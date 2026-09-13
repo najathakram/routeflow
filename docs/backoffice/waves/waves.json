@@ -8,8 +8,22 @@
   "narrative": "docs/superpowers/plans/2026-09-13-backoffice-waves.md",
   "orderingRule": "Money that is wrong -> numbers that are wrong -> the seat that operates on them -> the lifecycle around them -> what we sell -> what we show.",
   "lanes": {
-    "A": { "serial": ["B1", "B2", "B4", "B5", "B6"], "note": "the money/truth spine" },
-    "B": { "serial": ["B3"], "note": "admin seat security; disjoint files, runs in parallel from day one" }
+    "A": {
+      "serial": [
+        "B1",
+        "B2",
+        "B4",
+        "B5",
+        "B6"
+      ],
+      "note": "the money/truth spine"
+    },
+    "B": {
+      "serial": [
+        "B3"
+      ],
+      "note": "admin seat security; disjoint files, runs in parallel from day one"
+    }
   },
   "gates": [
     "Red-first regression proving the wrong value, per registry row.",
@@ -24,50 +38,199 @@
       "title": "Money that is wrong today",
       "rule": "Money moves incorrectly, or entitlements do not match what was paid for.",
       "dependsOn": [],
-      "blocks": ["B2"],
+      "blocks": [
+        "B2"
+      ],
       "moneyCarveOut": true,
       "status": "ready",
       "tasks": [
-        { "ref": "B58", "sev": "critical", "batch": "F18", "status": "open", "what": "Admin 'Change plan' always calls subscribe - full non-prorated charge AND a reset billing period. Every admin-initiated plan change overcharges." },
-        { "ref": "B107", "sev": "high", "batch": "F18", "status": "open", "what": "disableAddon nulls stripeItemId even when the Stripe delete failed - tenant keeps paying for a disabled add-on and the pointer to stop it is gone." },
-        { "ref": "B327", "sev": "high", "batch": "F42", "status": "open", "what": "The 3-day payment-grace suspension can never fire - non-payers are never suspended." },
-        { "ref": "B216", "sev": "high", "batch": null, "status": "open", "what": "Reinstating a lapsed tenant does not clear a downgrade armed before the lapse; it fires later against a paying tenant.", "note": "Adjacent to the in-flight billing lane; fold in there if that lands first." },
-        { "ref": "B342", "sev": "medium", "batch": "F45", "status": "open", "what": "Enabling a priced add-on twice creates two Stripe subscription items and keeps one pointer - double billing, one handle." },
-        { "ref": "B329", "sev": "low", "batch": "F42", "status": "open", "what": "rollCycles drifts the billing anchor day and drops the period time-of-day." },
-        { "ref": "B218", "sev": "low", "batch": null, "status": "open", "what": "subscribe() on an off-catalog published plan key writes currentPlan as the STARTER enum shadow - wrong entitlements, silently." },
-        { "ref": "TRIAL-1", "sev": "high", "batch": null, "status": "in-flight", "lane": "rf-billing-trial", "what": "A trial tenant cannot cancel - signup writes no TenantSubscription row for the cancel path to act on." },
-        { "ref": "RO-1", "sev": "high", "batch": null, "status": "in-flight", "lane": "rf-billing-trial", "what": "READ_ONLY never surfaces in the web UI; a lapsed tenant gets a degraded product with no explanation." },
-        { "ref": "STRIPE-CANCEL-1", "sev": "high", "batch": null, "status": "in-flight", "lane": "rf-billing-trial", "what": "In-app cancel never propagates to Stripe; onPaymentSucceeded then resurrects the tenant. Exposure at time of fix: ZERO (verified, no tenant holds a stripeSubId)." },
-        { "ref": "QUOTE-ALLOWLIST", "sev": "high", "batch": null, "status": "in-flight", "lane": "rf-billing-trial", "what": "POST /billing/quote missing from the READ_ONLY allowlist, so the Choose-a-plan CTA 403s and loops. Was Phase 0 task 7; reassigned." }
+        {
+          "ref": "B58",
+          "sev": "critical",
+          "batch": "F18",
+          "status": "done",
+          "what": "Admin 'Change plan' always calls subscribe - full non-prorated charge AND a reset billing period. Every admin-initiated plan change overcharges.",
+          "note": "DONE per registry status (F18 3/3 done) — listed here only so the wave shows its history; do not rework."
+        },
+        {
+          "ref": "ADMIN-UPDATEPLAN-1",
+          "sev": "high",
+          "batch": null,
+          "status": "unfiled",
+          "what": "platform-admin updatePlan (platform-admin.service.ts ~379) does a raw tx.tenant.update + tenantSubscription.upsert with basePriceSnapshot — no proration, no Stripe sync. B58 fixed the TENANT-facing change-plan path only; the ADMIN path is the same defect, unfiled. Files when 0d mints."
+        },
+        {
+          "ref": "B107",
+          "sev": "high",
+          "batch": "F18",
+          "status": "done",
+          "what": "disableAddon nulls stripeItemId even when the Stripe delete failed - tenant keeps paying for a disabled add-on and the pointer to stop it is gone.",
+          "note": "DONE per registry status (F18 3/3 done) — listed here only so the wave shows its history; do not rework."
+        },
+        {
+          "ref": "B327",
+          "sev": "high",
+          "batch": "F42",
+          "status": "open",
+          "what": "The 3-day payment-grace suspension can never fire - non-payers are never suspended."
+        },
+        {
+          "ref": "B216",
+          "sev": "high",
+          "batch": null,
+          "status": "open",
+          "what": "Reinstating a lapsed tenant does not clear a downgrade armed before the lapse; it fires later against a paying tenant.",
+          "note": "Adjacent to the in-flight billing lane; fold in there if that lands first."
+        },
+        {
+          "ref": "B342",
+          "sev": "medium",
+          "batch": "F45",
+          "status": "open",
+          "what": "Enabling a priced add-on twice creates two Stripe subscription items and keeps one pointer - double billing, one handle."
+        },
+        {
+          "ref": "B329",
+          "sev": "low",
+          "batch": "F42",
+          "status": "open",
+          "what": "rollCycles drifts the billing anchor day and drops the period time-of-day."
+        },
+        {
+          "ref": "B218",
+          "sev": "low",
+          "batch": null,
+          "status": "open",
+          "what": "subscribe() on an off-catalog published plan key writes currentPlan as the STARTER enum shadow - wrong entitlements, silently."
+        },
+        {
+          "ref": "TRIAL-1",
+          "sev": "high",
+          "batch": null,
+          "status": "in-flight",
+          "lane": "rf-billing-trial",
+          "what": "A trial tenant cannot cancel - signup writes no TenantSubscription row for the cancel path to act on."
+        },
+        {
+          "ref": "RO-1",
+          "sev": "high",
+          "batch": null,
+          "status": "in-flight",
+          "lane": "rf-billing-trial",
+          "what": "READ_ONLY never surfaces in the web UI; a lapsed tenant gets a degraded product with no explanation."
+        },
+        {
+          "ref": "STRIPE-CANCEL-1",
+          "sev": "high",
+          "batch": null,
+          "status": "in-flight",
+          "lane": "rf-billing-trial",
+          "what": "In-app cancel never propagates to Stripe; onPaymentSucceeded then resurrects the tenant. Exposure at time of fix: ZERO (verified, no tenant holds a stripeSubId)."
+        },
+        {
+          "ref": "QUOTE-ALLOWLIST",
+          "sev": "high",
+          "batch": null,
+          "status": "in-flight",
+          "lane": "rf-billing-trial",
+          "what": "POST /billing/quote missing from the READ_ONLY allowlist, so the Choose-a-plan CTA 403s and loops. Was Phase 0 task 7; reassigned."
+        }
       ]
     },
     {
       "id": "B2",
       "title": "Truth (= Phase 0)",
       "rule": "Every number the admin surface shows must be derived, not estimated, and every tenant must be classifiable.",
-      "dependsOn": ["B1"],
+      "dependsOn": [
+        "B1"
+      ],
       "dependsWhy": "Reconciling the subscription set while the billing writes that produce it are still wrong reconciles to wrong values.",
-      "blocks": ["B4", "B5", "B6"],
+      "blocks": [
+        "B4",
+        "B5",
+        "B6"
+      ],
       "moneyCarveOut": true,
       "status": "planned-not-started",
       "plan": "docs/superpowers/plans/2026-09-12-backoffice-phase-0-truth.md",
       "note": "ALREADY FULLY PLANNED as 15 tasks - do not re-plan. Carries the programme's only migration; owner-gated, own window.",
       "tasks": [
-        { "ref": "P0-T1", "status": "open", "what": "TenantClass enum, TenantPlan widening, Customer.representsTenantId - schema + migration" },
-        { "ref": "P0-T2", "status": "open", "what": "classifyTenantSlug utility + unit tests" },
-        { "ref": "P0-T3", "status": "open", "what": "Dark backfill script for Tenant.class (owner reviews the dry run before KPI filtering flips on)" },
-        { "ref": "P0-T4", "status": "open", "what": "TRIAL_LENGTH_DAYS constant" },
-        { "ref": "P0-T5", "status": "open", "what": "Promote extractDeviceInfo to a shared utility" },
-        { "ref": "P0-T6", "status": "open", "what": "Thread DeviceInfo through the Google OAuth platform-admin flow" },
-        { "ref": "P0-T7", "status": "reassigned", "lane": "rf-billing-trial", "what": "READ_ONLY allowlist hotfix for /billing/quote - CONSUME, do not rebuild" },
-        { "ref": "P0-T8", "status": "open", "what": "updateTenantClass endpoint + TENANT_CLASS_CHANGED event" },
-        { "ref": "P0-T9", "status": "open", "what": "One MRR engine - export MrrService, scope by class, retire the getStats() estimator. THIS is what fixes the $499-vs-$0.00 split." },
-        { "ref": "P0-T10", "status": "open", "what": "CreateTenantDto plan validation + trial length; updatePlan/activateSubscription DTOs pick up GROWTH/SCALE" },
-        { "ref": "P0-T11", "status": "open", "what": "Subscription-set reconciliation script - owner signs off the dry-run diff before any prod apply" },
-        { "ref": "P0-T12", "status": "open", "what": "PlatformConfig house-tenant key + bootstrap-house-tenant.mjs" },
-        { "ref": "P0-T13", "status": "open", "what": "TenantMirrorService with @LeaderCron" },
-        { "ref": "P0-T14", "status": "open", "what": "Web - live catalog in the Create Tenant plan picker, plan label fixes, MRR field rename" },
-        { "ref": "P0-T15", "status": "open", "what": "Full verification pass and Playwright confirmation" }
+        {
+          "ref": "P0-T1",
+          "status": "open",
+          "what": "TenantClass enum, TenantPlan widening, Customer.representsTenantId - schema + migration"
+        },
+        {
+          "ref": "P0-T2",
+          "status": "open",
+          "what": "classifyTenantSlug utility + unit tests"
+        },
+        {
+          "ref": "P0-T3",
+          "status": "open",
+          "what": "Dark backfill script for Tenant.class (owner reviews the dry run before KPI filtering flips on)"
+        },
+        {
+          "ref": "P0-T4",
+          "status": "open",
+          "what": "TRIAL_LENGTH_DAYS constant"
+        },
+        {
+          "ref": "P0-T5",
+          "status": "open",
+          "what": "Promote extractDeviceInfo to a shared utility"
+        },
+        {
+          "ref": "P0-T6",
+          "status": "open",
+          "what": "Thread DeviceInfo through the Google OAuth platform-admin flow"
+        },
+        {
+          "ref": "P0-T7",
+          "status": "reassigned",
+          "lane": "rf-billing-trial",
+          "what": "READ_ONLY allowlist hotfix for /billing/quote - CONSUME, do not rebuild"
+        },
+        {
+          "ref": "P0-T8",
+          "status": "open",
+          "what": "updateTenantClass endpoint + TENANT_CLASS_CHANGED event"
+        },
+        {
+          "ref": "P0-T9",
+          "status": "open",
+          "what": "One MRR engine - export MrrService, scope by class, retire the getStats() estimator. THIS is what fixes the $499-vs-$0.00 split."
+        },
+        {
+          "ref": "P0-T10",
+          "status": "open",
+          "what": "CreateTenantDto plan validation + trial length; updatePlan/activateSubscription DTOs pick up GROWTH/SCALE"
+        },
+        {
+          "ref": "P0-T11",
+          "status": "open",
+          "what": "Subscription-set reconciliation script - owner signs off the dry-run diff before any prod apply"
+        },
+        {
+          "ref": "P0-T12",
+          "status": "open",
+          "what": "PlatformConfig house-tenant key + bootstrap-house-tenant.mjs"
+        },
+        {
+          "ref": "P0-T13",
+          "status": "open",
+          "what": "TenantMirrorService with @LeaderCron"
+        },
+        {
+          "ref": "P0-T14",
+          "status": "open",
+          "what": "Web - live catalog in the Create Tenant plan picker, plan label fixes, MRR field rename"
+        },
+        {
+          "ref": "P0-T15",
+          "status": "open",
+          "what": "Full verification pass and Playwright confirmation"
+        }
       ]
     },
     {
@@ -79,56 +242,184 @@
       "parallelWhy": "Touches auth/impersonation/mobile-session files; B1 touches billing/*. Disjoint - no worktree contention.",
       "status": "ready",
       "tasks": [
-        { "ref": "B124", "sev": "high", "batch": "F33", "status": "open", "what": "Impersonation keeps the previous tenant's logo, business name and username." },
-        { "ref": "B138", "sev": "high", "batch": "F14", "status": "open", "what": "Signing out during impersonation deletes every refresh token of the REAL tenant admin." },
-        { "ref": "B140", "sev": "high", "batch": "F19", "status": "open", "what": "Mobile sign-out never clears the query cache - the next tenant sees the previous tenant's figures." },
-        { "ref": "B123", "sev": "high", "batch": "F33", "status": "open", "what": "Developer Mode silently overrode per-tenant delivery toggles and the dispatch API." },
-        { "ref": "B165", "sev": "medium", "batch": "F14", "status": "open", "what": "The impersonation guard can never fire - impersonated writes are audited as the tenant's own admin. Audit is blind exactly when it matters most." },
-        { "ref": "B173", "sev": "low", "batch": "F29", "status": "open", "what": "An impersonation timeout bounces the admin silently and leaves the tenant cookie set." },
-        { "ref": "B349", "sev": "high", "batch": null, "status": "built-elsewhere", "what": "Signed OAuth state (HKDF from JWT_SECRET) - already built in another lane; land it, do not rebuild." },
-        { "ref": "P2-MFA", "sev": "high", "batch": null, "status": "open", "what": "Platform-admin MFA + recovery (Phase 2 of the umbrella spec). Single SUPER_ADMIN account has no second factor today." }
+        {
+          "ref": "B124",
+          "sev": "high",
+          "batch": "F33",
+          "status": "done",
+          "what": "Impersonation keeps the previous tenant's logo, business name and username.",
+          "note": "DONE per registry status (F33 6/6 done) — listed here only so the wave shows its history; do not rework."
+        },
+        {
+          "ref": "B138",
+          "sev": "high",
+          "batch": "F14",
+          "status": "open",
+          "what": "Signing out during impersonation deletes every refresh token of the REAL tenant admin."
+        },
+        {
+          "ref": "B140",
+          "sev": "high",
+          "batch": "F19",
+          "status": "open",
+          "what": "Mobile sign-out never clears the query cache - the next tenant sees the previous tenant's figures."
+        },
+        {
+          "ref": "B123",
+          "sev": "high",
+          "batch": "F33",
+          "status": "done",
+          "what": "Developer Mode silently overrode per-tenant delivery toggles and the dispatch API.",
+          "note": "DONE per registry status (F33 6/6 done) — listed here only so the wave shows its history; do not rework."
+        },
+        {
+          "ref": "B165",
+          "sev": "medium",
+          "batch": "F14",
+          "status": "open",
+          "what": "The impersonation guard can never fire - impersonated writes are audited as the tenant's own admin. Audit is blind exactly when it matters most."
+        },
+        {
+          "ref": "B173",
+          "sev": "low",
+          "batch": "F29",
+          "status": "open",
+          "what": "An impersonation timeout bounces the admin silently and leaves the tenant cookie set."
+        },
+        {
+          "ref": "B349",
+          "sev": "high",
+          "batch": null,
+          "status": "built-elsewhere",
+          "what": "Signed OAuth state (HKDF from JWT_SECRET) - already built in another lane; land it, do not rebuild."
+        },
+        {
+          "ref": "P2-MFA",
+          "sev": "high",
+          "batch": null,
+          "status": "open",
+          "what": "Platform-admin MFA + recovery (Phase 2 of the umbrella spec). Single SUPER_ADMIN account has no second factor today."
+        }
       ]
     },
     {
       "id": "B4",
       "title": "Tenant lifecycle completeness",
       "rule": "Every state a tenant can reach has a way out, and somebody is told when it is reached.",
-      "dependsOn": ["B2"],
+      "dependsOn": [
+        "B2"
+      ],
       "status": "blocked",
       "tasks": [
-        { "ref": "CANCELLED-DEADEND", "sev": "high", "batch": null, "status": "filed-not-built", "gate": true, "what": "CANCELLED is a hard dead end - 403 on every method INCLUDING GET, no banner, no CTA; only platform-admin updateStatus restores. GATING PRECONDITION: do not enable Stripe checkout for any real tenant until CANCELLED has a path back (self-serve resubscribe, or at minimum read-only data access + support CTA). STRIPE-CANCEL-1 makes this state reachable by a self-service click." },
-        { "ref": "B125", "sev": "high", "batch": "F33", "status": "open", "what": "Tenant admins are auto-created as drivers, and deleting the driver row silently rolls back." },
-        { "ref": "B217", "sev": "medium", "batch": null, "status": "open", "what": "A scheduled downgrade deactivates every seat over cap with no way to choose which ones." },
-        { "ref": "B219", "sev": "low", "batch": null, "status": "open", "what": "A failed re-quote on choose-plan clears the summary card with no error toast." },
-        { "ref": "B95", "sev": "low", "batch": "F20", "status": "open", "what": "The mobile tenant-admin dashboard is unreachable - no role ever routes there." },
-        { "ref": "P4-MESSAGING", "sev": "medium", "batch": null, "status": "open", "dependsOn": ["ROAD-84"], "what": "Phase 4 lifecycle messaging - event-triggered emails on the existing notify() engine, owner alerts, and the legacy READ_ONLY-with-live-Stripe cohort alert (currently a log warn nobody reads). Needs the real outbound transport." }
+        {
+          "ref": "CANCELLED-DEADEND",
+          "sev": "high",
+          "batch": null,
+          "status": "filed-not-built",
+          "gate": true,
+          "what": "CANCELLED is a hard dead end - 403 on every method INCLUDING GET, no banner, no CTA; only platform-admin updateStatus restores. GATING PRECONDITION: do not enable Stripe checkout for any real tenant until CANCELLED has a path back (self-serve resubscribe, or at minimum read-only data access + support CTA). STRIPE-CANCEL-1 makes this state reachable by a self-service click."
+        },
+        {
+          "ref": "B125",
+          "sev": "high",
+          "batch": "F33",
+          "status": "done",
+          "what": "Tenant admins are auto-created as drivers, and deleting the driver row silently rolls back.",
+          "note": "DONE per registry status (F33 6/6 done) — listed here only so the wave shows its history; do not rework."
+        },
+        {
+          "ref": "B217",
+          "sev": "medium",
+          "batch": null,
+          "status": "open",
+          "what": "A scheduled downgrade deactivates every seat over cap with no way to choose which ones."
+        },
+        {
+          "ref": "B219",
+          "sev": "low",
+          "batch": null,
+          "status": "open",
+          "what": "A failed re-quote on choose-plan clears the summary card with no error toast."
+        },
+        {
+          "ref": "B95",
+          "sev": "low",
+          "batch": "F20",
+          "status": "open",
+          "what": "The mobile tenant-admin dashboard is unreachable - no role ever routes there."
+        },
+        {
+          "ref": "P4-MESSAGING",
+          "sev": "medium",
+          "batch": null,
+          "status": "open",
+          "dependsOn": [
+            "ROAD-84"
+          ],
+          "what": "Phase 4 lifecycle messaging - event-triggered emails on the existing notify() engine, owner alerts, and the legacy READ_ONLY-with-live-Stripe cohort alert (currently a log warn nobody reads). Needs the real outbound transport."
+        }
       ]
     },
     {
       "id": "B5",
       "title": "What we sell (= Phase 3)",
       "rule": "The catalog we sell from must be editable safely and consistent with what checkout charges.",
-      "dependsOn": ["B2"],
+      "dependsOn": [
+        "B2"
+      ],
       "dependsWhy": "A plan editor over untrustworthy plan data is a liability.",
       "moneyCarveOut": true,
       "status": "blocked",
       "tasks": [
-        { "ref": "P3-EDITOR", "status": "open", "what": "Draft/publish plan editor" },
-        { "ref": "P3-PRICING", "status": "open", "what": "Pricing consistency across catalog and checkout" },
-        { "ref": "P3-GHL-SKU", "status": "open", "what": "GoHighLevel $9.99/mo add-on SKU (integration already built behind a dark gate)" }
+        {
+          "ref": "P3-EDITOR",
+          "status": "open",
+          "what": "Draft/publish plan editor"
+        },
+        {
+          "ref": "P3-PRICING",
+          "status": "open",
+          "what": "Pricing consistency across catalog and checkout"
+        },
+        {
+          "ref": "P3-GHL-SKU",
+          "status": "open",
+          "what": "GoHighLevel $9.99/mo add-on SKU (integration already built behind a dark gate)"
+        }
       ]
     },
     {
       "id": "B6",
       "title": "What we show (= Phases 5-6)",
       "rule": "One place to see a tenant whole, and a portal where the tenant can serve itself.",
-      "dependsOn": ["B2"],
+      "dependsOn": [
+        "B2"
+      ],
       "status": "blocked",
       "tasks": [
-        { "ref": "P5-360", "status": "open", "what": "Tenant 360 - merged timeline, contacts, tasks, health score, attention queue" },
-        { "ref": "P6-PORTAL", "status": "open", "what": "Tenant portal - self-serve card/invoice, credits" },
-        { "ref": "P6-EXPORT", "status": "open", "relatedRoad": "ROAD-79", "what": "Export/erasure - also discharges the contractual data-export guarantee and answers the CANCELLED data-access problem from B4." }
+        {
+          "ref": "P5-360",
+          "status": "open",
+          "what": "Tenant 360 - merged timeline, contacts, tasks, health score, attention queue"
+        },
+        {
+          "ref": "P6-PORTAL",
+          "status": "open",
+          "what": "Tenant portal - self-serve card/invoice, credits"
+        },
+        {
+          "ref": "P6-EXPORT",
+          "status": "open",
+          "relatedRoad": "ROAD-79",
+          "what": "Export/erasure - also discharges the contractual data-export guarantee and answers the CANCELLED data-access problem from B4."
+        }
       ]
     }
-  ]
+  ],
+  "registryTruth": {
+    "openTotal": 220,
+    "openCritical": 7,
+    "openHigh": 56,
+    "note": "Resolved via status/F##.jsonl on 2026-09-13. The raw state field in bugs.jsonl is the INITIAL state and overstates open work ~2x (raw: 393/39/135). Always resolve through bugs.mjs status or the status files."
+  }
 }
