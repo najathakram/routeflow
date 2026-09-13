@@ -190,8 +190,29 @@ export function planKeyFromEnum(plan: string | null | undefined): PlanKey {
   }
 }
 
-/** Values of the legacy Prisma `TenantPlan` enum (mirrored here, like METER_KEYS, not imported). */
-export type TenantPlanEnumValue = "STARTER" | "TEAM" | "BUSINESS" | "PROFESSIONAL" | "ENTERPRISE";
+/**
+ * Values of the Prisma `TenantPlan` enum (mirrored here, like METER_KEYS, not imported). Phase 0
+ * (docs/superpowers/plans/2026-09-12-backoffice-phase-0-truth.md) widened the enum with GROWTH
+ * and SCALE ahead of Task 10's catalog entries — see `SELECTABLE_TENANT_PLANS` below for which of
+ * these are currently acceptable on a write DTO.
+ */
+export type TenantPlanEnumValue =
+  "STARTER" | "TEAM" | "BUSINESS" | "PROFESSIONAL" | "ENTERPRISE" | "GROWTH" | "SCALE";
+
+/**
+ * `TenantPlan` values currently selectable on an admin-facing DTO (`UpdateTenantPlanDto`,
+ * `ActivateSubscriptionDto`). Excludes GROWTH and SCALE: `@IsEnum(TenantPlan)` alone would accept
+ * them now that the Prisma enum has widened, but `planKeyFromEnum()` doesn't know them yet and
+ * falls through to its default STARTER branch — GROWTH/SCALE become selectable in Phase 0 Task 10
+ * when planKeyFromEnum learns them.
+ */
+export const SELECTABLE_TENANT_PLANS: TenantPlanEnumValue[] = [
+  "STARTER",
+  "TEAM",
+  "BUSINESS",
+  "PROFESSIONAL",
+  "ENTERPRISE",
+];
 
 /**
  * Current planKey → the legacy `TenantPlan` enum shadow column. The Prisma enum was NOT
