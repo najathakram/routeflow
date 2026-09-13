@@ -238,6 +238,34 @@ nonce}` so a re-scan re-flashes),
   BOX price billed $1,440 instead of $60) **and posted that inflated figure as `payment.amount`**.
   `payment.tsx`'s two-tier `invoiceTotal` (first order keeps the short-pick `reconciledTotal`) and
   its `Math.min(received, invoiceTotal)` change-giving cap are unchanged — only the basis was wrong.
+- **F38 — the at-door amount due is the server's open-draft invoice; the short-pick estimate
+  matches the SAME line set (B305, 2026-09-13, PR #710).** `run-money.ts` gains `RunMoneyInvoice`
+  (one open DRAFT — `subtotal`/`taxAmount`/`discount`/`shippingFee`/`total`) and
+  `orderAmountDue(order)` = Σ `order.invoices`' `total` (ALL open drafts — a regulated split order
+  carries base + `-R#` siblings, never just the first) when at least one is finite, else the legacy
+  `sumOrderLineItems` pre-tax fallback (never a client-side `Order.total - discountAmount` guess —
+  unsafe once an order is edited/merged past create). `stopAmountDue(stop)` sums it per stop;
+  `payment.tsx`'s `fullOrderTotal` and `stop/[stopId]/index.tsx`'s `dollarTotal` now call these
+  instead of `sumOrderLineItems`/`sumStopOrders`. `deliveredCategoryTax(lineItems,
+deliveredQtyById)` = Σ each line's `categoryTaxAmount` (new on `RUN_LINE_ITEMS_SELECT`, mirrored
+  onto `lib/api/routes.ts#RouteRunOrderItem`) scaled by delivered/ordered qty share (a line absent
+  from the map defaults to fully delivered — matches `short-pick.ts#buildDeliveries`);
+  `reconciledAmountDue({drafts, order, deliveredSubtotal, deliveredCategoryTax, isTaxExempt})`
+  reproduces the server's delivered-basis rule exactly
+  (`invoices.service.ts#reconcileOrderDraftInvoice`): `deliveredSubtotal − Σdraft.discount +
+Σdraft.shippingFee + order.tax×(deliveredSubtotal/order.subtotal) + deliveredCategoryTax`, both
+  tax terms zeroed when `isTaxExempt` (mirrors `RUN_STOP_INCLUDE.customer.isTaxExempt`, projected
+  onto `lib/api/routes.ts#RouteRunStop.customer`). **Round 4 seam fix (`df635fdb`):** `payment.tsx`
+  fed `deliveredSubtotal` from the filtered `shortPickLines` but `deliveredCategoryTax` from the
+  RAW `o.lineItems` — since `deliveredCategoryTax` defaults an unlisted line to fully delivered, a
+  CANCELLED or already-delivered regulated line leaked its full category tax into the quote while
+  contributing zero subtotal (cash over-collected at the door). New `shortPickCategoryTax(lineItems,
+shortPickLines, deliveredQtyById)` restricts the sum to `shortPickLines`' ids and delegates to
+  `deliveredCategoryTax`; `payment.tsx` calls it so both halves derive from ONE line set, and the
+  invoice label appends " (est. — final on invoice)" whenever a short-pick estimate is shown.
+  Fenced by a SOURCE PIN (`__tests__/short-pick-category-tax.pins.test.ts` — the unit tests can't
+  import the RN screen, so a revert to the raw-lines call would otherwise stay green). Specs:
+  `__tests__/run-money.test.ts` REG-B305 (rounds 2-4).
 - **Run settlement is server-gated (F05, B152/B167).** `shouldForceSettlement(run, storeSignal)` in
   `lib/run-settlement.ts` decides the complete-route branch from the run payload
   (`collectedPayments` + `settlementNote`), OR'd with the device store only to cover the moments
@@ -265,6 +293,24 @@ nonce}` so a re-scan re-flashes),
   POSTs one create-return per order via `Promise.allSettled`, folded by `summarizeSubmissions`
   into landed-vs-retry with a toast when every row nets to zero. The rewire itself is not
   jest-provable (RN screen); the helper is the tested oracle (stated in #645's PR body).
+- **F38 — an offline-queued mutation reads as success, not a failure (B307/B308, 2026-09-13, PR
+  #710).** NEW `lib/offline-errors.ts#classifyMutationError(e)` → `{kind: "queued"|"error",
+message}` (mirrors the pattern already correct in `skip-stop.ts:48-57`) — `api-client.ts:183`
+  rejects with `{isOfflineQueued: true}` once a mutation is enqueued, which is a PENDING success,
+  not a rejection. Three call sites: `payment.tsx`'s completion `catch` runs the success-path
+  cleanup (clear POD/plan, record the collection, offer the Google-Maps continue prompt) instead
+  of re-arming the Complete button, toast "Offline — completion queued…" (known gap, filed: the
+  payment-photo upload is dropped on this path — it needs `paymentIds` off a real, non-queued
+  response); `components/NewOrderScreen.tsx`'s submit `onError` classifies FIRST and, when queued,
+  awaits `finalizeBoundDraft()` and navigates back WITHOUT `endSubmit()`/`resetOrderSubmitKey()` —
+  releasing the latch or rotating the key before the queued POST resolves would let a double-tap
+  mint a second create whose fresh key the original queued request can't dedupe against;
+  `return/index.tsx` carries the flag through `ReturnSubmissionResult.isOfflineQueued` into
+  `summarizeSubmissions` above, which now returns a third bucket **`queued: string[]`** (always
+  present, empty when nothing queued) — an offline-queued return is filed there, never in
+  `failed`; the return screen marks queued ids submitted alongside `done` and toasts "Offline —
+  return queued…" instead of "Return submitted". Specs: `__tests__/offline-errors.test.ts`,
+  `__tests__/returns-logic.test.ts` REG-B307/REG-B308.
 - **Durable POD (2026-08-28):** `lib/pod-artifacts.ts` (pure, spec'd in
   `__tests__/pod-artifacts.test.ts`) — `strokesToSvgDataUrl` (stroke vectors → SVG data URL,
   white bg, null for tap-only; used by `components/SignaturePad.tsx` on BOTH platforms — the
