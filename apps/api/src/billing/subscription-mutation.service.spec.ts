@@ -1545,7 +1545,7 @@ describe("STRIPE-CANCEL-1 — self-serve cancel/resume propagate to Stripe", () 
     // nothing too — false on a timeout Stripe actually applied. Reworded to describe an
     // UNCERTAIN provider outcome instead.
     await expect(svc.cancel("t1", "admin")).rejects.toThrow(
-      "The payment provider did not confirm the change — it may or may not have been applied. Refresh to check before retrying, or contact support.",
+      "The payment provider did not confirm the change — it may still apply. Check your subscription in a moment before retrying, or contact support.",
     );
     expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
     expect(events.emit).not.toHaveBeenCalled();
@@ -1604,7 +1604,7 @@ describe("STRIPE-CANCEL-1 — self-serve cancel/resume propagate to Stripe", () 
     // R3: the 503 copy now describes an UNCERTAIN provider outcome, not "nothing was changed"
     // (which is false on a timeout Stripe actually applied).
     await expect(svc.resume("t1", "admin")).rejects.toThrow(
-      "The payment provider did not confirm the change — it may or may not have been applied. Refresh to check before retrying, or contact support.",
+      "The payment provider did not confirm the change — it may still apply. Check your subscription in a moment before retrying, or contact support.",
     );
     expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
     expect(events.emit).not.toHaveBeenCalled();
@@ -1622,11 +1622,14 @@ describe("STRIPE-CANCEL-1 — self-serve cancel/resume propagate to Stripe", () 
   });
 
   it("resume() with stripeSubId: null never calls Stripe — existing path unchanged", async () => {
-    const { svc, tx, events, stripe } = make({
+    const { svc, prisma, tx, events, stripe } = make({
       sub: activeSub({ cancelAtPeriodEnd: true }), // stripeSubId: null
     });
     await svc.resume("t1", "admin");
     expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    // A stripeSubId-less row has no Stripe gate to evaluate — resume() must not pay for the
+    // tenant-status read either (see E1: it used to run unconditionally in a Promise.all).
+    expect(prisma.tenant.findUnique).not.toHaveBeenCalled();
     expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
       cancelAtPeriodEnd: false,
     });
@@ -1726,17 +1729,36 @@ describe("STRIPE-CANCEL-1 — self-serve cancel/resume propagate to Stripe", () 
       isConfigured: false,
       updateSubscription: jest.fn().mockRejectedValue(new Error("stripe down")),
     };
-    const { svc, tx, events, stripe } = make({
+    const { svc, prisma, tx, events, stripe } = make({
       tenantStatus: "ACTIVE",
       sub: activeSub({ cancelAtPeriodEnd: true }), // stripeSubId: null
       stripe: hostileStripe,
     });
     const result = await svc.resume("t1", "admin");
     expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    // Same as the plain null-stripeSubId case: the tenant-status read is skipped entirely, so a
+    // hostile/unconfigured Stripe is never even the reason this path is safe — it is never
+    // reached in the first place.
+    expect(prisma.tenant.findUnique).not.toHaveBeenCalled();
     expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
       cancelAtPeriodEnd: false,
     });
     expect(emitted(events)).toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
     expect(result).toEqual({ planKey: "TEAM" });
+  });
+
+  // (STRIPE-CANCEL-1 round 3) resume() mirror of (10): an api_error/500 must still refuse via
+  // the ServiceUnavailableException branch, never be read through the resource_missing guard —
+  // guards isStripeResourceMissing widening on the resume path too (the existing resume 503
+  // case above rejects with a bare Error, never a Stripe-shaped rejection object).
+  it("REG resume() rejects ServiceUnavailableException on a Stripe api_error (500) — no write, no emit", async () => {
+    const { svc, tx, events, stripe } = make({
+      tenantStatus: "ACTIVE",
+      sub: activeSub({ stripeSubId: "sub_x", cancelAtPeriodEnd: true }),
+    });
+    stripe.updateSubscription.mockRejectedValue({ statusCode: 500, code: "api_error" });
+    await expect(svc.resume("t1", "admin")).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
   });
 });

@@ -873,7 +873,7 @@ export class SubscriptionMutationService {
           // false on a timeout Stripe actually applied — describe the provider outcome as
           // UNCERTAIN instead.
           throw new ServiceUnavailableException(
-            "The payment provider did not confirm the change — it may or may not have been applied. Refresh to check before retrying, or contact support.",
+            "The payment provider did not confirm the change — it may still apply. Check your subscription in a moment before retrying, or contact support.",
           );
         }
       }
@@ -909,15 +909,14 @@ export class SubscriptionMutationService {
    * only self-service "keep my current plan"; it never touches planKey or the period.
    */
   async resume(tenantId: string, actorId?: string) {
-    const [sub, tenant] = await Promise.all([
-      this.prisma.tenantSubscription.findUnique({ where: { tenantId } }),
-      this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { status: true } }),
-    ]);
+    const sub = await this.prisma.tenantSubscription.findUnique({ where: { tenantId } });
     if (!sub) throw new NotFoundException("No subscription.");
 
     // STRIPE-CANCEL-1: the mirror of cancel()'s Stripe-first write — undo the scheduled
     // cancellation with Stripe before touching our own row. A row with no stripeSubId takes the
-    // existing path unchanged.
+    // existing path unchanged, and skips the tenant read below entirely: the `stripeSubId ==
+    // null` branch is 100% of real production resumes today, so it must never pay for a query
+    // it has no use for (a pool timeout on that read would 500 a resume that used to succeed).
     //
     // R1 (Opus F1+F2): call Stripe ONLY when cancelAtPeriodEnd is actually ARMED on a tenant
     // Stripe is still charging (tenant.status === "ACTIVE"). Two money defects otherwise:
@@ -930,23 +929,29 @@ export class SubscriptionMutationService {
     // cancellation), calling Stripe here could silently revoke a cancellation the tenant made
     // in the Stripe customer portal that our local row never learned about — only
     // onSubscriptionUpdated syncs Stripe→local, and there is no ordering guard against this call.
-    if (sub.stripeSubId && sub.cancelAtPeriodEnd === true && tenant?.status === "ACTIVE") {
-      try {
-        await this.stripe.updateSubscription(sub.stripeSubId, { cancel_at_period_end: false });
-      } catch (err) {
-        if (isStripeResourceMissing(err)) {
-          // Nothing to resume — the provider subscription is gone, so there is no local write.
-          throw new ConflictException(
-            "The payment-provider subscription no longer exists — subscribe again to restore service.",
+    if (sub.stripeSubId && sub.cancelAtPeriodEnd === true) {
+      const tenant = await this.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { status: true },
+      });
+      if (tenant?.status === "ACTIVE") {
+        try {
+          await this.stripe.updateSubscription(sub.stripeSubId, { cancel_at_period_end: false });
+        } catch (err) {
+          if (isStripeResourceMissing(err)) {
+            // Nothing to resume — the provider subscription is gone, so there is no local write.
+            throw new ConflictException(
+              "The payment-provider subscription no longer exists — subscribe again to restore service.",
+            );
+          }
+          this.logger.error(
+            `STRIPE-CANCEL-1: resume() failed to resume the Stripe subscription for tenant ${tenantId} (stripeSubId ${sub.stripeSubId})`,
+          );
+          // R3: same UNCERTAIN-provider-outcome wording as cancel()'s 503.
+          throw new ServiceUnavailableException(
+            "The payment provider did not confirm the change — it may still apply. Check your subscription in a moment before retrying, or contact support.",
           );
         }
-        this.logger.error(
-          `STRIPE-CANCEL-1: resume() failed to resume the Stripe subscription for tenant ${tenantId} (stripeSubId ${sub.stripeSubId})`,
-        );
-        // R3: same UNCERTAIN-provider-outcome wording as cancel()'s 503.
-        throw new ServiceUnavailableException(
-          "The payment provider did not confirm the change — it may or may not have been applied. Refresh to check before retrying, or contact support.",
-        );
       }
     }
 
