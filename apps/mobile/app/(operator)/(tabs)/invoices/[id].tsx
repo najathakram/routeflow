@@ -1136,8 +1136,8 @@ export default function InvoiceDetailScreen() {
 /**
  * Invoice-side "Apply advance" — lists the customer's advance-payment wallet
  * rows with remaining balance and applies the tapped one (server caps at
- * min(wallet balance, invoice balance); reference AP-<id-8>). Mobile is the
- * FIRST client for this action — web's hook is dead code with no UI.
+ * min(wallet balance, invoice balance); reference AP-<id-8>). Web's invoice
+ * detail page (B13) mirrors this same flow via ApplyAdvanceModal.
  */
 function ApplyAdvanceSheet({
   customerId,
