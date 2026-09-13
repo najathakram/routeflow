@@ -15,7 +15,10 @@ import { NumberingService } from "../import/numbering.service";
 
 // B70: terminal status set — CONVERTED is terminal and cannot be re-transitioned; voided
 // (DECLINED) is also terminal per the requirement that send/decline/accept refuse both.
-export const TERMINAL_ESTIMATE_STATUSES = ["CONVERTED", "DECLINED"] as const;
+export const TERMINAL_ESTIMATE_STATUSES = [
+  "CONVERTED",
+  "DECLINED",
+] as const satisfies readonly EstimateStatus[];
 
 @Injectable()
 export class EstimatesService {
