@@ -232,6 +232,79 @@ describe("RoutesService", () => {
       prisma.route.findUnique.mockResolvedValue(null);
       await expect(service.findOneRoute("nonexistent")).rejects.toThrow(NotFoundException);
     });
+
+    it("REG-B157: excludes a removed customer's stop from the route plan", async () => {
+      prisma.route.findUnique.mockResolvedValue({ ...MOCK_ROUTE, stops: [] });
+
+      await service.findOneRoute("route-1");
+
+      expect(prisma.route.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: expect.objectContaining({
+            stops: expect.objectContaining({
+              where: { OR: [{ customerId: null }, { customer: { deletedAt: null } }] },
+            }),
+          }),
+        }),
+      );
+    });
+  });
+
+  describe("addStop", () => {
+    beforeEach(() => {
+      prisma.route.findUnique.mockResolvedValue(MOCK_ROUTE);
+      prisma.routeStop.findFirst.mockResolvedValue({ stopNumber: 3 });
+      prisma.customerAddress.findFirst.mockResolvedValue({ id: "addr-1" });
+      prisma.routeStop.create.mockResolvedValue({ id: "stop-new" });
+    });
+
+    it("creates the stop for a live customer", async () => {
+      prisma.customer.findUnique.mockResolvedValue({ deletedAt: null });
+
+      await service.addStop("route-1", { customerId: "cust-1" } as any);
+
+      expect(prisma.routeStop.create).toHaveBeenCalled();
+    });
+
+    it("REG-B157: refuses to add a removed customer to a route", async () => {
+      prisma.customer.findUnique.mockResolvedValue({ deletedAt: new Date() });
+
+      await expect(service.addStop("route-1", { customerId: "cust-1" } as any)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(prisma.routeStop.create).not.toHaveBeenCalled();
+    });
+
+    it("REG-B157: throws NotFoundException for a nonexistent customer", async () => {
+      prisma.customer.findUnique.mockResolvedValue(null);
+
+      await expect(service.addStop("route-1", { customerId: "cust-1" } as any)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+  });
+
+  describe("getPackingList", () => {
+    it("REG-B157: excludes a removed customer's stop (and its order) from the packing list", async () => {
+      prisma.route.findUnique.mockResolvedValue({ ...MOCK_ROUTE, stops: [] });
+
+      await service.getPackingList("route-1");
+
+      expect(prisma.route.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: expect.objectContaining({
+            stops: expect.objectContaining({
+              where: { OR: [{ customerId: null }, { customer: { deletedAt: null } }] },
+            }),
+          }),
+        }),
+      );
+    });
+
+    it("throws NotFoundException for a nonexistent route", async () => {
+      prisma.route.findUnique.mockResolvedValue(null);
+      await expect(service.getPackingList("nonexistent")).rejects.toThrow(NotFoundException);
+    });
   });
 
   describe("createRoute", () => {
@@ -446,6 +519,7 @@ describe("RoutesService", () => {
     });
 
     it("addStop clears it", async () => {
+      prisma.customer.findUnique.mockResolvedValue({ deletedAt: null });
       prisma.routeStop.findFirst.mockResolvedValue({ stopNumber: 3 });
       prisma.customerAddress.findFirst.mockResolvedValue({ id: "addr-1" });
       prisma.routeStop.create.mockResolvedValue({ id: "stop-new" });
@@ -508,6 +582,18 @@ describe("RoutesService", () => {
       expect(prisma.routeStop.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({ route: { kind: RouteKind.SCHEDULED } }),
+        }),
+      );
+    });
+
+    it("REG-B157: excludes a removed customer's stop — same predicate customers.service.ts's unassigned=1 filter relies on", async () => {
+      prisma.routeStop.findMany.mockResolvedValue([]);
+
+      await service.getCustomerRouteAssignments();
+
+      expect(prisma.routeStop.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ customer: { deletedAt: null } }),
         }),
       );
     });

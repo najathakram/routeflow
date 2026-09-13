@@ -25,6 +25,7 @@ import {
   ChangeRequestStatus,
 } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
+import { LIVE_CUSTOMER_STOP_WHERE, SCHEDULED_ROUTE_KIND_WHERE } from "./route-stop-filters.util";
 // F03/F05: the settlement cash basis stays pinned to the shared CONFIRMED
 // predicate rather than a literal `status: "PAID"`, so it can never silently
 // desync from every other confirmed-money read in the codebase.
@@ -193,7 +194,11 @@ export class RoutesService {
     const route = await this.prisma.forTenant().route.findUnique({
       where: { id },
       include: {
+        // REG-B157: a removed customer's stop dropped out at dispatch (createRun) but
+        // stayed fully visible in the route plan itself — same shared filter as dispatch,
+        // applied to every planning read too, not just the dispatch-time one.
         stops: {
+          where: LIVE_CUSTOMER_STOP_WHERE,
           include: {
             customer: { select: { id: true, businessName: true } },
             customerAddress: true,
@@ -450,6 +455,18 @@ export class RoutesService {
   async addStop(routeId: string, dto: AddStopDto) {
     await this.findRouteOrThrow(routeId);
 
+    // REG-B157: addStop had no customer lookup at all — a removed customer could be added
+    // to a route exactly like a live one, with only createRun's dispatch-time filter ever
+    // dropping the stop silently. Refuse it here instead.
+    const customer = await this.prisma.forTenant().customer.findUnique({
+      where: { id: dto.customerId },
+      select: { deletedAt: true },
+    });
+    if (!customer) throw new NotFoundException("Customer not found");
+    if (customer.deletedAt) {
+      throw new ConflictException("Restore the customer first");
+    }
+
     let stopNumber = dto.stopNumber;
     if (stopNumber === undefined) {
       const last = await this.prisma.forTenant().routeStop.findFirst({
@@ -629,7 +646,11 @@ export class RoutesService {
     const route = await this.prisma.forTenant().route.findUnique({
       where: { id: routeId },
       include: {
+        // REG-B157: without this, a removed customer's still-PENDING/CONFIRMED order kept
+        // showing up here for the warehouse to pack even after dispatch had already
+        // dropped that stop — the exact gap createRun's own filter closed for dispatch.
         stops: {
+          where: LIVE_CUSTOMER_STOP_WHERE,
           include: { customer: { select: { id: true, businessName: true } } },
           orderBy: { stopNumber: "asc" },
         },
@@ -707,8 +728,14 @@ export class RoutesService {
     const stops = await this.prisma.forTenant().routeStop.findMany({
       // ADHOC trips must never populate the "Currently in:" customer hints —
       // those are a SCHEDULED-route concept and a one-shot trip isn't a
-      // recurring assignment.
-      where: { customerId: { not: null }, route: { kind: RouteKind.SCHEDULED } },
+      // recurring assignment. REG-B157: also exclude a removed customer's stop —
+      // shares SCHEDULED_ROUTE_KIND_WHERE with customers.service.ts's own
+      // `unassigned=1` filter so the two can never disagree on the same screen.
+      where: {
+        customerId: { not: null },
+        route: SCHEDULED_ROUTE_KIND_WHERE,
+        customer: { deletedAt: null },
+      },
       select: {
         customerId: true,
         route: { select: { id: true, name: true } },
@@ -809,13 +836,14 @@ export class RoutesService {
     const route = await this.prisma.forTenant().route.findUnique({
       where: { id: dto.routeId },
       include: {
-        // REG-B131: a removed (soft-deleted) customer's stop is not dispatched — no RouteRunStop
-        // and, because the order sweep below runs off run.stops, no order attached either. Filtered
-        // in the query (never in JS after the fact) so the count below is the only other read. A
-        // stop with NO customer (customerId null — a manual/depot stop) is not a customer stop and
-        // stays. Stateless: restoreCustomer() clears deletedAt and the next dispatch includes it.
+        // REG-B131/REG-B157: a removed (soft-deleted) customer's stop is not dispatched — no
+        // RouteRunStop and, because the order sweep below runs off run.stops, no order attached
+        // either. Filtered in the query (never in JS after the fact) so the count below is the
+        // only other read. Shared with every other planning read (findOneRoute, getPackingList)
+        // via LIVE_CUSTOMER_STOP_WHERE so they can't drift apart again. Stateless:
+        // restoreCustomer() clears deletedAt and the next dispatch includes it.
         stops: {
-          where: { OR: [{ customerId: null }, { customer: { deletedAt: null } }] },
+          where: LIVE_CUSTOMER_STOP_WHERE,
           orderBy: { stopNumber: "asc" },
         },
       },

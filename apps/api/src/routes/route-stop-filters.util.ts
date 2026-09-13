@@ -19,4 +19,4 @@ export const SCHEDULED_ROUTE_KIND_WHERE = { kind: RouteKind.SCHEDULED } as const
  */
 export const LIVE_CUSTOMER_STOP_WHERE = {
   OR: [{ customerId: null }, { customer: { deletedAt: null } }],
-} as const;
+};
