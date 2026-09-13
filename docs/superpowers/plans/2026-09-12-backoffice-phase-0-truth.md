@@ -727,6 +727,15 @@ git commit -m "fix(auth): record device info for Google OAuth sessions (both pla
 
 ### Task 7: READ_ONLY allowlist hotfix for `/billing/quote`
 
+> **REASSIGNED 2026-09-13 — DO NOT BUILD THIS TASK.** The same fix is a blocker inside
+> routeflow-03's billing trial-cancel lane (`fix/trial-cancel-readonly`, worktree
+> `rf-billing-trial`), where the READ_ONLY "Choose a plan" CTA 403s and loops without it. That
+> lane already carries the guard regression test, so the lead transferred ownership rather than
+> have two lanes build one guard edit. Phase 0 **consumes** the result: when that PR lands,
+> verify `POST /api/v1/billing/quote` is exempt in `tenant-status.guard.ts` and skip straight to
+> Task 8. If it has NOT landed when Phase 0 starts, reclaim this task and tell routeflow-03.
+> The steps below are kept verbatim as the specification of what the fix must do.
+
 **Files:**
 - Modify: `apps/api/src/tenant/tenant-status.guard.ts:134-138`
 - Modify: `apps/api/src/tenant/tenant-status.guard.spec.ts`
