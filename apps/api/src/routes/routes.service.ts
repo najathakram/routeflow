@@ -120,6 +120,24 @@ export const RUN_STOP_INCLUDE = {
       subtotal: true,
       tax: true,
       total: true,
+      discountAmount: true,
+      shippingFee: true,
+      // B305: the open order draft is the figure the invoice bills; Order.total
+      // carries no discount. `findOpenOrderDraft`'s own predicate
+      // (invoices.service.ts) is DRAFT + deliveryBatchId: null — mirrored here
+      // so the driver payload's invoice, if any, is that same open draft.
+      invoices: {
+        where: { status: InvoiceStatus.DRAFT, deliveryBatchId: null },
+        select: {
+          id: true,
+          subtotal: true,
+          taxAmount: true,
+          discount: true,
+          shippingFee: true,
+          total: true,
+        },
+        take: 1,
+      },
       lineItems: { select: RUN_LINE_ITEMS_SELECT },
     },
   },
@@ -3020,20 +3038,6 @@ export class RoutesService {
       }
     }
 
-    // B306: a zero-payable-invoice completion books the WHOLE at-door amount
-    // as an AdvancePayment with no InvoicePayment row, so the liveMoney guard
-    // above never sees it. Block reopen while that advance stands — voiding
-    // the door payments reverses it (invoices.service.ts voidPayment).
-    const runAdvance = await this.prisma.forTenant().advancePayment.findFirst({
-      where: { reference: `RUN:${runId}:STOP:${stopId}` },
-      select: { id: true },
-    });
-    if (runAdvance) {
-      throw new BadRequestException(
-        "An at-door over-collection advance is booked against this stop — void the delivery payments (which reverses it) before reopening",
-      );
-    }
-
     // Check for recorded payments on any transaction — block reopen if payment exists
     if (orderIds.length > 0) {
       const transactions = await this.prisma.forTenant().transaction.findMany({
@@ -3050,6 +3054,21 @@ export class RoutesService {
     }
 
     await this.prisma.tenantTransaction(async (tx) => {
+      // 0. B306: a zero-payable-invoice completion books the WHOLE at-door
+      // amount as an AdvancePayment with no InvoicePayment row, so the
+      // liveMoney guard above never sees it and voidPayment's own reversal
+      // (which only fires when a confirmed InvoicePayment is voided) never
+      // runs for it either — leaving the reopen with nothing to void and no
+      // way forward. Reverse any such advance here, inside this same
+      // transaction: a zero-payable advance is reversed and the reopen
+      // proceeds; an advance already applied elsewhere throws (propagating
+      // out of this transaction, so none of the writes below commit).
+      await this.invoicesService.reverseRunAdvancesInTx(tx, {
+        runId,
+        stopId,
+        reason: "stop reopened",
+      });
+
       // 1. Delete delivery mutations for this stop
       await tx.deliveryMutation.deleteMany({ where: { routeRunStopId: stopId } });
 

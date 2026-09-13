@@ -8335,6 +8335,26 @@ describe("InvoicesService", () => {
       expect(prisma.advancePayment.findMany).not.toHaveBeenCalled();
     });
   });
+
+  // B306: reopenStop (routes.service.ts) needs the same reversal voidPayment
+  // does, but a zero-payable-invoice completion books the advance with NO
+  // InvoicePayment row, so reopenStop's own guard has nothing to void. Extracted
+  // as a public helper so reopenStop can call it directly inside its own tx.
+  describe("reverseRunAdvancesInTx (REG-B306)", () => {
+    it("REG-B306 reverseRunAdvancesInTx ignores an order with no run id", async () => {
+      // An order with a null routeRunId must not build a `RUN:null:…`
+      // reference and query for it — that would (mis)match nothing, or worse,
+      // a real advance if some other code ever wrote a literal "null" id.
+      const result = await service.reverseRunAdvancesInTx(prisma, {
+        runId: null,
+        stopId: "s",
+        reason: "x",
+      });
+
+      expect(result).toBe(0);
+      expect(prisma.advancePayment.findMany).not.toHaveBeenCalled();
+    });
+  });
 });
 
 /**

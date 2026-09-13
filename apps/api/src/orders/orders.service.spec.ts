@@ -2097,6 +2097,29 @@ describe("OrdersService", () => {
         ),
       ).rejects.toThrow(BadRequestException);
     });
+
+    // B309 (Opus MAJOR): the link block above is role-agnostic and the
+    // controller admits CUSTOMER, so a buyer could POST routeRunId/
+    // routeRunStopId directly and attach their own order to a driver's
+    // manifest — the DRIVER-only ownership checks above never run for them.
+    it("REG-B309 a CUSTOMER cannot link an order to a route run or stop", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+      prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
+      prisma.order.create.mockResolvedValue(MOCK_ORDER);
+      (service as any).systemConfig.get.mockResolvedValue("0");
+
+      await expect(
+        service.create(
+          {
+            items: [{ productId: "prod-1", qty: 1 }],
+            routeRunId: "run-1",
+          } as any,
+          customerPayload,
+        ),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(prisma.order.create).not.toHaveBeenCalled();
+    });
   });
 
   // ─── createSale (order + invoice in one step) ─────────────────────────────

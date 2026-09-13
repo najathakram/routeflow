@@ -88,7 +88,7 @@ describe("RoutesService", () => {
   >;
   let notifications: jest.Mocked<Pick<NotificationsService, "sendToDriver">>;
   let messaging: { notify: jest.Mock; notifyEvent: jest.Mock };
-  let invoicesService: { recordDeliveryPaymentInTx: jest.Mock };
+  let invoicesService: { recordDeliveryPaymentInTx: jest.Mock; reverseRunAdvancesInTx: jest.Mock };
   let storage: { upload: jest.Mock; presignedUrl: jest.Mock; delete: jest.Mock };
 
   beforeEach(async () => {
@@ -97,6 +97,7 @@ describe("RoutesService", () => {
       recordDeliveryPaymentInTx: jest
         .fn()
         .mockResolvedValue({ applied: 0, invoiceIds: [], paymentIds: [] }),
+      reverseRunAdvancesInTx: jest.fn().mockResolvedValue(1),
     };
 
     gateway = {
@@ -2335,22 +2336,25 @@ describe("RoutesService", () => {
       );
     });
 
-    it("REG-B306 a stop with an unreversed over-collection advance cannot be reopened", async () => {
-      prisma.routeRun.findUnique.mockResolvedValue({
-        ...MOCK_RUN,
-        id: "run-1",
-        status: "COMPLETED" as const,
-        stops: [
-          {
-            id: "stop-1",
-            status: "COMPLETED",
-            orders: [{ id: "ord-1", status: "DELIVERED", lineItems: [] }],
-          },
-        ],
-      });
-      prisma.invoice.findFirst.mockResolvedValue(null);
-      prisma.advancePayment.findFirst.mockResolvedValue({ id: "adv-1" });
-      const txMock = {
+    it("REG-B306 a stop with an unreversed over-collection advance is reopened only after the advance is reversed inside the transaction", async () => {
+      const arrangeReopen = () => {
+        prisma.routeRun.findUnique.mockResolvedValue({
+          ...MOCK_RUN,
+          id: "run-1",
+          status: "COMPLETED" as const,
+          stops: [
+            {
+              id: "stop-1",
+              status: "COMPLETED",
+              orders: [{ id: "ord-1", status: "DELIVERED", lineItems: [] }],
+            },
+          ],
+        });
+        // No confirmed money on the delivery — the "Payment already recorded"
+        // guard above the reversal call must let this through.
+        prisma.invoice.findFirst.mockResolvedValue(null);
+      };
+      const buildTxMock = () => ({
         ...prisma,
         deliveryMutation: {
           ...prisma.deliveryMutation,
@@ -2365,14 +2369,36 @@ describe("RoutesService", () => {
         routeRunStop: { ...prisma.routeRunStop, update: jest.fn().mockResolvedValue({}) },
         routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
         auditLog: { ...prisma.auditLog, create: jest.fn().mockResolvedValue({}) },
-      };
+      });
+
+      // Case 1: a zero-payable advance is reversed inside the transaction and
+      // the reopen proceeds.
+      arrangeReopen();
+      let txMock = buildTxMock();
       (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
 
-      await expect(service.reopenStop("run-1", "stop-1", operatorPayload)).rejects.toThrow(
-        BadRequestException,
+      await service.reopenStop("run-1", "stop-1", operatorPayload);
+
+      expect(invoicesService.reverseRunAdvancesInTx).toHaveBeenCalledWith(expect.anything(), {
+        runId: "run-1",
+        stopId: "stop-1",
+        reason: "stop reopened",
+      });
+
+      // Case 2: an already-applied advance makes the helper throw — reopenStop
+      // must propagate that rejection, and none of the reopen's other writes
+      // (all inside the same transaction) should have run.
+      arrangeReopen();
+      txMock = buildTxMock();
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+      invoicesService.reverseRunAdvancesInTx.mockRejectedValueOnce(
+        new BadRequestException(
+          "The at-door over-collection advance adv-1 has already been applied — release its applications before voiding this payment",
+        ),
       );
+
       await expect(service.reopenStop("run-1", "stop-1", operatorPayload)).rejects.toThrow(
-        /over-collection/i,
+        /advance.*applied/i,
       );
       expect(txMock.deliveryMutation.deleteMany).not.toHaveBeenCalled();
     });

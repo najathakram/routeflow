@@ -1992,6 +1992,15 @@ export class OrdersService implements OnApplicationBootstrap {
       }
     } else {
       // Customer creates their own order
+      // B309 (Opus MAJOR): the routeRunId/routeRunStopId link block later in
+      // create() is role-agnostic and the controller admits CUSTOMER — without
+      // this a buyer could POST either field directly and attach their own
+      // order to a driver's manifest, bypassing the DRIVER-only
+      // ownership/in-progress checks in the branch above entirely. Refuse
+      // before any read or write; the OPERATOR/TENANT_ADMIN path is untouched.
+      if (dto.routeRunId || dto.routeRunStopId) {
+        throw new BadRequestException("Route run linkage is not allowed for customer orders");
+      }
       // REG-B131: `deletedAt: null` here, not a second check below — a removal deactivates the
       // user but an access token minted just before it stays valid for up to 15 minutes, so a
       // removed customer's own in-flight session must fall into the existing refusal.
