@@ -62,15 +62,13 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
         "Converted estimates cannot be re-accepted",
       );
 
-      expect(prisma.estimate.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
-            id: "est-1",
-            status: { notIn: ["CONVERTED"] },
-          }),
-          data: { status: "ACCEPTED" },
-        }),
-      );
+      // Exact match, not objectContaining: pins the WHOLE where key-set (rc-b70
+      // finding 2 — { id, status }, no tenant key) so a stray extra key would
+      // fail this test instead of silently passing.
+      expect(prisma.estimate.updateMany).toHaveBeenCalledWith({
+        where: { id: "est-1", status: { notIn: ["CONVERTED"] } },
+        data: { status: "ACCEPTED" },
+      });
       // A losing claim must never fall through to the final read/return.
       expect(prisma.estimate.findUniqueOrThrow).not.toHaveBeenCalled();
     });
@@ -82,15 +80,10 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       const result = await service.accept("est-1");
 
       expect(result).toEqual({ id: "est-1", status: "ACCEPTED" });
-      expect(prisma.estimate.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
-            id: "est-1",
-            status: { notIn: ["CONVERTED"] },
-          }),
-          data: { status: "ACCEPTED" },
-        }),
-      );
+      expect(prisma.estimate.updateMany).toHaveBeenCalledWith({
+        where: { id: "est-1", status: { notIn: ["CONVERTED"] } },
+        data: { status: "ACCEPTED" },
+      });
     });
   });
 
@@ -411,6 +404,10 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
 
     prisma.estimate.findUnique.mockImplementation(() => Promise.resolve({ ...row }));
     prisma.estimate.findFirst.mockImplementation(() => Promise.resolve({ ...row }));
+    // send()/accept()/decline()/voidEstimate() all read back through
+    // findUniqueOrThrow after a winning claim — wired here too so a harness
+    // caller's resolved value reflects the row's real post-claim state.
+    prisma.estimate.findUniqueOrThrow.mockImplementation(() => Promise.resolve({ ...row }));
 
     prisma.estimate.updateMany.mockImplementation((args: any) => {
       const predicate = args?.where?.status;
@@ -583,6 +580,20 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       expect(whereStatus).not.toEqual(
         expect.objectContaining({ notIn: expect.arrayContaining([VOID_STATUS]) }),
       );
+    });
+
+    // The test above stubs updateMany to unconditionally resolve { count: 1 },
+    // which pins the WHERE shape but never proves a real DECLINED row would
+    // actually match it. This one drives the same claim through
+    // createLaunderingHarness's stateful predicate evaluator instead, so the
+    // transition only succeeds if the notIn check genuinely admits DECLINED —
+    // this is the invariant an earlier fix round broke once (L-119); a
+    // structural-only assertion could not have caught that.
+    it("PIN-B70 accept() genuinely succeeds from a DECLINED row (end-to-end via the laundering harness)", async () => {
+      const row = createLaunderingHarness(prisma, { id: "est-1", status: VOID_STATUS });
+
+      await expect(service.accept("est-1")).resolves.toEqual({ id: "est-1", status: "ACCEPTED" });
+      expect(row.status).toBe("ACCEPTED");
     });
   });
 
