@@ -184,6 +184,47 @@ no-row 404 for those statuses is dead code; `/choose-plan` end-to-end for READ_O
    `cancel()` never cancels the Stripe subscription (admin-provisioned Stripe sub keeps invoicing a
    READ_ONLY tenant; `onPaymentSucceeded` resurrects it) — medium, money.
 
+## STRIPE-CANCEL-1 (owner-directed via fb, 2026-09-13 ~12:00Z — built on this branch, same PR)
+
+**Defect (pre-existing, found by Opus round 2, reachability traced):** self-serve `cancel()`/`resume()`
+write `cancelAtPeriodEnd` locally and never call Stripe; `stripeSubId` exists only for tenants
+provisioned through a super-admin checkout link (`onCheckoutCompleted` is the sole writer). Such a
+tenant keeps being invoiced after cancelling; the cron makes it READ_ONLY (−MRR); the next
+`invoice.payment_succeeded` → `onPaymentSucceeded` → `transitionAndEmit({ status: { not: "ACTIVE" } }
+→ ACTIVE, +MRR)` resurrects it without reading `cancelAtPeriodEnd`, and `disarmedDowngrade()` leaves
+the flag armed → monthly READ_ONLY↔ACTIVE flap with ±MRR pairs while Stripe charges every cycle.
+
+**S2 ruling (Fable, lead-approved scope):** (a) real fix — `cancel()` legacy path and `resume()`
+call `stripe.updateSubscription(stripeSubId, { cancel_at_period_end: true|false })` BEFORE the
+local transaction (Stripe is the billing truth; a DB failure after a Stripe success self-heals via
+`onSubscriptionDeleted`, the reverse order leaves a cancelled tenant being charged); B107 error
+semantics — generic failure → `ServiceUnavailableException`, nothing written, no event;
+`resource_missing` → cancel proceeds locally (nothing left to stop), resume → `ConflictException`
+(nothing to resume); `stripeSubId: null` tenants byte-identical; the TRIAL/READ_ONLY branches never
+touch Stripe. (b) defence in depth — `onPaymentSucceeded` refreshes period dates but, when
+`cancelAtPeriodEnd` is armed, logs a `STRIPE-CANCEL-1` warn and returns without reinstating, without
+a ledger delta and without `disarmedDowngrade()`. (c) NO data repair: no backfill, no self-healing
+Stripe call from the webhook, `onCheckoutCompleted`/`onSubscriptionDeleted`/crons untouched — tenants
+already in the loop are the owner's reconciliation decision once prod numbers exist.
+`StripeService` becomes the 8th ctor dependency of `SubscriptionMutationService` (already provided by
+`BillingModule`; `app-module-compile.spec.ts` guards the DI scope).
+
+**Known consequence for the reviewer:** with (a), a self-serve-cancelled Stripe tenant reaches
+period end via Stripe's `customer.subscription.deleted` → `onSubscriptionDeleted` → CANCELLED (hard
+block, the existing terminal path) — whereas the cron alone would leave it READ_ONLY (exports work).
+Which one wins depends on ordering; the tenant ends CANCELLED either way because the `!churned`
+branch sets CANCELLED unconditionally. Pre-existing semantics of Stripe-deleted subscriptions;
+flagged, not changed here. **fb ruling:** correct, not a regression — a genuinely cancelled
+subscription should reach a real terminal state; the bug was that it never resolved at all. Opus
+must additionally check whether a CANCELLED tenant has ANY path back in (resubscribe CTA, support
+contact) or lands on a UI dead end — a gap is a TO FILE item, not built in this PR.
+
+**Tests (red-first):** STRIPE-CANCEL-1 ×9 in `subscription-mutation.service.spec.ts` (Stripe called
+once, before the write, with the right flag; 503 + no write on failure; `resource_missing` cancel
+proceeds / resume 409; TRIAL branch never calls Stripe; null `stripeSubId` untouched) + ×2 in
+`billing.service.spec.ts` (armed flag → no reinstatement, warn logged; unarmed → reinstates).
+Gates: Opus refute-first → fix → re-review; commit, HOLD, ping fb "STRIPE-CANCEL-1 ready, holding".
+
 ## Pre-push checklist (when #710 + its bookkeeping have landed)
 
 1. `git fetch` + rebase onto master (expect LESSONS.md/ARCHIVE.md/`_meta.json` adjacency
