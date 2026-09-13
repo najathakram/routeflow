@@ -370,20 +370,6 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
   it is unverified.**
 - **Guard:** none — judgment. Grep `isWeb`/`Platform.OS` in any file a fix touches.
 
-### L-113 · 2026-09-12 · testing · CRM GoHighLevel handoff
-
-- **Symptom:** the handoff's ExternalRef lookup used `where: { source: "gohighlevel" }` though
-  the Prisma column is `externalSource`; 99 unit tests stayed green since every Prisma call was a
-  `jest.fn()` mock typed `any` — a real client throws on statement one, so no customer is ever
-  created in prod.
-- **Root cause:** a mock-boundary spec proves control flow, not the schema contract.
-- **Lesson:** **every new Prisma call site needs a proof its `where`/`data` matches the schema —
-  a DB-lane spec, or a unit spec asserting the exact `where` against a
-  `Prisma.<Model>WhereInput` literal so `tsc` rejects an unknown column — an `any`-typed mock
-  proves nothing about columns.**
-- **Guard:** `gohighlevel-handoff.service.spec.ts` #1 (filters on `externalSource`, never
-  `source`) + the Opus review in fix-plan.md round 2.
-
 ### L-115 · 2026-09-12 · testing · #703 (W16 outage)
 
 - **Symptom:** #702 shipped a controller with per-handler `@UseGuards(AddonGuard)` in a module
@@ -531,6 +517,24 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
 - **Guard:** REG-B67 T1/T2/T5 (apply-side, incl. the auto-apply door) and REG-B66 T6/T7/T9–T11 in
   `apps/api/src/credit-notes/credit-notes.wallet-integrity.spec.ts`; the pins file (T3/T3b) proves
   PAID/WRITTEN_OFF still shrink; `apps/api/src/invoices/invoice-status-sets.ts` is the one home.
+
+### L-118 · 2026-09-13 · domain · F15 customer-removal lifecycle
+
+- **Symptom:** B157: `getCustomerRouteAssignments` already excluded removed customers' stops,
+  but `findOneRoute`, `getPackingList` and `createRun` each re-derived the same OR-clause, so a
+  removed customer's stop still showed on route/packing views the assignment picker had already
+  scrubbed. B159 (same batch): soft-deleting a customer left its linked `User` ACTIVE, still
+  holding the username/email — blocking re-signup and leaving restore no way back.
+- **Root cause:** the "customer is live" predicate was a literal re-typed per read site instead
+  of one shared export; soft-delete stopped at the `Customer` row without touching the identity
+  (`User`) it fronts.
+- **Lesson:** **A visibility predicate that must hold at every read site belongs in one named,
+  shared export, never a literal re-derived per call site. A parent's soft-delete must cascade to
+  every row fronting its identity (deactivate + free the username/email) and restore must reverse
+  it symmetrically, incl. a P2002-safe path if that identity was reclaimed meanwhile.**
+- **Guard:** `route-stop-filters.util.ts`'s `LIVE_CUSTOMER_STOP_WHERE`/`SCHEDULED_ROUTE_KIND_WHERE`
+  (REG-B157); `customers.service.ts`'s shared `buildListWhere` (REG-B156/B158) and
+  `deleteCustomer`/`restoreCustomer`'s symmetric User deactivate/reactivate (REG-B159).
 
 ### L-114 · 2026-09-12 · tooling · plane-learning self-test tmpdir
 

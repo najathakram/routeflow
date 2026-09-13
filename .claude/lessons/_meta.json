@@ -1,10 +1,10 @@
 {
-  "nextId": 118,
+  "nextId": 119,
   "activeCount": 38,
-  "archivedCount": 75,
+  "archivedCount": 76,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-13T04:38:54.000Z",
+  "updatedAt": "2026-09-13T06:45:00.000Z",
   "schemaVersion": 1,
-  "note": "fix(mobile): B389 non-root Docker runner (worktree next-bug-fixing-wave). Register was at 40/40 entries and 40947/40960 bytes -- effectively at both caps -- so three entries were archived before recording this fix's lesson. Zero outside citations found for L-110/L-111/L-112 (repo-wide grep excluding .claude/lessons/**, .claude/pipeline/**, and code-map CHANGELOG/_meta.json); all three fully guarded. L-110 (2026-09-11) is the oldest of that tied-at-zero set by id, per the standing archiving rule (least-cited, fully-guarded, oldest first); L-111 and L-112 were archived alongside it in the same pass to restore real headroom (target <=30 per the lessons-learned skill) rather than landing back at the cap on the next fix. Moved to ARCHIVE.md verbatim under a new 2026-09-13 section following the existing L-109 (2026-09-12) archival section. Added L-117 (tooling: prefer an upstream-hardened Docker image variant over hand-patching an unverifiable one when no daemon is available to test). nextId 118, activeCount 38 (40 - 3 + L-117), archivedCount 75 (72 + 3) -- counted directly from '### L-' headers in the real files."
+  "note": "fix(routes)/fix(customers) x2: F15 customer-removal lifecycle batch (B156/B157/B158/B159/B170, worktree next-bug-fixing-wave). Register was at 39526/40960 bytes -- one more full entry would have overflowed the size cap -- so L-113 (CRM GoHighLevel handoff, 2026-09-12) was archived first: zero outside citations (repo-wide grep excluding .claude/lessons/**, .claude/pipeline/**, and code-map CHANGELOG/_meta.json) and fully guarded (gohighlevel-handoff.service.spec.ts #1 pins the exact regression), the strongest archival candidate over the two zero-citation-but-UNguarded entries (L-103, L-106, both still 'Guard: none yet') per the stated preference order (superseded > guarded-and-uncited > oldest-uncited). Moved to ARCHIVE.md verbatim under a new 2026-09-13 section following the existing L-112 (2026-09-12) archival section. Added L-118 (domain: a visibility predicate that must hold at every read site belongs in one shared export, never a literal re-derived per call site -- B157's route-planning reads and B159's soft-delete-must-cascade-to-the-linked-User-identity are the same anti-pattern at two call sites). nextId 119, activeCount 38 (38 - 1 archived + 1 new), archivedCount 76 (75 + 1) -- counted directly from '### L-' headers in the real files (LESSONS.md 40022/40960 bytes, ARCHIVE.md 100048 bytes)."
 }

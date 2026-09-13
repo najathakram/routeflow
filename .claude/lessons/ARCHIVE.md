@@ -1442,3 +1442,19 @@ itself, so archiving loses no enforcement.
   `uuidIds: true` seeds + the uuid-id cases in plane-sync/plane-apply self-tests; Landmine 15
   (live shapes) in the harness build plan. Related [[L-111]] (hook/branch gate), [[L-074]]
   (fixture realism).
+
+## Archived 2026-09-13 — least-cited, fully guarded; headroom for L-118
+
+### L-113 · 2026-09-12 · testing · CRM GoHighLevel handoff
+
+- **Symptom:** the handoff's ExternalRef lookup used `where: { source: "gohighlevel" }` though
+  the Prisma column is `externalSource`; 99 unit tests stayed green since every Prisma call was a
+  `jest.fn()` mock typed `any` — a real client throws on statement one, so no customer is ever
+  created in prod.
+- **Root cause:** a mock-boundary spec proves control flow, not the schema contract.
+- **Lesson:** **every new Prisma call site needs a proof its `where`/`data` matches the schema —
+  a DB-lane spec, or a unit spec asserting the exact `where` against a
+  `Prisma.<Model>WhereInput` literal so `tsc` rejects an unknown column — an `any`-typed mock
+  proves nothing about columns.**
+- **Guard:** `gohighlevel-handoff.service.spec.ts` #1 (filters on `externalSource`, never
+  `source`) + the Opus review in fix-plan.md round 2.
