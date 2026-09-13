@@ -48,6 +48,7 @@ import {
   NotificationEvent,
   FulfillPath,
   RouteRunStatus,
+  RouteRunStopStatus,
 } from "@prisma/client";
 import { ListOrdersDto } from "./dto/list-orders.dto";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
@@ -1908,6 +1909,10 @@ export class OrdersService implements OnApplicationBootstrap {
 
     // Resolve which customer this order is for
     let customerId: string;
+    // REG-B309: set by the DRIVER branch below when only routeRunStopId was
+    // supplied, so the link block after the order write still persists
+    // routeRunId (resolved from the validated stop).
+    let resolvedRouteRunId: string | null = null;
 
     const orderDate = this.parseOrderDate(dto.orderDate, user.role);
     // Sales agents & commissions: staff-gated per-order rate override.
@@ -1942,6 +1947,49 @@ export class OrdersService implements OnApplicationBootstrap {
       // B131: same removed-customer refusal as the staff branch above.
       if (customer.deletedAt) throw new BadRequestException("Customer not found");
       customerId = customer.id;
+
+      // B309: a driver may only link a new order to a stop/run that is their own
+      // and currently active — mirrors routes.service.ts's completeWithPayment /
+      // reopenStop driver-isolation guard (B72). This runs BEFORE any order row
+      // is written, so a rejected link never leaves an orphan order.
+      if (dto.routeRunId || dto.routeRunStopId) {
+        const driver = await this.prisma
+          .forTenant()
+          .driver.findFirst({ where: { userId: user.sub } });
+
+        let stop: { id: string; status: RouteRunStopStatus; routeRunId: string } | null = null;
+        let runId = dto.routeRunId ?? null;
+        if (dto.routeRunStopId) {
+          stop = await this.prisma.forTenant().routeRunStop.findFirst({
+            where: { id: dto.routeRunStopId },
+            select: { id: true, status: true, routeRunId: true },
+          });
+          if (!stop) throw new BadRequestException("Stop not found");
+          if (dto.routeRunId && dto.routeRunId !== stop.routeRunId) {
+            throw new BadRequestException("Stop does not belong to the supplied route run");
+          }
+          runId = stop.routeRunId;
+        }
+
+        const run = await this.prisma.forTenant().routeRun.findFirst({
+          where: { id: runId as string },
+          select: { id: true, driverId: true, status: true },
+        });
+        if (!driver || !run || run.driverId !== driver.id) {
+          throw new ForbiddenException("You do not have access to this route run");
+        }
+        if (run.status !== RouteRunStatus.IN_PROGRESS) {
+          throw new BadRequestException("Route run is not in progress");
+        }
+        if (
+          stop &&
+          (stop.status === RouteRunStopStatus.COMPLETED ||
+            stop.status === RouteRunStopStatus.SKIPPED)
+        ) {
+          throw new BadRequestException("Stop is already completed or skipped");
+        }
+        resolvedRouteRunId = runId;
+      }
     } else {
       // Customer creates their own order
       // REG-B131: `deletedAt: null` here, not a second check below — a removal deactivates the
@@ -2571,7 +2619,9 @@ export class OrdersService implements OnApplicationBootstrap {
       await this.prisma.forTenant().order.update({
         where: { id: order.id },
         data: {
-          routeRunId: dto.routeRunId ?? null,
+          // B309: a driver who supplied only routeRunStopId still gets routeRunId
+          // written, resolved from the validated stop above.
+          routeRunId: dto.routeRunId ?? resolvedRouteRunId ?? null,
           routeRunStopId: dto.routeRunStopId ?? null,
           status: dto.immediateDelivery ? OrderStatus.CONFIRMED : order.status,
         },
