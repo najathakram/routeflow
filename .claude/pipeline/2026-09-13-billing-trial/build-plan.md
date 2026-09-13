@@ -324,3 +324,43 @@ HOLD — ping fb "STRIPE-CANCEL-1 ready, holding".
    exercised in production) — no data repair needed"; (ii) the gating sentence verbatim: "Do not
    enable Stripe checkout for any real tenant until CANCELLED has a path back (self-serve
    resubscribe, or at minimum read-only data access + a support CTA)."
+
+## Lessons HELD for the bookkeeping follow-up (not in the register)
+
+The register is at its byte cap (40/40 entries, 40,957/40,960 B on master after #715) and the
+`maxBytes` decision is with the owner, so this PR ships with a `Bookkeeping-Follow-Up: pending`
+trailer and these two entries land in its docs follow-up. Lead ruling (fb): do NOT merge them —
+the inverse-direction clause in the second is the most reusable thing in either. Drafted verbatim:
+
+### L-120 · 2026-09-13 · domain · billing self-serve (TRIAL-1 / RO-1)
+
+- **Symptom:** every trial tenant's "Cancel" 404'd; an expired trial (READ_ONLY) showed the same
+  button, got the same 404, and saw no explanation in the web — a guard-enforced lockout with no UI.
+- **Root cause:** `cancel()` keyed on a `TenantSubscription` row `register()` never writes, while
+  the real lifecycle state lives on `Tenant.status`; the web rendered that status as a raw badge
+  and had no branch for the guard's `READ_ONLY` code.
+- **Lesson:** **Key a lifecycle action on the table that owns the state; a sibling row some
+  creation path never writes is optional — a missing-row 404 there hides a legitimate transition.
+  Every status the API can return and every code a guard can emit needs a UI branch, or the
+  lockout is invisible.**
+- **Guard:** TRIAL-1 in `subscription-mutation.service.spec.ts` (no-row TRIAL → READ_ONLY,
+  READ_ONLY idempotent, ACTIVE no-row keeps 404, with-row unchanged); RO-1 in
+  `subscription.service.spec.ts` + `billing-page.test.tsx`.
+
+### L-121 · 2026-09-13 · domain · STRIPE-CANCEL-1
+
+- **Symptom:** a tenant on an admin-provisioned Stripe subscription clicked Cancel; Stripe kept
+  invoicing; the cron made it READ_ONLY (−MRR), then the next `invoice.payment_succeeded` lifted
+  it back to ACTIVE (+MRR) — a monthly flap with ±MRR pairs while a cancelled customer was charged.
+- **Root cause:** `cancel()`/`resume()` wrote `cancelAtPeriodEnd` locally and never called Stripe;
+  `onPaymentSucceeded` reinstated ANY non-ACTIVE tenant without reading the local cancellation.
+- **Lesson:** **On a provider-billed tenant, write a scheduled billing transition to the provider
+  FIRST and locally second — a failed provider call changes nothing, a failed local write
+  self-heals off the provider's webhook. Gate the provider call on the state that makes it
+  meaningful (a cancellation actually armed, on a tenant actually paying) — a fix for
+  over-charging must never be able to START charging. A webhook that promotes status must read
+  the local intent it overrides: an EXECUTED cancellation plus a payment is an anomaly to flag,
+  never to resurrect; a dunning tenant who pays is reinstated.**
+- **Guard:** STRIPE-CANCEL-1 ×15 in `subscription-mutation.service.spec.ts` (called once, before
+  the write; resume only when armed + ACTIVE; 503 writes nothing; null `stripeSubId` untouched
+  under a hostile mock) + ×4 in `billing.service.spec.ts`. Sibling [[L-120]]; class of B107.
