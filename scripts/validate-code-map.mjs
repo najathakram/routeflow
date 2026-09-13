@@ -60,6 +60,7 @@ const MAP_DIR = path.join(REPO_ROOT, ".claude", "code-map");
 
 const INDEX = path.join(MAP_DIR, "INDEX.md");
 const CHANGELOG = path.join(MAP_DIR, "CHANGELOG.md");
+const CHANGELOG_ARCHIVE = path.join(MAP_DIR, "CHANGELOG-ARCHIVE.md");
 const META = path.join(MAP_DIR, "_meta.json");
 
 const INDEX_MAX_BYTES = 20_000;
@@ -139,7 +140,12 @@ if (changelogEntries > CHANGELOG_MAX_ENTRIES) {
 // ─── 4b. Area-file size cap — every .md under MAP_DIR other than INDEX/CHANGELOG ────
 // Recurses so a project that already split an area into `<area>/<module>.md`
 // parts (see map-format.md "Splitting a large area file") gets every part
-// checked too, not just top-level `<area>.md` files.
+// checked too, not just top-level `<area>.md` files. CHANGELOG-ARCHIVE.md is
+// exempt for the same reason CHANGELOG.md itself is: it is an append-only
+// overflow record, not a signature-level index meant to be read in full each
+// session — the newest-30/40,000-byte cap on CHANGELOG.md is what keeps the
+// per-session read small; the archive exists precisely to hold what that cap
+// evicts, uncapped, same as `git log` would.
 function listAreaMdFiles(dir) {
   const out = [];
   let entries;
@@ -152,7 +158,13 @@ function listAreaMdFiles(dir) {
     const full = path.join(dir, e.name);
     if (e.isDirectory()) {
       out.push(...listAreaMdFiles(full));
-    } else if (e.isFile() && e.name.endsWith(".md") && full !== INDEX && full !== CHANGELOG) {
+    } else if (
+      e.isFile() &&
+      e.name.endsWith(".md") &&
+      full !== INDEX &&
+      full !== CHANGELOG &&
+      full !== CHANGELOG_ARCHIVE
+    ) {
       out.push(full);
     }
   }
