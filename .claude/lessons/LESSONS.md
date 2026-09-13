@@ -619,7 +619,7 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
   the write; resume only when armed + ACTIVE; 503 writes nothing; null `stripeSubId` untouched
   under a hostile mock) + ×4 in `billing.service.spec.ts`. Sibling [[L-120]]; class of B107.
 
-### L-122 · 2026-09-14 · process · W1 seam rows
+### L-123 · 2026-09-14 · process · W1 seam rows
 
 - **Symptom:** an independent pre-merge review of a just-merged money PR found two live
   defects in code three in-lane review rounds had passed — a cancel that never reached the
@@ -636,7 +636,7 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
 - **Guard:** the W1 rows themselves (`STRIPE-CANCEL-2`, `STRIPE-RESUME-1`) plus the rewritten
   spec that used to assert the defect as expected. Sibling [[L-119]].
 
-### L-123 · 2026-09-14 · domain · W1 billing anchor
+### L-125 · 2026-09-14 · domain · W1 billing anchor
 
 - **Symptom:** a fix for billing-period drift was about to derive each tenant's cycle anchor
   from `TenantSubscription.createdAt`, the only date on the row — which would have moved real
