@@ -1966,6 +1966,9 @@ describe("RoutesService", () => {
         boxes: true,
         pieces: true,
         unitsPerBox: true,
+        // B305 round 2 (RULING 1/3): per-line regulated-category tax snapshot —
+        // see routes.run-stop-select.spec.ts for the dedicated oracle.
+        categoryTaxAmount: true,
       });
     });
 

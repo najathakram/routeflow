@@ -88,6 +88,13 @@ export const RUN_LINE_ITEMS_SELECT = {
   boxes: true,
   pieces: true,
   unitsPerBox: true,
+  // B305 round 2 (RULING 1/3): the per-line regulated-category tax snapshot
+  // (sales.prisma OrderItem.categoryTaxAmount) — mobile's run-money.ts
+  // #deliveredCategoryTax scales this by delivered/ordered qty to reproduce
+  // invoices.service.ts#buildInvoiceItemData's own per-unit proration for a
+  // short-picked stop's estimate. NOTE: `OrderItem` has no `taxRate` column
+  // (only `categoryTaxAmount`) — see routes.run-stop-select.spec.ts.
+  categoryTaxAmount: true,
 } as const;
 
 // Shared per-stop include used by both list (`findAllRuns`) and detail
@@ -122,12 +129,18 @@ export const RUN_STOP_INCLUDE = {
       total: true,
       discountAmount: true,
       shippingFee: true,
-      // B305: the open order draft is the figure the invoice bills; Order.total
-      // carries no discount. `findOpenOrderDraft`'s own predicate
-      // (invoices.service.ts) is DRAFT + deliveryBatchId: null — mirrored here
-      // so the driver payload's invoice, if any, is that same open draft.
+      // B305 round 2 (RULING 1): ALL open drafts, not just the oldest one — a
+      // regulated SEPARATE_INVOICE order's `reconcileSplitOrderDrafts` can leave
+      // it with SEVERAL open DRAFT + deliveryBatchId:null invoices (base + `-R#`
+      // siblings), and every one of them is money the invoice actually bills.
+      // `take: 1` silently dropped every sibling but the oldest and
+      // under-charged the driver. `orderBy: createdAt asc` mirrors
+      // `findOpenOrderDraft`/`reconcileSplitOrderDrafts` (invoices.service.ts)
+      // so the payload lists them in the same order the server reasons about
+      // them — never re-sort client-side.
       invoices: {
         where: { status: InvoiceStatus.DRAFT, deliveryBatchId: null },
+        orderBy: { createdAt: "asc" },
         select: {
           id: true,
           subtotal: true,
@@ -136,7 +149,6 @@ export const RUN_STOP_INCLUDE = {
           shippingFee: true,
           total: true,
         },
-        take: 1,
       },
       lineItems: { select: RUN_LINE_ITEMS_SELECT },
     },

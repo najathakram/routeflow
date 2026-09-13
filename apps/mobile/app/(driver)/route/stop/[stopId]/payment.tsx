@@ -41,7 +41,11 @@ import { usePodStore } from "../../../../../store/podStore";
 import { useDeliveryPlanStore } from "../../../../../store/delivery-plan-store";
 import { useRunSettlementStore } from "../../../../../store/runSettlementStore";
 import type { CollectedMethod } from "../../../../../lib/run-settlement";
-import { draftMoney, orderAmountDue, reconciledAmountDue } from "../../../../../lib/run-money";
+import {
+  deliveredCategoryTax,
+  orderAmountDue,
+  reconciledAmountDue,
+} from "../../../../../lib/run-money";
 import { classifyMutationError } from "../../../../../lib/offline-errors";
 import {
   buildDeliveries,
@@ -133,19 +137,29 @@ export default function PaymentScreen() {
     (sum, o) =>
       sum +
       (o.id === orderId && shortPickLines.length > 0
-        ? // REG-B305 round 2: prorate the order's OPEN DRAFT INVOICE's tax by
-          // the delivered share (invoices.service.ts's own proration) — the
-          // draft, never `Order.total` (no discount, whole fee on a split
-          // delivery — see run-money.ts#orderAmountDue).
+        ? // REG-B305 round 2 (RULING 3): follow the SERVER's own delivered-basis
+          // rule (invoices.service.ts#reconcileOrderDraftInvoice) — regular tax
+          // scales by the delivered share of the ORDER's own subtotal, category
+          // tax is the Σ of each DELIVERED line's own snapshot
+          // (deliveredCategoryTax), and every open draft's discount/fee stay
+          // whole. Never the draft's whole `taxAmount` prorated by subtotal
+          // share (that can't tell which lines shipped).
           reconciledAmountDue({
-            draft: draftMoney(o),
-            reconciledSubtotal: reconciledTotal(shortPickLines, deliveredQtyById),
+            drafts: o.invoices ?? [],
+            order: { subtotal: o.subtotal, tax: o.tax },
+            deliveredSubtotal: reconciledTotal(shortPickLines, deliveredQtyById),
+            deliveredCategoryTax: deliveredCategoryTax(o.lineItems ?? [], deliveredQtyById),
           })
         : fullOrderTotal(o)),
     0,
   );
+  // REG-B305 round 2 (RULING 3): the short-pick branch bills an ESTIMATE (the
+  // server recomputes the real invoice total independently once the batch
+  // lands) — flag it inline so the driver doesn't read it as the final figure.
   const invoiceLabel = stop?.orders?.[0]?.orderNumber
-    ? `ORDER ${stop.orders[0].orderNumber} · ${(stop.customer?.businessName ?? "Customer").toUpperCase()}`
+    ? `ORDER ${stop.orders[0].orderNumber} · ${(stop.customer?.businessName ?? "Customer").toUpperCase()}${
+        shortPickLines.length > 0 ? " (est. — final on invoice)" : ""
+      }`
     : "PAYMENT";
 
   // Per-tenant opt-in for at-door money collection (owner decision

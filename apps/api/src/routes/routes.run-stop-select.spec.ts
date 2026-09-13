@@ -36,7 +36,28 @@ describe("REG-B305 driver run/stop order projection", () => {
         shippingFee: true,
         total: true,
       },
-      take: 1,
+      orderBy: { createdAt: "asc" },
     });
+  });
+
+  // B305 round 2 (RULING 1): a regulated SEPARATE_INVOICE order's
+  // `reconcileSplitOrderDrafts` can leave it with SEVERAL open drafts (base +
+  // `-R#` siblings) — `take: 1` silently dropped every sibling but the oldest
+  // and under-charged the driver. `orderBy: createdAt asc` (no `take`) mirrors
+  // `findOpenOrderDraft`/`reconcileSplitOrderDrafts` (invoices.service.ts) so
+  // every open draft is projected, oldest first.
+  it("REG-B305 RULING 1: projects ALL open drafts (never `take: 1`), oldest first", () => {
+    expect((RUN_STOP_INCLUDE.orders.select.invoices as any).take).toBeUndefined();
+    expect(RUN_STOP_INCLUDE.orders.select.invoices.orderBy).toEqual({ createdAt: "asc" });
+  });
+
+  // B305 round 2 (RULING 1/3): the delivered-basis short-pick estimate needs
+  // each line's regulated-category tax snapshot to reproduce
+  // invoices.service.ts#buildInvoiceItemData's own per-unit proration
+  // (mobile's run-money.ts#deliveredCategoryTax). `OrderItem` (sales.prisma)
+  // has NO `taxRate` column — only `categoryTaxAmount` — so that field alone
+  // is added here.
+  it("REG-B305 RULING 1/3: the line items select carries the per-line category tax snapshot", () => {
+    expect(RUN_LINE_ITEMS_SELECT.categoryTaxAmount).toBe(true);
   });
 });

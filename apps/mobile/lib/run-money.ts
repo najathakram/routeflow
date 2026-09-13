@@ -10,6 +10,8 @@
 import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
 
 export interface RunMoneyLineItem {
+  /** OrderItem id — the key `deliveredQtyById` (short-pick's `orderItemId`) uses. */
+  id?: string;
   qty: number;
   unitPrice: number;
   boxes?: number | null;
@@ -17,15 +19,24 @@ export interface RunMoneyLineItem {
   unitsPerBox?: number | null;
   /** Prisma Decimal — may arrive as a string over the wire. */
   subtotal?: number | string | null;
+  /**
+   * B305 round 2 (RULING 3): sale-time snapshot of this line's regulated
+   * category tax (sales.prisma OrderItem.categoryTaxAmount, projected by
+   * RUN_LINE_ITEMS_SELECT). Prisma Decimal — may arrive as a string.
+   */
+  categoryTaxAmount?: number | string | null;
 }
 
 /**
- * REG-B305 round 2: the order's single OPEN DRAFT INVOICE, as the server last
- * computed it (status DRAFT, deliveryBatchId null; `total = subtotal +
- * taxAmount + shippingFee - discount`, `taxAmount` already folds regular +
- * category tax). This — not `Order.total` — is the basis for the driver's
- * amount due: `Order.total` carries NO discount and, on a split delivery,
- * the WHOLE shipping fee on every visit.
+ * REG-B305 round 2 (RULING 1): ONE of the order's OPEN DRAFT INVOICES, as the
+ * server last computed it (status DRAFT, deliveryBatchId null; `total =
+ * subtotal + taxAmount + shippingFee - discount`, `taxAmount` already folds
+ * regular + category tax). A regulated SEPARATE_INVOICE order can have
+ * SEVERAL of these open at once (base + `-R#` siblings —
+ * invoices.service.ts#reconcileSplitOrderDrafts) — `RunMoneyOrder.invoices`
+ * is the FULL list, never just the first. This — not `Order.total` — is the
+ * basis for the driver's amount due: `Order.total` carries NO discount and,
+ * on a split delivery, the WHOLE shipping fee on every visit.
  */
 export interface RunMoneyInvoice {
   id: string;
@@ -42,10 +53,16 @@ export interface RunMoneyOrder {
   subtotal?: number | string | null;
   tax?: number | string | null;
   total?: number | string | null;
-  /** REG-B305 round 2 — see RunMoneyInvoice; used only by the no-draft fallback. */
+  /**
+   * B305 round 2 (RULING 2): projected but NOT read by orderAmountDue's money
+   * math any more — `Order.total` is already net of discount on the CREATE
+   * path (orders.service.ts:2428) but not on edit/merge, so no client-side
+   * `total - discountAmount` guess is ever safe (Opus round-2 finding). Kept
+   * in the type/projection for potential display use.
+   */
   discountAmount?: number | string | null;
   shippingFee?: number | string | null;
-  /** The order's open draft invoice, when the payload carries one. */
+  /** ALL of the order's open draft invoices (RULING 1 — never just the first). */
   invoices?: RunMoneyInvoice[];
 }
 
@@ -80,36 +97,32 @@ export function sumStopOrders(stop: RunMoneyStop): number {
   return (stop.orders ?? []).reduce((sum, order) => sum + sumOrderLineItems(order), 0);
 }
 
-/** The order's single open draft invoice, when the payload carries one. */
-export function draftMoney(order: RunMoneyOrder): RunMoneyInvoice | undefined {
-  return order.invoices?.[0];
-}
-
 /**
- * REG-B305 round 2 (Opus BLOCKER on round 1's basis): the driver "amount due"
- * is the order's OPEN DRAFT INVOICE as the server last computed it —
- * `Order.total` carries no discount and, on a split delivery, the WHOLE
- * shipping fee on every visit, so it can only ever be a fallback.
+ * REG-B305 round 2 (RULING 1): the driver "amount due" is the SUM of every
+ * open draft invoice's total, as the server last computed each — a regulated
+ * split order can have several (base + `-R#` siblings), and each is real
+ * money the invoice bills. Only drafts with a finite `total` count; a
+ * malformed one is skipped rather than poisoning the sum.
  *
- *  (a) a draft invoice with a finite `total` -> that total, rounded;
- *  (b) else a finite `Order.total` -> `total - discountAmount` (a fallback
- *      for a payload without the draft; the fee allocation of a split
- *      delivery is only right for the FIRST visit here, since `Order.total`
- *      does not know which visit it is);
- *  (c) else the pre-tax line sum (`sumOrderLineItems`).
+ *  (a) one or more drafts with a finite `total` -> Σ those totals, rounded;
+ *  (b) else the pre-tax line sum (`sumOrderLineItems`) — RULING 2: `Order.total
+ *      - discountAmount` is NEVER a safe fallback. `Order.total` is net of
+ *      discount only on the CREATE path (orders.service.ts:2428); an
+ *      edited/merged order can leave it stale, so a client-side re-derivation
+ *      of the discount would silently disagree with what the server actually
+ *      bills. Falling to the honest pre-tax line sum is a smaller, visible
+ *      under-estimate rather than a confident wrong number.
  *
  * Every `Number()` is guarded by `Number.isFinite` (via `finiteOrNull`) —
  * this never returns NaN.
  */
 export function orderAmountDue(order: RunMoneyOrder): number {
-  const draft = draftMoney(order);
-  const draftTotal = draft ? finiteOrNull(draft.total) : null;
-  if (draftTotal != null) return roundMoney(draftTotal);
-
-  const orderTotal = finiteOrNull(order.total);
-  if (orderTotal != null) {
-    const discount = finiteOrNull(order.discountAmount) ?? 0;
-    return roundMoney(orderTotal - discount);
+  const drafts = order.invoices ?? [];
+  const finiteTotals = drafts
+    .map((d) => finiteOrNull(d.total))
+    .filter((n): n is number => n != null);
+  if (finiteTotals.length > 0) {
+    return roundMoney(finiteTotals.reduce((sum, n) => sum + n, 0));
   }
 
   return sumOrderLineItems(order);
@@ -122,44 +135,80 @@ export function stopAmountDue(stop: RunMoneyStop): number {
   }, 0);
 }
 
+/**
+ * REG-B305 round 2 (RULING 3): Σ over lines of that line's snapshotted
+ * category tax scaled by its delivered/ordered qty share — reproduces
+ * invoices.service.ts#buildInvoiceItemData's own per-unit proration for a
+ * from-scratch (`prior` 0) delivered-basis bill: `categoryTaxAmount ==
+ * storedCategoryTax * billQty / orderQty`. Per-unit excise concentrates on
+ * whichever lines actually shipped, so — unlike prorating the draft's whole
+ * `taxAmount` by subtotal share — this is EXACT, not an approximation.
+ * `deliveredQtyById` is keyed by line id (== `orderItemId`, short-pick's
+ * convention); a line missing from it defaults to fully delivered (matches
+ * `short-pick.ts#buildDeliveries`). Guards qty <= 0 and non-finite inputs —
+ * never NaN, never divides by zero.
+ */
+export function deliveredCategoryTax(
+  lineItems: RunMoneyLineItem[],
+  deliveredQtyById: Record<string, number>,
+): number {
+  let sum = 0;
+  for (const li of lineItems) {
+    const qty = Number(li.qty ?? 0);
+    if (!(qty > 0)) continue;
+    const categoryTax = finiteOrNull(li.categoryTaxAmount);
+    if (!categoryTax) continue;
+    const raw = li.id != null && li.id in deliveredQtyById ? deliveredQtyById[li.id] : qty;
+    const delivered = Math.max(0, Math.min(Number(raw) || 0, qty));
+    sum += (categoryTax * delivered) / qty;
+  }
+  return roundMoney(sum);
+}
+
 export interface ReconciledAmountDueInput {
   /**
-   * The order's open draft invoice (or just the fields off it). Omit when
-   * the payload carries no draft — the result then falls back to the
-   * pre-tax `reconciledSubtotal` alone (legacy basis).
+   * ALL of the order's open draft invoices (RULING 1 — a regulated split
+   * order can have several). Only `discount`/`shippingFee` are read — an
+   * empty array falls back to `deliveredSubtotal` alone (legacy basis).
    */
-  draft?: {
-    subtotal: number | string | null;
-    taxAmount: number | string | null;
-    discount: number | string | null;
-    shippingFee: number | string | null;
-  } | null;
-  /** The delivered/short-picked share of the order's pre-tax subtotal. */
-  reconciledSubtotal: number;
+  drafts: Array<Pick<RunMoneyInvoice, "discount" | "shippingFee">>;
+  /** The ORDER's own projected subtotal/tax (Order columns, never the draft's). */
+  order: { subtotal: number | string | null | undefined; tax: number | string | null | undefined };
+  /** The delivered/short-picked share of the order's pre-tax line subtotal (`reconciledTotal`). */
+  deliveredSubtotal: number;
+  /** Σ each delivered line's category tax share — see `deliveredCategoryTax`. */
+  deliveredCategoryTax: number;
 }
 
 /**
- * REG-B305 round 2: reproduces invoices.service.ts's proration of a
- * short-picked order's tax (incl. category tax) by delivered/ordered
- * subtotal off the DRAFT invoice — discount and the ALLOCATED shipping fee
- * stay whole (they don't prorate by delivered qty), only tax scales with the
- * delivered share. Exact for uniform lines; an approximation when a per-unit
- * excise tax concentrates on specific lines within the order (documented,
- * not a bug — the server folds category tax into one order-level
- * `taxAmount`, so the client has no per-line breakdown to prorate more
- * precisely).
+ * REG-B305 round 2 (RULING 3 — the short-pick estimate follows the SERVER's
+ * own rule, invoices.service.ts#reconcileOrderDraftInvoice basis "delivered"):
+ * `regularTax` scales with the delivered SHARE of the order's own subtotal
+ * (`orderTax * (deliveredSubtotal / orderSubtotal)`, never the draft's whole
+ * `taxAmount`), `categoryTax` is the caller's own per-line
+ * `deliveredCategoryTax`, and discount/shipping fee stay WHOLE (the server
+ * never prorates them). Falls back to the bare `deliveredSubtotal` (legacy)
+ * when there is no open draft or the order's own subtotal isn't a usable
+ * basis (<= 0) — prorating against zero would divide by zero.
  */
 export function reconciledAmountDue(input: ReconciledAmountDueInput): number {
-  const reconciledSubtotal = Number.isFinite(input.reconciledSubtotal)
-    ? input.reconciledSubtotal
-    : 0;
-  const { draft } = input;
-  if (!draft) return reconciledSubtotal;
+  const deliveredSubtotal = Number.isFinite(input.deliveredSubtotal) ? input.deliveredSubtotal : 0;
+  const drafts = input.drafts ?? [];
+  const orderSubtotal = finiteOrNull(input.order?.subtotal);
+  if (drafts.length === 0 || orderSubtotal == null || !(orderSubtotal > 0)) {
+    return deliveredSubtotal;
+  }
 
-  const draftSubtotal = finiteOrNull(draft.subtotal);
-  const taxAmount = finiteOrNull(draft.taxAmount) ?? 0;
-  const discount = finiteOrNull(draft.discount) ?? 0;
-  const shippingFee = finiteOrNull(draft.shippingFee) ?? 0;
-  const share = draftSubtotal != null && draftSubtotal > 0 ? reconciledSubtotal / draftSubtotal : 1;
-  return roundMoney(reconciledSubtotal - discount + shippingFee + taxAmount * share);
+  const orderTax = finiteOrNull(input.order?.tax) ?? 0;
+  const discount = drafts.reduce((sum, d) => sum + (finiteOrNull(d.discount) ?? 0), 0);
+  const shippingFee = drafts.reduce((sum, d) => sum + (finiteOrNull(d.shippingFee) ?? 0), 0);
+  const categoryTax = Number.isFinite(input.deliveredCategoryTax) ? input.deliveredCategoryTax : 0;
+
+  return roundMoney(
+    deliveredSubtotal -
+      discount +
+      shippingFee +
+      orderTax * (deliveredSubtotal / orderSubtotal) +
+      categoryTax,
+  );
 }
