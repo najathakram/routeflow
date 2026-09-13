@@ -95,7 +95,7 @@ export const RUN_LINE_ITEMS_SELECT = {
 // `customer`, `customerAddress`, and `orders` to render addresses/totals and to
 // build Google Maps waypoints — selecting a slim shape here previously caused
 // scheduled-run cards to render "no location" for every stop.
-const RUN_STOP_INCLUDE = {
+export const RUN_STOP_INCLUDE = {
   customer: {
     select: {
       id: true,
@@ -114,6 +114,12 @@ const RUN_STOP_INCLUDE = {
       status: true,
       urgent: true,
       notes: true,
+      // B305: the driver's at-door amount due needs the tax-inclusive total —
+      // these are Order Decimal columns (sales.prisma:559-561), arrive as
+      // strings on the wire, no conversion here.
+      subtotal: true,
+      tax: true,
+      total: true,
       lineItems: { select: RUN_LINE_ITEMS_SELECT },
     },
   },
