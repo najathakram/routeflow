@@ -1,6 +1,6 @@
 {
   "mappedSha": "2d3537522d94fa6a29c693c2e6d76988eca8f074",
-  "generatedAt": "2026-09-13T05:05:00.000Z",
+  "generatedAt": "2026-09-13T09:30:00.000Z",
   "areas": ["api", "web", "mobile", "packages"],
   "fileCount": 1024,
   "notes": "**2026-09-13** — (branch `docs/704-bookkeeping`, Option-B follow-up for #704 = master `2d353752`) — registry tooling from the `security-registry-tags` run: `bugs.mjs` `--tag` + `already-fixed` state, `plane-sync.mjs` tags → Plane labels (R8) + self-test T8, `bug-registry/SKILL.md` security-findings section, `docs/audit/security-findings-index.md` Registry column, `docs/security/security-testing-program.md` §7 pointer; F48 (B355–B360) + F49 (B361–B393 `already-fixed`) filed. INDEX.md rows 'Bug catalogue + agent fix carve-out' and 'Plane BUGS mirror' extended; the api.md section is still deferred (over the 1,024 KiB pre-commit cap until the area-file split on `chore/workflow-redesign` lands); web.md/mobile.md/packages.md untouched (no diff). Same PR: ledger row, RUN-LOG entry, B349 ruling note, L-117 (L-110/L-111 archived). See CHANGELOG.md for full detail."
