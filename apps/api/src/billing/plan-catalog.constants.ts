@@ -207,6 +207,23 @@ export type TenantPlanEnumValue = "STARTER" | "TEAM" | "BUSINESS" | "PROFESSIONA
  * 400 for a client-supplied key, a logged skip for one bad row in a cron sweep) — never catch
  * it only to re-default to STARTER, which is exactly the bug this closes.
  */
+/**
+ * CHANGE-2 (2026-09-13): dedicated error class for `planKeyToEnum()`'s unresolvable-key case,
+ * so a caller can discriminate it with `instanceof` instead of matching a message PREFIX
+ * (`billing-cron.service.ts`'s `isUnresolvablePlanKeyError()` used to do exactly that — a
+ * reworded message would have silently stopped discriminating this data problem from a real
+ * infrastructure failure). Carries the offending key for logging. The message text is
+ * unchanged from the plain-`Error` original so nothing that reads it regresses.
+ */
+export class UnknownPlanKeyError extends Error {
+  constructor(public readonly planKey: string | null | undefined) {
+    super(
+      `planKeyToEnum: unrecognized plan key "${planKey}" — not in PLAN_KEYS or LEGACY_PLAN_KEY_ALIASES`,
+    );
+    this.name = "UnknownPlanKeyError";
+  }
+}
+
 export function planKeyToEnum(planKey: string | null | undefined): TenantPlanEnumValue {
   const normalized = normalizePlanKey(planKey);
   switch (normalized) {
@@ -219,9 +236,7 @@ export function planKeyToEnum(planKey: string | null | undefined): TenantPlanEnu
     case "STARTER":
       return "STARTER";
     default:
-      throw new Error(
-        `planKeyToEnum: unrecognized plan key "${planKey}" — not in PLAN_KEYS or LEGACY_PLAN_KEY_ALIASES`,
-      );
+      throw new UnknownPlanKeyError(planKey);
   }
 }
 

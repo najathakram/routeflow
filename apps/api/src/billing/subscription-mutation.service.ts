@@ -791,7 +791,15 @@ export class SubscriptionMutationService {
       // all) skips the Stripe call; the row is still read, because only it can say so.
       const sub = await this.prisma.tenantSubscription.findUnique({ where: { tenantId } });
       if (sub?.stripeSubId) {
-        await this.propagateCancelToStripe(tenantId, sub.stripeSubId);
+        // CHANGE-1 RULING (2026-09-13, lead — overturnable, owner informed): this READ_ONLY
+        // tenant already lost service at its LAST period end, so scheduling cancellation at
+        // the NEXT one (propagateCancelToStripe()'s `cancel_at_period_end: true`, what every
+        // other cancel() path uses) would let Stripe invoice a full period the tenant gets
+        // nothing for — a charge that cannot be defended ("forfeiting a paid period" does not
+        // apply: this cohort was suspended for non-payment). Cancel immediately instead.
+        // Reversal is a ONE-LINE swap: replace the call below with
+        // `await this.propagateCancelToStripe(tenantId, sub.stripeSubId);`.
+        await this.cancelReadOnlyStripeSubImmediately(tenantId, sub.stripeSubId);
       }
       return { cancelled: "already_read_only" as const };
     }
@@ -991,6 +999,44 @@ export class SubscriptionMutationService {
         // R3: the local row really is unchanged, but claiming Stripe changed nothing too is
         // false on a timeout Stripe actually applied — describe the provider outcome as
         // UNCERTAIN instead.
+        throw new ServiceUnavailableException(
+          "The payment provider did not confirm the change — it may still apply. Check your subscription in a moment before retrying, or contact support.",
+        );
+      }
+    }
+  }
+
+  /**
+   * CHANGE-1 RULING (2026-09-13, lead — overturnable, owner informed): the READ_ONLY cohort's
+   * ONLY Stripe instrument — cancels the subscription IMMEDIATELY (`stripe.cancelSubscription`)
+   * rather than scheduling at period end, because this cohort already lost service at its last
+   * period end and a period-end cancellation would let Stripe invoice a full period of nothing.
+   * Every other cancel() path keeps using `propagateCancelToStripe()` unchanged. Same B107
+   * error semantics as that helper: `resource_missing` logs and proceeds to the local
+   * short-circuit; anything else throws a 503 with nothing written locally. Never log the raw
+   * error. If this ruling is overturned, swap the ONE call site in `cancel()` back to
+   * `propagateCancelToStripe()` — this method can then be deleted.
+   */
+  private async cancelReadOnlyStripeSubImmediately(
+    tenantId: string,
+    stripeSubId: string,
+  ): Promise<void> {
+    try {
+      await this.stripe.cancelSubscription(stripeSubId);
+    } catch (err) {
+      if (isStripeResourceMissing(err)) {
+        // The Stripe subscription is already gone — nothing left to cancel. Proceed with the
+        // local short-circuit.
+        this.logger.warn(
+          `STRIPE-CANCEL-2: cancel() found Stripe subscription already gone for tenant ${tenantId} (stripeSubId ${stripeSubId}) — proceeding with the READ_ONLY short-circuit`,
+        );
+      } else {
+        // Never log the raw error (may carry Stripe request/auth details) — tenantId +
+        // stripeSubId only.
+        this.logger.error(
+          `STRIPE-CANCEL-2: cancel() failed to cancel the Stripe subscription immediately for tenant ${tenantId} (stripeSubId ${stripeSubId})`,
+        );
+        // Same UNCERTAIN-provider-outcome wording as propagateCancelToStripe()'s 503.
         throw new ServiceUnavailableException(
           "The payment provider did not confirm the change — it may still apply. Check your subscription in a moment before retrying, or contact support.",
         );

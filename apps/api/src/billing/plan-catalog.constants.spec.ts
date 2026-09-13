@@ -1,4 +1,9 @@
-import { PLAN_KEYS, LEGACY_PLAN_KEY_ALIASES, planKeyToEnum } from "./plan-catalog.constants";
+import {
+  PLAN_KEYS,
+  LEGACY_PLAN_KEY_ALIASES,
+  planKeyToEnum,
+  UnknownPlanKeyError,
+} from "./plan-catalog.constants";
 
 /**
  * B218: `planKeyToEnum()` used to fall through a bare `default: return "STARTER"` for ANY
@@ -44,5 +49,23 @@ describe("planKeyToEnum", () => {
   it("REG-B218 throws for a prototype-pollution-style key (Object.hasOwn guard on the alias map)", () => {
     expect(() => planKeyToEnum("constructor")).toThrow(/unrecognized plan key/);
     expect(() => planKeyToEnum("__proto__")).toThrow(/unrecognized plan key/);
+  });
+
+  // CHANGE-2 (2026-09-13): the unresolvable-key failure now has a dedicated class, so a
+  // caller (billing-cron.service.ts) can discriminate it with `instanceof` instead of
+  // matching a message PREFIX — a reworded message used to silently stop discriminating a
+  // data problem from a real infrastructure failure. The message text itself is unchanged
+  // (REG-B218 tests above keep asserting it), and the error carries the offending key.
+  it("REG-B218-TYPED throws UnknownPlanKeyError carrying the offending key", () => {
+    expect(() => planKeyToEnum("PRO")).toThrow(UnknownPlanKeyError);
+    let caught: unknown;
+    try {
+      planKeyToEnum("PRO");
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(UnknownPlanKeyError);
+    expect((caught as UnknownPlanKeyError).planKey).toBe("PRO");
+    expect((caught as UnknownPlanKeyError).message).toMatch(/unrecognized plan key "PRO"/);
   });
 });

@@ -13,6 +13,7 @@ import {
   findPlanDefinition,
   GRACE_DAYS,
   planKeyToEnum,
+  UnknownPlanKeyError,
 } from "./plan-catalog.constants";
 import { addCycle } from "./billing-math";
 
@@ -41,19 +42,18 @@ export class BillingCronService {
   }
 
   /**
-   * F2 (W1 review-fix round): true only for `planKeyToEnum()`'s specific unresolvable-key
-   * `Error` (`plan-catalog.constants.ts`) — the ONLY failure `applyScheduledDowngrades`'
-   * per-tenant catch below may still log-and-skip. `planKeyToEnum` throws a plain `Error`
-   * with no dedicated class and no stable `.code` to match on, so its fixed message PREFIX
-   * (set once, at the single throw site — never the free-text suffix, which is the
-   * offending key) is the most precise discriminator available without editing that shared
-   * helper, which sits outside this fix's file ownership. Everything else — a pool
-   * exhaustion, a Prisma error, any other unrelated failure — must NOT match here, so the
-   * caller rethrows it instead of disguising a real infrastructure failure as a bad plan
-   * key (the sweep would otherwise silently report success while masking one).
+   * CHANGE-2 (2026-09-13): true only for `planKeyToEnum()`'s dedicated `UnknownPlanKeyError`
+   * (`plan-catalog.constants.ts`) — the ONLY failure `applyScheduledDowngrades`' per-tenant
+   * catch below may still log-and-skip. Was a message-PREFIX match on a plain `Error` (F2,
+   * W1 review-fix round) — brittle, because a reworded message would have silently stopped
+   * matching and started swallowing a real infrastructure failure as a data problem. Now an
+   * `instanceof` check against the typed class instead. Everything else — a pool exhaustion,
+   * a Prisma error, any other unrelated failure — must NOT match here, so the caller rethrows
+   * it instead of disguising a real infrastructure failure as a bad plan key (the sweep would
+   * otherwise silently report success while masking one).
    */
   private isUnresolvablePlanKeyError(err: unknown): boolean {
-    return err instanceof Error && err.message.startsWith("planKeyToEnum: unrecognized plan key");
+    return err instanceof UnknownPlanKeyError;
   }
 
   /** Trial expiry → READ_ONLY (NOT suspended — exports + sign-in still work). */

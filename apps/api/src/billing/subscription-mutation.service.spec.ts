@@ -278,6 +278,10 @@ function make(opts: Opts = {}) {
     ({
       isConfigured: true,
       updateSubscription: jest.fn().mockResolvedValue({}),
+      // CHANGE-1 (2026-09-13): the READ_ONLY cohort's cancel() branch now cancels the Stripe
+      // subscription IMMEDIATELY (see cancelReadOnlyStripeSubImmediately) instead of scheduling
+      // at period end via updateSubscription.
+      cancelSubscription: jest.fn().mockResolvedValue({}),
     } as any);
   const svc = new SubscriptionMutationService(
     prisma,
@@ -1982,16 +1986,22 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
     return { planKey: "BUSINESS", cycle: "MONTHLY", periodEnd, stripeSubId: null, ...extra };
   };
 
-  it("cancel() READ_ONLY + live stripeSubId propagates to Stripe BEFORE the short-circuit — no local write, no emit", async () => {
+  // CHANGE-1 RULING (2026-09-13, lead — overturnable, owner informed): a READ_ONLY tenant
+  // already lost service at its LAST period end, so scheduling cancellation at the NEXT one
+  // (the period-end `propagateCancelToStripe()` helper every other cancel() path uses) would
+  // let Stripe invoice a full period the tenant gets nothing for. This cohort cancels
+  // IMMEDIATELY via `stripe.cancelSubscription()` instead — was: "propagates to Stripe BEFORE
+  // the short-circuit" via the period-end `updateSubscription()` call.
+  it("cancel() READ_ONLY + live stripeSubId cancels Stripe IMMEDIATELY (not scheduled at period end) — no local write, no emit", async () => {
     const { svc, tx, events, stripe } = make({
       tenantStatus: "READ_ONLY",
       sub: activeSub({ stripeSubId: "sub_x" }),
     });
     await expect(svc.cancel("t1", "admin")).resolves.toEqual({ cancelled: "already_read_only" });
-    expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
-    expect(stripe.updateSubscription).toHaveBeenCalledWith("sub_x", {
-      cancel_at_period_end: true,
-    });
+    expect(stripe.cancelSubscription).toHaveBeenCalledTimes(1);
+    expect(stripe.cancelSubscription).toHaveBeenCalledWith("sub_x");
+    // Never the period-end instrument for this cohort — that's the whole point of the ruling.
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
     expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
     expect(events.emit).not.toHaveBeenCalled();
   });
@@ -2002,6 +2012,7 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
       sub: activeSub(), // stripeSubId: null
     });
     await expect(svc.cancel("t1", "admin")).resolves.toEqual({ cancelled: "already_read_only" });
+    expect(stripe.cancelSubscription).not.toHaveBeenCalled();
     expect(stripe.updateSubscription).not.toHaveBeenCalled();
     expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
     expect(events.emit).not.toHaveBeenCalled();
@@ -2012,7 +2023,7 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
       tenantStatus: "READ_ONLY",
       sub: activeSub({ stripeSubId: "sub_x" }),
     });
-    stripe.updateSubscription.mockRejectedValue(new Error("boom"));
+    stripe.cancelSubscription.mockRejectedValue(new Error("boom"));
     await expect(svc.cancel("t1", "admin")).rejects.toBeInstanceOf(ServiceUnavailableException);
     expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
     expect(events.emit).not.toHaveBeenCalled();
@@ -2023,9 +2034,9 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
       tenantStatus: "READ_ONLY",
       sub: activeSub({ stripeSubId: "sub_x" }),
     });
-    stripe.updateSubscription.mockRejectedValue({ code: "resource_missing", statusCode: 404 });
+    stripe.cancelSubscription.mockRejectedValue({ code: "resource_missing", statusCode: 404 });
     await expect(svc.cancel("t1", "admin")).resolves.toEqual({ cancelled: "already_read_only" });
-    expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
+    expect(stripe.cancelSubscription).toHaveBeenCalledTimes(1);
     expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
     expect(events.emit).not.toHaveBeenCalled();
   });
