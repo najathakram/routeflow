@@ -401,8 +401,14 @@ describe("reconciledAmountDue (REG-B305 round 3: tax-exempt customer)", () => {
  * `buildShortPickLines` below mirrors that mapping exactly (imports the real
  * `ShortPickLine` type, `reconciledTotal`, and `freeUnitSizeFor` from
  * `lib/short-pick`, the same helpers the page uses).
+ *
+ * Scope: these fixtures pin the DOOR COMPOSITION invariant only. The
+ * cancelled-line case's door amount is independently re-derivable as a real
+ * invoice total (see its oracle comment below); the split-delivery case is
+ * NOT — see that test's own scope note for the standing `rebuildSiblingDrafts`
+ * reachability gap it documents instead.
  */
-describe("REG-B305 round 4 — door quote equals what the server invoices when regulated lines are cancelled or already delivered", () => {
+describe("REG-B305 round 4 — the door quote's two halves derive from ONE line set (a cancelled or already-delivered line contributes neither subtotal nor category tax)", () => {
   // Mirrors payment.tsx:110-128's shortPickLines useMemo verbatim, over a
   // fixture shaped like `order.lineItems` (id/productId/qty/subtotal/status/
   // deliveredQty/categoryTaxAmount — a superset of both `ShortPickLine`'s
@@ -458,7 +464,12 @@ describe("REG-B305 round 4 — door quote equals what the server invoices when r
     // shipping fee on the open draft stay WHOLE. #buildInvoiceItemData —
     // `categoryTaxAmount = stored * billQty / orderQty`, summed only over the
     // lines this visit actually bills (`where status != CANCELLED`, and never
-    // a line already fully billed on an earlier visit).
+    // a line already fully billed on an earlier visit). This oracle DOES hold
+    // as a real server-invoice equality (unlike the split-delivery test
+    // below): orders.service.ts's totals recompute (~4481-4492) selects only
+    // `status: { not: "CANCELLED" }` lines, so cancelled line A's subtotal
+    // and tax never entered `order.subtotal`/`order.tax` (50 / 4.00) to begin
+    // with — a reader can re-derive 43.20 from those two columns directly.
     const deliveredSubtotal = reconciledTotal(shortPickLines, plan);
     const regularTax = roundMoney(order.tax * (deliveredSubtotal / order.subtotal));
     // Σ over the visit's delivered lines (B only — A is neither in
@@ -497,7 +508,7 @@ describe("REG-B305 round 4 — door quote equals what the server invoices when r
     expect(oldComposition).not.toBe(actual);
   });
 
-  it("REG-B305 round 4: split delivery visit 2 — a regulated line already billed on visit 1 contributes zero category tax here", () => {
+  it("REG-B305 round 4: a regulated line already delivered on an earlier visit contributes zero category tax to the door quote", () => {
     // Line R: regulated, qty 10, subtotal 200, categoryTaxAmount 20.00,
     // deliveredQty 10 (billed on visit 1's invoice already). Line S: qty 4,
     // subtotal 80, categoryTaxAmount 0, deliveredQty 0. Order subtotal 280,
@@ -537,6 +548,28 @@ describe("REG-B305 round 4 — door quote equals what the server invoices when r
       isTaxExempt: false,
     });
     expect(actual).toBe(expected);
+
+    // SCOPE NOTE (replaces an earlier "equals what the server invoices"
+    // claim — that claim does not hold): this fences the DOOR COMPOSITION
+    // only. The server's `rebuildSiblingDrafts` (invoices.service.ts
+    // ~1848-1872) bills each line at `billQtyOf = Number(li.deliveredQty)`
+    // with NO `priorBilledQty` subtracted, and line R (`deliveredQty: 10`,
+    // status PENDING, not CANCELLED) survives its `where status !=
+    // CANCELLED` line select — so an actual visit-2 draft rebuild would bill
+    // R's subtotal (200) again alongside S's (40), landing at 272.00
+    // (240 subtotal + round(14 * 240/280) = 12.00 regular tax + 20.00
+    // category tax), not this test's 42.00. No reachable path to that state
+    // was found: `deliveredQty > 0` is written only by `completeWithPayment`
+    // (which completes the stop), and `reopenStop` zeroes it back out — so
+    // it is latent, not live. This fixture documents the composition
+    // invariant (both halves derive from `shortPickLines`), not a live
+    // invoice equality.
+    //
+    // TO FILE: partial prior delivery (`0 < deliveredQty < qty`) is excluded
+    // from `shortPickLines` entirely (the filter requires `deliveredQty ===
+    // 0`), so neither its remaining subtotal nor its remaining excise is
+    // quoted at the door — a pre-existing F38 design gap, latent for the
+    // same reachability reason as above.
 
     // Documents the defect: R is absent from `plan` (it was never re-picked
     // this visit), so the OLD raw-lines composition defaults it to fully
@@ -603,6 +636,10 @@ describe("REG-B305 round 4 — door quote equals what the server invoices when r
     const deliveredExcise = shortPickCategoryTax(runLines, shortPickLines, plan);
     // Oracle: invoices.service.ts ~1495-1500 — an exempt customer zeroes BOTH
     // the regular tax term and the category tax; discount/fee stay whole.
+    // This holds regardless of the split-visit reachability caveat above
+    // (reused fixture: R already delivered, S short-picked) since exempt
+    // zeroes every tax term either way; it is not a claim that 40.00 is what
+    // an actual visit-2 invoice would total (see the split test's scope note).
     const expected = roundMoney(deliveredSubtotal - draftDiscount + draftShippingFee);
     expect(expected).toBe(40.0);
 
