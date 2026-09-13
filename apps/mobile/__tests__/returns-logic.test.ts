@@ -321,6 +321,7 @@ describe("summarizeSubmissions", () => {
     expect(summarizeSubmissions([{ orderId: "ord-1", ok: true }])).toEqual({
       done: ["ord-1"],
       failed: [],
+      queued: [],
     });
   });
 
@@ -338,7 +339,7 @@ describe("summarizeSubmissions", () => {
           "Already returned: 4 of 4.",
       },
     ]);
-    expect(result).toEqual({ done: ["ord-1", "ord-2"], failed: [] });
+    expect(result).toEqual({ done: ["ord-1", "ord-2"], failed: [], queued: [] });
   });
 
   it("any other rejection stays pending, carrying its own message", () => {
@@ -384,7 +385,7 @@ describe("summarizeSubmissions", () => {
   });
 
   it("an empty round summarises to nothing done and nothing failed", () => {
-    expect(summarizeSubmissions([])).toEqual({ done: [], failed: [] });
+    expect(summarizeSubmissions([])).toEqual({ done: [], failed: [], queued: [] });
   });
 });
 

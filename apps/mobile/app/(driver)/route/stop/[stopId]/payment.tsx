@@ -41,7 +41,7 @@ import { usePodStore } from "../../../../../store/podStore";
 import { useDeliveryPlanStore } from "../../../../../store/delivery-plan-store";
 import { useRunSettlementStore } from "../../../../../store/runSettlementStore";
 import type { CollectedMethod } from "../../../../../lib/run-settlement";
-import { orderAmountDue, reconciledAmountDue } from "../../../../../lib/run-money";
+import { draftMoney, orderAmountDue, reconciledAmountDue } from "../../../../../lib/run-money";
 import { classifyMutationError } from "../../../../../lib/offline-errors";
 import {
   buildDeliveries,
@@ -133,12 +133,12 @@ export default function PaymentScreen() {
     (sum, o) =>
       sum +
       (o.id === orderId && shortPickLines.length > 0
-        ? // REG-B305: prorate the order's tax by the delivered share, same as
-          // invoices.service.ts:1454-1456.
+        ? // REG-B305 round 2: prorate the order's OPEN DRAFT INVOICE's tax by
+          // the delivered share (invoices.service.ts's own proration) — the
+          // draft, never `Order.total` (no discount, whole fee on a split
+          // delivery — see run-money.ts#orderAmountDue).
           reconciledAmountDue({
-            orderSubtotal: Number(o.subtotal),
-            orderTax: Number(o.tax),
-            orderTotal: Number(o.total),
+            draft: draftMoney(o),
             reconciledSubtotal: reconciledTotal(shortPickLines, deliveredQtyById),
           })
         : fullOrderTotal(o)),
@@ -436,9 +436,13 @@ export default function PaymentScreen() {
       const outcome = classifyMutationError(e);
       if (outcome.kind === "queued") {
         // REG-B308: a queued offline completion is a pending success, not a
-        // failure — mirror the success path's cleanup below (minus the
-        // paymentIds-only photo upload, which needs the real response) and
-        // keep `closing` true until navigation so the button is never re-armed.
+        // failure — mirror the success path's cleanup below. `setClosing(false)`
+        // below releases the latch right before the Alert/navigate, exactly
+        // like the success path does further down — the mutation has already
+        // settled either way, and this screen navigates away next regardless.
+        // Known gap (TO FILE, out of scope here): the payment photo upload is
+        // dropped entirely on this path — it needs `paymentIds` off the real
+        // (non-queued) response, which never arrives for a queued completion.
         showToast("Offline — completion queued and will sync when you reconnect");
         clearPod(stopId);
         if (unsentUris.length) usePodStore.getState().setPhotos(stopId, unsentUris);

@@ -96,67 +96,127 @@ describe("sumOrderLineItems / sumStopOrders (REG-B49)", () => {
 });
 
 /**
- * REG-B305: the driver "amount due" must be the tax-inclusive total the invoice
- * will actually bill, not the pre-tax line subtotal — `sumOrderLineItems` alone
- * (REG-B49 above) undercharges by the order's tax whenever the tenant has a
- * non-zero tax rate. `orderAmountDue`/`stopAmountDue`/`reconciledAmountDue` do
- * not exist in `lib/run-money.ts` yet, so every assertion below is red on
- * missing export (a TypeError calling `undefined` as a function) until the fix
- * adds them.
+ * REG-B305 round 2 (Opus BLOCKER on round 1's basis): `Order.total` carries
+ * NO discount and, on a split delivery, bills the WHOLE shipping fee on
+ * every visit — it is not what the invoice actually bills. The driver's
+ * amount due must be the order's OPEN DRAFT INVOICE as the server last
+ * computed it (`order.invoices[0]`: `total = subtotal + taxAmount +
+ * shippingFee - discount`). These fixtures pin that basis; before the fix,
+ * `orderAmountDue`/`reconciledAmountDue` read `order.total` directly and the
+ * discount/split-fee assertions below are red on the WRONG (pre-fix) value,
+ * not on a missing export.
  */
-describe("REG-B305 tax-inclusive amount due", () => {
-  // The bug's own numbers: invoice $128.51, driver screen asked $116.83 (pre-tax).
-  const taxedOrder = {
-    lineItems: [{ qty: 1, unitPrice: 116.83, subtotal: 116.83 }],
-    subtotal: "116.83",
-    tax: "11.68",
-    total: "128.51",
-  };
-
-  it("REG-B305 a stop on a tenant with a non-zero tax rate quotes and collects the tax-inclusive amount due", () => {
-    expect(orderAmountDue(taxedOrder as any)).toBe(128.51);
-    expect(stopAmountDue({ orders: [taxedOrder] } as any)).toBe(128.51);
-    // Documents the wrong value: the legacy pre-tax helper still returns the bare subtotal.
-    expect(sumOrderLineItems(taxedOrder as any)).toBe(116.83);
-  });
-
-  it("REG-B305 change is computed off the tax-inclusive amount", () => {
+describe("REG-B305 tax-inclusive amount due (round 2: read off the draft invoice)", () => {
+  it("REG-B305 the bug's own numbers: quotes and collects the draft invoice's total", () => {
+    const order = {
+      lineItems: [{ qty: 1, unitPrice: 116.83, subtotal: 116.83 }],
+      invoices: [
+        {
+          id: "inv-1",
+          subtotal: "116.83",
+          taxAmount: "11.68",
+          discount: "0",
+          shippingFee: "0",
+          total: "128.51",
+        },
+      ],
+    };
+    expect(orderAmountDue(order as any)).toBe(128.51);
     // Driver collected $130 cash; change should be $1.49, not $13.17 (pre-tax basis).
-    const change = Math.max(0, 130 - orderAmountDue(taxedOrder as any));
+    const change = Math.max(0, 130 - orderAmountDue(order as any));
     expect(change).toBeCloseTo(1.49, 2);
   });
 
-  it("REG-B305 a short-picked order prorates the order's tax by the delivered share", () => {
-    // Half the goods delivered → half the tax carried forward.
-    expect(
-      reconciledAmountDue({
-        orderSubtotal: 116.83,
-        orderTax: 11.68,
-        orderTotal: 128.51,
-        reconciledSubtotal: 58.415,
-      }),
-    ).toBeCloseTo(64.26, 2);
-
-    // Everything delivered → the full order total, unprorated.
-    expect(
-      reconciledAmountDue({
-        orderSubtotal: 116.83,
-        orderTax: 11.68,
-        orderTotal: 128.51,
-        reconciledSubtotal: 116.83,
-      }),
-    ).toBeCloseTo(128.51, 2);
+  it("REG-B305 Opus BLOCKER: a discount on the draft wins, never Order.total's discount-less figure", () => {
+    // Order.total (110) carries no discount; the draft (95) is what the
+    // invoice actually bills.
+    const order = {
+      lineItems: [],
+      subtotal: 100,
+      tax: 10,
+      total: 110,
+      discountAmount: 15,
+      invoices: [
+        { id: "inv-1", subtotal: 100, taxAmount: 10, discount: 15, shippingFee: 0, total: 95 },
+      ],
+    };
+    expect(orderAmountDue(order as any)).toBe(95);
+    expect(orderAmountDue(order as any)).not.toBe(110);
   });
 
-  it("REG-B305 falls back to the pre-tax line sum when the payload carries no server total", () => {
+  it("REG-B305 a split delivery's allocated fee is read off the draft, never Order.total's whole fee", () => {
+    // Order.total (121) is the WHOLE shipping fee applied on every visit —
+    // the draft carries the fee actually allocated to THIS visit.
+    const baseOrder = { lineItems: [], subtotal: 50, tax: 5, total: 121 };
+    const firstVisit = {
+      ...baseOrder,
+      invoices: [
+        { id: "inv-1", subtotal: 50, taxAmount: 5, discount: 0, shippingFee: 10, total: 65 },
+      ],
+    };
+    expect(orderAmountDue(firstVisit as any)).toBe(65);
+    const secondVisit = {
+      ...baseOrder,
+      invoices: [
+        { id: "inv-2", subtotal: 50, taxAmount: 5, discount: 0, shippingFee: 0, total: 55 },
+      ],
+    };
+    expect(orderAmountDue(secondVisit as any)).toBe(55);
+    expect(orderAmountDue(secondVisit as any)).not.toBe(121);
+  });
+
+  it("REG-B305 a short-picked order prorates the draft's tax (incl. category tax) by the delivered share", () => {
+    // draft: $100 subtotal, $60 tax (10 regular + 50 per-unit excise). Half
+    // delivered -> server bills $50 + $5 regular tax + $25 category tax = $80.
+    const draft = { subtotal: 100, taxAmount: 60, discount: 0, shippingFee: 0 };
+    expect(reconciledAmountDue({ draft, reconciledSubtotal: 50 })).toBeCloseTo(80, 2);
+    // Everything delivered -> the full draft total, unprorated.
+    expect(reconciledAmountDue({ draft, reconciledSubtotal: 100 })).toBeCloseTo(160, 2);
+  });
+
+  it("REG-B305 falls back to Order.total minus discount when the payload carries no draft", () => {
+    expect(orderAmountDue({ lineItems: [], total: 110, discountAmount: 15 } as any)).toBe(95);
+  });
+
+  it("REG-B305 falls back to the pre-tax line sum when the payload carries no total at all", () => {
     const order = { lineItems: [{ qty: 2, unitPrice: 10, subtotal: 20 }] };
     expect(orderAmountDue(order as any)).toBe(sumOrderLineItems(order as any));
   });
 
-  it("REG-B305 coerces string-Decimal totals", () => {
+  it("REG-B305 a malformed total with no draft falls to the line sum, never NaN", () => {
+    const order = { lineItems: [{ qty: 2, unitPrice: 10, subtotal: 20 }], total: "abc" };
+    const due = orderAmountDue(order as any);
+    expect(due).toBe(20);
+    expect(Number.isNaN(due)).toBe(false);
+  });
+
+  it("REG-B305 coerces string-Decimal draft totals", () => {
     const base = { lineItems: [{ qty: 1, unitPrice: 10, subtotal: 10 }] };
-    expect(orderAmountDue({ ...base, total: "128.51" } as any)).toBe(128.51);
-    expect(orderAmountDue({ ...base, total: 128.51 } as any)).toBe(128.51);
-    expect(orderAmountDue({ ...base, total: null } as any)).toBe(sumOrderLineItems(base as any));
+    expect(
+      orderAmountDue({
+        ...base,
+        invoices: [
+          {
+            id: "i1",
+            subtotal: "10",
+            taxAmount: "0",
+            discount: "0",
+            shippingFee: "0",
+            total: "10",
+          },
+        ],
+      } as any),
+    ).toBe(10);
+  });
+
+  it("REG-B305 stopAmountDue mixes a draft-bearing order with a legacy order, never NaN", () => {
+    const draftOrder = {
+      lineItems: [],
+      invoices: [{ id: "i1", subtotal: 50, taxAmount: 5, discount: 0, shippingFee: 0, total: 55 }],
+    };
+    const legacyOrder = { lineItems: [{ qty: 1, unitPrice: 20, subtotal: 20 }] };
+    // No draft AND a malformed total -> falls all the way to the line sum.
+    const brokenOrder = { lineItems: [{ qty: 1, unitPrice: 5, subtotal: 5 }], total: "garbage" };
+    expect(stopAmountDue({ orders: [draftOrder, legacyOrder, brokenOrder] } as any)).toBe(80);
   });
 });

@@ -19,16 +19,45 @@ export interface RunMoneyLineItem {
   subtotal?: number | string | null;
 }
 
+/**
+ * REG-B305 round 2: the order's single OPEN DRAFT INVOICE, as the server last
+ * computed it (status DRAFT, deliveryBatchId null; `total = subtotal +
+ * taxAmount + shippingFee - discount`, `taxAmount` already folds regular +
+ * category tax). This — not `Order.total` — is the basis for the driver's
+ * amount due: `Order.total` carries NO discount and, on a split delivery,
+ * the WHOLE shipping fee on every visit.
+ */
+export interface RunMoneyInvoice {
+  id: string;
+  subtotal: number | string | null;
+  taxAmount: number | string | null;
+  discount: number | string | null;
+  shippingFee: number | string | null;
+  total: number | string | null;
+}
+
 export interface RunMoneyOrder {
   lineItems: RunMoneyLineItem[];
   /** Prisma Decimals — may arrive as strings over the wire. */
   subtotal?: number | string | null;
   tax?: number | string | null;
   total?: number | string | null;
+  /** REG-B305 round 2 — see RunMoneyInvoice; used only by the no-draft fallback. */
+  discountAmount?: number | string | null;
+  shippingFee?: number | string | null;
+  /** The order's open draft invoice, when the payload carries one. */
+  invoices?: RunMoneyInvoice[];
 }
 
 export interface RunMoneyStop {
   orders?: RunMoneyOrder[];
+}
+
+/** `Number(v)` guarded so null/""/non-finite input comes back `null`, never NaN. */
+function finiteOrNull(v: number | string | null | undefined): number | null {
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 
 /** One line's money — server subtotal when present, else the box-aware fallback. */
@@ -51,35 +80,86 @@ export function sumStopOrders(stop: RunMoneyStop): number {
   return (stop.orders ?? []).reduce((sum, order) => sum + sumOrderLineItems(order), 0);
 }
 
+/** The order's single open draft invoice, when the payload carries one. */
+export function draftMoney(order: RunMoneyOrder): RunMoneyInvoice | undefined {
+  return order.invoices?.[0];
+}
+
 /**
- * REG-B305: the driver "amount due" is the server's tax-inclusive total, not
- * the pre-tax line subtotal. Falls back to `sumOrderLineItems` (legacy
- * pre-tax basis) only when the payload carries no `total` yet.
+ * REG-B305 round 2 (Opus BLOCKER on round 1's basis): the driver "amount due"
+ * is the order's OPEN DRAFT INVOICE as the server last computed it —
+ * `Order.total` carries no discount and, on a split delivery, the WHOLE
+ * shipping fee on every visit, so it can only ever be a fallback.
+ *
+ *  (a) a draft invoice with a finite `total` -> that total, rounded;
+ *  (b) else a finite `Order.total` -> `total - discountAmount` (a fallback
+ *      for a payload without the draft; the fee allocation of a split
+ *      delivery is only right for the FIRST visit here, since `Order.total`
+ *      does not know which visit it is);
+ *  (c) else the pre-tax line sum (`sumOrderLineItems`).
+ *
+ * Every `Number()` is guarded by `Number.isFinite` (via `finiteOrNull`) —
+ * this never returns NaN.
  */
 export function orderAmountDue(order: RunMoneyOrder): number {
-  if (order.total != null && order.total !== "") return Number(order.total);
+  const draft = draftMoney(order);
+  const draftTotal = draft ? finiteOrNull(draft.total) : null;
+  if (draftTotal != null) return roundMoney(draftTotal);
+
+  const orderTotal = finiteOrNull(order.total);
+  if (orderTotal != null) {
+    const discount = finiteOrNull(order.discountAmount) ?? 0;
+    return roundMoney(orderTotal - discount);
+  }
+
   return sumOrderLineItems(order);
 }
 
 export function stopAmountDue(stop: RunMoneyStop): number {
-  return (stop.orders ?? []).reduce((sum, order) => sum + orderAmountDue(order), 0);
+  return (stop.orders ?? []).reduce((sum, order) => {
+    const due = orderAmountDue(order);
+    return Number.isFinite(due) ? sum + due : sum;
+  }, 0);
+}
+
+export interface ReconciledAmountDueInput {
+  /**
+   * The order's open draft invoice (or just the fields off it). Omit when
+   * the payload carries no draft — the result then falls back to the
+   * pre-tax `reconciledSubtotal` alone (legacy basis).
+   */
+  draft?: {
+    subtotal: number | string | null;
+    taxAmount: number | string | null;
+    discount: number | string | null;
+    shippingFee: number | string | null;
+  } | null;
+  /** The delivered/short-picked share of the order's pre-tax subtotal. */
+  reconciledSubtotal: number;
 }
 
 /**
- * REG-B305: reproduces invoices.service.ts:1454-1456's proration of an
- * order's tax by delivered/ordered subtotal (discount/fee stay whole).
+ * REG-B305 round 2: reproduces invoices.service.ts's proration of a
+ * short-picked order's tax (incl. category tax) by delivered/ordered
+ * subtotal off the DRAFT invoice — discount and the ALLOCATED shipping fee
+ * stay whole (they don't prorate by delivered qty), only tax scales with the
+ * delivered share. Exact for uniform lines; an approximation when a per-unit
+ * excise tax concentrates on specific lines within the order (documented,
+ * not a bug — the server folds category tax into one order-level
+ * `taxAmount`, so the client has no per-line breakdown to prorate more
+ * precisely).
  */
-export function reconciledAmountDue(input: {
-  orderSubtotal: number;
-  orderTax: number;
-  orderTotal: number;
-  reconciledSubtotal: number;
-}): number {
-  const { orderSubtotal, orderTax, orderTotal, reconciledSubtotal } = input;
-  if (!(orderSubtotal > 0) || !Number.isFinite(orderTotal) || !Number.isFinite(orderTax)) {
-    return reconciledSubtotal;
-  }
-  const deliveredShare = reconciledSubtotal / orderSubtotal;
-  const taxCarried = orderTax * (1 - deliveredShare);
-  return roundMoney(orderTotal - (orderSubtotal - reconciledSubtotal) - taxCarried);
+export function reconciledAmountDue(input: ReconciledAmountDueInput): number {
+  const reconciledSubtotal = Number.isFinite(input.reconciledSubtotal)
+    ? input.reconciledSubtotal
+    : 0;
+  const { draft } = input;
+  if (!draft) return reconciledSubtotal;
+
+  const draftSubtotal = finiteOrNull(draft.subtotal);
+  const taxAmount = finiteOrNull(draft.taxAmount) ?? 0;
+  const discount = finiteOrNull(draft.discount) ?? 0;
+  const shippingFee = finiteOrNull(draft.shippingFee) ?? 0;
+  const share = draftSubtotal != null && draftSubtotal > 0 ? reconciledSubtotal / draftSubtotal : 1;
+  return roundMoney(reconciledSubtotal - discount + shippingFee + taxAmount * share);
 }

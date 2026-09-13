@@ -45,6 +45,20 @@ export interface RouteRunOrder {
   subtotal?: number | string | null;
   tax?: number | string | null;
   total?: number | string | null;
+  // REG-B305 round 2: `Order.total` above carries NO discount and, on a
+  // split delivery, the WHOLE shipping fee on every visit — these plus
+  // `invoices` (the single open draft) are the real basis for the amount
+  // due. See lib/run-money.ts#orderAmountDue / #draftMoney.
+  discountAmount?: number | string | null;
+  shippingFee?: number | string | null;
+  invoices?: Array<{
+    id: string;
+    subtotal: number | string | null;
+    taxAmount: number | string | null;
+    discount: number | string | null;
+    shippingFee: number | string | null;
+    total: number | string | null;
+  }>;
 }
 
 export interface RouteRunStop {

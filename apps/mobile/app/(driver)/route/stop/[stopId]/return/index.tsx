@@ -170,7 +170,9 @@ export default function ReturnScreen() {
           message: e?.response?.data?.message ?? e?.message ?? "",
         };
       });
-      const { done, failed, queued = [] } = summarizeSubmissions(results);
+      // REG-B308: `queued` is always an array now (empty when nothing
+      // queued), so no default is needed here.
+      const { done, failed, queued } = summarizeSubmissions(results);
       if (done.length > 0 || queued.length > 0) {
         setSubmittedOrderIds((prev) => {
           const next = new Set(prev);

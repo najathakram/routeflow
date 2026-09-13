@@ -1837,22 +1837,29 @@ function ProductPickView({
           onSaved(order.orderNumber);
         },
         onError: async (err: Error) => {
-          // Release the latch on EVERY failure branch below — each of them
-          // either replays submitOrder (merge choice, license guard) or hands
-          // the operator the button back. Success deliberately stays latched:
-          // that path navigates away.
-          endSubmit();
-          // REG-B308: a queued offline create is a pending success, not a
-          // failure — mirror onSuccess's id-independent cleanup and leave via
-          // the same navigation the cancel path uses (no order id exists yet).
+          // REG-B308: classify FIRST. A queued offline create is a pending
+          // success, not a failure — it must NOT release the submit latch
+          // (endSubmit) or rotate the idempotency key (resetOrderSubmitKey)
+          // before finalizeBoundDraft() resolves: doing either re-arms the
+          // button and mints a fresh key while the ORIGINAL queued POST still
+          // carries the old one, so a double-tap in that window fires a
+          // SECOND create whose retry key can no longer dedupe against the
+          // one already queued. Mirror onSuccess's id-independent cleanup and
+          // leave via the same navigation the cancel path uses (no order id
+          // exists yet); only the fall-through error path below re-arms the
+          // button with endSubmit().
           const outcome = classifyMutationError(err);
           if (outcome.kind === "queued") {
-            resetOrderSubmitKey(customerId);
             await finalizeBoundDraft();
             showToast("Offline — order queued and will sync when you reconnect");
             onBack();
             return;
           }
+          // Release the latch on EVERY failure branch below — each of them
+          // either replays submitOrder (merge choice, license guard) or hands
+          // the operator the button back. Success deliberately stays latched:
+          // that path navigates away.
+          endSubmit();
           const errAny = err as unknown as {
             response?: {
               status?: number;

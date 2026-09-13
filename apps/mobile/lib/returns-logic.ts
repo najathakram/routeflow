@@ -335,8 +335,8 @@ export interface ReturnSubmissionResult {
 export function summarizeSubmissions(results: ReturnSubmissionResult[]): {
   done: string[];
   failed: { orderId: string; message: string }[];
-  /** REG-B307: present only when at least one result queued offline. */
-  queued?: string[];
+  /** REG-B307: an empty array when nothing queued offline, never omitted. */
+  queued: string[];
 } {
   const done: string[] = [];
   const failed: { orderId: string; message: string }[] = [];
@@ -354,7 +354,7 @@ export function summarizeSubmissions(results: ReturnSubmissionResult[]): {
       failed.push({ orderId: r.orderId, message: message || "Try again." });
     }
   }
-  return queued.length > 0 ? { done, failed, queued } : { done, failed };
+  return { done, failed, queued };
 }
 
 export function returnActionFlags(status: string): ReturnActionFlags {
