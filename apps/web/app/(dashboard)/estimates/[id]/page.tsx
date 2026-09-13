@@ -285,7 +285,7 @@ export default function EstimateDetailPage() {
             </>
           )}
 
-          {status === "ACCEPTED" && (
+          {canConvert && (
             <Button
               size="sm"
               leftIcon={<FileText className="h-4 w-4" />}
