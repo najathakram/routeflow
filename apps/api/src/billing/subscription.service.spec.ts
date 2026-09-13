@@ -151,4 +151,48 @@ describe("SubscriptionService.getSubscription", () => {
     expect(s.annualPrice).toBeNull(); // DEFS omits annualPrice → null-safe
     expect(s.addons).toEqual([{ sku: "SEAT_EXTRA", name: "Extra seat", quantity: 2, monthly: 24 }]);
   });
+
+  // RO-1: settings-billing + a future dashboard-wide banner both need to know WHY a tenant
+  // is read-only (trial_expired vs. subscription_cancelled vs. trial_cancelled) — today the
+  // view exposes only the raw `status` enum, never the reason sub-field.
+  it("RO-1 the subscription view carries the tenant's readOnlyReason", async () => {
+    const catalog = {
+      getVersionForTenant: jest.fn().mockResolvedValue({ definitions: DEFS, addonSkus: [] }),
+    } as any;
+    const prisma = {
+      tenantSubscription: { findUnique: jest.fn().mockResolvedValue(null) },
+      tenantAddon: { findMany: jest.fn().mockResolvedValue([]) },
+    } as any;
+    const meters = {} as any;
+
+    const readOnlyEntitlements = {
+      planKey: "STARTER",
+      planName: "Starter",
+      status: "READ_ONLY",
+      planVersionId: "v7",
+      trialEndsAt: null,
+      readOnlyReason: "trial_expired",
+    };
+    const readOnlySvc = new SubscriptionService(
+      prisma,
+      catalog,
+      { resolve: jest.fn().mockResolvedValue(readOnlyEntitlements) } as any,
+      meters,
+    );
+    const readOnlyView = await readOnlySvc.getSubscription("t-1");
+    expect(readOnlyView.readOnlyReason).toBe("trial_expired");
+
+    const activeSvc = new SubscriptionService(
+      prisma,
+      catalog,
+      {
+        resolve: jest
+          .fn()
+          .mockResolvedValue({ ...readOnlyEntitlements, status: "ACTIVE", readOnlyReason: null }),
+      } as any,
+      meters,
+    );
+    const activeView = await activeSvc.getSubscription("t-1");
+    expect(activeView.readOnlyReason).toBeNull();
+  });
 });

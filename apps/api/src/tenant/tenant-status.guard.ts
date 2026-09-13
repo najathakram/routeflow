@@ -134,6 +134,7 @@ export class TenantStatusGuard implements CanActivate {
       const allowedMutation =
         path.startsWith("/api/v1/auth/") ||
         path === "/api/v1/billing/subscribe" ||
+        path === "/api/v1/billing/quote" ||
         path === "/api/v1/billing/subscription" ||
         path.startsWith("/api/v1/billing/subscription/");
       if (!isRead && !allowedMutation) {

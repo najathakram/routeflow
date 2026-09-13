@@ -18,7 +18,7 @@ import { LEGACY_ADDON_KEY_TO_SKU } from "./plan-catalog.constants";
  * no-op success. Every other Stripe failure must be surfaced to the caller
  * (B107): never widen this predicate.
  */
-function isStripeResourceMissing(err: unknown): boolean {
+export function isStripeResourceMissing(err: unknown): boolean {
   const e = err as { code?: string; statusCode?: number } | undefined;
   return e?.code === "resource_missing" || e?.statusCode === 404;
 }
