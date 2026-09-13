@@ -359,19 +359,27 @@ private …` immediately followed by a `gh repo view --json visibility` read-bac
   pools PR-2b, 2026-09-04)** — exports
   `withAdvisoryLock<T>({family,key,mode:"wait"|"try",waitMs?}, fn): Promise<LockResult<T>>` where
   `LockResult<T> = {acquired:true,value:T}|{acquired:false}`, plus `LOCK_FAMILIES`
-  (`["order-merge","cron"] as const`) / `LockFamily`, `LockTimeoutError`/
+  (`["order-merge","cron","billing"] as const`) / `LockFamily`, `LockTimeoutError`/
   `LockUnavailableError` and a test-only `_resetLockPoolForTests()` (ends+clears ALL pools).
   Cross-process critical
   section on a Postgres advisory lock (`pg_advisory_lock(hashtext(family), hashtext(key))`), held
   on DEDICATED `pg.Pool`s it owns itself — **one pool per family, sized per family** (`cron`
-  `max: 12`, `order-merge` `max: 8`): a cron winner pins a slot for its whole tick (≤ 7
+  `max: 12`, `order-merge` `max: 8`, **`billing` `max: 4` (B342, 2026-09-13)** — short,
+  request-path checkouts like `order-merge`'s, but a far rarer settings action than per-order
+  volume): a cron winner pins a slot for its whole tick (≤ 7
   concurrently at the monthly peak, plus a straggling hourly sweep), which out of one shared
-  `max: 8` pool left merges 1–3 slots and 503s. BOTH pools set `keepAlive: true` /
+  `max: 8` pool left merges 1–3 slots and 503s. ALL THREE pools set `keepAlive: true` /
   `keepAliveInitialDelayMillis: 30_000` — a lock connection is SOCKET-IDLE for the whole hold (a
   cron tick's work runs on the Prisma pool), so an intermediate idle-reap would end the session,
   release the advisory lock mid-tick and let another replica win an election for a running job.
   `withAdvisoryLock` throws `TypeError` for a family outside `LOCK_FAMILIES`
-  BEFORE connecting, so a typo cannot stand up a third pool. Prisma's pool is private and offers no
+  BEFORE connecting, so a typo cannot stand up a fourth pool. **`billing`'s own call site
+  (B342):** `addon.service.ts enableAddon()` wraps its existing-check → Stripe
+  subscription-item-create → row-upsert window in ONE lock, key `addon:<tenantId>:<addonKey>`,
+  `mode:"wait"`, `waitMs:10_000` — closes a race where two concurrent enables both passed the
+  sequential "already active" guard, both created a live Stripe item, and the final upsert kept
+  only one `stripeItemId` (double billing, one handle left to stop it); full writeup in
+  `feature-modules-4.md`'s `billing/` section. Prisma's pool is private and offers no
   connection-pinning API, so this module never touches it and cannot deadlock against it. `wait`
   blocks up to `waitMs` (default 20s; SQLSTATE 55P03 on `lock_timeout` → `LockTimeoutError`); `try`
   returns `{acquired:false}` without calling `fn` or issuing UNLOCK when the lock is already held.
@@ -912,4 +920,3 @@ homeAddress` (the driver-home origin), and orders inherit `fulfillPath` from the
 - **`prisma/rls.sql`** — superseded pointer stub (comments only). The policy DDL lived here
   until it moved into the migration above; a second copy of the table list is how a table
   gets armed without the pre-flight ever checking it. Do not re-add DDL here.
-

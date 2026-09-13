@@ -8,6 +8,29 @@ newest first**. This file replaces the old habit of prepending each session's no
 below, and set `_meta.json` `"notes"` to that same note plus the pointer to this file —
 never accumulate history in `"notes"`.
 
+- **2026-09-13 — wave W1 "money that is wrong today" (branch `fix/w1-billing-money`, worktree
+  `rf-billing-trial`, base master `bc36a0dd`; map lands IN the code PR per #716's split, no
+  Bookkeeping-Follow-Up needed)** — `feature-modules-4.md` (`billing/`): B329 part
+  (`billing-math.ts` new `addMonthsUtc`/`addCycle`, preserves a rolled period's time-of-day;
+  anchor-ratchet half deliberately NOT fixed, blocked on a missing `anchorDay` column, `it.todo`
+  names it); B342 (`enableAddon()` serialises existing-check→Stripe-create→upsert per
+  tenant+addon through a new `"billing"` `withAdvisoryLock` family, `max:4`); STRIPE-CANCEL-2 +
+  STRIPE-RESUME-1 (`cancel()`'s READ_ONLY short-circuit now tells Stripe first; a hollow
+  `resume()` on a READ_ONLY tenant with a live sub now refuses instead of disarming
+  `onPaymentSucceeded`'s guard — both are seam damage from two different rounds of the #714
+  lane editing the same function); B218 (`planKeyToEnum()` throws on an unresolvable key
+  instead of defaulting to STARTER; `subscribe()` 400s, `applyScheduledDowngrades()` logs+skips
+  one bad row); `proration.service.ts` gains public `proratedDiff()`, promoted from a private
+  `SubscriptionMutationService` method. `feature-modules-1.md` (`platform-admin/`):
+  ADMIN-UPDATEPLAN-1 (`updatePlan()` now branches like the tenant path — upgrade stays instant
+  and surfaces `proratedNow`, downgrade now SCHEDULES at period end with no credit instead of
+  applying instantly; ledger emits `PLAN_DOWNGRADE_SCHEDULED` at `amountDelta:0`, never
+  `PLAN_CHANGED`, at request time); B216 (`updateStatus()` now clears an armed downgrade on a
+  REAL non-ACTIVE→ACTIVE admin reactivation, matching the two Stripe-webhook paths'
+  `disarmedDowngrade()`). `bootstrap-cross-cutting.md`: `db-locks.ts` — `LOCK_FAMILIES` gains
+  `"billing"` (`max:4`), worst-case pool-connection commentary and the "typo stands up a Nth
+  pool" line updated for the third family. web.md/mobile.md/packages.md untouched (no diff in
+  those trees). `validate-code-map.mjs`: PASS.
 - **2026-09-13 — F38 driver at-door money / offline close-out / run linkage (`docs/710-bookkeeping`,
   Option-B follow-up for PR #710 = master `14048230`)** — B305 (driver at-door amount due is now
   the order's open DRAFT invoice(s), never `Order.total` or a raw line sum — `RUN_STOP_INCLUDE`
@@ -244,4 +267,3 @@ react@18.3.1…`) and its `jest.config.js` `moduleNameMapper` twin — one repo-
 - **2026-09-08** — (branch `docs/673-signin-menu-bookkeeping`, Option-B bookkeeping follow-up for PR #673, mapped at `c138289c`) — **Sign-in menu focus-ring hotfix mapped.** `web.md`'s `components/site-header.tsx` bullet documents the Sign-in `DropdownMenu.Item asChild` anchors (`role="menuitem"`, icon + label + `ArrowUpRight` glyph): the `.signin-menu [role="menuitem"]` rule in `marketing.css` is now `display: flex; align-items: center; width: 100%; white-space: nowrap` with its own `:focus-visible` ring (`outline` + `outline-offset`) and `> * { outline: none }` on its children — was `inline`, so the ring painted once per line box (icon/label/arrow) and the arrow wrapped; resting colour unified `#6b81a0` → `#202124`. The `marketing-port.static.test.ts` bullet notes the 3 new R-MKT signin-menu CSS-rule-parser assertions (suite 59/59). Registry: B279 filed unbatched (ui-ux, medium) — `bugs.mjs prove`/`discharge` both require a `--batch` ledger shard by design (confirmed from source), so an unbatched row cannot reach `done`; full root-cause/fix/test-plan evidence written via `note` instead of a fabricated state. Lessons: L-098 appended (domain — a focusable element with more than one child is a flex/grid/block container with `white-space: nowrap`, the focus ring lives on the element never its children, pin with a CSS-rule test not a source-text grep); L-051 (2026-09-02, process, the pre-flagged headroom candidate from the #671 follow-up's own `_meta.json` note) archived, grep-confirmed clean. Register back to 40/40.
 
 **Older entries (archived 216, 2026-09-13 split):** [`CHANGELOG-ARCHIVE.md`](CHANGELOG-ARCHIVE.md) — full verbatim history back to the changelog's creation. `git log -- .claude/code-map` for anything older still.
-
