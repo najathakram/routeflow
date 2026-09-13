@@ -509,6 +509,23 @@ export default defineConfig({
       },
     },
 
+    // ── Apply advance to invoice (F09, spec 38) ────────────────────────────────
+    // REG-B13: web's invoice detail page can now apply a customer's
+    // advance-payment wallet balance (previously mobile-only — the web hook
+    // had zero callers). Mutating but self-contained: a throwaway `E2E B13 …`
+    // customer + invoice on the approved seed tenant, same residue tolerance
+    // 21/22/24/27/28/29 already take. Uses operator auth state.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's precedent.
+    {
+      name: "apply-advance",
+      testMatch: /38-apply-advance\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
     // ── Returns lifecycle (F08, spec 29) ───────────────────────────────────────
     // REG-B166: the returns list search box must actually filter (return #,
     // order #, or customer). REG-B75: the list's Value column and the "Total

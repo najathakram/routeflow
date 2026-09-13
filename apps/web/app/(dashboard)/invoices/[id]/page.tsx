@@ -30,6 +30,7 @@ import {
   Upload,
   X,
   Clock,
+  Wallet,
 } from "lucide-react";
 import { Badge, Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -57,6 +58,7 @@ import {
   useUpdateInvoiceShipment,
   useUpdateInvoiceTerms,
   useSetCheckStatus,
+  useApplyAdvanceToInvoice,
   type Invoice,
   type InvoiceStatus,
   type InvoicePayment,
@@ -65,6 +67,7 @@ import {
 import { useParams, useRouter } from "next/navigation";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
+import { useCustomerAdvancePayments } from "@/lib/api/customers";
 import { fmt, fmtCalendarDate, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
 import { formatQtySplit } from "@routeflow/pricing";
@@ -513,6 +516,101 @@ function RecordPaymentModal({
           )}
         </div>
       </form>
+    </Modal>
+  );
+}
+
+// ─── Apply advance modal (B13) ─────────────────────────────────────────────────
+
+/**
+ * Lists the customer's advance-payment wallet rows with a remaining balance
+ * and applies the picked one to this invoice — mirrors mobile's
+ * ApplyAdvanceSheet (apps/mobile/app/(operator)/(tabs)/invoices/[id].tsx), the
+ * first client for this action. The server caps the applied amount at
+ * min(wallet balance, invoice balance) and writes the InvoicePayment
+ * (method ADVANCE, reference AP-<id8>); the client does no money math.
+ */
+function ApplyAdvanceModal({
+  isOpen,
+  onClose,
+  customerId,
+  invoiceId,
+  invoiceNumber,
+  balanceDue,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  customerId: string;
+  invoiceId: string;
+  invoiceNumber: string;
+  balanceDue: number;
+}) {
+  const { toast } = useToast();
+  const { data, isLoading } = useCustomerAdvancePayments(customerId);
+  const applyAdvance = useApplyAdvanceToInvoice();
+  const open = (data ?? []).filter((ap) => Number(ap.balance) > 0.001);
+
+  const handleApply = (advancePaymentId: string, remaining: number) => {
+    const applied = Math.min(remaining, balanceDue);
+    if (
+      !window.confirm(
+        `${fmt(applied)} of the customer's advance will be applied to ${invoiceNumber}.`,
+      )
+    ) {
+      return;
+    }
+    applyAdvance.mutate(
+      { customerId, advancePaymentId, invoiceId },
+      {
+        onSuccess: () => {
+          toast({
+            title: "Advance applied",
+            description: `${fmt(applied)} applied.`,
+            variant: "success",
+          });
+          onClose();
+        },
+        onError: (e: any) =>
+          toast({
+            title: "Could not apply advance",
+            description: e?.response?.data?.message ?? e?.message ?? "Try again.",
+            variant: "error",
+          }),
+      },
+    );
+  };
+
+  return (
+    <Modal open={isOpen} onClose={onClose} title="Apply advance">
+      {isLoading ? (
+        <p className="py-6 text-center text-sm text-navy/60">Loading…</p>
+      ) : open.length === 0 ? (
+        <p className="py-6 text-center text-sm text-navy/60">
+          No advance balance for this customer. Record one from the customer page, or an overpaid
+          standalone payment creates one automatically.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {open.map((ap) => {
+            const remaining = Number(ap.balance) || 0;
+            return (
+              <button
+                key={ap.id}
+                type="button"
+                disabled={applyAdvance.isPending}
+                onClick={() => handleApply(ap.id, remaining)}
+                className="flex w-full items-center justify-between rounded-lg border border-surface-border bg-white px-3 py-2.5 text-left text-sm transition-colors hover:bg-surface-raised disabled:opacity-50"
+              >
+                <span className="flex items-center gap-2 text-navy/80">
+                  <Wallet className="h-3.5 w-3.5 text-navy/50" />
+                  {ap.reference || `Advance · ${fmtDate(ap.createdAt)}`}
+                </span>
+                <span className="font-medium text-navy">{fmt(remaining)}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </Modal>
   );
 }
@@ -1450,6 +1548,7 @@ export default function InvoiceDetailPage() {
   const isOperator = user?.role === "OPERATOR";
 
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
+  const [isAdvanceOpen, setIsAdvanceOpen] = React.useState(false);
   // Payment row whose "Remove credit" was clicked — confirm before un-applying.
   const [removingCreditPayment, setRemovingCreditPayment] = React.useState<InvoicePayment | null>(
     null,
@@ -2211,6 +2310,12 @@ export default function InvoiceDetailPage() {
               }
               items={[
                 { label: "Record Payment", onClick: () => setIsPaymentOpen(true) },
+                // B13: web had no way to apply a customer's advance-payment wallet balance —
+                // only mobile could. Same gate as Record Payment; the server also refuses a
+                // settled/dead/forgiven invoice (CREDIT_NOT_APPLICABLE) regardless.
+                ...(invoice.customerId
+                  ? [{ label: "Apply Advance", onClick: () => setIsAdvanceOpen(true) }]
+                  : []),
                 { label: "Write Off", onClick: () => setIsWriteOffOpen(true), danger: true },
               ]}
             />
@@ -2879,6 +2984,17 @@ export default function InvoiceDetailPage() {
         balanceDue={balanceDue}
         isPending={recordPayment.isPending}
       />
+
+      {isAdvanceOpen && invoice.customerId && (
+        <ApplyAdvanceModal
+          isOpen={isAdvanceOpen}
+          onClose={() => setIsAdvanceOpen(false)}
+          customerId={invoice.customerId}
+          invoiceId={invoice.id}
+          invoiceNumber={invoice.invoiceNumber}
+          balanceDue={balanceDue}
+        />
+      )}
 
       <EditPaymentModal
         isOpen={!!editingPayment}
