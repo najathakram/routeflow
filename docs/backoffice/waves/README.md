@@ -12,7 +12,7 @@ Same shape as the bug registry: **the file is proof, Plane is a view.**
 |---|---|
 | `waves.json` | Authoritative task lists, ordering, dependencies, gates. Edit here. |
 | `docs/superpowers/plans/2026-09-13-backoffice-waves.md` | The narrative: diagnosis, ordering rule, execution model. Read once, for the *why*. |
-| `docs/superpowers/plans/2026-09-12-backoffice-phase-0-truth.md` | Wave B2's own 15-task implementation plan. Not duplicated here. |
+| `docs/superpowers/plans/2026-09-12-backoffice-phase-0-truth.md` | Wave W2's own 15-task implementation plan. Not duplicated here. |
 | `.claude/campaign/bugs.jsonl` | The registry rows a wave's `ref` fields point at. Not duplicated here. |
 | Plane ROAD items | **Pointers only.** A ROAD item names its wave and links here; it never holds a second copy of the task list. |
 
@@ -29,7 +29,7 @@ for(const v of w.waves) console.log(v.id, v.status.padEnd(20), v.title, '| depen
 # The task list for one wave
 node -e "const w=require('./docs/backoffice/waves/waves.json');
 const v=w.waves.find(x=>x.id===process.argv[1]);
-console.log(v.title+' — '+v.rule); v.tasks.forEach(t=>console.log(' ',t.ref.padEnd(18),(t.sev||'-').padEnd(9),t.status.padEnd(16),t.what));" B1
+console.log(v.title+' — '+v.rule); v.tasks.forEach(t=>console.log(' ',t.ref.padEnd(18),(t.sev||'-').padEnd(9),t.status.padEnd(16),t.what));" W1
 ```
 
 ## Field meanings

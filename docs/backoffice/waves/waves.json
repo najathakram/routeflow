@@ -10,36 +10,36 @@
   "lanes": {
     "A": {
       "serial": [
-        "B1",
-        "B2",
-        "B4",
-        "B5",
-        "B6"
+        "W1",
+        "W2",
+        "W4",
+        "W5",
+        "W6"
       ],
       "note": "the money/truth spine"
     },
     "B": {
       "serial": [
-        "B3"
+        "W3"
       ],
       "note": "admin seat security; disjoint files, runs in parallel from day one"
     }
   },
   "gates": [
     "Red-first regression proving the wrong value, per registry row.",
-    "Money carve-out (B1, B2 reconciliation, B5): Opus refute-first review is mandatory.",
+    "Money carve-out (W1, W2 reconciliation, W5): Opus refute-first review is mandatory.",
     "No data repair inside a bug fix; reconciliation is a separate owner-signed dry-run-first step.",
     "Compose boot gate before push on anything touching module wiring.",
     "One PR per wave segment, batched by file locality - not one per bug."
   ],
   "waves": [
     {
-      "id": "B1",
+      "id": "W1",
       "title": "Money that is wrong today",
       "rule": "Money moves incorrectly, or entitlements do not match what was paid for.",
       "dependsOn": [],
       "blocks": [
-        "B2"
+        "W2"
       ],
       "moneyCarveOut": true,
       "status": "ready",
@@ -138,17 +138,17 @@
       ]
     },
     {
-      "id": "B2",
+      "id": "W2",
       "title": "Truth (= Phase 0)",
       "rule": "Every number the admin surface shows must be derived, not estimated, and every tenant must be classifiable.",
       "dependsOn": [
-        "B1"
+        "W1"
       ],
       "dependsWhy": "Reconciling the subscription set while the billing writes that produce it are still wrong reconciles to wrong values.",
       "blocks": [
-        "B4",
-        "B5",
-        "B6"
+        "W4",
+        "W5",
+        "W6"
       ],
       "moneyCarveOut": true,
       "status": "planned-not-started",
@@ -234,12 +234,12 @@
       ]
     },
     {
-      "id": "B3",
+      "id": "W3",
       "title": "The admin seat: impersonation and isolation",
       "rule": "An admin acting on a tenant must not leak across tenants, and must be auditable.",
       "dependsOn": [],
       "parallel": true,
-      "parallelWhy": "Touches auth/impersonation/mobile-session files; B1 touches billing/*. Disjoint - no worktree contention.",
+      "parallelWhy": "Touches auth/impersonation/mobile-session files; W1 touches billing/*. Disjoint - no worktree contention.",
       "status": "ready",
       "tasks": [
         {
@@ -303,11 +303,11 @@
       ]
     },
     {
-      "id": "B4",
+      "id": "W4",
       "title": "Tenant lifecycle completeness",
       "rule": "Every state a tenant can reach has a way out, and somebody is told when it is reached.",
       "dependsOn": [
-        "B2"
+        "W2"
       ],
       "status": "blocked",
       "tasks": [
@@ -361,11 +361,11 @@
       ]
     },
     {
-      "id": "B5",
+      "id": "W5",
       "title": "What we sell (= Phase 3)",
       "rule": "The catalog we sell from must be editable safely and consistent with what checkout charges.",
       "dependsOn": [
-        "B2"
+        "W2"
       ],
       "dependsWhy": "A plan editor over untrustworthy plan data is a liability.",
       "moneyCarveOut": true,
@@ -389,11 +389,11 @@
       ]
     },
     {
-      "id": "B6",
+      "id": "W6",
       "title": "What we show (= Phases 5-6)",
       "rule": "One place to see a tenant whole, and a portal where the tenant can serve itself.",
       "dependsOn": [
-        "B2"
+        "W2"
       ],
       "status": "blocked",
       "tasks": [
@@ -411,7 +411,7 @@
           "ref": "P6-EXPORT",
           "status": "open",
           "relatedRoad": "ROAD-79",
-          "what": "Export/erasure - also discharges the contractual data-export guarantee and answers the CANCELLED data-access problem from B4."
+          "what": "Export/erasure - also discharges the contractual data-export guarantee and answers the CANCELLED data-access problem from W4."
         }
       ]
     }

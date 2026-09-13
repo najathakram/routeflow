@@ -60,7 +60,7 @@ conflict risk.
 For five customers, *perfect* is narrow and concrete. Each of them must be able to:
 - be created on the right plan (Phase 0 T10/T14 — live catalog in the plan picker, `PLAN_KEYS` validation),
 - trial → subscribe → pay, and cancel cleanly (03's billing branch: TRIAL-1, RO-1, STRIPE-CANCEL-1, `/billing/quote`),
-- be billed correctly month over month (wave B1 remainder: B327 dunning that never fires, B342 double add-on, B216 armed downgrade, B218 STARTER shadow, B329 anchor drift, the unfiled admin `updatePlan` no-proration path),
+- be billed correctly month over month (wave W1 remainder: B327 dunning that never fires, B342 double add-on, B216 armed downgrade, B218 STARTER shadow, B329 anchor drift, the unfiled admin `updatePlan` no-proration path),
 - never see another tenant's data (B323 — the one open cross-tenant critical),
 - and the owner must see **true** numbers for them (Phase 0 T9 one MRR engine, T11 reconciliation).
 
@@ -96,13 +96,13 @@ Get the eight finished units into production. This is the whole job for the next
 **Exit criterion:** zero finished-but-unmerged work; two criticals closed (B305, B349); freeze lifted.
 
 ### Phase B — BACK OFFICE · days 2–6 · lane A only
-Wave **B1** remainder, then wave **B2** (Phase 0), in that order — reconciliation must not run
+Wave **W1** remainder, then wave **W2** (Phase 0), in that order — reconciliation must not run
 against billing writes that are still wrong.
 
-- **B1 remainder** (one PR, file-local): B327, B342, B216, B218, B329, `ADMIN-UPDATEPLAN-1`. Money carve-out: red-first per row, one in-lane Opus refute, one independent pre-merge.
-- **B2 = Phase 0**, split into two sessions on its own seams, not one:
-  - **B2a — schema + classification:** T1 (migration, owner-gated window), T2, T3 (dry run reviewed by owner), T8.
-  - **B2b — truth + house tenant:** T4–T6, T9 (one MRR engine — fixes the $499-vs-$0 split), T10, T11 (reconciliation, owner signs the dry-run diff), T12–T15. T7 is consumed from the billing branch, not rebuilt.
+- **W1 remainder** (one PR, file-local): B327, B342, B216, B218, B329, `ADMIN-UPDATEPLAN-1`. Money carve-out: red-first per row, one in-lane Opus refute, one independent pre-merge.
+- **W2 = Phase 0**, split into two sessions on its own seams, not one:
+  - **W2a — schema + classification:** T1 (migration, owner-gated window), T2, T3 (dry run reviewed by owner), T8.
+  - **W2b — truth + house tenant:** T4–T6, T9 (one MRR engine — fixes the $499-vs-$0 split), T10, T11 (reconciliation, owner signs the dry-run diff), T12–T15. T7 is consumed from the billing branch, not rebuilt.
 - **B323** (cross-tenant sweep, critical) rides in this phase — it is a back-office trust issue for real customers, not a generic bug.
 
 **Exit criterion:** the five customers can be created, billed, cancelled, and seen truthfully; the admin dashboard's numbers are derived, not estimated.
@@ -123,7 +123,7 @@ Each batch: hand-fixed, red-first, one in-lane refute, one independent pre-merge
 Only once Phases A–B have landed. Order by what a prospect sees:
 
 1. **Demo-visible little things** from the Gap Ledger (roughly ten): paste-a-list bulk order entry; products-and-units summary line; invoice send toggles (hide cost / MSRP / balance); returns tab on the customer page; available-credit tile; reorder-list-to-PO button; "Generate description" button reusing the existing Claude client; hero tagline + banner on the buyer shop; a Quick Order shortcut into Your Shelf; a weekly emailed P&L via one `@LeaderCron`.
-2. Wave **B3** (admin seat: B138, B140, B165, B173 — the F33 rows are done) — sales-questionnaire material.
+2. Wave **W3** (admin seat: B138, B140, B165, B173 — the F33 rows are done) — sales-questionnaire material.
 3. Then ROAD by dependency: lot expiry (ROAD-90 — one nullable column first), then the rest.
 
 **Exit criterion:** a thirty-minute demo has no moment where we say "we don't have that yet" for something K-HUB shows.

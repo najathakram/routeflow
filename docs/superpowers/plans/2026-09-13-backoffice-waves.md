@@ -1,4 +1,4 @@
-# Back-office delivery plan — waves B1–B6
+# Back-office delivery plan — waves W1–W6
 
 **Status:** proposed 2026-09-13 by the fleet lead. Supersedes nothing; it *sequences* work that
 already exists as specs, plans and registry rows but has never been ordered.
@@ -7,7 +7,7 @@ already exists as specs, plans and registry rows but has never been ordered.
 
 - `docs/superpowers/specs/2026-09-12-platform-backoffice-design.md` — the umbrella design (house tenant, Phases 0–6)
 - `docs/superpowers/specs/2026-09-12-backoffice-phase-0-truth-design.md` — Phase 0 design
-- `docs/superpowers/plans/2026-09-12-backoffice-phase-0-truth.md` — Phase 0's own 15-task plan (= wave B2)
+- `docs/superpowers/plans/2026-09-12-backoffice-phase-0-truth.md` — Phase 0's own 15-task plan (= wave W2)
 - The published K-HUB Gap Ledger — competitive gaps, 83 one-sentence fixes
 - `.claude/campaign/bugs.jsonl` — the registry rows named below
 
@@ -49,7 +49,7 @@ truth). Everything else follows from that.
 
 ## 3. The waves
 
-### Wave B1 — Money that is wrong today
+### Wave W1 — Money that is wrong today
 **Rule:** money moves incorrectly, or entitlements do not match what was paid for. Nothing here is
 cosmetic; every row is a real over- or under-charge.
 
@@ -68,11 +68,11 @@ cosmetic; every row is a real over- or under-charge.
 inside a fix.** Two separate money-direction errors were caught by that gate on 2026-09-13 alone.
 
 **Note on B216:** adjacent to the in-flight lane (`onCheckoutCompleted` / armed-downgrade
-semantics). Fold it into that lane if it lands before B1 starts; otherwise it heads B1.
+semantics). Fold it into that lane if it lands before W1 starts; otherwise it heads W1.
 
 ---
 
-### Wave B2 — Truth (= Phase 0, already fully planned)
+### Wave W2 — Truth (= Phase 0, already fully planned)
 **Rule:** every number the admin surface shows must be derived, not estimated, and every tenant
 must be classifiable. This wave is **already written** as a 15-task plan — do not re-plan it.
 
@@ -83,7 +83,7 @@ is what fixes the $499-vs-$0.00 split) · `CreateTenantDto` plan validation ·
 **subscription-set reconciliation** (owner signs off a dry-run diff) · house-tenant bootstrap ·
 `TenantMirrorService` · web plan picker + MRR field rename · full verification.
 
-**Depends on B1.** Reconciling the subscription set while the billing writes that produce it are
+**Depends on W1.** Reconciling the subscription set while the billing writes that produce it are
 still wrong reconciles to wrong values. Task 7 (`/billing/quote` allowlist) is **already
 reassigned** to the in-flight billing lane — consume it, do not rebuild it.
 
@@ -91,9 +91,9 @@ reassigned** to the in-flight billing lane — consume it, do not rebuild it.
 
 ---
 
-### Wave B3 — The admin seat: impersonation and isolation
+### Wave W3 — The admin seat: impersonation and isolation
 **Rule:** an admin acting on a tenant must not leak across tenants, and must be auditable.
-**This wave is independent of B1/B2 files and should run in parallel from day one.**
+**This wave is independent of W1/W2 files and should run in parallel from day one.**
 
 | Item | Sev | Batch | What is wrong |
 |---|---|---|---|
@@ -107,9 +107,9 @@ reassigned** to the in-flight billing lane — consume it, do not rebuild it.
 
 ---
 
-### Wave B4 — Tenant lifecycle completeness
+### Wave W4 — Tenant lifecycle completeness
 **Rule:** every state a tenant can reach has a way out, and somebody is told when it is reached.
-**Depends on B2** (needs `Tenant.class` and trustworthy states).
+**Depends on W2** (needs `Tenant.class` and trustworthy states).
 
 - **CANCELLED is a dead end** — 403 on every method *including GET*, no banner, no CTA; only a
   platform-admin `updateStatus` restores. **This is a gating precondition: do not enable Stripe
@@ -126,16 +126,16 @@ reassigned** to the in-flight billing lane — consume it, do not rebuild it.
 
 ---
 
-### Wave B5 — What we sell (= Phase 3)
+### Wave W5 — What we sell (= Phase 3)
 Draft/publish plan editor · pricing consistency across catalog and checkout · the GoHighLevel
-$9.99 SKU. **Depends on B2** (a plan editor over untrustworthy plan data is a liability).
+$9.99 SKU. **Depends on W2** (a plan editor over untrustworthy plan data is a liability).
 
 ---
 
-### Wave B6 — What we show (= Phases 5–6)
+### Wave W6 — What we show (= Phases 5–6)
 Tenant 360: merged timeline, contacts, tasks, health score, attention queue. Tenant portal:
 self-serve card/invoice, credits, **export/erasure** — which also discharges the contractual
-data-export guarantee in ROAD-79 and answers the CANCELLED data-access problem from B4.
+data-export guarantee in ROAD-79 and answers the CANCELLED data-access problem from W4.
 
 ---
 
@@ -144,18 +144,18 @@ data-export guarantee in ROAD-79 and answers the CANCELLED data-access problem f
 **Two lanes, not six.** The waves are a sequence, but not a single-file queue:
 
 ```
-Lane A (serial spine):   B1 ──▶ B2 ──▶ B4 ──▶ B5 ──▶ B6
-Lane B (parallel):       B3 ─────────────────▶ (lands whenever ready)
+Lane A (serial spine):   W1 ──▶ W2 ──▶ W4 ──▶ W5 ──▶ W6
+Lane B (parallel):       W3 ─────────────────▶ (lands whenever ready)
 ```
 
-- **B3 runs from day one alongside B1.** It touches auth/impersonation/mobile-session files; B1
+- **W3 runs from day one alongside W1.** It touches auth/impersonation/mobile-session files; W1
   touches `billing/*`. Disjoint — no worktree contention, no merge conflicts.
-- **B1 → B2 is the one hard serialization.** Reconciliation must not run against wrong writes.
-- **B4/B5 both depend on B2 only**, so they can split into two lanes once B2 lands.
+- **W1 → W2 is the one hard serialization.** Reconciliation must not run against wrong writes.
+- **W4/W5 both depend on W2 only**, so they can split into two lanes once W2 lands.
 
 **Per-wave gates (non-negotiable):**
 1. Red-first regression proving the *wrong value*, per registry row.
-2. Money carve-out on B1, B2's reconciliation, and B5: **Opus refute-first review, mandatory.**
+2. Money carve-out on W1, W2's reconciliation, and W5: **Opus refute-first review, mandatory.**
 3. No data repair inside a bug fix. Reconciliation is a separate, owner-signed, dry-run-first step.
 4. Compose boot gate before push on anything touching module wiring.
 5. One PR per wave segment, not per bug — batch by file locality to keep review coherent.
@@ -168,7 +168,7 @@ wave takes only part of a batch, note the split in the PR body so the remainder 
 
 ## 5. What this plan deliberately does not do
 
-- **Does not re-plan Phase 0.** B2 *is* the existing 15-task plan.
+- **Does not re-plan Phase 0.** W2 *is* the existing 15-task plan.
 - **Does not re-file any registry row.** Waves reference; they do not duplicate.
 - **Does not duplicate ROAD items.** ROAD-76…ROAD-95 remain the feature backlog; the wave items
   added alongside them are an index over that backlog plus the registry, not a second copy.
