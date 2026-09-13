@@ -1,5 +1,15 @@
 import { TenantClass } from "@prisma/client";
-import { TEST_TENANT_SLUGS, TEST_TENANT_PATTERN } from "../../../../scripts/lib/test-tenants.cjs";
+
+/**
+ * Inlined from scripts/lib/test-tenants.cjs (the repo-root single source of truth for the
+ * test-tenant policy). Repo-root `scripts/` is NOT copied into the API Docker image
+ * (apps/api/Dockerfile), so this file cannot import that module directly — `nest build` would
+ * pass under host tsc (which resolves the relative path fine) but fail with TS2307 inside the
+ * image build, where the file the import points to simply isn't there. Kept byte-for-byte equal
+ * to the .cjs values; tenant-class.util.spec.ts asserts the two never drift.
+ */
+const TEST_TENANT_SLUGS = new Set(["test", "e2e-routeflow", "routeflow-demo"]);
+const TEST_TENANT_PATTERN = /^(qa|e2e|ux-audit)-/;
 
 /** The one hardcoded exception: routeflow-demo is TEST_TENANT_SLUGS-approved for the write
  * policy but is classified DEMO here — visible in lists, excluded from revenue and sends,
