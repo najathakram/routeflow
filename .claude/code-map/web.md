@@ -1550,3 +1550,29 @@ today]`, under the shared `["invoices"]`-prefix invalidation every payment mutat
   stale-poll notification surfaces the bell/Activity-card states rely on.
 - **`app/(dashboard)/layout.tsx`** / **`app/(dashboard)/customers/page.tsx`** — bell entry point
   and a CRM-linked-customer affordance per ux-spec.md's "Entry points" section.
+
+### 2026-09-13 — F15 customer-removal lifecycle (B156/B157/B158/B159/B170) + B13 apply-advance
+
+- **`app/(dashboard)/customers/page.tsx`** — `useUrlFilters` gained `unassigned`/`removed`
+  boolean filter chips wired straight to the API's new `ListCustomersDto` params (see api.md
+  `customers/` — `buildListWhere`); the old client-side `unassignedOnly`
+  useMemo filter is gone (server does it now, keeping list/export parity — B158). Removed
+  customers (`deletedAt` set) render a red "Removed" status badge and their row's actions
+  collapse to Restore-only (`useRestoreCustomer`), instead of the normal edit/delete set.
+- **`app/(dashboard)/customers/[id]/page.tsx`** — a page-level "Removed" banner with an inline
+  Restore button appears when `customer.deletedAt` is set; the header badge/Edit button and the
+  Account Status card all branch to a Restore-only surface in that state, so a removed
+  customer's detail page can no longer be edited or have its status changed from here (matches
+  the service-layer refusal — B170).
+- **`lib/api/customers.ts`** — `useCustomers`/`useExportCustomers` params gained
+  `unassigned?`/`removed?` string flags passed straight through as query params.
+- **`app/(dashboard)/invoices/[id]/page.tsx`** (B13) — new `ApplyAdvanceModal`, wired into the
+  "Record Payment" dropdown as an "Apply Advance" item (gated on `invoice.customerId`). Lists
+  the customer's open advance-payment wallet rows via `useCustomerAdvancePayments`, spends one
+  via the already-existing `useApplyAdvanceToInvoice` hook (`lib/api/invoices.ts` — previously
+  dead code with no caller; mobile's `ApplyAdvanceSheet` in
+  `apps/mobile/app/(operator)/(tabs)/invoices/[id].tsx` was the only client using the server
+  route). Confirms via `window.confirm` and toasts, matching `RecordPaymentModal`'s existing
+  pattern. Proof: `e2e/38-apply-advance.spec.ts` (project `apply-advance` in
+  `playwright.config.ts`) — throwaway customer + invoice, applies a $40 advance, asserts the
+  invoice goes PARTIAL with an `AP-`-referenced ADVANCE payment row and the wallet balance zeroes.
