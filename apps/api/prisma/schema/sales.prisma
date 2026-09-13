@@ -128,6 +128,11 @@ model Customer {
   phone                 String?
   notes                 String?
   zohoContactId         String?     @unique
+  // Set only for Customer rows on the routeflow-hq house tenant: the platform Tenant this
+  // row represents. Null for every ordinary tenant's own customers. Written by
+  // TenantMirrorService (see tenant-mirror.service.ts); no writer exists before Phase 0's
+  // HQ bootstrap task runs.
+  representsTenantId   String?     @unique
   fulfillPath           FulfillPath @default(ROUTE)
   deliveryWindowStart   String?
   deliveryWindowEnd     String?

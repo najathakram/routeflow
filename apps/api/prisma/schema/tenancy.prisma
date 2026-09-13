@@ -25,6 +25,19 @@ enum TenantPlan {
   BUSINESS
   PROFESSIONAL
   ENTERPRISE
+  GROWTH
+  SCALE
+}
+
+// Phase 0 truth: classifies a Tenant row for KPI/MRR scoping (production revenue vs.
+// demo/test/house-internal noise). Default PRODUCTION; backfilled by
+// scripts/backfill-tenant-class.mjs, set explicitly by bootstrap-house-tenant.mjs for
+// routeflow-hq, and changeable via PlatformAdminService.updateTenantClass().
+enum TenantClass {
+  PRODUCTION
+  DEMO
+  TEST
+  INTERNAL
 }
 
 enum UserStatus {
@@ -71,6 +84,7 @@ model Tenant {
   name           String
   status         TenantStatus @default(TRIAL)
   plan           TenantPlan   @default(STARTER)
+  class          TenantClass  @default(PRODUCTION)
   trialEndsAt    DateTime?
   // Billing plans-as-data: the published PlanVersion this tenant is pinned to
   // (the source of truth for entitlements; the `plan` enum stays a legacy shadow).
@@ -192,6 +206,7 @@ model Tenant {
   @@index([status])
   @@index([deletedAt])
   @@index([planVersionId])
+  @@index([class])
 }
 
 model TenantConfig {
