@@ -5,13 +5,17 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
-import { PriceType } from "@prisma/client";
+import { EstimateStatus, PriceType } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { computeLineSubtotal, getTierPrice, roundMoney } from "@routeflow/pricing";
 import { loadMsrpMap } from "../common/msrp";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { NumberingService } from "../import/numbering.service";
+
+// B70: terminal status set — CONVERTED is terminal and cannot be re-transitioned; voided
+// (DECLINED) is also terminal per the requirement that send/decline/accept refuse both.
+export const TERMINAL_ESTIMATE_STATUSES = ["CONVERTED", "DECLINED"] as const;
 
 @Injectable()
 export class EstimatesService {
@@ -22,6 +26,28 @@ export class EstimatesService {
   ) {}
 
   private readonly logger = new Logger(EstimatesService.name);
+
+  /**
+   * B70: atomic claim for estimate status transitions. Ensures only one call succeeds
+   * when multiple transitions are attempted concurrently; throws NotFoundException if
+   * estimate is missing, or BadRequestException if the estimate is in a terminal state
+   * (CONVERTED or DECLINED/voided) and the transition is not allowed.
+   */
+  private async claimTransition(id: string, to: EstimateStatus, refusal: string): Promise<void> {
+    const r = await this.prisma.forTenant().estimate.updateMany({
+      where: {
+        id,
+        status: { notIn: [...TERMINAL_ESTIMATE_STATUSES] },
+      },
+      data: { status: to },
+    });
+    if (r.count === 1) return;
+    const row = await this.prisma.forTenant().estimate.findFirst({
+      where: { id },
+    });
+    if (!row) throw new NotFoundException("Estimate not found");
+    throw new BadRequestException(refusal);
+  }
 
   /**
    * The next `EST-<year>-####` number, from the SAME per-tenant-year primitive the
@@ -231,29 +257,22 @@ export class EstimatesService {
   }
 
   async send(id: string) {
-    return this.prisma.forTenant().estimate.update({ where: { id }, data: { status: "SENT" } });
+    await this.claimTransition(id, "SENT", "Converted or voided estimates cannot be re-sent");
+    return this.prisma.forTenant().estimate.findUniqueOrThrow({ where: { id } });
   }
-  // Atomic claim: a CONVERTED estimate must never be re-accepted, or the
+  // Atomic claim: a CONVERTED or voided estimate must never be re-accepted, or the
   // convert path below will mint a second invoice for the same estimate.
   async accept(id: string) {
-    const { count } = await this.prisma.forTenant().estimate.updateMany({
-      where: { id, status: { not: "CONVERTED" } },
-      data: { status: "ACCEPTED" },
-    });
-    if (count === 0) {
-      throw new BadRequestException("Converted estimates cannot be re-accepted");
-    }
+    await this.claimTransition(id, "ACCEPTED", "Converted estimates cannot be re-accepted");
     return this.prisma.forTenant().estimate.findUniqueOrThrow({ where: { id } });
   }
   async decline(id: string) {
-    return this.prisma.forTenant().estimate.update({ where: { id }, data: { status: "DECLINED" } });
+    await this.claimTransition(id, "DECLINED", "Converted or voided estimates cannot be declined");
+    return this.prisma.forTenant().estimate.findUniqueOrThrow({ where: { id } });
   }
   async voidEstimate(id: string) {
-    const est = await this.prisma.forTenant().estimate.findUnique({ where: { id } });
-    if (!est) throw new NotFoundException("Estimate not found");
-    if (est.status === "CONVERTED")
-      throw new BadRequestException("Converted estimates cannot be voided");
-    return this.prisma.forTenant().estimate.update({ where: { id }, data: { status: "DECLINED" } });
+    await this.claimTransition(id, "DECLINED", "Converted estimates cannot be voided");
+    return this.prisma.forTenant().estimate.findUniqueOrThrow({ where: { id } });
   }
 
   async convertToInvoice(id: string) {
