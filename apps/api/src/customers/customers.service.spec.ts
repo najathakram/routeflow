@@ -209,6 +209,150 @@ describe("CustomersService", () => {
 
       expect((result.data[0] as any).regulatedCount).toBe(2);
     });
+
+    // ─── REG-B156: unassigned=1 ─────────────────────────────────────────────
+
+    it('REG-B156: filters to customers with no stop on a SCHEDULED route when unassigned="1"', async () => {
+      prisma.customer.findMany.mockResolvedValue([]);
+      prisma.customer.count.mockResolvedValue(0);
+
+      await service.findAll({ unassigned: "1", page: 1, limit: 20 } as any);
+
+      expect(prisma.customer.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            routeStops: { none: { route: { kind: "SCHEDULED" } } },
+          }),
+        }),
+      );
+    });
+
+    it('REG-B156: omits the unassigned filter when "unassigned" is not exactly "1"', async () => {
+      prisma.customer.findMany.mockResolvedValue([]);
+      prisma.customer.count.mockResolvedValue(0);
+
+      await service.findAll({ unassigned: "0", page: 1, limit: 20 } as any);
+
+      expect(prisma.customer.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.not.objectContaining({ routeStops: expect.anything() }),
+        }),
+      );
+    });
+
+    // ─── REG-B170: removed=1 ────────────────────────────────────────────────
+
+    it('REG-B170: shows ONLY soft-deleted customers when removed="1"', async () => {
+      prisma.customer.findMany.mockResolvedValue([]);
+      prisma.customer.count.mockResolvedValue(0);
+
+      await service.findAll({ removed: "1", page: 1, limit: 20 } as any);
+
+      expect(prisma.customer.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ deletedAt: { not: null } }),
+        }),
+      );
+    });
+
+    it("REG-B170: excludes removed customers by default (unchanged behaviour)", async () => {
+      prisma.customer.findMany.mockResolvedValue([]);
+      prisma.customer.count.mockResolvedValue(0);
+
+      await service.findAll({ page: 1, limit: 20 });
+
+      expect(prisma.customer.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ deletedAt: null }),
+        }),
+      );
+    });
+  });
+
+  // ─── changeStatus ─────────────────────────────────────────────────────────
+
+  describe("changeStatus", () => {
+    it("updates the user's status", async () => {
+      prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
+      prisma.user.update.mockResolvedValue({ id: "user-1", status: "SUSPENDED" });
+
+      await service.changeStatus("cust-1", { status: "SUSPENDED" } as any);
+
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "user-1" },
+          data: { status: "SUSPENDED" },
+        }),
+      );
+    });
+
+    it("REG-B170: refuses to change status for a removed customer (zombie write)", async () => {
+      prisma.customer.findUnique.mockResolvedValue({ ...MOCK_CUSTOMER, deletedAt: new Date() });
+
+      await expect(service.changeStatus("cust-1", { status: "ACTIVE" } as any)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it("should throw NotFoundException for non-existent customer", async () => {
+      prisma.customer.findUnique.mockResolvedValue(null);
+      await expect(
+        service.changeStatus("nonexistent", { status: "ACTIVE" } as any),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ─── exportCustomers ──────────────────────────────────────────────────────
+
+  describe("exportCustomers", () => {
+    beforeEach(() => {
+      prisma.customer.findMany.mockResolvedValue([]);
+    });
+
+    it("REG-B158: excludes supplier-only and soft-deleted customers, same as findAll", async () => {
+      await service.exportCustomers({} as any);
+
+      expect(prisma.customer.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ supplierOnly: false, deletedAt: null }),
+        }),
+      );
+    });
+
+    it("REG-B158: applies the regulated filter, same as findAll (was missing entirely)", async () => {
+      await service.exportCustomers({ regulated: "1" } as any);
+
+      expect(prisma.customer.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            authorizations: { some: { trackedCategory: { requiresLicense: true } } },
+          }),
+        }),
+      );
+    });
+
+    it("REG-B158: applies the search filter, same as findAll (was missing entirely)", async () => {
+      await service.exportCustomers({ search: "acme" } as any);
+
+      expect(prisma.customer.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            OR: expect.arrayContaining([{ businessName: expect.any(Object) }]),
+          }),
+        }),
+      );
+    });
+
+    it("REG-B170: exports removed customers when removed=1 (export what the screen shows)", async () => {
+      await service.exportCustomers({ removed: "1" } as any);
+
+      expect(prisma.customer.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ deletedAt: { not: null } }),
+        }),
+      );
+    });
   });
 
   // ─── findOne ──────────────────────────────────────────────────────────────
@@ -527,6 +671,15 @@ describe("CustomersService", () => {
     it("should throw NotFoundException for non-existent customer", async () => {
       prisma.customer.findUnique.mockResolvedValue(null);
       await expect(service.update("nonexistent", {} as any)).rejects.toThrow(NotFoundException);
+    });
+
+    it("REG-B170: refuses to edit a removed customer", async () => {
+      prisma.customer.findUnique.mockResolvedValue({ ...MOCK_CUSTOMER, deletedAt: new Date() });
+
+      await expect(service.update("cust-1", { businessName: "New Name" } as any)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(prisma.customer.update).not.toHaveBeenCalled();
     });
 
     // ─── update: defaultDepositPercent (WP1) ────────────────────────────────

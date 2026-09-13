@@ -22,6 +22,7 @@ import {
   LIFETIME_INVOICED_EXCLUDED,
 } from "../invoices/invoice-status-sets";
 import { geocodeAddress, GeocodableAddress, GeocodeCoords } from "../common/geocode.util";
+import { SCHEDULED_ROUTE_KIND_WHERE } from "../routes/route-stop-filters.util";
 import { StorageService } from "../storage/storage.service";
 import { compressDocument } from "../storage/compress.util";
 import { CreateCustomerDto } from "./dto/create-customer.dto";
@@ -114,16 +115,20 @@ export class CustomersService {
     return { total: addresses.length, geocoded, failed };
   }
 
-  async findAll(query: ListCustomersDto) {
-    const page = Number(query.page ?? 1);
-    const limit = Number(query.limit ?? 20);
-    const skip = (page - 1) * limit;
-
+  /**
+   * REG-B158: the ONE where-builder for both the paginated list and the CSV
+   * export — they drifted (export had no supplierOnly/deletedAt/regulated
+   * clause at all) because each hand-rolled its own `where`. Also the landing
+   * site for REG-B156 (unassigned) and REG-B170 (removed): list/export drift
+   * on a new filter becomes unwritable, not merely tested.
+   */
+  private buildListWhere(query: ListCustomersDto): any {
     const where: any = {
       // Exclude supplier-only contacts (vendors imported from expense CSVs that have no orders)
       supplierOnly: false,
-      // Exclude soft-deleted customers (RF-197)
-      deletedAt: null,
+      // REG-B170: default excludes soft-deleted customers (RF-197); removed=1 is an explicit
+      // trash view — it shows ONLY removed customers, never mixed with live ones.
+      deletedAt: query.removed === "1" ? { not: null } : null,
     };
     if (query.search) {
       const q = query.search;
@@ -151,6 +156,21 @@ export class CustomersService {
     if (query.regulated === "1") {
       where.authorizations = { some: { trackedCategory: { requiresLicense: true } } };
     }
+    // REG-B156: no stop on a currently SCHEDULED route. Shares SCHEDULED_ROUTE_KIND_WHERE with
+    // routes.service.ts's getCustomerRouteAssignments so the "Currently in" hint on the same
+    // screen can never disagree with this filter about what counts as assigned.
+    if (query.unassigned === "1") {
+      where.routeStops = { none: { route: SCHEDULED_ROUTE_KIND_WHERE } };
+    }
+    return where;
+  }
+
+  async findAll(query: ListCustomersDto) {
+    const page = Number(query.page ?? 1);
+    const limit = Number(query.limit ?? 20);
+    const skip = (page - 1) * limit;
+
+    const where = this.buildListWhere(query);
 
     // Build orderBy. F4-002: sortBy reaches Prisma's orderBy, so it MUST be an
     // allowlisted scalar column — a free-form field name lets a caller inject an
@@ -721,7 +741,12 @@ export class CustomersService {
   }
 
   async update(id: string, dto: UpdateCustomerDto) {
-    await this.findCustomerOrThrow(id);
+    const existing = await this.findCustomerOrThrow(id);
+    // REG-B170: a removed customer's page still rendered its edit controls; refuse the write
+    // rather than silently editing a customer nobody can see in the list.
+    if (existing.deletedAt) {
+      throw new ConflictException("Restore the customer first");
+    }
     return this.prisma.forTenant().customer.update({
       where: { id },
       data: {
@@ -762,6 +787,12 @@ export class CustomersService {
 
   async changeStatus(id: string, dto: ChangeCustomerStatusDto) {
     const customer = await this.findCustomerOrThrow(id);
+    // REG-B170: changeStatus had no removed gate at all — clicking "Active" on a removed
+    // customer's still-visible status buttons wrote a zombie (deletedAt set + User.status
+    // ACTIVE) hidden from every list yet able to log in. Refuse instead; restore first.
+    if (customer.deletedAt) {
+      throw new ConflictException("Restore the customer first");
+    }
     return this.prisma.forTenant().user.update({
       where: { id: customer.userId },
       data: { status: dto.status },
@@ -1633,28 +1664,7 @@ export class CustomersService {
   // ─── Export CSV ────────────────────────────────────────────────────────────
 
   async exportCustomers(query: ListCustomersDto): Promise<string> {
-    const where: any = {};
-    if (query.search) {
-      const q = query.search;
-      where.OR = [
-        { businessName: { contains: q, mode: "insensitive" } },
-        { contactName: { contains: q, mode: "insensitive" } },
-        { phone: { contains: q, mode: "insensitive" } },
-        { email: { contains: q, mode: "insensitive" } },
-        { displayName: { contains: q, mode: "insensitive" } },
-      ];
-    }
-    if (query.status) {
-      where.user = { status: query.status };
-    }
-    if (query.customerType) {
-      where.customerType = query.customerType;
-    }
-    if (query.tag) {
-      where.tagAssignments = {
-        some: { tagId: query.tag },
-      };
-    }
+    const where = this.buildListWhere(query);
 
     const customers = await this.prisma.forTenant().customer.findMany({
       where,
