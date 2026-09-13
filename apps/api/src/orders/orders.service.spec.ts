@@ -50,6 +50,7 @@ import { InvoicesService } from "../invoices/invoices.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
+import { TenantContextService } from "../tenant/tenant-context.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InventoryService } from "../inventory/inventory.service";
@@ -134,6 +135,11 @@ describe("OrdersService", () => {
   // WP3: captured so the credit-limit plan-flag tests can assert whether/how
   // hasFlag is consulted under each PLAN_FLAG_ENFORCEMENT state.
   let entitlementsService: { hasFlag: jest.Mock };
+  // B323: a recording mock, not the real AsyncLocalStorage-backed class — module-boundary
+  // mocking (this file's convention) means we assert sweepAllPendingOrders() CALLS
+  // tenantCtx.run(tenantId, fn) with each group's own tenantId (and still invokes fn so
+  // the merge underneath runs), rather than re-deriving ALS behavior in a unit test.
+  let tenantCtx: { run: jest.Mock };
   let mockQueue: { add: jest.Mock };
   let mockGateway: {
     emitStopCompleted: jest.Mock;
@@ -145,6 +151,7 @@ describe("OrdersService", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    tenantCtx = { run: jest.fn((_tenantId: string | null, fn: () => unknown) => fn()) };
     mockQueue = { add: jest.fn() };
     mockGateway = {
       emitStopCompleted: jest.fn(),
@@ -252,6 +259,9 @@ describe("OrdersService", () => {
           provide: RegulatedLedgerService,
           useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
         },
+        // B323: sweepAllPendingOrders() re-enters each group's own tenant scope via
+        // tenantCtx.run() before calling into anything ambient-scoped.
+        { provide: TenantContextService, useValue: tenantCtx },
       ],
     }).compile();
 
@@ -2574,6 +2584,42 @@ describe("OrdersService", () => {
       expect(prisma.order.groupBy).toHaveBeenCalledWith(
         expect.objectContaining({ where: expect.objectContaining({ skipAutoMerge: false }) }),
       );
+    });
+  });
+
+  describe("sweepAllPendingOrders — tenant scoping (B323)", () => {
+    it("REG-B323 sweepAllPendingOrders runs each customer group inside its own tenant context and skips null-tenant groups", async () => {
+      const mergeSpy = jest
+        .spyOn(service, "mergeAllPendingForCustomer")
+        .mockImplementation(async (customerId: string) =>
+          customerId === "cust-a" ? "ord-a-winner" : "ord-b-winner",
+        );
+      const warnSpy = jest
+        .spyOn((service as any).logger, "warn")
+        .mockImplementation(() => undefined);
+
+      prisma.order.groupBy.mockResolvedValue([
+        { customerId: "cust-a", tenantId: "tenant-a", _count: { _all: 2 } },
+        { customerId: "cust-b", tenantId: "tenant-b", _count: { _all: 3 } },
+        { customerId: "cust-null", tenantId: null, _count: { _all: 2 } },
+      ]);
+
+      const result = await service.sweepAllPendingOrders();
+
+      // (a) each non-null group's merge ran inside ITS OWN tenant's context — never the
+      // other group's, and never ambient/unscoped.
+      expect(tenantCtx.run).toHaveBeenCalledTimes(2);
+      expect(tenantCtx.run).toHaveBeenNthCalledWith(1, "tenant-a", expect.any(Function));
+      expect(tenantCtx.run).toHaveBeenNthCalledWith(2, "tenant-b", expect.any(Function));
+      expect(mergeSpy).toHaveBeenCalledWith("cust-a");
+      expect(mergeSpy).toHaveBeenCalledWith("cust-b");
+
+      // (b) the null-tenant group is skipped: never merged, never wrapped in tenantCtx.run,
+      // and a warning is logged instead of guessing a tenant.
+      expect(mergeSpy).not.toHaveBeenCalledWith("cust-null");
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("cust-null"));
+
+      expect(result).toEqual({ customers: 3, merged: 2 });
     });
   });
 
