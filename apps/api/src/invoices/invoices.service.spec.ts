@@ -2903,6 +2903,25 @@ describe("InvoicesService", () => {
       expect(prisma.invoice.update).not.toHaveBeenCalled();
     });
 
+    // B314: a VOID (bounced) payment carries no money — counting it here permanently blocked
+    // the revert with no way out (voiding the invoice doesn't help; it already IS voided-money).
+    it("B314: a VOID-only payment history no longer blocks the edit — only LIVE payments do", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        { id: "inv-1", invoiceNumber: "INV-1", internalNotes: null },
+      ]);
+      // Mock is where-aware: a real DB with status:{not:"VOID"} would exclude the sole VOID
+      // row and return 0; without that filter (the bug), it counts the VOID row and returns 1.
+      prisma.invoicePayment.count.mockImplementation(async ({ where }: any) =>
+        where?.status?.not === "VOID" ? 0 : 1,
+      );
+      prisma.invoice.update.mockResolvedValue({ id: "inv-1", status: "DRAFT" });
+
+      const reverted = await service.revertLinkedInvoicesForOrderEdit("ord-1");
+
+      expect(reverted).toEqual(["inv-1"]);
+      expect(prisma.invoice.update).toHaveBeenCalled();
+    });
+
     // B1 (WP-D1): a deposit mirror issued at ORDER PLACEMENT is SENT on purpose, and
     // reverting it is IRREVERSIBLE (a pre-delivery order-linked DRAFT can never be
     // re-sent). It is exempt — the widened reconcile keeps it in lockstep instead.
@@ -2990,6 +3009,41 @@ describe("InvoicesService", () => {
       prisma.invoice.update.mockResolvedValue({ id: "inv-dep", status: "DRAFT" });
 
       expect(await service.revertLinkedInvoicesForOrderEdit("o-dep")).toEqual(["inv-dep"]);
+    });
+  });
+
+  describe("revertInvoiceToDraft (standalone)", () => {
+    it("B314: a VOID-only payment history no longer blocks the manual revert-to-Draft action", async () => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-1",
+        status: InvoiceStatus.SENT,
+      });
+      // Where-aware, same technique as the order-edit variant above: a real query with
+      // status:{not:"VOID"} excludes the sole VOID row (0); without the filter it counts it (1).
+      prisma.invoicePayment.count.mockImplementation(async ({ where }: any) =>
+        where?.status?.not === "VOID" ? 0 : 1,
+      );
+      prisma.invoice.update.mockResolvedValue({ id: "inv-1", status: "DRAFT" });
+
+      const result = await service.revertInvoiceToDraft("inv-1");
+
+      expect(result).toMatchObject({ status: "DRAFT" });
+      expect(prisma.invoice.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: InvoiceStatus.DRAFT }) }),
+      );
+    });
+
+    it("still blocks when a LIVE (non-VOID) payment is recorded", async () => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-1",
+        status: InvoiceStatus.SENT,
+      });
+      // A LIVE payment counts regardless of the `where` shape (unlike the VOID-only test above,
+      // this isn't proving the filter — it's proving a real payment still blocks).
+      prisma.invoicePayment.count.mockResolvedValue(1);
+
+      await expect(service.revertInvoiceToDraft("inv-1")).rejects.toThrow(BadRequestException);
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
     });
   });
 
@@ -6019,6 +6073,85 @@ describe("InvoicesService", () => {
       for (const [args] of calls) {
         expect((args as any).data.settledAt).toEqual(new Date(futureSettlement));
       }
+    });
+
+    it("B311: a concurrent office payment can no longer overpay the invoice past its live balance", async () => {
+      // Stateful stand-in for the invoice row: `paid` only grows once a payment actually
+      // commits, so a caller that re-reads it AFTER the row lock is released sees the truth.
+      let paid = 0;
+      prisma.invoice.findFirst.mockImplementation(async () => ({
+        id: "inv-1",
+        invoiceNumber: "INV-1",
+        status: "SENT",
+        total: 100,
+        payments: paid > 0 ? [{ amount: paid, status: "PAID" }] : [],
+      }));
+      prisma.invoicePayment.create.mockImplementation(async ({ data }: any) => {
+        paid += Number(data.amount);
+        return { id: `pay-${paid}`, ...data };
+      });
+      prisma.invoicePayment.findMany.mockResolvedValue([]);
+      prisma.paymentCounter.upsert.mockResolvedValue({ id: "test-tenant", next: 1 });
+
+      // `tenantTransaction` normally hands `recordStandalonePayment` a fresh `$executeRaw`
+      // jest.fn() PER CALL (prisma-mock.ts), so it can't carry cross-call lock state on its
+      // own. This override keeps every other tx model shared with `prisma` (as `forTenant()`
+      // already does) and adds ONE property: a `$executeRaw` that blocks on a promise chain
+      // until the PRIOR holder's whole transaction settles — the same property a real Postgres
+      // `FOR UPDATE` gives (held until COMMIT), reproduced here because a live DB is out of
+      // scope for a unit spec (see db-locks.db.spec.ts for that primitive's own coverage). The
+      // fix now locks ALL of a call's allocation ids in ONE statement (`Prisma.join`, a real
+      // `Sql` fragment — not a plain id string), so this mock keys the queue by a single
+      // constant: this test's two calls both target the SAME one invoice, which is the only
+      // contention this scenario needs to prove.
+      const LOCK_KEY = "invoice-lock";
+      const invoiceLocks = new Map<string, Promise<unknown>>();
+      prisma.tenantTransaction.mockImplementation(async (fn: any) => {
+        let release: (() => void) | undefined;
+        const sharedTx = {
+          invoice: prisma.invoice,
+          invoicePayment: prisma.invoicePayment,
+          paymentCounter: prisma.paymentCounter,
+          advancePayment: prisma.advancePayment,
+          $executeRaw: async (..._args: any[]) => {
+            const prior = invoiceLocks.get(LOCK_KEY) ?? Promise.resolve();
+            const gate = new Promise<void>((res) => (release = res));
+            invoiceLocks.set(
+              LOCK_KEY,
+              prior.then(() => gate),
+            );
+            await prior;
+            return 0;
+          },
+          $queryRaw: jest.fn().mockResolvedValue([]),
+        };
+        try {
+          return await fn(sharedTx);
+        } finally {
+          release?.();
+        }
+      });
+
+      const makeCall = () =>
+        service.recordStandalonePayment(
+          {
+            customerId: "cust-1",
+            totalAmount: 80,
+            method: "CASH",
+            allocations: [{ invoiceId: "inv-1", amount: 80 }],
+          } as any,
+          { assertAllocationsWithinBalance: true },
+        );
+
+      // Two concurrent $80 payments against a $100 invoice. Without the row lock, both read
+      // paid=0 before either commits, both pass "80 <= 100", and both land — 160 on a $100
+      // invoice. With the lock, the second call's read is guaranteed fresh: it sees the
+      // first's $80 already applied and correctly rejects (only $20 remains) instead of
+      // silently overpaying.
+      const results = await Promise.allSettled([makeCall(), makeCall()]);
+
+      expect(paid).toBeLessThanOrEqual(100);
+      expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     });
 
     describe("setCheckStatus CLEARED", () => {

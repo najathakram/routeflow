@@ -4297,10 +4297,11 @@ export class InvoicesService {
         `Only SENT, VIEWED, or OVERDUE invoices with no payments can be reverted to Draft. Current status: ${inv.status}`,
       );
     }
-    // Block if there are any payments
+    // Block if there are any LIVE payments. B314: a VOID (bounced) payment carries no money —
+    // counting it here made a bounced check permanently block the revert with no way out.
     const paymentCount = await this.prisma
       .forTenant()
-      .invoicePayment.count({ where: { invoiceId: id } });
+      .invoicePayment.count({ where: { invoiceId: id, status: { not: "VOID" } } });
     if (paymentCount > 0) {
       throw new BadRequestException(
         "Cannot revert to Draft: this invoice has payments recorded. Void it instead.",
@@ -4386,7 +4387,11 @@ export class InvoicesService {
       // Under the caller's tx: hold the row before the count, so the payment-block below reads a
       // state no concurrent recordPayment can change until this tx commits or rolls back.
       if (opts?.lockRows) await lockRowsNoWait(db, "Invoice", [inv.id], "INVOICE_BUSY");
-      const paymentCount = await db.invoicePayment.count({ where: { invoiceId: inv.id } });
+      // B314: same live-payments filter as revertInvoiceToDraft — a VOID (bounced) payment
+      // carries no money and must never block an edit that would otherwise revert cleanly.
+      const paymentCount = await db.invoicePayment.count({
+        where: { invoiceId: inv.id, status: { not: "VOID" } },
+      });
       if (paymentCount > 0) {
         throw new BadRequestException(
           `This order can't be edited while invoice ${inv.invoiceNumber} has payments recorded. ` +
@@ -5469,6 +5474,26 @@ export class InvoicesService {
     const { tenantShort, start } = await this.nextPaymentNumber(dto.allocations.length);
 
     return this.prisma.tenantTransaction(async (tx) => {
+      // B311: the buyer/online path's anti-overpay guard reads the invoice's balance and
+      // THEN checks it — with no row lock between the two, a concurrent office payment on the
+      // same invoice could commit in between, and this check would still pass against the
+      // STALE balance it already read, overpaying the invoice exactly like B310's wallet race.
+      // Lock every allocation's invoice FIRST, all in ONE statement in id-sorted order —
+      // Opus review (F39): taking them one at a time inside the loop below (in whatever order
+      // the caller's `allocations` array happens to list them) would let two concurrent
+      // multi-allocation calls acquire the same two rows in opposite orders and deadlock
+      // (db-locks.ts's "take rows in a consistent order" rule). Plain blocking `FOR UPDATE`,
+      // not the house `lockRowsNoWait` NOWAIT primitive: the competing office payment takes NO
+      // explicit lock of its own — it just INSERTs an InvoicePayment, which only holds `FOR KEY
+      // SHARE` on the parent Invoice row — and `FOR NO KEY UPDATE` does NOT conflict with `FOR
+      // KEY SHARE`, so NOWAIT here would not actually exclude that writer; `FOR UPDATE` does.
+      if (opts?.assertAllocationsWithinBalance) {
+        const ids = [...new Set(dto.allocations.map((a) => a.invoiceId))].sort();
+        if (ids.length > 0) {
+          await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id IN (${Prisma.join(ids)}) ORDER BY id FOR UPDATE`;
+        }
+      }
+
       const payments: any[] = [];
       for (let i = 0; i < dto.allocations.length; i++) {
         const alloc = dto.allocations[i];
