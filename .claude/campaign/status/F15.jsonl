@@ -1,7 +1,7 @@
-{"id":"B131","batch":"F15","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0b2c3a0a"}
-{"id":"B141","batch":"F15","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0b2c3a0a"}
-{"id":"B156","batch":"F15","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0b2c3a0a"}
-{"id":"B157","batch":"F15","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0b2c3a0a"}
-{"id":"B158","batch":"F15","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0b2c3a0a"}
-{"id":"B159","batch":"F15","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0b2c3a0a"}
-{"id":"B170","batch":"F15","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0b2c3a0a"}
+{"id":"B131","batch":"F15","tier":"T1","state":"proven","pr":693,"proof":"REG-B131 T1: generateDailyOrders skips an active template whose customer was removed","evidence":null,"roundSha":"0b2c3a0a","buildPlan":null}
+{"id":"B141","batch":"F15","tier":"T1","state":"proven","pr":693,"proof":"REG-B141 T6: the seller-context guard refuses a removed customer's ACTIVE link, and names it in the log","evidence":null,"roundSha":"0b2c3a0a","buildPlan":null}
+{"id":"B156","batch":"F15","tier":"T2","state":"in-flight","pr":null,"proof":null,"evidence":null,"roundSha":"0b2c3a0a","claimedFrom":"queued","claimedBy":"next-bug-fixing-wave"}
+{"id":"B157","batch":"F15","tier":"T1","state":"in-flight","pr":null,"proof":null,"evidence":null,"roundSha":"0b2c3a0a","claimedFrom":"queued","claimedBy":"next-bug-fixing-wave"}
+{"id":"B158","batch":"F15","tier":"T1","state":"in-flight","pr":null,"proof":null,"evidence":null,"roundSha":"0b2c3a0a","claimedFrom":"queued","claimedBy":"next-bug-fixing-wave"}
+{"id":"B159","batch":"F15","tier":"T1","state":"in-flight","pr":null,"proof":null,"evidence":null,"roundSha":"0b2c3a0a","claimedFrom":"queued","claimedBy":"next-bug-fixing-wave"}
+{"id":"B170","batch":"F15","tier":"T1","state":"in-flight","pr":null,"proof":null,"evidence":null,"roundSha":"0b2c3a0a","claimedFrom":"queued","claimedBy":"next-bug-fixing-wave"}
