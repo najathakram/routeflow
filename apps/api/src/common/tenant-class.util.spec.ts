@@ -1,3 +1,6 @@
+import { spawnSync } from "child_process";
+import path from "path";
+import { pathToFileURL } from "url";
 import { TenantClass } from "@prisma/client";
 import { classifyTenantSlug } from "./tenant-class.util";
 
@@ -45,5 +48,52 @@ describe("classifyTenantSlug", () => {
 
   it("classifies everything else as PRODUCTION", () => {
     expect(classifyTenantSlug("acme-wholesale")).toBe(TenantClass.PRODUCTION);
+  });
+});
+
+// F2 (Task 3 Step 1 of the phase-0 truth plan): cross-check backfill-tenant-class.mjs's exported
+// classify() against classifyTenantSlug over every TenantClass. Moved here from
+// backfill-tenant-class.db.spec.ts (2026-09-13, PR #718 fix round 2) — apps/api/package.json's
+// Jest config ignores `\.db\.spec\.ts$` in the normal lane, so the assertion never ran there
+// despite needing no DB; this file has no such exclusion.
+const CLI = path.resolve(__dirname, "../../scripts/backfill-tenant-class.mjs");
+const CLI_HREF = pathToFileURL(CLI).href;
+
+const CROSS_CHECK_SLUGS = [
+  "acme-wholesale", // PRODUCTION
+  "routeflow-demo", // DEMO
+  "qa-abc", // TEST (qa- pattern)
+  "e2e-x", // TEST (e2e- pattern)
+  "ux-audit-123", // TEST (ux-audit- pattern)
+  "test", // TEST (exact slug)
+  "e2e-routeflow", // TEST (exact slug)
+  "routeflow-hq", // INTERNAL
+];
+
+/**
+ * Imports the real `classify()` from backfill-tenant-class.mjs (ESM) in a
+ * `node --input-type=module` child — this suite runs under ts-jest's CommonJS transform, same
+ * shim shape as backfill-legacy-tenant-ids-script.spec.ts — and returns its result per slug.
+ */
+function classifyViaCli(slugs: string[]): string[] {
+  const program = `
+    import { classify } from ${JSON.stringify(CLI_HREF)};
+    console.log(JSON.stringify(${JSON.stringify(slugs)}.map(classify)));
+  `;
+  const result = spawnSync(process.execPath, ["--input-type=module"], {
+    input: program,
+    encoding: "utf-8",
+  });
+  if (result.status !== 0) {
+    throw new Error(`classify() child failed: ${result.stderr}`);
+  }
+  return JSON.parse(result.stdout.trim());
+}
+
+describe("backfill-tenant-class.mjs classify() vs classifyTenantSlug (no DB)", () => {
+  it("agrees with classifyTenantSlug for every TenantClass across the fixture slugs", () => {
+    const fromCli = classifyViaCli(CROSS_CHECK_SLUGS);
+    const fromUtil = CROSS_CHECK_SLUGS.map((slug) => classifyTenantSlug(slug));
+    expect(fromCli).toEqual(fromUtil);
   });
 });

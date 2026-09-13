@@ -10,6 +10,7 @@
 //   node apps/api/scripts/backfill-tenant-class.mjs           # dry run, prints table only
 //   node apps/api/scripts/backfill-tenant-class.mjs --apply   # writes the classification
 
+import { pathToFileURL } from "node:url";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
@@ -65,7 +66,14 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Only run the CLI when this file is the process entry point — never on import. Without this
+// guard, importing `classify` alone (as tenant-class.util.spec.ts's cross-check does) would also
+// invoke `main()`, which either crashes on a missing DATABASE_URL outside the CLI or, worse,
+// silently opens a real Postgres connection as an unawaited side effect of a pure-function import.
+const isMain = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;
+if (isMain) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
