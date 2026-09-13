@@ -342,6 +342,7 @@ function CreateEstimateModal({
 
     const dto = {
       customerId: selectedCustomer!.id,
+      issueDate,
       expiresAt: expiryDate,
       notes: notes.trim() || undefined,
       items: lineItems.map((li) => ({
@@ -918,7 +919,7 @@ export default function EstimatesPage() {
                     {est.customer?.businessName ?? "—"}
                   </td>
                   <td className="px-4 py-3 text-navy">
-                    {fmtCalendarDate((est as any).issueDate ?? est.createdAt)}
+                    {fmtCalendarDate(est.issueDate ?? est.createdAt)}
                   </td>
                   <td className="px-4 py-3 text-navy">
                     {fmtCalendarDate((est as any).expiresAt ?? (est as any).expiryDate)}

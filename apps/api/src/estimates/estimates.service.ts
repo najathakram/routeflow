@@ -148,6 +148,7 @@ export class EstimatesService {
           taxAmount: tax,
           discount,
           total,
+          issueDate: dto.issueDate ? new Date(dto.issueDate) : null,
           expiresAt: dto.expiresAt
             ? new Date(dto.expiresAt)
             : dto.expiryDate

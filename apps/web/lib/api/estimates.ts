@@ -102,7 +102,8 @@ export function useDeclineEstimate() {
 
 export function useConvertEstimateToInvoice() {
   const qc = useQueryClient();
-  return useMutation<{ invoiceId: string }, Error, string>({
+  // Server returns the created Invoice keyed `id` (B15-NAV) — not `invoiceId`.
+  return useMutation<{ id: string }, Error, string>({
     mutationFn: (id) => apiClient.post(`/estimates/${id}/convert`).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["estimates"] });

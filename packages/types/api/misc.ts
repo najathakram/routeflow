@@ -62,6 +62,8 @@ export interface Estimate {
   customerId: string;
   customer?: { id: string; businessName: string; contactName?: string; address?: string };
   status: EstimateStatus;
+  /** Operator-picked issue date (F27); null on legacy rows — fall back to createdAt. */
+  issueDate?: string | null;
   expiresAt?: string;
   subtotal: number;
   taxAmount?: number;

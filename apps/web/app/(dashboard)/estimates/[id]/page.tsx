@@ -118,8 +118,9 @@ export default function EstimateDetailPage() {
     sendEstimate.mutate(estimate.id, {
       onSuccess: () => {
         toast({
-          title: "Estimate sent",
-          description: `${estimate.estimateNumber} has been sent to the customer.`,
+          // POST /estimates/:id/send only flips DRAFT -> SENT; no email goes out.
+          title: "Estimate marked as sent",
+          description: "No email was sent.",
           variant: "success",
         });
       },
@@ -173,13 +174,17 @@ export default function EstimateDetailPage() {
 
   const handleConvert = () => {
     convertToInvoice.mutate(estimate.id, {
-      onSuccess: ({ invoiceId }) => {
+      onSuccess: (inv) => {
         toast({
           title: "Invoice created",
           description: `${estimate.estimateNumber} has been converted to an invoice.`,
           variant: "success",
         });
-        router.push(`/invoices/${invoiceId}`);
+        // B15-NAV: the server returns the created Invoice keyed `id` (not
+        // `invoiceId`). Never navigate to /invoices/undefined — without an id,
+        // stay here; the hook's onSuccess already refetches the estimate.
+        const target = inv?.id ?? (inv as unknown as { invoiceId?: string } | undefined)?.invoiceId;
+        if (target) router.push(`/invoices/${target}`);
       },
       onError: () => {
         toast({
@@ -211,7 +216,8 @@ export default function EstimateDetailPage() {
     });
   };
 
-  const canConvert = status === "DRAFT" || status === "SENT" || status === "ACCEPTED";
+  // F27: mirrors the API rule — only ACCEPTED estimates can be converted.
+  const canConvert = status === "ACCEPTED";
   // Wave E / imp-10b, L-072 (sibling-sweep find): dropped a comparison against a
   // phantom "EXPIRED" EstimateStatus value the schema has never had.
   const isReadOnly = status === "DECLINED";
@@ -244,16 +250,7 @@ export default function EstimateDetailPage() {
                 onClick={handleSend}
                 loading={sendEstimate.isPending}
               >
-                Send
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<FileText className="h-4 w-4" />}
-                onClick={handleConvert}
-                loading={convertToInvoice.isPending}
-              >
-                Convert to Invoice
+                Mark as sent
               </Button>
               <Button
                 size="sm"
@@ -284,15 +281,6 @@ export default function EstimateDetailPage() {
                 loading={declineEstimate.isPending}
               >
                 Mark Declined
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<FileText className="h-4 w-4" />}
-                onClick={handleConvert}
-                loading={convertToInvoice.isPending}
-              >
-                Convert to Invoice
               </Button>
             </>
           )}
@@ -355,7 +343,7 @@ export default function EstimateDetailPage() {
                 </p>
                 <p className="text-sm text-navy/70">
                   <span className="font-medium text-navy">Issue Date:</span>{" "}
-                  {fmtCalendarDate((estimate as any).issueDate ?? estimate.createdAt)}
+                  {fmtCalendarDate(estimate.issueDate ?? estimate.createdAt)}
                 </p>
                 <p className="text-sm text-navy/70">
                   <span className="font-medium text-navy">Valid Until:</span>{" "}
@@ -498,7 +486,7 @@ export default function EstimateDetailPage() {
               <div className="flex justify-between">
                 <dt className="text-navy/70">Issue Date</dt>
                 <dd className="text-navy">
-                  {fmtCalendarDate((estimate as any).issueDate ?? estimate.createdAt)}
+                  {fmtCalendarDate(estimate.issueDate ?? estimate.createdAt)}
                 </dd>
               </div>
               <div className="flex justify-between">
