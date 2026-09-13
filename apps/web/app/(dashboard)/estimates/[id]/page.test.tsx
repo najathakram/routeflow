@@ -136,13 +136,14 @@ describe("EstimateDetailPage — REG-B15 convert control gated to ACCEPTED (rt-b
   });
 });
 
-// rt-b15: REG-B15-NAV — the server's created-Invoice response is keyed `id`,
-// not `invoiceId`. Navigating on the wrong key sends the caller to
+// rt-b15: REG-B394 (planning-time alias "B15-NAV", minted as B394 in the
+// registry) — the server's created-Invoice response is keyed `id`, not
+// `invoiceId`. Navigating on the wrong key sends the caller to
 // /invoices/undefined instead of the real invoice.
-describe("EstimateDetailPage — REG-B15-NAV convert navigates to returned invoice (rt-b15)", () => {
+describe("EstimateDetailPage — REG-B394 convert navigates to returned invoice (rt-b15)", () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it("REG-B15-NAV successful convert navigates to the returned invoice", async () => {
+  it("REG-B394 successful convert navigates to the returned invoice", async () => {
     const user = userEvent.setup();
     convertEstimateMutate.mockImplementation(
       (_id: string, opts?: { onSuccess?: (inv: unknown) => void }) => {

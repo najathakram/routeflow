@@ -127,46 +127,9 @@ describe("EstimateDetailPage — REG-B17 send toast/label no longer claim delive
   });
 });
 
-// REG-B15 / REG-B15-NAV / PIN-B15 (rt-b15, bug-test-plan.md T20-T23, T34).
-// Pre-existing, already-correct UI behavior (control visibility / navigation
-// / count) that legitimately passes today and is not part of the rt-b17-web
-// bug fix.
-describe("EstimateDetailPage — REG-B15 pre-gate checks (existing, already-correct behavior)", () => {
-  beforeEach(() => jest.clearAllMocks());
-
-  it("REG-B15 convert control is absent on DRAFT", () => {
-    renderEstimatePage({ status: "DRAFT" as EstimateStatus });
-
-    expect(screen.queryAllByRole("button", { name: /convert to invoice/i })).toHaveLength(0);
-  });
-
-  it("REG-B15 convert control is absent on SENT", () => {
-    renderEstimatePage({ status: "SENT" as EstimateStatus });
-
-    expect(screen.queryAllByRole("button", { name: /convert to invoice/i })).toHaveLength(0);
-  });
-
-  it("REG-B15-NAV successful convert navigates to the returned invoice", async () => {
-    const user = userEvent.setup();
-    convertEstimateMutate.mockImplementation(
-      (_id: string, opts?: { onSuccess?: (inv: unknown) => void }) => {
-        opts?.onSuccess?.({ id: "inv_1" });
-      },
-    );
-
-    renderEstimatePage({ status: "ACCEPTED" as EstimateStatus });
-
-    const convertButton = screen.getAllByRole("button", { name: /convert to invoice/i })[0];
-    await user.click(convertButton);
-
-    await waitFor(() => expect(routerPushMock).toHaveBeenCalled());
-
-    expect(routerPushMock).toHaveBeenCalledWith("/invoices/inv_1");
-  });
-
-  it("PIN-B15 ACCEPTED renders exactly 2 convert controls", () => {
-    renderEstimatePage({ status: "ACCEPTED" as EstimateStatus });
-
-    expect(screen.getAllByRole("button", { name: /convert to invoice/i })).toHaveLength(2);
-  });
-});
+// REG-B15/REG-B394/PIN-B15 coverage lives in page.test.tsx, not here — an
+// earlier partial round duplicated it into this "existing-behavior" file too,
+// which is meant to hold only PIN-class behavior kept separate from
+// page.test.tsx's RED-gate scope. Removed rather than left redundant so
+// campaign-check's REG-B394 token citation stays unambiguous (one test, not
+// two, claim the same registry proof).
