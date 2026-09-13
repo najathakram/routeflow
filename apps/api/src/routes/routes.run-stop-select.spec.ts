@@ -60,4 +60,14 @@ describe("REG-B305 driver run/stop order projection", () => {
   it("REG-B305 RULING 1/3: the line items select carries the per-line category tax snapshot", () => {
     expect(RUN_LINE_ITEMS_SELECT.categoryTaxAmount).toBe(true);
   });
+
+  // B305 round 3 (Opus): the driver's short-pick estimate must zero tax for an
+  // exempt customer exactly as reconcileOrderDraftInvoice does
+  // (invoices.service.ts ~1493-1495: `select: { isTaxExempt: true }` ->
+  // `isTaxExempt = !!customer?.isTaxExempt`) — without this column projected
+  // on the stop's customer, the mobile helper has no way to know the customer
+  // is exempt and over-collects at the door on a partial delivery.
+  it("REG-B305 round 3: the stop's customer select carries the tax-exemption column", () => {
+    expect(RUN_STOP_INCLUDE.customer.select.isTaxExempt).toBe(true);
+  });
 });

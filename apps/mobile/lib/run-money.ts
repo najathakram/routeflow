@@ -178,6 +178,16 @@ export interface ReconciledAmountDueInput {
   deliveredSubtotal: number;
   /** Σ each delivered line's category tax share — see `deliveredCategoryTax`. */
   deliveredCategoryTax: number;
+  /**
+   * B305 round 3: the customer's exemption flag (sales.prisma
+   * Customer.isTaxExempt, projected onto RUN_STOP_INCLUDE.customer.select).
+   * Neither `order.tax` nor a line's `categoryTaxAmount` snapshot is
+   * exemption-aware on its own — the server zeroes BOTH for an exempt
+   * customer (invoices.service.ts ~1495-1500: `regularTax = isTaxExempt ? 0
+   * : …`, `foldCategoryTax(…, isTaxExempt)` -> 0) — so this must be passed
+   * separately.
+   */
+  isTaxExempt?: boolean;
 }
 
 /**
@@ -199,9 +209,19 @@ export function reconciledAmountDue(input: ReconciledAmountDueInput): number {
     return deliveredSubtotal;
   }
 
-  const orderTax = finiteOrNull(input.order?.tax) ?? 0;
   const discount = drafts.reduce((sum, d) => sum + (finiteOrNull(d.discount) ?? 0), 0);
   const shippingFee = drafts.reduce((sum, d) => sum + (finiteOrNull(d.shippingFee) ?? 0), 0);
+
+  // B305 round 3: an exempt customer's server-side reconcile
+  // (invoices.service.ts#reconcileOrderDraftInvoice) zeroes BOTH the regular
+  // tax term and the per-line category tax — reproduce that exactly, or a
+  // short-picked stop over-collects at the door. Discount/shipping fee still
+  // stay whole (the server never prorates them either way).
+  if (input.isTaxExempt) {
+    return roundMoney(deliveredSubtotal - discount + shippingFee);
+  }
+
+  const orderTax = finiteOrNull(input.order?.tax) ?? 0;
   const categoryTax = Number.isFinite(input.deliveredCategoryTax) ? input.deliveredCategoryTax : 0;
 
   return roundMoney(

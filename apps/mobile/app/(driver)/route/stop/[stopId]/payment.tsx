@@ -149,6 +149,10 @@ export default function PaymentScreen() {
             order: { subtotal: o.subtotal, tax: o.tax },
             deliveredSubtotal: reconciledTotal(shortPickLines, deliveredQtyById),
             deliveredCategoryTax: deliveredCategoryTax(o.lineItems ?? [], deliveredQtyById),
+            // B305 round 3: an exempt customer's server-side reconcile zeroes
+            // BOTH tax terms — mirror that here (RUN_STOP_INCLUDE.customer
+            // projects the column; RouteRunStop.customer.isTaxExempt above).
+            isTaxExempt: stop?.customer?.isTaxExempt === true,
           })
         : fullOrderTotal(o)),
     0,

@@ -320,3 +320,64 @@ describe("reconciledAmountDue (REG-B305 RULING 3: the server's delivered-basis r
     ).toBe(42);
   });
 });
+
+/**
+ * REG-B305 round 3 (Opus): the server zeroes BOTH the regular tax term and the
+ * per-line category tax for a tax-exempt customer (invoices.service.ts
+ * ~1495-1500: `regularTax = isTaxExempt ? 0 : …`, `foldCategoryTax(…,
+ * isTaxExempt)` -> 0) — neither `order.tax` nor the delivered lines'
+ * `categoryTaxAmount` snapshots are exemption-aware on their own, so the
+ * short-pick estimate must be told separately. Before the fix,
+ * `reconciledAmountDue` has no `isTaxExempt` input at all and always charges
+ * the delivered category tax — exempt + deliver B only quotes 160, the server
+ * bills 100 ($60 over-collected at the door).
+ */
+describe("reconciledAmountDue (REG-B305 round 3: tax-exempt customer)", () => {
+  it("REG-B305 round 3 the Opus scenario: exempt customer, deliver B only -> 100, never 160", () => {
+    // order subtotal 200, tax (regular) 20; lines A {qty 1, subtotal 100,
+    // categoryTaxAmount 0} + B {qty 1, subtotal 100, categoryTaxAmount 50}; one
+    // draft {subtotal 200, taxAmount 0, discount 0, shippingFee 0, total 200}
+    // (the server already zeroed the draft's own tax for this exempt customer).
+    const order = { subtotal: 200, tax: 20 };
+    const drafts = [{ discount: 0, shippingFee: 0 }];
+    const dueDeliverBOnly = reconciledAmountDue({
+      drafts,
+      order,
+      deliveredSubtotal: 100,
+      deliveredCategoryTax: 50,
+      isTaxExempt: true,
+    });
+    expect(dueDeliverBOnly).toBe(100);
+    expect(dueDeliverBOnly).not.toBe(160);
+  });
+
+  it("REG-B305 round 3: exempt customer keeps discount/shipping fee whole — only the tax terms zero", () => {
+    const order = { subtotal: 100, tax: 10 };
+    const drafts = [{ discount: 15, shippingFee: 10 }];
+    // Deliver half (50), exempt: 50 - 15 + 10 = 45. Non-exempt would add
+    // 10 * 50/100 = 5 -> 50 (see the sibling non-exempt discount/fee test above).
+    expect(
+      reconciledAmountDue({
+        drafts,
+        order,
+        deliveredSubtotal: 50,
+        deliveredCategoryTax: 0,
+        isTaxExempt: true,
+      }),
+    ).toBe(45);
+  });
+
+  it("REG-B305 round 3: non-exempt is unchanged — the existing A-only/B-only/both oracles stay put", () => {
+    const order = { subtotal: 200, tax: 20 };
+    const drafts = [{ discount: 0, shippingFee: 0 }];
+    expect(
+      reconciledAmountDue({ drafts, order, deliveredSubtotal: 100, deliveredCategoryTax: 0 }),
+    ).toBe(110);
+    expect(
+      reconciledAmountDue({ drafts, order, deliveredSubtotal: 100, deliveredCategoryTax: 50 }),
+    ).toBe(160);
+    expect(
+      reconciledAmountDue({ drafts, order, deliveredSubtotal: 200, deliveredCategoryTax: 50 }),
+    ).toBe(270);
+  });
+});

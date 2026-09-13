@@ -79,6 +79,11 @@ export interface RouteRunStop {
     phone?: string;
     deliveryWindowStart?: string;
     deliveryWindowEnd?: string;
+    // B305 round 3: mirrors RUN_STOP_INCLUDE.customer.select.isTaxExempt
+    // (sales.prisma Customer.isTaxExempt) — feeds reconciledAmountDue's
+    // isTaxExempt input so a short-picked stop's estimate zeroes tax for an
+    // exempt customer exactly as the server does.
+    isTaxExempt?: boolean;
   };
   customerAddress?: {
     line1: string;

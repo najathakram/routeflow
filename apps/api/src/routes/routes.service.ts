@@ -111,6 +111,9 @@ export const RUN_STOP_INCLUDE = {
       phone: true,
       deliveryWindowStart: true,
       deliveryWindowEnd: true,
+      // B305 round 3: the driver's short-pick estimate must zero tax for an
+      // exempt customer exactly as reconcileOrderDraftInvoice does.
+      isTaxExempt: true,
     },
   },
   customerAddress: true,
