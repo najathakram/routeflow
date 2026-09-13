@@ -13,6 +13,7 @@ import { MeterService } from "../billing/meter.service";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { AdminAuditAction } from "./audit-actions.constant";
 
 /**
  * P1 regression: platform-admin lifecycle mutations MUST emit a purpose-built
@@ -676,6 +677,59 @@ describe("PlatformAdminService — audit provenance", () => {
         }),
       );
       expect((prisma as any).driver.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("updateTenantClass", () => {
+    it("updates the class, writes an audit row, and emits a BillingEvent when leaving PRODUCTION", async () => {
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
+      prisma.tenant.update.mockResolvedValue({ id: TENANT_ID, slug: "acme", class: "TEST" } as any);
+
+      await service.updateTenantClass(
+        TENANT_ID,
+        { class: "TEST", reason: "reclassified as QA" } as any,
+        ADMIN_ID,
+      );
+
+      expect(prisma.tenant.update).toHaveBeenCalledWith({
+        where: { id: TENANT_ID },
+        data: { class: "TEST" },
+        select: { id: true, slug: true, class: true },
+      });
+      expect(auditLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: TENANT_ID,
+          userId: ADMIN_ID,
+          action: AdminAuditAction.TENANT_CLASS_CHANGED,
+        }),
+      );
+      expect(billingEventService.emit).toHaveBeenCalledWith(
+        TENANT_ID,
+        "tenant.class_changed",
+        expect.objectContaining({ from: "PRODUCTION", to: "TEST", reason: "reclassified as QA" }),
+        expect.objectContaining({ actorId: ADMIN_ID }),
+      );
+    });
+
+    it("does not emit a BillingEvent when moving between two non-PRODUCTION classes", async () => {
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "qa-1",
+        class: "TEST",
+      } as any);
+      prisma.tenant.update.mockResolvedValue({ id: TENANT_ID, slug: "qa-1", class: "DEMO" } as any);
+
+      await service.updateTenantClass(
+        TENANT_ID,
+        { class: "DEMO", reason: "repurposed for sales demo" } as any,
+        ADMIN_ID,
+      );
+
+      expect(billingEventService.emit).not.toHaveBeenCalled();
     });
   });
 });

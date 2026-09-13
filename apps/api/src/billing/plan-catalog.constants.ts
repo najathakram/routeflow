@@ -162,6 +162,11 @@ export const BILLING_EVENTS = {
   SUBSCRIPTION_CANCELED: "subscription.canceled",
   SUBSCRIPTION_SUSPENDED: "subscription.suspended",
   SUBSCRIPTION_RESUMED: "subscription.resumed",
+  // Phase 0 T8: a tenant's classification changed via the platform-admin override endpoint.
+  // Only emitted when the change crosses into or out of PRODUCTION (see
+  // PlatformAdminService.updateTenantClass) — that's the transition that moves revenue in or
+  // out of MrrService's scope, so it's the one worth a ledger row.
+  TENANT_CLASS_CHANGED: "tenant.class_changed",
 } as const;
 export type BillingEventType = (typeof BILLING_EVENTS)[keyof typeof BILLING_EVENTS];
 

@@ -29,6 +29,7 @@ export const AdminAuditAction = {
   ADDON_ENABLED: "ADDON_ENABLED",
   ADDON_DISABLED: "ADDON_DISABLED",
   IMPERSONATION_STARTED: "IMPERSONATION_STARTED",
+  TENANT_CLASS_CHANGED: "TENANT_CLASS_CHANGED",
 } as const;
 
 export type AdminAuditActionCode = (typeof AdminAuditAction)[keyof typeof AdminAuditAction];
@@ -49,6 +50,7 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   ADDON_ENABLED: "Add-on enabled",
   ADDON_DISABLED: "Add-on disabled",
   IMPERSONATION_STARTED: "Impersonation started",
+  TENANT_CLASS_CHANGED: "Class changed",
 };
 
 /** Facet list for the audit-log filter dropdown (code + label), ordered as declared. */
