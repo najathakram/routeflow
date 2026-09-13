@@ -47,8 +47,20 @@ Opus refute-first review mandatory when built. Branch `fix/trial-cancel-readonly
 - NOT done, deliberately: creating a `TenantSubscription` row at `register()`/`createTenant()`
   (would change `EntitlementsService.resolve()`'s no-row fallback for every new tenant — a separate
   decision) and any backfill (data repair → DECIDE-30 (a) FAIL).
+- **Lead ruling (fb, 2026-09-13): the no-row state is TEMPORARY.** The platform back-office Phase 0
+  plan (`docs/superpowers/plans/2026-09-12-backoffice-phase-0-truth.md`, fb's, not started) carries
+  a subscription-reconciliation script that creates the missing rows under owner sign-off on a
+  dry-run diff (the same absence splits MRR into $499-vs-$0 on the admin dashboard). The target
+  convention — every tenant carries a `TenantSubscription` row — is reached by that reconciliation,
+  never by changing `register()` under a bug fix. Therefore the fix keys on **`Tenant.status`, not
+  on row presence**, and is idempotent in both worlds: TRIAL → end the trial now (tenant →
+  READ_ONLY/`trial_cancelled`; if a row exists, also `cancelAtPeriodEnd: true` so the row agrees);
+  READ_ONLY without a row → no-op success, READ_ONLY with a row → the existing schedule path;
+  any other status without a row → the existing 404 — **revisit when Phase 0 reconciliation lands:
+  that case should become unreachable, not stay a 404 forever.** No new code path may assume
+  no-row is the steady state.
 - Invariants: no schema change; no new endpoint (same `POST /billing/subscription/cancel`,
-  TENANT_ADMIN); one-armed transition untouched for tenants WITH a row.
+  TENANT_ADMIN); one-armed transition untouched for ACTIVE tenants WITH a row.
 
 ### RO-1 — the read-only state is visible and actionable
 
@@ -107,5 +119,13 @@ REQUIRED (billing = money carve-out) · (d) REG red on the wrong value — the r
 - TRIAL-1 (high): a trial tenant cannot cancel — no subscription row, `cancel()` 404s; expired
   trials show Cancel and get the raw 404 toast.
 - RO-1 (high): READ_ONLY is invisible in the web app — no banner, no CTA, no handled toast.
-- Candidate: `register()`/`createTenant()` vs `subscribe()` row conventions — decide whether every
-  tenant should carry a `TenantSubscription` row (entitlement fallback exists because they don't).
+- (Not a TO FILE — lead decision, Phase 0:) the register/subscribe row convention is settled by the
+  back-office Phase 0 reconciliation plan above; only TRIAL-1 and RO-1 are filed.
+
+## Lead rulings 2026-09-13 (fb)
+
+1. Never push a red-tests-only branch (a merge-train accident); committed locally satisfies the
+   no-uncommitted-work rule. 2. Proceed to the fix round now — Opus refutation mandatory (money
+   carve-out), fix, then HOLD before the push; the PR opens only after #710 merges and its
+   bookkeeping follow-up lands. 3. Correct in both worlds (row / no row), see S2. 4. Row convention
+   = Phase 0, not a registry item.
