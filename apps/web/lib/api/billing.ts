@@ -62,6 +62,10 @@ export interface SubscriptionView {
   downgradeToPlanKey: string | null;
   downgradeEffectiveAt: string | null;
   trialEndsAt: string | null;
+  /** Populated only when `status === "READ_ONLY"` — the enforcement reason the tenant-status
+   *  guard recorded (`"trial_expired"` | `"subscription_cancelled"` | `"trial_cancelled"`, or
+   *  another server-defined string). `null`/absent renders the generic read-only copy. */
+  readOnlyReason?: string | null;
   addons: Array<{ sku: string | null; name: string; quantity: number; monthly: number | null }>;
 }
 
@@ -157,10 +161,16 @@ export function usePlans() {
   });
 }
 
-export function useSubscription() {
+/** `staleTime` defaults to the QueryClient-wide 30s; callers that only need the read-only
+ *  banner on every dashboard page (not the billing page's live detail) should pass a longer
+ *  one so it doesn't refetch on every navigation. `enabled` lets a caller that renders for
+ *  every role (e.g. the dashboard shell) skip the request for roles the endpoint 403s
+ *  (CUSTOMER/DRIVER — `GET /billing/subscription` is `@Roles(OPERATOR)`-gated). */
+export function useSubscription(options?: { staleTime?: number; enabled?: boolean }) {
   return useQuery<SubscriptionView>({
     queryKey: [...KEY, "subscription"],
     queryFn: () => apiClient.get("/billing/subscription").then((r) => r.data),
+    ...options,
   });
 }
 
