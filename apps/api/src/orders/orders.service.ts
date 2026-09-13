@@ -1550,7 +1550,7 @@ export class OrdersService implements OnApplicationBootstrap {
     }
   }
 
-  async sweepAllPendingOrders(): Promise<{ customers: number; merged: number }> {
+  async sweepAllPendingOrders(): Promise<{ customers: number; merged: number; skipped: number }> {
     // B323: no HTTP request context runs this (cron tick / boot), so ALS is empty and
     // forTenant() used to fall through to the UNSCOPED client — every forTenant() call
     // deeper in mergeAllPendingForCustomer (SystemConfigService.get for the tax rate,
@@ -1558,39 +1558,57 @@ export class OrdersService implements OnApplicationBootstrap {
     // findFirst/findMany happened to return first, not the customer's own tenant.
     // Group by tenantId alongside customerId so each group carries the tenant to
     // re-enter below.
+    const pendingMergeCandidateWhere = {
+      status: OrderStatus.PENDING,
+      routeRunId: null,
+      routeRunStopId: null,
+      transaction: { is: null },
+      invoices: { none: {} },
+      returns: { none: {} },
+      skipAutoMerge: false,
+    };
+
     const groups = await this.prisma.forTenant().order.groupBy({
       by: ["customerId", "tenantId"],
-      where: {
-        status: OrderStatus.PENDING,
-        routeRunId: null,
-        routeRunStopId: null,
-        transaction: { is: null },
-        invoices: { none: {} },
-        returns: { none: {} },
-        skipAutoMerge: false,
-      },
+      where: pendingMergeCandidateWhere,
       _count: { _all: true },
       having: { customerId: { _count: { gt: 1 } } },
     });
 
+    // F1 (B323 review): a customer with, say, one pending order under a real tenant AND
+    // one legacy null-tenant order lands in two SEPARATE one-row (customerId, tenantId)
+    // groups above — neither clears `having customerId._count > 1`, so the pair was
+    // silently invisible to both the merge loop AND the warn below it. Run one extra
+    // query on the same (unscoped, deliberate) client, over the identical filter but
+    // restricted to tenantId: null, so every customer with a null-tenant pending order
+    // is found and counted whether or not their real-tenant group individually cleared
+    // the >1 threshold.
+    const nullTenantRows = await this.prisma.forTenant().order.groupBy({
+      by: ["customerId"],
+      where: { ...pendingMergeCandidateWhere, tenantId: null },
+      _count: { _all: true },
+    });
+    for (const r of nullTenantRows) {
+      this.logger.warn(
+        `sweepAllPendingOrders: customer ${r.customerId} has ${r._count._all} pending order(s) without tenantId — not merged (B323)`,
+      );
+    }
+    const skipped = nullTenantRows.length;
+
+    // Null-tenant groups are fully accounted for by the pass above (count + warn) —
+    // exclude them here so the same customer is never double-logged, and so `customers`
+    // below reflects only the groups actually eligible to merge.
+    const mergeCandidateGroups = groups.filter((g) => g.tenantId);
+
     let merged = 0;
-    for (const g of groups) {
-      if (!g.tenantId) {
-        // Pre-backfill legacy row (see the null-tenant-rows program) — there is no
-        // tenant to scope the merge to, so leave it for that backfill rather than
-        // guess. Never safe to merge unscoped.
-        this.logger.warn(
-          `sweepAllPendingOrders: skipped customer ${g.customerId} — order rows have no tenantId`,
-        );
-        continue;
-      }
+    for (const g of mergeCandidateGroups) {
       try {
         // RF-008: re-enter this group's OWN tenant's ALS scope before calling into
         // anything that relies on ambient forTenant() scoping (same pattern as
         // recurring-invoices.generateDueRecurringInvoices / tobacco-report /
         // order-templates / authorization-expiry / commission-reconciliation /
         // regulated-filing-cron).
-        const winner = await this.tenantCtx.run(g.tenantId, () =>
+        const winner = await this.tenantCtx.run(g.tenantId as string, () =>
           this.mergeAllPendingForCustomer(g.customerId),
         );
         if (winner) merged++;
@@ -1610,9 +1628,9 @@ export class OrdersService implements OnApplicationBootstrap {
       }
     }
     this.logger.log(
-      `sweepAllPendingOrders: swept ${groups.length} customer(s), merged into ${merged} winner(s)`,
+      `sweepAllPendingOrders: swept ${mergeCandidateGroups.length} customer(s), merged into ${merged} winner(s), skipped ${skipped} without tenantId`,
     );
-    return { customers: groups.length, merged };
+    return { customers: mergeCandidateGroups.length, merged, skipped };
   }
 
   onApplicationBootstrap() {

@@ -285,10 +285,12 @@ describe("OrdersService merge paths — customer advisory lock (T3, R3)", () => 
 
   describe("T3-d: sweepAllPendingOrders survives a contended customer", () => {
     it("skips a customer whose merge throws ConflictException, still merges the rest, and warns", async () => {
-      prisma.order.groupBy.mockResolvedValue([
-        { customerId: "cust-A", tenantId: "tenant-1" },
-        { customerId: "cust-B", tenantId: "tenant-1" },
-      ] as any);
+      prisma.order.groupBy
+        .mockResolvedValueOnce([
+          { customerId: "cust-A", tenantId: "tenant-1" },
+          { customerId: "cust-B", tenantId: "tenant-1" },
+        ] as any)
+        .mockResolvedValueOnce([]);
       const warn = jest.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
       jest.spyOn((service as any).logger, "log").mockImplementation(() => undefined);
       const merge = jest
@@ -306,14 +308,14 @@ describe("OrdersService merge paths — customer advisory lock (T3, R3)", () => 
       const result = await service.sweepAllPendingOrders();
 
       expect(merge).toHaveBeenCalledTimes(2);
-      expect(result).toEqual({ customers: 2, merged: 1 });
+      expect(result).toEqual({ customers: 2, merged: 1, skipped: 0 });
       expect(warn).toHaveBeenCalledWith(expect.stringContaining("cust-A"));
     });
 
     it("still propagates a non-lock error from a customer's merge", async () => {
-      prisma.order.groupBy.mockResolvedValue([
-        { customerId: "cust-A", tenantId: "tenant-1" },
-      ] as any);
+      prisma.order.groupBy
+        .mockResolvedValueOnce([{ customerId: "cust-A", tenantId: "tenant-1" }] as any)
+        .mockResolvedValueOnce([]);
       jest.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
       jest.spyOn(service, "mergeAllPendingForCustomer").mockRejectedValue(new Error("boom"));
 
@@ -321,10 +323,12 @@ describe("OrdersService merge paths — customer advisory lock (T3, R3)", () => 
     });
 
     it("skips a customer whose merge throws the coded 503 (LOCK_UNAVAILABLE) and continues to the next", async () => {
-      prisma.order.groupBy.mockResolvedValue([
-        { customerId: "cust-A", tenantId: "tenant-1" },
-        { customerId: "cust-B", tenantId: "tenant-1" },
-      ] as any);
+      prisma.order.groupBy
+        .mockResolvedValueOnce([
+          { customerId: "cust-A", tenantId: "tenant-1" },
+          { customerId: "cust-B", tenantId: "tenant-1" },
+        ] as any)
+        .mockResolvedValueOnce([]);
       const warn = jest.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
       jest.spyOn((service as any).logger, "log").mockImplementation(() => undefined);
       const merge = jest
@@ -344,15 +348,17 @@ describe("OrdersService merge paths — customer advisory lock (T3, R3)", () => 
       // An exhausted lock pool is contention too: skip that customer this hour and
       // keep sweeping, rather than abandoning every customer after the first.
       expect(merge).toHaveBeenCalledTimes(2);
-      expect(result).toEqual({ customers: 2, merged: 1 });
+      expect(result).toEqual({ customers: 2, merged: 1, skipped: 0 });
       expect(warn).toHaveBeenCalledWith(expect.stringContaining("cust-A"));
     });
 
     it("does NOT swallow a 503 raised for some other reason — the skip is by CODE, not by exception type", async () => {
-      prisma.order.groupBy.mockResolvedValue([
-        { customerId: "cust-A", tenantId: "tenant-1" },
-        { customerId: "cust-B", tenantId: "tenant-1" },
-      ] as any);
+      prisma.order.groupBy
+        .mockResolvedValueOnce([
+          { customerId: "cust-A", tenantId: "tenant-1" },
+          { customerId: "cust-B", tenantId: "tenant-1" },
+        ] as any)
+        .mockResolvedValueOnce([]);
       jest.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
       const merge = jest
         .spyOn(service, "mergeAllPendingForCustomer")

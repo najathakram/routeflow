@@ -2598,28 +2598,56 @@ describe("OrdersService", () => {
         .spyOn((service as any).logger, "warn")
         .mockImplementation(() => undefined);
 
-      prisma.order.groupBy.mockResolvedValue([
-        { customerId: "cust-a", tenantId: "tenant-a", _count: { _all: 2 } },
-        { customerId: "cust-b", tenantId: "tenant-b", _count: { _all: 3 } },
-        { customerId: "cust-null", tenantId: null, _count: { _all: 2 } },
-      ]);
+      // First call: the main (customerId, tenantId) groupBy. Second call: the
+      // tenantId: null-only sweep added for F1 below — a normal two-tenant sweep has
+      // no null-tenant pending orders at all.
+      prisma.order.groupBy
+        .mockResolvedValueOnce([
+          { customerId: "cust-a", tenantId: "tenant-a", _count: { _all: 2 } },
+          { customerId: "cust-b", tenantId: "tenant-b", _count: { _all: 3 } },
+        ])
+        .mockResolvedValueOnce([]);
 
       const result = await service.sweepAllPendingOrders();
 
-      // (a) each non-null group's merge ran inside ITS OWN tenant's context — never the
-      // other group's, and never ambient/unscoped.
+      // each group's merge ran inside ITS OWN tenant's context — never the other
+      // group's, and never ambient/unscoped.
       expect(tenantCtx.run).toHaveBeenCalledTimes(2);
       expect(tenantCtx.run).toHaveBeenNthCalledWith(1, "tenant-a", expect.any(Function));
       expect(tenantCtx.run).toHaveBeenNthCalledWith(2, "tenant-b", expect.any(Function));
       expect(mergeSpy).toHaveBeenCalledWith("cust-a");
       expect(mergeSpy).toHaveBeenCalledWith("cust-b");
+      expect(warnSpy).not.toHaveBeenCalled();
 
-      // (b) the null-tenant group is skipped: never merged, never wrapped in tenantCtx.run,
-      // and a warning is logged instead of guessing a tenant.
-      expect(mergeSpy).not.toHaveBeenCalledWith("cust-null");
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("cust-null"));
+      expect(result).toEqual({ customers: 2, merged: 2, skipped: 0 });
+    });
 
-      expect(result).toEqual({ customers: 3, merged: 2 });
+    it("REG-B323 a customer with one tenant-scoped pending order and one legacy null-tenant order is counted and warned, never dropped silently", async () => {
+      const mergeSpy = jest.spyOn(service, "mergeAllPendingForCustomer");
+      const warnSpy = jest
+        .spyOn((service as any).logger, "warn")
+        .mockImplementation(() => undefined);
+
+      // The customer has exactly 2 pending orders total: 1 under tenant-a, 1 with a
+      // null tenantId. Grouped by (customerId, tenantId) that is TWO one-row groups —
+      // neither clears the main query's `having customerId._count > 1`, so the main
+      // groupBy returns nothing for this customer at all (F1: this used to mean
+      // nothing merged AND nothing logged). The dedicated null-tenant-only query
+      // (second groupBy call) still finds and counts the null-tenant row.
+      prisma.order.groupBy
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ customerId: "cust-a", _count: { _all: 1 } }]);
+
+      const result = await service.sweepAllPendingOrders();
+
+      expect(tenantCtx.run).not.toHaveBeenCalled();
+      expect(mergeSpy).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "sweepAllPendingOrders: customer cust-a has 1 pending order(s) without tenantId — not merged (B323)",
+        ),
+      );
+      expect(result).toEqual({ customers: 0, merged: 0, skipped: 1 });
     });
   });
 
