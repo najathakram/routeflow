@@ -86,3 +86,7 @@ device/emulator against the compose stack and recorded here at discharge time.
 
 - approach-rotation hook resolves its state file relative to cwd (`apps/api/.claude/pipeline/approach-rotation.json` written from a drifted cwd) — same class as the BUGS_ROOT trap (B278).
 - Returns credit total (`return/index.tsx` uses `sumStopOrders`, pre-tax) — decide whether return credits should carry tax; out of F38's scope.
+
+## Status
+
+- 2026-09-13 06:1xZ: all five fixes committed (ce3c1373 B306 · 0510a3f3 B309 · 939f6246 B305 api · c52b0d0b B305 mobile · 2ac0ade3 B307/B308); Opus refute-first review and revert probes in progress; push waits for the verify slot.
