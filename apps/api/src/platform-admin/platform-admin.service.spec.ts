@@ -535,6 +535,47 @@ describe("PlatformAdminService — audit provenance", () => {
       );
       expect(changedCalls).toHaveLength(0);
     });
+
+    // Coverage gap flagged when the row above landed: the DOWNGRADE branch's own guard —
+    // it cannot SCHEDULE a downgrade against a subscription with no `periodEnd` to schedule
+    // against (mirrors SubscriptionMutationService.downgrade()'s identical check at
+    // subscription-mutation.service.ts:712-716 — same precondition, same reasoning: a
+    // schedule written with `downgradeEffectiveAt: null` is filtered OUT by
+    // billing-cron.service.ts's applyScheduledDowngrades() query, so the UI would report the
+    // downgrade as accepted while the cron can never apply it) — was untested.
+    it("REG a DOWNGRADE with no periodEnd on the subscription rejects with BadRequestException — writes nothing, emits nothing", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "PROFESSIONAL",
+        status: "ACTIVE",
+      } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-9",
+        definitions: [
+          { planKey: "STARTER", monthlyPrice: 99 },
+          { planKey: "SCALE", monthlyPrice: 499 },
+        ],
+      });
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        planKey: "SCALE",
+        basePriceSnapshot: 499,
+        priceOverrideMonthly: null,
+        discount: null,
+        cycle: "MONTHLY",
+        periodStart,
+        periodEnd: null, // no active billing period to schedule against
+      });
+
+      await expect(
+        service.updatePlan(TENANT_ID, { plan: "STARTER" } as any, ADMIN_ID),
+      ).rejects.toThrow(/no active billing period/);
+
+      expect((prisma as any).tenantSubscription.update).not.toHaveBeenCalled();
+      expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+      expect(prisma.tenant.update).not.toHaveBeenCalled();
+      expect(billingEventService.emit).not.toHaveBeenCalled();
+    });
   });
 
   it("activateManualSubscription disarms every pending transition when it rolls the period (round 3, findings 2/9)", async () => {

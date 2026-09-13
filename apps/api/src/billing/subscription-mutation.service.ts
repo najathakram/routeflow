@@ -157,6 +157,18 @@ export class SubscriptionMutationService {
     const def = version.definitions.find((d) => d.planKey === input.planKey);
     if (!def) throw new BadRequestException(`Unknown plan "${input.planKey}"`);
     if (def.isCustom) throw new BadRequestException("Enterprise is a custom plan — contact sales.");
+    // B218: `def` only proves `input.planKey` matches a PUBLISHED catalog definition
+    // verbatim — nothing stops a published PlanDefinition's key from being outside
+    // PLAN_KEYS (a catalog-publishing bug), and this IS the client-reachable path (the
+    // client picks from whatever /billing/quote actually offers). Left unchecked,
+    // planKeyToEnum() below now THROWS instead of silently writing STARTER, which would
+    // otherwise crash the request with a 500 for what is really a 400 — refuse it here,
+    // the same seam planChangePreview() already guards for the ranking paths.
+    if (!normalizePlanKey(input.planKey)) {
+      throw new BadRequestException(
+        `Plan "${input.planKey}" is not a recognized plan key — contact support.`,
+      );
+    }
     const quote = await this.proration.quote({
       planKey: input.planKey,
       cycle: input.cycle,
@@ -613,6 +625,12 @@ export class SubscriptionMutationService {
     if (!sub || !fromKey || (!sub.planKey && tenant?.status !== "ACTIVE")) {
       throw new BadRequestException("No active subscription — subscribe first.");
     }
+    // B218: this ALSO already refuses an off-catalog `planKey` before planKeyToEnum() is ever
+    // called below — `planRank` normalizes and returns -1 for anything outside PLAN_KEYS /
+    // LEGACY_PLAN_KEY_ALIASES, `fromKey` is always a real (non-negative) rank by this point
+    // (guarded above), and -1 can never be > a real rank, so the check below rejects it as
+    // "not an upgrade" rather than ranking it. The message doesn't name the real reason, but
+    // no separate off-catalog guard is needed here — adding one would be redundant.
     if (planRank(planKey) <= planRank(fromKey)) {
       throw new BadRequestException("Target is not an upgrade — use downgrade for a lower plan.");
     }

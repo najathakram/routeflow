@@ -7,6 +7,7 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
+import { ProrationService } from "./proration.service";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
 
 /** A same-cycle ACTIVE period straddling "now" (mid-cycle, so proration is partial and > 0). */
@@ -187,9 +188,18 @@ function make(opts: Opts = {}) {
       .fn()
       .mockResolvedValue(opts.pinnedCatalog ?? opts.catalog ?? catalog()),
   } as any;
+  // ADMIN-UPDATEPLAN-1: proratedDiff() moved from a private SubscriptionMutationService
+  // method to a public one on ProrationService (its natural home, now shared with
+  // PlatformAdminService.updatePlan()). upgrade()/planChangePreview() tests below assert
+  // real day-precise numbers, so this delegates to the ACTUAL implementation (a real
+  // ProrationService instance) rather than a canned mock — quote()/prorationPreview() stay
+  // mocked as before; only proratedDiff needs to be real.
+  const realProrationMath = new ProrationService({} as any, {} as any);
   const proration = {
     quote: jest.fn().mockResolvedValue({ subtotalMonthly: 173, lines: [] }),
     prorationPreview: jest.fn().mockResolvedValue({ proratedToday: 6.4 }),
+    proratedDiff: (...args: Parameters<ProrationService["proratedDiff"]>) =>
+      realProrationMath.proratedDiff(...args),
   } as any;
   const subscription = { getSubscription: jest.fn().mockResolvedValue({ planKey: "TEAM" }) } as any;
   const entitlements = { invalidate: jest.fn() } as any;
@@ -986,6 +996,36 @@ describe("SubscriptionMutationService — an unrankable plan key is refused at t
     // catches it — `-1 >= planRank(BUSINESS)` is false, so the schedule used to be written.
     await expect(svc.downgrade("t1", "PRO", [], "admin")).rejects.toThrow(/Unknown plan/);
     expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+  });
+
+  // B218: `def` above only proves the key matches a PUBLISHED catalog definition verbatim —
+  // nothing stops a published PlanDefinition's key from being outside PLAN_KEYS (a catalog
+  // publishing bug). Before the fix, subscribe()/upgrade() let this through to
+  // planKeyToEnum(), which silently wrote STARTER as `currentPlan`/`plan` while `planKey`
+  // itself was stored correctly — a tenant paying for "PRO" was shadow-entitled as Starter
+  // with no error anywhere.
+  it("REG-B218 subscribe() refuses an off-list key that IS in the published catalog (was: silently wrote STARTER)", async () => {
+    const { svc, tx } = make({
+      catalog: catalogWithOffListKey(),
+      tenantStatus: "TRIAL",
+    });
+    await expect(svc.subscribe("t1", { planKey: "PRO", cycle: "MONTHLY" })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    // No write at all — never a `currentPlan: "STARTER"` shadow for a "PRO" subscription.
+    expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+    expect(tx.tenant.update).not.toHaveBeenCalled();
+  });
+
+  it("REG-B218 upgrade() refuses an off-list key that IS in the published catalog — already protected pre-fix by the rank check (planRank('PRO') = -1 can never exceed a real plan's rank), confirmed here so a future refactor can't silently drop it", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc, tx } = make({
+      catalog: catalogWithOffListKey(),
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "STARTER", cycle: "MONTHLY", periodStart, periodEnd },
+    });
+    await expect(svc.upgrade("t1", "PRO", "admin")).rejects.toBeInstanceOf(BadRequestException);
+    expect(tx.tenantSubscription.updateMany).not.toHaveBeenCalled();
   });
 });
 

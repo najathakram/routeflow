@@ -197,17 +197,31 @@ export type TenantPlanEnumValue = "STARTER" | "TEAM" | "BUSINESS" | "PROFESSIONA
  * validation at runtime. Every write to `Tenant.plan` / `TenantSubscription.currentPlan` must go
  * through here; entitlement logic keeps reading the string `planKey`, never this shadow.
  * Inverse of `planKeyFromEnum()`.
+ *
+ * B218: this is a pure mapping function — it does NOT validate `planKey` against the live
+ * catalog, and it must not silently paper over a key it cannot map. THROWS for anything
+ * `normalizePlanKey` cannot resolve (neither in `PLAN_KEYS` nor `LEGACY_PLAN_KEY_ALIASES`) —
+ * it used to fall through to `STARTER` here, which under-entitled a tenant actually on a
+ * published-but-off-vocabulary tier (e.g. a catalog publishing typo) with no error anywhere.
+ * Every caller MUST handle the throw explicitly for whatever "loud" means on that path (a
+ * 400 for a client-supplied key, a logged skip for one bad row in a cron sweep) — never catch
+ * it only to re-default to STARTER, which is exactly the bug this closes.
  */
 export function planKeyToEnum(planKey: string | null | undefined): TenantPlanEnumValue {
-  switch (normalizePlanKey(planKey)) {
+  const normalized = normalizePlanKey(planKey);
+  switch (normalized) {
     case "GROWTH":
       return "TEAM";
     case "SCALE":
       return "BUSINESS";
     case "ENTERPRISE":
       return "ENTERPRISE";
-    default:
+    case "STARTER":
       return "STARTER";
+    default:
+      throw new Error(
+        `planKeyToEnum: unrecognized plan key "${planKey}" — not in PLAN_KEYS or LEGACY_PLAN_KEY_ALIASES`,
+      );
   }
 }
 

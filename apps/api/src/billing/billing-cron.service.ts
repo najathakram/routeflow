@@ -147,61 +147,77 @@ export class BillingCronService {
       );
       const seatCap = targetDef?.seatsIncluded ?? null;
 
-      await this.prisma.$transaction(async (tx) => {
-        await tx.tenantSubscription.update({
-          where: { tenantId: s.tenantId },
-          data: {
-            planKey: target,
-            currentPlan: planKeyToEnum(target),
-            basePriceSnapshot: targetDef?.monthlyPrice ?? null,
-            downgradeToPlanKey: null,
-            downgradeEffectiveAt: null,
-            retainedUserIds: [],
-          },
-        });
-        await tx.tenant.update({
-          where: { id: s.tenantId },
-          data: { plan: planKeyToEnum(target) },
-        });
-        // Free seats ONLY when over the new cap (deactivate non-retained OPERATOR/DRIVER;
-        // TENANT_ADMIN is never deactivated). An empty retained list = keep only admins.
-        if (seatCap != null) {
-          const activeTeam = await tx.user.count({
-            where: {
-              tenantId: s.tenantId,
-              role: { in: ["TENANT_ADMIN", "OPERATOR", "DRIVER"] },
-              status: "ACTIVE",
-              deletedAt: null,
+      try {
+        await this.prisma.$transaction(async (tx) => {
+          await tx.tenantSubscription.update({
+            where: { tenantId: s.tenantId },
+            data: {
+              planKey: target,
+              // B218: `target` came from a PAST downgrade()/updatePlan() write, which already
+              // validates against the catalog — but this row can also be old, migrated, or
+              // manually edited data pointing at a plan key that no longer resolves. planKeyToEnum()
+              // now THROWS instead of silently writing STARTER for such a key; caught below so ONE
+              // bad row never stops the sweep from applying every other tenant's downgrade.
+              currentPlan: planKeyToEnum(target),
+              basePriceSnapshot: targetDef?.monthlyPrice ?? null,
+              downgradeToPlanKey: null,
+              downgradeEffectiveAt: null,
+              retainedUserIds: [],
             },
           });
-          if (activeTeam > seatCap) {
-            const freed = await tx.user.updateMany({
+          await tx.tenant.update({
+            where: { id: s.tenantId },
+            data: { plan: planKeyToEnum(target) },
+          });
+          // Free seats ONLY when over the new cap (deactivate non-retained OPERATOR/DRIVER;
+          // TENANT_ADMIN is never deactivated). An empty retained list = keep only admins.
+          if (seatCap != null) {
+            const activeTeam = await tx.user.count({
               where: {
                 tenantId: s.tenantId,
-                role: { in: ["OPERATOR", "DRIVER"] },
+                role: { in: ["TENANT_ADMIN", "OPERATOR", "DRIVER"] },
                 status: "ACTIVE",
                 deletedAt: null,
-                id: { notIn: s.retainedUserIds },
               },
-              data: { status: "INACTIVE" },
             });
-            if (freed.count > 0) {
-              await this.events.emit(
-                s.tenantId,
-                BILLING_EVENTS.SEAT_FREED,
-                { quantity: freed.count },
-                { tx },
-              );
+            if (activeTeam > seatCap) {
+              const freed = await tx.user.updateMany({
+                where: {
+                  tenantId: s.tenantId,
+                  role: { in: ["OPERATOR", "DRIVER"] },
+                  status: "ACTIVE",
+                  deletedAt: null,
+                  id: { notIn: s.retainedUserIds },
+                },
+                data: { status: "INACTIVE" },
+              });
+              if (freed.count > 0) {
+                await this.events.emit(
+                  s.tenantId,
+                  BILLING_EVENTS.SEAT_FREED,
+                  { quantity: freed.count },
+                  { tx },
+                );
+              }
             }
           }
-        }
-        await this.events.emit(
-          s.tenantId,
-          BILLING_EVENTS.PLAN_CHANGED,
-          { fromPlan: s.planKey, toPlan: target, scheduled: true, applied: true },
-          { amountDelta, tx },
+          await this.events.emit(
+            s.tenantId,
+            BILLING_EVENTS.PLAN_CHANGED,
+            { fromPlan: s.planKey, toPlan: target, scheduled: true, applied: true },
+            { amountDelta, tx },
+          );
+        });
+      } catch (err) {
+        // B218: log and move on — a cron that dies on tenant N's bad row would silently
+        // strand every tenant after it unapplied too, which is worse than the one bad row.
+        this.logger.error(
+          `Skipping scheduled downgrade for tenant=${s.tenantId} target="${target}" — ${
+            err instanceof Error ? err.message : String(err)
+          }`,
         );
-      });
+        continue;
+      }
       this.entitlements.invalidate(s.tenantId);
       this.tenantStatus.invalidate(s.tenantId);
       applied++;

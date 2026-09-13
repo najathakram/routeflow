@@ -11,6 +11,7 @@ jest.mock("../common/db-locks", () => ({
   LockUnavailableError: class extends Error {},
 }));
 
+import { Logger } from "@nestjs/common";
 import { BillingCronService } from "./billing-cron.service";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
 
@@ -231,6 +232,51 @@ describe("BillingCronService", () => {
     // Same clause applyScheduledCancellations carries in this file.
     const where = prisma.tenantSubscription.findMany.mock.calls[0][0].where;
     expect(where.tenant).toEqual({ status: "ACTIVE", deletedAt: null });
+  });
+
+  // B218: planKeyToEnum() now THROWS for a `downgradeToPlanKey` outside PLAN_KEYS instead of
+  // silently writing STARTER (e.g. stale/migrated data, or a catalog row retired after the
+  // downgrade was scheduled). A cron sweep must not let tenant N's bad row stop tenant N+1's
+  // otherwise-valid scheduled downgrade from applying.
+  it("REG-B218 applyScheduledDowngrades skips-and-logs ONE bad row (off-catalog target) and still applies the rest", async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+    const { svc, tx, entitlements, tenantStatus } = make({
+      downgrades: [
+        {
+          tenantId: "bad-1",
+          planKey: "BUSINESS",
+          planVersionId: "v7",
+          downgradeToPlanKey: "BOGUS", // not in PLAN_KEYS or LEGACY_PLAN_KEY_ALIASES
+          retainedUserIds: [],
+        },
+        {
+          tenantId: "good-1",
+          planKey: "BUSINESS",
+          planVersionId: "v7",
+          downgradeToPlanKey: "STARTER",
+          retainedUserIds: ["u1"],
+        },
+      ],
+      activeTeam: 5,
+    });
+
+    await svc.applyScheduledDowngrades();
+
+    // The bad row's write never reached the DB — planKeyToEnum() throws while building the
+    // update's `data`, before tx.tenantSubscription.update is ever invoked for tenant
+    // "bad-1" — but the sweep kept going: the good row right after it still applied in full.
+    expect(tx.tenantSubscription.update).toHaveBeenCalledTimes(1);
+    expect(tx.tenantSubscription.update.mock.calls[0][0]).toMatchObject({
+      where: { tenantId: "good-1" },
+      data: { planKey: "STARTER" },
+    });
+    expect(entitlements.invalidate).toHaveBeenCalledWith("good-1");
+    expect(entitlements.invalidate).not.toHaveBeenCalledWith("bad-1");
+    expect(tenantStatus.invalidate).not.toHaveBeenCalledWith("bad-1");
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("tenant=bad-1"));
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("BOGUS"));
+
+    errorSpy.mockRestore();
   });
 
   it("applyScheduledCancellations flips cancelled+expired subs to READ_ONLY + emits a NEGATIVE churn delta", async () => {
