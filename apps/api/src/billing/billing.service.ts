@@ -117,7 +117,10 @@ export class BillingService {
     return this.prisma.$transaction(async (tx) => {
       const { count } = await tx.tenant.updateMany({
         where: { ...statusWhere, id: tenantId },
-        data: { status: toStatus },
+        // Reinstating to ACTIVE also clears a stale readOnlyReason (trial_cancelled /
+        // trial_expired / subscription_cancelled) — RO-1 now ships that field to the client,
+        // and a Stripe-driven reactivation is a paying tenant, never read-only.
+        data: { status: toStatus, ...(toStatus === "ACTIVE" ? { readOnlyReason: null } : {}) },
       });
       if (count !== 1) return false;
       await this.emitPayingDelta(tenantId, sub, direction, event, payload, tx);

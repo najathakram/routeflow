@@ -44,6 +44,20 @@ describe("TenantStatusGuard — READ_ONLY enforcement", () => {
     ).resolves.toBe(true);
   });
 
+  it("allows /billing/quote while READ_ONLY (the plan-change classifier /choose-plan fires before subscribe)", async () => {
+    await expect(
+      guardFor("READ_ONLY").canActivate(ctx("POST", "/api/v1/billing/quote")),
+    ).resolves.toBe(true);
+  });
+
+  it("still blocks an unrelated mutation while READ_ONLY (guard on the guard)", async () => {
+    const err = await guardFor("READ_ONLY")
+      .canActivate(ctx("POST", "/api/v1/orders"))
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(ForbiddenException);
+    expect((err.getResponse() as { code: string }).code).toBe("READ_ONLY");
+  });
+
   it("does not exempt an unrelated path that merely contains an allowlisted substring", async () => {
     // /authorization-overrides is not /auth/ — anchored startsWith must block it while READ_ONLY.
     await expect(

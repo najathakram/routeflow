@@ -206,6 +206,15 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
       expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_RESUMED)).toBe(349);
     });
 
+    it("R3 an ACTIVE transition's CAS write also clears a stale readOnlyReason", async () => {
+      const { svc, tx } = make({ transitionCount: 1 });
+      await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+      expect(tx.tenant.updateMany.mock.calls[0][0].data).toEqual({
+        status: "ACTIVE",
+        readOnlyReason: null,
+      });
+    });
+
     it("emits no delta on a renewal / lost race (CAS finds the tenant already ACTIVE)", async () => {
       const { svc, events } = make({ transitionCount: 0 });
       await (svc as any).onPaymentSucceeded({ customer: "cus_1" });

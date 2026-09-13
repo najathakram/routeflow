@@ -302,7 +302,14 @@ export class SubscriptionMutationService {
       });
       await tx.tenant.update({
         where: { id: tenantId },
-        data: { status: "ACTIVE", planVersionId: version.id, plan: planKeyToEnum(input.planKey) },
+        data: {
+          status: "ACTIVE",
+          planVersionId: version.id,
+          plan: planKeyToEnum(input.planKey),
+          // An ACTIVE tenant otherwise keeps a stale "trial_cancelled"/"trial_expired" forever
+          // (RO-1 now ships this to the client) — subscribing clears it.
+          readOnlyReason: null,
+        },
       });
       for (const [code, qty] of desired) {
         const meta = skuByCode.get(code)!;
@@ -753,57 +760,78 @@ export class SubscriptionMutationService {
    *
    * TRIAL-1: the no-row state is TEMPORARY (a Phase 0 reconciliation will backfill rows
    * later) — this must be correct in BOTH worlds, so it never assumes no-row is steady
-   * state. `TRIAL` → end the trial now (mirrors `billing-cron.service.ts` `expireTrials()`);
-   * if a row also exists, mark it `cancelAtPeriodEnd` too so it agrees with the tenant.
-   * `READ_ONLY` with no row → idempotent no-op success (already where cancelling would land).
-   * Any other status with no row → the existing 404 (a genuine anomaly today).
+   * state. READ_ONLY short-circuits FIRST, regardless of row: a read-only tenant is already
+   * where cancellation lands, so a repeat call is an idempotent no-op — never a fresh write
+   * or a fresh SUBSCRIPTION_CANCELED ledger row. `TRIAL` → end the trial now (mirrors
+   * `billing-cron.service.ts` `expireTrials()`) via a compare-and-swap on `Tenant.status`,
+   * deliberately leaving any `TenantSubscription` row untouched (see below for why). Any
+   * other status with no row → the existing 404 (a genuine anomaly today).
    */
   async cancel(tenantId: string, actorId?: string) {
     const [sub, tenant] = await Promise.all([
       this.prisma.tenantSubscription.findUnique({ where: { tenantId } }),
       this.prisma.tenant.findUnique({
         where: { id: tenantId },
-        select: { status: true, trialEndsAt: true },
+        select: { status: true },
       }),
     ]);
 
+    // Already read-only — with or without a row — is where cancellation lands. Checked
+    // FIRST and unconditionally: the old with-row path below re-armed cancelAtPeriodEnd and
+    // wrote a fresh SUBSCRIPTION_CANCELED ledger row on every repeat call.
+    if (tenant?.status === "READ_ONLY") {
+      return { cancelled: "already_read_only" as const };
+    }
+
     if (tenant?.status === "TRIAL") {
       const now = new Date();
-      await this.prisma.$transaction(async (tx) => {
-        await tx.tenant.update({
-          where: { id: tenantId },
+      const result = await this.prisma.$transaction(async (tx) => {
+        // Compare-and-swap: only end the trial if it is STILL TRIAL — a concurrent
+        // cancel/webhook can race this call between the read above and here.
+        const { count } = await tx.tenant.updateMany({
+          where: { id: tenantId, status: "TRIAL" },
           data: { status: "READ_ONLY", readOnlyReason: "trial_cancelled", trialEndsAt: now },
         });
-        if (sub) {
-          // Keep the row in agreement with the tenant — same shape the no-row-less path
-          // below writes — so a later Phase 0 reconciliation finds a consistent state.
-          await tx.tenantSubscription.update({
-            where: { tenantId },
-            data: {
-              cancelAtPeriodEnd: true,
-              downgradeToPlanKey: null,
-              downgradeEffectiveAt: null,
-              retainedUserIds: [],
-            },
+        if (count !== 1) {
+          const current = await tx.tenant.findUnique({
+            where: { id: tenantId },
+            select: { status: true },
           });
+          if (current?.status === "READ_ONLY") {
+            // A concurrent cancel already won the race — already where this call wanted
+            // to land.
+            return { cancelled: "already_read_only" as const };
+          }
+          // A concurrent subscribe/webhook made the tenant ACTIVE in the meantime — never
+          // overwrite a paying tenant with a stale trial-cancellation.
+          throw new ConflictException(
+            "Tenant status changed while ending the trial; refresh and try again.",
+          );
         }
+        // Deliberately leaves any TenantSubscription row untouched: the
+        // scheduled-cancellation sweep filters tenant.status ACTIVE, so an armed
+        // cancelAtPeriodEnd could never fire for this READ_ONLY tenant — but it WOULD
+        // survive a later Stripe reactivation (onCheckoutCompleted clears only the
+        // downgrade fields) and churn a paying tenant at period end, and it surfaces a
+        // "Keep my plan" control that resume() cannot honour.
         await this.events.emit(
           tenantId,
           BILLING_EVENTS.TRIAL_CANCELLED,
           { at: now.toISOString() },
           { actorId, tx },
         );
+        return { cancelled: "trial" as const };
       });
-      this.entitlements.invalidate(tenantId);
-      this.tenantStatus.invalidate(tenantId);
-      return { cancelled: "trial" as const };
+      // Invalidate only on the "trial" outcome — invalidating on already_read_only is
+      // harmless but unnecessary (nothing changed).
+      if (result.cancelled === "trial") {
+        this.entitlements.invalidate(tenantId);
+        this.tenantStatus.invalidate(tenantId);
+      }
+      return result;
     }
 
     if (!sub) {
-      if (tenant?.status === "READ_ONLY") {
-        // Already read-only with nothing to schedule — a success, not a 404.
-        return { cancelled: "already_read_only" as const };
-      }
       // Any other status with no row is a genuine anomaly today (e.g. ACTIVE with a missing
       // row) — revisit when Phase 0 subscription reconciliation lands: this case should
       // become unreachable, not stay a 404 forever.

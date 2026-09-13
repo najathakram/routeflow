@@ -144,7 +144,13 @@ function make(opts: Opts = {}) {
       update: jest.fn().mockResolvedValue({}),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
-    tenant: { update: jest.fn().mockResolvedValue({}) },
+    tenant: {
+      update: jest.fn().mockResolvedValue({}),
+      // TRIAL-1: cancel()'s TRIAL branch is a compare-and-swap (updateMany) with a
+      // re-read (findUnique) only when the CAS is lost — default to a clean win/no-race.
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      findUnique: jest.fn().mockResolvedValue({ status: "ACTIVE" }),
+    },
     tenantAddon: {
       upsert: jest.fn().mockResolvedValue({}),
       update: jest.fn().mockResolvedValue({}),
@@ -193,7 +199,7 @@ function make(opts: Opts = {}) {
     events,
     tenantStatus,
   );
-  return { svc, prisma, tx, events, entitlements, cat };
+  return { svc, prisma, tx, events, entitlements, tenantStatus, cat };
 }
 
 const deltaOf = (events: any, type: string) => {
@@ -1043,70 +1049,117 @@ describe("SubscriptionMutationService — one armed transition at a time (REG-B5
 });
 
 describe("SubscriptionMutationService.cancel — trial/read-only tenants with no subscription row (TRIAL-1)", () => {
-  it("TRIAL-1 cancel() on a trial tenant with no subscription row ends the trial into READ_ONLY instead of 404", async () => {
-    // NOTE (build-plan.md ruling): the write is transactional (tenant + subscription row must
-    // agree atomically when a row exists — see the WITH-a-row test below), so it goes through
-    // `tx.tenant.update`, not the bare `prisma.tenant.update` — asserting on the tx client here.
-    const { svc, tx } = make({ sub: null, tenantStatus: "TRIAL" });
-    await expect(svc.cancel("t-1", "u-1")).resolves.toEqual(
-      expect.objectContaining({ cancelled: "trial" }),
-    );
-    expect(tx.tenant.update).toHaveBeenCalledWith({
-      where: { id: "t-1" },
-      data: expect.objectContaining({
+  // (1) TRIAL, no row. RED against 51daea36: that build writes via `tx.tenant.update`
+  // unconditionally (no CAS `updateMany` call exists at all), so asserting an `updateMany`
+  // call with a `{ id, status: "TRIAL" }` where-clause fails outright.
+  it("TRIAL-1 (1) TRIAL no row: CAS updateMany on Tenant.status, emits TRIAL_CANCELLED without amountDelta, invalidates both caches once, resolves trial", async () => {
+    const { svc, tx, events, entitlements, tenantStatus } = make({
+      sub: null,
+      tenantStatus: "TRIAL",
+    });
+    await expect(svc.cancel("t-1", "u-1")).resolves.toEqual({ cancelled: "trial" });
+    expect(tx.tenant.updateMany).toHaveBeenCalledWith({
+      where: { id: "t-1", status: "TRIAL" },
+      data: {
         status: "READ_ONLY",
         readOnlyReason: "trial_cancelled",
         trialEndsAt: expect.any(Date),
-      }),
+      },
     });
+    const call = events.emit.mock.calls.find((c: any[]) => c[1] === BILLING_EVENTS.TRIAL_CANCELLED);
+    expect(call).toBeDefined();
+    expect(call![3]).not.toHaveProperty("amountDelta");
+    expect(entitlements.invalidate).toHaveBeenCalledTimes(1);
+    expect(tenantStatus.invalidate).toHaveBeenCalledTimes(1);
   });
 
-  it("TRIAL-1 cancel() on a read-only tenant with no subscription row is an idempotent success", async () => {
-    const { svc, tx } = make({ sub: null, tenantStatus: "READ_ONLY" });
-    await expect(svc.cancel("t-1", "u-1")).resolves.toEqual(
-      expect.objectContaining({ cancelled: "already_read_only" }),
-    );
+  // (2) TRIAL, WITH a row. RED against 51daea36: the old TRIAL branch calls
+  // `tx.tenantSubscription.update` whenever `sub` is present — this "NOT called" assertion
+  // fails against it.
+  it("TRIAL-1 (2) TRIAL with a row: same CAS + emit as (1), and the TenantSubscription row is left untouched", async () => {
+    const periodEnd = new Date("2026-08-01");
+    const { svc, tx, events } = make({
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodEnd },
+      tenantStatus: "TRIAL",
+    });
+    await expect(svc.cancel("t-1", "u-1")).resolves.toEqual({ cancelled: "trial" });
+    expect(tx.tenant.updateMany).toHaveBeenCalledWith({
+      where: { id: "t-1", status: "TRIAL" },
+      data: expect.objectContaining({ status: "READ_ONLY", readOnlyReason: "trial_cancelled" }),
+    });
+    expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+    expect(emitted(events)).toContain(BILLING_EVENTS.TRIAL_CANCELLED);
+  });
+
+  // (3) READ_ONLY, no row. RED against 51daea36 only in spirit (that build already resolves
+  // "already_read_only" here) — kept as the guard for the NEW short-circuit ordering.
+  it("TRIAL-1 (3) READ_ONLY no row: idempotent success, no writes, no emits", async () => {
+    const { svc, tx, events } = make({ sub: null, tenantStatus: "READ_ONLY" });
+    await expect(svc.cancel("t-1", "u-1")).resolves.toEqual({ cancelled: "already_read_only" });
     expect(tx.tenant.update).not.toHaveBeenCalled();
+    expect(tx.tenant.updateMany).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
   });
 
-  // Regression guard: an active tenant with no subscription row is a genuine anomaly, not a
-  // trial ending — the existing 404 must stay. GREEN today.
-  it("TRIAL-1 cancel() on an active tenant with no subscription row still 404s (anomaly, not a trial)", async () => {
+  // (4) READ_ONLY, WITH a row. RED against 51daea36: READ_ONLY is only checked inside the
+  // `!sub` branch there, so a READ_ONLY tenant WITH a row falls through to the legacy
+  // schedule path and DOES call `tenantSubscription.update` + emit SUBSCRIPTION_CANCELED —
+  // this assertion fails against it (F6 in the digest).
+  it("TRIAL-1 (4) READ_ONLY with a row: idempotent success, row untouched, no SUBSCRIPTION_CANCELED emit", async () => {
+    const periodEnd = new Date("2026-08-01");
+    const { svc, tx, events } = make({
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodEnd },
+      tenantStatus: "READ_ONLY",
+    });
+    await expect(svc.cancel("t-1", "u-1")).resolves.toEqual({ cancelled: "already_read_only" });
+    expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+    expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_CANCELED);
+  });
+
+  // (5) ACTIVE, no row — regression guard, GREEN today and after.
+  it("TRIAL-1 (5) ACTIVE no row: genuine anomaly, still 404s", async () => {
     const { svc } = make({ sub: null, tenantStatus: "ACTIVE" });
     await expect(svc.cancel("t-1", "u-1")).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  // Regression guard: a tenant that DOES have a subscription row keeps the existing
-  // schedule-at-period-end behavior untouched by the trial/read-only branch above. GREEN today.
-  it("TRIAL-1 cancel() with a subscription row is unchanged — schedules cancelAtPeriodEnd", async () => {
+  // (6) ACTIVE, WITH a row — regression guard for the legacy path, GREEN today and after.
+  // `make()` defaults `tenantStatus` to "TRIAL" (F5 in the digest) — this case must pass it
+  // explicitly, or it silently exercises the NEW TRIAL branch instead of the legacy one.
+  it("TRIAL-1 (6) ACTIVE with a row: legacy schedule path, untouched by the TRIAL/READ_ONLY branches", async () => {
     const periodEnd = new Date("2026-08-01");
-    const { svc, tx } = make({ sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodEnd } });
+    const { svc, tx, events } = make({
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodEnd },
+      tenantStatus: "ACTIVE",
+    });
     await svc.cancel("t-1", "u-1");
     expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
       cancelAtPeriodEnd: true,
     });
+    expect(emitted(events)).toContain(BILLING_EVENTS.SUBSCRIPTION_CANCELED);
+    expect(tx.tenant.updateMany).not.toHaveBeenCalled();
+    expect(tx.tenant.update).not.toHaveBeenCalled();
   });
 
-  it("TRIAL-1 cancel() on a trial tenant WITH a subscription row ends the trial now and marks the row cancelAtPeriodEnd", async () => {
-    const periodEnd = new Date("2026-08-01");
-    const { svc, tx } = make({
-      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodEnd },
+  // (7)/(8) exercise the CAS-lost re-read — unreachable in 51daea36 (no CAS exists there).
+  it("TRIAL-1 (7) CAS lost, re-read READ_ONLY: a concurrent cancel already won — idempotent success, no emit", async () => {
+    const { svc, tx, events } = make({ sub: null, tenantStatus: "TRIAL" });
+    tx.tenant.updateMany.mockResolvedValue({ count: 0 });
+    tx.tenant.findUnique.mockResolvedValue({ status: "READ_ONLY" });
+    await expect(svc.cancel("t-1", "u-1")).resolves.toEqual({ cancelled: "already_read_only" });
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it("TRIAL-1 (8) CAS lost, re-read ACTIVE: a concurrent subscribe/webhook won — refuses instead of overwriting a paying tenant", async () => {
+    const { svc, tx, events, entitlements, tenantStatus } = make({
+      sub: null,
       tenantStatus: "TRIAL",
     });
-    await expect(svc.cancel("t-1", "u-1")).resolves.toEqual(
-      expect.objectContaining({ cancelled: "trial" }),
-    );
-    expect(tx.tenant.update).toHaveBeenCalledWith({
-      where: { id: "t-1" },
-      data: expect.objectContaining({
-        status: "READ_ONLY",
-        readOnlyReason: "trial_cancelled",
-        trialEndsAt: expect.any(Date),
-      }),
-    });
-    expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
-      cancelAtPeriodEnd: true,
-    });
+    tx.tenant.updateMany.mockResolvedValue({ count: 0 });
+    tx.tenant.findUnique.mockResolvedValue({ status: "ACTIVE" });
+    await expect(svc.cancel("t-1", "u-1")).rejects.toBeInstanceOf(ConflictException);
+    expect(events.emit).not.toHaveBeenCalled();
+    expect(entitlements.invalidate).not.toHaveBeenCalled();
+    expect(tenantStatus.invalidate).not.toHaveBeenCalled();
   });
 });
 
