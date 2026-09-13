@@ -1,10 +1,10 @@
 {
-  "nextId": 118,
-  "activeCount": 39,
+  "nextId": 125,
+  "activeCount": 40,
   "archivedCount": 74,
-  "maxEntries": 40,
-  "maxBytes": 40960,
-  "updatedAt": "2026-09-13T05:05:00.000Z",
+  "maxEntries": 48,
+  "maxBytes": 49152,
+  "updatedAt": "2026-09-13T00:00:00.000Z",
   "schemaVersion": 1,
-  "note": "2026-09-13 (docs/704-bookkeeping, Option-B follow-up for #704 = master 2d353752): L-117 added (tooling, fresh-worktree first push: no .husky/_ hooks before npm ci so the push goes out unverified; then turbo shared-cache HITS leave .campaign/runs/*.json unwritten and campaign-check refuses). Register was at the cap (40 entries, 40,947 of 40,960 bytes), so TWO entries were archived for headroom: L-110 and L-111 (both 2026-09-11 tooling, zero outside citations by repo-wide grep excluding .claude/lessons/**, .claude/pipeline/** and code-map CHANGELOG/_meta.json, both fully guarded — the two oldest of the zero-cited fully-guarded set L-110/L-111/L-112/L-113). L-103 and L-106 are also zero-cited but carry 'Guard: none yet' and were kept per the fully-guarded rule. Moved verbatim to ARCHIVE.md under a new 2026-09-13 section. activeCount 39 (40 - 2 + 1), archivedCount 74 (72 + 2), nextId 118 — counted from '### L-' headers in the real files."
+  "note": "2026-09-13 (fix/B323-tenant-sweep, PR #722 fix round): L-124 added (domain, sweepAllPendingOrders' null-tenant customers were silently dropped — two one-row (customerId,tenantId) groups never cleared `having customerId._count > 1`, so nothing merged and nothing logged; fixed with a dedicated unscoped tenantId:null groupBy that counts and warns every such customer). Caps raised to 48 entries / 49,152 bytes here to match master (#717); this branch's copy was still on the old 40/40,960 caps and full. L-120–L-123 are reserved by other open PRs and not yet present in this branch's LESSONS.md — do not reuse those ids. activeCount 40 (39 + 1), nextId 125."
 }

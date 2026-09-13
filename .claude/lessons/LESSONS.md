@@ -579,3 +579,23 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
 - **Guard:** `campaign-check` refuses the missing-report case (the refusal itself); CI verify on
   the PR head is the merge gate for the no-hook case; P-BUILD step 1 and P-CLOUD-0 step 7 carry
   the routine. Candidate: `scripts/worktree-audit.mjs` flags a worktree without `.husky/_`.
+
+### L-124 · 2026-09-13 · domain · cron sweep silently dropped null-tenant orders
+
+- **Symptom:** `sweepAllPendingOrders()` grouped pending orders by `(customerId, tenantId)` and
+  filtered with `having customerId._count > 1`; a customer with one order under a real tenant and
+  one legacy order with `tenantId: null` produced two SEPARATE one-row groups, both filtered out
+  by `having` before the null-tenant branch ever ran — nothing merged, and NOTHING logged (PR
+  #722 independent review, B323).
+- **Root cause:** the null-tenant warn lived only inside the per-group loop, downstream of the
+  `having` filter, so a null-tenant row was only ever visible when it happened to share its
+  `(customerId, tenantId)` group with more than one other row. A lone null-tenant row sitting
+  beside a lone real-tenant row for the same customer was invisible to both the merge and the log.
+- **Lesson:** **A cron or bootstrap entry point has NO ambient tenant: group the work by tenantId
+  first and run each group inside `tenantCtx.run(tenantId)`; `forTenant()` silently returns the
+  unscoped client otherwise. Rows without a tenant are skipped AND counted, never merged unscoped
+  and never dropped silently.**
+- **Guard:** `REG-B323` — a dedicated unscoped `groupBy({ by: ["customerId"], where: { ...,
+tenantId: null } })` run alongside the main query counts and warns every null-tenant customer
+  regardless of whether their real-tenant group individually cleared the `>1` threshold; the
+  sweep's return shape carries the count as `skipped`.
