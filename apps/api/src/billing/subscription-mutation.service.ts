@@ -5,6 +5,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
@@ -14,6 +15,8 @@ import { ProrationService } from "./proration.service";
 import { SubscriptionService } from "./subscription.service";
 import { EntitlementsService } from "./entitlements.service";
 import { BillingEventService } from "./billing-event.service";
+import { StripeService } from "./stripe.service";
+import { isStripeResourceMissing } from "./addon.service";
 import {
   BILLING_EVENTS,
   findPlanDefinition,
@@ -137,6 +140,11 @@ export class SubscriptionMutationService {
     private readonly entitlements: EntitlementsService,
     private readonly events: BillingEventService,
     private readonly tenantStatus: TenantStatusGuard,
+    // STRIPE-CANCEL-1: cancel()/resume() must tell Stripe about a self-serve schedule change
+    // for a row provisioned via a super-admin checkout link (stripeSubId set) — otherwise the
+    // Stripe subscription keeps invoicing after our local cancellation. Already provided by
+    // BillingModule; no module change needed.
+    private readonly stripe: StripeService,
   ) {}
 
   private readonly logger = new Logger(SubscriptionMutationService.name);
@@ -838,6 +846,36 @@ export class SubscriptionMutationService {
       throw new NotFoundException("No subscription to cancel.");
     }
 
+    // STRIPE-CANCEL-1: a row provisioned by a super-admin checkout link carries a stripeSubId —
+    // Stripe itself must be told, or its subscription keeps invoicing after this "cancellation"
+    // only ever flips our local flag. Deliberately BEFORE the local write: if Stripe succeeds and
+    // the DB write below then fails, Stripe has still stopped invoicing and the
+    // subscription.deleted webhook (onSubscriptionDeleted) churns the tenant correctly at period
+    // end. The reverse order would leave a tenant who thinks they cancelled still being charged.
+    // A row with no stripeSubId (plans-as-data / manual) takes the path below byte-identically.
+    if (sub.stripeSubId) {
+      try {
+        await this.stripe.updateSubscription(sub.stripeSubId, { cancel_at_period_end: true });
+      } catch (err) {
+        if (isStripeResourceMissing(err)) {
+          // The Stripe subscription is already gone — nothing left to stop invoicing; the
+          // deleted-subscription webhook handles the churn. Proceed with the local cancellation.
+          this.logger.warn(
+            `STRIPE-CANCEL-1: cancel() found Stripe subscription already gone for tenant ${tenantId} (stripeSubId ${sub.stripeSubId}) — proceeding with local cancellation`,
+          );
+        } else {
+          // Never log the raw error (may carry Stripe request/auth details) — tenantId +
+          // stripeSubId only.
+          this.logger.error(
+            `STRIPE-CANCEL-1: cancel() failed to schedule the Stripe cancellation for tenant ${tenantId} (stripeSubId ${sub.stripeSubId})`,
+          );
+          throw new ServiceUnavailableException(
+            "Could not schedule the cancellation with the payment provider — nothing was changed; retry, or contact support.",
+          );
+        }
+      }
+    }
+
     await this.prisma.$transaction(async (tx) => {
       await tx.tenantSubscription.update({
         where: { tenantId },
@@ -870,6 +908,29 @@ export class SubscriptionMutationService {
   async resume(tenantId: string, actorId?: string) {
     const sub = await this.prisma.tenantSubscription.findUnique({ where: { tenantId } });
     if (!sub) throw new NotFoundException("No subscription.");
+
+    // STRIPE-CANCEL-1: the mirror of cancel()'s Stripe-first write — undo the scheduled
+    // cancellation with Stripe before touching our own row. A row with no stripeSubId takes the
+    // existing path unchanged.
+    if (sub.stripeSubId) {
+      try {
+        await this.stripe.updateSubscription(sub.stripeSubId, { cancel_at_period_end: false });
+      } catch (err) {
+        if (isStripeResourceMissing(err)) {
+          // Nothing to resume — the provider subscription is gone, so there is no local write.
+          throw new ConflictException(
+            "The payment-provider subscription no longer exists — subscribe again to restore service.",
+          );
+        }
+        this.logger.error(
+          `STRIPE-CANCEL-1: resume() failed to resume the Stripe subscription for tenant ${tenantId} (stripeSubId ${sub.stripeSubId})`,
+        );
+        throw new ServiceUnavailableException(
+          "Could not resume the subscription with the payment provider — nothing was changed; retry, or contact support.",
+        );
+      }
+    }
+
     await this.prisma.$transaction(async (tx) => {
       await tx.tenantSubscription.update({
         where: { tenantId },

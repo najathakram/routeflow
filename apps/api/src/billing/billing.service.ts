@@ -613,6 +613,18 @@ export class BillingService {
       }
     }
 
+    // STRIPE-CANCEL-1: a tenant who self-serve cancelled has cancelAtPeriodEnd armed locally.
+    // Reinstating here on the next invoice.payment_succeeded would resurrect them to ACTIVE
+    // without ever checking whether Stripe actually stopped billing — the exact defect (our
+    // cron takes them READ_ONLY at period end, then this handler flips them back ACTIVE every
+    // cycle while Stripe keeps charging). Nothing is written; this needs manual reconciliation.
+    if (sub.cancelAtPeriodEnd) {
+      this.logger.warn(
+        `STRIPE-CANCEL-1: invoice.payment_succeeded for tenant ${sub.tenantId} while cancelAtPeriodEnd is armed (stripeSubId ${sub.stripeSubId ?? "none"}) — not reinstating; the provider subscription was not cancelled at period end. Needs manual reconciliation.`,
+      );
+      return;
+    }
+
     // Atomic non-ACTIVE→ACTIVE: reinstates a dropped-out tenant and re-adds its run-rate exactly
     // once. The conditional flip is the idempotency key — the paired checkout.session.completed
     // webhook races here and only the winner emits — and it is a NO-OP on ordinary renewals

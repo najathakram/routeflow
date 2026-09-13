@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
@@ -123,6 +124,7 @@ interface Opts {
   tenantStatus?: string;
   /** The legacy `Tenant.plan` enum — the ONLY place a pre-plans-as-data tenant's plan lives. */
   tenantPlan?: string | null;
+  /** STRIPE-CANCEL-1: `sub.stripeSubId` (default null) gates whether cancel()/resume() talk to Stripe. */
   sub?: any;
   priorAddons?: any[];
   existingAddon?: any;
@@ -190,6 +192,12 @@ function make(opts: Opts = {}) {
   const entitlements = { invalidate: jest.fn() } as any;
   const events = { emit: jest.fn().mockResolvedValue({}) } as any;
   const tenantStatus = { invalidate: jest.fn() } as any;
+  // STRIPE-CANCEL-1: 8th ctor arg — cancel()/resume() tell Stripe about a self-serve
+  // schedule change when the row carries a stripeSubId (Opts.sub.stripeSubId, default null).
+  const stripe = {
+    isConfigured: true,
+    updateSubscription: jest.fn().mockResolvedValue({}),
+  } as any;
   const svc = new SubscriptionMutationService(
     prisma,
     cat,
@@ -198,8 +206,9 @@ function make(opts: Opts = {}) {
     entitlements,
     events,
     tenantStatus,
+    stripe,
   );
-  return { svc, prisma, tx, events, entitlements, tenantStatus, cat };
+  return { svc, prisma, tx, events, entitlements, tenantStatus, cat, stripe };
 }
 
 const deltaOf = (events: any, type: string) => {
@@ -1469,5 +1478,135 @@ describe("SubscriptionMutationService.planChangePreview — the off-list refusal
     await expect(svc.planChangePreview("t1", "PRO", "MONTHLY")).rejects.toBeInstanceOf(
       BadRequestException,
     );
+  });
+});
+
+// STRIPE-CANCEL-1: cancel()/resume() only wrote TenantSubscription.cancelAtPeriodEnd locally and
+// never told Stripe — a tenant provisioned by a super-admin checkout link kept being invoiced
+// after "cancelling", and the monthly READ_ONLY<->ACTIVE flap (billing.service.ts
+// onPaymentSucceeded resurrecting the tenant without reading cancelAtPeriodEnd) is covered
+// separately in billing.service.spec.ts. Stripe-first ordering (R2/R3): if Stripe succeeds and
+// the local write then fails, Stripe still stops invoicing and the deleted-subscription webhook
+// churns the tenant correctly — the reverse order would leave a tenant who thinks they cancelled
+// still being charged.
+describe("STRIPE-CANCEL-1 — self-serve cancel/resume propagate to Stripe", () => {
+  const activeSub = (extra: Record<string, unknown> = {}) => {
+    const { periodEnd } = activePeriod();
+    return { planKey: "BUSINESS", cycle: "MONTHLY", periodEnd, stripeSubId: null, ...extra };
+  };
+
+  it("cancel() ACTIVE + stripeSubId schedules the Stripe cancellation BEFORE the local write, then writes + emits", async () => {
+    const { svc, tx, events, stripe } = make({
+      tenantStatus: "ACTIVE",
+      sub: activeSub({ stripeSubId: "sub_x" }),
+    });
+    await svc.cancel("t1", "admin");
+    expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
+    expect(stripe.updateSubscription).toHaveBeenCalledWith("sub_x", {
+      cancel_at_period_end: true,
+    });
+    expect(stripe.updateSubscription.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.tenantSubscription.update.mock.invocationCallOrder[0],
+    );
+    expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
+      cancelAtPeriodEnd: true,
+    });
+    expect(emitted(events)).toContain(BILLING_EVENTS.SUBSCRIPTION_CANCELED);
+  });
+
+  it("cancel() ACTIVE + stripeSubId: null never calls Stripe — legacy/manual path unchanged", async () => {
+    const { svc, tx, events, stripe } = make({
+      tenantStatus: "ACTIVE",
+      sub: activeSub(), // stripeSubId: null
+    });
+    await svc.cancel("t1", "admin");
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
+      cancelAtPeriodEnd: true,
+    });
+    expect(emitted(events)).toContain(BILLING_EVENTS.SUBSCRIPTION_CANCELED);
+  });
+
+  it("cancel() rejects ServiceUnavailableException on a generic Stripe failure — no DB write, no emit", async () => {
+    const { svc, tx, events, stripe } = make({
+      tenantStatus: "ACTIVE",
+      sub: activeSub({ stripeSubId: "sub_x" }),
+    });
+    stripe.updateSubscription.mockRejectedValue(new Error("boom"));
+    await expect(svc.cancel("t1", "admin")).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it("cancel() proceeds locally when Stripe reports resource_missing (subscription already gone)", async () => {
+    const { svc, tx, events, stripe } = make({
+      tenantStatus: "ACTIVE",
+      sub: activeSub({ stripeSubId: "sub_x" }),
+    });
+    stripe.updateSubscription.mockRejectedValue({ code: "resource_missing", statusCode: 404 });
+    await expect(svc.cancel("t1", "admin")).resolves.toBeDefined();
+    expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
+    expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
+      cancelAtPeriodEnd: true,
+    });
+    expect(emitted(events)).toContain(BILLING_EVENTS.SUBSCRIPTION_CANCELED);
+  });
+
+  it("cancel() on a TRIAL tenant ends the trial without ever touching Stripe, even with a stripeSubId on the row", async () => {
+    const { svc, stripe } = make({
+      tenantStatus: "TRIAL",
+      sub: activeSub({ stripeSubId: "sub_x" }),
+    });
+    await expect(svc.cancel("t1", "admin")).resolves.toEqual({ cancelled: "trial" });
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
+  });
+
+  it("resume() with a stripeSubId un-schedules the Stripe cancellation BEFORE the local write, then writes + emits", async () => {
+    const { svc, tx, events, stripe } = make({
+      sub: activeSub({ stripeSubId: "sub_x", cancelAtPeriodEnd: true }),
+    });
+    await svc.resume("t1", "admin");
+    expect(stripe.updateSubscription).toHaveBeenCalledWith("sub_x", {
+      cancel_at_period_end: false,
+    });
+    expect(stripe.updateSubscription.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.tenantSubscription.update.mock.invocationCallOrder[0],
+    );
+    expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
+      cancelAtPeriodEnd: false,
+    });
+    expect(emitted(events)).toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
+  });
+
+  it("resume() rejects ServiceUnavailableException on a generic Stripe failure — no write, no emit", async () => {
+    const { svc, tx, events, stripe } = make({
+      sub: activeSub({ stripeSubId: "sub_x", cancelAtPeriodEnd: true }),
+    });
+    stripe.updateSubscription.mockRejectedValue(new Error("boom"));
+    await expect(svc.resume("t1", "admin")).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it("resume() rejects ConflictException when Stripe reports resource_missing — no write, no emit", async () => {
+    const { svc, tx, events, stripe } = make({
+      sub: activeSub({ stripeSubId: "sub_x", cancelAtPeriodEnd: true }),
+    });
+    stripe.updateSubscription.mockRejectedValue({ code: "resource_missing", statusCode: 404 });
+    await expect(svc.resume("t1", "admin")).rejects.toBeInstanceOf(ConflictException);
+    expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it("resume() with stripeSubId: null never calls Stripe — existing path unchanged", async () => {
+    const { svc, tx, events, stripe } = make({
+      sub: activeSub({ cancelAtPeriodEnd: true }), // stripeSubId: null
+    });
+    await svc.resume("t1", "admin");
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
+      cancelAtPeriodEnd: false,
+    });
+    expect(emitted(events)).toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
   });
 });
