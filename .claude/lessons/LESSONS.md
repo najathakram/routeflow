@@ -765,9 +765,11 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   the server's claim predicate (same status set, from the shared enum), and a navigation off a
   mutation result reads the field the server actually returns — a hand-typed response type is a
   silent `undefined`.**
-- **Guard:** PARTIAL — `useConvertEstimate` typed `{ id }` (aa47ee9e) holds; `estimates/[id]/page.tsx`
-  still gates Convert on `canConvert` (:446) AND two inline `status === "ACCEPTED"` copies (:288,
-  :526) — collapsing them is open. No unit pin yet — the B394 (B15-NAV) row keeps the gap visible.
+- **Guard:** NOT IN PLACE for the predicate half — at aa47ee9e `estimates/[id]/page.tsx` still
+  gates Convert on `canConvert` (:220/:446) AND two inline `status === "ACCEPTED"` copies (:288,
+  :526): three predicates, the drift this lesson forbids. Only the navigation half holds
+  (`useConvertEstimate` typed `{ id }`). Open follow-up: collapse onto one `canConvert` + a unit
+  pin; the B394 (B15-NAV) row keeps the gap visible.
 
 ### L-130 · 2026-09-13 · domain · F27 B17/B79 (estimates)
 
