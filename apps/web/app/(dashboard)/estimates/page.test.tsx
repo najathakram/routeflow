@@ -1,6 +1,6 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen, waitFor, within } from "@/test-utils/render";
+import { fireEvent, renderWithProviders, screen, waitFor, within } from "@/test-utils/render";
 import EstimatesPage from "./page";
 
 // REG-B79 (rc-b79): the create-estimate form lets an operator pick an
@@ -91,10 +91,14 @@ describe("EstimatesPage — REG-B79 issueDate write path", () => {
 
     // Set issue date — the label has no htmlFor/id association, so select the
     // first of the two `type="date"` inputs (Issue Date, then Expiry Date).
+    // fireEvent.change (not user.clear/user.type) sets the value directly:
+    // userEvent's keystroke-by-keystroke typing into a native `type="date"`
+    // input is locale/OS-dependent across jsdom environments and is flaky
+    // under a different runner (CI failed here with the mutate mock never
+    // called — the typed keystrokes never resolved to a valid date).
     const dateInputs = dialog.querySelectorAll('input[type="date"]');
     const issueDateInput = dateInputs[0] as HTMLInputElement;
-    await user.clear(issueDateInput);
-    await user.type(issueDateInput, "2026-09-01");
+    fireEvent.change(issueDateInput, { target: { value: "2026-09-01" } });
 
     await user.click(within(dialog).getByRole("button", { name: /create estimate/i }));
 
