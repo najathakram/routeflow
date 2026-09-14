@@ -33,9 +33,9 @@
     "postinstall": "prisma generate"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.124.0",
-    "@aws-sdk/client-s3": "^3.1127.0",
-    "@aws-sdk/s3-request-presigner": "^3.1127.0",
+    "@anthropic-ai/sdk": "^0.125.0",
+    "@aws-sdk/client-s3": "^3.1130.0",
+    "@aws-sdk/s3-request-presigner": "^3.1130.0",
     "@nestjs/bull": "^11.0.5",
     "@nestjs/common": "^11.2.3",
     "@nestjs/config": "^4.0.3",
@@ -53,11 +53,11 @@
     "@react-pdf/renderer": "^4.9.0",
     "@routeflow/pricing": "*",
     "@routeflow/types": "*",
-    "@sentry/node": "^10.73.0",
+    "@sentry/node": "^10.74.0",
     "@socket.io/redis-adapter": "^8.3.0",
     "@types/nodemailer": "^8.0.0",
     "@types/pg": "^8.23.1",
-    "@types/react": "^19.2.2",
+    "@types/react": "^19.3.0",
     "@types/sanitize-html": "^2.16.1",
     "axios": "^1.20.0",
     "bcrypt": "^6.0.0",
@@ -70,7 +70,7 @@
     "firebase-admin": "^13.7.0",
     "helmet": "^8.3.0",
     "ioredis": "^5.11.1",
-    "libphonenumber-js": "^1.12.39",
+    "libphonenumber-js": "^1.13.13",
     "mime-types": "^2.1.35",
     "multer": "^2.3.0",
     "nodemailer": "^8.0.4",
@@ -78,14 +78,14 @@
     "passport-jwt": "^4.0.1",
     "passport-local": "^1.0.0",
     "pg": "^8.23.0",
-    "react": "^19.2.4",
+    "react": "^19.3.0",
     "reflect-metadata": "^0.2.2",
-    "resend": "^6.26.0",
+    "resend": "^6.27.0",
     "rxjs": "^7.8.2",
     "sanitize-html": "2.17.5",
     "sharp": "^0.35.4",
     "socket.io": "^4.8.3",
-    "stripe": "^22.6.1",
+    "stripe": "^22.6.2",
     "uuid": "^7.0.3"
   },
   "devDependencies": {
@@ -120,7 +120,7 @@
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.69.0"
+    "typescript-eslint": "^8.70.0"
   },
   "jest": {
     "reporters": [
