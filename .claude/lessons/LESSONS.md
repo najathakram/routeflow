@@ -236,7 +236,7 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
   "predates this boot" verdict; the owner-write fixture clears the lock dir before its own precondition
   (`scripts/campaign/bugs.mjs` self-test, step 6 of `npm run verify`).
 
-### L-129 · 2026-09-14 · tooling · B420 GIT_* env leak into self-test throwaway repos
+### L-139 · 2026-09-14 · tooling · B420 GIT_* env leak into self-test throwaway repos
 
 - **Symptom:** a pre-push hook's `validate-code-map.stamp.self-test.mjs` renamed a live worktree's
   branch twice and stacked fixture commits on real work, mid-session (rf-mobile-lanes incident).
