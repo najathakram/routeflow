@@ -1392,11 +1392,13 @@ export class CustomersService {
       // Opus review (F39): withAdvisoryLock above only serializes concurrent applies of THIS
       // advance against EACH OTHER (keyed by customerId) — it does nothing against a totally
       // different writer of the same Invoice, e.g. a concurrent invoices.service.ts
-      // `recordPayment` (which takes this exact lock at its own start). Without locking the
-      // row here too, that path could still overpay the invoice from the other side — the
-      // B311 race, reachable through this door instead. `FOR UPDATE` (not the NOWAIT house
-      // primitive), matching `recordPayment`'s own choice: an ordinary InsertPayment only
-      // holds `FOR KEY SHARE` on the parent, which `FOR NO KEY UPDATE` would not conflict with.
+      // `recordPayment` insert (invoices.service.ts never calls withAdvisoryLock, so that path
+      // takes no such lock). Without locking the row here too, that path could still overpay
+      // the invoice from the other side — the B311 race, reachable through this door instead.
+      // The `SELECT ... FOR UPDATE` below is what actually conflicts with it: an ordinary
+      // InsertPayment only holds `FOR KEY SHARE` on the parent Invoice row, and plain
+      // `FOR UPDATE` (not the NOWAIT house primitive) is strong enough to block against that —
+      // `FOR NO KEY UPDATE` would not be.
       await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${dto.invoiceId} FOR UPDATE`;
 
       const inv = await tx.invoice.findUnique({
