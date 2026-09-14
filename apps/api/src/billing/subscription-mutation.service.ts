@@ -85,6 +85,25 @@ function isSelfServiceAddon(sku: string): boolean {
   return (SELF_SERVICE_ADDON_SKUS as readonly string[]).includes(sku);
 }
 
+/**
+ * B408: the Stripe subscription statuses there is NOTHING LEFT TO CANCEL from. Reaching one of
+ * these is the desired end state of a cancel, so `cancel()`'s READ_ONLY branch treats it as
+ * success and drops the dead `stripeSubId` rather than throwing.
+ *
+ * - `canceled` — the subscription was cancelled. The end state itself.
+ * - `incomplete_expired` — the FIRST invoice was never paid inside Stripe's window, so the
+ *   subscription expired without ever activating. It can never be revived or charged, and
+ *   `cancelSubscription` on it 400s exactly like `canceled`.
+ *
+ * Deliberately NOT terminal, because each can still be cancelled and a cancel there is a real
+ * state change we must not swallow: `active`, `trialing`, `past_due`, `unpaid` (retries are
+ * exhausted but the subscription lives and still bills on repair), `paused` (resumable), and
+ * `incomplete` (the first payment can still succeed). Treating any of those as "nothing to do"
+ * would drop the tenant's cancellation on the floor and keep Stripe invoicing — the opposite
+ * defect, and a worse one.
+ */
+const STRIPE_TERMINAL_STATUSES: ReadonlySet<string> = new Set(["canceled", "incomplete_expired"]);
+
 const ADMIN_ONLY_ADDON_MESSAGE =
   "This add-on is enabled by RouteFlow for your workspace — contact support";
 
@@ -1030,17 +1049,16 @@ export class SubscriptionMutationService {
         this.logger.warn(
           `STRIPE-CANCEL-2: cancel() found Stripe subscription already gone for tenant ${tenantId} (stripeSubId ${stripeSubId}) — proceeding with the READ_ONLY short-circuit`,
         );
-      } else if (await this.stripeSubIsAlreadyCanceled(stripeSubId)) {
-        // FINDING-2 (round 3 review): cancelling an ALREADY-cancelled subscription is not
+      } else if (await this.stripeSubIsTerminal(stripeSubId)) {
+        // B408: cancelling a subscription that is ALREADY in a terminal state is not
         // `resource_missing` — the object still exists, so Stripe returns a 400
         // invalid_request_error ("a subscription with status `canceled` may not be updated").
-        // Treated as a generic failure that branch threw 503 on every retry while the local
-        // pointer was never cleared, so the tenant could never get out. Already cancelled IS
-        // the desired end state. Detected by re-reading the subscription's status rather than
-        // matching the message text: Stripe exposes no dedicated code here, and a message
-        // match is the brittle discriminator B218 already had to replace once.
+        // Falling to the generic branch threw 503 on every retry while the local pointer was
+        // never cleared, so the tenant could never get out. A terminal state IS the desired end
+        // state. See STRIPE_TERMINAL_STATUSES for which statuses qualify and, just as
+        // importantly, which do not.
         this.logger.warn(
-          `STRIPE-CANCEL-2: cancel() found Stripe subscription already cancelled for tenant ${tenantId} (stripeSubId ${stripeSubId}) — proceeding with the READ_ONLY short-circuit`,
+          `STRIPE-CANCEL-2/B408: cancel() found Stripe subscription already in a terminal state for tenant ${tenantId} (stripeSubId ${stripeSubId}) — proceeding with the READ_ONLY short-circuit`,
         );
       } else {
         // Never log the raw error (may carry Stripe request/auth details) — tenantId +
@@ -1069,15 +1087,21 @@ export class SubscriptionMutationService {
   }
 
   /**
-   * FINDING-2: is this subscription already in Stripe's terminal `canceled` state? Re-reads the
-   * subscription rather than matching error text. A 404 on the re-read means it is gone
-   * entirely, which is equally "nothing left to cancel"; any other failure is inconclusive and
-   * returns false so the caller still surfaces the 503.
+   * B408: is this subscription in a TERMINAL Stripe state — one there is nothing left to cancel
+   * from? Re-reads the subscription rather than matching error text (Stripe exposes no dedicated
+   * code, and a message match is the brittle discriminator B218 already had to replace once). A
+   * 404 on the re-read means it is gone entirely, which is equally "nothing left to cancel"; any
+   * other failure is inconclusive and returns false so the caller still surfaces the 503.
+   *
+   * This used to test `status === "canceled"` alone, which is how B408 happened: the fix was
+   * written against the ONE status the repro produced, so every OTHER terminal status still fell
+   * to the generic branch and threw 503 forever with `stripeSubId` intact — the exact permanent
+   * lockout that fix existed to remove. The membership test is now the SET.
    */
-  private async stripeSubIsAlreadyCanceled(stripeSubId: string): Promise<boolean> {
+  private async stripeSubIsTerminal(stripeSubId: string): Promise<boolean> {
     try {
       const sub = await this.stripe.getSubscription(stripeSubId);
-      return sub?.status === "canceled";
+      return typeof sub?.status === "string" && STRIPE_TERMINAL_STATUSES.has(sub.status);
     } catch (err) {
       return isStripeResourceMissing(err);
     }

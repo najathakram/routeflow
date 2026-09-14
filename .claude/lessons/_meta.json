@@ -1,11 +1,11 @@
 {
-  "nextId": 128,
-  "activeCount": 48,
+  "nextId": 129,
+  "activeCount": 49,
   "archivedCount": 75,
   "maxEntries": 64,
   "maxBytes": 65536,
-  "updatedAt": "2026-09-14T07:17:40.977Z",
+  "updatedAt": "2026-09-14T09:35:31.383Z",
   "schemaVersion": 1,
-  "note": "W1 tail (branch fix/b216-webhook-disarm, master 73b0d3e4): ONE entry, L-127, for the B216 owner ruling that reversed the Stripe-reinstatement disarm. Lands IN the code PR now that maxEntries is 64. Under the 1.5 KB author-trim rule. activeCount 47 -> 48.",
+  "note": "B408 (branch fix/B408-terminal-stripe-status, master 9ab91f7a): ONE entry, L-128 — an equality check against one value of an external status enum is a set-membership test nobody wrote yet. Recurrence evidence is strong: the canceled-only fix landed in #740 and its successor status was found by the next review the same day. Under the 1.5 KB author-trim rule. activeCount 48 -> 49.",
   "notes": "2026-09-13 owner ruling: maxBytes 40,960 -> 49,152 so the 40-entry cap is the binding constraint (40 x ~1.05 KB); the byte cap had made the entry cap unreachable and left no eligible archive candidate. maxEntries 40 -> 48 in the same ruling: with bytes raised the entry cap became binding at 40/40 with no eligible archive candidate, so bytes alone unblocked nothing. 2026-09-14 owner ruling: maxBytes 49,152 -> 65,536 (register hit 49,142 after two waves in one day with no eligible archive candidate); maxEntries stays 48. House rule: an author trims any entry over 1.5 KB before it lands; never shorten a live entry afterwards. 2026-09-14 owner ruling: maxEntries 48 -> 64 to match the 65,536-byte cap (register reached 47/48 after the W1 wave); author-trim rule (>1.5 KB) unchanged."
 }

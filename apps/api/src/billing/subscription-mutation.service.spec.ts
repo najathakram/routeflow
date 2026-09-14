@@ -2047,6 +2047,65 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
     expect(events.emit).not.toHaveBeenCalled();
   });
 
+  // B408: the fix above was written against the ONE status its repro produced (`canceled`), so
+  // every OTHER terminal status still fell to the generic branch and threw 503 forever with
+  // stripeSubId intact — the same permanent lockout it existed to remove. The membership test is
+  // the SET now, and these cases pin both halves of it.
+  it("REG-B408 cancel() READ_ONLY + an incomplete_expired Stripe sub → treated as success, pointer dropped, no 503", async () => {
+    const { svc, prisma, events, stripe } = make({
+      tenantStatus: "READ_ONLY",
+      sub: activeSub({ stripeSubId: "sub_x" }),
+    });
+    // The first invoice was never paid inside Stripe's window: the subscription expired without
+    // ever activating, can never be charged, and 400s on cancel exactly like `canceled`.
+    stripe.cancelSubscription.mockRejectedValue({
+      statusCode: 400,
+      type: "StripeInvalidRequestError",
+      message: "A subscription with status `incomplete_expired` may not be updated",
+    });
+    stripe.getSubscription.mockResolvedValue({ status: "incomplete_expired" });
+
+    await expect(svc.cancel("t1", "admin")).resolves.toEqual({ cancelled: "already_read_only" });
+    expect(prisma.tenantSubscription.updateMany).toHaveBeenCalledWith({
+      where: { tenantId: "t1", stripeSubId: "sub_x" },
+      data: { stripeSubId: null },
+    });
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it.each(["active", "trialing", "past_due", "unpaid", "paused", "incomplete"])(
+    "REG-B408 guard: %s is NOT terminal — the 503 still surfaces and the pointer survives",
+    async (status) => {
+      const { svc, prisma, events, stripe } = make({
+        tenantStatus: "READ_ONLY",
+        sub: activeSub({ stripeSubId: "sub_x" }),
+      });
+      stripe.cancelSubscription.mockRejectedValue(new Error("boom"));
+      stripe.getSubscription.mockResolvedValue({ status });
+
+      // Swallowing any of these would drop a real cancellation and keep Stripe invoicing — the
+      // opposite defect to B408, and the worse one. `unpaid` in particular LOOKS dead (retries
+      // exhausted) but still bills on repair, and `incomplete`'s first payment can still land.
+      await expect(svc.cancel("t1", "admin")).rejects.toBeInstanceOf(ServiceUnavailableException);
+      expect(prisma.tenantSubscription.updateMany).not.toHaveBeenCalled();
+      expect(events.emit).not.toHaveBeenCalled();
+    },
+  );
+
+  it("REG-B408 guard: an unrecognised future status is NOT assumed terminal", async () => {
+    const { svc, prisma, stripe } = make({
+      tenantStatus: "READ_ONLY",
+      sub: activeSub({ stripeSubId: "sub_x" }),
+    });
+    stripe.cancelSubscription.mockRejectedValue(new Error("boom"));
+    // A status Stripe adds later must fail CLOSED: 503 and keep the pointer, so the tenant can
+    // retry once we teach the set about it — never silently succeed on an unknown state.
+    stripe.getSubscription.mockResolvedValue({ status: "some_future_status" });
+
+    await expect(svc.cancel("t1", "admin")).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(prisma.tenantSubscription.updateMany).not.toHaveBeenCalled();
+  });
+
   it("REG-B399 a SECOND cancel() on the same READ_ONLY tenant is a no-op success — the cleared pointer means Stripe is never called again", async () => {
     const { svc, prisma, events, stripe } = make({
       tenantStatus: "READ_ONLY",
