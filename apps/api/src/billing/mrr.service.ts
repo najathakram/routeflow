@@ -41,9 +41,13 @@ export class MrrService {
   constructor(private readonly prisma: PrismaService) {}
 
   async computeOverview(): Promise<MrrOverview> {
+    // Phase 0 T9: every query below scopes by tenant.class === "PRODUCTION" — the first
+    // five customers are FREE PILOTS/TRIALS and every TEST/DEMO/INTERNAL tenant (routeflow-demo,
+    // qa-*/e2e-*/ux-audit-* slugs, routeflow-hq) must be invisible to revenue everywhere,
+    // not just here in the paying-subscription filter.
     const payingWhere = {
       planKey: { not: null },
-      tenant: { status: "ACTIVE" as const, deletedAt: null },
+      tenant: { status: "ACTIVE" as const, deletedAt: null, class: "PRODUCTION" as const },
     };
     const now = new Date();
     // Fixed trailing 30-day window. (Decrementing the month component instead overflows
@@ -62,16 +66,28 @@ export class MrrService {
         // manual/external-payment activation) would book add-on MRR with no base behind it.
         where: {
           active: true,
-          tenant: { status: "ACTIVE", deletedAt: null, subscription: { planKey: { not: null } } },
+          tenant: {
+            status: "ACTIVE",
+            deletedAt: null,
+            class: "PRODUCTION",
+            subscription: { planKey: { not: null } },
+          },
         },
         select: { priceSnapshot: true, quantity: true },
       }),
-      this.prisma.tenant.count({ where: { status: "TRIAL", deletedAt: null } }),
-      this.prisma.tenant.count({ where: { status: "READ_ONLY", deletedAt: null } }),
-      this.prisma.billingEvent.aggregate({ _sum: { amountDelta: true } }),
+      this.prisma.tenant.count({
+        where: { status: "TRIAL", deletedAt: null, class: "PRODUCTION" },
+      }),
+      this.prisma.tenant.count({
+        where: { status: "READ_ONLY", deletedAt: null, class: "PRODUCTION" },
+      }),
       this.prisma.billingEvent.aggregate({
         _sum: { amountDelta: true },
-        where: { createdAt: { gte: monthAgo } },
+        where: { tenant: { class: "PRODUCTION" } },
+      }),
+      this.prisma.billingEvent.aggregate({
+        _sum: { amountDelta: true },
+        where: { createdAt: { gte: monthAgo }, tenant: { class: "PRODUCTION" } },
       }),
     ]);
 

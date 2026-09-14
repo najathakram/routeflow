@@ -11,6 +11,7 @@ import { PlatformPricingService } from "../billing/platform-pricing.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { BillingEventService } from "../billing/billing-event.service";
 import { MeterService } from "../billing/meter.service";
+import { MrrService } from "../billing/mrr.service";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -34,6 +35,7 @@ describe("PlatformAdminService — audit provenance", () => {
   let billingEventService: { emit: jest.Mock };
   let meterService: { readAll: jest.Mock };
   let platformPricingService: { resolveTenantPricing: jest.Mock };
+  let mrrService: { computeOverview: jest.Mock };
 
   const ADMIN_ID = "super-1";
   const TENANT_ID = "tenant-1";
@@ -71,6 +73,22 @@ describe("PlatformAdminService — audit provenance", () => {
     billingEventService = { emit: jest.fn().mockResolvedValue({}) };
     meterService = { readAll: jest.fn() };
     platformPricingService = { resolveTenantPricing: jest.fn() };
+    // Default: zeroed overview — the getStats-enrichment describe block below overrides
+    // per-case to prove getStats() reads MrrService, not a re-derived estimate.
+    mrrService = {
+      computeOverview: jest.fn().mockResolvedValue({
+        mrr: 0,
+        baseMrr: 0,
+        addonMrr: 0,
+        discountTotal: 0,
+        payingTenants: 0,
+        trialTenants: 0,
+        readOnlyTenants: 0,
+        byPlan: [],
+        ledgerMrr: 0,
+        momDelta: 0,
+      }),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -97,6 +115,7 @@ describe("PlatformAdminService — audit provenance", () => {
         { provide: MeterService, useValue: meterService },
         { provide: TenantStatusGuard, useValue: { invalidate: jest.fn() } },
         { provide: AuditService, useValue: { log: auditLog } },
+        { provide: MrrService, useValue: mrrService },
       ],
     }).compile();
 
@@ -933,20 +952,14 @@ describe("PlatformAdminService — audit provenance", () => {
   });
 
   describe("getStats enrichment", () => {
-    it("computes estMrrUsd from basePriceSnapshot else the catalog price for the tenant's normalized planKey — a GROWTH tenant contributes its real price, never $0", async () => {
+    // Phase 0 T9: getStats() no longer re-derives MRR from the catalog price — it reads
+    // MrrService.computeOverview() as the one MRR engine (already class-scoped to
+    // PRODUCTION, see mrr.service.spec.ts). These two fields replace the old estMrrUsd.
+    it("sources MRR from MrrService, not the legacy estimator", async () => {
       prisma.tenant.findMany.mockImplementation((args: any) => {
         if (args?.where?.status?.not === "CANCELLED") {
           return Promise.resolve([
-            // Grandfathered: keeps its pinned $59 snapshot even though the catalog
-            // now prices STARTER at $99.
-            {
-              status: "ACTIVE",
-              plan: "STARTER",
-              subscription: { planKey: "STARTER", basePriceSnapshot: 59 },
-            },
-            // No snapshot; only the legacy `plan` enum. planKeyFromEnum("TEAM") now
-            // maps to GROWTH (the v8 rename) — this is exactly what
-            // STOPGAP_PLAN_MONTHLY_USD priced at $0.
+            { status: "ACTIVE", plan: "STARTER", subscription: { planKey: "STARTER" } },
             { status: "ACTIVE", plan: "TEAM", subscription: null },
             // TRIAL: counted in planBreakdown, excluded from MRR.
             { status: "TRIAL", plan: "STARTER", subscription: null },
@@ -954,46 +967,42 @@ describe("PlatformAdminService — audit provenance", () => {
         }
         return Promise.resolve([]);
       });
-      planCatalogService.getPublishedVersion.mockResolvedValue({
-        definitions: [
-          { planKey: "STARTER", monthlyPrice: 99 },
-          { planKey: "GROWTH", monthlyPrice: 249 },
-          { planKey: "SCALE", monthlyPrice: 499 },
-          { planKey: "ENTERPRISE", monthlyPrice: null },
-        ],
+      mrrService.computeOverview.mockResolvedValue({
+        mrr: 748,
+        baseMrr: 748,
+        addonMrr: 0,
+        discountTotal: 0,
+        payingTenants: 2,
+        trialTenants: 1,
+        readOnlyTenants: 0,
+        byPlan: [],
+        ledgerMrr: 748,
+        momDelta: 0,
       });
 
       const stats = await service.getStats();
 
-      expect(stats.estMrrUsd).toBe(59 + 249);
+      expect(stats.mrr).toBe(748);
+      expect(stats.ledgerMrr).toBe(748);
+      expect(stats).not.toHaveProperty("estMrrUsd");
+      expect(mrrService.computeOverview).toHaveBeenCalled();
       expect(stats.planBreakdown).toEqual({ STARTER: 2, GROWTH: 1 });
     });
 
-    it("prices tenants against a still-published legacy catalog — TEAM/BUSINESS rows answer GROWTH/SCALE lookups", async () => {
-      prisma.tenant.findMany.mockImplementation((args: any) => {
-        if (args?.where?.status?.not === "CANCELLED") {
-          return Promise.resolve([
-            { status: "ACTIVE", plan: "TEAM", subscription: null },
-            { status: "ACTIVE", plan: "PROFESSIONAL", subscription: null },
-          ]);
-        }
-        return Promise.resolve([]);
-      });
-      // The publish script is a manual post-deploy step: until it runs, the
-      // published version is still keyed TEAM/BUSINESS.
-      planCatalogService.getPublishedVersion.mockResolvedValue({
-        definitions: [
-          { planKey: "STARTER", monthlyPrice: 59 },
-          { planKey: "TEAM", monthlyPrice: 149 },
-          { planKey: "BUSINESS", monthlyPrice: 349 },
-          { planKey: "ENTERPRISE", monthlyPrice: null },
-        ],
-      });
+    it("scopes every tenant-count query in getStats() by class: PRODUCTION", async () => {
+      prisma.tenant.findMany.mockResolvedValue([]);
 
-      const stats = await service.getStats();
+      await service.getStats();
 
-      expect(stats.estMrrUsd).toBe(149 + 349);
-      expect(stats.planBreakdown).toEqual({ GROWTH: 1, SCALE: 1 });
+      // tenant.count is called for total/active/trial/suspended/newThisMonth — every call
+      // except the (tenantless) SUPER_ADMIN user count must carry class: "PRODUCTION".
+      for (const call of (prisma.tenant.count as jest.Mock).mock.calls) {
+        expect(call[0].where.class).toBe("PRODUCTION");
+      }
+      const planScanCall = (prisma.tenant.findMany as jest.Mock).mock.calls.find(
+        (c: any[]) => c[0]?.where?.status?.not === "CANCELLED",
+      );
+      expect(planScanCall[0].where.class).toBe("PRODUCTION");
     });
 
     it("attaches userCount to trials and a human riskReason to at-risk tenants", async () => {
@@ -1143,6 +1152,43 @@ describe("PlatformAdminService — audit provenance", () => {
         }),
       );
       expect((prisma as any).driver.create).not.toHaveBeenCalled();
+    });
+  });
+
+  // Phase 0 Task 10: the admin Create Tenant path used to hardcode a 7-day trial
+  // independent of TRIAL_LENGTH_DAYS (public self-signup's constant); it now defaults to
+  // that shared constant and accepts an explicit override.
+  describe("createTenant — trial length", () => {
+    const validCreateDto = {
+      slug: "acme-wholesale",
+      businessName: "Acme Wholesale",
+      adminEmail: "owner@acme.example.com",
+      adminUsername: "acme_owner",
+    } as any;
+
+    beforeEach(() => {
+      prisma.tenant.findUnique.mockResolvedValue(null); // slug not taken
+      prisma.user.findFirst.mockResolvedValue(null); // no existing admin collision
+      prisma.tenant.create.mockImplementation((args: any) =>
+        Promise.resolve({ id: TENANT_ID, ...args.data }),
+      );
+      prisma.user.create.mockResolvedValue({ id: "admin-1" } as any);
+    });
+
+    it("defaults trial length to TRIAL_LENGTH_DAYS when no override is given", async () => {
+      const result = await service.createTenant(validCreateDto);
+
+      const expectedMs = 14 * 24 * 60 * 60 * 1000; // TRIAL_LENGTH_DAYS
+      const actualMs = (result.trialEndsAt as Date).getTime() - Date.now();
+      expect(Math.abs(actualMs - expectedMs)).toBeLessThan(5000);
+    });
+
+    it("honors an explicit trialLengthDays override", async () => {
+      const result = await service.createTenant({ ...validCreateDto, trialLengthDays: 30 });
+
+      const expectedMs = 30 * 24 * 60 * 60 * 1000;
+      const actualMs = (result.trialEndsAt as Date).getTime() - Date.now();
+      expect(Math.abs(actualMs - expectedMs)).toBeLessThan(5000);
     });
   });
 

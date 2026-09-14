@@ -17,11 +17,12 @@ function make() {
         .mockImplementation(({ where }: any) => Promise.resolve(where.status === "TRIAL" ? 3 : 1)),
     },
     billingEvent: {
-      // ledger (no where) vs 30-day window (where)
+      // ledger (no createdAt filter) vs 30-day window (has createdAt) — both now also carry
+      // a tenant.class filter (Phase 0 T9), so distinguish on createdAt, not on `where` alone.
       aggregate: jest
         .fn()
         .mockImplementation(({ where }: any) =>
-          Promise.resolve({ _sum: { amountDelta: where ? 50 : 422 } }),
+          Promise.resolve({ _sum: { amountDelta: where?.createdAt ? 50 : 422 } }),
         ),
     },
   } as any;
@@ -67,11 +68,43 @@ describe("MrrService.computeOverview", () => {
   it("uses a fixed trailing 30-day window for momDelta (no month-overflow)", async () => {
     const { svc, prisma } = make();
     await svc.computeOverview();
-    // The windowed aggregate (the call WITH a where clause) must start ~30 days before now.
-    const windowed = prisma.billingEvent.aggregate.mock.calls.find((c: any[]) => c[0]?.where);
+    // The windowed aggregate (the call WITH a createdAt filter) must start ~30 days before now.
+    const windowed = prisma.billingEvent.aggregate.mock.calls.find(
+      (c: any[]) => c[0]?.where?.createdAt,
+    );
     const gte = windowed[0].where.createdAt.gte as Date;
     const days = (Date.now() - gte.getTime()) / 86_400_000;
     expect(days).toBeGreaterThan(29.9);
     expect(days).toBeLessThan(30.1);
+  });
+
+  // Phase 0 T9: the first five customers are FREE PILOTS and every TEST/DEMO/INTERNAL
+  // tenant must be invisible to revenue — every query MrrService issues has to carry
+  // tenant: { class: "PRODUCTION" } so a QA or demo tenant's subscription/addon/ledger
+  // rows can never inflate the number the platform admin reads as real revenue.
+  it("excludes non-PRODUCTION tenants from mrr and ledgerMrr", async () => {
+    const { svc, prisma } = make();
+    await svc.computeOverview();
+
+    expect(prisma.tenantSubscription.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          tenant: expect.objectContaining({ class: "PRODUCTION" }),
+        }),
+      }),
+    );
+    expect(prisma.tenantAddon.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          tenant: expect.objectContaining({ class: "PRODUCTION" }),
+        }),
+      }),
+    );
+    for (const call of prisma.tenant.count.mock.calls) {
+      expect(call[0].where.class).toBe("PRODUCTION");
+    }
+    for (const call of prisma.billingEvent.aggregate.mock.calls) {
+      expect(call[0].where.tenant).toEqual({ class: "PRODUCTION" });
+    }
   });
 });
