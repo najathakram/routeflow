@@ -1,5 +1,17 @@
 # build-plan.md — F27 (Estimates) — task-loop engine (2026-09-12 rebuild)
 
+**Status: IMPLEMENTED — proven, pending merge** (PR #711). All 4 bugs (B70, B17, B79,
+B15/B15-NAV = registry B394) are `proven`/`proven-pending-deploy` in `.claude/campaign/bugs/`;
+B16 closed stale. Coverage matrix walked 2026-09-14 against the shipped tree: T1-T3, T5-T13,
+T15, T16, T19-T32, T34 all present and matching. One acceptance criterion was deliberately
+revised after S5: `accept()`'s exclude list stayed `["CONVERTED"]` only, not the full
+`TERMINAL_ESTIMATE_STATUSES` set §2 B70 step 5 originally declared — `voidEstimate()` writes the
+same `DECLINED` enum value `decline()` does (no separate VOID member exists on this schema), so
+excluding both would have silently broken the pre-existing `DECLINED→ACCEPTED` invariant; full
+postmortem in `LESSONS.md` L-119. Known minor gap: T33 (createdAt fallback) is pinned on the
+estimates **list** page only — the `[id]` detail page carries the identical one-line
+`?? estimate.createdAt` fallback in source but has no dedicated regression test for it.
+
 ## Preamble
 
 Tree `fix/F27` @ `2d353752` (= origin/master), worktree `rf-F27-build`. No schema change, no
@@ -14,6 +26,7 @@ Full cause/fix reasoning: `cause-ruling.md` (S3, this directory). Full REG/PIN t
 `test-plan.md` (S4, this directory, = `bug-test-plan.md` at the worktree root, T1-T34).
 
 **Two parallel chains + shared bookkeeping:**
+
 - API chain (all HIGH risk): rc-b70/rc-b17/rc-b79 -> rt-b70 -> fix-b70 -> rp-b70 -> rt-b17-api ->
   fix-b17-api -> rp-b17-api -> rt-b79-api + rt-b79-db -> fix-b79-api -> rp-b79-api.
 - Type/formatter (feature, no bug chain): feat-b79-types (depends on rc-b79 only).
@@ -28,6 +41,7 @@ B16 (Expired filter) is REFUTED as stale (already fixed in #621, L-072) — no f
 in docs-closeout.
 
 ## Task summary (26 tasks: 4 root-cause, 8 repro-test, 6 fix, 6 revert-probe, 1 feature, 1
+
 ui-verify, 1 docs)
 
 - **rc-b70** (root-cause) — B70 root cause: status mutators launder CONVERTED/voided estimates

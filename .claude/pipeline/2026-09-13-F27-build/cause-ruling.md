@@ -1,5 +1,13 @@
 # Cause Ruling — F27 (Estimates) — AMENDED (S3, final)
 
+**Status: IMPLEMENTED — proven, pending merge** (PR #711). §2 B70 step 5's declared semantic
+change ("a voided estimate can no longer be accepted") was superseded during the fix loop:
+`voidEstimate()` writes the same `DECLINED` value `decline()` does (no separate VOID member
+exists on this schema), so the full terminal-set exclusion on `accept()` was indistinguishable
+from also blocking the pre-existing `DECLINED→ACCEPTED` invariant. The shipped fix keeps
+`accept()`'s exclude list to `["CONVERTED"]` only; every other fix design below (B17 link, B79
+validation/read-path, B15/B15-NAV) landed as ruled. Full postmortem: `LESSONS.md` L-119.
+
 Ruled from the S1 brief + S2 refutations + the S3 critique only (no repo access). Tree of record: `rf-F27` @ `2d353752`. Scope: bug-pipeline, carve-out/money-sensitive. **No schema change and no migration in this batch** — `Estimate.issueDate` and `Estimate.invoiceId` (+FK/unique) are already migrated by `20260908000000_campaign_schema_foundation`.
 
 **Coordinates.** Every `:NNN` below is an anchor into HEAD `2d353752`, not an address. The batch edits `estimates.service.ts` three times and `[id]/page.tsx` twice, and B17's new toast template rewraps under `printWidth 100`, so from the second commit on the implementer locates hunks by the quoted code text, never by line number.
@@ -10,40 +18,40 @@ Ruled from the S1 brief + S2 refutations + the S3 critique only (no repo access)
 
 ## 0. Critique dispositions
 
-| # | Disposition | Where |
-|---|---|---|
-| 1 | **Accepted** for VOID: the set is `CONVERTED` + the status `voidEstimate()` writes; `voidEstimate()` sweep is mandatory; REG `void → send`. **Disagreed** for EXPIRED (if it exists): an expired estimate is legitimately re-sendable/acceptable late, and it cannot mint a second invoice unless it is already CONVERTED, which the set refuses. Excluding it is a product decision, not this bug. | §2 B70 |
-| 2 | **Accepted.** The where-clause is `accept()`'s where-clause verbatim + the status predicate; REG asserts `objectContaining`; a key-set-parity PIN proves send/decline/void carry every key accept carries. | §2 B70, §3 |
-| 3 | **Accepted.** Claim logic moves into one helper that returns nothing; each mutator keeps its own post-claim read reproducing today's return shape; `PIN-B70 send() response shape unchanged`. | §2 B70, §3 |
-| 4 | **Accepted**, and applied to `accept()` too (same helper): `count === 0` → existence read → 404 if missing, 400 if wrong status. Declared contract change; existing B8 pins get their mocks extended, not deleted. | §2 B70, §3 |
-| 5 | **Accepted.** The sidebar reads `canConvert` today (that is why S2 put `:458-470` in the radius of `:214`); stated explicitly, with a verification step. | §2 B15 |
-| 6 | **Accepted.** Step 3 dropped; the header Convert control is hoisted out of the status blocks into a single `{canConvert && …}`. | §2 B15 |
-| 7 | **Accepted.** The `/invoices/undefined` finding rides F27 under a newly minted registry id, with a REG on the navigation target and a local-lane confirmation step. | §2 B15-NAV |
-| 8 | **Accepted** for (a): the link write is an `updateMany` with the same where-shape as the claim at `:284-287`, count-checked. **Disagreed** that P2002 is reachable: `inv.id` is minted inside the same transaction, so no other row can reference it, and a retry after commit dies at the `status: "ACCEPTED"` claim before any invoice exists. Stated, and the count check catches the impossible case anyway. | §2 B17 |
-| 9 | **Accepted.** `issueDate?: string \| null`. | §2 B79 |
-| 10 | **Accepted.** `select` audit + a DB-lane round-trip REG (`*.db.spec.ts`, `local:test:db`). | §2 B79, §3 |
-| 11 | **Accepted.** Readers use a UTC-fixed date-only formatter; read-side PIN runs under `process.env.TZ = "America/New_York"` (Node ≥ 13 honours runtime TZ changes; CI is Node 20). | §2 B79, §3 |
-| 12 | **Accepted** for `issueDate` (format + NaN check → 400, REG). **Disagreed** on sweeping `expiresAt` in F27: the web's current `expiresAt` payload format is not on record, and a format check could 400 the live form. Filed as residual (§8). | §2 B79, §8 |
-| 13 | **Accepted.** The `dto as any` cast is removed unconditionally; the client `CreateEstimateDto` is widened to what the form already sends; the probe becomes concrete. | §2 B79, §7 |
-| 14 | **Accepted.** e2e grep in the radius, `local:e2e` in the gates. | §4 |
-| 15 | **Accepted** as a required S4 finding: the implementer states whether `customers.service.ts:1774` writes `status`; if it does, it takes the helper or is filed. | §2 B70 |
-| 16 | **Accepted.** Step 4 now changes semantics (VOID refused by `accept()`) with a REG; `voidEstimate()` refactor is mandatory with its own REG (it is a TOCTOU). | §2 B70, §3 |
-| 17 | **Accepted**, all three. | §3 |
-| 18 | **Accepted**, all six greps rewritten. | §5 |
-| 19 | **Accepted.** Anchor rule above. | preamble |
-| 20 | **Accepted.** Three archivals; L-067 untouched; the addendum becomes L-119. | §8 |
+| #   | Disposition                                                                                                                                                                                                                                                                                                                                                                                                      | Where      |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
+| 1   | **Accepted** for VOID: the set is `CONVERTED` + the status `voidEstimate()` writes; `voidEstimate()` sweep is mandatory; REG `void → send`. **Disagreed** for EXPIRED (if it exists): an expired estimate is legitimately re-sendable/acceptable late, and it cannot mint a second invoice unless it is already CONVERTED, which the set refuses. Excluding it is a product decision, not this bug.              | §2 B70     |
+| 2   | **Accepted.** The where-clause is `accept()`'s where-clause verbatim + the status predicate; REG asserts `objectContaining`; a key-set-parity PIN proves send/decline/void carry every key accept carries.                                                                                                                                                                                                       | §2 B70, §3 |
+| 3   | **Accepted.** Claim logic moves into one helper that returns nothing; each mutator keeps its own post-claim read reproducing today's return shape; `PIN-B70 send() response shape unchanged`.                                                                                                                                                                                                                    | §2 B70, §3 |
+| 4   | **Accepted**, and applied to `accept()` too (same helper): `count === 0` → existence read → 404 if missing, 400 if wrong status. Declared contract change; existing B8 pins get their mocks extended, not deleted.                                                                                                                                                                                               | §2 B70, §3 |
+| 5   | **Accepted.** The sidebar reads `canConvert` today (that is why S2 put `:458-470` in the radius of `:214`); stated explicitly, with a verification step.                                                                                                                                                                                                                                                         | §2 B15     |
+| 6   | **Accepted.** Step 3 dropped; the header Convert control is hoisted out of the status blocks into a single `{canConvert && …}`.                                                                                                                                                                                                                                                                                  | §2 B15     |
+| 7   | **Accepted.** The `/invoices/undefined` finding rides F27 under a newly minted registry id, with a REG on the navigation target and a local-lane confirmation step.                                                                                                                                                                                                                                              | §2 B15-NAV |
+| 8   | **Accepted** for (a): the link write is an `updateMany` with the same where-shape as the claim at `:284-287`, count-checked. **Disagreed** that P2002 is reachable: `inv.id` is minted inside the same transaction, so no other row can reference it, and a retry after commit dies at the `status: "ACCEPTED"` claim before any invoice exists. Stated, and the count check catches the impossible case anyway. | §2 B17     |
+| 9   | **Accepted.** `issueDate?: string \| null`.                                                                                                                                                                                                                                                                                                                                                                      | §2 B79     |
+| 10  | **Accepted.** `select` audit + a DB-lane round-trip REG (`*.db.spec.ts`, `local:test:db`).                                                                                                                                                                                                                                                                                                                       | §2 B79, §3 |
+| 11  | **Accepted.** Readers use a UTC-fixed date-only formatter; read-side PIN runs under `process.env.TZ = "America/New_York"` (Node ≥ 13 honours runtime TZ changes; CI is Node 20).                                                                                                                                                                                                                                 | §2 B79, §3 |
+| 12  | **Accepted** for `issueDate` (format + NaN check → 400, REG). **Disagreed** on sweeping `expiresAt` in F27: the web's current `expiresAt` payload format is not on record, and a format check could 400 the live form. Filed as residual (§8).                                                                                                                                                                   | §2 B79, §8 |
+| 13  | **Accepted.** The `dto as any` cast is removed unconditionally; the client `CreateEstimateDto` is widened to what the form already sends; the probe becomes concrete.                                                                                                                                                                                                                                            | §2 B79, §7 |
+| 14  | **Accepted.** e2e grep in the radius, `local:e2e` in the gates.                                                                                                                                                                                                                                                                                                                                                  | §4         |
+| 15  | **Accepted** as a required S4 finding: the implementer states whether `customers.service.ts:1774` writes `status`; if it does, it takes the helper or is filed.                                                                                                                                                                                                                                                  | §2 B70     |
+| 16  | **Accepted.** Step 4 now changes semantics (VOID refused by `accept()`) with a REG; `voidEstimate()` refactor is mandatory with its own REG (it is a TOCTOU).                                                                                                                                                                                                                                                    | §2 B70, §3 |
+| 17  | **Accepted**, all three.                                                                                                                                                                                                                                                                                                                                                                                         | §3         |
+| 18  | **Accepted**, all six greps rewritten.                                                                                                                                                                                                                                                                                                                                                                           | §5         |
+| 19  | **Accepted.** Anchor rule above.                                                                                                                                                                                                                                                                                                                                                                                 | preamble   |
+| 20  | **Accepted.** Three archivals; L-067 untouched; the addendum becomes L-119.                                                                                                                                                                                                                                                                                                                                      | §8         |
 
 ---
 
 ## 1. Cause verdicts
 
-| Bug | S2 verdict | Ruling |
-|---|---|---|
-| B15 | CONFIRMED (same-commit mismatch from `41ab2803`; radius `canConvert :214` + sidebar `:458-470`) | **ACCEPTED.** Fix designed. **Adjacent B15-NAV** (`onSuccess` navigates on `invoiceId`, server returns `{id}`) rides F27 under a new registry id (§2). |
-| B16 | REFUTED — stale, removed in `60d10e66` (#621, L-072), guarded by `enum-parity.spec.ts:222-237` | **ACCEPTED as REFUTED. Close B16 as stale. No fix.** Residual (unvalidated `@Query("status")` → `where.status`) UNDETERMINED → §8. |
-| B17 | CONFIRMED effect, cause reframed: (1) `send()` status-only is house-correct; the lie is the toast/label; (2) `convertToInvoice` never writes `invoiceId` | **ACCEPTED with the reframe.** Fix designed for toast/label + the `invoiceId` link. Real delivery is a feature → §8. |
-| B70 | CONFIRMED — `send()` :232 / `decline()` :247 bare `estimate.update`; launder → `accept()` → second invoice | **ACCEPTED, widened.** The same launder exists via `voidEstimate()`'s status (`void → send → accept → convert`), and `voidEstimate()` itself is read-then-check (TOCTOU). Both are fixed here. |
-| B79 | CONFIRMED — web dto drops `issueDate`; `create()` never writes it; shared type lacks it | **ACCEPTED.** Create path + shared type + read path + validation. PATCH is a feature → §8. |
+| Bug | S2 verdict                                                                                                                                               | Ruling                                                                                                                                                                                         |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| B15 | CONFIRMED (same-commit mismatch from `41ab2803`; radius `canConvert :214` + sidebar `:458-470`)                                                          | **ACCEPTED.** Fix designed. **Adjacent B15-NAV** (`onSuccess` navigates on `invoiceId`, server returns `{id}`) rides F27 under a new registry id (§2).                                         |
+| B16 | REFUTED — stale, removed in `60d10e66` (#621, L-072), guarded by `enum-parity.spec.ts:222-237`                                                           | **ACCEPTED as REFUTED. Close B16 as stale. No fix.** Residual (unvalidated `@Query("status")` → `where.status`) UNDETERMINED → §8.                                                             |
+| B17 | CONFIRMED effect, cause reframed: (1) `send()` status-only is house-correct; the lie is the toast/label; (2) `convertToInvoice` never writes `invoiceId` | **ACCEPTED with the reframe.** Fix designed for toast/label + the `invoiceId` link. Real delivery is a feature → §8.                                                                           |
+| B70 | CONFIRMED — `send()` :232 / `decline()` :247 bare `estimate.update`; launder → `accept()` → second invoice                                               | **ACCEPTED, widened.** The same launder exists via `voidEstimate()`'s status (`void → send → accept → convert`), and `voidEstimate()` itself is read-then-check (TOCTOU). Both are fixed here. |
+| B79 | CONFIRMED — web dto drops `issueDate`; `create()` never writes it; shared type lacks it                                                                  | **ACCEPTED.** Create path + shared type + read path + validation. PATCH is a feature → §8.                                                                                                     |
 
 ---
 
@@ -52,12 +60,18 @@ Ruled from the S1 brief + S2 refutations + the S3 critique only (no repo access)
 ### B70 — `apps/api/src/estimates/estimates.service.ts` (money guard; lands first)
 
 1. **One named set, top of file** (L-081):
+
    ```ts
-   const TERMINAL_ESTIMATE_STATUSES = ["CONVERTED", "<VOID-STATUS>"] as const satisfies readonly EstimateStatus[];
+   const TERMINAL_ESTIMATE_STATUSES = [
+     "CONVERTED",
+     "<VOID-STATUS>",
+   ] as const satisfies readonly EstimateStatus[];
    ```
+
    `<VOID-STATUS>` is the literal `voidEstimate()` writes today at `:249-255` — the enum member name is not on record; the implementer copies it, never invents one. EXPIRED (if present) is deliberately **not** in the set (§0 #1).
 
 2. **One private helper, one place:**
+
    ```ts
    private async claimTransition(id: string, to: EstimateStatus, refusal: string): Promise<void>
    ```
@@ -82,6 +96,7 @@ Ruled from the S1 brief + S2 refutations + the S3 critique only (no repo access)
 ### B17 — two edits, no schema change
 
 **(a) `estimates.service.ts` `convertToInvoice()`** — inside the existing `tenantTransaction` (`:280`), after `const inv = await tx.invoice.create(...)` (`:307-334`) and before `return inv;` (`:335`):
+
 ```ts
 const linked = await tx.estimate.updateMany({
   where: { <same keys as the claim at :284-287>, status: "CONVERTED" },
@@ -89,6 +104,7 @@ const linked = await tx.estimate.updateMany({
 });
 if (linked.count !== 1) throw new ConflictException("Estimate link failed"); // rolls the tx back
 ```
+
 Same client shape as the claim two hunks above (no bare `update` on a unique key). P2002 on `invoiceId @unique` is unreachable: `inv.id` is minted in this transaction, so no other row can already hold it, and a retry after a visible commit dies at the `status: "ACCEPTED"` claim before `invoice.create` runs. The count check exists so the impossible case rolls back rather than half-commits. Return shape (`inv`) unchanged.
 
 **(b) `apps/web/app/(dashboard)/estimates/[id]/page.tsx`** — `handleSend` `onSuccess` `:121-122`: title `"Estimate marked as sent"`, description `` `${estimate.estimateNumber} is marked Sent. No email was sent.` ``; Send button label (`:244`) → `"Mark as sent"`. Mobile: reviewer checks the operator estimate screen for the same delivery claim and mirrors the wording if present (web is golden).
@@ -102,16 +118,18 @@ Same client shape as the claim two hunks above (no bare `update` on a unique key
 2. **`apps/web/app/(dashboard)/estimates/page.tsx`** dto literal `:343-356`: add `issueDate` (the `"YYYY-MM-DD"` string in state `:149`). Readers `page.tsx:921`, `[id]/page.tsx:358,501`: `est.issueDate ?? est.createdAt` without the `(as any)` cast, **formatted with a UTC-fixed date-only formatter** — the one the invoice detail page uses for `Invoice.issueDate` if one exists in `apps/web/lib`; otherwise `Intl.DateTimeFormat(undefined, { timeZone: "UTC", year: "numeric", month: "short", day: "numeric" })` added to `apps/web/lib` (one helper, not inline). Keep the `createdAt` fallback.
 
 3. **`estimates.service.ts` `create()` `:141-158`:**
+
    ```ts
    let issueDate: Date | undefined;
    if (dto.issueDate != null) {
      if (typeof dto.issueDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(dto.issueDate))
        throw new BadRequestException("issueDate must be YYYY-MM-DD");
-     issueDate = new Date(dto.issueDate);               // UTC midnight (L-047)
+     issueDate = new Date(dto.issueDate); // UTC midnight (L-047)
      if (Number.isNaN(issueDate.getTime()))
        throw new BadRequestException("issueDate must be YYYY-MM-DD");
    }
    ```
+
    and `issueDate` in the data literal. No second alias. Absent → stays NULL.
 
 4. **Read-path audit:** if `findAll`/`findOne`/list in `estimates.service.ts` use explicit `select` blocks, add `issueDate` to each. Proven by the DB-lane REG below, not by inspection.
@@ -131,9 +149,10 @@ Same client shape as the claim two hunks above (no bare `update` on a unique key
 ### B15-NAV — new registry id (minted by `bugs.mjs file` on the master-merged tree; do not guess the number), linked to B15
 
 `estimates.service.spec.ts:126` pins that `convertToInvoice` returns the raw Invoice keyed `id`; the controller returns the service result; no `APP_INTERCEPTOR` remap is on record. Therefore:
+
 - `apps/web/lib/api/estimates.ts:105`: the `useConvertEstimateToInvoice` result type becomes `{ id: string }` (or the shared `Invoice` type).
 - `[id]/page.tsx:176,182` `onSuccess`: navigate on `.id`.
-- **Local-lane confirmation (gate):** convert an ACCEPTED estimate in the compose stack and record the landing URL in the commit body. If it lands on `/invoices/<id>` *before* this edit, an interceptor remaps the response — the implementer stops, reports the interceptor's location, and the REG is rewritten to that contract before merge. Either way the batch does not close with the finding unresolved, because after B15 this is the only Convert path left.
+- **Local-lane confirmation (gate):** convert an ACCEPTED estimate in the compose stack and record the landing URL in the commit body. If it lands on `/invoices/<id>` _before_ this edit, an interceptor remaps the response — the implementer stops, reports the interceptor's location, and the REG is rewritten to that contract before merge. Either way the batch does not close with the finding unresolved, because after B15 this is the only Convert path left.
 
 ### Package sequencing
 
@@ -144,6 +163,7 @@ Branch `fix/F27`, commits: **B70 → B17 → B79 → B15 (+B15-NAV in the same c
 ## 3. Regression tests (REG must fail on today's exact wrong value; PIN must be green today and after)
 
 **B70 — `apps/api/src/estimates/estimates.service.spec.ts`**
+
 - `REG-B70 send() refuses a CONVERTED estimate`: `updateMany` → `{count:0}`, `findFirst` → `{id:"est-1", status:"CONVERTED"}`. Today `send("est-1")` **resolves** `{id:"est-1", status:"SENT"}` via `estimate.update` and `updateMany` is called 0 times; expected `rejects.toThrow(BadRequestException)` `"Converted or voided estimates cannot be re-sent"` and `updateMany` called with `expect.objectContaining({ where: expect.objectContaining({ id:"est-1", status:{ notIn:["CONVERTED","<VOID-STATUS>"] } }), data:{ status:"SENT" } })`.
 - `REG-B70 send() refuses a voided estimate`: same, `findFirst` → `status:"<VOID-STATUS>"`; today resolves; expected the same rejection.
 - `REG-B70 decline() refuses a CONVERTED estimate`: same shape; today resolves `{status:"DECLINED"}`; expected `"Converted or voided estimates cannot be declined"`.
@@ -157,22 +177,25 @@ Branch `fix/F27`, commits: **B70 → B17 → B79 → B15 (+B15-NAV in the same c
 - `PIN-B70 exact set`: `TERMINAL_ESTIMATE_STATUSES` `toEqual(["CONVERTED","<VOID-STATUS>"])` (a set that silently grows or shrinks is red).
 
 **B17 — `estimates.service.spec.ts` + web test below**
+
 - `REG-B17 convertToInvoice links the estimate to the minted invoice`: `tx.invoice.create` → `{id:"inv-1"}`, `tx.estimate.updateMany` → `{count:1}`. Today `tx.estimate.updateMany` is called with `data.invoiceId === "inv-1"` **0** times; expected exactly **1**, with `where.status === "CONVERTED"`, and ordering asserted: `invoiceCreate.mock.invocationCallOrder[0] < linkCall.invocationCallOrder[0]`.
 - `REG-B17 link count mismatch rolls back`: link `updateMany` → `{count:0}` → `rejects.toThrow(ConflictException)` (today: resolves `inv`).
 - `REG-B17 send toast does not claim delivery` (web): today description `"EST-0001 has been sent to the customer."`; expected `"EST-0001 is marked Sent. No email was sent."`.
 - `PIN-B17 convert still claims via updateMany status ACCEPTED and returns the invoice`: `updateMany` called with `where` containing `status:"ACCEPTED"`; result `toMatchObject({id:"inv-1"})`.
 
 **B79 — `estimates.service.spec.ts`, new `apps/api/src/estimates/estimates.issue-date.db.spec.ts` (DB lane), new `apps/web/app/(dashboard)/estimates/page.test.tsx`, formatter test**
+
 - `REG-B79 create() persists issueDate`: `dto.issueDate="2026-03-01"` → today `estimate.create` `data.issueDate === undefined`; expected `data.issueDate.toISOString() === "2026-03-01T00:00:00.000Z"`.
 - `REG-B79 create() rejects a malformed issueDate`: `"not-a-date"` and `"2026-03-01T10:00:00-05:00"` → today `estimate.create` is called with `issueDate` absent (resolves); expected `rejects.toThrow(BadRequestException)` and `estimate.create` called 0 times.
 - `REG-B79 read path returns the persisted issueDate` (**DB lane**, `local:test:db`, `test` tenant only via `assertTestTenant`): create with `issueDate:"2026-03-01"`, then `findOne` (and the list method) → today `issueDate` is `null` (never written); expected `"2026-03-01T00:00:00.000Z"`. This is the only test that also catches a `select` that drops the column.
 - `REG-B79 web submit carries issueDate`: fill issue date `2026-03-01`, submit → today the mocked `useCreateEstimate` mutate arg has no `issueDate`; expected `"2026-03-01"`.
 - `PIN-B79 UTC-fixed display`: in the formatter's own test, `beforeAll(() => { process.env.TZ = "America/New_York"; })` / `afterAll` restore; `formatDateOnly("2026-03-01T00:00:00.000Z")` renders day **1** March (a local formatter renders 28 Feb — the test is discriminating only under a west-of-UTC TZ, which the override guarantees on Node 20).
 - `PIN-B79 create() without issueDate leaves it unset` (`undefined`, never `now()`).
-- `PIN-B79 expiresAt still parsed as before`: `dto.expiresAt="2026-04-01"` → `data.expiresAt.toISOString() === "2026-04-01T00:00:00.000Z"` (exact value; if today's parse at `:150-154` yields something else, pin *that* value — the point is a concrete string).
+- `PIN-B79 expiresAt still parsed as before`: `dto.expiresAt="2026-04-01"` → `data.expiresAt.toISOString() === "2026-04-01T00:00:00.000Z"` (exact value; if today's parse at `:150-154` yields something else, pin _that_ value — the point is a concrete string).
 - `PIN-B79 readers fall back to createdAt when issueDate is null`.
 
 **B15 / B15-NAV — new `apps/web/app/(dashboard)/estimates/[id]/page.test.tsx`** (mock `apps/web/lib/api/estimates` hooks and `next/navigation`; toasts via the toast container, L-076)
+
 - `REG-B15 convert control is absent on DRAFT and SENT`: today `getAllByRole("button",{name:/convert to invoice/i}).length === 2` for DRAFT and for SENT; expected `queryAllByRole(...)` `[]` for both.
 - `REG-B15 convert failure toast surfaces the server reason`: rejection `{response:{data:{message:"Only ACCEPTED estimates can be converted"}}}` → today `"Please try again."`; expected the server message.
 - `REG-B15-NAV successful convert navigates to the returned invoice`: mutation resolves `{id:"inv-1"}` → today `router.push` called with `"/invoices/undefined"`; expected `"/invoices/inv-1"`.
@@ -183,6 +206,7 @@ Branch `fix/F27`, commits: **B70 → B17 → B79 → B15 (+B15-NAV in the same c
 ## 4. Blast radius (`radiusFiles`, deduped)
 
 Edited:
+
 - `apps/api/src/estimates/estimates.service.ts`, `estimates.service.spec.ts`, new `estimates.issue-date.db.spec.ts`
 - `apps/web/app/(dashboard)/estimates/[id]/page.tsx`, `page.tsx`, new `[id]/page.test.tsx`, new `page.test.tsx`
 - `apps/web/lib/api/estimates.ts`; `apps/web/lib/<date-only formatter>` (new or existing) + its test
@@ -192,6 +216,7 @@ Edited:
 - bookkeeping: `.claude/code-map/{api,web,packages}.md`, `_meta.json`; `.claude/lessons/LESSONS.md`, `LESSONS-DIGEST.md`, `_meta.json`, `ARCHIVE.md` (three archivals); registry rows B15/B16/B17/B70/B79 + the new B15-NAV row
 
 Review-read (unchanged, ripple check):
+
 - `estimates.controller.ts` (both convert routes → same method; `@Body() dto: any` stays; any `APP_INTERCEPTOR`/`ClassSerializerInterceptor` that could remap `id` → `invoiceId`, per B15-NAV)
 - `estimates.module.ts` (no new imports — L-113 DI boot gate)
 - `apps/api/prisma/schema/finance.prisma` `:552-584`, `:215-216`; migration `20260908000000_campaign_schema_foundation`
@@ -226,14 +251,14 @@ Review-read (unchanged, ripple check):
 
 ## 7. Probe plan (`revertFix`: restore HEAD content; named REG must go red)
 
-| Fixed file | Probe granularity | REG(s) that must go red |
-|---|---|---|
-| `estimates.service.ts` | whole-file, **plus** per hunk: helper+constant, `send()`, `decline()`, `accept()`, `voidEstimate()`, `convertToInvoice` tail, `create()` | `REG-B70 send() refuses…` (both), `REG-B70 decline()…`, `REG-B70 accept() refuses a voided…`, `REG-B70 voidEstimate() claims atomically`, `REG-B70 laundered…`, `REG-B70 missing id is 404`, `REG-B17 …links…`, `REG-B17 link count mismatch…`, `REG-B79 create() persists…`, `REG-B79 …rejects a malformed…`, `REG-B79 read path…` (DB lane) |
-| `[id]/page.tsx` | whole-file, plus per hunk: controls, `onError`, `onSuccess`, toast | `REG-B15 convert control is absent…`, `REG-B15 …server reason`, `REG-B15-NAV …navigates…`, `REG-B17 send toast…` |
-| `estimates/page.tsx` | whole-file | `REG-B79 web submit carries issueDate`; `npm run check-types` red (the dto literal no longer typechecks without `issueDate` in `CreateEstimateDto`? — no: reverting *this* file restores the cast; the REG is the probe) |
-| `apps/web/lib/api/estimates.ts` | whole-file | `npm run check-types` red on two counts: the dto literal in `page.tsx` (cast removed) has fields the reverted `CreateEstimateDto` lacks, and `onSuccess` reads `.id` the reverted result type lacks. Green = the cast was kept or the type was not fixed → harness defect, batch does not merge. |
-| `packages/types/api/misc.ts` | whole-file | `npm run check-types` red: readers access `est.issueDate` without a cast on a type that no longer declares it |
-| formatter helper | whole-file (or revert readers to the local formatter) | `PIN-B79 UTC-fixed display` red under the TZ override |
+| Fixed file                      | Probe granularity                                                                                                                        | REG(s) that must go red                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `estimates.service.ts`          | whole-file, **plus** per hunk: helper+constant, `send()`, `decline()`, `accept()`, `voidEstimate()`, `convertToInvoice` tail, `create()` | `REG-B70 send() refuses…` (both), `REG-B70 decline()…`, `REG-B70 accept() refuses a voided…`, `REG-B70 voidEstimate() claims atomically`, `REG-B70 laundered…`, `REG-B70 missing id is 404`, `REG-B17 …links…`, `REG-B17 link count mismatch…`, `REG-B79 create() persists…`, `REG-B79 …rejects a malformed…`, `REG-B79 read path…` (DB lane) |
+| `[id]/page.tsx`                 | whole-file, plus per hunk: controls, `onError`, `onSuccess`, toast                                                                       | `REG-B15 convert control is absent…`, `REG-B15 …server reason`, `REG-B15-NAV …navigates…`, `REG-B17 send toast…`                                                                                                                                                                                                                              |
+| `estimates/page.tsx`            | whole-file                                                                                                                               | `REG-B79 web submit carries issueDate`; `npm run check-types` red (the dto literal no longer typechecks without `issueDate` in `CreateEstimateDto`? — no: reverting _this_ file restores the cast; the REG is the probe)                                                                                                                      |
+| `apps/web/lib/api/estimates.ts` | whole-file                                                                                                                               | `npm run check-types` red on two counts: the dto literal in `page.tsx` (cast removed) has fields the reverted `CreateEstimateDto` lacks, and `onSuccess` reads `.id` the reverted result type lacks. Green = the cast was kept or the type was not fixed → harness defect, batch does not merge.                                              |
+| `packages/types/api/misc.ts`    | whole-file                                                                                                                               | `npm run check-types` red: readers access `est.issueDate` without a cast on a type that no longer declares it                                                                                                                                                                                                                                 |
+| formatter helper                | whole-file (or revert readers to the local formatter)                                                                                    | `PIN-B79 UTC-fixed display` red under the TZ override                                                                                                                                                                                                                                                                                         |
 
 Harness-integrity: every REG green after the fix and red under its probe; a REG red under no probe is a harness defect, not a pass. There is no longer any probe row conditioned on an implementer choice.
 
@@ -249,6 +274,6 @@ Harness-integrity: every REG green after the fix and red under its probe; a REG 
 6. **`customers.service.ts:1774`** — S4's written finding on whether it writes `status` (§2 B70.7); a "yes" becomes a registry row or a fifth helper call site in this batch.
 7. **Data-repair items F27-DR-B70 / F27-DR-B17 / F27-DR-B79** (§6) — B70's can touch money.
 8. **Lessons** (register at 40/40; **archive three** fully-guarded, least-cited entries verbatim to `ARCHIVE.md` first; nextId 117; L-067 is not edited in place):
-   - **L-117** (B15): *An action control's render predicate is the same status set the server's claim enforces, expressed once per surface.*
-   - **L-118** (B70): *When a terminal-status guard is added to one mutator of a status column, sweep every mutator of that column — same file and every other writer in the radius — through one shared claim helper in the same fix; "optional" sweeps ship the hole one status over.*
-   - **L-119** (B17/B79): *A schema field that lands ahead of its write path ships with a red test pinning the write and a read-path round-trip, or the column is NULL forever and the type lies.*
+   - **L-117** (B15): _An action control's render predicate is the same status set the server's claim enforces, expressed once per surface._
+   - **L-118** (B70): _When a terminal-status guard is added to one mutator of a status column, sweep every mutator of that column — same file and every other writer in the radius — through one shared claim helper in the same fix; "optional" sweeps ship the hole one status over._
+   - **L-119** (B17/B79): _A schema field that lands ahead of its write path ships with a red test pinning the write and a read-path round-trip, or the column is NULL forever and the type lies._
