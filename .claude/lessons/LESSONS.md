@@ -586,6 +586,36 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
 - **Guard:** REG-B305 round 4 + the source pin `short-pick-category-tax.pins.test.ts` (the
   composition lives in a screen unit tests cannot import).
 
+### L-120 · 2026-09-13 · domain · billing self-serve (TRIAL-1 / RO-1)
+
+- **Symptom:** every trial tenant's "Cancel" 404'd; an expired trial showed the same button, got
+  the same 404, and saw no explanation — a guard-enforced lockout with no UI.
+- **Root cause:** `cancel()` keyed on a `TenantSubscription` row `register()` never writes, while
+  the real lifecycle state lives on `Tenant.status`; the web rendered that status as a raw badge
+  with no branch for the guard's `READ_ONLY` code.
+- **Lesson:** **Key a lifecycle action on the table that owns the state; a sibling row some
+  creation path never writes is optional — a missing-row 404 there hides a legitimate transition.
+  Every status the API can return and every code a guard can emit needs a UI branch, or the
+  lockout is invisible.**
+- **Guard:** TRIAL-1 in `subscription-mutation.service.spec.ts`; RO-1 in
+  `subscription.service.spec.ts` + `billing-page.test.tsx`.
+
+### L-121 · 2026-09-13 · domain · STRIPE-CANCEL-1
+
+- **Symptom:** a tenant on an admin-provisioned Stripe subscription clicked Cancel; Stripe kept
+  invoicing; the cron made it READ_ONLY (−MRR), the next paid invoice lifted it back to ACTIVE
+  (+MRR) — a monthly flap while a cancelled customer was charged.
+- **Root cause:** `cancel()`/`resume()` wrote `cancelAtPeriodEnd` locally and never called Stripe;
+  `onPaymentSucceeded` reinstated ANY non-ACTIVE tenant without reading the local cancellation.
+- **Lesson:** **On a provider-billed tenant, write a scheduled billing transition to the provider
+  FIRST and locally second — a failed provider call changes nothing, a failed local write
+  self-heals off the webhook. Gate the provider call on the state that makes it meaningful (a
+  cancellation actually armed, a tenant actually paying): a fix for over-charging must never be
+  able to START charging. A webhook that promotes status must read the local intent it overrides —
+  an executed cancellation plus a payment is an anomaly to flag, never to resurrect.**
+- **Guard:** STRIPE-CANCEL-1 ×15 in `subscription-mutation.service.spec.ts` + ×4 in
+  `billing.service.spec.ts`. Class of B107.
+
 ### L-122 · 2026-09-13 · domain · F39 (B310/B311/B315 wallet/invoice lost updates)
 
 - **Symptom:** B310 — `applyAdvancePaymentToInvoice` read `AdvancePayment.balance` and decremented
@@ -617,6 +647,22 @@ col + delta)` has no read-modify-write window at all. And such a fix is regressi
   when the whole `tenantTransaction` call settles — not at the raw-query call site). Both verified
   red-then-green by hand before commit.
 
+### L-123 · 2026-09-14 · process · W1 seam rows
+
+- **Symptom:** an independent pre-merge review found two live defects in code three in-lane
+  rounds had passed — a cancel that never reached the payment provider, and a resume that
+  cleared the one flag a new guard reads.
+- **Root cause:** each round fixed what it was handed. Round 1 added an idempotence
+  short-circuit; a later round added a provider call BELOW it; a third gave that call a
+  three-condition gate and left the local write on one. Every diff was correct read alone.
+- **Lesson:** **When a function is edited by more than one review round, the seam between the
+  rounds is where the defect lives: a guard added early can end up ahead of a call added late,
+  and a gate tightened on one branch can leave its sibling ungated. Touching a function an
+  earlier round changed means re-reading it whole — an in-lane reviewer holding one diff cannot
+  see this, which is what the independent pre-merge pass is for.**
+- **Guard:** the W1 rows (`STRIPE-CANCEL-2`, `STRIPE-RESUME-1`) plus the rewritten spec that
+  asserted the defect. Sibling [[L-119]].
+
 ### L-124 · 2026-09-13 · domain · cron sweep silently dropped null-tenant orders
 
 - **Symptom:** `sweepAllPendingOrders()` grouped pending orders by `(customerId, tenantId)` and
@@ -636,3 +682,37 @@ col + delta)` has no read-modify-write window at all. And such a fix is regressi
 tenantId: null } })` run alongside the main query counts and warns every null-tenant customer
   regardless of whether their real-tenant group individually cleared the `>1` threshold; the
   sweep's return shape carries the count as `skipped`.
+
+### L-125 · 2026-09-14 · domain · W1 billing anchor
+
+- **Symptom:** a fix for billing-period drift was about to derive each tenant's cycle anchor from
+  `TenantSubscription.createdAt`, the only date on the row — moving real charge dates for anyone
+  whose row predates their subscription.
+- **Root cause:** several paths create that row without subscribing (a customer-cap grace window,
+  a Stripe customer being minted), so its creation date is not the anchor; no column stores one.
+- **Lesson:** **Never infer a money-bearing date from a column that merely happens to hold a date.
+  Check every writer of the row before treating a field as the thing you need — if none of them
+  means it, the honest fix is a column and a migration, not the nearest plausible field. Shipping
+  half a fix beats shipping a wrong charge date.**
+- **Guard:** the time-of-day half shipped alone; the drift half is filed, blocked on an
+  `anchorDay` column. Sibling [[L-118]].
+
+### L-126 · 2026-09-14 · domain · W1 admin plan change
+
+- **Symptom:** an admin plan-change branch cleared `cancelAtPeriodEnd`, revoking a cancellation
+  the TENANT had asked for — no event, no audit line, and the sweep then never churned them, so a
+  cancelled tenant was billed indefinitely. The SAME wave repeated it one row later: the fix for a
+  different row cleared the tenant's armed downgrade on admin reactivation.
+- **Root cause:** both writes were copied from a path where they ARE correct — the first from the
+  tenant's own `downgrade()`, the second from the Stripe webhook's reinstatement — into a path
+  where an operator acts on someone else's subscription. The code was identical; the authority
+  behind it was not.
+- **Lesson:** **Consent does not travel with copied code. Before lifting a write from a
+  self-service or provider-driven path into an admin path, ask who is acting and on whose behalf:
+  a flag the owner of a subscription may clear for themselves is not one an operator may clear for
+  them. Check every WRITER of the field first — where each one is a deliberate choice by the
+  owner, no third party may quietly undo it.**
+- **Guard:** the admin plan change REFUSES in either direction while a cancellation is armed
+  (`cancelAtPeriodEnd` added to the select it was blind to); admin reactivation leaves the
+  downgrade armed and audits it instead. `REG-FINDING-1`/`REG-FINDING-4` in
+  `platform-admin.service.spec.ts`. Sibling [[L-123]].
