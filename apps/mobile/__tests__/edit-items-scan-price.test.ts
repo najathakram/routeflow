@@ -117,7 +117,14 @@ describe("edit-items.tsx picker-branch price gate (REG-B263-D)", () => {
   const pickerMount = (parentSrc.match(/<ProductPicker\b[\s\S]*?\/>/) ?? [""])[0];
 
   it("REG-B263-D: the ProductPicker mount threads the list branch's canEditPrice gate", () => {
-    expect(pickerMount).toContain('canEditPrice={!isDriver && order.status !== "CANCELLED"}');
+    // Re-pointed 2026-09-14: the gate is now PER LINE (SPECIAL-tier lock + the
+    // order's edit window, RULINGS R2/R9), and the picker's own `canEditPrice`
+    // gates exactly one line — the last-added strip's. The contract this pin
+    // exists for is unchanged: the strip is behind the SAME gate the line list
+    // puts on that line, never a looser one.
+    expect(pickerMount).toMatch(
+      /canEditPrice=\{lastAddedLine \? canEditPriceFor\(lastAddedLine\.productId\) : false\}/,
+    );
   });
 
   it("REG-B263-D: the last-added strip's Edit price control is behind canEditPrice", () => {
@@ -141,7 +148,17 @@ describe("edit-items.tsx below-floor ack is operator-only (REG-B263-E)", () => {
   });
 
   it("REG-B263-E: floorAcked has exactly one writer (the Sell anyway tap)", () => {
-    expect((parentSrc.match(/setFloorAcked\(/g) ?? []).length).toBe(1);
+    // The contract is "nothing ADDS an ack except the explicit tap". The
+    // staged-edit snapshot (2026-09-14) also REPLACES the whole set on restore
+    // and on discard — carrying the operator's own acks back, never minting
+    // one — so the pin counts the additive writer specifically.
+    expect(
+      (parentSrc.match(/setFloorAcked\(\(prev\) => new Set\(prev\)\.add\(/g) ?? []).length,
+    ).toBe(1);
+    // And the only other writers are the two snapshot ones, both of which
+    // assign a whole set rather than adding to the live one.
+    const others = (parentSrc.match(/setFloorAcked\(/g) ?? []).length - 1;
+    expect(parentSrc.match(/setFloorAcked\(new Set\(/g) ?? []).toHaveLength(others);
   });
 
   it("REG-B263-H: neither PriceOverrideModal apply path touches the ack state", () => {
@@ -165,9 +182,18 @@ describe("edit-items.tsx last-added strip is per scan session (REG-B263-F)", () 
     expect(onClose).toMatch(/setScanOpen\(false\)[\s\S]*?onScanSessionEnd/);
   });
 
-  it("REG-B263-F: the parent clears lastScannedId on scan-session end", () => {
+  it("REG-B263-F: the parent does NOT clear lastScannedId on scan-session end", () => {
+    // REVERSED 2026-09-14 (RULINGS R5). The original assertion — a lazy
+    // `onScanSessionEnd={[\s\S]*?setLastScannedId(null)` — would now pass
+    // VACUOUSLY by running on into `onPick`'s own clear further down the
+    // mount, so it is replaced rather than left standing. The camera closing
+    // does not undo the add: an add made with the camera SHUT (a hardware
+    // wedge, a typed code + Enter) must keep its price affordance. Every other
+    // clear (session start, picker close, row tap) is still pinned below.
     const pickerMount = (parentSrc.match(/<ProductPicker\b[\s\S]*?\/>/) ?? [""])[0];
-    expect(pickerMount).toMatch(/onScanSessionEnd=\{[\s\S]*?setLastScannedId\(null\)/);
+    const endHandler = (pickerMount.match(/onScanSessionEnd=\{[^\n]*\}/) ?? [""])[0];
+    expect(endHandler).toMatch(/^onScanSessionEnd=\{/);
+    expect(endHandler).not.toContain("setLastScannedId");
   });
 
   // Review round (2026-09-08): the scanner-close clear is only half the
@@ -204,7 +230,10 @@ describe("edit-items.tsx last-added strip is per scan session (REG-B263-F)", () 
 describe("edit-items.tsx picker-strip below-floor parity (REG-B263-G)", () => {
   // The whole strip branch (`{scanOpen && lastAdded ? ( ... ) : null}`), not
   // just its first row — the below-floor affordance lives in the second row.
-  const stripStart = pickerSrc.indexOf("{scanOpen && lastAdded ? (");
+  // Re-pointed 2026-09-14 with the guard itself (RULINGS R5): the strip is no
+  // longer gated on `scanOpen`, so the old literal would slice nothing and
+  // silently turn every assertion below vacuous.
+  const stripStart = pickerSrc.indexOf("{lastAdded && !trayExpanded ? (");
   const strip =
     stripStart === -1
       ? ""
@@ -233,8 +262,12 @@ describe("edit-items.tsx picker-strip below-floor parity (REG-B263-G)", () => {
 
   it("REG-B263-G: the strip never stamps the ack (no Sell anyway on this surface)", () => {
     expect(strip).not.toMatch(/Sell anyway|setFloorAcked/);
-    // Belt and braces alongside REG-B263-E: exactly one ack writer, screen-wide.
-    expect((source.match(/setFloorAcked\(/g) ?? []).length).toBe(1);
+    // Belt and braces alongside REG-B263-E: exactly one writer that ADDS an
+    // ack, screen-wide (the snapshot restore/discard replace the whole set —
+    // see REG-B263-E for why that is not an ack being minted).
+    expect((source.match(/setFloorAcked\(\(prev\) => new Set\(prev\)\.add\(/g) ?? []).length).toBe(
+      1,
+    );
   });
 
   it("REG-B263-G: the parent derives the strip's floor with the list row's helper", () => {
@@ -252,9 +285,13 @@ describe("edit-items.tsx picker-strip below-floor parity (REG-B263-G)", () => {
 // select only tests the fix turns green (red-gate audit 2026-09-08).
 describe("edit-items.tsx list-branch canEditPrice (PIN-B263-D4, unchanged)", () => {
   it("PIN-B263-D4: canEditPrice's gate on the list branch is unchanged", () => {
-    // D4: `canEditPrice` itself is explicitly untouched by this fix — pin
-    // its exact current wiring (`:922`) so a change here fails loudly.
-    expect(parentSrc).toContain('canEditPrice={!isDriver && order.status !== "CANCELLED"}');
+    // Re-pointed 2026-09-14: the list branch now gates PER LINE through
+    // `canEditPriceFor` (SPECIAL-tier lock + web's edit window, RULINGS
+    // R2/R9). The order-wide `!isDriver && status !== "CANCELLED"` gate is
+    // gone screen-wide — pin that too, so it cannot creep back as a second,
+    // looser rule beside the per-line one.
+    expect(parentSrc).toMatch(/canEditPrice=\{canEditPriceFor\(it\.productId\)\}/);
+    expect(source).not.toContain('canEditPrice={!isDriver && order.status !== "CANCELLED"}');
   });
 });
 
