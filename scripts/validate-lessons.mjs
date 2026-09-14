@@ -79,7 +79,13 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
-const DIR = path.join(REPO_ROOT, ".claude", "lessons");
+// LESSONS_ROOT overrides the register directory — used by
+// validate-lessons.digest.self-test.mjs (F3) so the self-test can point this
+// script at a disposable copy of `.claude/lessons/` instead of mutating the
+// real register on SIGINT or a concurrent `npm run verify`.
+const DIR = process.env.LESSONS_ROOT
+  ? path.resolve(process.env.LESSONS_ROOT)
+  : path.join(REPO_ROOT, ".claude", "lessons");
 
 const LESSONS = path.join(DIR, "LESSONS.md");
 const ARCHIVE = path.join(DIR, "ARCHIVE.md");
@@ -238,14 +244,44 @@ if (inBoth.length) {
 const allIds = [...active, ...archived];
 const maxNum = allIds.length ? Math.max(...allIds.map((e) => e.num)) : 0;
 const maxId = `L-${String(maxNum).padStart(3, "0")}`;
+const minNextId = maxNum + 1;
+
+// nextId is NOT derived the same way as the other two counters (F4, owner
+// ruling 2026-09-14 follow-up): the register reserves ids by storing a
+// nextId HIGHER than maxId + 1 — an open branch already claimed those ids
+// and hasn't merged yet — and `dev-pipeline/scripts/closeout.mjs` reads
+// that stored value to place the next stub. Collapsing nextId to a plain
+// `maxId + 1` derivation would silently un-reserve those ids and hand them
+// straight back out. So: `derivedNextId = max(maxId + 1, stored nextId)`.
+// A stored value BELOW maxId + 1 is the one direction that stays a hard
+// FAILURE, not a warning — a hand-lowered nextId guarantees a future
+// duplicate id, which is exactly the failure mode this register exists to
+// prevent (see the file header). A stored value ABOVE maxId + 1 only WARNS,
+// since it's the expected shape of a live reservation.
+const declaredNextId = meta.nextId;
+const hasValidDeclaredNextId = Number.isInteger(declaredNextId);
+if (hasValidDeclaredNextId && declaredNextId < minNextId) {
+  fail(
+    `NEXTID TOO LOW: ${rel(META)} says nextId ${declaredNextId}, but the highest id in the ` +
+      `register is ${maxId} (needs nextId >= ${minNextId}). A hand-lowered nextId risks a future ` +
+      `duplicate id — fix with: node scripts/validate-lessons.mjs --digest.`,
+  );
+} else if (hasValidDeclaredNextId && declaredNextId > minNextId) {
+  warn(
+    `nextId reserves ${declaredNextId - minNextId} id(s) beyond max (declared ${declaredNextId}, ` +
+      `max + 1 is ${minNextId}) — informational only; an open branch likely already claimed them.`,
+  );
+}
+const derivedNextId = hasValidDeclaredNextId ? Math.max(minNextId, declaredNextId) : minNextId;
 
 const derivedCounters = {
   activeCount: active.length,
   archivedCount: archived.length,
-  nextId: maxNum + 1,
+  nextId: derivedNextId,
 };
 
 for (const [field, derived] of Object.entries(derivedCounters)) {
+  if (field === "nextId") continue; // handled above — FAIL-below / WARN-above / floor logic
   const declared = meta[field];
   if (declared === undefined) continue; // field is optional; nothing to reconcile
   if (!Number.isInteger(declared)) continue; // already failed above as a type error
@@ -259,7 +295,7 @@ for (const [field, derived] of Object.entries(derivedCounters)) {
   }
 }
 
-// ─── 5. Cross-references resolve ─────────────────────────────────────────────
+// ─── 4. Cross-references resolve ─────────────────────────────────────────────
 // `[[L-012]]` must name a real entry in one of the two files. Archiving keeps a
 // reference valid; renumbering does not, which is why ids are identifiers and
 // never an index.
@@ -284,7 +320,7 @@ if (dangling.size) {
   );
 }
 
-// ─── 5b. Every active entry has a Lesson line ────────────────────────────────
+// ─── 4b. Every active entry has a Lesson line ───────────────────────────────
 // The digest is built entirely FROM the "- **Lesson:**" bodies, so an entry
 // missing one cannot be represented there — reject it here rather than
 // silently dropping it from the digest.
@@ -296,7 +332,7 @@ if (missingLesson.length) {
   );
 }
 
-// ─── 6. Caps ─────────────────────────────────────────────────────────────────
+// ─── 5. Caps ─────────────────────────────────────────────────────────────────
 const bytes = statSync(LESSONS).size;
 const kb = (bytes / 1024).toFixed(1);
 const capKb = (maxBytes / 1024).toFixed(1);
@@ -354,14 +390,18 @@ const counts =
   `${active.length}/${maxEntries} entries · ${kb}/${capKb} KB · archived ${archived.length} · ` +
   `nextId ${derivedCounters.nextId} (max ${maxId}) · binding: ${binding}`;
 
+// Warnings are printed regardless of outcome (F5) — a failing run can still
+// carry a real, actionable warning (e.g. a reservation note alongside an
+// unrelated OVER CAP failure), and silently dropping it just because the
+// build was already red hides information a fixer would want.
+for (const w of warnings) console.log(`  ⚠ ${w}`);
+
 if (failures.length) {
   console.error(`\n✖ ${failures.length} register problem(s):\n`);
   for (const f of failures) console.error(`   - ${f}`);
   console.error(`\n.claude/lessons: ${counts}\n`);
   process.exit(1);
 }
-
-for (const w of warnings) console.log(`  ⚠ ${w}`);
 
 // ─── Digest ──────────────────────────────────────────────────────────────────
 // Deterministic given LESSONS.md + _meta.json alone: a 3-line header (title,

@@ -35,23 +35,42 @@
 //                     <= 8,000-byte table of contents).
 //   META MISSING    — .claude/code-map/_meta.json missing or not valid JSON.
 //
+// `mappedSha` != `HEAD` alone is never an error — every feature branch makes
+// that true the moment it commits anything else, and failing the build on
+// mere inequality is unsatisfiable: `--stamp` sets `mappedSha` to HEAD, but
+// *committing* that stamp creates a new HEAD, so the sha is stale again
+// before anyone can read it. Instead this is a DRIFT rule (owner ruling
+// 2026-09-14):
+//
+//   1. `mappedSha` must name a commit that is HEAD itself or an ancestor of
+//      it (`git merge-base --is-ancestor`) — otherwise the stored sha names
+//      a commit outside HEAD's history (a rebase/force-push, or a hand-typed
+//      typo) and there is no meaningful drift to compute. This is an ERROR
+//      on every branch.
+//   2. Otherwise, compute `drift` = the files changed between
+//      `mappedSha..HEAD` (`git diff --name-only`) that fall under `apps/**`,
+//      `packages/**`, or `scripts/**`, and `mapTouched` = whether any file
+//      under `.claude/code-map/**` changed in that same range.
+//   3. STALE = `drift` is non-empty AND `mapTouched` is false — code changed
+//      that could affect the map, and nothing under the map directory
+//      acknowledged it. A branch that touches the map alongside its code
+//      change is never stale, regardless of how far mappedSha has fallen
+//      behind.
+//
 // WHAT IT WARNS ON (does not fail, exit 0 — off master)
-//   STALE SHA       — `_meta.json`'s `mappedSha` != `git rev-parse HEAD`. The
-//                     map may be out of date; `git diff --name-only
-//                     <mappedSha> HEAD` shows the drift. `mappedSha` (and
-//                     `generatedAt`) are informational (owner ruling
-//                     2026-09-14) precisely because every feature branch
-//                     makes them stale the moment it commits anything else —
-//                     that used to make `_meta.json` a near-guaranteed merge
-//                     conflict between parallel PRs for a value nobody was
-//                     acting on mid-branch. A feature branch is expected to
-//                     carry a stale sha; only `master` (or CI running against
-//                     the `master` ref) is expected to be current, so it is
-//                     the one place this is still an ERROR, not a warning.
+//   STALE            — see rule 3 above. `mappedSha` (and `generatedAt`) are
+//                     informational off master precisely because every
+//                     feature branch is expected to drift mid-flight; only
+//                     `master` (or CI running against the `master` ref) is
+//                     expected to be current, so STALE is still an ERROR
+//                     there, using the same branch detection as before.
 //
 // `--stamp` sets `mappedSha` to HEAD and `generatedAt` to now — the landing
 // follow-up's one job, run right after a code-map-touching PR merges to
 // master, so master's own error case is satisfied without hand-editing JSON.
+// It runs ONLY after every structural check above has passed (the write is
+// the very last thing the script does) — a failing run exits 1 and never
+// touches `_meta.json`, so `--stamp` can never paper over a real problem.
 //
 // USAGE
 //   node scripts/validate-code-map.mjs
@@ -62,7 +81,7 @@
 // see root package.json.
 
 import { readFileSync, readdirSync, existsSync, statSync, writeFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -120,29 +139,9 @@ if (!existsSync(META)) {
   }
 }
 
-// ─── 2b. --stamp: set mappedSha = HEAD, generatedAt = now ───────────────────
-// The landing follow-up's one job (owner ruling 2026-09-14): run this right
-// after a code-map-touching PR merges to master, so master's mappedSha is
-// current without hand-editing `_meta.json`. Updates the in-memory `meta` too
-// so the freshness check below (section 6) reports fresh immediately, in the
-// same process, rather than needing a second run.
-if (stampMode && meta) {
-  try {
-    const head = execFileSync("git", ["rev-parse", "HEAD"], {
-      cwd: REPO_ROOT,
-      encoding: "utf8",
-    }).trim();
-    const generatedAt = new Date().toISOString();
-    const newMeta = { ...meta, mappedSha: head, generatedAt };
-    writeFileSync(META, `${JSON.stringify(newMeta, null, 2)}\n`);
-    meta = newMeta;
-    console.log(
-      `✔ stamped ${rel(META)}: mappedSha -> ${head.slice(0, 8)}, generatedAt -> ${generatedAt}`,
-    );
-  } catch (e) {
-    fail(`STAMP FAILED: could not resolve HEAD or write ${rel(META)} — ${e.message}`);
-  }
-}
+// `--stamp`'s write moved to the very end of the script (after the Report
+// section) — see "USAGE" in the file header. It must run only once every
+// structural check below has passed, so it cannot happen here.
 
 // ─── 3. INDEX.md size ───────────────────────────────────────────────────────
 const indexBytes = statSync(INDEX).size;
@@ -275,14 +274,13 @@ if (fixReport && rowOffenders.length) {
   }
 }
 
-// ─── 6. mappedSha freshness ──────────────────────────────────────────────────
-// Informational on any branch except `master` itself: a stale sha is the
-// expected state of a feature branch mid-flight (every commit after the last
-// map update makes it stale), so failing the build over it there just forces
-// busy-work re-stamps with no reader who benefits before merge. `master` (or
-// CI running against the `master` ref) is the one place a stale sha is a real
-// defect — nothing else will ever bring it current — so it stays an ERROR
-// there. `--stamp` (2b above) is the fix in both cases.
+// ─── 6. mappedSha drift ──────────────────────────────────────────────────────
+// See file header for the full rule. `mappedSha` != HEAD alone is never an
+// error — only an ancestor violation (rule 1) or genuine drift with no map
+// update (rule 3) is. `master` (or CI running against the `master` ref) is
+// the one place drift is a real defect — nothing else will ever bring it
+// current — so it stays an ERROR there; everywhere else it warns. `--stamp`
+// (moved to the very end of the script) is the fix in both cases.
 if (meta && typeof meta.mappedSha === "string" && meta.mappedSha) {
   try {
     const head = execFileSync("git", ["rev-parse", "HEAD"], {
@@ -290,38 +288,67 @@ if (meta && typeof meta.mappedSha === "string" && meta.mappedSha) {
       encoding: "utf8",
     }).trim();
     if (head && head !== meta.mappedSha) {
-      let branch = "";
-      try {
-        branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+      const ancestor = spawnSync("git", ["merge-base", "--is-ancestor", meta.mappedSha, "HEAD"], {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+      });
+      if (ancestor.status !== 0) {
+        fail(
+          `MAPPED SHA NOT ANCESTOR: ${rel(META)}'s mappedSha (${meta.mappedSha.slice(0, 8)}) is ` +
+            `not HEAD and not an ancestor of HEAD (${head.slice(0, 8)}) — it may name a commit ` +
+            `from a rebased/force-pushed history, or be malformed. Fix with: ` +
+            `node scripts/validate-code-map.mjs --stamp (once mappedSha's commit is reachable ` +
+            `from HEAD).`,
+        );
+      } else {
+        const diffOut = execFileSync("git", ["diff", "--name-only", `${meta.mappedSha}..${head}`], {
           cwd: REPO_ROOT,
           encoding: "utf8",
-        }).trim();
-      } catch {
-        // detached HEAD or git unavailable — treat as non-master (warn only)
-      }
-      // `branch === "master"` covers the normal case. The CI fallback covers
-      // a detached-HEAD checkout (common for shallow/tag CI checkouts, where
-      // `--abbrev-ref HEAD` reports literally "HEAD") that is nonetheless
-      // building the `master` ref — `GITHUB_REF_NAME`/`GITHUB_REF` name it
-      // even when the branch name does not.
-      const onMaster =
-        branch === "master" ||
-        (Boolean(process.env.CI) &&
-          (process.env.GITHUB_REF_NAME === "master" ||
-            process.env.GITHUB_REF === "refs/heads/master"));
-      const msg =
-        `STALE SHA: ${rel(META)}'s mappedSha (${meta.mappedSha.slice(0, 8)}) != HEAD ` +
-        `(${head.slice(0, 8)}). Check drift with: git diff --name-only ${meta.mappedSha} HEAD. ` +
-        `Fix with: node scripts/validate-code-map.mjs --stamp`;
-      if (onMaster) {
-        fail(`${msg} (branch is master — this is an error, not a warning: see file header § 6).`);
-      } else {
-        warn(msg);
+        });
+        const changed = diffOut.split(/\r?\n/).filter(Boolean);
+        const drift = changed.filter((f) => /^(apps|packages|scripts)\//.test(f));
+        const mapTouched = changed.some((f) => f.startsWith(".claude/code-map/"));
+        const stale = drift.length > 0 && !mapTouched;
+        if (stale) {
+          let branch = "";
+          try {
+            branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+              cwd: REPO_ROOT,
+              encoding: "utf8",
+            }).trim();
+          } catch {
+            // detached HEAD or git unavailable — treat as non-master (warn only)
+          }
+          // `branch === "master"` covers the normal case. The CI fallback
+          // covers a detached-HEAD checkout (common for shallow/tag CI
+          // checkouts, where `--abbrev-ref HEAD` reports literally "HEAD")
+          // that is nonetheless building the `master` ref —
+          // `GITHUB_REF_NAME`/`GITHUB_REF` name it even when the branch name
+          // does not.
+          const onMaster =
+            branch === "master" ||
+            (Boolean(process.env.CI) &&
+              (process.env.GITHUB_REF_NAME === "master" ||
+                process.env.GITHUB_REF === "refs/heads/master"));
+          const msg =
+            `STALE: ${rel(META)}'s mappedSha (${meta.mappedSha.slice(0, 8)}) is behind HEAD ` +
+            `(${head.slice(0, 8)}) by ${drift.length} changed file(s) under apps/**, ` +
+            `packages/**, scripts/** with no corresponding .claude/code-map/** update. Check ` +
+            `with: git diff --name-only ${meta.mappedSha} HEAD. Fix with: ` +
+            `node scripts/validate-code-map.mjs --stamp (after updating the map).`;
+          if (onMaster) {
+            fail(
+              `${msg} (branch is master — this is an error, not a warning: see file header § 6).`,
+            );
+          } else {
+            warn(msg);
+          }
+        }
       }
     }
   } catch {
     // No git available (or not a repo) — not this script's job to enforce
-    // that; silently skip the freshness check rather than fail the build.
+    // that; silently skip the drift check rather than fail the build.
   }
 }
 
@@ -338,6 +365,25 @@ if (failures.length) {
     console.error("  (--fix-report prints every offending row)");
   }
   process.exit(1);
+}
+
+// ─── --stamp: write only after every structural check above has passed ─────
+if (stampMode) {
+  try {
+    const head = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+    }).trim();
+    const generatedAt = new Date().toISOString();
+    const newMeta = { ...meta, mappedSha: head, generatedAt };
+    writeFileSync(META, `${JSON.stringify(newMeta, null, 2)}\n`);
+    console.log(
+      `✔ stamped ${rel(META)}: mappedSha -> ${head.slice(0, 8)}, generatedAt -> ${generatedAt}`,
+    );
+  } catch (e) {
+    console.error(`✖ STAMP FAILED: could not resolve HEAD or write ${rel(META)} — ${e.message}`);
+    process.exit(1);
+  }
 }
 
 console.log(`✔ .claude/code-map: sizes within cap. ${sizes}`);
