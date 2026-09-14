@@ -30,12 +30,12 @@
  * created fresh by this file and deleted in `afterAll`.
  *
  * The CLI itself is a whole-table dark backfill by design (every tenant, not a `--tenant=` scope
- * like the tobacco backfill) — running `--apply` in a shared local compose database therefore
- * reclassifies every OTHER tenant sitting in it too (e.g. a `qa-*`/`test` row left over from
- * another lane's run), not just this file's own two rows. `beforeAll` snapshots every tenant's
- * `class` before touching anything, and `afterAll` restores exactly the rows this file did not
- * create back to their snapshotted value — so this spec never leaves a durable side effect on
- * another session's data, independent of whether that data happened to reclassify "correctly".
+ * like the tobacco backfill) — running an unscoped `--apply` in a shared local compose database
+ * would therefore reclassify every OTHER tenant sitting in it too (e.g. a `qa-*`/`test` row left
+ * over from another lane's run, or another `.db.spec.ts` suite's own PRODUCTION fixtures running
+ * concurrently in a sibling Jest worker — this is exactly how L-129 was paid for). This spec
+ * instead passes `--slug-prefix <SLUG_PREFIX>` on every invocation so the CLI's scan/apply never
+ * touches a row outside its own fixtures — no whole-table snapshot/restore needed.
  */
 import { execSync } from "child_process";
 import { randomUUID } from "crypto";

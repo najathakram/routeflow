@@ -20,6 +20,9 @@
 // Usage:
 //   node apps/api/scripts/backfill-subscription-reconciliation.mjs           # dry run
 //   node apps/api/scripts/backfill-subscription-reconciliation.mjs --apply   # writes changes
+//   ... --slug-prefix <prefix>  # scope the tenant scan/apply to slugs starting with <prefix> —
+//   for a db spec or a one-tenant prod rehearsal — never let a spec run an unscoped --apply on a
+//   shared DB.
 
 import { pathToFileURL } from "node:url";
 import { PrismaClient } from "@prisma/client";
@@ -32,8 +35,31 @@ import { resolveDatabaseUrl, scrubSecrets } from "./lib/railway-db-url.mjs";
 // `main()`'s own try/finally.
 let databaseUrl;
 
+// Parses the optional `--slug-prefix <prefix>` flag: value required, given at most once, and
+// never empty — so a spec or rehearsal that scopes this platform-wide script cannot silently
+// fall back to an unscoped scan/apply on a shared DB. Mirrors backfill-tenant-class.mjs's parser.
+export function parseSlugPrefix(argv) {
+  const idx = argv.indexOf("--slug-prefix");
+  if (idx === -1) return undefined;
+  if (argv.indexOf("--slug-prefix", idx + 1) !== -1) {
+    throw new Error("--slug-prefix may be given only once");
+  }
+  const value = argv[idx + 1];
+  if (!value || value.startsWith("--")) {
+    throw new Error("--slug-prefix requires a non-empty value");
+  }
+  return value;
+}
+
 async function main() {
   const apply = process.argv.includes("--apply");
+  let slugPrefix;
+  try {
+    slugPrefix = parseSlugPrefix(process.argv);
+  } catch (err) {
+    console.error(err.message);
+    process.exit(1);
+  }
   try {
     databaseUrl = resolveDatabaseUrl(process.env);
   } catch (err) {
@@ -58,7 +84,11 @@ async function main() {
     );
 
     const tenants = await prisma.tenant.findMany({
-      where: { class: { in: ["PRODUCTION", "DEMO"] }, deletedAt: null },
+      where: {
+        class: { in: ["PRODUCTION", "DEMO"] },
+        deletedAt: null,
+        ...(slugPrefix ? { slug: { startsWith: slugPrefix } } : {}),
+      },
       select: { id: true, slug: true, plan: true, subscription: true },
     });
 
@@ -116,7 +146,9 @@ async function main() {
     }
 
     console.log(
-      `${tenants.length} tenant(s) scanned, ${rows.length} change(s), ${skipped.length} skipped:`,
+      `${tenants.length} tenant(s) scanned, ${rows.length} change(s), ${skipped.length} skipped${
+        slugPrefix ? ` (scoped to slug prefix "${slugPrefix}")` : ""
+      }:`,
     );
     console.table(
       rows.map((r) => ({ slug: r.slug, action: r.action, planKey: r.planKey, price: r.price })),
