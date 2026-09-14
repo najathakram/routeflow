@@ -3163,6 +3163,51 @@ describe("OrdersService", () => {
         data: { currentStock: { increment: 10 } },
       });
     });
+
+    // Round 1 (F1/F3): the status write and the stock settle used to be two
+    // separate commits — the generic `order.update` ran before either tx, so a
+    // crash between them left a live PENDING/DRAFT order with no matching stock
+    // movement. Both are now inside the SAME `tenantTransaction`.
+    it("REG-B283(e): a boxed line (unitsPerBox>1) decrements by the persisted OrderItem.qty — the same pieces-basis value create() already stored, not a re-derived boxes*unitsPerBox+pieces", async () => {
+      prisma.order.findUnique.mockResolvedValue(DRAFT_ORDER);
+      prisma.order.update.mockResolvedValue({ ...DRAFT_ORDER, status: "PENDING" });
+      // 2 boxes x 12/box + 3 pieces = 27 — the pieces basis create() itself would
+      // have stored on OrderItem.qty for this boxed line (see the WP1 pin above).
+      prisma.orderItem.findMany.mockResolvedValue([
+        { productId: "prod-box12", qty: 27, boxes: 2, pieces: 3, trackedCategoryId: null },
+      ]);
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-box12", name: "Eggs", currentStock: 100, unitsPerBox: 12 },
+      ]);
+      const txExecuteRaw = mockTenantTransactionWithRawSpy();
+
+      await service.changeStatus("ord-1", { status: "PENDING" as any }, operatorPayload);
+
+      const bound = readAggregatedDecrementValues(txExecuteRaw);
+      expect(bound).toEqual(expect.arrayContaining(["prod-box12", 27]));
+    });
+
+    it("REG-B283(f): when the decrement rejects inside the transaction, the order status is never persisted as PENDING (decrement runs before the status write, in the same rolled-back tx)", async () => {
+      prisma.order.findUnique.mockResolvedValue(DRAFT_ORDER);
+      prisma.orderItem.findMany.mockResolvedValue([
+        { productId: "prod-1", qty: 10, trackedCategoryId: null },
+      ]);
+      const decrementSpy = jest
+        .spyOn(service as any, "decrementStockForSale")
+        .mockRejectedValue(new Error("stock decrement failed"));
+      // Run the real callback (unlike the raw-spy helper above) so a throw inside
+      // it actually prevents the `tx.order.update` call that follows it.
+      prisma.tenantTransaction.mockImplementation((fn: any) => fn(prisma));
+
+      await expect(
+        service.changeStatus("ord-1", { status: "PENDING" as any }, operatorPayload),
+      ).rejects.toThrow("stock decrement failed");
+
+      expect(decrementSpy).toHaveBeenCalled();
+      expect(prisma.order.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: "PENDING" }) }),
+      );
+    });
   });
 
   // ─── WP3: universal one-step demotion + reopen DELIVERED ──────────────────

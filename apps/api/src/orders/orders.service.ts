@@ -2899,21 +2899,78 @@ export class OrdersService implements OnApplicationBootstrap {
     // order exactly as it was, not cancelled-but-not-unwound.
     if (dto.status === OrderStatus.CANCELLED) await this.assertCancellableOrThrow(id);
 
-    const updated = await this.prisma.forTenant().order.update({
-      where: { id },
-      data: {
-        status: dto.status,
-        // A backdated order was delivered on its business date, not on the day
-        // staff got around to marking it.
-        ...(dto.status === OrderStatus.DELIVERED
-          ? { deliveredAt: order.deliveredAt ?? order.orderDate ?? new Date() }
-          : {}),
-        // A reopened order is no longer delivered — a stale deliveredAt would
-        // keep it in delivered-on-date reports and reconcile passes.
-        ...(isDeliveredDemotion ? { deliveredAt: null } : {}),
-        ...(noteAppend ? { notes: (order.notes ?? "") + noteAppend } : {}),
-      },
-    });
+    const statusUpdateData = {
+      status: dto.status,
+      // A backdated order was delivered on its business date, not on the day
+      // staff got around to marking it.
+      ...(dto.status === OrderStatus.DELIVERED
+        ? { deliveredAt: order.deliveredAt ?? order.orderDate ?? new Date() }
+        : {}),
+      // A reopened order is no longer delivered — a stale deliveredAt would
+      // keep it in delivered-on-date reports and reconcile passes.
+      ...(isDeliveredDemotion ? { deliveredAt: null } : {}),
+      ...(noteAppend ? { notes: (order.notes ?? "") + noteAppend } : {}),
+    };
+
+    const isDraftToPendingPromotion =
+      order.status === OrderStatus.DRAFT && dto.status === OrderStatus.PENDING;
+    const isPendingToDraftDemotion =
+      order.status === OrderStatus.PENDING && dto.status === OrderStatus.DRAFT;
+
+    // B283 (REG-B283) round 1 (F1): for the DRAFT<->PENDING transitions, the
+    // status write happens INSIDE the same transaction as the stock settle
+    // below — not as a separate, already-committed update — so a failure
+    // between the decrement/credit and the status change can never leave a
+    // live status with no matching stock movement (the narrower window that
+    // let a later cancel credit phantom stock). Every other transition keeps
+    // its own already-committed update, untouched.
+    const updated = await (async () => {
+      if (isDraftToPendingPromotion) {
+        // B283 (REG-B283): promoting a DRAFT into a live PENDING order is when
+        // it becomes a real sale — reserve stock now, via the SAME decrement
+        // helper create() uses for a non-draft order (no second
+        // implementation). Without this, cancel's `cancelReturnsStock =
+        // order.status !== DRAFT` (below) credited stock back for a
+        // promotion that never took any — a phantom stock credit on
+        // DRAFT → PENDING → CANCELLED.
+        const isStaffRole = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
+        return this.prisma.tenantTransaction(
+          async (tx) => {
+            const activeItems: Array<{ productId: string | null; qty: any }> =
+              await tx.orderItem.findMany({
+                where: { orderId: id, status: { not: "CANCELLED" } },
+                select: { productId: true, qty: true },
+              });
+            const stockLines = activeItems
+              .filter((li): li is { productId: string; qty: any } => !!li.productId)
+              .map((li) => ({ productId: li.productId, qty: Number(li.qty) }));
+            await this.decrementStockForSale(tx, stockLines, isStaffRole);
+            return tx.order.update({ where: { id }, data: statusUpdateData });
+          },
+          { isolationLevel: "Serializable", timeout: 15_000 },
+        );
+      }
+      if (isPendingToDraftDemotion) {
+        // Symmetric reverse: demoting a PENDING order back to DRAFT gives back
+        // exactly what the DRAFT→PENDING promotion above took. Reuses the SAME
+        // edit-delta helper the operator-edit and cancel paths already use
+        // (heldItems = the order's current lines, final = none — an empty
+        // target credits back the undelivered remainder, same call shape as
+        // the cancel branch above).
+        return this.prisma.tenantTransaction(
+          async (tx) => {
+            const activeItems = await tx.orderItem.findMany({
+              where: { orderId: id, status: { not: "CANCELLED" } },
+              select: { productId: true, qty: true, deliveredQty: true, status: true },
+            });
+            await this.settleStockForEdit(tx, { id, status: OrderStatus.PENDING }, activeItems, []);
+            return tx.order.update({ where: { id }, data: statusUpdateData });
+          },
+          { isolationLevel: "Serializable", timeout: 15_000 },
+        );
+      }
+      return this.prisma.forTenant().order.update({ where: { id }, data: statusUpdateData });
+    })();
 
     this.gateway.emitOrderStatusChanged(this.prisma.getTenantId(), {
       orderId: id,
@@ -3058,40 +3115,10 @@ export class OrdersService implements OnApplicationBootstrap {
         // that helper's per-product lock/read/write loop alongside the voids.
         { isolationLevel: "Serializable", timeout: 15_000 },
       );
-    } else if (order.status === OrderStatus.DRAFT && dto.status === OrderStatus.PENDING) {
-      // B283 (REG-B283): promoting a DRAFT into a live PENDING order is when it
-      // becomes a real sale — reserve stock now, via the SAME decrement helper
-      // create() uses for a non-draft order (no second implementation). Without
-      // this, cancel's `cancelReturnsStock = order.status !== DRAFT` (above)
-      // credited stock back for a promotion that never took any — a phantom
-      // stock credit on DRAFT → PENDING → CANCELLED.
-      const isStaffRole = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
-      await this.prisma.tenantTransaction(async (tx) => {
-        const activeItems: Array<{ productId: string | null; qty: any }> =
-          await tx.orderItem.findMany({
-            where: { orderId: id, status: { not: "CANCELLED" } },
-            select: { productId: true, qty: true },
-          });
-        const stockLines = activeItems
-          .filter((li): li is { productId: string; qty: any } => !!li.productId)
-          .map((li) => ({ productId: li.productId, qty: Number(li.qty) }));
-        await this.decrementStockForSale(tx, stockLines, isStaffRole);
-      });
-    } else if (order.status === OrderStatus.PENDING && dto.status === OrderStatus.DRAFT) {
-      // Symmetric reverse: demoting a PENDING order back to DRAFT gives back
-      // exactly what the DRAFT→PENDING promotion above took. Reuses the SAME
-      // edit-delta helper the operator-edit and cancel paths already use
-      // (heldItems = the order's current lines, final = none — an empty
-      // target credits back the undelivered remainder, same call shape as
-      // the cancel branch above).
-      await this.prisma.tenantTransaction(async (tx) => {
-        const activeItems = await tx.orderItem.findMany({
-          where: { orderId: id, status: { not: "CANCELLED" } },
-          select: { productId: true, qty: true, deliveredQty: true, status: true },
-        });
-        await this.settleStockForEdit(tx, { id, status: OrderStatus.PENDING }, activeItems, []);
-      });
     }
+    // DRAFT→PENDING and PENDING→DRAFT (B283 F1) are handled above, atomically
+    // with the status write, inside the `updated` transaction — nothing left
+    // to do for them here.
 
     // Fire-and-forget push notifications for key status transitions
     const notifMap: Partial<Record<OrderStatus, { title: string; body: string }>> = {
