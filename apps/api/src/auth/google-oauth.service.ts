@@ -109,6 +109,11 @@ export class GoogleOAuthService {
     this.oauth2Client = new OAuth2Client(clientId, clientSecret);
 
     const jwtSecret = configService.get<{ secret: string }>("jwt")?.secret ?? "";
+    if (!jwtSecret) {
+      // B349 round 1: deriving the state-signing key from an empty string is a fixed,
+      // publicly-known key — fail closed instead of silently signing state with it.
+      throw new Error("JWT_SECRET is required to sign OAuth state");
+    }
     this.stateSigningKey = Buffer.from(
       crypto.hkdfSync(
         "sha256",

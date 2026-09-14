@@ -134,6 +134,26 @@ describe("GoogleOAuthService OAuth state signing (REG-B349)", () => {
     );
   });
 
+  it("REG-B349(e): a validly bound state with a corrupted MAC segment is rejected", async () => {
+    // Proves the MAC check (not just the nonce-binding check) is load-bearing: the
+    // other REG-B349 cases pass even if verifyStateSignature is deleted, because the
+    // nonce binding rejects the tampered payload first. Here the nonce binding is
+    // stored for the EXACT payload presented (as generateLinkUrl does on the happy
+    // path) — only the MAC segment is corrupted — so a correct implementation must
+    // reject on the signature check alone.
+    const { service } = buildService();
+    const state = await service.generateLinkUrl("tenant", "victim-user-id");
+    const dotIndex = state.indexOf(".");
+    const payloadB64 = state.slice(0, dotIndex);
+    const macB64 = state.slice(dotIndex + 1);
+    const flipped = macB64[0] === "A" ? "B" : "A";
+    const corruptedState = `${payloadB64}.${flipped}${macB64.slice(1)}`;
+
+    await expect(service.verifyCallback("code", corruptedState)).rejects.toThrow(
+      new ForbiddenException("state_invalid"),
+    );
+  });
+
   it("REG-B349: the happy path still works, with the same generic error for every rejection", async () => {
     const { service } = buildService();
 
@@ -167,5 +187,23 @@ describe("GoogleOAuthService OAuth state signing (REG-B349)", () => {
     expect((replayError as ForbiddenException).message).toBe(
       (tamperError as ForbiddenException).message,
     );
+  });
+});
+
+describe("GoogleOAuthService construction (B349 round 1 — fail closed without a secret)", () => {
+  it("throws instead of deriving the state-signing key from an empty string when JWT_SECRET is missing", () => {
+    const config = {
+      get: (key: string) => (key === "jwt" ? { secret: "" } : undefined),
+    } as unknown as ConfigService;
+    expect(
+      () =>
+        new GoogleOAuthService(
+          {} as any,
+          {} as unknown as JwtService,
+          config,
+          {} as any,
+          { claimsFor: jest.fn() } as any,
+        ),
+    ).toThrow("JWT_SECRET is required to sign OAuth state");
   });
 });
