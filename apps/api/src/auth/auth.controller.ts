@@ -16,7 +16,7 @@ import {
 import { ApiTags, ApiOperation, ApiBearerAuth } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
 import { ConfigService } from "@nestjs/config";
-import type { Response } from "express";
+import type { Request, Response } from "express";
 import { AuthService } from "./auth.service";
 import { LocalAuthGuard } from "./guards/local-auth.guard";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
@@ -284,6 +284,7 @@ export class AuthController {
     @Query("code") code: string,
     @Query("state") state: string,
     @Query("error") oauthError: string,
+    @Req() req: Request,
     @Res() res: Response,
   ) {
     // Peek at the state blob (without consuming the nonce) to decide web vs mobile redirect
@@ -316,7 +317,7 @@ export class AuthController {
       }
 
       // ── Sign-in flow ─────────────────────────────────────────────────────────
-      const result = await this.googleOAuth.findOrCreateUser(profile);
+      const result = await this.googleOAuth.findOrCreateUser(profile, extractDeviceInfo(req));
 
       // Build the param bundle the web callback page expects.
       let bundle: Record<string, string>;

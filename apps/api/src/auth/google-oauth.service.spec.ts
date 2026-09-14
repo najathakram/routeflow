@@ -295,6 +295,47 @@ describe("GoogleOAuthService device info threading (Phase 0 T6)", () => {
       }),
     );
   });
+
+  it("handleTenantAuth (tenant/staff Google callback) stores the provided device info on the refresh token", async () => {
+    const { service, prisma, refreshTokenUpsert } = buildService({
+      tenant: {
+        findFirst: jest.fn().mockResolvedValue({ id: "tenant-1", status: "ACTIVE" }),
+      },
+    });
+    prisma.user.findFirst.mockResolvedValue({
+      id: "staff-1",
+      username: "staff",
+      role: "OPERATOR",
+      status: "ACTIVE",
+      googleId: "g2",
+      forcePasswordChange: false,
+      tenantId: "tenant-1",
+      password: null,
+    });
+
+    await service.findOrCreateUser(
+      {
+        type: "tenant",
+        googleId: "g2",
+        email: "staff@example.com",
+        tenantSlug: "acme",
+      } as any,
+      { userAgent: "TestAgent/1.0", ipAddress: "10.0.0.1" },
+    );
+
+    expect(refreshTokenUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          userAgent: "TestAgent/1.0",
+          ipAddress: "10.0.0.1",
+        }),
+        update: expect.objectContaining({
+          userAgent: "TestAgent/1.0",
+          ipAddress: "10.0.0.1",
+        }),
+      }),
+    );
+  });
 });
 
 describe("GoogleOAuthService construction (B349 round 1 — fail closed without a secret)", () => {
