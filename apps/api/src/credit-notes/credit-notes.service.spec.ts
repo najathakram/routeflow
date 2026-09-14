@@ -1127,7 +1127,7 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
     // (wallet money exactly like a credit note) just stayed "spent" against a total that no
     // longer existed once the order edit shrunk the invoice, silently losing the customer's
     // prepaid dollars instead of giving them back to AdvancePayment.balance.
-    it("shrink pass: an invoice total dropped below an applied ADVANCE restores the excess to the wallet's AdvancePayment.balance", async () => {
+    it("REG-B315 shrink pass: an invoice total dropped below an applied ADVANCE restores the excess to the wallet's AdvancePayment.balance", async () => {
       prisma.orderCreditNote.findMany.mockResolvedValueOnce([]); // no apply-phase intents needed
       prisma.invoice.findMany.mockResolvedValueOnce([
         {

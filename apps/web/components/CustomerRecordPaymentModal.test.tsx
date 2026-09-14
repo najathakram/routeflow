@@ -4,7 +4,7 @@ import { clampAllocationInput } from "./CustomerRecordPaymentModal";
 // ("Cap at the invoice's balance — the server would happily over-pay it"), but this web
 // modal edited the raw string with no cap at all — an operator could allocate past an
 // invoice's amountDue here while mobile silently clamped the identical input.
-describe("clampAllocationInput (B313)", () => {
+describe("REG-B313 clampAllocationInput", () => {
   it("caps an over-allocation at the invoice's amountDue", () => {
     // Before the fix, updateAlloc stored the raw string verbatim — "500" past a $100 balance.
     expect(clampAllocationInput("500", 100)).toBe("100");

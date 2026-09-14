@@ -2905,7 +2905,7 @@ describe("InvoicesService", () => {
 
     // B314: a VOID (bounced) payment carries no money — counting it here permanently blocked
     // the revert with no way out (voiding the invoice doesn't help; it already IS voided-money).
-    it("B314: a VOID-only payment history no longer blocks the edit — only LIVE payments do", async () => {
+    it("REG-B314 a VOID-only payment history no longer blocks the edit — only LIVE payments do", async () => {
       prisma.invoice.findMany.mockResolvedValue([
         { id: "inv-1", invoiceNumber: "INV-1", internalNotes: null },
       ]);
@@ -3013,7 +3013,7 @@ describe("InvoicesService", () => {
   });
 
   describe("revertInvoiceToDraft (standalone)", () => {
-    it("B314: a VOID-only payment history no longer blocks the manual revert-to-Draft action", async () => {
+    it("REG-B314 a VOID-only payment history no longer blocks the manual revert-to-Draft action", async () => {
       prisma.invoice.findUnique.mockResolvedValue({
         id: "inv-1",
         status: InvoiceStatus.SENT,
@@ -6075,7 +6075,7 @@ describe("InvoicesService", () => {
       }
     });
 
-    it("B311: a concurrent office payment can no longer overpay the invoice past its live balance", async () => {
+    it("REG-B311 a concurrent office payment can no longer overpay the invoice past its live balance", async () => {
       // Stateful stand-in for the invoice row: `paid` only grows once a payment actually
       // commits, so a caller that re-reads it AFTER the row lock is released sees the truth.
       let paid = 0;

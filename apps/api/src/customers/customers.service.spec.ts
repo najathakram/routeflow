@@ -1188,7 +1188,7 @@ describe("CustomersService", () => {
       );
     });
 
-    it("B310: two concurrent applies of the SAME advance never drive its balance negative", async () => {
+    it("REG-B310 two concurrent applies of the SAME advance never drive its balance negative", async () => {
       // The mocked `withAdvisoryLock` is a module-level jest.fn shared across every test in this
       // file (a prior test above also calls applyAdvancePaymentToInvoice) — clear its call
       // history so the per-call key assertion below only sees calls THIS test made.
