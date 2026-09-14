@@ -312,7 +312,7 @@ describe("AddonService.enableAddon — B342 concurrency lock", () => {
   // SKU. For the four LEGACY_ADDON_KEY_TO_SKU-bridged add-ons that meant two locks for one
   // entitlement, so the paths raced each other despite both being "locked". The key is now
   // normalised to the SKU on this side.
-  it("REG-FINDING-3 a bridged addonKey locks on its SKU, so the admin path serialises against the tenant self-serve path", async () => {
+  it("REG-B342 a bridged addonKey locks on its SKU, so the admin path serialises against the tenant self-serve path", async () => {
     mockWithAdvisoryLock.mockClear();
     const { svc } = make({
       stripe: { isConfigured: false },
