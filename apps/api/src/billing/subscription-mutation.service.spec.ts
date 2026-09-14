@@ -1887,7 +1887,7 @@ describe("STRIPE-CANCEL-1 — self-serve cancel/resume propagate to Stripe", () 
   // invoice.payment_succeeded webhook — even though nothing about the tenant's real payment
   // state changed and Stripe was never told to stop. Was: "never calls Stripe — local clear
   // still happens" (asserted the bug as expected behaviour); now: refuses and writes nothing.
-  it("STRIPE-RESUME-1 resume() with stripeSubId + cancelAtPeriodEnd: true on a READ_ONLY tenant REFUSES — no Stripe call, no local write, no emit", async () => {
+  it("REG-B400 resume() with stripeSubId + cancelAtPeriodEnd: true on a READ_ONLY tenant REFUSES — no Stripe call, no local write, no emit", async () => {
     const { svc, tx, events, stripe } = make({
       tenantStatus: "READ_ONLY",
       sub: activeSub({ stripeSubId: "sub_x", cancelAtPeriodEnd: true }),
@@ -1999,7 +1999,7 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
   // let Stripe invoice a full period the tenant gets nothing for. This cohort cancels
   // IMMEDIATELY via `stripe.cancelSubscription()` instead — was: "propagates to Stripe BEFORE
   // the short-circuit" via the period-end `updateSubscription()` call.
-  it("cancel() READ_ONLY + live stripeSubId cancels Stripe IMMEDIATELY (not scheduled at period end), drops the dead pointer, no emit", async () => {
+  it("REG-B399 cancel() READ_ONLY + live stripeSubId cancels Stripe IMMEDIATELY (not scheduled at period end), drops the dead pointer, no emit", async () => {
     const { svc, prisma, tx, events, stripe } = make({
       tenantStatus: "READ_ONLY",
       sub: activeSub({ stripeSubId: "sub_x" }),
@@ -2060,7 +2060,7 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
     expect(events.emit).not.toHaveBeenCalled();
   });
 
-  it("cancel() READ_ONLY + stripeSubId: null never calls Stripe — immediate short-circuit, no write", async () => {
+  it("REG-B399 cancel() READ_ONLY + stripeSubId: null never calls Stripe — immediate short-circuit, no write", async () => {
     const { svc, tx, events, stripe } = make({
       tenantStatus: "READ_ONLY",
       sub: activeSub(), // stripeSubId: null
@@ -2072,7 +2072,7 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
     expect(events.emit).not.toHaveBeenCalled();
   });
 
-  it("cancel() READ_ONLY + live sub, Stripe generic failure → ServiceUnavailableException, nothing written (B107 semantics preserved)", async () => {
+  it("REG-B399 cancel() READ_ONLY + live sub, Stripe generic failure → ServiceUnavailableException, nothing written (B107 semantics preserved)", async () => {
     const { svc, prisma, tx, events, stripe } = make({
       tenantStatus: "READ_ONLY",
       sub: activeSub({ stripeSubId: "sub_x" }),
@@ -2099,7 +2099,7 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
     expect(events.emit).not.toHaveBeenCalled();
   });
 
-  it("cancel() READ_ONLY + live sub, Stripe resource_missing → proceeds to the short-circuit result (B107 semantics preserved)", async () => {
+  it("REG-B399 cancel() READ_ONLY + live sub, Stripe resource_missing → proceeds to the short-circuit result (B107 semantics preserved)", async () => {
     const { svc, prisma, tx, events, stripe } = make({
       tenantStatus: "READ_ONLY",
       sub: activeSub({ stripeSubId: "sub_x" }),
