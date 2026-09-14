@@ -9,8 +9,11 @@
 // things are deliberately never written and are only ever listed for a human:
 //   - a tenant with no subscription row at all ("no subscription — manual decision"),
 //   - a subscription row with no planKey set ("no planKey — manual decision"),
-//   - a planKey the published catalog prices at null, e.g. ENTERPRISE ("custom-priced —
-//     skipped") — excluded from the re-flag predicate so a second run reports 0 changes.
+//   - a planKey that isn't in the published catalog at all ("planKey not in the published
+//     catalog — manual decision") — distinct from a catalog-known plan priced at null,
+//   - a planKey the published catalog prices at null, e.g. ENTERPRISE ("custom-priced (null
+//     price) — skipped") — excluded from the re-flag predicate so a second run reports 0
+//     changes.
 // Only PRODUCTION and DEMO class tenants are in scope — TEST/INTERNAL tenants are never
 // billed, so they're left alone.
 //
@@ -22,28 +25,15 @@ import { pathToFileURL } from "node:url";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
-import { resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
+import { resolveDatabaseUrl, scrubSecrets } from "./lib/railway-db-url.mjs";
 
-// Hand-checked mapping, not inferred — see Phase 0 spec Section 3. GROWTH/SCALE map to
-// themselves (Phase 0 Task 10 made them direct TenantPlan enum values, not only legacy
-// aliases); TEAM/BUSINESS/PROFESSIONAL keep mapping to their v8-rename targets.
-export const LEGACY_PLAN_TO_CATALOG_KEY = {
-  STARTER: "STARTER",
-  TEAM: "GROWTH",
-  BUSINESS: "SCALE",
-  PROFESSIONAL: "SCALE",
-  GROWTH: "GROWTH",
-  SCALE: "SCALE",
-  ENTERPRISE: "ENTERPRISE",
-};
-
-export function resolveCatalogKey(legacyPlan) {
-  return LEGACY_PLAN_TO_CATALOG_KEY[legacyPlan] ?? null;
-}
+// Hoisted to module scope (not `main()`-local) so the top-level `.catch` below can scrub a
+// connection string out of an error message even when the failure happens before or after
+// `main()`'s own try/finally.
+let databaseUrl;
 
 async function main() {
   const apply = process.argv.includes("--apply");
-  let databaseUrl;
   try {
     databaseUrl = resolveDatabaseUrl(process.env);
   } catch (err) {
@@ -96,7 +86,20 @@ async function main() {
       if (basePriceSnapshot != null) {
         continue; // already snapshotted — nothing to do, not even worth listing
       }
-      const price = priceByKey[planKey] ?? null;
+      if (!(planKey in priceByKey)) {
+        // planKey isn't in the published catalog AT ALL — distinct from a catalog-known
+        // plan priced at null (ENTERPRISE). We can't tell a typo from a retired key from a
+        // key the catalog just hasn't caught up to yet, so this always needs a human, never
+        // an idempotent skip.
+        skipped.push({
+          slug: t.slug,
+          legacyPlan: t.plan,
+          planKey,
+          reason: "planKey not in the published catalog — manual decision",
+        });
+        continue;
+      }
+      const price = priceByKey[planKey];
       if (price == null) {
         // ENTERPRISE (or any plan the catalog prices at null) is custom-priced — skip
         // idempotently and keep it OUT of `rows` so a second run never re-flags it and
@@ -105,7 +108,7 @@ async function main() {
           slug: t.slug,
           legacyPlan: t.plan,
           planKey,
-          reason: "custom-priced — skipped",
+          reason: "custom-priced (null price) — skipped",
         });
         continue;
       }
@@ -133,27 +136,43 @@ async function main() {
     // the tenant being deleted) must fail that one row, not roll back the whole run.
     let applied = 0;
     let failed = 0;
+    let raced = 0;
     for (const r of rows) {
       try {
-        await prisma.tenantSubscription.update({
-          where: { tenantId: r.tenantId },
+        // Conditional write (review F7b): only write — and only emit a BillingEvent — if the
+        // row still matches exactly what was scanned. `count === 0` means someone else
+        // (the checkout webhook, another run) already changed this row between scan and
+        // write; never overwrite a state we didn't observe, and never emit a duplicate event.
+        const result = await prisma.tenantSubscription.updateMany({
+          where: { tenantId: r.tenantId, planKey: r.planKey, basePriceSnapshot: null },
           data: { basePriceSnapshot: r.price, planVersionId: publishedVersion.id },
         });
-        await prisma.billingEvent.create({
-          data: {
-            tenantId: r.tenantId,
-            type: "reconciliation.snapshot_backfilled",
-            payload: { planKey: r.planKey, price: r.price, scriptRun: new Date().toISOString() },
-            amountDelta: null,
-          },
-        });
-        applied++;
+        if (result.count === 1) {
+          await prisma.billingEvent.create({
+            data: {
+              tenantId: r.tenantId,
+              type: "reconciliation.snapshot_backfilled",
+              payload: { planKey: r.planKey, price: r.price, scriptRun: new Date().toISOString() },
+              amountDelta: null,
+            },
+          });
+          applied++;
+        } else {
+          skipped.push({
+            slug: r.slug,
+            planKey: r.planKey,
+            reason: "changed concurrently since scan — rerun",
+          });
+          raced++;
+        }
       } catch (err) {
         console.error(`Failed to reconcile ${r.slug}: ${err.message}`);
         failed++;
       }
     }
-    console.log(`Applied ${applied} change(s), ${failed} failed.`);
+    console.log(
+      `Applied ${applied} change(s), ${failed} failed, ${raced} raced (rerun to pick up).`,
+    );
   } finally {
     await prisma.$disconnect();
     await pool.end();
@@ -161,12 +180,15 @@ async function main() {
 }
 
 // Only run the CLI when this file is the process entry point — never on import (mirrors
-// backfill-tenant-class.mjs's guard, so the DB-lane spec can import resolveCatalogKey
-// without opening a real Postgres connection as an unawaited side effect).
+// backfill-tenant-class.mjs's guard).
 const isMain = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;
 if (isMain) {
   main().catch((err) => {
-    console.error(err);
+    const msg = err?.message ?? String(err);
+    // Never print the raw error object — it can embed a connection string (password and
+    // all). Scrub it through the same helper that builds `databaseUrl`, when we got far
+    // enough to have one.
+    console.error(databaseUrl ? scrubSecrets(msg, databaseUrl) : msg);
     process.exit(1);
   });
 }

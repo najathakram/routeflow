@@ -14,7 +14,11 @@ import { pathToFileURL } from "node:url";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
-import { resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
+import { resolveDatabaseUrl, scrubSecrets } from "./lib/railway-db-url.mjs";
+
+// Hoisted to module scope so the top-level `.catch` below can scrub a connection string out
+// of an error message.
+let databaseUrl;
 
 const DEMO_SLUG = "routeflow-demo";
 const HOUSE_TENANT_SLUG = "routeflow-hq";
@@ -30,7 +34,6 @@ export function classify(slug) {
 
 async function main() {
   const apply = process.argv.includes("--apply");
-  let databaseUrl;
   try {
     databaseUrl = resolveDatabaseUrl(process.env);
   } catch (err) {
@@ -104,7 +107,8 @@ async function main() {
 const isMain = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;
 if (isMain) {
   main().catch((err) => {
-    console.error(err);
+    const msg = err?.message ?? String(err);
+    console.error(databaseUrl ? scrubSecrets(msg, databaseUrl) : msg);
     process.exit(1);
   });
 }
