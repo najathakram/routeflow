@@ -19,6 +19,10 @@
  * T1: determinism — two `--digest` runs produce byte-identical content.
  * T2: a stale digest fails the plain run with the documented message.
  * T3: `--digest` repairs a stale digest, and the plain run then passes.
+ * T4: (owner ruling 2026-09-14) `activeCount`/`nextId` are DERIVED from the
+ *     register, not checked against `_meta.json` as ground truth — a stale
+ *     stored value only WARNS on a plain run (never fails the build), and
+ *     `--digest` re-stamps `_meta.json` back to the derived value.
  */
 import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -29,6 +33,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..");
 const SCRIPT = join(__dirname, "validate-lessons.mjs");
 const DIGEST = join(REPO_ROOT, ".claude", "lessons", "LESSONS-DIGEST.md");
+const META = join(REPO_ROOT, ".claude", "lessons", "_meta.json");
 const PRETTIERIGNORE = join(REPO_ROOT, ".prettierignore");
 
 let failures = 0;
@@ -47,6 +52,7 @@ const readDigest = () => (existsSync(DIGEST) ? readFileSync(DIGEST, "utf8") : nu
 const main = () => {
   const original = readDigest();
   check("setup: LESSONS-DIGEST.md exists before the test", original !== null, true);
+  const originalMeta = readFileSync(META, "utf8");
 
   // Guard against the generated digest going back under lint-staged's
   // `prettier --write` (which would rewrite it and desync it from what
@@ -94,9 +100,46 @@ const main = () => {
 
     const cleanRun = run([]);
     check("T3: plain run passes once the digest is fresh again", cleanRun.status, 0);
+
+    // ── T4: stale counters warn (never fail), --digest re-stamps them ────
+    const meta = JSON.parse(originalMeta);
+    const staleMeta = { ...meta, activeCount: meta.activeCount + 1, nextId: 1 };
+    writeFileSync(META, `${JSON.stringify(staleMeta, null, 2)}\n`);
+
+    const staleCounters = run([]);
+    check(
+      "T4: stale activeCount/nextId still exits 0 (warning, not failure)",
+      staleCounters.status,
+      0,
+    );
+    const staleOut = staleCounters.stdout + staleCounters.stderr;
+    check(
+      "T4: plain run WARNS about the stale activeCount",
+      staleOut.includes("STALE ACTIVECOUNT"),
+      true,
+    );
+    check("T4: plain run WARNS about the stale nextId", staleOut.includes("STALE NEXTID"), true);
+
+    const restamp = run(["--digest"]);
+    check("T4: --digest exits 0 while re-stamping counters", restamp.status, 0);
+    const restampedMeta = JSON.parse(readFileSync(META, "utf8"));
+    check(
+      "T4: --digest restores activeCount to the derived value",
+      restampedMeta.activeCount,
+      meta.activeCount,
+    );
+    check("T4: --digest restores nextId to the derived value", restampedMeta.nextId, meta.nextId);
+
+    const cleanAfterRestamp = run([]);
+    check(
+      "T4: plain run has no counter warning after --digest re-stamps",
+      cleanAfterRestamp.status,
+      0,
+    );
   } finally {
     // Leave the working tree exactly as found, regardless of pass/fail above.
     if (original !== null) writeFileSync(DIGEST, original);
+    writeFileSync(META, originalMeta);
   }
 
   console.log(
