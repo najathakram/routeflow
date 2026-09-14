@@ -2936,6 +2936,22 @@ export class OrdersService implements OnApplicationBootstrap {
         const isStaffRole = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
         return this.prisma.tenantTransaction(
           async (tx) => {
+            // B283 (REG-B283) round 2 (F2): claim the row with a compare-and-set
+            // BEFORE touching stock — an out-of-transaction read followed by a
+            // plain `update` let two concurrent promotions of the same draft
+            // both pass the pre-check and both decrement stock. `updateMany`'s
+            // `where` re-checks status atomically against the current row; a
+            // second promotion loses the race and gets `count: 0` here instead
+            // of a second decrement.
+            const claimed = await tx.order.updateMany({
+              where: { id, status: OrderStatus.DRAFT },
+              data: statusUpdateData,
+            });
+            if (claimed.count === 0) {
+              throw new ConflictException(
+                "This order is no longer DRAFT — someone else already changed its status.",
+              );
+            }
             const activeItems: Array<{ productId: string | null; qty: any }> =
               await tx.orderItem.findMany({
                 where: { orderId: id, status: { not: "CANCELLED" } },
@@ -2945,7 +2961,7 @@ export class OrdersService implements OnApplicationBootstrap {
               .filter((li): li is { productId: string; qty: any } => !!li.productId)
               .map((li) => ({ productId: li.productId, qty: Number(li.qty) }));
             await this.decrementStockForSale(tx, stockLines, isStaffRole);
-            return tx.order.update({ where: { id }, data: statusUpdateData });
+            return tx.order.findUniqueOrThrow({ where: { id } });
           },
           { isolationLevel: "Serializable", timeout: 15_000 },
         );
@@ -2959,12 +2975,23 @@ export class OrdersService implements OnApplicationBootstrap {
         // the cancel branch above).
         return this.prisma.tenantTransaction(
           async (tx) => {
+            // B283 round 2 (F2): same compare-and-set claim, mirrored for the
+            // reverse transition — see the DRAFT→PENDING branch above.
+            const claimed = await tx.order.updateMany({
+              where: { id, status: OrderStatus.PENDING },
+              data: statusUpdateData,
+            });
+            if (claimed.count === 0) {
+              throw new ConflictException(
+                "This order is no longer PENDING — someone else already changed its status.",
+              );
+            }
             const activeItems = await tx.orderItem.findMany({
               where: { orderId: id, status: { not: "CANCELLED" } },
               select: { productId: true, qty: true, deliveredQty: true, status: true },
             });
             await this.settleStockForEdit(tx, { id, status: OrderStatus.PENDING }, activeItems, []);
-            return tx.order.update({ where: { id }, data: statusUpdateData });
+            return tx.order.findUniqueOrThrow({ where: { id } });
           },
           { isolationLevel: "Serializable", timeout: 15_000 },
         );
