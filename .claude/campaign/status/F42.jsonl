@@ -1,7 +1,7 @@
-{"id":"B323","batch":"F42","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B324","batch":"F42","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B325","batch":"F42","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B326","batch":"F42","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B327","batch":"F42","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B328","batch":"F42","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B329","batch":"F42","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B323","batch":"F42","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"claimedFrom":null,"claimedBy":null}
+{"id":"B324","batch":"F42","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"claimedFrom":null,"claimedBy":null}
+{"id":"B325","batch":"F42","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"claimedFrom":null,"claimedBy":null}
+{"id":"B326","batch":"F42","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"claimedFrom":null,"claimedBy":null}
+{"id":"B327","batch":"F42","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"claimedFrom":null,"claimedBy":null}
+{"id":"B328","batch":"F42","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"claimedFrom":null,"claimedBy":null}
+{"id":"B329","batch":"F42","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"claimedFrom":null,"claimedBy":null}

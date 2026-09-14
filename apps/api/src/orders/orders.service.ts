@@ -69,6 +69,7 @@ import {
   type RegulatedDeliveryDb,
 } from "../common/regulated-delivery";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
+import { TenantContextService } from "../tenant/tenant-context.service";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { taxRateFractionFrom } from "../common/tax-rate";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -133,6 +134,13 @@ export class OrdersService implements OnApplicationBootstrap {
     // per-invoice teardown — the two sibling paths (voidInvoiceInTx,
     // deleteInvoice) already do this.
     private readonly ledger: RegulatedLedgerService,
+    // B323: the hourly/boot-time pending-order sweep has no HTTP request, so ALS is
+    // empty — sweepAllPendingOrders() re-enters each customer's own tenant scope
+    // via tenantCtx.run() (the RF-008 pattern already used by recurring-invoices,
+    // tobacco-report, order-templates, authorization-expiry, commission-reconciliation
+    // and regulated-filing-cron) so every forTenant() call inside the merge resolves
+    // that tenant's own config/data, never another tenant's.
+    private readonly tenantCtx: TenantContextService,
   ) {}
 
   /**
@@ -1542,26 +1550,67 @@ export class OrdersService implements OnApplicationBootstrap {
     }
   }
 
-  async sweepAllPendingOrders(): Promise<{ customers: number; merged: number }> {
+  async sweepAllPendingOrders(): Promise<{ customers: number; merged: number; skipped: number }> {
+    // B323: no HTTP request context runs this (cron tick / boot), so ALS is empty and
+    // forTenant() used to fall through to the UNSCOPED client — every forTenant() call
+    // deeper in mergeAllPendingForCustomer (SystemConfigService.get for the tax rate,
+    // product lookups, ...) then resolved against whichever tenant's row a bare
+    // findFirst/findMany happened to return first, not the customer's own tenant.
+    // Group by tenantId alongside customerId so each group carries the tenant to
+    // re-enter below.
+    const pendingMergeCandidateWhere = {
+      status: OrderStatus.PENDING,
+      routeRunId: null,
+      routeRunStopId: null,
+      transaction: { is: null },
+      invoices: { none: {} },
+      returns: { none: {} },
+      skipAutoMerge: false,
+    };
+
     const groups = await this.prisma.forTenant().order.groupBy({
-      by: ["customerId"],
-      where: {
-        status: OrderStatus.PENDING,
-        routeRunId: null,
-        routeRunStopId: null,
-        transaction: { is: null },
-        invoices: { none: {} },
-        returns: { none: {} },
-        skipAutoMerge: false,
-      },
+      by: ["customerId", "tenantId"],
+      where: pendingMergeCandidateWhere,
       _count: { _all: true },
       having: { customerId: { _count: { gt: 1 } } },
     });
 
+    // F1 (B323 review): a customer with, say, one pending order under a real tenant AND
+    // one legacy null-tenant order lands in two SEPARATE one-row (customerId, tenantId)
+    // groups above — neither clears `having customerId._count > 1`, so the pair was
+    // silently invisible to both the merge loop AND the warn below it. Run one extra
+    // query on the same (unscoped, deliberate) client, over the identical filter but
+    // restricted to tenantId: null, so every customer with a null-tenant pending order
+    // is found and counted whether or not their real-tenant group individually cleared
+    // the >1 threshold.
+    const nullTenantRows = await this.prisma.forTenant().order.groupBy({
+      by: ["customerId"],
+      where: { ...pendingMergeCandidateWhere, tenantId: null },
+      _count: { _all: true },
+    });
+    for (const r of nullTenantRows) {
+      this.logger.warn(
+        `sweepAllPendingOrders: customer ${r.customerId} has ${r._count._all} pending order(s) without tenantId — not merged (B323)`,
+      );
+    }
+    const skipped = nullTenantRows.length;
+
+    // Null-tenant groups are fully accounted for by the pass above (count + warn) —
+    // exclude them here so the same customer is never double-logged, and so `customers`
+    // below reflects only the groups actually eligible to merge.
+    const mergeCandidateGroups = groups.filter((g) => g.tenantId);
+
     let merged = 0;
-    for (const g of groups) {
+    for (const g of mergeCandidateGroups) {
       try {
-        const winner = await this.mergeAllPendingForCustomer(g.customerId);
+        // RF-008: re-enter this group's OWN tenant's ALS scope before calling into
+        // anything that relies on ambient forTenant() scoping (same pattern as
+        // recurring-invoices.generateDueRecurringInvoices / tobacco-report /
+        // order-templates / authorization-expiry / commission-reconciliation /
+        // regulated-filing-cron).
+        const winner = await this.tenantCtx.run(g.tenantId as string, () =>
+          this.mergeAllPendingForCustomer(g.customerId),
+        );
         if (winner) merged++;
       } catch (e) {
         // Skip by CAUSE, not by exception type: only the two coded lock-contention errors mean
@@ -1579,9 +1628,9 @@ export class OrdersService implements OnApplicationBootstrap {
       }
     }
     this.logger.log(
-      `sweepAllPendingOrders: swept ${groups.length} customer(s), merged into ${merged} winner(s)`,
+      `sweepAllPendingOrders: swept ${mergeCandidateGroups.length} customer(s), merged into ${merged} winner(s), skipped ${skipped} without tenantId`,
     );
-    return { customers: groups.length, merged };
+    return { customers: mergeCandidateGroups.length, merged, skipped };
   }
 
   onApplicationBootstrap() {
