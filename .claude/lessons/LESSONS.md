@@ -512,25 +512,6 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
   `apps/api/src/credit-notes/credit-notes.wallet-integrity.spec.ts`; the pins file (T3/T3b) proves
   PAID/WRITTEN_OFF still shrink; `apps/api/src/invoices/invoice-status-sets.ts` is the one home.
 
-### L-112 · 2026-09-12 · testing · Plane bulk sync
-
-- **Symptom:** the first bulk registry→Plane sync from master adopted all 160 name-keyed items
-  but created 0 of 72 rows and patched 0 of 160 (`skipped(forbidden)=232`), and plane-apply
-  refused every op with `forbidden (tenant-uuid)` — despite the full suite (T1–T18 plus an Opus
-  review and re-check) having been green.
-- **Root cause:** the write-path denylist scanned every string in a request body, so Plane's own
-  uuid-shaped state/label/assignee ids tripped the tenant-uuid pattern; the fake server's ids
-  were short strings (`state-1`), so no test could ever see the collision — the fixture's data
-  shape was less realistic than production's on exactly the axis the guard keyed on.
-- **Lesson:** **A fake/fixture must reproduce the production SHAPE of every value a guard keys
-  on (id formats, timestamp offsets, envelope vs bare array), and a content filter must be
-  scoped to the content fields it protects — never to "every string" — because a guard tested
-  only against toy shapes is a guard that fires first in production.**
-- **Guard:** `scripts/campaign/plane-client.mjs` scans `CONTENT_KEYS` only; `plane-fake-server.mjs`
-  `uuidIds: true` seeds + the uuid-id cases in plane-sync/plane-apply self-tests; Landmine 15
-  (live shapes) in the harness build plan. Related [[L-111]] (hook/branch gate), [[L-074]]
-  (fixture realism).
-
 ### L-114 · 2026-09-12 · tooling · plane-learning self-test tmpdir
 
 - **Symptom:** a lead's pre-push verify failed at `plane-learning.self-test: 1 FAILURE(S)` while
@@ -579,6 +560,62 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
 - **Guard:** `campaign-check` refuses the missing-report case (the refusal itself); CI verify on
   the PR head is the merge gate for the no-hook case; P-BUILD step 1 and P-CLOUD-0 step 7 carry
   the routine. Candidate: `scripts/worktree-audit.mjs` flags a worktree without `.husky/_`.
+
+### L-118 · 2026-09-13 · domain · F38 at-door money (B305)
+
+- **Symptom:** the at-door amount was the pre-tax line sum; three rounds refuted each "obvious"
+  server basis — `Order.total` omits discount, one draft misses a split order's siblings,
+  per-line tax snapshots ignore exemption.
+- **Root cause:** the client mirrored whichever column looked like the answer instead of
+  reproducing what the server bills.
+- **Lesson:** **A client money figure must reproduce the SERVER's billing rule from the inputs
+  the server bills from — its open DRAFT invoices — never a convenient column, and every flag
+  that rule applies must be projected to the client too.**
+- **Guard:** REG-B305 in `run-money.test.ts` + `routes.run-stop-select.spec.ts`.
+
+### L-119 · 2026-09-13 · process · F38 round 4
+
+- **Symptom:** an independent pre-merge review found the door quote collecting excise on
+  cancelled and already-delivered lines — after three in-lane rounds passed that code.
+- **Root cause:** the two halves of one money figure came from differently filtered line sets;
+  each file read correctly alone, so the defect lived only in the seam.
+- **Lesson:** **Both halves of one money figure must derive from ONE collection — pass the
+  filtered array, never re-derive the filter at the second call site. A reviewer inside the lane
+  is the wrong instrument for a seam; it takes an independent pre-merge pass to see across two
+  files that are each individually right.**
+- **Guard:** REG-B305 round 4 + the source pin `short-pick-category-tax.pins.test.ts` (the
+  composition lives in a screen unit tests cannot import).
+
+### L-122 · 2026-09-13 · domain · F39 (B310/B311/B315 wallet/invoice lost updates)
+
+- **Symptom:** B310 — `applyAdvancePaymentToInvoice` read `AdvancePayment.balance` and decremented
+  it as two separate statements inside one Prisma transaction; two concurrent applies of the same
+  advance both read the same balance and both passed the "has remaining balance" check, driving it
+  negative. B311 — `recordStandalonePayment`'s buyer/online overpay guard had the identical shape
+  one call away, on `Invoice` instead of `AdvancePayment`.
+- **Root cause:** a single Prisma `tenantTransaction` is NOT a lock — under READ COMMITTED, a plain
+  read inside it sees only what's already committed, so a check-then-act on a row neither
+  transaction has locked lets two concurrent callers both read the pre-decrement value and both
+  proceed; only an explicit row lock (or an equivalent serializing primitive) closes the window.
+- **Lesson:** **A balance/limit check followed by a write to the SAME row, inside one transaction,
+  is a check-then-act race unless something locks the row (or the caller) BEFORE the read — a
+  customer-keyed `withAdvisoryLock` when the critical section spans multiple tables/calls (the
+  house pattern for money serialization), or a plain `SELECT ... FOR UPDATE` inside the same tx
+  when it's one row — or, when the write is a single column and the cap is expressible in SQL
+  (B315's advance-restore), skip locking altogether: one atomic `UPDATE ... SET col = LEAST(cap,
+col + delta)` has no read-modify-write window at all. And such a fix is regression-testable
+  WITHOUT a live database: mock the lock
+  primitive (`withAdvisoryLock`, or the specific `$executeRaw` call) with a per-key promise chain
+  that genuinely serializes concurrent callers in call order, drive two concurrent calls through
+  the real service method, and assert on the wrong VALUE (balance negative, sum overpaid) — then
+  confirm the test is real by temporarily reverting the fix and watching it fail on that same
+  wrong value before restoring it.**
+- **Guard:** `apps/api/src/customers/customers.service.spec.ts` "B310: two concurrent applies of
+  the SAME advance never drive its balance negative" (promise-chain `withAdvisoryLock` mock);
+  `apps/api/src/invoices/invoices.service.spec.ts` "B311: a concurrent office payment can no
+  longer overpay the invoice past its live balance" (promise-chain `$executeRaw` mock, released
+  when the whole `tenantTransaction` call settles — not at the raw-query call site). Both verified
+  red-then-green by hand before commit.
 
 ### L-124 · 2026-09-13 · domain · cron sweep silently dropped null-tenant orders
 

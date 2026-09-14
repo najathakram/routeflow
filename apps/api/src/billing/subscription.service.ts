@@ -51,6 +51,9 @@ export class SubscriptionService {
       planKey: ent.planKey,
       planName: ent.planName,
       status: ent.status,
+      // RO-1: why the tenant is READ_ONLY (trial_expired | subscription_cancelled |
+      // trial_cancelled) — see EntitlementsService.resolve().
+      readOnlyReason: ent.readOnlyReason ?? null,
       cycle: sub?.cycle ?? "MONTHLY",
       // A per-tenant custom fee is what Stripe actually bills — show THAT, never the
       // catalog number it replaced, or the tenant sees one price and is charged another.

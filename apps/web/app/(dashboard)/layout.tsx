@@ -54,6 +54,8 @@ import { BRAND_MARK_SRC } from "@/components/brand";
 import { PortalSwitchLink } from "@/components/PortalSwitchLink";
 import { setLastPortalCookie } from "@/lib/presence-cookies";
 import { CommandPalette, useCommandPalette } from "@/components/CommandPalette";
+import { ReadOnlyBanner } from "@/components/ReadOnlyBanner";
+import { useSubscription } from "@/lib/api/billing";
 import { useAuth } from "@/lib/auth-context";
 import {
   getImpersonation,
@@ -1070,6 +1072,10 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   const { enabled: deliveryAccess } = useDeliveryAccess();
   // Only OPERATOR/TENANT_ADMIN see regulated nav; skip the fetch for CUSTOMER/DRIVER.
   const isStaff = user?.role !== "CUSTOMER" && user?.role !== "DRIVER";
+  // RO-1: dashboard-wide read-only banner, fed by the same query as the billing page.
+  // `enabled: isStaff` mirrors the endpoint's own @Roles(OPERATOR) gate (it 403s for
+  // CUSTOMER/DRIVER); a 60s staleTime keeps it from refetching on every navigation.
+  const { data: subscriptionStatus } = useSubscription({ staleTime: 60_000, enabled: isStaff });
   const { data: regulatedSections, isLoading: regulatedLoading } = useTrackedCategories(
     { active: true },
     { enabled: isStaff },
@@ -1397,6 +1403,13 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
           control; below lg the rail is a drawer so it becomes the viewport corner. */}
       <div className="relative flex flex-1 flex-col overflow-hidden">
         <ImpersonationBanner />
+        {subscriptionStatus && (
+          <ReadOnlyBanner
+            status={subscriptionStatus.status}
+            readOnlyReason={subscriptionStatus.readOnlyReason}
+            compact
+          />
+        )}
         <Header
           onOpenPalette={() => setPaletteOpen(true)}
           onOpenMobileNav={() => setMobileNavOpen(true)}

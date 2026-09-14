@@ -1411,3 +1411,35 @@ so archiving it loses no enforcement.
   home.**
 - **Guard:** `plane-sync.mjs` R14 branch guard + `--max-writes` (25), tests T16/T16b;
   `dedupe-2026-09-12.mjs` cleaned dupes. Sibling [[L-074]].
+
+## Archived 2026-09-13 — headroom for L-118 / L-119 (#710 Option-B follow-up)
+
+One entry archived for F38's two lessons: **L-112** (2026-09-12, testing, Plane bulk sync) — the
+only active entry that is both zero-cited outside the registers (repo-wide `git grep` excluding
+`.claude/lessons/**`, `.claude/pipeline/**`, `.claude/handoffs/**` and code-map
+CHANGELOG/`_meta.json`) and fully guarded. Note for the next session: the register is now
+structurally full — L-103 and L-106 are zero-cited but carry "Guard: none yet" (ineligible),
+L-113 gained a citation from `orders.service.spec.ts` when #710 landed, and every other entry is
+cited at least once. The two caps disagree (40 entries × ~1.05 KB ≈ 42 KB vs a 40 KB byte cap),
+which `validate-lessons.mjs` flags on every run as an owner decision. Its guard
+(`plane-client.mjs` `CONTENT_KEYS` scoping + the uuid-id self-test cases) is an existing
+mechanism, so archiving loses no enforcement.
+
+### L-112 · 2026-09-12 · testing · Plane bulk sync
+
+- **Symptom:** the first bulk registry→Plane sync from master adopted all 160 name-keyed items
+  but created 0 of 72 rows and patched 0 of 160 (`skipped(forbidden)=232`), and plane-apply
+  refused every op with `forbidden (tenant-uuid)` — despite the full suite (T1–T18 plus an Opus
+  review and re-check) having been green.
+- **Root cause:** the write-path denylist scanned every string in a request body, so Plane's own
+  uuid-shaped state/label/assignee ids tripped the tenant-uuid pattern; the fake server's ids
+  were short strings (`state-1`), so no test could ever see the collision — the fixture's data
+  shape was less realistic than production's on exactly the axis the guard keyed on.
+- **Lesson:** **A fake/fixture must reproduce the production SHAPE of every value a guard keys
+  on (id formats, timestamp offsets, envelope vs bare array), and a content filter must be
+  scoped to the content fields it protects — never to "every string" — because a guard tested
+  only against toy shapes is a guard that fires first in production.**
+- **Guard:** `scripts/campaign/plane-client.mjs` scans `CONTENT_KEYS` only; `plane-fake-server.mjs`
+  `uuidIds: true` seeds + the uuid-id cases in plane-sync/plane-apply self-tests; Landmine 15
+  (live shapes) in the harness build plan. Related [[L-111]] (hook/branch gate), [[L-074]]
+  (fixture realism).
