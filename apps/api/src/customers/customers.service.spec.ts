@@ -19,6 +19,43 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { CreateCustomerDto } from "./dto/create-customer.dto";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
+import { withAdvisoryLock as mockedWithAdvisoryLock } from "../common/db-locks";
+
+// B310: a real advisory lock serializes concurrent callers sharing a key on a dedicated
+// Postgres connection (see db-locks.db.spec.ts for that primitive's own coverage). A plain
+// unit test has no live DB, so this stand-in reproduces the one property the fix depends on —
+// concurrent callers sharing a `(family, key)` run their critical section ONE AT A TIME, in
+// call order — via a per-key promise chain, so the race this bug fixes stays reproducible here.
+jest.mock("../common/db-locks", () => {
+  class LockTimeoutError extends Error {
+    constructor(
+      public family: string,
+      public key: string,
+      public waitMs: number,
+    ) {
+      super(`advisory lock ${family}:${key} not acquired within ${waitMs}ms`);
+      this.name = "LockTimeoutError";
+    }
+  }
+  class LockUnavailableError extends Error {
+    constructor(public cause?: unknown) {
+      super("advisory lock connection unavailable");
+      this.name = "LockUnavailableError";
+    }
+  }
+  const chains = new Map<string, Promise<unknown>>();
+  const withAdvisoryLock = jest.fn((opts: any, fn: () => Promise<any>) => {
+    const lockKey = `${opts.family}:${opts.key}`;
+    const prior = chains.get(lockKey) ?? Promise.resolve();
+    const turn = prior.then(fn, fn);
+    chains.set(
+      lockKey,
+      turn.catch(() => undefined),
+    );
+    return turn.then((value) => ({ acquired: true, value }));
+  });
+  return { withAdvisoryLock, LockTimeoutError, LockUnavailableError };
+});
 
 const MOCK_CUSTOMER = {
   id: "cust-1",
@@ -1149,6 +1186,60 @@ describe("CustomersService", () => {
       expect(prisma.advancePayment.update).toHaveBeenCalledWith(
         expect.objectContaining({ data: { balance: { decrement: 100 } } }),
       );
+    });
+
+    it("B310: two concurrent applies of the SAME advance never drive its balance negative", async () => {
+      // The mocked `withAdvisoryLock` is a module-level jest.fn shared across every test in this
+      // file (a prior test above also calls applyAdvancePaymentToInvoice) — clear its call
+      // history so the per-call key assertion below only sees calls THIS test made.
+      (mockedWithAdvisoryLock as jest.Mock).mockClear();
+      let balance = 100;
+      const customerId = "cust-wallet-1";
+      prisma.advancePayment.findUnique.mockImplementation(async () => ({
+        id: "ap-1",
+        balance,
+        customerId,
+      }));
+      prisma.advancePayment.update.mockImplementation(async ({ data }: any) => {
+        balance = balance - Number(data.balance.decrement);
+        return { id: "ap-1", balance };
+      });
+      prisma.invoice.findUnique.mockImplementation(async ({ where }: any) => ({
+        id: where.id,
+        total: 100,
+        status: "SENT",
+        dueDate: null,
+        payments: [],
+      }));
+
+      // Two DIFFERENT $100 invoices, both trying to spend the SAME $100 advance at once.
+      // Without a lock between the read and the decrement, both see balance=100, both
+      // qualify, and both apply — driving the wallet to -100 (money spent twice). With the
+      // fix, the second apply's critical section only starts after the first's decrement has
+      // landed, sees balance=0, and correctly REJECTS ("no remaining balance") instead of
+      // silently overdrawing the wallet.
+      const results = await Promise.allSettled([
+        service.applyAdvancePaymentToInvoice("ap-1", { invoiceId: "inv-a" }),
+        service.applyAdvancePaymentToInvoice("ap-1", { invoiceId: "inv-b" }),
+      ]);
+
+      expect(balance).toBeGreaterThanOrEqual(0);
+      expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+      expect(prisma.invoicePayment.create).toHaveBeenCalledTimes(1);
+
+      // Direct guard against a wrong-key regression (e.g. locking on invoiceId instead of
+      // customerId, which would silently stop serializing the SAME advance applied to two
+      // DIFFERENT invoices — the exact scenario above — while still reading as "locked").
+      // The balance/fulfilled-count assertions above can pass by timing luck even with the
+      // wrong key (both mocked lock chains still resolve, just independently); this pins the
+      // actual key so that coincidence can't mask a regression.
+      expect(mockedWithAdvisoryLock).toHaveBeenCalledWith(
+        expect.objectContaining({ family: "order-merge", key: customerId }),
+        expect.any(Function),
+      );
+      for (const [opts] of (mockedWithAdvisoryLock as jest.Mock).mock.calls) {
+        expect(opts.key).toBe(customerId);
+      }
     });
 
     // F03 (R1): the monthly-income query must use the same CONFIRMED predicate as

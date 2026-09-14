@@ -47,6 +47,7 @@ import { OrdersService } from "./orders.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { TenantContextService } from "../tenant/tenant-context.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -97,6 +98,12 @@ describe("OrdersService — F11 getOrderTracking pins (no REG- token; excluded f
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         OrdersService,
+        {
+          provide: TenantContextService,
+          // B323: sweepAllPendingOrders() now takes TenantContextService; this spec never
+          // exercises the sweep, so a bare run-through mock is enough to satisfy DI.
+          useValue: { run: (_tenantId: string | null, fn: () => unknown) => fn() },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: getQueueToken("invoices"), useValue: { add: jest.fn() } },
         {

@@ -50,6 +50,7 @@ import { InvoicesService } from "../invoices/invoices.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
+import { TenantContextService } from "../tenant/tenant-context.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InventoryService } from "../inventory/inventory.service";
@@ -134,6 +135,11 @@ describe("OrdersService", () => {
   // WP3: captured so the credit-limit plan-flag tests can assert whether/how
   // hasFlag is consulted under each PLAN_FLAG_ENFORCEMENT state.
   let entitlementsService: { hasFlag: jest.Mock };
+  // B323: a recording mock, not the real AsyncLocalStorage-backed class — module-boundary
+  // mocking (this file's convention) means we assert sweepAllPendingOrders() CALLS
+  // tenantCtx.run(tenantId, fn) with each group's own tenantId (and still invokes fn so
+  // the merge underneath runs), rather than re-deriving ALS behavior in a unit test.
+  let tenantCtx: { run: jest.Mock };
   let mockQueue: { add: jest.Mock };
   let mockGateway: {
     emitStopCompleted: jest.Mock;
@@ -145,6 +151,7 @@ describe("OrdersService", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    tenantCtx = { run: jest.fn((_tenantId: string | null, fn: () => unknown) => fn()) };
     mockQueue = { add: jest.fn() };
     mockGateway = {
       emitStopCompleted: jest.fn(),
@@ -252,6 +259,9 @@ describe("OrdersService", () => {
           provide: RegulatedLedgerService,
           useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
         },
+        // B323: sweepAllPendingOrders() re-enters each group's own tenant scope via
+        // tenantCtx.run() before calling into anything ambient-scoped.
+        { provide: TenantContextService, useValue: tenantCtx },
       ],
     }).compile();
 
@@ -2574,6 +2584,70 @@ describe("OrdersService", () => {
       expect(prisma.order.groupBy).toHaveBeenCalledWith(
         expect.objectContaining({ where: expect.objectContaining({ skipAutoMerge: false }) }),
       );
+    });
+  });
+
+  describe("sweepAllPendingOrders — tenant scoping (B323)", () => {
+    it("REG-B323 sweepAllPendingOrders runs each customer group inside its own tenant context and skips null-tenant groups", async () => {
+      const mergeSpy = jest
+        .spyOn(service, "mergeAllPendingForCustomer")
+        .mockImplementation(async (customerId: string) =>
+          customerId === "cust-a" ? "ord-a-winner" : "ord-b-winner",
+        );
+      const warnSpy = jest
+        .spyOn((service as any).logger, "warn")
+        .mockImplementation(() => undefined);
+
+      // First call: the main (customerId, tenantId) groupBy. Second call: the
+      // tenantId: null-only sweep added for F1 below — a normal two-tenant sweep has
+      // no null-tenant pending orders at all.
+      prisma.order.groupBy
+        .mockResolvedValueOnce([
+          { customerId: "cust-a", tenantId: "tenant-a", _count: { _all: 2 } },
+          { customerId: "cust-b", tenantId: "tenant-b", _count: { _all: 3 } },
+        ])
+        .mockResolvedValueOnce([]);
+
+      const result = await service.sweepAllPendingOrders();
+
+      // each group's merge ran inside ITS OWN tenant's context — never the other
+      // group's, and never ambient/unscoped.
+      expect(tenantCtx.run).toHaveBeenCalledTimes(2);
+      expect(tenantCtx.run).toHaveBeenNthCalledWith(1, "tenant-a", expect.any(Function));
+      expect(tenantCtx.run).toHaveBeenNthCalledWith(2, "tenant-b", expect.any(Function));
+      expect(mergeSpy).toHaveBeenCalledWith("cust-a");
+      expect(mergeSpy).toHaveBeenCalledWith("cust-b");
+      expect(warnSpy).not.toHaveBeenCalled();
+
+      expect(result).toEqual({ customers: 2, merged: 2, skipped: 0 });
+    });
+
+    it("REG-B323 a customer with one tenant-scoped pending order and one legacy null-tenant order is counted and warned, never dropped silently", async () => {
+      const mergeSpy = jest.spyOn(service, "mergeAllPendingForCustomer");
+      const warnSpy = jest
+        .spyOn((service as any).logger, "warn")
+        .mockImplementation(() => undefined);
+
+      // The customer has exactly 2 pending orders total: 1 under tenant-a, 1 with a
+      // null tenantId. Grouped by (customerId, tenantId) that is TWO one-row groups —
+      // neither clears the main query's `having customerId._count > 1`, so the main
+      // groupBy returns nothing for this customer at all (F1: this used to mean
+      // nothing merged AND nothing logged). The dedicated null-tenant-only query
+      // (second groupBy call) still finds and counts the null-tenant row.
+      prisma.order.groupBy
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ customerId: "cust-a", _count: { _all: 1 } }]);
+
+      const result = await service.sweepAllPendingOrders();
+
+      expect(tenantCtx.run).not.toHaveBeenCalled();
+      expect(mergeSpy).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "sweepAllPendingOrders: customer cust-a has 1 pending order(s) without tenantId — not merged (B323)",
+        ),
+      );
+      expect(result).toEqual({ customers: 0, merged: 0, skipped: 1 });
     });
   });
 
