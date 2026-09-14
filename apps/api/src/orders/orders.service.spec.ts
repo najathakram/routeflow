@@ -3021,6 +3021,273 @@ describe("OrdersService", () => {
     });
   });
 
+  // ─── B283: DRAFT→PENDING never reserved stock, so a later cancel credited a
+  // phantom decrement that was never taken. The fix reuses create()'s own
+  // decrement helper on promotion, and the existing settleStockForEdit delta
+  // helper on the symmetric demotion / on cancel. ─────────────────────────────
+  describe("REG-B283 — DRAFT→PENDING reserves stock symmetrically with cancel", () => {
+    const DRAFT_ORDER = { ...MOCK_ORDER, status: "DRAFT" as const };
+
+    /** Same extraction shape as the WP1 create() decrement pin above — reads the
+     * `[productId, qty]` pairs bound into the aggregated
+     * `UPDATE … FROM (VALUES …)` raw-SQL decrement. */
+    function readAggregatedDecrementValues(txExecuteRaw: jest.Mock): any[] {
+      const isSql = (v: any) => typeof v?.sql === "string" && Array.isArray(v?.values);
+      const sqlText = (v: any): string =>
+        v == null
+          ? ""
+          : typeof v === "string"
+            ? v
+            : isSql(v)
+              ? v.sql
+              : Array.isArray(v)
+                ? v.map(sqlText).join(" ")
+                : "";
+      const flatValues = (v: any): any[] =>
+        v == null
+          ? []
+          : isSql(v)
+            ? flatValues(v.values)
+            : Array.isArray(v)
+              ? v.flatMap(flatValues)
+              : [v];
+      const call = txExecuteRaw.mock.calls.find((c: any[]) =>
+        (sqlText(c[0]) + " " + sqlText(c.slice(1))).includes("currentStock"),
+      );
+      if (!call) return [];
+      return isSql(call[0]) ? flatValues(call[0]) : flatValues(call.slice(1));
+    }
+
+    function mockTenantTransactionWithRawSpy(): jest.Mock {
+      const txExecuteRaw = jest.fn().mockResolvedValue(0);
+      prisma.tenantTransaction.mockImplementation((fn: any) =>
+        fn({
+          ...(prisma as unknown as Record<string, any>),
+          $executeRaw: txExecuteRaw,
+          $queryRaw: jest.fn().mockResolvedValue([]),
+        }),
+      );
+      return txExecuteRaw;
+    }
+
+    it("REG-B283(a): DRAFT→PENDING decrements currentStock by the line quantities via create()'s own decrement helper", async () => {
+      prisma.order.findUnique.mockResolvedValue(DRAFT_ORDER);
+      prisma.order.updateMany.mockResolvedValue({ count: 1 });
+      prisma.order.findUniqueOrThrow.mockResolvedValue({ ...DRAFT_ORDER, status: "PENDING" });
+      // Serves BOTH the license-guard read (productId/trackedCategoryId) and the
+      // promotion's own stock-lines read (productId/qty) — the mock ignores `select`.
+      prisma.orderItem.findMany.mockResolvedValue([
+        { productId: "prod-1", qty: 10, trackedCategoryId: null },
+      ]);
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-1", name: "Tomatoes", currentStock: 100 },
+      ]);
+      const txExecuteRaw = mockTenantTransactionWithRawSpy();
+
+      await service.changeStatus("ord-1", { status: "PENDING" as any }, operatorPayload);
+
+      const bound = readAggregatedDecrementValues(txExecuteRaw);
+      expect(bound).toEqual(expect.arrayContaining(["prod-1", 10]));
+    });
+
+    it("REG-B283(b): DRAFT→PENDING→CANCELLED leaves currentStock net unchanged", async () => {
+      // Step 1: promote DRAFT → PENDING — takes 10 units.
+      prisma.order.findUnique.mockResolvedValue(DRAFT_ORDER);
+      prisma.order.updateMany.mockResolvedValue({ count: 1 });
+      prisma.order.findUniqueOrThrow.mockResolvedValue({ ...DRAFT_ORDER, status: "PENDING" });
+      prisma.orderItem.findMany.mockResolvedValue([
+        {
+          productId: "prod-1",
+          qty: 10,
+          trackedCategoryId: null,
+          deliveredQty: 0,
+          status: "PENDING",
+        },
+      ]);
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-1", name: "Tomatoes", currentStock: 100 },
+      ]);
+      const txExecuteRaw = mockTenantTransactionWithRawSpy();
+
+      await service.changeStatus("ord-1", { status: "PENDING" as any }, operatorPayload);
+
+      const promoted = readAggregatedDecrementValues(txExecuteRaw);
+      expect(promoted).toEqual(expect.arrayContaining(["prod-1", 10]));
+
+      // Step 2: cancel the now-PENDING order — must credit back exactly the 10
+      // units the promotion above took (settleStockForEdit's edit-delta path).
+      const PENDING_ORDER = { ...MOCK_ORDER, status: "PENDING" as const };
+      prisma.order.findUnique.mockResolvedValue(PENDING_ORDER);
+      prisma.order.findFirst.mockResolvedValue(PENDING_ORDER); // cancelImpact's own read
+      prisma.order.update.mockResolvedValueOnce({ ...PENDING_ORDER, status: "CANCELLED" });
+      prisma.invoice.findMany.mockResolvedValue([]); // no invoices to void
+      prisma.product.update.mockClear();
+
+      await service.changeStatus("ord-1", { status: "CANCELLED" as any }, operatorPayload);
+
+      // Same 10 units, credited back — net delta across the pair is zero.
+      expect(prisma.product.update).toHaveBeenCalledWith({
+        where: { id: "prod-1" },
+        data: { currentStock: { increment: 10 } },
+      });
+    });
+
+    it("REG-B283(c): DRAFT→CANCELLED touches no stock", async () => {
+      prisma.order.findUnique.mockResolvedValue(DRAFT_ORDER);
+      prisma.order.findFirst.mockResolvedValue(DRAFT_ORDER); // cancelImpact's own read
+      prisma.order.update.mockResolvedValue({ ...DRAFT_ORDER, status: "CANCELLED" });
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.orderItem.findMany.mockResolvedValue([
+        { productId: "prod-1", qty: 10, deliveredQty: 0, status: "DRAFT" },
+      ]);
+
+      await service.changeStatus("ord-1", { status: "CANCELLED" as any }, operatorPayload);
+
+      expect(prisma.product.update).not.toHaveBeenCalled();
+    });
+
+    it("REG-B283(d): the symmetric reverse (PENDING→DRAFT) credits back exactly what the promotion took", async () => {
+      const PENDING_ORDER = { ...MOCK_ORDER, status: "PENDING" as const };
+      prisma.order.findUnique.mockResolvedValue(PENDING_ORDER);
+      prisma.order.updateMany.mockResolvedValue({ count: 1 });
+      prisma.order.findUniqueOrThrow.mockResolvedValue({ ...PENDING_ORDER, status: "DRAFT" });
+      prisma.orderItem.findMany.mockResolvedValue([
+        { productId: "prod-1", qty: 10, deliveredQty: 0, status: "PENDING" },
+      ]);
+
+      await service.changeStatus(
+        "ord-1",
+        { status: "DRAFT" as any, reason: "customer asked to hold" },
+        operatorPayload,
+      );
+
+      expect(prisma.product.update).toHaveBeenCalledWith({
+        where: { id: "prod-1" },
+        data: { currentStock: { increment: 10 } },
+      });
+    });
+
+    // Round 1 (F1/F3): the status write and the stock settle used to be two
+    // separate commits — the generic `order.update` ran before either tx, so a
+    // crash between them left a live PENDING/DRAFT order with no matching stock
+    // movement. Both are now inside the SAME `tenantTransaction`.
+    it("REG-B283(e): a boxed line (unitsPerBox>1) decrements by the persisted OrderItem.qty — the same pieces-basis value create() already stored, not a re-derived boxes*unitsPerBox+pieces", async () => {
+      prisma.order.findUnique.mockResolvedValue(DRAFT_ORDER);
+      prisma.order.updateMany.mockResolvedValue({ count: 1 });
+      prisma.order.findUniqueOrThrow.mockResolvedValue({ ...DRAFT_ORDER, status: "PENDING" });
+      // 2 boxes x 12/box + 3 pieces = 27 — the pieces basis create() itself would
+      // have stored on OrderItem.qty for this boxed line (see the WP1 pin above).
+      prisma.orderItem.findMany.mockResolvedValue([
+        { productId: "prod-box12", qty: 27, boxes: 2, pieces: 3, trackedCategoryId: null },
+      ]);
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-box12", name: "Eggs", currentStock: 100, unitsPerBox: 12 },
+      ]);
+      const txExecuteRaw = mockTenantTransactionWithRawSpy();
+
+      await service.changeStatus("ord-1", { status: "PENDING" as any }, operatorPayload);
+
+      const bound = readAggregatedDecrementValues(txExecuteRaw);
+      expect(bound).toEqual(expect.arrayContaining(["prod-box12", 27]));
+    });
+
+    it("REG-B283(f): when the decrement rejects inside the transaction, the order status is never persisted as PENDING (decrement runs before the status write, in the same rolled-back tx)", async () => {
+      prisma.order.findUnique.mockResolvedValue(DRAFT_ORDER);
+      prisma.order.updateMany.mockResolvedValue({ count: 1 });
+      prisma.orderItem.findMany.mockResolvedValue([
+        { productId: "prod-1", qty: 10, trackedCategoryId: null },
+      ]);
+      const decrementSpy = jest
+        .spyOn(service as any, "decrementStockForSale")
+        .mockRejectedValue(new Error("stock decrement failed"));
+      // Run the real callback (unlike the raw-spy helper above) so a throw inside
+      // it actually prevents the final `tx.order.findUniqueOrThrow` read that
+      // follows it — the whole tx (claim included) rolls back.
+      prisma.tenantTransaction.mockImplementation((fn: any) => fn(prisma));
+
+      await expect(
+        service.changeStatus("ord-1", { status: "PENDING" as any }, operatorPayload),
+      ).rejects.toThrow("stock decrement failed");
+
+      expect(decrementSpy).toHaveBeenCalled();
+      expect(prisma.order.findUniqueOrThrow).not.toHaveBeenCalled();
+      expect(prisma.order.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: "PENDING" }) }),
+      );
+    });
+
+    it("REG-B283(g): a second concurrent promotion loses the compare-and-set claim and never decrements stock", async () => {
+      prisma.order.findUnique.mockResolvedValue(DRAFT_ORDER);
+      // Simulates a racing promotion that already flipped the row to PENDING —
+      // this caller's `updateMany({ where: { id, status: DRAFT } })` matches
+      // nothing.
+      prisma.order.updateMany.mockResolvedValue({ count: 0 });
+      prisma.orderItem.findMany.mockResolvedValue([
+        { productId: "prod-1", qty: 10, trackedCategoryId: null },
+      ]);
+      const decrementSpy = jest.spyOn(service as any, "decrementStockForSale");
+      prisma.tenantTransaction.mockImplementation((fn: any) => fn(prisma));
+
+      await expect(
+        service.changeStatus("ord-1", { status: "PENDING" as any }, operatorPayload),
+      ).rejects.toBeInstanceOf(ConflictException);
+
+      expect(decrementSpy).not.toHaveBeenCalled();
+      expect(prisma.order.findUniqueOrThrow).not.toHaveBeenCalled();
+    });
+
+    it("REG-B283(h): PENDING→DRAFT with a boxed line credits back the persisted qty, and a rejected credit-back leaves the status persisted as PENDING", async () => {
+      const PENDING_ORDER = { ...MOCK_ORDER, status: "PENDING" as const };
+      prisma.order.findUnique.mockResolvedValue(PENDING_ORDER);
+      prisma.order.updateMany.mockResolvedValue({ count: 1 });
+      prisma.order.findUniqueOrThrow.mockResolvedValue({ ...PENDING_ORDER, status: "DRAFT" });
+      // Same boxed-line basis as (e): persisted qty 27 (2 boxes x 12/box + 3).
+      prisma.orderItem.findMany.mockResolvedValue([
+        {
+          productId: "prod-box12",
+          qty: 27,
+          boxes: 2,
+          pieces: 3,
+          deliveredQty: 0,
+          status: "PENDING",
+        },
+      ]);
+      const settleSpy = jest.spyOn(service as any, "settleStockForEdit");
+      prisma.tenantTransaction.mockImplementation((fn: any) => fn(prisma));
+
+      await service.changeStatus(
+        "ord-1",
+        { status: "DRAFT" as any, reason: "customer asked to hold" },
+        operatorPayload,
+      );
+
+      expect(settleSpy).toHaveBeenCalledWith(
+        prisma,
+        { id: "ord-1", status: "PENDING" },
+        expect.arrayContaining([expect.objectContaining({ productId: "prod-box12", qty: 27 })]),
+        [],
+      );
+
+      // Now the credit-back itself rejects — the claim already flipped the row
+      // in this same (mocked) transaction, but since the callback is run for
+      // real, the caller sees the rejection and the final read never happens,
+      // so no DRAFT status is ever returned/persisted.
+      prisma.order.updateMany.mockClear().mockResolvedValue({ count: 1 });
+      prisma.order.findUniqueOrThrow.mockClear();
+      settleSpy.mockRejectedValueOnce(new Error("credit-back failed"));
+
+      await expect(
+        service.changeStatus(
+          "ord-1",
+          { status: "DRAFT" as any, reason: "customer asked to hold" },
+          operatorPayload,
+        ),
+      ).rejects.toThrow("credit-back failed");
+
+      expect(prisma.order.findUniqueOrThrow).not.toHaveBeenCalled();
+    });
+  });
+
   // ─── WP3: universal one-step demotion + reopen DELIVERED ──────────────────
 
   describe("changeStatus — one-step-back demotions (reopen DELIVERED)", () => {
@@ -3035,7 +3302,8 @@ describe("OrdersService", () => {
 
     it("PENDING → DRAFT is legal for staff with a reason", async () => {
       prisma.order.findUnique.mockResolvedValue(MOCK_ORDER); // PENDING
-      prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, status: "DRAFT" });
+      prisma.order.updateMany.mockResolvedValue({ count: 1 });
+      prisma.order.findUniqueOrThrow.mockResolvedValue({ ...MOCK_ORDER, status: "DRAFT" });
 
       await service.changeStatus(
         "ord-1",
@@ -3043,9 +3311,9 @@ describe("OrdersService", () => {
         operatorPayload,
       );
 
-      expect(prisma.order.update).toHaveBeenCalledWith(
+      expect(prisma.order.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "ord-1" },
+          where: { id: "ord-1", status: "PENDING" },
           data: expect.objectContaining({ status: "DRAFT" }),
         }),
       );

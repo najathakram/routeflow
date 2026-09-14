@@ -378,14 +378,18 @@ export class AuthController {
   }
 
   /**
-   * Decode the state param without consuming the nonce so we can pick the correct
-   * redirect base (web vs mobile) on error paths. Non-throwing — returns false on
-   * any parse failure and the flow falls back to the web URL.
+   * Decode the state param without consuming the nonce or verifying its signature,
+   * so we can pick the correct redirect base (web vs mobile) on error paths.
+   * Non-throwing — returns false on any parse failure and the flow falls back to the
+   * web URL. Not a security decision: it only chooses which URL an error bounces to;
+   * the authoritative signature check happens in GoogleOAuthService.verifyCallback.
+   * B349: state is now `base64url(payload).base64url(mac)` — read the payload segment.
    */
   private peekMobileFlag(state: string | undefined): boolean {
     if (!state) return false;
     try {
-      const obj = JSON.parse(Buffer.from(state, "base64url").toString("utf-8"));
+      const payloadPart = state.split(".")[0];
+      const obj = JSON.parse(Buffer.from(payloadPart, "base64url").toString("utf-8"));
       return obj?.mobile === true;
     } catch {
       return false;
