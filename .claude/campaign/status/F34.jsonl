@@ -1,4 +1,4 @@
-{"id":"B283","batch":"F34","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B283","batch":"F34","tier":"T1","state":"proven","pr":726,"proof":"REG-B283 DRAFT->PENDING decrements stock through create()'s path inside one transaction with a compare-and-set claim; promote->cancel nets to zero; draft->cancel touches nothing (orders.service.spec.ts)","evidence":null,"buildPlan":null}
 {"id":"B284","batch":"F34","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B285","batch":"F34","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B286","batch":"F34","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
