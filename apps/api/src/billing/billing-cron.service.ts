@@ -13,18 +13,9 @@ import {
   findPlanDefinition,
   GRACE_DAYS,
   planKeyToEnum,
+  UnknownPlanKeyError,
 } from "./plan-catalog.constants";
-
-/** Add whole months (or a year) to a UTC date, clamping the day to the target month. */
-function addCycle(from: Date, cycle: string): Date {
-  const day = from.getUTCDate();
-  const d = new Date(
-    Date.UTC(from.getUTCFullYear(), from.getUTCMonth() + (cycle === "ANNUAL" ? 12 : 1), 1),
-  );
-  const lastDay = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
-  d.setUTCDate(Math.min(day, lastDay));
-  return d;
-}
+import { addCycle } from "./billing-math";
 
 /**
  * Plan lifecycle crons (Plans & Billing Phase 5). Operate cross-tenant with explicit
@@ -48,6 +39,21 @@ export class BillingCronService {
     if (!version || !planKey) return 0;
     const d = findPlanDefinition(version.definitions, planKey);
     return d?.monthlyPrice != null ? Number(d.monthlyPrice) : 0;
+  }
+
+  /**
+   * CHANGE-2 (2026-09-13): true only for `planKeyToEnum()`'s dedicated `UnknownPlanKeyError`
+   * (`plan-catalog.constants.ts`) — the ONLY failure `applyScheduledDowngrades`' per-tenant
+   * catch below may still log-and-skip. Was a message-PREFIX match on a plain `Error` (F2,
+   * W1 review-fix round) — brittle, because a reworded message would have silently stopped
+   * matching and started swallowing a real infrastructure failure as a data problem. Now an
+   * `instanceof` check against the typed class instead. Everything else — a pool exhaustion,
+   * a Prisma error, any other unrelated failure — must NOT match here, so the caller rethrows
+   * it instead of disguising a real infrastructure failure as a bad plan key (the sweep would
+   * otherwise silently report success while masking one).
+   */
+  private isUnresolvablePlanKeyError(err: unknown): boolean {
+    return err instanceof UnknownPlanKeyError;
   }
 
   /** Trial expiry → READ_ONLY (NOT suspended — exports + sign-in still work). */
@@ -157,61 +163,82 @@ export class BillingCronService {
       );
       const seatCap = targetDef?.seatsIncluded ?? null;
 
-      await this.prisma.$transaction(async (tx) => {
-        await tx.tenantSubscription.update({
-          where: { tenantId: s.tenantId },
-          data: {
-            planKey: target,
-            currentPlan: planKeyToEnum(target),
-            basePriceSnapshot: targetDef?.monthlyPrice ?? null,
-            downgradeToPlanKey: null,
-            downgradeEffectiveAt: null,
-            retainedUserIds: [],
-          },
-        });
-        await tx.tenant.update({
-          where: { id: s.tenantId },
-          data: { plan: planKeyToEnum(target) },
-        });
-        // Free seats ONLY when over the new cap (deactivate non-retained OPERATOR/DRIVER;
-        // TENANT_ADMIN is never deactivated). An empty retained list = keep only admins.
-        if (seatCap != null) {
-          const activeTeam = await tx.user.count({
-            where: {
-              tenantId: s.tenantId,
-              role: { in: ["TENANT_ADMIN", "OPERATOR", "DRIVER"] },
-              status: "ACTIVE",
-              deletedAt: null,
+      try {
+        await this.prisma.$transaction(async (tx) => {
+          await tx.tenantSubscription.update({
+            where: { tenantId: s.tenantId },
+            data: {
+              planKey: target,
+              // B218: `target` came from a PAST downgrade()/updatePlan() write, which already
+              // validates against the catalog — but this row can also be old, migrated, or
+              // manually edited data pointing at a plan key that no longer resolves. planKeyToEnum()
+              // now THROWS instead of silently writing STARTER for such a key; caught below so ONE
+              // bad row never stops the sweep from applying every other tenant's downgrade.
+              currentPlan: planKeyToEnum(target),
+              basePriceSnapshot: targetDef?.monthlyPrice ?? null,
+              downgradeToPlanKey: null,
+              downgradeEffectiveAt: null,
+              retainedUserIds: [],
             },
           });
-          if (activeTeam > seatCap) {
-            const freed = await tx.user.updateMany({
+          await tx.tenant.update({
+            where: { id: s.tenantId },
+            data: { plan: planKeyToEnum(target) },
+          });
+          // Free seats ONLY when over the new cap (deactivate non-retained OPERATOR/DRIVER;
+          // TENANT_ADMIN is never deactivated). An empty retained list = keep only admins.
+          if (seatCap != null) {
+            const activeTeam = await tx.user.count({
               where: {
                 tenantId: s.tenantId,
-                role: { in: ["OPERATOR", "DRIVER"] },
+                role: { in: ["TENANT_ADMIN", "OPERATOR", "DRIVER"] },
                 status: "ACTIVE",
                 deletedAt: null,
-                id: { notIn: s.retainedUserIds },
               },
-              data: { status: "INACTIVE" },
             });
-            if (freed.count > 0) {
-              await this.events.emit(
-                s.tenantId,
-                BILLING_EVENTS.SEAT_FREED,
-                { quantity: freed.count },
-                { tx },
-              );
+            if (activeTeam > seatCap) {
+              const freed = await tx.user.updateMany({
+                where: {
+                  tenantId: s.tenantId,
+                  role: { in: ["OPERATOR", "DRIVER"] },
+                  status: "ACTIVE",
+                  deletedAt: null,
+                  id: { notIn: s.retainedUserIds },
+                },
+                data: { status: "INACTIVE" },
+              });
+              if (freed.count > 0) {
+                await this.events.emit(
+                  s.tenantId,
+                  BILLING_EVENTS.SEAT_FREED,
+                  { quantity: freed.count },
+                  { tx },
+                );
+              }
             }
           }
-        }
-        await this.events.emit(
-          s.tenantId,
-          BILLING_EVENTS.PLAN_CHANGED,
-          { fromPlan: s.planKey, toPlan: target, scheduled: true, applied: true },
-          { amountDelta, tx },
+          await this.events.emit(
+            s.tenantId,
+            BILLING_EVENTS.PLAN_CHANGED,
+            { fromPlan: s.planKey, toPlan: target, scheduled: true, applied: true },
+            { amountDelta, tx },
+          );
+        });
+      } catch (err) {
+        // F2: narrowed from "catch everything" — only planKeyToEnum()'s own unresolvable-key
+        // Error is a data problem this sweep may skip past. Anything else (pool exhaustion, a
+        // Prisma error, any other unrelated failure) rethrows so it surfaces as a real cron
+        // failure instead of being logged and swallowed as if it were a bad plan key.
+        if (!this.isUnresolvablePlanKeyError(err)) throw err;
+        // B218: log and move on — a cron that dies on tenant N's bad row would silently
+        // strand every tenant after it unapplied too, which is worse than the one bad row.
+        this.logger.error(
+          `Skipping scheduled downgrade for tenant=${s.tenantId} target="${target}" — ${
+            err instanceof Error ? err.message : String(err)
+          }`,
         );
-      });
+        continue;
+      }
       this.entitlements.invalidate(s.tenantId);
       this.tenantStatus.invalidate(s.tenantId);
       applied++;
@@ -278,7 +305,27 @@ export class BillingCronService {
   }
 
   /** Advance billing periods past their end so SCANS/MSGS meters bucket into the new
-   *  cycle (bucketed by periodStart, so a new period reads 0 automatically). */
+   *  cycle (bucketed by periodStart, so a new period reads 0 automatically).
+   *
+   *  B329, time-of-day half (fixed here): a rolled `periodEnd` used to collapse to
+   *  midnight; `addCycle`/`addMonthsUtc` (billing-math.ts) now preserve `periodEnd`'s
+   *  hours/minutes/seconds/ms exactly.
+   *
+   *  B329, anchor-ratchet half (NOT fixed here — correction 2026-09-13): `periodEnd`
+   *  gets overwritten with a clamped value on every roll (Jan 31 → Feb 28), and
+   *  re-deriving the clamp day from THAT already-clamped `periodEnd` on the next roll
+   *  ratchets the anchor down forever (Feb 28 → Mar 28, never back to the 31st).
+   *  `addMonthsUtc` takes an `anchorDay` override that would fix this, but there is no
+   *  persisted, never-clamped billing-anchor-day column to pass it —
+   *  `TenantSubscription.createdAt` is NOT a safe substitute: seven call sites create
+   *  this row, and several have nothing to do with subscribing (e.g.
+   *  `customers.service.ts`'s `maybeStartCustomerGrace()` mints one when a tenant
+   *  crosses the customer soft cap; `billing.service.ts`'s `ensureStripeCustomer()`
+   *  mints one on first Stripe customer creation) — using either would compute every
+   *  future period off a date that has nothing to do with the tenant's real billing
+   *  anchor. So this stays byte-identical to master's ratchet behaviour (the clamp day
+   *  is re-derived from the period being rolled, i.e. `addCycle`'s own default) until
+   *  an immutable `anchorDay` column exists; that is filed separately. */
   @LeaderCron("5 0 * * *", "billing-cron.rollCycles")
   async rollCycles(): Promise<void> {
     const now = new Date();

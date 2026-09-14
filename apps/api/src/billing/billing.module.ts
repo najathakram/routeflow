@@ -49,6 +49,10 @@ import { EntitlementsModule } from "./entitlements.module";
     // Platform-admin plan changes move the snapshot MRR run-rate, so they must emit the
     // matching signed BillingEvent delta (see PlatformAdminService.updatePlan).
     BillingEventService,
+    // ADMIN-UPDATEPLAN-1: PlatformAdminService.updatePlan() shares the same prorated-diff
+    // math an admin upgrade uses as the tenant-facing upgrade() — exported so
+    // PlatformAdminModule (which already imports BillingModule) can inject it.
+    ProrationService,
     EntitlementsModule,
   ],
 })

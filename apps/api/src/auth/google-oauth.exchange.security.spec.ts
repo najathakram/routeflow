@@ -28,7 +28,10 @@ describe("GoogleOAuthService exchange code (F8-001)", () => {
   }
 
   function buildService() {
-    const config = { get: () => undefined } as unknown as ConfigService;
+    const config = {
+      get: (key: string) =>
+        key === "jwt" ? { secret: "test-jwt-secret-for-oauth-state" } : undefined,
+    } as unknown as ConfigService;
     const jwt = {} as unknown as JwtService;
     const prisma = {} as any;
     const email = {} as any;
