@@ -717,7 +717,24 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   downgrade armed and audits it instead. `REG-FINDING-1`/`REG-FINDING-4` in
   `platform-admin.service.spec.ts`. Sibling [[L-123]].
 
-### L-127 · 2026-09-14 · process · Phase 0 T10 deferred-gap markers
+### L-127 · 2026-09-14 · domain · B216 webhook disarm
+
+- **Symptom:** paying an overdue invoice silently cancelled the tenant's OWN scheduled
+  downgrade. They stayed on the plan they had asked to leave, with no event and no audit line —
+  the only trace was a downgrade that never happened.
+- **Root cause:** the disarm existed to stop a schedule that came due DURING a lapse from firing
+  on the first sweep after reactivation. That outcome looks surprising, so it was read as wrong.
+  But only the tenant ever arms those fields, so firing late was their intent arriving late, and
+  the guard destroyed the intent instead of the surprise.
+- **Lesson:** **Before adding a guard that suppresses a surprising outcome, decide whether the
+  outcome is WRONG or merely unexpected. Deferred intent that arrives late is still intent: make
+  it visible — log it, put it on the event, surface it in the UI — rather than cancelling it. A
+  guard that silently deletes a choice only the user could have made is a worse defect than the
+  surprise it was written to prevent.**
+- **Guard:** five `REG-B216` cases in `billing.service.spec.ts` — both reinstatement paths leave
+  the schedule armed and name it on `SUBSCRIPTION_RESUMED`. Sibling [[L-126]].
+
+### L-128 · 2026-09-14 · process · Phase 0 T10 deferred-gap markers
 
 - **Symptom:** the T9-T11 lane's plan pseudocode said `UpdateTenantPlanDto`/`ActivateSubscriptionDto`
   "already use `@IsEnum(TenantPlan)`... nothing to do" for Task 10. The actual code (written by an
