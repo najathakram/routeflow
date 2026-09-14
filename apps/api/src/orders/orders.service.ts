@@ -3067,12 +3067,13 @@ export class OrdersService implements OnApplicationBootstrap {
       // stock credit on DRAFT → PENDING → CANCELLED.
       const isStaffRole = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
       await this.prisma.tenantTransaction(async (tx) => {
-        const activeItems = await tx.orderItem.findMany({
-          where: { orderId: id, status: { not: "CANCELLED" } },
-          select: { productId: true, qty: true },
-        });
+        const activeItems: Array<{ productId: string | null; qty: any }> =
+          await tx.orderItem.findMany({
+            where: { orderId: id, status: { not: "CANCELLED" } },
+            select: { productId: true, qty: true },
+          });
         const stockLines = activeItems
-          .filter((li): li is typeof li & { productId: string } => !!li.productId)
+          .filter((li): li is { productId: string; qty: any } => !!li.productId)
           .map((li) => ({ productId: li.productId, qty: Number(li.qty) }));
         await this.decrementStockForSale(tx, stockLines, isStaffRole);
       });
