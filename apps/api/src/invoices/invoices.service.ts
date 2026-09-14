@@ -819,6 +819,38 @@ export class InvoicesService {
   }
 
   /**
+   * B294: the REGULAR (non-category) tax rate to stamp on order-derived invoice
+   * lines. The order never carries a per-line/category rate for regular tax — it
+   * applies one tenant-wide flat rate (orders.service.getTaxRate(), sourced from
+   * `settings.taxRate`) to its whole subtotal (`order.tax = subtotal * rate`), so
+   * `order.tax / order.subtotal` recovers that same rate exactly (0 for an
+   * exempt customer, mirroring foldCategoryTax's contract). Every order-derived
+   * InvoiceItem.taxRate must carry this value: `applyPriceAdjustment` recomputes
+   * an invoice's regular tax as `Σ li.subtotal * li.taxRate`, and a line built
+   * with `taxRate: 0` silently zeroes the tax on the very next adjustment even
+   * though the invoice was issued with the correct total.
+   */
+  private orderDerivedTaxRate(
+    order: { tax?: unknown; subtotal?: unknown },
+    isTaxExempt: boolean,
+  ): number {
+    if (isTaxExempt) return 0;
+    const orderSubtotal = Number(order?.subtotal) || 0;
+    if (orderSubtotal <= 0) return 0;
+    return Number(order?.tax ?? 0) / orderSubtotal;
+  }
+
+  /** Stamps `orderDerivedTaxRate` onto every built line in place (mirrors foldCategoryTax's shape). */
+  private applyOrderDerivedTaxRate(
+    itemsData: Array<{ taxRate?: number }>,
+    order: { tax?: unknown; subtotal?: unknown },
+    isTaxExempt: boolean,
+  ): void {
+    const rate = this.orderDerivedTaxRate(order, isTaxExempt);
+    for (const it of itemsData) it.taxRate = rate;
+  }
+
+  /**
    * BUY_N_GET_M free units for a CLIENT-SUBMITTED invoice line (create + the
    * DRAFT edit, which delete-and-recreates every line). The snapshot travels on
    * the payload like `boxes`/`pieces`/`notes` do — without it an order-derived
@@ -990,6 +1022,12 @@ export class InvoicesService {
       discount: 0,
       originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
       priceType: li.priceType ?? "STANDARD",
+      // B294: placeholder — this builder has no order-level context (isTaxExempt,
+      // order.tax/order.subtotal), so every caller MUST overwrite this via
+      // `applyOrderDerivedTaxRate(itemsData, order, isTaxExempt)` right after
+      // calling buildInvoiceItemData. Leaving it at 0 here (as before B294) let
+      // applyPriceAdjustment's `Σ li.subtotal * li.taxRate` recompute silently
+      // zero the regular tax on any order-derived invoice.
       taxRate: 0,
       subtotal,
       // Phase 4 (W4): carry the line's regulated category onto the invoice line so
@@ -1124,6 +1162,10 @@ export class InvoicesService {
           priorBilledQty: Number(li.invoicedQty ?? 0),
         }),
       );
+      // B294: stamp the order's effective regular-tax rate onto every line so a
+      // later applyPriceAdjustment recompute (Σ li.subtotal * li.taxRate) reproduces
+      // this group's regular tax instead of the previous hardcoded 0.
+      this.applyOrderDerivedTaxRate(itemsData, order, isTaxExempt);
       const subtotal = roundMoney(itemsData.reduce((s: number, it: any) => s + it.subtotal, 0));
       // RF-4: Σ the per-line category tax for this group (0 when the customer is
       // tax-exempt — foldCategoryTax also zeroes the per-line snapshots then).
@@ -1496,6 +1538,9 @@ export class InvoicesService {
     const orderSubtotal = Number(order.subtotal) || 1;
     const proportion = subtotal / orderSubtotal;
     const regularTax = isTaxExempt ? 0 : roundMoney(Number(order.tax) * proportion);
+    // B294: stamp the order's effective regular-tax rate onto every line so a
+    // later applyPriceAdjustment recompute reproduces `regularTax` instead of 0.
+    this.applyOrderDerivedTaxRate(itemsData, order, isTaxExempt);
     // RF-4: fold the per-line category tax into the draft's tax (exempt → 0 for both).
     const categoryTax = this.foldCategoryTax(itemsData, isTaxExempt);
     const taxAmount = roundMoney(regularTax + categoryTax);
@@ -1870,6 +1915,9 @@ export class InvoicesService {
       const itemsData = billable.map(({ li, billQty }: any) =>
         this.buildInvoiceItemData(li, billQty, tenantId),
       );
+      // B294: stamp the order's effective regular-tax rate onto every line so a
+      // later applyPriceAdjustment recompute reproduces this draft's regular tax.
+      this.applyOrderDerivedTaxRate(itemsData, order, isTaxExempt);
       const subtotal = roundMoney(itemsData.reduce((s: number, it: any) => s + it.subtotal, 0));
       // RF-4: per-draft category tax (0 + zeroed snapshots when the customer is exempt).
       const categoryTax = this.foldCategoryTax(itemsData, isTaxExempt);
@@ -2712,6 +2760,9 @@ export class InvoicesService {
     const orderSubtotal = Number(order.subtotal) || 1;
     const proportion = subtotal / orderSubtotal;
     const regularTax = isTaxExempt ? 0 : roundMoney(Number(order.tax) * proportion);
+    // B294: stamp the order's effective regular-tax rate onto every line so a
+    // later applyPriceAdjustment recompute reproduces this partial's regular tax.
+    this.applyOrderDerivedTaxRate(itemsData, order, isTaxExempt);
     // RF-4: fold each partial's share of the per-line category tax (exempt → 0 both).
     const categoryTax = this.foldCategoryTax(itemsData, isTaxExempt);
     const taxAmount = roundMoney(regularTax + categoryTax);
