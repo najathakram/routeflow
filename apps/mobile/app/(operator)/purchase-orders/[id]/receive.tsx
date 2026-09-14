@@ -4,6 +4,7 @@ import { FormField, FormSection, FormSheet, FormTextInput } from "../../../../co
 import { usePurchaseOrder, useReceivePO } from "../../../../lib/api/purchase-orders";
 import { normalizeBoxesPieces } from "@routeflow/pricing";
 import { showToast } from "../../../../lib/toast";
+import { hasTouchedReceiveForm } from "../../../../lib/discard-guard";
 
 /** Prisma Decimals arrive as strings; subtraction needs rounding to the column's 3dp. */
 function remainingOf(qtyOrdered: number | string, qtyReceived: number | string): number {
@@ -84,6 +85,7 @@ export default function ReceivePOScreen() {
       subtitle={po?.poNumber}
       submitLabel={mut.isPending ? "Saving…" : "Confirm receipt"}
       submitting={mut.isPending}
+      confirmDiscardIfDirty={hasTouchedReceiveForm({ qtys, boxQtys, pieceQtys, notes })}
       onSubmit={submit}
     >
       <FormSection title="Items">
