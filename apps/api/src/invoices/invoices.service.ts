@@ -23,6 +23,7 @@ import { PAYABLE, KPI_SUMMARY_EXCLUDED } from "./invoice-status-sets";
 import { clampLimit } from "../common/pagination";
 import { isInternalEmail } from "../common/internal-email";
 import { loadMsrpMap } from "../common/msrp";
+import { effectiveTaxRateFromTotals } from "../common/tax-rate";
 import { EntitlementsService } from "../billing/entitlements.service";
 import {
   CheckStatus,
@@ -834,10 +835,7 @@ export class InvoicesService {
     order: { tax?: unknown; subtotal?: unknown },
     isTaxExempt: boolean,
   ): number {
-    if (isTaxExempt) return 0;
-    const orderSubtotal = Number(order?.subtotal) || 0;
-    if (orderSubtotal <= 0) return 0;
-    return Number(order?.tax ?? 0) / orderSubtotal;
+    return effectiveTaxRateFromTotals(order?.tax, order?.subtotal, isTaxExempt);
   }
 
   /** Stamps `orderDerivedTaxRate` onto every built line in place (mirrors foldCategoryTax's shape). */

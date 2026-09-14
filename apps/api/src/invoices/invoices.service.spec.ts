@@ -5335,6 +5335,24 @@ describe("InvoicesService", () => {
 
       expect(Number(invoice.shippingFee)).toBe(0);
     });
+
+    // F3: createPartialFromOrder is a patched B294 call site with no direct
+    // coverage of the stamped rate — this pins that its lines carry the
+    // order's effective rate (tax 5 / subtotal 50 = 0.10), not 0.
+    it("REG-B294: a partial invoice's lines carry the order's effective tax rate", async () => {
+      prisma.order.findUnique.mockResolvedValue(baseOrder());
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { shippingFee: 0 } });
+
+      await service.createPartialFromOrder("ord-p1", {
+        items: [{ orderItemId: "oi-1", qty: 10 }],
+      } as any);
+
+      const createdLines = prisma.invoice.create.mock.calls[0][0].data.items.create;
+      expect(createdLines.length).toBeGreaterThan(0);
+      for (const line of createdLines) {
+        expect(line.taxRate).toBeCloseTo(0.1, 4);
+      }
+    });
   });
 
   // F03 (T-B85 / R7 / REG-B85): createPartialFromOrder never settles order-level
@@ -6400,7 +6418,7 @@ describe("InvoicesService", () => {
         id: "o-294b",
         customerId: "c-294b",
         subtotal: 200,
-        tax: 15, // 15 / 200 = 0.075 effective rate
+        tax: 16.5, // 16.50 / 200.00 = 0.0825 effective rate
         lineItems: [
           {
             id: "li-294b",
@@ -6423,7 +6441,9 @@ describe("InvoicesService", () => {
       await service.reconcileOrderDraftInvoice("o-294b", { basis: "order" });
       const builtLine = prisma.invoice.update.mock.calls[0][0].data.items.create[0];
       const storedRate = builtLine.taxRate;
-      expect(storedRate).not.toBe(0); // sanity: the (a) case pins this directly
+      // Pin the rate itself to an independently-known value (not just "not
+      // 0") — a wrong-but-nonzero stored rate must also fail this test.
+      expect(storedRate).toBeCloseTo(0.0825, 4);
 
       // Now adjust the price on that same line. orderId: null keeps this test
       // scoped to the tax recompute (mirrors the B7 fixture above) — the
@@ -6462,16 +6482,134 @@ describe("InvoicesService", () => {
         scope: "SINGLE",
       });
 
-      // The pricing-package computation over the STORED rate — never re-derived
-      // from qty * unitPrice (packages/pricing convention) — must be > 0. Before
-      // the fix every stored rate was 0, so this was always 0 regardless of the
+      // F3: an INDEPENDENTLY-computed literal, not `roundMoney(newSubtotal *
+      // storedRate)` — that production-formula echo would still pass even if
+      // orderDerivedTaxRate stamped a wrong (but nonzero) rate, since the
+      // "expected" value would be wrong in the exact same way. 190.00 * 0.0825
+      // = 15.675, which roundMoney (round-half-up) takes to 15.68. Before the
+      // fix every stored rate was 0, so this was always 0 regardless of the
       // order's real tax.
-      const expectedRegularTax = roundMoney(newSubtotal * storedRate);
-      expect(expectedRegularTax).toBeGreaterThan(0);
+      const expectedRegularTax = 15.68;
       expect(prisma.invoice.update).toHaveBeenLastCalledWith(
         expect.objectContaining({
           where: { id: "d-294b" },
           data: expect.objectContaining({ taxAmount: expectedRegularTax }),
+        }),
+      );
+    });
+
+    // F2: orderDerivedTaxRate must agree with what the order-splitting call
+    // sites actually issue for a genuinely zero-subtotal order (every line
+    // free) — a stored rate of 0 that disagreed with a nonzero issued tax
+    // would be its own regression.
+    it("REG-B294: a zero-subtotal order stores rate 0 AND issues $0 regular tax", async () => {
+      prisma.invoice.findFirst.mockResolvedValue({ id: "d-294z", discount: 0, shippingFee: 0 });
+      prisma.order.findUnique.mockResolvedValue({
+        id: "o-294z",
+        customerId: "c-294z",
+        subtotal: 0,
+        tax: 0,
+        lineItems: [
+          {
+            id: "li-294z",
+            productId: "p-294z",
+            qty: 10,
+            deliveredQty: 10,
+            unitPrice: 0,
+            originalPrice: null,
+            priceType: "STANDARD",
+            product: { name: "P294z" },
+            status: "PENDING",
+          },
+        ],
+      });
+      prisma.invoiceItem.deleteMany.mockResolvedValue({});
+      prisma.invoice.update.mockResolvedValue({ id: "d-294z", status: InvoiceStatus.DRAFT });
+      prisma.orderItem.findMany.mockResolvedValue([{ id: "li-294z" }]);
+      prisma.orderItem.update.mockResolvedValue({});
+
+      await service.reconcileOrderDraftInvoice("o-294z", { basis: "order" });
+
+      const call = prisma.invoice.update.mock.calls[0][0];
+      const createdLine = call.data.items.create[0];
+      expect(createdLine.taxRate).toBe(0);
+      expect(call.data.taxAmount).toBe(0);
+    });
+
+    // F3: exempt customers owe $0 of regular tax regardless of the order's
+    // rate — the stored rate must be 0 (not the order's real, nonzero rate)
+    // so a later applyPriceAdjustment recompute doesn't re-introduce tax.
+    it("REG-B294: an exempt customer's order-derived line stores rate 0 and recomputes $0 tax", async () => {
+      prisma.invoice.findFirst.mockResolvedValue({ id: "d-294e", discount: 0, shippingFee: 0 });
+      prisma.order.findUnique.mockResolvedValue({
+        id: "o-294e",
+        customerId: "c-294e",
+        subtotal: 200,
+        tax: 0, // exempt orders never accrue tax in the first place
+        lineItems: [
+          {
+            id: "li-294e",
+            productId: "p-294e",
+            qty: 20,
+            deliveredQty: 20,
+            unitPrice: 10,
+            originalPrice: null,
+            priceType: "STANDARD",
+            product: { name: "P294e" },
+            status: "PENDING",
+          },
+        ],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: true } as any);
+      prisma.invoiceItem.deleteMany.mockResolvedValue({});
+      prisma.invoice.update.mockResolvedValue({ id: "d-294e", status: InvoiceStatus.DRAFT });
+      prisma.orderItem.findMany.mockResolvedValue([{ id: "li-294e" }]);
+      prisma.orderItem.update.mockResolvedValue({});
+
+      await service.reconcileOrderDraftInvoice("o-294e", { basis: "order" });
+
+      const createdLine = prisma.invoice.update.mock.calls[0][0].data.items.create[0];
+      expect(createdLine.taxRate).toBe(0);
+
+      // Now recompute via applyPriceAdjustment — the stored 0 rate must keep
+      // producing $0 regular tax, not silently reintroduce it.
+      const invoiceItem = {
+        id: "li-294e",
+        invoiceId: "d-294e",
+        productId: "p-294e",
+        unitPrice: 10,
+        discount: 0,
+        subtotal: 200,
+        qty: 20,
+        taxRate: createdLine.taxRate,
+        categoryTaxAmount: 0,
+      };
+      const invoice = {
+        id: "d-294e",
+        customerId: "c-294e",
+        orderId: null,
+        status: InvoiceStatus.SENT,
+        discount: 0,
+        shippingFee: 0,
+        internalNotes: null,
+        items: [invoiceItem],
+      };
+      prisma.invoice.findUnique.mockResolvedValue(invoice);
+      prisma.invoiceItem.update.mockResolvedValue({});
+      prisma.invoiceItem.findMany.mockResolvedValue([
+        { ...invoiceItem, unitPrice: 9.5, subtotal: 190 },
+      ]);
+      prisma.invoice.update.mockResolvedValue({});
+
+      await service.applyPriceAdjustment("d-294e", {
+        items: [{ itemId: "li-294e", newUnitPrice: 9.5 }],
+        scope: "SINGLE",
+      });
+
+      expect(prisma.invoice.update).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          where: { id: "d-294e" },
+          data: expect.objectContaining({ taxAmount: 0 }),
         }),
       );
     });
