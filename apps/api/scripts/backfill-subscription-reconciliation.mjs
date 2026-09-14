@@ -137,6 +137,7 @@ async function main() {
     let applied = 0;
     let failed = 0;
     let raced = 0;
+    const skippedBeforeApply = skipped.length;
     for (const r of rows) {
       try {
         // Conditional write (review F7b): only write — and only emit a BillingEvent — if the
@@ -169,6 +170,10 @@ async function main() {
         console.error(`Failed to reconcile ${r.slug}: ${err.message}`);
         failed++;
       }
+    }
+    if (raced > 0) {
+      console.log("\nRACED — changed concurrently since scan, rerun to pick these up:");
+      console.table(skipped.slice(skippedBeforeApply));
     }
     console.log(
       `Applied ${applied} change(s), ${failed} failed, ${raced} raced (rerun to pick up).`,

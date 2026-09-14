@@ -100,8 +100,10 @@ describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
       // catalog this spec needs rather than failing: a PUBLISHED version with a real-priced
       // SCALE definition and a null-priced ENTERPRISE definition, mirroring the shape
       // `publish-plan-catalog-v11.ts` writes. `version` just needs to be unique — derive it
-      // from the clock plus a random offset so parallel/retried runs never collide.
-      const version = Math.floor(Date.now() / 1000) * 1000 + Math.floor(Math.random() * 1000);
+      // from the current max instead of the clock.
+      // int4 column — never derive from Date.now()
+      const version =
+        ((await prisma.planVersion.aggregate({ _max: { version: true } }))._max.version ?? 0) + 1;
       publishedVersion = await prisma.planVersion.create({
         data: {
           version,
