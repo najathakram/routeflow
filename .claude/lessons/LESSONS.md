@@ -752,3 +752,19 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
 - **Guard:** `planKeyFromEnum()` now identity-maps GROWTH/SCALE, `SELECTABLE_TENANT_PLANS` includes
   them, and both DTO specs flipped from "rejects" to "accepts" (`update-tenant-plan.dto.spec.ts`,
   `activate-subscription.dto.spec.ts`).
+
+### L-129 · 2026-09-14 · testing
+
+- **Symptom:** a new `*.db.spec.ts` passed against the compose stack but CI's "Replay migrations
+  on a fresh database" job failed its `beforeAll` with "No PUBLISHED PlanVersion … run
+  `npm run local:seed` first", then `afterAll` threw `Cannot read properties of undefined
+(reading 'id')` and Jest hung on an unclosed pool.
+- **Root cause:** `local:seed` publishes the plan catalog (global reference data the `PlanVersion`
+  table starts empty of); CI's replay job runs `test:db` on a freshly migrated DB with no seed at
+  all, so any spec that assumes seeded reference data is green locally and red in CI.
+- **Lesson:** **a db spec creates every row it reads — including global reference data — in its
+  own `beforeAll` (use an existing row if present, create a minimal one otherwise, remember what
+  it created), tears down only what it created, guards every cleanup on the fixture existing, and
+  always closes the pool in `afterAll` even when `beforeAll` threw.**
+- **Guard:** CI's migration-replay job (fresh DB, no seed) is the standing check; the spec
+  `apps/api/src/common/backfill-subscription-reconciliation.db.spec.ts` is the reference pattern.
