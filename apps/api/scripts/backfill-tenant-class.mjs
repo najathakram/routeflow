@@ -14,6 +14,7 @@ import { pathToFileURL } from "node:url";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
+import { resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
 
 const DEMO_SLUG = "routeflow-demo";
 const HOUSE_TENANT_SLUG = "routeflow-hq";
@@ -29,11 +30,14 @@ export function classify(slug) {
 
 async function main() {
   const apply = process.argv.includes("--apply");
-  if (!process.env.DATABASE_URL) {
-    console.error("Missing env: DATABASE_URL");
+  let databaseUrl;
+  try {
+    databaseUrl = resolveDatabaseUrl(process.env);
+  } catch (err) {
+    console.error(err.message);
     process.exit(1);
   }
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const pool = new Pool({ connectionString: databaseUrl });
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
 
   try {
