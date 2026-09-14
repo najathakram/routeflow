@@ -1,5 +1,5 @@
 {"id":"B293","batch":"F36","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B294","batch":"F36","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B294","batch":"F36","tier":"T1","state":"proven","pr":725,"proof":"REG-B294 order-derived and estimate-converted invoice lines store the effective regular tax rate so applyPriceAdjustment keeps the tax (invoices.service.spec.ts, estimates.service.spec.ts)","evidence":null,"buildPlan":null}
 {"id":"B295","batch":"F36","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B296","batch":"F36","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B297","batch":"F36","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
