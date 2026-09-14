@@ -190,6 +190,154 @@ describe("GoogleOAuthService OAuth state signing (REG-B349)", () => {
   });
 });
 
+/**
+ * Phase 0 T6: platform-admin and tenant-staff Google sign-ins used to call
+ * issueUserTokenPair/storeUserRefreshToken with no device parameter at all, so
+ * RefreshToken.userAgent/ipAddress stayed null forever for Google-issued sessions
+ * ("Unknown device" in the sessions list) — unlike the credential-login path, which
+ * already threads DeviceInfo through AuthService.storeRefreshToken. This proves
+ * findOrCreateUser now forwards an optional DeviceInfo all the way to the upsert.
+ */
+describe("GoogleOAuthService device info threading (Phase 0 T6)", () => {
+  function buildService(prismaOverrides: Record<string, any> = {}) {
+    const jwtConfig = {
+      secret: "test-jwt-secret-for-oauth-state",
+      refreshSecret: "test-jwt-refresh-secret",
+      expiresIn: "15m",
+      refreshExpiresIn: "30d",
+    };
+    const config = {
+      get: (key: string) => (key === "jwt" ? jwtConfig : undefined),
+    } as unknown as ConfigService;
+
+    const refreshTokenUpsert = jest.fn().mockResolvedValue({});
+    const prisma = {
+      user: {
+        findFirst: jest.fn(),
+        update: jest.fn(),
+      },
+      refreshToken: { upsert: refreshTokenUpsert },
+      ...prismaOverrides,
+    } as any;
+
+    const jwtService = {
+      sign: jest.fn((payload: any) => `signed.${JSON.stringify(payload)}`),
+      decode: jest.fn(() => ({ exp: Math.floor(Date.now() / 1000) + 3600 })),
+    } as unknown as JwtService;
+
+    const entitlements = { claimsFor: jest.fn().mockResolvedValue(null) } as any;
+
+    const service = new GoogleOAuthService(
+      prisma,
+      jwtService,
+      config,
+      {} as any, // email
+      entitlements,
+    );
+
+    return { service, prisma, refreshTokenUpsert };
+  }
+
+  it("handlePlatformAuth stores the provided device info on the refresh token", async () => {
+    const { service, prisma, refreshTokenUpsert } = buildService();
+    prisma.user.findFirst.mockResolvedValue({
+      id: "admin-1",
+      username: "admin",
+      role: "SUPER_ADMIN",
+      status: "ACTIVE",
+      googleId: "g1",
+      forcePasswordChange: false,
+      tenantId: null,
+      password: null,
+    });
+
+    await service.findOrCreateUser(
+      { type: "platform", googleId: "g1", email: "admin@example.com" } as any,
+      { userAgent: "TestAgent/1.0", ipAddress: "10.0.0.1" },
+    );
+
+    expect(refreshTokenUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          userAgent: "TestAgent/1.0",
+          ipAddress: "10.0.0.1",
+        }),
+        update: expect.objectContaining({
+          userAgent: "TestAgent/1.0",
+          ipAddress: "10.0.0.1",
+        }),
+      }),
+    );
+  });
+
+  it("handlePlatformAuth omits device info when none is provided", async () => {
+    const { service, prisma, refreshTokenUpsert } = buildService();
+    prisma.user.findFirst.mockResolvedValue({
+      id: "admin-1",
+      username: "admin",
+      role: "SUPER_ADMIN",
+      status: "ACTIVE",
+      googleId: "g1",
+      forcePasswordChange: false,
+      tenantId: null,
+      password: null,
+    });
+
+    await service.findOrCreateUser({
+      type: "platform",
+      googleId: "g1",
+      email: "admin@example.com",
+    } as any);
+
+    expect(refreshTokenUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ userAgent: undefined, ipAddress: undefined }),
+      }),
+    );
+  });
+
+  it("handleTenantAuth (tenant/staff Google callback) stores the provided device info on the refresh token", async () => {
+    const { service, prisma, refreshTokenUpsert } = buildService({
+      tenant: {
+        findFirst: jest.fn().mockResolvedValue({ id: "tenant-1", status: "ACTIVE" }),
+      },
+    });
+    prisma.user.findFirst.mockResolvedValue({
+      id: "staff-1",
+      username: "staff",
+      role: "OPERATOR",
+      status: "ACTIVE",
+      googleId: "g2",
+      forcePasswordChange: false,
+      tenantId: "tenant-1",
+      password: null,
+    });
+
+    await service.findOrCreateUser(
+      {
+        type: "tenant",
+        googleId: "g2",
+        email: "staff@example.com",
+        tenantSlug: "acme",
+      } as any,
+      { userAgent: "TestAgent/1.0", ipAddress: "10.0.0.1" },
+    );
+
+    expect(refreshTokenUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          userAgent: "TestAgent/1.0",
+          ipAddress: "10.0.0.1",
+        }),
+        update: expect.objectContaining({
+          userAgent: "TestAgent/1.0",
+          ipAddress: "10.0.0.1",
+        }),
+      }),
+    );
+  });
+});
+
 describe("GoogleOAuthService construction (B349 round 1 — fail closed without a secret)", () => {
   it("throws instead of deriving the state-signing key from an empty string when JWT_SECRET is missing", () => {
     const config = {

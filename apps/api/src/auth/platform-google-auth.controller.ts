@@ -2,16 +2,18 @@ import {
   Controller,
   Get,
   Query,
+  Req,
   Res,
   UseGuards,
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { ApiOperation, ApiTags, ApiBearerAuth } from "@nestjs/swagger";
 import { ConfigService } from "@nestjs/config";
-import type { Response } from "express";
+import type { Request, Response } from "express";
 import { GoogleOAuthService } from "./google-oauth.service";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { CurrentUser } from "./decorators/current-user.decorator";
+import { extractDeviceInfo } from "./device-info.util";
 
 /**
  * Public Google OAuth endpoints for the Platform Admin (SUPER_ADMIN) flow.
@@ -85,6 +87,7 @@ export class PlatformGoogleAuthController {
     @Query("code") code: string,
     @Query("state") state: string,
     @Query("error") oauthError: string,
+    @Req() req: Request,
     @Res() res: Response,
   ) {
     const base = `${this.webUrl}/platform`;
@@ -107,7 +110,7 @@ export class PlatformGoogleAuthController {
       }
 
       // ── Sign-in flow ─────────────────────────────────────────────────────────
-      const result = await this.googleOAuth.findOrCreateUser(profile);
+      const result = await this.googleOAuth.findOrCreateUser(profile, extractDeviceInfo(req));
 
       // Only SUPER_ADMIN platform accounts are expected here
       if (result.kind !== "platform") {

@@ -17,6 +17,7 @@ import { UpdateEmailConfigDto } from "./dto/update-email-config.dto";
 import { UpdateGoogleOAuthConfigDto } from "./dto/update-google-oauth-config.dto";
 import { UpdateBrandingDto } from "./dto/update-branding.dto";
 import { compressImage } from "../storage/compress.util";
+import { TRIAL_LENGTH_DAYS } from "../billing/plan-catalog.constants";
 
 const RESERVED_SLUGS = new Set([
   "api",
@@ -95,7 +96,7 @@ export class TenantsService {
     }
 
     const trialEndsAt = new Date();
-    trialEndsAt.setDate(trialEndsAt.getDate() + 14);
+    trialEndsAt.setDate(trialEndsAt.getDate() + TRIAL_LENGTH_DAYS);
     const hashedPassword = await bcrypt.hash(adminPassword, 10);
 
     const result = await this.prisma.$transaction(async (tx) => {

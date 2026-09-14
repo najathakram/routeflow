@@ -10,6 +10,12 @@
 export const PLAN_KEYS = ["STARTER", "GROWTH", "SCALE", "ENTERPRISE"] as const;
 export type PlanKey = (typeof PLAN_KEYS)[number];
 
+/** Default trial length in days. First consumer is `tenants.service.ts` (public
+ * self-signup); `platform-admin.service.ts`'s Create Tenant path still hardcodes its
+ * own 7-day value and is NOT wired to this constant yet — unifying it is a later
+ * trial-length task, not done here. */
+export const TRIAL_LENGTH_DAYS = 14;
+
 /**
  * Enforcement status of these flags, as of the WP1-WP3 kill-switch rollout
  * (`PLAN_FLAG_ENFORCEMENT` env, default off — see plan-flag.guard.ts). This

@@ -18,6 +18,7 @@ import type { AppConfig } from "../config/configuration";
 import type { JwtPayload } from "./jwt-payload.interface";
 import type { BuyerJwtPayload } from "../buyer/interfaces/buyer-jwt-payload.interface";
 import { EntitlementsService } from "../billing/entitlements.service";
+import type { DeviceInfo } from "./auth.service";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -480,15 +481,21 @@ export class GoogleOAuthService {
   }
 
   /** Find or create the appropriate user record and return a token pair. */
-  async findOrCreateUser(profile: GoogleProfile): Promise<GoogleAuthResult> {
+  async findOrCreateUser(
+    profile: GoogleProfile,
+    deviceInfo?: DeviceInfo,
+  ): Promise<GoogleAuthResult> {
     return profile.type === "platform"
-      ? this.handlePlatformAuth(profile)
-      : this.handleTenantAuth(profile);
+      ? this.handlePlatformAuth(profile, deviceInfo)
+      : this.handleTenantAuth(profile, deviceInfo);
   }
 
   // ─── Platform flow (SUPER_ADMIN only) ─────────────────────────────────────
 
-  private async handlePlatformAuth(profile: GoogleProfile): Promise<GoogleAuthResult> {
+  private async handlePlatformAuth(
+    profile: GoogleProfile,
+    deviceInfo?: DeviceInfo,
+  ): Promise<GoogleAuthResult> {
     const user = await this.prisma.user.findFirst({
       where: {
         tenantId: null,
@@ -512,7 +519,7 @@ export class GoogleOAuthService {
       });
     }
 
-    const tokens = await this.issueUserTokenPair(user, null);
+    const tokens = await this.issueUserTokenPair(user, null, deviceInfo);
     return {
       kind: "platform",
       ...tokens,
@@ -528,7 +535,10 @@ export class GoogleOAuthService {
 
   // ─── Tenant flow (OPERATOR/DRIVER or buyer portal) ─────────────────────────
 
-  private async handleTenantAuth(profile: GoogleProfile): Promise<GoogleAuthResult> {
+  private async handleTenantAuth(
+    profile: GoogleProfile,
+    deviceInfo?: DeviceInfo,
+  ): Promise<GoogleAuthResult> {
     // buyer-standalone: Google sign-in from the buyer portal without a seller invite link.
     // Skip tenant resolution entirely and go straight to buyer portal auth.
     if (profile.context === "buyer-standalone") {
@@ -567,7 +577,7 @@ export class GoogleOAuthService {
           data: { googleId: profile.googleId, forcePasswordChange: false },
         });
       }
-      const tokens = await this.issueUserTokenPair(staffUser, tenant.slug);
+      const tokens = await this.issueUserTokenPair(staffUser, tenant.slug, deviceInfo);
       return {
         kind: "staff",
         ...tokens,
@@ -764,7 +774,11 @@ export class GoogleOAuthService {
 
   // ─── Token issuance helpers ────────────────────────────────────────────────
 
-  private async issueUserTokenPair(user: any, tenantSlug: string | null): Promise<TokenPair> {
+  private async issueUserTokenPair(
+    user: any,
+    tenantSlug: string | null,
+    deviceInfo?: DeviceInfo,
+  ): Promise<TokenPair> {
     const jwtConfig = this.configService.get<{
       secret: string;
       refreshSecret: string;
@@ -792,7 +806,7 @@ export class GoogleOAuthService {
       { sub: user.id, type: "staff" }, // F5-003: realm discriminator (Google staff login)
       { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
     );
-    await this.storeUserRefreshToken(user.id, refreshToken);
+    await this.storeUserRefreshToken(user.id, refreshToken, deviceInfo);
     return { accessToken, refreshToken };
   }
 
@@ -834,14 +848,24 @@ export class GoogleOAuthService {
     return { accessToken, refreshToken };
   }
 
-  private async storeUserRefreshToken(userId: string, token: string): Promise<void> {
+  private async storeUserRefreshToken(
+    userId: string,
+    token: string,
+    deviceInfo?: DeviceInfo,
+  ): Promise<void> {
     const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
     const decoded = this.jwtService.decode(token);
     const expiresAt = new Date(decoded.exp * 1000);
     await this.prisma.refreshToken.upsert({
       where: { tokenHash },
-      create: { userId, tokenHash, expiresAt },
-      update: { expiresAt },
+      create: {
+        userId,
+        tokenHash,
+        expiresAt,
+        userAgent: deviceInfo?.userAgent,
+        ipAddress: deviceInfo?.ipAddress,
+      },
+      update: { expiresAt, userAgent: deviceInfo?.userAgent, ipAddress: deviceInfo?.ipAddress },
     });
   }
 }
