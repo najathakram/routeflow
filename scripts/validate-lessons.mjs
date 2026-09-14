@@ -64,11 +64,15 @@
 // USAGE
 //   npm run validate-lessons
 //   npm run validate-lessons -- --verbose   # also list every id and the gaps
+//   node scripts/validate-lessons.mjs --digest   # (re)generate LESSONS-DIGEST.md
 //
 // It is step 2 of `npm run verify`, so the pre-push hook gates the register on
-// every push and CI re-checks it on Linux.
+// every push and CI re-checks it on Linux. A PLAIN run (no --digest) also checks
+// that `.claude/lessons/LESSONS-DIGEST.md` is up to date with LESSONS.md — the
+// digest is a derived artifact, and a stale one is exactly the kind of drift
+// this file already exists to catch (see the `activeCount` story above).
 
-import { readFileSync, existsSync, statSync } from "node:fs";
+import { readFileSync, existsSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -79,8 +83,10 @@ const DIR = path.join(REPO_ROOT, ".claude", "lessons");
 const LESSONS = path.join(DIR, "LESSONS.md");
 const ARCHIVE = path.join(DIR, "ARCHIVE.md");
 const META = path.join(DIR, "_meta.json");
+const DIGEST = path.join(DIR, "LESSONS-DIGEST.md");
 
 const verbose = process.argv.includes("--verbose");
+const digestMode = process.argv.includes("--digest");
 
 // Fallbacks only — `_meta.json` is the source of truth when the fields exist.
 // These match the caps written in the register's own header.
@@ -122,20 +128,43 @@ for (const field of ["activeCount", "nextId"]) {
 const maxBytes = Number.isInteger(meta.maxBytes) ? meta.maxBytes : DEFAULT_MAX_BYTES;
 const maxEntries = Number.isInteger(meta.maxEntries) ? meta.maxEntries : DEFAULT_MAX_ENTRIES;
 
-// ─── Parse ids ───────────────────────────────────────────────────────────────
+// ─── Parse entries ───────────────────────────────────────────────────────────
 // Matches an entry heading only — `### L-029 · 2026-09-01 · tooling`. A bare
 // L-029 in prose (a [[L-029]] cross-reference, say) is deliberately not an
 // entry and must never be counted as one.
-const HEADING_RE = /^### (L-(\d+))\b/gm;
+//
+// The SAME parse feeds both the structural checks below (id/num only) and the
+// digest (category + the "- **Lesson:** ..." body) — one parser, two
+// consumers, so a heading-format change can never make the digest and the
+// register disagree about what an entry is.
+const HEADING_RE = /^### (L-(\d+))[^\n]*$/gm;
 
-function idsIn(text) {
-  const out = [];
-  for (const m of text.matchAll(HEADING_RE)) out.push({ id: m[1], num: Number(m[2]) });
-  return out;
+function parseEntries(text) {
+  const headings = [...text.matchAll(HEADING_RE)];
+  return headings.map((m, i) => {
+    const id = m[1];
+    const num = Number(m[2]);
+    // Fields on the heading line, e.g. "L-029 · 2026-09-01 · tooling · #598"
+    // -> ["L-029", "2026-09-01", "tooling", "#598"]. category is always the
+    // 3rd field; anything after it is a free-text descriptor we don't need.
+    const fields = m[0]
+      .replace(/^###\s*/, "")
+      .split("·")
+      .map((s) => s.trim());
+    const category = fields[2] || "";
+
+    const bodyStart = m.index + m[0].length;
+    const bodyEnd = i + 1 < headings.length ? headings[i + 1].index : text.length;
+    const body = text.slice(bodyStart, bodyEnd);
+    const lessonMatch = body.match(/-\s*\*\*Lesson:\*\*\s*([\s\S]*?)(?=\n-\s*\*\*Guard:\*\*|$)/);
+    const lessonRaw = lessonMatch ? lessonMatch[1].trim() : null;
+
+    return { id, num, category, lessonRaw };
+  });
 }
 
-const active = idsIn(lessonsText);
-const archived = idsIn(archiveText);
+const active = parseEntries(lessonsText);
+const archived = parseEntries(archiveText);
 
 // ─── 1. Conflict markers ─────────────────────────────────────────────────────
 // `<<<<<<<` and `>>>>>>>` are unambiguous. A bare `=======` is reported only
@@ -242,6 +271,18 @@ if (dangling.size) {
   );
 }
 
+// ─── 5b. Every active entry has a Lesson line ────────────────────────────────
+// The digest is built entirely FROM the "- **Lesson:**" bodies, so an entry
+// missing one cannot be represented there — reject it here rather than
+// silently dropping it from the digest.
+const missingLesson = active.filter((e) => !e.lessonRaw);
+if (missingLesson.length) {
+  fail(
+    `MISSING LESSON: ${missingLesson.map((e) => e.id).join(", ")} — every active entry needs ` +
+      `a "- **Lesson:** ..." line (the digest is generated from it).`,
+  );
+}
+
 // ─── 6. Caps ─────────────────────────────────────────────────────────────────
 const bytes = statSync(LESSONS).size;
 const kb = (bytes / 1024).toFixed(1);
@@ -303,7 +344,47 @@ if (failures.length) {
   process.exit(1);
 }
 
-console.log(`✔ .claude/lessons: register is self-consistent. ${counts}`);
+// ─── Digest ──────────────────────────────────────────────────────────────────
+// Deterministic given LESSONS.md + _meta.json alone: a 3-line header (title,
+// "generated" notice, the counts line above), then one line per ACTIVE entry
+// in id order — never file order, since the register groups by category, not
+// by id. Collapsing a multi-line "- **Lesson:** ..." body to one line keeps
+// this file `grep`-able without opening LESSONS.md.
+function collapseLesson(raw, maxLen = 240) {
+  const collapsed = raw.replace(/\s+/g, " ").trim();
+  if (collapsed.length <= maxLen) return collapsed;
+  return `${collapsed.slice(0, maxLen - 1).trimEnd()}…`;
+}
+
+function buildDigest(entries, countsLine) {
+  const sorted = [...entries].sort((a, b) => a.num - b.num);
+  const lines = [
+    "# Lessons Digest — RouteFlow",
+    "> Generated by `node scripts/validate-lessons.mjs --digest` — do not edit by hand.",
+    `> ${countsLine}`,
+    ...sorted.map((e) => `- ${e.id} · ${e.category} · ${collapseLesson(e.lessonRaw)}`),
+  ];
+  return `${lines.join("\n")}\n`;
+}
+
+const digestContent = buildDigest(active, counts);
+
+if (digestMode) {
+  writeFileSync(DIGEST, digestContent);
+  console.log(`✔ .claude/lessons: register is self-consistent. ${counts}`);
+  console.log(`✔ wrote ${rel(DIGEST)} (${active.length} entries)`);
+} else {
+  // A digest written on a different OS checkout may carry CRLF line endings —
+  // normalize before comparing so that alone is never a false "stale" report.
+  const normalize = (s) => s.replace(/\r\n/g, "\n");
+  const existingDigest = existsSync(DIGEST) ? readFileSync(DIGEST, "utf8") : null;
+  if (existingDigest === null || normalize(existingDigest) !== normalize(digestContent)) {
+    console.error(`✖ ${rel(DIGEST)} is stale — run: node scripts/validate-lessons.mjs --digest`);
+    process.exit(1);
+  }
+  console.log(`✔ .claude/lessons: register is self-consistent. ${counts}`);
+}
+
 if (capsConflict) {
   console.log(
     `  ⚠ caps disagree: ${maxEntries} entries at ${(avgBytes / 1024).toFixed(2)} KB each is ` +
