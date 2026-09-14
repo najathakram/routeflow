@@ -105,17 +105,17 @@ describe("NewOrderScreen unlisted $0 line (REG-NEWORDER-ZERO)", () => {
 });
 
 describe("NewOrderScreen draft-save signal and flush points (REG-NEWORDER-DRAFT)", () => {
-  it("REG-NEWORDER-DRAFT-A: the autosave engine's error hook is actually wired", () => {
+  it("REG-B339: the autosave engine's error hook is actually wired", () => {
     expect(screen).toMatch(/onSaveError:\s*noteDraftSaveError,/);
     expect(screen).toMatch(/setDraftSaveFailed\(true\)/);
   });
 
-  it("REG-NEWORDER-DRAFT-B: a failed save is visible to the operator", () => {
+  it("REG-B339: a failed save is visible to the operator", () => {
     expect(screen).toMatch(/draftSaveFailed \?/);
     expect(screen).toMatch(/Draft not saved/);
   });
 
-  it("REG-NEWORDER-DRAFT-C: the two empty catches are gone; success clears the flag", () => {
+  it("REG-B339: the two empty catches are gone; success clears the flag", () => {
     expect(screen).not.toMatch(/flushDraft\(\)\.catch\(\(\) => \{\}\)/);
     expect(screen).toMatch(
       /flushDraft\(\)\.then\(\(\) => setDraftSaveFailed\(false\), noteDraftSaveError\)/,
@@ -124,7 +124,7 @@ describe("NewOrderScreen draft-save signal and flush points (REG-NEWORDER-DRAFT)
     expect(screen).toMatch(/await flushDraftQuietly\(\);/);
   });
 
-  it("REG-NEWORDER-DRAFT-D: backgrounding the app flushes on native, and so does unmount", () => {
+  it("REG-B339: backgrounding the app flushes on native, and so does unmount", () => {
     // Pre-fix the ONLY flush triggers were React Navigation's beforeRemove and
     // a `visibilitychange` handler that returns early off web — so the
     // shipping platform had no background trigger at all. Pattern copied from
