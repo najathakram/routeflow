@@ -35,7 +35,12 @@ never accumulate history in `"notes"`.
   re-reading status, and the dead `stripeSubId` is dropped so a repeat cancel is a true no-op) and
   FINDING-3 (both add-on paths now key the advisory lock on the SKU, so the bridged legacy keys
   actually serialise across paths). web.md/mobile.md/packages.md untouched (no diff in those
-  trees). `validate-code-map.mjs`: PASS.
+  trees). `validate-code-map.mjs`: PASS. **W1 tail (`fix/b216-webhook-disarm`, owner ruling
+  2026-09-14):** B216's disposition inverts — the two `disarmedDowngrade()` calls on the
+  Stripe REINSTATEMENT paths are removed, so a paid invoice no longer revokes a tenant-chosen
+  downgrade; the resume event carries `downgradeLeftArmed` instead. One row added to
+  `feature-modules-4.md`, `feature-modules-1.md`'s open question closed. Appended here rather
+  than as a new bullet: same wave's tail, and the live file is at its cap.
 - **2026-09-13 — B323 tenant-scoping sweep fix, re-homed into the split map
   (`fix/B323-tenant-sweep` merge of `origin/master` 2e5602ae for PR #722)** — `sweepAllPendingOrders`
   now groups pending orders by `["customerId","tenantId"]` (not `customerId` alone), skips a

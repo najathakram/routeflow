@@ -360,7 +360,12 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
   });
 });
 
-describe("B216 — a Stripe reinstatement disarms a downgrade scheduled before the lapse", () => {
+// B216 (owner ruling 2026-09-14): REVERSED from "a reinstatement disarms". Paying an invoice
+// settles a debt; it is not a statement about which plan the tenant wants. The old behaviour
+// silently revoked a downgrade only the tenant had scheduled, with no event and no audit line,
+// leaving them on the plan they had asked to leave. It was justified by the schedule otherwise
+// firing "the first night after reactivation" — but firing IS the tenant's stated intent.
+describe("B216 — a Stripe reinstatement LEAVES a downgrade scheduled before the lapse armed", () => {
   // A subscription that lapsed with a downgrade armed (scheduled while ACTIVE, then the tenant dropped out).
   const armedSub = (over: Record<string, unknown> = {}) => ({
     tenantId: "t1",
@@ -378,37 +383,69 @@ describe("B216 — a Stripe reinstatement disarms a downgrade scheduled before t
     prisma.tenantSubscription.update.mock.calls.find(
       (c: any[]) => c[0]?.data && "downgradeToPlanKey" in c[0].data,
     );
-  const DISARMED = {
-    where: { tenantId: "t1" },
-    data: { downgradeToPlanKey: null, downgradeEffectiveAt: null, retainedUserIds: [] },
-  };
+  // The meta the SUBSCRIPTION_RESUMED ledger event carries: events.emit(tenantId, type, payload,
+  // { amountDelta, tx }) — payload is arg 2.
+  const resumedMeta = (events: any) =>
+    events.emit.mock.calls.find((c: any[]) => c[1] === BILLING_EVENTS.SUBSCRIPTION_RESUMED)?.[2];
   const checkoutSession = {
     metadata: { tenantId: "t1" },
     subscription: "sub_1",
     customer: "cus_1",
   };
 
-  it("REG-B216-A onPaymentSucceeded reinstatement (CAS won) disarms the armed downgrade", async () => {
-    const { svc, prisma } = make({ sub: armedSub(), transitionCount: 1 });
+  it("REG-B216 onPaymentSucceeded reinstatement (CAS won) leaves the armed downgrade ALONE and names it on the resume event", async () => {
+    const { svc, prisma, events } = make({ sub: armedSub(), transitionCount: 1 });
     await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
-    expect(disarmCall(prisma)?.[0]).toEqual(DISARMED);
+    // RED before the ruling: this wrote {downgradeToPlanKey: null, ...}.
+    expect(disarmCall(prisma)).toBeUndefined();
+    expect(resumedMeta(events)).toMatchObject({
+      reason: "payment_succeeded",
+      downgradeLeftArmed: "STARTER",
+      downgradeEffectiveAt: "2026-08-01T00:00:00.000Z",
+    });
   });
 
-  it("REG-B216-B onCheckoutCompleted reinstatement (CAS won) disarms the armed downgrade", async () => {
-    const { svc, prisma } = make({ sub: armedSub(), transitionCount: 1 });
+  it("REG-B216 onCheckoutCompleted reinstatement (CAS won) leaves the armed downgrade ALONE and names it on the resume event", async () => {
+    const { svc, prisma, events } = make({ sub: armedSub(), transitionCount: 1 });
     await (svc as any).onCheckoutCompleted(checkoutSession);
-    expect(disarmCall(prisma)?.[0]).toEqual(DISARMED);
+    expect(disarmCall(prisma)).toBeUndefined();
+    expect(resumedMeta(events)).toMatchObject({
+      reason: "checkout_completed",
+      downgradeLeftArmed: "STARTER",
+      downgradeEffectiveAt: "2026-08-01T00:00:00.000Z",
+    });
   });
 
-  it("REG-B216-C onPaymentSucceeded with a live Stripe sub writes the disarm as its own update after the period write", async () => {
+  it("REG-B216 a reinstatement with a live Stripe sub writes ONLY the period update — no schedule write at all", async () => {
     const { svc, prisma } = make({ sub: armedSub({ stripeSubId: "sub_1" }), transitionCount: 1 });
     await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
     expect(
       prisma.tenantSubscription.update.mock.calls.map((c: any[]) => Object.keys(c[0].data).sort()),
-    ).toEqual([
-      ["periodEnd", "periodStart"],
-      ["downgradeEffectiveAt", "downgradeToPlanKey", "retainedUserIds"],
-    ]);
+    ).toEqual([["periodEnd", "periodStart"]]);
+  });
+
+  it("REG-B216 a reinstatement with NOTHING armed carries neither schedule key", async () => {
+    const { svc, events } = make({
+      sub: armedSub({ downgradeToPlanKey: null, downgradeEffectiveAt: null }),
+      transitionCount: 1,
+    });
+    await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+    const meta = resumedMeta(events);
+    expect(meta).not.toHaveProperty("downgradeLeftArmed");
+    expect(meta).not.toHaveProperty("downgradeEffectiveAt");
+  });
+
+  it("REG-B216 the legacy cohort (planKey null → emitPayingDelta short-circuits, no event) still never disarms", async () => {
+    // The cohort most likely to be here is exactly the one the ledger cannot record, because
+    // emitPayingDelta emits nothing without a planKey — the service logs it instead. What must
+    // hold either way is that the tenant's schedule survives.
+    const { svc, prisma, events } = make({
+      sub: armedSub({ planKey: null, basePriceSnapshot: null }),
+      transitionCount: 1,
+    });
+    await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+    expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
+    expect(disarmCall(prisma)).toBeUndefined();
   });
 
   it("pin B216: an ordinary renewal (CAS count 0) leaves a scheduled downgrade armed", async () => {

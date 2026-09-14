@@ -16,9 +16,12 @@ const PAYMENT_GRACE_DAYS = 3;
 
 /**
  * The ONE shape that disarms a scheduled plans-as-data downgrade (L-072: never hand-type it twice).
- * Spread by every Stripe lifecycle handler that must cancel a pending downgrade: subscription deleted,
- * subscription updated to cancel_at_period_end, and a real reinstatement (B216). A function, not a
- * const, so each write gets a fresh mutable `retainedUserIds` array Prisma's String[] input accepts.
+ * Spread by the two Stripe lifecycle handlers that must cancel a pending downgrade, both of which
+ * are CANCELLATIONS superseding it: subscription deleted, and subscription updated to
+ * cancel_at_period_end. A function, not a const, so each write gets a fresh mutable
+ * `retainedUserIds` array Prisma's String[] input accepts.
+ *
+ * B216 (owner ruling 2026-09-14): REINSTATEMENT no longer disarms — see `scheduleLeftArmed()`.
  */
 function disarmedDowngrade(): {
   downgradeToPlanKey: null;
@@ -26,6 +29,31 @@ function disarmedDowngrade(): {
   retainedUserIds: string[];
 } {
   return { downgradeToPlanKey: null, downgradeEffectiveAt: null, retainedUserIds: [] };
+}
+
+/**
+ * B216 (owner ruling 2026-09-14): a reinstatement LEAVES a tenant-chosen scheduled downgrade
+ * armed and records that it did so. Paying an invoice is not a statement about which plan the
+ * tenant wants — it settles a debt. The previous behaviour disarmed on any real non-ACTIVE→ACTIVE
+ * transition, reasoning that a schedule which came due during the lapse would otherwise fire "the
+ * first night after reactivation"; but firing IS the tenant's stated intent, and the disarm
+ * silently revoked a choice only the tenant had made, with no event and no audit line, leaving
+ * them on the plan they had asked to leave. `applyScheduledDowngrades` applies it when due (a
+ * schedule already past due applies on the next pass). Mirrors the admin path's
+ * `updateStatus()`, which leaves the schedule armed and names it in the admin audit meta.
+ *
+ * Returns the meta keys the SUBSCRIPTION_RESUMED ledger event carries — same key names the admin
+ * audit uses — or `{}` when nothing is armed.
+ */
+function scheduleLeftArmed(sub: {
+  downgradeToPlanKey: string | null;
+  downgradeEffectiveAt: Date | null;
+}): { downgradeLeftArmed?: string; downgradeEffectiveAt?: string | null } {
+  if (!sub.downgradeToPlanKey) return {};
+  return {
+    downgradeLeftArmed: sub.downgradeToPlanKey,
+    downgradeEffectiveAt: sub.downgradeEffectiveAt?.toISOString() ?? null,
+  };
 }
 
 @Injectable()
@@ -562,20 +590,21 @@ export class BillingService {
       "ACTIVE",
       1,
       BILLING_EVENTS.SUBSCRIPTION_RESUMED,
-      { source: "stripe", reason: "checkout_completed" },
+      { source: "stripe", reason: "checkout_completed", ...scheduleLeftArmed(upserted) },
     );
     this.tenantStatusGuard.invalidate(tenantId);
 
-    // B216: only a REAL reinstatement (this call won the non-ACTIVE→ACTIVE CAS) disarms a downgrade
-    // scheduled before the lapse; left armed, the 02:00 applyScheduledDowngrades sweep (which skips
-    // non-ACTIVE tenants) applies it the first night after reactivation. Never on a lost CAS (tenant
-    // already ACTIVE): that would delete a downgrade the ACTIVE tenant legitimately scheduled. A
-    // separate post-commit write, mirroring onSubscriptionDeleted; never resume() (double emit).
-    if (reinstated) {
-      await this.prisma.tenantSubscription.update({
-        where: { tenantId },
-        data: disarmedDowngrade(),
-      });
+    // B216: this reinstatement does NOT touch the tenant's scheduled downgrade — see
+    // scheduleLeftArmed(). The ledger event above carries it, but emitPayingDelta short-circuits
+    // when planKey is null (the legacy Stripe cohort, which is exactly the cohort most likely to
+    // be here), so no event exists for those tenants and this log line is then the only record.
+    if (reinstated && upserted.downgradeToPlanKey) {
+      this.logger.log(
+        `B216: checkout reinstatement left tenant ${tenantId}'s scheduled downgrade to ` +
+          `${upserted.downgradeToPlanKey} ARMED (effective ` +
+          `${upserted.downgradeEffectiveAt?.toISOString() ?? "unset"}) — applyScheduledDowngrades ` +
+          `applies it when due`,
+      );
     }
 
     this.logger.log(`Tenant ${tenantId} activated via checkout (sub: ${subscriptionId})`);
@@ -651,17 +680,19 @@ export class BillingService {
       "ACTIVE",
       1,
       BILLING_EVENTS.SUBSCRIPTION_RESUMED,
-      { source: "stripe", reason: "payment_succeeded" },
+      { source: "stripe", reason: "payment_succeeded", ...scheduleLeftArmed(sub) },
     );
     this.tenantStatusGuard.invalidate(sub.tenantId);
 
-    // B216: see onCheckoutCompleted — disarm ONLY when this call performed the reinstatement; an
-    // ordinary renewal (already ACTIVE → CAS count 0 → false) keeps a legitimately scheduled downgrade.
-    if (reinstated) {
-      await this.prisma.tenantSubscription.update({
-        where: { tenantId: sub.tenantId },
-        data: disarmedDowngrade(),
-      });
+    // B216: see onCheckoutCompleted — paying an invoice settles a debt, it does not re-choose a
+    // plan, so the tenant's scheduled downgrade is left armed and recorded rather than cleared.
+    if (reinstated && sub.downgradeToPlanKey) {
+      this.logger.log(
+        `B216: payment reinstatement left tenant ${sub.tenantId}'s scheduled downgrade to ` +
+          `${sub.downgradeToPlanKey} ARMED (effective ` +
+          `${sub.downgradeEffectiveAt?.toISOString() ?? "unset"}) — applyScheduledDowngrades ` +
+          `applies it when due`,
+      );
     }
 
     this.logger.log(`Payment succeeded for tenant ${sub.tenantId} (customer ${customerId})`);
