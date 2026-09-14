@@ -107,4 +107,54 @@ describe("MrrService.computeOverview", () => {
       expect(call[0].where.tenant).toEqual({ class: "PRODUCTION" });
     }
   });
+
+  // F6 (owner ruling): the five pilots are FREE and never paying MRR; revenue excludes
+  // Tenant.class TEST/DEMO/INTERNAL. Fixture proves the engine's total is exactly the
+  // paying tenant's price — a DEMO tenant's paid plan and a subscription-less PRODUCTION
+  // pilot both contribute $0, mirroring the real `payingWhere` filter (tenant.status ===
+  // ACTIVE && tenant.class === PRODUCTION && planKey != null) against a raw fixture.
+  it("prices only the paying PRODUCTION tenant — DEMO and a no-subscription pilot contribute $0", async () => {
+    const fixtureSubs = [
+      {
+        planKey: "GROWTH",
+        basePriceSnapshot: 249,
+        discount: 0,
+        tenant: { status: "ACTIVE", deletedAt: null, class: "PRODUCTION" },
+      },
+      // DEMO tenant on a paid plan — excluded by the class filter, never revenue.
+      {
+        planKey: "GROWTH",
+        basePriceSnapshot: 249,
+        discount: 0,
+        tenant: { status: "ACTIVE", deletedAt: null, class: "DEMO" },
+      },
+      // t-pilot: PRODUCTION + ACTIVE but has no subscription row at all — a free pilot
+      // never appears in tenantSubscription, so it never reaches this query either.
+    ];
+    const prisma = {
+      tenantSubscription: {
+        findMany: jest
+          .fn()
+          .mockImplementation(({ where }: any) =>
+            Promise.resolve(
+              fixtureSubs
+                .filter(
+                  (s) =>
+                    s.tenant.status === where.tenant.status &&
+                    s.tenant.class === where.tenant.class,
+                )
+                .map(({ tenant, ...rest }) => rest),
+            ),
+          ),
+      },
+      tenantAddon: { findMany: jest.fn().mockResolvedValue([]) },
+      tenant: { count: jest.fn().mockResolvedValue(0) },
+      billingEvent: { aggregate: jest.fn().mockResolvedValue({ _sum: { amountDelta: 0 } }) },
+    } as any;
+
+    const o = await new MrrService(prisma).computeOverview();
+
+    expect(o.mrr).toBe(249);
+    expect(o.payingTenants).toBe(1);
+  });
 });

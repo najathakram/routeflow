@@ -954,7 +954,8 @@ describe("PlatformAdminService — audit provenance", () => {
   describe("getStats enrichment", () => {
     // Phase 0 T9: getStats() no longer re-derives MRR from the catalog price — it reads
     // MrrService.computeOverview() as the one MRR engine (already class-scoped to
-    // PRODUCTION, see mrr.service.spec.ts). These two fields replace the old estMrrUsd.
+    // PRODUCTION, see mrr.service.spec.ts). `estMrrUsd` stays as an alias of `mrr` until
+    // Phase 0 T12 updates the dashboard to read the new fields directly.
     it("sources MRR from MrrService, not the legacy estimator", async () => {
       prisma.tenant.findMany.mockImplementation((args: any) => {
         if (args?.where?.status?.not === "CANCELLED") {
@@ -984,7 +985,9 @@ describe("PlatformAdminService — audit provenance", () => {
 
       expect(stats.mrr).toBe(748);
       expect(stats.ledgerMrr).toBe(748);
-      expect(stats).not.toHaveProperty("estMrrUsd");
+      // estMrrUsd is an alias of the MrrService total (web admin dashboard still reads it
+      // until Phase 0 T12) — never a re-derived estimate.
+      expect(stats.estMrrUsd).toBe(stats.mrr);
       expect(mrrService.computeOverview).toHaveBeenCalled();
       expect(stats.planBreakdown).toEqual({ STARTER: 2, GROWTH: 1 });
     });
@@ -1038,6 +1041,53 @@ describe("PlatformAdminService — audit provenance", () => {
       const stats = await service.getStats();
       expect(stats.trialsExpiringSoon[0].userCount).toBe(4);
       expect(stats.atRiskTenants[0].riskReason).toBe("Suspended");
+    });
+  });
+
+  describe("getTenant — estMrrUsd card", () => {
+    // _monthlyPriceUsd / _catalogPriceByPlanKey are still live here (getStats() moved to
+    // MrrService, but the tenant-detail card prices a single tenant directly).
+    it("prices a still-published legacy catalog — TEAM/BUSINESS rows answer GROWTH/SCALE lookups", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+        plan: "TEAM",
+        subscription: { planKey: null, basePriceSnapshot: null },
+      } as any);
+      // The publish script is a manual post-deploy step: until it runs, the
+      // published version is still keyed TEAM/BUSINESS.
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        definitions: [
+          { planKey: "STARTER", monthlyPrice: 59 },
+          { planKey: "TEAM", monthlyPrice: 149 },
+          { planKey: "BUSINESS", monthlyPrice: 349 },
+          { planKey: "ENTERPRISE", monthlyPrice: null },
+        ],
+      });
+
+      const tenant = await service.getTenant(TENANT_ID);
+
+      // planKeyFromEnum("TEAM") normalizes to GROWTH, which the still-legacy-keyed
+      // catalog answers via its TEAM row ($149) — never $0.
+      expect(tenant.estMrrUsd).toBe(149);
+    });
+
+    it("keeps a grandfathered basePriceSnapshot even though the catalog re-prices the plan", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+        plan: "STARTER",
+        subscription: { planKey: "STARTER", basePriceSnapshot: 59 },
+      } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        definitions: [{ planKey: "STARTER", monthlyPrice: 99 }],
+      });
+
+      const tenant = await service.getTenant(TENANT_ID);
+
+      expect(tenant.estMrrUsd).toBe(59);
     });
   });
 

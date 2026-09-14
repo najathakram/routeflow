@@ -939,6 +939,8 @@ ${paymentSection}
       // run-rate; `ledgerMrr` reconciles it against the append-only BillingEvent ledger.
       mrr: mrrOverview.mrr,
       ledgerMrr: mrrOverview.ledgerMrr,
+      // alias until Phase 0 T12 updates the dashboard
+      estMrrUsd: mrrOverview.mrr,
       planBreakdown: planCounts,
       recentTenants,
       trialsExpiringSoon: trialsExpiringSoon.map((t) => ({
