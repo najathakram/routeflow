@@ -10,8 +10,12 @@
  * The ladder itself is pure: the network call, the cart write and the two
  * hand-offs are injected, so it unit-tests in the node Jest env.
  */
-import { normalizeScanCode } from "./barcode-normalize";
-import { scanUnitKind, looksLikeScanCode, type ScanMatchable } from "./wedge-scan";
+import {
+  scanUnitKind,
+  looksLikeScanCode,
+  findExactScanMatch,
+  type ScanMatchable,
+} from "./wedge-scan";
 import type { BarcodeResolveResult } from "./barcode-resolve";
 import type { ScanOutcome } from "./scan-loop";
 import type { ScanAcceptGuard, ScanAcceptResolution } from "./scan-accept-guard";
@@ -97,16 +101,26 @@ export function makeScanHandler<T extends ScanMatchable>(
     // 1) Local fast-path over the rows already in memory. Uses the same
     //    candidate set the server does (UPC-E/EAN-13/leading-zero variants), so
     //    a code the server would resolve doesn't cost a round trip.
-    const candidates = new Set(normalizeScanCode(trimmed).map((c) => c.toUpperCase()));
-    const hit = (v?: string | null) => !!v && candidates.has(v.toUpperCase());
-    const local = resolveProducts(deps.products).find(
-      (p) =>
-        hit(p.barcode) ||
-        hit(p.sku) ||
-        hit(p.unitSku) ||
-        (p.id ?? "").toLowerCase() === trimmed.toLowerCase(),
-    );
-    if (local) return settle("accepted", deps.accept(local, scanUnitKind(trimmed, local)));
+    //    `findExactScanMatch` is the SAME helper the settled-search effect uses
+    //    (M5): a code shared by two cached rows (one's SKU = another's barcode —
+    //    per-column-unique constraints allow it) is never a coin-flip accept,
+    //    and a row cached before it was archived elsewhere is never accepted
+    //    locally — both fall through to the server rung below, which resolves
+    //    the ambiguity for real or reports the archived verdict.
+    const localMatch = findExactScanMatch(trimmed, resolveProducts(deps.products));
+    if (localMatch.match) {
+      const local = localMatch.match;
+      return settle("accepted", deps.accept(local, scanUnitKind(trimmed, local)));
+    }
+    if (localMatch.multiple) {
+      return settle("unresolved", {
+        feedback: {
+          kind: "error",
+          text: `More than one product matches "${trimmed}"`,
+          action: { label: "Choose", onPress: () => deps.onAmbiguous(trimmed) },
+        },
+      });
+    }
 
     // 2) Server fallback: barcode → exact SKU → name/SKU substring → notFound.
     //    Bounded by SCAN_RESOLVE_TIMEOUT_MS — an abort, so a lookup that blows

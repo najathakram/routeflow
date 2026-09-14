@@ -27,6 +27,7 @@ interface P {
   sku?: string | null;
   unitSku?: string | null;
   name?: string;
+  isActive?: boolean;
 }
 
 const CASE_CODE = "4000000000019";
@@ -79,6 +80,72 @@ describe("makeScanHandler — local fast path", () => {
     const { scan, calls } = harness();
     expect(await scan("   ")).toBeUndefined();
     expect(calls.accepted).toHaveLength(0);
+  });
+
+  it("REG-MSCAN-M5: a code that hits two DIFFERENT local rows (one's SKU = another's barcode) raises Choose instead of silently accepting the first", async () => {
+    const shared = "4000000000019";
+    const rowA: P = { id: "pA", name: "Row A", barcode: shared };
+    const rowB: P = { id: "pB", name: "Row B", sku: shared };
+    let resolveCalls = 0;
+    const { scan, calls } = harness({
+      products: [rowA, rowB],
+      resolve: async (): Promise<BarcodeResolveResult<P>> => {
+        resolveCalls++;
+        return { notFound: true };
+      },
+    });
+    const out = fb(await scan(shared));
+    // Wrong-today value: .find() silently accepts rowA (whichever comes first),
+    // never consults the server, and never offers a picker.
+    expect(calls.accepted).toHaveLength(0);
+    expect(resolveCalls).toBe(0);
+    expect(out.kind).toBe("error");
+    action(out).onPress();
+    expect(calls.ambiguous).toEqual([shared]);
+  });
+
+  it("REG-MSCAN-M5: a locally-cached row that has since been archived elsewhere is NOT accepted from the local match — falls through to the server rung", async () => {
+    const archived: P = {
+      id: "p1",
+      name: "Discontinued widget",
+      barcode: CASE_CODE,
+      isActive: false,
+    };
+    let resolveCalls = 0;
+    const { scan, calls } = harness({
+      products: [archived],
+      resolve: async (): Promise<BarcodeResolveResult<P>> => {
+        resolveCalls++;
+        return { archived: true, product: archived, source: "barcode" };
+      },
+    });
+    const out = fb(await scan(CASE_CODE));
+    // Wrong-today value: .find() accepts the cached row unconditionally — the
+    // operator adds a line for a product the catalog no longer sells.
+    expect(calls.accepted).toHaveLength(0);
+    expect(resolveCalls).toBe(1);
+    expect(out.text).toContain("Discontinued widget");
+  });
+
+  it("REG-MSCAN-M5: an active row still adds locally when an inactive sibling shares its code — the archived exclusion never hides a legitimate match", async () => {
+    const active: P = { id: "pActive", name: "In stock", barcode: CASE_CODE, isActive: true };
+    const inactiveSibling: P = {
+      id: "pGone",
+      name: "Discontinued",
+      sku: CASE_CODE,
+      isActive: false,
+    };
+    let resolveCalls = 0;
+    const { scan, calls } = harness({
+      products: [active, inactiveSibling],
+      resolve: async (): Promise<BarcodeResolveResult<P>> => {
+        resolveCalls++;
+        return { notFound: true };
+      },
+    });
+    await scan(CASE_CODE);
+    expect(calls.accepted).toEqual([{ id: "pActive", unit: "case" }]);
+    expect(resolveCalls).toBe(0);
   });
 });
 
