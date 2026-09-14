@@ -716,3 +716,22 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   (`cancelAtPeriodEnd` added to the select it was blind to); admin reactivation leaves the
   downgrade armed and audits it instead. `REG-FINDING-1`/`REG-FINDING-4` in
   `platform-admin.service.spec.ts`. Sibling [[L-123]].
+
+### L-127 · 2026-09-14 · process · Phase 0 T10 deferred-gap markers
+
+- **Symptom:** the T9-T11 lane's plan pseudocode said `UpdateTenantPlanDto`/`ActivateSubscriptionDto`
+  "already use `@IsEnum(TenantPlan)`... nothing to do" for Task 10. The actual code (written by an
+  earlier lane) instead used `@IsIn(SELECTABLE_TENANT_PLANS)`, which deliberately EXCLUDED
+  GROWTH/SCALE with comments and dedicated specs both saying "not yet selectable — Phase 0 Task 10
+  gap." Following the plan text as written would have left that gap open while marking Task 10 done.
+- **Root cause:** the plan was written against an earlier snapshot of the code; a later lane (T1-T6)
+  had since built a more careful interim state (a real gap, explicitly fenced off with forward
+  references to the exact task that would close it) that the plan's pseudocode never anticipated.
+- **Lesson:** **Before implementing a task from a written plan, grep the touched files for the
+  task's own number/name in comments and spec titles ("Phase 0 Task N gap", "TODO: TaskN").** A
+  prior lane often leaves an explicit, load-bearing marker naming exactly what the next task must
+  close — trust that marker over the plan's stale pseudocode, and treat closing it as in-scope even
+  when the plan text says "nothing to do here."
+- **Guard:** `planKeyFromEnum()` now identity-maps GROWTH/SCALE, `SELECTABLE_TENANT_PLANS` includes
+  them, and both DTO specs flipped from "rejects" to "accepts" (`update-tenant-plan.dto.spec.ts`,
+  `activate-subscription.dto.spec.ts`).
