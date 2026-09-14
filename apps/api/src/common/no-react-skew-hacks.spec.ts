@@ -61,13 +61,15 @@ describe("apps/web carries no leftover React-18-pin hack (T2, R2)", () => {
     ).toEqual([]);
   });
 
-  it('apps/web/package.json dependencies.react satisfies "^19.2.0"', () => {
-    // Red today: "^18".
-    expect(readWebManifest().dependencies?.react).toBe("^19.2.0");
+  it("apps/web/package.json dependencies.react stays on the React 19 line", () => {
+    // Red today: "^18". Checks the major line, not an exact minor/patch — dependabot moves the
+    // patch/minor routinely (e.g. ^19.2.0 -> ^19.3.0), and pinning an exact string here just
+    // makes every such bump fail this unrelated skew guard.
+    expect(readWebManifest().dependencies?.react).toMatch(/^\^19\./);
   });
 
-  it('apps/web/package.json dependencies["react-dom"] satisfies "^19.2.0"', () => {
-    // Red today: "^18".
-    expect(readWebManifest().dependencies?.["react-dom"]).toBe("^19.2.0");
+  it('apps/web/package.json dependencies["react-dom"] stays on the React 19 line', () => {
+    // Red today: "^18". Same rationale as the react case above.
+    expect(readWebManifest().dependencies?.["react-dom"]).toMatch(/^\^19\./);
   });
 });

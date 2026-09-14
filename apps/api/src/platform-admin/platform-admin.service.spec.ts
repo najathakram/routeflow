@@ -169,7 +169,7 @@ describe("PlatformAdminService — audit provenance", () => {
   describe("updateStatus — FINDING-4 the armed downgrade survives reactivation", () => {
     const ARMED_AT = new Date("2026-03-01T00:00:00.000Z");
 
-    it("REG-FINDING-4 keeps a tenant's armed downgrade when an admin reactivates a lapsed (SUSPENDED) tenant, and names it in the audit meta", async () => {
+    it("REG-B402 keeps a tenant's armed downgrade when an admin reactivates a lapsed (SUSPENDED) tenant, and names it in the audit meta", async () => {
       // FINDING-3 shape: the prior-status read is a CAS `updateMany` predicated on
       // status != ACTIVE — count === 1 means THIS call performed a real transition.
       prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
@@ -199,7 +199,7 @@ describe("PlatformAdminService — audit provenance", () => {
       );
     });
 
-    it("REG-FINDING-4 a reactivation with NO armed downgrade audits neither schedule field", async () => {
+    it("REG-B402 a reactivation with NO armed downgrade audits neither schedule field", async () => {
       prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
       prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
       prisma.tenant.update.mockResolvedValue({
@@ -277,7 +277,7 @@ describe("PlatformAdminService — audit provenance", () => {
     // the prior status, exactly like billing.service.ts's transitionAndEmit(). It still matters
     // after FINDING-4: the schedule the audit line reports must be the row as it stood AT the
     // transition, not one a concurrent downgrade() armed a moment later.
-    it("REG-FINDING-3 folds the status CAS and the schedule read into ONE transaction (structural pin — see note)", async () => {
+    it("REG-B402 folds the status CAS and the schedule read into ONE transaction (structural pin — see note)", async () => {
       prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
       prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
       prisma.tenant.update.mockResolvedValue({
@@ -697,7 +697,7 @@ describe("PlatformAdminService — audit provenance", () => {
       });
     });
 
-    it("REG-FINDING-1 refuses an UPGRADE attempt for a tenant with cancelAtPeriodEnd: true — nothing written, no event", async () => {
+    it("REG-B401 refuses an UPGRADE attempt for a tenant with cancelAtPeriodEnd: true — nothing written, no event", async () => {
       (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
         planKey: "STARTER",
         basePriceSnapshot: 99,
@@ -720,7 +720,7 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(billingEventService.emit).not.toHaveBeenCalled();
     });
 
-    it("REG-FINDING-1 refuses a DOWNGRADE attempt for a tenant with cancelAtPeriodEnd: true — nothing written, no event", async () => {
+    it("REG-B401 refuses a DOWNGRADE attempt for a tenant with cancelAtPeriodEnd: true — nothing written, no event", async () => {
       (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
         planKey: "SCALE",
         basePriceSnapshot: 499,
@@ -755,7 +755,7 @@ describe("PlatformAdminService — audit provenance", () => {
     const periodEnd = new Date("2026-10-01T00:00:00Z");
 
     it.each(["READ_ONLY", "TRIAL"])(
-      "REG-FINDING-2 a DOWNGRADE for a %s tenant applies instantly and does not schedule",
+      "REG-B401 a DOWNGRADE for a %s tenant applies instantly and does not schedule",
       async (status) => {
         prisma.tenant.findUnique.mockResolvedValue({
           id: TENANT_ID,

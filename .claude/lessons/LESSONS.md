@@ -734,7 +734,25 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
 - **Guard:** five `REG-B216` cases in `billing.service.spec.ts` — both reinstatement paths leave
   the schedule armed and name it on `SUBSCRIPTION_RESUMED`. Sibling [[L-126]].
 
-### L-128 · 2026-09-14 · process · Phase 0 T10 deferred-gap markers
+### L-128 · 2026-09-14 · domain · B408 terminal provider states
+
+- **Symptom:** a cancel path treated ONE provider status as "already done" and every other
+  terminal status as a hard failure, so those tenants got a 503 on every retry with the dead
+  provider pointer never cleared — a permanent lockout, produced by the code written to remove
+  one.
+- **Root cause:** the fix was written against the single status its reproduction produced.
+  `status === "canceled"` was a set-membership test disguised as an equality check; the
+  provider's enum had a second terminal member (`incomplete_expired`) and nothing pointed at it.
+- **Lesson:** **An equality check against one value of an external status enum is usually a SET
+  membership test nobody has written yet. Enumerate the whole class the branch cares about, name
+  it as a constant, and record in the comment which members are deliberately EXCLUDED and why —
+  the exclusions are the part the next reader cannot reconstruct from the code. An unrecognised
+  future member must fail CLOSED: an unknown state is not a safe state.**
+- **Guard:** `STRIPE_TERMINAL_STATUSES` + `REG-B408` ×8 in
+  `subscription-mutation.service.spec.ts` — one case per non-terminal status, plus one pinning
+  that an unrecognised status still surfaces the error. Sibling [[L-127]].
+
+### L-129 · 2026-09-14 · process · Phase 0 T10 deferred-gap markers
 
 - **Symptom:** the T9-T11 lane's plan pseudocode said `UpdateTenantPlanDto`/`ActivateSubscriptionDto`
   "already use `@IsEnum(TenantPlan)`... nothing to do" for Task 10. The actual code (written by an
@@ -753,7 +771,7 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   them, and both DTO specs flipped from "rejects" to "accepts" (`update-tenant-plan.dto.spec.ts`,
   `activate-subscription.dto.spec.ts`).
 
-### L-129 · 2026-09-14 · testing
+### L-130 · 2026-09-14 · testing
 
 - **Symptom:** a new `*.db.spec.ts` passed against the compose stack but CI's "Replay migrations
   on a fresh database" job failed its `beforeAll` with "No PUBLISHED PlanVersion … run
