@@ -385,7 +385,11 @@ const main = () => {
       head: git(["rev-parse", "HEAD"], victim).stdout,
       config: readFileSync(join(victim, ".git", "config"), "utf8"),
     };
-    check("REG-B420: an ambient GIT_DIR/GIT_WORK_TREE never touches the victim's branches", after.branches, before.branches);
+    check(
+      "REG-B420: an ambient GIT_DIR/GIT_WORK_TREE never touches the victim's branches",
+      after.branches,
+      before.branches,
+    );
     check("REG-B420: ...never touches the victim's HEAD", after.head, before.head);
     check("REG-B420: ...never touches the victim's config", after.config, before.config);
     cleanup(victim);

@@ -773,3 +773,20 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
 - **Guard:** `STRIPE_TERMINAL_STATUSES` + `REG-B408` ×8 in
   `subscription-mutation.service.spec.ts` — one case per non-terminal status, plus one pinning
   that an unrecognised status still surfaces the error. Sibling [[L-127]].
+
+### L-129 · 2026-09-14 · tooling · #745 react skew guard
+
+- **Symptom:** `no-react-skew-hacks.spec.ts` asserted `apps/web`'s `react`/`react-dom` deps
+  equal the exact string `"^19.2.0"`. #727's routine Dependabot minor/patch bump moved them to
+  `"^19.3.0"` and broke this unrelated guard on master, even though the React-18 pin hack it
+  exists to catch had not returned.
+- **Root cause:** the test was written to confirm one thing — the old React-18 pin never comes
+  back — but asserted a much narrower thing: the exact current semver string. An equality check
+  against a moving value stood in for the invariant that actually mattered.
+- **Lesson:** **A regression test guarding against a stale/incompatible dependency PIN should
+  assert the invariant it actually protects (the major line, or a pattern) — never the exact
+  current version string. Pinning the whole string makes every routine dependency bump
+  (Dependabot, a minor/patch upgrade) fail an unrelated guard, and repeated unrelated red trains
+  people to stop reading CI failures.**
+- **Guard:** both assertions now match `/^\^19\./` instead of `.toBe("^19.2.0")` in
+  `apps/api/src/common/no-react-skew-hacks.spec.ts`.
