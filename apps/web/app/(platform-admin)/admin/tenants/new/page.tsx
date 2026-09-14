@@ -2,8 +2,8 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { PLAN_KEYS } from "@routeflow/types";
 import { superAdminClient } from "@/lib/admin-api";
+import { fetchPlanCatalog, type PlanCatalogEntry } from "@/lib/api/platform-pricing";
 import { planLabel } from "../../../_components/AdminBadge";
 
 interface CreatedTenant {
@@ -28,6 +28,39 @@ export default function AdminCreateTenantPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [success, setSuccess] = React.useState<CreatedTenant | null>(null);
   const [copied, setCopied] = React.useState(false);
+  const [plans, setPlans] = React.useState<PlanCatalogEntry[]>([]);
+  const [plansLoading, setPlansLoading] = React.useState(true);
+  const [plansUnavailable, setPlansUnavailable] = React.useState(false);
+
+  // The plan list is catalog-driven (GROWTH/SCALE ship without a web release); a failed or
+  // empty catalog degrades to the currently selected plan so the form stays submittable.
+  React.useEffect(() => {
+    let cancelled = false;
+    fetchPlanCatalog()
+      .then((catalog) => {
+        if (cancelled) return;
+        const sorted = [...(catalog?.plans ?? [])].sort((a, b) => a.sortOrder - b.sortOrder);
+        if (!sorted.length) {
+          setPlansUnavailable(true);
+          return;
+        }
+        setPlans(sorted);
+        setForm((prev) =>
+          sorted.some((p) => p.planKey === prev.plan)
+            ? prev
+            : { ...prev, plan: sorted[0]!.planKey },
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setPlansUnavailable(true);
+      })
+      .finally(() => {
+        if (!cancelled) setPlansLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const onChange =
     (field: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -257,12 +290,25 @@ export default function AdminCreateTenantPage() {
               onChange={onChange("plan")}
               className="h-10 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
             >
-              {PLAN_KEYS.map((p) => (
-                <option key={p} value={p}>
-                  {planLabel(p)}
+              {plansLoading ? (
+                <option value={form.plan} disabled>
+                  Loading plans…
                 </option>
-              ))}
+              ) : plans.length ? (
+                plans.map((p) => (
+                  <option key={p.planKey} value={p.planKey}>
+                    {planLabel(p.planKey)}
+                  </option>
+                ))
+              ) : (
+                <option value={form.plan}>{planLabel(form.plan)}</option>
+              )}
             </select>
+            {plansUnavailable && (
+              <p className="text-xs text-amber-400">
+                Plan catalog unavailable — showing the default plan only.
+              </p>
+            )}
           </div>
 
           {/* Submit */}

@@ -1,0 +1,2676 @@
+{
+  "v": 1,
+  "sessionId": "ab372ec1-77a2-4b1e-a362-adf8dac613c4",
+  "project": "C:\\ClaudeCode\\routeflow",
+  "pricesAsOf": "2026-06-24",
+  "session": {
+    "byModel": {
+      "claude-sonnet-5": {
+        "input": 296,
+        "cacheWrite5m": 0,
+        "cacheWrite1h": 1160129,
+        "cacheRead": 67764522,
+        "output": 274498,
+        "messages": 152,
+        "tokens": 69199445,
+        "costUsd": 20.9389924
+      }
+    },
+    "total": {
+      "input": 296,
+      "cacheWrite5m": 0,
+      "cacheWrite1h": 1160129,
+      "cacheRead": 67764522,
+      "output": 274498,
+      "messages": 152,
+      "tokens": 69199445,
+      "costUsd": 20.9389924
+    },
+    "messages": 152,
+    "firstAt": "2026-09-14T15:40:47.369Z",
+    "lastAt": "2026-09-14T21:06:51.118Z",
+    "activeMs": 4467091,
+    "cacheHitRatio": 0.9831639333723391
+  },
+  "workflows": {
+    "4752fe6b-157": {
+      "byPhase": {
+        "Red gate": {
+          "total": {
+            "input": 204,
+            "cacheWrite5m": 654402,
+            "cacheWrite1h": 0,
+            "cacheRead": 4424288,
+            "output": 551,
+            "messages": 0,
+            "tokens": 5079445,
+            "costUsd": 3.5430183
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 20,
+              "cacheWrite5m": 287694,
+              "cacheWrite1h": 0,
+              "cacheRead": 937541,
+              "output": 25,
+              "messages": 0,
+              "tokens": 1225280,
+              "costUsd": 2.267583
+            },
+            "claude-haiku-4-5-20251001": {
+              "input": 144,
+              "cacheWrite5m": 207028,
+              "cacheWrite1h": 0,
+              "cacheRead": 852031,
+              "output": 36,
+              "messages": 0,
+              "tokens": 1059239,
+              "costUsd": 0.34431209999999995
+            },
+            "claude-sonnet-5": {
+              "input": 40,
+              "cacheWrite5m": 159680,
+              "cacheWrite1h": 0,
+              "cacheRead": 2634716,
+              "output": 490,
+              "messages": 0,
+              "tokens": 2794926,
+              "costUsd": 0.9311232
+            }
+          },
+          "agents": 6,
+          "labels": [
+            "red-audit:a2",
+            "red-run:a1",
+            "red-remediate",
+            "red-run:a2",
+            "red-audit:a1",
+            "checkpoint:Red gate"
+          ],
+          "durationMs": 1258686
+        },
+        "Fix": {
+          "total": {
+            "input": 218,
+            "cacheWrite5m": 1301972,
+            "cacheWrite1h": 0,
+            "cacheRead": 10704386,
+            "output": 3468,
+            "messages": 0,
+            "tokens": 12010044,
+            "costUsd": 13.100198749999999
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 194,
+              "cacheWrite5m": 1067719,
+              "cacheWrite1h": 0,
+              "cacheRead": 9397071,
+              "output": 3426,
+              "messages": 0,
+              "tokens": 10468410,
+              "costUsd": 11.45839925
+            },
+            "claude-fable-5-1": {
+              "input": 2,
+              "cacheWrite5m": 79414,
+              "cacheWrite1h": 0,
+              "cacheRead": 0,
+              "output": 2,
+              "messages": 0,
+              "tokens": 79418,
+              "costUsd": 0.992795
+            },
+            "claude-sonnet-5": {
+              "input": 22,
+              "cacheWrite5m": 154839,
+              "cacheWrite1h": 0,
+              "cacheRead": 1307315,
+              "output": 40,
+              "messages": 0,
+              "tokens": 1462216,
+              "costUsd": 0.6490045
+            }
+          },
+          "agents": 15,
+          "labels": [
+            "fix:apps/api/src/platform-admin/platform-config.service.spec.ts",
+            "fix:apps/web/app/(platform-admin)/_components/AdminBadge.tsx",
+            "fix:apps/api/src/platform-admin/tenant-mirror.service.ts",
+            "fix:apps/web/app/(platform-admin)/admin/dashboard/page.tsx",
+            "fix:apps/api/scripts/bootstrap-house-tenant.mjs",
+            "fix-plan:r1",
+            "fix:apps/web/app/(platform-admin)/admin/tenants/new/page.tsx",
+            "fix:apps/api/src/platform-admin/tenant-mirror.service.spec.ts",
+            "fix:apps/web/app/(platform-admin)/admin/tenants/new/page.test.tsx",
+            "fix:apps/api/src/platform-admin/platform-admin.service.spec.ts",
+            "fix:apps/web/e2e/01-super-admin.spec.ts",
+            "fix:apps/web/app/(platform-admin)/admin/dashboard/page.test.tsx",
+            "fix:apps/api/src/platform-admin/platform-admin.service.ts",
+            "fix:apps/web/app/(platform-admin)/_components/AdminBadge.test.tsx",
+            "fix-brief:r1"
+          ],
+          "durationMs": 3253194
+        },
+        "Author tests": {
+          "total": {
+            "input": 368,
+            "cacheWrite5m": 975470,
+            "cacheWrite1h": 0,
+            "cacheRead": 26820449,
+            "output": 6469,
+            "messages": 0,
+            "tokens": 27802756,
+            "costUsd": 7.77194775
+          },
+          "byModel": {
+            "claude-haiku-4-5-20251001": {
+              "input": 34,
+              "cacheWrite5m": 62829,
+              "cacheWrite1h": 0,
+              "cacheRead": 176528,
+              "output": 4,
+              "messages": 0,
+              "tokens": 239395,
+              "costUsd": 0.09624305
+            },
+            "claude-sonnet-5": {
+              "input": 334,
+              "cacheWrite5m": 912641,
+              "cacheWrite1h": 0,
+              "cacheRead": 26643921,
+              "output": 6465,
+              "messages": 0,
+              "tokens": 27563361,
+              "costUsd": 7.6757047
+            }
+          },
+          "agents": 7,
+          "labels": [
+            "checkpoint:Author tests",
+            "tests:TP-C",
+            "tests:TP-D",
+            "tests:TP-E",
+            "tests:TP-B",
+            "tests:TP-E:rerun",
+            "tests:TP-A"
+          ],
+          "durationMs": 3391683
+        },
+        "Mutation probe": {
+          "total": {
+            "input": 140,
+            "cacheWrite5m": 523562,
+            "cacheWrite1h": 0,
+            "cacheRead": 3059970,
+            "output": 933,
+            "messages": 0,
+            "tokens": 3584605,
+            "costUsd": 1.64708705
+          },
+          "byModel": {
+            "claude-sonnet-5": {
+              "input": 62,
+              "cacheWrite5m": 327053,
+              "cacheWrite1h": 0,
+              "cacheRead": 2684093,
+              "output": 909,
+              "messages": 0,
+              "tokens": 3012117,
+              "costUsd": 1.3636651000000002
+            },
+            "claude-haiku-4-5-20251001": {
+              "input": 78,
+              "cacheWrite5m": 196509,
+              "cacheWrite1h": 0,
+              "cacheRead": 375877,
+              "output": 24,
+              "messages": 0,
+              "tokens": 572488,
+              "costUsd": 0.28342195000000003
+            }
+          },
+          "agents": 7,
+          "labels": [
+            "mutate:apps/web/app/(platform-admin)/admin/dashboard/page.tsx",
+            "mutate:apps/api/src/platform-admin/tenant-mirror.service.ts",
+            "checkpoint:Mutation probe",
+            "mutation-checksum:after",
+            "mutation-checksum:before",
+            "mutation-remediate:apps/web/app/(platform-admin)/admin/dashboard/page.tsx"
+          ],
+          "durationMs": 464389
+        },
+        "Baseline": {
+          "total": {
+            "input": 616,
+            "cacheWrite5m": 557436,
+            "cacheWrite1h": 0,
+            "cacheRead": 6142970,
+            "output": 1286,
+            "messages": 0,
+            "tokens": 6702308,
+            "costUsd": 1.318138
+          },
+          "byModel": {
+            "claude-haiku-4-5-20251001": {
+              "input": 616,
+              "cacheWrite5m": 557436,
+              "cacheWrite1h": 0,
+              "cacheRead": 6142970,
+              "output": 1286,
+              "messages": 0,
+              "tokens": 6702308,
+              "costUsd": 1.318138
+            }
+          },
+          "agents": 4,
+          "labels": [
+            "baseline-grounding",
+            "baseline-manifest",
+            "baseline-gate",
+            "checkpoint:Baseline"
+          ],
+          "durationMs": 3129863
+        },
+        "Gate & Review": {
+          "total": {
+            "input": 862,
+            "cacheWrite5m": 1404121,
+            "cacheWrite1h": 0,
+            "cacheRead": 17234757,
+            "output": 1468,
+            "messages": 0,
+            "tokens": 18641208,
+            "costUsd": 9.8747051
+          },
+          "byModel": {
+            "claude-haiku-4-5-20251001": {
+              "input": 668,
+              "cacheWrite5m": 357708,
+              "cacheWrite1h": 0,
+              "cacheRead": 5003219,
+              "output": 479,
+              "messages": 0,
+              "tokens": 5362074,
+              "costUsd": 0.9505199
+            },
+            "claude-opus-5": {
+              "input": 90,
+              "cacheWrite5m": 655180,
+              "cacheWrite1h": 0,
+              "cacheRead": 4622957,
+              "output": 499,
+              "messages": 0,
+              "tokens": 5278726,
+              "costUsd": 6.4192785
+            },
+            "claude-sonnet-5": {
+              "input": 104,
+              "cacheWrite5m": 391233,
+              "cacheWrite1h": 0,
+              "cacheRead": 7608581,
+              "output": 490,
+              "messages": 0,
+              "tokens": 8000408,
+              "costUsd": 2.5049067000000003
+            }
+          },
+          "agents": 15,
+          "labels": [
+            "gate-flaky-rerun:r2",
+            "checkpoint:Gate & Review",
+            "review:spec-compliance",
+            "review:correctness",
+            "review:operability",
+            "gate",
+            "review:test-quality",
+            "review:scope-coverage",
+            "review:edge-cases-and-security",
+            "warm:claude-opus-5",
+            "warm:claude-sonnet-5",
+            "regate:after-build-fix",
+            "gate-flaky-rerun:r1",
+            "build-fix",
+            "gate-flaky-rerun:r3"
+          ],
+          "durationMs": 4167638
+        },
+        "Implement": {
+          "total": {
+            "input": 348,
+            "cacheWrite5m": 761783,
+            "cacheWrite1h": 0,
+            "cacheRead": 20275795,
+            "output": 7274,
+            "messages": 0,
+            "tokens": 21045200,
+            "costUsd": 5.936392049999999
+          },
+          "byModel": {
+            "claude-sonnet-5": {
+              "input": 322,
+              "cacheWrite5m": 694564,
+              "cacheWrite1h": 0,
+              "cacheRead": 20149838,
+              "output": 7271,
+              "messages": 0,
+              "tokens": 20851995,
+              "costUsd": 5.8397315999999995
+            },
+            "claude-haiku-4-5-20251001": {
+              "input": 26,
+              "cacheWrite5m": 67219,
+              "cacheWrite1h": 0,
+              "cacheRead": 125957,
+              "output": 3,
+              "messages": 0,
+              "tokens": 193205,
+              "costUsd": 0.09666045
+            }
+          },
+          "agents": 7,
+          "labels": [
+            "impl:WP-F",
+            "impl:WP-A",
+            "checkpoint:Implement",
+            "impl:WP-E",
+            "impl:WP-B",
+            "impl:WP-C",
+            "impl:WP-D"
+          ],
+          "durationMs": 2248053
+        },
+        "Verify": {
+          "total": {
+            "input": 152,
+            "cacheWrite5m": 974910,
+            "cacheWrite1h": 0,
+            "cacheRead": 5007275,
+            "output": 547,
+            "messages": 0,
+            "tokens": 5982884,
+            "costUsd": 6.28736335
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 76,
+              "cacheWrite5m": 562796,
+              "cacheWrite1h": 0,
+              "cacheRead": 2730203,
+              "output": 285,
+              "messages": 0,
+              "tokens": 3293360,
+              "costUsd": 4.8900815
+            },
+            "claude-haiku-4-5-20251001": {
+              "input": 26,
+              "cacheWrite5m": 63459,
+              "cacheWrite1h": 0,
+              "cacheRead": 118248,
+              "output": 3,
+              "messages": 0,
+              "tokens": 181736,
+              "costUsd": 0.09118955000000001
+            },
+            "claude-sonnet-5": {
+              "input": 50,
+              "cacheWrite5m": 348655,
+              "cacheWrite1h": 0,
+              "cacheRead": 2158824,
+              "output": 259,
+              "messages": 0,
+              "tokens": 2507788,
+              "costUsd": 1.3060923
+            }
+          },
+          "agents": 15,
+          "labels": [
+            "refute-batch:apps/api/scripts/bootstrap-house-tenant.mjs",
+            "refute-batch:apps/web/app/(platform-admin)/_components/AdminBadge.tsx",
+            "refute-batch:apps/api/src/platform-admin/platform-admin.service.spec.ts",
+            "refute-batch:apps/web/app/(platform-admin)/_components/AdminBadge.test.tsx",
+            "checkpoint:Verify",
+            "refute-batch:apps/api/src/platform-admin/tenant-mirror.service.ts",
+            "refute-batch:apps/api/src/platform-admin/tenant-mirror.service.spec.ts",
+            "refute-batch:apps/web/e2e/01-super-admin.spec.ts",
+            "refute-batch:apps/web/app/(platform-admin)/admin/dashboard/page.tsx",
+            "refute-batch:apps/api/src/platform-admin/platform-admin.service.ts",
+            "refute-batch:apps/web/app/(platform-admin)/admin/tenants/new/page.test.tsx",
+            "refute-batch:apps/web/app/(platform-admin)/admin/tenants/new/page.tsx",
+            "refute-batch:apps/web/app/(platform-admin)/admin/dashboard/page.test.tsx",
+            "location-check",
+            "refute-batch:apps/api/src/platform-admin/platform-config.service.spec.ts"
+          ],
+          "durationMs": 752995
+        },
+        "UI verify": {
+          "total": {
+            "input": 158,
+            "cacheWrite5m": 293923,
+            "cacheWrite1h": 0,
+            "cacheRead": 10330565,
+            "output": 8736,
+            "messages": 0,
+            "tokens": 10633382,
+            "costUsd": 3.4956445499999997
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 14,
+              "cacheWrite5m": 112485,
+              "cacheWrite1h": 0,
+              "cacheRead": 616141,
+              "output": 23,
+              "messages": 0,
+              "tokens": 728663,
+              "costUsd": 1.01174675
+            },
+            "claude-sonnet-5": {
+              "input": 144,
+              "cacheWrite5m": 181438,
+              "cacheWrite1h": 0,
+              "cacheRead": 9714424,
+              "output": 8713,
+              "messages": 0,
+              "tokens": 9904719,
+              "costUsd": 2.4838978
+            }
+          },
+          "agents": 2,
+          "labels": ["ui-judge", "ui-drive"],
+          "durationMs": 1018480
+        }
+      },
+      "byLabel": {
+        "red-audit:a2": {
+          "total": {
+            "input": 10,
+            "cacheWrite5m": 149524,
+            "cacheWrite1h": 0,
+            "cacheRead": 466928,
+            "output": 13,
+            "messages": 0,
+            "tokens": 616475,
+            "costUsd": 1.168364
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 10,
+              "cacheWrite5m": 149524,
+              "cacheWrite1h": 0,
+              "cacheRead": 466928,
+              "output": 13,
+              "messages": 0,
+              "tokens": 616475,
+              "costUsd": 1.168364
+            }
+          },
+          "agents": 1,
+          "labels": ["red-audit:a2"],
+          "durationMs": 252337
+        },
+        "fix:apps/api/src/platform-admin/platform-config.service.spec.ts": {
+          "total": {
+            "input": 14,
+            "cacheWrite5m": 69636,
+            "cacheWrite1h": 0,
+            "cacheRead": 652344,
+            "output": 28,
+            "messages": 0,
+            "tokens": 722022,
+            "costUsd": 0.762167
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 14,
+              "cacheWrite5m": 69636,
+              "cacheWrite1h": 0,
+              "cacheRead": 652344,
+              "output": 28,
+              "messages": 0,
+              "tokens": 722022,
+              "costUsd": 0.762167
+            }
+          },
+          "agents": 1,
+          "labels": ["fix:apps/api/src/platform-admin/platform-config.service.spec.ts"],
+          "durationMs": 206121
+        },
+        "red-run:a1": {
+          "total": {
+            "input": 50,
+            "cacheWrite5m": 67520,
+            "cacheWrite1h": 0,
+            "cacheRead": 295074,
+            "output": 10,
+            "messages": 0,
+            "tokens": 362654,
+            "costUsd": 0.1140074
+          },
+          "byModel": {
+            "claude-haiku-4-5-20251001": {
+              "input": 50,
+              "cacheWrite5m": 67520,
+              "cacheWrite1h": 0,
+              "cacheRead": 295074,
+              "output": 10,
+              "messages": 0,
+              "tokens": 362654,
+              "costUsd": 0.1140074
+            }
+          },
+          "agents": 1,
+          "labels": ["red-run:a1"],
+          "durationMs": 110016
+        },
+        "fix:apps/web/app/(platform-admin)/_components/AdminBadge.tsx": {
+          "total": {
+            "input": 10,
+            "cacheWrite5m": 57480,
+            "cacheWrite1h": 0,
+            "cacheRead": 403445,
+            "output": 18,
+            "messages": 0,
+            "tokens": 460953,
+            "costUsd": 0.5614725
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 10,
+              "cacheWrite5m": 57480,
+              "cacheWrite1h": 0,
+              "cacheRead": 403445,
+              "output": 18,
+              "messages": 0,
+              "tokens": 460953,
+              "costUsd": 0.5614725
+            }
+          },
+          "agents": 1,
+          "labels": ["fix:apps/web/app/(platform-admin)/_components/AdminBadge.tsx"],
+          "durationMs": 121952
+        },
+        "red-remediate": {
+          "total": {
+            "input": 40,
+            "cacheWrite5m": 159680,
+            "cacheWrite1h": 0,
+            "cacheRead": 2634716,
+            "output": 490,
+            "messages": 0,
+            "tokens": 2794926,
+            "costUsd": 0.9311232
+          },
+          "byModel": {
+            "claude-sonnet-5": {
+              "input": 40,
+              "cacheWrite5m": 159680,
+              "cacheWrite1h": 0,
+              "cacheRead": 2634716,
+              "output": 490,
+              "messages": 0,
+              "tokens": 2794926,
+              "costUsd": 0.9311232
+            }
+          },
+          "agents": 1,
+          "labels": ["red-remediate"],
+          "durationMs": 370107
+        },
+        "checkpoint:Author tests": {
+          "total": {
+            "input": 34,
+            "cacheWrite5m": 62829,
+            "cacheWrite1h": 0,
+            "cacheRead": 176528,
+            "output": 4,
+            "messages": 0,
+            "tokens": 239395,
+            "costUsd": 0.09624305
+          },
+          "byModel": {
+            "claude-haiku-4-5-20251001": {
+              "input": 34,
+              "cacheWrite5m": 62829,
+              "cacheWrite1h": 0,
+              "cacheRead": 176528,
+              "output": 4,
+              "messages": 0,
+              "tokens": 239395,
+              "costUsd": 0.09624305
+            }
+          },
+          "agents": 1,
+          "labels": ["checkpoint:Author tests"],
+          "durationMs": 38542
+        },
+        "mutate:apps/web/app/(platform-admin)/admin/dashboard/page.tsx": {
+          "total": {
+            "input": 20,
+            "cacheWrite5m": 67121,
+            "cacheWrite1h": 0,
+            "cacheRead": 940988,
+            "output": 196,
+            "messages": 0,
+            "tokens": 1008325,
+            "costUsd": 0.3580001
+          },
+          "byModel": {
+            "claude-sonnet-5": {
+              "input": 20,
+              "cacheWrite5m": 67121,
+              "cacheWrite1h": 0,
+              "cacheRead": 940988,
+              "output": 196,
+              "messages": 0,
+              "tokens": 1008325,
+              "costUsd": 0.3580001
+            }
+          },
+          "agents": 1,
+          "labels": ["mutate:apps/web/app/(platform-admin)/admin/dashboard/page.tsx"],
+          "durationMs": 145922
+        },
+        "baseline-grounding": {
+          "total": {
+            "input": 266,
+            "cacheWrite5m": 126929,
+            "cacheWrite1h": 0,
+            "cacheRead": 3610658,
+            "output": 801,
+            "messages": 0,
+            "tokens": 3738654,
+            "costUsd": 0.52399805
+          },
+          "byModel": {
+            "claude-haiku-4-5-20251001": {
+              "input": 266,
+              "cacheWrite5m": 126929,
+              "cacheWrite1h": 0,
+              "cacheRead": 3610658,
+              "output": 801,
+              "messages": 0,
+              "tokens": 3738654,
+              "costUsd": 0.52399805
+            }
+          },
+          "agents": 1,
+          "labels": ["baseline-grounding"],
+          "durationMs": 310013
+        },
+        "fix:apps/api/src/platform-admin/tenant-mirror.service.ts": {
+          "total": {
+            "input": 26,
+            "cacheWrite5m": 139250,
+            "cacheWrite1h": 0,
+            "cacheRead": 1486502,
+            "output": 1287,
+            "messages": 0,
+            "tokens": 1627065,
+            "costUsd": 1.6458685
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 26,
+              "cacheWrite5m": 139250,
+              "cacheWrite1h": 0,
+              "cacheRead": 1486502,
+              "output": 1287,
+              "messages": 0,
+              "tokens": 1627065,
+              "costUsd": 1.6458685
+            }
+          },
+          "agents": 1,
+          "labels": ["fix:apps/api/src/platform-admin/tenant-mirror.service.ts"],
+          "durationMs": 580667
+        },
+        "gate-flaky-rerun:r2": {
+          "total": {
+            "input": 114,
+            "cacheWrite5m": 42002,
+            "cacheWrite1h": 0,
+            "cacheRead": 853386,
+            "output": 27,
+            "messages": 0,
+            "tokens": 895529,
+            "costUsd": 0.1380901
+          },
+          "byModel": {
+            "claude-haiku-4-5-20251001": {
+              "input": 114,
+              "cacheWrite5m": 42002,
+              "cacheWrite1h": 0,
+              "cacheRead": 853386,
+              "output": 27,
+              "messages": 0,
+              "tokens": 895529,
+              "costUsd": 0.1380901
+            }
+          },
+          "agents": 1,
+          "labels": ["gate-flaky-rerun:r2"],
+          "durationMs": 441681
+        },
+        "mutate:apps/api/src/platform-admin/tenant-mirror.service.ts": {
+          "total": {
+            "input": 32,
+            "cacheWrite5m": 168798,
+            "cacheWrite1h": 0,
+            "cacheRead": 1394054,
+            "output": 578,
+            "messages": 0,
+            "tokens": 1563462,
+            "costUsd": 0.7066498
+          },
+          "byModel": {
+            "claude-sonnet-5": {
+              "input": 32,
+              "cacheWrite5m": 168798,
+              "cacheWrite1h": 0,
+              "cacheRead": 1394054,
+              "output": 578,
+              "messages": 0,
+              "tokens": 1563462,
+              "costUsd": 0.7066498
+            }
+          },
+          "agents": 2,
+          "labels": ["mutate:apps/api/src/platform-admin/tenant-mirror.service.ts"],
+          "durationMs": 132833
+        },
+        "checkpoint:Gate & Review": {
+          "total": {
+            "input": 50,
+            "cacheWrite5m": 83847,
+            "cacheWrite1h": 0,
+            "cacheRead": 375663,
+            "output": 8,
+            "messages": 0,
+            "tokens": 459568,
+            "costUsd": 0.14246504999999998
+          },
+          "byModel": {
+            "claude-haiku-4-5-20251001": {
+              "input": 50,
+              "cacheWrite5m": 83847,
+              "cacheWrite1h": 0,
+              "cacheRead": 375663,
+              "output": 8,
+              "messages": 0,
+              "tokens": 459568,
+              "costUsd": 0.14246504999999998
+            }
+          },
+          "agents": 1,
+          "labels": ["checkpoint:Gate & Review"],
+          "durationMs": 185067
+        },
+        "impl:WP-F": {
+          "total": {
+            "input": 60,
+            "cacheWrite5m": 106833,
+            "cacheWrite1h": 0,
+            "cacheRead": 3822230,
+            "output": 1355,
+            "messages": 0,
+            "tokens": 3930478,
+            "costUsd": 1.0451985
+          },
+          "byModel": {
+            "claude-sonnet-5": {
+              "input": 60,
+              "cacheWrite5m": 106833,
+              "cacheWrite1h": 0,
+              "cacheRead": 3822230,
+              "output": 1355,
+              "messages": 0,
+              "tokens": 3930478,
+              "costUsd": 1.0451985
+            }
+          },
+          "agents": 1,
+          "labels": ["impl:WP-F"],
+          "durationMs": 282125
+        },
+        "tests:TP-C": {
+          "total": {
+            "input": 52,
+            "cacheWrite5m": 134486,
+            "cacheWrite1h": 0,
+            "cacheRead": 2922563,
+            "output": 1088,
+            "messages": 0,
+            "tokens": 3058189,
+            "costUsd": 0.9317116
+          },
+          "byModel": {
+            "claude-sonnet-5": {
+              "input": 52,
+              "cacheWrite5m": 134486,
+              "cacheWrite1h": 0,
+              "cacheRead": 2922563,
+              "output": 1088,
+              "messages": 0,
+              "tokens": 3058189,
+              "costUsd": 0.9317116
+            }
+          },
+          "agents": 1,
+          "labels": ["tests:TP-C"],
+          "durationMs": 239157
+        },
+        "tests:TP-D": {
+          "total": {
+            "input": 38,
+            "cacheWrite5m": 145734,
+            "cacheWrite1h": 0,
+            "cacheRead": 2326009,
+            "output": 991,
+            "messages": 0,
+            "tokens": 2472772,
+            "costUsd": 0.8395228
+          },
+          "byModel": {
+            "claude-sonnet-5": {
+              "input": 38,
+              "cacheWrite5m": 145734,
+              "cacheWrite1h": 0,
+              "cacheRead": 2326009,
+              "output": 991,
+              "messages": 0,
+              "tokens": 2472772,
+              "costUsd": 0.8395228
+            }
+          },
+          "agents": 1,
+          "labels": ["tests:TP-D"],
+          "durationMs": 191188
+        },
+        "review:spec-compliance": {
+          "total": {
+            "input": 14,
+            "cacheWrite5m": 117205,
+            "cacheWrite1h": 0,
+            "cacheRead": 787449,
+            "output": 19,
+            "messages": 0,
+            "tokens": 904687,
+            "costUsd": 1.12680075
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 14,
+              "cacheWrite5m": 117205,
+              "cacheWrite1h": 0,
+              "cacheRead": 787449,
+              "output": 19,
+              "messages": 0,
+              "tokens": 904687,
+              "costUsd": 1.12680075
+            }
+          },
+          "agents": 1,
+          "labels": ["review:spec-compliance"],
+          "durationMs": 171629
+        },
+        "impl:WP-A": {
+          "total": {
+            "input": 108,
+            "cacheWrite5m": 114014,
+            "cacheWrite1h": 0,
+            "cacheRead": 7196248,
+            "output": 2512,
+            "messages": 0,
+            "tokens": 7312882,
+            "costUsd": 1.7496206
+          },
+          "byModel": {
+            "claude-sonnet-5": {
+              "input": 108,
+              "cacheWrite5m": 114014,
+              "cacheWrite1h": 0,
+              "cacheRead": 7196248,
+              "output": 2512,
+              "messages": 0,
+              "tokens": 7312882,
+              "costUsd": 1.7496206
+            }
+          },
+          "agents": 1,
+          "labels": ["impl:WP-A"],
+          "durationMs": 896515
+        },
+        "review:correctness": {
+          "total": {
+            "input": 18,
+            "cacheWrite5m": 131944,
+            "cacheWrite1h": 0,
+            "cacheRead": 945267,
+            "output": 25,
+            "messages": 0,
+            "tokens": 1077254,
+            "costUsd": 1.2979985
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 18,
+              "cacheWrite5m": 131944,
+              "cacheWrite1h": 0,
+              "cacheRead": 945267,
+              "output": 25,
+              "messages": 0,
+              "tokens": 1077254,
+              "costUsd": 1.2979985
+            }
+          },
+          "agents": 1,
+          "labels": ["review:correctness"],
+          "durationMs": 235823
+        },
+        "checkpoint:Mutation probe": {
+          "total": {
+            "input": 26,
+            "cacheWrite5m": 63912,
+            "cacheWrite1h": 0,
+            "cacheRead": 118560,
+            "output": 9,
+            "messages": 0,
+            "tokens": 182507,
+            "costUsd": 0.091817
+          },
+          "byModel": {
+            "claude-haiku-4-5-20251001": {
+              "input": 26,
+              "cacheWrite5m": 63912,
+              "cacheWrite1h": 0,
+              "cacheRead": 118560,
+              "output": 9,
+              "messages": 0,
+              "tokens": 182507,
+              "costUsd": 0.091817
+            }
+          },
+          "agents": 1,
+          "labels": ["checkpoint:Mutation probe"],
+          "durationMs": 38316
+        },
+        "fix:apps/web/app/(platform-admin)/admin/dashboard/page.tsx": {
+          "total": {
+            "input": 16,
+            "cacheWrite5m": 83045,
+            "cacheWrite1h": 0,
+            "cacheRead": 843341,
+            "output": 28,
+            "messages": 0,
+            "tokens": 926430,
+            "costUsd": 0.94148175
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 16,
+              "cacheWrite5m": 83045,
+              "cacheWrite1h": 0,
+              "cacheRead": 843341,
+              "output": 28,
+              "messages": 0,
+              "tokens": 926430,
+              "costUsd": 0.94148175
+            }
+          },
+          "agents": 1,
+          "labels": ["fix:apps/web/app/(platform-admin)/admin/dashboard/page.tsx"],
+          "durationMs": 334571
+        },
+        "fix:apps/api/scripts/bootstrap-house-tenant.mjs": {
+          "total": {
+            "input": 12,
+            "cacheWrite5m": 63211,
+            "cacheWrite1h": 0,
+            "cacheRead": 522355,
+            "output": 191,
+            "messages": 0,
+            "tokens": 585769,
+            "costUsd": 0.66108125
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 12,
+              "cacheWrite5m": 63211,
+              "cacheWrite1h": 0,
+              "cacheRead": 522355,
+              "output": 191,
+              "messages": 0,
+              "tokens": 585769,
+              "costUsd": 0.66108125
+            }
+          },
+          "agents": 1,
+          "labels": ["fix:apps/api/scripts/bootstrap-house-tenant.mjs"],
+          "durationMs": 94707
+        },
+        "checkpoint:Implement": {
+          "total": {
+            "input": 26,
+            "cacheWrite5m": 67219,
+            "cacheWrite1h": 0,
+            "cacheRead": 125957,
+            "output": 3,
+            "messages": 0,
+            "tokens": 193205,
+            "costUsd": 0.09666045
+          },
+          "byModel": {
+            "claude-haiku-4-5-20251001": {
+              "input": 26,
+              "cacheWrite5m": 67219,
+              "cacheWrite1h": 0,
+              "cacheRead": 125957,
+              "output": 3,
+              "messages": 0,
+              "tokens": 193205,
+              "costUsd": 0.09666045
+            }
+          },
+          "agents": 1,
+          "labels": ["checkpoint:Implement"],
+          "durationMs": 44510
+        },
+        "impl:WP-E": {
+          "total": {
+            "input": 38,
+            "cacheWrite5m": 134957,
+            "cacheWrite1h": 0,
+            "cacheRead": 2183297,
+            "output": 387,
+            "messages": 0,
+            "tokens": 2318679,
+            "costUsd": 0.7779979
+          },
+          "byModel": {
+            "claude-sonnet-5": {
+              "input": 38,
+              "cacheWrite5m": 134957,
+              "cacheWrite1h": 0,
+              "cacheRead": 2183297,
+              "output": 387,
+              "messages": 0,
+              "tokens": 2318679,
+              "costUsd": 0.7779979
+            }
+          },
+          "agents": 1,
+          "labels": ["impl:WP-E"],
+          "durationMs": 275476
+        },
+        "refute-batch:apps/api/scripts/bootstrap-house-tenant.mjs": {
+          "total": {
+            "input": 8,
+            "cacheWrite5m": 53247,
+            "cacheWrite1h": 0,
+            "cacheRead": 296648,
+            "output": 10,
+            "messages": 0,
+            "tokens": 349913,
+            "costUsd": 0.48140775
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 8,
+              "cacheWrite5m": 53247,
+              "cacheWrite1h": 0,
+              "cacheRead": 296648,
+              "output": 10,
+              "messages": 0,
+              "tokens": 349913,
+              "costUsd": 0.48140775
+            }
+          },
+          "agents": 1,
+          "labels": ["refute-batch:apps/api/scripts/bootstrap-house-tenant.mjs"],
+          "durationMs": 77410
+        },
+        "fix-plan:r1": {
+          "total": {
+            "input": 2,
+            "cacheWrite5m": 79414,
+            "cacheWrite1h": 0,
+            "cacheRead": 0,
+            "output": 2,
+            "messages": 0,
+            "tokens": 79418,
+            "costUsd": 0.992795
+          },
+          "byModel": {
+            "claude-fable-5-1": {
+              "input": 2,
+              "cacheWrite5m": 79414,
+              "cacheWrite1h": 0,
+              "cacheRead": 0,
+              "output": 2,
+              "messages": 0,
+              "tokens": 79418,
+              "costUsd": 0.992795
+            }
+          },
+          "agents": 1,
+          "labels": ["fix-plan:r1"],
+          "durationMs": 0
+        },
+        "baseline-manifest": {
+          "total": {
+            "input": 74,
+            "cacheWrite5m": 76749,
+            "cacheWrite1h": 0,
+            "cacheRead": 522748,
+            "output": 20,
+            "messages": 0,
+            "tokens": 599591,
+            "costUsd": 0.14838505
+          },
+          "byModel": {
+            "claude-haiku-4-5-20251001": {
+              "input": 74,
+              "cacheWrite5m": 76749,
+              "cacheWrite1h": 0,
+              "cacheRead": 522748,
+              "output": 20,
+              "messages": 0,
+              "tokens": 599591,
+              "costUsd": 0.14838505
+            }
+          },
+          "agents": 1,
+          "labels": ["baseline-manifest"],
+          "durationMs": 64686
+        },
+        "mutation-checksum:after": {
+          "total": {
+            "input": 34,
+            "cacheWrite5m": 74228,
+            "cacheWrite1h": 0,
+            "cacheRead": 202089,
+            "output": 10,
+            "messages": 0,
+            "tokens": 276361,
+            "costUsd": 0.1130779
+          },
+          "byModel": {
+            "claude-haiku-4-5-20251001": {
+              "input": 34,
+              "cacheWrite5m": 74228,
+              "cacheWrite1h": 0,
+              "cacheRead": 202089,
+              "output": 10,
+              "messages": 0,
+              "tokens": 276361,
+              "costUsd": 0.1130779
+            }
+          },
+          "agents": 1,
+          "labels": ["mutation-checksum:after"],
+          "durationMs": 52004
+        },
+        "tests:TP-E": {
+          "total": {
+            "input": 60,
+            "cacheWrite5m": 112632,
+            "cacheWrite1h": 0,
+            "cacheRead": 3963753,
+            "output": 1026,
+            "messages": 0,
+            "tokens": 4077471,
+            "costUsd": 1.0847106000000002
+          },
+          "byModel": {
+            "claude-sonnet-5": {
+              "input": 60,
+              "cacheWrite5m": 112632,
+              "cacheWrite1h": 0,
+              "cacheRead": 3963753,
+              "output": 1026,
+              "messages": 0,
+              "tokens": 4077471,
+              "costUsd": 1.0847106000000002
+            }
+          },
+          "agents": 1,
+          "labels": ["tests:TP-E"],
+          "durationMs": 780678
+        },
+        "review:operability": {
+          "total": {
+            "input": 12,
+            "cacheWrite5m": 107436,
+            "cacheWrite1h": 0,
+            "cacheRead": 637790,
+            "output": 18,
+            "messages": 0,
+            "tokens": 745256,
+            "costUsd": 0.99088
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 12,
+              "cacheWrite5m": 107436,
+              "cacheWrite1h": 0,
+              "cacheRead": 637790,
+              "output": 18,
+              "messages": 0,
+              "tokens": 745256,
+              "costUsd": 0.99088
+            }
+          },
+          "agents": 1,
+          "labels": ["review:operability"],
+          "durationMs": 207000
+        },
+        "refute-batch:apps/web/app/(platform-admin)/_components/AdminBadge.tsx": {
+          "total": {
+            "input": 6,
+            "cacheWrite5m": 57468,
+            "cacheWrite1h": 0,
+            "cacheRead": 214429,
+            "output": 10,
+            "messages": 0,
+            "tokens": 271913,
+            "costUsd": 0.4666695
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 6,
+              "cacheWrite5m": 57468,
+              "cacheWrite1h": 0,
+              "cacheRead": 214429,
+              "output": 10,
+              "messages": 0,
+              "tokens": 271913,
+              "costUsd": 0.4666695
+            }
+          },
+          "agents": 1,
+          "labels": ["refute-batch:apps/web/app/(platform-admin)/_components/AdminBadge.tsx"],
+          "durationMs": 27057
+        },
+        "tests:TP-B": {
+          "total": {
+            "input": 132,
+            "cacheWrite5m": 298518,
+            "cacheWrite1h": 0,
+            "cacheRead": 14619954,
+            "output": 2040,
+            "messages": 0,
+            "tokens": 14920644,
+            "costUsd": 3.6909498000000003
+          },
+          "byModel": {
+            "claude-sonnet-5": {
+              "input": 132,
+              "cacheWrite5m": 298518,
+              "cacheWrite1h": 0,
+              "cacheRead": 14619954,
+              "output": 2040,
+              "messages": 0,
+              "tokens": 14920644,
+              "costUsd": 3.6909498000000003
+            }
+          },
+          "agents": 1,
+          "labels": ["tests:TP-B"],
+          "durationMs": 1714789
+        },
+        "gate": {
+          "total": {
+            "input": 90,
+            "cacheWrite5m": 71742,
+            "cacheWrite1h": 0,
+            "cacheRead": 608117,
+            "output": 21,
+            "messages": 0,
+            "tokens": 679970,
+            "costUsd": 0.15068420000000002
+          },
+          "byModel": {
+            "claude-haiku-4-5-20251001": {
+              "input": 90,
+              "cacheWrite5m": 71742,
+              "cacheWrite1h": 0,
+              "cacheRead": 608117,
+              "output": 21,
+              "messages": 0,
+              "tokens": 679970,
+              "costUsd": 0.15068420000000002
+            }
+          },
+          "agents": 1,
+          "labels": ["gate"],
+          "durationMs": 456512
+        },
+        "refute-batch:apps/api/src/platform-admin/platform-admin.service.spec.ts": {
+          "total": {
+            "input": 10,
+            "cacheWrite5m": 51341,
+            "cacheWrite1h": 0,
+            "cacheRead": 383948,
+            "output": 162,
+            "messages": 0,
+            "tokens": 435461,
+            "costUsd": 0.51695525
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 10,
+              "cacheWrite5m": 51341,
+              "cacheWrite1h": 0,
+              "cacheRead": 383948,
+              "output": 162,
+              "messages": 0,
+              "tokens": 435461,
+              "costUsd": 0.51695525
+            }
+          },
+          "agents": 1,
+          "labels": ["refute-batch:apps/api/src/platform-admin/platform-admin.service.spec.ts"],
+          "durationMs": 50468
+        },
+        "refute-batch:apps/web/app/(platform-admin)/_components/AdminBadge.test.tsx": {
+          "total": {
+            "input": 8,
+            "cacheWrite5m": 48549,
+            "cacheWrite1h": 0,
+            "cacheRead": 287889,
+            "output": 10,
+            "messages": 0,
+            "tokens": 336456,
+            "costUsd": 0.44766575
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 8,
+              "cacheWrite5m": 48549,
+              "cacheWrite1h": 0,
+              "cacheRead": 287889,
+              "output": 10,
+              "messages": 0,
+              "tokens": 336456,
+              "costUsd": 0.44766575
+            }
+          },
+          "agents": 1,
+          "labels": ["refute-batch:apps/web/app/(platform-admin)/_components/AdminBadge.test.tsx"],
+          "durationMs": 68780
+        },
+        "fix:apps/web/app/(platform-admin)/admin/tenants/new/page.tsx": {
+          "total": {
+            "input": 12,
+            "cacheWrite5m": 80178,
+            "cacheWrite1h": 0,
+            "cacheRead": 587243,
+            "output": 15,
+            "messages": 0,
+            "tokens": 667448,
+            "costUsd": 0.795169
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 12,
+              "cacheWrite5m": 80178,
+              "cacheWrite1h": 0,
+              "cacheRead": 587243,
+              "output": 15,
+              "messages": 0,
+              "tokens": 667448,
+              "costUsd": 0.795169
+            }
+          },
+          "agents": 1,
+          "labels": ["fix:apps/web/app/(platform-admin)/admin/tenants/new/page.tsx"],
+          "durationMs": 117644
+        },
+        "fix:apps/api/src/platform-admin/tenant-mirror.service.spec.ts": {
+          "total": {
+            "input": 12,
+            "cacheWrite5m": 73599,
+            "cacheWrite1h": 0,
+            "cacheRead": 558331,
+            "output": 204,
+            "messages": 0,
+            "tokens": 632146,
+            "costUsd": 0.74431925
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 12,
+              "cacheWrite5m": 73599,
+              "cacheWrite1h": 0,
+              "cacheRead": 558331,
+              "output": 204,
+              "messages": 0,
+              "tokens": 632146,
+              "costUsd": 0.74431925
+            }
+          },
+          "agents": 1,
+          "labels": ["fix:apps/api/src/platform-admin/tenant-mirror.service.spec.ts"],
+          "durationMs": 162310
+        },
+        "checkpoint:Verify": {
+          "total": {
+            "input": 26,
+            "cacheWrite5m": 63459,
+            "cacheWrite1h": 0,
+            "cacheRead": 118248,
+            "output": 3,
+            "messages": 0,
+            "tokens": 181736,
+            "costUsd": 0.09118955000000001
+          },
+          "byModel": {
+            "claude-haiku-4-5-20251001": {
+              "input": 26,
+              "cacheWrite5m": 63459,
+              "cacheWrite1h": 0,
+              "cacheRead": 118248,
+              "output": 3,
+              "messages": 0,
+              "tokens": 181736,
+              "costUsd": 0.09118955000000001
+            }
+          },
+          "agents": 1,
+          "labels": ["checkpoint:Verify"],
+          "durationMs": 34168
+        },
+        "refute-batch:apps/api/src/platform-admin/tenant-mirror.service.ts": {
+          "total": {
+            "input": 16,
+            "cacheWrite5m": 72256,
+            "cacheWrite1h": 0,
+            "cacheRead": 787493,
+            "output": 201,
+            "messages": 0,
+            "tokens": 859966,
+            "costUsd": 0.3401806
+          },
+          "byModel": {
+            "claude-sonnet-5": {
+              "input": 16,
+              "cacheWrite5m": 72256,
+              "cacheWrite1h": 0,
+              "cacheRead": 787493,
+              "output": 201,
+              "messages": 0,
+              "tokens": 859966,
+              "costUsd": 0.3401806
+            }
+          },
+          "agents": 1,
+          "labels": ["refute-batch:apps/api/src/platform-admin/tenant-mirror.service.ts"],
+          "durationMs": 69512
+        },
+        "fix:apps/web/app/(platform-admin)/admin/tenants/new/page.test.tsx": {
+          "total": {
+            "input": 22,
+            "cacheWrite5m": 171272,
+            "cacheWrite1h": 0,
+            "cacheRead": 1122028,
+            "output": 1128,
+            "messages": 0,
+            "tokens": 1294450,
+            "costUsd": 1.659774
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 22,
+              "cacheWrite5m": 171272,
+              "cacheWrite1h": 0,
+              "cacheRead": 1122028,
+              "output": 1128,
+              "messages": 0,
+              "tokens": 1294450,
+              "costUsd": 1.659774
+            }
+          },
+          "agents": 1,
+          "labels": ["fix:apps/web/app/(platform-admin)/admin/tenants/new/page.test.tsx"],
+          "durationMs": 582446
+        },
+        "fix:apps/api/src/platform-admin/platform-admin.service.spec.ts": {
+          "total": {
+            "input": 22,
+            "cacheWrite5m": 75466,
+            "cacheWrite1h": 0,
+            "cacheRead": 1090048,
+            "output": 213,
+            "messages": 0,
+            "tokens": 1165749,
+            "costUsd": 1.0221215
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 22,
+              "cacheWrite5m": 75466,
+              "cacheWrite1h": 0,
+              "cacheRead": 1090048,
+              "output": 213,
+              "messages": 0,
+              "tokens": 1165749,
+              "costUsd": 1.0221215
+            }
+          },
+          "agents": 1,
+          "labels": ["fix:apps/api/src/platform-admin/platform-admin.service.spec.ts"],
+          "durationMs": 224433
+        },
+        "review:test-quality": {
+          "total": {
+            "input": 68,
+            "cacheWrite5m": 177822,
+            "cacheWrite1h": 0,
+            "cacheRead": 5136642,
+            "output": 418,
+            "messages": 0,
+            "tokens": 5314950,
+            "costUsd": 1.4761993999999998
+          },
+          "byModel": {
+            "claude-sonnet-5": {
+              "input": 68,
+              "cacheWrite5m": 177822,
+              "cacheWrite1h": 0,
+              "cacheRead": 5136642,
+              "output": 418,
+              "messages": 0,
+              "tokens": 5314950,
+              "costUsd": 1.4761993999999998
+            }
+          },
+          "agents": 1,
+          "labels": ["review:test-quality"],
+          "durationMs": 353811
+        },
+        "review:scope-coverage": {
+          "total": {
+            "input": 34,
+            "cacheWrite5m": 131661,
+            "cacheWrite1h": 0,
+            "cacheRead": 2471939,
+            "output": 71,
+            "messages": 0,
+            "tokens": 2603705,
+            "costUsd": 0.8243183000000001
+          },
+          "byModel": {
+            "claude-sonnet-5": {
+              "input": 34,
+              "cacheWrite5m": 131661,
+              "cacheWrite1h": 0,
+              "cacheRead": 2471939,
+              "output": 71,
+              "messages": 0,
+              "tokens": 2603705,
+              "costUsd": 0.8243183000000001
+            }
+          },
+          "agents": 1,
+          "labels": ["review:scope-coverage"],
+          "durationMs": 159306
+        },
+        "refute-batch:apps/api/src/platform-admin/tenant-mirror.service.spec.ts": {
+          "total": {
+            "input": 12,
+            "cacheWrite5m": 104703,
+            "cacheWrite1h": 0,
+            "cacheRead": 470267,
+            "output": 24,
+            "messages": 0,
+            "tokens": 575006,
+            "costUsd": 0.3560749
+          },
+          "byModel": {
+            "claude-sonnet-5": {
+              "input": 12,
+              "cacheWrite5m": 104703,
+              "cacheWrite1h": 0,
+              "cacheRead": 470267,
+              "output": 24,
+              "messages": 0,
+              "tokens": 575006,
+              "costUsd": 0.3560749
+            }
+          },
+          "agents": 1,
+          "labels": ["refute-batch:apps/api/src/platform-admin/tenant-mirror.service.spec.ts"],
+          "durationMs": 50391
+        },
+        "refute-batch:apps/web/e2e/01-super-admin.spec.ts": {
+          "total": {
+            "input": 8,
+            "cacheWrite5m": 49812,
+            "cacheWrite1h": 0,
+            "cacheRead": 290513,
+            "output": 14,
+            "messages": 0,
+            "tokens": 340347,
+            "costUsd": 0.4569715
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 8,
+              "cacheWrite5m": 49812,
+              "cacheWrite1h": 0,
+              "cacheRead": 290513,
+              "output": 14,
+              "messages": 0,
+              "tokens": 340347,
+              "costUsd": 0.4569715
+            }
+          },
+          "agents": 1,
+          "labels": ["refute-batch:apps/web/e2e/01-super-admin.spec.ts"],
+          "durationMs": 38960
+        },
+        "review:edge-cases-and-security": {
+          "total": {
+            "input": 18,
+            "cacheWrite5m": 105834,
+            "cacheWrite1h": 0,
+            "cacheRead": 1038004,
+            "output": 29,
+            "messages": 0,
+            "tokens": 1143885,
+            "costUsd": 1.1812795
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 18,
+              "cacheWrite5m": 105834,
+              "cacheWrite1h": 0,
+              "cacheRead": 1038004,
+              "output": 29,
+              "messages": 0,
+              "tokens": 1143885,
+              "costUsd": 1.1812795
+            }
+          },
+          "agents": 1,
+          "labels": ["review:edge-cases-and-security"],
+          "durationMs": 222887
+        },
+        "red-run:a2": {
+          "total": {
+            "input": 68,
+            "cacheWrite5m": 69089,
+            "cacheWrite1h": 0,
+            "cacheRead": 431102,
+            "output": 21,
+            "messages": 0,
+            "tokens": 500280,
+            "costUsd": 0.12964445000000002
+          },
+          "byModel": {
+            "claude-haiku-4-5-20251001": {
+              "input": 68,
+              "cacheWrite5m": 69089,
+              "cacheWrite1h": 0,
+              "cacheRead": 431102,
+              "output": 21,
+              "messages": 0,
+              "tokens": 500280,
+              "costUsd": 0.12964445000000002
+            }
+          },
+          "agents": 1,
+          "labels": ["red-run:a2"],
+          "durationMs": 228398
+        },
+        "refute-batch:apps/web/app/(platform-admin)/admin/dashboard/page.tsx": {
+          "total": {
+            "input": 10,
+            "cacheWrite5m": 52916,
+            "cacheWrite1h": 0,
+            "cacheRead": 386932,
+            "output": 21,
+            "messages": 0,
+            "tokens": 439879,
+            "costUsd": 0.524766
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 10,
+              "cacheWrite5m": 52916,
+              "cacheWrite1h": 0,
+              "cacheRead": 386932,
+              "output": 21,
+              "messages": 0,
+              "tokens": 439879,
+              "costUsd": 0.524766
+            }
+          },
+          "agents": 1,
+          "labels": ["refute-batch:apps/web/app/(platform-admin)/admin/dashboard/page.tsx"],
+          "durationMs": 55904
+        },
+        "baseline-gate": {
+          "total": {
+            "input": 250,
+            "cacheWrite5m": 292859,
+            "cacheWrite1h": 0,
+            "cacheRead": 1893797,
+            "output": 461,
+            "messages": 0,
+            "tokens": 2187367,
+            "costUsd": 0.55800845
+          },
+          "byModel": {
+            "claude-haiku-4-5-20251001": {
+              "input": 250,
+              "cacheWrite5m": 292859,
+              "cacheWrite1h": 0,
+              "cacheRead": 1893797,
+              "output": 461,
+              "messages": 0,
+              "tokens": 2187367,
+              "costUsd": 0.55800845
+            }
+          },
+          "agents": 1,
+          "labels": ["baseline-gate"],
+          "durationMs": 2733246
+        },
+        "warm:claude-opus-5": {
+          "total": {
+            "input": 4,
+            "cacheWrite5m": 77870,
+            "cacheWrite1h": 0,
+            "cacheRead": 77826,
+            "output": 57,
+            "messages": 0,
+            "tokens": 155757,
+            "costUsd": 0.5270455
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 4,
+              "cacheWrite5m": 77870,
+              "cacheWrite1h": 0,
+              "cacheRead": 77826,
+              "output": 57,
+              "messages": 0,
+              "tokens": 155757,
+              "costUsd": 0.5270455
+            }
+          },
+          "agents": 1,
+          "labels": ["warm:claude-opus-5"],
+          "durationMs": 2150
+        },
+        "fix:apps/web/e2e/01-super-admin.spec.ts": {
+          "total": {
+            "input": 14,
+            "cacheWrite5m": 62658,
+            "cacheWrite1h": 0,
+            "cacheRead": 616030,
+            "output": 253,
+            "messages": 0,
+            "tokens": 678955,
+            "costUsd": 0.7060225
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 14,
+              "cacheWrite5m": 62658,
+              "cacheWrite1h": 0,
+              "cacheRead": 616030,
+              "output": 253,
+              "messages": 0,
+              "tokens": 678955,
+              "costUsd": 0.7060225
+            }
+          },
+          "agents": 1,
+          "labels": ["fix:apps/web/e2e/01-super-admin.spec.ts"],
+          "durationMs": 181489
+        },
+        "warm:claude-sonnet-5": {
+          "total": {
+            "input": 2,
+            "cacheWrite5m": 81750,
+            "cacheWrite1h": 0,
+            "cacheRead": 0,
+            "output": 1,
+            "messages": 0,
+            "tokens": 81753,
+            "costUsd": 0.204389
+          },
+          "byModel": {
+            "claude-sonnet-5": {
+              "input": 2,
+              "cacheWrite5m": 81750,
+              "cacheWrite1h": 0,
+              "cacheRead": 0,
+              "output": 1,
+              "messages": 0,
+              "tokens": 81753,
+              "costUsd": 0.204389
+            }
+          },
+          "agents": 1,
+          "labels": ["warm:claude-sonnet-5"],
+          "durationMs": 0
+        },
+        "refute-batch:apps/api/src/platform-admin/platform-admin.service.ts": {
+          "total": {
+            "input": 16,
+            "cacheWrite5m": 60148,
+            "cacheWrite1h": 0,
+            "cacheRead": 703317,
+            "output": 25,
+            "messages": 0,
+            "tokens": 763506,
+            "costUsd": 0.2913154
+          },
+          "byModel": {
+            "claude-sonnet-5": {
+              "input": 16,
+              "cacheWrite5m": 60148,
+              "cacheWrite1h": 0,
+              "cacheRead": 703317,
+              "output": 25,
+              "messages": 0,
+              "tokens": 763506,
+              "costUsd": 0.2913154
+            }
+          },
+          "agents": 1,
+          "labels": ["refute-batch:apps/api/src/platform-admin/platform-admin.service.ts"],
+          "durationMs": 56012
+        },
+        "red-audit:a1": {
+          "total": {
+            "input": 10,
+            "cacheWrite5m": 138170,
+            "cacheWrite1h": 0,
+            "cacheRead": 470613,
+            "output": 12,
+            "messages": 0,
+            "tokens": 608805,
+            "costUsd": 1.099219
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 10,
+              "cacheWrite5m": 138170,
+              "cacheWrite1h": 0,
+              "cacheRead": 470613,
+              "output": 12,
+              "messages": 0,
+              "tokens": 608805,
+              "costUsd": 1.099219
+            }
+          },
+          "agents": 1,
+          "labels": ["red-audit:a1"],
+          "durationMs": 223324
+        },
+        "refute-batch:apps/web/app/(platform-admin)/admin/tenants/new/page.test.tsx": {
+          "total": {
+            "input": 8,
+            "cacheWrite5m": 54940,
+            "cacheWrite1h": 0,
+            "cacheRead": 295517,
+            "output": 15,
+            "messages": 0,
+            "tokens": 350480,
+            "costUsd": 0.4915485
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 8,
+              "cacheWrite5m": 54940,
+              "cacheWrite1h": 0,
+              "cacheRead": 295517,
+              "output": 15,
+              "messages": 0,
+              "tokens": 350480,
+              "costUsd": 0.4915485
+            }
+          },
+          "agents": 1,
+          "labels": ["refute-batch:apps/web/app/(platform-admin)/admin/tenants/new/page.test.tsx"],
+          "durationMs": 116643
+        },
+        "checkpoint:Baseline": {
+          "total": {
+            "input": 26,
+            "cacheWrite5m": 60899,
+            "cacheWrite1h": 0,
+            "cacheRead": 115767,
+            "output": 4,
+            "messages": 0,
+            "tokens": 176696,
+            "costUsd": 0.08774645
+          },
+          "byModel": {
+            "claude-haiku-4-5-20251001": {
+              "input": 26,
+              "cacheWrite5m": 60899,
+              "cacheWrite1h": 0,
+              "cacheRead": 115767,
+              "output": 4,
+              "messages": 0,
+              "tokens": 176696,
+              "costUsd": 0.08774645
+            }
+          },
+          "agents": 1,
+          "labels": ["checkpoint:Baseline"],
+          "durationMs": 21918
+        },
+        "regate:after-build-fix": {
+          "total": {
+            "input": 122,
+            "cacheWrite5m": 75355,
+            "cacheWrite1h": 0,
+            "cacheRead": 904102,
+            "output": 190,
+            "messages": 0,
+            "tokens": 979769,
+            "costUsd": 0.18567595
+          },
+          "byModel": {
+            "claude-haiku-4-5-20251001": {
+              "input": 122,
+              "cacheWrite5m": 75355,
+              "cacheWrite1h": 0,
+              "cacheRead": 904102,
+              "output": 190,
+              "messages": 0,
+              "tokens": 979769,
+              "costUsd": 0.18567595
+            }
+          },
+          "agents": 1,
+          "labels": ["regate:after-build-fix"],
+          "durationMs": 275204
+        },
+        "fix:apps/web/app/(platform-admin)/admin/dashboard/page.test.tsx": {
+          "total": {
+            "input": 16,
+            "cacheWrite5m": 82753,
+            "cacheWrite1h": 0,
+            "cacheRead": 813412,
+            "output": 27,
+            "messages": 0,
+            "tokens": 896208,
+            "costUsd": 0.92466725
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 16,
+              "cacheWrite5m": 82753,
+              "cacheWrite1h": 0,
+              "cacheRead": 813412,
+              "output": 27,
+              "messages": 0,
+              "tokens": 896208,
+              "costUsd": 0.92466725
+            }
+          },
+          "agents": 1,
+          "labels": ["fix:apps/web/app/(platform-admin)/admin/dashboard/page.test.tsx"],
+          "durationMs": 241475
+        },
+        "gate-flaky-rerun:r1": {
+          "total": {
+            "input": 98,
+            "cacheWrite5m": 39449,
+            "cacheWrite1h": 0,
+            "cacheRead": 703720,
+            "output": 19,
+            "messages": 0,
+            "tokens": 743286,
+            "costUsd": 0.11987625
+          },
+          "byModel": {
+            "claude-haiku-4-5-20251001": {
+              "input": 98,
+              "cacheWrite5m": 39449,
+              "cacheWrite1h": 0,
+              "cacheRead": 703720,
+              "output": 19,
+              "messages": 0,
+              "tokens": 743286,
+              "costUsd": 0.11987625
+            }
+          },
+          "agents": 1,
+          "labels": ["gate-flaky-rerun:r1"],
+          "durationMs": 369558
+        },
+        "mutation-checksum:before": {
+          "total": {
+            "input": 18,
+            "cacheWrite5m": 58369,
+            "cacheWrite1h": 0,
+            "cacheRead": 55228,
+            "output": 5,
+            "messages": 0,
+            "tokens": 113620,
+            "costUsd": 0.07852705
+          },
+          "byModel": {
+            "claude-haiku-4-5-20251001": {
+              "input": 18,
+              "cacheWrite5m": 58369,
+              "cacheWrite1h": 0,
+              "cacheRead": 55228,
+              "output": 5,
+              "messages": 0,
+              "tokens": 113620,
+              "costUsd": 0.07852705
+            }
+          },
+          "agents": 1,
+          "labels": ["mutation-checksum:before"],
+          "durationMs": 6862
+        },
+        "tests:TP-E:rerun": {
+          "total": {
+            "input": 34,
+            "cacheWrite5m": 146205,
+            "cacheWrite1h": 0,
+            "cacheRead": 1964595,
+            "output": 953,
+            "messages": 0,
+            "tokens": 2111787,
+            "costUsd": 0.7680295
+          },
+          "byModel": {
+            "claude-sonnet-5": {
+              "input": 34,
+              "cacheWrite5m": 146205,
+              "cacheWrite1h": 0,
+              "cacheRead": 1964595,
+              "output": 953,
+              "messages": 0,
+              "tokens": 2111787,
+              "costUsd": 0.7680295
+            }
+          },
+          "agents": 1,
+          "labels": ["tests:TP-E:rerun"],
+          "durationMs": 270436
+        },
+        "mutation-remediate:apps/web/app/(platform-admin)/admin/dashboard/page.tsx": {
+          "total": {
+            "input": 10,
+            "cacheWrite5m": 91134,
+            "cacheWrite1h": 0,
+            "cacheRead": 349051,
+            "output": 135,
+            "messages": 0,
+            "tokens": 440330,
+            "costUsd": 0.29901520000000004
+          },
+          "byModel": {
+            "claude-sonnet-5": {
+              "input": 10,
+              "cacheWrite5m": 91134,
+              "cacheWrite1h": 0,
+              "cacheRead": 349051,
+              "output": 135,
+              "messages": 0,
+              "tokens": 440330,
+              "costUsd": 0.29901520000000004
+            }
+          },
+          "agents": 1,
+          "labels": ["mutation-remediate:apps/web/app/(platform-admin)/admin/dashboard/page.tsx"],
+          "durationMs": 88452
+        },
+        "ui-judge": {
+          "total": {
+            "input": 14,
+            "cacheWrite5m": 112485,
+            "cacheWrite1h": 0,
+            "cacheRead": 616141,
+            "output": 23,
+            "messages": 0,
+            "tokens": 728663,
+            "costUsd": 1.01174675
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 14,
+              "cacheWrite5m": 112485,
+              "cacheWrite1h": 0,
+              "cacheRead": 616141,
+              "output": 23,
+              "messages": 0,
+              "tokens": 728663,
+              "costUsd": 1.01174675
+            }
+          },
+          "agents": 1,
+          "labels": ["ui-judge"],
+          "durationMs": 72517
+        },
+        "impl:WP-B": {
+          "total": {
+            "input": 26,
+            "cacheWrite5m": 114527,
+            "cacheWrite1h": 0,
+            "cacheRead": 1697563,
+            "output": 61,
+            "messages": 0,
+            "tokens": 1812177,
+            "costUsd": 0.6264921000000001
+          },
+          "byModel": {
+            "claude-sonnet-5": {
+              "input": 26,
+              "cacheWrite5m": 114527,
+              "cacheWrite1h": 0,
+              "cacheRead": 1697563,
+              "output": 61,
+              "messages": 0,
+              "tokens": 1812177,
+              "costUsd": 0.6264921000000001
+            }
+          },
+          "agents": 1,
+          "labels": ["impl:WP-B"],
+          "durationMs": 215096
+        },
+        "impl:WP-C": {
+          "total": {
+            "input": 58,
+            "cacheWrite5m": 96690,
+            "cacheWrite1h": 0,
+            "cacheRead": 3575079,
+            "output": 1837,
+            "messages": 0,
+            "tokens": 3673664,
+            "costUsd": 0.9752268000000001
+          },
+          "byModel": {
+            "claude-sonnet-5": {
+              "input": 58,
+              "cacheWrite5m": 96690,
+              "cacheWrite1h": 0,
+              "cacheRead": 3575079,
+              "output": 1837,
+              "messages": 0,
+              "tokens": 3673664,
+              "costUsd": 0.9752268000000001
+            }
+          },
+          "agents": 1,
+          "labels": ["impl:WP-C"],
+          "durationMs": 302170
+        },
+        "ui-drive": {
+          "total": {
+            "input": 144,
+            "cacheWrite5m": 181438,
+            "cacheWrite1h": 0,
+            "cacheRead": 9714424,
+            "output": 8713,
+            "messages": 0,
+            "tokens": 9904719,
+            "costUsd": 2.4838978
+          },
+          "byModel": {
+            "claude-sonnet-5": {
+              "input": 144,
+              "cacheWrite5m": 181438,
+              "cacheWrite1h": 0,
+              "cacheRead": 9714424,
+              "output": 8713,
+              "messages": 0,
+              "tokens": 9904719,
+              "costUsd": 2.4838978
+            }
+          },
+          "agents": 1,
+          "labels": ["ui-drive"],
+          "durationMs": 945963
+        },
+        "tests:TP-A": {
+          "total": {
+            "input": 18,
+            "cacheWrite5m": 75066,
+            "cacheWrite1h": 0,
+            "cacheRead": 847047,
+            "output": 367,
+            "messages": 0,
+            "tokens": 922498,
+            "costUsd": 0.3607804
+          },
+          "byModel": {
+            "claude-sonnet-5": {
+              "input": 18,
+              "cacheWrite5m": 75066,
+              "cacheWrite1h": 0,
+              "cacheRead": 847047,
+              "output": 367,
+              "messages": 0,
+              "tokens": 922498,
+              "costUsd": 0.3607804
+            }
+          },
+          "agents": 1,
+          "labels": ["tests:TP-A"],
+          "durationMs": 156893
+        },
+        "checkpoint:Red gate": {
+          "total": {
+            "input": 26,
+            "cacheWrite5m": 70419,
+            "cacheWrite1h": 0,
+            "cacheRead": 125855,
+            "output": 5,
+            "messages": 0,
+            "tokens": 196305,
+            "costUsd": 0.10066025
+          },
+          "byModel": {
+            "claude-haiku-4-5-20251001": {
+              "input": 26,
+              "cacheWrite5m": 70419,
+              "cacheWrite1h": 0,
+              "cacheRead": 125855,
+              "output": 5,
+              "messages": 0,
+              "tokens": 196305,
+              "costUsd": 0.10066025
+            }
+          },
+          "agents": 1,
+          "labels": ["checkpoint:Red gate"],
+          "durationMs": 74504
+        },
+        "fix:apps/api/src/platform-admin/platform-admin.service.ts": {
+          "total": {
+            "input": 8,
+            "cacheWrite5m": 52883,
+            "cacheWrite1h": 0,
+            "cacheRead": 300467,
+            "output": 16,
+            "messages": 0,
+            "tokens": 353374,
+            "costUsd": 0.48119225
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 8,
+              "cacheWrite5m": 52883,
+              "cacheWrite1h": 0,
+              "cacheRead": 300467,
+              "output": 16,
+              "messages": 0,
+              "tokens": 353374,
+              "costUsd": 0.48119225
+            }
+          },
+          "agents": 1,
+          "labels": ["fix:apps/api/src/platform-admin/platform-admin.service.ts"],
+          "durationMs": 32173
+        },
+        "refute-batch:apps/web/app/(platform-admin)/admin/tenants/new/page.tsx": {
+          "total": {
+            "input": 6,
+            "cacheWrite5m": 51294,
+            "cacheWrite1h": 0,
+            "cacheRead": 208591,
+            "output": 10,
+            "messages": 0,
+            "tokens": 259901,
+            "costUsd": 0.425163
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 6,
+              "cacheWrite5m": 51294,
+              "cacheWrite1h": 0,
+              "cacheRead": 208591,
+              "output": 10,
+              "messages": 0,
+              "tokens": 259901,
+              "costUsd": 0.425163
+            }
+          },
+          "agents": 1,
+          "labels": ["refute-batch:apps/web/app/(platform-admin)/admin/tenants/new/page.tsx"],
+          "durationMs": 32139
+        },
+        "refute-batch:apps/web/app/(platform-admin)/admin/dashboard/page.test.tsx": {
+          "total": {
+            "input": 6,
+            "cacheWrite5m": 96509,
+            "cacheWrite1h": 0,
+            "cacheRead": 162273,
+            "output": 13,
+            "messages": 0,
+            "tokens": 258801,
+            "costUsd": 0.68467275
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 6,
+              "cacheWrite5m": 96509,
+              "cacheWrite1h": 0,
+              "cacheRead": 162273,
+              "output": 13,
+              "messages": 0,
+              "tokens": 258801,
+              "costUsd": 0.68467275
+            }
+          },
+          "agents": 1,
+          "labels": ["refute-batch:apps/web/app/(platform-admin)/admin/dashboard/page.test.tsx"],
+          "durationMs": 23914
+        },
+        "location-check": {
+          "total": {
+            "input": 6,
+            "cacheWrite5m": 111548,
+            "cacheWrite1h": 0,
+            "cacheRead": 197747,
+            "output": 9,
+            "messages": 0,
+            "tokens": 309310,
+            "costUsd": 0.3185214
+          },
+          "byModel": {
+            "claude-sonnet-5": {
+              "input": 6,
+              "cacheWrite5m": 111548,
+              "cacheWrite1h": 0,
+              "cacheRead": 197747,
+              "output": 9,
+              "messages": 0,
+              "tokens": 309310,
+              "costUsd": 0.3185214
+            }
+          },
+          "agents": 1,
+          "labels": ["location-check"],
+          "durationMs": 21632
+        },
+        "fix:apps/web/app/(platform-admin)/_components/AdminBadge.test.tsx": {
+          "total": {
+            "input": 10,
+            "cacheWrite5m": 56288,
+            "cacheWrite1h": 0,
+            "cacheRead": 401525,
+            "output": 18,
+            "messages": 0,
+            "tokens": 457841,
+            "costUsd": 0.5530625
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 10,
+              "cacheWrite5m": 56288,
+              "cacheWrite1h": 0,
+              "cacheRead": 401525,
+              "output": 18,
+              "messages": 0,
+              "tokens": 457841,
+              "costUsd": 0.5530625
+            }
+          },
+          "agents": 1,
+          "labels": ["fix:apps/web/app/(platform-admin)/_components/AdminBadge.test.tsx"],
+          "durationMs": 192719
+        },
+        "impl:WP-D": {
+          "total": {
+            "input": 32,
+            "cacheWrite5m": 127543,
+            "cacheWrite1h": 0,
+            "cacheRead": 1675421,
+            "output": 1119,
+            "messages": 0,
+            "tokens": 1804115,
+            "costUsd": 0.6651957
+          },
+          "byModel": {
+            "claude-sonnet-5": {
+              "input": 32,
+              "cacheWrite5m": 127543,
+              "cacheWrite1h": 0,
+              "cacheRead": 1675421,
+              "output": 1119,
+              "messages": 0,
+              "tokens": 1804115,
+              "costUsd": 0.6651957
+            }
+          },
+          "agents": 1,
+          "labels": ["impl:WP-D"],
+          "durationMs": 232161
+        },
+        "build-fix": {
+          "total": {
+            "input": 24,
+            "cacheWrite5m": 114891,
+            "cacheWrite1h": 0,
+            "cacheRead": 1136621,
+            "output": 351,
+            "messages": 0,
+            "tokens": 1251887,
+            "costUsd": 1.29527425
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 24,
+              "cacheWrite5m": 114891,
+              "cacheWrite1h": 0,
+              "cacheRead": 1136621,
+              "output": 351,
+              "messages": 0,
+              "tokens": 1251887,
+              "costUsd": 1.29527425
+            }
+          },
+          "agents": 1,
+          "labels": ["build-fix"],
+          "durationMs": 363173
+        },
+        "fix-brief:r1": {
+          "total": {
+            "input": 22,
+            "cacheWrite5m": 154839,
+            "cacheWrite1h": 0,
+            "cacheRead": 1307315,
+            "output": 40,
+            "messages": 0,
+            "tokens": 1462216,
+            "costUsd": 0.6490045
+          },
+          "byModel": {
+            "claude-sonnet-5": {
+              "input": 22,
+              "cacheWrite5m": 154839,
+              "cacheWrite1h": 0,
+              "cacheRead": 1307315,
+              "output": 40,
+              "messages": 0,
+              "tokens": 1462216,
+              "costUsd": 0.6490045
+            }
+          },
+          "agents": 1,
+          "labels": ["fix-brief:r1"],
+          "durationMs": 180487
+        },
+        "gate-flaky-rerun:r3": {
+          "total": {
+            "input": 194,
+            "cacheWrite5m": 45313,
+            "cacheWrite1h": 0,
+            "cacheRead": 1558231,
+            "output": 214,
+            "messages": 0,
+            "tokens": 1603952,
+            "costUsd": 0.21372835
+          },
+          "byModel": {
+            "claude-haiku-4-5-20251001": {
+              "input": 194,
+              "cacheWrite5m": 45313,
+              "cacheWrite1h": 0,
+              "cacheRead": 1558231,
+              "output": 214,
+              "messages": 0,
+              "tokens": 1603952,
+              "costUsd": 0.21372835
+            }
+          },
+          "agents": 1,
+          "labels": ["gate-flaky-rerun:r3"],
+          "durationMs": 723837
+        },
+        "refute-batch:apps/api/src/platform-admin/platform-config.service.spec.ts": {
+          "total": {
+            "input": 6,
+            "cacheWrite5m": 46720,
+            "cacheWrite1h": 0,
+            "cacheRead": 203463,
+            "output": 20,
+            "messages": 0,
+            "tokens": 250209,
+            "costUsd": 0.3942615
+          },
+          "byModel": {
+            "claude-opus-5": {
+              "input": 6,
+              "cacheWrite5m": 46720,
+              "cacheWrite1h": 0,
+              "cacheRead": 203463,
+              "output": 20,
+              "messages": 0,
+              "tokens": 250209,
+              "costUsd": 0.3942615
+            }
+          },
+          "agents": 1,
+          "labels": ["refute-batch:apps/api/src/platform-admin/platform-config.service.spec.ts"],
+          "durationMs": 30005
+        }
+      },
+      "byModel": {
+        "claude-opus-5": {
+          "input": 394,
+          "cacheWrite5m": 2685874,
+          "cacheWrite1h": 0,
+          "cacheRead": 18303913,
+          "output": 4258,
+          "messages": 197,
+          "tokens": 20994439,
+          "costUsd": 26.047089
+        },
+        "claude-haiku-4-5-20251001": {
+          "input": 1592,
+          "cacheWrite5m": 1512188,
+          "cacheWrite1h": 0,
+          "cacheRead": 12794830,
+          "output": 1835,
+          "messages": 194,
+          "tokens": 14310445,
+          "costUsd": 3.180485
+        },
+        "claude-sonnet-5": {
+          "input": 1078,
+          "cacheWrite5m": 3170103,
+          "cacheWrite1h": 0,
+          "cacheRead": 72901712,
+          "output": 24637,
+          "messages": 539,
+          "tokens": 76097530,
+          "costUsd": 22.7541259
+        },
+        "claude-fable-5-1": {
+          "input": 2,
+          "cacheWrite5m": 79414,
+          "cacheWrite1h": 0,
+          "cacheRead": 0,
+          "output": 2,
+          "messages": 1,
+          "tokens": 79418,
+          "costUsd": 0.992795
+        }
+      },
+      "total": {
+        "input": 3066,
+        "cacheWrite5m": 7447579,
+        "cacheWrite1h": 0,
+        "cacheRead": 104000455,
+        "output": 30732,
+        "messages": 931,
+        "tokens": 111481832,
+        "costUsd": 52.974494899999996
+      },
+      "agents": 78,
+      "cacheHitRatio": 0.9331487531302967,
+      "durationMs": 14241396
+    }
+  },
+  "agents": {
+    "byType": {
+      "claude": {
+        "total": {
+          "input": 66,
+          "cacheWrite5m": 113509,
+          "cacheWrite1h": 0,
+          "cacheRead": 184616,
+          "output": 372,
+          "messages": 0,
+          "tokens": 298563,
+          "costUsd": 1.4842765
+        },
+        "byModel": {
+          "claude-fable-5-1": {
+            "input": 66,
+            "cacheWrite5m": 113509,
+            "cacheWrite1h": 0,
+            "cacheRead": 184616,
+            "output": 372,
+            "messages": 0,
+            "tokens": 298563,
+            "costUsd": 1.4842765
+          }
+        },
+        "agents": 1,
+        "durationMs": 500158
+      }
+    },
+    "list": [
+      {
+        "id": "a35934f133961d2d5",
+        "agentType": "claude",
+        "description": "Fable planning pass for Phase 0 T12-T15",
+        "tokens": 298563,
+        "costUsd": 1.4842765,
+        "cacheHitRatio": 0.6191199600256212,
+        "durationMs": 500158
+      }
+    ],
+    "total": {
+      "input": 66,
+      "cacheWrite5m": 113509,
+      "cacheWrite1h": 0,
+      "cacheRead": 184616,
+      "output": 372,
+      "messages": 3,
+      "tokens": 298563,
+      "costUsd": 1.4842765
+    },
+    "cacheHitRatio": 0.6191199600256212
+  },
+  "warnings": ["project: resolved via --project -> C:\\ClaudeCode\\routeflow"]
+}

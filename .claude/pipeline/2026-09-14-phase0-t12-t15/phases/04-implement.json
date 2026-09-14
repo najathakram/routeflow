@@ -1,0 +1,181 @@
+{
+  "seq": 4,
+  "idempotencyKey": "2026-09-14-phase0-t12-t15:Implement:1",
+  "phase": {
+    "phase": "Implement",
+    "ran": true,
+    "agents": 6,
+    "rawFindings": 0,
+    "tokens": 75398,
+    "model": "claude-sonnet-5",
+    "effort": "medium (a package's own effort wins)",
+    "estUsd": 0.75,
+    "overlappedWith": null,
+    "note": ""
+  },
+  "totals": { "agents": 19, "tokens": 333390, "estUsd": 4.55 },
+  "findingsBySeverity": { "blocker": 0, "major": 0, "minor": 0 },
+  "findingSummaries": [],
+  "mode": "feature",
+  "scale": "major",
+  "startedAt": "2026-09-14T17:15:00Z",
+  "args": {
+    "planPath": ".claude/pipeline/2026-09-14-phase0-t12-t15/build-plan.md",
+    "discoveryPath": ".claude/pipeline/2026-09-14-phase0-t12-t15/discovery.md",
+    "specPath": ".claude/pipeline/2026-09-14-phase0-t12-t15/spec.md",
+    "uxSpecPath": "",
+    "testPlanPath": ".claude/pipeline/2026-09-14-phase0-t12-t15/test-plan.md",
+    "designSystemPath": "",
+    "lessonsPath": ".claude/lessons/LESSONS.md",
+    "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-phase0d",
+    "runDir": ".claude/pipeline/2026-09-14-phase0-t12-t15"
+  },
+  "resultSoFar": {
+    "mode": "feature",
+    "scale": "major",
+    "startedAt": "2026-09-14T17:15:00Z",
+    "phaseReport": [
+      {
+        "phase": "Baseline",
+        "ran": true,
+        "agents": 3,
+        "rawFindings": 1,
+        "tokens": 42837,
+        "model": "claude-haiku-4-5 (gate/grounding/manifest)",
+        "effort": "low",
+        "estUsd": 0.21,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Author tests",
+        "ran": true,
+        "agents": 5,
+        "rawFindings": 0,
+        "tokens": 119169,
+        "model": "claude-sonnet-5",
+        "effort": "medium (a package's own effort wins)",
+        "estUsd": 1.19,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Red gate",
+        "ran": true,
+        "agents": 5,
+        "rawFindings": 1,
+        "tokens": 95986,
+        "model": "claude-haiku-4-5 (run) + claude-opus-5 (audit/remediate)",
+        "effort": "low run / high audit / medium remediation",
+        "estUsd": 2.4,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Implement",
+        "ran": true,
+        "agents": 6,
+        "rawFindings": 0,
+        "tokens": 75398,
+        "model": "claude-sonnet-5",
+        "effort": "medium (a package's own effort wins)",
+        "estUsd": 0.75,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Gate & Review",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Verify",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "UI verify",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Mutation probe",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Fix",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Final pass",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      }
+    ],
+    "remainingFindings": [
+      {
+        "file": "(gate-command)",
+        "severity": "major",
+        "summary": "`cd apps/web && npx jest platform-admin` already fails on the unmodified baseline tree — the command is broken, not the code",
+        "detail": "Baseline output: No tests found, exiting with code 1. This command failed BEFORE any agent wrote anything, so its failures during this run are not evidence about the change. It is excluded from the pass/fail decision and cannot make the result unclean. It still runs every round, so a change in its behavior stays visible.",
+        "fixHint": "Fix this in the PLAN, not in the code: correct or drop the command in verifyCommands (wrong script name, wrong directory, wrong flags), or install the prerequisite it needs, then re-run.",
+        "phase": "Baseline",
+        "fixComplexity": "mechanical"
+      },
+      {
+        "file": "(red-gate)",
+        "severity": "blocker",
+        "phase": "Red gate",
+        "summary": "Red gate never went structurally RED — the new tests are not proven able to fail",
+        "detail": "A test that has never failed proves nothing. Auditor notes: [\"STRUCTURAL: T12-1 (platform-config.service.spec.ts:104) errored — `TypeError: service.getHouseTenantId is not a function` — it never reached its own assertion, so the $queryRaw-returns-then-empty oracle is unproven.\",\"STRUCTURAL: T12-2 (platform-config.service.spec.ts:114) errored the same way on `service.setHouseTenantId`; the key/value assertions (`platform.houseTenantId`, `hq-1`) were never executed.\",\"STRUCTURAL: the new AdminBadge test \\\"keeps the existing PROFESSIONAL -> 'Business' mapping unchanged\\\" (AdminBadge.test.tsx:24) PASSED — reason: the behavior already exists today (it is an intentional regression guard, not a vacuous assertion). No requirement needs rewriting, but a passing test in the red-gate file breaks the gate.\",\"STRUCTURAL: T13-9 (tenant-mirror.service.db.spec.ts) was never collected or run — it is a `*.db.spec.ts` gathered only by jest.db.config.js via `npm run local:test:db` (RUN_DB_SPECS + compose Postgres), which the red-gate command does not invoke. R9/R10's deepest (DB) level and R14 have zero red evidence.\",\"STRUCTURAL (context, not a test): `apps/api/src/platform-admin/tenant-mirror.service.ts` already exists as an untracked production stub with a no-op `async upsert()`, so the 'nothing implemented' premise is not literally true. It is why T13-2..T13-8 fail on 'zero calls' rather than on module resolution.\",\"BEHAVIORAL: T14-6 and T14-7 both fail on the same missing `dashboard-mrr`/`dashboard-ledger-mrr` testid as T14-5, never reaching their distinguishing oracles (no-'differs' text; '—' and no 'NaN'). Three tests, one identical failure cause — the wiring is proven, the oracles are not.\",\"BEHAVIORAL: T13-1, T13-5 and T13-7 fail on 'the call was never made' (Number of calls: 0), not on a wrong value, so their real oracles — the exact `user.create`/`customer.create` data shapes, `userId: \\\"u-old\\\"`, `contactName: \\\"Acme Wholesale\\\"` — are never compared against anything.\",\"BEHAVIORAL: T14-3 case A and case B fail identically on the absent /plan catalog unavailable/i text; nothing in the current red distinguishes the reject path from the empty-catalog path.\",\"BEHAVIORAL (wrong-reason risk, later): tenant-mirror.service.spec.ts monkey-patches `mirrorSync` onto the REAL exported class prototype (lines 74-83) when it is missing. Once the implementation lands this scaffolding must be deleted — otherwise a future regression that removes `mirrorSync` would be silently patched over and only T13-0 would go red.\",\"BEHAVIORAL (wrong-reason risk): T14-3's `expect(options[0].value).toBe(select.value)` is self-referential — it compares the rendered select against its own single option and would pass for ANY fallback plan key, including a wrong one. It does not pin the fallback to the form's actual current `form.plan`.\",\"BEHAVIORAL (coverage gap): tenant-mirror.service.db.spec.ts explicitly drops R14 (ContactPerson sync) at lines 171-176, but test-plan.md's coverage matrix still lists R14 as covered by T13-9. R14 currently has no test at any level.\",\"BEHAVIORAL (cost/flake, not a blocker): each of the 7 web tests burns a full ~10 s findBy/waitFor timeout (dashboard suite 35.7 s, tenants suite 44.3 s) while red. Expected for a red gate, but the implementation phase should confirm these drop to sub-second rather than staying timeout-bound.\",\"NOTE (evidence quality): the supplied attempt-2 runner output names the tenants spec as `admin/tenants/(create)/page.test.tsx`; the file on disk and in my own run is `admin/tenants/new/page.test.tsx`. My run is the authoritative record. Also, per-failure messages for 8 of the 10 tenant-mirror tests were not individually captured (jest truncated); those 8 are classified assertion-failure from their × status plus the code, not from a printed message.\"]",
+        "fixHint": "Strengthen the vacuous tests, or rewrite the requirement if the behavior already exists."
+      }
+    ],
+    "clean": null
+  },
+  "resultSoFarTruncated": false
+}
