@@ -236,3 +236,64 @@ alongside the two released by #717 (**120, 121**); next free is 127.
 - **Guard:** the admin plan change now REFUSES in either direction while a cancellation is armed,
   with `cancelAtPeriodEnd` added to the select it was blind to; REG tests in
   `platform-admin.service.spec.ts`. Sibling [[L-123]].
+
+## Round 3 — the independent pre-merge pass (verdict: MERGE-WITH-NOTES)
+
+The lead's independent Opus pass cleared the diff on assertions, double-apply, lock family, DI
+and the refusal-while-armed coverage, and returned four notes. Three were fixed here.
+
+### F-1 — admin reactivation must NOT clear the tenant's armed downgrade (reverses B216's admin half)
+
+`updateStatus()`'s non-ACTIVE→ACTIVE CAS cleared `downgradeToPlanKey`/`downgradeEffectiveAt`/
+`retainedUserIds`. Only two paths ever ARM those fields — the tenant's own `downgrade()` and
+`updatePlan()`'s scheduled branch — so the field set is **always a chosen schedule**, never a
+dunning threat the system armed. Clearing it revoked the tenant's own choice by someone else's
+action, unrecorded, leaving them on the higher plan they had asked to leave. This is the same
+consent seam the round-2 review caught on `cancelAtPeriodEnd`, one function away.
+
+Implemented per the lead's ruling: the schedule survives, `applyScheduledDowngrades` applies it
+when due (one that came due during the lapse applies on the next pass — the tenant's stated
+intent), and the reactivation records `downgradeLeftArmed`/`downgradeEffectiveAt` in the admin
+audit meta. `updateStatus()` now writes nothing to `TenantSubscription` on any path. FINDING-3's
+single transaction is kept and still earns its place: the audited schedule must be the row as it
+stood AT the transition, not one a concurrent `downgrade()` armed a moment later.
+
+**Consequence for B216:** its admin half is not a defect as filed, so #730 does not fix B216. The
+row's remaining substance is the Stripe-webhook disarm already on master. A registry note records
+this; disposition is the lead's.
+
+**Contested, as invited — the precedent argues the other way.** `billing.service.ts`'s comment at
+the `disarmedDowngrade()` call sites states the disarm's rationale as: left armed, the sweep
+"applies it the first night after reactivation" — i.e. the webhook path treats exactly the outcome
+F-1 now mandates as the thing to prevent. So the two paths now disagree, and the webhook side may
+be a latent instance of this same class: it clears a FUTURE-dated tenant-chosen schedule when an
+invoice is paid, and paying an invoice does not express "I no longer want my downgrade". Out of
+scope here and unchanged; raised to the lead for the owner.
+
+### F-2 — an already-cancelled Stripe sub is a 400, not `resource_missing`
+
+Cancelling an already-cancelled subscription returns `invalid_request_error` ("a subscription with
+status `canceled` may not be updated") because the object still exists. That fell to the generic
+branch, so the READ_ONLY path threw 503 on every retry while `stripeSubId` was never cleared —
+the tenant could never get out. Already-cancelled is now treated as success, **detected by
+re-reading the subscription's status**, not by matching the message: Stripe exposes no dedicated
+code here, and a message-prefix discriminator is exactly what B218 had to replace one commit
+earlier in this same wave. A 404 on the re-read is equally "nothing left to cancel"; any other
+re-read failure is inconclusive and still surfaces the 503. On a confirmed outcome the dead
+pointer is dropped, scoped to the same `stripeSubId` so a concurrent re-subscribe is never
+clobbered — which is what makes a repeat `cancel()` a true no-op rather than merely tolerated.
+
+### F-3 — the two add-on paths locked on different keys
+
+Admin keyed on the raw `addonKey`, tenant on the `sku`, so the four `LEGACY_ADDON_KEY_TO_SKU`
+add-ons took two different locks for one entitlement and raced each other despite both holding a
+lock — the comments on both sides claimed they serialised. Both now key on the SKU.
+
+### F-4 — `proratedNow` ignores `priceOverrideMonthly`/`discount` (left as a row)
+
+Confirmed and NOT trivial, so left per the lead's own instruction. `ProrationService` exposes no
+effective-price helper; the override logic lives in `platform-pricing.service.ts` (`ignoreOverrides`
+→ `tenant.subscription.priceOverrideMonthly`). Wiring it in means injecting that service into the
+proration math and changing what every `proratedDiff()` caller computes — a money change that
+needs its own red-first row, not a review-round patch. Worth noting the admin path already selects
+`priceOverrideMonthly` for other purposes, so the value is in hand at the call site.

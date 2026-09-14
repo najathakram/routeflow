@@ -124,7 +124,16 @@ export class AddonService {
     // pool, sized for this call's own peak (max 4: a short, request-path critical section
     // like order-merge's, but a far rarer settings action than a checkout merge). The
     // "addon:"-prefixed key can never collide with another billing-family key.
-    const lockKey = `addon:${tenantId}:${addonKey}`;
+    //
+    // FINDING-3 (round 3 review): the key is built from the SKU, not the raw addonKey, so this
+    // admin path and the tenant self-serve path in subscription-mutation.service.ts (which only
+    // ever deals in SKUs) serialise against EACH OTHER. Keyed on the raw addonKey, the four
+    // LEGACY_ADDON_KEY_TO_SKU-bridged add-ons took two different locks for the same underlying
+    // entitlement — admin on "tobacco_dealer", tenant on "REGULATED_ITEMS" — so the two paths
+    // raced despite both holding a lock. An unbridged key has no tenant-path equivalent and
+    // keys on itself.
+    const lockSku = LEGACY_ADDON_KEY_TO_SKU[addonKey] ?? addonKey;
+    const lockKey = `addon:${tenantId}:${lockSku}`;
     try {
       const result = await withAdvisoryLock(
         { family: "billing", key: lockKey, mode: "wait", waitMs: 10_000 },

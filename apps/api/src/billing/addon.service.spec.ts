@@ -307,6 +307,42 @@ describe("AddonService.enableAddon — B342 concurrency lock", () => {
     expect(prisma.tenantAddon.upsert).not.toHaveBeenCalled();
   });
 
+  // FINDING-3 (round 3 review): both add-on paths took a lock, but on DIFFERENT keys — this
+  // admin path on the raw addonKey, the tenant self-serve path in subscription-mutation on the
+  // SKU. For the four LEGACY_ADDON_KEY_TO_SKU-bridged add-ons that meant two locks for one
+  // entitlement, so the paths raced each other despite both being "locked". The key is now
+  // normalised to the SKU on this side.
+  it("REG-FINDING-3 a bridged addonKey locks on its SKU, so the admin path serialises against the tenant self-serve path", async () => {
+    mockWithAdvisoryLock.mockClear();
+    const { svc } = make({
+      stripe: { isConfigured: false },
+      existingAddon: { id: "addon1", addonKey: "tobacco_dealer", active: true },
+    });
+
+    await expect(svc.enableAddon("t1", "tobacco_dealer")).rejects.toBeInstanceOf(ConflictException);
+
+    // RED before the fix, which passed "addon:t1:tobacco_dealer" and never met the tenant path.
+    expect(mockWithAdvisoryLock).toHaveBeenCalledWith(
+      expect.objectContaining({ family: "billing", key: "addon:t1:REGULATED_ITEMS" }),
+      expect.any(Function),
+    );
+  });
+
+  it("guard: an UNBRIDGED addonKey has no tenant-path equivalent and still keys on itself", async () => {
+    mockWithAdvisoryLock.mockClear();
+    const { svc } = make({
+      stripe: { isConfigured: false },
+      existingAddon: { id: "addon1", addonKey: "developer_mode", active: true },
+    });
+
+    await expect(svc.enableAddon("t1", "developer_mode")).rejects.toBeInstanceOf(ConflictException);
+
+    expect(mockWithAdvisoryLock).toHaveBeenCalledWith(
+      expect.objectContaining({ family: "billing", key: "addon:t1:developer_mode" }),
+      expect.any(Function),
+    );
+  });
+
   it("REG-B342 race: two concurrent enableAddon calls for the same tenant+addon create exactly ONE Stripe item and ONE row — the loser is refused, never double-billed", async () => {
     // A STATEFUL TenantAddon "row", unlike the static mocks above: the second call, once
     // serialised behind the first by the (mocked) advisory lock, must observe the FIRST call's

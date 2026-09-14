@@ -1030,17 +1030,56 @@ export class SubscriptionMutationService {
         this.logger.warn(
           `STRIPE-CANCEL-2: cancel() found Stripe subscription already gone for tenant ${tenantId} (stripeSubId ${stripeSubId}) — proceeding with the READ_ONLY short-circuit`,
         );
+      } else if (await this.stripeSubIsAlreadyCanceled(stripeSubId)) {
+        // FINDING-2 (round 3 review): cancelling an ALREADY-cancelled subscription is not
+        // `resource_missing` — the object still exists, so Stripe returns a 400
+        // invalid_request_error ("a subscription with status `canceled` may not be updated").
+        // Treated as a generic failure that branch threw 503 on every retry while the local
+        // pointer was never cleared, so the tenant could never get out. Already cancelled IS
+        // the desired end state. Detected by re-reading the subscription's status rather than
+        // matching the message text: Stripe exposes no dedicated code here, and a message
+        // match is the brittle discriminator B218 already had to replace once.
+        this.logger.warn(
+          `STRIPE-CANCEL-2: cancel() found Stripe subscription already cancelled for tenant ${tenantId} (stripeSubId ${stripeSubId}) — proceeding with the READ_ONLY short-circuit`,
+        );
       } else {
         // Never log the raw error (may carry Stripe request/auth details) — tenantId +
         // stripeSubId only.
         this.logger.error(
           `STRIPE-CANCEL-2: cancel() failed to cancel the Stripe subscription immediately for tenant ${tenantId} (stripeSubId ${stripeSubId})`,
         );
-        // Same UNCERTAIN-provider-outcome wording as propagateCancelToStripe()'s 503.
+        // Same UNCERTAIN-provider-outcome wording as propagateCancelToStripe()'s 503. Nothing
+        // has been written locally at this point, and nothing below runs.
         throw new ServiceUnavailableException(
           "The payment provider did not confirm the change — it may still apply. Check your subscription in a moment before retrying, or contact support.",
         );
       }
+    }
+
+    // FINDING-2: the pointer is dead once the subscription is confirmed cancelled or gone.
+    // Dropping it makes a repeat cancel() short-circuit without touching Stripe at all, which
+    // is what makes this branch idempotent rather than merely tolerant of a second call. Scoped
+    // to the SAME stripeSubId so a concurrent re-subscribe that already wrote a new pointer is
+    // never clobbered. This is the one local write the READ_ONLY branch makes, and it happens
+    // only after a confirmed provider outcome.
+    await this.prisma.tenantSubscription.updateMany({
+      where: { tenantId, stripeSubId },
+      data: { stripeSubId: null },
+    });
+  }
+
+  /**
+   * FINDING-2: is this subscription already in Stripe's terminal `canceled` state? Re-reads the
+   * subscription rather than matching error text. A 404 on the re-read means it is gone
+   * entirely, which is equally "nothing left to cancel"; any other failure is inconclusive and
+   * returns false so the caller still surfaces the 503.
+   */
+  private async stripeSubIsAlreadyCanceled(stripeSubId: string): Promise<boolean> {
+    try {
+      const sub = await this.stripe.getSubscription(stripeSubId);
+      return sub?.status === "canceled";
+    } catch (err) {
+      return isStripeResourceMissing(err);
     }
   }
 
@@ -1073,6 +1112,10 @@ export class SubscriptionMutationService {
     const qty = Math.max(1, Math.trunc(quantity ?? 1));
     const preview = await this.proration.prorationPreview(tenantId, sku);
 
+    // FINDING-3 (round 3 review): same family and the same SKU-keyed shape as the admin path in
+    // addon.service.ts, so the two paths serialise against each other and not merely within
+    // themselves. This side is already SKU-native; the admin side normalises its addonKey
+    // through LEGACY_ADDON_KEY_TO_SKU to land on this same key.
     const lockKey = `addon:${tenantId}:${sku}`;
     try {
       const result = await withAdvisoryLock(

@@ -25,12 +25,17 @@ never accumulate history in `"notes"`.
   ADMIN-UPDATEPLAN-1 (`updatePlan()` now branches like the tenant path — upgrade stays instant
   and surfaces `proratedNow`, downgrade now SCHEDULES at period end with no credit instead of
   applying instantly; ledger emits `PLAN_DOWNGRADE_SCHEDULED` at `amountDelta:0`, never
-  `PLAN_CHANGED`, at request time); B216 (`updateStatus()` now clears an armed downgrade on a
-  REAL non-ACTIVE→ACTIVE admin reactivation, matching the two Stripe-webhook paths'
-  `disarmedDowngrade()`). `bootstrap-cross-cutting.md`: `db-locks.ts` — `LOCK_FAMILIES` gains
-  `"billing"` (`max:4`), worst-case pool-connection commentary and the "typo stands up a Nth
-  pool" line updated for the third family. web.md/mobile.md/packages.md untouched (no diff in
-  those trees). `validate-code-map.mjs`: PASS.
+  `PLAN_CHANGED`, at request time); B216 → **FINDING-4** (round-3 review REVERSED the round-2
+  clear: `updateStatus()` now LEAVES an armed downgrade armed and records it in the admin audit
+  meta — the fields are only ever set by a CHOSEN schedule, so clearing them revoked the
+  tenant's own choice; B216's admin half is not a defect as filed). `bootstrap-cross-cutting.md`:
+  `db-locks.ts` — `LOCK_FAMILIES` gains `"billing"` (`max:4`), worst-case pool-connection
+  commentary and the "typo stands up a Nth pool" line updated for the third family. Round-3 also
+  landed FINDING-2 (an already-cancelled Stripe sub is a 400, not `resource_missing`; detected by
+  re-reading status, and the dead `stripeSubId` is dropped so a repeat cancel is a true no-op) and
+  FINDING-3 (both add-on paths now key the advisory lock on the SKU, so the bridged legacy keys
+  actually serialise across paths). web.md/mobile.md/packages.md untouched (no diff in those
+  trees). `validate-code-map.mjs`: PASS.
 - **2026-09-13 — B323 tenant-scoping sweep fix, re-homed into the split map
   (`fix/B323-tenant-sweep` merge of `origin/master` 2e5602ae for PR #722)** — `sweepAllPendingOrders`
   now groups pending orders by `["customerId","tenantId"]` (not `customerId` alone), skips a

@@ -365,15 +365,13 @@ ${paymentSection}
     await this._findOrThrow(id);
 
     // B216 / FINDING-3 (round 2 review): the prior-status read, the status write, and the
-    // downgrade clear are now ONE transaction, using the same non-ACTIVE→ACTIVE CAS shape as
+    // downgrade lookup are ONE transaction, using the same non-ACTIVE→ACTIVE CAS shape as
     // billing.service.ts's transitionAndEmit() (a conditional `updateMany` predicated on the
     // PRIOR status IS the "was this a REAL transition" read — count===1 only if THIS call
-    // flipped the row). The old shape ran three separate, unserialized queries (read wasActive
-    // → write status → clear downgrade); a downgrade() armed by the tenant in the gap between
-    // the write and the clear was silently wiped — the tenant was told "scheduled" and it never
-    // fired. Folding everything into one transaction closes that gap: nothing outside it can
-    // observe or act on the row between the CAS and the clear.
-    const tenant = await this.prisma.$transaction(async (tx) => {
+    // flipped the row). The old shape ran three separate, unserialized queries, so the schedule
+    // this call reports could be one a concurrent downgrade() armed a moment later. One
+    // transaction means the audit line describes the row as it stood at the transition.
+    const { tenant, armedDowngrade } = await this.prisma.$transaction(async (tx) => {
       let wasRealReactivation = false;
       if (dto.status === "ACTIVE") {
         const { count } = await tx.tenant.updateMany({
@@ -391,23 +389,28 @@ ${paymentSection}
         data: { status: dto.status },
       });
 
-      // Scoped to a REAL non-ACTIVE→ACTIVE transition only (mirrors the Stripe webhook paths'
-      // CAS discipline): never fires for an already-ACTIVE tenant re-set ACTIVE, or for a
-      // transition to any other status, so a legitimately scheduled downgrade on a healthy
-      // tenant survives. cancelAtPeriodEnd is deliberately left untouched — that flag is a
-      // cancellation, not a downgrade. Not imported: disarmedDowngrade() is a private
-      // module-level function in billing.service.ts, not exported, and this service has no
-      // existing dependency on its internals to justify exporting it just for this — the field
-      // set is replicated here with billing.service.ts's disarmedDowngrade() named as the
-      // source of truth.
+      // FINDING-4 RULING (2026-09-14, lead): an admin reactivation does NOT clear the tenant's
+      // armed downgrade. Only two paths ever arm downgradeToPlanKey — the tenant's own
+      // downgrade() and updatePlan()'s scheduled branch — so the field set is always a CHOSEN
+      // schedule, never a dunning threat the system armed. Reactivating is someone else acting
+      // on the tenant's subscription, and clearing here revoked that choice with no event and
+      // no audit line; the tenant kept paying the higher plan they had asked to leave. The
+      // schedule now survives and applyScheduledDowngrades applies it when due (a schedule that
+      // came due during the lapse applies on the next pass, which is the tenant's stated
+      // intent). It is recorded in the admin audit meta instead, so the reactivation says what
+      // it left armed. cancelAtPeriodEnd was already left untouched for the same reason.
+      let armed: { planKey: string; effectiveAt: Date | null } | null = null;
       if (wasRealReactivation) {
-        await tx.tenantSubscription.updateMany({
+        const sub = await tx.tenantSubscription.findUnique({
           where: { tenantId: id },
-          data: { downgradeToPlanKey: null, downgradeEffectiveAt: null, retainedUserIds: [] },
+          select: { downgradeToPlanKey: true, downgradeEffectiveAt: true },
         });
+        if (sub?.downgradeToPlanKey) {
+          armed = { planKey: sub.downgradeToPlanKey, effectiveAt: sub.downgradeEffectiveAt };
+        }
       }
 
-      return updated;
+      return { tenant: updated, armedDowngrade: armed };
     });
 
     // Evict cached status so the guard picks up the change immediately
@@ -418,7 +421,17 @@ ${paymentSection}
         : dto.status === "ACTIVE"
           ? AdminAuditAction.TENANT_REACTIVATED
           : AdminAuditAction.TENANT_STATUS_CHANGED;
-    await this.recordAdminAction(id, adminId, action, { status: tenant.status });
+    await this.recordAdminAction(id, adminId, action, {
+      status: tenant.status,
+      // FINDING-4: name the schedule this reactivation deliberately left armed, so the audit
+      // trail shows it rather than the tenant discovering the downgrade on the next cron pass.
+      ...(armedDowngrade
+        ? {
+            downgradeLeftArmed: armedDowngrade.planKey,
+            downgradeEffectiveAt: armedDowngrade.effectiveAt?.toISOString() ?? null,
+          }
+        : {}),
+    });
 
     return { id: tenant.id, slug: tenant.slug, status: tenant.status };
   }
