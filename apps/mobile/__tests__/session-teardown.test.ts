@@ -5,8 +5,9 @@
  * ONE teardown function (`lib/session-teardown.ts#teardownUserSession`)
  * BEFORE `apiLogout()` (tokens still valid): stop background GPS for BOTH
  * realms, mark the offline queue's owner, `queryClient.cancelQueries()` then
- * `.clear()`, and reset the 7 user-scoped stores — the tenant store is never
- * touched (Q2, shared-tablet branded login).
+ * `.clear()`, and reset the 8 user-scoped stores (stopCartStore added to the
+ * original 7) — the tenant store is never touched (Q2, shared-tablet
+ * branded login).
  *
  * Mobile Jest is pure-logic only (jest.config.js testMatch) — this drives the
  * REAL `useAuthStore.logout()` with every native/store dependency mocked, the
@@ -78,12 +79,18 @@ jest.mock("../lib/query-client", () => ({
 // addresses is observable — only the native storage under it is mocked, the
 // same shape offline-queue-identity.test.ts uses.
 const removeItemMock = jest.fn();
+// The staged-edit snapshot is a KEYSPACE (one key per order), so the teardown
+// also enumerates and prefix-sweeps — mock those two calls as well.
+const getAllKeysMock = jest.fn();
+const multiRemoveMock = jest.fn();
 jest.mock("@react-native-async-storage/async-storage", () => ({
   __esModule: true,
   default: {
     getItem: jest.fn(),
     setItem: jest.fn(),
     removeItem: (...args: unknown[]) => removeItemMock(...args),
+    getAllKeys: (...args: unknown[]) => getAllKeysMock(...args),
+    multiRemove: (...args: unknown[]) => multiRemoveMock(...args),
   },
 }));
 
@@ -117,6 +124,11 @@ const productPickerStoreReset = jest.fn();
 jest.mock("../store/productPickerStore", () => ({
   useProductPickerStore: { getState: () => ({ reset: productPickerStoreReset }) },
 }));
+const stopCartStoreReset = jest.fn();
+jest.mock("../store/stopCartStore", () => ({
+  STOP_CART_STORE_NAME: "routeflow-stop-cart-store",
+  useStopCartStore: { getState: () => ({ reset: stopCartStoreReset }) },
+}));
 
 // The Q2 pin — "sign-out teardown NEVER clears the tenant store" — is green
 // before AND after the fix, so it does not belong in this red-gate file: it
@@ -128,6 +140,7 @@ import { join } from "path";
 import { useAuthStore } from "../lib/auth-store";
 import type { TeardownOptions } from "../lib/session-teardown";
 import { clearUserScopedStorage, userScopedStorageKeyFor } from "../lib/user-scoped-storage";
+import { editItemsSnapshotKey } from "../lib/edit-items-draft";
 
 const OPERATOR = {
   id: "u1",
@@ -145,6 +158,7 @@ const USER_SCOPED_RESETS: Array<[string, jest.Mock]> = [
   ["delivery-plan-store", deliveryPlanStoreReset],
   ["listUiStore", listUiStoreReset],
   ["productPickerStore", productPickerStoreReset],
+  ["stopCartStore", stopCartStoreReset],
 ];
 
 describe("useAuthStore.logout() teardown (T1, REG-B150 / REG-B140)", () => {
@@ -341,16 +355,79 @@ describe("REG-B136-F: sign-out clears the persisted blobs by pre-resolved user i
     expect(removeItemMock).toHaveBeenCalledWith("routeflow-pod-store:u-1");
   });
 
-  it("logout deletes BOTH persisted keys under the signed-in user's id", async () => {
+  it("logout deletes all THREE persisted keys under the signed-in user's id (driver-durability lane added stopCartStore)", async () => {
     useAuthStore.setState({ user: OPERATOR as any, isAuthenticated: true, activeRole: "operator" });
 
     await useAuthStore.getState().logout();
 
     expect(removeItemMock.mock.calls.map((c) => c[0])).toEqual(
-      expect.arrayContaining(["routeflow-pod-store:u1", "routeflow-run-settlement:u1"]),
+      expect.arrayContaining([
+        "routeflow-pod-store:u1",
+        "routeflow-run-settlement:u1",
+        "routeflow-stop-cart-store:u1",
+      ]),
     );
     // Never the anon bucket — that is the bug this pins.
     expect(removeItemMock.mock.calls.map((c) => c[0])).not.toContain("routeflow-pod-store:anon");
+  });
+});
+
+/**
+ * FINDING 2 (RULINGS R1) — the order-item editor parks the operator's staged
+ * edit at `rf.edit-items.v1:<userId>:<orderId>`. That is one key PER ORDER, so
+ * it cannot be addressed by a `clearUserScopedStorage(NAME, userId)` call and
+ * sign-out never cleared it: the next operator to sign in on the same device
+ * was offered the previous one's staged edit for restore. Teardown now sweeps
+ * the outgoing user's whole prefix.
+ */
+describe("REG-EDIT-SWEEP: sign-out sweeps the staged-edit KEYSPACE", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    apiLogoutMock.mockResolvedValue(undefined);
+    teardownSpy.mockImplementation((options?: TeardownOptions) => realTeardownUserSession(options));
+    getAllKeysMock.mockResolvedValue([]);
+    multiRemoveMock.mockResolvedValue(undefined);
+  });
+
+  it("REG-EDIT-SWEEP-B: logout removes EVERY staged order edit of the outgoing user, and no one else's", async () => {
+    const mine = [editItemsSnapshotKey("o1", "u1"), editItemsSnapshotKey("o2", "u1")];
+    const theirs = [
+      editItemsSnapshotKey("o1", "u2"),
+      editItemsSnapshotKey("o3", "u10"),
+      editItemsSnapshotKey("o4", null),
+    ];
+    getAllKeysMock.mockResolvedValue([...mine, ...theirs, "routeflow-pod-store:u1", "tokens"]);
+
+    useAuthStore.setState({ user: OPERATOR as any, isAuthenticated: true, activeRole: "operator" });
+    await useAuthStore.getState().logout();
+
+    expect(getAllKeysMock).toHaveBeenCalled();
+    expect(multiRemoveMock).toHaveBeenCalledTimes(1);
+    const swept = multiRemoveMock.mock.calls[0][0] as string[];
+    expect([...swept].sort()).toEqual([...mine].sort());
+    // "u1" must not sweep "u10" (the trailing separator), another user, the
+    // anon bucket, or an unrelated key.
+    for (const key of [...theirs, "routeflow-pod-store:u1", "tokens"]) {
+      expect(swept).not.toContain(key);
+    }
+  });
+
+  it("REG-EDIT-SWEEP-C: nothing to sweep issues no multiRemove", async () => {
+    getAllKeysMock.mockResolvedValue(["tokens", "routeflow-pod-store:u1"]);
+    useAuthStore.setState({ user: OPERATOR as any, isAuthenticated: true, activeRole: "operator" });
+
+    await useAuthStore.getState().logout();
+
+    expect(multiRemoveMock).not.toHaveBeenCalled();
+  });
+
+  it("REG-EDIT-SWEEP-D: a storage failure during the sweep never breaks sign-out", async () => {
+    getAllKeysMock.mockRejectedValue(new Error("storage unavailable"));
+    useAuthStore.setState({ user: OPERATOR as any, isAuthenticated: true, activeRole: "operator" });
+
+    await expect(useAuthStore.getState().logout()).resolves.toBeUndefined();
+    expect(apiLogoutMock).toHaveBeenCalled();
+    expect(useAuthStore.getState().user).toBeNull();
   });
 });
 
@@ -374,12 +451,31 @@ describe("REG-B136-F: identity is resolved before anything can delete the tokens
     expect(identityAt).toBeLessThan(stopAt);
   });
 
-  it("session-teardown clears BOTH persisted stores after the resets", () => {
+  it("session-teardown clears all THREE persisted stores after the resets", () => {
     const clears = teardownSrc.match(/clearUserScopedStorage\s*\(/g) ?? [];
-    expect(clears).toHaveLength(2);
+    expect(clears).toHaveLength(3);
     const lastResetAt = teardownSrc.lastIndexOf("resetIfPresent(use");
     expect(lastResetAt).toBeGreaterThan(-1);
     expect(teardownSrc.search(/clearUserScopedStorage\s*\(/)).toBeGreaterThan(lastResetAt);
+  });
+
+  it("REG-EDIT-SWEEP-E: the prefix sweep runs AFTER the per-store clears and is wrapped", () => {
+    // The sweep must not be able to throw a sign-out down — unlike step (5)'s
+    // removes, it depends on `getAllKeys`, which an older native module (or an
+    // older test mock) may not expose at all.
+    const sweepAt = teardownSrc.indexOf("clearStorageByPrefix(editItemsSnapshotUserPrefix(");
+    expect(sweepAt).toBeGreaterThan(-1);
+    expect(sweepAt).toBeGreaterThan(teardownSrc.lastIndexOf("clearUserScopedStorage("));
+    const helperAt = teardownSrc.indexOf("async function clearStorageByPrefix");
+    expect(helperAt).toBeGreaterThan(-1);
+    const helper = teardownSrc.slice(helperAt, helperAt + 600);
+    expect(helper).toContain("AsyncStorage.getAllKeys()");
+    expect(helper).toContain("AsyncStorage.multiRemove(");
+    expect(helper).toContain("} catch {");
+    // The prefix comes from the editor's own key helper — a second hand-rolled
+    // literal here is how a sweep silently stops matching.
+    expect(teardownSrc).toContain("editItemsSnapshotUserPrefix");
+    expect(teardownSrc).not.toContain("rf.edit-items");
   });
 
   it("all three auth-store call sites (logout, session-expired, cross-tab/REG-B140-D) hand the teardown a userId", () => {
@@ -393,14 +489,14 @@ describe("REG-B136-F: identity is resolved before anything can delete the tokens
  * REG-B140-D — cross-tab logout (web build). Before this fix,
  * `installCrossTabLogoutListener`'s "storage" handler only dropped the
  * in-memory user; it never ran the shared teardown, so tab B kept the prior
- * user's GPS tracking, query cache, and the 7 user-scoped stores alive after
+ * user's GPS tracking, query cache, and the 8 user-scoped stores alive after
  * tab A signed out elsewhere. This describe gets its own fresh module graph
  * (`jest.resetModules()` + a dynamic import) because `installCrossTabLogoutListener`
  * is a module-level, install-once singleton gated on `Platform.OS === "web"`
  * and a real `window` — neither of which the rest of this file (OS "ios", no
  * window) exercises. `react-native` is re-mocked to "web" via `jest.doMock`
  * for just this block; every other static mock in this file (session-teardown,
- * the 7 stores, api-client, auth, etc.) survives `resetModules()` unchanged.
+ * the 8 stores, api-client, auth, etc.) survives `resetModules()` unchanged.
  */
 describe("REG-B140-D: cross-tab logout tears down (web build)", () => {
   let storageHandler: ((e: { key: string | null; newValue: string | null }) => void) | null = null;

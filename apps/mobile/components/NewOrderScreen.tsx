@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ActivityIndicator,
+  AppState,
   FlatList,
   Modal,
   Platform,
@@ -37,6 +38,7 @@ import { resolveProductByCode } from "../lib/barcode-resolve";
 import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../lib/wedge-scan";
 import { makeScanHandler, runWedgeSubmit } from "../lib/scan-ladder";
 import { createScanAttempt, createWedgeSubmitHandler } from "../lib/wedge-submit";
+import { createScanAcceptGuard } from "../lib/scan-accept-guard";
 // Compose "<Parent> - <Variant>" so scanned variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../lib/product-display";
 import {
@@ -113,6 +115,7 @@ import {
   type DraftCatalogLine,
 } from "../lib/drafts-payload";
 import { useDraftAutosave, type DraftRowMeta } from "../lib/use-draft-autosave";
+import { useStopCartStore } from "../store/stopCartStore";
 
 export interface NewOrderScreenProps {
   /** When present, customer is locked (e.g. invoked from a specific stop). */
@@ -565,6 +568,18 @@ function ProductPickView({
   if (draftSeedRef.current === null && initialDraft) {
     draftSeedRef.current = fromOrderDraftPayload(initialDraft.payload);
   }
+  // At-door durability (hunt 2026-09-14): a route/stop order never enables the
+  // server autosave engine below (`enabled: !runId && !stopId && …`), so an app
+  // kill mid-sale used to lose the whole cart with nothing to resume from. The
+  // local snapshot store is that resume point, and it seeds through the SAME
+  // one-shot ref as a server draft — which means it also inherits the
+  // hydration-safety pass (every parked productId is re-checked against the
+  // live catalog before a line renders or is priced). A real server draft
+  // always wins; the snapshot is only ever the fallback.
+  if (draftSeedRef.current === null && !initialDraft && stopId) {
+    const snapshot = useStopCartStore.getState().carts[stopId];
+    if (snapshot) draftSeedRef.current = fromOrderDraftPayload(snapshot.payload);
+  }
   const draftSeed = draftSeedRef.current;
   // Only a draft parked for THIS customer carries per-customer choices over.
   // "Change customer" remounts this view with the SAME draft (lines survive by
@@ -630,6 +645,8 @@ function ProductPickView({
   const lineUnitFor = (line: LineState | undefined, p: Product) =>
     isSpecialFor(p) ? tierPriceFor(p) : effectiveUnitPrice(line, tierPriceFor(p));
   const [scanOpen, setScanOpen] = useState(false);
+  /** Tray line (catalog id or unlisted local id) whose price is being edited. */
+  const [priceEditId, setPriceEditId] = useState<string | null>(null);
   // Newest-first ids for the scan tray + which row is flashing. Both are scan-UI
   // only: the order payload never reads them.
   const [scanOrder, setScanOrder] = useState<string[]>([]);
@@ -870,7 +887,19 @@ function ProductPickView({
    * for up to 10,000 rows and ships megabytes to a phone before the first row
    * renders ("the whole product catalogue loads"). Category filtering moved
    * server-side with it; see `productSearchParams`.
+   *
+   * The fetch is now GATED too (owner ask 2026-09-14): page 1 no longer loads
+   * at screen mount, only once there is a term or the operator taps "Browse
+   * catalogue" — `productSearchEnabled`. The screen already rendered quiet, so
+   * nothing on screen changes; what stops is the request.
    */
+  // Quiet by default (owner ask 2026-08-17): the builder shows what is ON the
+  // order, and the full catalogue is one deliberate tap away. Accepting a scan
+  // clears the search box, so without this the list snapped back to hundreds of
+  // rows after every item — see visibleCatalogRows. Search still wins over both.
+  // Declared HERE, not beside the list it feeds: `useProductSearch` reads it,
+  // and a `const` declared below its reader is a TDZ ReferenceError.
+  const [browsing, setBrowsing] = useState(false);
   const {
     search,
     setSearch,
@@ -882,7 +911,7 @@ function ProductPickView({
     hasNextPage,
     fetchNextPage,
     isFetchingNextPage,
-  } = useProductSearch<Product>({ category });
+  } = useProductSearch<Product>({ category, browsing });
 
   // Index of everything this screen can price: the current page, plus
   // snapshots of lines added from a page that is no longer loaded.
@@ -1085,13 +1114,32 @@ function ProductPickView({
    * resolves codes the text search never matches — so a SUCCESSFUL scan could
    * leave an empty list.
    */
+  // Two invariants the scan paths depend on, neither of which plain state can
+  // give them:
+  //  1. An Enter dispatched from the render BEFORE a clear must read the
+  //     CURRENT term, not the one captured in that render's closure —
+  //     otherwise it re-submits the code the accept just consumed.
+  //     `clearSearch` empties the ref SYNCHRONOUSLY with the field, so such a
+  //     submit sees "" and `runWedgeSubmit` no-ops.
+  //  2. One input event yields one add: the camera/wedge ladder and the
+  //     settled-search effect below both resolve the same physical scan, so
+  //     they share a claim (`lib/scan-accept-guard.ts`). Nothing here keys on
+  //     a code or a clock — a deliberate re-scan still adds a second unit.
+  const searchTermRef = useRef("");
+  searchTermRef.current = searchTerm;
+  const clearSearch = () => {
+    searchTermRef.current = "";
+    setSearch("");
+  };
+  const scanGuardRef = useRef(createScanAcceptGuard<Product>());
+
   const acceptScannedProduct = (
     product: Product,
     unitKind: "case" | "piece" = "case",
   ): ScanOutcome => {
     addOne(product.id, product, unitKind);
     bumpScanned(product.id);
-    setSearch("");
+    clearSearch();
     const label =
       unitKind === "piece" && Number(product.unitsPerBox ?? 0) > 1
         ? `Added 1 loose · ${displayName(product)}`
@@ -1110,13 +1158,19 @@ function ProductPickView({
   // one — see that file for why an ambiguous hit opens a picker rather than
   // silently taking matches[0], and why a miss must never close the scanner.
   const handleBarcodeScanned = makeScanHandler<Product>({
-    products,
+    // Every row this screen can price, not just the loaded page: with the
+    // catalogue fetch gated on term-or-browse there IS no preloaded page 1, so
+    // a plain `products` would drop the local fast path for lines already on
+    // the order (the re-scan-for-another-case burst). `scannedById` snapshots
+    // keep them resolvable with no request at all.
+    products: () => Array.from(productById.values()),
     accept: acceptScannedProduct,
     // Forward the ladder's abort signal — without it a lookup that blows the
     // scan deadline keeps running and still adds the line (F30 / R2).
     resolve: (c, signal) => resolveProductByCode<Product>(c, signal),
     onAmbiguous: setPickCode,
     onCreate: canCreateProducts ? setCreateCode : undefined,
+    acceptGuard: scanGuardRef.current,
   });
 
   /**
@@ -1152,10 +1206,10 @@ function ProductPickView({
       runWedgeSubmit({
         term: code,
         scan: handleBarcodeScanned,
-        clearSearch: () => setSearch(""),
+        clearSearch,
         showInline,
       }),
-    clearSearch: () => setSearch(""),
+    clearSearch,
   };
   const wedgeSubmitRef = useRef(
     createWedgeSubmitHandler({
@@ -1163,7 +1217,7 @@ function ProductPickView({
       clearSearch: () => wedgeDepsRef.current.clearSearch(),
     }),
   );
-  const handleSearchSubmit = () => wedgeSubmitRef.current(searchTerm);
+  const handleSearchSubmit = () => wedgeSubmitRef.current(searchTermRef.current);
 
   // Settled exact-match auto-add (no-terminator scanners): whether a settle
   // may add is decided by a per-scan ATTEMPT, not a time window (REG-B201) — a
@@ -1184,7 +1238,13 @@ function ProductPickView({
     const { match } = findExactScanMatch(code, products);
     if (!match) return;
     if (!autoAddAttemptRef.current.shouldAutoAdd(code)) return;
-    const outcome = acceptScannedProduct(match, scanUnitKind(code, match));
+    const kind = scanUnitKind(code, match);
+    // Consume the nonce FIRST (above), then offer: a match parked on an open
+    // ladder claim must not re-park on a later settle of the same attempt. A
+    // false answer means the ladder owns this label and will redeem the match
+    // itself if its own lookup comes back empty.
+    if (!scanGuardRef.current.offer(code, match, kind)) return;
+    const outcome = acceptScannedProduct(match, kind);
     if (outcome?.feedback?.kind === "added") showInline(outcome.feedback.text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchTerm, products, isSearching]);
@@ -1219,11 +1279,6 @@ function ProductPickView({
     [tenantCategories],
   );
 
-  // Quiet by default (owner ask 2026-08-17): the builder shows what is ON the
-  // order, and the full catalogue is one deliberate tap away. Accepting a scan
-  // clears the search box, so without this the list snapped back to hundreds of
-  // rows after every item — see visibleCatalogRows. Search still wins over both.
-  const [browsing, setBrowsing] = useState(false);
   const visible = useMemo(
     () =>
       visibleCatalogRows<Product>({
@@ -1350,6 +1405,15 @@ function ProductPickView({
     removeLine,
     isUnlisted: (id: string) => unlisted.some((u) => u.id === id),
     unlistedQty: (id: string) => unlisted.find((u) => u.id === id)?.qty ?? 0,
+    // SPECIAL (tier ≠ 1) lines are the customer's permanent price and are
+    // never overridable — the same rule submit already enforces by stripping a
+    // lingering override before it posts. The tray must not offer an edit that
+    // would be silently discarded.
+    isSpecialLine: (id: string) => {
+      const p = productById.get(id);
+      return p ? isSpecialFor(p) : false;
+    },
+    showInline,
     updateUnlistedQty,
     removeUnlisted,
     unitsPerBox: (id: string) => Number(productById.get(id)?.unitsPerBox ?? 0),
@@ -1414,6 +1478,39 @@ function ProductPickView({
     if (a.isUnlisted(id)) a.removeUnlisted(id);
     else a.removeLine(id);
   }, []);
+  // Reprice without leaving the camera. Until now the only price editor on
+  // this surface lived in CartModal, reachable only by leaving scan mode —
+  // while the order EDIT screen has had a one-tap edit under its scanner for
+  // two releases.
+  const onTrayEditPrice = useCallback((id: string) => {
+    const a = actionsRef.current;
+    if (!a.isUnlisted(id) && a.isSpecialLine(id)) {
+      a.showInline("Contract price — not editable on this order");
+      return;
+    }
+    setPriceEditId(id);
+  }, []);
+  // Resolved lazily (two map lookups) rather than memoized: it is null on every
+  // render but the handful where the sheet is open.
+  const priceEditTarget = ((): {
+    id: string;
+    name: string;
+    unitPrice: number;
+    unlisted: boolean;
+  } | null => {
+    if (!priceEditId) return null;
+    const u = unlisted.find((x) => x.id === priceEditId);
+    if (u) return { id: u.id, name: u.name, unitPrice: u.unitPrice, unlisted: true };
+    const p = productById.get(priceEditId);
+    if (!p) return null;
+    return {
+      id: priceEditId,
+      name: displayName(p, products),
+      // The override if one is set, else what this customer is billed today.
+      unitPrice: items[priceEditId]?.unitPrice ?? tierPriceFor(p),
+      unlisted: false,
+    };
+  })();
 
   // Boxed rows have variable height, so there's no getItemLayout to make
   // scrollToIndex exact — estimate, then retry once the cells have laid out.
@@ -1592,11 +1689,27 @@ function ProductPickView({
     });
   const deleteDraftDep = (id: string) => deleteDraftMutation.mutateAsync(id);
 
+  // A failed draft write used to be invisible at EVERY layer: `onSaveError`
+  // was never passed (so the engine's one observability hook was
+  // `undefined?.(err)`), and both manual flush points swallowed their
+  // rejection in a literal empty catch. A 5xx, a 403 addon gate, a 404 on a
+  // draft deleted from web — nothing on screen, nothing in the console, and no
+  // retry unless a later edit happens to fire one. (A genuine loss of network
+  // is different: api-client queues that write and replays it.)
+  const [draftSaveFailed, setDraftSaveFailed] = useState(false);
+  // Stable: the autosave engine reads this ONCE, at mount.
+  const noteDraftSaveError = useCallback((err: unknown) => {
+    setDraftSaveFailed(true);
+    console.error("[NewOrderScreen] draft autosave failed:", err);
+  }, []);
+
   // Bind point: this hook owns the create/autosave/single-flight-create
   // lifecycle; ProductPickView only reads its result and drives the
   // submit-time poison-pill + delete below. Never enabled for a route/stop
-  // order (driver flows never park — the run/stop itself is the "draft") and
-  // — money-critical — never enabled while a resumed session is still
+  // order: an at-door order is submitted then and there, so it parks no SERVER
+  // draft — its durability is the LOCAL `stopCartStore` snapshot below, not
+  // the run/stop row (which holds no cart at all). And — money-critical —
+  // never enabled while a resumed session is still
   // hydrating: `items` is deliberately empty until the live-product
   // cross-check finishes (see above), so `draftPayload` would otherwise be
   // missing every catalog line and an autosave write in that window would
@@ -1622,6 +1735,7 @@ function ProductPickView({
     createDraft: createDraftDep,
     updateDraft: updateDraftDep,
     deleteDraft: deleteDraftDep,
+    onSaveError: noteDraftSaveError,
     hydrate: initialDraft ? { draftId: initialDraft.id, payload: initialDraft.payload } : null,
   });
   useEffect(() => {
@@ -1635,10 +1749,50 @@ function ProductPickView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftId]);
 
-  // Flush points (navigation only — never blocks the action itself). Every
-  // flush is swallowed: parking is best-effort, and an unhandled rejection
-  // from a failed draft write must never surface as an app-level error.
-  const flushDraftQuietly = useCallback(() => flushDraft().catch(() => {}), [flushDraft]);
+  // At-door snapshot: the local counterpart of the server autosave above, on
+  // the same 900ms cadence, for the run/stop orders that engine never covers.
+  // Written from the same `draftPayload` the server draft serializes, so the
+  // seed at the top of this component is a plain `fromOrderDraftPayload` round
+  // trip with no second shape to keep in step.
+  const stopCartParkable = draftParkable(draftBuilderState);
+  useEffect(() => {
+    if (!stopId) return;
+    const timer = setTimeout(() => {
+      const store = useStopCartStore.getState();
+      // Symmetric on purpose: emptying the cart must REMOVE the snapshot, or a
+      // kill right after "I took those back off" would restore the lines the
+      // operator just deleted. It also keeps a route's worth of visited stops
+      // from each leaving a permanent empty entry behind.
+      if (stopCartParkable) store.setSnapshot(stopId, draftPayload);
+      else store.clear(stopId);
+    }, 900);
+    return () => clearTimeout(timer);
+  }, [stopId, draftPayload, stopCartParkable]);
+  const clearStopCartSnapshot = useCallback(() => {
+    if (stopId) useStopCartStore.getState().clear(stopId);
+  }, [stopId]);
+
+  // Flush points. Never blocks the action itself — parking is best-effort and
+  // an unhandled rejection must never surface as an app-level error — but it
+  // is no longer SILENT: success clears the "not saved" state, failure raises
+  // it and logs, through the same handler the engine's debounced path uses.
+  const flushDraftQuietly = useCallback(
+    () => flushDraft().then(() => setDraftSaveFailed(false), noteDraftSaveError),
+    [flushDraft, noteDraftSaveError],
+  );
+  // Backgrounding the app is one of the loss vectors this autosave exists for,
+  // and on iOS/Android it had NO trigger at all: `beforeRemove` is in-app
+  // navigation and the `visibilitychange` handler below returns early off web.
+  // Pattern copied verbatim from the one other autosaving screen,
+  // app/(operator)/products/stock-count/[id].tsx — background flush, then
+  // unmount flush.
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state !== "active") void flushDraftQuietly();
+    });
+    return () => sub.remove();
+  }, [flushDraftQuietly]);
+  useEffect(() => () => void flushDraftQuietly(), [flushDraftQuietly]);
   const navigation = useNavigation();
   useEffect(() => {
     const nav = navigation as unknown as {
@@ -1748,7 +1902,7 @@ function ProductPickView({
     // it gate the order: a rejected draft write (offline queue, 404 on a draft
     // discarded from web) would otherwise abort submitOrder before `mutate`,
     // leaving Confirm a dead button with no error shown.
-    await flushDraft().catch(() => {});
+    await flushDraftQuietly();
     const catalogPayload: CreateOrderItemInput[] = Object.entries(items)
       .map(([productId, line]): CreateOrderItemInput => {
         const p = productById.get(productId);
@@ -1779,8 +1933,14 @@ function ProductPickView({
       })
       .filter((it) => "productId" in it && it.qty > 0);
     // Unlisted lines → `{ name, qty, unitPrice }` (no productId; never boxed).
+    // No `unitPrice > 0` clause: a $0 ad-hoc line (a comped or free item the
+    // operator deliberately entered) stays fully visible in the cart and still
+    // counts toward ITEMS, so dropping it from the POST silently deleted a line
+    // the driver would then never load. The server allows it (`@Min(0)` on
+    // CreateOrderItemDto.unitPrice) and web sends it. The cart submits what it
+    // shows; a line is removed by removing it, not by zeroing its price.
     const unlistedPayload: CreateOrderItemInput[] = unlisted
-      .filter((u) => u.qty > 0 && u.name.trim() !== "" && u.unitPrice > 0)
+      .filter((u) => u.qty > 0 && u.name.trim() !== "")
       .map((u) => ({
         name: u.name.trim(),
         qty: u.qty,
@@ -1826,6 +1986,9 @@ function ProductPickView({
           // This cart is now a real order; anything submitted next for THIS customer is a NEW
           // order and must carry its own key (B215/R3: only this customer's slot is cleared).
           resetOrderSubmitKey(customerId);
+          // The at-door cart is now a real order — drop its local snapshot so
+          // re-opening the stop starts clean instead of resurrecting it.
+          clearStopCartSnapshot();
           if (mergeChoice === "merge") {
             showToast(`Merged into order ${order.orderNumber}`);
           } else if (asDraft) {
@@ -1850,6 +2013,11 @@ function ProductPickView({
           // button with endSubmit().
           const outcome = classifyMutationError(err);
           if (outcome.kind === "queued") {
+            // REG-B308: a queued create is a pending SUCCESS, so the snapshot
+            // clears here too — leaving it would let the operator re-open the
+            // stop, find the cart restored, and sell the same load twice while
+            // the original POST is still waiting to replay.
+            clearStopCartSnapshot();
             await finalizeBoundDraft();
             showToast("Offline — order queued and will sync when you reconnect");
             onBack();
@@ -2077,11 +2245,16 @@ function ProductPickView({
         </Pressable>
       </View>
 
-      {/* Find: search + categories, pinned so they never scroll away. */}
+      {/* Find: search + categories, pinned so they never scroll away.
+          autoFocus is scoped to THIS product/search picker only — the
+          customer-select SearchBar above (CustomerPickerView) does not pass
+          it, since a wedge scan there should not steal focus into the wrong
+          field. */}
       <SearchBar
         placeholder="Search items…"
         value={search}
         onChangeText={setSearch}
+        autoFocus
         onSubmitEditing={() => void handleSearchSubmit()}
         trailing={
           <View style={styles.searchTrailing}>
@@ -2271,7 +2444,14 @@ function ProductPickView({
           </Pressable>
         </View>
         <View style={styles.footerSubRow}>
-          {totalItems === 0 && !createOrder.isPending ? (
+          {/* A rejected draft write used to be silent everywhere. The order
+              itself is never at risk — it is right here on screen — so say
+              exactly that rather than alarm an operator mid-round. */}
+          {draftSaveFailed ? (
+            <Text style={styles.footerNotSaved} numberOfLines={2}>
+              Draft not saved — your items are safe here. Confirm to send.
+            </Text>
+          ) : totalItems === 0 && !createOrder.isPending ? (
             <Text style={styles.footerHint}>Add an item to confirm, or save a draft.</Text>
           ) : (
             <View style={{ flex: 1 }} />
@@ -2295,7 +2475,9 @@ function ProductPickView({
         // Freeze decoding, don't close: `scanOpen` is never cleared here, so
         // whether the operator creates the product or cancels, they land back
         // in a live scanner with the tray intact — nothing to restore.
-        paused={createCode != null || pickCode != null}
+        // Freeze the decode loop while the price sheet is stacked over the
+        // camera too — same reason as the other two hand-offs.
+        paused={createCode != null || pickCode != null || priceEditId != null}
         rows={trayRows}
         flash={scanFlash}
         totalItems={totalItems}
@@ -2305,6 +2487,7 @@ function ProductPickView({
         onIncrement={onTrayIncrement}
         onDecrement={onTrayDecrement}
         onRemove={onTrayRemove}
+        onEditPrice={onTrayEditPrice}
         onReview={() => {
           setScanOpen(false);
           setCartOpen(true);
@@ -2365,6 +2548,26 @@ function ProductPickView({
         initialCode={createCode ?? undefined}
         onClose={() => setCreateCode(null)}
         onCreated={handleInlineCreated}
+      />
+
+      {/* Reprice a tray line without leaving the camera. Same portal-order
+          rule as the two sheets above: it MUST stay after <ScanOrderSheet>. */}
+      <LinePriceModal
+        open={priceEditTarget != null}
+        name={priceEditTarget?.name ?? ""}
+        unitPrice={priceEditTarget?.unitPrice ?? null}
+        onClose={() => setPriceEditId(null)}
+        onSave={(value) => {
+          const target = priceEditTarget;
+          setPriceEditId(null);
+          if (!target) return;
+          // Money discipline: round every monetary write. The line TOTAL is
+          // never written here — the tray and the footer both re-derive it
+          // through computeLineSubtotal from this unit price.
+          const price = value == null ? null : roundMoney(value);
+          if (target.unlisted) updateUnlistedPrice(target.id, price);
+          else setLinePrice(target.id, price);
+        }}
       />
 
       <CartModal
@@ -3413,6 +3616,80 @@ function UnlistedCartRow({
 }
 
 /**
+ * Reprice ONE line from the scan tray, without tearing the camera down.
+ *
+ * The create surface's only price editor used to be inside CartModal, i.e.
+ * behind "Review" — so fixing a price mid-scan meant leaving scan mode and
+ * coming back, while the order EDIT screen has offered a one-tap edit under
+ * its scanner since B263. This is the create-side counterpart.
+ *
+ * Deliberately thin: it collects a number and hands it back. Rounding, the
+ * SPECIAL-tier lock and the catalog-vs-unlisted split all live with the
+ * caller, which already owns those rules.
+ */
+function LinePriceModal({
+  open,
+  name,
+  unitPrice,
+  onClose,
+  onSave,
+}: {
+  open: boolean;
+  name: string;
+  /** The price in force for this line right now. */
+  unitPrice: number | null;
+  onClose: () => void;
+  /** `null` clears the override, so the line falls back to the catalog price. */
+  onSave: (value: number | null) => void;
+}) {
+  const [value, setValue] = useState<number | null>(null);
+
+  // Re-seed on every open — a different line each time.
+  useEffect(() => {
+    if (open) setValue(unitPrice);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  return (
+    <Modal visible={open} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.unlistedOverlay} onPress={onClose}>
+        <Pressable style={styles.unlistedCard} onPress={(e) => e.stopPropagation()}>
+          <Text style={styles.unlistedTitle} numberOfLines={2}>
+            {name || "Edit price"}
+          </Text>
+          <Text style={styles.unlistedSub}>Price for this order only.</Text>
+
+          <Text style={styles.unlistedFieldLabel}>Unit price</Text>
+          <MoneyTextInput
+            style={styles.unlistedInput}
+            value={value}
+            onChangeValue={setValue}
+            placeholder="0.00"
+            placeholderTextColor={ios.label3}
+            returnKeyType="done"
+            autoFocus
+          />
+
+          <View style={[styles.modalBtns, { marginTop: 4 }]}>
+            <Pressable style={styles.modalBtnGhost} onPress={onClose}>
+              <Text style={styles.modalBtnGhostText}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              style={styles.modalBtnFill}
+              onPress={() => onSave(value)}
+              accessibilityRole="button"
+              accessibilityLabel="Save price"
+            >
+              <Text style={styles.modalBtnFillText}>Save</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+/**
  * Small modal to compose a new unlisted line: free-text name, unit price
  * (required), integer qty. Mirrors the PriceOverrideModal styling.
  */
@@ -3878,6 +4155,12 @@ const styles = StyleSheet.create({
     color: ios.label3,
     fontSize: 12,
     fontFamily: "Inter_400Regular",
+    flex: 1,
+  },
+  footerNotSaved: {
+    color: ios.system.redInk,
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
     flex: 1,
   },
   footerSubRow: {
