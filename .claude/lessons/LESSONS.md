@@ -751,3 +751,25 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
 - **Guard:** `STRIPE_TERMINAL_STATUSES` + `REG-B408` ×8 in
   `subscription-mutation.service.spec.ts` — one case per non-terminal status, plus one pinning
   that an unrecognised status still surfaces the error. Sibling [[L-127]].
+
+### L-129 · 2026-09-14 · domain · mobile scan-to-order, staged-edit persistence
+
+- **Symptom:** a reviewer flagged a new "don't lose the operator's staged edits" snapshot
+  (`edit-items-draft.ts`) as a likely R1 violation — R1 requires local persistence to go through
+  the user-scoped zustand `persist` store pattern (`podStore.ts`), never a raw AsyncStorage key,
+  specifically to prevent one user's work surfacing under the next login (B136/B137/B140).
+- **Root cause:** R1 was written against a single-blob-per-user shape (one cart, one draft). This
+  snapshot is one-per-ORDER, and an operator edits several orders per session — a single zustand
+  store holds one state object, not a dynamic per-order keyspace, so the literal store pattern
+  doesn't fit the shape. The code used a `rf.edit-items.v1:<userId>:<orderId>` AsyncStorage
+  keyspace instead, with `lib/session-teardown.ts` enumerating and wiping every key under a
+  user's prefix on logout.
+- **Lesson:** **A binding rule written for one shape (single blob) does not automatically bind a
+  different shape (a per-entity keyspace) the same way. Before flagging a deviation from a
+  pattern-shaped rule as a violation, check what invariant the rule actually protects — here, no
+  cross-user data leak — and whether the deviation still satisfies THAT, not just whether it uses
+  the literal mechanism. Verify the substitute mechanism is real (grep the teardown/hydrate wiring
+  itself), don't take a code comment's claim on faith.**
+- **Guard:** `session-teardown.ts` imports and calls `editItemsSnapshotUserPrefix` +
+  `clearStorageByPrefix` — grep for it before trusting this reasoning again on the same file.
+  `apps/mobile/lib/edit-items-draft.ts` carries the design-rationale comment inline.

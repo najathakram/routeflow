@@ -111,6 +111,11 @@ message}` (mirrors the pattern already correct in `skip-stop.ts:48-57`) — `api
   `failed`; the return screen marks queued ids submitted alongside `done` and toasts "Offline —
   return queued…" instead of "Return submitted". Specs: `__tests__/offline-errors.test.ts`,
   `__tests__/returns-logic.test.ts` REG-B307/REG-B308.
+  **2026-09-14:** `offline-errors.ts` gains a second, deliberately separate predicate
+  `isStopAlreadyCompletedError(e)` (400 + "already completed" substring) — `payment.tsx`'s retry
+  path treats it as success rather than re-arming the Complete button, since the server refuses
+  any write once the stop is COMPLETED. Detail: `mobile/tests-2.md`'s "2026-09-14 —
+  hunt-mobile-scan lanes A-E" §Lane D.
 - **Durable POD (2026-08-28):** `lib/pod-artifacts.ts` (pure, spec'd in
   `__tests__/pod-artifacts.test.ts`) — `strokesToSvgDataUrl` (stroke vectors → SVG data URL,
   white bg, null for tap-only; used by `components/SignaturePad.tsx` on BOTH platforms — the
@@ -145,7 +150,11 @@ message}` (mirrors the pattern already correct in `skip-stop.ts:48-57`) — `api
   branch now mounts `BarcodeFab` (`hidden={scanFabHidden(...)}` via new `lib/scan-fab-visibility.ts`,
   gated on pricing-ready/picker-open/price-modal-open/other-blocking-modal-open; `onPress` opens the
   local `ProductPicker` pre-armed to scan via a new `initialScanOpen` prop — 1 tap after Apply, was
-  2, no second scanner/pricing path), `[id]/split-invoice.tsx`.
+  2, no second scanner/pricing path), `[id]/split-invoice.tsx`. **2026-09-14 (hunt-mobile-scan lane
+  A):** lazy-gated product search, a `scan-accept-guard.ts` dedup claim, and a staged-edit
+  AsyncStorage snapshot (`lib/edit-items-draft.ts`, restore-on-reopen) replace the old always-fetch
+  picker and unprotected in-progress edit — `canEditPriceFor` now also requires `pricingReady`
+  (B62). Full detail: `mobile/tests-2.md`'s "2026-09-14 — hunt-mobile-scan lanes A-E" section.
 - **Share retap made synchronous (2026-08-27, Samsung Internet dead-end):** `lib/share-pdf.ts`
   `canShareFilesHere()` now probes FILE support via a sync `canShare({files:[probe]})` (Samsung
   Internet exposes share()/canShare() but rejects files — it was taking the file-share path and
@@ -170,7 +179,7 @@ message}` (mirrors the pattern already correct in `skip-stop.ts:48-57`) — `api
   `exceptions.tsx`, `analytics/index.tsx`, `movements.tsx`, `messages.tsx`, `fleet.tsx`, `driver.tsx`,
   `profile.tsx`, `change-password.tsx`, `expenses/{index,[id],new}.tsx`.
 - **Analytics perf hooks widened (2026-08-28, mirror of web):** `lib/api/admin.ts` `useAnalyticsRoutePerformance`/`useAnalyticsDriverPerformance` now accept `(from?, to?)` (params + queryKey) and both row types extend `RunOpsMetrics` (`onTimeRate`/`stopsPerHour`/`avgRunDurationMinutes`, nullable = no measurable data). No mobile screen renders these two hooks yet — `analytics/index.tsx` uses DSO/AOV/top-products/top-customers only.
-- `recurring-invoices/` → `index.tsx` (**#225:** "New" NavAction), `[id].tsx`, **#225 new:** `new.tsx` (customer→schedule[frequency chips + `recurringScheduleFields`]→item builder via `useCreateRecurringInvoice`).
+- `recurring-invoices/` → `index.tsx` (**#225:** "New" NavAction), `[id].tsx`, **#225 new:** `new.tsx` (customer→schedule[frequency chips + `recurringScheduleFields`]→item builder via `useCreateRecurringInvoice`). **2026-09-14:** its `ProductPickerModal` now gates the catalogue fetch on a term or a "Browse catalogue" tap (`browsing` state, resets on close) instead of loading on mount — same lazy-load pattern as `ProductPickerSheet.tsx`; see `mobile/tests-2.md`'s "2026-09-14" §Lane E.
 
 ### `(tenant)/` — tenant-admin dashboard
 
