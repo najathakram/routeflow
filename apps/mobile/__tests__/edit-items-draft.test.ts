@@ -183,6 +183,43 @@ describe("edit-items-draft: the dirty check is the Save payload (REG-EDIT-DRAFT-
     expect(stagedDiffItems({ draft, unlisted, pendingDeletes: [] }, originals)).toEqual(expected);
     expect(expected.length).toBeGreaterThan(0);
   });
+
+  it("REG-MSCAN-M1: orderOriginals threads overrideReason through, so a reason-only correction saves and a re-hydrated unchanged override does not false-positive", () => {
+    const order = orderFixture();
+    order.lineItems = [
+      { ...order.lineItems![0], overrideReason: "Damaged case" },
+      order.lineItems![1],
+    ];
+    const originals = orderOriginals(order);
+    expect(originals.find((o) => o.id === "L1")?.overrideReason).toBe("Damaged case");
+
+    // Re-hydrated draft carries the SAME saved reason, price/qty untouched — must
+    // be silent (this is the false-positive M1's own fix could have introduced
+    // if orderOriginals didn't carry overrideReason through from the server line).
+    const untouched = draftFixture();
+    untouched.p1 = { ...untouched.p1, overrideReason: "Damaged case" };
+    expect(
+      stagedDiffItems({ draft: untouched, unlisted: [], pendingDeletes: [] }, originals),
+    ).toEqual([]);
+
+    // Operator corrects ONLY the reason text — unitPrice identical to the
+    // original 24. Before the fix this was dropped silently (M1).
+    const reasonOnly = draftFixture();
+    reasonOnly.p1 = { ...reasonOnly.p1, overrideReason: "Damaged case, restocking fee waived" };
+    expect(
+      stagedDiffItems({ draft: reasonOnly, unlisted: [], pendingDeletes: [] }, originals),
+    ).toEqual([
+      {
+        id: "L1",
+        action: "UPDATE",
+        qty: 24,
+        boxes: 2,
+        pieces: 0,
+        unitPrice: 24,
+        overrideReason: "Damaged case, restocking fee waived",
+      },
+    ]);
+  });
 });
 
 describe("edit-items-draft: the on-device snapshot (REG-EDIT-DRAFT-B)", () => {

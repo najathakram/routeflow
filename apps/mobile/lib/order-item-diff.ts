@@ -78,6 +78,7 @@ export interface OriginalLine {
   unitPrice: number;
   name?: string | null;
   notes?: string | null;
+  overrideReason?: string | null;
 }
 
 export function buildOrderItemDiff(args: {
@@ -165,15 +166,19 @@ export function buildOrderItemDiff(args: {
 
     const qtyChanged = Math.abs(line.qty - orig.qty) > EPS;
     const priceChanged = Math.abs(line.unitPrice - orig.unitPrice) > EPS;
+    // A reason-only correction (unitPrice unchanged) is still a change — without
+    // this, buildOrderItemDiff dropped it silently: the UI showed the corrected
+    // reason as saved, but a reload reverted it (M1).
+    const reasonChanged = (line.overrideReason ?? "") !== (orig.overrideReason ?? "");
     // A note-only edit is still a change (send the new value; empty clears it).
     const notesChanged = noteVal !== (orig.notes ?? "").trim();
-    if (qtyChanged || priceChanged || notesChanged) {
+    if (qtyChanged || priceChanged || reasonChanged || notesChanged) {
       out.push({
         id: line.lineId,
         action: "UPDATE",
         qty: line.qty, // server's UPDATE branch requires qty present
         ...boxFields,
-        ...(priceChanged
+        ...(priceChanged || reasonChanged
           ? {
               unitPrice: line.unitPrice,
               ...(line.overrideReason ? { overrideReason: line.overrideReason } : {}),

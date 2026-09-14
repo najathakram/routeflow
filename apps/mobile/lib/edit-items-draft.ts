@@ -147,6 +147,7 @@ export interface BaselineLine {
   name?: string | null;
   notes?: string | null;
   status?: string | null;
+  overrideReason?: string | null;
 }
 
 export interface BaselineOrderLike {
@@ -170,6 +171,7 @@ export function orderOriginals(order: BaselineOrderLike | null | undefined): Ori
       unitPrice: toNumber(li.unitPrice),
       name: li.name ?? null,
       notes: li.notes ?? null,
+      overrideReason: li.overrideReason ?? null,
     }));
 }
 
