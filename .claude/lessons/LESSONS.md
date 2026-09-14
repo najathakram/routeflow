@@ -768,3 +768,7 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   always closes the pool in `afterAll` even when `beforeAll` threw.**
 - **Guard:** CI's migration-replay job (fresh DB, no seed) is the standing check; the spec
   `apps/api/src/common/backfill-subscription-reconciliation.db.spec.ts` is the reference pattern.
+  When a spec fabricates a reference row, derive any integer key or version from the table
+  (`max(col) + 1`), never from `Date.now()` — `PlanVersion.version` is int4 and a timestamp-derived
+  value overflowed it only on CI's fresh database, i.e. the one environment the fix targeted; a fix
+  aimed at an environment you cannot run must be traced against that environment's schema and limits.
