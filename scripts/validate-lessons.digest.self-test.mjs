@@ -70,7 +70,7 @@ const main = () => {
     const lessonsDir = join(scratchRoot, "lessons");
     cpSync(REAL_LESSONS_DIR, lessonsDir, { recursive: true });
 
-    const env = { ...process.env, LESSONS_ROOT: lessonsDir };
+    const env = { ...process.env, LESSONS_ROOT: lessonsDir, LESSONS_SELF_TEST: "1" };
     const run = (args) => spawnSync(process.execPath, [SCRIPT, ...args], { encoding: "utf8", env });
     const DIGEST = join(lessonsDir, "LESSONS-DIGEST.md");
     const META = join(lessonsDir, "_meta.json");

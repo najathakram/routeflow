@@ -50,7 +50,22 @@
 //   2. Otherwise, compute `drift` = the files changed between
 //      `mappedSha..HEAD` (`git diff --name-only`) that fall under `apps/**`,
 //      `packages/**`, or `scripts/**`, and `mapTouched` = whether any file
-//      under `.claude/code-map/**` changed in that same range.
+//      under `.claude/code-map/**` changed in that same range. This list
+//      deliberately omits `.github/**`, `.husky/**`, and root config files —
+//      those don't describe the shipped app/package/script surface the map
+//      indexes, so a workflow or lint-config-only change is never drift.
+//
+//   0. Before either of the above, mappedSha's commit object must actually
+//      be present locally. A shallow CI checkout (`actions/checkout`
+//      defaults to fetch-depth 1) or a PR build's synthetic merge-ref HEAD
+//      can leave mappedSha's own commit unfetched — `git merge-base
+//      --is-ancestor` can't answer "is X an ancestor" when X doesn't exist
+//      as an object (it exits 128, "unknown object", not the same as exit 1
+//      "X exists but isn't an ancestor"). Treating 128 as "not an ancestor"
+//      was the CI bug this rule fixes (owner ruling 2026-09-14): a missing
+//      object, or any merge-base exit code other than 0/1, is classified
+//      UNVERIFIABLE — a WARNING, never an error, on master or off — and
+//      drift is skipped entirely. Only exit code 1 stays an ERROR.
 //   3. STALE = `drift` is non-empty AND `mapTouched` is false — code changed
 //      that could affect the map, and nothing under the map directory
 //      acknowledged it. A branch that touches the map alongside its code
@@ -288,11 +303,28 @@ if (meta && typeof meta.mappedSha === "string" && meta.mappedSha) {
       encoding: "utf8",
     }).trim();
     if (head && head !== meta.mappedSha) {
-      const ancestor = spawnSync("git", ["merge-base", "--is-ancestor", meta.mappedSha, "HEAD"], {
+      // See file header § 6 rule 0: check object presence before asking
+      // merge-base an ancestry question it cannot answer for an absent sha.
+      const catFile = spawnSync("git", ["cat-file", "-e", `${meta.mappedSha}^{commit}`], {
         cwd: REPO_ROOT,
         encoding: "utf8",
       });
-      if (ancestor.status !== 0) {
+      const objectMissing = catFile.status !== 0;
+      const ancestor = objectMissing
+        ? null
+        : spawnSync("git", ["merge-base", "--is-ancestor", meta.mappedSha, "HEAD"], {
+            cwd: REPO_ROOT,
+            encoding: "utf8",
+          });
+      // Only exit 1 ("X exists, but is not an ancestor") is a real ancestry
+      // violation. A missing object, or any other non-zero merge-base exit
+      // (e.g. 128 "unknown object"), is UNVERIFIABLE — never an error.
+      if (objectMissing || ancestor.status > 1) {
+        warn(
+          `mappedSha ${meta.mappedSha.slice(0, 8)} not present locally (shallow clone) — ` +
+            `ancestry and drift unverifiable.`,
+        );
+      } else if (ancestor.status === 1) {
         fail(
           `MAPPED SHA NOT ANCESTOR: ${rel(META)}'s mappedSha (${meta.mappedSha.slice(0, 8)}) is ` +
             `not HEAD and not an ancestor of HEAD (${head.slice(0, 8)}) — it may name a commit ` +
@@ -364,6 +396,7 @@ if (failures.length) {
   if (!fixReport && rowOffenders.length) {
     console.error("  (--fix-report prints every offending row)");
   }
+  for (const w of warnings) console.log(`  ⚠ ${w}`);
   process.exit(1);
 }
 

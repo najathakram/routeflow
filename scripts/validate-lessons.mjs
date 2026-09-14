@@ -82,8 +82,25 @@ const REPO_ROOT = path.resolve(__dirname, "..");
 // LESSONS_ROOT overrides the register directory — used by
 // validate-lessons.digest.self-test.mjs (F3) so the self-test can point this
 // script at a disposable copy of `.claude/lessons/` instead of mutating the
-// real register on SIGINT or a concurrent `npm run verify`.
-const DIR = process.env.LESSONS_ROOT
+// real register on SIGINT or a concurrent `npm run verify`. Guarded like
+// SCHEMA_DRIFT_PRISMA_CLI (apps/api/scripts/schema-drift.mjs): an exported
+// LESSONS_ROOT alone would silently redirect both validation AND the
+// --digest write away from the real register, so it is honoured ONLY when a
+// second marker, LESSONS_SELF_TEST=1, is also set (the self-test sets both),
+// with a loud WARNING whenever it is active; anywhere else it is ignored.
+const selfTestArmed = process.env.LESSONS_SELF_TEST === "1" && Boolean(process.env.LESSONS_ROOT);
+if (selfTestArmed) {
+  console.error(
+    `validate-lessons: WARNING — LESSONS_ROOT override in effect (${process.env.LESSONS_ROOT}); ` +
+      `this is NOT the real register`,
+  );
+} else if (process.env.LESSONS_ROOT) {
+  console.error(
+    "validate-lessons: LESSONS_ROOT is ignored outside self-test (LESSONS_SELF_TEST=1 unset); " +
+      "using the real .claude/lessons register",
+  );
+}
+const DIR = selfTestArmed
   ? path.resolve(process.env.LESSONS_ROOT)
   : path.join(REPO_ROOT, ".claude", "lessons");
 
@@ -264,7 +281,8 @@ if (hasValidDeclaredNextId && declaredNextId < minNextId) {
   fail(
     `NEXTID TOO LOW: ${rel(META)} says nextId ${declaredNextId}, but the highest id in the ` +
       `register is ${maxId} (needs nextId >= ${minNextId}). A hand-lowered nextId risks a future ` +
-      `duplicate id — fix with: node scripts/validate-lessons.mjs --digest.`,
+      `duplicate id — fix by raising nextId in ${rel(META)} to >= ${minNextId} (--digest refuses ` +
+      `to write while this check is failing).`,
   );
 } else if (hasValidDeclaredNextId && declaredNextId > minNextId) {
   warn(
