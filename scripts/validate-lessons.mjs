@@ -21,17 +21,11 @@
 //
 // WHAT IT CHECKS
 // Everything is derivable from the two markdown files plus `_meta.json` — no
-// network, no install, no git. Six classes fail the build:
+// network, no install, no git. Four classes fail the build:
 //
-//   COUNT MISMATCH  — heading count != the matching `_meta` count. The register
-//                     no longer describes itself. This is the union-merge class
-//                     above, and the reason this script exists.
 //   DUPLICATE ID    — the same L-### twice, in either file or across both. An
 //                     id in LESSONS.md *and* ARCHIVE.md means a compaction
 //                     copied an entry where it should have moved it.
-//   NEXTID          — `_meta.nextId` is not strictly greater than the highest
-//                     id in EITHER file. Archived ids are retired, never
-//                     reissued: the citation pointing at one still resolves.
 //   DANGLING REF    — a `[[L-0xx]]` cross-reference naming an id that exists in
 //                     neither file. This is what makes ids safely immutable —
 //                     renumbering silently breaks citations, and nothing else
@@ -44,6 +38,13 @@
 //                     constraint and nobody was reading it. Every session loads
 //                     this file in full, so an over-cap register is a cost paid
 //                     on every future turn.
+//
+// `activeCount`/`archivedCount`/`nextId` are DERIVED from the two files, not
+// checked against `_meta.json` as ground truth (owner ruling 2026-09-14): a
+// stale stored value only WARNS (never fails the build), and `--digest` mode
+// re-stamps it. This is what stops two PRs — each individually correct about
+// its own counter — from conflicting on `_meta.json` when merged; see the
+// derived-counters section below for the full rationale.
 //
 // Gaps in the id sequence are NOT a finding. A gap is normally an id reserved
 // by an open branch that has not merged yet, and treating it as free is exactly
@@ -95,6 +96,8 @@ const DEFAULT_MAX_ENTRIES = 40;
 
 const failures = [];
 const fail = (msg) => failures.push(msg);
+const warnings = [];
+const warn = (msg) => warnings.push(msg);
 const rel = (p) => path.relative(REPO_ROOT, p).replace(/\\/g, "/");
 
 // ─── Load ────────────────────────────────────────────────────────────────────
@@ -119,8 +122,12 @@ try {
   process.exit(1);
 }
 
-for (const field of ["activeCount", "nextId"]) {
-  if (!Number.isInteger(meta[field])) {
+// activeCount / archivedCount / nextId are DERIVED from the two markdown files
+// (see "Counters" below) — a present-but-wrong-TYPE value is still a real data
+// error (something wrote non-JSON-number garbage), so that alone still fails;
+// a present-but-STALE value no longer does.
+for (const field of ["activeCount", "archivedCount", "nextId"]) {
+  if (field in meta && !Number.isInteger(meta[field])) {
     fail(`${rel(META)}: "${field}" must be an integer, got ${JSON.stringify(meta[field])}`);
   }
 }
@@ -188,29 +195,7 @@ function conflictMarkers(text, label) {
 conflictMarkers(lessonsText, rel(LESSONS));
 if (archiveText) conflictMarkers(archiveText, rel(ARCHIVE));
 
-// ─── 2. Counts match _meta ───────────────────────────────────────────────────
-const countChecks = [
-  ["activeCount", active.length, LESSONS, meta.activeCount],
-  ["archivedCount", archived.length, ARCHIVE, meta.archivedCount],
-];
-for (const [field, counted, file, declared] of countChecks) {
-  // archivedCount is optional on older registers; only check it once present.
-  if (declared === undefined) continue;
-  if (!Number.isInteger(declared)) {
-    fail(`${rel(META)}: "${field}" must be an integer, got ${JSON.stringify(declared)}`);
-    continue;
-  }
-  if (counted !== declared) {
-    fail(
-      `COUNT MISMATCH: ${rel(file)} has ${counted} entr${counted === 1 ? "y" : "ies"} but ` +
-        `${rel(META)} says ${field} ${declared}. Re-derive by counting headings in the MERGED ` +
-        `file — after a union merge both sides' numbers can be individually correct and the ` +
-        `total neither.`,
-    );
-  }
-}
-
-// ─── 3. Duplicate ids ────────────────────────────────────────────────────────
+// ─── 2. Duplicate ids ────────────────────────────────────────────────────────
 function dupes(list) {
   const seen = new Map();
   for (const { id } of list) seen.set(id, (seen.get(id) || 0) + 1);
@@ -232,18 +217,46 @@ if (inBoth.length) {
   );
 }
 
-// ─── 4. nextId sits above every id ever issued ───────────────────────────────
+// ─── 3. Counters (activeCount / archivedCount / nextId) — DERIVED ────────────
+// All three are 100% computable from the headings in LESSONS.md/ARCHIVE.md —
+// which is exactly why a stored copy is the one kind of value a git union-merge
+// cannot reconcile (see the file header: two branches each add entries, the
+// markdown merges clean, and BOTH sides' counters are individually correct
+// while the merged total is neither). Owner ruling 2026-09-14: stop treating
+// the stored value as authoritative.
+//
+// `_meta.json` still CARRIES these fields — `dev-pipeline/scripts/closeout.mjs`
+// reads `nextId`/`activeCount` to place the next lesson stub and check cap
+// headroom — so the keys are not removed. What changes is who is trusted:
+//   - `--digest` mode OVERWRITES all three with the derived value (the same
+//     run that already regenerates LESSONS-DIGEST.md now also re-stamps the
+//     counters, so one command repairs both derived artifacts at once).
+//   - A plain run only WARNS on a stale value — it never fails the build over
+//     a counter, which is the actual fix for the union-merge conflict: two PRs
+//     landing individually-correct-but-different counters no longer red the
+//     build, because neither counter is checked as a source of truth anymore.
 const allIds = [...active, ...archived];
 const maxNum = allIds.length ? Math.max(...allIds.map((e) => e.num)) : 0;
 const maxId = `L-${String(maxNum).padStart(3, "0")}`;
 
-if (Number.isInteger(meta.nextId) && allIds.length && meta.nextId <= maxNum) {
-  const where = archived.some((e) => e.num === maxNum) ? rel(ARCHIVE) : rel(LESSONS);
-  fail(
-    `NEXTID: ${rel(META)} says nextId ${meta.nextId}, but ${maxId} already exists in ` +
-      `${where}. nextId must be at least ${maxNum + 1}. An archived id is retired, never ` +
-      `reissued — the citation pointing at it still resolves.`,
-  );
+const derivedCounters = {
+  activeCount: active.length,
+  archivedCount: archived.length,
+  nextId: maxNum + 1,
+};
+
+for (const [field, derived] of Object.entries(derivedCounters)) {
+  const declared = meta[field];
+  if (declared === undefined) continue; // field is optional; nothing to reconcile
+  if (!Number.isInteger(declared)) continue; // already failed above as a type error
+  if (declared !== derived) {
+    warn(
+      `STALE ${field.toUpperCase()}: ${rel(META)} says ${field} ${declared}, derived from the ` +
+        `register is ${derived}. Informational only — run \`node scripts/validate-lessons.mjs ` +
+        `--digest\` to re-stamp it (or ignore: nothing downstream trusts the stored value as ` +
+        `authoritative anymore).`,
+    );
+  }
 }
 
 // ─── 5. Cross-references resolve ─────────────────────────────────────────────
@@ -333,9 +346,13 @@ if (verbose) {
   );
 }
 
+// The summary line always reports the DERIVED nextId, not the (now purely
+// informational) stored one — the stored value can be stale by design and a
+// status line quoting a stale number is exactly the failure mode L-### stories
+// in this file's header are about.
 const counts =
   `${active.length}/${maxEntries} entries · ${kb}/${capKb} KB · archived ${archived.length} · ` +
-  `nextId ${meta.nextId} (max ${maxId}) · binding: ${binding}`;
+  `nextId ${derivedCounters.nextId} (max ${maxId}) · binding: ${binding}`;
 
 if (failures.length) {
   console.error(`\n✖ ${failures.length} register problem(s):\n`);
@@ -343,6 +360,8 @@ if (failures.length) {
   console.error(`\n.claude/lessons: ${counts}\n`);
   process.exit(1);
 }
+
+for (const w of warnings) console.log(`  ⚠ ${w}`);
 
 // ─── Digest ──────────────────────────────────────────────────────────────────
 // Deterministic given LESSONS.md + _meta.json alone: a 3-line header (title,
@@ -373,6 +392,24 @@ if (digestMode) {
   writeFileSync(DIGEST, digestContent);
   console.log(`✔ .claude/lessons: register is self-consistent. ${counts}`);
   console.log(`✔ wrote ${rel(DIGEST)} (${active.length} entries)`);
+
+  // Re-stamp any of the three counters that _meta.json still carries — same
+  // "one command repairs the derived artifact" contract as the digest write
+  // above. A field entirely absent from _meta.json is left absent (not every
+  // project wants the key); a present-but-stale one is corrected in place.
+  const metaUpdates = {};
+  for (const [field, derived] of Object.entries(derivedCounters)) {
+    if (field in meta && meta[field] !== derived) metaUpdates[field] = derived;
+  }
+  if (Object.keys(metaUpdates).length) {
+    const newMeta = { ...meta, ...metaUpdates, updatedAt: new Date().toISOString() };
+    writeFileSync(META, `${JSON.stringify(newMeta, null, 2)}\n`);
+    console.log(
+      `✔ re-stamped ${rel(META)}: ${Object.entries(metaUpdates)
+        .map(([f, v]) => `${f} -> ${v}`)
+        .join(", ")}`,
+    );
+  }
 } else {
   // A digest written on a different OS checkout may carry CRLF line endings —
   // normalize before comparing so that alone is never a false "stale" report.
