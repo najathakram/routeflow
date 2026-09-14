@@ -82,11 +82,19 @@ export type GoogleAuthResult =
 
 const NONCE_TTL_SECS = 600; // 10 minutes
 
+// B349: the OAuth `state` is signed so a caller cannot rewrite `linkUserId` (or any
+// other field) to attach their Google identity to someone else's account. The key is
+// HKDF-derived from JWT_SECRET (same isolation pattern as STORAGE_URL_SIGNING_SECRET)
+// — no new secret to provision.
+const OAUTH_STATE_HKDF_INFO = "routeflow-oauth-state-v1";
+const OAUTH_STATE_KEY_LEN = 32;
+
 @Injectable()
 export class GoogleOAuthService {
   private readonly logger = new Logger(GoogleOAuthService.name);
   private readonly oauth2Client: OAuth2Client;
   private readonly redis: Redis;
+  private readonly stateSigningKey: Buffer;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -99,6 +107,22 @@ export class GoogleOAuthService {
     const clientId = configService.get<string>("GOOGLE_CLIENT_ID") ?? "";
     const clientSecret = configService.get<string>("GOOGLE_CLIENT_SECRET") ?? "";
     this.oauth2Client = new OAuth2Client(clientId, clientSecret);
+
+    const jwtSecret = configService.get<{ secret: string }>("jwt")?.secret ?? "";
+    if (!jwtSecret) {
+      // B349 round 1: deriving the state-signing key from an empty string is a fixed,
+      // publicly-known key — fail closed instead of silently signing state with it.
+      throw new Error("JWT_SECRET is required to sign OAuth state");
+    }
+    this.stateSigningKey = Buffer.from(
+      crypto.hkdfSync(
+        "sha256",
+        jwtSecret,
+        Buffer.alloc(0),
+        OAUTH_STATE_HKDF_INFO,
+        OAUTH_STATE_KEY_LEN,
+      ),
+    );
 
     if (!clientId || !clientSecret) {
       this.logger.warn(
@@ -159,6 +183,48 @@ export class GoogleOAuthService {
   }
 
   /**
+   * B349: sign a state payload — base64url(payloadJson) + "." + base64url(HMAC-SHA256).
+   * The MAC covers the exact JSON string, so any edit to the payload (e.g. rewriting
+   * `linkUserId`) invalidates it.
+   */
+  private signState(payloadJson: string): string {
+    const mac = crypto.createHmac("sha256", this.stateSigningKey).update(payloadJson).digest();
+    return `${Buffer.from(payloadJson, "utf-8").toString("base64url")}.${mac.toString("base64url")}`;
+  }
+
+  /**
+   * B349: verify a state's signature and return the raw payload JSON on success.
+   * Throws the same generic ForbiddenException("state_invalid") the rest of the
+   * callback path uses — no oracle distinguishing a bad MAC from any other failure.
+   */
+  private verifyStateSignature(stateParam: string): string {
+    const parts = typeof stateParam === "string" ? stateParam.split(".") : [];
+    if (parts.length !== 2) throw new ForbiddenException("state_invalid");
+    const [payloadB64, macB64] = parts;
+
+    let payloadJson: string;
+    let presentedMac: Buffer;
+    try {
+      payloadJson = Buffer.from(payloadB64, "base64url").toString("utf-8");
+      presentedMac = Buffer.from(macB64, "base64url");
+    } catch {
+      throw new ForbiddenException("state_invalid");
+    }
+
+    const expectedMac = crypto
+      .createHmac("sha256", this.stateSigningKey)
+      .update(payloadJson)
+      .digest();
+    if (
+      presentedMac.length !== expectedMac.length ||
+      !crypto.timingSafeEqual(presentedMac, expectedMac)
+    ) {
+      throw new ForbiddenException("state_invalid");
+    }
+    return payloadJson;
+  }
+
+  /**
    * Build a Google OAuth consent URL.
    * Persists a one-time nonce in Redis (TTL 10 min) for CSRF protection.
    */
@@ -181,11 +247,16 @@ export class GoogleOAuthService {
       // F12-005: carry the device state nonce through Google (opaque round-trip).
       ...(deviceState && { deviceState }),
     };
-    const state = Buffer.from(JSON.stringify(stateObj)).toString("base64url");
+    const payloadJson = JSON.stringify(stateObj);
+    const state = this.signState(payloadJson);
 
-    // Fire-and-forget — a Redis outage must not prevent login initiation
+    // Fire-and-forget — a Redis outage must not prevent login initiation.
+    // B349: bind the nonce to this exact payload (its content hash) rather than a
+    // bare presence flag, so the callback can reject a nonce presented alongside a
+    // payload it wasn't minted for.
+    const payloadHash = crypto.createHash("sha256").update(payloadJson).digest("hex");
     this.redis
-      .set(`oauth:nonce:${nonce}`, "1", "EX", NONCE_TTL_SECS)
+      .set(`oauth:nonce:${nonce}`, payloadHash, "EX", NONCE_TTL_SECS)
       .catch((e: Error) => this.logger.warn(`Nonce write failed: ${e.message}`));
 
     const redirectUri = this.resolveRedirectUri(type);
@@ -206,10 +277,12 @@ export class GoogleOAuthService {
   async generateLinkUrl(type: "platform" | "tenant", userId: string): Promise<string> {
     const nonce = crypto.randomUUID();
     const stateObj: OAuthState = { type, nonce, linkUserId: userId };
-    const state = Buffer.from(JSON.stringify(stateObj)).toString("base64url");
+    const payloadJson = JSON.stringify(stateObj);
+    const state = this.signState(payloadJson);
 
+    const payloadHash = crypto.createHash("sha256").update(payloadJson).digest("hex");
     this.redis
-      .set(`oauth:nonce:${nonce}`, "1", "EX", NONCE_TTL_SECS)
+      .set(`oauth:nonce:${nonce}`, payloadHash, "EX", NONCE_TTL_SECS)
       .catch((e: Error) => this.logger.warn(`Nonce write failed: ${e.message}`));
 
     const redirectUri = this.resolveRedirectUri(type);
@@ -267,9 +340,13 @@ export class GoogleOAuthService {
    * Throws ForbiddenException("state_invalid") if the nonce is missing or expired.
    */
   async verifyCallback(code: string, stateParam: string): Promise<GoogleProfile> {
+    // B349: verify the HMAC BEFORE parsing — reject a tampered payload without ever
+    // trusting its content (e.g. a rewritten `linkUserId`).
+    const payloadJson = this.verifyStateSignature(stateParam);
+
     let stateObj: OAuthState;
     try {
-      stateObj = JSON.parse(Buffer.from(stateParam, "base64url").toString("utf-8")) as OAuthState;
+      stateObj = JSON.parse(payloadJson) as OAuthState;
     } catch {
       throw new ForbiddenException("state_invalid");
     }
@@ -295,6 +372,20 @@ export class GoogleOAuthService {
       stored = luaResult as string | null;
     }
     if (!stored) throw new ForbiddenException("state_invalid");
+
+    // B349: bind the nonce to the payload it was minted for — reject a presented
+    // payload whose content hash doesn't match what this nonce was stored against.
+    // The MAC above already proves the payload wasn't tampered with post-mint; this
+    // additionally proves it's the SAME payload the nonce was issued for.
+    const presentedHash = crypto.createHash("sha256").update(payloadJson).digest("hex");
+    const storedBuf = Buffer.from(stored, "utf-8");
+    const presentedBuf = Buffer.from(presentedHash, "utf-8");
+    if (
+      storedBuf.length !== presentedBuf.length ||
+      !crypto.timingSafeEqual(storedBuf, presentedBuf)
+    ) {
+      throw new ForbiddenException("state_invalid");
+    }
 
     const redirectUri = this.resolveRedirectUri(stateObj.type);
 

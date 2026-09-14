@@ -1,6 +1,7 @@
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
 import { ForbiddenException, UnauthorizedException } from "@nestjs/common";
+import * as crypto from "crypto";
 import { GoogleOAuthService } from "./google-oauth.service";
 import { TenantGoogleOAuthService } from "../tenants/tenant-google-oauth.service";
 import { EncryptionService } from "../common/encryption.service";
@@ -30,7 +31,8 @@ describe("GoogleOAuthService.verifyCallback email_verified (F3-001)", () => {
 
   function buildService(payload: Record<string, unknown>) {
     const config = {
-      get: (key: string) => CONFIG_VALUES[key],
+      get: (key: string) =>
+        key === "jwt" ? { secret: "test-jwt-secret-for-oauth-state" } : CONFIG_VALUES[key],
     } as unknown as ConfigService;
     const service = new GoogleOAuthService(
       {} as any, // prisma — verifyCallback never reaches the DB
@@ -52,9 +54,15 @@ describe("GoogleOAuthService.verifyCallback email_verified (F3-001)", () => {
     return service;
   }
 
-  const state = Buffer.from(JSON.stringify({ nonce: "n1", type: "tenant" }), "utf-8").toString(
-    "base64url",
-  );
+  // B349: state is now signed (base64url(payload).base64url(mac)) — build it via the
+  // service's own signState() rather than duplicating the HKDF/HMAC scheme here, and
+  // point the nonce mock at the matching content hash so the binding check passes.
+  function signedState(service: GoogleOAuthService, payload: Record<string, unknown>) {
+    const payloadJson = JSON.stringify(payload);
+    const hash = crypto.createHash("sha256").update(payloadJson).digest("hex");
+    (service as any).redis.getdel = jest.fn().mockResolvedValue(hash);
+    return (service as any).signState(payloadJson);
+  }
 
   it("rejects when Google reports email_verified=false", async () => {
     const service = buildService({
@@ -62,6 +70,7 @@ describe("GoogleOAuthService.verifyCallback email_verified (F3-001)", () => {
       email: "victim@example.com",
       email_verified: false,
     });
+    const state = signedState(service, { nonce: "n1", type: "tenant" });
 
     await expect(service.verifyCallback("code", state)).rejects.toThrow(
       new UnauthorizedException("google_email_not_verified"),
@@ -70,6 +79,7 @@ describe("GoogleOAuthService.verifyCallback email_verified (F3-001)", () => {
 
   it("rejects when email_verified is absent from the payload", async () => {
     const service = buildService({ sub: "google-1", email: "victim@example.com" });
+    const state = signedState(service, { nonce: "n1", type: "tenant" });
 
     await expect(service.verifyCallback("code", state)).rejects.toThrow(
       new UnauthorizedException("google_email_not_verified"),
@@ -83,6 +93,7 @@ describe("GoogleOAuthService.verifyCallback email_verified (F3-001)", () => {
       email_verified: true,
       name: "Person",
     });
+    const state = signedState(service, { nonce: "n1", type: "tenant" });
 
     const profile = await service.verifyCallback("code", state);
     expect(profile).toMatchObject({ googleId: "google-1", email: "person@example.com" });
