@@ -1,5 +1,17 @@
-import { IsString, MinLength, MaxLength, Matches, IsEmail, IsOptional } from "class-validator";
+import {
+  IsString,
+  MinLength,
+  MaxLength,
+  Matches,
+  IsEmail,
+  IsOptional,
+  IsIn,
+  IsInt,
+  Min,
+  Max,
+} from "class-validator";
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
+import { PLAN_KEYS } from "../../billing/plan-catalog.constants";
 
 export class CreateTenantDto {
   @ApiProperty()
@@ -33,8 +45,17 @@ export class CreateTenantDto {
   @MinLength(8)
   adminPassword?: string;
 
-  @ApiPropertyOptional({ enum: ["STARTER", "PROFESSIONAL", "ENTERPRISE"], default: "STARTER" })
+  @ApiPropertyOptional({ enum: PLAN_KEYS, default: "STARTER" })
   @IsOptional()
-  @IsString()
-  plan?: string;
+  @IsIn(PLAN_KEYS)
+  plan?: (typeof PLAN_KEYS)[number];
+
+  @ApiPropertyOptional({
+    description: "Trial length override in days (default: TRIAL_LENGTH_DAYS)",
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(90)
+  trialLengthDays?: number;
 }

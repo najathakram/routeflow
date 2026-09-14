@@ -190,6 +190,14 @@ export function planKeyFromEnum(plan: string | null | undefined): PlanKey {
     case "BUSINESS":
     case "PROFESSIONAL":
       return "SCALE";
+    // Phase 0 Task 10: GROWTH/SCALE are now also DIRECT TenantPlan enum values (not only
+    // legacy aliases mapped forward) — identity map them instead of falling through to the
+    // STARTER default, which used to silently under-price/under-entitle a tenant written with
+    // the new enum value directly.
+    case "GROWTH":
+      return "GROWTH";
+    case "SCALE":
+      return "SCALE";
     case "ENTERPRISE":
       return "ENTERPRISE";
     case "STARTER":
@@ -209,10 +217,8 @@ export type TenantPlanEnumValue =
 
 /**
  * `TenantPlan` values currently selectable on an admin-facing DTO (`UpdateTenantPlanDto`,
- * `ActivateSubscriptionDto`). Excludes GROWTH and SCALE: `@IsEnum(TenantPlan)` alone would accept
- * them now that the Prisma enum has widened, but `planKeyFromEnum()` doesn't know them yet and
- * falls through to its default STARTER branch — GROWTH/SCALE become selectable in Phase 0 Task 10
- * when planKeyFromEnum learns them.
+ * `ActivateSubscriptionDto`). Phase 0 Task 10 closed the GROWTH/SCALE gap: `planKeyFromEnum()`
+ * now identity-maps both, so they're safe to accept here too.
  */
 export const SELECTABLE_TENANT_PLANS: TenantPlanEnumValue[] = [
   "STARTER",
@@ -220,6 +226,8 @@ export const SELECTABLE_TENANT_PLANS: TenantPlanEnumValue[] = [
   "BUSINESS",
   "PROFESSIONAL",
   "ENTERPRISE",
+  "GROWTH",
+  "SCALE",
 ];
 
 /**
