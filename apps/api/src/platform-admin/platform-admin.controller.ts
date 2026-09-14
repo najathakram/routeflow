@@ -27,6 +27,7 @@ import { ActivateSubscriptionDto } from "./dto/activate-subscription.dto";
 import { UpdateTenantConfigDto } from "./dto/update-tenant-config.dto";
 import { UpdateTenantPriceDto } from "./dto/update-tenant-price.dto";
 import { UpdatePlanPricesDto } from "./dto/update-plan-prices.dto";
+import { UpdateTenantClassDto } from "./dto/update-tenant-class.dto";
 import { EnableAddonDto, DisableAddonDto } from "../billing/dto/manage-addon.dto";
 import { AdminAuditAction } from "./audit-actions.constant";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
@@ -131,6 +132,16 @@ export class PlatformAdminController {
     @CurrentUser() admin: JwtPayload,
   ) {
     return this.svc.updatePlan(id, dto, admin.sub);
+  }
+
+  @Patch("tenants/:id/class")
+  @ApiOperation({ summary: "Change a tenant's classification (production/demo/test/internal)" })
+  updateTenantClass(
+    @Param("id") id: string,
+    @Body() dto: UpdateTenantClassDto,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    return this.svc.updateTenantClass(id, dto, admin.sub);
   }
 
   @Post("tenants/:id/impersonate")

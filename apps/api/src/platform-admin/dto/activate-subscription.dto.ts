@@ -1,5 +1,6 @@
-import { IsEnum, IsIn, IsInt, IsOptional, IsString, Min } from "class-validator";
+import { IsIn, IsInt, IsOptional, IsString, Min } from "class-validator";
 import { TenantPlan } from "@prisma/client";
+import { SELECTABLE_TENANT_PLANS } from "../../billing/plan-catalog.constants";
 
 export const EXTERNAL_PAYMENT_METHODS = [
   "ZELLE",
@@ -13,7 +14,9 @@ export const EXTERNAL_PAYMENT_METHODS = [
 export type ExternalPaymentMethod = (typeof EXTERNAL_PAYMENT_METHODS)[number];
 
 export class ActivateSubscriptionDto {
-  @IsEnum(TenantPlan)
+  // GROWTH/SCALE are valid TenantPlan enum members but not yet selectable here — see
+  // SELECTABLE_TENANT_PLANS in plan-catalog.constants.ts (Phase 0 Task 10 gap).
+  @IsIn(SELECTABLE_TENANT_PLANS)
   plan!: TenantPlan;
 
   @IsIn(EXTERNAL_PAYMENT_METHODS)
