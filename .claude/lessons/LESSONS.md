@@ -585,3 +585,34 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
   files that are each individually right.**
 - **Guard:** REG-B305 round 4 + the source pin `short-pick-category-tax.pins.test.ts` (the
   composition lives in a screen unit tests cannot import).
+
+### L-122 · 2026-09-13 · domain · F39 (B310/B311/B315 wallet/invoice lost updates)
+
+- **Symptom:** B310 — `applyAdvancePaymentToInvoice` read `AdvancePayment.balance` and decremented
+  it as two separate statements inside one Prisma transaction; two concurrent applies of the same
+  advance both read the same balance and both passed the "has remaining balance" check, driving it
+  negative. B311 — `recordStandalonePayment`'s buyer/online overpay guard had the identical shape
+  one call away, on `Invoice` instead of `AdvancePayment`.
+- **Root cause:** a single Prisma `tenantTransaction` is NOT a lock — under READ COMMITTED, a plain
+  read inside it sees only what's already committed, so a check-then-act on a row neither
+  transaction has locked lets two concurrent callers both read the pre-decrement value and both
+  proceed; only an explicit row lock (or an equivalent serializing primitive) closes the window.
+- **Lesson:** **A balance/limit check followed by a write to the SAME row, inside one transaction,
+  is a check-then-act race unless something locks the row (or the caller) BEFORE the read — a
+  customer-keyed `withAdvisoryLock` when the critical section spans multiple tables/calls (the
+  house pattern for money serialization), or a plain `SELECT ... FOR UPDATE` inside the same tx
+  when it's one row — or, when the write is a single column and the cap is expressible in SQL
+  (B315's advance-restore), skip locking altogether: one atomic `UPDATE ... SET col = LEAST(cap,
+col + delta)` has no read-modify-write window at all. And such a fix is regression-testable
+  WITHOUT a live database: mock the lock
+  primitive (`withAdvisoryLock`, or the specific `$executeRaw` call) with a per-key promise chain
+  that genuinely serializes concurrent callers in call order, drive two concurrent calls through
+  the real service method, and assert on the wrong VALUE (balance negative, sum overpaid) — then
+  confirm the test is real by temporarily reverting the fix and watching it fail on that same
+  wrong value before restoring it.**
+- **Guard:** `apps/api/src/customers/customers.service.spec.ts` "B310: two concurrent applies of
+  the SAME advance never drive its balance negative" (promise-chain `withAdvisoryLock` mock);
+  `apps/api/src/invoices/invoices.service.spec.ts` "B311: a concurrent office payment can no
+  longer overpay the invoice past its live balance" (promise-chain `$executeRaw` mock, released
+  when the whole `tenantTransaction` call settles — not at the raw-query call site). Both verified
+  red-then-green by hand before commit.

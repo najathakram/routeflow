@@ -20,4 +20,3 @@ Authz + input-validation batch from the security audit (each fix has a `*.securi
 ## Security hardening — SEC-3 (audit-IP, 2026-07-16)
 
 - **F9-006** — `audit.interceptor.ts` now records `req.ip` (Express trust-proxy-aware; `trust proxy = 2` set in main.ts) instead of the LEFTMOST `X-Forwarded-For` entry, which a client could spoof by prepending a fake value → poisoning the audit trail's source IP. Spec `audit.interceptor.security.spec.ts`. (F5-003 refresh-token type-claim + F12-005 mobile-deep-link deferred — see the security backlog note.)
-

@@ -172,4 +172,3 @@ tone="dark"|"light"})` — plain `<img src="/brand/routeflow-mark-192.png">`, de
   (via a `role="img" aria-label` wrapper, since `BrandMark` itself is `alt=""`/`aria-hidden`) when
   no `branding.logoUrl` is uploaded; its own `tone` prop (default `"dark"`) affects only the
   fallback mark, never a tenant's uploaded logo.
-

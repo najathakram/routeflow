@@ -107,4 +107,3 @@ center; width: 100%; white-space: nowrap`, its own `:focus-visible` ring (`outli
   `railway ssh --service @routeflow/web 'printf "%s" "$RAILWAY_GIT_COMMIT_SHA"'`.
   Middleware does not interfere: `/api/` skips the mobile-UA rewrite, the landing 307 is scoped to
   `pathname === "/"`, and the buyer guard's prefixes exclude `/api`.
-

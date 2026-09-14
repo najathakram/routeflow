@@ -912,4 +912,3 @@ homeAddress` (the driver-home origin), and orders inherit `fulfillPath` from the
 - **`prisma/rls.sql`** — superseded pointer stub (comments only). The policy DDL lived here
   until it moved into the migration above; a second copy of the table list is how a table
   gets armed without the pre-flight ever checking it. Do not re-add DDL here.
-

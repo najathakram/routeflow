@@ -18,4 +18,3 @@ lists live in `apps/{web,mobile}/lib/payment-methods.ts`. `import.service.ts`
 `mapPaymentMethod` maps a source `"zelle"` to ZELLE — it used to fold it into ACH) ·
 MovementType(PURCHASE, SALE, ADJUSTMENT, RETURN, WRITE_OFF) ·
 CreditNoteStatus(ISSUED, APPLIED, VOID).
-

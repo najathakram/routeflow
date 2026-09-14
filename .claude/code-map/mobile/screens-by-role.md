@@ -175,4 +175,3 @@ message}` (mirrors the pattern already correct in `skip-stop.ts:48-57`) — `api
 ### `(tenant)/` — tenant-admin dashboard
 
 - root `_layout.tsx` — Tabs (Today, Dispatch, Billing, Settings, More; the Dispatch `Tabs.Screen` carries `href: devMode ? undefined : null`). Operator-like scope with org-level controls.
-

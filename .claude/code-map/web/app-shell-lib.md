@@ -464,4 +464,3 @@
   an in-module listener set so same-tab toggles also re-sync). No deps, no API call. Consumed by
   `(dashboard)/layout.tsx` Header (topbar chip + one-tap Exit, avatar-menu toggle) and
   `routes/my-runs/page.tsx` (field-layout switch).
-

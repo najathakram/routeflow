@@ -8,6 +8,21 @@ newest first**. This file replaces the old habit of prepending each session's no
 below, and set `_meta.json` `"notes"` to that same note plus the pointer to this file —
 never accumulate history in `"notes"`.
 
+- **2026-09-13 — F39 wallet/invoice lost-update batch, re-homed into the split map
+  (`fix/F39-wallet` merge of `origin/master`)** — B310 (`customers.service.ts
+applyAdvancePaymentToInvoice` wraps its locked body in a customer-keyed `withAdvisoryLock` +
+  `FOR UPDATE` on the target invoice — wallet double-spend), B311 (`invoices.service.ts
+recordStandalonePayment`'s buyer/online overpay guard now takes a single id-sorted `FOR UPDATE`
+  over every allocation's invoice before the loop), B314 (`revertInvoiceToDraft` /
+  `revertLinkedInvoicesForOrderEdit` exclude VOID payments from the revert-block count), B315
+  (`credit-notes.service.ts settleOrderCreditsInTx`'s SHRINK pass restores an excess-applied
+  ADVANCE via one atomic `LEAST(...)` UPDATE — no read-modify-write), B312
+  (`bookkeeping.service.ts recordPayment` refuses a VOID/WRITTEN_OFF invoice), B313
+  (`components/CustomerRecordPaymentModal.tsx` gains `clampAllocationInput`, mirroring mobile's
+  existing clamp). api.md: rows added to `api/feature-modules-1.md` (customers), `-3.md`
+  (invoices, credit-notes), `-6.md` (bookkeeping); web.md: `web/routes-1.md` (customers page).
+  Lesson content re-numbered L-118→**L-122** on merge (master had already spent L-118/L-119 on
+  the F38 batch); L-120/L-121 stay reserved for the W1 billing PR.
 - **2026-09-13 — #712 bookkeeping (`docs/712-bookkeeping`, master `bc36a0dd`)** — B389/F12-003:
   mobile's web-export runner swaps `nginx:alpine` (root) for `nginxinc/nginx-unprivileged:alpine`,
   ends on `USER nginx`, moves the listen port 80→8080 (`PORT` default 8080); new tripwire spec
