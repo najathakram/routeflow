@@ -2023,7 +2023,7 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
   // invalid_request_error, NOT resource_missing — the object still exists. Before the fix that
   // fell to the generic branch and threw 503 on every retry while the pointer was never
   // cleared, so a tenant in this state could never get out.
-  it("REG-FINDING-2 cancel() READ_ONLY + a Stripe sub already cancelled → treated as success, pointer dropped, no 503", async () => {
+  it("REG-B399 cancel() READ_ONLY + a Stripe sub already cancelled → treated as success, pointer dropped, no 503", async () => {
     const { svc, prisma, events, stripe } = make({
       tenantStatus: "READ_ONLY",
       sub: activeSub({ stripeSubId: "sub_x" }),
@@ -2047,7 +2047,7 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
     expect(events.emit).not.toHaveBeenCalled();
   });
 
-  it("REG-FINDING-2 a SECOND cancel() on the same READ_ONLY tenant is a no-op success — the cleared pointer means Stripe is never called again", async () => {
+  it("REG-B399 a SECOND cancel() on the same READ_ONLY tenant is a no-op success — the cleared pointer means Stripe is never called again", async () => {
     const { svc, prisma, events, stripe } = make({
       tenantStatus: "READ_ONLY",
       // The state the first cancel() leaves behind: row intact, pointer gone.
@@ -2086,7 +2086,7 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
     expect(events.emit).not.toHaveBeenCalled();
   });
 
-  it("REG-FINDING-2 an inconclusive re-read after a generic failure still throws 503 and writes nothing", async () => {
+  it("REG-B399 an inconclusive re-read after a generic failure still throws 503 and writes nothing", async () => {
     const { svc, prisma, events, stripe } = make({
       tenantStatus: "READ_ONLY",
       sub: activeSub({ stripeSubId: "sub_x" }),
