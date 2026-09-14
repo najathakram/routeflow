@@ -65,10 +65,11 @@ sentence>` line per entry, no Symptom/Root cause/Guard. **Read this first, befor
 
 - **`_meta.json`** — `{ nextId, activeCount, archivedCount, maxEntries, maxBytes, updatedAt,
 schemaVersion }`. Bookkeeping ONLY — never accumulate prose here (an unbounded notes field
-  elsewhere once grew to ~90K chars, ~38K tokens/read). `nextId` sits above every id ever issued
-  (archived ids retire, never reissue); `activeCount`/`archivedCount` must equal the heading
-  counts in `LESSONS.md`/`ARCHIVE.md` — checked by validator, since a git union-merge can leave
-  both sides' counts individually correct and the total wrong; `maxEntries`/`maxBytes` are the
+  elsewhere once grew to ~90K chars, ~38K tokens/read). `nextId`/`activeCount`/`archivedCount` are
+  now **derived** from the heading counts in `LESSONS.md`/`ARCHIVE.md` (owner ruling
+  2026-09-14) — a stale stored value only warns, never fails the build, and `--digest` re-stamps
+  it, so two PRs each individually correct about their own counter no longer conflict on
+  `_meta.json` when merged. `maxEntries`/`maxBytes` are the
   caps as data (raising one is a field edit); `updatedAt` doubles as the enforcement hook's
   acknowledge-without-entry escape.
 
@@ -134,7 +135,8 @@ files, run against this register:
 `LESSONS-DIGEST.md` is generated, never hand-edited. Run `validate-lessons.mjs --digest` after
 any Record (§2) or Compact (§3): it turns each `### L-NNN` entry's **Lesson** bullet into one
 `- L-NNN · <category> · <sentence>` line, and refuses over its own byte cap — fix by compacting
-(§3), never by hand-shrinking. An `activeCount` mismatch (COUNT MISMATCH) must be fixed first.
+(§3), never by hand-shrinking. `--digest` also re-stamps any stale `activeCount`/`nextId` in
+`_meta.json` to the derived value in the same run (owner ruling 2026-09-14).
 
 ## 5. Bootstrap — create it for a project
 
