@@ -29,6 +29,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..");
 const SCRIPT = join(__dirname, "validate-lessons.mjs");
 const DIGEST = join(REPO_ROOT, ".claude", "lessons", "LESSONS-DIGEST.md");
+const PRETTIERIGNORE = join(REPO_ROOT, ".prettierignore");
 
 let failures = 0;
 const check = (name, got, want) => {
@@ -46,6 +47,16 @@ const readDigest = () => (existsSync(DIGEST) ? readFileSync(DIGEST, "utf8") : nu
 const main = () => {
   const original = readDigest();
   check("setup: LESSONS-DIGEST.md exists before the test", original !== null, true);
+
+  // Guard against the generated digest going back under lint-staged's
+  // `prettier --write` (which would rewrite it and desync it from what
+  // `--digest` regenerates) — .prettierignore must keep listing it.
+  const prettierIgnore = existsSync(PRETTIERIGNORE) ? readFileSync(PRETTIERIGNORE, "utf8") : "";
+  check(
+    "setup: .prettierignore lists .claude/lessons/LESSONS-DIGEST.md",
+    prettierIgnore.split("\n").some((line) => line.trim() === ".claude/lessons/LESSONS-DIGEST.md"),
+    true,
+  );
 
   try {
     // ── T1: determinism ──────────────────────────────────────────────────
