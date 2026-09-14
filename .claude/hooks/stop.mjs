@@ -27,6 +27,16 @@
  * `.claude/lessons/` — including a bare `_meta.json` updatedAt bump, the
  * "no transferable lesson" acknowledgement — silences both.
  *
+ * Derived counters (owner ruling 2026-09-14): both gates key on the FILE
+ * PATH prefix (`.claude/code-map/…`, `.claude/lessons/…`), never on
+ * `_meta.json`'s mtime or field values — an entry added to LESSONS.md or a
+ * row edited in an area file already satisfies its gate on its own.
+ * `_meta.json`'s `mappedSha`/`generatedAt`/`nextId`/`activeCount`/
+ * `archivedCount` are now derived, informational fields (see
+ * `scripts/validate-code-map.mjs` § "mappedSha freshness" and
+ * `scripts/validate-lessons.mjs` § "Counters") — bumping them is never
+ * required to pass either gate, only to keep them from warning.
+ *
  * Why prettier-only (no eslint here): ESLint flat config resolves from the
  * current working directory, and this repo has NO root eslint.config — eslint
  * only runs per-workspace via `npm run lint` / Turbo. tsc is likewise excluded
@@ -114,8 +124,10 @@ const hasMap = existsSync(".claude/code-map/_meta.json");
 
 const HOW_TO_FIX =
   "Surgically update the touched entries (.claude/code-map/INDEX.md → the area file: " +
-  "api/web/mobile/packages.md) and bump _meta.json (mappedSha + generatedAt). " +
-  "If the map's content is genuinely unaffected, bump generatedAt to acknowledge the review.";
+  "api/web/mobile/packages.md) — that alone satisfies this gate. _meta.json's mappedSha/" +
+  "generatedAt are derived/informational now (owner ruling 2026-09-14) and do NOT need a " +
+  "bump here; `npm run code-map:stamp` refreshes them right before merging to master, where " +
+  "a stale mappedSha is still an error.";
 
 if (hasMap && bookkeepingDeferred) {
   console.log("Gate 2: bookkeeping deferred to the follow-up PR (trailer present)");
@@ -167,9 +179,12 @@ if (hasLessons && !changed.some(isLesson) && bookkeepingDeferred) {
 
 if (hasLessons && !changed.some(isLesson) && !bookkeepingDeferred) {
   const LESSON_FIX =
-    "Append an entry to .claude/lessons/LESSONS.md (Symptom / Root cause / Lesson / Guard) " +
-    "and bump _meta.json (nextId, activeCount, updatedAt). If this fix genuinely carries no " +
-    "transferable lesson (typo-class), bump _meta.json.updatedAt alone to acknowledge.";
+    "Append an entry to .claude/lessons/LESSONS.md (Symptom / Root cause / Lesson / Guard) — " +
+    "that alone satisfies this gate. _meta.json's nextId/activeCount are derived/informational " +
+    "now (owner ruling 2026-09-14) and do NOT need a manual bump; " +
+    "`node scripts/validate-lessons.mjs --digest` re-stamps them and regenerates the digest in " +
+    "one step. If this fix genuinely carries no transferable lesson (typo-class), bump " +
+    "_meta.json.updatedAt alone to acknowledge.";
 
   // (a) session-local: live work on a fix branch
   const branch = sh("git rev-parse --abbrev-ref HEAD").out.trim();
