@@ -587,7 +587,7 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
     // actually match it. This one drives the same claim through
     // createLaunderingHarness's stateful predicate evaluator instead, so the
     // transition only succeeds if the notIn check genuinely admits DECLINED —
-    // this is the invariant an earlier fix round broke once (L-131); a
+    // this is the invariant an earlier fix round broke once (L-132); a
     // structural-only assertion could not have caught that.
     it("PIN-B70 accept() genuinely succeeds from a DECLINED row (end-to-end via the laundering harness)", async () => {
       const row = createLaunderingHarness(prisma, { id: "est-1", status: VOID_STATUS });

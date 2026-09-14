@@ -1444,9 +1444,10 @@ mechanism, so archiving loses no enforcement.
   (live shapes) in the harness build plan. Related [[L-111]] (hook/branch gate), [[L-074]]
   (fixture realism).
 
-## Archived 2026-09-13 — headroom for L-131 (F27 B70) + byte cap
+## Archived 2026-09-13 — headroom for L-132 (F27 B70) + byte cap
 
-Three active entries archived to clear headroom for L-131 (F27 B70, renumbered from L-119 during
+Three active entries archived to clear headroom for L-132 (F27 B70, renumbered from L-119, then
+again from L-131 to avoid a second collision, during
 the 2026-09-14 rebase to avoid colliding with master's own L-119) and bring the register back
 under its 40 KB byte cap: L-035, L-027, L-010. All three carry `none — judgment` guards (no landed
 enforcement mechanism) and zero outside citations (repo-wide grep excluding `.claude/lessons/**`,

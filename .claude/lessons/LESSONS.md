@@ -714,7 +714,7 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   `subscription-mutation.service.spec.ts` — one case per non-terminal status, plus one pinning
   that an unrecognised status still surfaces the error. Sibling [[L-127]].
 
-### L-129 · 2026-09-13 · domain · F27 B15 (estimates)
+### L-130 · 2026-09-13 · domain · F27 B15 (estimates)
 
 - **Symptom:** the estimate detail page offered "Convert to Invoice" on DRAFT and SENT rows while
   the API's convert claims ACCEPTED only, so the control failed every time it was shown; and a
@@ -732,7 +732,7 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   typed `{ id }`. Pinned by `[id]/page.test.tsx` (zero controls on DRAFT/SENT, exactly two on
   ACCEPTED, navigates on `data.id`) — landed 2026-09-13; B394 (B15-NAV) closes with this proof.
 
-### L-130 · 2026-09-13 · domain · F27 B17/B79 (estimates)
+### L-131 · 2026-09-13 · domain · F27 B17/B79 (estimates)
 
 - **Symptom:** the create form required an Issue Date the request never carried and the service
   never wrote (the column had landed by migration earlier); every row rendered `createdAt` in its
@@ -750,7 +750,7 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   Pinned by `estimates.service.spec.ts` and `estimates.issue-date.db.spec.ts` (real Postgres) —
   landed 2026-09-13. `CreateEstimateDto` now declares `issueDate?: string`, no more `as any` cast.
 
-### L-131 · 2026-09-13 · domain · F27 B70 (estimates)
+### L-132 · 2026-09-13 · domain · F27 B70 (estimates)
 
 - **Symptom:** a fix round made `accept()`'s atomic claim exclude the full terminal-status set
   instead of CONVERTED alone, breaking the pre-existing invariant that a DECLINED estimate can

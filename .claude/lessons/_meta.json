@@ -1,11 +1,11 @@
 {
-  "nextId": 132,
+  "nextId": 142,
   "activeCount": 49,
   "archivedCount": 78,
   "maxEntries": 64,
   "maxBytes": 65536,
   "updatedAt": "2026-09-14T21:43:24.853Z",
   "schemaVersion": 1,
-  "note": "F27 rebase onto master (2026-09-14, branch fix/F27, PR #711): master had independently taken L-117/L-118 (fresh-worktree first push; F38 at-door money) by the time this branch rebased, so this branch's own F27 lessons were renumbered L-117->L-129 (B15), L-118->L-130 (B17/B79) and L-119->L-131 (B70, incl. the pre-merge-review corollary on the accept()-exclude-list regression) to avoid colliding with already-landed content; L-110/L-111/L-112 were already archived on master for its own reasons (see ARCHIVE.md), so no new archival was needed here. All three F27 lesson slots are now filled.",
+  "note": "F27 rebase onto master (2026-09-14, branch fix/F27, PR #711): master had independently taken L-117/L-118 (fresh-worktree first push; F38 at-door money) by the time this branch rebased, so this branch's own F27 lessons were renumbered L-117->L-129 (B15), L-118->L-130 (B17/B79) and L-119->L-131 (B70, incl. the pre-merge-review corollary on the accept()-exclude-list regression) to avoid colliding with already-landed content; L-110/L-111/L-112 were already archived on master for its own reasons (see ARCHIVE.md), so no new archival was needed here. Renumbered a second time the same day (L-129->L-130, L-130->L-131, L-131->L-132): PR #746 (open, based on master, independently filed B411-B415 and its own L-129) would otherwise collide once it merges. L-133-L-141 reserved by the lead for open lanes.",
   "notes": "2026-09-13 owner ruling: maxBytes 40,960 -> 49,152 so the 40-entry cap is the binding constraint (40 x ~1.05 KB); the byte cap had made the entry cap unreachable and left no eligible archive candidate. maxEntries 40 -> 48 in the same ruling: with bytes raised the entry cap became binding at 40/40 with no eligible archive candidate, so bytes alone unblocked nothing. 2026-09-14 owner ruling: maxBytes 49,152 -> 65,536 (register hit 49,142 after two waves in one day with no eligible archive candidate); maxEntries stays 48. House rule: an author trims any entry over 1.5 KB before it lands; never shorten a live entry afterwards. 2026-09-14 owner ruling: maxEntries 48 -> 64 to match the 65,536-byte cap (register reached 47/48 after the W1 wave); author-trim rule (>1.5 KB) unchanged."
 }
