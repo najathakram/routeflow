@@ -752,7 +752,7 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   `subscription-mutation.service.spec.ts` — one case per non-terminal status, plus one pinning
   that an unrecognised status still surfaces the error. Sibling [[L-127]].
 
-### L-129 · 2026-09-14 · process · Phase 0 T10 deferred-gap markers
+### L-133 · 2026-09-14 · process · Phase 0 T10 deferred-gap markers
 
 - **Symptom:** the T9-T11 lane's plan pseudocode said `UpdateTenantPlanDto`/`ActivateSubscriptionDto`
   "already use `@IsEnum(TenantPlan)`... nothing to do" for Task 10. The actual code (written by an
@@ -771,7 +771,7 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   them, and both DTO specs flipped from "rejects" to "accepts" (`update-tenant-plan.dto.spec.ts`,
   `activate-subscription.dto.spec.ts`).
 
-### L-130 · 2026-09-14 · testing
+### L-134 · 2026-09-14 · testing
 
 - **Symptom:** a new `*.db.spec.ts` passed against the compose stack but CI's "Replay migrations
   on a fresh database" job failed its `beforeAll` with "No PUBLISHED PlanVersion … run
