@@ -2439,7 +2439,9 @@ export class InvoicesService {
     // drift); mirror updateOrderItems' total = subtotal + regular tax + category tax.
     subtotal = roundMoney(subtotal);
     const prevSubtotal = Number(order.subtotal) || 0;
-    const effectiveTaxRate = prevSubtotal > 0 ? Number(order.tax) / prevSubtotal : 0;
+    // B294 round 2: same semantics as the inline `prevSubtotal > 0 ? tax/prevSubtotal : 0`
+    // this replaced — the shared helper's zero-subtotal guard lands on the same 0.
+    const effectiveTaxRate = effectiveTaxRateFromTotals(order.tax, prevSubtotal, false);
     const tax = roundMoney(subtotal * effectiveTaxRate);
     // RF-4: fold the billed category tax (Σ per line) back into the order total, so
     // the order stays in step with what the invoices actually charged.

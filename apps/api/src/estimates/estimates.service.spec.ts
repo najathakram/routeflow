@@ -176,6 +176,45 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       expect(createdLine.taxRate).toBeCloseTo(0.1, 4);
     });
 
+    // B294 round 2: convertToInvoice passed `isTaxExempt: false` unconditionally
+    // to effectiveTaxRateFromTotals, so an exempt customer whose estimate still
+    // carries a stale non-zero taxAmount (from before exemption was set, or a
+    // data-entry error) would convert that stale amount into a non-zero line
+    // rate. An exempt customer must always convert at rate 0 regardless of what
+    // taxAmount says.
+    it("REG-B294: an exempt customer's estimate converts with line rate 0 even with a stale non-zero taxAmount", async () => {
+      prisma.estimate.updateMany.mockResolvedValue({ count: 1 });
+      prisma.estimate.findUnique.mockResolvedValue({
+        id: "est-294x",
+        status: "ACCEPTED",
+        customerId: "cust-294x",
+        customer: { isTaxExempt: true },
+        subtotal: 100,
+        taxAmount: 10, // stale non-zero taxAmount on an exempt customer's estimate
+        discount: 0,
+        total: 100,
+        notes: null,
+        terms: null,
+        items: [
+          {
+            description: "Widget",
+            productId: "prod-294x",
+            qty: 2,
+            unitPrice: 50,
+            subtotal: 100,
+          },
+        ],
+      });
+      prisma.invoice.create.mockImplementation((args: any) =>
+        Promise.resolve({ id: "inv-294x", ...args.data, customer: {} }),
+      );
+
+      await service.convertToInvoice("est-294x");
+
+      const createdLine = prisma.invoice.create.mock.calls[0][0].data.items.create[0];
+      expect(createdLine.taxRate).toBe(0);
+    });
+
     // REG-B100-F (cause-ruling.md §3, cause-refutation.md §7.4): convertToInvoice
     // has no P2002 catch today — a concurrent convert's unique-constraint hit
     // propagates as a raw 500. TODAY this rejects with the plain `{ code: "P2002" }`

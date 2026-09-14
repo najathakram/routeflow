@@ -30,13 +30,15 @@ export function taxRateFractionFrom(stored: string | null): number {
  * `tax / subtotal` recovers that same rate exactly.
  *
  * Zero for an exempt customer (mirrors foldCategoryTax's contract), and zero
- * for a degenerate zero-or-negative subtotal: no line item ever has a
- * negative subtotal (validated at creation), so a row-level subtotal of 0
- * implies every one of its lines is also 0 — the proportional formulas used
- * at the order-splitting call sites (`orderTax * (lineSubtotal /
- * orderSubtotal)`) already land on 0 in that case for the same reason; this
- * guard just makes the 0 explicit instead of relying on a 0-numerator to
- * cancel out a defaulted denominator.
+ * for a degenerate zero-or-negative subtotal (the guard this helper always
+ * applies). That guard's 0 agrees with the three proportional `regularTax`
+ * call sites (`orderTax * (lineSubtotal / orderSubtotal)`) only when the
+ * order header's subtotal equals the sum of its lines — the normal case,
+ * since no line item ever has a negative subtotal (validated at creation).
+ * A header desynced from its lines (subtotal stored as 0 while lines sum to
+ * something > 0 and `tax` is a stale non-zero from an older code path) is a
+ * pre-existing data inconsistency this helper does not detect or resolve —
+ * it will report a 0 rate for that row same as the genuine zero-subtotal case.
  *
  * Shared by invoices.service.ts (order-derived lines) and
  * estimates.service.ts (estimate→invoice conversion) — one implementation,
