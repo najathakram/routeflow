@@ -36,8 +36,10 @@ Consult the map to scope which files are involved and where a change ripples —
 
 ## After EVERY change (surgical, not a regen)
 
-Update the touched entries (purpose, exports/signatures, cross-refs) in the area file, and bump
-`_meta.json` (`mappedSha` → new HEAD, `generatedAt`). Record your session note by adding a dated
+Update the touched entries (purpose, exports/signatures, cross-refs) in the area file — that
+alone satisfies the gate; bumping `_meta.json` (`mappedSha`/`generatedAt`) is no longer required
+per PR (owner ruling 2026-09-14: those fields are derived/informational off `master`, and
+`node scripts/validate-code-map.mjs --stamp` re-stamps them right before merging). Record your session note by adding a dated
 bullet at the TOP of `CHANGELOG.md` and REPLACING `_meta.json` `notes` with that same note + the
 CHANGELOG pointer — never prepend/accumulate history in `notes` (it once grew to ~90K chars and
 cost ~38K tokens per read). A small code change is a few-line map edit — never regenerate the
@@ -46,7 +48,9 @@ whole map. Trust the code over the map when they disagree, and fix the map.
 ## Staleness
 
 Compare `_meta.json.mappedSha` to `git rev-parse HEAD`; `git diff --name-only <mappedSha> HEAD`
-shows the drift. Refresh the affected entries (or re-map an area if the drift is structural).
+shows the drift. Refresh the affected entries (or re-map an area if the drift is structural). A
+stale `mappedSha` only WARNS off `master`; it is an ERROR on `master` itself (or CI building the
+`master` ref), fixed with `--stamp`.
 
 ## Money math note
 

@@ -35,21 +35,33 @@
 //                     <= 8,000-byte table of contents).
 //   META MISSING    — .claude/code-map/_meta.json missing or not valid JSON.
 //
-// WHAT IT WARNS ON (does not fail, exit 0)
+// WHAT IT WARNS ON (does not fail, exit 0 — off master)
 //   STALE SHA       — `_meta.json`'s `mappedSha` != `git rev-parse HEAD`. The
 //                     map may be out of date; `git diff --name-only
-//                     <mappedSha> HEAD` shows the drift. Advisory only — a
-//                     stale map is common between sessions and is not itself
-//                     a defect worth blocking a push over.
+//                     <mappedSha> HEAD` shows the drift. `mappedSha` (and
+//                     `generatedAt`) are informational (owner ruling
+//                     2026-09-14) precisely because every feature branch
+//                     makes them stale the moment it commits anything else —
+//                     that used to make `_meta.json` a near-guaranteed merge
+//                     conflict between parallel PRs for a value nobody was
+//                     acting on mid-branch. A feature branch is expected to
+//                     carry a stale sha; only `master` (or CI running against
+//                     the `master` ref) is expected to be current, so it is
+//                     the one place this is still an ERROR, not a warning.
+//
+// `--stamp` sets `mappedSha` to HEAD and `generatedAt` to now — the landing
+// follow-up's one job, run right after a code-map-touching PR merges to
+// master, so master's own error case is satisfied without hand-editing JSON.
 //
 // USAGE
 //   node scripts/validate-code-map.mjs
 //   node scripts/validate-code-map.mjs --fix-report   # print every offending row
+//   node scripts/validate-code-map.mjs --stamp        # set mappedSha=HEAD, generatedAt=now
 //
 // Wired into `npm run verify` the same way `scripts/validate-lessons.mjs` is —
 // see root package.json.
 
-import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, statSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -80,6 +92,7 @@ function countChangelogEntries(file) {
 }
 
 const fixReport = process.argv.includes("--fix-report");
+const stampMode = process.argv.includes("--stamp");
 
 const failures = [];
 const warnings = [];
@@ -104,6 +117,30 @@ if (!existsSync(META)) {
     meta = JSON.parse(readFileSync(META, "utf8"));
   } catch (e) {
     fail(`META MISSING: ${rel(META)} is not valid JSON — ${e.message}`);
+  }
+}
+
+// ─── 2b. --stamp: set mappedSha = HEAD, generatedAt = now ───────────────────
+// The landing follow-up's one job (owner ruling 2026-09-14): run this right
+// after a code-map-touching PR merges to master, so master's mappedSha is
+// current without hand-editing `_meta.json`. Updates the in-memory `meta` too
+// so the freshness check below (section 6) reports fresh immediately, in the
+// same process, rather than needing a second run.
+if (stampMode && meta) {
+  try {
+    const head = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+    }).trim();
+    const generatedAt = new Date().toISOString();
+    const newMeta = { ...meta, mappedSha: head, generatedAt };
+    writeFileSync(META, `${JSON.stringify(newMeta, null, 2)}\n`);
+    meta = newMeta;
+    console.log(
+      `✔ stamped ${rel(META)}: mappedSha -> ${head.slice(0, 8)}, generatedAt -> ${generatedAt}`,
+    );
+  } catch (e) {
+    fail(`STAMP FAILED: could not resolve HEAD or write ${rel(META)} — ${e.message}`);
   }
 }
 
@@ -238,7 +275,14 @@ if (fixReport && rowOffenders.length) {
   }
 }
 
-// ─── 6. mappedSha freshness — warn only ─────────────────────────────────────
+// ─── 6. mappedSha freshness ──────────────────────────────────────────────────
+// Informational on any branch except `master` itself: a stale sha is the
+// expected state of a feature branch mid-flight (every commit after the last
+// map update makes it stale), so failing the build over it there just forces
+// busy-work re-stamps with no reader who benefits before merge. `master` (or
+// CI running against the `master` ref) is the one place a stale sha is a real
+// defect — nothing else will ever bring it current — so it stays an ERROR
+// there. `--stamp` (2b above) is the fix in both cases.
 if (meta && typeof meta.mappedSha === "string" && meta.mappedSha) {
   try {
     const head = execFileSync("git", ["rev-parse", "HEAD"], {
@@ -246,10 +290,34 @@ if (meta && typeof meta.mappedSha === "string" && meta.mappedSha) {
       encoding: "utf8",
     }).trim();
     if (head && head !== meta.mappedSha) {
-      warn(
+      let branch = "";
+      try {
+        branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+          cwd: REPO_ROOT,
+          encoding: "utf8",
+        }).trim();
+      } catch {
+        // detached HEAD or git unavailable — treat as non-master (warn only)
+      }
+      // `branch === "master"` covers the normal case. The CI fallback covers
+      // a detached-HEAD checkout (common for shallow/tag CI checkouts, where
+      // `--abbrev-ref HEAD` reports literally "HEAD") that is nonetheless
+      // building the `master` ref — `GITHUB_REF_NAME`/`GITHUB_REF` name it
+      // even when the branch name does not.
+      const onMaster =
+        branch === "master" ||
+        (Boolean(process.env.CI) &&
+          (process.env.GITHUB_REF_NAME === "master" ||
+            process.env.GITHUB_REF === "refs/heads/master"));
+      const msg =
         `STALE SHA: ${rel(META)}'s mappedSha (${meta.mappedSha.slice(0, 8)}) != HEAD ` +
-          `(${head.slice(0, 8)}). Check drift with: git diff --name-only ${meta.mappedSha} HEAD`,
-      );
+        `(${head.slice(0, 8)}). Check drift with: git diff --name-only ${meta.mappedSha} HEAD. ` +
+        `Fix with: node scripts/validate-code-map.mjs --stamp`;
+      if (onMaster) {
+        fail(`${msg} (branch is master — this is an error, not a warning: see file header § 6).`);
+      } else {
+        warn(msg);
+      }
     }
   } catch {
     // No git available (or not a repo) — not this script's job to enforce
