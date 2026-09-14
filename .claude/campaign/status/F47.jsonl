@@ -1,4 +1,4 @@
-{"id":"B349","batch":"F47","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B349","batch":"F47","tier":"T1","state":"proven","pr":732,"proof":"REG-B349 OAuth state is HKDF/HMAC-signed and verified with timingSafeEqual before parse, the nonce is bound to the payload hash and single-use, and every rejection is the same generic error (google-oauth.service.spec.ts, cases a-e)","evidence":null,"buildPlan":null}
 {"id":"B350","batch":"F47","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B351","batch":"F47","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B352","batch":"F47","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
