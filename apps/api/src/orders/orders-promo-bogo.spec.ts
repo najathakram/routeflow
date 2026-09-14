@@ -58,6 +58,7 @@ import { Prisma } from "@prisma/client";
 import { OrdersService } from "./orders.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { TenantContextService } from "../tenant/tenant-context.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NotificationsService } from "../notifications/notifications.service";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -154,6 +155,12 @@ describe("OrdersService — BUY_N_GET_M (BOGO)", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         OrdersService,
+        {
+          provide: TenantContextService,
+          // B323: sweepAllPendingOrders() now takes TenantContextService; this spec never
+          // exercises the sweep, so a bare run-through mock is enough to satisfy DI.
+          useValue: { run: (_tenantId: string | null, fn: () => unknown) => fn() },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: getQueueToken("invoices"), useValue: { add: jest.fn() } },
         {

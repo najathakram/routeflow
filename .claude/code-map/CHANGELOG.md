@@ -31,6 +31,15 @@ never accumulate history in `"notes"`.
   `"billing"` (`max:4`), worst-case pool-connection commentary and the "typo stands up a Nth
   pool" line updated for the third family. web.md/mobile.md/packages.md untouched (no diff in
   those trees). `validate-code-map.mjs`: PASS.
+- **2026-09-13 — B323 tenant-scoping sweep fix, re-homed into the split map
+  (`fix/B323-tenant-sweep` merge of `origin/master` 2e5602ae for PR #722)** — `sweepAllPendingOrders`
+  now groups pending orders by `["customerId","tenantId"]` (not `customerId` alone), skips a
+  null-tenantId group with a `logger.warn`, and wraps each group's `mergeAllPendingForCustomer`
+  call in `this.tenantCtx.run(g.tenantId, ...)` — the cron/boot entry point has no ambient ALS
+  scope, so `forTenant()` used to fall through unscoped and merged rows landed with
+  `tenantId: null`. Row added to `api/feature-modules-2.md` (orders). Lesson L-124 appended to
+  `LESSONS.md` (cap raised to 48/49,152 to match master #717; L-123 stays reserved for the W1
+  billing PR).
 - **2026-09-13 — F39 wallet/invoice lost-update batch, re-homed into the split map
   (`fix/F39-wallet` merge of `origin/master`)** — B310 (`customers.service.ts
 applyAdvancePaymentToInvoice` wraps its locked body in a customer-keyed `withAdvisoryLock` +
