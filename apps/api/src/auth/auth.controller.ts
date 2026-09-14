@@ -31,6 +31,7 @@ import { RequestPasswordResetDto } from "./dto/request-password-reset.dto";
 import { ResetPasswordDto } from "./dto/reset-password.dto";
 import { ExchangeCodeDto } from "./dto/exchange-code.dto";
 import { resolveLoginThrottle } from "./login-throttle.config";
+import { extractDeviceInfo } from "./device-info.util";
 
 // SEC-4 / F11-002: name + scope of the httpOnly refresh cookie. Path is scoped
 // to the auth routes so it is never sent to unrelated API endpoints. Kept in
@@ -81,7 +82,7 @@ export class AuthController {
     @Req() req: any,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const deviceInfo = this.extractDeviceInfo(req);
+    const deviceInfo = extractDeviceInfo(req);
     const result = await this.authService.login(user, deviceInfo);
     // SEC-4 / F11-002: ALSO set the refresh token as an httpOnly cookie. Purely
     // additive — the body still carries the token, so mobile and the current web
@@ -99,7 +100,7 @@ export class AuthController {
     @Req() req: any,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const deviceInfo = this.extractDeviceInfo(req);
+    const deviceInfo = extractDeviceInfo(req);
     // SEC-4 / F11-002: prefer the httpOnly cookie, fall back to the request body
     // (mobile can't use cookies, so its body token keeps working unchanged).
     const token = this.readRefreshCookie(req) ?? dto.refreshToken;
@@ -136,7 +137,7 @@ export class AuthController {
   @Throttle({ default: { ttl: 60_000, limit: 10 } })
   @ApiOperation({ summary: "Verify email from signup link and return auth tokens" })
   verifyEmail(@Body() body: { token: string }, @Req() req: any) {
-    const deviceInfo = this.extractDeviceInfo(req);
+    const deviceInfo = extractDeviceInfo(req);
     return this.authService.verifyEmailAndLogin(body.token, deviceInfo);
   }
 
@@ -156,7 +157,7 @@ export class AuthController {
   @Throttle({ default: { ttl: 900_000, limit: 5 } }) // 5 per 15 min per IP — matches reset endpoints
   @ApiOperation({ summary: "Set a first password on a Google-only account (no current password)" })
   setPassword(@CurrentUser() user: { id: string }, @Body() dto: SetPasswordDto, @Req() req: any) {
-    return this.authService.setPassword(user.id, dto.newPassword, this.extractDeviceInfo(req));
+    return this.authService.setPassword(user.id, dto.newPassword, extractDeviceInfo(req));
   }
 
   // ─── Password reset (RF-018) ───────────────────────────────────────────────
@@ -481,15 +482,6 @@ export class AuthController {
   }
 
   // ─── Helpers ───────────────────────────────────────────────────────────────
-
-  private extractDeviceInfo(req: any) {
-    const ua = (req.headers?.["user-agent"] as string) ?? undefined;
-    const ip =
-      (req.headers?.["x-forwarded-for"] as string)?.split(",")[0]?.trim() ??
-      req.socket?.remoteAddress ??
-      undefined;
-    return { userAgent: ua, ipAddress: ip };
-  }
 
   private mapErrorCode(raw: string): string {
     const allowed = new Set([
