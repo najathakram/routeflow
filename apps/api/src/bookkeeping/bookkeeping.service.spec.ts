@@ -398,7 +398,7 @@ describe("BookkeepingService", () => {
   // recordPayment (which refuses VOID), a WRITTEN_OFF invoice's `remaining` balance is still
   // > 0 (write-off doesn't touch `total`), so this second, weaker path would happily flip a
   // forgiven invoice back to PARTIAL/PAID as if it were still collectible.
-  describe("B312 — recordPayment refuses a VOID or WRITTEN_OFF invoice", () => {
+  describe("REG-B312 recordPayment refuses a VOID or WRITTEN_OFF invoice", () => {
     it("refuses a WRITTEN_OFF invoice instead of resurrecting it", async () => {
       prisma.invoice.findUnique.mockResolvedValue({
         id: "inv-wo",

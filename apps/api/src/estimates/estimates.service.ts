@@ -9,6 +9,7 @@ import { PriceType } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { computeLineSubtotal, getTierPrice, roundMoney } from "@routeflow/pricing";
 import { loadMsrpMap } from "../common/msrp";
+import { effectiveTaxRateFromTotals } from "../common/tax-rate";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { NumberingService } from "../import/numbering.service";
 
@@ -289,7 +290,10 @@ export class EstimatesService {
         throw new BadRequestException("Only ACCEPTED estimates can be converted");
       }
 
-      const est = await tx.estimate.findUnique({ where: { id }, include: { items: true } });
+      const est = await tx.estimate.findUnique({
+        where: { id },
+        include: { items: true, customer: { select: { isTaxExempt: true } } },
+      });
       if (!est) throw new NotFoundException("Estimate not found");
 
       // MSRP snapshot at conversion time — same contract as
@@ -302,6 +306,20 @@ export class EstimatesService {
               ...new Set(est.items.map((i) => i.productId).filter(Boolean)),
             ] as string[])
           : new Map<string, number | null>();
+
+      // B294: the estimate never carries a per-line tax rate, only one flat
+      // `taxAmount` over its whole `subtotal` — same shape as an order's
+      // `order.tax`/`order.subtotal`. Recovering `taxAmount / subtotal` here
+      // (0 for a degenerate zero-subtotal estimate) and stamping it on every
+      // converted line is the same fix invoices.service.ts applies to
+      // order-derived lines: a line built with `taxRate: 0` silently zeroes
+      // the tax on the very next applyPriceAdjustment recompute even though
+      // the invoice was issued with the correct total.
+      const lineTaxRate = effectiveTaxRateFromTotals(
+        est.taxAmount,
+        est.subtotal,
+        !!est.customer?.isTaxExempt,
+      );
 
       try {
         const inv = await tx.invoice.create({
@@ -323,7 +341,7 @@ export class EstimatesService {
                 qty: i.qty,
                 unitPrice: i.unitPrice,
                 discount: 0,
-                taxRate: 0,
+                taxRate: lineTaxRate,
                 subtotal: i.subtotal,
                 msrp: i.productId ? (msrpMap.get(i.productId) ?? null) : null,
                 tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
