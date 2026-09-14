@@ -1,11 +1,11 @@
 {
-  "nextId": 127,
-  "activeCount": 47,
+  "nextId": 128,
+  "activeCount": 48,
   "archivedCount": 75,
   "maxEntries": 64,
   "maxBytes": 65536,
-  "updatedAt": "2026-09-14T06:49:37.002Z",
+  "updatedAt": "2026-09-14T07:17:40.977Z",
   "schemaVersion": 1,
-  "note": "W1 docs follow-up (branch docs/w1-lessons, master 23b7a621) for code PR #730, which carries Bookkeeping-Follow-Up: pending. Lands the FIVE entries W1 held out while the caps were being ruled on: L-120/L-121 (released by #717, held out of #714 by the byte cap) and W1's own L-123/L-125/L-126. Ids 122 and 124 were spent by #719 and #722 while W1 was in review, so the wave renumbered around them; next free id is 127. Every entry is under the 1.5 KB author-trim rule from the 2026-09-14 owner ruling (largest is L-126). L-126 was strengthened before landing with the SECOND instance of its own rule, which #730's round-3 review caught in the wave's own fix for a different row. activeCount 42 -> 47; nothing archived (maxBytes 65,536 leaves room).",
+  "note": "W1 tail (branch fix/b216-webhook-disarm, master 73b0d3e4): ONE entry, L-127, for the B216 owner ruling that reversed the Stripe-reinstatement disarm. Lands IN the code PR now that maxEntries is 64. Under the 1.5 KB author-trim rule. activeCount 47 -> 48.",
   "notes": "2026-09-13 owner ruling: maxBytes 40,960 -> 49,152 so the 40-entry cap is the binding constraint (40 x ~1.05 KB); the byte cap had made the entry cap unreachable and left no eligible archive candidate. maxEntries 40 -> 48 in the same ruling: with bytes raised the entry cap became binding at 40/40 with no eligible archive candidate, so bytes alone unblocked nothing. 2026-09-14 owner ruling: maxBytes 49,152 -> 65,536 (register hit 49,142 after two waves in one day with no eligible archive candidate); maxEntries stays 48. House rule: an author trims any entry over 1.5 KB before it lands; never shorten a live entry afterwards. 2026-09-14 owner ruling: maxEntries 48 -> 64 to match the 65,536-byte cap (register reached 47/48 after the W1 wave); author-trim rule (>1.5 KB) unchanged."
 }
