@@ -17,6 +17,7 @@ import { EntitlementsService } from "./entitlements.service";
 import { BillingEventService } from "./billing-event.service";
 import { StripeService } from "./stripe.service";
 import { isStripeResourceMissing } from "./addon.service";
+import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import {
   BILLING_EVENTS,
   findPlanDefinition,
@@ -27,7 +28,7 @@ import {
   addonSkuCode,
   SELF_SERVICE_ADDON_SKUS,
 } from "./plan-catalog.constants";
-import { annualPrice, Cycle } from "./billing-math";
+import { addCycle, Cycle } from "./billing-math";
 
 export interface SubscribeInput {
   planKey: string;
@@ -76,29 +77,6 @@ export interface PlanChangePreview {
    *  cancellation, a cycle switch), and inferring the seat consequence from its mere presence
    *  made the UI demand consent to a deactivation that would never happen. */
   seatAckRequired: boolean;
-}
-
-/** Add whole months (or a year) to a UTC date, clamping the day to the target month's length
- *  (Jan 31 + 1mo → Feb 28/29, never overflowing into March). */
-function addMonthsUtc(from: Date, months: number): Date {
-  const day = from.getUTCDate();
-  const d = new Date(
-    Date.UTC(
-      from.getUTCFullYear(),
-      from.getUTCMonth() + months,
-      1,
-      from.getUTCHours(),
-      from.getUTCMinutes(),
-      from.getUTCSeconds(),
-    ),
-  );
-  const lastDay = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
-  d.setUTCDate(Math.min(day, lastDay));
-  return d;
-}
-
-function addCycle(from: Date, cycle: Cycle): Date {
-  return addMonthsUtc(from, cycle === "ANNUAL" ? 12 : 1);
 }
 
 /** A SKU a TENANT_ADMIN may add or drop themselves. Everything else "ships dark" —
@@ -180,6 +158,18 @@ export class SubscriptionMutationService {
     const def = version.definitions.find((d) => d.planKey === input.planKey);
     if (!def) throw new BadRequestException(`Unknown plan "${input.planKey}"`);
     if (def.isCustom) throw new BadRequestException("Enterprise is a custom plan — contact sales.");
+    // B218: `def` only proves `input.planKey` matches a PUBLISHED catalog definition
+    // verbatim — nothing stops a published PlanDefinition's key from being outside
+    // PLAN_KEYS (a catalog-publishing bug), and this IS the client-reachable path (the
+    // client picks from whatever /billing/quote actually offers). Left unchecked,
+    // planKeyToEnum() below now THROWS instead of silently writing STARTER, which would
+    // otherwise crash the request with a 500 for what is really a 400 — refuse it here,
+    // the same seam planChangePreview() already guards for the ranking paths.
+    if (!normalizePlanKey(input.planKey)) {
+      throw new BadRequestException(
+        `Plan "${input.planKey}" is not a recognized plan key — contact support.`,
+      );
+    }
     const quote = await this.proration.quote({
       planKey: input.planKey,
       cycle: input.cycle,
@@ -548,7 +538,7 @@ export class SubscriptionMutationService {
       const oldMonthly = this.planMonthly(version, fromKey);
       const newMonthly =
         publishedTargetDef?.monthlyPrice != null ? Number(publishedTargetDef.monthlyPrice) : 0;
-      const proratedNow = this.proratedDiff(
+      const proratedNow = this.proration.proratedDiff(
         { cycle: priorSub.cycle, periodStart: priorSub.periodStart, periodEnd: priorSub.periodEnd },
         newMonthly - oldMonthly,
       );
@@ -636,6 +626,12 @@ export class SubscriptionMutationService {
     if (!sub || !fromKey || (!sub.planKey && tenant?.status !== "ACTIVE")) {
       throw new BadRequestException("No active subscription — subscribe first.");
     }
+    // B218: this ALSO already refuses an off-catalog `planKey` before planKeyToEnum() is ever
+    // called below — `planRank` normalizes and returns -1 for anything outside PLAN_KEYS /
+    // LEGACY_PLAN_KEY_ALIASES, `fromKey` is always a real (non-negative) rank by this point
+    // (guarded above), and -1 can never be > a real rank, so the check below rejects it as
+    // "not an upgrade" rather than ranking it. The message doesn't name the real reason, but
+    // no separate off-catalog guard is needed here — adding one would be redundant.
     if (planRank(planKey) <= planRank(fromKey)) {
       throw new BadRequestException("Target is not an upgrade — use downgrade for a lower plan.");
     }
@@ -648,7 +644,7 @@ export class SubscriptionMutationService {
     // the entitlement instead: the tenant already holds `fromKey` and owes only the difference.
     const ledgerOldMonthly = sub.planKey ? oldMonthly : 0;
     const amountDelta = roundMoney(newMonthly - ledgerOldMonthly);
-    const proratedNow = this.proratedDiff(sub, newMonthly - oldMonthly);
+    const proratedNow = this.proration.proratedDiff(sub, newMonthly - oldMonthly);
 
     await this.prisma.$transaction(async (tx) => {
       // Optimistic guard: only apply if still on the expected plan (blocks a concurrent
@@ -776,18 +772,35 @@ export class SubscriptionMutationService {
    * other status with no row → the existing 404 (a genuine anomaly today).
    */
   async cancel(tenantId: string, actorId?: string) {
-    const [sub, tenant] = await Promise.all([
-      this.prisma.tenantSubscription.findUnique({ where: { tenantId } }),
-      this.prisma.tenant.findUnique({
-        where: { id: tenantId },
-        select: { status: true },
-      }),
-    ]);
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { status: true },
+    });
 
     // Already read-only — with or without a row — is where cancellation lands. Checked
     // FIRST and unconditionally: the old with-row path below re-armed cancelAtPeriodEnd and
     // wrote a fresh SUBSCRIPTION_CANCELED ledger row on every repeat call.
     if (tenant?.status === "READ_ONLY") {
+      // STRIPE-CANCEL-2: applyScheduledCancellations (billing-cron.service.ts) flips a tenant
+      // to READ_ONLY without ever touching stripeSubId — a tenant cancelled locally BEFORE
+      // STRIPE-CANCEL-1 existed is exactly this un-repaired legacy cohort, and the web hides
+      // the Cancel control for READ_ONLY tenants, so there is no self-serve way out. Tell
+      // Stripe FIRST, before returning the short-circuit — never touch the local row, which is
+      // already correct either way. A row with no stripeSubId (the common, already-correct
+      // case: self-serve cancel already propagated, or a plans-as-data tenant with no Stripe at
+      // all) skips the Stripe call; the row is still read, because only it can say so.
+      const sub = await this.prisma.tenantSubscription.findUnique({ where: { tenantId } });
+      if (sub?.stripeSubId) {
+        // CHANGE-1 RULING (2026-09-13, lead — overturnable, owner informed): this READ_ONLY
+        // tenant already lost service at its LAST period end, so scheduling cancellation at
+        // the NEXT one (propagateCancelToStripe()'s `cancel_at_period_end: true`, what every
+        // other cancel() path uses) would let Stripe invoice a full period the tenant gets
+        // nothing for — a charge that cannot be defended ("forfeiting a paid period" does not
+        // apply: this cohort was suspended for non-payment). Cancel immediately instead.
+        // Reversal is a ONE-LINE swap: replace the call below with
+        // `await this.propagateCancelToStripe(tenantId, sub.stripeSubId);`.
+        await this.cancelReadOnlyStripeSubImmediately(tenantId, sub.stripeSubId);
+      }
       return { cancelled: "already_read_only" as const };
     }
 
@@ -839,6 +852,7 @@ export class SubscriptionMutationService {
       return result;
     }
 
+    const sub = await this.prisma.tenantSubscription.findUnique({ where: { tenantId } });
     if (!sub) {
       // Any other status with no row is a genuine anomaly today (e.g. ACTIVE with a missing
       // row) — revisit when Phase 0 subscription reconciliation lands: this case should
@@ -854,29 +868,7 @@ export class SubscriptionMutationService {
     // end. The reverse order would leave a tenant who thinks they cancelled still being charged.
     // A row with no stripeSubId (plans-as-data / manual) takes the path below byte-identically.
     if (sub.stripeSubId) {
-      try {
-        await this.stripe.updateSubscription(sub.stripeSubId, { cancel_at_period_end: true });
-      } catch (err) {
-        if (isStripeResourceMissing(err)) {
-          // The Stripe subscription is already gone — nothing left to stop invoicing; the
-          // deleted-subscription webhook handles the churn. Proceed with the local cancellation.
-          this.logger.warn(
-            `STRIPE-CANCEL-1: cancel() found Stripe subscription already gone for tenant ${tenantId} (stripeSubId ${sub.stripeSubId}) — proceeding with local cancellation`,
-          );
-        } else {
-          // Never log the raw error (may carry Stripe request/auth details) — tenantId +
-          // stripeSubId only.
-          this.logger.error(
-            `STRIPE-CANCEL-1: cancel() failed to schedule the Stripe cancellation for tenant ${tenantId} (stripeSubId ${sub.stripeSubId})`,
-          );
-          // R3: the local row really is unchanged, but claiming Stripe changed nothing too is
-          // false on a timeout Stripe actually applied — describe the provider outcome as
-          // UNCERTAIN instead.
-          throw new ServiceUnavailableException(
-            "The payment provider did not confirm the change — it may still apply. Check your subscription in a moment before retrying, or contact support.",
-          );
-        }
-      }
+      await this.propagateCancelToStripe(tenantId, sub.stripeSubId);
     }
 
     await this.prisma.$transaction(async (tx) => {
@@ -952,6 +944,18 @@ export class SubscriptionMutationService {
             "The payment provider did not confirm the change — it may still apply. Check your subscription in a moment before retrying, or contact support.",
           );
         }
+      } else {
+        // STRIPE-RESUME-1: the tenant is not ACTIVE (e.g. READ_ONLY — the un-repaired legacy
+        // cohort our cron cancelled locally without ever telling Stripe), so Stripe is
+        // correctly skipped above — but there is nothing legitimate to "resume" locally
+        // either: clearing cancelAtPeriodEnd here with nothing having changed at Stripe would
+        // disarm the exact guard onPaymentSucceeded() reads (billing.service.ts), reinstating
+        // the tenant ACTIVE (and booking a +1 MRR delta) the next time Stripe happens to fire
+        // an invoice.payment_succeeded webhook for a subscription it was never told to stop.
+        // Refuse instead, mirroring cancel()'s own handling of a state it cannot honour.
+        throw new ConflictException(
+          "The subscription cannot be resumed while the workspace is read-only; subscribe again to restore service.",
+        );
       }
     }
 
@@ -970,7 +974,136 @@ export class SubscriptionMutationService {
     return this.subscription.getSubscription(tenantId);
   }
 
-  /** Enable an add-on (prorated for the current cycle; SEAT_EXTRA adds seats). */
+  /**
+   * STRIPE-CANCEL-2: the shared Stripe-propagation call `cancel()` makes both from the
+   * READ_ONLY short-circuit (a live sub the cron cancelled locally without ever telling
+   * Stripe) and from the ordinary with-row cancellation path — same call, same B107 error
+   * semantics, one place to keep them identical.
+   */
+  private async propagateCancelToStripe(tenantId: string, stripeSubId: string): Promise<void> {
+    try {
+      await this.stripe.updateSubscription(stripeSubId, { cancel_at_period_end: true });
+    } catch (err) {
+      if (isStripeResourceMissing(err)) {
+        // The Stripe subscription is already gone — nothing left to stop invoicing; the
+        // deleted-subscription webhook handles the churn. Proceed with the local cancellation.
+        this.logger.warn(
+          `STRIPE-CANCEL-1: cancel() found Stripe subscription already gone for tenant ${tenantId} (stripeSubId ${stripeSubId}) — proceeding with local cancellation`,
+        );
+      } else {
+        // Never log the raw error (may carry Stripe request/auth details) — tenantId +
+        // stripeSubId only.
+        this.logger.error(
+          `STRIPE-CANCEL-1: cancel() failed to schedule the Stripe cancellation for tenant ${tenantId} (stripeSubId ${stripeSubId})`,
+        );
+        // R3: the local row really is unchanged, but claiming Stripe changed nothing too is
+        // false on a timeout Stripe actually applied — describe the provider outcome as
+        // UNCERTAIN instead.
+        throw new ServiceUnavailableException(
+          "The payment provider did not confirm the change — it may still apply. Check your subscription in a moment before retrying, or contact support.",
+        );
+      }
+    }
+  }
+
+  /**
+   * CHANGE-1 RULING (2026-09-13, lead — overturnable, owner informed): the READ_ONLY cohort's
+   * ONLY Stripe instrument — cancels the subscription IMMEDIATELY (`stripe.cancelSubscription`)
+   * rather than scheduling at period end, because this cohort already lost service at its last
+   * period end and a period-end cancellation would let Stripe invoice a full period of nothing.
+   * Every other cancel() path keeps using `propagateCancelToStripe()` unchanged. Same B107
+   * error semantics as that helper: `resource_missing` logs and proceeds to the local
+   * short-circuit; anything else throws a 503 with nothing written locally. Never log the raw
+   * error. If this ruling is overturned, swap the ONE call site in `cancel()` back to
+   * `propagateCancelToStripe()` — this method can then be deleted.
+   */
+  private async cancelReadOnlyStripeSubImmediately(
+    tenantId: string,
+    stripeSubId: string,
+  ): Promise<void> {
+    try {
+      await this.stripe.cancelSubscription(stripeSubId);
+    } catch (err) {
+      if (isStripeResourceMissing(err)) {
+        // The Stripe subscription is already gone — nothing left to cancel. Proceed with the
+        // local short-circuit.
+        this.logger.warn(
+          `STRIPE-CANCEL-2: cancel() found Stripe subscription already gone for tenant ${tenantId} (stripeSubId ${stripeSubId}) — proceeding with the READ_ONLY short-circuit`,
+        );
+      } else if (await this.stripeSubIsAlreadyCanceled(stripeSubId)) {
+        // FINDING-2 (round 3 review): cancelling an ALREADY-cancelled subscription is not
+        // `resource_missing` — the object still exists, so Stripe returns a 400
+        // invalid_request_error ("a subscription with status `canceled` may not be updated").
+        // Treated as a generic failure that branch threw 503 on every retry while the local
+        // pointer was never cleared, so the tenant could never get out. Already cancelled IS
+        // the desired end state. Detected by re-reading the subscription's status rather than
+        // matching the message text: Stripe exposes no dedicated code here, and a message
+        // match is the brittle discriminator B218 already had to replace once.
+        this.logger.warn(
+          `STRIPE-CANCEL-2: cancel() found Stripe subscription already cancelled for tenant ${tenantId} (stripeSubId ${stripeSubId}) — proceeding with the READ_ONLY short-circuit`,
+        );
+      } else {
+        // Never log the raw error (may carry Stripe request/auth details) — tenantId +
+        // stripeSubId only.
+        this.logger.error(
+          `STRIPE-CANCEL-2: cancel() failed to cancel the Stripe subscription immediately for tenant ${tenantId} (stripeSubId ${stripeSubId})`,
+        );
+        // Same UNCERTAIN-provider-outcome wording as propagateCancelToStripe()'s 503. Nothing
+        // has been written locally at this point, and nothing below runs.
+        throw new ServiceUnavailableException(
+          "The payment provider did not confirm the change — it may still apply. Check your subscription in a moment before retrying, or contact support.",
+        );
+      }
+    }
+
+    // FINDING-2: the pointer is dead once the subscription is confirmed cancelled or gone.
+    // Dropping it makes a repeat cancel() short-circuit without touching Stripe at all, which
+    // is what makes this branch idempotent rather than merely tolerant of a second call. Scoped
+    // to the SAME stripeSubId so a concurrent re-subscribe that already wrote a new pointer is
+    // never clobbered. This is the one local write the READ_ONLY branch makes, and it happens
+    // only after a confirmed provider outcome.
+    await this.prisma.tenantSubscription.updateMany({
+      where: { tenantId, stripeSubId },
+      data: { stripeSubId: null },
+    });
+  }
+
+  /**
+   * FINDING-2: is this subscription already in Stripe's terminal `canceled` state? Re-reads the
+   * subscription rather than matching error text. A 404 on the re-read means it is gone
+   * entirely, which is equally "nothing left to cancel"; any other failure is inconclusive and
+   * returns false so the caller still surfaces the 503.
+   */
+  private async stripeSubIsAlreadyCanceled(stripeSubId: string): Promise<boolean> {
+    try {
+      const sub = await this.stripe.getSubscription(stripeSubId);
+      return sub?.status === "canceled";
+    } catch (err) {
+      return isStripeResourceMissing(err);
+    }
+  }
+
+  /**
+   * Enable an add-on (prorated for the current cycle; SEAT_EXTRA adds seats).
+   *
+   * F1 (W1 review-fix round): the existence read, the delta-quantity computation, the row
+   * write and the ledger emit below are a check-then-act sequence — without serialisation,
+   * two concurrent calls for the same (tenantId, sku) can both read `priorQty` from the
+   * pre-write state and both emit `ADDON_ENABLED` at the full delta, overstating MRR by a
+   * ledger entry that never self-heals (the ledger is a running Σ amountDelta). This is the
+   * SAME race `AddonService.enableAddon` (`addon.service.ts`) closed for the platform-admin
+   * grant path — this tenant self-serve path (`POST /billing/addons/:sku/enable`, callable
+   * by any OPERATOR) is more exposed and had no lock at all. The whole window is now wrapped
+   * in `withAdvisoryLock`, on the SAME `"billing"` lock family and the SAME
+   * `addon:<tenantId>:<sku>` key shape as the admin path, so an admin enable and a tenant
+   * enable of the same add-on serialise against EACH OTHER too, not merely against
+   * themselves. A second, now-serialised call re-reads the first call's committed write, so
+   * `priorQty` already reflects it — an identical re-enable still nets `deltaQty === 0` and
+   * emits nothing (the existing idempotent-repeat behaviour, unchanged: this method has no
+   * "already active" refusal the way the admin path's boolean enable/disable does), and a
+   * genuine quantity bump nets only the real incremental delta. Never add a second,
+   * in-process lock on top of this (see `common/db-locks.ts`).
+   */
   async enableAddon(tenantId: string, sku: string, quantity: number | undefined, actorId?: string) {
     const version = await this.catalog.getPublishedCatalog();
     const skuDef = version.addonSkus.find((s) => s.sku === sku);
@@ -979,42 +1112,73 @@ export class SubscriptionMutationService {
     const qty = Math.max(1, Math.trunc(quantity ?? 1));
     const preview = await this.proration.prorationPreview(tenantId, sku);
 
-    const existing = await this.prisma.tenantAddon.findUnique({
-      where: { tenantId_addonKey: { tenantId, addonKey: sku } },
-    });
-    const priorQty = existing?.active ? existing.quantity : 0;
-    const deltaQty = qty - priorQty; // MRR change relative to prior active quantity
+    // FINDING-3 (round 3 review): same family and the same SKU-keyed shape as the admin path in
+    // addon.service.ts, so the two paths serialise against each other and not merely within
+    // themselves. This side is already SKU-native; the admin side normalises its addonKey
+    // through LEGACY_ADDON_KEY_TO_SKU to land on this same key.
+    const lockKey = `addon:${tenantId}:${sku}`;
+    try {
+      const result = await withAdvisoryLock(
+        { family: "billing", key: lockKey, mode: "wait", waitMs: 10_000 },
+        async () => {
+          const existing = await this.prisma.tenantAddon.findUnique({
+            where: { tenantId_addonKey: { tenantId, addonKey: sku } },
+          });
+          const priorQty = existing?.active ? existing.quantity : 0;
+          const deltaQty = qty - priorQty; // MRR change relative to prior active quantity
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.tenantAddon.upsert({
-        where: { tenantId_addonKey: { tenantId, addonKey: sku } },
-        create: {
-          tenantId,
-          addonKey: sku,
-          sku,
-          quantity: qty,
-          active: true,
-          priceSnapshot: skuDef.monthlyPrice,
+          await this.prisma.$transaction(async (tx) => {
+            await tx.tenantAddon.upsert({
+              where: { tenantId_addonKey: { tenantId, addonKey: sku } },
+              create: {
+                tenantId,
+                addonKey: sku,
+                sku,
+                quantity: qty,
+                active: true,
+                priceSnapshot: skuDef.monthlyPrice,
+              },
+              update: { sku, quantity: qty, active: true, priceSnapshot: skuDef.monthlyPrice },
+            });
+            if (deltaQty !== 0) {
+              await this.events.emit(
+                tenantId,
+                BILLING_EVENTS.ADDON_ENABLED,
+                { sku, quantity: qty, prorated: preview.proratedToday },
+                { amountDelta: roundMoney(Number(skuDef.monthlyPrice) * deltaQty), actorId, tx },
+              );
+              if (sku === "SEAT_EXTRA" && priorQty === 0) {
+                await this.events.emit(
+                  tenantId,
+                  BILLING_EVENTS.SEAT_ADDED,
+                  { quantity: qty },
+                  { actorId, tx },
+                );
+              }
+            }
+          });
         },
-        update: { sku, quantity: qty, active: true, priceSnapshot: skuDef.monthlyPrice },
-      });
-      if (deltaQty !== 0) {
-        await this.events.emit(
-          tenantId,
-          BILLING_EVENTS.ADDON_ENABLED,
-          { sku, quantity: qty, prorated: preview.proratedToday },
-          { amountDelta: roundMoney(Number(skuDef.monthlyPrice) * deltaQty), actorId, tx },
+      );
+
+      if (!result.acquired) {
+        // Unreachable under `mode: "wait"` (it either acquires or the catch below maps a
+        // `LockTimeoutError`) — kept only so this exhaustively narrows `LockResult` without
+        // a cast, matching `addon.service.ts`'s own shape.
+        throw new ServiceUnavailableException(
+          `Could not enable add-on "${sku}" for tenant ${tenantId} — lock unavailable`,
         );
-        if (sku === "SEAT_EXTRA" && priorQty === 0) {
-          await this.events.emit(
-            tenantId,
-            BILLING_EVENTS.SEAT_ADDED,
-            { quantity: qty },
-            { actorId, tx },
-          );
-        }
       }
-    });
+    } catch (e) {
+      if (e instanceof LockTimeoutError || e instanceof LockUnavailableError) {
+        this.logger.error(
+          `Add-on "${sku}" lock unavailable for tenant ${tenantId}: ${(e as Error).message}`,
+        );
+        throw new ServiceUnavailableException(
+          `Could not serialise enabling add-on "${sku}" for tenant ${tenantId} — retry shortly`,
+        );
+      }
+      throw e;
+    }
 
     this.entitlements.invalidate(tenantId);
     return {
@@ -1058,30 +1222,5 @@ export class SubscriptionMutationService {
 
     this.entitlements.invalidate(tenantId);
     return this.subscription.getSubscription(tenantId);
-  }
-
-  /** The prorated charge for a monthly price DELTA over the remaining current period. */
-  private proratedDiff(
-    sub: { cycle: string; periodStart: Date | null; periodEnd: Date | null },
-    monthlyDelta: number,
-  ): number {
-    const now = new Date();
-    if (sub.cycle === "ANNUAL" && sub.periodStart && sub.periodEnd) {
-      const aIn = sub.periodEnd.getTime() - sub.periodStart.getTime();
-      const aRem = Math.max(0, Math.min(aIn, sub.periodEnd.getTime() - now.getTime()));
-      return aIn > 0 ? roundMoney((annualPrice(monthlyDelta) * aRem) / aIn) : 0;
-    }
-    let start: Date;
-    let end: Date;
-    if (sub.periodStart && sub.periodEnd && sub.periodStart <= now && now < sub.periodEnd) {
-      start = sub.periodStart;
-      end = sub.periodEnd;
-    } else {
-      start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-      end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
-    }
-    const msIn = end.getTime() - start.getTime();
-    const msRem = Math.max(0, Math.min(msIn, end.getTime() - now.getTime()));
-    return msIn > 0 ? roundMoney((monthlyDelta * msRem) / msIn) : 0;
   }
 }

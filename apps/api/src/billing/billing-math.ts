@@ -62,3 +62,45 @@ export function daysBetween(from: Date, to: Date): number {
   const ms = to.getTime() - from.getTime();
   return Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)));
 }
+
+/**
+ * Add whole months (or, via {@link addCycle}, a year) to a UTC date, clamping the
+ * day to the target month's length (Jan 31 + 1mo → Feb 28/29, never overflowing
+ * into March) and preserving `from`'s time-of-day (hours/minutes/seconds/ms)
+ * exactly — a rolled period boundary must not collapse to midnight.
+ *
+ * `anchorDay`, when given, is the tenant's ORIGINAL, never-clamped billing anchor
+ * day (1-31) to clamp toward. Pass it explicitly whenever chaining calls across
+ * cycles (a nightly roll, one call per tick) so a short month's clip does not
+ * permanently ratchet the anchor down — `from.getUTCDate()` alone re-derives the
+ * day from the PREVIOUS (already-clamped) result, which is exactly the B329 bug:
+ * a 31st anchor clipped to 28 in February then stayed on 28 forever after, even in
+ * a 31-day month. Omitting `anchorDay` uses `from`'s own day, correct for a single,
+ * non-repeating add (e.g. `subscribe()` computing one period end from "now").
+ */
+export function addMonthsUtc(from: Date, months: number, anchorDay?: number): Date {
+  const day = anchorDay ?? from.getUTCDate();
+  const d = new Date(
+    Date.UTC(
+      from.getUTCFullYear(),
+      from.getUTCMonth() + months,
+      1,
+      from.getUTCHours(),
+      from.getUTCMinutes(),
+      from.getUTCSeconds(),
+      from.getUTCMilliseconds(),
+    ),
+  );
+  const lastDay = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+  d.setUTCDate(Math.min(day, lastDay));
+  return d;
+}
+
+/** One cycle's worth of {@link addMonthsUtc} — 12 months for ANNUAL, 1 otherwise.
+ *  `cycle` is typed as `string` (rather than the narrower {@link Cycle}) so both the
+ *  plans-as-data `Cycle` literal and Prisma's generated `BillingCycle` enum widen
+ *  into it without a cast at either call site. See {@link addMonthsUtc} for
+ *  `anchorDay`. */
+export function addCycle(from: Date, cycle: string, anchorDay?: number): Date {
+  return addMonthsUtc(from, cycle === "ANNUAL" ? 12 : 1, anchorDay);
+}

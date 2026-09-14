@@ -11,6 +11,7 @@ jest.mock("../common/db-locks", () => ({
   LockUnavailableError: class extends Error {},
 }));
 
+import { Logger } from "@nestjs/common";
 import { BillingCronService } from "./billing-cron.service";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
 
@@ -233,6 +234,85 @@ describe("BillingCronService", () => {
     expect(where.tenant).toEqual({ status: "ACTIVE", deletedAt: null });
   });
 
+  // B218: planKeyToEnum() now THROWS for a `downgradeToPlanKey` outside PLAN_KEYS instead of
+  // silently writing STARTER (e.g. stale/migrated data, or a catalog row retired after the
+  // downgrade was scheduled). A cron sweep must not let tenant N's bad row stop tenant N+1's
+  // otherwise-valid scheduled downgrade from applying.
+  it("REG-B218 applyScheduledDowngrades skips-and-logs ONE bad row (off-catalog target) and still applies the rest", async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+    const { svc, tx, entitlements, tenantStatus } = make({
+      downgrades: [
+        {
+          tenantId: "bad-1",
+          planKey: "BUSINESS",
+          planVersionId: "v7",
+          downgradeToPlanKey: "BOGUS", // not in PLAN_KEYS or LEGACY_PLAN_KEY_ALIASES
+          retainedUserIds: [],
+        },
+        {
+          tenantId: "good-1",
+          planKey: "BUSINESS",
+          planVersionId: "v7",
+          downgradeToPlanKey: "STARTER",
+          retainedUserIds: ["u1"],
+        },
+      ],
+      activeTeam: 5,
+    });
+
+    await svc.applyScheduledDowngrades();
+
+    // The bad row's write never reached the DB — planKeyToEnum() throws while building the
+    // update's `data`, before tx.tenantSubscription.update is ever invoked for tenant
+    // "bad-1" — but the sweep kept going: the good row right after it still applied in full.
+    expect(tx.tenantSubscription.update).toHaveBeenCalledTimes(1);
+    expect(tx.tenantSubscription.update.mock.calls[0][0]).toMatchObject({
+      where: { tenantId: "good-1" },
+      data: { planKey: "STARTER" },
+    });
+    expect(entitlements.invalidate).toHaveBeenCalledWith("good-1");
+    expect(entitlements.invalidate).not.toHaveBeenCalledWith("bad-1");
+    expect(tenantStatus.invalidate).not.toHaveBeenCalledWith("bad-1");
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("tenant=bad-1"));
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("BOGUS"));
+
+    errorSpy.mockRestore();
+  });
+
+  // F2 (W1 review-fix round): the catch around applyScheduledDowngrades' per-tenant
+  // $transaction was, pre-fix, broad enough to swallow EVERY error class — a pool
+  // exhaustion, a Prisma error, any unrelated failure — and log it as if it were a bad
+  // plan key, so the sweep reported success while masking a real infrastructure failure.
+  // The B218 skip-and-continue behaviour above (an unresolvable plan key) must stay
+  // exactly as it is; everything else must now propagate instead.
+  it("REG-F2 applyScheduledDowngrades PROPAGATES a non-plan-key failure instead of logging it as a bad plan key", async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+    const { svc, tx } = make({
+      downgrades: [
+        {
+          tenantId: "infra-1",
+          planKey: "BUSINESS",
+          planVersionId: "v7",
+          downgradeToPlanKey: "STARTER", // a perfectly valid plan key — NOT the failure here
+          retainedUserIds: [],
+        },
+      ],
+      activeTeam: 5,
+    });
+    // A Prisma-style failure (e.g. pool exhaustion, P2025) thrown from inside the
+    // transaction — NOT planKeyToEnum()'s unresolvable-key Error.
+    const dbError = Object.assign(new Error("Connection pool timeout"), { code: "P2024" });
+    tx.tenantSubscription.update.mockRejectedValueOnce(dbError);
+
+    await expect(svc.applyScheduledDowngrades()).rejects.toThrow("Connection pool timeout");
+
+    // Must never be reported through the "Skipping ... " bad-plan-key path — that would
+    // disguise a real infrastructure failure as a data problem.
+    expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining("Skipping"));
+
+    errorSpy.mockRestore();
+  });
+
   it("applyScheduledCancellations flips cancelled+expired subs to READ_ONLY + emits a NEGATIVE churn delta", async () => {
     const { svc, prisma, events, tenantStatus } = make({
       cancellations: [{ tenantId: "t1", basePriceSnapshot: 349, discount: 10 }],
@@ -267,11 +347,47 @@ describe("BillingCronService", () => {
   it("rollCycles advances the billing period so meters bucket into the new cycle", async () => {
     const periodEnd = new Date("2026-06-01T00:00:00Z"); // in the past
     const { svc, prisma } = make({
-      rollSubs: [{ tenantId: "t1", cycle: "MONTHLY", periodEnd }],
+      rollSubs: [{ tenantId: "t1", cycle: "MONTHLY", periodEnd, createdAt: periodEnd }],
     });
     await svc.rollCycles();
     const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
     expect(data.periodStart).toEqual(periodEnd); // new period starts at the old end
     expect(data.periodEnd.getTime()).toBeGreaterThan(periodEnd.getTime()); // advanced ~1 month
+  });
+
+  // B329's anchor-ratchet half stayed UNFIXED (correction 2026-09-13 — see the
+  // rollCycles() comment in billing-cron.service.ts): the previously-landed fix used
+  // TenantSubscription.createdAt as the anchor day, but createdAt is not a safe billing
+  // anchor — 7 call sites create that row, several unrelated to subscribing (e.g.
+  // customers.service.ts's maybeStartCustomerGrace(), billing.service.ts's
+  // ensureStripeCustomer()) — so a tenant whose row was minted by one of those would have
+  // every future period computed from the wrong date. rollCycles() still re-derives the
+  // clamp day from the already-clamped periodEnd on every tick and therefore still
+  // ratchets an anchor day down after a short month clips it, exactly like master.
+  // addMonthsUtc already supports the anchorDay parameter that would fix this (full
+  // coverage in billing-math.spec.ts) — it just needs an immutable, never-clamped
+  // anchorDay column on TenantSubscription to pass it, which does not exist yet.
+  it.todo(
+    "rollCycles preserves the tenant's original anchor day across repeated short-month clips, never ratcheting down — blocked on a persisted anchorDay column; no safe anchor source exists today (createdAt is not the billing anchor)",
+  );
+
+  it("rollCycles preserves the period's time-of-day instead of collapsing to midnight — B329 (2)", async () => {
+    const periodEnd = new Date("2026-01-15T09:30:15.250Z");
+    const { svc, prisma } = make({
+      rollSubs: [{ tenantId: "t1", cycle: "MONTHLY", periodEnd, createdAt: periodEnd }],
+    });
+    await svc.rollCycles();
+    const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
+    expect(data.periodEnd.toISOString()).toBe("2026-02-15T09:30:15.250Z");
+  });
+
+  it("rollCycles guard: a mid-month anchor at midnight rolls byte-identically (no clip, nothing to preserve) — B329 (4)", async () => {
+    const periodEnd = new Date("2026-03-15T00:00:00.000Z");
+    const { svc, prisma } = make({
+      rollSubs: [{ tenantId: "t1", cycle: "MONTHLY", periodEnd, createdAt: periodEnd }],
+    });
+    await svc.rollCycles();
+    const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
+    expect(data.periodEnd.toISOString()).toBe("2026-04-15T00:00:00.000Z");
   });
 });
