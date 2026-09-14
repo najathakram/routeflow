@@ -2507,73 +2507,11 @@ export class OrdersService implements OnApplicationBootstrap {
               (li): li is typeof li & { productId: string } => !!li.productId,
             );
             if (!isDraft && stockLines.length > 0) {
-              const productIds = stockLines.map((li) => li.productId);
-              // SELECT … FOR UPDATE acquires row-level locks in the current transaction.
-              await tx.$executeRaw`
-              SELECT id FROM "Product"
-              WHERE id IN (${Prisma.join(productIds)})
-              FOR UPDATE
-            `;
-
-              const lockedProducts = await tx.product.findMany({
-                where: { id: { in: productIds } },
-                select: { id: true, name: true, currentStock: true },
-              });
-
-              const oosItems: string[] = [];
-              for (const li of stockLines) {
-                const p = lockedProducts.find((lp) => lp.id === li.productId);
-                if (p && Number(p.currentStock) < li.qty) {
-                  oosItems.push(
-                    `${productMap.get(li.productId)?.name ?? li.productId}` +
-                      ` (available: ${Number(p.currentStock)}, requested: ${li.qty})`,
-                  );
-                }
-              }
-              if (oosItems.length > 0) {
-                if (isStaffRole) {
-                  this.logger.warn(
-                    `Operator-initiated order will go below stock: ${oosItems.join("; ")}`,
-                  );
-                } else {
-                  throw new ConflictException(`Insufficient stock: ${oosItems.join("; ")}`);
-                }
-              }
-
-              // Decrement stock atomically while the lock is held. For operator-initiated
-              // overselling, this lets currentStock go negative — the inventory page can
-              // surface that and the operator can reconcile after restock.
-              //
-              // B116 (REG-B116): ONE aggregated, set-based UPDATE instead of a
-              // per-line ORM call — the old loop issued N round-trips inside this
-              // (now timeout-bounded) transaction, and a per-line write ordering
-              // is why multiple lines for the same product used to touch it
-              // twice instead of once. Aggregate first: `UPDATE … FROM (VALUES
-              // …)` applies at most one row per join key, so summing qty per
-              // product BEFORE the statement is load-bearing, not cosmetic.
-              //
-              // Raw SQL bypasses the tenant proxy that scoped the ORM call it
-              // replaces, so the tenant predicate is re-stated explicitly here —
-              // a cross-tenant productId must not be able to move another
-              // tenant's stock. Null tenantId (SUPER_ADMIN context) keeps the
-              // unscoped behaviour the ORM call had in that same context.
-              const stockTenantId = this.prisma.getTenantId();
-              const qtyByProduct = new Map<string, number>();
-              for (const li of stockLines) {
-                qtyByProduct.set(li.productId, (qtyByProduct.get(li.productId) ?? 0) + li.qty);
-              }
-              const stockValues = Prisma.join(
-                [...qtyByProduct.entries()].map(
-                  ([productId, qty]) => Prisma.sql`(${productId}::text, ${qty}::numeric)`,
-                ),
-              );
-              await tx.$executeRaw`
-              UPDATE "Product" AS p
-              SET "currentStock" = p."currentStock" - v.qty
-              FROM (VALUES ${stockValues}) AS v(id, qty)
-              WHERE p.id = v.id
-                ${stockTenantId ? Prisma.sql`AND p."tenantId" = ${stockTenantId}` : Prisma.empty}
-            `;
+              // B283: extracted to `decrementStockForSale` — changeStatus()'s
+              // DRAFT→PENDING promotion is the SAME "becomes a real sale" moment
+              // as a non-draft create(), so it calls the identical helper (no
+              // second implementation of the lock/oversell-check/decrement).
+              await this.decrementStockForSale(tx, stockLines, isStaffRole);
             }
 
             // RF-014: generate order number inside the transaction so a P2002 on
@@ -2961,21 +2899,105 @@ export class OrdersService implements OnApplicationBootstrap {
     // order exactly as it was, not cancelled-but-not-unwound.
     if (dto.status === OrderStatus.CANCELLED) await this.assertCancellableOrThrow(id);
 
-    const updated = await this.prisma.forTenant().order.update({
-      where: { id },
-      data: {
-        status: dto.status,
-        // A backdated order was delivered on its business date, not on the day
-        // staff got around to marking it.
-        ...(dto.status === OrderStatus.DELIVERED
-          ? { deliveredAt: order.deliveredAt ?? order.orderDate ?? new Date() }
-          : {}),
-        // A reopened order is no longer delivered — a stale deliveredAt would
-        // keep it in delivered-on-date reports and reconcile passes.
-        ...(isDeliveredDemotion ? { deliveredAt: null } : {}),
-        ...(noteAppend ? { notes: (order.notes ?? "") + noteAppend } : {}),
-      },
-    });
+    const statusUpdateData = {
+      status: dto.status,
+      // A backdated order was delivered on its business date, not on the day
+      // staff got around to marking it.
+      ...(dto.status === OrderStatus.DELIVERED
+        ? { deliveredAt: order.deliveredAt ?? order.orderDate ?? new Date() }
+        : {}),
+      // A reopened order is no longer delivered — a stale deliveredAt would
+      // keep it in delivered-on-date reports and reconcile passes.
+      ...(isDeliveredDemotion ? { deliveredAt: null } : {}),
+      ...(noteAppend ? { notes: (order.notes ?? "") + noteAppend } : {}),
+    };
+
+    const isDraftToPendingPromotion =
+      order.status === OrderStatus.DRAFT && dto.status === OrderStatus.PENDING;
+    const isPendingToDraftDemotion =
+      order.status === OrderStatus.PENDING && dto.status === OrderStatus.DRAFT;
+
+    // B283 (REG-B283) round 1 (F1): for the DRAFT<->PENDING transitions, the
+    // status write happens INSIDE the same transaction as the stock settle
+    // below — not as a separate, already-committed update — so a failure
+    // between the decrement/credit and the status change can never leave a
+    // live status with no matching stock movement (the narrower window that
+    // let a later cancel credit phantom stock). Every other transition keeps
+    // its own already-committed update, untouched.
+    const updated = await (async () => {
+      if (isDraftToPendingPromotion) {
+        // B283 (REG-B283): promoting a DRAFT into a live PENDING order is when
+        // it becomes a real sale — reserve stock now, via the SAME decrement
+        // helper create() uses for a non-draft order (no second
+        // implementation). Without this, cancel's `cancelReturnsStock =
+        // order.status !== DRAFT` (below) credited stock back for a
+        // promotion that never took any — a phantom stock credit on
+        // DRAFT → PENDING → CANCELLED.
+        const isStaffRole = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
+        return this.prisma.tenantTransaction(
+          async (tx) => {
+            // B283 (REG-B283) round 2 (F2): claim the row with a compare-and-set
+            // BEFORE touching stock — an out-of-transaction read followed by a
+            // plain `update` let two concurrent promotions of the same draft
+            // both pass the pre-check and both decrement stock. `updateMany`'s
+            // `where` re-checks status atomically against the current row; a
+            // second promotion loses the race and gets `count: 0` here instead
+            // of a second decrement.
+            const claimed = await tx.order.updateMany({
+              where: { id, status: OrderStatus.DRAFT },
+              data: statusUpdateData,
+            });
+            if (claimed.count === 0) {
+              throw new ConflictException(
+                "This order is no longer DRAFT — someone else already changed its status.",
+              );
+            }
+            const activeItems: Array<{ productId: string | null; qty: any }> =
+              await tx.orderItem.findMany({
+                where: { orderId: id, status: { not: "CANCELLED" } },
+                select: { productId: true, qty: true },
+              });
+            const stockLines = activeItems
+              .filter((li): li is { productId: string; qty: any } => !!li.productId)
+              .map((li) => ({ productId: li.productId, qty: Number(li.qty) }));
+            await this.decrementStockForSale(tx, stockLines, isStaffRole);
+            return tx.order.findUniqueOrThrow({ where: { id } });
+          },
+          { isolationLevel: "Serializable", timeout: 15_000 },
+        );
+      }
+      if (isPendingToDraftDemotion) {
+        // Symmetric reverse: demoting a PENDING order back to DRAFT gives back
+        // exactly what the DRAFT→PENDING promotion above took. Reuses the SAME
+        // edit-delta helper the operator-edit and cancel paths already use
+        // (heldItems = the order's current lines, final = none — an empty
+        // target credits back the undelivered remainder, same call shape as
+        // the cancel branch above).
+        return this.prisma.tenantTransaction(
+          async (tx) => {
+            // B283 round 2 (F2): same compare-and-set claim, mirrored for the
+            // reverse transition — see the DRAFT→PENDING branch above.
+            const claimed = await tx.order.updateMany({
+              where: { id, status: OrderStatus.PENDING },
+              data: statusUpdateData,
+            });
+            if (claimed.count === 0) {
+              throw new ConflictException(
+                "This order is no longer PENDING — someone else already changed its status.",
+              );
+            }
+            const activeItems = await tx.orderItem.findMany({
+              where: { orderId: id, status: { not: "CANCELLED" } },
+              select: { productId: true, qty: true, deliveredQty: true, status: true },
+            });
+            await this.settleStockForEdit(tx, { id, status: OrderStatus.PENDING }, activeItems, []);
+            return tx.order.findUniqueOrThrow({ where: { id } });
+          },
+          { isolationLevel: "Serializable", timeout: 15_000 },
+        );
+      }
+      return this.prisma.forTenant().order.update({ where: { id }, data: statusUpdateData });
+    })();
 
     this.gateway.emitOrderStatusChanged(this.prisma.getTenantId(), {
       orderId: id,
@@ -3121,6 +3143,9 @@ export class OrdersService implements OnApplicationBootstrap {
         { isolationLevel: "Serializable", timeout: 15_000 },
       );
     }
+    // DRAFT→PENDING and PENDING→DRAFT (B283 F1) are handled above, atomically
+    // with the status write, inside the `updated` transaction — nothing left
+    // to do for them here.
 
     // Fire-and-forget push notifications for key status transitions
     const notifMap: Partial<Record<OrderStatus, { title: string; body: string }>> = {
@@ -4913,6 +4938,86 @@ export class OrdersService implements OnApplicationBootstrap {
         },
       });
     });
+  }
+
+  /**
+   * B283: the ONE stock-decrement code path for turning a set of order lines
+   * into a real (non-draft) sale — locks the touched product rows FOR UPDATE,
+   * blocks (customer/driver) or warns (staff) on insufficient stock, then
+   * applies ONE aggregated UPDATE. Extracted out of create()'s non-draft
+   * branch so changeStatus()'s DRAFT→PENDING promotion (the same "becomes a
+   * real sale" moment) calls the IDENTICAL logic instead of a second
+   * implementation — see REG-B283. Must be called from inside the caller's
+   * transaction (the FOR UPDATE lock is only meaningful there).
+   */
+  private async decrementStockForSale(
+    tx: any,
+    stockLines: Array<{ productId: string; qty: number }>,
+    isStaffRole: boolean,
+  ): Promise<void> {
+    if (stockLines.length === 0) return;
+    const productIds = stockLines.map((li) => li.productId);
+    // SELECT … FOR UPDATE acquires row-level locks in the current transaction.
+    await tx.$executeRaw`
+      SELECT id FROM "Product"
+      WHERE id IN (${Prisma.join(productIds)})
+      FOR UPDATE
+    `;
+
+    const lockedProducts = await tx.product.findMany({
+      where: { id: { in: productIds } },
+      select: { id: true, name: true, currentStock: true },
+    });
+
+    const oosItems: string[] = [];
+    for (const li of stockLines) {
+      const p = lockedProducts.find((lp: any) => lp.id === li.productId);
+      if (p && Number(p.currentStock) < li.qty) {
+        oosItems.push(
+          `${p.name ?? li.productId} (available: ${Number(p.currentStock)}, requested: ${li.qty})`,
+        );
+      }
+    }
+    if (oosItems.length > 0) {
+      if (isStaffRole) {
+        this.logger.warn(`Operator-initiated order will go below stock: ${oosItems.join("; ")}`);
+      } else {
+        throw new ConflictException(`Insufficient stock: ${oosItems.join("; ")}`);
+      }
+    }
+
+    // Decrement stock atomically while the lock is held. For operator-initiated
+    // overselling, this lets currentStock go negative — the inventory page can
+    // surface that and the operator can reconcile after restock.
+    //
+    // B116 (REG-B116): ONE aggregated, set-based UPDATE instead of a per-line
+    // ORM call — a per-line write ordering is why multiple lines for the same
+    // product used to touch it twice instead of once. Aggregate first:
+    // `UPDATE … FROM (VALUES …)` applies at most one row per join key, so
+    // summing qty per product BEFORE the statement is load-bearing.
+    //
+    // Raw SQL bypasses the tenant proxy that scoped the ORM call it replaces,
+    // so the tenant predicate is re-stated explicitly here — a cross-tenant
+    // productId must not be able to move another tenant's stock. Null
+    // tenantId (SUPER_ADMIN context) keeps the unscoped behaviour the ORM
+    // call had in that same context.
+    const stockTenantId = this.prisma.getTenantId();
+    const qtyByProduct = new Map<string, number>();
+    for (const li of stockLines) {
+      qtyByProduct.set(li.productId, (qtyByProduct.get(li.productId) ?? 0) + li.qty);
+    }
+    const stockValues = Prisma.join(
+      [...qtyByProduct.entries()].map(
+        ([productId, qty]) => Prisma.sql`(${productId}::text, ${qty}::numeric)`,
+      ),
+    );
+    await tx.$executeRaw`
+      UPDATE "Product" AS p
+      SET "currentStock" = p."currentStock" - v.qty
+      FROM (VALUES ${stockValues}) AS v(id, qty)
+      WHERE p.id = v.id
+        ${stockTenantId ? Prisma.sql`AND p."tenantId" = ${stockTenantId}` : Prisma.empty}
+    `;
   }
 
   /**
