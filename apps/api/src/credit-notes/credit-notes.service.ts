@@ -854,6 +854,68 @@ export class CreditNotesService {
   }
 
   /**
+   * B315 — the ADVANCE counterpart of restoreCreditFromPaymentInTx: gives (part of) an applied
+   * advance back to the customer's wallet. Deletes (or shrinks) the ADVANCE InvoicePayment and
+   * increments AdvancePayment.balance back up (capped at its original `amount` — balance can
+   * never exceed what the customer actually deposited), then recomputes the invoice's status
+   * from its remaining non-VOID payments. Returns the dollars actually restored.
+   */
+  private async restoreAdvanceFromPaymentInTx(
+    tx: any,
+    payment: { id: string; invoiceId: string; advancePaymentId: string | null; amount: unknown },
+    reduceBy?: number,
+  ): Promise<number> {
+    if (!payment.advancePaymentId) return 0;
+    const payAmt = roundMoney(Number(payment.amount));
+    const restore = roundMoney(Math.min(payAmt, reduceBy ?? payAmt));
+    if (!(restore > 0.001)) return 0;
+
+    if (restore >= payAmt - 0.001) {
+      await tx.invoicePayment.delete({ where: { id: payment.id } });
+    } else {
+      await tx.invoicePayment.update({
+        where: { id: payment.id },
+        data: { amount: roundMoney(payAmt - restore) },
+      });
+    }
+
+    // Opus review (F39): a read-then-write (`findUnique` balance, compute, `update`) on this
+    // SAME column is the exact lost-update class B310 just closed on the apply side — a
+    // concurrent `applyAdvancePaymentToInvoiceLocked` (atomic `{ decrement }` under its
+    // advisory lock) could land between this read and this write and be silently erased. A
+    // blocking advisory lock here would be wrong too (this runs inside an order-edit
+    // transaction already holding row locks on a different connection — a second lock from in
+    // here risks a cross-connection deadlock the 10s timeout would only mask). One atomic SQL
+    // statement closes it instead: the cap-at-`amount` becomes `LEAST`, so there is no
+    // read-modify-write window at all.
+    await tx.$executeRaw`UPDATE "AdvancePayment" SET balance = LEAST(amount, balance + ${restore}) WHERE id = ${payment.advancePaymentId}`;
+
+    const inv = await tx.invoice.findUnique({
+      where: { id: payment.invoiceId },
+      include: { payments: true },
+    });
+    if (inv) {
+      const paid = roundMoney(
+        (inv.payments ?? [])
+          .filter((p: any) => p.status !== "VOID")
+          .reduce((s: number, p: any) => s + Number(p.amount), 0),
+      );
+      const newStatus = this.recomputeStatus(paid, Number(inv.total), inv.dueDate, inv.status);
+      await tx.invoice.update({
+        where: { id: inv.id },
+        data: {
+          status: newStatus,
+          paidAt: newStatus === InvoiceStatus.PAID ? (inv.paidAt ?? new Date()) : null,
+        },
+      });
+      // Sales agents & commissions: giving the advance back to the wallet grows the base
+      // again and un-shrinks the collectible — same reasoning as the credit-note restore.
+      await this.commissionEngine.syncInvoiceCommissionSafe(payment.invoiceId, tx);
+    }
+    return restore;
+  }
+
+  /**
    * Validates a proposed set of order credit-note selections against the customer's
    * wallet BEFORE any mutation. Throws BadRequest/NotFound on: duplicate creditNoteId
    * in the list; unknown id; different customer; status VOID; expired
@@ -1136,6 +1198,25 @@ export class CreditNotesService {
             0,
             roundMoney(Number(owner.creditNote.amountUsed) - restored),
           );
+        }
+      }
+      // B315: an ADVANCE payment is wallet money exactly like a credit note — when the order
+      // edit above shrinks the invoice below what an applied advance covers, the excess must
+      // come back to the customer's AdvancePayment.balance the same way a credit note's
+      // excess comes back to amountUsed. Before this, the shrink pass only ever looked at
+      // CREDIT_NOTE payments, so an applied advance just stayed "spent" against a total that
+      // no longer existed — money the customer prepaid, silently gone from the wallet.
+      if (excess > 0.001) {
+        const advancePays = nonVoid
+          .filter((p: any) => p.method === "ADVANCE" && p.advancePaymentId)
+          .sort(
+            (a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+          );
+        for (const p of advancePays) {
+          if (!(excess > 0.001)) break;
+          const restored = await this.restoreAdvanceFromPaymentInTx(tx, p, excess);
+          excess = roundMoney(excess - restored);
+          result.unapplied = roundMoney(result.unapplied + restored);
         }
       }
     }

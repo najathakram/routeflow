@@ -100,4 +100,3 @@ AgentFormModal` in a nested modal (`isAgentModalOpen` state); on create it selec
   `deliveredOn` semantics in `apps/api/src/orders/orders.service.ts` (`changeStatus` /
   `deleteOrder(id, user?)` / `createSale`) — see `api.md` `orders/` section for the exact rules,
   including the run-stop-completed 409 the Reopen button surfaces through the global error toast.
-

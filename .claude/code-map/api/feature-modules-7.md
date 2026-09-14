@@ -74,4 +74,3 @@
 
 - **module** — global. `broadcast{RouteUpdate,LocationUpdate,OrderUpdate}`, `notifyUser`. Redis adapter pub/sub to connected clients.
 - **buyer-connect emitters (2026-08-20)** — `emitBuyerConnectRequest(tenantId, {customerId, customerName, buyerName, buyerEmail, requestedAt})` → `buyer.connect.requested` and `emitBuyerAutoLinked(tenantId, {customerId, customerName, buyerName, buyerEmail})` → `buyer.connect.autolinked`, both to `tenantRoom(tenantId,"operators")` only (same shape as `emitUrgentOrder`). Called fire-and-forget from `buyer.service.requestSeller`; consumed by web `lib/hooks/useNotifications.ts` (requested also invalidates the pending-approvals query).
-

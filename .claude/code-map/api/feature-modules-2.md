@@ -267,4 +267,3 @@ qtyPieces, qtyUnits, lastPrice, boxCtx)` dropped `private`; bodies are byte-iden
   `orderBy` gains an id tiebreaker: `[{createdAt:"desc"},{id:"desc"}]` (B169 — same-second
   creates could tie and float across pages). Specs: `orders.service.spec.ts` REG-B144/REG-B169
   describe blocks, `dto/list-orders.dto.spec.ts` (limit=5000 rejected, limit=1000 accepted).
-

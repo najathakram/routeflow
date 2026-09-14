@@ -588,79 +588,104 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
 
 ### L-120 · 2026-09-13 · domain · billing self-serve (TRIAL-1 / RO-1)
 
-- **Symptom:** every trial tenant's "Cancel" 404'd; an expired trial (READ_ONLY) showed the same
-  button, got the same 404, and saw no explanation in the web — a guard-enforced lockout with no UI.
+- **Symptom:** every trial tenant's "Cancel" 404'd; an expired trial showed the same button, got
+  the same 404, and saw no explanation — a guard-enforced lockout with no UI.
 - **Root cause:** `cancel()` keyed on a `TenantSubscription` row `register()` never writes, while
   the real lifecycle state lives on `Tenant.status`; the web rendered that status as a raw badge
-  and had no branch for the guard's `READ_ONLY` code.
+  with no branch for the guard's `READ_ONLY` code.
 - **Lesson:** **Key a lifecycle action on the table that owns the state; a sibling row some
   creation path never writes is optional — a missing-row 404 there hides a legitimate transition.
   Every status the API can return and every code a guard can emit needs a UI branch, or the
   lockout is invisible.**
-- **Guard:** TRIAL-1 in `subscription-mutation.service.spec.ts` (no-row TRIAL → READ_ONLY,
-  READ_ONLY idempotent, ACTIVE no-row keeps 404, with-row unchanged); RO-1 in
+- **Guard:** TRIAL-1 in `subscription-mutation.service.spec.ts`; RO-1 in
   `subscription.service.spec.ts` + `billing-page.test.tsx`.
 
 ### L-121 · 2026-09-13 · domain · STRIPE-CANCEL-1
 
 - **Symptom:** a tenant on an admin-provisioned Stripe subscription clicked Cancel; Stripe kept
-  invoicing; the cron made it READ_ONLY (−MRR), then the next `invoice.payment_succeeded` lifted
-  it back to ACTIVE (+MRR) — a monthly flap with ±MRR pairs while a cancelled customer was charged.
+  invoicing; the cron made it READ_ONLY (−MRR), the next paid invoice lifted it back to ACTIVE
+  (+MRR) — a monthly flap while a cancelled customer was charged.
 - **Root cause:** `cancel()`/`resume()` wrote `cancelAtPeriodEnd` locally and never called Stripe;
   `onPaymentSucceeded` reinstated ANY non-ACTIVE tenant without reading the local cancellation.
 - **Lesson:** **On a provider-billed tenant, write a scheduled billing transition to the provider
   FIRST and locally second — a failed provider call changes nothing, a failed local write
-  self-heals off the provider's webhook. Gate the provider call on the state that makes it
-  meaningful (a cancellation actually armed, on a tenant actually paying) — a fix for
-  over-charging must never be able to START charging. A webhook that promotes status must read
-  the local intent it overrides: an EXECUTED cancellation plus a payment is an anomaly to flag,
-  never to resurrect; a dunning tenant who pays is reinstated.**
-- **Guard:** STRIPE-CANCEL-1 ×15 in `subscription-mutation.service.spec.ts` (called once, before
-  the write; resume only when armed + ACTIVE; 503 writes nothing; null `stripeSubId` untouched
-  under a hostile mock) + ×4 in `billing.service.spec.ts`. Sibling [[L-120]]; class of B107.
+  self-heals off the webhook. Gate the provider call on the state that makes it meaningful (a
+  cancellation actually armed, a tenant actually paying): a fix for over-charging must never be
+  able to START charging. A webhook that promotes status must read the local intent it overrides —
+  an executed cancellation plus a payment is an anomaly to flag, never to resurrect.**
+- **Guard:** STRIPE-CANCEL-1 ×15 in `subscription-mutation.service.spec.ts` + ×4 in
+  `billing.service.spec.ts`. Class of B107.
+
+### L-122 · 2026-09-13 · domain · F39 (B310/B311/B315 wallet/invoice lost updates)
+
+- **Symptom:** B310 — `applyAdvancePaymentToInvoice` read `AdvancePayment.balance` and decremented
+  it as two separate statements inside one Prisma transaction; two concurrent applies of the same
+  advance both read the same balance and both passed the "has remaining balance" check, driving it
+  negative. B311 — `recordStandalonePayment`'s buyer/online overpay guard had the identical shape
+  one call away, on `Invoice` instead of `AdvancePayment`.
+- **Root cause:** a single Prisma `tenantTransaction` is NOT a lock — under READ COMMITTED, a plain
+  read inside it sees only what's already committed, so a check-then-act on a row neither
+  transaction has locked lets two concurrent callers both read the pre-decrement value and both
+  proceed; only an explicit row lock (or an equivalent serializing primitive) closes the window.
+- **Lesson:** **A balance/limit check followed by a write to the SAME row, inside one transaction,
+  is a check-then-act race unless something locks the row (or the caller) BEFORE the read — a
+  customer-keyed `withAdvisoryLock` when the critical section spans multiple tables/calls (the
+  house pattern for money serialization), or a plain `SELECT ... FOR UPDATE` inside the same tx
+  when it's one row — or, when the write is a single column and the cap is expressible in SQL
+  (B315's advance-restore), skip locking altogether: one atomic `UPDATE ... SET col = LEAST(cap,
+col + delta)` has no read-modify-write window at all. And such a fix is regression-testable
+  WITHOUT a live database: mock the lock
+  primitive (`withAdvisoryLock`, or the specific `$executeRaw` call) with a per-key promise chain
+  that genuinely serializes concurrent callers in call order, drive two concurrent calls through
+  the real service method, and assert on the wrong VALUE (balance negative, sum overpaid) — then
+  confirm the test is real by temporarily reverting the fix and watching it fail on that same
+  wrong value before restoring it.**
+- **Guard:** `apps/api/src/customers/customers.service.spec.ts` "B310: two concurrent applies of
+  the SAME advance never drive its balance negative" (promise-chain `withAdvisoryLock` mock);
+  `apps/api/src/invoices/invoices.service.spec.ts` "B311: a concurrent office payment can no
+  longer overpay the invoice past its live balance" (promise-chain `$executeRaw` mock, released
+  when the whole `tenantTransaction` call settles — not at the raw-query call site). Both verified
+  red-then-green by hand before commit.
 
 ### L-123 · 2026-09-14 · process · W1 seam rows
 
-- **Symptom:** an independent pre-merge review of a just-merged money PR found two live
-  defects in code three in-lane review rounds had passed — a cancel that never reached the
-  payment provider, and a resume that cleared the one flag a new guard reads.
+- **Symptom:** an independent pre-merge review found two live defects in code three in-lane
+  rounds had passed — a cancel that never reached the payment provider, and a resume that
+  cleared the one flag a new guard reads.
 - **Root cause:** each round fixed what it was handed. Round 1 added an idempotence
   short-circuit; a later round added a provider call BELOW it; a third gave that call a
   three-condition gate and left the local write on one. Every diff was correct read alone.
-- **Lesson:** **When a function is edited by more than one review round, the seam between
-  the rounds is where the defect lives: a guard added early can end up ahead of a call added
-  late, and a gate tightened on one branch can leave its sibling ungated. Whenever you touch a
-  function an earlier round already changed, re-read it whole and ask which of today's guards
-  now sits on the wrong side of yesterday's call — an in-lane reviewer holding one diff cannot
-  see it, so this is what the independent pre-merge pass is for.**
-- **Guard:** the W1 rows themselves (`STRIPE-CANCEL-2`, `STRIPE-RESUME-1`) plus the rewritten
-  spec that used to assert the defect as expected. Sibling [[L-119]].
+- **Lesson:** **When a function is edited by more than one review round, the seam between the
+  rounds is where the defect lives: a guard added early can end up ahead of a call added late,
+  and a gate tightened on one branch can leave its sibling ungated. Touching a function an
+  earlier round changed means re-reading it whole — an in-lane reviewer holding one diff cannot
+  see this, which is what the independent pre-merge pass is for.**
+- **Guard:** the W1 rows (`STRIPE-CANCEL-2`, `STRIPE-RESUME-1`) plus the rewritten spec that
+  asserted the defect. Sibling [[L-119]].
 
 ### L-125 · 2026-09-14 · domain · W1 billing anchor
 
-- **Symptom:** a fix for billing-period drift was about to derive each tenant's cycle anchor
-  from `TenantSubscription.createdAt`, the only date on the row — which would have moved real
-  charge dates for anyone whose row predates their subscription.
-- **Root cause:** the row is created by several paths that have nothing to do with
-  subscribing (a customer-cap grace window, a Stripe customer being minted), so its creation
-  date is not the billing anchor; no column stores the anchor at all.
-- **Lesson:** **Never infer a money-bearing date from a column that merely happens to hold a
-  date. Check every writer of that row before treating any field as the thing you need — if
-  none of them means what you need, the honest fix is a column and a migration, not the
-  nearest plausible field. Shipping half a fix beats shipping a wrong charge date.**
-- **Guard:** the rolled-period time-of-day fix shipped alone; the drift half is a filed row
-  blocked on an `anchorDay` column, and its test is an `it.todo` naming that blocker rather
-  than a passing test that implies a fix. Sibling [[L-118]].
+- **Symptom:** a fix for billing-period drift was about to derive each tenant's cycle anchor from
+  `TenantSubscription.createdAt`, the only date on the row — moving real charge dates for anyone
+  whose row predates their subscription.
+- **Root cause:** several paths create that row without subscribing (a customer-cap grace window,
+  a Stripe customer being minted), so its creation date is not the anchor; no column stores one.
+- **Lesson:** **Never infer a money-bearing date from a column that merely happens to hold a date.
+  Check every writer of the row before treating a field as the thing you need — if none of them
+  means it, the honest fix is a column and a migration, not the nearest plausible field. Shipping
+  half a fix beats shipping a wrong charge date.**
+- **Guard:** the time-of-day half shipped alone; the drift half is filed, blocked on an
+  `anchorDay` column. Sibling [[L-118]].
 
 ### L-126 · 2026-09-14 · domain · W1 admin plan change
 
 - **Symptom:** a new admin plan-change branch cleared `cancelAtPeriodEnd`, silently revoking a
-  cancellation the TENANT had asked for — no event, no audit line, and the scheduled-cancellation
-  sweep then never churned them, so a tenant who cancelled kept being billed indefinitely.
+  cancellation the TENANT had asked for — no event, no audit line, and the sweep then never
+  churned them, so a tenant who cancelled kept being billed indefinitely.
 - **Root cause:** the line was copied verbatim from the tenant's own `downgrade()`, where clearing
-  that flag is correct because the tenant is acting on their own subscription. The admin path
-  performs the same write on someone else's subscription. The code was identical; the authority
-  behind it was not — and the sibling branch two screens down already stated the opposite rule.
+  that flag is correct because the tenant is acting on their own subscription; the admin path
+  performs the same write on someone else's. The code was identical, the authority behind it was
+  not — and the sibling branch two screens down already stated the opposite rule.
 - **Lesson:** **Consent does not travel with copied code. Before lifting a write from a
   self-service path into an admin path (or the reverse), ask who is acting and on whose behalf: a
   flag the owner of a subscription may clear for themselves is not one an operator may clear for
@@ -668,4 +693,4 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
   is the bug, not the discovery of an exception.**
 - **Guard:** the admin plan change now REFUSES in either direction while a cancellation is armed,
   with `cancelAtPeriodEnd` added to the select it was blind to; REG tests in
-  `platform-admin.service.spec.ts`. Sibling [[L-123]] (the seam rule this is a special case of).
+  `platform-admin.service.spec.ts`. Sibling [[L-123]].

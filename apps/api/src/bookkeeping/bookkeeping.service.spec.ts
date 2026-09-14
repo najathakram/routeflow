@@ -1,6 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
-import { NotFoundException } from "@nestjs/common";
+import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 
 const mockAnthropicCreate = jest.fn();
@@ -391,6 +391,41 @@ describe("BookkeepingService", () => {
       const invoiceRow = result.data.find((r) => r.type === "INVOICE");
 
       expect(invoiceRow?.balance).toBe(100);
+    });
+  });
+
+  // ─── B312: this ledger writer had NO status guard at all — unlike invoices.service's
+  // recordPayment (which refuses VOID), a WRITTEN_OFF invoice's `remaining` balance is still
+  // > 0 (write-off doesn't touch `total`), so this second, weaker path would happily flip a
+  // forgiven invoice back to PARTIAL/PAID as if it were still collectible.
+  describe("B312 — recordPayment refuses a VOID or WRITTEN_OFF invoice", () => {
+    it("refuses a WRITTEN_OFF invoice instead of resurrecting it", async () => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-wo",
+        status: "WRITTEN_OFF",
+        total: 100,
+        payments: [], // remaining = 100 > 0 — the old `remaining <= 0` guard alone can't catch this
+      });
+
+      await expect(
+        service.recordPayment("inv-wo", { amount: 50, method: "CASH" as any }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+
+    it("refuses a VOID invoice the same way", async () => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-void-2",
+        status: "VOID",
+        total: 100,
+        payments: [],
+      });
+
+      await expect(
+        service.recordPayment("inv-void-2", { amount: 50, method: "CASH" as any }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
     });
   });
 

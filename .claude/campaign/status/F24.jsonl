@@ -1,5 +1,5 @@
-{"id":"B134","batch":"F24","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0b2c3a0a"}
-{"id":"B135","batch":"F24","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0b2c3a0a"}
+{"id":"B134","batch":"F24","tier":"T1","state":"proven","pr":692,"proof":"REG-B134 (T1-T3): the invoice un-send runs inside the merge transaction, after the order row lock, and rolls back with the merge on failure (orders.service.spec.ts); landed master 9ae8f443 (PR #692)","evidence":null,"roundSha":"0b2c3a0a","buildPlan":null}
+{"id":"B135","batch":"F24","tier":"T1","state":"proven","pr":692,"proof":"REG-B135 (T4-T7): stop/order/run state and LINE_ALREADY_DELIVERED are judged on the locked in-tx row, not the pre-tx snapshot (orders.service.spec.ts); landed master 9ae8f443 (PR #692)","evidence":null,"roundSha":"0b2c3a0a","buildPlan":null}
 {"id":"B162","batch":"F24","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0b2c3a0a"}
 {"id":"B163","batch":"F24","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0b2c3a0a"}
 {"id":"B164","batch":"F24","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0b2c3a0a"}

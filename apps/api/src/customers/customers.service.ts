@@ -5,6 +5,7 @@ import {
   Logger,
   NotFoundException,
   ForbiddenException,
+  ServiceUnavailableException,
   UnprocessableEntityException,
 } from "@nestjs/common";
 import * as crypto from "crypto";
@@ -22,6 +23,7 @@ import {
   LIFETIME_INVOICED_EXCLUDED,
 } from "../invoices/invoice-status-sets";
 import { geocodeAddress, GeocodableAddress, GeocodeCoords } from "../common/geocode.util";
+import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import { StorageService } from "../storage/storage.service";
 import { compressDocument } from "../storage/compress.util";
 import { CreateCustomerDto } from "./dto/create-customer.dto";
@@ -1323,7 +1325,61 @@ export class CustomersService {
     await this.prisma.forTenant().customerPrice.delete({ where: { id: priceId } });
   }
 
+  /**
+   * B310: reading `ap.balance` and later decrementing it were two separate statements with no
+   * lock between them — two concurrent applies of the SAME advance could both read the
+   * balance BEFORE either decrement landed, both pass the "has remaining balance" check, and
+   * both apply, driving `balance` negative (money spent twice). Serialized with the house
+   * `withAdvisoryLock` primitive (`family: "order-merge"`, customer-keyed — the same
+   * customer-level lock order-merges already use for money serialization; see CLAUDE.md
+   * "Money discipline"), never a second in-process lock. The pre-lock read below only fetches
+   * the immutable `customerId` to build the lock key — it never informs the balance decision,
+   * which is re-read fresh INSIDE the lock.
+   */
   async applyAdvancePaymentToInvoice(
+    advancePaymentId: string,
+    dto: { invoiceId: string; amount?: number },
+  ) {
+    const apStub = await this.prisma.forTenant().advancePayment.findUnique({
+      where: { id: advancePaymentId },
+      select: { customerId: true },
+    });
+    if (!apStub) throw new NotFoundException("Advance payment not found");
+
+    try {
+      const lock = await withAdvisoryLock(
+        { family: "order-merge", key: apStub.customerId, mode: "wait", waitMs: 10_000 },
+        () => this.applyAdvancePaymentToInvoiceLocked(advancePaymentId, dto),
+      );
+      // Unreachable in practice: `mode: "wait"` either resolves acquired (fn ran) or the
+      // acquire itself rejects (LockTimeoutError/LockUnavailableError, caught below) — it
+      // never returns `{ acquired: false }`. Narrowed so `lock.value` type-checks.
+      if (!lock.acquired) {
+        throw new ServiceUnavailableException({
+          code: "LOCK_UNAVAILABLE",
+          message: "Wallet lock unavailable — retry shortly.",
+        });
+      }
+      return lock.value;
+    } catch (e) {
+      if (e instanceof LockTimeoutError) {
+        throw new ConflictException({
+          code: "WALLET_LOCK_BUSY",
+          message:
+            "Another payment against this customer's wallet is in progress. Try again in a moment.",
+        });
+      }
+      if (e instanceof LockUnavailableError) {
+        throw new ServiceUnavailableException({
+          code: "LOCK_UNAVAILABLE",
+          message: "Wallet lock unavailable — retry shortly.",
+        });
+      }
+      throw e;
+    }
+  }
+
+  private async applyAdvancePaymentToInvoiceLocked(
     advancePaymentId: string,
     dto: { invoiceId: string; amount?: number },
   ) {
@@ -1332,6 +1388,16 @@ export class CustomersService {
       if (!ap) throw new NotFoundException("Advance payment not found");
       if (Number(ap.balance) <= 0)
         throw new BadRequestException("Advance payment has no remaining balance");
+
+      // Opus review (F39): withAdvisoryLock above only serializes concurrent applies of THIS
+      // advance against EACH OTHER (keyed by customerId) — it does nothing against a totally
+      // different writer of the same Invoice, e.g. a concurrent invoices.service.ts
+      // `recordPayment` (which takes this exact lock at its own start). Without locking the
+      // row here too, that path could still overpay the invoice from the other side — the
+      // B311 race, reachable through this door instead. `FOR UPDATE` (not the NOWAIT house
+      // primitive), matching `recordPayment`'s own choice: an ordinary InsertPayment only
+      // holds `FOR KEY SHARE` on the parent, which `FOR NO KEY UPDATE` would not conflict with.
+      await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${dto.invoiceId} FOR UPDATE`;
 
       const inv = await tx.invoice.findUnique({
         where: { id: dto.invoiceId },

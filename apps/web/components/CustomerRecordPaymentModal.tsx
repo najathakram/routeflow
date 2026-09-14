@@ -12,6 +12,7 @@ import {
 } from "@/lib/api/invoices";
 import { waterfallAllocations, allocationTotals } from "@/lib/api/supplier-payments";
 import { fmt } from "@/lib/formatting";
+import { roundMoney } from "@routeflow/pricing";
 import {
   SELECTABLE_PAYMENT_METHODS,
   PAYMENT_METHOD_LABELS,
@@ -35,6 +36,26 @@ interface AllocRow {
   invoiceNumber: string;
   amountDue: number;
   amount: string;
+}
+
+/**
+ * B313: mobile's record.tsx caps each row at the invoice's balance ("Cap at the invoice's
+ * balance — the server would happily over-pay it"); this modal edited the raw string with no
+ * cap at all, so an operator could type more than an invoice's `amountDue` here while mobile
+ * silently clamped the same input. Blank/unparseable input passes through untouched so the
+ * field stays editable (matching mobile's `value == null` passthrough).
+ *
+ * Opus review (F39): an EARLIER version of this reformatted every keystroke through
+ * `roundMoney`/`String`, which rewrites "12.50" to "12.5" mid-type — an in-range value now
+ * passes through EXACTLY as typed (decimal in progress, trailing zero and all); only an
+ * out-of-range value gets replaced, and only then with a clean rounded string.
+ */
+export function clampAllocationInput(raw: string, amountDue: number): string {
+  const parsed = parseFloat(raw);
+  if (raw === "" || Number.isNaN(parsed)) return raw;
+  if (parsed < 0) return "0";
+  if (parsed > amountDue) return String(roundMoney(amountDue));
+  return raw;
 }
 
 export interface CustomerRecordPaymentModalProps {
@@ -124,7 +145,11 @@ export function CustomerRecordPaymentModal({
   );
 
   const updateAlloc = (idx: number, val: string) =>
-    setAllocations((prev) => prev.map((a, i) => (i === idx ? { ...a, amount: val } : a)));
+    setAllocations((prev) =>
+      prev.map((a, i) =>
+        i === idx ? { ...a, amount: clampAllocationInput(val, a.amountDue) } : a,
+      ),
+    );
 
   const handleSave = async (status: "DRAFT" | "PAID") => {
     if (!total || total <= 0) {

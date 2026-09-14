@@ -16,6 +16,9 @@ in `useOpenPurchaseOrders` always return zero rows for that leg; `lib/api/buyer.
 `lib/buyer-cart-logic.ts` `matchingBogoPromo`, now removed). Sibling-sweep find: both apps'
 `EstimateStatus` carried a phantom `"EXPIRED"` — dead branch removed from `lib/estimates-logic.ts`.
 
+- **`Dockerfile` + `railway.toml` (#712, B389)** — web-export runner is nginx (non-root,
+  `nginx-unprivileged:alpine`); watchPatterns `apps/mobile/**` + `packages/**`.
+
 > **2026-09-13 split** (`docs/code-map-split-land`): this file used to hold ALL of mobile's
 > signature-level content (313,959 bytes — over 3x the 100,000-byte area cap; its own "Where to
 > find" table alone was padded to 165,321 bytes before de-padding). The content below was moved
@@ -24,10 +27,10 @@ in `useOpenPurchaseOrders` always return zero rows for that leg; `lib/api/buyer.
 
 ## Module index
 
-| Part | Covers |
-| --- | --- |
-| [mobile/where-to-find.md](mobile/where-to-find.md) | Where to find (this area) — need/symptom → file/symbol |
-| [mobile/app-shell-lib.md](mobile/app-shell-lib.md) | App shell & lib |
-| [mobile/screens-by-role.md](mobile/screens-by-role.md) | Screens by role (`app/`): `(auth)`, `(customer)`, `(driver)`, `(operator)`, `(tenant)` |
-| [mobile/tests-1.md](mobile/tests-1.md) | Tests (1/2): `__tests__/` intro + batches through 2026-08-25 recurring-routes/order-delivery split |
-| [mobile/tests-2.md](mobile/tests-2.md) | Tests (2/2): batches from 2026-08-28 `developer_mode` narrowing through 2026-09-09 Train 1/2 |
+| Part                                                   | Covers                                                                                             |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| [mobile/where-to-find.md](mobile/where-to-find.md)     | Where to find (this area) — need/symptom → file/symbol                                             |
+| [mobile/app-shell-lib.md](mobile/app-shell-lib.md)     | App shell & lib                                                                                    |
+| [mobile/screens-by-role.md](mobile/screens-by-role.md) | Screens by role (`app/`): `(auth)`, `(customer)`, `(driver)`, `(operator)`, `(tenant)`             |
+| [mobile/tests-1.md](mobile/tests-1.md)                 | Tests (1/2): `__tests__/` intro + batches through 2026-08-25 recurring-routes/order-delivery split |
+| [mobile/tests-2.md](mobile/tests-2.md)                 | Tests (2/2): batches from 2026-08-28 `developer_mode` narrowing through 2026-09-09 Train 1/2       |

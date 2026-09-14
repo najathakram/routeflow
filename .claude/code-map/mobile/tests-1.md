@@ -555,4 +555,3 @@ draft.ts` mirrors web's `lib/trip-draft.ts` (local-only picked-orders draft, cle
   every tenant — only the trip-planning entry points are dev-gated, via the `dispatch.tsx` Trips
   row and the builder screens themselves).
 - Findings + demo-seed coordinate fix for this feature: `docs/phase0-adhoc-trips-findings.md`.
-
