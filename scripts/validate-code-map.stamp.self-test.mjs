@@ -59,9 +59,31 @@ const check = (name, got, want) => {
 // blow up loudly here, not surface as a confusing assertion failure three
 // steps later.
 const git = (args, cwd) => {
+  // GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE/GIT_COMMON_DIR are set by git itself when it
+  // invokes a hook from a linked worktree, and inherit straight through spawnSync by
+  // default — a scratch repo's own `git add`/`git init` then resolves against the OUTER
+  // repo's gitdir instead of `cwd`, failing with "fatal: this operation must be run in a
+  // work tree". Scrub them the same way runScript() below already scrubs CI/GITHUB_REF*.
+  const env = { ...process.env };
+  delete env.GIT_DIR;
+  delete env.GIT_WORK_TREE;
+  delete env.GIT_INDEX_FILE;
+  delete env.GIT_COMMON_DIR;
+  delete env.GIT_PREFIX;
+  // The remaining five from the 2026-09-04 bugs.mjs incident's prescribed list
+  // (reference_git_worktreeconfig_bare_trap): not observed to cause THIS
+  // incident, but git honors all ten from a hook's environment, so scrubbing
+  // only the two that happened to bite is how a sibling script (this one)
+  // repeated the exact same class of bug ten days later.
+  delete env.GIT_OBJECT_DIRECTORY;
+  delete env.GIT_ALTERNATE_OBJECT_DIRECTORIES;
+  delete env.GIT_QUARANTINE_PATH;
+  delete env.GIT_NAMESPACE;
+  delete env.GIT_CEILING_DIRECTORIES;
   const res = spawnSync("git", ["-c", "commit.gpgsign=false", "-c", "core.hooksPath=", ...args], {
     cwd,
     encoding: "utf8",
+    env,
   });
   if (res.status !== 0) {
     throw new Error(
@@ -78,12 +100,27 @@ const git = (args, cwd) => {
 // would leak into every scratch repo's child process and misclassify an
 // off-master scratch branch as master. The scratch repo's own branch name
 // (set explicitly per case below) is the only thing that should decide it.
-const runScript = (scriptPath, args, cwd) =>
-  spawnSync(process.execPath, [scriptPath, ...args], {
+const runScript = (scriptPath, args, cwd) => {
+  const env = { ...process.env, CI: "", GITHUB_REF_NAME: "", GITHUB_REF: "" };
+  // Same GIT_DIR/GIT_WORK_TREE leak as the git() helper above: validate-code-map.mjs
+  // shells out to git itself, so without this it silently resolves HEAD/ancestry
+  // against the outer repo instead of the scratch repo passed as `cwd`.
+  delete env.GIT_DIR;
+  delete env.GIT_WORK_TREE;
+  delete env.GIT_INDEX_FILE;
+  delete env.GIT_COMMON_DIR;
+  delete env.GIT_PREFIX;
+  delete env.GIT_OBJECT_DIRECTORY;
+  delete env.GIT_ALTERNATE_OBJECT_DIRECTORIES;
+  delete env.GIT_QUARANTINE_PATH;
+  delete env.GIT_NAMESPACE;
+  delete env.GIT_CEILING_DIRECTORIES;
+  return spawnSync(process.execPath, [scriptPath, ...args], {
     cwd,
     encoding: "utf8",
-    env: { ...process.env, CI: "", GITHUB_REF_NAME: "", GITHUB_REF: "" },
+    env,
   });
+};
 
 // Builds a fresh throwaway repo with a minimal code map + a copy of the
 // script under test, seeds one commit, renames the branch to `branch`, and
@@ -106,6 +143,21 @@ function makeRepo(branch) {
   cpSync(SCRIPT, scriptCopy);
 
   git(["init"], scratch);
+  // Guard, not a formality: proves the scrubbing above actually took effect for
+  // THIS process's git binary/version, rather than trusting the env-deletion
+  // list is complete. A leaked GIT_DIR resolves --show-toplevel to the OUTER
+  // repo's root, never inside `scratch` — catch that here, before any command
+  // below can mutate the outer repo, instead of failing opaquely three steps on.
+  {
+    const toplevel = git(["rev-parse", "--show-toplevel"], scratch).stdout.trim();
+    const norm = (p) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+    if (!norm(toplevel).startsWith(norm(scratch))) {
+      throw new Error(
+        `validate-code-map.stamp.self-test: makeRepo's scratch repo resolved to toplevel ` +
+          `"${toplevel}", not inside "${scratch}" — GIT_* env leaked into git()`,
+      );
+    }
+  }
   git(["config", "user.email", "self-test@example.invalid"], scratch);
   git(["config", "user.name", "self-test"], scratch);
   git(["add", "-A"], scratch);
@@ -285,6 +337,63 @@ const main = () => {
       cleanup(shallow);
     }
   });
+
+  // ── REG-B420: an ambient GIT_DIR/GIT_WORK_TREE (exactly what git sets when
+  // invoking a hook from a linked worktree) must never leak into this file's
+  // OWN scratch-repo git calls. A "victim" repo stands in for the real outer
+  // repo; process.env is polluted the same way a pre-push hook pollutes it;
+  // a normal fixture op runs; the victim's branches/HEAD/config must be
+  // byte-identical before and after. This is the actual 2026-09-14 incident,
+  // reproduced: on the pre-fix file this FAILS (the victim gets a renamed
+  // branch and a fixture commit, exactly as rf-mobile-lanes did); on the
+  // fixed file it PASSES.
+  {
+    const victim = mkdtempSync(join(tmpdir(), "code-map-self-test-victim-"));
+    git(["init"], victim);
+    git(["config", "user.email", "victim@example.invalid"], victim);
+    git(["config", "user.name", "victim"], victim);
+    writeFileSync(join(victim, "seed.txt"), "victim seed\n");
+    git(["add", "-A"], victim);
+    git(["commit", "-m", "victim seed"], victim);
+    git(["branch", "-M", "master"], victim);
+
+    const before = {
+      branches: git(["branch", "-a"], victim).stdout,
+      head: git(["rev-parse", "HEAD"], victim).stdout,
+      config: readFileSync(join(victim, ".git", "config"), "utf8"),
+    };
+
+    const savedDir = process.env.GIT_DIR;
+    const savedWorkTree = process.env.GIT_WORK_TREE;
+    // Real hook-set values are absolute paths to the OUTER repo's gitdir/worktree —
+    // mirror that shape exactly rather than a plausible-looking stand-in.
+    process.env.GIT_DIR = join(victim, ".git");
+    process.env.GIT_WORK_TREE = victim;
+    try {
+      withRepo("feature/reg-b420", (repo) => {
+        repo.commitFile("apps/api/src/thing.ts", "export const x = 1;\n", "reg-b420 fixture op");
+      });
+    } finally {
+      if (savedDir === undefined) delete process.env.GIT_DIR;
+      else process.env.GIT_DIR = savedDir;
+      if (savedWorkTree === undefined) delete process.env.GIT_WORK_TREE;
+      else process.env.GIT_WORK_TREE = savedWorkTree;
+    }
+
+    const after = {
+      branches: git(["branch", "-a"], victim).stdout,
+      head: git(["rev-parse", "HEAD"], victim).stdout,
+      config: readFileSync(join(victim, ".git", "config"), "utf8"),
+    };
+    check(
+      "REG-B420: an ambient GIT_DIR/GIT_WORK_TREE never touches the victim's branches",
+      after.branches,
+      before.branches,
+    );
+    check("REG-B420: ...never touches the victim's HEAD", after.head, before.head);
+    check("REG-B420: ...never touches the victim's config", after.config, before.config);
+    cleanup(victim);
+  }
 
   console.log(
     failures
