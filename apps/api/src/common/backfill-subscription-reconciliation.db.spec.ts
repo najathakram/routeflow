@@ -1,15 +1,17 @@
 /**
  * DB-lane spec for `../../scripts/backfill-subscription-reconciliation.mjs` — proves the
- * dry-run/apply mechanics against a REAL Postgres (create-if-missing, backfill-if-partial,
- * PRODUCTION/DEMO-only scope, idempotency). Lives under `src/common` (not next to the script
- * under `scripts/`) because `jest.db.config.js` inherits `rootDir: "src"` from the base Jest
- * config — a spec under `apps/api/scripts/` would never be discovered by `npm run
+ * dry-run/apply mechanics against a REAL Postgres. F2/F3 (Phase 0 fix round 1): the script
+ * NEVER invents a subscription and NEVER re-derives a planKey from the legacy `plan` enum — a
+ * tenant with no subscription row (a free pilot) is only ever reported, and a plan the catalog
+ * prices at null (ENTERPRISE) is skipped idempotently. Lives under `src/common` (not next to
+ * the script under `scripts/`) because `jest.db.config.js` inherits `rootDir: "src"` from the
+ * base Jest config — a spec under `apps/api/scripts/` would never be discovered by `npm run
  * local:test:db`, matching the sibling precedent `backfill-tenant-class.db.spec.ts`.
  *
  * Collected only by `jest.db.config.js` (`.db.spec.ts$`), run via `npm run local:test:db`.
  * `requireLocalDatabaseUrl()` refuses any non-local host.
  *
- * SAFETY: both fixture slugs are `assertTestTenant`-approved (`qa-` prefix). Their `class` is
+ * SAFETY: all fixture slugs are `assertTestTenant`-approved (`qa-` prefix). Their `class` is
  * set DIRECTLY at creation to PRODUCTION/TEST rather than derived from the slug — the CLI reads
  * whatever `class` a tenant already carries, and this file never runs the class backfill
  * against these rows, so a qa-prefixed slug carrying `class: PRODUCTION` here does not
@@ -45,7 +47,11 @@ const TEST_CLASS_SLUG = assertTestTenant(
   `qa-phase0-recon-${RUN_SUFFIX}-3`,
   "backfill-subscription-reconciliation.db.spec.ts",
 );
-const ALL_SLUGS = [NO_SUB_SLUG, PARTIAL_SUB_SLUG, TEST_CLASS_SLUG];
+const ENTERPRISE_SLUG = assertTestTenant(
+  `qa-phase0-recon-${RUN_SUFFIX}-4`,
+  "backfill-subscription-reconciliation.db.spec.ts",
+);
+const ALL_SLUGS = [NO_SUB_SLUG, PARTIAL_SUB_SLUG, TEST_CLASS_SLUG, ENTERPRISE_SLUG];
 
 describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
   const dbUrl = requireLocalDatabaseUrl();
@@ -55,7 +61,7 @@ describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
   let tenantNoSub: { id: string };
   let tenantPartial: { id: string };
   let tenantTestClass: { id: string };
-  let starterPrice: string;
+  let tenantEnterprise: { id: string };
   let scalePrice: string;
 
   beforeAll(async () => {
@@ -68,16 +74,19 @@ describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
         "No PUBLISHED PlanVersion in the compose DB — run `npm run local:seed` first.",
       );
     }
-    starterPrice = String(
-      publishedVersion.definitions.find((d) => d.planKey === "STARTER")?.monthlyPrice,
-    );
     scalePrice = String(
       publishedVersion.definitions.find((d) => d.planKey === "SCALE")?.monthlyPrice,
     );
 
+    // Pilot-like: PRODUCTION, ACTIVE, no subscription row at all — must be reported and
+    // NEVER written (F2: the script never invents a subscription, or the free pilots would
+    // become paying MRR on --apply).
     tenantNoSub = await prisma.tenant.create({
       data: { slug: NO_SUB_SLUG, name: NO_SUB_SLUG, status: "ACTIVE", class: "PRODUCTION" },
     });
+    // Already has a planKey, missing only basePriceSnapshot (the one failure mode this
+    // script still fixes — a Stripe-originated row created before the checkout webhook set
+    // the price snapshot).
     tenantPartial = await prisma.tenant.create({
       data: {
         slug: PARTIAL_SUB_SLUG,
@@ -85,7 +94,7 @@ describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
         status: "ACTIVE",
         class: "PRODUCTION",
         plan: "PROFESSIONAL",
-        subscription: { create: { planKey: null, basePriceSnapshot: null } },
+        subscription: { create: { planKey: "SCALE", basePriceSnapshot: null } },
       },
     });
     // Excluded from reconciliation by class alone (not by slug) — proves the script's
@@ -94,10 +103,22 @@ describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
     tenantTestClass = await prisma.tenant.create({
       data: { slug: TEST_CLASS_SLUG, name: TEST_CLASS_SLUG, status: "ACTIVE", class: "TEST" },
     });
+    // ENTERPRISE: the published catalog prices it at null (custom, per-deal pricing) — F3:
+    // skip idempotently, never write, never flagged again on a second run.
+    tenantEnterprise = await prisma.tenant.create({
+      data: {
+        slug: ENTERPRISE_SLUG,
+        name: ENTERPRISE_SLUG,
+        status: "ACTIVE",
+        class: "PRODUCTION",
+        plan: "ENTERPRISE",
+        subscription: { create: { planKey: "ENTERPRISE", basePriceSnapshot: null } },
+      },
+    });
   });
 
   afterAll(async () => {
-    const tenantIds = [tenantNoSub.id, tenantPartial.id, tenantTestClass.id];
+    const tenantIds = [tenantNoSub.id, tenantPartial.id, tenantTestClass.id, tenantEnterprise.id];
     await prisma.billingEvent.deleteMany({ where: { tenantId: { in: tenantIds } } });
     await prisma.tenantSubscription.deleteMany({ where: { tenantId: { in: tenantIds } } });
     await prisma.tenant.deleteMany({ where: { slug: { in: ALL_SLUGS } } });
@@ -115,25 +136,26 @@ describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
     const partial = await prisma.tenantSubscription.findUnique({
       where: { tenantId: tenantPartial.id },
     });
-    expect(partial?.planKey).toBeNull();
+    expect(partial?.basePriceSnapshot).toBeNull();
   });
 
-  it("apply creates a missing subscription and backfills a partial one, excluding TEST class", async () => {
-    execSync(`node ${CLI} --apply`, {
+  it("apply backfills the partial subscription, reports the pilot untouched, excludes TEST class", async () => {
+    const output = execSync(`node ${CLI} --apply`, {
       encoding: "utf-8",
       env: { ...process.env, DATABASE_URL: dbUrl },
     });
 
-    const created = await prisma.tenantSubscription.findUnique({
+    // F2: a pilot-like tenant (PRODUCTION class, no subscription) is reported — never
+    // written — a real business becoming paying MRR just because this script ran.
+    expect(output).toContain("no subscription — manual decision");
+    const noSub = await prisma.tenantSubscription.findUnique({
       where: { tenantId: tenantNoSub.id },
     });
-    expect(created?.planKey).toBe("STARTER");
-    expect(String(created?.basePriceSnapshot)).toBe(starterPrice);
+    expect(noSub).toBeNull();
 
     const backfilled = await prisma.tenantSubscription.findUnique({
       where: { tenantId: tenantPartial.id },
     });
-    // PROFESSIONAL maps to SCALE (v8 rename — same mapping planKeyFromEnum already uses).
     expect(backfilled?.planKey).toBe("SCALE");
     expect(String(backfilled?.basePriceSnapshot)).toBe(scalePrice);
 
@@ -142,27 +164,35 @@ describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
     });
     expect(testClassSub).toBeNull();
 
-    const events = await prisma.billingEvent.findMany({
-      where: { tenantId: { in: [tenantNoSub.id, tenantPartial.id] } },
+    // F3: ENTERPRISE (null catalog price) is reported "custom-priced — skipped" and left
+    // untouched.
+    expect(output).toContain("custom-priced — skipped");
+    const enterpriseSub = await prisma.tenantSubscription.findUnique({
+      where: { tenantId: tenantEnterprise.id },
     });
-    expect(events).toHaveLength(2);
-    expect(events.map((e) => e.type).sort()).toEqual([
-      "reconciliation.snapshot_backfilled",
-      "reconciliation.subscription_created",
-    ]);
+    expect(enterpriseSub?.basePriceSnapshot).toBeNull();
+
+    const events = await prisma.billingEvent.findMany({
+      where: { tenantId: { in: [tenantNoSub.id, tenantPartial.id, tenantEnterprise.id] } },
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe("reconciliation.snapshot_backfilled");
+    expect(events[0].tenantId).toBe(tenantPartial.id);
   });
 
-  it("a second apply is idempotent — no duplicate BillingEvent rows for this file's own tenants", async () => {
-    execSync(`node ${CLI} --apply`, {
+  it("a second apply reports 0 changes and appends no new events (incl. the ENTERPRISE row)", async () => {
+    const output = execSync(`node ${CLI} --apply`, {
       encoding: "utf-8",
       env: { ...process.env, DATABASE_URL: dbUrl },
     });
 
+    expect(output).toContain("0 change(s)");
+
     const events = await prisma.billingEvent.findMany({
-      where: { tenantId: { in: [tenantNoSub.id, tenantPartial.id] } },
+      where: { tenantId: { in: [tenantNoSub.id, tenantPartial.id, tenantEnterprise.id] } },
     });
-    // Still exactly 2 — both subscriptions now have planKey + basePriceSnapshot set, so
-    // neither is flagged as a "change" on the second scan.
-    expect(events).toHaveLength(2);
+    // Still exactly 1 (from the first apply) — the backfilled subscription now has a
+    // basePriceSnapshot, so it's no longer flagged, and ENTERPRISE was never flagged at all.
+    expect(events).toHaveLength(1);
   });
 });

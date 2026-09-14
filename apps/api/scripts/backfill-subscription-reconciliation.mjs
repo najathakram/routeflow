@@ -1,13 +1,18 @@
 // apps/api/scripts/backfill-subscription-reconciliation.mjs
 //
 // Reconciles the TenantSubscription set so MrrService.computeOverview() (which only counts
-// rows with planKey set) sees every real tenant. Two failure modes fixed:
-//   1. A TenantSubscription row exists but is missing planKey/basePriceSnapshot/planVersionId
-//      (Stripe-originated rows created before the checkout webhook set these fields).
-//   2. No TenantSubscription row exists at all (self-signup seeds none).
+// rows with planKey set) sees every real tenant, WITHOUT ever inventing a subscription: the
+// five free pilots (and any other PRODUCTION/DEMO tenant with no subscription row) must never
+// become paying MRR just because this script ran. Only one failure mode is fixed here — a
+// TenantSubscription row exists, already carries a planKey, but is missing basePriceSnapshot
+// (Stripe-originated rows created before the checkout webhook set the price snapshot). Three
+// things are deliberately never written and are only ever listed for a human:
+//   - a tenant with no subscription row at all ("no subscription — manual decision"),
+//   - a subscription row with no planKey set ("no planKey — manual decision"),
+//   - a planKey the published catalog prices at null, e.g. ENTERPRISE ("custom-priced —
+//     skipped") — excluded from the re-flag predicate so a second run reports 0 changes.
 // Only PRODUCTION and DEMO class tenants are in scope — TEST/INTERNAL tenants are never
-// billed, so they're left alone. A tenant whose legacy `plan` enum has no entry in
-// LEGACY_PLAN_TO_CATALOG_KEY is skipped and listed separately — never guessed at.
+// billed, so they're left alone.
 //
 // Usage:
 //   node apps/api/scripts/backfill-subscription-reconciliation.mjs           # dry run
@@ -17,6 +22,7 @@ import { pathToFileURL } from "node:url";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
+import { resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
 
 // Hand-checked mapping, not inferred — see Phase 0 spec Section 3. GROWTH/SCALE map to
 // themselves (Phase 0 Task 10 made them direct TenantPlan enum values, not only legacy
@@ -37,11 +43,14 @@ export function resolveCatalogKey(legacyPlan) {
 
 async function main() {
   const apply = process.argv.includes("--apply");
-  if (!process.env.DATABASE_URL) {
-    console.error("Missing env: DATABASE_URL");
+  let databaseUrl;
+  try {
+    databaseUrl = resolveDatabaseUrl(process.env);
+  } catch (err) {
+    console.error(err.message);
     process.exit(1);
   }
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const pool = new Pool({ connectionString: databaseUrl });
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
 
   try {
@@ -66,25 +75,41 @@ async function main() {
     const rows = [];
     const skipped = [];
 
+    // The script NEVER invents a subscription and NEVER re-derives a planKey from the
+    // legacy `plan` enum — every decision below reads only the subscription row that
+    // already exists. Anything it can't safely fill in is LISTED for a human, never
+    // written.
     for (const t of tenants) {
-      const catalogKey = resolveCatalogKey(t.plan);
-      if (!catalogKey) {
-        skipped.push({ slug: t.slug, legacyPlan: t.plan, reason: "no catalog mapping" });
+      if (!t.subscription) {
+        skipped.push({
+          slug: t.slug,
+          legacyPlan: t.plan,
+          reason: "no subscription — manual decision",
+        });
         continue;
       }
-      const price = priceByKey[catalogKey] ?? null;
-
-      if (!t.subscription) {
-        rows.push({ tenantId: t.id, slug: t.slug, action: "create", planKey: catalogKey, price });
-      } else if (!t.subscription.planKey || t.subscription.basePriceSnapshot == null) {
-        rows.push({
-          tenantId: t.id,
-          slug: t.slug,
-          action: "backfill",
-          planKey: catalogKey,
-          price,
-        });
+      const { planKey, basePriceSnapshot } = t.subscription;
+      if (!planKey) {
+        skipped.push({ slug: t.slug, legacyPlan: t.plan, reason: "no planKey — manual decision" });
+        continue;
       }
+      if (basePriceSnapshot != null) {
+        continue; // already snapshotted — nothing to do, not even worth listing
+      }
+      const price = priceByKey[planKey] ?? null;
+      if (price == null) {
+        // ENTERPRISE (or any plan the catalog prices at null) is custom-priced — skip
+        // idempotently and keep it OUT of `rows` so a second run never re-flags it and
+        // never emits a duplicate event.
+        skipped.push({
+          slug: t.slug,
+          legacyPlan: t.plan,
+          planKey,
+          reason: "custom-priced — skipped",
+        });
+        continue;
+      }
+      rows.push({ tenantId: t.id, slug: t.slug, action: "backfill", planKey, price });
     }
 
     console.log(
@@ -104,38 +129,20 @@ async function main() {
     }
 
     // Every tenant is its own statement (never one enclosing transaction) — a raced
-    // concurrent write (checkout webhook creating the row between scan and write, or the
-    // tenant being deleted) must fail that one row, not roll back the whole run.
+    // concurrent write (checkout webhook backfilling the row between scan and write, or
+    // the tenant being deleted) must fail that one row, not roll back the whole run.
     let applied = 0;
     let failed = 0;
     for (const r of rows) {
       try {
-        if (r.action === "create") {
-          await prisma.tenantSubscription.create({
-            data: {
-              tenantId: r.tenantId,
-              planKey: r.planKey,
-              basePriceSnapshot: r.price,
-              planVersionId: publishedVersion.id,
-            },
-          });
-        } else {
-          await prisma.tenantSubscription.update({
-            where: { tenantId: r.tenantId },
-            data: {
-              planKey: r.planKey,
-              basePriceSnapshot: r.price,
-              planVersionId: publishedVersion.id,
-            },
-          });
-        }
+        await prisma.tenantSubscription.update({
+          where: { tenantId: r.tenantId },
+          data: { basePriceSnapshot: r.price, planVersionId: publishedVersion.id },
+        });
         await prisma.billingEvent.create({
           data: {
             tenantId: r.tenantId,
-            type:
-              r.action === "create"
-                ? "reconciliation.subscription_created"
-                : "reconciliation.snapshot_backfilled",
+            type: "reconciliation.snapshot_backfilled",
             payload: { planKey: r.planKey, price: r.price, scriptRun: new Date().toISOString() },
             amountDelta: null,
           },
