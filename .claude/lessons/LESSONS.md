@@ -733,3 +733,21 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   surprise it was written to prevent.**
 - **Guard:** five `REG-B216` cases in `billing.service.spec.ts` — both reinstatement paths leave
   the schedule armed and name it on `SUBSCRIPTION_RESUMED`. Sibling [[L-126]].
+
+### L-128 · 2026-09-14 · domain · B408 terminal provider states
+
+- **Symptom:** a cancel path treated ONE provider status as "already done" and every other
+  terminal status as a hard failure, so those tenants got a 503 on every retry with the dead
+  provider pointer never cleared — a permanent lockout, produced by the code written to remove
+  one.
+- **Root cause:** the fix was written against the single status its reproduction produced.
+  `status === "canceled"` was a set-membership test disguised as an equality check; the
+  provider's enum had a second terminal member (`incomplete_expired`) and nothing pointed at it.
+- **Lesson:** **An equality check against one value of an external status enum is usually a SET
+  membership test nobody has written yet. Enumerate the whole class the branch cares about, name
+  it as a constant, and record in the comment which members are deliberately EXCLUDED and why —
+  the exclusions are the part the next reader cannot reconstruct from the code. An unrecognised
+  future member must fail CLOSED: an unknown state is not a safe state.**
+- **Guard:** `STRIPE_TERMINAL_STATUSES` + `REG-B408` ×8 in
+  `subscription-mutation.service.spec.ts` — one case per non-terminal status, plus one pinning
+  that an unrecognised status still surfaces the error. Sibling [[L-127]].
