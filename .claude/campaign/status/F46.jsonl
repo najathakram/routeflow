@@ -3,4 +3,4 @@
 {"id":"B345","batch":"F46","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B346","batch":"F46","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B347","batch":"F46","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B348","batch":"F46","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B348","batch":"F46","tier":"T1","state":"proven","pr":758,"proof":"REG-B348 x2: PROCESSED is retired -- offers no actions but is no longer specially flagged terminal either; PROCESSED (retired, no writer) degrades to the same default as any unrecognised status -- apps/mobile/__tests__/returns-logic.test.ts","evidence":null,"buildPlan":null}

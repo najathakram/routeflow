@@ -2,5 +2,5 @@
 {"id":"B350","batch":"F47","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B351","batch":"F47","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B352","batch":"F47","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B353","batch":"F47","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B353","batch":"F47","tier":"T1","state":"proven","pr":758,"proof":"REG-B353-1..4: mints through reserveNext(RETURN,...) never a Date.now()-derived number, reserves on the CALLER's own transaction never nested, current calendar year is what gets reserved against, two back-to-back creates both mint through reserveNext -- apps/api/src/returns/returns-numbering.spec.ts","evidence":null,"buildPlan":null}
 {"id":"B354","batch":"F47","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
