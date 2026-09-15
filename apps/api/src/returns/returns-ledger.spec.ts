@@ -93,6 +93,23 @@ describe("ReturnsService → regulated ledger (W5c)", () => {
     expect(ledger.unreverseReturnEntries).not.toHaveBeenCalled();
   });
 
+  it("B348: cancel() of a PROCESSED return does NOT touch the ledger — PROCESSED is retired, no writer ever sets it", async () => {
+    prisma.return.findUnique.mockResolvedValue({
+      id: "ret-1",
+      status: "PROCESSED",
+      orderId: "ord-1",
+      customerId: "cust-1",
+      items: [{ productId: "p1", qty: 2, restock: false }],
+    });
+
+    await service.cancel("ret-1", { sub: "u1", role: "OPERATOR" } as any);
+
+    // The cancel claim itself still succeeds (PROCESSED is not excluded from
+    // the →CANCELLED transition) — only the now-dead RECEIVED-or-PROCESSED
+    // stock/ledger undo must never fire for it.
+    expect(ledger.unreverseReturnEntries).not.toHaveBeenCalled();
+  });
+
   it("receive() aborts without reversing when the IN_TRANSIT claim loses the race", async () => {
     prisma.return.findUnique.mockResolvedValue({
       id: "ret-1",

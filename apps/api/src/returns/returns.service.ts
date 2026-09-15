@@ -762,8 +762,7 @@ export class ReturnsService {
 
       // Concurrency guard: claim the →CANCELLED transition atomically so two
       // concurrent cancels can't both run the stock/ledger undo (double-decrement).
-      // The loser matches 0 rows and aborts. The RECEIVED/PROCESSED undo below is
-      // idempotent-safe under RECEIVED↔PROCESSED staleness (both branches undo).
+      // The loser matches 0 rows and aborts.
       const claimed = await tx.return.updateMany({
         where: { id, status: { notIn: ["CANCELLED", "REFUNDED"] } },
         data: { status: "CANCELLED" },
@@ -771,8 +770,11 @@ export class ReturnsService {
       if (claimed.count === 0) {
         throw new BadRequestException("Return can no longer be cancelled");
       }
-      // Reverse stock movements if items were already received into stock
-      if (fresh.status === "RECEIVED" || fresh.status === "PROCESSED") {
+      // Reverse stock movements if items were already received into stock.
+      // B348: PROCESSED is a retired ReturnStatus with no writer anywhere in
+      // this service — the OR-branch here was dead defensive code, never a
+      // reachable state.
+      if (fresh.status === "RECEIVED") {
         const returnRef = `RET-${fresh.id.slice(0, 8)}`;
         for (const item of fresh.items) {
           if (item.restock) {

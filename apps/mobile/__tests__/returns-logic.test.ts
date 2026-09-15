@@ -53,7 +53,7 @@ describe("returnActionFlags", () => {
   });
 
   it("terminal statuses offer nothing", () => {
-    for (const s of ["REFUNDED", "PROCESSED", "REJECTED", "CANCELLED"] as const) {
+    for (const s of ["REFUNDED", "REJECTED", "CANCELLED"] as const) {
       const f = returnActionFlags(s);
       expect(f.terminal).toBe(true);
       expect(
@@ -65,6 +65,22 @@ describe("returnActionFlags", () => {
           f.canRefund,
       ).toBe(false);
     }
+  });
+
+  it("B348: PROCESSED is retired — offers no actions, but is no longer specially flagged terminal either", () => {
+    // No writer anywhere sets this status; the OR-branch that treated it as
+    // equivalent to REFUNDED/REJECTED/CANCELLED was dead defensive code.
+    const f = returnActionFlags("PROCESSED");
+    expect(f.terminal).toBe(false);
+    expect(
+      f.canApprove ||
+        f.canReject ||
+        f.canMarkInTransit ||
+        f.canReceive ||
+        f.canResolveWithoutReceipt ||
+        f.canRefund ||
+        f.canCancel,
+    ).toBe(false);
   });
 });
 
@@ -475,5 +491,9 @@ describe("returnPillFor", () => {
     expect(returnPillFor("REFUNDED").variant).toBe("green");
     // Unknown status degrades gracefully to gray + the raw string.
     expect(returnPillFor("WEIRD")).toEqual({ variant: "gray", label: "WEIRD" });
+  });
+
+  it("B348: PROCESSED (retired, no writer) degrades to the same default as any unrecognised status", () => {
+    expect(returnPillFor("PROCESSED")).toEqual({ variant: "gray", label: "PROCESSED" });
   });
 });

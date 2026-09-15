@@ -23,8 +23,6 @@ export function returnPillFor(status: string): { variant: ReturnPillVariant; lab
       return { variant: "brand", label: "Received" };
     case "REFUNDED":
       return { variant: "green", label: "Refunded" };
-    case "PROCESSED":
-      return { variant: "green", label: "Processed" };
     case "REJECTED":
       return { variant: "red", label: "Rejected" };
     case "CANCELLED":
@@ -400,11 +398,7 @@ export function returnActionFlags(status: string): ReturnActionFlags {
     status === "APPROVED" ||
     status === "IN_TRANSIT" ||
     status === "RECEIVED";
-  const terminal =
-    status === "REFUNDED" ||
-    status === "PROCESSED" ||
-    status === "REJECTED" ||
-    status === "CANCELLED";
+  const terminal = status === "REFUNDED" || status === "REJECTED" || status === "CANCELLED";
   return {
     canApprove,
     canReject,
