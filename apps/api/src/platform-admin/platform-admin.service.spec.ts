@@ -15,6 +15,7 @@ import { MrrService } from "../billing/mrr.service";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { TenantMirrorService } from "./tenant-mirror.service";
 import { AdminAuditAction } from "./audit-actions.constant";
 
 /**
@@ -36,6 +37,7 @@ describe("PlatformAdminService — audit provenance", () => {
   let meterService: { readAll: jest.Mock };
   let platformPricingService: { resolveTenantPricing: jest.Mock };
   let mrrService: { computeOverview: jest.Mock; priceTenant: jest.Mock };
+  let tenantMirror: { upsert: jest.Mock };
 
   const ADMIN_ID = "super-1";
   const TENANT_ID = "tenant-1";
@@ -92,6 +94,8 @@ describe("PlatformAdminService — audit provenance", () => {
       }),
       priceTenant: jest.fn().mockResolvedValue(0),
     };
+    // R18: the mirror call sites are best-effort — tests that care override upsert to reject.
+    tenantMirror = { upsert: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -119,6 +123,7 @@ describe("PlatformAdminService — audit provenance", () => {
         { provide: TenantStatusGuard, useValue: { invalidate: jest.fn() } },
         { provide: AuditService, useValue: { log: auditLog } },
         { provide: MrrService, useValue: mrrService },
+        { provide: TenantMirrorService, useValue: tenantMirror },
       ],
     }).compile();
 
@@ -988,9 +993,8 @@ describe("PlatformAdminService — audit provenance", () => {
 
       expect(stats.mrr).toBe(748);
       expect(stats.ledgerMrr).toBe(748);
-      // estMrrUsd is an alias of the MrrService total (web admin dashboard still reads it
-      // until Phase 0 T12) — never a re-derived estimate.
-      expect(stats.estMrrUsd).toBe(stats.mrr);
+      // R28: getStats() no longer returns estMrrUsd at all — the dashboard reads mrr/ledgerMrr.
+      expect(stats).not.toHaveProperty("estMrrUsd");
       expect(mrrService.computeOverview).toHaveBeenCalled();
       expect(stats.planBreakdown).toEqual({ STARTER: 2, GROWTH: 1 });
     });
@@ -1340,6 +1344,52 @@ describe("PlatformAdminService — audit provenance", () => {
       ).rejects.toThrow(/production/i);
 
       expect(prisma.tenant.create).not.toHaveBeenCalled();
+    });
+  });
+
+  // R18: both admin write paths mirror the tenant into the house tenant's CRM, best-effort —
+  // a mirror failure must never fail the admin action (T13-10, T13-11).
+  describe("tenant mirror call sites (R18)", () => {
+    it("T13-10 createTenant() mirrors the new tenant once and survives a rejecting upsert", async () => {
+      prisma.tenant.findUnique.mockResolvedValue(null); // slug not taken
+      prisma.user.findFirst.mockResolvedValue(null);
+      prisma.tenant.create.mockImplementation((args: any) =>
+        Promise.resolve({ id: TENANT_ID, ...args.data }),
+      );
+      prisma.user.create.mockResolvedValue({ id: "admin-1" } as any);
+      tenantMirror.upsert.mockRejectedValue(new Error("no house tenant configured"));
+
+      const result = await service.createTenant({
+        slug: "acme-wholesale",
+        businessName: "Acme Wholesale",
+        adminEmail: "owner@acme.example.com",
+        adminUsername: "acme_owner",
+      } as any);
+
+      expect(result.id).toBe(TENANT_ID);
+      expect(tenantMirror.upsert).toHaveBeenCalledTimes(1);
+      expect(tenantMirror.upsert).toHaveBeenCalledWith(TENANT_ID);
+    });
+
+    it("T13-11 updateTenantConfig() mirrors the tenant once and survives a rejecting upsert", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+        plan: "STARTER",
+        subscription: null,
+      } as any);
+      tenantMirror.upsert.mockRejectedValue(new Error("no house tenant configured"));
+
+      const tenant = await service.updateTenantConfig(
+        TENANT_ID,
+        { businessName: "Acme Wholesale" } as any,
+        ADMIN_ID,
+      );
+
+      expect(tenant.id).toBe(TENANT_ID);
+      expect(tenantMirror.upsert).toHaveBeenCalledTimes(1);
+      expect(tenantMirror.upsert).toHaveBeenCalledWith(TENANT_ID);
     });
   });
 
