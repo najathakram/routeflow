@@ -153,7 +153,7 @@ describe("IdempotencyService (REG-IDEM-SVC)", () => {
     expect(hashA).toBe(service.keyHash("key-1", "tenant-a:returns.create:user-1:ord-1"));
   });
 
-  it("REG-IDEM-SVC-8 F5 round 2 (N1): acquireLock takes a transaction-scoped pg_advisory_xact_lock on the given hash, wrapped in a SAVEPOINT released on success", async () => {
+  it("REG-IDEM-SVC-8 F5 round 2 (N1): acquireLock takes a transaction-scoped pg_advisory_xact_lock on the given hash", async () => {
     const hash = service.hashFor("key-1", "tenant-a", "scope-a");
 
     await service.acquireLock(hash, tx);
@@ -166,20 +166,25 @@ describe("IdempotencyService (REG-IDEM-SVC)", () => {
     // A distinct namespace, not `hashtext(hash)` alone — keeps this xact-scoped lock in its own
     // slice of Postgres's shared advisory-lock keyspace.
     expect(lockCall.slice(1)).toContain("idempotency");
-    expect(sqlText(tx.$executeRaw.mock.calls[0])).toBe("SAVEPOINT idempotency_lock");
-    expect(sqlText(tx.$executeRaw.mock.calls.at(-1)!)).toBe("RELEASE SAVEPOINT idempotency_lock");
   });
 
-  it("REG-IDEM-SVC-9 F5 round 2 (N1): acquireLock FAILS OPEN — a lock error never throws and is never a new way for the caller's transaction to fail; it just proceeds unlocked", async () => {
+  it("REG-IDEM-SVC-9 F5 round 3 (independent review round 3): acquireLock FAILS CLOSED — a lock error propagates unchanged, no SAVEPOINT, no swallow", async () => {
+    // Deliberately the ONE method in this class that does NOT fail open: proceeding unlocked
+    // after a failed acquire would silently defeat the whole reason F5 exists (closing the
+    // check-then-act race). check()/save() can safely fail open because the cumulative
+    // over-return guard backstops THEM; nothing backstops a lost lock the same way.
+    const boom = new Error("lock failed");
     tx.$executeRaw.mockImplementation((strings: TemplateStringsArray) => {
       const s = strings[0] ?? "";
-      if (s.includes("pg_advisory_xact_lock")) return Promise.reject(new Error("lock failed"));
+      if (s.includes("pg_advisory_xact_lock")) return Promise.reject(boom);
       return Promise.resolve(undefined);
     });
 
-    await expect(service.acquireLock("some-hash", tx)).resolves.toBeUndefined();
-    expect(sqlText(tx.$executeRaw.mock.calls.at(-1)!)).toBe(
-      "ROLLBACK TO SAVEPOINT idempotency_lock",
-    );
+    await expect(service.acquireLock("some-hash", tx)).rejects.toBe(boom);
+    // No SAVEPOINT dance at all for this method — a bare, unwrapped statement.
+    expect(tx.$executeRaw.mock.calls.some((c) => sqlText(c).startsWith("SAVEPOINT"))).toBe(false);
+    expect(
+      tx.$executeRaw.mock.calls.some((c) => sqlText(c).startsWith("ROLLBACK TO SAVEPOINT")),
+    ).toBe(false);
   });
 });

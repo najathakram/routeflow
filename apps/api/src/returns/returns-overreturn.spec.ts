@@ -53,8 +53,17 @@ describe("ReturnsService.create → cumulative over-return / double-refund race 
 
     txReturn = { findMany: jest.fn(), create: jest.fn() };
     txExecuteRaw = jest.fn().mockResolvedValue(0);
+    // Round 3 (independent review round 3, PR-2): order lookup + role check now run on `tx`
+    // (inside the transaction) — reuse the same `prisma.order`/`prisma.customer` mock refs so
+    // this file's own `prisma.order.findUnique` setup still applies.
     prisma.tenantTransaction.mockImplementation((fn: any) =>
-      fn({ return: txReturn, $executeRaw: txExecuteRaw, $queryRaw: jest.fn() }),
+      fn({
+        return: txReturn,
+        order: prisma.order,
+        customer: prisma.customer,
+        $executeRaw: txExecuteRaw,
+        $queryRaw: jest.fn(),
+      }),
     );
 
     const mod: TestingModule = await Test.createTestingModule({

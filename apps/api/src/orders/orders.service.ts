@@ -4426,6 +4426,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 // size can differ from what was used at sale time), silently mutating money
                 // fields a reason-only edit was never meant to touch. This is its own minimal,
                 // fully separate write.
+                const isUnlisted = !li.productId;
                 const isReasonOrNotesOnly =
                   item.qty === undefined &&
                   item.boxes == null &&
@@ -4436,6 +4437,11 @@ export class OrdersService implements OnApplicationBootstrap {
                   await tx.orderItem.update({
                     where: { id: item.id },
                     data: {
+                      // Round 3 finding 1 (independent review, PR-2): `name` is not a pricing
+                      // field — an unlisted line's rename must survive this fast path exactly
+                      // like the full path below allows it, or a payload combining a rename
+                      // with a reason/notes edit silently drops the rename.
+                      ...(isUnlisted && item.name !== undefined ? { name: item.name } : {}),
                       ...(item.notes !== undefined ? { notes: item.notes } : {}),
                       ...(item.overrideReason !== undefined
                         ? {
@@ -4447,8 +4453,6 @@ export class OrdersService implements OnApplicationBootstrap {
                   });
                   continue;
                 }
-
-                const isUnlisted = !li.productId;
                 // A zero boxes+pieces payload is "not using box entry", not "zero
                 // quantity" (see create()) — a POSITIVE check keeps it from
                 // silently discarding a real item.qty typed alongside it (the

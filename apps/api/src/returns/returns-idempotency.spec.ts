@@ -15,16 +15,21 @@
  * header behaves exactly as it did before this change, the check-then-act
  * race between two concurrent IDENTICAL submissions is closed (F5 round 2 /
  * N1's transaction-scoped lock), DIFFERENT keys never serialize against each
- * other (N1), and a genuinely later submission (a different key, or the store
- * no longer holding a prior record) still creates a new return.
+ * other (N1), a genuinely later submission (a different key, or the store no
+ * longer holding a prior record) still creates a new return, and a retry
+ * whose order state has since changed still returns the saved body instead
+ * of a 404/400 (round 3).
  *
- * STRUCTURAL NOTE (F5 round 2 / N1, 2026-09-15): round 1 ran check() BEFORE the order lookup and
- * BEFORE opening any transaction, so a replay never touched the database at all. N1 moved
- * check+create+save INSIDE the create() transaction (alongside a transaction-scoped
- * pg_advisory_xact_lock, replacing round 1's dedicated connection pool) — the order lookup
- * stays OUTSIDE the transaction as before, so it now runs on EVERY call, replay included. A
- * replay therefore now DOES call `prisma.order.findUnique` and DOES open a transaction; what it
- * still never does is create a second return row or emit a second `return.created`.
+ * STRUCTURAL NOTE (F5 round 2 / N1, then round 3, 2026-09-15): round 1 ran check() BEFORE the
+ * order lookup and BEFORE opening any transaction, so a replay never touched the database at
+ * all. Round 2 (N1) moved check+create+save INSIDE the create() transaction (alongside a
+ * transaction-scoped pg_advisory_xact_lock, replacing round 1's dedicated connection pool) but
+ * put the order lookup BEFORE the check, inside the transaction — meaning a replay DID still run
+ * order/DELIVERED/ownership validation, which could wrongly 404/400 a retry whose order state
+ * had moved on since the original (already-successful) attempt. Round 3 fixed the ordering:
+ * check runs FIRST; order lookup/validation run only on a genuine miss. A replay therefore now
+ * calls NEITHER `prisma.order.findUnique` NOR `tx.return.create` — it still opens a transaction
+ * (for the lock+check), but never reaches order validation or a second write.
  */
 import { Test, TestingModule } from "@nestjs/testing";
 import { ReturnsService } from "./returns.service";
@@ -90,8 +95,18 @@ describe("ReturnsService.create — Idempotency-Key replay guard (REG-RET-IDEM)"
       findMany: jest.fn().mockResolvedValue([]),
       create: jest.fn().mockResolvedValue({ id: "ret-1", returnNumber: "RET-2026-1", items: [] }),
     };
+    // Round 3 (independent review round 3, PR-2): order lookup + role check now run on `tx`
+    // (inside the transaction, after the replay check) — `order`/`customer` reuse the SAME mock
+    // refs as the top-level `prisma` object, so a test's `prisma.order.findUnique.mockResolvedValue(...)`
+    // is exactly what `tx.order.findUnique` sees too.
     prisma.tenantTransaction.mockImplementation((fn: any) =>
-      fn({ return: txReturn, $executeRaw: jest.fn().mockResolvedValue(0), $queryRaw: jest.fn() }),
+      fn({
+        return: txReturn,
+        order: prisma.order,
+        customer: prisma.customer,
+        $executeRaw: jest.fn().mockResolvedValue(0),
+        $queryRaw: jest.fn(),
+      }),
     );
 
     // A real in-memory stand-in rather than a bare jest.fn, so the SECOND call
@@ -178,7 +193,7 @@ describe("ReturnsService.create — Idempotency-Key replay guard (REG-RET-IDEM)"
     expect(gateway.emitReturnCreated).toHaveBeenCalledTimes(1);
   });
 
-  it("REG-RET-IDEM-2 a REPLAY with the same key creates nothing and re-emits nothing (though it now DOES read the order and open a transaction — see the file header)", async () => {
+  it("REG-RET-IDEM-2 a REPLAY with the same key creates nothing, re-emits nothing, and never even reaches order validation (round 3 — see the file header)", async () => {
     const first = await service.create(dto(), "user-1", "DRIVER", "key-1");
 
     txReturn.create.mockClear();
@@ -193,11 +208,34 @@ describe("ReturnsService.create — Idempotency-Key replay guard (REG-RET-IDEM)"
     expect(txReturn.create).not.toHaveBeenCalled();
     // A second return.created would light up the operator dashboard twice.
     expect(gateway.emitReturnCreated).not.toHaveBeenCalled();
-    // N1 structural change (see file header): the order lookup stays OUTSIDE the transaction and
-    // now runs unconditionally, and the transaction itself always opens (the check now lives
-    // inside it) — a replay reaches both, it just writes nothing once inside.
-    expect(prisma.order.findUnique).toHaveBeenCalledTimes(1);
+    // Round 3: the replay check now runs BEFORE order lookup/validation, so a cache hit returns
+    // before ever reaching it — a retry must never 404/400 on order state that moved on since
+    // the original (already-successful) attempt. The transaction still opens (for the lock+check).
+    expect(prisma.order.findUnique).not.toHaveBeenCalled();
     expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("round 3 (independent review round 3, PR-2): a retry whose order state now FAILS validation still returns the FIRST saved return, never a 404/400", async () => {
+    // The exact scenario the ruling names: the first create() succeeds while the order is
+    // DELIVERED; something else changes the order's state afterward (unrelated to this return);
+    // a retry with the SAME key must still get the saved body — proving the replay check truly
+    // runs before, not just structurally near, the order/DELIVERED/ownership checks.
+    const first = await service.create(dto(), "user-1", "DRIVER", "key-1");
+    expect(txReturn.create).toHaveBeenCalledTimes(1);
+
+    txReturn.create.mockClear();
+    gateway.emitReturnCreated.mockClear();
+    prisma.order.findUnique.mockClear();
+    // The order's state has moved on — a fresh lookup would now throw. If the replay check
+    // did not run first, this retry would 400 instead of returning the saved return.
+    prisma.order.findUnique.mockResolvedValue({ ...order, status: "CANCELLED" } as any);
+
+    const retry = await service.create(dto(), "user-1", "DRIVER", "key-1");
+
+    expect(retry).toBe(first);
+    expect(txReturn.create).not.toHaveBeenCalled();
+    expect(gateway.emitReturnCreated).not.toHaveBeenCalled();
+    expect(prisma.order.findUnique).not.toHaveBeenCalled();
   });
 
   it("REG-RET-IDEM-3 a request with NO Idempotency-Key behaves exactly as before — the guard (and the F5 lock) is never consulted", async () => {

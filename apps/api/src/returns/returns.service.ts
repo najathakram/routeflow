@@ -106,42 +106,29 @@ export class ReturnsService {
     const idemScopeSuffix = `returns.create:${userId}:${dto.orderId}`;
     const tenantId = this.prisma.getTenantId();
 
-    const order = await this.prisma.forTenant().order.findUnique({
-      where: { id: dto.orderId },
-      include: {
-        customer: { select: { id: true, businessName: true } },
-        lineItems: { select: { productId: true, qty: true, unitPrice: true } },
-        invoices: { select: { id: true } },
-      },
-    });
-    if (!order) throw new NotFoundException("Order not found");
-    if (order.status !== "DELIVERED")
-      throw new BadRequestException("Returns can only be submitted for delivered orders");
-
-    // Customers can only create returns for their own orders
-    if (userRole === "CUSTOMER") {
-      const customer = await this.prisma.forTenant().customer.findFirst({ where: { userId } });
-      if (!customer || order.customerId !== customer.id) {
-        throw new ForbiddenException("You can only submit returns for your own orders");
-      }
-    }
-
     // Cumulative-qty validation and the create must share one transaction: two
     // concurrent requests previously read the same snapshot, both passed the
     // remaining-qty check, and both committed — over-returning the order and
     // (once each was refunded) paying the customer twice for the same goods.
-    const { ret, replayed } = await this.prisma.tenantTransaction(async (tx) => {
+    const { ret, replayed, order } = await this.prisma.tenantTransaction(async (tx) => {
       // F5 round 2 (N1, independent review round 2, PR-2): check-then-create-then-save is a
       // check-then-act race — two concurrent replays of the same key both miss the check
       // (neither has saved yet) and both create a return. Round 1 closed this with a SEPARATE
       // session-level advisory lock on its own dedicated connection pool; the review judged that
       // pool an unjustified extra failure surface. `acquireLock` instead takes a
       // TRANSACTION-scoped `pg_advisory_xact_lock` on THIS transaction's own connection — no
-      // extra connection, auto-released at commit/rollback, and (being savepoint-guarded inside
-      // IdempotencyService) never a new way for this transaction to fail. `check`/`save` run on
-      // this same connection too, so the return row and its idempotency-key cache entry commit
-      // or roll back TOGETHER — see idempotency.service.ts's class docstring for the full
-      // savepoint reasoning.
+      // extra connection, auto-released at commit/rollback. `check`/`save` run on this same
+      // connection too, so the return row and its idempotency-key cache entry commit or roll
+      // back TOGETHER — see idempotency.service.ts's class docstring for the full savepoint
+      // reasoning, and for why `acquireLock` itself is the one method here that fails CLOSED.
+      //
+      // Round 3 (independent review round 3, PR-2): the replay check runs BEFORE the order
+      // lookup/DELIVERED/ownership validation below, not after — those checks read MUTABLE
+      // order state that can legitimately differ between a submission's first attempt and a
+      // later retry (the order's status can change for reasons that have nothing to do with
+      // this return, e.g. a separate workflow). A retry must return what was already recorded
+      // regardless of the order's CURRENT state, never a 404/400 for state that moved out from
+      // under an already-successful attempt.
       if (idempotencyKey && this.idempotency) {
         const lockHash = this.idempotency.hashFor(idempotencyKey, tenantId, idemScopeSuffix);
         await this.idempotency.acquireLock(lockHash, tx);
@@ -151,7 +138,30 @@ export class ReturnsService {
           idemScopeSuffix,
           tx,
         );
-        if (cached) return { ret: cached, replayed: true as const };
+        if (cached) return { ret: cached, replayed: true as const, order: undefined };
+      }
+
+      // tx is already tenant-scoped (tenantTransaction wraps it with the same forTenant()
+      // extension) — this is the identical read `this.prisma.forTenant().order.findUnique(...)`
+      // used to be, just now sharing the lock/check's connection and transaction.
+      const order = await tx.order.findUnique({
+        where: { id: dto.orderId },
+        include: {
+          customer: { select: { id: true, businessName: true } },
+          lineItems: { select: { productId: true, qty: true, unitPrice: true } },
+          invoices: { select: { id: true } },
+        },
+      });
+      if (!order) throw new NotFoundException("Order not found");
+      if (order.status !== "DELIVERED")
+        throw new BadRequestException("Returns can only be submitted for delivered orders");
+
+      // Customers can only create returns for their own orders
+      if (userRole === "CUSTOMER") {
+        const customer = await tx.customer.findFirst({ where: { userId } });
+        if (!customer || order.customerId !== customer.id) {
+          throw new ForbiddenException("You can only submit returns for your own orders");
+        }
       }
 
       // The transaction ALONE does not close the race: tenantTransaction runs at
@@ -240,12 +250,14 @@ export class ReturnsService {
         await this.idempotency.save(idempotencyKey, tenantId, idemScopeSuffix, created, tx);
       }
 
-      return { ret: created, replayed: false as const };
+      return { ret: created, replayed: false as const, order };
     });
 
     // Stored/replayed inside the transaction above, so a replay never reaches here having
     // re-run any of the writes it replayed — but it DOES still need to skip the emit below, or
-    // a replayed return.created would light up the operator dashboard twice.
+    // a replayed return.created would light up the operator dashboard twice. `order` is only
+    // ever undefined on the replayed branch (round 3: order lookup now happens AFTER the replay
+    // check, so a cache hit never reaches it) — exactly when this block is skipped.
     if (!replayed) {
       this.gateway.emitReturnCreated(tenantId, {
         returnId: ret.id,

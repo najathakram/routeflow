@@ -60,14 +60,21 @@ import { createHash } from "crypto";
  *    is nothing further this guard can do about it, and pretending otherwise would swallow a
  *    real error.
  *
- * `acquireLock` (F5 round 2 / N1) is the same story for the replay guard's LOCK: a
- * TRANSACTION-scoped `pg_advisory_xact_lock` on the caller's own connection, auto-released at
- * that transaction's commit/rollback — no separate connection, no pool to size or exhaust,
- * and (via the same savepoint discipline) no new way for the lock itself to fail the return it
- * is protecting. This replaces round 1's dedicated `"idempotency"` advisory-lock family in
- * `common/db-locks.ts` (a session-level lock on its own pinned pool) — the independent review
- * judged that pool an unjustified extra failure surface for what a transaction-scoped lock on
- * the connection the caller already holds gives for free.
+ * `acquireLock` (F5 round 2 / N1) is a TRANSACTION-scoped `pg_advisory_xact_lock` on the
+ * caller's own connection, auto-released at that transaction's commit/rollback — no separate
+ * connection, no pool to size or exhaust. This replaces round 1's dedicated `"idempotency"`
+ * advisory-lock family in `common/db-locks.ts` (a session-level lock on its own pinned pool) —
+ * the independent review judged that pool an unjustified extra failure surface for what a
+ * transaction-scoped lock on the connection the caller already holds gives for free.
+ *
+ * `acquireLock` FAILS CLOSED (F5 round 3, independent review round 3, PR-2) — deliberately the
+ * ONE exception to this class's fail-open rule, and deliberately NOT savepoint-guarded: a
+ * failure here propagates and aborts the whole caller transaction. `check`/`save` can safely
+ * fail open because the cumulative over-return guard (returns.service.ts) is a DOMAIN-level
+ * backstop against the specific harm each protects against; the lock has no equivalent backstop
+ * for the harm IT protects against (two concurrent identical-key attempts racing past each
+ * other) — proceeding unlocked after a failed acquire would silently defeat the entire point of
+ * F5. A mobile client's retry (same nonce) is always safe to just try again.
  *
  * RoutesService's existing scopes are left exactly as they are — retrofitting a tenantId into
  * them would silently invalidate in-flight driver keys, and RULINGS R7 keeps RoutesService out
@@ -104,26 +111,14 @@ export class IdempotencyService {
   /**
    * Acquire a TRANSACTION-scoped advisory lock (`pg_advisory_xact_lock`) on `hash` (from
    * `hashFor`), on `tx`'s own connection — released automatically at `tx`'s commit or rollback,
-   * no explicit unlock. FAIL-OPEN, savepoint-guarded (see class docstring): a failure to acquire
-   * degrades to "proceed without the lock" rather than failing the caller's transaction. Callers
-   * still see check-then-act protection in the overwhelmingly common case; what they never see is
-   * a 500 caused BY the lock itself.
+   * no explicit unlock. FAILS CLOSED (see class docstring): a failure here is NOT caught — it
+   * propagates and aborts the whole caller transaction, deliberately. Proceeding unlocked after
+   * a failed acquire would defeat the entire reason this lock exists (closing the check-then-act
+   * race between two identical-key attempts); a mobile client's retry with the same nonce is
+   * always safe to just try again.
    */
   async acquireLock(hash: string, tx: any): Promise<void> {
-    try {
-      await tx.$executeRaw`SAVEPOINT idempotency_lock`;
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${IdempotencyService.LOCK_NAMESPACE}), hashtext(${hash}))`;
-      await tx.$executeRaw`RELEASE SAVEPOINT idempotency_lock`;
-    } catch (e) {
-      this.logger.warn(
-        `idempotency lock acquisition degraded (fail-open, proceeding unlocked): ${(e as Error)?.message ?? e}`,
-      );
-      try {
-        await tx.$executeRaw`ROLLBACK TO SAVEPOINT idempotency_lock`;
-      } catch {
-        // Transaction is genuinely unrecoverable — the caller's next statement surfaces that.
-      }
-    }
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${IdempotencyService.LOCK_NAMESPACE}), hashtext(${hash}))`;
   }
 
   /** The stored response for this key, scoped to tenant+scopeSuffix, inside the 24h window,

@@ -1,11 +1,11 @@
 {
-  "nextId": 157,
-  "activeCount": 45,
+  "nextId": 158,
+  "activeCount": 46,
   "archivedCount": 90,
   "maxEntries": 64,
   "maxBytes": 65536,
-  "updatedAt": "2026-09-15T06:27:58.833Z",
+  "updatedAt": "2026-09-15T06:54:59.976Z",
   "schemaVersion": 1,
-  "note": "Merge of fix/mobile-scan-lane-d (L-146 B221, L-155 F2 retired-writer-vs-legacy-data) with origin/master d69f3094 (#752 archived 11 least-cited guarded entries incl. L-071/L-076/L-082/L-086/L-093/L-095; #754 nextId 157). No id collision. Fleet reservation (lead, 2026-09-15): L-147/L-148 Lite lane, L-149 Backoffice, L-150 Lane E PR-3 build, L-151-153 Backoffice, L-154 Lane E PR-3 fix-round — none land on THIS branch. L-155's own headroom came from archiving L-098 and L-066 (narrow, dated, fully guarded) — both additive alongside master's own #752 wave, no overlap. Counts re-derived by validate-lessons.mjs --digest, not hand-computed.",
+  "note": "Merge of fix/mobile-scan-lane-d (L-146 B221, L-155 F2 retired-writer-vs-legacy-data) with origin/master d69f3094 (#752 archived 11 least-cited guarded entries incl. L-071/L-076/L-082/L-086/L-093/L-095; #754 nextId 157). No id collision. L-157 (this update) is Lane D's PR-2 fix round 3 lesson (idempotency guard ordering + fail-closed lock) — plenty of headroom (58.1/64.0 KB), no archival needed this time. Fleet reservation (lead, 2026-09-15): L-147/L-148 Lite lane, L-149 Backoffice, L-150 Lane E PR-3 build, L-151-153 Backoffice, L-154 Lane E PR-3 fix-round — none land on THIS branch. L-155's own headroom came from archiving L-098 and L-066 (narrow, dated, fully guarded) — both additive alongside master's own #752 wave, no overlap. Counts re-derived by validate-lessons.mjs --digest, not hand-computed.",
   "notes": "2026-09-13 owner ruling: maxBytes 40,960 -> 49,152 so the 40-entry cap is the binding constraint (40 x ~1.05 KB); the byte cap had made the entry cap unreachable and left no eligible archive candidate. maxEntries 40 -> 48 in the same ruling: with bytes raised the entry cap became binding at 40/40 with no eligible archive candidate, so bytes alone unblocked nothing. 2026-09-14 owner ruling: maxBytes 49,152 -> 65,536 (register hit 49,142 after two waves in one day with no eligible archive candidate); maxEntries stays 48. House rule: an author trims any entry over 1.5 KB before it lands; never shorten a live entry afterwards. 2026-09-14 owner ruling: maxEntries 48 -> 64 to match the 65,536-byte cap (register reached 47/48 after the W1 wave); author-trim rule (>1.5 KB) unchanged."
 }

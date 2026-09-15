@@ -52,7 +52,15 @@ describe("ReturnsService.create — return numbering via NumberingService (B353)
           Promise.resolve({ id: "ret-1", returnNumber: data.returnNumber, items: [] }),
         ),
     };
-    txHandle = { return: txReturn, $executeRaw: jest.fn().mockResolvedValue(0) };
+    // Round 3 (independent review round 3, PR-2): order lookup + role check now run on `tx`
+    // (inside the transaction) — reuse the same `prisma.order`/`prisma.customer` mock refs so
+    // this file's own `prisma.order.findUnique.mockResolvedValue(order)` above still applies.
+    txHandle = {
+      return: txReturn,
+      order: prisma.order,
+      customer: prisma.customer,
+      $executeRaw: jest.fn().mockResolvedValue(0),
+    };
     prisma.tenantTransaction.mockImplementation((fn: any) => fn(txHandle));
 
     reserveNext = jest.fn().mockResolvedValue("RET-2026-0001");

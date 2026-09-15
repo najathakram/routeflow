@@ -4140,6 +4140,55 @@ describe("OrdersService", () => {
       expect(updateArg.data.overriddenBy).toBe("user-op");
     });
 
+    it("round 3 finding 1 (independent review, PR-2): a reason/notes-only edit that ALSO renames an unlisted line must still write the new name — the N4 fast path must not drop it", async () => {
+      // N4's fast path (added round 2) writes only overrideReason/overriddenBy/notes — it never
+      // carried `item.name` through, so an unlisted line's rename silently vanished whenever the
+      // SAME payload also included a reason or notes (which is exactly what routes a rename
+      // through this branch at all: the outer gate has no `item.name` clause of its own).
+      const unlistedOrder = {
+        ...draftOrder,
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: null,
+            name: "Old Name",
+            qty: 3,
+            unitPrice: 4.99,
+            subtotal: 14.97,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+            priceType: "STANDARD",
+            originalPrice: null,
+          },
+        ],
+      };
+      prisma.order.findUnique.mockResolvedValue(unlistedOrder);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 14.97, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [
+            {
+              id: "li-1",
+              action: "UPDATE",
+              name: "New Name",
+              notes: "renamed at customer's request",
+            },
+          ],
+        },
+        operatorPayload,
+      );
+
+      const updateArg = prisma.orderItem.update.mock.calls[0][0] as any;
+      expect(updateArg.data.name).toBe("New Name");
+      expect(updateArg.data.notes).toBe("renamed at customer's request");
+      expect(updateArg.data).not.toHaveProperty("qty");
+      expect(updateArg.data).not.toHaveProperty("unitPrice");
+    });
+
     it("applies a price override on a PENDING order (not just DRAFT)", async () => {
       // The web + mobile UIs now expose price/discount editing on PENDING and
       // CONFIRMED orders, not only DRAFT. The service must honor the override on

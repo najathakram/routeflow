@@ -704,6 +704,25 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
 - **Guard:** `returns-ledger.spec.ts`'s PROCESSED-cancel case pins the restored behavior; the
   comment on the branch cites the exact prod check (`GROUP BY status`) that would retire it.
 
+### L-157 · 2026-09-15 · domain · PR-2 fix round 3 (idempotency guard: ordering + fail-closed)
+
+- **Symptom:** two findings on one newly-built idempotency guard (returns.service.ts create()).
+  (a) the replay check ran AFTER order/DELIVERED/ownership validation, so a retry whose order
+  state changed for unrelated reasons since an already-successful attempt wrongly 404/400'd
+  instead of returning the saved result. (b) the lock acquisition was built fail-open like the
+  guard's other methods, but a failed lock has no other backstop against the race it prevents —
+  fail-open there silently defeats the whole guard.
+- **Root cause:** (a) validation predating the guard stayed in its original position instead of
+  being re-examined against the new replay path. (b) fail-open was applied uniformly, without
+  asking whether each method has an independent backstop if it fails.
+- **Lesson:** **Adding a replay guard around an existing operation: (1) the replay check runs
+  BEFORE any validation reading MUTABLE state the original attempt already passed; (2) fail-open
+  is a per-method decision — a step with NO other backstop against the harm it prevents (a lock
+  closing a race) must fail CLOSED, even when siblings safely fail open because a domain-level
+  guard backstops them.**
+- **Guard:** `returns-idempotency.spec.ts`'s retry-after-state-changed case;
+  `idempotency.service.spec.ts` REG-IDEM-SVC-9; `returns-idempotency.db.spec.ts` (real Postgres).
+
 ### L-130 · 2026-09-13 · domain · F27 B15 (estimates)
 
 - **Symptom:** the estimate detail page offered "Convert to Invoice" on DRAFT and SENT rows while
