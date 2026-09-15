@@ -76,23 +76,6 @@
 - **Guard:** `apps/web/jest.config.js`'s inline comment on `testMatch`; the web suite count (19
   spec files) pinned in `.claude/code-map/web.md`.
 
-### L-067 · 2026-09-04 · tooling · #597
-
-- **Symptom:** eight defects from one script: "updated" edits that changed nothing, mangled authored
-  text, a regex parsed as a comment, a record claiming a proof it never held.
-- **Root cause:** each write and derivation trusted something other than its own result — a STRING
-  `replace` expands `$1`/`$&` out of the CALLER's text; an anchored replace that misses returns the
-  subject unchanged; a regex routed through a script's template literal loses a backslash layer; a
-  derived field read a proxy, not the field it names.
-- **Lesson:** **A write must prove its own effect; a derived field comes from the field it
-  represents, never a correlate. Function replacement for authored text; compare before/after and
-  fail when equal ("wrote" ≠ "changed"); `proof` from `row.proof`, "event recorded" from the
-  append's return; write regex/escape-heavy edits directly, never through an intermediate script's
-  string layer; EXECUTE the function you patched — `node -c` proves it parses, not that it runs.**
-- **Guard:** `bugs self-test` (step 6 of `npm run verify`): `$`-safety, one `## History` per record,
-  ledger id-uniqueness, real `cmds.render` on a fixture, sync done→queued→done, reopen leaves the
-  proof clear.
-
 ### L-068 · 2026-09-04 · tooling · #597
 
 - **Symptom:** a proven ledger row silently back to `queued`; a live lock stolen, admitting three
@@ -227,13 +210,6 @@
   own `process.env` and asserts the child still resolves to the local host.
 
 ## testing
-
-### L-066 · 2026-09-04 · testing · watchdog spec
-
-- **Symptom:** a spec green on CI failed on every loaded dev box, pushing people to skip the pre-push gate.
-- **Root cause:** a fixed 500 ms `setTimeout` stood in for "the spawned child has booted"; bare Node boot here is 0.6–6 s. A poll alone still fails: the api lane's undeclared Jest cap is 5 s.
-- **Lesson:** **A fixed delay is never a readiness signal. Wait on the observable (log line, exit, stream) with a capped poll, kill the child in `finally`, and give the async test its own timeout above the cap.**
-- **Guard:** `visibility-watchdog-script.spec.ts` slow-boot repro (`NODE_OPTIONS=--require slow-boot.cjs`, 1.5 s) stays green.
 
 ### L-063 · 2026-09-04 · testing · imp-04
 
@@ -670,6 +646,60 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   people to stop reading CI failures.**
 - **Guard:** both assertions now match `/^\^19\./` instead of `.toBe("^19.2.0")` in
   `apps/api/src/common/no-react-skew-hacks.spec.ts`.
+
+### L-146 · 2026-09-14 · domain · B221 driver return-list scoping
+
+- **Symptom:** `GET /returns` is `@Roles(OPERATOR, DRIVER, CUSTOMER)` on the controller, but
+  `ReturnsService.findAllForUser` had a scoping branch for CUSTOMER only — a DRIVER fell through
+  to the unscoped, tenant-wide `findAll`, seeing every return in the tenant rather than just
+  ones on orders assigned to their own route runs.
+- **Root cause:** the role was added to the endpoint's authorization list (so a driver COULD
+  call it at all) without a matching branch in the service's OWN scoping logic — `@Roles` and
+  tenant-scoping (`forTenant()`) both silently read as "this is handled," but neither actually
+  restricts results to the CALLER's own data once past the tenant boundary.
+- **Lesson:** **`@Roles(...)` is authorization (can this role call the endpoint at all), never
+  scoping (which rows can this specific caller see). Adding a role to an endpoint's allow-list
+  is only half the change — grep the SERVICE method's own list-scoping for a branch per role
+  actually granted access, and add one for any that's missing, or the new role inherits
+  whichever existing branch's fallthrough happens to run (often the most-privileged one).**
+- **Guard:** `ReturnsService.findAllForUser`'s DRIVER branch (resolves the caller's `Driver` row,
+  scopes via `where.order = {routeRun: {driverId}}`); `returns.security.spec.ts`'s B221 suite.
+  Sibling pattern already fixed once in `credit-notes.service.ts` (DRIVER denied outright there,
+  a different but equally deliberate choice — the point is BOTH required an explicit branch).
+
+### L-155 · 2026-09-15 · domain · PR-2 fix round (F2: retired-writer branch vs legacy data)
+
+- **Symptom:** B348 removed a `cancel()` branch handling ReturnStatus PROCESSED, reasoning "no
+  writer sets this anymore" (confirmed by grep) — independent review restored it: rows already
+  PROCESSED from before the writer was retired still need cancel() to undo their stock/ledger
+  effects, and removing the branch stranded that reversal for every such legacy row.
+- **Root cause:** "no live writer" was verified against CODE (a grep for the enum value) and
+  treated as equivalent to "no live DATA in that state" — a retired write path leaves its
+  already-written rows behind; the enum member stayed real in the schema.
+- **Lesson:** **Before deleting a branch that HANDLES an enum/state value because nothing WRITES
+  it anymore, that is a claim about existing DATA, not code — verify with a query (or an
+  explicit prod count) before removing the read/update-side handling, not a grep for writers.**
+- **Guard:** `returns-ledger.spec.ts`'s PROCESSED-cancel case pins the restored behavior; the
+  comment on the branch cites the exact prod check (`GROUP BY status`) that would retire it.
+
+### L-158 · 2026-09-15 · domain · PR-2 fix round 3 (idempotency guard: ordering + fail-closed)
+
+- **Symptom:** two findings on one newly-built idempotency guard (returns.service.ts create()).
+  (a) the replay check ran AFTER order/DELIVERED/ownership validation, so a retry whose order
+  state changed for unrelated reasons since an already-successful attempt wrongly 404/400'd
+  instead of returning the saved result. (b) the lock acquisition was built fail-open like the
+  guard's other methods, but a failed lock has no other backstop against the race it prevents —
+  fail-open there silently defeats the whole guard.
+- **Root cause:** (a) validation predating the guard stayed in its original position instead of
+  being re-examined against the new replay path. (b) fail-open was applied uniformly, without
+  asking whether each method has an independent backstop if it fails.
+- **Lesson:** **Adding a replay guard around an existing operation: (1) the replay check runs
+  BEFORE any validation reading MUTABLE state the original attempt already passed; (2) fail-open
+  is a per-method decision — a step with NO other backstop against the harm it prevents (a lock
+  closing a race) must fail CLOSED, even when siblings safely fail open because a domain-level
+  guard backstops them.**
+- **Guard:** `returns-idempotency.spec.ts`'s retry-after-state-changed case;
+  `idempotency.service.spec.ts` REG-IDEM-SVC-9; `returns-idempotency.db.spec.ts` (real Postgres).
 
 ### L-130 · 2026-09-13 · domain · F27 B15 (estimates)
 

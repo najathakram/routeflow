@@ -15,6 +15,7 @@ import { AddonService } from "../billing/addon.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
+import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { buildPlanGateBody } from "../billing/plan-gate";
 import { CreateProductDto } from "./dto/create-product.dto";
 import { UpdateProductDto } from "./dto/update-product.dto";
@@ -79,7 +80,27 @@ export class ProductsService {
     private readonly systemConfig: SystemConfigService,
     private readonly entitlements: EntitlementsService,
     private readonly planCatalog: PlanCatalogService,
+    private readonly gateway: RouteFlowGateway,
   ) {}
+
+  /**
+   * Tell every operator socket in this tenant that the catalog moved, so a
+   * mounted scan/picker/list screen refetches instead of serving a stale price
+   * or an archived product for its whole staleTime. Fire-and-forget: a socket
+   * failure must never fail the catalog write that already committed.
+   */
+  private emitProductChanged(
+    productId: string | null,
+    action: "created" | "updated" | "archived" | "bulk",
+  ): void {
+    try {
+      this.gateway.emitProductUpdated(this.prisma.getTenantId(), { productId, action });
+    } catch (err) {
+      this.logger.warn(
+        `product.updated emit failed (${action}): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
 
   /**
    * MSRP writes are flag-gated INSIDE the service, not on the whole route —
@@ -653,7 +674,7 @@ export class ProductsService {
       });
       syncedCategory = sub?.name;
     }
-    return this.prisma.forTenant().product.create({
+    const created = await this.prisma.forTenant().product.create({
       data: {
         name: dto.name,
         sku: dto.sku,
@@ -693,9 +714,11 @@ export class ProductsService {
       },
       include: { variants: true, parent: true },
     });
+    this.emitProductChanged(created.id, "created");
+    return created;
   }
 
-  async update(id: string, dto: UpdateProductDto) {
+  async update(id: string, dto: UpdateProductDto, options?: { suppressEmit?: boolean }) {
     await this.assertCanFlagTobacco(dto.isTobacco);
     if (dto.msrp !== undefined) await this.assertMsrpAllowed();
     const existing = await this.findOne(id);
@@ -925,10 +948,19 @@ export class ProductsService {
         data.isTobacco = isTobaccoCategoryName(cat?.name);
       }
     }
-    return this.prisma.forTenant().product.update({
+    // The primary path for a price change, an isActive toggle, or a category/MSRP
+    // edit — but not the only writer of those fields (remove() also flips
+    // isActive, bulkSetMsrp() also writes msrp) or of Product rows in general
+    // (import/variant-resolution paths write directly and emit nothing; see
+    // products.gateway-emit.spec.ts for the paths that DO emit).
+    const updated = await this.prisma.forTenant().product.update({
       where: { id },
       data,
     });
+    // suppressEmit lets a caller that loops this method (bulkAssignParent) emit
+    // ONE coalesced event after the loop instead of one per row.
+    if (!options?.suppressEmit) this.emitProductChanged(id, "updated");
+    return updated;
   }
 
   /**
@@ -955,7 +987,7 @@ export class ProductsService {
       });
     }
 
-    return this.prisma.tenantTransaction(async (tx) => {
+    const result = await this.prisma.tenantTransaction(async (tx) => {
       let updated = 0;
       const warnings: Array<{ productId: string; msrp: number; wholesalePerPiece: number }> = [];
       for (const item of dto.items) {
@@ -975,6 +1007,10 @@ export class ProductsService {
       }
       return { updated, warnings };
     });
+    // ONE coalesced event for the whole batch, never one per row — the payload
+    // carries no data, so clients just mark the catalog families stale.
+    if (result.updated > 0) this.emitProductChanged(null, "bulk");
+    return result;
   }
 
   /**
@@ -1075,12 +1111,19 @@ export class ProductsService {
     const failed: { id: string; reason: string }[] = [];
     for (const assignment of dto.assignments) {
       try {
-        await this.update(assignment.id, {
-          parentProductId: dto.parentProductId,
-          variantName: assignment.variantName,
-          // Variants store JUST the variant name in `name` (PR #44).
-          name: assignment.variantName,
-        } as UpdateProductDto);
+        // suppressEmit: this loop can reassign N products in one request — emit
+        // ONE coalesced event after the loop below, never one per row (the same
+        // rule bulkSetMsrp/bulkDelete/importFromZoho already follow).
+        await this.update(
+          assignment.id,
+          {
+            parentProductId: dto.parentProductId,
+            variantName: assignment.variantName,
+            // Variants store JUST the variant name in `name` (PR #44).
+            name: assignment.variantName,
+          } as UpdateProductDto,
+          { suppressEmit: true },
+        );
         succeeded.push(assignment.id);
       } catch (err) {
         // F8-003: surface the app's OWN validation messages (HttpException — intentional
@@ -1097,6 +1140,9 @@ export class ProductsService {
         }
       }
     }
+    // ONE coalesced event for the whole request, never one per reassigned row —
+    // each call above ran with suppressEmit so this is the only emit it produces.
+    if (succeeded.length > 0) this.emitProductChanged(null, "bulk");
     return { succeeded, failed };
   }
 
@@ -1108,7 +1154,11 @@ export class ProductsService {
     if (activeItems > 0) {
       throw new BadRequestException("Cannot delete product with active order items");
     }
-    return this.prisma.forTenant().product.update({ where: { id }, data: { isActive: false } });
+    const archived = await this.prisma
+      .forTenant()
+      .product.update({ where: { id }, data: { isActive: false } });
+    this.emitProductChanged(id, "archived");
+    return archived;
   }
 
   async clearAll(): Promise<{
@@ -1281,6 +1331,9 @@ export class ProductsService {
       ]);
     }
 
+    // ONE coalesced event for the whole batch (clearAll delegates HERE, so it
+    // must NOT emit as well — that would double-fire for a single request).
+    if (softDeleteIds.length > 0 || hardDeleteIds.length > 0) this.emitProductChanged(null, "bulk");
     return { deleted: hardDeleteIds.length, softDeleted: softDeleteIds.length, skipped };
   }
 
@@ -1363,6 +1416,8 @@ export class ProductsService {
       }
     }
 
+    // ONE coalesced event for the whole import, never one per created row.
+    if (created > 0) this.emitProductChanged(null, "bulk");
     return { created, skipped, errors };
   }
 }

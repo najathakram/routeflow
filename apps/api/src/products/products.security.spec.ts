@@ -20,6 +20,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { BulkDeleteProductsDto } from "./dto/bulk-delete-products.dto";
 
 describe("BulkDeleteProductsDto — F9-009 input validation", () => {
@@ -62,6 +63,7 @@ describe("ProductsService — F8-003 import error disclosure", () => {
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
         { provide: PlanCatalogService, useValue: { upgradeTargetForFlag: jest.fn() } },
+        { provide: RouteFlowGateway, useValue: { emitProductUpdated: jest.fn() } },
       ],
     }).compile();
     service = mod.get(ProductsService);
@@ -110,6 +112,7 @@ describe("ProductsService.clearAll — cross-tenant wipe regression", () => {
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
         { provide: PlanCatalogService, useValue: { upgradeTargetForFlag: jest.fn() } },
+        { provide: RouteFlowGateway, useValue: { emitProductUpdated: jest.fn() } },
       ],
     }).compile();
     service = mod.get(ProductsService);
@@ -186,6 +189,7 @@ describe("ProductsService.bulkAssignParent — cross-tenant parent id rejected",
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
         { provide: PlanCatalogService, useValue: { upgradeTargetForFlag: jest.fn() } },
+        { provide: RouteFlowGateway, useValue: { emitProductUpdated: jest.fn() } },
       ],
     }).compile();
     service = mod.get(ProductsService);

@@ -8,9 +8,17 @@ import { CreditNotesModule } from "../credit-notes/credit-notes.module";
 // EntitlementsModule depends only on the global PrismaService — it supplies
 // PlanFlagGuard for the controller's @RequirePlanFlag("flag.returns") gate.
 import { EntitlementsModule } from "../billing/entitlements.module";
+import { NumberingModule } from "../import/numbering.module";
 
 @Module({
-  imports: [PrismaModule, GatewaysModule, RegulatedModule, CreditNotesModule, EntitlementsModule],
+  imports: [
+    PrismaModule,
+    GatewaysModule,
+    RegulatedModule,
+    CreditNotesModule,
+    EntitlementsModule,
+    NumberingModule,
+  ],
   controllers: [ReturnsController],
   providers: [ReturnsService],
   exports: [ReturnsService],

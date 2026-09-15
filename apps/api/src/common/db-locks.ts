@@ -52,6 +52,15 @@
  * connect, so a typo cannot silently stand up a FOURTH pool whose holders serialize against
  * nobody while reading as locked.
  *
+ * RETIRED (F5 round 2 / N1, independent review round 2, PR-2, 2026-09-15): a fourth
+ * `"idempotency"` family briefly lived here (round 1, `max: 6`) backing
+ * `ReturnsService#create`'s check-then-create-then-save guard. The independent review judged a
+ * whole dedicated 6-connection pool an unjustified extra failure surface for that one caller —
+ * it now takes a TRANSACTION-scoped `pg_advisory_xact_lock` on its own transaction's connection
+ * instead (`common/idempotency.service.ts#acquireLock`), needing no pool here at all. If a
+ * future caller has a genuinely SESSION-scoped (not transaction-scoped) locking need, mirror
+ * `billing`'s sizing reasoning rather than reusing this note.
+ *
  * WHY KEEPALIVE (`keepAlive: true`, `keepAliveInitialDelayMillis: 30_000`, on BOTH families —
  * `pg` forwards both straight to the socket): a Postgres advisory lock lives with the SESSION,
  * and a cron leader's lock connection is SOCKET-IDLE for the whole tick — the tick's actual work
@@ -128,7 +137,11 @@ const pools = new Map<string, Pool>();
  * fallback below is a real branch: `withAdvisoryLock` rejects an unknown family before `lockPool`
  * is ever reached, so it is unreachable in practice.
  */
-const POOL_MAX: Record<string, number | undefined> = { "order-merge": 8, cron: 12, billing: 4 };
+const POOL_MAX: Record<string, number | undefined> = {
+  "order-merge": 8,
+  cron: 12,
+  billing: 4,
+};
 const DEFAULT_POOL_MAX = 8;
 function lockPool(family: string): Pool {
   let pool = pools.get(family);

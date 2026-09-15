@@ -1,11 +1,11 @@
 {
-  "nextId": 158,
-  "activeCount": 49,
-  "archivedCount": 93,
+  "nextId": 159,
+  "activeCount": 50,
+  "archivedCount": 95,
   "maxEntries": 64,
   "maxBytes": 65536,
-  "updatedAt": "2026-09-15T08:49:51.521Z",
+  "updatedAt": "2026-09-15T09:19:20.370Z",
   "schemaVersion": 1,
-  "note": "Third merge of fix/mobile-scan-lane-e with origin/master (up through 73b67f34, #743+#759 both folded in): L-150/L-154 (this branch) vs L-133/L-134 (master) landed at the same position with no id overlap -- kept both, reordered numerically. No new id minted by this branch, so nextId stays master's 158. Counts re-derived by validate-lessons.mjs --digest against the merged register, not hand-computed.",
+  "note": "Fourth merge of fix/mobile-scan-lane-e with origin/master, docs-only refresh after #758 (lane-d's PR-2) merged to master as d6ea82a1: master's nextId 159 (lane-d's L-158, now canonical via the merge) supersedes this branch's own 158. L-150/L-154 (this branch, already reconciled from the prior merge) carry forward unaffected -- no new collision this round. Merged register landed 0.6KB over the 64.0KB cap at 51 entries -- archived L-067 (2026-09-04, tooling, fully guarded by bugs.mjs's own self-test) to clear it. Counts re-derived by validate-lessons.mjs --digest against the merged register, not hand-computed.",
   "notes": "2026-09-13 owner ruling: maxBytes 40,960 -> 49,152 so the 40-entry cap is the binding constraint (40 x ~1.05 KB); the byte cap had made the entry cap unreachable and left no eligible archive candidate. maxEntries 40 -> 48 in the same ruling: with bytes raised the entry cap became binding at 40/40 with no eligible archive candidate, so bytes alone unblocked nothing. 2026-09-14 owner ruling: maxBytes 49,152 -> 65,536 (register hit 49,142 after two waves in one day with no eligible archive candidate); maxEntries stays 48. House rule: an author trims any entry over 1.5 KB before it lands; never shorten a live entry afterwards. 2026-09-14 owner ruling: maxEntries 48 -> 64 to match the 65,536-byte cap (register reached 47/48 after the W1 wave); author-trim rule (>1.5 KB) unchanged."
 }

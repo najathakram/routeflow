@@ -182,7 +182,24 @@ export function useSocket() {
       });
 
       socket.on("invoice.updated", () => {
+        // The gateway emits into BOTH the operators room and the customer's
+        // own room (customer:<customerId>), but only the operator family was
+        // ever invalidated here — so a buyer's invoice screen (["invoices",
+        // id], useMyInvoice) never learned about a server-side rewrite (e.g.
+        // resyncOrderInvoicesForEdit on an order-item edit) from ANY emit.
         void qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+        void qc.invalidateQueries({ queryKey: ["invoices"] });
+      });
+
+      // A catalog write (create/update/archive/bulk) is stale the moment it
+      // lands on another device — the scan-picker, barcode lookup and admin
+      // product list all read from these two families. Never key off
+      // payload.productId: every list key's second element is a params
+      // OBJECT ([\"products\", query] / [\"admin\",\"products\", params]), so
+      // only the family PREFIX actually reaches those caches.
+      socket.on("product.updated", () => {
+        void qc.invalidateQueries({ queryKey: ["products"] });
+        void qc.invalidateQueries({ queryKey: ["admin", "products"] });
       });
     };
 

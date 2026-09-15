@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 
 const VALID_RETURN_REASONS = [
@@ -26,12 +27,19 @@ import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { roundMoney } from "@routeflow/pricing";
 import type { ProcessRefundDto } from "./dto/process-refund.dto";
 import { CREDIT_SOURCE_EXCLUDED } from "../invoices/invoice-status-sets";
+import { IdempotencyService } from "../common/idempotency.service";
+import { NumberingService } from "../import/numbering.service";
+
+/** The shape `create` returns — reused to type a replayed (idempotent) result. */
+type CreatedReturn = Prisma.ReturnGetPayload<{ include: { items: true } }>;
 
 /** F08 B166/B75: options object for `findAll`/`findAllForUser` — `search` narrows by
  * return/order number or customer name; everything else is unchanged filtering. */
 export interface FindAllReturnsOptions {
   orderId?: string;
   customerId?: string;
+  /** B221: scopes to returns on orders assigned to this driver's route run. */
+  driverId?: string;
   status?: string;
   reason?: string;
   search?: string;
@@ -46,6 +54,12 @@ export class ReturnsService {
     private readonly gateway: RouteFlowGateway,
     private readonly ledger: RegulatedLedgerService,
     private readonly creditNotes: CreditNotesService,
+    private readonly numbering: NumberingService,
+    // Provided by the @Global CommonModule in every running app. Declared
+    // @Optional so the four existing ReturnsService spec suites (which predate
+    // it and provide no mock) still resolve; a request carrying no
+    // Idempotency-Key never touches it, which is the no-header regression pin.
+    @Optional() private readonly idempotency?: IdempotencyService,
   ) {}
 
   private readonly logger = new Logger(ReturnsService.name);
@@ -56,14 +70,19 @@ export class ReturnsService {
     return !NO_RESTOCK_REASONS.has(reason ?? "");
   }
 
-  private generateReturnNumber(): string {
-    const now = new Date();
-    const year = now.getFullYear();
-    const seq = Date.now().toString().slice(-6);
-    return `RET-${year}-${seq}`;
+  // B353: the last-six-digits-of-Date.now() scheme collided every ~16.7
+  // minutes (1e6 ms). RETURN's DocumentNumberType/DEFAULTS entry was seeded
+  // for exactly this call (see numbering.service.ts). Runs on the caller's
+  // OWN transaction (`opts.tx`) — this is always invoked from inside
+  // `create()`'s `tenantTransaction`, and reserving standalone here would be
+  // a nested transaction (numbering.service.ts's `reserveNext` doc comment).
+  private async generateReturnNumber(tx: Prisma.TransactionClient): Promise<string> {
+    const year = new Date().getFullYear();
+    const tenantId = this.prisma.getTenantId() ?? undefined;
+    return this.numbering.reserveNext("RETURN", { year, tenantId, tx });
   }
 
-  async create(dto: any, userId: string, userRole?: string) {
+  async create(dto: any, userId: string, userRole?: string, idempotencyKey?: string) {
     if (!VALID_RETURN_REASONS.includes(dto.reason)) {
       throw new BadRequestException(
         `Invalid reason. Must be one of: ${VALID_RETURN_REASONS.join(", ")}`,
@@ -76,31 +95,75 @@ export class ReturnsService {
       throw new BadRequestException("At least one return item is required");
     }
 
-    const order = await this.prisma.forTenant().order.findUnique({
-      where: { id: dto.orderId },
-      include: {
-        customer: { select: { id: true, businessName: true } },
-        lineItems: { select: { productId: true, qty: true, unitPrice: true } },
-        invoices: { select: { id: true } },
-      },
-    });
-    if (!order) throw new NotFoundException("Order not found");
-    if (order.status !== "DELIVERED")
-      throw new BadRequestException("Returns can only be submitted for delivered orders");
-
-    // Customers can only create returns for their own orders
-    if (userRole === "CUSTOMER") {
-      const customer = await this.prisma.forTenant().customer.findFirst({ where: { userId } });
-      if (!customer || order.customerId !== customer.id) {
-        throw new ForbiddenException("You can only submit returns for your own orders");
-      }
-    }
+    // F1 (independent review round 1, PR-2): the scope used to be tenant+orderId alone, so two
+    // DIFFERENT submitters (two drivers, or a driver and a customer-portal user) reusing the
+    // same orderId+client-generated key collided onto one submitter's cached result — scope now
+    // also includes the submitting user. The per-ATTEMPT half of F1 (the SAME submitter's own
+    // retry-vs-genuinely-new-return distinction) lives in the nonce the caller bakes into the
+    // key itself (`apps/mobile/lib/return-submit-key.ts`), not in this scope string. tenantId is
+    // a required positional argument on `check`/`save` now (F6), so it can never be folded into
+    // a hand-built scope string a caller forgets.
+    const idemScopeSuffix = `returns.create:${userId}:${dto.orderId}`;
+    const tenantId = this.prisma.getTenantId();
 
     // Cumulative-qty validation and the create must share one transaction: two
     // concurrent requests previously read the same snapshot, both passed the
     // remaining-qty check, and both committed — over-returning the order and
     // (once each was refunded) paying the customer twice for the same goods.
-    const ret = await this.prisma.tenantTransaction(async (tx) => {
+    const { ret, replayed, order } = await this.prisma.tenantTransaction(async (tx) => {
+      // F5 round 2 (N1, independent review round 2, PR-2): check-then-create-then-save is a
+      // check-then-act race — two concurrent replays of the same key both miss the check
+      // (neither has saved yet) and both create a return. Round 1 closed this with a SEPARATE
+      // session-level advisory lock on its own dedicated connection pool; the review judged that
+      // pool an unjustified extra failure surface. `acquireLock` instead takes a
+      // TRANSACTION-scoped `pg_advisory_xact_lock` on THIS transaction's own connection — no
+      // extra connection, auto-released at commit/rollback. `check`/`save` run on this same
+      // connection too, so the return row and its idempotency-key cache entry commit or roll
+      // back TOGETHER — see idempotency.service.ts's class docstring for the full savepoint
+      // reasoning, and for why `acquireLock` itself is the one method here that fails CLOSED.
+      //
+      // Round 3 (independent review round 3, PR-2): the replay check runs BEFORE the order
+      // lookup/DELIVERED/ownership validation below, not after — those checks read MUTABLE
+      // order state that can legitimately differ between a submission's first attempt and a
+      // later retry (the order's status can change for reasons that have nothing to do with
+      // this return, e.g. a separate workflow). A retry must return what was already recorded
+      // regardless of the order's CURRENT state, never a 404/400 for state that moved out from
+      // under an already-successful attempt.
+      if (idempotencyKey && this.idempotency) {
+        const lockHash = this.idempotency.hashFor(idempotencyKey, tenantId, idemScopeSuffix);
+        await this.idempotency.acquireLock(lockHash, tx);
+        const cached = await this.idempotency.check<CreatedReturn>(
+          idempotencyKey,
+          tenantId,
+          idemScopeSuffix,
+          tx,
+        );
+        if (cached) return { ret: cached, replayed: true as const, order: undefined };
+      }
+
+      // tx is already tenant-scoped (tenantTransaction wraps it with the same forTenant()
+      // extension) — this is the identical read `this.prisma.forTenant().order.findUnique(...)`
+      // used to be, just now sharing the lock/check's connection and transaction.
+      const order = await tx.order.findUnique({
+        where: { id: dto.orderId },
+        include: {
+          customer: { select: { id: true, businessName: true } },
+          lineItems: { select: { productId: true, qty: true, unitPrice: true } },
+          invoices: { select: { id: true } },
+        },
+      });
+      if (!order) throw new NotFoundException("Order not found");
+      if (order.status !== "DELIVERED")
+        throw new BadRequestException("Returns can only be submitted for delivered orders");
+
+      // Customers can only create returns for their own orders
+      if (userRole === "CUSTOMER") {
+        const customer = await tx.customer.findFirst({ where: { userId } });
+        if (!customer || order.customerId !== customer.id) {
+          throw new ForbiddenException("You can only submit returns for your own orders");
+        }
+      }
+
       // The transaction ALONE does not close the race: tenantTransaction runs at
       // Postgres' default READ COMMITTED, so two concurrent creates would each
       // take a snapshot without the other's uncommitted insert, both pass the
@@ -155,9 +218,10 @@ export class ReturnsService {
         alreadyReturned[item.productId] = previouslyReturned + Number(item.qty);
       }
 
-      return tx.return.create({
+      const returnNumber = await this.generateReturnNumber(tx);
+      const created = await tx.return.create({
         data: {
-          returnNumber: this.generateReturnNumber(),
+          returnNumber,
           orderId: dto.orderId,
           customerId: order.customerId,
           reason: dto.reason,
@@ -178,15 +242,31 @@ export class ReturnsService {
         },
         include: { items: true },
       });
+
+      // Saved INSIDE this same transaction — the row and its idempotency-key cache entry commit
+      // or roll back together (round 1 saved AFTER the transaction committed, on a separate
+      // connection, leaving a narrow crash window with no cache entry for an already-created row).
+      if (idempotencyKey && this.idempotency) {
+        await this.idempotency.save(idempotencyKey, tenantId, idemScopeSuffix, created, tx);
+      }
+
+      return { ret: created, replayed: false as const, order };
     });
 
-    this.gateway.emitReturnCreated(this.prisma.getTenantId(), {
-      returnId: ret.id,
-      customerId: order.customerId,
-      customerName: order.customer.businessName,
-      orderId: dto.orderId,
-      reason: dto.reason,
-    });
+    // Stored/replayed inside the transaction above, so a replay never reaches here having
+    // re-run any of the writes it replayed — but it DOES still need to skip the emit below, or
+    // a replayed return.created would light up the operator dashboard twice. `order` is only
+    // ever undefined on the replayed branch (round 3: order lookup now happens AFTER the replay
+    // check, so a cache hit never reaches it) — exactly when this block is skipped.
+    if (!replayed) {
+      this.gateway.emitReturnCreated(tenantId, {
+        returnId: ret.id,
+        customerId: order.customerId,
+        customerName: order.customer.businessName,
+        orderId: dto.orderId,
+        reason: dto.reason,
+      });
+    }
 
     return ret;
   }
@@ -206,6 +286,20 @@ export class ReturnsService {
       }
       return this.findAll({ ...options, customerId: customer.id });
     }
+    // B221: findAll's own tenant scoping (forTenant()) is not USER scoping — a
+    // driver with no branch here saw every return in the tenant, not just
+    // returns on orders assigned to their own route runs.
+    if (user.role === "DRIVER") {
+      const driver = await this.prisma
+        .forTenant()
+        .driver.findFirst({ where: { userId: user.sub } });
+      if (!driver) {
+        const page = options.page ?? 1;
+        const limit = options.limit ?? 20;
+        return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
+      }
+      return this.findAll({ ...options, driverId: driver.id });
+    }
     return this.findAll(options);
   }
 
@@ -221,11 +315,16 @@ export class ReturnsService {
    * `refundEstimateReason`, so a real $0 is distinguishable from a refusal.
    */
   async findAll(options: FindAllReturnsOptions = {}) {
-    const { orderId, customerId, status, reason, search, page = 1, limit = 20 } = options;
+    const { orderId, customerId, driverId, status, reason, search, page = 1, limit = 20 } = options;
     const skip = (page - 1) * limit;
     const where: any = {};
     if (orderId) where.orderId = orderId;
     if (customerId) where.customerId = customerId;
+    // A relation filter, not a scalar FK — Return carries no driverId of its
+    // own (RETURN → orderId → Order.routeRunId → RouteRun.driverId). An order
+    // with no route run assigned (routeRunId null) can never match, which is
+    // correct: it was never on any driver's route.
+    if (driverId) where.order = { routeRun: { driverId } };
     if (status) where.status = status;
     if (reason) where.reason = reason;
     if (search) {
@@ -703,8 +802,7 @@ export class ReturnsService {
 
       // Concurrency guard: claim the →CANCELLED transition atomically so two
       // concurrent cancels can't both run the stock/ledger undo (double-decrement).
-      // The loser matches 0 rows and aborts. The RECEIVED/PROCESSED undo below is
-      // idempotent-safe under RECEIVED↔PROCESSED staleness (both branches undo).
+      // The loser matches 0 rows and aborts.
       const claimed = await tx.return.updateMany({
         where: { id, status: { notIn: ["CANCELLED", "REFUNDED"] } },
         data: { status: "CANCELLED" },
@@ -712,7 +810,14 @@ export class ReturnsService {
       if (claimed.count === 0) {
         throw new BadRequestException("Return can no longer be cancelled");
       }
-      // Reverse stock movements if items were already received into stock
+      // Reverse stock movements if items were already received into stock.
+      // F2 (independent review, PR-2): B348 removed the PROCESSED arm on the theory that no
+      // writer in this service ever sets it — true for CODE, not for DATA. PROCESSED is a
+      // legacy ReturnStatus: the enum member is retained in sales.prisma specifically because
+      // rows already sitting in that state predate whatever retired the writer, and cancelling
+      // one of THOSE must still undo its stock/ledger effects. Restored unconditionally rather
+      // than gated on a prod check — retire this arm only after a prod
+      // `GROUP BY status` count shows zero PROCESSED rows.
       if (fresh.status === "RECEIVED" || fresh.status === "PROCESSED") {
         const returnRef = `RET-${fresh.id.slice(0, 8)}`;
         for (const item of fresh.items) {

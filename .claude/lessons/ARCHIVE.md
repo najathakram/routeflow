@@ -63,6 +63,23 @@
 
 ## tooling
 
+### L-067 · 2026-09-04 · tooling · #597
+
+- **Symptom:** eight defects from one script: "updated" edits that changed nothing, mangled authored
+  text, a regex parsed as a comment, a record claiming a proof it never held.
+- **Root cause:** each write and derivation trusted something other than its own result — a STRING
+  `replace` expands `$1`/`$&` out of the CALLER's text; an anchored replace that misses returns the
+  subject unchanged; a regex routed through a script's template literal loses a backslash layer; a
+  derived field read a proxy, not the field it names.
+- **Lesson:** **A write must prove its own effect; a derived field comes from the field it
+  represents, never a correlate. Function replacement for authored text; compare before/after and
+  fail when equal ("wrote" ≠ "changed"); `proof` from `row.proof`, "event recorded" from the
+  append's return; write regex/escape-heavy edits directly, never through an intermediate script's
+  string layer; EXECUTE the function you patched — `node -c` proves it parses, not that it runs.**
+- **Guard:** `bugs self-test` (step 6 of `npm run verify`): `$`-safety, one `## History` per record,
+  ledger id-uniqueness, real `cmds.render` on a fixture, sync done→queued→done, reopen leaves the
+  proof clear.
+
 ### L-009 · 2026-08-29 · tooling · #501
 
 - **Symptom:** `npm run verify` printed a full jest pass after a 19-package dependency bump —
@@ -175,6 +192,13 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
 - **Lesson:** **Before tightening any list-DTO validation, grep `limit: 0` and other sentinel
   params across every client — hardening a contract means checking its consumers.**
 - **Guard:** DTO regression specs (products, suppliers).
+
+### L-066 · 2026-09-04 · testing · watchdog spec
+
+- **Symptom:** a spec green on CI failed on every loaded dev box, pushing people to skip the pre-push gate.
+- **Root cause:** a fixed 500 ms `setTimeout` stood in for "the spawned child has booted"; bare Node boot here is 0.6–6 s. A poll alone still fails: the api lane's undeclared Jest cap is 5 s.
+- **Lesson:** **A fixed delay is never a readiness signal. Wait on the observable (log line, exit, stream) with a capped poll, kill the child in `finally`, and give the async test its own timeout above the cap.**
+- **Guard:** `visibility-watchdog-script.spec.ts` slow-boot repro (`NODE_OPTIONS=--require slow-boot.cjs`, 1.5 s) stays green.
 
 ### L-076 · 2026-09-05 · testing · F13
 
