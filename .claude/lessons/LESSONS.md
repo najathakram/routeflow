@@ -837,3 +837,21 @@ apps/web/app --include=*.tsx -A1 | grep -B1 onSuccess` — narrow to `.map()`-re
   never a bare `new PrismaClient()`. A writer resolving a special row by id must re-validate its
   identity/class on every write, not just once.**
 - **Guard:** `bootstrap-house-tenant.db.spec.ts`, `tenant-mirror.service.spec.ts`.
+
+### L-163 · 2026-09-15 · tooling · flaky-gate assertions on wall-clock timing / ambient counts (B225, B244, B411)
+
+- **Symptom:** `ci-freshness-guard-script.spec.ts`'s "(pin) hang" case asserted
+  `elapsedMs < 5000` around a real `spawnSync` — a margin meant to absorb node/subprocess startup
+  overhead, which itself goes flaky under host load even when behavior is correct (B225, B244).
+  `stop.gate5.spec.mjs`'s F4 compared a global `stop-gate5-spec-*` tmpdir COUNT before/after in
+  the same process — a concurrent sibling run creating its own dirs mid-window trips the count
+  with no bearing on whether THIS run's own dirs were actually cleaned up (B411).
+- **Root cause:** both asserted an AMBIENT, load-sensitive quantity (wall-clock time; a
+  shared/global count) as a proxy for "did this run behave/clean up correctly", instead of the
+  run's own artifacts (its exit code and output markers; its own registered paths).
+- **Lesson:** **A test must assert its own run's outcome, never wall-clock timing or an
+  ambient/shared count as a stand-in for it — a real subprocess's timing and a global directory
+  count both vary with host load and concurrent siblings independent of correctness.**
+- **Guard:** `ci-freshness-guard-script.spec.ts` (c0d45b0f — behavioral assertions only, no
+  `elapsedMs` check); `stop.gate5.spec.mjs` F4 (5c57af58 — iterates `REPO_DIRS`, asserts each no
+  longer exists, drops the ambient count comparison).
