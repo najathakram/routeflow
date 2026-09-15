@@ -52,6 +52,9 @@ const RUNTIME_TYPES_IMPORT_PATTERNS = [
   /(^|\n)\s*export\s+(?!type\b)[^;]*from\s+["']@routeflow\/types["']/,
   // require("@routeflow/types") / require('@routeflow/types')
   /require\s*\(\s*["']@routeflow\/types["']\s*\)/,
+  // import("@routeflow/types") / await import('@routeflow/types') — a dynamic import, which the
+  // compiled CommonJS output turns into a runtime require() just like the static forms above.
+  /\bimport\s*\(\s*["']@routeflow\/types["']\s*\)/,
 ];
 
 describe("API runtime imports", () => {
@@ -89,6 +92,13 @@ describe("RUNTIME_TYPES_IMPORT_PATTERNS — offender-detection coverage", () => 
   it("catches a require(...) call", () => {
     expect(isOffender(`const { Foo } = require("@routeflow/types");`)).toBe(true);
     expect(isOffender(`const types = require('@routeflow/types');`)).toBe(true);
+  });
+
+  it("catches a dynamic import(...) call", () => {
+    expect(isOffender(`const types = import("@routeflow/types");`)).toBe(true);
+    expect(isOffender(`const types = import('@routeflow/types');`)).toBe(true);
+    expect(isOffender(`const types = await import("@routeflow/types");`)).toBe(true);
+    expect(isOffender(`const types = await import('@routeflow/types');`)).toBe(true);
   });
 
   it("never flags a type-only import or re-export (erased at compile time)", () => {
