@@ -27,7 +27,8 @@ interface PlatformStats {
   tenants: { total: number; active: number; trial: number; suspended: number };
   totalUsers: number;
   newTenantsThisMonth: number;
-  estMrrUsd: number;
+  mrr: number;
+  ledgerMrr: number;
   planBreakdown: Record<string, number>;
   recentTenants: Array<{
     id: string;
@@ -68,8 +69,32 @@ const usd = (n: number) =>
   new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   }).format(n);
+
+function MrrCard({ mrr, ledgerMrr }: { mrr: number | undefined; ledgerMrr: number | undefined }) {
+  const ready = typeof mrr === "number" && typeof ledgerMrr === "number";
+  const gapCents = ready ? Math.round(mrr * 100) - Math.round(ledgerMrr * 100) : 0;
+  return (
+    <div className="rounded-xl bg-slate-800 p-5 ring-1 ring-white/5">
+      <div className="text-xs uppercase tracking-wide text-slate-400">MRR</div>
+      <div className="text-2xl font-semibold text-white" data-testid="dashboard-mrr">
+        {ready ? usd(mrr) : "—"}
+      </div>
+      <div
+        className="mt-1 text-xs text-slate-400"
+        data-testid="dashboard-ledger-mrr"
+        title="MRR and its ledger reconciliation come from one computation over PRODUCTION tenants."
+      >
+        Reconciled to ledger: {ready ? usd(ledgerMrr) : "—"}
+        {ready && gapCents !== 0 && (
+          <span className="ml-1 text-amber-400">· differs by {usd(Math.abs(gapCents) / 100)}</span>
+        )}
+      </div>
+    </div>
+  );
+}
 
 // ─── Page ──────────────────────────────────────────────────────────────────────
 
@@ -154,6 +179,7 @@ export default function AdminDashboardPage() {
           sub="Across all workspaces"
           icon={<Users className="h-5 w-5" />}
         />
+        <MrrCard mrr={stats.mrr} ledgerMrr={stats.ledgerMrr} />
       </div>
 
       {/* Charts Row */}
@@ -202,14 +228,7 @@ export default function AdminDashboardPage() {
         </AdminCard>
 
         {/* Plan Distribution */}
-        <AdminCard
-          title="Plan Distribution"
-          actions={
-            <span className="font-mono text-xs text-slate-400">
-              Est. MRR <span className="text-slate-200">{usd(stats.estMrrUsd)}</span>
-            </span>
-          }
-        >
+        <AdminCard title="Plan Distribution">
           {planData.length > 0 ? (
             <ResponsiveContainer width="100%" height={260}>
               <PieChart>

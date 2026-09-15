@@ -772,24 +772,6 @@ apps/web/app --include=*.tsx -A1 | grep -B1 onSuccess` — narrow to `.map()`-re
   `--apply` runs unscoped. Sibling fix same round: the write's `updateMany` re-asserts tenant
   state, closing a scan-to-write race.
 
-### L-159 · 2026-09-15 · domain · B421 (PDF + web-detail rounds, independent review)
-
-- **Symptom:** a PDF template's fallback (for a caller not yet passing B421's new split fields)
-  re-derived `totalPaid`/`creditApplied`/`advanceApplied` independently, each gated on its OWN
-  `!= null` check — a caller passing an old, credit-inclusive `totalPaid` alone would get
-  `creditApplied`/`advanceApplied` re-split from raw payments too, subtracting the same
-  credit/advance a second time and understating the balance. The very next surface (a web page)
-  reinvented the identical bug before it even landed, independently of the first.
-- **Root cause:** three related figures each checked their own presence instead of sharing ONE
-  gate, so a partially-precomputed payload silently mixed two inconsistent bases.
-- **Lesson:** **When a fallback re-derives several related figures from raw data, gate ALL of
-  them on ONE presence check, never per-field — a caller supplying some but not all of a
-  precomputed set must get either the full precomputed set (missing members default to zero) or
-  the full re-derived set, never a mix.**
-- **Guard:** `payment-predicates.ts`'s `resolveConfirmedAmounts(precomputed, payments)` (API) and
-  the hand-rolled web mirror in `invoices/[id]/page.tsx` both gate on one field's presence; each
-  has a red-first regression test pinning the double-subtraction case.
-
 ### L-143 · 2026-09-15 · domain · B421 (credit-applied vs paid, full fix)
 
 - **Symptom:** a CREDIT_NOTE-method `InvoicePayment` row (`status: PAID`) rendered/counted as
@@ -809,3 +791,49 @@ apps/web/app --include=*.tsx -A1 | grep -B1 onSuccess` — narrow to `.map()`-re
   precondition generically (e.g. re-checking `.status`) will silently no-op for a caller whose
   `select`/fixture never populated that field for its own prior reasons (a `where` already
   enforcing it) — run that caller's existing tests before trusting a swap, never a type-check alone.
+
+### L-159 · 2026-09-15 · domain · B421 (PDF + web-detail rounds, independent review)
+
+- **Symptom:** a PDF template's fallback (for a caller not yet passing B421's new split fields)
+  re-derived `totalPaid`/`creditApplied`/`advanceApplied` independently, each gated on its OWN
+  `!= null` check — a caller passing an old, credit-inclusive `totalPaid` alone would get
+  `creditApplied`/`advanceApplied` re-split from raw payments too, subtracting the same
+  credit/advance a second time and understating the balance. The very next surface (a web page)
+  reinvented the identical bug before it even landed, independently of the first.
+- **Root cause:** three related figures each checked their own presence instead of sharing ONE
+  gate, so a partially-precomputed payload silently mixed two inconsistent bases.
+- **Lesson:** **When a fallback re-derives several related figures from raw data, gate ALL of
+  them on ONE presence check, never per-field — a caller supplying some but not all of a
+  precomputed set must get either the full precomputed set (missing members default to zero) or
+  the full re-derived set, never a mix.**
+- **Guard:** `payment-predicates.ts`'s `resolveConfirmedAmounts(precomputed, payments)` (API) and
+  the hand-rolled web mirror in `invoices/[id]/page.tsx` both gate on one field's presence; each
+  has a red-first regression test pinning the double-subtraction case.
+
+### L-160 · 2026-09-15 · domain · T14 catalog-driven plan select vs server's PLAN_KEYS allow-list (REG-743-F1)
+
+- **Symptom:** the catalog-driven plan `<select>` on `admin/tenants/new/page.tsx` rendered every
+  row `fetchPlanCatalog()` returned; `create-tenant.dto.ts` validates `@IsIn(PLAN_KEYS)`, a
+  narrower allow-list, so a legacy or not-yet-launched catalog row would 400 on submit.
+- **Root cause:** two sources of truth for "which plans can this form offer" — the published
+  pricing catalog (business config, can carry legacy/future rows) and the server's accepted-value
+  enum — were conflated; the UI trusted the broader one.
+- **Lesson:** **When a form's options come from a dynamic/business-config source rather than a
+  hardcoded enum, filter to whatever narrower set the server actually validates against — a
+  catalog superset is not a submittable set.**
+- **Guard:** `page.test.tsx`'s REG-743-F1 cases — an extra non-`PLAN_KEYS` catalog row is excluded
+  from rendered options; a catalog with zero `PLAN_KEYS`-eligible rows falls back to exactly
+  `PLAN_KEYS`.
+
+### L-161 · 2026-09-15 · tooling · T12-T15 review round F1/F2 (house-tenant script + mirror re-validation)
+
+- **Symptom:** `bootstrap-house-tenant.mjs` called `new PrismaClient()` with no driver adapter —
+  Prisma 7 throws. `TenantMirrorService#upsert` trusted a once-resolved `platform.houseTenantId`
+  forever, so a config key later pointing at a deleted/reclassified tenant would write admin data
+  into it.
+- **Root cause:** a resolved or pattern-copied dependency was trusted without re-checking it
+  against its current siblings or current row.
+- **Lesson:** **A prod-targeting script must match its siblings' PrismaPg/pg.Pool client setup,
+  never a bare `new PrismaClient()`. A writer resolving a special row by id must re-validate its
+  identity/class on every write, not just once.**
+- **Guard:** `bootstrap-house-tenant.db.spec.ts`, `tenant-mirror.service.spec.ts`.
