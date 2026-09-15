@@ -112,6 +112,24 @@ phone-UA proxy), plus a latent totals bug found on the way.
   `ProductPicker`, `recurring-invoices/new`. **NOT converted:
   `regulated/[id]/assign-products.tsx` — its `limit: 0` is load-bearing** (seeds the assigned set
   from the whole catalogue; paging would unassign unloaded products on Save).
+  **Lazy-gated catalogue load (2026-09-14, owner ask) — the catalogue now fetches only on a term
+  or a deliberate "Browse catalogue" tap, never on mount.** `lib/product-search-params.ts` gains
+  `ProductSearchParams.scanCode?` (set instead of `search` when `looksLikeScanCode(term)` —
+  `products.service.ts findAll` treats `search`/`scanCode` as mutually exclusive and expands
+  `scanCode` against every `normalizeScanCode` candidate, which a literal ILIKE on `search`
+  cannot match for a decoder-mismatched barcode) and `productSearchEnabled({term, browsing,
+enabled})` (a VETO: `enabled:false` always wins; otherwise a term or `browsing:true` is
+  required — the shared gate every picker below now applies). `useProductSearch` gains
+  `opts.browsing` + a `ProductSearch.idle` flag (fetch gated off — render an idle empty state,
+  not "no matches"); new sibling **`useAdminProductSearch<T>`** built on `lib/api/admin.ts`'s
+  `useAdminProductsInfinite` (now `enabled`-gated) for the `AdminProduct`-shaped pickers —
+  `ProductPickerSheet` needs archived rows for several callers (`activeOnly` prop), which
+  `useProductsInfinite` cannot serve (hardcodes `isActive:true`). Converted to the gated pattern:
+  `edit-items.tsx`, `NewOrderScreen.tsx`, `invoices/new.tsx`, `ProductPickerSheet.tsx`,
+  `recurring-invoices/new.tsx`'s `ProductPickerModal` — each renders an idle "Browse catalogue"
+  affordance instead of the full list on open. `lib/api/products.ts useProductsInfinite` params
+  gain `scanCode?`; `lib/api/admin.ts useAdminProducts`/`useAdminProductsInfinite` both gain an
+  `options?: {enabled?}` second arg. Specs: `__tests__/picker-idle.test.ts`.
 - **"ON THIS ORDER" mode** — `orderOnly` state on both sale builders: after a scan the list shows
   only the order's lines, newest scan first, with a _Show all items_ escape in the chip row's slot.
   Exits on typing, the toggle, or the order emptying. Deliberately does NOT put the scanned code
@@ -161,7 +179,9 @@ phone-UA proxy), plus a latent totals bug found on the way.
 - **Companions:** `components/FormSheet.tsx` gains `bottomInset` (default OFF — sheets now sit above
   a bar that already owns the inset; `(customer)/sellers/connect.tsx` is the one consumer with no
   bar below it and opts in). `lib/toast.ts` web toast moved from `bottom:32px` to `96px` to clear
-  the bar.
+  the bar. **2026-09-14:** `warnIfDirty` renamed `confirmDiscardIfDirty` (now also gates an in-app
+  discard confirm, not just web `beforeunload`) — see `mobile/tests-2.md`'s "2026-09-14 —
+  hunt-mobile-scan lanes A-E" §Lane C.
 
 ### 2026-08-11b — scan-to-order realigned with web
 

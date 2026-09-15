@@ -7,6 +7,7 @@ import { AddressAutocompleteInput } from "./AddressAutocompleteInput";
 import { isInternalEmail } from "../lib/internal-email";
 import { useTierLabels } from "../lib/api/tier-labels";
 import { tierLabel } from "../lib/tier-label";
+import { shouldConfirmDiscard } from "../lib/discard-guard";
 
 export interface CustomerFormValues {
   businessName: string;
@@ -257,7 +258,7 @@ export function CustomerForm({
       submitLabel={submitLabel}
       submitting={submitting}
       onSubmit={submit}
-      warnIfDirty={isDirty && !submitting}
+      confirmDiscardIfDirty={shouldConfirmDiscard(isDirty, !!submitting)}
     >
       {error ? (
         <View style={styles.errorBanner}>

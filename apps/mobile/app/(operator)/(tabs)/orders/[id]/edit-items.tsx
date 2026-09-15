@@ -1,17 +1,22 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  AppState,
   Modal,
+  PanResponder,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminOrder } from "../../../../../lib/api/admin";
@@ -35,7 +40,6 @@ import {
   priceForMarginFloor,
   roundMoney,
 } from "@routeflow/pricing";
-import { editedLineFreeUnits } from "../../../../../lib/invoice-totals";
 import { freeUnitsLabel } from "../../../../../lib/buyer-cart-logic";
 import { incrementLine, incrementLinePiece, setLineUnits } from "../../../../../lib/sale-line";
 import { buildSubstituteLine } from "../../../../../lib/substitute-line";
@@ -43,11 +47,35 @@ import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../../../..
 import type { ScanOutcome } from "../../../../../lib/scan-loop";
 import { useMarginConfig, floorForCategory } from "../../../../../lib/api/margin";
 import {
-  buildOrderItemDiff,
-  type DiffCatalogLine,
-  type DiffUnlistedLine,
-  type OriginalLine,
-} from "../../../../../lib/order-item-diff";
+  draftFreeUnits,
+  draftTrayRows,
+  deserializeEditItemsSnapshot,
+  editItemsSnapshotKey,
+  hasUnsavedWork,
+  isSnapshotStale,
+  makeEditItemsSnapshot,
+  orderOriginals,
+  pickerTrayExpandedHeight,
+  serializeEditItemsSnapshot,
+  shouldRehydrateFromOrder,
+  snapshotBaseline,
+  stagedDiffItems,
+  EDIT_ITEMS_AUTOSAVE_DEBOUNCE_MS,
+  PICKER_TRAY_HANDLE_HEIGHT,
+  type DraftItem,
+  type BaselineOrderLike,
+  type EditItemsSnapshot,
+  type StagedEdit,
+  type UnlistedDraft,
+} from "../../../../../lib/edit-items-draft";
+import {
+  bumpScanOrder,
+  nextFlash,
+  type ScanFlash,
+  type TrayRow,
+} from "../../../../../lib/scan-tray";
+import { ScanTray } from "../../../../../components/ScanTray";
+import { createScanAcceptGuard } from "../../../../../lib/scan-accept-guard";
 import { sanitizeIntInput } from "../../../../../lib/qty";
 import { QTY_INPUT_WIDTH } from "../../../../../lib/row-layout";
 import { resolveProductByCode } from "../../../../../lib/barcode-resolve";
@@ -77,71 +105,6 @@ import {
 import { useAuthStore } from "../../../../../lib/auth-store";
 import { fmtCalendarDate } from "../../../../../lib/format-date";
 
-/**
- * One row of the in-progress edit. `qty` is total pieces (server's source of
- * truth). For products with `unitsPerBox > 1` operators may also set
- * `boxes`/`pieces` and the server recomputes qty + uses BOX-price proration
- * (see apps/api/src/orders/orders.service.ts:594).
- */
-type DraftItem = {
-  productId: string;
-  qty: number;
-  boxes?: number;
-  pieces?: number;
-  unitsPerBox?: number | null;
-  unitPrice: number;
-  /** The customer's tier/base price — new lines send an override only if unitPrice diverges. */
-  catalogPrice: number;
-  name: string;
-  unit?: string;
-  overrideReason?: string;
-  /** Per-line note (buyer-visible) — must round-trip through the save. */
-  notes?: string;
-  /** Original DB line id; undefined = added this session. */
-  lineId?: string;
-  /** The line was stored with a box split — send boxes/pieces on save only then. */
-  boxSplit?: boolean;
-  /** Set when this row substitutes a different product onto its original line. */
-  substituteProductId?: string;
-  /**
-   * Per-piece average cost + category — drives the live margin hint
-   * (pos-cost-roles-spec §1). Only `averageCost` is available here (the
-   * order's embedded product `select` doesn't include `standardCost`, unlike
-   * the separate `/products` list `NewOrderScreen` reads from) — rows with no
-   * average cost yet (never sold) simply show no hint.
-   */
-  averageCost?: number | string | null;
-  category?: string | null;
-  /** UI-only qty entry mode for a case-packed line. NEVER submitted — the
-   *  diff always carries {qty, boxes, pieces} and the per-case unitPrice. */
-  sellBy?: "case" | "unit";
-  /**
-   * BUY_N_GET_M snapshot on the loaded line + the whole selling-unit count it
-   * was earned at. The preview MUST net these off or a BOGO line shows at full
-   * price and disagrees with both the stored subtotal and what the server
-   * re-derives on save (mirrors web's order edit builder).
-   */
-  promoFreeUnits?: number | null;
-  promoBaseUnits?: number | null;
-};
-
-/**
- * A new ad-hoc (unlisted) line being added in this edit session. Serialised as
- * `{ name, qty, unitPrice }` on save (no productId; never boxed). Existing
- * unlisted lines on the order are NOT loaded here (the replace-all edit only
- * re-sends catalog lines + any newly added unlisted lines).
- */
-type UnlistedDraft = {
-  id: string;
-  name: string;
-  unitPrice: number;
-  qty: number;
-  /** Per-line note (buyer-visible) — must round-trip through the save. */
-  notes?: string;
-  /** Original DB line id for an existing unlisted line; undefined = new. */
-  lineId?: string;
-};
-
 function newLocalId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
@@ -156,19 +119,65 @@ function toNumber(v: number | string | null | undefined): number {
 }
 
 /**
- * BUY_N_GET_M free units for THIS draft row, rescaled to the qty now on screen
- * (shared helper, same rule as the invoice edit form and the server's
- * `rescaleBogoFreeUnits` fallback). A pending SUBSTITUTION earns nothing — the
- * snapshot belongs to the product being replaced, and undoing it restores them.
+ * Server lines -> the editor's staged shape. Extracted from the hydration
+ * effect so the restore banner's "Discard changes" can rebuild EXACTLY the
+ * state a fresh load would produce, instead of a second, drifting mapping.
  */
-function draftFreeUnits(item: DraftItem): number {
-  if (item.substituteProductId) return 0;
-  return editedLineFreeUnits({
-    promoFreeUnits: item.promoFreeUnits,
-    promoBaseUnits: item.promoBaseUnits,
-    boxes: item.boxes ?? null,
-    qty: item.qty,
-  });
+function hydrateFromOrder(order: { lineItems?: readonly any[] } | null | undefined): {
+  draft: Record<string, DraftItem>;
+  unlisted: UnlistedDraft[];
+} {
+  const next: Record<string, DraftItem> = {};
+  const nextUnlisted: UnlistedDraft[] = [];
+  for (const li of order?.lineItems ?? []) {
+    // Unlisted line (no productId): carry it through the replace-all save so
+    // it isn't lost. `name` holds the free-text label.
+    // Skip already-cancelled lines (they aren't editable and shouldn't diff).
+    if ((li as any).status === "CANCELLED") continue;
+    if (!li.productId) {
+      nextUnlisted.push({
+        id: li.id ?? newLocalId(),
+        lineId: li.id ?? undefined,
+        name: li.name ?? "Unlisted item",
+        unitPrice: toNumber(li.unitPrice),
+        qty: toNumber(li.qty),
+        notes: (li as any).notes ?? undefined,
+      });
+      continue;
+    }
+    const product = (li as any).product ?? {};
+    const catalogPrice = toNumber(product.pricePerUnit ?? li.unitPrice);
+    const upbRaw = product.unitsPerBox;
+    const unitsPerBox = upbRaw == null ? null : Number(upbRaw);
+    next[li.productId] = {
+      productId: li.productId,
+      qty: toNumber(li.qty),
+      boxes: li.boxes ?? undefined,
+      pieces: li.pieces ?? undefined,
+      unitsPerBox,
+      unitPrice: toNumber(li.unitPrice),
+      catalogPrice,
+      name: product.name ?? "Item",
+      unit: product.unit,
+      overrideReason: li.overrideReason ?? undefined,
+      notes: (li as any).notes ?? undefined,
+      lineId: li.id ?? undefined,
+      // Preserve the stored denomination so a qty-only edit doesn't invent a split.
+      boxSplit: li.boxes != null || li.pieces != null,
+      // NEW (P10-POS-1): read via the existing `any`-cast `product` ref above —
+      // the server already returns these on the order's embedded product, only
+      // AdminOrder's TS type doesn't declare them yet (out of scope here).
+      averageCost: product.averageCost ?? null,
+      category: product.category ?? null,
+      // BUY_N_GET_M: the snapshot plus the selling-unit count it was earned
+      // at, so a qty edit rescales it exactly like the server does on save.
+      promoFreeUnits: li.promoFreeUnits ?? null,
+      promoBaseUnits: li.promoFreeUnits
+        ? Math.trunc(Number(li.boxes != null ? li.boxes : li.qty) || 0)
+        : null,
+    };
+  }
+  return { draft: next, unlisted: nextUnlisted };
 }
 
 /**
@@ -182,6 +191,11 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   const params = useLocalSearchParams<{ id?: string }>();
   const id = orderId ?? params.id ?? "";
   const { data: order, isLoading } = useAdminOrder(id);
+  // The same order, narrowed to the fields the pure snapshot/diff layer reads.
+  // AdminOrder declares neither `updatedAt` nor a line's `notes`/`status`, all
+  // of which the server does return (orders.service.ts findOne has no top-level
+  // select) — the cast is the existing `(order as any)` habit, scoped.
+  const baselineOrder = order as unknown as BaselineOrderLike | undefined;
   const customerId = (order as any)?.customerId as string | undefined;
   // Remembered per-customer prices — pre-fill a newly added line's price so a
   // prior discount carries forward (operator can still change it).
@@ -214,7 +228,14 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     for (const cp of customerPrices ?? []) m.set(cp.productId, cp.pricingTier);
     return m;
   }, [customerPrices]);
+  const effectiveTierFor = (productId: string) => cpMap.get(productId) ?? customerTier ?? 1;
+  /** SPECIAL (tier!==1) lines are the customer's permanent price — never overridable
+   *  (the create surface's own rule, components/NewOrderScreen.tsx:627). Mobile's
+   *  editor contradicted mobile's builder until this landed; the api-side gate is
+   *  still the owner's call, so this is a CLIENT gate only (RULINGS R2/R9). */
+  const isSpecialFor = (productId: string) => effectiveTierFor(productId) !== 1;
   const userRole = useAuthStore((s) => s.user?.role);
+  const userId = useAuthStore((s) => s.user?.id);
   // Customer accounts shouldn't reach this screen, but defend anyway —
   // box-splitting is operator/driver-only by product policy.
   const canSplitBoxes = userRole !== "CUSTOMER";
@@ -250,6 +271,10 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   // can offer "Edit price" over the paused camera without leaving the sheet.
   // Reset whenever the picker closes.
   const [lastScannedId, setLastScannedId] = useState<string | null>(null);
+  // The picker's pull-out drawer: newest-first scan order + which row flashes.
+  // Both belong to the CURRENT picker session, so both reset when it closes.
+  const [scanOrder, setScanOrder] = useState<string[]>([]);
+  const [trayFlash, setTrayFlash] = useState<ScanFlash | null>(null);
   const [substituteFor, setSubstituteFor] = useState<string | null>(null);
   const [priceEditItem, setPriceEditItem] = useState<DraftItem | null>(null);
   const [licenseBlock, setLicenseBlock] = useState<BlockedCategory[] | null>(null);
@@ -262,6 +287,15 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   // server's existing intent untouched, per the API contract.
   const [selectedCreditIds, setSelectedCreditIds] = useState<string[]>([]);
   const [creditsTouched, setCreditsTouched] = useState(false);
+
+  // ── Autosave / restore of the staged edit ─────────────────────────────────
+  // The operator's staged edit is parked on this device (user- and
+  // order-scoped) so leaving the editor — a back tap, a swipe, the OS
+  // backgrounding the app — never costs the work. `restored` is the parsed
+  // snapshot read on mount; `restoreState` makes the apply ONE-SHOT.
+  const [restored, setRestored] = useState<EditItemsSnapshot | null>(null);
+  const [restoreChecked, setRestoreChecked] = useState(false);
+  const [restoreState, setRestoreState] = useState<"idle" | "applied" | "stale">("idle");
   const { data: openCredits } = useCreditNotes({
     customerId,
     status: "ISSUED",
@@ -329,58 +363,44 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   const tierPriceFor = (p: { id: string } & Parameters<typeof getTierPrice>[0]) =>
     getTierPrice(p, cpMap.get(p.id) ?? customerTier ?? 1);
 
+  // Latched by a successful save. Read by the hydration guard below (the
+  // post-save refetch IS the new truth, so it re-hydrates) and by the snapshot
+  // writer: without it the unmount/beforeRemove flush fires DURING the
+  // post-save navigation — while `draft` still differs from the order the
+  // screen loaded — and writes the snapshot straight back after
+  // `clearSnapshot` removed it, offering a saved edit for restore.
+  const savedRef = useRef(false);
+  // `dirty` is computed further down (it needs `originals`/`staged`, which are
+  // derived from the draft this effect writes), so it is mirrored into a ref
+  // on every render and read here. The effect runs after its render, so the
+  // ref holds exactly "was there staged work before this refetch?".
+  const dirtyRef = useRef(false);
+  // Which order this screen has already hydrated. The FIRST hydration must
+  // always run: on the render where `order` first arrives the draft is still
+  // empty, so `dirty` is TRUE (every server line reads as a removal) and a
+  // bare dirty check would leave the editor permanently blank.
+  const hydratedOrderRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (!order) return;
-    const next: Record<string, DraftItem> = {};
-    const nextUnlisted: UnlistedDraft[] = [];
-    for (const li of order.lineItems) {
-      // Unlisted line (no productId): carry it through the replace-all save so
-      // it isn't lost. `name` holds the free-text label.
-      // Skip already-cancelled lines (they aren't editable and shouldn't diff).
-      if ((li as any).status === "CANCELLED") continue;
-      if (!li.productId) {
-        nextUnlisted.push({
-          id: li.id ?? newLocalId(),
-          lineId: li.id ?? undefined,
-          name: li.name ?? "Unlisted item",
-          unitPrice: toNumber(li.unitPrice),
-          qty: toNumber(li.qty),
-          notes: (li as any).notes ?? undefined,
-        });
-        continue;
-      }
-      const product = (li as any).product ?? {};
-      const catalogPrice = toNumber(product.pricePerUnit ?? li.unitPrice);
-      const upbRaw = product.unitsPerBox;
-      const unitsPerBox = upbRaw == null ? null : Number(upbRaw);
-      next[li.productId] = {
-        productId: li.productId,
-        qty: toNumber(li.qty),
-        boxes: li.boxes ?? undefined,
-        pieces: li.pieces ?? undefined,
-        unitsPerBox,
-        unitPrice: toNumber(li.unitPrice),
-        catalogPrice,
-        name: product.name ?? "Item",
-        unit: product.unit,
-        overrideReason: li.overrideReason ?? undefined,
-        notes: (li as any).notes ?? undefined,
-        lineId: li.id ?? undefined,
-        // Preserve the stored denomination so a qty-only edit doesn't invent a split.
-        boxSplit: li.boxes != null || li.pieces != null,
-        // NEW (P10-POS-1): read via the existing `any`-cast `product` ref above —
-        // the server already returns these on the order's embedded product, only
-        // AdminOrder's TS type doesn't declare them yet (out of scope here).
-        averageCost: product.averageCost ?? null,
-        category: product.category ?? null,
-        // BUY_N_GET_M: the snapshot plus the selling-unit count it was earned
-        // at, so a qty edit rescales it exactly like the server does on save.
-        promoFreeUnits: li.promoFreeUnits ?? null,
-        promoBaseUnits: li.promoFreeUnits
-          ? Math.trunc(Number(li.boxes != null ? li.boxes : li.qty) || 0)
-          : null,
-      };
+    // MONEY (hydration guard): a background refetch — window focus, a cache
+    // invalidation, a socket push — must never overwrite a staged edit. It
+    // used to: this effect re-ran `setDraft`/`setUnlisted` from the server,
+    // the one-shot restore effect could not put the work back, and the
+    // autosave effect then saw a clean draft and REMOVED the on-disk snapshot
+    // as well. The rule itself lives in `shouldRehydrateFromOrder`.
+    const orderKey = ((order as any)?.id as string | undefined) ?? id ?? null;
+    if (
+      !shouldRehydrateFromOrder({
+        hydrated: hydratedOrderRef.current === orderKey,
+        dirty: dirtyRef.current,
+        justSaved: savedRef.current,
+      })
+    ) {
+      return;
     }
+    hydratedOrderRef.current = orderKey;
+    const { draft: next, unlisted: nextUnlisted } = hydrateFromOrder(order);
     setDraft(next);
     setUnlisted(nextUnlisted);
     // Apply-credit: pre-check whatever the order already carries, and reset
@@ -390,7 +410,57 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     );
     setCreditsTouched(false);
     setJustCreatedCredits([]);
-  }, [order]);
+  }, [order, id]);
+
+  // The snapshot key resolves SYNCHRONOUSLY from the store (unlike
+  // lib/user-scoped-storage.ts's async key, whose extra hop that module's own
+  // header documents as a data-loss trap).
+  const snapshotKey = editItemsSnapshotKey(id, userId);
+
+  // Read the parked snapshot once per key. `restoreChecked` flips even when
+  // there is nothing to restore — the autosave effect below must not write
+  // (or REMOVE) anything until this read has answered, or a freshly hydrated
+  // clean draft would delete the very snapshot we came back for.
+  useEffect(() => {
+    let alive = true;
+    setRestored(null);
+    setRestoreChecked(false);
+    setRestoreState("idle");
+    AsyncStorage.getItem(snapshotKey)
+      .then((raw) => {
+        if (!alive) return;
+        setRestored(deserializeEditItemsSnapshot(raw));
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (alive) setRestoreChecked(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [snapshotKey]);
+
+  /**
+   * Apply the snapshot. DECLARED AFTER the hydration effect above and sharing
+   * its `[order]` dependency ON PURPOSE: React runs effects in declaration
+   * order, so a background refetch re-hydrates the draft from the server and
+   * this immediately puts the operator's staged edit back on top. The
+   * `restoreState` guard keeps it one-shot, so it can never fight a later edit.
+   */
+  useEffect(() => {
+    if (!order || !restored || restoreState !== "idle") return;
+    if (isSnapshotStale(restored, baselineOrder)) {
+      setRestoreState("stale");
+      return;
+    }
+    setDraft(restored.draft);
+    setUnlisted(restored.unlisted);
+    setPendingDeletes(restored.pendingDeletes);
+    setSelectedCreditIds(restored.selectedCreditIds);
+    setCreditsTouched(restored.creditsTouched);
+    setFloorAcked(new Set(restored.floorAcked));
+    setRestoreState("applied");
+  }, [order, baselineOrder, restored, restoreState]);
 
   // Live total mirrors the server math (BOX-price proration when split).
   const total = useMemo(() => {
@@ -420,6 +490,104 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   const itemCount =
     Object.values(draft).filter((it) => effectiveQty(it, it.unitsPerBox) > 0).length +
     unlisted.filter((u) => u.qty > 0).length;
+
+  // ── The staged edit, as one value ─────────────────────────────────────────
+  // `originals` and `staged` are the SAME inputs `save()` builds its payload
+  // from (lib/edit-items-draft.ts), so "is there unsaved work?" can never
+  // disagree with what Save would actually send.
+  const originals = useMemo(() => orderOriginals(baselineOrder), [baselineOrder]);
+  const staged: StagedEdit = useMemo(
+    () => ({
+      draft,
+      unlisted,
+      pendingDeletes,
+      selectedCreditIds,
+      creditsTouched,
+      floorAcked: Array.from(floorAcked),
+    }),
+    [draft, unlisted, pendingDeletes, selectedCreditIds, creditsTouched, floorAcked],
+  );
+  const dirty = useMemo(() => hasUnsavedWork(staged, originals), [staged, originals]);
+  // Mirror for the hydration guard above — assigned during render, so the
+  // effect that runs after THIS render reads THIS render's answer.
+  dirtyRef.current = dirty;
+
+  /**
+   * Write (or clear) the snapshot right now, no debounce. Best-effort by
+   * contract: a failed write must never surface as an app error, and must
+   * never block the navigation that triggered it.
+   */
+  const snapshotWriteRef = useRef<() => Promise<void>>(async () => undefined);
+  snapshotWriteRef.current = async () => {
+    // userId undefined means auth hasn't resolved yet (cold open / deep link)
+    // — never stage under the shared `anon` bucket, where the next operator to
+    // sign in on this device could be offered it (B136/B137/B140 class).
+    if (!order || !id || savedRef.current || userId == null) return;
+    try {
+      if (!dirty) {
+        await AsyncStorage.removeItem(snapshotKey);
+        return;
+      }
+      await AsyncStorage.setItem(
+        snapshotKey,
+        serializeEditItemsSnapshot(
+          makeEditItemsSnapshot({
+            orderId: id,
+            staged,
+            baseline: snapshotBaseline(baselineOrder),
+            orderUpdatedAt: baselineOrder?.updatedAt ?? null,
+          }),
+        ),
+      );
+    } catch {
+      // Persistence is best-effort — never an app-level error.
+    }
+  };
+  const flushSnapshot = useCallback(() => snapshotWriteRef.current().catch(() => {}), []);
+  const clearSnapshot = useCallback(
+    () => AsyncStorage.removeItem(snapshotKey).catch(() => {}),
+    [snapshotKey],
+  );
+
+  // Debounced autosave. Held off until the restore read has answered (and
+  // until a found snapshot has been applied), so the hydrated-clean first
+  // render can't wipe the snapshot before it is restored.
+  const snapshotReady = restoreChecked && !(restored && restoreState === "idle");
+  useEffect(() => {
+    if (!order || !snapshotReady) return;
+    const timer = setTimeout(() => void flushSnapshot(), EDIT_ITEMS_AUTOSAVE_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [order, snapshotReady, staged, dirty, flushSnapshot]);
+
+  // Flush points, copied from the two in-repo patterns: NewOrderScreen's
+  // `beforeRemove` (Android hardware back + the iOS swipe) plus its web
+  // `visibilitychange` branch, and stock-count's AppState background flush.
+  const navigation = useNavigation();
+  useEffect(() => {
+    const nav = navigation as unknown as {
+      addListener: (event: "beforeRemove", cb: () => void) => () => void;
+    };
+    const unsubscribe = nav.addListener("beforeRemove", () => {
+      void flushSnapshot();
+    });
+    return unsubscribe;
+  }, [navigation, flushSnapshot]);
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state !== "active") void flushSnapshot();
+    });
+    return () => sub.remove();
+  }, [flushSnapshot]);
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    if (typeof document === "undefined") return;
+    const handler = () => {
+      if (document.visibilityState === "hidden") void flushSnapshot();
+    };
+    document.addEventListener("visibilitychange", handler);
+    return () => document.removeEventListener("visibilitychange", handler);
+  }, [flushSnapshot]);
+  useEffect(() => () => void flushSnapshot(), [flushSnapshot]);
 
   // ── Unlisted line helpers ──────────────────────────────────────────────────
   const addUnlisted = (name: string, unitPrice: number, qty: number) =>
@@ -598,6 +766,61 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       return next;
     });
 
+  // ── The picker's pull-out drawer ──────────────────────────────────────────
+  // Rows come from the ONE tray derivation the sale builders use
+  // (lib/scan-tray.ts via draftTrayRows); the drawer's item count and total
+  // are the footer's own `itemCount`/`total`, never a second money derivation.
+  const trayRows = useMemo(
+    () => draftTrayRows({ draft, unlisted, scanOrder }),
+    [draft, unlisted, scanOrder],
+  );
+  // ScanTray memoizes its rows on callback identity (components/ScanTray.tsx),
+  // so these four have to be referentially stable — a "latest deps" ref keeps
+  // them stable while still dispatching against the current draft.
+  const trayDepsRef = useRef({
+    unlisted,
+    setUnits,
+    incQty,
+    decQty,
+    removeLine,
+    setUnlistedQty,
+    removeUnlisted,
+  });
+  trayDepsRef.current = {
+    unlisted,
+    setUnits,
+    incQty,
+    decQty,
+    removeLine,
+    setUnlistedQty,
+    removeUnlisted,
+  };
+  const unlistedRow = (id: string) => trayDepsRef.current.unlisted.find((u) => u.id === id);
+  // ScanTray hands a TOTAL UNIT count (ScanTray.tsx), which is exactly what
+  // `setUnits` normalises back into cases + loose.
+  const onTrayChangeQty = useCallback((id: string, units: number) => {
+    const d = trayDepsRef.current;
+    if (unlistedRow(id)) d.setUnlistedQty(id, units);
+    else d.setUnits(id, units);
+  }, []);
+  const onTrayIncrement = useCallback((id: string) => {
+    const d = trayDepsRef.current;
+    const u = unlistedRow(id);
+    if (u) d.setUnlistedQty(id, u.qty + 1);
+    else d.incQty(id);
+  }, []);
+  const onTrayDecrement = useCallback((id: string) => {
+    const d = trayDepsRef.current;
+    const u = unlistedRow(id);
+    if (u) d.setUnlistedQty(id, u.qty - 1);
+    else d.decQty(id);
+  }, []);
+  const onTrayRemove = useCallback((id: string) => {
+    const d = trayDepsRef.current;
+    if (unlistedRow(id)) d.removeUnlisted(id);
+    else d.removeLine(id);
+  }, []);
+
   // ── Save ─────────────────────────────────────────────────────────────────
 
   const save = () => {
@@ -606,51 +829,17 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     // ids, invoiced qty, and override history — the old full-replace clobbered them.
     // `notes` (per-line, buyer-visible) is threaded through the diff so editing a
     // note is picked up as a change and never silently wiped.
-    const catalog: DiffCatalogLine[] = Object.values(draft).map((i) => ({
-      lineId: i.lineId,
-      productId: i.productId,
-      qty: effectiveQty(i, i.unitsPerBox),
-      boxes: i.boxes ?? null,
-      pieces: i.pieces ?? null,
-      boxSplit: !!i.boxSplit,
-      unitPrice: i.unitPrice,
-      basePrice: i.catalogPrice,
-      overrideReason: i.overrideReason,
-      substituteProductId: i.substituteProductId,
-      notes: i.notes,
-    }));
-    const unlistedLines: DiffUnlistedLine[] = unlisted.map((u) => ({
-      lineId: u.lineId,
-      name: u.name,
-      qty: u.qty,
-      unitPrice: u.unitPrice,
-      notes: u.notes,
-    }));
-    const originals: OriginalLine[] = (order?.lineItems ?? [])
-      .filter((li: any) => li.status !== "CANCELLED")
-      .map((li: any) => ({
-        id: li.id,
-        productId: li.productId ?? null,
-        qty: toNumber(li.qty),
-        unitPrice: toNumber(li.unitPrice),
-        name: li.name ?? null,
-        notes: (li as any).notes ?? null,
-      }));
-
     // buildOrderItemDiff auto-DELETEs any original line absent from the surviving
     // catalog/unlisted lines — covering removals via the qty stepper (zeroing),
     // not just the trash button — so `pendingDeletes` here is just the explicit
-    // trash-button set.
-    const items = buildOrderItemDiff({
-      catalog,
-      unlisted: unlistedLines,
-      originals,
-      pendingDeletes,
-      pendingCancels: [],
-    });
+    // trash-button set. The whole mapping lives in lib/edit-items-draft.ts so
+    // the dirty check and this payload are ONE derivation.
+    const items = stagedDiffItems({ draft, unlisted, pendingDeletes }, originals);
 
     if (items.length === 0 && !creditsTouched) {
       // Nothing changed — mirror web: just leave the editor, don't error.
+      savedRef.current = true;
+      void clearSnapshot();
       leaveEditor();
       return;
     }
@@ -687,6 +876,10 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       {
         onSuccess: () => {
           showToast("Items updated");
+          // A saved edit must never be offered for restore again — the latch
+          // also stops the unmount/beforeRemove flush re-writing it behind us.
+          savedRef.current = true;
+          void clearSnapshot();
           // Land on the orders LIST after a successful save instead of
           // popping back to the order detail. The user reported "Back" not
           // taking them to all orders after submit; explicit navigation
@@ -714,12 +907,52 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     );
   };
 
+  /**
+   * Leave. No confirm() prompt: NewOrderScreen's `beforeRemove` — the app's
+   * only other navigation guard — doesn't prompt either, and with the snapshot
+   * written there is nothing to lose. The toast is the receipt.
+   */
+  const handleBackWithSnapshot = () => {
+    void flushSnapshot();
+    if (dirty) showToast("Unsaved item changes kept on this device");
+    router.back();
+  };
+
+  /**
+   * Throw the parked edit away and go back to exactly what the server has.
+   * `restoreState` leaves "idle" for good (so the one-shot apply effect can
+   * never run again this mount) and `restored` is dropped, which is what
+   * hides both banners.
+   */
+  const discardRestored = () => {
+    void clearSnapshot();
+    setRestoreState("stale");
+    setRestored(null);
+    if (!baselineOrder) return;
+    const rebuilt = hydrateFromOrder(order);
+    setDraft(rebuilt.draft);
+    setUnlisted(rebuilt.unlisted);
+    setPendingDeletes([]);
+    setFloorAcked(new Set());
+    setSelectedCreditIds(
+      ((order as any)?.orderCreditNotes ?? []).map((oc: any) => oc.creditNoteId),
+    );
+    setCreditsTouched(false);
+  };
+
   if (isLoading || !order) {
     return (
       <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
         <NavBar
           inlineTitle="Edit items"
-          leading={<NavBackButton onPress={() => router.back()} />}
+          leading={
+            <NavBackButton
+              onPress={() => {
+                void flushSnapshot();
+                router.back();
+              }}
+            />
+          }
         />
         <View style={styles.center}>
           <ActivityIndicator color={ios.brand} />
@@ -727,6 +960,22 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       </SafeAreaView>
     );
   }
+
+  // Web parity (apps/web/app/(dashboard)/orders/[id]/page.tsx:1765): the
+  // server's own edit window decides, with the status list as the fallback —
+  // NOT "any status but CANCELLED", which is what mobile used to allow.
+  const orderPriceEditable =
+    !isDriver &&
+    (order.editWindow?.editable ??
+      (order.status === "DRAFT" || order.status === "PENDING" || order.status === "CONFIRMED"));
+  /**
+   * Per LINE, not per order. `pricingReady` is in the AND deliberately: while
+   * the customer/customer-price queries are in flight `cpMap` is empty and
+   * `isSpecialFor` would answer false for a genuinely SPECIAL line — exactly
+   * the window B62 was filed for.
+   */
+  const canEditPriceFor = (productId: string) =>
+    orderPriceEditable && pricingReady && !isSpecialFor(productId);
 
   // B263 D3: the draft line behind the picker's "last added" strip, resolved
   // once so its margin floor and ack state are derived from the same line the
@@ -737,7 +986,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
         inlineTitle="Edit items"
-        leading={<NavBackButton label={order.orderNumber} onPress={() => router.back()} />}
+        leading={<NavBackButton label={order.orderNumber} onPress={handleBackWithSnapshot} />}
       />
 
       {priceEditItem ? (
@@ -822,7 +1071,10 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
         <ProductPicker
           title={substituteFor ? "Substitute with…" : "Add product"}
           canCreateProducts={!isDriver}
-          canEditPrice={!isDriver && order.status !== "CANCELLED"}
+          // The picker's `canEditPrice` gates exactly ONE line — the last-added
+          // strip's "Edit price" and its modal — so it is that LINE's gate, not
+          // the order's (SPECIAL-tier lock + web's edit window, RULINGS R2/R9).
+          canEditPrice={lastAddedLine ? canEditPriceFor(lastAddedLine.productId) : false}
           initialScanOpen={pickerScanIntent}
           // Add-and-stay (scans + wedge input): the picker stays open so N
           // items scan with zero taps — closes web's long-standing edit-screen
@@ -833,8 +1085,18 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
               : (p, kind) => {
                   addPickedToDraft(p, kind);
                   setLastScannedId(p.id);
+                  setScanOrder((o) => bumpScanOrder(o, p.id));
+                  setTrayFlash((f) => nextFlash(f, p.id));
                 }
           }
+          trayRows={trayRows}
+          trayFlash={trayFlash}
+          trayItemCount={itemCount}
+          trayTotal={total}
+          onTrayChangeQty={onTrayChangeQty}
+          onTrayIncrement={onTrayIncrement}
+          onTrayDecrement={onTrayDecrement}
+          onTrayRemove={onTrayRemove}
           lastAdded={lastAddedLine}
           // Review round: the strip flags a below-floor price with the SAME
           // floor and the SAME ack state the line list uses — one derivation
@@ -868,7 +1130,11 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
             });
           }}
           onScanSessionStart={() => setLastScannedId(null)}
-          onScanSessionEnd={() => setLastScannedId(null)}
+          // RULINGS R5: the camera CLOSING does not undo the add, so this no
+          // longer clears `lastScannedId` — the price affordance has to survive
+          // an add made with the camera shut (a wedge scanner, a typed code).
+          // Only the row flash, which belongs to the camera session, is cleared.
+          onScanSessionEnd={() => setTrayFlash(null)}
           onPick={(p, kind) => {
             if (substituteFor) {
               const tierPrice = tierPriceFor(p);
@@ -892,23 +1158,80 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
               setSubstituteFor(null);
             } else {
               addPickedToDraft(p, kind);
+              setScanOrder((o) => bumpScanOrder(o, p.id));
+              setTrayFlash((f) => nextFlash(f, p.id));
             }
             setShowPicker(false);
             setPickerScanIntent(false);
-            // The strip belongs to the CURRENT camera session: a row tap (or a
+            // The strip belongs to the CURRENT picker session: a row tap (or a
             // substitute pick) closes the picker, so the id a wedge/search
             // auto-add left behind must not survive into the next session.
             setLastScannedId(null);
+            setScanOrder([]);
+            setTrayFlash(null);
           }}
           onClose={() => {
             setShowPicker(false);
             setSubstituteFor(null);
             setPickerScanIntent(false);
             setLastScannedId(null);
+            setScanOrder([]);
+            setTrayFlash(null);
           }}
         />
       ) : (
         <>
+          {/* Restore banner. An APPLIED snapshot is already back on screen —
+              this is the receipt plus a way out. A STALE one is never applied:
+              the server lines it was diffed against changed underneath it, so
+              re-sending those qty/price edits would write money against a
+              different baseline. */}
+          {restoreState === "applied" ? (
+            <View style={styles.restoreBanner}>
+              <Ionicons name="refresh-outline" size={16} color={ios.brand} />
+              <Text style={styles.restoreText} numberOfLines={2}>
+                Restored your unsaved changes
+              </Text>
+              <Pressable
+                onPress={() =>
+                  confirm(
+                    "Discard changes?",
+                    "Your unsaved item changes will be removed.",
+                    discardRestored,
+                    { confirmText: "Discard", destructive: true },
+                  )
+                }
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Discard restored changes"
+              >
+                <Text style={styles.restoreAction}>Discard</Text>
+              </Pressable>
+            </View>
+          ) : null}
+          {restoreState === "stale" && restored ? (
+            <View style={styles.restoreBanner}>
+              <Ionicons name="alert-circle-outline" size={16} color={ios.system.orangeInk} />
+              <Text style={styles.restoreText} numberOfLines={2}>
+                This order changed since your unsaved edits
+              </Text>
+              <Pressable
+                onPress={() =>
+                  confirm(
+                    "Discard changes?",
+                    "Your unsaved item changes will be removed.",
+                    discardRestored,
+                    { confirmText: "Discard", destructive: true },
+                  )
+                }
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Discard unsaved changes"
+              >
+                <Text style={styles.restoreAction}>Discard</Text>
+              </Pressable>
+            </View>
+          ) : null}
           <ScrollView showsVerticalScrollIndicator={false}>
             {/* Apply credit — mirrors NewOrderScreen. Driver-gated off: drivers
                 don't manage credits. Gated on the customer alone (not credit
@@ -982,7 +1305,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
                     key={it.productId}
                     item={it}
                     canSplitBoxes={canSplitBoxes}
-                    canEditPrice={!isDriver && order.status !== "CANCELLED"}
+                    canEditPrice={canEditPriceFor(it.productId)}
                     pricingReady={pricingReady}
                     marginFloor={floorForCategory(marginConfig, it.category)}
                     acked={floorAcked.has(it.lineId ?? it.productId)}
@@ -1860,6 +2183,14 @@ function ProductPicker({
   canEditPrice = false,
   onScanSessionStart,
   onScanSessionEnd,
+  trayRows,
+  trayFlash,
+  trayItemCount,
+  trayTotal,
+  onTrayChangeQty,
+  onTrayIncrement,
+  onTrayDecrement,
+  onTrayRemove,
 }: {
   title?: string;
   /** Single pick — the caller closes the picker (tap rows, substitutions). */
@@ -1918,17 +2249,51 @@ function ProductPicker({
    */
   onSetToFloor: (item: DraftItem, unitPrice: number) => void;
   /**
-   * The list branch's price gate, threaded verbatim: a price override from
-   * the picker is reachable exactly when the line list's price chip is
-   * (never for a DRIVER, never on a CANCELLED order). Defaults to false.
+   * The list branch's PER-LINE price gate for `lastAdded`, threaded verbatim
+   * (`canEditPriceFor(lastAddedLine.productId)`): a price override from the
+   * picker is reachable exactly when that line's price chip is — never for a
+   * DRIVER, never outside the order's edit window, never on a SPECIAL-tier
+   * line (RULINGS R2/R9). Defaults to false.
    */
   canEditPrice?: boolean;
   /** A camera session is opening — the parent clears its "last scan-added" line. */
   onScanSessionStart?: () => void;
-  /** A camera session ended — the parent clears its "last scan-added" line. */
+  /** A camera session ended. Does NOT clear the last-added line (RULINGS R5). */
   onScanSessionEnd?: () => void;
+  /**
+   * The pull-out drawer: everything added so far, newest-scanned first, from
+   * the parent's ONE tray derivation (`draftTrayRows`). The drawer renders
+   * money it is handed; it never derives any.
+   */
+  trayRows: TrayRow[];
+  trayFlash: ScanFlash | null;
+  /** The footer's own count/total — never a second derivation for the drawer. */
+  trayItemCount: number;
+  trayTotal: number;
+  /** ScanTray hands a TOTAL UNIT count (components/ScanTray.tsx). */
+  onTrayChangeQty: (id: string, units: number) => void;
+  onTrayIncrement: (id: string) => void;
+  onTrayDecrement: (id: string) => void;
+  onTrayRemove: (id: string) => void;
 }) {
   const [scanOpen, setScanOpen] = useState(initialScanOpen ?? false);
+  // The drawer's own open/closed state and the window it must not cover.
+  const [trayExpanded, setTrayExpanded] = useState(false);
+  const win = useWindowDimensions();
+  // Drag the handle to open/close, in the BarcodeFab shape (core RN
+  // PanResponder — do NOT wire react-native-gesture-handler for this).
+  // `onStartShouldSetPanResponder: false` lets a plain tap reach the Pressable.
+  const trayPan = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dy) > 8,
+      onPanResponderRelease: (_, g) => setTrayExpanded(g.dy < 0),
+    }),
+  ).current;
+  // Owner ask (2026-09-14): the catalogue loads only when the operator asks —
+  // a term, a wedge-scanned code, or a deliberate "Browse catalogue" tap.
+  // Latches on for the life of the picker; Cancel is the exit.
+  const [browsing, setBrowsing] = useState(false);
   // B263 D3: the just-scanned line open for a price edit, stacked over the
   // scanner. The camera stays mounted but paused (`active={!pickerPriceEditItem}`)
   // — the same "keep it mounted" contract `paused` already uses below.
@@ -1955,13 +2320,24 @@ function ProductPicker({
     isLoading,
     isSearching,
     isPlaceholder,
+    idle,
     hasNextPage,
     fetchNextPage,
     isFetchingNextPage,
-  } = useProductSearch<{ id: string }>();
+  } = useProductSearch<{ id: string }>({ browsing });
   const products = pagedProducts as unknown as Array<
     PickedProduct & { sku?: string; barcode?: string | null; unitSku?: string | null }
   >;
+  // The CURRENT search term, readable from an async scan path. `setSearch("")`
+  // only takes effect on the next render, so a submit dispatched in between
+  // would still read the stale term and re-scan it; `clearSearch` writes the
+  // ref SYNCHRONOUSLY, which is what makes runWedgeSubmit no-op there.
+  const searchTermRef = useRef("");
+  searchTermRef.current = searchTerm;
+  const clearSearch = () => {
+    searchTermRef.current = "";
+    setSearch("");
+  };
 
   /**
    * Scan handler. With `onPickAndStay` the scanner runs CONTINUOUS (items add
@@ -1974,11 +2350,24 @@ function ProductPicker({
    * code closed the scanner and seeded the search box, and a miss offered
    * nothing at all.
    */
+  // F30: one physical scan, one add. The camera/ladder path and the settled
+  // search effect below both resolve the SAME code independently; this claim
+  // is what links them (lib/scan-accept-guard.ts) so neither double-adds nor
+  // reports a false "No product for X" for a line that is already on the order.
+  const scanGuardRef =
+    useRef(createScanAcceptGuard<PickedProduct & { unitsPerBox?: number | null }>());
   const onScanned = makeScanHandler<PickedProduct & { unitsPerBox?: number | null }>({
     products: () => products,
+    acceptGuard: scanGuardRef.current,
     accept: (product, kind) => {
       if (onPickAndStay) {
         onPickAndStay(product, kind);
+        // The code that produced this add is spent: drop it so the settled
+        // effect can't re-fire on it and the next scan starts from an empty
+        // box. Gated on `looksLikeScanCode` so a typed product NAME (and the
+        // filtered list the operator is reading) survives — the same rule
+        // createWedgeSubmitHandler applies at wedge-submit.ts:77.
+        if (looksLikeScanCode(searchTermRef.current)) clearSearch();
         const loose = kind === "piece" && Number(product.unitsPerBox ?? 0) > 1 ? "1 loose · " : "";
         return { feedback: { kind: "added", text: `Added ${loose}${product.name}` } };
       }
@@ -2014,10 +2403,10 @@ function ProductPicker({
       runWedgeSubmit({
         term: code,
         scan: onScanned,
-        clearSearch: () => setSearch(""),
+        clearSearch,
         showInline: showToast,
       }),
-    clearSearch: () => setSearch(""),
+    clearSearch,
   };
   const wedgeSubmitRef = useRef(
     createWedgeSubmitHandler({
@@ -2027,7 +2416,9 @@ function ProductPicker({
   );
   const handleSearchSubmit = () => {
     if (!onPickAndStay) return Promise.resolve();
-    return wedgeSubmitRef.current(searchTerm);
+    // The REF, never the render-scope term: a burst's second Enter arrives
+    // before the clear has re-rendered, and the stale term would be re-scanned.
+    return wedgeSubmitRef.current(searchTermRef.current);
   };
 
   // Settled exact-match auto-add (no-terminator scanners): a per-scan ATTEMPT
@@ -2048,8 +2439,13 @@ function ProductPicker({
     if (!match) return;
     if (!autoAddAttemptRef.current.shouldAutoAdd(code)) return;
     const kind = scanUnitKind(code, match);
+    // Consume the attempt FIRST (above), then offer: a match parked on an open
+    // ladder claim must not re-park on a later settle. `offer` returns false
+    // when it was parked — the ladder redeems it if and only if it ends
+    // unresolved, so this code adds exactly once (lib/scan-accept-guard.ts).
+    if (!scanGuardRef.current.offer(code, match, kind)) return;
     onPickAndStay(match, kind);
-    setSearch("");
+    clearSearch();
     const loose = kind === "piece" && Number(match.unitsPerBox ?? 0) > 1 ? "1 loose · " : "";
     showToast(`Added ${loose}${match.name}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2077,6 +2473,13 @@ function ProductPicker({
         placeholder="Scan or search products…"
         value={search}
         onChangeText={setSearch}
+        // A hardware WEDGE scanner types into whatever currently holds focus,
+        // so without this the picker opens with nothing focused and the first
+        // wedge scan is dropped on the floor. Gated to the add-and-stay
+        // surface: substitute mode (no `onPickAndStay`) is a one-pick browse,
+        // and a camera-first mount (`initialScanOpen`, the B246 scan FAB) must
+        // not pop the keyboard over the viewfinder.
+        autoFocus={!!onPickAndStay && !initialScanOpen}
         onSubmitEditing={onPickAndStay ? () => void handleSearchSubmit() : undefined}
         trailing={
           <Pressable
@@ -2108,12 +2511,35 @@ function ProductPicker({
           <View style={styles.center}>
             <ActivityIndicator color={ios.brand} />
           </View>
+        ) : idle ? (
+          // Nothing has been asked for yet — so this is NOT "no products
+          // match", which would be a lie about a catalogue that was never
+          // queried. The Browse tap is the deliberate way into the full list.
+          <View style={styles.center}>
+            <Text style={styles.empty}>Scan or search to add items.</Text>
+            <Pressable
+              onPress={() => setBrowsing(true)}
+              style={styles.browseBtn}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Browse the full catalogue"
+            >
+              <Text style={styles.browseBtnText}>Browse catalogue</Text>
+            </Pressable>
+          </View>
         ) : products.length === 0 ? (
           <View style={styles.center}>
             <Text style={styles.empty}>{isSearching ? "Searching…" : "No products match."}</Text>
           </View>
         ) : (
-          <View style={{ paddingHorizontal: 16, gap: 6, paddingBottom: 24 }}>
+          <View
+            style={{
+              paddingHorizontal: 16,
+              gap: 6,
+              // Clear the collapsed drawer handle so the last row stays tappable.
+              paddingBottom: 24 + PICKER_TRAY_HANDLE_HEIGHT,
+            }}
+          >
             {products.map((p) => {
               const upb = Number(p.unitsPerBox ?? 0);
               return (
@@ -2158,9 +2584,17 @@ function ProductPicker({
         />
       ) : null}
 
-      {/* B263 D3: the last scan-added line, with an inline price edit that
-          never leaves the scan surface or tears the camera down. */}
-      {scanOpen && lastAdded ? (
+      {/* B263 D3: the last-added line, with an inline price edit that never
+          leaves the picker or tears the camera down.
+
+          RULINGS R5: the guard is `lastAdded` ALONE — `scanOpen` is the camera
+          -session flag, but `lastScannedId` is set by EVERY add-and-stay path,
+          including a hardware wedge typing into the search box and a typed code
+          plus Enter, neither of which ever opens the camera. Gating on
+          `scanOpen` is exactly what made the price affordance unreachable after
+          those adds. `!trayExpanded` only keeps it from being buried under the
+          open drawer, which shows the same line and its price anyway. */}
+      {lastAdded && !trayExpanded ? (
         <View style={styles.pickerLastAdded} pointerEvents="box-none">
           <View style={styles.pickerLastAddedRow}>
             <Text style={styles.pickerLastAddedText} numberOfLines={1}>
@@ -2262,6 +2696,49 @@ function ProductPicker({
           }
         }}
       />
+
+      {/* The pull-out drawer of everything added. LAST child of the fragment,
+          so it paints over the camera (which is a plain absoluteFill overlay)
+          and under the two sheets above (which portal through <Modal/>). Its
+          expanded height is derived from BarcodeScanner's own viewfinder
+          geometry, so it can never cover the window the operator scans into. */}
+      <View
+        style={[
+          styles.pickerTray,
+          { height: trayExpanded ? pickerTrayExpandedHeight(win) : PICKER_TRAY_HANDLE_HEIGHT },
+        ]}
+      >
+        <Pressable
+          style={styles.pickerTrayHandle}
+          onPress={() => setTrayExpanded((v) => !v)}
+          accessibilityRole="button"
+          accessibilityLabel={trayExpanded ? "Hide added items" : "Show added items"}
+          {...trayPan.panHandlers}
+        >
+          <View style={styles.pickerTrayGrabber} />
+          <Text style={styles.pickerTraySummary} numberOfLines={1}>
+            {trayItemCount} item{trayItemCount === 1 ? "" : "s"} · ${trayTotal.toFixed(2)}
+          </Text>
+          <Ionicons
+            name={trayExpanded ? "chevron-down" : "chevron-up"}
+            size={18}
+            color={ios.label2}
+          />
+        </Pressable>
+        {trayExpanded ? (
+          <ScanTray
+            rows={trayRows}
+            flash={trayFlash}
+            onChangeQty={onTrayChangeQty}
+            onIncrement={onTrayIncrement}
+            onDecrement={onTrayDecrement}
+            onRemove={onTrayRemove}
+            ListEmptyComponent={
+              <Text style={styles.empty}>Nothing added yet — scan or tap a product.</Text>
+            }
+          />
+        ) : null}
+      </View>
     </>
   );
 }
@@ -2490,6 +2967,66 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 10,
   },
+
+  // ── Picker idle state (lazy catalogue) ────────────────────────────────────
+  browseBtn: {
+    marginTop: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: ios.brand,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  browseBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.brand },
+
+  // ── Picker pull-out drawer ────────────────────────────────────────────────
+  pickerTray: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: ios.bgElev,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: ios.separator,
+    overflow: "hidden",
+  },
+  pickerTrayHandle: {
+    height: PICKER_TRAY_HANDLE_HEIGHT,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 16,
+  },
+  pickerTrayGrabber: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: ios.fill3,
+  },
+  pickerTraySummary: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+  },
+
+  // ── Restore banner (staged-edit autosave) ─────────────────────────────────
+  restoreBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginHorizontal: 16,
+    marginTop: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: ios.bgElev,
+  },
+  restoreText: { flex: 1, fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label },
+  restoreAction: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.brand },
 
   // ── Picker "last added" strip (B263 D3) ─────────────────────────────────────
   pickerLastAdded: {

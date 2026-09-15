@@ -3,7 +3,8 @@
  * had inline before the extraction, so adopting it in the editors can't quietly
  * change what a scan does.
  */
-import { makeScanHandler, runWedgeSubmit } from "../lib/scan-ladder";
+import { makeScanHandler, runWedgeSubmit, SCAN_RESOLVE_TIMEOUT_MS } from "../lib/scan-ladder";
+import { createScanAcceptGuard } from "../lib/scan-accept-guard";
 import type { ScanOutcome, ScanFeedback } from "../lib/scan-loop";
 import type { BarcodeResolveResult } from "../lib/barcode-resolve";
 
@@ -26,6 +27,7 @@ interface P {
   sku?: string | null;
   unitSku?: string | null;
   name?: string;
+  isActive?: boolean;
 }
 
 const CASE_CODE = "4000000000019";
@@ -50,7 +52,7 @@ function harness(over: Partial<Parameters<typeof makeScanHandler<P>>[0]> = {}) {
     onCreate: (c: string) => calls.created.push(c),
     ...over,
   };
-  return { scan: makeScanHandler<P>(deps), calls };
+  return { scan: makeScanHandler<P>(deps), calls, deps };
 }
 
 describe("makeScanHandler — local fast path", () => {
@@ -78,6 +80,72 @@ describe("makeScanHandler — local fast path", () => {
     const { scan, calls } = harness();
     expect(await scan("   ")).toBeUndefined();
     expect(calls.accepted).toHaveLength(0);
+  });
+
+  it("REG-MSCAN-M5: a code that hits two DIFFERENT local rows (one's SKU = another's barcode) raises Choose instead of silently accepting the first", async () => {
+    const shared = "4000000000019";
+    const rowA: P = { id: "pA", name: "Row A", barcode: shared };
+    const rowB: P = { id: "pB", name: "Row B", sku: shared };
+    let resolveCalls = 0;
+    const { scan, calls } = harness({
+      products: [rowA, rowB],
+      resolve: async (): Promise<BarcodeResolveResult<P>> => {
+        resolveCalls++;
+        return { notFound: true };
+      },
+    });
+    const out = fb(await scan(shared));
+    // Wrong-today value: .find() silently accepts rowA (whichever comes first),
+    // never consults the server, and never offers a picker.
+    expect(calls.accepted).toHaveLength(0);
+    expect(resolveCalls).toBe(0);
+    expect(out.kind).toBe("error");
+    action(out).onPress();
+    expect(calls.ambiguous).toEqual([shared]);
+  });
+
+  it("REG-MSCAN-M5: a locally-cached row that has since been archived elsewhere is NOT accepted from the local match — falls through to the server rung", async () => {
+    const archived: P = {
+      id: "p1",
+      name: "Discontinued widget",
+      barcode: CASE_CODE,
+      isActive: false,
+    };
+    let resolveCalls = 0;
+    const { scan, calls } = harness({
+      products: [archived],
+      resolve: async (): Promise<BarcodeResolveResult<P>> => {
+        resolveCalls++;
+        return { archived: true, product: archived, source: "barcode" };
+      },
+    });
+    const out = fb(await scan(CASE_CODE));
+    // Wrong-today value: .find() accepts the cached row unconditionally — the
+    // operator adds a line for a product the catalog no longer sells.
+    expect(calls.accepted).toHaveLength(0);
+    expect(resolveCalls).toBe(1);
+    expect(out.text).toContain("Discontinued widget");
+  });
+
+  it("REG-MSCAN-M5: an active row still adds locally when an inactive sibling shares its code — the archived exclusion never hides a legitimate match", async () => {
+    const active: P = { id: "pActive", name: "In stock", barcode: CASE_CODE, isActive: true };
+    const inactiveSibling: P = {
+      id: "pGone",
+      name: "Discontinued",
+      sku: CASE_CODE,
+      isActive: false,
+    };
+    let resolveCalls = 0;
+    const { scan, calls } = harness({
+      products: [active, inactiveSibling],
+      resolve: async (): Promise<BarcodeResolveResult<P>> => {
+        resolveCalls++;
+        return { notFound: true };
+      },
+    });
+    await scan(CASE_CODE);
+    expect(calls.accepted).toEqual([{ id: "pActive", unit: "case" }]);
+    expect(resolveCalls).toBe(0);
   });
 });
 
@@ -162,6 +230,202 @@ describe("makeScanHandler — products getter", () => {
     rows = [boxed];
     await scan(CASE_CODE);
     expect(calls.accepted).toEqual([{ id: "p1", unit: "case" }]);
+  });
+});
+
+/**
+ * `acceptGuard` interleavings (F30 hunt 2026-09-14, scan-guard lane). These
+ * drive the REAL `makeScanHandler`, wired with a real `createScanAcceptGuard`,
+ * and stand in for a screen's settled-search auto-add effect by calling
+ * `guard.offer(...)` directly at the point that effect would fire — the
+ * screens themselves are out of scope for this lane. The whole suite above
+ * must stay green with `acceptGuard` omitted (every harness call there
+ * constructs deps without it), proving the dep is genuinely optional.
+ */
+describe("makeScanHandler — acceptGuard interleavings (REG-scanguard)", () => {
+  const CODE = "4000000000019";
+  const OTHER_CODE = "2000000000012";
+  const remoteHit: P = { id: "p9", name: "Widget", barcode: CODE };
+
+  /** A resolve the test controls the timing of, to model a real in-flight lookup. */
+  function pendingResolve() {
+    let settle!: (v: BarcodeResolveResult<P>) => void;
+    let reject!: (err: unknown) => void;
+    const promise = new Promise<BarcodeResolveResult<P>>((res, rej) => {
+      settle = res;
+      reject = rej;
+    });
+    return { promise, settle, reject };
+  }
+
+  // REG-scanguard-k installs fake timers to reach the ladder's deadline abort.
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it("REG-scanguard-a: one input event yields one add", async () => {
+    const guard = createScanAcceptGuard<P>();
+    const { scan, calls } = harness({ acceptGuard: guard });
+    await scan(CASE_CODE);
+    expect(calls.accepted).toHaveLength(1);
+  });
+
+  it("REG-scanguard-b (anti-regression): two deliberate scans of the SAME code, no delay, both add", async () => {
+    const guard = createScanAcceptGuard<P>();
+    const { scan, calls } = harness({ acceptGuard: guard });
+    await scan(CASE_CODE);
+    await scan(CASE_CODE);
+    expect(calls.accepted).toHaveLength(2);
+  });
+
+  it("REG-scanguard-c: a same-label offer from the settled-search effect parks while the ladder's server resolve is in flight, and the ladder's own accept fires exactly once with no miss feedback", async () => {
+    const guard = createScanAcceptGuard<P>();
+    const { promise, settle } = pendingResolve();
+    const { scan, calls } = harness({
+      products: [], // no local hit — forces the async server leg
+      acceptGuard: guard,
+      resolve: async () => promise,
+    });
+    const scanPromise = scan(CODE);
+    // The settled-search effect fires while this same code's claim is still
+    // open — it must park, never add directly.
+    expect(guard.offer(CODE, remoteHit, "case")).toBe(false);
+    expect(calls.accepted).toHaveLength(0);
+    settle({ product: remoteHit, source: "barcode" });
+    const outcome = await scanPromise;
+    expect(calls.accepted).toEqual([{ id: "p9", unit: "case" }]);
+    expect(outcome).toMatchObject({ feedback: { kind: "added" } });
+  });
+
+  it("REG-scanguard-d: a ladder notFound for a code the settled effect already matched redeems the parked match once, with no 'No product for' pill", async () => {
+    const guard = createScanAcceptGuard<P>();
+    const { promise, settle } = pendingResolve();
+    const { scan, calls } = harness({
+      products: [],
+      acceptGuard: guard,
+      resolve: async () => promise,
+    });
+    const scanPromise = scan(CODE);
+    expect(guard.offer(CODE, remoteHit, "case")).toBe(false);
+    settle({ notFound: true });
+    const outcome = fb(await scanPromise);
+    expect(calls.accepted).toEqual([{ id: "p9", unit: "case" }]);
+    expect(outcome.kind).toBe("added");
+    expect(outcome.text).not.toMatch(/No product for/);
+    expect(outcome.action).toBeUndefined();
+  });
+
+  it("REG-scanguard-e (anti-regression): a settled-effect offer for a DIFFERENT label while a claim is open is accepted immediately, and both eventually add", async () => {
+    const guard = createScanAcceptGuard<P>();
+    const other: P = { id: "p10", name: "Other", barcode: OTHER_CODE };
+    const { promise, settle } = pendingResolve();
+    const { scan, calls, deps } = harness({
+      products: [],
+      acceptGuard: guard,
+      resolve: async () => promise,
+    });
+    const scanPromise = scan(CODE); // opens a claim for CODE
+    // A different physical label must never be blocked by CODE's open claim
+    // — `true` tells the caller (the settled-search effect) to add it itself,
+    // immediately, exactly as it does today.
+    expect(guard.offer(OTHER_CODE, other, "case")).toBe(true);
+    deps.accept(other, "case"); // the effect's own accept call, on the `true`
+    settle({ product: remoteHit, source: "barcode" }); // CODE also resolves
+    await scanPromise;
+    expect(calls.accepted).toEqual([
+      { id: "p10", unit: "case" },
+      { id: "p9", unit: "case" },
+    ]);
+  });
+
+  /**
+   * The four resolutions the ladder passes to `claim.settle(...)` on its
+   * non-miss exits. Each is one word in `scan-ladder.ts`, and swapping that
+   * word silently changes what the operator gets — "refused" → "unresolved" on
+   * the archived branch would ADD a product the server just called archived.
+   * These pin the word by its observable effect: does the parked match get
+   * redeemed, and does its "Added …" outcome replace the ladder's own pill?
+   */
+  const archivedRow: P = { id: "p9", name: "Widget" };
+
+  it("REG-scanguard-i: an archived verdict DISCARDS the parked match — nothing is added and the archived pill stands", async () => {
+    const guard = createScanAcceptGuard<P>();
+    const { promise, settle } = pendingResolve();
+    const { scan, calls } = harness({
+      products: [],
+      acceptGuard: guard,
+      resolve: async () => promise,
+    });
+    const scanPromise = scan(CODE);
+    expect(guard.offer(CODE, remoteHit, "case")).toBe(false);
+    settle({ archived: true, product: archivedRow, source: "barcode" });
+    const outcome = fb(await scanPromise);
+    // A definite "this product exists but is archived" must never be
+    // overridden by a settled-list redeem.
+    expect(calls.accepted).toHaveLength(0);
+    expect(outcome.kind).toBe("error");
+    expect(outcome.text).toBe("Widget is archived — reactivate to sell");
+  });
+
+  it("REG-scanguard-j: an ambiguous substring result REDEEMS the parked exact match once instead of raising a picker", async () => {
+    const guard = createScanAcceptGuard<P>();
+    const { promise, settle } = pendingResolve();
+    const { scan, calls } = harness({
+      products: [],
+      acceptGuard: guard,
+      resolve: async () => promise,
+    });
+    const scanPromise = scan(CODE);
+    expect(guard.offer(CODE, remoteHit, "case")).toBe(false);
+    settle({
+      ambiguous: true,
+      matches: [{ id: "a" }, { id: "b" }],
+      product: { id: "a" },
+      source: "search",
+    });
+    const outcome = fb(await scanPromise);
+    expect(calls.accepted).toEqual([{ id: "p9", unit: "case" }]);
+    expect(outcome.kind).toBe("added");
+    expect(outcome.text).not.toMatch(/products match/);
+    expect(outcome.action).toBeUndefined();
+    expect(calls.ambiguous).toHaveLength(0);
+  });
+
+  it("REG-scanguard-k: a 5s deadline abort REDEEMS the parked match once instead of telling the operator to try again", async () => {
+    jest.useFakeTimers();
+    const guard = createScanAcceptGuard<P>();
+    const { scan, calls } = harness({
+      products: [],
+      acceptGuard: guard,
+      resolve: (_code: string, signal?: AbortSignal) =>
+        new Promise<BarcodeResolveResult<P>>((_res, rej) => {
+          signal?.addEventListener("abort", () => rej(new Error("Aborted")));
+        }),
+    });
+    const scanPromise = scan(CODE);
+    expect(guard.offer(CODE, remoteHit, "case")).toBe(false);
+    jest.advanceTimersByTime(SCAN_RESOLVE_TIMEOUT_MS);
+    const outcome = fb(await scanPromise);
+    expect(calls.accepted).toEqual([{ id: "p9", unit: "case" }]);
+    expect(outcome.kind).toBe("added");
+    expect(outcome.text).not.toMatch(/try again/);
+  });
+
+  it("REG-scanguard-l: a network / 5xx lookup failure REDEEMS the parked match once instead of surfacing the error", async () => {
+    const guard = createScanAcceptGuard<P>();
+    const { promise, reject } = pendingResolve();
+    const { scan, calls } = harness({
+      products: [],
+      acceptGuard: guard,
+      resolve: async () => promise,
+    });
+    const scanPromise = scan(CODE);
+    expect(guard.offer(CODE, remoteHit, "case")).toBe(false);
+    reject({ response: { data: { message: "Gateway timeout" } } });
+    const outcome = fb(await scanPromise);
+    expect(calls.accepted).toEqual([{ id: "p9", unit: "case" }]);
+    expect(outcome.kind).toBe("added");
+    expect(outcome.text).not.toMatch(/Gateway timeout/);
   });
 });
 

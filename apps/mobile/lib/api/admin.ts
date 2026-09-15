@@ -505,19 +505,25 @@ export interface AdminProduct {
 
 export type StockStatusFilter = "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
 
-export function useAdminProducts(params?: {
-  search?: string;
-  page?: number;
-  limit?: number;
-  stockStatus?: StockStatusFilter;
-  isActive?: boolean;
-  /** Regulated-section filter: "any" | "none" | a section id. */
-  section?: string;
-}) {
+export function useAdminProducts(
+  params?: {
+    search?: string;
+    page?: number;
+    limit?: number;
+    stockStatus?: StockStatusFilter;
+    isActive?: boolean;
+    /** Regulated-section filter: "any" | "none" | a section id. */
+    section?: string;
+  },
+  // Mirrors apps/mobile/lib/api/products.ts so a picker can gate its fetch
+  // while closed.
+  options?: { enabled?: boolean },
+) {
   return useQuery<{ data: AdminProduct[]; meta: PaginationMeta }>({
     queryKey: ["admin", "products", params],
     queryFn: () => apiClient.get("/products", { params }).then((r) => r.data),
     staleTime: 60_000,
+    enabled: options?.enabled ?? true,
   });
 }
 
@@ -527,14 +533,17 @@ export function useAdminProducts(params?: {
  * 100 — the "products missing on mobile" report). Key stays under
  * ["admin","products"] so the existing socket invalidation covers it.
  */
-export function useAdminProductsInfinite(params?: {
-  search?: string;
-  stockStatus?: StockStatusFilter;
-  isActive?: boolean;
-  limit?: number;
-  /** Regulated-section filter: "any" | "none" | a section id. */
-  section?: string;
-}) {
+export function useAdminProductsInfinite(
+  params?: {
+    search?: string;
+    stockStatus?: StockStatusFilter;
+    isActive?: boolean;
+    limit?: number;
+    /** Regulated-section filter: "any" | "none" | a section id. */
+    section?: string;
+  },
+  options?: { enabled?: boolean },
+) {
   const limit = params?.limit ?? 50;
   return useInfiniteQuery({
     queryKey: ["admin", "products", "infinite", params],
@@ -550,6 +559,7 @@ export function useAdminProductsInfinite(params?: {
     // the rows blank to a spinner between debounced fetches; callers gate
     // `onEndReached` on `isPlaceholderData` so the stale page can't be paged.
     placeholderData: keepPreviousData,
+    enabled: options?.enabled ?? true,
   });
 }
 

@@ -26,6 +26,8 @@ export interface ScanMatchable {
   barcode?: string | null;
   sku?: string | null;
   unitSku?: string | null;
+  /** Absent/null/undefined is treated as active — only an explicit `false` excludes a row. */
+  isActive?: boolean | null;
 }
 
 export interface ExactScanMatch<T> {
@@ -64,12 +66,16 @@ export function findExactScanMatch<T extends ScanMatchable>(
   if (!trimmed) return { match: null, multiple: false };
   const candidates = new Set(normalizeScanCode(trimmed).map((c) => c.toUpperCase()));
   const hit = (v?: string | null) => !!v && candidates.has(v.toUpperCase());
+  // A row cached with isActive:false (archived elsewhere since it was loaded)
+  // is never a valid local match — the caller must fall through and let the
+  // server rung report the archived verdict, never silently accept a dead row.
   const matches = products.filter(
     (p) =>
-      hit(p.barcode) ||
-      hit(p.sku) ||
-      hit(p.unitSku) ||
-      (p.id ?? "").toLowerCase() === trimmed.toLowerCase(),
+      p.isActive !== false &&
+      (hit(p.barcode) ||
+        hit(p.sku) ||
+        hit(p.unitSku) ||
+        (p.id ?? "").toLowerCase() === trimmed.toLowerCase()),
   );
   if (matches.length === 1) return { match: matches[0], multiple: false };
   return { match: null, multiple: matches.length > 1 };
