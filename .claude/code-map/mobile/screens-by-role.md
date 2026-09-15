@@ -18,8 +18,8 @@
 - tabs `(tabs)/_layout.tsx` — Home, Orders, Catalog, Invoices, More.
 - `(tabs)/home.tsx` (dashboard, recentOrders w/ itemCount fallback, balance), `orders.tsx`,
   `catalog.tsx` (tier pricing; **#225:** `useBuyerProductsInfinite` pages the whole catalog + pull-to-refresh, NavBar heart→`favorites.tsx`/shield→`licenses.tsx` icons replacing the old Alert popup, floating cart total is promo-aware via `priceCart`; **P5-16a:** inline `ProductCard` tile gained image, struck promo price + live-stock label + merch/behavioral chips via `lib/catalog-tile-logic.ts`, OOS Notify-me/Notifying toggle via `useSubscribeStockAlert`/`useUnsubscribeStockAlert` — see "Buyer catalogue v2 + stock alerts" row above), `invoices.tsx`, `more.tsx` (**#225:** Finances/Favorites/Licenses rows added; Unpaid stat now reads `dashboard.stats.unpaidInvoiceCount`, was a phantom field always 0).
-- `profile.tsx`, `orders/[id].tsx` (detail, cancel), `orders/[id]/edit-items.tsx` (DRAFT qty),
-  `orders/cart.tsx` (checkout → `POST /buyer/orders`; **#225:** promo-priced via `priceCart`/`promoRulesFrom`, strikethrough + "Promotion savings"), `invoices/[id].tsx` (record-payment, **Share PDF** when `pdfUrl` present),
+- `profile.tsx`, `orders/[id].tsx` (detail, cancel, **WP2:** per-line `item.notes` under the qty/price line when present), `orders/[id]/edit-items.tsx` (DRAFT qty),
+  `orders/cart.tsx` (checkout → `POST /buyer/orders`; **#225:** promo-priced via `priceCart`/`promoRulesFrom`, strikethrough + "Promotion savings"), `invoices/[id].tsx` (record-payment, **Share PDF** when `pdfUrl` present, **WP2:** per-line `item.notes` in `LineItemRow`),
   `change-password.tsx`, `standing-orders.tsx` (recurring calendar).
 - **#225 new:** `favorites.tsx` (hearted products, add-to-cart/un-favorite), `finances.tsx` (spend/invoice-status summary, `useBuyerAnalytics`, no chart lib), `licenses.tsx` (submit/renew regulated-category licenses) — see "Where to find" rows above.
 - **P5-16c new:** `payments.tsx` (wallet + payment history + statement PDF download) — see "Buyer payments/credits/statement" row above.

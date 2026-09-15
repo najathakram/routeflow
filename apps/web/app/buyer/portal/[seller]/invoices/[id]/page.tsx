@@ -294,7 +294,12 @@ export default function BuyerInvoiceDetailPage() {
               const msrp = itemMsrp(item);
               return (
                 <tr key={item.id} className="hover:bg-surface-raised/50">
-                  <td className="px-4 py-3 text-sm font-medium text-navy">{item.description}</td>
+                  <td className="px-4 py-3 text-sm font-medium text-navy">
+                    {item.description}
+                    {item.notes?.trim() && (
+                      <p className="mt-0.5 text-xs font-normal italic text-navy/60">{item.notes}</p>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-right text-sm text-navy">
                     {Number(item.qty)}
                     {/* BUY_N_GET_M: name the free units, or the reduced subtotal

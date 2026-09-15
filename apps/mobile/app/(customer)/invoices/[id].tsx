@@ -262,6 +262,11 @@ function LineItemRow({ item, last }: { item: BuyerInvoiceItem; last: boolean }) 
           {unit ? ` / ${unit}` : ""}
           {item.discount ? ` − $${Number(item.discount).toFixed(2)} disc` : ""}
         </Text>
+        {item.notes?.trim() ? (
+          <Text style={styles.itemNote} numberOfLines={2}>
+            {item.notes}
+          </Text>
+        ) : null}
         {/* Suggested retail price snapshot — per PIECE, display-only. */}
         {itemMsrp != null ? (
           <Text style={styles.itemMsrp}>MSRP ${Number(itemMsrp).toFixed(2)}/pc</Text>
@@ -349,6 +354,7 @@ const styles = StyleSheet.create({
   },
   itemName: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label },
   itemMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  itemNote: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
   itemMsrp: { fontSize: 11, fontFamily: "Inter_400Regular", color: ios.label3, marginTop: 2 },
   itemFreeLabel: {
     fontSize: 11,

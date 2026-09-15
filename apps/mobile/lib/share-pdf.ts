@@ -11,6 +11,7 @@ import { showToast } from "./toast";
 import { chooseAction } from "./confirm";
 import { classifyShareError } from "./share-error";
 import { createPendingCache } from "./pending-cache";
+import { isDownloadOk } from "./print-logic";
 
 export interface SharePdfOptions {
   /** Fully-qualified (signed) PDF URL returned by `GET /invoices/:id/pdf`. */
@@ -240,7 +241,10 @@ async function sharePdfNative(options: SharePdfOptions): Promise<ShareOutcome> {
   // message/caption parameter, only a file (documented on SharePdfOptions.text).
   try {
     const target = (FileSystem.cacheDirectory ?? "") + sanitizeFilename(filename);
-    const { uri } = await FileSystem.downloadAsync(url, target);
+    const { uri, status } = await FileSystem.downloadAsync(url, target);
+    if (!isDownloadOk(status)) {
+      throw new Error("Couldn't share the PDF.");
+    }
     if (!(await Sharing.isAvailableAsync())) {
       showToast("Sharing isn't available on this device.");
       return "failed";

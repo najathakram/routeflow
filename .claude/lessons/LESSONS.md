@@ -758,6 +758,16 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   integer key/version from the table (`max(col) + 1`), never `Date.now()` — a timestamp overflowed
   `PlanVersion.version` (int4) only on CI's fresh DB, the one environment you cannot run locally.
 
+### L-147 · 2026-09-15 · domain · WP4 print-row state
+
+- **Symptom:** invoices-list Print used one `printingId` for every row; printing row A then
+  clicking row B cleared A's spinner, both buttons racing the same flag.
+- **Root cause:** a single scalar stood in for "this row's action is pending" across a list —
+  wrong once two rows can act at once.
+- **Lesson:** **Per-row async state in a list is keyed per row (`Set`/`Map` of ids), never one
+  scalar — a scalar assumes at most one row is ever in flight.**
+- **Guard:** `invoices/page.tsx` tracks `printingIds: Set<string>`; row `disabled={printingIds.has(inv.id)}`.
+
 ### L-156 · 2026-09-15 · tooling · B420 mistiered proof, no lawful reclassify path
 
 - **Symptom:** B420 was correctly fixed and proven (T1), but its proof cited a standalone node
@@ -775,6 +785,24 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   single-field ledger edit (owner-approved, out of band) rather than fabricate a regression.
 - **Guard:** filed B426 (bugs.mjs needs a lawful `proven`→`already-fixed` reclassify path,
   distinct from `reopen`'s regression semantics) so this doesn't recur as a manual escape hatch.
+
+### L-148 · 2026-09-15 · domain · #756 F1, shared mutation observer
+
+- **Symptom:** an invoices-list row's Print button called ONE shared `useDownloadInvoicePdf()`
+  hook's `.mutate(id, { onSuccess, onError, onSettled })` per row. Printing row A then row B
+  before A settled silently dropped row A's print, its error toast, and left its spinner stuck
+  forever.
+- **Root cause:** TanStack Query v5's `useMutation()` is a single observer per hook instance —
+  concurrent `.mutate()` calls share that state, so per-call callbacks passed to an EARLIER call
+  are overwritten by whichever call fires last, not accumulated.
+- **Lesson:** **A list's per-row action must never share one `useMutation()` hook across
+  concurrent rows via `.mutate(id, { onSuccess, ... })`. Use `mutateAsync(id)` with a LOCAL
+  try/catch/finally at each call site instead — no shared callback state to overwrite.**
+- **Guard:** `invoices/page.tsx` row Print now uses `mutateAsync`
+  (`print-row-concurrency.test.tsx`, two rows resolving out of order). Sibling-sweep grep
+  (unaudited — dozens of hits, most single-instance and safe): `grep -rn '\.mutate([a-zA-Z].*{$'
+apps/web/app --include=*.tsx -A1 | grep -B1 onSuccess` — narrow to `.map()`-rendered LIST rows
+  sharing one hook before assuming any hit is a real instance of this bug.
 
 ### L-157 · 2026-09-15 · domain · #743 review round #3 (F1/F2)
 
