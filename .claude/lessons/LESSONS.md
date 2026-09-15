@@ -761,23 +761,17 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
 
 ### L-154 · 2026-09-15 · domain · PR-3 independent review F1/F4 (moved logic, new entry point)
 
-- **Symptom:** two findings from the same review, same root shape. F1: a handler copied from
-  `ProductPickerSheet.onScanned` (a single-shot sheet) into a `continuous` `BarcodeFab` returned no
-  `ScanOutcome`, so the scanner overlay showed zero feedback per scan — the sheet's own
-  `setScanOpen(false)` had made a fallback toast visible, masking the missing return there. F4: a
-  cost-prefill rule moved verbatim from an existing `onSelect` only prefilled an empty field, so
-  scanning product A then B without clearing the field billed B at A's cost — true of the ORIGINAL
-  tap-search-tap flow too, but a scan FAB turns that into the routine sequence the bug needs.
-- **Root cause:** both fixes reused logic (a handler shape, a field rule) that carried an implicit
-  assumption from its ORIGINAL context (single-shot, slow-to-trigger) into a NEW entry point
-  (continuous, one-tap) that invalidates it — and nothing in either move's review checked whether
-  the new entry point's own USAGE PATTERN (fires repeatedly, fires fast) breaks that assumption.
-- **Lesson:** **Moving or copying logic into a new entry point is not done when it compiles and
-  matches structurally — audit whether the NEW surface's usage pattern (how often it fires, what
-  else is/isn't visible when it does) still holds every assumption the ORIGINAL context relied on
-  implicitly. A rule that was safe because triggering it was slow/rare stops being safe once a
-  faster trigger is added on top of the same code.**
-- **Guard:** `scan-affordance-siblings.test.ts` (`REG-F1`, both continuous screens) and
-  `purchase-receive-logic.test.ts` (`REG-F4`, the scan-A-then-B sequence) pin the fixed behavior;
-  F4's rule is also now an exported, unit-tested function (`nextUnitCost`) instead of only living
-  inline where the next mover could repeat the same miss.
+- **Symptom:** two findings, same root shape. F1: a handler copied from `ProductPickerSheet.onScanned`
+  (single-shot) into a `continuous` `BarcodeFab` returned no `ScanOutcome`, so the scanner showed zero
+  feedback per scan — the sheet's own `setScanOpen(false)` had masked the missing return there. F4: a
+  cost-prefill rule moved verbatim from an `onSelect` only prefilled an EMPTY field, so scanning A then
+  B billed B at A's cost — true of the original tap-search-tap flow too, but the scan FAB makes it routine.
+- **Root cause:** both fixes reused logic that carried an implicit assumption from its ORIGINAL context
+  (single-shot, slow-to-trigger) into a NEW entry point (continuous, one-tap) that invalidates it; neither
+  review checked whether the new surface's usage pattern (fires often, fires fast) still holds it.
+- **Lesson:** **Moving/copying logic into a new entry point is not done once it compiles and matches
+  structurally — audit whether the new surface's usage pattern still holds every assumption the original
+  context relied on implicitly. A rule safe because triggering it was slow/rare stops being safe once a
+  faster trigger sits on the same code.**
+- **Guard:** `scan-affordance-siblings.test.ts` (REG-F1) and `purchase-receive-logic.test.ts` (REG-F4) pin
+  the fix; F4's rule is now an exported, unit-tested `nextUnitCost` instead of living only inline.
