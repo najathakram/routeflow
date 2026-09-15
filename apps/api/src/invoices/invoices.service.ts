@@ -18,7 +18,12 @@ import {
   type CategoryTaxType,
 } from "@routeflow/pricing";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
-import { CONFIRMED_PAYMENT, splitConfirmed, sumConfirmed } from "./payment-predicates";
+import {
+  CONFIRMED_PAYMENT,
+  CREDIT_NOTE_METHOD,
+  splitConfirmed,
+  sumConfirmed,
+} from "./payment-predicates";
 import { PAYABLE, KPI_SUMMARY_EXCLUDED } from "./invoice-status-sets";
 import { clampLimit } from "../common/pagination";
 import { isInternalEmail } from "../common/internal-email";
@@ -3876,7 +3881,12 @@ export class InvoicesService {
         customer: { select: { id: true, businessName: true, contactName: true, email: true } },
         items: true,
         // F03/R8: CONFIRMED (PAID) payments only — feeds totalPaid/balanceDue below.
-        payments: { where: CONFIRMED_PAYMENT },
+        // B421: creditNote relation needed for the customer-facing "Credit
+        // issued — CN-…" line's number.
+        payments: {
+          where: CONFIRMED_PAYMENT,
+          include: { creditNote: { select: { creditNoteNumber: true } } },
+        },
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
@@ -3922,8 +3932,20 @@ export class InvoicesService {
     // F03/R8/T-B102: CONFIRMED (PAID) basis — mirrors the PDF and the invoice
     // detail's own paidAmount/balanceDue math. A DRAFT (unconfirmed) payment must
     // not inflate what the email tells the customer they've already paid.
-    const totalPaid = sumConfirmed(inv.payments);
-    const balanceDue = roundMoney(Math.max(0, Number(inv.total) - totalPaid));
+    // B421: totalPaid is cash-only — a CREDIT_NOTE or ADVANCE application must
+    // never render as "Amount Paid" in an email sent to the customer. balanceDue
+    // stays on the full confirmed total (sumConfirmed) — a credit note or
+    // advance genuinely reduces what's still owed.
+    const { cash: totalPaid, creditApplied, advanceApplied } = splitConfirmed(inv.payments);
+    const balanceDue = roundMoney(Math.max(0, Number(inv.total) - sumConfirmed(inv.payments)));
+    const creditNoteNumbers = Array.from(
+      new Set(
+        (inv.payments ?? [])
+          .filter((p) => p.method === CREDIT_NOTE_METHOD)
+          .map((p) => (p as any).creditNote?.creditNoteNumber)
+          .filter((n): n is string => !!n),
+      ),
+    );
 
     // F03/R9: the SAME tenant setting findOneOrThrow and the PDF read. The email
     // body renders the same item table as the PDF attached to this very message,
@@ -3948,6 +3970,9 @@ export class InvoicesService {
       paymentTermsLabel: inv.paymentTermsLabel ?? undefined,
       total: Number(inv.total),
       totalPaid,
+      creditApplied,
+      advanceApplied,
+      creditNoteNumbers,
       balanceDue,
       items: inv.items.map((it: any) => ({
         description: it.description,
@@ -4089,7 +4114,12 @@ export class InvoicesService {
         customer: { select: { id: true, businessName: true, contactName: true, email: true } },
         items: true,
         // F03/R8: CONFIRMED (PAID) payments only — feeds totalPaid/balanceDue below.
-        payments: { where: CONFIRMED_PAYMENT },
+        // B421: creditNote relation needed for the customer-facing "Credit
+        // issued — CN-…" line's number.
+        payments: {
+          where: CONFIRMED_PAYMENT,
+          include: { creditNote: { select: { creditNoteNumber: true } } },
+        },
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
@@ -4126,9 +4156,17 @@ export class InvoicesService {
 
     // F03/R8/T-B102: CONFIRMED (PAID) basis, same as sendEmail — a reminder must
     // demand the true outstanding balance, never the DRAFT-inflated figure a
-    // non-VOID sum would give.
-    const totalPaid = sumConfirmed(inv.payments);
-    const balanceDue = roundMoney(Math.max(0, Number(inv.total) - totalPaid));
+    // non-VOID sum would give. B421: totalPaid is cash-only, same as sendEmail.
+    const { cash: totalPaid, creditApplied, advanceApplied } = splitConfirmed(inv.payments);
+    const balanceDue = roundMoney(Math.max(0, Number(inv.total) - sumConfirmed(inv.payments)));
+    const creditNoteNumbers = Array.from(
+      new Set(
+        (inv.payments ?? [])
+          .filter((p) => p.method === CREDIT_NOTE_METHOD)
+          .map((p) => (p as any).creditNote?.creditNoteNumber)
+          .filter((n): n is string => !!n),
+      ),
+    );
 
     // F03/R9: see sendEmail's matching comment — the reminder renders the same item
     // table, so it honours the same hide-original-price setting.
@@ -4147,6 +4185,9 @@ export class InvoicesService {
       paymentTermsLabel: inv.paymentTermsLabel ?? undefined,
       total: Number(inv.total),
       totalPaid,
+      creditApplied,
+      advanceApplied,
+      creditNoteNumbers,
       balanceDue,
       items: inv.items.map((it: any) => ({
         description: it.description,

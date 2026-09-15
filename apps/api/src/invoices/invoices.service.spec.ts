@@ -6866,7 +6866,15 @@ describe("InvoicesService", () => {
   // actually passes — in the invoice `include`, in invoicePayment.findMany, or in an
   // aggregate — and the assertions then pin the resulting NUMBER. A `status: { not:
   // "VOID" }` predicate cannot reach those numbers; only PAID-only can.
-  type FakePaymentRow = { id: string; amount: number; status: string };
+  type FakePaymentRow = {
+    id: string;
+    amount: number;
+    status: string;
+    // B421: optional so every pre-existing fixture (status-only) stays valid;
+    // set on rows that need to exercise the method-aware split.
+    method?: string;
+    creditNote?: { creditNoteNumber: string } | null;
+  };
 
   const matchesPaymentStatus = (value: string, cond: any): boolean => {
     if (cond === undefined) return true;
@@ -7067,6 +7075,114 @@ describe("InvoicesService", () => {
           total: 500,
           totalPaid: 300,
           balanceDue: 200,
+          isReminder: true,
+        }),
+      );
+    });
+  });
+
+  // F03 (B421) — a CREDIT_NOTE/ADVANCE application must never reach the
+  // customer's own inbox labeled as cash they paid. This is the client's
+  // exact original complaint, reaching an email sent to their customer.
+  describe("sendEmail / sendReminder split totalPaid/creditApplied/advanceApplied (REG-B421)", () => {
+    // $870 invoice: $232 CASH + $638 CREDIT_NOTE, both CONFIRMED.
+    const CREDIT_ONLY: FakePaymentRow[] = [
+      {
+        id: "pay-credit",
+        amount: 638,
+        status: "PAID",
+        method: "CREDIT_NOTE",
+        creditNote: { creditNoteNumber: "CN-1042" },
+      },
+    ];
+    const CASH_AND_CREDIT: FakePaymentRow[] = [
+      { id: "pay-cash", amount: 232, status: "PAID", method: "CASH" },
+      ...CREDIT_ONLY,
+    ];
+
+    const invoiceFixture870 = () => ({
+      id: "inv-b421",
+      orderId: null,
+      invoiceNumber: "INV-3001",
+      status: InvoiceStatus.PARTIAL,
+      deliveryBatchId: null,
+      total: 870,
+      subtotal: 870,
+      taxAmount: 0,
+      discount: 0,
+      shippingFee: 0,
+      depositPercent: null,
+      depositDueDate: null,
+      paymentTermsLabel: null,
+      issueDate: new Date("2026-01-01"),
+      dueDate: new Date("2026-01-31"),
+      customer: { id: "c-b421", businessName: "Acme Buyer", email: "buyer@example.com" },
+      items: [{ description: "Widget", qty: 1, unitPrice: 870, subtotal: 870, msrp: null }],
+    });
+
+    const setUpFixture = (rows: FakePaymentRow[]) => {
+      stubPaymentReads(rows);
+      prisma.invoice.findUnique.mockImplementation(async (args: any) => ({
+        ...invoiceFixture870(),
+        payments: filterPayments(rows, args?.include?.payments?.where),
+      }));
+      prisma.invoice.update.mockResolvedValue({
+        id: "inv-b421",
+        invoiceNumber: "INV-3001",
+        customerId: "c-b421",
+        orderId: null,
+        status: InvoiceStatus.PARTIAL,
+        total: 870,
+        dueDate: null,
+      });
+      mockEmailService.sendInvoice.mockClear();
+      mockEmailService.isEmailConfigured.mockResolvedValue(true);
+      mockEmailService.sendInvoice.mockResolvedValue({ delivered: true, transport: "resend" });
+    };
+
+    it("REG-B421: a credit-only invoice's sendEmail payload has totalPaid 0, creditApplied 638, balanceDue 232 (full basis)", async () => {
+      setUpFixture(CREDIT_ONLY);
+
+      await service.sendEmail("inv-b421");
+
+      expect(mockEmailService.sendInvoice).toHaveBeenCalledWith(
+        expect.objectContaining({
+          totalPaid: 0,
+          creditApplied: 638,
+          advanceApplied: 0,
+          creditNoteNumbers: ["CN-1042"],
+          balanceDue: 232,
+        }),
+      );
+    });
+
+    it("REG-B421: a cash + credit invoice's sendEmail payload carries both figures", async () => {
+      setUpFixture(CASH_AND_CREDIT);
+
+      await service.sendEmail("inv-b421");
+
+      expect(mockEmailService.sendInvoice).toHaveBeenCalledWith(
+        expect.objectContaining({
+          totalPaid: 232,
+          creditApplied: 638,
+          advanceApplied: 0,
+          balanceDue: 0,
+        }),
+      );
+    });
+
+    it("REG-B421: sendReminder splits the same way as sendEmail", async () => {
+      setUpFixture(CREDIT_ONLY);
+
+      await service.sendReminder("inv-b421");
+
+      expect(mockEmailService.sendInvoice).toHaveBeenCalledWith(
+        expect.objectContaining({
+          totalPaid: 0,
+          creditApplied: 638,
+          advanceApplied: 0,
+          creditNoteNumbers: ["CN-1042"],
+          balanceDue: 232,
           isReminder: true,
         }),
       );
