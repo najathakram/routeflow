@@ -8,6 +8,16 @@ newest first**. This file replaces the old habit of prepending each session's no
 below, and set `_meta.json` `"notes"` to that same note plus the pointer to this file —
 never accumulate history in `"notes"`.
 
+- **2026-09-15 — `bootstrap-cross-cutting.md` area-cap split (docs-only, no code change)** — it
+  had grown to 99,955 B against the 100,000 B cap. Split verbatim (byte-diffed identical to the
+  pre-split body) into six parts under `api/bootstrap-cross-cutting/`: `schema-integrity-and-
+backfills.md`, `ci-gates-and-db-test-lane.md`, `calendar-and-advisory-locks.md`,
+  `repo-truth-specs.md`, `bootstrap-and-money-pricing.md`, `prisma-schema-and-seeds.md` — see
+  that file's own TOC table for what each covers. `bootstrap-cross-cutting.md` is now a 3.4 KB
+  TOC. Also fixed one pre-existing stale INDEX.md row (data-integrity forensics had already
+  moved to `root-tooling-campaign-infrastructure.md`) and repointed two live cross-refs in
+  `feature-modules-1.md`/`-4.md` at the correct new part. `mappedSha` left as-is.
+
 - **2026-09-14 — B408 terminal Stripe status (`fix/B408-terminal-stripe-status`, master
   `9ab91f7a`)** — `subscription-mutation.service.ts`: the READ_ONLY cancel branch tested
   `status === "canceled"` alone, so every OTHER terminal Stripe status fell to the generic branch
