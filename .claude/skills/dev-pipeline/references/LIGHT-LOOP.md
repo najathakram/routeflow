@@ -1,7 +1,7 @@
 # Light loop — `light-loop.js`, a bounded-work Workflow script
 
 Owner ruling 2026-09-10 (skills-build wave 2): the light loop is now a real Workflow script,
-`.claude/skills/dev-pipeline/scripts/light-loop.js`, not a manual S1–S5 checklist. It shares
+`~/.claude/skills/dev-pipeline/scripts/light-loop.js`, not a manual S1–S5 checklist. It shares
 pipeline.js's PROMPT CONVENTIONS — a byte-identical RUN PREFIX, a `PHASE: <alias> · LABEL:
 <slug>` tag on every agent call, per-phase Haiku checkpoints — so `session-usage.mjs` and the
 ledger need no new parsing. It is **not** a `mode:'light-loop'` fork of the pipeline.js engine
@@ -10,6 +10,11 @@ both still link this file.
 
 Design: `routeflow/.claude/pipeline/skills-design-2026-09-10.md` §3. Ruling:
 `skills-upgrade-ruling-2026-09-10.md` C1. Brief: `skills-build-brief-2026-09-10.md` §3.
+
+> Note (2026-09-12 task-loop rebuild): `pipeline.js` was rebuilt on the superpowers task-loop shape
+> (`references/ENGINE-NOTES.md`'s `## 2026-09-12 — task-loop rebuild`); `light-loop.js` is untouched and
+> stays the brief-driven BOUNDED variant — one brief, no `tasks[]` plan, a `maxFixRounds` cap — for small
+> bounded work, while `pipeline.js` is the full plan-driven engine.
 
 ## Invoking it
 
@@ -47,25 +52,25 @@ spansSkillAndRepo:false, maxFixRounds:2, fixPlanOverride }` (`*` required).
   still dirty at the cap ends `clean:false` with `remainingFindings` populated — it never
   silently attempts a round beyond the cap, and the owner decides from there. A `BLOCK` review
   verdict does **not** bypass this pipeline (owner ruling 2026-09-11, F7) — it is a hard stop
-  _into_ Fix brief/plan, with the same round cap as any other dirty run.
+  *into* Fix brief/plan, with the same round cap as any other dirty run.
 - `fixPlanOverride` — optional. When the calling session itself IS Fable and has already ruled
   the fix plan inline (no agent hop needed), pass that ruling here; `runFixPlan` returns it
   verbatim and never spawns the fix-plan agent for that round.
 
 ## The phases (alias = the `PHASE_ORDER` name emitted — the ledger needs no change)
 
-| #   | Phase     | alias                                                         | model · effort                                                                    | contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| --- | --------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0   | Preflight | Baseline                                                      | Haiku 4.5 `low`                                                                   | host-contention check, ≤3 retries; a still-contended host makes the run abort **before any further agent call of any kind** — `{aborted:'host-contention', phaseReport:[]}`                                                                                                                                                                                                                                                                                                     |
-| 1   | Ground    | Baseline                                                      | Haiku 4.5 `low`                                                                   | every file/script/sha the brief names must exist; a fail blocks Build and closes the run out immediately (with a blocker finding), never a silent skip                                                                                                                                                                                                                                                                                                                          |
-| 2   | Build     | Implement                                                     | Sonnet 5 `medium` (`high` for a HIGH-risk package)                                | per package, disjoint files; scoped gates; a deviation from the brief is a finding, never an unlogged improvisation                                                                                                                                                                                                                                                                                                                                                             |
-| 3   | Pack      | folded into Gate & Review (first pass) / Final pass (refresh) | Sonnet 5 `low`, read-only                                                         | `review-pack.md` ≤ 40 KB: spec excerpt + acceptance criteria **first** (ruling A1), then diff hunks, then call sites, then lesson ids — truncation drops the lowest-priority section first, never the spec/diff                                                                                                                                                                                                                                                                 |
-| 4   | Review    | Gate & Review                                                 | Opus 5 `high`, ≤ 12 tool calls                                                    | refute-first correctness lens; **two parallel lenses** (engine/scripts, docs/repo) when `spansSkillAndRepo` — see below; every finding is `plausible` until execution-verified (ruling A2), never self-confirmed                                                                                                                                                                                                                                                                |
-| 5   | Fix brief | folded into Fix                                               | Sonnet 5 `low`                                                                    | packages open findings for the planner; proposes no design itself                                                                                                                                                                                                                                                                                                                                                                                                               |
-| 6   | Fix plan  | Fix                                                           | Fable 5.1 `high`; Opus 5 `xhigh` fallback once                                    | brief text only, **zero repo access**; decides fix / dispute / defer per finding, writes the design + invariant + `testPin` + `executorTier` for every "fix"; the brief itself is capped at 8192 bytes with a `[truncated at 8 KB — packager must tighten]` marker (F5, mirrors pipeline.js's `capFableBrief()`), built once and reused verbatim on the Opus fallback — the fallback call stays **exempt** from the 12-tool-call cap below (F8), since it reads brief text only |
-| 7   | Execute   | Fix                                                           | Sonnet 5 `low` (mechanical) / `medium` (designed-low) / Opus 5 `high` (HIGH-risk) | implements exactly the planner's design; a design that does not fit the code returns `status:'blocked'`, never an improvised substitute; disjoint files per executor; an **Opus-tier** executor carries the same 12-tool-call budget clause as Review/Re-check (F8)                                                                                                                                                                                                             |
-| 8   | Re-check  | Final pass                                                    | Sonnet 5 `low` pack refresh → **one** Opus 5 `high` re-check                      | scoped to only the fixes just applied — no new lenses, no re-reading files outside this round; the Opus reader carries the 12-tool-call budget clause (F8); loops back to Fix brief when dirty, capped at `maxFixRounds` — including when the round was entered on a `BLOCK` verdict (F7)                                                                                                                                                                                       |
-| 9   | Result    | folded into Final pass                                        | Haiku 4.5 `low`                                                                   | writes `<runDir>/result.json` in the shape `closeout.mjs`/`pipeline-ledger.mjs buildRow()` reads: `mode:'light-loop'`, `scale`, `runId`, `startedAt`, `endedAt`, `fixRounds` (also `rounds`, kept for back-compat), `clean`, `remainingFindings[]`, `confirmedByPhase{}`, `phaseReport[]`, `checkpoints[]`                                                                                                                                                                      |
+| # | Phase | alias | model · effort | contract |
+|---|---|---|---|---|
+| 0 | Preflight | Baseline | Haiku 4.5 `low` | host-contention check, ≤3 retries; a still-contended host makes the run abort **before any further agent call of any kind** — `{aborted:'host-contention', phaseReport:[]}` |
+| 1 | Ground | Baseline | Haiku 4.5 `low` | every file/script/sha the brief names must exist; a fail blocks Build and closes the run out immediately (with a blocker finding), never a silent skip |
+| 2 | Build | Implement | Sonnet 5 `medium` (`high` for a HIGH-risk package) | per package, disjoint files; scoped gates; a deviation from the brief is a finding, never an unlogged improvisation |
+| 3 | Pack | folded into Gate & Review (first pass) / Final pass (refresh) | Sonnet 5 `low`, read-only | `review-pack.md` ≤ 40 KB: spec excerpt + acceptance criteria **first** (ruling A1), then diff hunks, then call sites, then lesson ids — truncation drops the lowest-priority section first, never the spec/diff |
+| 4 | Review | Gate & Review | Opus 5 `high`, ≤ 12 tool calls | refute-first correctness lens; **two parallel lenses** (engine/scripts, docs/repo) when `spansSkillAndRepo` — see below; every finding is `plausible` until execution-verified (ruling A2), never self-confirmed |
+| 5 | Fix brief | folded into Fix | Sonnet 5 `low` | packages open findings for the planner; proposes no design itself |
+| 6 | Fix plan | Fix | Fable 5.1 `high`; Opus 5 `xhigh` fallback once | brief text only, **zero repo access**; decides fix / dispute / defer per finding, writes the design + invariant + `testPin` + `executorTier` for every "fix"; the brief itself is capped at 8192 bytes with a `[truncated at 8 KB — packager must tighten]` marker (F5, mirrors pipeline.js's `capFableBrief()`), built once and reused verbatim on the Opus fallback — the fallback call stays **exempt** from the 12-tool-call cap below (F8), since it reads brief text only |
+| 7 | Execute | Fix | Sonnet 5 `low` (mechanical) / `medium` (designed-low) / Opus 5 `high` (HIGH-risk) | implements exactly the planner's design; a design that does not fit the code returns `status:'blocked'`, never an improvised substitute; disjoint files per executor; an **Opus-tier** executor carries the same 12-tool-call budget clause as Review/Re-check (F8) |
+| 8 | Re-check | Final pass | Sonnet 5 `low` pack refresh → **one** Opus 5 `high` re-check | scoped to only the fixes just applied — no new lenses, no re-reading files outside this round; the Opus reader carries the 12-tool-call budget clause (F8); loops back to Fix brief when dirty, capped at `maxFixRounds` — including when the round was entered on a `BLOCK` verdict (F7) |
+| 9 | Result | folded into Final pass | Haiku 4.5 `low` | writes `<runDir>/result.json` in the shape `closeout.mjs`/`pipeline-ledger.mjs buildRow()` reads: `mode:'light-loop'`, `scale`, `runId`, `startedAt`, `endedAt`, `fixRounds` (also `rounds`, kept for back-compat), `clean`, `remainingFindings[]`, `confirmedByPhase{}`, `phaseReport[]`, `checkpoints[]` |
 
 **Alias rule.** Every `agent()` call's `PHASE:` tag is a real `PHASE_ORDER` name (copied
 verbatim from `pipeline-ledger.mjs`: Baseline, Author tests, Red gate, Implement, Gate &
@@ -121,7 +126,7 @@ real calls land warm instead.
 
 ## Close-out
 
-`node .claude/skills/dev-pipeline/scripts/closeout.mjs <runDir>` — **no `--light` flag
+`node ~/.claude/skills/dev-pipeline/scripts/closeout.mjs <runDir>` — **no `--light` flag
 needed**, because `light-loop.js` writes a real `result.json` before it returns (Result, phase
 9 above). `--light` remains available for a light loop that lost its agents mid-run and never
 reached Result — `closeout.mjs` auto-triggers the same synthesis whenever `<runDir>` has no
@@ -154,7 +159,7 @@ cannot have them. Canonical text: [LEARNING-CLAUSE](LEARNING-CLAUSE.md).
 
 ## Its check
 
-`node .claude/skills/dev-pipeline/scripts/light-loop-dry-run.mjs` — zero API calls, stubs
+`node ~/.claude/skills/dev-pipeline/scripts/light-loop-dry-run.mjs` — zero API calls, stubs
 `agent()`/`parallel()`/`pipeline()` exactly as `dry-run.mjs` does for pipeline.js. Run it after
 ANY edit to `light-loop.js`; `node --check light-loop.js` proves syntax, the dry-run proves the
 branches: PHASE/LABEL tagging, PHASE_ORDER-only aliases, checkpoint count, isolation

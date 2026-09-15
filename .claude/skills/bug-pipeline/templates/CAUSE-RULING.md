@@ -15,16 +15,18 @@
 
 ## 3. Regression tests
 
-| T#  | REG token | Fails TODAY on (exact wrong value) | Passes after fix on | Notes |
-| --- | --------- | ---------------------------------- | ------------------- | ----- |
+| T# | REG token | Fails TODAY on (exact wrong value) | Passes after fix on | Notes |
+|---|---|---|---|---|
 
 Pins (no REG token, outside the red gate): <behavior frozen, file>
 
-## 4. Blast radius (`radiusFiles`)
+## 4. Blast radius (`radius:` per-`fix`-task `[before, after]` pair)
 
-- <files review depth belongs to — the fix's files, their specs, direct callers>
+- <the context-line counts `review-pack.mjs --radius before,after` shows around each call-site hit of the fix's
+  changed/exported symbols — NOT a file list; the script auto-discovers the radius files itself from those
+  call sites>
 
-## 5. Sibling pattern (`siblingPatterns`)
+## 5. Sibling pattern (engine-level `siblingPatterns`, read once for the whole run)
 
 - `<regex>` — <what a hit means> · or: **none plausible** (recorded; the sweep is skipped)
 
@@ -35,5 +37,8 @@ Pins (no REG token, outside the red gate): <behavior frozen, file>
 
 ## 7. Probe plan
 
-| File | `revertFix` | REG test that must go red |
-| ---- | ----------- | ------------------------- |
+- Each row below becomes a `revert-probe {file, test}` task in the build plan, run sequentially after the
+  fix's wave (never in parallel) and checksum-verified on restore by one shared `checksum:after` agent.
+
+| File | Needs a `revert-probe` task? | REG test that must go red (`t.test`) |
+|---|---|---|

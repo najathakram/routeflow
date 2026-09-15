@@ -9,7 +9,7 @@ in), [`ARCHITECT-QUESTIONS.md`](ARCHITECT-QUESTIONS.md) gate **G5**, and
 
 ## Rule 0 — the repo outranks this file
 
-This playbook describes a _method_, not a stack. Before proposing a single test, read what
+This playbook describes a *method*, not a stack. Before proposing a single test, read what
 the target repo already does and match it: runner, file layout, naming, fixture style,
 assertion library, CI entry points. A test in the wrong shape is a test nobody maintains.
 
@@ -21,7 +21,7 @@ grep -iA5 'test' CLAUDE.md CONTRIBUTING.md 2>/dev/null
 git log --oneline -20 -- '*spec*' '*test*'  # the conventions people actually follow
 ```
 
-Read the repo's _prohibitions_ too. Many repos ban a second test runner, snapshot tests, or a
+Read the repo's *prohibitions* too. Many repos ban a second test runner, snapshot tests, or a
 particular assertion style. Introducing one is a review failure, not a contribution.
 
 ---
@@ -34,8 +34,8 @@ requirement → example → executable test → VERIFIED RED → implement → g
 
 1. **Requirement** — a numbered `R#` from [`../templates/SPEC.md`](../templates/SPEC.md).
    Not a task; an observable behavior with a priority.
-2. **Example** — a concrete Given/When/Then with real values. _Given a boxed line of 3 boxes
-   at 12 units/box and $1.05/unit, When the line total is computed, Then it is $37.80._
+2. **Example** — a concrete Given/When/Then with real values. *Given a boxed line of 3 boxes
+   at 12 units/box and $1.05/unit, When the line total is computed, Then it is $37.80.*
    Vague requirements die here, which is the point: if you cannot write the example, the
    requirement is not yet a requirement — go back to S2.
 3. **Executable test** — the example, mechanically. Same name, same numbers, tagged with the
@@ -47,7 +47,7 @@ requirement → example → executable test → VERIFIED RED → implement → g
 7. **Refactor** — with the suite as the safety net, tidy the shape. Behavior is now frozen by
    tests; only structure moves.
 
-**Why not write the tests afterwards.** A test written after the code is written _against_
+**Why not write the tests afterwards.** A test written after the code is written *against*
 the code: it copies the implementation's own output as the expected value, mirrors its
 structure, mocks whatever it happens to call, and passes on its first run — which is the only
 run in which it will ever be observed doing anything. It documents what the code does, not
@@ -63,7 +63,7 @@ never produce: proof that this test can fail when the behavior is wrong.
 > **A test that has never failed proves nothing.** It is an unexercised alarm. Nobody knows
 > it is wired to anything.
 
-Run the new tests _before_ any implementation exists, and inspect the failure — do not settle
+Run the new tests *before* any implementation exists, and inspect the failure — do not settle
 for a non-zero exit code.
 
 **A RED that counts** fails on the **assertion**: the test ran, reached the check, and the
@@ -79,13 +79,13 @@ observed value differed from the expected value.
 **A RED that does not count** — the test never reached its assertion, so nothing about that
 assertion has been proven:
 
-| Symptom                                                       | What it actually means                                           |
-| ------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Symptom | What it actually means |
+|---|---|
 | `Cannot find module` / `is not defined` / `is not a function` | Wiring error. Stub the symbol so the call resolves, then re-run. |
-| `SyntaxError`, transform or parse error                       | The test is broken, not the code.                                |
-| Timeout with no assertion output                              | Fixture or environment failure.                                  |
-| `0 tests found` / `No tests matched`                          | Nothing ran. The most common fake red.                           |
-| Suite-level crash before the case                             | You measured the harness, not the behavior.                      |
+| `SyntaxError`, transform or parse error | The test is broken, not the code. |
+| Timeout with no assertion output | Fixture or environment failure. |
+| `0 tests found` / `No tests matched` | Nothing ran. The most common fake red. |
+| Suite-level crash before the case | You measured the harness, not the behavior. |
 
 **A new test that passes before the code exists is a hard stop.** There are exactly three
 explanations, each with its own action:
@@ -93,15 +93,17 @@ explanations, each with its own action:
 1. **Vacuous** — it asserts nothing that can be false (`expect(result).toBeDefined()`,
    `expect(fn).not.toThrow()`, an assertion on a mock's own return value). Rewrite it.
 2. **Already shipped** — the behavior exists. Good news, but then it is not a requirement of
-   _this_ change: mark `R#` already-satisfied, cite the pre-existing test, drop the duplicate.
+   *this* change: mark `R#` already-satisfied, cite the pre-existing test, drop the duplicate.
 3. **Wrong target** — it exercises a different code path than the one you are about to
    change. Fix the target.
 
 **Pipeline mechanics.** The `Red gate` phase runs `args.redGate.commands`, scoped to the new
-tests — never the whole suite, since a full-suite red says nothing about _which_ test is
+tests — never the whole suite, since a full-suite red says nothing about *which* test is
 wired. It requires: every new test fails, each on an assertion, none pass. One
 test-remediation round may fix vacuous or broken tests. Implementation does not start until
-the gate is honest.
+the gate is honest. (2026-09-12 task-loop rebuild: this check now runs per task, scoped to that
+task's own `tests[]` in `args.tasks[]` — there is no separate top-level `args.redGate.commands`
+field; the method — behavioral RED, one remediation round — is unchanged.)
 
 ```bash
 # scope the run to the new specs and read the failure text, not just the exit code
@@ -110,12 +112,12 @@ npx playwright test e2e/new-flow.spec.ts --reporter=list
 ```
 
 **Sanity-check the gate itself.** A mistyped red-gate command matches zero tests and "fails"
-perfectly. Confirm the runner reports the expected _number_ of failing tests.
+perfectly. Confirm the runner reports the expected *number* of failing tests.
 
 **A stub-undefined red is the weakest honest red.** Stubbing a missing symbol makes the call
 resolve, but a gate where every test fails identically with `received undefined` has proven the
 wiring, not the oracles — each expected value must still be behavioral (§3), so each test fails on
-_its own_ number. The pipeline allows exactly ONE remediation round: if the second attempt is still
+*its own* number. The pipeline allows exactly ONE remediation round: if the second attempt is still
 not properly red, stop rather than weakening the tests. The `(red-gate)` blocker stands, the
 mutation probe stops skipping LOW-risk targets and runs on **every** declared target (§9), and that
 probe plus one hand-run probe on a sibling behaviour becomes the run's only test-quality evidence —
@@ -141,12 +143,12 @@ report it as a substitution, never as a passed red gate.
 - **No `.skip`, no `.only`, no commented-out assertions.** A skipped test is a lie in the
   report.
 - **Every test carries its `R#`** in the title or a tag, so the coverage matrix is walkable.
-- **Test the negative.** The thing that must _not_ happen — the unauthorized caller gets 403,
+- **Test the negative.** The thing that must *not* happen — the unauthorized caller gets 403,
   the duplicate submit creates one record, invalid input is rejected — is where bugs live.
 
 ### The oracle
 
-The **oracle** is what makes the expected value _known_ independently of the code:
+The **oracle** is what makes the expected value *known* independently of the code:
 
 - hand-computed from the spec (money, quantities, dates — do the arithmetic yourself);
 - a worked example the requester supplied;
@@ -161,14 +163,14 @@ you have a snapshot of a bug. Say so in the test plan and fix the requirement.
 
 ## 4. Test levels — pick the lowest that can fail for the right reason
 
-| Level           | Proves                                               | Cost    | Confidence          | Use when                                                           |
-| --------------- | ---------------------------------------------------- | ------- | ------------------- | ------------------------------------------------------------------ |
-| **Unit**        | one function or module's behavior                    | lowest  | narrow              | pure logic, branches, error paths, edge values                     |
-| **Property**    | an invariant over generated inputs                   | low     | broad per invariant | money, rounding, quantities, dates, permissions                    |
-| **Contract**    | the wire shape between producer and consumers        | low     | high per interface  | one API serving several clients                                    |
-| **Integration** | real collaborators wired together (DB, router, auth) | medium  | high on wiring      | queries, transactions, guards, migrations, serialization           |
-| **E2E**         | a user achieves the goal in the real UI              | highest | end-to-end          | the one or two flows that must never break                         |
-| **Manual only** | judgment (visual taste, hardware, print)             | n/a     | n/a                 | genuinely unautomatable — record as a checklist, never as "tested" |
+| Level | Proves | Cost | Confidence | Use when |
+|---|---|---|---|---|
+| **Unit** | one function or module's behavior | lowest | narrow | pure logic, branches, error paths, edge values |
+| **Property** | an invariant over generated inputs | low | broad per invariant | money, rounding, quantities, dates, permissions |
+| **Contract** | the wire shape between producer and consumers | low | high per interface | one API serving several clients |
+| **Integration** | real collaborators wired together (DB, router, auth) | medium | high on wiring | queries, transactions, guards, migrations, serialization |
+| **E2E** | a user achieves the goal in the real UI | highest | end-to-end | the one or two flows that must never break |
+| **Manual only** | judgment (visual taste, hardware, print) | n/a | n/a | genuinely unautomatable — record as a checklist, never as "tested" |
 
 **Rule: prefer the lowest level that can fail for the right reason.** "Right reason" is the
 constraint that stops this collapsing into "unit-test everything". A tenancy-scoping bug
@@ -191,15 +193,15 @@ boundary is untestable. Fix the boundary.
 **Test depth follows blast radius, not code volume.** A 12-line money function outranks a
 600-line settings screen.
 
-Rank each requirement by _worst credible consequence_ × _likelihood of getting it wrong_:
+Rank each requirement by *worst credible consequence* × *likelihood of getting it wrong*:
 
-| Blast radius                                                                                            | Depth demanded                                                                |
-| ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Blast radius | Depth demanded |
+|---|---|
 | Money wrong, data destroyed, cross-tenant leak, message sent to a real customer, irreversible migration | unit + property + integration + negative/authorization tests + mutation probe |
-| Auth, permissions, PII, anything a regulator asks about                                                 | unit + integration + an explicit negative test per role                       |
-| Core daily workflow                                                                                     | unit + integration + one e2e happy path                                       |
-| Secondary feature                                                                                       | unit + integration                                                            |
-| Cosmetic or internal tooling                                                                            | unit, or a smoke check                                                        |
+| Auth, permissions, PII, anything a regulator asks about | unit + integration + an explicit negative test per role |
+| Core daily workflow | unit + integration + one e2e happy path |
+| Secondary feature | unit + integration |
+| Cosmetic or internal tooling | unit, or a smoke check |
 
 If the change touches money, auth, tenancy, PII, migrations, or anything irreversible,
 escalate the pipeline `scale` to `major` and add property tests. See G4 in
@@ -218,7 +220,7 @@ Reach for it when a rule is universal:
 - rounding is stable and idempotent — `round(round(x)) === round(x)`;
 - a total equals the sum of its parts, to the cent, for any set of parts;
 - splitting then recombining a quantity conserves it (no unit lost to rollover);
-- a permission check never _widens_ — no input makes a lesser role see more;
+- a permission check never *widens* — no input makes a lesser role see more;
 - encode/decode and serialize/parse round-trip to the original;
 - ordering is total and stable regardless of input order.
 
@@ -235,7 +237,7 @@ as a permanent example-based regression test. That is the bug, minimized, for fr
 ## 7. Contract testing — one API, several clients
 
 When a single API serves multiple consumers (a web app and a mobile app, an internal service
-and a partner), the wire shape _is_ the contract, and it breaks silently:
+and a partner), the wire shape *is* the contract, and it breaks silently:
 
 - **One source of truth for the shape** — a shared DTO/type package, or a schema the server
   validates against and the clients import. Two hand-maintained copies of a response type
@@ -261,7 +263,7 @@ Before restructuring code that lacks tests:
 
 1. **Capture today's behavior** across a representative input set, including the ugly cases
    the code clearly handles on purpose. Record the outputs.
-2. **Pin them** as assertions. These are _characterization_ tests: they assert what the code
+2. **Pin them** as assertions. These are *characterization* tests: they assert what the code
    does, not what it should do. Say so in a comment — they are not requirements.
 3. **Refactor** until green.
 4. **Then** fix any behavior the characterization tests exposed as wrong — as a separate
@@ -276,7 +278,7 @@ fields that matter.
 
 ## 9. Mutation testing — the oracle for test quality
 
-Coverage says a line was _executed_. It does not say a failure would have been _caught_.
+Coverage says a line was *executed*. It does not say a failure would have been *caught*.
 Mutation testing answers the real question: **if I break the code, does a test go red?**
 
 **The real tool for JS/TS is `Stryker`** (`@stryker-mutator/core`). It mutates the source —
@@ -287,7 +289,10 @@ code is a bug in the test suite.
 
 **The pipeline's lightweight substitute — the mutation probe.** Full mutation runs are too
 slow for a change-sized loop, so `args.mutationProbe.targets` runs one deliberate defect per
-target, **sequentially**:
+target, **sequentially**: (2026-09-12 task-loop rebuild: this is now a `revert-probe` task type
+`{file, test}` inside `args.tasks[]`, run strictly sequentially across probes with one separate
+checksum agent verifying every restore — not a standalone `args.mutationProbe.targets` array;
+the probe procedure below is unchanged.)
 
 1. **Back up OUTSIDE the repo, by file copy.** Copy the file into the **OS temp directory**
    (Git Bash: `"$TMPDIR"` when set, else `/tmp`; a Windows shell: `%TEMP%`) under a unique
@@ -316,7 +321,7 @@ target, **sequentially**:
    probe proves nothing unless the mutated run fails DIFFERENTLY from the unmutated one.** A test
    already failing for any reason — a harness gap, an undefined mock, a missing fixture — fails
    identically with and without the mutation, its real assertions never evaluate, and "caught" becomes
-   indistinguishable from "blind". Compare the failure _message_, not just the exit code. Measured:
+   indistinguishable from "blind". Compare the failure *message*, not just the exit code. Measured:
    a probe reported `allCaught: false` because the mocked client lacked a model the code touched, so
    both runs died on the same `TypeError` before reaching the behavioural assertion — the tests were
    never weak, the harness was. **Run it again after any change to the shared mocks or fixtures.**
@@ -328,12 +333,12 @@ target, **sequentially**:
    - **GREEN, skipped, or a collection/compile error** → not caught. A green test does not
      check this behavior at all; that is a finding — the test is decorative. Fix the test,
      then re-probe.
-     ⚠️ Each probe is a **scoped** run, so where the repo wires a reporter to a gate artifact
-     (§10) the probes leave that artifact holding only the probe's own tests. Finish the run
-     with the FULL suite before reading any gate that consumes it — a gate read straight after
-     a probe reports a red the probes themselves manufactured. **Then confirm the artifact was
-     actually rewritten** (check its mtime): a cached task replay prints a green summary without
-     executing the runner, so the reporter never fires and the stale file survives (§10).
+   ⚠️ Each probe is a **scoped** run, so where the repo wires a reporter to a gate artifact
+   (§10) the probes leave that artifact holding only the probe's own tests. Finish the run
+   with the FULL suite before reading any gate that consumes it — a gate read straight after
+   a probe reports a red the probes themselves manufactured. **Then confirm the artifact was
+   actually rewritten** (check its mtime): a cached task replay prints a green summary without
+   executing the runner, so the reporter never fires and the stale file survives (§10).
 4. **Restore by copying the temp backup back over the file.** Never `mv`, which destroys the
    backup before you have proven the restore, leaving no recovery source in exactly the case
    that needs one. Never any git command, for the reason in step 1.
@@ -367,7 +372,6 @@ target, **sequentially**:
 
    A probe reporting `restored: true` next to a digest mismatch is precisely the case this
    bracket exists to catch.
-
 7. **Never run probes in parallel** with each other or with anything that reads the file —
    each probe leaves a deliberately broken file on disk for the length of its test run — and
    never leave a backup behind, with one exception: when the compare in step 5 fails, **leave
@@ -377,8 +381,8 @@ target, **sequentially**:
 A probe that cannot be restored cleanly is a stop-the-line event: report it loudly instead of
 continuing.
 
-**When the probe is spent.** The red gate already proves each _new_ test can fail for the
-right reason; the probe proves the suite catches a _regression_. That evidence overlaps, so
+**When the probe is spent.** The red gate already proves each *new* test can fail for the
+right reason; the probe proves the suite catches a *regression*. That evidence overlaps, so
 the probe is spent only where it is not redundant: on HIGH-risk files (money, auth, tenancy,
 migrations, PII, payments), and on every target when the red gate did not run. Each skip is
 logged and recorded per target. **A skipped probe is not a passed probe** — a run where every
@@ -398,8 +402,8 @@ couple the test to markup. Add a stable test id **only** where semantics genuine
 address the element (a canvas, a chart node, an unlabeled container).
 
 ```ts
-await page.getByRole("button", { name: "Save" }).click();
-await expect(page.getByRole("alert")).toHaveText(/saved/i);
+await page.getByRole('button', { name: 'Save' }).click();
+await expect(page.getByRole('alert')).toHaveText(/saved/i);
 ```
 
 **Web-first assertions.** `await expect(locator).toBeVisible()` auto-retries until timeout.
@@ -409,11 +413,10 @@ That retry is the entire anti-flake mechanism.
   short.
 - **Never check-then-act on the same element:**
   ```ts
-  if (await row.isVisible()) await row.click(); // ✗ the row can move in between
-  await expect(row).toBeVisible();
-  await row.click(); // ✓ assertion first, act after
+  if (await row.isVisible()) await row.click();          // ✗ the row can move in between
+  await expect(row).toBeVisible(); await row.click();    // ✓ assertion first, act after
   ```
-  Assert the _stable end state_ — a row count, a total, a status chip — before interacting
+  Assert the *stable end state* — a row count, a total, a status chip — before interacting
   with a list that just changed. Acting on a freshly added row before the list settles is a
   classic intermittent failure.
 - Assert values that prove the behavior (a total, a status, the row still there after
@@ -491,17 +494,17 @@ screenshot of the running app, never by reading the source.**
 page. Use the browser MCP tools (`mcp__Claude_Browser__*` — confirm the exact server prefix in
 the available tool list; it varies by install):
 
-| Need                                      | Tool                    |
-| ----------------------------------------- | ----------------------- |
-| Open the page, or go back                 | `navigate`              |
-| Structure, roles, labels, element refs    | `read_page`             |
-| Click, type, scroll, screenshot, zoom     | `computer`              |
-| JS errors and warnings                    | `read_console_messages` |
-| Failing requests, status codes, bodies    | `read_network_requests` |
-| Mobile / tablet / desktop, light and dark | `resize_window`         |
+| Need | Tool |
+|---|---|
+| Open the page, or go back | `navigate` |
+| Structure, roles, labels, element refs | `read_page` |
+| Click, type, scroll, screenshot, zoom | `computer` |
+| JS errors and warnings | `read_console_messages` |
+| Failing requests, status codes, bodies | `read_network_requests` |
+| Mobile / tablet / desktop, light and dark | `resize_window` |
 
 Same discipline: assert an observable end state, record what you saw, reset any emulated
-viewport when done. If the repo _should_ have UI regression tests, say so in the close-out
+viewport when done. If the repo *should* have UI regression tests, say so in the close-out
 report — an MCP session is verification, not a suite.
 
 ---
@@ -518,10 +521,10 @@ data and migration checks, mutation runs on high-risk modules, dependency audits
 ### The baseline gate — prove the command before you read its failure
 
 > **A verification command must be proven to pass on the UNMODIFIED tree before its failure
-> can be read as a defect.** A command that fails on a clean tree is a _broken command_, not
+> can be read as a defect.** A command that fails on a clean tree is a *broken command*, not
 > a finding about the change.
 
-Run the whole verify set against the tree exactly as you find it, _before_ anything is
+Run the whole verify set against the tree exactly as you find it, *before* anything is
 written, and record which commands already fail. Skipping this produces the most confident
 kind of false blocker: a gate reports a failure, a reviewer reads it as a defect, and a fixer
 edits working code until a wrong command goes green.
@@ -530,7 +533,7 @@ edits working code until a wrong command goes green.
 statement`. The script body legitimately ends in a top-level `return` — the runtime wraps
 that body in an async function, so the construct is legal where it actually runs and illegal
 only when the file is handed to `node` as a standalone module. The identical failure occurs
-on the untouched file, which is the tell: the _check_ is wrong, not the script. The correct
+on the untouched file, which is the tell: the *check* is wrong, not the script. The correct
 check wraps the body first (`export const meta` reduced to `const meta`, the whole file
 wrapped in `(async () => { ... })()`), then runs `node --check` on the wrapper.
 
@@ -557,7 +560,7 @@ same commands no longer become `(gate)` blockers demanding a code fix.
 
 **A cached green is not evidence that a test ran.** Cache-aware task runners hash their inputs
 and, on a hit, **replay the previous run's log verbatim** — including its cheerful "all tests
-passed" summary. A printed test summary therefore proves nothing about _this_ run.
+passed" summary. A printed test summary therefore proves nothing about *this* run.
 
 - Trust only the runner's own report of **work actually done**: cache hit/miss counters,
   executed-task counts, job duration. A test job that "passed" in two seconds executed
@@ -579,7 +582,7 @@ retried into green; a quarantined test has an owner and a date.
 ## 12. What NOT to test
 
 - **The framework** — that the router routes, the ORM saves, the validation decorator
-  validates. Test _your configuration_ of it only where a mistake is plausible and costly.
+  validates. Test *your configuration* of it only where a mistake is plausible and costly.
 - **Third-party code.** Test your adapter and your error handling at the boundary, not the
   library's internals.
 - **Getters, setters, constants, pure pass-throughs, generated code.** No behavior, no test.
@@ -587,7 +590,7 @@ retried into green; a quarantined test has an owner and a date.
   code changes shape, that is coupling, not coverage.
 - **Private functions directly.** Test them through the public surface; if that is
   impossible, the boundary is wrong.
-- **Mocks asserting on themselves** — `expect(mockFn).toHaveBeenCalled()` as the _only_
+- **Mocks asserting on themselves** — `expect(mockFn).toHaveBeenCalled()` as the *only*
   assertion proves you called your own stub.
 - **Coverage percentage as a goal.** It is a smoke detector, not a score: 100% coverage of
   vacuous assertions kills zero mutants.
@@ -598,20 +601,20 @@ retried into green; a quarantined test has an owner and a date.
 
 Mandatory means the test plan contains it, or states in writing why it does not.
 
-| Change                     | Unit                                  | Property               | Contract        | Integration                          | E2E                     | Extra gate                                                                                               |
-| -------------------------- | ------------------------------------- | ---------------------- | --------------- | ------------------------------------ | ----------------------- | -------------------------------------------------------------------------------------------------------- |
-| **Pure logic / algorithm** | ✅                                    | if an invariant exists | —               | —                                    | —                       | boundary and error inputs                                                                                |
-| **Money math**             | ✅                                    | ✅                     | —               | ✅ on persisted values               | —                       | hand-computed oracle; mutation probe; rounding at every write                                            |
-| **API endpoint**           | ✅ handler logic                      | —                      | ✅ if >1 client | ✅                                   | only on a critical path | authorization + scoping negative tests; error shapes                                                     |
-| **DB migration**           | —                                     | —                      | —               | ✅ up, and down if reversible        | —                       | run against realistic existing data; back-compat for the currently deployed code; no unscoped bulk write |
-| **UI screen**              | ✅ view logic/formatters              | —                      | —               | ✅ data fetch/mutation               | ✅ primary flow         | every state (empty/loading/error/unauthorized); a11y; each viewport; screenshot evidence                 |
-| **Refactor**               | existing suite stays green, unchanged | —                      | —               | —                                    | —                       | characterization tests **first** (§8); zero behavior change; the diff edits no assertions                |
-| **Bug fix**                | ✅                                    | —                      | —               | at the level the bug lived           | —                       | see below                                                                                                |
-| **Config / flag / infra**  | —                                     | —                      | —               | ✅ where a wrong value is detectable | —                       | who can actually grant the flag; deploy-day behavior for existing users; rollback                        |
+| Change | Unit | Property | Contract | Integration | E2E | Extra gate |
+|---|---|---|---|---|---|---|
+| **Pure logic / algorithm** | ✅ | if an invariant exists | — | — | — | boundary and error inputs |
+| **Money math** | ✅ | ✅ | — | ✅ on persisted values | — | hand-computed oracle; mutation probe; rounding at every write |
+| **API endpoint** | ✅ handler logic | — | ✅ if >1 client | ✅ | only on a critical path | authorization + scoping negative tests; error shapes |
+| **DB migration** | — | — | — | ✅ up, and down if reversible | — | run against realistic existing data; back-compat for the currently deployed code; no unscoped bulk write |
+| **UI screen** | ✅ view logic/formatters | — | — | ✅ data fetch/mutation | ✅ primary flow | every state (empty/loading/error/unauthorized); a11y; each viewport; screenshot evidence |
+| **Refactor** | existing suite stays green, unchanged | — | — | — | — | characterization tests **first** (§8); zero behavior change; the diff edits no assertions |
+| **Bug fix** | ✅ | — | — | at the level the bug lived | — | see below |
+| **Config / flag / infra** | — | — | — | ✅ where a wrong value is detectable | — | who can actually grant the flag; deploy-day behavior for existing users; rollback |
 
 **Bug fix — the rule, plainly: first write the test that reproduces the bug, and watch it
 fail.** Reproduce it at the lowest level that exhibits it, with the reporter's actual data.
-That failing test _is_ the bug report, and its red run is the proof you understood the defect
+That failing test *is* the bug report, and its red run is the proof you understood the defect
 rather than one near it. Only then fix the code. If you cannot make a test fail, you have not
 reproduced the bug — do not ship a fix for a defect you cannot demonstrate. Keep the test
 forever; it is the regression guard, and it carries the bug's ID.
