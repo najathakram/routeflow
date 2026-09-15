@@ -22,6 +22,31 @@
  */
 export const CONFIRMED_PAYMENT = { status: "PAID" } as const;
 
+/**
+ * B421 — the two `InvoicePayment.method` values that are credit APPLICATIONS,
+ * not cash-like tender: a CREDIT_NOTE application never represents money the
+ * tenant received (the credit note itself is the artifact; nothing is banked
+ * when it's applied). An ADVANCE application draws down a pre-existing
+ * `AdvancePayment` balance the customer funded earlier — from THIS invoice's
+ * point of view it is also not new payment, which is why `statement.service.ts`
+ * groups both together as "credits" for a per-customer statement.
+ *
+ * That symmetry does NOT extend to tenant-wide cash reporting: bookkeeping
+ * never reads the `AdvancePayment` model at all (confirmed by inspection — no
+ * `advancePayment` query anywhere in bookkeeping.service.ts), so an ADVANCE
+ * application's `InvoicePayment` row is the ONLY point in the entire system
+ * where that already-real cash is ever recorded. Excluding it from cash-flow
+ * the same way CREDIT_NOTE is excluded would make real, previously-received
+ * cash disappear rather than just fix its timing — see `splitConfirmed`'s own
+ * doc for which bucket each consumer should use.
+ */
+export const CREDIT_NOTE_METHOD = "CREDIT_NOTE";
+export const ADVANCE_METHOD = "ADVANCE";
+const CREDIT_METHODS = [CREDIT_NOTE_METHOD, ADVANCE_METHOD] as const;
+
+/** Prisma `method: { notIn: [...] }` filter for a cash-like-only aggregate. */
+export const CASH_METHOD_FILTER = { notIn: [...CREDIT_METHODS] };
+
 export interface ConfirmablePaymentRow {
   // `unknown` (not `number | string`) so a Prisma row's `amount: Decimal` — the
   // actual runtime type on every InvoicePayment read in this codebase — is
@@ -30,6 +55,7 @@ export interface ConfirmablePaymentRow {
   // already does.
   amount: unknown;
   status: string;
+  method: string;
 }
 
 /**
@@ -38,9 +64,44 @@ export interface ConfirmablePaymentRow {
  * included on a given query without an extra guard at every call site.
  */
 export function sumConfirmed(
-  payments: ReadonlyArray<ConfirmablePaymentRow> | null | undefined,
+  payments: ReadonlyArray<Pick<ConfirmablePaymentRow, "amount" | "status">> | null | undefined,
 ): number {
   return (payments ?? [])
     .filter((p) => p.status === CONFIRMED_PAYMENT.status)
     .reduce((sum, p) => sum + Number(p.amount), 0);
+}
+
+export interface SplitConfirmedResult {
+  /** Cash-like tender only (CASH/CHECK/ACH/CREDIT_CARD/ZELLE/OTHER). */
+  cash: number;
+  /** CREDIT_NOTE applications — never real cash, at this invoice or ever. */
+  creditApplied: number;
+  /** ADVANCE applications — real cash, but received earlier than this row's
+   *  `paidAt` (see the module doc above); callers computing tenant-wide cash
+   *  received (not this invoice's own balance) must add this to `cash`. */
+  advanceApplied: number;
+}
+
+/**
+ * Splits the SAME confirmed-payment array `sumConfirmed` sums into cash vs.
+ * credit-note vs. advance buckets, so every consumer derives its figures from
+ * ONE call over ONE filtered array instead of re-filtering independently
+ * (B421 — a CREDIT_NOTE application rendering/counting as "Paid" cash was
+ * exactly that kind of re-filtering drift). `cash + creditApplied +
+ * advanceApplied === sumConfirmed(payments)` always.
+ */
+export function splitConfirmed(
+  payments: ReadonlyArray<ConfirmablePaymentRow> | null | undefined,
+): SplitConfirmedResult {
+  const confirmed = (payments ?? []).filter((p) => p.status === CONFIRMED_PAYMENT.status);
+  let cash = 0;
+  let creditApplied = 0;
+  let advanceApplied = 0;
+  for (const p of confirmed) {
+    const amount = Number(p.amount);
+    if (p.method === CREDIT_NOTE_METHOD) creditApplied += amount;
+    else if (p.method === ADVANCE_METHOD) advanceApplied += amount;
+    else cash += amount;
+  }
+  return { cash, creditApplied, advanceApplied };
 }

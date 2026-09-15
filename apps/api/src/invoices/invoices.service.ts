@@ -18,7 +18,7 @@ import {
   type CategoryTaxType,
 } from "@routeflow/pricing";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
-import { CONFIRMED_PAYMENT, sumConfirmed } from "./payment-predicates";
+import { CONFIRMED_PAYMENT, splitConfirmed, sumConfirmed } from "./payment-predicates";
 import { PAYABLE, KPI_SUMMARY_EXCLUDED } from "./invoice-status-sets";
 import { clampLimit } from "../common/pagination";
 import { isInternalEmail } from "../common/internal-email";
@@ -3070,20 +3070,39 @@ export class InvoicesService {
       // confirmed yet) must not be folded into the list's own balance-due number
       // any more than a VOID (bounced check, P5-12) one is — both must match
       // findOne's paidAmount/balanceDue.
-      const paidAmount = sumConfirmed(inv.payments);
+      //
+      // B421: paidAmount is now CASH-ONLY (a CREDIT_NOTE application is not
+      // money the tenant received, and rendered/counted as "Paid" it looked
+      // like one) — creditApplied/advanceApplied are separate fields. The
+      // customer's OBLIGATION is still reduced by any confirmed method, so
+      // balanceDue and the deposit check both use the full confirmed total.
+      const { cash: paidAmount, creditApplied, advanceApplied } = splitConfirmed(inv.payments);
+      const totalConfirmed = paidAmount + creditApplied + advanceApplied;
       const isSettled =
         inv.status === InvoiceStatus.PAID ||
         inv.status === InvoiceStatus.VOID ||
         inv.status === InvoiceStatus.WRITTEN_OFF;
-      const balanceDue = isSettled ? 0 : Math.max(0, Number(inv.total) - paidAmount);
+      const balanceDue = isSettled ? 0 : Math.max(0, Number(inv.total) - totalConfirmed);
       const dueDateIso = inv.dueDate
         ? (inv.dueDate instanceof Date ? inv.dueDate : new Date(inv.dueDate))
             .toISOString()
             .slice(0, 10)
         : null;
       const isOverdue = !isSettled && balanceDue > 0 && dueDateIso != null && dueDateIso < todayIso;
-      const { depositAmount, depositOverdue } = this.computeDepositFields(inv as any, paidAmount);
-      return { ...inv, balanceDue, paidAmount, isOverdue, depositAmount, depositOverdue };
+      const { depositAmount, depositOverdue } = this.computeDepositFields(
+        inv as any,
+        totalConfirmed,
+      );
+      return {
+        ...inv,
+        balanceDue,
+        paidAmount,
+        creditApplied,
+        advanceApplied,
+        isOverdue,
+        depositAmount,
+        depositOverdue,
+      };
     });
 
     return {
@@ -3301,12 +3320,17 @@ export class InvoicesService {
     // F03/R1: CONFIRMED (PAID) payments only. VOID payments (manually voided OR
     // bounced checks) must not count toward the paid amount — and neither must an
     // unconfirmed DRAFT one; every other paid-sum in this file matches.
-    const paidAmount = sumConfirmed(inv.payments);
+    //
+    // B421: paidAmount is CASH-ONLY; creditApplied/advanceApplied are separate
+    // — see findAll's matching comment for why balanceDue/deposit still use
+    // the full confirmed total.
+    const { cash: paidAmount, creditApplied, advanceApplied } = splitConfirmed(inv.payments);
+    const totalConfirmed = paidAmount + creditApplied + advanceApplied;
     const isSettled =
       inv.status === InvoiceStatus.PAID ||
       inv.status === InvoiceStatus.VOID ||
       inv.status === InvoiceStatus.WRITTEN_OFF;
-    const balanceDue = isSettled ? 0 : Math.max(0, Number(inv.total) - paidAmount);
+    const balanceDue = isSettled ? 0 : Math.max(0, Number(inv.total) - totalConfirmed);
     // RF-202: date-string comparison — invoice due today is NOT overdue.
     const dueDateIso = inv.dueDate
       ? (inv.dueDate instanceof Date ? inv.dueDate : new Date(inv.dueDate))
@@ -3318,7 +3342,7 @@ export class InvoicesService {
       balanceDue > 0 &&
       dueDateIso != null &&
       dueDateIso < new Date().toISOString().slice(0, 10);
-    const { depositAmount, depositOverdue } = this.computeDepositFields(inv as any, paidAmount);
+    const { depositAmount, depositOverdue } = this.computeDepositFields(inv as any, totalConfirmed);
     // Rides the invoice payload (not /settings/invoice, which is operator-only)
     // so CUSTOMER viewers of this same document honor the tenant's
     // hide-original-price preference too.
@@ -3327,6 +3351,8 @@ export class InvoicesService {
       ...inv,
       balanceDue,
       paidAmount,
+      creditApplied,
+      advanceApplied,
       isOverdue,
       depositAmount,
       depositOverdue,
