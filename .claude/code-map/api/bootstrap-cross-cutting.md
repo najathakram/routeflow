@@ -358,19 +358,16 @@ private …` immediately followed by a `gh repo view --json visibility` read-bac
   Specs: `analytics.service.calendar.spec.ts` (DST fixture), `calendar-date.pins.spec.ts` (pinned
   UTC-midnight/round-trip behaviour).
 - **`src/common/db-locks.ts` (PR-2, `imp-02-order-merge-advisory-lock`, 2026-09-03; per-family
-  pools PR-2b, 2026-09-04; `idempotency` family F5 2026-09-15)** — exports
+  pools PR-2b, 2026-09-04)** — exports
   `withAdvisoryLock<T>({family,key,mode:"wait"|"try",waitMs?}, fn): Promise<LockResult<T>>` where
   `LockResult<T> = {acquired:true,value:T}|{acquired:false}`, plus `LOCK_FAMILIES`
-  (`["order-merge","cron","billing","idempotency"] as const`) / `LockFamily`, `LockTimeoutError`/
+  (`["order-merge","cron","billing"] as const`) / `LockFamily`, `LockTimeoutError`/
   `LockUnavailableError` and a test-only `_resetLockPoolForTests()` (ends+clears ALL pools).
   Cross-process critical
   section on a Postgres advisory lock (`pg_advisory_lock(hashtext(family), hashtext(key))`), held
   on DEDICATED `pg.Pool`s it owns itself — **one pool per family, sized per family** (`cron`
-  `max: 12`, `order-merge` `max: 8`, **`billing` `max: 4` (B342, 2026-09-13)** — short,
-  request-path checkouts like `order-merge`'s, but a far rarer settings action than per-order
-  volume — **`idempotency` `max: 6` (F5, PR-2 review, 2026-09-15)** — same short/request-path
-  shape, sized a little under `order-merge` for `ReturnsService#create`'s lower-volume caller (a
-  driver return submission) without starving a plausible burst): a cron winner pins a slot for
+  `max: 12`, `order-merge` `max: 8`, **`billing` `max: 4` (B342, 2026-09-13)**): a cron winner
+  pins a slot for
   its whole tick (≤ 7
   concurrently at the monthly peak, plus a straggling hourly sweep), which out of one shared
   `max: 8` pool left merges 1–3 slots and 503s. ALL THREE pools set `keepAlive: true` /
@@ -378,7 +375,13 @@ private …` immediately followed by a `gh repo view --json visibility` read-bac
   cron tick's work runs on the Prisma pool), so an intermediate idle-reap would end the session,
   release the advisory lock mid-tick and let another replica win an election for a running job.
   `withAdvisoryLock` throws `TypeError` for a family outside `LOCK_FAMILIES`
-  BEFORE connecting, so a typo cannot stand up a fifth pool. **`billing`'s two call sites
+  BEFORE connecting, so a typo cannot stand up a fourth pool. **RETIRED (F5 round 2 / N1,
+  independent review round 2, PR-2, 2026-09-15):** a fourth `"idempotency"` family briefly lived
+  here (round 1, `max: 6`) backing `ReturnsService#create`'s check-then-create-then-save guard —
+  the review judged a dedicated 6-connection pool an unjustified extra failure surface; it now
+  takes a TRANSACTION-scoped `pg_advisory_xact_lock` on its own transaction's connection instead
+  (`common/idempotency.service.ts#acquireLock` — see the Returns row below), needing no pool
+  here at all. **`billing`'s two call sites
   (B342 admin path; F1 2026-09-13 tenant path):** `addon.service.ts enableAddon()` (admin grant)
   and `subscription-mutation.service.ts enableAddon()` (tenant self-serve, `POST
 /billing/addons/:sku/enable`) each wrap their existing-check → row-write window in ONE lock,
@@ -404,15 +407,6 @@ private …` immediately followed by a `gh repo view --json visibility` read-bac
   Request-path post-commit callers (the sibling sweep / post-create auto-consolidation) pass
   `{ lockMode: "try" }` instead — a contended lock is skipped with a warning, never blocks the
   request. `LockTimeoutError` → 409 `MERGE_IN_PROGRESS`, `LockUnavailableError` → 503.
-  **`idempotency` family's one call site (F5, PR-2 review, 2026-09-15):** `returns.service.ts`
-  `create()` wraps its whole check→order-lookup→transaction→save sequence in one lock, family
-  `"idempotency"`, key = `IdempotencyService#hashFor(idempotencyKey, tenantId, scopeSuffix)`
-  (the exact hash `check`/`save` hash internally, so the lock can never drift from the row it
-  protects), `mode:"wait"` (default `waitMs`). Only entered when the caller sent an
-  `Idempotency-Key` header AND `IdempotencyService` is injected — the no-header fail-open bypass
-  never touches this lock. `LockTimeoutError`/`LockUnavailableError` → 503
-  `RETURN_SUBMIT_LOCK_UNAVAILABLE` (its own code — NOT `MERGE_IN_PROGRESS`/`LOCK_UNAVAILABLE`,
-  which name the `order-merge` family specifically).
 - **`src/common/cron-lock.ts` (PR-2b, `imp-02b-cron-leader-lock`, 2026-09-04)** — exports
   `LeaderCron(cronTime, name, options?): MethodDecorator`, `CRON_LOCK_FAMILY = "cron"` and the
   `LeaderCronOptions` type (a DISTRIBUTIVE `Omit<CronOptions,"name">` — a plain `Omit` collapses

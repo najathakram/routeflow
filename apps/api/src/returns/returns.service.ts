@@ -5,7 +5,6 @@ import {
   Logger,
   NotFoundException,
   Optional,
-  ServiceUnavailableException,
 } from "@nestjs/common";
 
 const VALID_RETURN_REASONS = [
@@ -19,14 +18,6 @@ const VALID_RETURN_REASONS = [
 // Reasons where the returned goods are physically unsellable never restock by
 // default; the rest go back into stock unless the caller says otherwise.
 const NO_RESTOCK_REASONS = new Set(["DAMAGED", "QUALITY_ISSUE"]);
-
-// F5 (independent review, PR-2): the `code` a submitter sees when the `idempotency` advisory
-// lock (common/db-locks.ts) times out or has no connection available. Deliberately its OWN code
-// — never orders/merge-contention.ts's `MERGE_IN_PROGRESS`/`LOCK_UNAVAILABLE` — those name the
-// customer order-merge lock family specifically and would mislabel a returns-submission retry.
-const RETURN_SUBMIT_LOCK_UNAVAILABLE = "RETURN_SUBMIT_LOCK_UNAVAILABLE";
-const RETURN_SUBMIT_LOCK_UNAVAILABLE_MESSAGE =
-  "This return submission is already being processed — retry shortly.";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
@@ -38,12 +29,6 @@ import type { ProcessRefundDto } from "./dto/process-refund.dto";
 import { CREDIT_SOURCE_EXCLUDED } from "../invoices/invoice-status-sets";
 import { IdempotencyService } from "../common/idempotency.service";
 import { NumberingService } from "../import/numbering.service";
-import {
-  withAdvisoryLock,
-  LockTimeoutError,
-  LockUnavailableError,
-  type LockResult,
-} from "../common/db-locks";
 
 /** The shape `create` returns — reused to type a replayed (idempotent) result. */
 type CreatedReturn = Prisma.ReturnGetPayload<{ include: { items: true } }>;
@@ -110,7 +95,7 @@ export class ReturnsService {
       throw new BadRequestException("At least one return item is required");
     }
 
-    // F1 (independent review, PR-2): the scope used to be tenant+orderId alone, so two
+    // F1 (independent review round 1, PR-2): the scope used to be tenant+orderId alone, so two
     // DIFFERENT submitters (two drivers, or a driver and a customer-portal user) reusing the
     // same orderId+client-generated key collided onto one submitter's cached result — scope now
     // also includes the submitting user. The per-ATTEMPT half of F1 (the SAME submitter's own
@@ -121,188 +106,157 @@ export class ReturnsService {
     const idemScopeSuffix = `returns.create:${userId}:${dto.orderId}`;
     const tenantId = this.prisma.getTenantId();
 
-    // The check → order-lookup → role-check → transaction → save sequence, shared by the
-    // no-header path (called directly below, unlocked — the existing fail-open bypass is
-    // unchanged: no Idempotency-Key means this never touches IdempotencyService or the lock) and
-    // the F5-locked path. `replayed: true` only on a cache hit — the caller uses it to skip the
-    // `return.created` emit, exactly as the old "return cached" early-return did.
-    const runCreate = async () => {
+    const order = await this.prisma.forTenant().order.findUnique({
+      where: { id: dto.orderId },
+      include: {
+        customer: { select: { id: true, businessName: true } },
+        lineItems: { select: { productId: true, qty: true, unitPrice: true } },
+        invoices: { select: { id: true } },
+      },
+    });
+    if (!order) throw new NotFoundException("Order not found");
+    if (order.status !== "DELIVERED")
+      throw new BadRequestException("Returns can only be submitted for delivered orders");
+
+    // Customers can only create returns for their own orders
+    if (userRole === "CUSTOMER") {
+      const customer = await this.prisma.forTenant().customer.findFirst({ where: { userId } });
+      if (!customer || order.customerId !== customer.id) {
+        throw new ForbiddenException("You can only submit returns for your own orders");
+      }
+    }
+
+    // Cumulative-qty validation and the create must share one transaction: two
+    // concurrent requests previously read the same snapshot, both passed the
+    // remaining-qty check, and both committed — over-returning the order and
+    // (once each was refunded) paying the customer twice for the same goods.
+    const { ret, replayed } = await this.prisma.tenantTransaction(async (tx) => {
+      // F5 round 2 (N1, independent review round 2, PR-2): check-then-create-then-save is a
+      // check-then-act race — two concurrent replays of the same key both miss the check
+      // (neither has saved yet) and both create a return. Round 1 closed this with a SEPARATE
+      // session-level advisory lock on its own dedicated connection pool; the review judged that
+      // pool an unjustified extra failure surface. `acquireLock` instead takes a
+      // TRANSACTION-scoped `pg_advisory_xact_lock` on THIS transaction's own connection — no
+      // extra connection, auto-released at commit/rollback, and (being savepoint-guarded inside
+      // IdempotencyService) never a new way for this transaction to fail. `check`/`save` run on
+      // this same connection too, so the return row and its idempotency-key cache entry commit
+      // or roll back TOGETHER — see idempotency.service.ts's class docstring for the full
+      // savepoint reasoning.
       if (idempotencyKey && this.idempotency) {
+        const lockHash = this.idempotency.hashFor(idempotencyKey, tenantId, idemScopeSuffix);
+        await this.idempotency.acquireLock(lockHash, tx);
         const cached = await this.idempotency.check<CreatedReturn>(
           idempotencyKey,
           tenantId,
           idemScopeSuffix,
+          tx,
         );
-        if (cached) return { ret: cached, order: null as null, replayed: true as const };
+        if (cached) return { ret: cached, replayed: true as const };
       }
 
-      const order = await this.prisma.forTenant().order.findUnique({
-        where: { id: dto.orderId },
-        include: {
-          customer: { select: { id: true, businessName: true } },
-          lineItems: { select: { productId: true, qty: true, unitPrice: true } },
-          invoices: { select: { id: true } },
-        },
+      // The transaction ALONE does not close the race: tenantTransaction runs at
+      // Postgres' default READ COMMITTED, so two concurrent creates would each
+      // take a snapshot without the other's uncommitted insert, both pass the
+      // remaining-qty check, and both commit. Lock the order row first so they
+      // serialize here — mirrors the FOR UPDATE idiom in invoices.service.ts
+      // recordPayment() and routes.service.ts dispatch.
+      await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${dto.orderId} FOR UPDATE`;
+
+      // Query existing returns for this order to prevent cumulative over-return
+      const existingReturns = await tx.return.findMany({
+        where: { orderId: dto.orderId, status: { notIn: ["REJECTED", "CANCELLED"] } },
+        include: { items: { select: { productId: true, qty: true } } },
       });
-      if (!order) throw new NotFoundException("Order not found");
-      if (order.status !== "DELIVERED")
-        throw new BadRequestException("Returns can only be submitted for delivered orders");
 
-      // Customers can only create returns for their own orders
-      if (userRole === "CUSTOMER") {
-        const customer = await this.prisma.forTenant().customer.findFirst({ where: { userId } });
-        if (!customer || order.customerId !== customer.id) {
-          throw new ForbiddenException("You can only submit returns for your own orders");
+      // Build a map of already-returned quantities per product
+      const alreadyReturned: Record<string, number> = {};
+      for (const r of existingReturns) {
+        for (const ri of r.items) {
+          alreadyReturned[ri.productId] = (alreadyReturned[ri.productId] ?? 0) + Number(ri.qty);
         }
       }
 
-      // Cumulative-qty validation and the create must share one transaction: two
-      // concurrent requests previously read the same snapshot, both passed the
-      // remaining-qty check, and both committed — over-returning the order and
-      // (once each was refunded) paying the customer twice for the same goods.
-      const ret = await this.prisma.tenantTransaction(async (tx) => {
-        // The transaction ALONE does not close the race: tenantTransaction runs at
-        // Postgres' default READ COMMITTED, so two concurrent creates would each
-        // take a snapshot without the other's uncommitted insert, both pass the
-        // remaining-qty check, and both commit. Lock the order row first so they
-        // serialize here — mirrors the FOR UPDATE idiom in invoices.service.ts
-        // recordPayment() and routes.service.ts dispatch.
-        await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${dto.orderId} FOR UPDATE`;
-
-        // Query existing returns for this order to prevent cumulative over-return
-        const existingReturns = await tx.return.findMany({
-          where: { orderId: dto.orderId, status: { notIn: ["REJECTED", "CANCELLED"] } },
-          include: { items: { select: { productId: true, qty: true } } },
-        });
-
-        // Build a map of already-returned quantities per product
-        const alreadyReturned: Record<string, number> = {};
-        for (const r of existingReturns) {
-          for (const ri of r.items) {
-            alreadyReturned[ri.productId] = (alreadyReturned[ri.productId] ?? 0) + Number(ri.qty);
-          }
-        }
-
-        // Validate return qty does not exceed ordered qty per item (cumulative)
-        for (const item of dto.items) {
-          if (!item.qty || item.qty <= 0)
-            throw new BadRequestException("Return item quantity must be greater than zero");
-          // The ITEM-level reason overrides dto.reason when deciding restock below, and
-          // defaultRestockForReason treats every string outside NO_RESTOCK_REASONS as
-          // sellable — so an unvalidated "damaged" (lower-case) or any typo would restock
-          // unsellable goods, which is exactly the B61 defect. The body binds as
-          // `@Body() dto: any`, so no class-validator layer catches it: validate here.
-          if (item.reason != null && !VALID_RETURN_REASONS.includes(item.reason))
-            throw new BadRequestException(
-              `Invalid reason for product ${item.productId}. Must be one of: ${VALID_RETURN_REASONS.join(", ")}`,
-            );
-          const orderLine = (order as any).lineItems?.find(
-            (li: any) => li.productId === item.productId,
+      // Validate return qty does not exceed ordered qty per item (cumulative)
+      for (const item of dto.items) {
+        if (!item.qty || item.qty <= 0)
+          throw new BadRequestException("Return item quantity must be greater than zero");
+        // The ITEM-level reason overrides dto.reason when deciding restock below, and
+        // defaultRestockForReason treats every string outside NO_RESTOCK_REASONS as
+        // sellable — so an unvalidated "damaged" (lower-case) or any typo would restock
+        // unsellable goods, which is exactly the B61 defect. The body binds as
+        // `@Body() dto: any`, so no class-validator layer catches it: validate here.
+        if (item.reason != null && !VALID_RETURN_REASONS.includes(item.reason))
+          throw new BadRequestException(
+            `Invalid reason for product ${item.productId}. Must be one of: ${VALID_RETURN_REASONS.join(", ")}`,
           );
-          if (!orderLine)
-            throw new BadRequestException(
-              `Product ${item.productId} was not in the original order`,
-            );
-          const orderedQty = Number(orderLine.qty);
-          const previouslyReturned = alreadyReturned[item.productId] ?? 0;
-          const remaining = orderedQty - previouslyReturned;
-          if (item.qty > remaining)
-            throw new BadRequestException(
-              `Return qty (${item.qty}) exceeds remaining returnable qty (${remaining}) for product ${item.productId}. Already returned: ${previouslyReturned} of ${orderedQty}.`,
-            );
-          // Count this line against the running total too: a single payload that
-          // lists the same productId twice previously validated every line against
-          // the same pre-request snapshot, so 2 × qty 10 against 10 ordered both
-          // passed and over-returned with no concurrency involved at all.
-          alreadyReturned[item.productId] = previouslyReturned + Number(item.qty);
-        }
+        const orderLine = (order as any).lineItems?.find(
+          (li: any) => li.productId === item.productId,
+        );
+        if (!orderLine)
+          throw new BadRequestException(`Product ${item.productId} was not in the original order`);
+        const orderedQty = Number(orderLine.qty);
+        const previouslyReturned = alreadyReturned[item.productId] ?? 0;
+        const remaining = orderedQty - previouslyReturned;
+        if (item.qty > remaining)
+          throw new BadRequestException(
+            `Return qty (${item.qty}) exceeds remaining returnable qty (${remaining}) for product ${item.productId}. Already returned: ${previouslyReturned} of ${orderedQty}.`,
+          );
+        // Count this line against the running total too: a single payload that
+        // lists the same productId twice previously validated every line against
+        // the same pre-request snapshot, so 2 × qty 10 against 10 ordered both
+        // passed and over-returned with no concurrency involved at all.
+        alreadyReturned[item.productId] = previouslyReturned + Number(item.qty);
+      }
 
-        const returnNumber = await this.generateReturnNumber(tx);
-        return tx.return.create({
-          data: {
-            returnNumber,
-            orderId: dto.orderId,
-            customerId: order.customerId,
-            reason: dto.reason,
-            notes: dto.notes,
-            photoUrls: dto.photoUrls ?? [],
-            status: "PENDING",
-            items: {
-              create: dto.items.map((i: any) => ({
-                productId: i.productId,
-                qty: i.qty,
-                reason: i.reason,
-                condition: i.condition ?? undefined,
-                notes: i.notes ?? undefined,
-                restock: i.restock ?? this.defaultRestockForReason(i.reason ?? dto.reason),
-                tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
-              })),
-            },
+      const returnNumber = await this.generateReturnNumber(tx);
+      const created = await tx.return.create({
+        data: {
+          returnNumber,
+          orderId: dto.orderId,
+          customerId: order.customerId,
+          reason: dto.reason,
+          notes: dto.notes,
+          photoUrls: dto.photoUrls ?? [],
+          status: "PENDING",
+          items: {
+            create: dto.items.map((i: any) => ({
+              productId: i.productId,
+              qty: i.qty,
+              reason: i.reason,
+              condition: i.condition ?? undefined,
+              notes: i.notes ?? undefined,
+              restock: i.restock ?? this.defaultRestockForReason(i.reason ?? dto.reason),
+              tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
+            })),
           },
-          include: { items: true },
-        });
+        },
+        include: { items: true },
       });
 
-      // Stored BEFORE the caller emits, so a replay returns above and never re-emits
-      // return.created. Best-effort by design (see IdempotencyService).
+      // Saved INSIDE this same transaction — the row and its idempotency-key cache entry commit
+      // or roll back together (round 1 saved AFTER the transaction committed, on a separate
+      // connection, leaving a narrow crash window with no cache entry for an already-created row).
       if (idempotencyKey && this.idempotency) {
-        await this.idempotency.save(idempotencyKey, tenantId, idemScopeSuffix, ret);
+        await this.idempotency.save(idempotencyKey, tenantId, idemScopeSuffix, created, tx);
       }
 
-      return { ret, order, replayed: false as const };
-    };
+      return { ret: created, replayed: false as const };
+    });
 
-    let outcome: Awaited<ReturnType<typeof runCreate>>;
-    if (idempotencyKey && this.idempotency) {
-      // F5 (independent review, PR-2): check-then-create-then-save is a check-then-act race —
-      // two concurrent replays of the same key both miss the check (neither has saved yet) and
-      // both create a return. Wrapping the WHOLE sequence in this lock means the second
-      // request's check only runs after the first request's save has landed, so it finds the
-      // cached row instead of racing past it. Keyed on the exact hash `check`/`save` use
-      // internally (`IdempotencyService#hashFor`), so the lock can never drift from the row it
-      // is protecting. Its own `"idempotency"` advisory-lock family (`common/db-locks.ts`) —
-      // never the customer order-merge lock, and never a second in-process lock layered on it.
-      const lockKey = this.idempotency.hashFor(idempotencyKey, tenantId, idemScopeSuffix);
-      let result: LockResult<Awaited<ReturnType<typeof runCreate>>>;
-      try {
-        result = await withAdvisoryLock(
-          { family: "idempotency", key: lockKey, mode: "wait" },
-          runCreate,
-        );
-      } catch (e) {
-        if (e instanceof LockTimeoutError || e instanceof LockUnavailableError) {
-          throw new ServiceUnavailableException({
-            code: RETURN_SUBMIT_LOCK_UNAVAILABLE,
-            message: RETURN_SUBMIT_LOCK_UNAVAILABLE_MESSAGE,
-          });
-        }
-        throw e;
-      }
-      // `mode: "wait"` either acquires or the acquire itself throws LockTimeoutError above —
-      // `acquired: false` is the `"try"`-mode outcome and is unreachable here, but narrows the
-      // type below without a non-null assertion.
-      if (!result.acquired) {
-        throw new ServiceUnavailableException({
-          code: RETURN_SUBMIT_LOCK_UNAVAILABLE,
-          message: RETURN_SUBMIT_LOCK_UNAVAILABLE_MESSAGE,
-        });
-      }
-      outcome = result.value;
-    } else {
-      outcome = await runCreate();
-    }
-
-    if (!outcome.replayed) {
+    // Stored/replayed inside the transaction above, so a replay never reaches here having
+    // re-run any of the writes it replayed — but it DOES still need to skip the emit below, or
+    // a replayed return.created would light up the operator dashboard twice.
+    if (!replayed) {
       this.gateway.emitReturnCreated(tenantId, {
-        returnId: outcome.ret.id,
-        customerId: outcome.order.customerId,
-        customerName: outcome.order.customer.businessName,
+        returnId: ret.id,
+        customerId: order.customerId,
+        customerName: order.customer.businessName,
         orderId: dto.orderId,
         reason: dto.reason,
       });
     }
 
-    return outcome.ret;
+    return ret;
   }
 
   async findAllForUser(user: JwtPayload, options: FindAllReturnsOptions = {}) {

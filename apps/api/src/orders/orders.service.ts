@@ -4417,6 +4417,37 @@ export class OrdersService implements OnApplicationBootstrap {
               ) {
                 const li = order.lineItems.find((li) => li.id === item.id);
                 if (!li) continue;
+
+                // N4 (independent review round 2, PR-2): a payload carrying ONLY
+                // overrideReason/notes (no qty/boxes/pieces/unitPrice at all) must never fall
+                // through into the qty/box normalization below — that logic can RE-DERIVE a
+                // different boxes/pieces/subtotal than what is stored (e.g. a box-split line
+                // with no unitsPerBox snapshot falls back to a LIVE product lookup, whose box
+                // size can differ from what was used at sale time), silently mutating money
+                // fields a reason-only edit was never meant to touch. This is its own minimal,
+                // fully separate write.
+                const isReasonOrNotesOnly =
+                  item.qty === undefined &&
+                  item.boxes == null &&
+                  item.pieces == null &&
+                  item.unitPrice === undefined &&
+                  (item.overrideReason !== undefined || item.notes !== undefined);
+                if (isReasonOrNotesOnly) {
+                  await tx.orderItem.update({
+                    where: { id: item.id },
+                    data: {
+                      ...(item.notes !== undefined ? { notes: item.notes } : {}),
+                      ...(item.overrideReason !== undefined
+                        ? {
+                            overrideReason: item.overrideReason ?? null,
+                            overriddenBy: user?.sub ?? null,
+                          }
+                        : {}),
+                    },
+                  });
+                  continue;
+                }
+
                 const isUnlisted = !li.productId;
                 // A zero boxes+pieces payload is "not using box entry", not "zero
                 // quantity" (see create()) — a POSITIVE check keeps it from

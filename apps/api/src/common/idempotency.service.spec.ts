@@ -11,23 +11,38 @@
  * the 24h read window, and the FAIL-OPEN catches. A replay guard that throws
  * would 500 a legitimate return, so "the DB is broken" must degrade to "the
  * duplicate lands", never to "the request fails".
+ *
+ * F5 round 2 (N1, independent review round 2, PR-2, 2026-09-15): `check`/`save`/`acquireLock`
+ * now require a transaction client (`tx`) and run each of their own statements inside a
+ * SAVEPOINT — a plain JS try/catch around a raw-SQL failure does NOT undo Postgres marking the
+ * whole surrounding transaction "aborted"; only `ROLLBACK TO SAVEPOINT` does. `tx` here is a
+ * hand-rolled fake exposing just `$queryRaw`/`$executeRaw` as jest mocks — real enough to assert
+ * the exact SAVEPOINT/RELEASE/ROLLBACK TO sequence each method issues.
  */
 import { Test, TestingModule } from "@nestjs/testing";
 import { createHash } from "crypto";
 import { IdempotencyService } from "./idempotency.service";
-import { PrismaService } from "../prisma/prisma.service";
-import { createMockPrisma } from "../testing/prisma-mock";
+
+/** Joins a tagged-template raw-SQL mock call's strings segments back into one string (params
+ *  become "?"), so a test can assert WHICH statement fired without caring about bind order. */
+const sqlText = (call: unknown[]): string => (call[0] as unknown as string[]).join("?");
 
 describe("IdempotencyService (REG-IDEM-SVC)", () => {
   let service: IdempotencyService;
-  let prisma: ReturnType<typeof createMockPrisma>;
+  let tx: { $queryRaw: jest.Mock; $executeRaw: jest.Mock };
 
   beforeEach(async () => {
-    prisma = createMockPrisma();
+    // F5 round 2 (N1): IdempotencyService takes no constructor dependencies at all any more —
+    // check/save/acquireLock run entirely on the CALLER-supplied `tx`, never on a Prisma client
+    // of its own.
     const mod: TestingModule = await Test.createTestingModule({
-      providers: [IdempotencyService, { provide: PrismaService, useValue: prisma }],
+      providers: [IdempotencyService],
     }).compile();
     service = mod.get(IdempotencyService);
+    tx = {
+      $queryRaw: jest.fn(),
+      $executeRaw: jest.fn().mockResolvedValue(undefined),
+    };
   });
 
   it("REG-IDEM-SVC-1 hashes sha256 of `${scope}:${key}` and separates scopes", () => {
@@ -38,21 +53,24 @@ describe("IdempotencyService (REG-IDEM-SVC)", () => {
     expect(service.keyHash("key-1", "scope-b")).not.toBe(expected);
   });
 
-  it("REG-IDEM-SVC-2 check() returns the parsed stored response", async () => {
-    prisma.$queryRaw.mockResolvedValue([{ response: JSON.stringify({ id: "ret-1", qty: 3 }) }]);
-    await expect(service.check("key-1", "tenant-a", "scope-a")).resolves.toEqual({
+  it("REG-IDEM-SVC-2 check() returns the parsed stored response, wrapped in a SAVEPOINT released on success", async () => {
+    tx.$queryRaw.mockResolvedValue([{ response: JSON.stringify({ id: "ret-1", qty: 3 }) }]);
+
+    await expect(service.check("key-1", "tenant-a", "scope-a", tx)).resolves.toEqual({
       id: "ret-1",
       qty: 3,
     });
+    expect(sqlText(tx.$executeRaw.mock.calls[0])).toBe("SAVEPOINT idempotency_check");
+    expect(sqlText(tx.$executeRaw.mock.calls.at(-1)!)).toBe("RELEASE SAVEPOINT idempotency_check");
   });
 
   it("REG-IDEM-SVC-3 check() reads with a 24h cutoff and returns null for no row", async () => {
-    prisma.$queryRaw.mockResolvedValue([]);
-    await expect(service.check("key-1", "tenant-a", "scope-a")).resolves.toBeNull();
+    tx.$queryRaw.mockResolvedValue([]);
+    await expect(service.check("key-1", "tenant-a", "scope-a", tx)).resolves.toBeNull();
 
     // The cutoff parameter is interpolated into the tagged template; assert it
     // is ~24h ago so shortening/removing the window fails here.
-    const params = prisma.$queryRaw.mock.calls.at(-1)!.slice(1);
+    const params = tx.$queryRaw.mock.calls.at(-1)!.slice(1);
     const cutoff = params.find((p: unknown) => p instanceof Date) as Date;
     expect(cutoff).toBeInstanceOf(Date);
     const ageMs = Date.now() - cutoff.getTime();
@@ -60,26 +78,60 @@ describe("IdempotencyService (REG-IDEM-SVC)", () => {
     expect(ageMs).toBeLessThan(25 * 60 * 60 * 1000);
   });
 
-  it("REG-IDEM-SVC-4 check() FAILS OPEN — returns null, never throws, when the read rejects", async () => {
-    prisma.$queryRaw.mockRejectedValue(new Error('relation "IdempotencyKey" does not exist'));
-    await expect(service.check("key-1", "tenant-a", "scope-a")).resolves.toBeNull();
+  it("REG-IDEM-SVC-4 check() FAILS OPEN — returns null, never throws, and rolls back to ITS OWN savepoint (not the whole transaction) when the read rejects", async () => {
+    tx.$queryRaw.mockRejectedValue(new Error('relation "IdempotencyKey" does not exist'));
+
+    await expect(service.check("key-1", "tenant-a", "scope-a", tx)).resolves.toBeNull();
+
+    expect(sqlText(tx.$executeRaw.mock.calls[0])).toBe("SAVEPOINT idempotency_check");
+    expect(sqlText(tx.$executeRaw.mock.calls.at(-1)!)).toBe(
+      "ROLLBACK TO SAVEPOINT idempotency_check",
+    );
+    // Never a plain ROLLBACK — that would abort the CALLER's whole transaction, which is exactly
+    // what a fail-open guard must never do to the return it is protecting.
+    expect(tx.$executeRaw.mock.calls.some((c) => sqlText(c) === "ROLLBACK")).toBe(false);
   });
 
-  it("REG-IDEM-SVC-5 save() upserts on keyHash and stores the JSON response", async () => {
-    await service.save("key-1", "tenant-a", "scope-a", { id: "ret-1" });
-    const call = prisma.$executeRaw.mock.calls.at(-1)!;
-    const sql = (call[0] as unknown as string[]).join("?");
+  it("REG-IDEM-SVC-4b check() still resolves null even when the rollback-to-savepoint ITSELF fails — never throws out of check()", async () => {
+    tx.$queryRaw.mockRejectedValue(new Error("read failed"));
+    tx.$executeRaw.mockImplementation((strings: TemplateStringsArray) =>
+      (strings[0] ?? "").includes("ROLLBACK TO SAVEPOINT")
+        ? Promise.reject(new Error("rollback failed too"))
+        : Promise.resolve(undefined),
+    );
+
+    await expect(service.check("key-1", "tenant-a", "scope-a", tx)).resolves.toBeNull();
+  });
+
+  it("REG-IDEM-SVC-5 save() upserts on keyHash and stores the JSON response, wrapped in a SAVEPOINT released on success", async () => {
+    await service.save("key-1", "tenant-a", "scope-a", { id: "ret-1" }, tx);
+
+    const insertCall = tx.$executeRaw.mock.calls.find((c: unknown[]) =>
+      sqlText(c).includes('INSERT INTO "IdempotencyKey"'),
+    )!;
+    expect(insertCall).toBeDefined();
+    const sql = sqlText(insertCall);
     expect(sql).toContain('INSERT INTO "IdempotencyKey"');
     expect(sql).toContain('ON CONFLICT ("keyHash") DO UPDATE');
-    expect(call.slice(1)).toContain(JSON.stringify({ id: "ret-1" }));
-    expect(call.slice(1)).toContain(service.hashFor("key-1", "tenant-a", "scope-a"));
+    expect(insertCall.slice(1)).toContain(JSON.stringify({ id: "ret-1" }));
+    expect(insertCall.slice(1)).toContain(service.hashFor("key-1", "tenant-a", "scope-a"));
+    expect(sqlText(tx.$executeRaw.mock.calls[0])).toBe("SAVEPOINT idempotency_save");
+    expect(sqlText(tx.$executeRaw.mock.calls.at(-1)!)).toBe("RELEASE SAVEPOINT idempotency_save");
   });
 
-  it("REG-IDEM-SVC-6 save() FAILS OPEN — swallows a rejecting write", async () => {
-    prisma.$executeRaw.mockRejectedValue(new Error("boom"));
+  it("REG-IDEM-SVC-6 save() FAILS OPEN — swallows a rejecting write and rolls back to ITS OWN savepoint", async () => {
+    tx.$executeRaw.mockImplementation((strings: TemplateStringsArray) => {
+      const s = strings[0] ?? "";
+      if (s.includes("INSERT INTO")) return Promise.reject(new Error("boom"));
+      return Promise.resolve(undefined);
+    });
+
     await expect(
-      service.save("key-1", "tenant-a", "scope-a", { id: "ret-1" }),
+      service.save("key-1", "tenant-a", "scope-a", { id: "ret-1" }, tx),
     ).resolves.toBeUndefined();
+    expect(sqlText(tx.$executeRaw.mock.calls.at(-1)!)).toBe(
+      "ROLLBACK TO SAVEPOINT idempotency_save",
+    );
   });
 
   it("REG-IDEM-SVC-7 F6: tenantId is required and folded into the hash — the same key+scopeSuffix under two different tenants never collides", () => {
@@ -99,5 +151,35 @@ describe("IdempotencyService (REG-IDEM-SVC)", () => {
     // hashFor is exactly the hash check()/save() use internally — the F5 lock
     // key (returns.service.ts) can never drift from the row it protects.
     expect(hashA).toBe(service.keyHash("key-1", "tenant-a:returns.create:user-1:ord-1"));
+  });
+
+  it("REG-IDEM-SVC-8 F5 round 2 (N1): acquireLock takes a transaction-scoped pg_advisory_xact_lock on the given hash, wrapped in a SAVEPOINT released on success", async () => {
+    const hash = service.hashFor("key-1", "tenant-a", "scope-a");
+
+    await service.acquireLock(hash, tx);
+
+    const lockCall = tx.$executeRaw.mock.calls.find((c: unknown[]) =>
+      sqlText(c).includes("pg_advisory_xact_lock"),
+    )!;
+    expect(lockCall).toBeDefined();
+    expect(lockCall.slice(1)).toContain(hash);
+    // A distinct namespace, not `hashtext(hash)` alone — keeps this xact-scoped lock in its own
+    // slice of Postgres's shared advisory-lock keyspace.
+    expect(lockCall.slice(1)).toContain("idempotency");
+    expect(sqlText(tx.$executeRaw.mock.calls[0])).toBe("SAVEPOINT idempotency_lock");
+    expect(sqlText(tx.$executeRaw.mock.calls.at(-1)!)).toBe("RELEASE SAVEPOINT idempotency_lock");
+  });
+
+  it("REG-IDEM-SVC-9 F5 round 2 (N1): acquireLock FAILS OPEN — a lock error never throws and is never a new way for the caller's transaction to fail; it just proceeds unlocked", async () => {
+    tx.$executeRaw.mockImplementation((strings: TemplateStringsArray) => {
+      const s = strings[0] ?? "";
+      if (s.includes("pg_advisory_xact_lock")) return Promise.reject(new Error("lock failed"));
+      return Promise.resolve(undefined);
+    });
+
+    await expect(service.acquireLock("some-hash", tx)).resolves.toBeUndefined();
+    expect(sqlText(tx.$executeRaw.mock.calls.at(-1)!)).toBe(
+      "ROLLBACK TO SAVEPOINT idempotency_lock",
+    );
   });
 });

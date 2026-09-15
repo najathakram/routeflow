@@ -11,12 +11,20 @@
  * is, the operator-facing failure is a hard 400 on a legitimate retry.
  *
  * The pins below cover the things that can regress: the replay is collapsed,
- * the scope is tenant- AND submitter-specific (F1, PR-2 — a hand-built key
- * reused across two DIFFERENT users must not collide them onto one return), a
- * request with NO header behaves exactly as it did before this change, the
- * check-then-act race between two concurrent identical submissions is closed
- * by the F5 advisory lock, and a genuinely later submission (the store no
- * longer holds a prior record) still creates a new return.
+ * the scope is tenant- AND submitter-specific (F1, PR-2), a request with NO
+ * header behaves exactly as it did before this change, the check-then-act
+ * race between two concurrent IDENTICAL submissions is closed (F5 round 2 /
+ * N1's transaction-scoped lock), DIFFERENT keys never serialize against each
+ * other (N1), and a genuinely later submission (a different key, or the store
+ * no longer holding a prior record) still creates a new return.
+ *
+ * STRUCTURAL NOTE (F5 round 2 / N1, 2026-09-15): round 1 ran check() BEFORE the order lookup and
+ * BEFORE opening any transaction, so a replay never touched the database at all. N1 moved
+ * check+create+save INSIDE the create() transaction (alongside a transaction-scoped
+ * pg_advisory_xact_lock, replacing round 1's dedicated connection pool) — the order lookup
+ * stays OUTSIDE the transaction as before, so it now runs on EVERY call, replay included. A
+ * replay therefore now DOES call `prisma.order.findUnique` and DOES open a transaction; what it
+ * still never does is create a second return row or emit a second `return.created`.
  */
 import { Test, TestingModule } from "@nestjs/testing";
 import { ReturnsService } from "./returns.service";
@@ -28,47 +36,27 @@ import { IdempotencyService } from "../common/idempotency.service";
 import { NumberingService } from "../import/numbering.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
-// F5 (independent review, PR-2): create() now wraps its whole check→order-lookup→transaction→save
-// sequence in withAdvisoryLock (common/db-locks.ts) — the REAL implementation opens a Postgres
-// connection, which a plain unit test has none of. Everything else in the module (LockTimeoutError,
-// LOCK_FAMILIES, …) stays real via requireActual; only withAdvisoryLock is replaced.
-//
-// The fake is a genuine per-key promise-chain mutex — NOT a passthrough that just calls fn()
-// immediately — so REG-RET-IDEM-7 below can prove the check-then-act race is actually closed
-// (the second caller's check() only runs after the first caller's save() has landed), the same
-// guarantee the real Postgres advisory lock gives. db-locks.spec.ts already proves the REAL
-// primitive serializes; this proves ReturnsService uses it correctly.
-const mockLockQueue = new Map<string, Promise<unknown>>();
-jest.mock("../common/db-locks", () => ({
-  ...jest.requireActual("../common/db-locks"),
-  withAdvisoryLock: jest.fn(
-    async (opts: { family: string; key: string }, fn: () => Promise<unknown>) => {
-      const qKey = `${opts.family}:${opts.key}`;
-      const prior = mockLockQueue.get(qKey) ?? Promise.resolve();
-      const mine = prior.then(
-        () => fn(),
-        () => fn(),
-      );
-      // The NEXT waiter's `prior` must resolve regardless of whether THIS holder's fn() threw —
-      // a real advisory lock unlocks unconditionally (its own `finally`). `mine` itself (below)
-      // still carries the real outcome back to THIS call's caller.
-      mockLockQueue.set(
-        qKey,
-        mine.catch(() => undefined),
-      );
-      const value = await mine;
-      return { acquired: true, value };
-    },
-  ),
-}));
-
 describe("ReturnsService.create — Idempotency-Key replay guard (REG-RET-IDEM)", () => {
   let service: ReturnsService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let gateway: { emitReturnCreated: jest.Mock };
   let txReturn: { findMany: jest.Mock; create: jest.Mock };
   let store: Map<string, unknown>;
-  let idempotency: { check: jest.Mock; save: jest.Mock; keyHash: jest.Mock; hashFor: jest.Mock };
+  let idempotency: {
+    check: jest.Mock;
+    save: jest.Mock;
+    keyHash: jest.Mock;
+    hashFor: jest.Mock;
+    acquireLock: jest.Mock;
+  };
+  // F5 round 2 (N1): a genuine per-hash mutex — NOT a passthrough — so REG-RET-IDEM-7 below can
+  // prove the check-then-act race is actually closed. `acquireLock` claims a place in the queue
+  // for its hash; `check` (on a cache HIT) and `save` are the two points the REAL
+  // transaction-scoped xact lock would actually let go (the transaction returns early, or is
+  // about to commit for real) — both release here too. A DIFFERENT hash never touches this
+  // queue at all, which is exactly what REG-RET-IDEM-9 (8 parallel distinct keys) relies on.
+  let mockLockQueue: Map<string, Promise<void>>;
+  let mockLockRelease: Map<string, () => void>;
 
   const order = {
     id: "ord-1",
@@ -91,9 +79,10 @@ describe("ReturnsService.create — Idempotency-Key replay guard (REG-RET-IDEM)"
   // assertions below) agree on the same format instead of three hand-typed copies drifting apart.
   const scopeFor = (tenantId: string | null, scopeSuffix: string) =>
     `${tenantId ?? "none"}:${scopeSuffix}`;
+  const storeKey = (key: string, tenantId: string | null, scopeSuffix: string) =>
+    `${scopeFor(tenantId, scopeSuffix)}:${key}`;
 
   beforeEach(async () => {
-    mockLockQueue.clear();
     prisma = createMockPrisma();
     prisma.order.findUnique.mockResolvedValue(order as any);
 
@@ -109,21 +98,44 @@ describe("ReturnsService.create — Idempotency-Key replay guard (REG-RET-IDEM)"
     // genuinely reads back what the first stored — under the same scoping rule
     // the production service uses.
     store = new Map<string, unknown>();
+    mockLockQueue = new Map<string, Promise<void>>();
+    mockLockRelease = new Map<string, () => void>();
+
+    const release = (hash: string) => {
+      mockLockRelease.get(hash)?.();
+      mockLockRelease.delete(hash);
+    };
+
     idempotency = {
       keyHash: jest.fn((key: string, scope: string) => `${scope}:${key}`),
       // F6: the exact hash check()/save() use internally, given tenantId as its own argument —
-      // this is what returns.service.ts hashes the F5 lock key from.
-      hashFor: jest.fn(
-        (key: string, tenantId: string | null, scopeSuffix: string) =>
-          `${scopeFor(tenantId, scopeSuffix)}:${key}`,
+      // this is what returns.service.ts hashes the F5-round-2 lock key from.
+      hashFor: jest.fn((key: string, tenantId: string | null, scopeSuffix: string) =>
+        storeKey(key, tenantId, scopeSuffix),
       ),
-      check: jest.fn(
-        async (key: string, tenantId: string | null, scopeSuffix: string) =>
-          store.get(`${scopeFor(tenantId, scopeSuffix)}:${key}`) ?? null,
-      ),
+      acquireLock: jest.fn(async (hash: string) => {
+        const prior = mockLockQueue.get(hash) ?? Promise.resolve();
+        let releaseFn!: () => void;
+        const mine = new Promise<void>((res) => {
+          releaseFn = res;
+        });
+        mockLockQueue.set(hash, mine);
+        await prior; // wait for whoever held this hash before us, if anyone
+        mockLockRelease.set(hash, releaseFn);
+      }),
+      check: jest.fn(async (key: string, tenantId: string | null, scopeSuffix: string) => {
+        const hash = storeKey(key, tenantId, scopeSuffix);
+        const cached = store.get(hash) ?? null;
+        // A cache HIT is where the real transaction would return early — release now, not at
+        // some later save() that will never come for this attempt.
+        if (cached) release(hash);
+        return cached;
+      }),
       save: jest.fn(
         async (key: string, tenantId: string | null, scopeSuffix: string, response: unknown) => {
-          store.set(`${scopeFor(tenantId, scopeSuffix)}:${key}`, response);
+          const hash = storeKey(key, tenantId, scopeSuffix);
+          store.set(hash, response);
+          release(hash);
         },
       ),
     };
@@ -161,11 +173,12 @@ describe("ReturnsService.create — Idempotency-Key replay guard (REG-RET-IDEM)"
       "test-tenant",
       "returns.create:user-1:ord-1",
       first,
+      expect.anything(), // tx (F5 round 2 / N1 — save() now runs on the create's own transaction)
     );
     expect(gateway.emitReturnCreated).toHaveBeenCalledTimes(1);
   });
 
-  it("REG-RET-IDEM-2 a REPLAY with the same key creates nothing, re-emits nothing, and returns the first return", async () => {
+  it("REG-RET-IDEM-2 a REPLAY with the same key creates nothing and re-emits nothing (though it now DOES read the order and open a transaction — see the file header)", async () => {
     const first = await service.create(dto(), "user-1", "DRIVER", "key-1");
 
     txReturn.create.mockClear();
@@ -176,13 +189,15 @@ describe("ReturnsService.create — Idempotency-Key replay guard (REG-RET-IDEM)"
     const replay = await service.create(dto(), "user-1", "DRIVER", "key-1");
 
     expect(replay).toBe(first);
-    // No second row, no second transaction, and the check happens BEFORE the
-    // order read — a replay must not even touch the database.
+    // No second row.
     expect(txReturn.create).not.toHaveBeenCalled();
-    expect(prisma.tenantTransaction).not.toHaveBeenCalled();
-    expect(prisma.order.findUnique).not.toHaveBeenCalled();
     // A second return.created would light up the operator dashboard twice.
     expect(gateway.emitReturnCreated).not.toHaveBeenCalled();
+    // N1 structural change (see file header): the order lookup stays OUTSIDE the transaction and
+    // now runs unconditionally, and the transaction itself always opens (the check now lives
+    // inside it) — a replay reaches both, it just writes nothing once inside.
+    expect(prisma.order.findUnique).toHaveBeenCalledTimes(1);
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
   });
 
   it("REG-RET-IDEM-3 a request with NO Idempotency-Key behaves exactly as before — the guard (and the F5 lock) is never consulted", async () => {
@@ -190,6 +205,7 @@ describe("ReturnsService.create — Idempotency-Key replay guard (REG-RET-IDEM)"
 
     expect(idempotency.check).not.toHaveBeenCalled();
     expect(idempotency.save).not.toHaveBeenCalled();
+    expect(idempotency.acquireLock).not.toHaveBeenCalled();
     expect(txReturn.create).toHaveBeenCalledTimes(1);
     expect(gateway.emitReturnCreated).toHaveBeenCalledTimes(1);
 
@@ -211,6 +227,7 @@ describe("ReturnsService.create — Idempotency-Key replay guard (REG-RET-IDEM)"
       "test-tenant",
       "returns.create:user-1:ord-2",
       expect.anything(),
+      expect.anything(), // tx
     );
   });
 
@@ -243,11 +260,9 @@ describe("ReturnsService.create — Idempotency-Key replay guard (REG-RET-IDEM)"
 
   it("REG-RET-IDEM-6 the SAME payload + key submitted again after the store no longer holds a prior record creates a genuinely SECOND return", async () => {
     // Distinct from REG-RET-IDEM-5's transient-failure fail-open case: this simulates a record
-    // that legitimately no longer exists (the 24h window elapsed, an ops purge, or — the
-    // reviewed scenario — a driver's mobile nonce rotated after the first attempt landed, so the
-    // SERVER-side key this test hand-constructs is the only thing standing in for "no longer
-    // cached"). Once the store is reset, there is nothing to replay onto: the guard must not
-    // block a genuinely new submission just because the CONTENT matches an old one.
+    // that legitimately no longer exists (the 24h window elapsed, an ops purge). Once the store
+    // is reset, there is nothing to replay onto: the guard must not block a genuinely new
+    // submission just because the CONTENT matches an old one.
     await service.create(dto(), "user-1", "DRIVER", "key-1");
     expect(txReturn.create).toHaveBeenCalledTimes(1);
 
@@ -261,14 +276,14 @@ describe("ReturnsService.create — Idempotency-Key replay guard (REG-RET-IDEM)"
     expect(gateway.emitReturnCreated).toHaveBeenCalledTimes(1);
   });
 
-  it("REG-RET-IDEM-7 F5: two PARALLEL identical submissions race-close to exactly ONE create — the second's check() only runs after the first's save() lands", async () => {
+  it("REG-RET-IDEM-7 F5 round 2 (N1): two PARALLEL identical submissions (SAME key) race-close to exactly ONE create — the second's check() only runs after the first's save() lands", async () => {
     // Unlike REG-RET-IDEM-2 (sequential — the second call starts only once the first has fully
     // resolved), this fires both requests BEFORE either has completed, exactly like an offline
     // queue drain racing a manual retry, or two devices submitting for the same driver in the
-    // same instant. Before F5, check() ran for both BEFORE either had saved, so both created a
-    // row; the mocked withAdvisoryLock above is a genuine per-key mutex, so this proves
-    // ReturnsService's check→create→save sequence is what gets serialized, not merely that a
-    // lock call was made somewhere.
+    // same instant. The mocked acquireLock/check/save above form a genuine per-hash mutex, so
+    // this proves ReturnsService's acquireLock→check→create→save sequence is what gets
+    // serialized now that it lives inside the transaction, not merely that acquireLock was
+    // called somewhere.
     const [first, second] = await Promise.all([
       service.create(dto(), "user-1", "DRIVER", "key-1"),
       service.create(dto(), "user-1", "DRIVER", "key-1"),
@@ -293,6 +308,45 @@ describe("ReturnsService.create — Idempotency-Key replay guard (REG-RET-IDEM)"
       "test-tenant",
       "returns.create:user-2:ord-1",
       expect.anything(),
+      expect.anything(), // tx
     );
+  });
+
+  it("REG-RET-IDEM-9 N1: 8 PARALLEL submissions for one order, each with a DISTINCT key, all succeed — different keys never serialize against each other", async () => {
+    // Proves the flip side of REG-RET-IDEM-7: the lock is keyed on the hash, so unrelated keys
+    // must never queue behind one another the way two identical-key attempts correctly do. Round
+    // 1's dedicated 6-connection pool could in principle starve under enough concurrent DIFFERENT
+    // keys; round 2's transaction-scoped lock has no pool to starve at all.
+    const keys = Array.from({ length: 8 }, (_, i) => `key-${i}`);
+
+    await Promise.all(keys.map((key) => service.create(dto(), "user-1", "DRIVER", key)));
+
+    // All 8 landed — none silently collapsed onto another, and none blocked behind a DIFFERENT
+    // key's holder. `acquireLock` was called once per key (never re-queued behind an unrelated
+    // hash), and every attempt reached its own `save()`.
+    expect(txReturn.create).toHaveBeenCalledTimes(8);
+    expect(gateway.emitReturnCreated).toHaveBeenCalledTimes(8);
+    expect(idempotency.acquireLock).toHaveBeenCalledTimes(8);
+    expect(idempotency.save).toHaveBeenCalledTimes(8);
+    const lockedHashes = idempotency.acquireLock.mock.calls.map((c: unknown[]) => c[0]);
+    expect(new Set(lockedHashes).size).toBe(8);
+  });
+
+  it("REG-RET-IDEM-10 N5: the SAME payload submitted under two DIFFERENT keys creates TWO returns — content alone is never the identity, the key is", async () => {
+    // The server-side counterpart to the mobile nonce scenario (return-submit-key.test.ts's
+    // end-to-end case): a driver returns 2 units, then genuinely finds 2 more of the same
+    // product later — the mobile client mints a fresh nonce (a fresh key) for that second
+    // attempt. Two distinct keys for byte-identical content must never be collapsed.
+    const payload = dto();
+    txReturn.create
+      .mockResolvedValueOnce({ id: "ret-a", returnNumber: "RET-2026-A", items: [] })
+      .mockResolvedValueOnce({ id: "ret-b", returnNumber: "RET-2026-B", items: [] });
+
+    const first = await service.create(payload, "user-1", "DRIVER", "key-a");
+    const second = await service.create(payload, "user-1", "DRIVER", "key-b");
+
+    expect(txReturn.create).toHaveBeenCalledTimes(2);
+    expect(second.id).not.toBe(first.id);
+    expect(gateway.emitReturnCreated).toHaveBeenCalledTimes(2);
   });
 });
