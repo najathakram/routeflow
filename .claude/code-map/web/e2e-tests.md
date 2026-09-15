@@ -66,10 +66,27 @@ same reason.
 /46-auth-redesign\.spec\.ts/`, no `dependencies`, Desktop Chrome only — **not part of the local
   red gate** per `test-plan.md`'s Harness notes; this project resolving/running IS the post-deploy
   proof). 4 `test.describe`s: T5 (desktop 1280×800 chrome/copy/labels), T5d (mobile 375×812
-  chrome), T5e (accessibility), T5f (tenant logo on a tenant subdomain host). Specs 47
+  chrome), T5e (accessibility), T5f (tenant logo on a tenant subdomain host). Spec 47
   (`47-auth-redesign-evidence.spec.ts`) and 48 (`48-auth-redesign-a11y.spec.ts`) were planned in
   the build-plan then DROPPED in the round-2 ruling (D3) — 47 duplicated the driver's own evidence
-  capture, 48 duplicated this spec's own T5e — so 47/48 return to the free spec-number pool.
+  capture, 48 duplicated this spec's own T5e — so 47/48 returned to the free spec-number pool. 47
+  was later taken by `47-house-tenant-mrr-verify.spec.ts` (see below); 48 is still free.
+- **`e2e/47-house-tenant-mrr-verify.spec.ts`, project `house-tenant-mrr`** (Phase 0 T12-T15
+  review round, 2026-09-15; `testMatch: /47-house-tenant-mrr-verify\.spec\.ts/`, mirrors
+  `super-admin`'s shape exactly — `dependencies: ["setup"]`, `storageState:
+super-admin.json` — so it self-skips wherever `PLAYWRIGHT_SA_*` is unset, same as
+  `01-super-admin.spec.ts`; **not in `LOCAL-LANE.md`'s allow-list**, same reason). READ-ONLY:
+  `routeflow-hq` is not an approved test tenant, so this file only reads MRR figures and the
+  billing overview stat — it never creates/edits/deletes a tenant row (an earlier draft created a
+  throwaway tenant per run; removed as redundant with `01-super-admin.spec.ts`'s SA-06). Every
+  test additionally self-skips via `beforeEach` when `GET /platform-admin/tenants?search=
+routeflow-hq` finds no row — the owner has not yet run
+  `apps/api/scripts/bootstrap-house-tenant.mjs --apply` against prod, and without this guard
+  every post-deploy E2E run would go red on that precondition. Flow 1: dashboard MRR card shows
+  an unlabeled `$`-figure (`data-testid=dashboard-mrr`) plus a "Reconciled to ledger" sub-line
+  (`data-testid=dashboard-ledger-mrr`), never an "Est. MRR" label. Flow 2: the Billing Overview
+  MRR stat is visible and read immediately after the dashboard figure (comparison logged, not
+  asserted equal — Prisma read timing between the two pages can legitimately differ by a request).
 
 ### Local E2E lane (`apps/web/e2e/LOCAL-LANE.md`, wave D)
 

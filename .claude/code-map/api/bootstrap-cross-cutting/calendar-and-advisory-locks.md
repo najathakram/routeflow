@@ -34,21 +34,21 @@
   pools PR-2b, 2026-09-04)** — exports
   `withAdvisoryLock<T>({family,key,mode:"wait"|"try",waitMs?}, fn): Promise<LockResult<T>>` where
   `LockResult<T> = {acquired:true,value:T}|{acquired:false}`, plus `LOCK_FAMILIES`
-  (`["order-merge","cron","billing"] as const`) / `LockFamily`, `LockTimeoutError`/
+  (`["order-merge","cron","billing","tenant-mirror"] as const`) / `LockFamily`, `LockTimeoutError`/
   `LockUnavailableError` and a test-only `_resetLockPoolForTests()` (ends+clears ALL pools).
   Cross-process critical
   section on a Postgres advisory lock (`pg_advisory_lock(hashtext(family), hashtext(key))`), held
   on DEDICATED `pg.Pool`s it owns itself — **one pool per family, sized per family** (`cron`
-  `max: 12`, `order-merge` `max: 8`, **`billing` `max: 4` (B342, 2026-09-13)**): a cron winner
-  pins a slot for
+  `max: 12`, `order-merge` `max: 8`, `billing` `max: 4` (B342, 2026-09-13), `tenant-mirror`
+  `max: 4` (F3, review round, 2026-09-15 — TenantMirrorService#upsert, see feature-modules-1.md)):
+  a cron winner pins a slot for
   its whole tick (≤ 7
   concurrently at the monthly peak, plus a straggling hourly sweep), which out of one shared
-  `max: 8` pool left merges 1–3 slots and 503s. ALL THREE pools set `keepAlive: true` /
-  `keepAliveInitialDelayMillis: 30_000` — a lock connection is SOCKET-IDLE for the whole hold (a
-  cron tick's work runs on the Prisma pool), so an intermediate idle-reap would end the session,
-  release the advisory lock mid-tick and let another replica win an election for a running job.
+  `max: 8` pool left merges 1–3 slots and 503s. ALL FOUR pools set `keepAlive: true` /
+  `keepAliveInitialDelayMillis: 30_000` (rationale: this file's own header comment — an idle-reap
+  would end a session mid-hold and release the lock early).
   `withAdvisoryLock` throws `TypeError` for a family outside `LOCK_FAMILIES`
-  BEFORE connecting, so a typo cannot stand up a fourth pool. **RETIRED (F5 round 2 / N1,
+  BEFORE connecting, so a typo cannot stand up a fifth pool. **RETIRED (F5 round 2 / N1,
   independent review round 2, PR-2, 2026-09-15):** a fourth `"idempotency"` family briefly lived
   here (round 1, `max: 6`) backing `ReturnsService#create`'s check-then-create-then-save guard —
   the review judged a dedicated 6-connection pool an unjustified extra failure surface; it now
