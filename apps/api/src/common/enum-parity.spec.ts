@@ -88,6 +88,9 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["CRM_TRIGGER_MODE_VALUES", "CrmTriggerMode"],
   ["CRM_HANDOFF_STATUS_VALUES", "CrmHandoffStatus"],
   ["TENANT_CLASS_VALUES", "TenantClass"],
+  // Post-dated check payments PR-1 (2026-09-15): CheckReturnReason is a brand-new Prisma enum
+  // (not a value added to an existing one) — see the triage tripwire below.
+  ["CHECK_RETURN_REASON_VALUES", "CheckReturnReason"],
 ];
 
 describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
@@ -122,7 +125,12 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // `TENANT_CLASS_VALUES` mirror (`packages/types/api/enums.ts`) + an `ENUM_TABLE` row above,
 // consumed by `create-tenant.dto.ts`'s `@IsIn` and the admin "New Tenant" form — see
 // REG-743-N6 below.
-const PINNED_PRISMA_ENUM_COUNT = 84;
+//
+// Triage for CheckReturnReason (post-dated check payments PR-1, 2026-09-15): a brand-new enum,
+// added with its `CHECK_RETURN_REASON_VALUES` mirror + `ENUM_TABLE` row in the SAME PR (unlike
+// PaymentStatus gaining `PENDING` or NotificationEvent gaining `CHECK_RETURNED`, which add a
+// VALUE to an enum this file already tracks/doesn't track — those never move this count).
+const PINNED_PRISMA_ENUM_COUNT = 85;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {
