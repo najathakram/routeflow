@@ -2,20 +2,24 @@
 //
 // Reconciles the TenantSubscription set so MrrService.computeOverview() (which only counts
 // rows with planKey set) sees every real tenant, WITHOUT ever inventing a subscription: the
-// five free pilots (and any other PRODUCTION/DEMO tenant with no subscription row) must never
+// five free pilots (and any other PRODUCTION tenant with no subscription row) must never
 // become paying MRR just because this script ran. Only one failure mode is fixed here — a
-// TenantSubscription row exists, already carries a planKey, but is missing basePriceSnapshot
-// (Stripe-originated rows created before the checkout webhook set the price snapshot). Three
-// things are deliberately never written and are only ever listed for a human:
+// TenantSubscription row exists, already carries a planKey and a Stripe subscription, but is
+// missing basePriceSnapshot (Stripe-originated rows created before the checkout webhook set
+// the price snapshot). Five things are deliberately never written and are only ever listed for
+// a human:
 //   - a tenant with no subscription row at all ("no subscription — manual decision"),
 //   - a subscription row with no planKey set ("no planKey — manual decision"),
-//   - a planKey that isn't in the published catalog at all ("planKey not in the published
-//     catalog — manual decision") — distinct from a catalog-known plan priced at null,
-//   - a planKey the published catalog prices at null, e.g. ENTERPRISE ("custom-priced (null
-//     price) — skipped") — excluded from the re-flag predicate so a second run reports 0
-//     changes.
-// Only PRODUCTION and DEMO class tenants are in scope — TEST/INTERNAL tenants are never
-// billed, so they're left alone.
+//   - a subscription row with a planKey but no stripeSubId, i.e. a manually-activated free
+//     pilot ("no Stripe subscription — manual decision" — B327: never remove this filter),
+//   - a planKey that isn't in the resolved PlanVersion's catalog at all ("planKey not in the
+//     resolved catalog version — manual decision") — distinct from a catalog-known plan priced
+//     at null,
+//   - a planKey that version prices at null, e.g. ENTERPRISE ("custom-priced (null price) —
+//     skipped") — excluded from the re-flag predicate so a second run reports 0 changes.
+// Only PRODUCTION-class, ACTIVE-status tenants are in scope — DEMO/TEST/INTERNAL and any
+// non-ACTIVE PRODUCTION tenant (TRIAL/CANCELLED/READ_ONLY/SUSPENDED) are never billed, so
+// they're left alone entirely.
 //
 // Usage:
 //   node apps/api/scripts/backfill-subscription-reconciliation.mjs           # dry run
@@ -71,27 +75,48 @@ async function main() {
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
 
   try {
+    // Fetched but no longer trusted as the ONLY version rows can price from (F3) — a
+    // resolvable-but-unpublished pin still wins over falling back to this.
     const publishedVersion = await prisma.planVersion.findFirst({
       where: { status: "PUBLISHED" },
-      include: { definitions: true },
     });
-    if (!publishedVersion) {
-      console.error("No PUBLISHED PlanVersion found — publish a catalog before running this.");
-      process.exitCode = 1;
-      return;
-    }
-    const priceByKey = Object.fromEntries(
-      publishedVersion.definitions.map((d) => [d.planKey, d.monthlyPrice]),
-    );
 
+    // F5: PRODUCTION + ACTIVE only. DEMO is never billed (out of scope entirely, not just
+    // excluded from MRR); CANCELLED/READ_ONLY/SUSPENDED/TRIAL PRODUCTION tenants are listed
+    // nowhere here and never written — reconciliation only touches a tenant currently paying.
     const tenants = await prisma.tenant.findMany({
       where: {
-        class: { in: ["PRODUCTION", "DEMO"] },
+        class: "PRODUCTION",
+        status: "ACTIVE",
         deletedAt: null,
         ...(slugPrefix ? { slug: { startsWith: slugPrefix } } : {}),
       },
-      select: { id: true, slug: true, plan: true, subscription: true },
+      select: { id: true, slug: true, plan: true, planVersionId: true, subscription: true },
     });
+
+    // F3: price from the row's OWN pinned PlanVersion when it has one — never always PUBLISHED,
+    // which would silently re-price a tenant pinned to an older (possibly ARCHIVED) version.
+    // Collect every version id any in-scope tenant could resolve to and load their definitions
+    // in ONE query, never per-row.
+    const candidateVersionIds = new Set();
+    for (const t of tenants) {
+      if (t.subscription?.planVersionId) candidateVersionIds.add(t.subscription.planVersionId);
+      if (t.planVersionId) candidateVersionIds.add(t.planVersionId);
+    }
+    if (publishedVersion) candidateVersionIds.add(publishedVersion.id);
+    const versions = candidateVersionIds.size
+      ? await prisma.planVersion.findMany({
+          where: { id: { in: [...candidateVersionIds] } },
+          include: { definitions: true },
+        })
+      : [];
+    // A Map, not a plain object (review finding): planKey is a free-text column, and
+    // `"constructor" in {}` / `{}.toString` are real values on a plain object — a stray
+    // catalog-data planKey matching an Object.prototype member must never resolve to a
+    // function instead of hitting the "not in the resolved catalog version" bucket.
+    const definitionsByVersion = new Map(
+      versions.map((v) => [v.id, new Map(v.definitions.map((d) => [d.planKey, d.monthlyPrice]))]),
+    );
 
     const rows = [];
     const skipped = [];
@@ -109,30 +134,58 @@ async function main() {
         });
         continue;
       }
-      const { planKey, basePriceSnapshot } = t.subscription;
+      const {
+        planKey,
+        basePriceSnapshot,
+        stripeSubId,
+        planVersionId: subPlanVersionId,
+      } = t.subscription;
       if (!planKey) {
         skipped.push({ slug: t.slug, legacyPlan: t.plan, reason: "no planKey — manual decision" });
+        continue;
+      }
+      // F4: a planKey with a null snapshot and NO Stripe subscription is exactly what a
+      // manually-activated free pilot looks like — never price it. Never drop this filter
+      // (standing B327 rule): the only rows this script may ever write are Stripe-originated.
+      if (!stripeSubId) {
+        skipped.push({
+          slug: t.slug,
+          legacyPlan: t.plan,
+          planKey,
+          reason: "no Stripe subscription — manual decision",
+        });
         continue;
       }
       if (basePriceSnapshot != null) {
         continue; // already snapshotted — nothing to do, not even worth listing
       }
-      if (!(planKey in priceByKey)) {
-        // planKey isn't in the published catalog AT ALL — distinct from a catalog-known
-        // plan priced at null (ENTERPRISE). We can't tell a typo from a retired key from a
-        // key the catalog just hasn't caught up to yet, so this always needs a human, never
-        // an idempotent skip.
+      const targetVersionId = subPlanVersionId ?? t.planVersionId ?? publishedVersion?.id;
+      if (!targetVersionId) {
         skipped.push({
           slug: t.slug,
           legacyPlan: t.plan,
           planKey,
-          reason: "planKey not in the published catalog — manual decision",
+          reason: "no resolvable plan version — manual decision",
         });
         continue;
       }
-      const price = priceByKey[planKey];
+      const defs = definitionsByVersion.get(targetVersionId);
+      if (!defs || !defs.has(planKey)) {
+        // planKey isn't in the resolved version's catalog AT ALL — distinct from a
+        // catalog-known plan priced at null (ENTERPRISE). We can't tell a typo from a
+        // retired key from a key that version's catalog just never had, so this always
+        // needs a human, never an idempotent skip.
+        skipped.push({
+          slug: t.slug,
+          legacyPlan: t.plan,
+          planKey,
+          reason: "planKey not in the resolved catalog version — manual decision",
+        });
+        continue;
+      }
+      const price = defs.get(planKey);
       if (price == null) {
-        // ENTERPRISE (or any plan the catalog prices at null) is custom-priced — skip
+        // ENTERPRISE (or any plan that version prices at null) is custom-priced — skip
         // idempotently and keep it OUT of `rows` so a second run never re-flags it and
         // never emits a duplicate event.
         skipped.push({
@@ -143,7 +196,24 @@ async function main() {
         });
         continue;
       }
-      rows.push({ tenantId: t.id, slug: t.slug, action: "backfill", planKey, price });
+      rows.push({
+        tenantId: t.id,
+        slug: t.slug,
+        action: "backfill",
+        planKey,
+        price,
+        targetVersionId,
+        // F3/N3: never overwrite an already-non-null pin — only set one that was null at
+        // scan time. Subscription and tenant pins are independent; both get checked. The
+        // WRITE'S where-clause re-asserts this exact scanned value (null or a specific id),
+        // not just a boolean — a concurrent pin change between scan and write (e.g. a
+        // checkout webhook) must fail this row's conditional write, not be silently
+        // overwritten by it (review finding: a boolean alone can't express "still exactly
+        // what I scanned" when the scanned value is itself non-null).
+        scannedSubPlanVersionId: subPlanVersionId ?? null,
+        subPlanVersionWasNull: subPlanVersionId == null,
+        tenantPlanVersionWasNull: t.planVersionId == null,
+      });
     }
 
     console.log(
@@ -152,7 +222,13 @@ async function main() {
       }:`,
     );
     console.table(
-      rows.map((r) => ({ slug: r.slug, action: r.action, planKey: r.planKey, price: r.price })),
+      rows.map((r) => ({
+        slug: r.slug,
+        action: r.action,
+        planKey: r.planKey,
+        price: r.price,
+        planVersionId: r.targetVersionId,
+      })),
     );
     if (skipped.length) {
       console.log("\nSKIPPED — needs manual decision:");
@@ -177,19 +253,46 @@ async function main() {
         // row still matches exactly what was scanned. `count === 0` means someone else
         // (the checkout webhook, another run) already changed this row between scan and
         // write; never overwrite a state we didn't observe, and never emit a duplicate event.
+        // F3: planVersionId is set ONLY when it was null at scan time — never overwrite a
+        // pin this row already carried. The where-clause re-asserts the EXACT scanned
+        // planVersionId (null or a specific id) rather than just re-checking
+        // basePriceSnapshot: a webhook that pins planVersionId (with the snapshot still
+        // null) between scan and write must fail this conditional write, never be silently
+        // overwritten by it.
+        const subData = { basePriceSnapshot: r.price };
+        if (r.subPlanVersionWasNull) subData.planVersionId = r.targetVersionId;
         const result = await prisma.tenantSubscription.updateMany({
-          where: { tenantId: r.tenantId, planKey: r.planKey, basePriceSnapshot: null },
-          data: { basePriceSnapshot: r.price, planVersionId: publishedVersion.id },
+          where: {
+            tenantId: r.tenantId,
+            planKey: r.planKey,
+            basePriceSnapshot: null,
+            stripeSubId: { not: null },
+            planVersionId: r.scannedSubPlanVersionId,
+          },
+          data: subData,
         });
         if (result.count === 1) {
           await prisma.billingEvent.create({
             data: {
               tenantId: r.tenantId,
               type: "reconciliation.snapshot_backfilled",
-              payload: { planKey: r.planKey, price: r.price, scriptRun: new Date().toISOString() },
+              payload: {
+                planKey: r.planKey,
+                price: r.price,
+                planVersionId: r.targetVersionId,
+                scriptRun: new Date().toISOString(),
+              },
               amountDelta: null,
             },
           });
+          // N3: the Tenant's own planVersionId pin is separate from the subscription's —
+          // backfill it too when null, never overwriting one that's already set.
+          if (r.tenantPlanVersionWasNull) {
+            await prisma.tenant.updateMany({
+              where: { id: r.tenantId, planVersionId: null },
+              data: { planVersionId: r.targetVersionId },
+            });
+          }
           applied++;
         } else {
           skipped.push({

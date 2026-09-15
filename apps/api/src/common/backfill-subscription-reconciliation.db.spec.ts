@@ -70,6 +70,10 @@ function childEnv(dbUrl: string): NodeJS.ProcessEnv {
 }
 
 const RUN_SUFFIX = randomUUID().slice(0, 8);
+// Common prefix across every fixture this file creates — every `--apply` invocation below must
+// scope to this (never run unscoped), matching the file's own header: "the CLI's scan/apply
+// never touches a row outside its own fixtures — no whole-table snapshot/restore needed."
+const RUN_PREFIX = `qa-phase0-recon-${RUN_SUFFIX}`;
 const NO_SUB_SLUG = assertTestTenant(
   `qa-phase0-recon-${RUN_SUFFIX}-1`,
   "backfill-subscription-reconciliation.db.spec.ts",
@@ -273,8 +277,9 @@ describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
       },
     });
     // Excluded from reconciliation by class alone (not by slug) — proves the script's
-    // `class: { in: ["PRODUCTION", "DEMO"] }` scope, matching MrrService's own PRODUCTION-only
-    // revenue rule (Phase 0 T9): a TEST tenant must never get a real subscription minted for it.
+    // `class: "PRODUCTION"` scope (T2, REG-743-F5 — narrowed from the original
+    // `{ in: ["PRODUCTION", "DEMO"] }`), matching MrrService's own PRODUCTION-only revenue rule
+    // (Phase 0 T9): a TEST tenant must never get a real subscription minted for it.
     tenantTestClass = await prisma.tenant.create({
       data: { slug: TEST_CLASS_SLUG, name: TEST_CLASS_SLUG, status: "ACTIVE", class: "TEST" },
     });
@@ -287,7 +292,15 @@ describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
         status: "ACTIVE",
         class: "PRODUCTION",
         plan: "ENTERPRISE",
-        subscription: { create: { planKey: "ENTERPRISE", basePriceSnapshot: null } },
+        // F4: needs a stripeSubId or the new "no Stripe subscription" gate would skip this row
+        // before it ever reaches the custom-priced-null-price branch this fixture exists to prove.
+        subscription: {
+          create: {
+            planKey: "ENTERPRISE",
+            basePriceSnapshot: null,
+            stripeSubId: "sub_qa_enterprise",
+          },
+        },
       },
     });
     // F7: a planKey the published catalog has never heard of — must land in the "manual
@@ -300,7 +313,14 @@ describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
         status: "ACTIVE",
         class: "PRODUCTION",
         plan: "ENTERPRISE",
-        subscription: { create: { planKey: "RETIRED_LEGACY_TIER", basePriceSnapshot: null } },
+        // F4: needs a stripeSubId too, for the same reason as the ENTERPRISE fixture above.
+        subscription: {
+          create: {
+            planKey: "RETIRED_LEGACY_TIER",
+            basePriceSnapshot: null,
+            stripeSubId: "sub_qa_unknown_key",
+          },
+        },
       },
     });
 
@@ -451,7 +471,11 @@ describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
   });
 
   it("apply backfills the partial subscription, reports the pilot untouched, excludes TEST class", async () => {
-    const output = execSync(`node ${CLI} --apply`, {
+    // Scoped (review finding): an unscoped --apply here would also sweep up every T2 fixture
+    // created in the same beforeAll (OLD_PIN/NULL_PIN/etc.) before their own scoped tests run,
+    // making those assertions pass vacuously against state this call already produced — and
+    // would touch any other PRODUCTION+ACTIVE Stripe row on the shared compose DB besides.
+    const output = execSync(`node ${CLI} --apply --slug-prefix ${RUN_PREFIX}`, {
       encoding: "utf-8",
       env: childEnv(dbUrl),
     });
@@ -483,9 +507,10 @@ describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
     });
     expect(enterpriseSub?.basePriceSnapshot).toBeNull();
 
-    // F7: a planKey the published catalog doesn't have at all — its own bucket, distinct
-    // from ENTERPRISE's — no write, no event.
-    expect(output).toContain("planKey not in the published catalog — manual decision");
+    // F7: a planKey the resolved catalog version doesn't have at all — its own bucket,
+    // distinct from ENTERPRISE's — no write, no event. Wording updated for F3 (T2): pricing
+    // now resolves from the row's own pinned version, not always PUBLISHED.
+    expect(output).toContain("planKey not in the resolved catalog version — manual decision");
     const unknownKeySub = await prisma.tenantSubscription.findUnique({
       where: { tenantId: tenantUnknownKey!.id },
     });
@@ -504,7 +529,7 @@ describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
   });
 
   it("a second apply reports 0 changes and appends no new events (incl. the ENTERPRISE row)", async () => {
-    const output = execSync(`node ${CLI} --apply`, {
+    const output = execSync(`node ${CLI} --apply --slug-prefix ${RUN_PREFIX}`, {
       encoding: "utf-8",
       env: childEnv(dbUrl),
     });
