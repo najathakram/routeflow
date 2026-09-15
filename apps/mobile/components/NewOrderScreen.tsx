@@ -3417,7 +3417,7 @@ function CartRow({
         <TextInput
           value={line.note ?? ""}
           onChangeText={onChangeNote}
-          placeholder="Note for this item (prints on invoice)"
+          placeholder="Flavor or note for this item (prints on invoice)"
           placeholderTextColor={ios.label3}
           maxLength={500}
           returnKeyType="done"
@@ -3426,7 +3426,7 @@ function CartRow({
       ) : (
         <Pressable onPress={onToggleNote} hitSlop={6} style={styles.cartNoteAdd}>
           <Ionicons name="create-outline" size={14} color={ios.brand} />
-          <Text style={styles.cartNoteAddText}>Add note</Text>
+          <Text style={styles.cartNoteAddText}>Add flavor / note</Text>
         </Pressable>
       )}
 
@@ -3594,7 +3594,7 @@ function UnlistedCartRow({
         <TextInput
           value={line.note ?? ""}
           onChangeText={onChangeNote}
-          placeholder="Note for this item (prints on invoice)"
+          placeholder="Flavor or note for this item (prints on invoice)"
           placeholderTextColor={ios.label3}
           maxLength={500}
           returnKeyType="done"
@@ -3603,7 +3603,7 @@ function UnlistedCartRow({
       ) : (
         <Pressable onPress={onToggleNote} hitSlop={6} style={styles.cartNoteAdd}>
           <Ionicons name="create-outline" size={14} color={ios.brand} />
-          <Text style={styles.cartNoteAddText}>Add note</Text>
+          <Text style={styles.cartNoteAddText}>Add flavor / note</Text>
         </Pressable>
       )}
 

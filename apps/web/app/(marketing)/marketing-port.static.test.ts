@@ -306,7 +306,7 @@ describe("marketing.css is delivered from the root layout — R-MKT T6", () => {
 
 // Hashes computed from this repo at branch base 5ddec78e (`git diff 5ddec78e
 // -- <path>` is empty for both at plan time — see the test-plan's T7 row).
-const GLOBALS_CSS_SHA256 = "09d7d3dc6fbeb42734933ef366a0586668d147f8e85bb17b8b37a94994e18dbe";
+const GLOBALS_CSS_SHA256 = "ab1fc07813131df9d6045fea66f566625b395d05424aa7db518eb6ea61f76d43";
 const TAILWIND_CONFIG_SHA256 = "5b62085fee3f38bba484393c94238b8651806d8c7e0e47efc9a91cce68ff9754";
 
 function sha256OfFile(filePath: string): string {

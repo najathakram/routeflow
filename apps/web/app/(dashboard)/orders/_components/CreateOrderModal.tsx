@@ -1489,7 +1489,7 @@ export function CreateOrderModal({
                             maxLength={500}
                             value={li.note ?? ""}
                             onChange={(e) => setLineNote(li.tempId, e.target.value)}
-                            placeholder="Note for this line (prints on invoice)"
+                            placeholder="Flavor or note for this item (prints on invoice)"
                             className="mt-1 w-full rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
                           />
                         )}
@@ -1595,7 +1595,7 @@ export function CreateOrderModal({
                             maxLength={500}
                             value={li.note ?? ""}
                             onChange={(e) => setLineNote(li.tempId, e.target.value)}
-                            placeholder="Note for this line (prints on invoice)"
+                            placeholder="Flavor or note for this item (prints on invoice)"
                             className="mt-1 w-full rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
                           />
                         )}
@@ -1723,7 +1723,7 @@ export function CreateOrderModal({
                         "shrink-0 rounded p-1 transition-colors hover:bg-surface-raised",
                         li.note?.trim() ? "text-brand-500" : "text-navy/30 hover:text-navy",
                       )}
-                      title={li.note?.trim() ? "Edit line note" : "Add a note for this line"}
+                      title="Add flavor / note"
                     >
                       <StickyNote className="h-3.5 w-3.5" />
                     </button>

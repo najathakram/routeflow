@@ -20,6 +20,7 @@ import {
   Truck,
   Calendar,
   Download,
+  Printer,
   Mail,
   MessageCircle,
   Phone,
@@ -87,6 +88,8 @@ import { ShipmentCard } from "@/components/ShipmentCard";
 import { SplitInvoiceModal } from "../_components/SplitInvoiceModal";
 import { InvoicePreviewModal, DivergenceNote } from "../../_components/LinkedDocPreviewModal";
 import { apiClient } from "@/lib/api-client";
+import { printPdfBlob } from "@/lib/print-pdf-blob";
+import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { CreditNotePicker, type CreditSelection } from "../_components/CreditNotePicker";
 
 // ─── Send Invoice Modal ────────────────────────────────────────────────────────
@@ -106,6 +109,7 @@ function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: 
   const sendInvoice = useSendInvoice();
   const sendInvoiceEmail = useSendInvoiceEmail();
   const [pdfLoading, setPdfLoading] = React.useState(false);
+  const [printLoading, setPrintLoading] = React.useState(false);
   const [sent, setSent] = React.useState(false);
   const [emailSent, setEmailSent] = React.useState(false);
 
@@ -151,14 +155,17 @@ function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: 
   async function handleDownload() {
     setPdfLoading(true);
     try {
-      // Two-step: ask the API to render the PDF, then fetch the bytes through
-      // the authenticated apiClient. Cannot `window.open(url)` directly — the
-      // storage endpoint requires a JWT (RF-075) and a top-level new-tab
-      // navigation has no token in localStorage scope, so it returns 401.
+      // Two-step: ask the API to render the PDF, then fetch the bytes.
+      // Cannot `window.open(url)` directly — the storage endpoint requires a
+      // JWT (RF-075) and a top-level new-tab navigation has no token in
+      // localStorage scope, so it returns 401. `fetchPdfBlob` (not bare
+      // apiClient — review finding F3) picks the right transport: same-origin
+      // → auth'd apiClient; external presigned URL → bare axios, so the JWT
+      // is never sent to a third-party host.
       const meta = await apiClient.get<{ url: string }>(`/invoices/${data.invoiceId}/pdf`);
       if (!meta.data?.url) throw new Error("No PDF URL returned");
-      const pdfRes = await apiClient.get<Blob>(meta.data.url, { responseType: "blob" });
-      const blobUrl = URL.createObjectURL(pdfRes.data);
+      const blob = await fetchPdfBlob(meta.data.url, apiClient);
+      const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = blobUrl;
       a.download = `invoice-${data.invoiceId}.pdf`;
@@ -171,6 +178,24 @@ function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: 
       toast({ title: "Could not generate PDF", variant: "error" });
     } finally {
       setPdfLoading(false);
+    }
+  }
+
+  async function handlePrint() {
+    setPrintLoading(true);
+    try {
+      // Mirrors handleDownload's two-step fetch (RF-075 — the storage URL
+      // still requires a JWT; fetchPdfBlob, not bare apiClient — review
+      // finding F3), then hands the bytes to the shared print helper
+      // instead of triggering a download.
+      const meta = await apiClient.get<{ url: string }>(`/invoices/${data.invoiceId}/pdf`);
+      if (!meta.data?.url) throw new Error("No PDF URL returned");
+      const blob = await fetchPdfBlob(meta.data.url, apiClient);
+      printPdfBlob(blob);
+    } catch {
+      toast({ title: "Could not generate PDF", variant: "error" });
+    } finally {
+      setPrintLoading(false);
     }
   }
 
@@ -297,6 +322,25 @@ function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: 
             <div>
               <p className="text-sm font-medium text-navy">Download PDF</p>
               <p className="text-xs text-navy/70">Save a copy to your device</p>
+            </div>
+          </button>
+
+          {/* Print PDF */}
+          <button
+            onClick={handlePrint}
+            disabled={printLoading}
+            className="flex w-full items-center gap-3 rounded-xl border border-surface-border bg-white px-4 py-3 text-left transition-colors hover:bg-surface-raised disabled:opacity-50"
+          >
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-raised">
+              {printLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin text-navy/70" />
+              ) : (
+                <Printer className="h-4 w-4 text-navy/70" />
+              )}
+            </div>
+            <div>
+              <p className="text-sm font-medium text-navy">Print</p>
+              <p className="text-xs text-navy/70">Open the print dialog</p>
             </div>
           </button>
         </div>

@@ -891,6 +891,9 @@ export default function BuyerOrderDetailPage() {
                           </span>
                         )}
                       </p>
+                      {li.notes?.trim() && (
+                        <p className="mt-0.5 text-xs font-normal italic text-navy/60">{li.notes}</p>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right text-sm text-navy">
                       <span>{Number(li.qty)}</span>

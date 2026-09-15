@@ -494,6 +494,22 @@ export default defineConfig({
       },
     },
 
+    // ── Web print surfaces (WP4, spec 38) ──────────────────────────────────────
+    // R6.6/R6.10: the invoices-list row Print button must not trigger the
+    // row's own navigate-to-detail click handler, and `@media print` must
+    // hide the dashboard chrome. Fully mocked — no writes to any tenant.
+    // Cloned from "calendar-dates" (name + spec + operator storageState reused).
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's precedent.
+    {
+      name: "line-note-print",
+      testMatch: /38-line-note-print\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
     // ── Credit-note wallet UI (F09, spec 28) ───────────────────────────────────
     // REG-B19 / REG-B18: invoice number over raw UUID on the credit-notes list
     // and detail pages, and no "Issue Credit Note" affordance. Fully mocked —

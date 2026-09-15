@@ -207,3 +207,17 @@ body {
     }
   }
 }
+
+/* Print (WP4, R6.10) — hide the dashboard chrome so a printed invoice/PDF
+   isn't framed by the sidebar/topbar. */
+@media print {
+  .surface-operator aside,
+  .surface-operator header {
+    display: none !important;
+  }
+  .surface-operator,
+  .surface-operator main {
+    height: auto !important;
+    overflow: visible !important;
+  }
+}

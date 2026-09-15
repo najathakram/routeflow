@@ -615,6 +615,8 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     });
   const setUnlistedName = (id: string, name: string) =>
     setUnlisted((u) => u.map((x) => (x.id === id ? { ...x, name } : x)));
+  const setUnlistedNote = (id: string, notes: string) =>
+    setUnlisted((u) => u.map((x) => (x.id === id ? { ...x, notes } : x)));
   const removeUnlisted = (id: string) => setUnlisted((u) => u.filter((x) => x.id !== id));
 
   // ── Per-line helpers ──────────────────────────────────────────────────────
@@ -684,6 +686,9 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       if (!cur) return d;
       return { ...d, [id]: { ...cur, unitPrice } };
     });
+
+  const setLineNote = (id: string, notes: string) =>
+    setDraft((d) => (d[id] ? { ...d, [id]: { ...d[id], notes } } : d));
 
   const incQty = (id: string) => {
     const cur = draft[id];
@@ -1332,6 +1337,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
                     onSetPieces={(n) => setPieces(it.productId, n)}
                     onSetUnits={(n) => setUnits(it.productId, n)}
                     onSetSellBy={(v) => setSellBy(it.productId, v)}
+                    onSetNote={(notes) => setLineNote(it.productId, notes)}
                     onPressPrice={() => setPriceEditItem(it)}
                     onPressSubstitute={() => {
                       setSubstituteFor(it.productId);
@@ -1351,6 +1357,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
                   key={u.id}
                   line={u}
                   onSetName={(name) => setUnlistedName(u.id, name)}
+                  onSetNote={(notes) => setUnlistedNote(u.id, notes)}
                   onSetPrice={(raw) => setUnlistedPrice(u.id, raw)}
                   onSetQty={(n) => setUnlistedQty(u.id, n)}
                   onRemove={() =>
@@ -1481,6 +1488,7 @@ function DraftItemCard({
   onSetPieces,
   onSetUnits,
   onSetSellBy,
+  onSetNote,
   onPressPrice,
   onPressSubstitute,
   onRemove,
@@ -1507,10 +1515,12 @@ function DraftItemCard({
   /** Unit mode: total unit count, routed through setLineUnits. */
   onSetUnits: (n: number) => void;
   onSetSellBy: (sellBy: "case" | "unit") => void;
+  onSetNote: (notes: string) => void;
   onPressPrice: () => void;
   onPressSubstitute: () => void;
   onRemove: () => void;
 }) {
+  const [noteOpen, setNoteOpen] = useState(Boolean(item.notes?.trim()));
   const isOverridden = item.unitPrice !== item.catalogPrice;
   const isUpsell = item.unitPrice > item.catalogPrice;
   // Green for an upsell (sold above catalog), orange for a discount.
@@ -1676,6 +1686,24 @@ function DraftItemCard({
           onIncrement={onIncQty}
           onDecrement={onDecQty}
         />
+      )}
+
+      {/* Flavor / note (R5.2) */}
+      {noteOpen || item.notes?.trim() ? (
+        <TextInput
+          value={item.notes ?? ""}
+          onChangeText={onSetNote}
+          placeholder="Flavor or note for this item (prints on invoice)"
+          placeholderTextColor={ios.label3}
+          maxLength={500}
+          returnKeyType="done"
+          style={styles.cartNoteInput}
+        />
+      ) : (
+        <Pressable onPress={() => setNoteOpen(true)} hitSlop={6} style={styles.cartNoteAdd}>
+          <Ionicons name="create-outline" size={14} color={ios.brand} />
+          <Text style={styles.cartNoteAddText}>Add flavor / note</Text>
+        </Pressable>
       )}
 
       {/* Actions */}
@@ -1910,16 +1938,19 @@ function PriceOverrideModal({
 function UnlistedDraftCard({
   line,
   onSetName,
+  onSetNote,
   onSetPrice,
   onSetQty,
   onRemove,
 }: {
   line: UnlistedDraft;
   onSetName: (name: string) => void;
+  onSetNote: (notes: string) => void;
   onSetPrice: (value: number | null) => void;
   onSetQty: (n: number) => void;
   onRemove: () => void;
 }) {
+  const [noteOpen, setNoteOpen] = useState(Boolean(line.notes?.trim()));
   const lineTotal = computeLineSubtotal({ unitPrice: line.unitPrice, qty: line.qty });
   return (
     <View style={styles.card}>
@@ -1959,6 +1990,24 @@ function UnlistedDraftCard({
         onIncrement={() => onSetQty(line.qty + 1)}
         onDecrement={() => onSetQty(Math.max(0, line.qty - 1))}
       />
+
+      {/* Flavor / note (R5.3) */}
+      {noteOpen || line.notes?.trim() ? (
+        <TextInput
+          value={line.notes ?? ""}
+          onChangeText={onSetNote}
+          placeholder="Flavor or note for this item (prints on invoice)"
+          placeholderTextColor={ios.label3}
+          maxLength={500}
+          returnKeyType="done"
+          style={styles.cartNoteInput}
+        />
+      ) : (
+        <Pressable onPress={() => setNoteOpen(true)} hitSlop={6} style={styles.cartNoteAdd}>
+          <Ionicons name="create-outline" size={14} color={ios.brand} />
+          <Text style={styles.cartNoteAddText}>Add flavor / note</Text>
+        </Pressable>
+      )}
 
       <View style={styles.cardActions}>
         <View style={{ flex: 1 }} />
@@ -2916,6 +2965,25 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: ios.system.redWash,
     borderRadius: 8,
+  },
+
+  // ── Per-line note (R5.2/R5.3, mirrors NewOrderScreen's cartNote*) ────────
+  cartNoteAdd: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingVertical: 4,
+  },
+  cartNoteAddText: { fontSize: 12, fontFamily: "Inter_500Medium", color: ios.brand },
+  cartNoteInput: {
+    backgroundColor: ios.fill3,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: ios.label,
+    marginBottom: 6,
   },
 
   // ── Add product CTA ───────────────────────────────────────────────────────
