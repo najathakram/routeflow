@@ -198,6 +198,28 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
   "predates this boot" verdict; the owner-write fixture clears the lock dir before its own precondition
   (`scripts/campaign/bugs.mjs` self-test, step 6 of `npm run verify`).
 
+### L-139 · 2026-09-14 · tooling · B420 GIT_* env leak into self-test throwaway repos
+
+- **Symptom:** a pre-push hook's `validate-code-map.stamp.self-test.mjs` renamed a live worktree's
+  branch twice and stacked fixture commits on real work, mid-session (rf-mobile-lanes incident).
+- **Root cause:** git sets `GIT_DIR`/`GIT_WORK_TREE` (+8 siblings) in a hook's environment; this
+  self-test's `spawnSync("git", …)` calls inherited them unscrubbed, so its "isolated" scratch
+  repo's `init`/`add`/`commit`/`branch -M` silently resolved against the REAL repo instead of
+  `cwd`. Identical root cause to L-082's sibling incident (`bugs.mjs self-test`, 2026-09-04, fixed
+  in that one file) — that lesson was never written down ("no headroom"), so a second, newer
+  self-test script repeated the exact anti-pattern ten days later.
+- **Lesson:** **Any script driving a THROWAWAY git repo as a fixture must scrub all ten `GIT_*`
+  vars (`GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE`/`GIT_COMMON_DIR`/`GIT_OBJECT_DIRECTORY`/
+  `GIT_ALTERNATE_OBJECT_DIRECTORIES`/`GIT_QUARANTINE_PATH`/`GIT_PREFIX`/`GIT_NAMESPACE`/
+  `GIT_CEILING_DIRECTORIES`) from every child process — it WILL run inside a hook eventually, and
+  git always exports them there. Scrubbing alone is not proof: assert the result too — after
+  `git init`, resolve `--show-toplevel` and confirm it lands inside the scratch dir before doing
+  anything that could mutate a real repo.**
+- **Guard:** the post-init toplevel check (throws on mismatch) + `REG-B420` (a second "victim"
+  repo's branches/HEAD/config asserted byte-unchanged after a polluted-env fixture op) in
+  `scripts/validate-code-map.stamp.self-test.mjs`. Sibling [[L-082]] — no shared guard between the
+  two files, so a third such script would still need its own.
+
 ## testing
 
 ### L-093 · 2026-09-08 · testing · #665
@@ -713,6 +735,23 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
 - **Guard:** `STRIPE_TERMINAL_STATUSES` + `REG-B408` ×8 in
   `subscription-mutation.service.spec.ts` — one case per non-terminal status, plus one pinning
   that an unrecognised status still surfaces the error. Sibling [[L-127]].
+
+### L-129 · 2026-09-14 · tooling · #745 react skew guard
+
+- **Symptom:** `no-react-skew-hacks.spec.ts` asserted `apps/web`'s `react`/`react-dom` deps
+  equal the exact string `"^19.2.0"`. #727's routine Dependabot minor/patch bump moved them to
+  `"^19.3.0"` and broke this unrelated guard on master, even though the React-18 pin hack it
+  exists to catch had not returned.
+- **Root cause:** the test was written to confirm one thing — the old React-18 pin never comes
+  back — but asserted a much narrower thing: the exact current semver string. An equality check
+  against a moving value stood in for the invariant that actually mattered.
+- **Lesson:** **A regression test guarding against a stale/incompatible dependency PIN should
+  assert the invariant it actually protects (the major line, or a pattern) — never the exact
+  current version string. Pinning the whole string makes every routine dependency bump
+  (Dependabot, a minor/patch upgrade) fail an unrelated guard, and repeated unrelated red trains
+  people to stop reading CI failures.**
+- **Guard:** both assertions now match `/^\^19\./` instead of `.toBe("^19.2.0")` in
+  `apps/api/src/common/no-react-skew-hacks.spec.ts`.
 
 ### L-130 · 2026-09-13 · domain · F27 B15 (estimates)
 
