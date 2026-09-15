@@ -39,7 +39,7 @@ import {
   Prisma,
   UserRole,
 } from "@prisma/client";
-import type { InvoiceKpiSummary } from "@routeflow/types";
+import { CHECK_TRANSITIONS, type InvoiceKpiSummary } from "@routeflow/types";
 import {
   CreateInvoiceDto,
   RecordInvoicePaymentDto,
@@ -106,18 +106,11 @@ function calendarDayOf(raw: string, field: string): string {
   return day;
 }
 
-/**
- * P5-12: legal FORWARD transitions for the check lifecycle.
- * RECORDED → DEPOSITED → CLEARED (strict sequence); any non-bounced state can
- * go to BOUNCED (a deposited or even cleared check can be returned by the
- * bank). BOUNCED is terminal.
- */
-const CHECK_TRANSITIONS: Record<CheckStatus, readonly CheckStatus[]> = {
-  RECORDED: ["DEPOSITED", "BOUNCED"],
-  DEPOSITED: ["CLEARED", "BOUNCED"],
-  CLEARED: ["BOUNCED"],
-  BOUNCED: [],
-};
+// P5-12 / post-dated check payments PR-1: `CHECK_TRANSITIONS` (legal FORWARD transitions for
+// the check lifecycle) now comes from `@routeflow/types` (`packages/types/api/checks.ts`) — the
+// ONE canonical copy shared with web (`invoices/[id]/page.tsx`) and mobile
+// (`payments-logic.ts`), which used to each hand-maintain an identical local const. See that
+// file's own doc for the V1-only rule (no `CHECK_TRANSITIONS_V2` here — a later PR owns that).
 
 @Injectable()
 export class InvoicesService {
