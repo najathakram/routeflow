@@ -55,7 +55,11 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       // status" (400), this mock must resolve a non-terminal row so this test's
       // 400 assertion below keeps holding after fix-b70 lands. Extending, not
       // replacing — HEAD ignores this mock entirely today.
-      prisma.estimate.findFirst.mockResolvedValue({ id: "est-1", status: "SENT" });
+      // F3 (#711 review): was mocked "SENT" — harmless under the old hardcoded
+      // message, but accept() excludes ONLY CONVERTED, so a real count-0 here
+      // means the row genuinely IS CONVERTED (matching this test's own name).
+      // The message is now built from this mock, so it must be realistic.
+      prisma.estimate.findFirst.mockResolvedValue({ id: "est-1", status: "CONVERTED" });
 
       await expect(service.accept("est-1")).rejects.toThrow(BadRequestException);
       await expect(service.accept("est-1")).rejects.toThrow(
@@ -444,9 +448,9 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       prisma.estimate.update.mockResolvedValue({ id: "est-1", status: "SENT" });
 
       await expect(service.send("est-1")).rejects.toThrow(BadRequestException);
-      await expect(service.send("est-1")).rejects.toThrow(
-        "Converted or voided estimates cannot be re-sent",
-      );
+      // F3 (#711 review): the refusal message now names the row's REAL status
+      // instead of a hardcoded guess — this row is CONVERTED, so it says so.
+      await expect(service.send("est-1")).rejects.toThrow("Converted estimates cannot be re-sent");
       expect(prisma.estimate.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({ id: "est-1", status: { notIn: TERMINAL_NOT_IN } }),
@@ -461,9 +465,9 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       prisma.estimate.update.mockResolvedValue({ id: "est-1", status: "SENT" });
 
       await expect(service.send("est-1")).rejects.toThrow(BadRequestException);
-      await expect(service.send("est-1")).rejects.toThrow(
-        "Converted or voided estimates cannot be re-sent",
-      );
+      // F3 (#711 review): this row is DECLINED (voided), so the message says so
+      // — not the old hardcoded "Converted" regardless of the real status.
+      await expect(service.send("est-1")).rejects.toThrow("Declined estimates cannot be re-sent");
       expect(prisma.estimate.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({ id: "est-1", status: { notIn: TERMINAL_NOT_IN } }),
@@ -518,8 +522,10 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       prisma.estimate.update.mockResolvedValue({ id: "est-1", status: "DECLINED" });
 
       await expect(service.decline("est-1")).rejects.toThrow(BadRequestException);
+      // F3 (#711 review): names the real status (CONVERTED here), not a
+      // hardcoded compound guess.
       await expect(service.decline("est-1")).rejects.toThrow(
-        "Converted or voided estimates cannot be declined",
+        "Converted estimates cannot be declined",
       );
       expect(prisma.estimate.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -609,6 +615,22 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       expect(prisma.estimate.update).not.toHaveBeenCalled();
       expect(prisma.estimate.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({ data: { status: VOID_STATUS } }),
+      );
+    });
+
+    // F3 (#711 review): excluding the whole terminal set means a repeat void
+    // of an ALREADY-DECLINED row also lands here — before this fix, the
+    // refusal message unconditionally claimed "Converted estimates cannot be
+    // voided" regardless of the row's real status, which is simply false for
+    // this row. It must name what the row actually is.
+    it("F3 voidEstimate() refusing an already-DECLINED row names DECLINED, not Converted", async () => {
+      prisma.estimate.updateMany.mockResolvedValue({ count: 0 });
+      prisma.estimate.findUnique.mockResolvedValue({ id: "est-1", status: VOID_STATUS });
+      prisma.estimate.findFirst.mockResolvedValue({ id: "est-1", status: VOID_STATUS });
+
+      await expect(service.voidEstimate("est-1")).rejects.toThrow(BadRequestException);
+      await expect(service.voidEstimate("est-1")).rejects.toThrow(
+        "Declined estimates cannot be voided",
       );
     });
 

@@ -41,7 +41,7 @@ export class EstimatesService {
   private async claimTransition(
     id: string,
     to: EstimateStatus,
-    refusal: string,
+    refusal: (humanizedActualStatus: string) => string,
     exclude: readonly EstimateStatus[] = TERMINAL_ESTIMATE_STATUSES,
   ): Promise<void> {
     const r = await this.prisma.forTenant().estimate.updateMany({
@@ -56,7 +56,13 @@ export class EstimatesService {
       where: { id },
     });
     if (!row) throw new NotFoundException("Estimate not found");
-    throw new BadRequestException(refusal);
+    // Name the row's REAL current status, not whichever exclusion member the
+    // caller wrote the message around — refusing a repeat void/decline of an
+    // already-DECLINED row must say Declined, not always claim "Converted".
+    // Humanized (Title case) to match the pre-existing message style, since
+    // the enum itself is upper-case ("CONVERTED", "DECLINED").
+    const humanStatus = row.status.charAt(0) + row.status.slice(1).toLowerCase();
+    throw new BadRequestException(refusal(humanStatus));
   }
 
   /**
@@ -287,7 +293,7 @@ export class EstimatesService {
   }
 
   async send(id: string) {
-    await this.claimTransition(id, "SENT", "Converted or voided estimates cannot be re-sent");
+    await this.claimTransition(id, "SENT", (status) => `${status} estimates cannot be re-sent`);
     return this.prisma.forTenant().estimate.findUniqueOrThrow({ where: { id } });
   }
   // Atomic claim: a CONVERTED estimate must never be re-accepted, or the convert path
@@ -304,17 +310,24 @@ export class EstimatesService {
   // a laundered one, so never relax voidEstimate/send/decline's exclusion set while
   // trusting this claim alone.
   async accept(id: string) {
-    await this.claimTransition(id, "ACCEPTED", "Converted estimates cannot be re-accepted", [
-      "CONVERTED",
-    ]);
+    await this.claimTransition(
+      id,
+      "ACCEPTED",
+      (status) => `${status} estimates cannot be re-accepted`,
+      ["CONVERTED"],
+    );
     return this.prisma.forTenant().estimate.findUniqueOrThrow({ where: { id } });
   }
   async decline(id: string) {
-    await this.claimTransition(id, "DECLINED", "Converted or voided estimates cannot be declined");
+    await this.claimTransition(
+      id,
+      "DECLINED",
+      (status) => `${status} estimates cannot be declined`,
+    );
     return this.prisma.forTenant().estimate.findUniqueOrThrow({ where: { id } });
   }
   async voidEstimate(id: string) {
-    await this.claimTransition(id, "DECLINED", "Converted estimates cannot be voided");
+    await this.claimTransition(id, "DECLINED", (status) => `${status} estimates cannot be voided`);
     return this.prisma.forTenant().estimate.findUniqueOrThrow({ where: { id } });
   }
 

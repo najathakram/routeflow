@@ -117,6 +117,15 @@ function defaultExpiryDate() {
   return d.toISOString().slice(0, 10);
 }
 
+// The operator's own local calendar date, not the UTC one — `.toISOString()`
+// would show tomorrow's date once local time crosses midnight UTC (e.g. any
+// evening in a timezone west of UTC). This is the input's default only; the
+// value itself stays a plain calendar-date string, storage unaffected.
+function defaultIssueDate() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 function CreateEstimateModal({
   isOpen,
   onClose,
@@ -146,7 +155,7 @@ function CreateEstimateModal({
   const [lineItems, setLineItems] = React.useState<EstimateLineItem[]>([]);
 
   // Dates & notes
-  const [issueDate, setIssueDate] = React.useState(new Date().toISOString().slice(0, 10));
+  const [issueDate, setIssueDate] = React.useState(defaultIssueDate());
   const [expiryDate, setExpiryDate] = React.useState(defaultExpiryDate());
   const [notes, setNotes] = React.useState("");
   const [errors, setErrors] = React.useState<Record<string, string>>({});
@@ -195,7 +204,7 @@ function CreateEstimateModal({
       setProductSearch("");
       setDebouncedProductSearch("");
       setLineItems([]);
-      setIssueDate(new Date().toISOString().slice(0, 10));
+      setIssueDate(defaultIssueDate());
       setExpiryDate(defaultExpiryDate());
       setNotes("");
       setErrors({});
