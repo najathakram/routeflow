@@ -5,13 +5,20 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
-import { PriceType } from "@prisma/client";
+import { EstimateStatus, PriceType } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { computeLineSubtotal, getTierPrice, roundMoney } from "@routeflow/pricing";
 import { loadMsrpMap } from "../common/msrp";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { NumberingService } from "../import/numbering.service";
+
+// B70: terminal status set — CONVERTED is terminal and cannot be re-transitioned; voided
+// (DECLINED) is also terminal per the requirement that send/decline/accept refuse both.
+export const TERMINAL_ESTIMATE_STATUSES = [
+  "CONVERTED",
+  "DECLINED",
+] as const satisfies readonly EstimateStatus[];
 
 @Injectable()
 export class EstimatesService {
@@ -22,6 +29,41 @@ export class EstimatesService {
   ) {}
 
   private readonly logger = new Logger(EstimatesService.name);
+
+  /**
+   * B70: atomic claim for estimate status transitions. Ensures only one call succeeds
+   * when multiple transitions are attempted concurrently; throws NotFoundException if
+   * estimate is missing, or BadRequestException if the estimate is in one of `exclude`
+   * and the transition is not allowed. `exclude` defaults to the full terminal set
+   * (CONVERTED + DECLINED/voided); accept() passes a narrower set — see its call site
+   * for why DECLINED is not terminal there.
+   */
+  private async claimTransition(
+    id: string,
+    to: EstimateStatus,
+    refusal: (humanizedActualStatus: string) => string,
+    exclude: readonly EstimateStatus[] = TERMINAL_ESTIMATE_STATUSES,
+  ): Promise<void> {
+    const r = await this.prisma.forTenant().estimate.updateMany({
+      where: {
+        id,
+        status: { notIn: [...exclude] },
+      },
+      data: { status: to },
+    });
+    if (r.count === 1) return;
+    const row = await this.prisma.forTenant().estimate.findFirst({
+      where: { id },
+    });
+    if (!row) throw new NotFoundException("Estimate not found");
+    // Name the row's REAL current status, not whichever exclusion member the
+    // caller wrote the message around — refusing a repeat void/decline of an
+    // already-DECLINED row must say Declined, not always claim "Converted".
+    // Humanized (Title case) to match the pre-existing message style, since
+    // the enum itself is upper-case ("CONVERTED", "DECLINED").
+    const humanStatus = row.status.charAt(0) + row.status.slice(1).toLowerCase();
+    throw new BadRequestException(refusal(humanStatus));
+  }
 
   /**
    * The next `EST-<year>-####` number, from the SAME per-tenant-year primitive the
@@ -44,6 +86,26 @@ export class EstimatesService {
   }
 
   async create(dto: any) {
+    // B79: issueDate is optional and, unlike expiresAt, has no legacy loose-parse
+    // behavior to preserve — validate the shape before touching the DB so a
+    // malformed value 400s instead of writing Invalid Date or a misparsed date.
+    let issueDate: Date | undefined;
+    if (dto.issueDate != null) {
+      if (typeof dto.issueDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(dto.issueDate)) {
+        throw new BadRequestException("issueDate must be YYYY-MM-DD");
+      }
+      issueDate = new Date(`${dto.issueDate}T00:00:00.000Z`);
+      // The regex alone accepts an out-of-range day/month (e.g. "2026-02-31"),
+      // which Date's day-rollover then silently turns into "2026-03-03" instead
+      // of failing — round-trip through ISO and compare to catch that class.
+      if (
+        Number.isNaN(issueDate.getTime()) ||
+        issueDate.toISOString().slice(0, 10) !== dto.issueDate
+      ) {
+        throw new BadRequestException("issueDate must be YYYY-MM-DD");
+      }
+    }
+
     const customer = await this.prisma
       .forTenant()
       .customer.findUnique({ where: { id: dto.customerId } });
@@ -148,6 +210,7 @@ export class EstimatesService {
           taxAmount: tax,
           discount,
           total,
+          issueDate,
           expiresAt: dto.expiresAt
             ? new Date(dto.expiresAt)
             : dto.expiryDate
@@ -230,29 +293,42 @@ export class EstimatesService {
   }
 
   async send(id: string) {
-    return this.prisma.forTenant().estimate.update({ where: { id }, data: { status: "SENT" } });
+    await this.claimTransition(id, "SENT", (status) => `${status} estimates cannot be re-sent`);
+    return this.prisma.forTenant().estimate.findUniqueOrThrow({ where: { id } });
   }
-  // Atomic claim: a CONVERTED estimate must never be re-accepted, or the
-  // convert path below will mint a second invoice for the same estimate.
+  // Atomic claim: a CONVERTED estimate must never be re-accepted, or the convert path
+  // below could see it as ACCEPTED again. Deliberately excludes ONLY CONVERTED (not
+  // the full TERMINAL_ESTIMATE_STATUSES set): accept() has always allowed
+  // DECLINED -> ACCEPTED (a pre-existing, pre-B70 invariant — staff can override a
+  // decline), and that stays true here. This does not reopen the laundering chain
+  // B70 closed: CONVERTED is an absorbing state across every writer of `status` —
+  // voidEstimate()/send()/decline() below each atomically refuse to act on an
+  // already-CONVERTED row (excluding the full terminal set), so nothing can ever
+  // move a CONVERTED estimate back to ACCEPTED. THAT is what actually gates a second
+  // invoice — convertToInvoice()'s own ACCEPTED->CONVERTED claim only prevents two
+  // *concurrent* converts of one already-ACCEPTED estimate; it does not by itself stop
+  // a laundered one, so never relax voidEstimate/send/decline's exclusion set while
+  // trusting this claim alone.
   async accept(id: string) {
-    const { count } = await this.prisma.forTenant().estimate.updateMany({
-      where: { id, status: { not: "CONVERTED" } },
-      data: { status: "ACCEPTED" },
-    });
-    if (count === 0) {
-      throw new BadRequestException("Converted estimates cannot be re-accepted");
-    }
+    await this.claimTransition(
+      id,
+      "ACCEPTED",
+      (status) => `${status} estimates cannot be re-accepted`,
+      ["CONVERTED"],
+    );
     return this.prisma.forTenant().estimate.findUniqueOrThrow({ where: { id } });
   }
   async decline(id: string) {
-    return this.prisma.forTenant().estimate.update({ where: { id }, data: { status: "DECLINED" } });
+    await this.claimTransition(
+      id,
+      "DECLINED",
+      (status) => `${status} estimates cannot be declined`,
+    );
+    return this.prisma.forTenant().estimate.findUniqueOrThrow({ where: { id } });
   }
   async voidEstimate(id: string) {
-    const est = await this.prisma.forTenant().estimate.findUnique({ where: { id } });
-    if (!est) throw new NotFoundException("Estimate not found");
-    if (est.status === "CONVERTED")
-      throw new BadRequestException("Converted estimates cannot be voided");
-    return this.prisma.forTenant().estimate.update({ where: { id }, data: { status: "DECLINED" } });
+    await this.claimTransition(id, "DECLINED", (status) => `${status} estimates cannot be voided`);
+    return this.prisma.forTenant().estimate.findUniqueOrThrow({ where: { id } });
   }
 
   async convertToInvoice(id: string) {
@@ -350,6 +426,19 @@ export class EstimatesService {
           },
           include: { customer: { select: { id: true, businessName: true } }, items: true },
         });
+
+        // B17: link the estimate to the invoice it minted, inside the same transaction
+        // as the claim above — a mismatch here (another write raced this same estimate
+        // between the claim and this link) rolls the whole conversion back rather than
+        // leaving a CONVERTED estimate with no invoiceId.
+        const linked = await tx.estimate.updateMany({
+          where: { id, status: "CONVERTED" },
+          data: { invoiceId: inv.id },
+        });
+        if (linked.count !== 1) {
+          throw new ConflictException("Estimate link failed");
+        }
+
         return inv;
       } catch (err: any) {
         // B100/F16b (REG-B100-F): had no P2002 catch — a concurrent convert's

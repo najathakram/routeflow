@@ -82,6 +82,61 @@
   any pin, re-resolve from manifests alone and prove it redundant.**
 - **Guard:** `validate-lock` pre-install CI job (#490).
 
+### L-062 · 2026-09-04 · tooling · imp-04
+
+- **Symptom:** dropping `@routeflow/api#test` (forbidden by package-shape.spec.ts) left
+  docs-truth.spec.ts/no-dead-deps.spec.ts's outside-workspace reads unhashed by any turbo task.
+- **Lesson:** a tripwire spec reaching outside its own workspace must own a turbo task whose
+  `inputs` name those files — a `<workspace>#<task>` override is one spec away from forbidden; a
+  GENERIC task with explicit inputs survives.
+- **Guard:** `turbo.json` `test:repo-truth`; `apps/api/src/common/turbo-inputs.spec.ts`.
+  Addendum (chore/next-15): moving a spec INTO the repo-truth lane must add it to the main
+  lane's `testPathIgnorePatterns` in the SAME change, or the main api lane still "collects" it,
+  runs zero assertions, and reports green.
+
+### L-070 · 2026-09-05 · tooling · #597
+
+- **Symptom:** the registry self-test's dead-holder lock cases failed on CI's Linux runner and
+  passed on Windows; the waiter never broke a dead owner's lock and every later case inherited it.
+- **Root cause:** `process.kill(pid, 0)` succeeds for a POSIX zombie — a killed child its parent
+  never reaped — and a synchronous parent (`Atomics.wait`, `spawnSync`) never reaps.
+- **Lesson:** **Signal 0 proves a pid exists, not that it lives. A POSIX liveness check must also
+  read `/proc/<pid>/stat` state `Z` (negative-only: unreadable means alive); a fixture that kills
+  a child must assert it was observed gone before the code under test runs.**
+- **Guard:** self-test `liveness:` checks (a2) and the dead-holder `observed gone` assertion, run on
+  both platforms; CI run 33938718344 is the red that proved it.
+
+### L-073 · 2026-09-04 · tooling · wave E `imp-10a`
+
+- **Symptom:** "generated client `index.d.ts` byte-identical before/after" failed on a
+  provably-lossless schema-folder split and would have read as a blocking regression.
+- **Root cause:** a multi-file schema concatenates in filename order, so a split reorders every
+  generated declaration (`modelProps` union, `ModelName` map, top-level re-exports) though content
+  stayed set-identical.
+- **Lesson:** **Never make a generated artifact's byte identity the oracle for a source
+  reorganization — pin the SEMANTICS instead** (block/name multisets on the input, an empty
+  `migrate diff` on the output).
+- **Guard:** `split-prisma-schema.mjs --check` proves block-identity + `MODEL_DOMAIN` placement;
+  `npm run local:drift` is the output-side oracle — both cheap/re-runnable, unlike a `.d.ts` diff.
+  Its comment stripper treats a quote left unterminated on its line as regex text, never a string opener.
+
+### L-114 · 2026-09-12 · tooling · plane-learning self-test tmpdir
+
+- **Symptom:** a lead's pre-push verify failed at `plane-learning.self-test: 1 FAILURE(S)` while
+  the suite passed alone; build agents saw the same "tmpdir count blip" whenever two suites
+  overlapped on the host.
+- **Root cause:** each plane self-test proved "leaves no dir behind" by counting
+  `<name>-self-test-*` entries in the shared `os.tmpdir()` before/after — another process's
+  fixtures (a second verify chain, a builder's test run) change the count, so the invariant
+  measured the host, not the process.
+- **Lesson:** **Global counts over a shared resource (tmpdir entries, ports, ledger lines) are
+  never process invariants — a test proves cleanup by tracking the exact paths it created under a
+  per-run unique prefix and asserting those are gone, so parallel runs on one host cannot fail
+  each other.**
+- **Guard:** `FIXTURE_PREFIX` (name + pid + random) and tracked-path assertions in the six plane
+  self-tests (commit 0ed13a56); OPS flake note; one verify chain at a time remains the host rule
+  for load-sensitive suites (see [[L-070]] class).
+
 ## testing
 
 ### L-014 · 2026-08-31 · testing · #562
@@ -101,6 +156,64 @@
 - **Lesson:** **Before tightening any list-DTO validation, grep `limit: 0` and other sentinel
   params across every client — hardening a contract means checking its consumers.**
 - **Guard:** DTO regression specs (products, suppliers).
+
+### L-076 · 2026-09-05 · testing · F13
+
+- **Symptom:** an E2E toast assertion via bare `getByText` hit a strict-mode violation
+  (2 elements) after the app gained an aria-live announcer that repeats toast copy.
+- **Root cause:** the same string is rendered twice on purpose — the visible toast
+  (`RadixToast.Title`) and Radix's own aria-live status region, portaled to `<body>`, which
+  mirrors the same title text for screen readers.
+- **Lesson:** **assert toasts through the toast container, never a bare text lookup — any copy
+  that is also announced resolves to two elements.** Scope through
+  `getByRole("region", { name: /notifications/i }).getByRole("listitem")`, not `page.getByText`.
+- **Guard:** the `getByRole("region"…).getByRole("listitem")` scoping convention (documented in
+  `21-destructive-guards.spec.ts`; no shared toast-assertion helper exists yet — a gap this entry
+  flags) applied at `apps/web/e2e/30-recurring-standing.spec.ts` (REG-B09, REG-B92).
+
+### L-082 · 2026-09-06 · testing · bugs.mjs self-test
+
+- **Symptom:** the registry self-test's pid-reuse fixture failed on an ubuntu runner (four checks in a
+  cascade) and passed on every Windows run and on its own CI re-run.
+- **Root cause:** the fixture forged a stale lock owner's boot stamp as "now minus 20 minutes"; the
+  liveness check treats a stamp within 5 s of the machine's real boot as the same boot, and a CI runner
+  that had been up about 20 minutes when the self-test started made the impostor look genuinely alive,
+  so the waiter spun out and the next fixtures inherited its lock dir.
+- **Lesson:** **never forge a timestamp relative to "now" by a plausible machine uptime — forge it
+  relative to the real boot stamp, far outside any slop; and give every fixture its own setup and
+  cleanup so a give-up cannot cascade into unrelated checks.**
+- **Guard:** the pid-reuse fixture forges `bootAt = bootStamp() − 1 year` and asserts the
+  "predates this boot" verdict; the owner-write fixture clears the lock dir before its own precondition
+  (`scripts/campaign/bugs.mjs` self-test, step 6 of `npm run verify`).
+
+### L-086 · 2026-09-07 · testing · #647
+
+- **Symptom:** F08's two new post-deploy Playwright rows failed on their first deployed run while
+  every other test passed: one expected the returns KPI to move by a hard-coded 10 (order line)
+  when the deployed billed basis gave 15; the other's heading locator matched two `h1`s.
+- **Root cause:** T2 rows are written without any run, so one encoded an order-line oracle for a
+  value the fix had moved to the invoice, and one used an unscoped role locator on a layout whose
+  header bar repeats every page title.
+- **Lesson:** **a post-deploy money oracle is read from the API at test time — the created record's
+  own billed figure, asserted `> 0` first so the row cannot pass vacuously — never computed from
+  fixture arithmetic; and heading locators on dashboard pages are scoped to `#main-content`.**
+- **Guard:** spec 29's `refundEstimate` fetch + vacuity guard; the T2 harness note in each
+  bug-test-plan; a T2 row stays `proven-pending-deploy` until its deploy-triggered run is green.
+
+### L-093 · 2026-09-08 · testing · #665
+
+- **Symptom:** after #657 deployed, `/distributors` answered 307 with no `Location` header in
+  production (and in the compose image), while `next dev` redirected fine — the deployment E2E
+  (spec 36 T1) was the only thing that caught it.
+- **Root cause:** the alias was a prerendered `redirect()` page; served from the ISR cache on the
+  standalone server, it lost its `Location` header.
+- **Lesson:** **URL aliases and legacy redirects belong in `next.config.mjs` `redirects()`
+  (evaluated before middleware, carries `Location` for every UA), never in a prerendered page
+  calling `redirect()` — the dev server masks this whole class, so the deployment E2E or a
+  production image is the only oracle.**
+- **Guard:** `apps/web/app/(marketing)/distributors-redirect.static.test.ts` pins the config
+  entry and the page's absence; a repo-wide sweep for the same shape filed 9 unbatched rows
+  (B251–B259) rather than extending this one test to cover them.
 
 ## deploy
 
@@ -171,6 +284,39 @@
   `discount: 0` — `discount` is reserved for explicit operator discounts; never derive one from
   the other.**
 - **Guard:** invoices spec "does NOT double-count a price override".
+
+### L-071 · 2026-09-04 · domain · OCR gate
+
+- **Symptom:** every invoice scan returned 403 for days; the web modal said "check the file and try again", so it read as a bad file, not a missing entitlement.
+- **Root cause:** #475 put `@RequireAddon("ocr")` on live routes with no backfill and no plan bundling the add-on, and the web discarded the server's message.
+- **Lesson:** **A new entitlement gate on an existing route is an outage unless it ships observe-first: register the key with a review date, allow-and-log until the backfill exists, fail closed only for unregistered keys, and always surface the server's message.**
+- **Guard:** `ADDON_GATE_REGISTRY` pins P1a–P1h and REG-OCR-1 T1–T8; e2e OP-17g; the CLAUDE.md "Entitlement gates" rule and the PR-template line.
+
+### L-095 · 2026-09-08 · domain · #668
+
+- **Symptom:** the fix's first round wired the scan FAB's tap to the wrong prop (inert, compiled
+  cleanly); round two found both handlers optional on shared `BarcodeFab` let `<BarcodeFab />`
+  compile into a dead control across five existing mounts too.
+- **Root cause:** mutually exclusive handlers (`onScanned` opens its own camera; `onPress`
+  intercepts the tap for a caller with its own scan surface) were modelled as independent optional
+  props, so neither being supplied still typechecked.
+- **Lesson:** **Model mutually exclusive handlers on a shared component as a discriminated union
+  (exactly one of `onScanned` / `onPress`), so a no-op mount is a TYPE error — pin it with a props
+  test.**
+- **Guard:** `barcode-fab-props.test.ts` (`tsc --noEmit`: rejects neither/both) + `BarcodeFab.tsx`'s
+  discriminated-union `Props`.
+
+### L-098 · 2026-09-08 · domain · #673
+
+- **Symptom:** a keyboard user saw a fragmented purple focus ring and a wrapped arrow on the
+  Sign-in menu items.
+- **Root cause:** an interactive element containing several inline children (icon, label, glyph)
+  was left `display: inline`, so `:focus-visible` painted once per line box and the trailing
+  glyph wrapped.
+- **Lesson:** **Any focusable element that holds more than one child is a flex/grid/block
+  container with `white-space: nowrap` where the row must not break; the focus ring lives on the
+  element, never on its children; pin the rule with a CSS-rule test, never a source-text grep.**
+- **Guard:** the `signin-menu` assertions in `marketing-port.static.test.ts`.
 
 ## security
 
@@ -1443,3 +1589,54 @@ mechanism, so archiving loses no enforcement.
   `uuidIds: true` seeds + the uuid-id cases in plane-sync/plane-apply self-tests; Landmine 15
   (live shapes) in the harness build plan. Related [[L-111]] (hook/branch gate), [[L-074]]
   (fixture realism).
+
+## Archived 2026-09-13 — headroom for L-132 (F27 B70) + byte cap
+
+Three active entries archived to clear headroom for L-132 (F27 B70, renumbered from L-119, then
+again from L-131 to avoid a second collision, during
+the 2026-09-14 rebase to avoid colliding with master's own L-119) and bring the register back
+under its 40 KB byte cap: L-035, L-027, L-010. All three carry `none — judgment` guards (no landed
+enforcement mechanism) and zero outside citations (repo-wide grep excluding `.claude/lessons/**`,
+`.claude/pipeline/**`, worktrees, and code-map CHANGELOG/`_meta.json`) — same disqualification
+class the register already used for L-004/L-026 (oldest, uncited, judgment-only). L-025 was
+checked and kept: it is cited from `apps/mobile/lib/skip-stop.ts`. L-055 was checked and kept: it
+is heavily cited across `apps/api/src/prisma/prisma-isolation.spec.ts`, `prisma.service.ts`, and
+multiple code-map CHANGELOG entries — not a candidate despite similar age.
+
+### L-035 · 2026-09-01 · process · #TBD
+
+- **Symptom:** B120's POD archive was designed onto a generic `AuditLog` row; review found
+  `RouteRunStop.podHistory` already existed, unused, with a schema comment naming the exact entry
+  shape and the words "F10 wires the write".
+- **Root cause:** an earlier enablement batch pre-added the column FOR this batch, and the design
+  was drawn from the register's suggested fix without grepping the schema for what was already
+  provisioned.
+- **Lesson:** **Before designing where something is stored, grep the schema for a column addressed
+  to your batch — the schema comment IS the spec.** Enablement batches leave columns waiting; a
+  field with no readers is a contract, not dead weight.
+- **Guard:** none — judgment. The mismatch also showed up as a blocker (the shared test mock had
+  no `auditLog` model), so "the harness fights you" is a hint you are off the intended path.
+
+### L-027 · 2026-09-01 · process
+
+- **Symptom:** with several sessions running in git worktrees, a repo-file gate was about to be
+  satisfied by writing into a _different_ session's working tree — surfacing later as a mystery diff
+  in someone else's PR.
+- **Root cause:** worktrees are nested inside the main checkout, and hooks resolve their paths
+  against that main checkout, not the worktree the session is working in. Whatever branch the shared
+  checkout happens to be parked on is the file the gate points at.
+- **Lesson:** **Never satisfy a gate by writing into whatever tree the hook happens to run from —
+  defer the write to your own worktree and say plainly why. Keep the shared checkout on the
+  integration branch; it is the only sane resting state for a tree that hooks resolve against.**
+- **Guard:** none — judgment. A gate demanding a repo file while you work in a worktree is the cue
+  to check which tree that path actually lands in.
+
+### L-010 · 2026-08-29 · tooling
+
+- **Symptom:** one workspace's tests "failed" under verify while the same code passed everywhere
+  else.
+- **Root cause:** worker exhaustion under host load — the task exited 1 with **no test report at
+  all**; nothing ever ran.
+- **Lesson:** **A bare non-zero task exit with no test report is environmental — re-run that
+  workspace directly before debugging; CI on clean runners is the authoritative gate.**
+- **Guard:** none — judgment (triage: direct `npx jest`, then filtered turbo).

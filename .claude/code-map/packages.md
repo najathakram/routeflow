@@ -37,6 +37,7 @@ Shared DTO/enum definitions. Entry: `index.ts` (no `src/`), re-exports `./api/*`
   `OVERDUE`, `PurchaseOrderStatus` (mobile local name `POStatus`) had `"PARTIALLY_RECEIVED"` instead
   of `PARTIAL`, `PromotionType` (`BuyerPromotion.type`) omitted `"BUY_N_GET_M"`; plus a sibling-sweep
   find, a phantom `"EXPIRED"` on `EstimateStatus` in both apps.
+- **F27 (2026-09-13, aa47ee9e)** — `api/misc.ts` `Estimate` gains `issueDate?: string | null` (operator-picked issue date; null on legacy rows — consumers fall back to `createdAt`). `EstimateItem`/`EstimateStatus` unchanged.
 - **`api/{orders,customers,products,finance,returns,regulated,routes,buyer,misc}.ts` (2026-09-03,
   wave E / imp-10b)** — the 95 identical/near-identical request/response DTOs the sweep
   (`.claude/pipeline/wave-E-structure/2026-09-03-imp-10b-shared-dtos/sweep.md`) found duplicated

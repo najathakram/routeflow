@@ -111,10 +111,24 @@ interface SelectedEstimateCustomer {
 
 // ─── Create Estimate modal ────────────────────────────────────────────────────
 
-function defaultExpiryDate() {
+// The operator's own local calendar date, not the UTC one — `.toISOString()`
+// would show tomorrow's date once local time crosses midnight UTC (e.g. any
+// evening in a timezone west of UTC). This is the input's default only; the
+// value itself stays a plain calendar-date string, storage unaffected.
+export function defaultIssueDate() {
   const d = new Date();
-  d.setDate(d.getDate() + 30);
-  return d.toISOString().slice(0, 10);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// 30 local-calendar days after the (already-local) issue date — takes the
+// computed issueDate rather than re-deriving "today" independently, so the
+// two defaults can never drift apart at a midnight boundary. The multi-arg
+// Date constructor is always local (unlike parsing an ISO string), and
+// correctly rolls month/year over for a day value past the month's end.
+export function defaultExpiryDate(fromIssueDate: string) {
+  const [y, m, day] = fromIssueDate.split("-").map(Number);
+  const d = new Date(y, m - 1, day + 30);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function CreateEstimateModal({
@@ -146,8 +160,8 @@ function CreateEstimateModal({
   const [lineItems, setLineItems] = React.useState<EstimateLineItem[]>([]);
 
   // Dates & notes
-  const [issueDate, setIssueDate] = React.useState(new Date().toISOString().slice(0, 10));
-  const [expiryDate, setExpiryDate] = React.useState(defaultExpiryDate());
+  const [issueDate, setIssueDate] = React.useState(defaultIssueDate());
+  const [expiryDate, setExpiryDate] = React.useState(() => defaultExpiryDate(issueDate));
   const [notes, setNotes] = React.useState("");
   const [errors, setErrors] = React.useState<Record<string, string>>({});
 
@@ -195,8 +209,9 @@ function CreateEstimateModal({
       setProductSearch("");
       setDebouncedProductSearch("");
       setLineItems([]);
-      setIssueDate(new Date().toISOString().slice(0, 10));
-      setExpiryDate(defaultExpiryDate());
+      const today = defaultIssueDate();
+      setIssueDate(today);
+      setExpiryDate(defaultExpiryDate(today));
       setNotes("");
       setErrors({});
     }
@@ -342,6 +357,7 @@ function CreateEstimateModal({
 
     const dto = {
       customerId: selectedCustomer!.id,
+      issueDate,
       expiresAt: expiryDate,
       notes: notes.trim() || undefined,
       items: lineItems.map((li) => ({
@@ -355,7 +371,7 @@ function CreateEstimateModal({
       })),
     };
 
-    createEstimate.mutate(dto as any, {
+    createEstimate.mutate(dto, {
       onSuccess: (est) => {
         toast({ title: "Estimate created", description: est.estimateNumber, variant: "success" });
         onClose();
@@ -918,7 +934,7 @@ export default function EstimatesPage() {
                     {est.customer?.businessName ?? "—"}
                   </td>
                   <td className="px-4 py-3 text-navy">
-                    {fmtCalendarDate((est as any).issueDate ?? est.createdAt)}
+                    {fmtCalendarDate(est.issueDate ?? est.createdAt)}
                   </td>
                   <td className="px-4 py-3 text-navy">
                     {fmtCalendarDate((est as any).expiresAt ?? (est as any).expiryDate)}
