@@ -16,6 +16,7 @@ import {
   Printer,
 } from "lucide-react";
 import { PageHeader, Button, cn, useToast, EmptyState } from "@routeflow/ui/web";
+import { resolveConfirmedAmounts } from "@routeflow/pricing";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
@@ -60,6 +61,33 @@ function todayLocalIso(): string {
   const m = String(now.getMonth() + 1).padStart(2, "0");
   const d = String(now.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
+}
+
+/**
+ * B421: the list row's Balance Due figure. The old inline version
+ * (`inv.paidAmount ?? (inv.payments ?? []).reduce((s, p) => s + Number(p.amount), 0)`)
+ * had no status OR method filter at all — it summed DRAFT/VOID rows and
+ * counted a CREDIT_NOTE/ADVANCE application as cash, both inflating "paid"
+ * and understating the balance. Delegates entirely to the shared
+ * `resolveConfirmedAmounts` (same helper the PDF/detail page use) — no local
+ * re-derivation. Exported for direct unit testing.
+ */
+export function resolveInvoiceListBalance(
+  inv: Pick<
+    Invoice,
+    "total" | "balanceDue" | "paidAmount" | "creditApplied" | "advanceApplied" | "payments"
+  >,
+): number {
+  if (inv.balanceDue !== undefined) return Number(inv.balanceDue);
+  const { cash, creditApplied, advanceApplied } = resolveConfirmedAmounts(
+    {
+      totalPaid: inv.paidAmount,
+      creditApplied: inv.creditApplied,
+      advanceApplied: inv.advanceApplied,
+    },
+    inv.payments ?? [],
+  );
+  return Math.max(0, Number(inv.total) - cash - creditApplied - advanceApplied);
 }
 
 /**
@@ -764,13 +792,7 @@ export default function InvoicesPage() {
               </tr>
             ) : (
               invoices.map((inv: Invoice) => {
-                const paid =
-                  inv.paidAmount ??
-                  (inv.payments ?? []).reduce((s: number, p: any) => s + Number(p.amount), 0);
-                const balance =
-                  inv.balanceDue !== undefined
-                    ? Number(inv.balanceDue)
-                    : Math.max(0, Number(inv.total) - paid);
+                const balance = resolveInvoiceListBalance(inv);
                 return (
                   <tr
                     key={inv.id}

@@ -77,6 +77,11 @@ describe("StatementService (P5-15 — monthly statement reconciliation)", () => 
         id: "pay-check",
         amount: 100,
         method: "CHECK",
+        // B421: the real query's own `select` now fetches `status` (the
+        // shared `splitConfirmed` re-checks it generically) — every row here
+        // already passed the query's `...CONFIRMED_PAYMENT` where-clause, so
+        // every fixture row is PAID, same as the query would actually return.
+        status: "PAID",
         reference: null,
         paidAt: new Date("2026-06-05T00:00:00.000Z"),
         invoice: { invoiceNumber: "INV-100" },
@@ -85,6 +90,7 @@ describe("StatementService (P5-15 — monthly statement reconciliation)", () => 
         id: "pay-credit-note",
         amount: 80,
         method: "CREDIT_NOTE",
+        status: "PAID",
         reference: null,
         paidAt: new Date("2026-06-07T00:00:00.000Z"),
         invoice: { invoiceNumber: "INV-100" },
@@ -132,6 +138,30 @@ describe("StatementService (P5-15 — monthly statement reconciliation)", () => 
       expect(creditLine).toBeDefined();
       expect(creditLine?.amount).toBe(-80);
       expect(stmt.lineItems.some((li) => li.type === "PAYMENT" && li.amount === -80)).toBe(false);
+    });
+
+    it("REG-B421: an ADVANCE-method application also routes into credits (same bucket as CREDIT_NOTE, via the shared splitConfirmed)", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValue([
+        ...MONTH_PAYMENT_ROWS,
+        {
+          id: "pay-advance",
+          amount: 15,
+          method: "ADVANCE",
+          status: "PAID",
+          reference: null,
+          paidAt: new Date("2026-06-08T00:00:00.000Z"),
+          invoice: { invoiceNumber: "INV-100" },
+        },
+      ]);
+
+      const stmt = await service.buildMonthlyStatement("cust-1", "2026-06");
+
+      // 80 (CREDIT_NOTE) + 15 (ADVANCE) = 95, both non-cash for THIS
+      // per-invoice-balance statement (unlike bookkeeping's cash-flow, which
+      // treats them asymmetrically — see payment-confirmation.ts's own doc).
+      expect(stmt.credits).toBe(95);
+      expect(stmt.payments).toBe(100);
+      expect(stmt.lineItems.some((li) => li.type === "CREDIT" && li.amount === -15)).toBe(true);
     });
 
     it("absorbs a mid-month write-off into adjustments so the identity still holds exactly", async () => {

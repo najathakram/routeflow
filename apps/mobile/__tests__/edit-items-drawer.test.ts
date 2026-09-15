@@ -217,7 +217,9 @@ describe("edit-items.tsx staged-edit autosave (REG-EDIT-AUTOSAVE)", () => {
     const restoreEffect = (parentSrc.match(
       /useEffect\(\(\) => \{\s*let alive = true;[\s\S]*?AsyncStorage\.getItem\(snapshotKey\)[\s\S]*?\n {2}\}, \[snapshotKey, userId\]\);/,
     ) ?? [""])[0];
-    expect(restoreEffect).toMatch(/if \(userId == null\) \{\s*setRestoreChecked\(true\);\s*return;/);
+    expect(restoreEffect).toMatch(
+      /if \(userId == null\) \{\s*setRestoreChecked\(true\);\s*return;/,
+    );
     // The guard must run BEFORE the AsyncStorage call, not after.
     const guardAt = restoreEffect.indexOf("userId == null");
     const readAt = restoreEffect.indexOf("AsyncStorage.getItem(snapshotKey)");
@@ -352,9 +354,7 @@ describe("edit-items.tsx last-added strip margin-ack basis (REG-B280)", () => {
     // with. AFTER: one basis (`marginClass`, already computed above for the
     // label) gates both the label AND the ack affordance.
     expect(strip).not.toMatch(/needsMarginAck\(/);
-    expect(strip).toMatch(
-      /\(marginClass === "belowCost" \|\| marginClass === "belowFloor"\) \?/,
-    );
+    expect(strip).toMatch(/\(marginClass === "belowCost" \|\| marginClass === "belowFloor"\) \?/);
   });
 
   it("REG-B280: needsMarginAck is no longer imported into edit-items.tsx", () => {

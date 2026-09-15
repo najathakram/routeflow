@@ -80,6 +80,25 @@ export default function CustomerInvoiceDetailScreen() {
   const p = invoicePill(invoice.status, invoice.isOverdue);
   const balanceDue = Number(invoice.balanceDue ?? invoice.amountDue ?? 0);
   const paidAmount = Number(invoice.paidAmount ?? invoice.amountPaid ?? 0);
+  // B421: confirmed but non-cash — a credit note or advance applied to this
+  // invoice reduces balanceDue but must never render as "Paid".
+  const creditApplied = Number(invoice.creditApplied ?? 0);
+  const advanceApplied = Number(invoice.advanceApplied ?? 0);
+  const showPaid = paidAmount > 0;
+  const showCredit = creditApplied > 0;
+  const showAdvance = advanceApplied > 0;
+  const showBalance = balanceDue > 0 && invoice.status !== "PAID";
+  // Which Summary row renders last (so only IT drops the bottom border) —
+  // whichever of these is true, checked in display order.
+  const lastSummaryRow = showBalance
+    ? "balance"
+    : showAdvance
+      ? "advance"
+      : showCredit
+        ? "credit"
+        : showPaid
+          ? "paid"
+          : "total";
   const pdfUrl = (invoice as any).pdfUrl as string | undefined;
   const paymentTermsLabel = (invoice as typeof invoice & InvoiceTermsLabelField).paymentTermsLabel;
 
@@ -233,9 +252,33 @@ export default function CustomerInvoiceDetailScreen() {
           <View style={styles.detailCard}>
             <DetailRow label="Invoice #" value={`#${invoice.invoiceNumber}`} />
             <DetailRow label="Status" value={p.label} />
-            <DetailRow label="Total" value={`$${Number(invoice.total).toFixed(2)}`} />
-            {paidAmount > 0 ? <DetailRow label="Paid" value={`$${paidAmount.toFixed(2)}`} /> : null}
-            {balanceDue > 0 && invoice.status !== "PAID" ? (
+            <DetailRow
+              label="Total"
+              value={`$${Number(invoice.total).toFixed(2)}`}
+              last={lastSummaryRow === "total"}
+            />
+            {showPaid ? (
+              <DetailRow
+                label="Paid"
+                value={`$${paidAmount.toFixed(2)}`}
+                last={lastSummaryRow === "paid"}
+              />
+            ) : null}
+            {showCredit ? (
+              <DetailRow
+                label="Credit issued"
+                value={`$${creditApplied.toFixed(2)}`}
+                last={lastSummaryRow === "credit"}
+              />
+            ) : null}
+            {showAdvance ? (
+              <DetailRow
+                label="Advance applied"
+                value={`$${advanceApplied.toFixed(2)}`}
+                last={lastSummaryRow === "advance"}
+              />
+            ) : null}
+            {showBalance ? (
               <DetailRow label="Balance due" value={`$${balanceDue.toFixed(2)}`} last />
             ) : null}
           </View>

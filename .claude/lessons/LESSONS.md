@@ -838,3 +838,41 @@ apps/web/app --include=*.tsx -A1 | grep -B1 onSuccess` — narrow to `.map()`-re
   `backfill-subscription-reconciliation.mjs` requires `--confirm-count` matching the scan when
   `--apply` runs unscoped. Sibling fix same round: the write's `updateMany` re-asserts tenant
   state, closing a scan-to-write race.
+
+### L-159 · 2026-09-15 · domain · B421 (PDF + web-detail rounds, independent review)
+
+- **Symptom:** a PDF template's fallback (for a caller not yet passing B421's new split fields)
+  re-derived `totalPaid`/`creditApplied`/`advanceApplied` independently, each gated on its OWN
+  `!= null` check — a caller passing an old, credit-inclusive `totalPaid` alone would get
+  `creditApplied`/`advanceApplied` re-split from raw payments too, subtracting the same
+  credit/advance a second time and understating the balance. The very next surface (a web page)
+  reinvented the identical bug before it even landed, independently of the first.
+- **Root cause:** three related figures each checked their own presence instead of sharing ONE
+  gate, so a partially-precomputed payload silently mixed two inconsistent bases.
+- **Lesson:** **When a fallback re-derives several related figures from raw data, gate ALL of
+  them on ONE presence check, never per-field — a caller supplying some but not all of a
+  precomputed set must get either the full precomputed set (missing members default to zero) or
+  the full re-derived set, never a mix.**
+- **Guard:** `payment-predicates.ts`'s `resolveConfirmedAmounts(precomputed, payments)` (API) and
+  the hand-rolled web mirror in `invoices/[id]/page.tsx` both gate on one field's presence; each
+  has a red-first regression test pinning the double-subtraction case.
+
+### L-143 · 2026-09-15 · domain · B421 (credit-applied vs paid, full fix)
+
+- **Symptom:** a CREDIT_NOTE-method `InvoicePayment` row (`status: PAID`) rendered/counted as
+  cash everywhere a "Paid"/"received" figure was shown — invoice totals, the PDF, buyer portal,
+  mobile, and every bookkeeping cash-flow/dashboard figure.
+- **Root cause:** the one shared confirmed-payment predicate answered "is this confirmed"
+  (status), necessary but not sufficient for "is this cash" — nothing distinguished the two
+  questions, so every consumer answered both with the same number.
+- **Lesson:** **A "paid"/"received" DISPLAY figure is cash-only (excludes CREDIT_NOTE; ADVANCE
+  stays in a tenant-wide received figure, since its application is the only place that cash is
+  ever recorded) — but balance/status/outstanding figures keep the FULL confirmed total, since a
+  credit note or advance genuinely settles what's owed. Two questions, two filters, ONE shared
+  predicate.**
+- **Guard:** `@routeflow/pricing`'s `splitConfirmed`/`resolveConfirmedAmounts`/
+  `RECEIVED_METHOD_FILTER`/`CASH_METHOD_FILTER` are the one implementation api/web/mobile
+  import — never re-derive either filter at a second site. A shared helper that re-derives a
+  precondition generically (e.g. re-checking `.status`) will silently no-op for a caller whose
+  `select`/fixture never populated that field for its own prior reasons (a `where` already
+  enforcing it) — run that caller's existing tests before trusting a swap, never a type-check alone.

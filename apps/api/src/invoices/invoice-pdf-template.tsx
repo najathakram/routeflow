@@ -1,8 +1,9 @@
 import React from "react";
 import { Document, Page, Text, View, StyleSheet, Image, Link } from "@react-pdf/renderer";
 import { carrierLabel, getTrackingUrl } from "../common/shipping";
-import { formatQtySplit } from "@routeflow/pricing";
+import { formatQtySplit, roundMoney } from "@routeflow/pricing";
 import { promoNote, showOriginalPrice } from "./invoice-pdf-item";
+import { CREDIT_NOTE_METHOD, resolveConfirmedAmounts } from "./payment-predicates";
 
 type DecimalLike = { toNumber(): number } | number | string;
 
@@ -51,6 +52,13 @@ export interface InvoicePdfData {
    * Balance Due actually uses, never a reduce over that array.
    */
   totalPaid?: number | null;
+  /**
+   * CONFIRMED-basis amounts NOT counted in `totalPaid` (B421) — a credit note
+   * or advance applied to this invoice, split out so the headline never shows
+   * either as cash the customer paid. Zero/absent renders no extra line.
+   */
+  creditApplied?: number | null;
+  advanceApplied?: number | null;
   /** Tenant's "hide original/pre-promo price" setting (F03/R9) — same source as
    *  the invoice detail endpoint's `hideOriginalPrice` field. */
   hideOriginalPrice?: boolean | null;
@@ -398,16 +406,37 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
   const discount = toNum(invoice.discount);
   const shippingFee = toNum(invoice.shippingFee);
   const total = toNum(invoice.total);
-  // F03/R1/B97: prefer the service's CONFIRMED-basis `totalPaid` (sumConfirmed).
+  // F03/R1/B97: prefer the service's CONFIRMED-basis `totalPaid` (splitConfirmed).
   // The `payments` array is a LISTING read — it still carries DRAFT rows so they
-  // can render below with a "Pending confirmation" label — so a fallback reduce
-  // over it (for any caller that hasn't been updated to pass `totalPaid`) sums
-  // only PAID rows, never a bare not-VOID pass that would double-count a draft.
-  const totalPaid =
-    invoice.totalPaid != null
-      ? toNum(invoice.totalPaid)
-      : invoice.payments.reduce((s, p) => (p.status === "PAID" ? s + toNum(p.amount) : s), 0);
-  const balance = total - totalPaid;
+  // can render below with a "Pending confirmation" label — so a fallback split
+  // over it (for any caller that hasn't been updated to pass `totalPaid`) uses
+  // the same shared predicate, never a bare PAID reduce that would count a
+  // credit note or advance application as cash (B421). All-or-nothing on
+  // `totalPaid`: `resolveConfirmedAmounts` never mixes a caller's own
+  // `totalPaid` with a freshly re-split `creditApplied`/`advanceApplied`,
+  // which would subtract the same credit twice and understate the balance.
+  const {
+    cash: totalPaid,
+    creditApplied,
+    advanceApplied,
+  } = resolveConfirmedAmounts(invoice, invoice.payments);
+  // B421 (review F3): roundMoney before the > 0 comparison/coloring below —
+  // this subtracts three separately-computed figures, so an invoice fully
+  // settled by a mix of cash/credit/advance can leave a sub-cent float
+  // remnant that would otherwise render a red "Balance Due $0.00".
+  const balance = roundMoney(total - totalPaid - creditApplied - advanceApplied);
+  // B421: customer-facing wording is "Credit issued — CN-…" (brief ruling #3),
+  // never folded into Amount Paid. Dedup + list every confirmed credit note
+  // number applied to this invoice; falls back to the plain label if the
+  // relation didn't resolve one.
+  const creditNoteNumbers = Array.from(
+    new Set(
+      invoice.payments
+        .filter((p) => p.status === "PAID" && p.method === CREDIT_NOTE_METHOD)
+        .map((p) => p.creditNote?.creditNoteNumber)
+        .filter((n): n is string => !!n),
+    ),
+  );
   const hideOriginalPrice = !!invoice.hideOriginalPrice;
   // Deposit schedule (Tier 1): depositAmount arrives pre-computed from the
   // service (roundMoney(total*percent/100)); the remainder is simply what's
@@ -682,6 +711,23 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                 <View style={styles.totalRow}>
                   <Text style={[styles.totalLabel, { color: SUCCESS }]}>Amount Paid</Text>
                   <Text style={[styles.totalValue, { color: SUCCESS }]}>-{fmt(totalPaid)}</Text>
+                </View>
+              ) : null}
+              {/* B421: a credit note or advance reduces the balance but is never
+                  cash the customer paid — neutral styling, never SUCCESS-green. */}
+              {creditApplied > 0 ? (
+                <View style={styles.totalRow}>
+                  <Text style={styles.totalLabel}>
+                    Credit issued
+                    {creditNoteNumbers.length > 0 ? ` — ${creditNoteNumbers.join(", ")}` : ""}
+                  </Text>
+                  <Text style={styles.totalValue}>-{fmt(creditApplied)}</Text>
+                </View>
+              ) : null}
+              {advanceApplied > 0 ? (
+                <View style={styles.totalRow}>
+                  <Text style={styles.totalLabel}>Advance applied</Text>
+                  <Text style={styles.totalValue}>-{fmt(advanceApplied)}</Text>
                 </View>
               ) : null}
               <View style={styles.totalDivider} />

@@ -18,7 +18,13 @@ import {
   type CategoryTaxType,
 } from "@routeflow/pricing";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
-import { CONFIRMED_PAYMENT, sumConfirmed } from "./payment-predicates";
+import {
+  CONFIRMED_PAYMENT,
+  CREDIT_NOTE_METHOD,
+  RECEIVED_METHOD_FILTER,
+  splitConfirmed,
+  sumConfirmed,
+} from "./payment-predicates";
 import { PAYABLE, KPI_SUMMARY_EXCLUDED } from "./invoice-status-sets";
 import { clampLimit } from "../common/pagination";
 import { isInternalEmail } from "../common/internal-email";
@@ -3094,20 +3100,48 @@ export class InvoicesService {
       // confirmed yet) must not be folded into the list's own balance-due number
       // any more than a VOID (bounced check, P5-12) one is — both must match
       // findOne's paidAmount/balanceDue.
-      const paidAmount = sumConfirmed(inv.payments);
+      //
+      // B421: paidAmount is now CASH-ONLY (a CREDIT_NOTE application is not
+      // money the tenant received, and rendered/counted as "Paid" it looked
+      // like one) — creditApplied/advanceApplied are separate fields. The
+      // customer's OBLIGATION is still reduced by any confirmed method, so
+      // balanceDue and the deposit check both use the full confirmed total.
+      const { cash: paidAmount, creditApplied, advanceApplied } = splitConfirmed(inv.payments);
+      const totalConfirmed = paidAmount + creditApplied + advanceApplied;
       const isSettled =
         inv.status === InvoiceStatus.PAID ||
         inv.status === InvoiceStatus.VOID ||
         inv.status === InvoiceStatus.WRITTEN_OFF;
-      const balanceDue = isSettled ? 0 : Math.max(0, Number(inv.total) - paidAmount);
+      // B421 (review F3): roundMoney BEFORE the > 0 comparison/coloring below —
+      // totalConfirmed sums three separately-computed floats (cash + credit +
+      // advance), so an invoice fully settled by a mix of methods can leave a
+      // sub-cent float remnant (e.g. -2.8e-14) that Math.max(0, ...) doesn't
+      // catch, rendering a red "Balance Due $0.00" on an otherwise-settled
+      // invoice. fmt() rounds for DISPLAY but this raw value drives the color/
+      // isOverdue logic directly.
+      const balanceDue = isSettled
+        ? 0
+        : Math.max(0, roundMoney(Number(inv.total) - totalConfirmed));
       const dueDateIso = inv.dueDate
         ? (inv.dueDate instanceof Date ? inv.dueDate : new Date(inv.dueDate))
             .toISOString()
             .slice(0, 10)
         : null;
       const isOverdue = !isSettled && balanceDue > 0 && dueDateIso != null && dueDateIso < todayIso;
-      const { depositAmount, depositOverdue } = this.computeDepositFields(inv as any, paidAmount);
-      return { ...inv, balanceDue, paidAmount, isOverdue, depositAmount, depositOverdue };
+      const { depositAmount, depositOverdue } = this.computeDepositFields(
+        inv as any,
+        totalConfirmed,
+      );
+      return {
+        ...inv,
+        balanceDue,
+        paidAmount,
+        creditApplied,
+        advanceApplied,
+        isOverdue,
+        depositAmount,
+        depositOverdue,
+      };
     });
 
     return {
@@ -3325,12 +3359,20 @@ export class InvoicesService {
     // F03/R1: CONFIRMED (PAID) payments only. VOID payments (manually voided OR
     // bounced checks) must not count toward the paid amount — and neither must an
     // unconfirmed DRAFT one; every other paid-sum in this file matches.
-    const paidAmount = sumConfirmed(inv.payments);
+    //
+    // B421: paidAmount is CASH-ONLY; creditApplied/advanceApplied are separate
+    // — see findAll's matching comment for why balanceDue/deposit still use
+    // the full confirmed total.
+    const { cash: paidAmount, creditApplied, advanceApplied } = splitConfirmed(inv.payments);
+    const totalConfirmed = paidAmount + creditApplied + advanceApplied;
     const isSettled =
       inv.status === InvoiceStatus.PAID ||
       inv.status === InvoiceStatus.VOID ||
       inv.status === InvoiceStatus.WRITTEN_OFF;
-    const balanceDue = isSettled ? 0 : Math.max(0, Number(inv.total) - paidAmount);
+    // B421 (review F3): roundMoney before the > 0 comparison — see findAll's
+    // matching comment (totalConfirmed sums three floats; a sub-cent remnant
+    // would otherwise render a red "Balance Due $0.00" on a settled invoice).
+    const balanceDue = isSettled ? 0 : Math.max(0, roundMoney(Number(inv.total) - totalConfirmed));
     // RF-202: date-string comparison — invoice due today is NOT overdue.
     const dueDateIso = inv.dueDate
       ? (inv.dueDate instanceof Date ? inv.dueDate : new Date(inv.dueDate))
@@ -3342,7 +3384,7 @@ export class InvoicesService {
       balanceDue > 0 &&
       dueDateIso != null &&
       dueDateIso < new Date().toISOString().slice(0, 10);
-    const { depositAmount, depositOverdue } = this.computeDepositFields(inv as any, paidAmount);
+    const { depositAmount, depositOverdue } = this.computeDepositFields(inv as any, totalConfirmed);
     // Rides the invoice payload (not /settings/invoice, which is operator-only)
     // so CUSTOMER viewers of this same document honor the tenant's
     // hide-original-price preference too.
@@ -3351,6 +3393,8 @@ export class InvoicesService {
       ...inv,
       balanceDue,
       paidAmount,
+      creditApplied,
+      advanceApplied,
       isOverdue,
       depositAmount,
       depositOverdue,
@@ -3850,7 +3894,12 @@ export class InvoicesService {
         customer: { select: { id: true, businessName: true, contactName: true, email: true } },
         items: true,
         // F03/R8: CONFIRMED (PAID) payments only — feeds totalPaid/balanceDue below.
-        payments: { where: CONFIRMED_PAYMENT },
+        // B421: creditNote relation needed for the customer-facing "Credit
+        // issued — CN-…" line's number.
+        payments: {
+          where: CONFIRMED_PAYMENT,
+          include: { creditNote: { select: { creditNoteNumber: true } } },
+        },
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
@@ -3896,8 +3945,20 @@ export class InvoicesService {
     // F03/R8/T-B102: CONFIRMED (PAID) basis — mirrors the PDF and the invoice
     // detail's own paidAmount/balanceDue math. A DRAFT (unconfirmed) payment must
     // not inflate what the email tells the customer they've already paid.
-    const totalPaid = sumConfirmed(inv.payments);
-    const balanceDue = roundMoney(Math.max(0, Number(inv.total) - totalPaid));
+    // B421: totalPaid is cash-only — a CREDIT_NOTE or ADVANCE application must
+    // never render as "Amount Paid" in an email sent to the customer. balanceDue
+    // stays on the full confirmed total (sumConfirmed) — a credit note or
+    // advance genuinely reduces what's still owed.
+    const { cash: totalPaid, creditApplied, advanceApplied } = splitConfirmed(inv.payments);
+    const balanceDue = roundMoney(Math.max(0, Number(inv.total) - sumConfirmed(inv.payments)));
+    const creditNoteNumbers = Array.from(
+      new Set(
+        (inv.payments ?? [])
+          .filter((p) => p.method === CREDIT_NOTE_METHOD)
+          .map((p) => (p as any).creditNote?.creditNoteNumber)
+          .filter((n): n is string => !!n),
+      ),
+    );
 
     // F03/R9: the SAME tenant setting findOneOrThrow and the PDF read. The email
     // body renders the same item table as the PDF attached to this very message,
@@ -3922,6 +3983,9 @@ export class InvoicesService {
       paymentTermsLabel: inv.paymentTermsLabel ?? undefined,
       total: Number(inv.total),
       totalPaid,
+      creditApplied,
+      advanceApplied,
+      creditNoteNumbers,
       balanceDue,
       items: inv.items.map((it: any) => ({
         description: it.description,
@@ -4063,7 +4127,12 @@ export class InvoicesService {
         customer: { select: { id: true, businessName: true, contactName: true, email: true } },
         items: true,
         // F03/R8: CONFIRMED (PAID) payments only — feeds totalPaid/balanceDue below.
-        payments: { where: CONFIRMED_PAYMENT },
+        // B421: creditNote relation needed for the customer-facing "Credit
+        // issued — CN-…" line's number.
+        payments: {
+          where: CONFIRMED_PAYMENT,
+          include: { creditNote: { select: { creditNoteNumber: true } } },
+        },
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
@@ -4100,9 +4169,17 @@ export class InvoicesService {
 
     // F03/R8/T-B102: CONFIRMED (PAID) basis, same as sendEmail — a reminder must
     // demand the true outstanding balance, never the DRAFT-inflated figure a
-    // non-VOID sum would give.
-    const totalPaid = sumConfirmed(inv.payments);
-    const balanceDue = roundMoney(Math.max(0, Number(inv.total) - totalPaid));
+    // non-VOID sum would give. B421: totalPaid is cash-only, same as sendEmail.
+    const { cash: totalPaid, creditApplied, advanceApplied } = splitConfirmed(inv.payments);
+    const balanceDue = roundMoney(Math.max(0, Number(inv.total) - sumConfirmed(inv.payments)));
+    const creditNoteNumbers = Array.from(
+      new Set(
+        (inv.payments ?? [])
+          .filter((p) => p.method === CREDIT_NOTE_METHOD)
+          .map((p) => (p as any).creditNote?.creditNoteNumber)
+          .filter((n): n is string => !!n),
+      ),
+    );
 
     // F03/R9: see sendEmail's matching comment — the reminder renders the same item
     // table, so it honours the same hide-original-price setting.
@@ -4121,6 +4198,9 @@ export class InvoicesService {
       paymentTermsLabel: inv.paymentTermsLabel ?? undefined,
       total: Number(inv.total),
       totalPaid,
+      creditApplied,
+      advanceApplied,
+      creditNoteNumbers,
       balanceDue,
       items: inv.items.map((it: any) => ({
         description: it.description,
@@ -4738,8 +4818,20 @@ export class InvoicesService {
       this.prisma.forTenant().invoicePayment.count({ where }),
     ]);
 
-    // Summary: total received (PAID only) and advance balance
-    const summaryWhere = { ...where, status: "PAID" };
+    // Summary: total received (PAID only) and advance balance. B421:
+    // "received" is cash-only — a CREDIT_NOTE application never counts,
+    // regardless of the caller's own `method` filter (if set, it narrows
+    // further via AND; it can never widen this back to include CREDIT_NOTE —
+    // filtering the LIST to credit-note rows must still show $0 received).
+    const { method: whereMethod, ...summaryWhereRest } = where;
+    const summaryWhere: any = {
+      ...summaryWhereRest,
+      status: "PAID",
+      AND: [
+        { method: RECEIVED_METHOD_FILTER },
+        ...(whereMethod != null ? [{ method: whereMethod }] : []),
+      ],
+    };
     const paidPayments = await this.prisma.forTenant().invoicePayment.findMany({
       where: summaryWhere,
       select: { amount: true },

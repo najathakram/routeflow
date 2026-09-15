@@ -4,17 +4,18 @@ Shared workspace packages (types, UI, configs) consumed by apps via npm workspac
 
 ## Where to find (this area)
 
-| Need                                             | File → symbol                                                              |
-| ------------------------------------------------ | -------------------------------------------------------------------------- |
-| Money math (line totals, tax, promos, tiers)     | `packages/pricing/src/` → `pricing.ts`, `tier-pricing.ts`                  |
-| Enums (UserRole, OrderStatus, ...)               | `packages/types/index.ts` → `export enum X`                                |
-| Type interfaces (User, Order, PaginatedResponse) | `packages/types/index.ts` → `export interface X`                           |
-| Web components (Button, Table, Modal, ...)       | `packages/ui/src/web/` → `index.ts` barrel                                 |
-| Mobile RN components                             | `packages/ui/src/mobile/index.ts`                                          |
-| iOS-specific components                          | `packages/ui/src/mobile/ios/index.ts`                                      |
-| Design tokens (colors, spacing, fonts)           | `packages/ui/src/tokens.ts`                                                |
-| ESLint flat presets                              | `packages/eslint-config/` → base.js, next.js, react-internal.js            |
-| TypeScript presets                               | `packages/typescript-config/` → base.json, nextjs.json, react-library.json |
+| Need                                                            | File → symbol                                                              |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Money math (line totals, tax, promos, tiers)                    | `packages/pricing/src/` → `pricing.ts`, `tier-pricing.ts`                  |
+| Payment-confirmation predicate (B421 cash/credit/advance split) | `packages/pricing/src/payment-confirmation.ts`                             |
+| Enums (UserRole, OrderStatus, ...)                              | `packages/types/index.ts` → `export enum X`                                |
+| Type interfaces (User, Order, PaginatedResponse)                | `packages/types/index.ts` → `export interface X`                           |
+| Web components (Button, Table, Modal, ...)                      | `packages/ui/src/web/` → `index.ts` barrel                                 |
+| Mobile RN components                                            | `packages/ui/src/mobile/index.ts`                                          |
+| iOS-specific components                                         | `packages/ui/src/mobile/ios/index.ts`                                      |
+| Design tokens (colors, spacing, fonts)                          | `packages/ui/src/tokens.ts`                                                |
+| ESLint flat presets                                             | `packages/eslint-config/` → base.js, next.js, react-internal.js            |
+| TypeScript presets                                              | `packages/typescript-config/` → base.json, nextjs.json, react-library.json |
 
 ## Packages
 
@@ -139,7 +140,19 @@ string` (B20 — free-form intake note, e.g. "DAMAGED_BOX") and its `restock?` d
 `pricing.ts` copies (api `src/common` + `src/utils`, web `lib`, mobile `lib`). Entry `src/index.ts`
 → `pricing.ts` (`computeLineSubtotal`, `normalizeBoxesPieces`, `roundMoney`, `prorateLineSubtotal`,
 `applyBestPromotion`/`promotionMatchesProduct`, the zero-price guard, BUY_N_GET_M helpers,
-`computeCategoryTax`, `roundUnitCost`, `effectiveQty`) + `tier-pricing.ts` (`getTierPrice`).
+`computeCategoryTax`, `roundUnitCost`, `effectiveQty`) + `tier-pricing.ts` (`getTierPrice`) +
+**`payment-confirmation.ts`** (B421, 2026-09-15 — moved here from an api-local
+`invoices/payment-predicates.ts` after independent review flagged the money-discipline
+violation of creating new payment-confirmation logic outside this package): `CONFIRMED_STATUS`/
+`CREDIT_NOTE_METHOD`/`ADVANCE_METHOD`/`CASH_METHOD_FILTER` (plain string literals — no
+`@prisma/client` import, pinned instead by `apps/api/src/invoices/payment-confirmation-parity.spec.ts`,
+the one place Prisma is available), `sumConfirmed`/`splitConfirmed` (cash vs. CREDIT_NOTE vs.
+ADVANCE), and `resolveConfirmedAmounts(precomputed, payments)` — all-or-nothing on
+`precomputed.totalPaid` so a caller supplying some but not all of a precomputed split never gets
+it mixed with a freshly re-derived one (lesson L-159). `apps/api/src/invoices/payment-predicates.ts`
+is now a thin re-export facade (existing `from "./payment-predicates"` call sites unchanged);
+`apps/web/app/(dashboard)/invoices/[id]/page.tsx` imports directly from `@routeflow/pricing`
+(its own hand-rolled mirror deleted). Mobile not yet wired — due when that surface is fixed.
 **Ships `dist/` (CJS + `.d.ts`), not source** — `main`/`types` point at `dist`, `package.json`
 declares `"build": "tsc -p tsconfig.build.json"`. This is load-bearing, unlike `@routeflow/types`'
 raw-TS `main`: the API consumes it at runtime through `nest build`'s emitted `require()`, and a
@@ -151,9 +164,10 @@ produces `dist` before anything typechecks. api/web/mobile all import the bare s
 
 - Golden tests live here: `src/pricing.spec.ts`, `src/tier-pricing.spec.ts`, `src/golden.spec.ts`
   (+ `src/golden.fixtures.ts`, the hand-worked money table, moved from api's old
-  `pricing-parity.fixtures.ts`). `src/no-mirrors.spec.ts` and `src/package-shape.spec.ts` guard the
-  package shape itself. `apps/api/src/common/no-runtime-workspace-imports.spec.ts` is the API-side
-  runtime-import guard.
+  `pricing-parity.fixtures.ts`), `src/payment-confirmation.spec.ts` (the core REG-B421 cases —
+  split math, the all-or-nothing `resolveConfirmedAmounts` guard). `src/no-mirrors.spec.ts` and
+  `src/package-shape.spec.ts` guard the package shape itself. `apps/api/src/common/no-runtime-workspace-imports.spec.ts`
+  is the API-side runtime-import guard.
 - Function bodies are byte-identical to the four deleted mirrors — proven by
   `scripts/codemods/pricing-body-diff.mjs` (per-symbol `identical`/`DIFFERS` diff; only
   `prorateLineSubtotal`'s signature line differs, widened to `storedSubtotal: number | null |
