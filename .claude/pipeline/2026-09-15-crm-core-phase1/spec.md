@@ -43,10 +43,10 @@ Web = `/crm/leads`, `/crm/leads/[id]`, `/crm/tasks`, Customer timeline tab · M 
 | Loading | skeleton in place | native skeleton | | R30 |
 | Partial | timeline source failed: rows + inline warning | same | `warnings[]` | R18 |
 | Error | inline error + Retry; mutation: toast + rollback | same | 4xx `{statusCode,message}` | R30 |
-| Offline | writes blocked + toast, no queue | cached reads, blocked writes | | R30 |
-| Unauthorized | DRIVER/CUSTOMER: no nav, URL gives 403 page; ungranted: nav and tab hidden | no route | 403 role · 404 tenant | R23-25, R27 |
+| Offline | no pattern exists in web today; a failed write surfaces the global axios toast | **mutations QUEUE** — the shipped interceptor (`mobile/lib/api-client.ts:120-166`) queues every non-FormData mutation on a hard transport failure; a TIMEOUT is deliberately not queued (REG-B196). **S3 correction: the earlier "blocked writes, no queue" was wrong** | | R30, R34 |
+| Unauthorized | DRIVER/CUSTOMER: no nav; a typed URL **redirects to `/dashboard`** via the existing role guard (`(dashboard)/layout.tsx:303-313`) — **there is no 403 page in this app**; ungranted tenant: nav hidden, deep link gets the `LockedPage` pattern | no route | **403** role · 404 tenant (unchanged — R23 is the API contract) | R23-25, R27 |
 | Too much data | 50/page, cursor load-more | 50/page | `limit ≤ 100` | R5, R18 |
-| Stale | refetch on focus | pull to refresh | | R30 |
+| Stale | 30 s `staleTime` + invalidate-on-mutation. **`refetchOnWindowFocus` is `false` globally** (`app/providers.tsx:67`) and no screen overrides it — CRM does not become the exception | pull to refresh | | R30 |
 | Concurrent | last-write-wins; stage change on CONVERTED 409 | same | convert lock | R7, R19 |
 
 ## 5. Non-functional
@@ -123,6 +123,7 @@ Verify: `unit`/`db` api Jest, `rtl` web, `e2e` Playwright, `jm` mobile Jest.
 | R31 | Expo `(operator)` has leads list, detail (timeline, tasks), add note, add/complete task, convert; `tel:` tap then "Log this call?" creates a CALL activity with outcome | must | jm + design review |
 | R32 | `CRM_LEAD_STATUS_VALUES` / `CRM_TASK_STATUS_VALUES` in `packages/types/api/enums.ts`, pinned in `enum-parity.spec.ts`; every Crm* model has `tenantId` NOT NULL + `(tenantId, …)` index and a `sales` entry in `MODEL_DOMAIN`; `split-prisma-schema.mjs --check` and Squawk pass | must | unit |
 | R33 | Fixtures, seeds, tests, copy use only approved test tenants and `acme`-style placeholders | must | review lens |
+| R34 | Mobile CRM writes inherit the existing offline queue, so a queued write can replay. Convert is idempotent (R19); **`POST /crm/activities` and `POST /crm/tasks` must not duplicate on replay** — carry a client-generated idempotency key or dedupe on `(tenantId, subject, authorUserId, body, occurredAt)`. Mechanism is S5's call; the no-duplicate property is the requirement | must | jm + db |
 
 ## 10. Open questions
 
@@ -132,6 +133,8 @@ Verify: `unit`/`db` api Jest, `rtl` web, `e2e` Playwright, `jm` mobile Jest.
 | #12 | Phone normaliser placement | one `digitsOnly` helper where the lead rules; R21 normalises both sides either way |
 | #13 | CRM advisory-lock family name | R19 uses one registered family, named at S5; `withAdvisoryLock` rejects an unregistered one, so it cannot ship unnamed |
 | Q4 | Owner's own unassign, others remaining: re-derive (R10) or null? | re-derive; one assertion flips if ruled null |
+| Q5 | Cap-403 on convert (R20): no mutation path renders an upgrade prompt today — only GETs do. Adding a `PLAN_GATE` branch to `MutationCache.onError` would touch **every** mutation repo-wide, not just CRM | spec'd as a scoped handler on the convert call only, unless the lead wants the global branch |
+| Q6 | `CrmActivity` CALL `outcome` enum values (mobile offers Reached / No answer / Left voicemail) | those three, pending the lead |
 
 ## 11. Assumptions (unverified)
 
