@@ -82,6 +82,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useTenant } from "@/components/tenant-provider";
 import { useAuth } from "@/lib/auth-context";
 import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
+import { printPdfBlob } from "@/lib/print-pdf-blob";
 
 // ─── Credit-note relation on a payment row ─────────────────────────────────────
 // WP2 (invoices.service.ts findOne) includes `creditNote: {id, creditNoteNumber,
@@ -1664,20 +1665,7 @@ export default function InvoiceDetailPage() {
     downloadPdf.mutate(
       { id: invoice.id, variant: pdfVariant },
       {
-        onSuccess: ({ blob }) => {
-          const blobUrl = URL.createObjectURL(blob);
-          const iframe = document.createElement("iframe");
-          iframe.style.display = "none";
-          iframe.src = blobUrl;
-          document.body.appendChild(iframe);
-          iframe.onload = () => {
-            iframe.contentWindow?.print();
-            setTimeout(() => {
-              iframe.remove();
-              URL.revokeObjectURL(blobUrl);
-            }, 60_000);
-          };
-        },
+        onSuccess: ({ blob }) => printPdfBlob(blob),
         onError: () =>
           toast({
             title: "Failed to generate PDF",

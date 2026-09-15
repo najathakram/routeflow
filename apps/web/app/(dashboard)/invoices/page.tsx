@@ -13,6 +13,7 @@ import {
   ChevronsUpDown,
   Trash2,
   Download,
+  Printer,
 } from "lucide-react";
 import { PageHeader, Button, cn, useToast, EmptyState } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -24,9 +25,11 @@ import {
   useInvoices,
   useInvoiceKpiSummary,
   useDeleteInvoice,
+  useDownloadInvoicePdf,
   type Invoice,
   type InvoiceStatus,
 } from "@/lib/api/invoices";
+import { printPdfBlob } from "@/lib/print-pdf-blob";
 import { apiClient } from "@/lib/api-client";
 import { useBookkeepingSummary } from "@/lib/api/bookkeeping";
 import { fmt, fmtCalendarDate, calendarDaysUntil } from "@/lib/formatting";
@@ -363,6 +366,8 @@ export default function InvoicesPage() {
   const { toast } = useToast();
   const deleteInvoice = useDeleteInvoice();
   const [confirmDeleteId, setConfirmDeleteId] = React.useState<string | null>(null);
+  const downloadPdf = useDownloadInvoicePdf();
+  const [printingId, setPrintingId] = React.useState<string | null>(null);
 
   const [urlFilters, setFilter, , setFilters] = useUrlFilters({
     status: "",
@@ -855,6 +860,31 @@ export default function InvoicesPage() {
                             className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-navy transition-colors"
                           >
                             <Eye className="h-4 w-4" />
+                          </button>
+                          <button
+                            title="Print invoice"
+                            aria-label={`Print invoice ${inv.invoiceNumber}`}
+                            disabled={printingId === inv.id}
+                            onClick={() => {
+                              setPrintingId(inv.id);
+                              downloadPdf.mutate(inv.id, {
+                                onSuccess: ({ blob }) => printPdfBlob(blob),
+                                onError: () =>
+                                  toast({
+                                    title: "Failed to generate PDF",
+                                    description: "Please try again.",
+                                    variant: "error",
+                                  }),
+                                onSettled: () => setPrintingId(null),
+                              });
+                            }}
+                            className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-navy transition-colors disabled:opacity-50"
+                          >
+                            {printingId === inv.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Printer className="h-4 w-4" />
+                            )}
                           </button>
                           {!isCustomer && inv.status === "DRAFT" && (
                             <button

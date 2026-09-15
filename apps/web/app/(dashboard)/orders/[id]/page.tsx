@@ -20,6 +20,7 @@ import {
   Truck,
   Calendar,
   Download,
+  Printer,
   Mail,
   MessageCircle,
   Phone,
@@ -87,6 +88,7 @@ import { ShipmentCard } from "@/components/ShipmentCard";
 import { SplitInvoiceModal } from "../_components/SplitInvoiceModal";
 import { InvoicePreviewModal, DivergenceNote } from "../../_components/LinkedDocPreviewModal";
 import { apiClient } from "@/lib/api-client";
+import { printPdfBlob } from "@/lib/print-pdf-blob";
 import { CreditNotePicker, type CreditSelection } from "../_components/CreditNotePicker";
 
 // ─── Send Invoice Modal ────────────────────────────────────────────────────────
@@ -106,6 +108,7 @@ function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: 
   const sendInvoice = useSendInvoice();
   const sendInvoiceEmail = useSendInvoiceEmail();
   const [pdfLoading, setPdfLoading] = React.useState(false);
+  const [printLoading, setPrintLoading] = React.useState(false);
   const [sent, setSent] = React.useState(false);
   const [emailSent, setEmailSent] = React.useState(false);
 
@@ -171,6 +174,23 @@ function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: 
       toast({ title: "Could not generate PDF", variant: "error" });
     } finally {
       setPdfLoading(false);
+    }
+  }
+
+  async function handlePrint() {
+    setPrintLoading(true);
+    try {
+      // Mirrors handleDownload's two-step fetch (RF-075 — the storage URL
+      // still requires a JWT), then hands the bytes to the shared print
+      // helper instead of triggering a download.
+      const meta = await apiClient.get<{ url: string }>(`/invoices/${data.invoiceId}/pdf`);
+      if (!meta.data?.url) throw new Error("No PDF URL returned");
+      const pdfRes = await apiClient.get<Blob>(meta.data.url, { responseType: "blob" });
+      printPdfBlob(pdfRes.data);
+    } catch {
+      toast({ title: "Could not generate PDF", variant: "error" });
+    } finally {
+      setPrintLoading(false);
     }
   }
 
@@ -297,6 +317,25 @@ function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: 
             <div>
               <p className="text-sm font-medium text-navy">Download PDF</p>
               <p className="text-xs text-navy/70">Save a copy to your device</p>
+            </div>
+          </button>
+
+          {/* Print PDF */}
+          <button
+            onClick={handlePrint}
+            disabled={printLoading}
+            className="flex w-full items-center gap-3 rounded-xl border border-surface-border bg-white px-4 py-3 text-left transition-colors hover:bg-surface-raised disabled:opacity-50"
+          >
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-raised">
+              {printLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin text-navy/70" />
+              ) : (
+                <Printer className="h-4 w-4 text-navy/70" />
+              )}
+            </div>
+            <div>
+              <p className="text-sm font-medium text-navy">Print</p>
+              <p className="text-xs text-navy/70">Open the print dialog</p>
             </div>
           </button>
         </div>
