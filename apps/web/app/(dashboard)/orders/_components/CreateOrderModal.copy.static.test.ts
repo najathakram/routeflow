@@ -5,10 +5,13 @@
  *
  * Ruling WP5 gives the exact relabel: both line-item note-input placeholders
  * (catalog line + custom/unlisted line) become "Flavor or note for this item
- * (prints on invoice)", and both `noteOpen` toggle labels (the single
- * shared `title={...}` ternary at the `:564`-pattern toggle site) become
- * "Add flavor / note". D-A5 (spec §10) confirms no existing test currently
- * pins the old "Add note" copy, so this is a clean new pin.
+ * (prints on invoice)". The toggle *label* has a single shared render site on
+ * web (one `<button title="Add flavor / note">` serves both the catalog and
+ * custom/unlisted line branches — unlike mobile's two separate
+ * CartRow/UnlistedCartRow components), so it relabels to "Add flavor / note"
+ * exactly once, not twice; see commit fc581139 for why the ternary that used
+ * to make this count 2 was dead code. D-A5 (spec §10) confirms no existing
+ * test currently pins the old "Add note" copy, so this is a clean new pin.
  */
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -28,8 +31,8 @@ describe("pin: web CreateOrderModal line-note copy (R5.5)", () => {
     ).toBe(2);
   });
 
-  it('shows the new toggle label "Add flavor / note" at least twice (both noteOpen toggle labels)', () => {
-    expect(countOccurrences(src, "Add flavor / note")).toBeGreaterThanOrEqual(2);
+  it('shows the new toggle label "Add flavor / note" at the single shared noteOpen toggle site', () => {
+    expect(countOccurrences(src, "Add flavor / note")).toBe(1);
   });
 
   it('no longer shows the old placeholder copy "Note for this line"', () => {
