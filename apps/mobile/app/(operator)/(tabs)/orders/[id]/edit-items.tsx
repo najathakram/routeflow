@@ -79,7 +79,7 @@ import { createScanAcceptGuard } from "../../../../../lib/scan-accept-guard";
 import { sanitizeIntInput } from "../../../../../lib/qty";
 import { QTY_INPUT_WIDTH } from "../../../../../lib/row-layout";
 import { resolveProductByCode } from "../../../../../lib/barcode-resolve";
-import { applyPriceOverride, needsMarginAck } from "../../../../../lib/price-override";
+import { applyPriceOverride } from "../../../../../lib/price-override";
 import { BarcodeScanner } from "../../../../../components/BarcodeScanner";
 import { BarcodeFab } from "../../../../../components/BarcodeFab";
 import { scanFabHidden } from "../../../../../lib/scan-fab-visibility";
@@ -2612,16 +2612,25 @@ function ProductPicker({
             ) : null}
           </View>
           {/* Review round: a below-floor price is flagged on THIS surface too
-              — same predicate (`needsMarginAck`), same floor, same guard as
-              the line row. No ack control here: acknowledging stays a
-              line-list tap, so `floorAcked` keeps exactly one writer.
+              — same guard as the line row. No ack control here: acknowledging
+              stays a line-list tap, so `floorAcked` keeps exactly one writer.
               Finding B263-H: the label ALSO reads `marginClass` (same
               `classifyMargin` call the row uses) so "Below cost" vs "Below
-              floor" can't disagree with the row for the same line. */}
+              floor" can't disagree with the row for the same line.
+              B280: this gate used to be `needsMarginAck` — a SEPARATE,
+              cent-rounded price comparison against `lastAddedFloor`
+              (`priceForMarginFloor`'s rounded output) — while the row's own
+              gate (`below`, DraftItemCard) and this same strip's label above
+              both classify by the EXACT fraction (`classifyMargin`). At the
+              half-cent boundary the two bases disagree, so the strip could
+              flag/not-flag a line the row disagreed with. Gate on
+              `marginClass` (the exact-fraction classification already
+              computed above for the label) instead — one basis, both
+              surfaces, never disagree. */}
           {canEditPrice &&
           lastAddedFloor != null &&
           !lastAddedAcked &&
-          needsMarginAck(lastAdded, lastAdded.unitPrice, lastAddedFloor) ? (
+          (marginClass === "belowCost" || marginClass === "belowFloor") ? (
             <View style={styles.pickerLastAddedRow}>
               <Text style={styles.pickerLastAddedBelow}>
                 {marginClass === "belowCost"

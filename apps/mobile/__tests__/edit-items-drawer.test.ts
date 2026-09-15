@@ -311,3 +311,40 @@ describe("edit-items.tsx B246 scan FAB survives (PIN-B246, unchanged)", () => {
     expect(pickerMount).toMatch(/initialScanOpen=\{pickerScanIntent\}/);
   });
 });
+
+describe("edit-items.tsx last-added strip margin-ack basis (REG-B280)", () => {
+  // Same slice REG-EDIT-STRIP computes above (module-local to that describe,
+  // so recomputed here): the last-added strip's own JSX, from its guard
+  // through (but not into) the list row's unrelated
+  // `canEditPrice && pickerPriceEditItem` block.
+  const stripStart = pickerSrc.indexOf("{lastAdded && !trayExpanded ? (");
+  const strip =
+    stripStart === -1
+      ? ""
+      : pickerSrc.slice(stripStart, pickerSrc.indexOf("canEditPrice && pickerPriceEditItem"));
+
+  it("REG-B280: the ack gate classifies by the SAME exact-fraction basis as the row's badge, not a separate price comparison", () => {
+    // TODAY (the bug): this gate called `needsMarginAck(lastAdded,
+    // lastAdded.unitPrice, lastAddedFloor)` — a cent-rounded PRICE comparison
+    // against `priceForMarginFloor`'s output — while the row's own `below`
+    // (DraftItemCard) and this strip's own label classify by the EXACT
+    // fraction (`classifyMargin`). At the half-cent boundary the two bases
+    // disagree, so the strip could flag/not-flag a line the row disagreed
+    // with. AFTER: one basis (`marginClass`, already computed above for the
+    // label) gates both the label AND the ack affordance.
+    expect(strip).not.toMatch(/needsMarginAck\(/);
+    expect(strip).toMatch(
+      /\(marginClass === "belowCost" \|\| marginClass === "belowFloor"\) \?/,
+    );
+  });
+
+  it("REG-B280: needsMarginAck is no longer imported into edit-items.tsx", () => {
+    // The function itself stays exported from lib/price-override.ts (its own
+    // REG-B263-A tests still pin its price-comparison behaviour unchanged —
+    // a correct, tested utility for a caller that genuinely has only a price
+    // and no fraction handy) — it just isn't the right tool for THIS gate,
+    // which already has the fraction-based `marginClass` on hand. Comments
+    // referencing the old name in explanation are fine; only CODE must not.
+    expect(stripComments(source)).not.toMatch(/needsMarginAck/);
+  });
+});
