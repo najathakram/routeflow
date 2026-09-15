@@ -856,3 +856,23 @@ apps/web/app --include=*.tsx -A1 | grep -B1 onSuccess` — narrow to `.map()`-re
 - **Guard:** `payment-predicates.ts`'s `resolveConfirmedAmounts(precomputed, payments)` (API) and
   the hand-rolled web mirror in `invoices/[id]/page.tsx` both gate on one field's presence; each
   has a red-first regression test pinning the double-subtraction case.
+
+### L-143 · 2026-09-15 · domain · B421 (credit-applied vs paid, full fix)
+
+- **Symptom:** a CREDIT_NOTE-method `InvoicePayment` row (`status: PAID`) rendered/counted as
+  cash everywhere a "Paid"/"received" figure was shown — invoice totals, the PDF, buyer portal,
+  mobile, and every bookkeeping cash-flow/dashboard figure.
+- **Root cause:** the one shared confirmed-payment predicate answered "is this confirmed"
+  (status), necessary but not sufficient for "is this cash" — nothing distinguished the two
+  questions, so every consumer answered both with the same number.
+- **Lesson:** **A "paid"/"received" DISPLAY figure is cash-only (excludes CREDIT_NOTE; ADVANCE
+  stays in a tenant-wide received figure, since its application is the only place that cash is
+  ever recorded) — but balance/status/outstanding figures keep the FULL confirmed total, since a
+  credit note or advance genuinely settles what's owed. Two questions, two filters, ONE shared
+  predicate.**
+- **Guard:** `@routeflow/pricing`'s `splitConfirmed`/`resolveConfirmedAmounts`/
+  `RECEIVED_METHOD_FILTER`/`CASH_METHOD_FILTER` are the one implementation api/web/mobile
+  import — never re-derive either filter at a second site. A shared helper that re-derives a
+  precondition generically (e.g. re-checking `.status`) will silently no-op for a caller whose
+  `select`/fixture never populated that field for its own prior reasons (a `where` already
+  enforcing it) — run that caller's existing tests before trusting a swap, never a type-check alone.
