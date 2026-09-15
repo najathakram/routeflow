@@ -81,20 +81,6 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
   connecting, and treat "nothing set" as a loud fallback.**
 - **Guard:** `resolveDatabaseUrl` + its spec; the seed logs its target host.
 
-### L-073 · 2026-09-04 · tooling · wave E `imp-10a`
-
-- **Symptom:** "generated client `index.d.ts` byte-identical before/after" failed on a
-  provably-lossless schema-folder split and would have read as a blocking regression.
-- **Root cause:** a multi-file schema concatenates in filename order, so a split reorders every
-  generated declaration (`modelProps` union, `ModelName` map, top-level re-exports) though content
-  stayed set-identical.
-- **Lesson:** **Never make a generated artifact's byte identity the oracle for a source
-  reorganization — pin the SEMANTICS instead** (block/name multisets on the input, an empty
-  `migrate diff` on the output).
-- **Guard:** `split-prisma-schema.mjs --check` proves block-identity + `MODEL_DOMAIN` placement;
-  `npm run local:drift` is the output-side oracle — both cheap/re-runnable, unlike a `.d.ts` diff.
-  Its comment stripper treats a quote left unterminated on its line as regex text, never a string opener.
-
 ### L-055 · 2026-09-03 · tooling · wave D imp-05
 
 - **Symptom:** Jest matched **zero tests** in this worktree with the documented
@@ -887,3 +873,20 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   restored the two `accept()` assertions from nested `expect.objectContaining` to exact
   `toHaveBeenCalledWith`: objectContaining silently admits extra `where` keys, so the key-set
   (`{ id, status }`, no tenant key) was pinned nowhere.
+
+### L-150 · 2026-09-15 · domain · B264/B265/B266 mobile scan FABs
+
+- **Symptom:** a `BarcodeFab` mounted inside a `FormSheet`-wrapped screen rendered but scrolled away
+  with the form content instead of floating fixed — the defect the floating-FAB pattern exists to
+  prevent, moved one layer down.
+- **Root cause:** `FormSheet`'s `children` render inside `FormSheet`'s OWN internal `ScrollView`
+  (`components/FormSheet.tsx`), not under the screen's stable outer container. `position:
+"absolute"` there is relative to the scrolling content box, not the viewport, so it moves with
+  the scroll. Every other `BarcodeFab` consumer uses a plain `SafeAreaView` + sibling `ScrollView`,
+  where this trap doesn't exist.
+- **Lesson:** **A wrapper whose `children` land inside its OWN scrolling container is not a safe
+  parent for an absolutely-positioned floating element — check the wrapper's own source for where
+  `children` actually renders before assuming position is unaffected. Mount the floating element
+  as a SIBLING of the wrapper instead (a Fragment), never inside its `children`.**
+- **Guard:** `apps/mobile/__tests__/scan-affordance-siblings.test.ts` pins the FAB's mount position
+  on all three screens (`fabAt > formSheetCloseAt`).

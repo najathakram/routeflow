@@ -1494,3 +1494,29 @@ multiple code-map CHANGELOG entries — not a candidate despite similar age.
 - **Lesson:** **A bare non-zero task exit with no test report is environmental — re-run that
   workspace directly before debugging; CI on clean runners is the authoritative gate.**
 - **Guard:** none — judgment (triage: direct `npx jest`, then filtered turbo).
+
+## Archived 2026-09-15 — headroom for L-150 (B264/B265/B266) + byte cap
+
+One active entry archived to bring fix/mobile-scan-lane-e's register (PR-3) back under its
+65,536-byte cap after L-150 landed: L-073. Zero outside citations (repo-wide grep across `apps/`,
+`scripts/`, `packages/` for `.ts`/`.tsx`/`.mjs`/`.cjs`/`.js`, and no `[[L-073]]` backlink from
+another live entry — same check already run once this window on the sibling fix/mobile-scan-lane-d
+branch, against the identical pre-PR-2/PR-3 codebase state, since neither branch touches the files
+that would cite it) and its operational substance — the Prisma schema-folder split, `--check`'s
+block-identity proof, `local:drift` as the output-side oracle — is already carried forward in
+CLAUDE.md's "Deployment & DB safety (Railway)" section, so archiving it loses no load-bearing
+knowledge.
+
+### L-073 · 2026-09-04 · tooling · wave E `imp-10a`
+
+- **Symptom:** "generated client `index.d.ts` byte-identical before/after" failed on a
+  provably-lossless schema-folder split and would have read as a blocking regression.
+- **Root cause:** a multi-file schema concatenates in filename order, so a split reorders every
+  generated declaration (`modelProps` union, `ModelName` map, top-level re-exports) though content
+  stayed set-identical.
+- **Lesson:** **Never make a generated artifact's byte identity the oracle for a source
+  reorganization — pin the SEMANTICS instead** (block/name multisets on the input, an empty
+  `migrate diff` on the output).
+- **Guard:** `split-prisma-schema.mjs --check` proves block-identity + `MODEL_DOMAIN` placement;
+  `npm run local:drift` is the output-side oracle — both cheap/re-runnable, unlike a `.d.ts` diff.
+  Its comment stripper treats a quote left unterminated on its line as regex text, never a string opener.
