@@ -266,13 +266,16 @@ ACTIVE` gate (non-PRODUCTION or non-ACTIVE → 0, no exceptions). `getTenant()` 
   the reconciliation script's entry (already current from commit `af1b700b`). Lessons: ONE entry
   for N2 (a child process does not inherit a guard — scrub env before spawning a prod-capable
   CLI) and ONE for N1 (a "single engine" claim needs a grep for the old helper's remaining call
-  sites, not just the one caller that was migrated) — **write these as L-140 and L-141** per
-  routeflow-c4's ruling (2026-09-14, resolving the id question this plan originally raised): the
-  branch's own two pre-existing entries are confirmed L-133/L-134 (fixed from this session's
-  first-pass L-129/L-130 guess — PR #746 had already claimed L-129 independently, verified
-  against its pushed head), and `_meta.json.nextId` is reserved at 142 to cover L-135-137
-  (T12-T15), L-138 (mobile lanes), L-139 (tooling) ahead of these two. Bump `nextId` to 143 after
-  writing L-141.
+  sites, not just the one caller that was migrated) — **ids are NOT fixed numbers; T8 is the last
+  task in the run and other lanes can land more commits before it executes.** Read
+  `.claude/lessons/_meta.json`'s `nextId` (call it N) at write time, use L-N and L-(N+1), grep
+  `LESSONS.md` first to confirm neither already exists, bump `nextId` to N+2, then run
+  `node scripts/validate-lessons.mjs --digest` and require a self-consistent report before
+  finishing. **Do NOT use L-140/L-141** — this plan's original placeholder, superseded during
+  pre-launch merges (this branch's own pre-existing two entries are L-133/L-134, fixed from an
+  earlier L-129/L-130 guess that collided with PR #746's independently-claimed L-129; by the
+  final pre-launch merge the confirmed floor was `nextId` 146, and it may be higher still by the
+  time T8 runs — that is exactly why this reads live rather than trusting any number written here).
 
 ---
 
@@ -459,7 +462,7 @@ reply) and on routeflow-c4 confirming HOST is free._
               '.claude/lessons/LESSONS.md'],
       tests: [],
       dependsOn: ['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'],
-      brief: 'F6,N7,N8. Fix stale TRIAL_LENGTH_DAYS docblock (plan-catalog.constants.ts:13-16, claims admin path NOT wired -- it is, flat 14 days; keep 14, declaration defect not code). Correct PR body ("per plan" wrong). Declare N7s undeclared trialLengthDays 1-90 admin override (create-tenant.dto.ts:52-59) in PR body, no code change. Add N8s RECONCILIATION_SNAPSHOT_BACKFILLED:"reconciliation.snapshot_backfilled" to BILLING_EVENTS with a comment the .mjs mirrors the string. Update code-map entries for mrr.service.ts, platform-admin.service.ts (getStats/getTenant/getBillingOverview/getGrowth), new tenant-class.ts. Write 2 lesson entries as L-140 (N2: a child process does not inherit a guard -- scrub env before spawning a prod-capable CLI) and L-141 (N1: a single-engine claim needs a grep for the old helpers remaining call sites, not just the one caller migrated) per routeflow-c4s 2026-09-14 ruling -- this branchs own pre-existing 2 entries are confirmed L-133/L-134 (fixed from this sessions first-pass L-129/L-130, which collided with PR #746s independently-claimed L-129). Bump _meta.json nextId to 143 after writing L-141.' },
+      brief: 'F6,N7,N8. Fix stale TRIAL_LENGTH_DAYS docblock (plan-catalog.constants.ts:13-16, claims admin path NOT wired -- it is, flat 14 days; keep 14, declaration defect not code). Correct PR body ("per plan" wrong). Declare N7s undeclared trialLengthDays 1-90 admin override (create-tenant.dto.ts:52-59) in PR body, no code change. Add N8s RECONCILIATION_SNAPSHOT_BACKFILLED:"reconciliation.snapshot_backfilled" to BILLING_EVENTS with a comment the .mjs mirrors the string. Update code-map entries for mrr.service.ts, platform-admin.service.ts (getStats/getTenant/getBillingOverview/getGrowth), new tenant-class.ts. LESSON IDS ARE NOT FIXED NUMBERS -- read .claude/lessons/_meta.json fresh at the moment you write (this is the LAST task in the run; other lanes may have landed more commits by then): use its current nextId N for L-N (N2: a child process does not inherit a guard -- scrub env before spawning a prod-capable CLI) and N+1 for L-(N+1) (N1: a single-engine claim needs a grep for the old helpers remaining call sites, not just the one caller migrated); grep LESSONS.md to confirm neither id already exists before writing; set nextId to N+2 afterward; run node scripts/validate-lessons.mjs --digest and require it to report self-consistent before finishing this task. Do NOT use L-140/L-141 -- those were this rounds original placeholder and are already claimed by other lanes (confirmed stale as of the pre-launch merge).' },
   ],
 
   verifyCommands: {
