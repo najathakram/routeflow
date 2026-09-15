@@ -137,6 +137,25 @@
   self-tests (commit 0ed13a56); OPS flake note; one verify chain at a time remains the host rule
   for load-sensitive suites (see [[L-070]] class).
 
+### L-083 · 2026-09-06 · tooling · campaign-check freshness
+
+- **Symptom:** four pushes in one day were refused twelve minutes into `npm run verify` with "no test titled
+  with REG-B###", although the tests existed and passed — the machine-local Jest report campaign-check reads
+  was simply older than the ledger rows it was asked to prove.
+- **Root cause:** turbo replays a `test` task whose input tree it has seen before (a worktree whose workspace
+  matches master's after a merge), so the reporter never runs and `.campaign/runs/<ws>.json` keeps the tokens
+  of its last real run; the gate compared claims against that stale artifact as if it were current.
+- **Lesson:** **an artifact a gate consumes must carry its own provenance (its start time) and the gate must
+  compare it with the inputs it certifies — the newest commit touching the workspace's tests or the ledger —
+  and refuse a stale artifact by name, with the regeneration command, before it scans a single token.**
+- **Guard:** `scripts/campaign-check.mjs` freshness rule (full mode, before indexing) + `--freshness-only`
+  pre-step at the head of `npm run verify` that asks `turbo --dry-run=json` whether a replay is coming;
+  `apps/api/src/common/campaign-check-freshness.spec.ts` T1–T17 (T15–T17 added in fix-round 1: the
+  bound now uses `git log --first-parent` — a merge TREESAME to one parent for the path was judged
+  by the OLDER pre-merge commit otherwise — and clamps to `Date.now()` on a future-dated commit).
+  Addendum (chore/next-15): after committing, regenerate every T1 workspace's report (`cd
+apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns the reporter.
+
 ## testing
 
 ### L-014 · 2026-08-31 · testing · #562
@@ -214,6 +233,37 @@
 - **Guard:** `apps/web/app/(marketing)/distributors-redirect.static.test.ts` pins the config
   entry and the page's absence; a repo-wide sweep for the same shape filed 9 unbatched rows
   (B251–B259) rather than extending this one test to cover them.
+
+### L-060 · 2026-09-03 · testing · wave B′ P4
+
+- **Symptom:** a spec commissioned as a "pin" (`tenant-findunique.db.spec.ts`) shipped 8/17 RED. Its
+  own header said the block was red "before the fix", but the package was scoped test-only, so no
+  fix was written and the branch's `npm run local:test:db` acceptance could not pass.
+- **Root cause:** the brief asked for tests that _pin_ an invariant (cross-tenant
+  `findUniqueOrThrow` throws) without anyone first checking the invariant held. It did not:
+  `findUniqueOrThrow` was in neither tenancy layer of `prisma.service.ts` — absent from
+  `POST_FILTER_METHODS`/`SCOPED_METHODS` in `_wrapTxWithTenant` and from `_tenantExtension`'s
+  `$allModels` map — so it returned another tenant's row on `forTenant()` and inside
+  `tenantTransaction()`.
+- **Lesson:** **A "pin" brief must state the expected colour per test, and any test that comes out
+  red escalates the package from `test:` to `fix:` on the spot.** A red pin is a live defect
+  report, never a spec to ship as-is — and "we only add tests" is not a reason to leave one red.
+- **Guard:** the RED BAR block now asserts `code: "P2025"` (Prisma's own not-found shape), so a
+  regression that returns the row — or throws something else — fails the DB lane.
+
+### L-061 · 2026-09-04 · testing · wave B′ P4
+
+- **Symptom:** a fail-closed `default:` added beside Prisma's named `$allModels` handlers threw on
+  every scoped query. Only the DB lane caught it — a unit test calling the handler directly stayed
+  green.
+- **Root cause:** Prisma composes `$allModels.$allOperations` WITH the named per-operation handlers
+  rather than choosing the most specific one: a named handler's `query()` runs the catch-all next.
+- **Lesson:** **A client-extension catch-all cannot coexist with a named map — write ONE
+  `$allOperations` switch with an explicit default. And a spec that calls an extension handler
+  directly proves nothing about how the framework COMPOSES it: exercise the composed chain (a real
+  client, or the DB lane).**
+- **Guard:** `prisma-isolation.spec.ts` drives the real `_tenantExtension`; `local:test:db` runs on
+  `apps/api/src/prisma/**` PRs (`db-migrations.yml` paths).
 
 ## deploy
 
@@ -317,6 +367,29 @@
   container with `white-space: nowrap` where the row must not break; the focus ring lives on the
   element, never on its children; pin the rule with a CSS-rule test, never a source-text grep.**
 - **Guard:** the `signin-menu` assertions in `marketing-port.static.test.ts`.
+
+### L-047 · 2026-09-04 · domain · F25
+
+- **Symptom:** run dates, licence expiries and dashboard dates shifted a day for viewers west of
+  UTC; on-time % was judged against the UTC day-end for tenants in New York; a driver location
+  POST was rejected on a platform sentinel `-1`.
+- **Root cause:** calendar dates stored as UTC midnight were read with local getters or
+  `toLocaleDateString`; one writer stored local `23:59:59`; analytics never read
+  `TenantConfig.timezone`; a sentinel reached a `@Min(0)` DTO unmapped.
+- **Lesson:** **A calendar date is a string, not an instant: store it as UTC midnight, render and
+  edit it only through the shared calendar-date helper (web/mobile mirrors), and evaluate day
+  boundaries in the TENANT's timezone through the one api helper — never `setHours`, local
+  getters or `toLocaleDateString` on a date-only field. A device sentinel (iOS `-1` for unknown
+  heading/speed) never reaches a bounded DTO unmapped — map it to null at the client seam and
+  mirror every server bound there, or one unknown field 400s the whole payload.**
+  A test for any of this must take the zone as DATA: under `TZ=UTC` — CI and the API image —
+  host-local and UTC components are identical, so a host-clock oracle is green on the buggy
+  body, and an in-file `process.env.TZ` pin is inert under jest (the sandbox gets a copy of
+  `process.env`).
+- **Guard:** REG-B59 e2e under `timezoneId`; REG-B118 tenant-tz jest with a DST fixture;
+  REG-B90/B91 mobile helper tests + the mirror-identity pin; the revenue-trend pin uses a Date
+  whose local getters disagree with its ISO view; REG-B185 DTO spec ([[L-026]] client sentinels
+  never reach a validator unmapped).
 
 ## security
 
