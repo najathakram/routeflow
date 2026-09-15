@@ -67,7 +67,8 @@ import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
 import { fmt, fmtCalendarDate, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
-import { formatQtySplit } from "@routeflow/pricing";
+import { formatQtySplit, resolveConfirmedAmounts } from "@routeflow/pricing";
+import { InvoiceTotalsSummary } from "./InvoiceTotalsSummary";
 import {
   SELECTABLE_PAYMENT_METHODS,
   PAYMENT_METHOD_LABELS,
@@ -98,42 +99,6 @@ interface PaymentCreditNoteInfo {
 function creditNoteOf(pmt: InvoicePayment): PaymentCreditNoteInfo | null {
   const withCn = pmt as unknown as { creditNote?: PaymentCreditNoteInfo | null };
   return withCn.creditNote ?? null;
-}
-
-/**
- * B421: resolves the same three CONFIRMED-basis figures the API's
- * `splitConfirmed` produces, preferring the server's own `paidAmount` over a
- * local re-split of `payments`. All-or-nothing on `paidAmount` alone — a
- * payload carrying an old, credit-inclusive `paidAmount` without the newer
- * split fields must NOT get `creditApplied`/`advanceApplied` re-derived from
- * `payments` too, which would subtract the same credit/advance twice and
- * understate the balance. Only when `paidAmount` itself is absent do all
- * three come from one local split over the same array. Exported for direct
- * unit testing (this page has no RTL harness yet).
- */
-export function resolveConfirmedAmounts(
-  invoice: Pick<Invoice, "paidAmount" | "creditApplied" | "advanceApplied">,
-  payments: InvoicePayment[],
-): { amountPaid: number; creditApplied: number; advanceApplied: number } {
-  if (invoice.paidAmount != null) {
-    return {
-      amountPaid: Number(invoice.paidAmount),
-      creditApplied: Number(invoice.creditApplied ?? 0),
-      advanceApplied: Number(invoice.advanceApplied ?? 0),
-    };
-  }
-  const confirmed = payments.filter((p) => p.status === "PAID");
-  return {
-    amountPaid: confirmed
-      .filter((p) => p.method !== "CREDIT_NOTE" && p.method !== "ADVANCE")
-      .reduce((s, p) => s + Number(p.amount), 0),
-    creditApplied: confirmed
-      .filter((p) => p.method === "CREDIT_NOTE")
-      .reduce((s, p) => s + Number(p.amount), 0),
-    advanceApplied: confirmed
-      .filter((p) => p.method === "ADVANCE")
-      .reduce((s, p) => s + Number(p.amount), 0),
-  };
 }
 
 const methodLabel = paymentMethodLabel;
@@ -1585,7 +1550,19 @@ export default function InvoiceDetailPage() {
   // showing DRAFT rows so DraftPaymentBadge can mark them.
   // B421: confirmed but non-cash — a credit note or advance applied to this
   // invoice reduces balanceDue but must never render as "Paid"/cash received.
-  const { amountPaid, creditApplied, advanceApplied } = resolveConfirmedAmounts(invoice, payments);
+  // The shared helper's field is `totalPaid`; this DTO's is `paidAmount`.
+  const {
+    cash: amountPaid,
+    creditApplied,
+    advanceApplied,
+  } = resolveConfirmedAmounts(
+    {
+      totalPaid: invoice.paidAmount,
+      creditApplied: invoice.creditApplied,
+      advanceApplied: invoice.advanceApplied,
+    },
+    payments,
+  );
   const status = invoice.status;
 
   // Draft/Final invoice-PDF stage. Default: DRAFT while it's still the
@@ -2576,59 +2553,16 @@ export default function InvoiceDetailPage() {
 
             {/* Totals footer */}
             <div className="mt-4 flex justify-end">
-              <div className="w-72 space-y-1.5 text-sm">
-                <div className="flex justify-between py-0.5">
-                  <span className="text-navy/70">Subtotal</span>
-                  <span className="money text-navy">{fmt(Number(invoice.subtotal))}</span>
-                </div>
-                {discount > 0 && (
-                  <div className="flex justify-between py-0.5 text-success">
-                    <span>Discount</span>
-                    <span className="money">-{fmt(discount)}</span>
-                  </div>
-                )}
-                {Number(invoice.taxAmount ?? 0) > 0 && (
-                  <div className="flex justify-between py-0.5">
-                    <span className="text-navy/70">Tax</span>
-                    <span className="money text-navy">{fmt(Number(invoice.taxAmount))}</span>
-                  </div>
-                )}
-                {shippingFee > 0 && (
-                  <div className="flex justify-between py-0.5">
-                    <span className="text-navy/70">Shipping</span>
-                    <span className="money text-navy">{fmt(shippingFee)}</span>
-                  </div>
-                )}
-                {amountPaid > 0 && (
-                  <div className="flex justify-between py-0.5 text-success">
-                    <span>Payments received</span>
-                    <span className="money">-{fmt(amountPaid)}</span>
-                  </div>
-                )}
-                {/* B421: a credit note or advance reduces the balance but is never
-                    cash received — neutral styling, never text-success. */}
-                {creditApplied > 0 && (
-                  <div className="flex justify-between py-0.5 text-navy/70">
-                    <span>Credits applied</span>
-                    <span className="money">-{fmt(creditApplied)}</span>
-                  </div>
-                )}
-                {advanceApplied > 0 && (
-                  <div className="flex justify-between py-0.5 text-navy/70">
-                    <span>Advance applied</span>
-                    <span className="money">-{fmt(advanceApplied)}</span>
-                  </div>
-                )}
-                <div
-                  className={cn(
-                    "mt-1.5 flex items-center justify-between border-t border-navy pt-2.5 text-base font-semibold",
-                    balanceDue > 0 ? "text-danger" : "text-success",
-                  )}
-                >
-                  <span>Balance due</span>
-                  <span className="money">{fmt(balanceDue)}</span>
-                </div>
-              </div>
+              <InvoiceTotalsSummary
+                subtotal={Number(invoice.subtotal)}
+                discount={discount}
+                taxAmount={Number(invoice.taxAmount ?? 0)}
+                shippingFee={shippingFee}
+                amountPaid={amountPaid}
+                creditApplied={creditApplied}
+                advanceApplied={advanceApplied}
+                balanceDue={balanceDue}
+              />
             </div>
 
             {/* Notes */}
