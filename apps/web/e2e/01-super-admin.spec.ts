@@ -9,6 +9,7 @@
 import { test, expect } from "@playwright/test";
 import { loginAsSuperAdmin, logout } from "./helpers/auth";
 import { CREDENTIALS, HAS_SUPER_ADMIN_CREDS } from "./helpers/constants";
+import { apiBase } from "./helpers/api";
 
 test.skip(!HAS_SUPER_ADMIN_CREDS, "PLAYWRIGHT_SA_USERNAME / PLAYWRIGHT_SA_PASSWORD not set");
 
@@ -54,6 +55,19 @@ test.describe("Super Admin — Platform Admin Panel", () => {
     await expect(statsArea).toBeVisible({ timeout: 15_000 });
   });
 
+  // T14/T15: the MRR card replaced "Est. MRR" — one figure, reconciled to the ledger,
+  // both derived from the same MrrService.computeOverview() (R27).
+  test("SA-03b dashboard MRR card shows one reconciled figure, no 'Est.' label", async ({
+    page,
+  }) => {
+    await page.goto("/admin/dashboard");
+    const mrrEl = page.getByTestId("dashboard-mrr");
+    await expect(mrrEl).toBeVisible({ timeout: 15_000 });
+    await expect(mrrEl).toHaveText(/^\$\d[\d,]*\.\d{2}$/);
+    await expect(page.getByTestId("dashboard-ledger-mrr")).toBeVisible();
+    await expect(page.getByText(/est\.\s*mrr/i)).toHaveCount(0);
+  });
+
   // ── Tenants list ─────────────────────────────────────────────────────────
 
   test("SA-04 tenants list loads — table rows with slug/name/status", async ({ page }) => {
@@ -86,6 +100,32 @@ test.describe("Super Admin — Platform Admin Panel", () => {
 
   test("SA-06 create new tenant — appears in list", async ({ page }) => {
     await page.goto("/admin/tenants/new");
+
+    // T14/T15: the plan <select> is sourced live from GET /billing/plans, not a
+    // hardcoded STARTER/PROFESSIONAL/ENTERPRISE array — assert against the endpoint
+    // itself (self-consistent oracle, R30) rather than any fixed list.
+    const catalogRes = await page.request.get(`${apiBase(page.url())}/api/v1/billing/plans`);
+    expect(catalogRes.ok()).toBeTruthy();
+    const catalog = await catalogRes.json();
+    const expectedPlanKeys: string[] = [...catalog.plans]
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map((p) => p.planKey);
+
+    const planSelect = page.getByRole("combobox").first();
+    await expect(planSelect).toBeVisible({ timeout: 15_000 });
+    // The select paints before the in-browser catalog fetch resolves (a disabled
+    // "Loading plans…" option), so poll the option list until it settles — a plain
+    // evaluateAll snapshot would race that placeholder.
+    await expect
+      .poll(
+        () =>
+          planSelect
+            .locator("option")
+            .evaluateAll((opts) => opts.map((o) => (o as HTMLOptionElement).value)),
+        { timeout: 15_000 },
+      )
+      .toEqual(expectedPlanKeys);
+
     const slug = `e2e-${Date.now()}`;
     // Use placeholders which are stable identifiers on this form
     await page.getByPlaceholder("e.g. acme-foods").fill(slug);
