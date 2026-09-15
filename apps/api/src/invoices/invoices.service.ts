@@ -21,6 +21,7 @@ import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import {
   CONFIRMED_PAYMENT,
   CREDIT_NOTE_METHOD,
+  RECEIVED_METHOD_FILTER,
   splitConfirmed,
   sumConfirmed,
 } from "./payment-predicates";
@@ -3111,7 +3112,16 @@ export class InvoicesService {
         inv.status === InvoiceStatus.PAID ||
         inv.status === InvoiceStatus.VOID ||
         inv.status === InvoiceStatus.WRITTEN_OFF;
-      const balanceDue = isSettled ? 0 : Math.max(0, Number(inv.total) - totalConfirmed);
+      // B421 (review F3): roundMoney BEFORE the > 0 comparison/coloring below —
+      // totalConfirmed sums three separately-computed floats (cash + credit +
+      // advance), so an invoice fully settled by a mix of methods can leave a
+      // sub-cent float remnant (e.g. -2.8e-14) that Math.max(0, ...) doesn't
+      // catch, rendering a red "Balance Due $0.00" on an otherwise-settled
+      // invoice. fmt() rounds for DISPLAY but this raw value drives the color/
+      // isOverdue logic directly.
+      const balanceDue = isSettled
+        ? 0
+        : Math.max(0, roundMoney(Number(inv.total) - totalConfirmed));
       const dueDateIso = inv.dueDate
         ? (inv.dueDate instanceof Date ? inv.dueDate : new Date(inv.dueDate))
             .toISOString()
@@ -3359,7 +3369,10 @@ export class InvoicesService {
       inv.status === InvoiceStatus.PAID ||
       inv.status === InvoiceStatus.VOID ||
       inv.status === InvoiceStatus.WRITTEN_OFF;
-    const balanceDue = isSettled ? 0 : Math.max(0, Number(inv.total) - totalConfirmed);
+    // B421 (review F3): roundMoney before the > 0 comparison — see findAll's
+    // matching comment (totalConfirmed sums three floats; a sub-cent remnant
+    // would otherwise render a red "Balance Due $0.00" on a settled invoice).
+    const balanceDue = isSettled ? 0 : Math.max(0, roundMoney(Number(inv.total) - totalConfirmed));
     // RF-202: date-string comparison — invoice due today is NOT overdue.
     const dueDateIso = inv.dueDate
       ? (inv.dueDate instanceof Date ? inv.dueDate : new Date(inv.dueDate))
@@ -4805,8 +4818,20 @@ export class InvoicesService {
       this.prisma.forTenant().invoicePayment.count({ where }),
     ]);
 
-    // Summary: total received (PAID only) and advance balance
-    const summaryWhere = { ...where, status: "PAID" };
+    // Summary: total received (PAID only) and advance balance. B421:
+    // "received" is cash-only — a CREDIT_NOTE application never counts,
+    // regardless of the caller's own `method` filter (if set, it narrows
+    // further via AND; it can never widen this back to include CREDIT_NOTE —
+    // filtering the LIST to credit-note rows must still show $0 received).
+    const { method: whereMethod, ...summaryWhereRest } = where;
+    const summaryWhere: any = {
+      ...summaryWhereRest,
+      status: "PAID",
+      AND: [
+        { method: RECEIVED_METHOD_FILTER },
+        ...(whereMethod != null ? [{ method: whereMethod }] : []),
+      ],
+    };
     const paidPayments = await this.prisma.forTenant().invoicePayment.findMany({
       where: summaryWhere,
       select: { amount: true },

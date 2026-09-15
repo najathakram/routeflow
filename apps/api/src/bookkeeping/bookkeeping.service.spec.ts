@@ -576,6 +576,32 @@ describe("BookkeepingService", () => {
       expect(result.total).toBe(400);
     });
 
+    it("REG-B421: getPaymentsReceivedReport excludes a CREDIT_NOTE row/total, keeps an ADVANCE one", async () => {
+      const CREDIT_NOTE_APPLIED = payment({
+        id: "pay-credit-note",
+        amount: 638,
+        method: "CREDIT_NOTE",
+        paidAt: new Date("2026-02-10T00:00:00Z"),
+      });
+      const ADVANCE_APPLIED = payment({
+        id: "pay-advance",
+        amount: 50,
+        method: "ADVANCE",
+        paidAt: new Date("2026-02-11T00:00:00Z"),
+      });
+      prisma.invoicePayment.findMany.mockImplementation(async (args: any) =>
+        [...ALL, CREDIT_NOTE_APPLIED, ADVANCE_APPLIED].filter((p) => matchesWhere(p, args.where)),
+      );
+
+      const result = await service.getPaymentsReceivedReport(FROM, TO);
+      const ids = result.data.map((r) => r.id);
+
+      expect(ids).not.toContain("pay-credit-note");
+      expect(ids).toContain("pay-advance");
+      // 400 (SETTLED_IN + LEGACY) + 50 (ADVANCE) -- the 638 CREDIT_NOTE never counts.
+      expect(result.total).toBe(450);
+    });
+
     it("getPaymentsReceivedReport renders settledAt when present and paidAt otherwise", async () => {
       const result = await service.getPaymentsReceivedReport(FROM, TO);
       const byId = Object.fromEntries(result.data.map((r) => [r.id, r]));

@@ -7189,6 +7189,58 @@ describe("InvoicesService", () => {
     });
   });
 
+  describe("listAllPayments — REG-B421: totalReceived excludes CREDIT_NOTE, list keeps the row", () => {
+    const ROWS: FakePaymentRow[] = [
+      { id: "pay-credit", amount: 500, status: "PAID", method: "CREDIT_NOTE" },
+    ];
+
+    const matchesField = (value: string | undefined, cond: any): boolean => {
+      if (cond === undefined) return true;
+      if (typeof cond === "string") return value === cond;
+      if (cond.not !== undefined) return value !== cond.not;
+      if (cond.in !== undefined) return (cond.in as string[]).includes(value as string);
+      return true;
+    };
+
+    const matchesListWhere = (row: FakePaymentRow, where: any): boolean => {
+      if (!where) return true;
+      if (!matchesField(row.status, where.status)) return false;
+      if (!matchesField(row.method, where.method)) return false;
+      if (Array.isArray(where.AND) && !where.AND.every((c: any) => matchesListWhere(row, c))) {
+        return false;
+      }
+      return true;
+    };
+
+    const stubListPaymentReads = (rows: FakePaymentRow[]) => {
+      prisma.invoicePayment.findMany.mockImplementation(async (args: any) => {
+        const matched = rows.filter((r) => matchesListWhere(r, args?.where));
+        return args?.select ? matched.map((r) => ({ amount: r.amount })) : matched;
+      });
+      prisma.invoicePayment.count.mockResolvedValue(rows.length);
+      prisma.advancePayment.findMany.mockResolvedValue([]);
+    };
+
+    it("REG-B421: a credit-only period reports totalReceived 0, but the list row is still returned", async () => {
+      stubListPaymentReads(ROWS);
+
+      const result = await service.listAllPayments({});
+
+      expect(result.summary.totalReceived).toBe(0);
+      expect(result.data).toHaveLength(1);
+      expect((result.data[0] as any).id).toBe("pay-credit");
+    });
+
+    it("REG-B421: filtering the list to method=CREDIT_NOTE still reports totalReceived 0 (AND, never OR/override)", async () => {
+      stubListPaymentReads(ROWS);
+
+      const result = await service.listAllPayments({ method: "CREDIT_NOTE" });
+
+      expect(result.data).toHaveLength(1);
+      expect(result.summary.totalReceived).toBe(0);
+    });
+  });
+
   // F03 (T-B103 / R9 / REG-B103) — the CALLER half of the promo/BOGO email display.
   // email.service.spec.ts hands `sendInvoice` the promo scalars directly, so a build
   // whose renderer is perfect but whose caller drops them still passes there while the

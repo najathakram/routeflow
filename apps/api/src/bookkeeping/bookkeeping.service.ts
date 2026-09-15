@@ -1706,8 +1706,15 @@ export class BookkeepingService implements OnModuleInit {
           return d;
         })()
       : new Date();
+    // B421: a "Payments Received" report — a CREDIT_NOTE application is not
+    // a payment received (it's a credit extended), so it belongs in neither
+    // the listed rows nor the total. ADVANCE stays (already-real cash).
     const payments = await this.prisma.forTenant().invoicePayment.findMany({
-      where: { status: PaymentStatus.PAID, ...settledDateFilter(fromDate, toDate) },
+      where: {
+        status: PaymentStatus.PAID,
+        method: RECEIVED_METHOD_FILTER,
+        ...settledDateFilter(fromDate, toDate),
+      },
       include: {
         invoice: {
           select: {

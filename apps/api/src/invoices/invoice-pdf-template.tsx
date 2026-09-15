@@ -1,7 +1,7 @@
 import React from "react";
 import { Document, Page, Text, View, StyleSheet, Image, Link } from "@react-pdf/renderer";
 import { carrierLabel, getTrackingUrl } from "../common/shipping";
-import { formatQtySplit } from "@routeflow/pricing";
+import { formatQtySplit, roundMoney } from "@routeflow/pricing";
 import { promoNote, showOriginalPrice } from "./invoice-pdf-item";
 import { CREDIT_NOTE_METHOD, resolveConfirmedAmounts } from "./payment-predicates";
 
@@ -420,7 +420,11 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
     creditApplied,
     advanceApplied,
   } = resolveConfirmedAmounts(invoice, invoice.payments);
-  const balance = total - totalPaid - creditApplied - advanceApplied;
+  // B421 (review F3): roundMoney before the > 0 comparison/coloring below —
+  // this subtracts three separately-computed figures, so an invoice fully
+  // settled by a mix of cash/credit/advance can leave a sub-cent float
+  // remnant that would otherwise render a red "Balance Due $0.00".
+  const balance = roundMoney(total - totalPaid - creditApplied - advanceApplied);
   // B421: customer-facing wording is "Credit issued — CN-…" (brief ruling #3),
   // never folded into Amount Paid. Dedup + list every confirmed credit note
   // number applied to this invoice; falls back to the plain label if the
