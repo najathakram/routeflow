@@ -145,6 +145,11 @@ describe("prod-migrate.mjs contract (R4)", () => {
       expect(res.stderr).toContain("DRIFT DETECTED");
       expect(res.stderr).toContain("post-deploy drift check FAILED");
       expect(res.stdout).not.toContain("✅ Migration applied.");
+      // A spawnSync timeout-kill (Node's own {timeout} option firing) also leaves res.status
+      // null, indistinguishable from a real wrong value by the bare toBe(2) below. Assert
+      // res.signal first so a timeout-kill fails here with a clear, distinguishable message
+      // instead of the misleading "Expected 2, Received null".
+      expect(res.signal).toBeNull();
       expect(res.status).toBe(2);
     });
 
