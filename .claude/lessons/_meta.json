@@ -1,11 +1,11 @@
 {
-  "nextId": 157,
-  "activeCount": 50,
+  "nextId": 158,
+  "activeCount": 51,
   "archivedCount": 89,
   "maxEntries": 64,
   "maxBytes": 65536,
-  "updatedAt": "2026-09-15T06:10:29.486Z",
+  "updatedAt": "2026-09-15T07:00:00.000Z",
   "schemaVersion": 1,
-  "note": "Merge of feat/phase0-t9-t11 (own L-130/131/132/138/149/151/152/153) with origin/master d69f3094 (adds L-156, B420 mistiered-proof lesson, and the B420 reclassify fix -- routeflow-c4). Both sides' entries kept side by side; counts re-derived by validate-lessons.mjs --digest against the merged register, not hand-computed.",
+  "note": "Added L-157 (#743 review round #3, F1/F2: no fallback pricing engine, unscoped destructive writes need an explicit confirm-count gate). nextId 158 clears past L-157; counts re-derived by validate-lessons.mjs --digest against the merged register, not hand-computed.",
   "notes": "2026-09-13 owner ruling: maxBytes 40,960 -> 49,152 so the 40-entry cap is the binding constraint (40 x ~1.05 KB); the byte cap had made the entry cap unreachable and left no eligible archive candidate. maxEntries 40 -> 48 in the same ruling: with bytes raised the entry cap became binding at 40/40 with no eligible archive candidate, so bytes alone unblocked nothing. 2026-09-14 owner ruling: maxBytes 49,152 -> 65,536 (register hit 49,142 after two waves in one day with no eligible archive candidate); maxEntries stays 48. House rule: an author trims any entry over 1.5 KB before it lands; never shorten a live entry afterwards. 2026-09-14 owner ruling: maxEntries 48 -> 64 to match the 65,536-byte cap (register reached 47/48 after the W1 wave); author-trim rule (>1.5 KB) unchanged."
 }

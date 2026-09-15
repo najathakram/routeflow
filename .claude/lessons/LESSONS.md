@@ -864,3 +864,21 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   single-field ledger edit (owner-approved, out of band) rather than fabricate a regression.
 - **Guard:** filed B426 (bugs.mjs needs a lawful `proven`→`already-fixed` reclassify path,
   distinct from `reopen`'s regression semantics) so this doesn't recur as a manual escape hatch.
+
+### L-157 · 2026-09-15 · domain · #743 review round #3 (F1/F2)
+
+- **Symptom:** an admin MRR card fell back to a client-side per-plan price estimate when the
+  server rollup failed -- a free pilot showed at full list price. A reconciliation script's
+  `--apply` wrote real prices to live PRODUCTION tenants with nothing between "ran the dry run"
+  and "wrote to prod" -- a stale terminal was indistinguishable from a reviewed decision.
+- **Root cause:** both were "best-effort" conveniences added without asking what happens when
+  the safety net itself is wrong: a fallback estimate is a second, unaudited pricing engine; an
+  unconfirmed bulk write on money data has no seam between intent and action.
+- **Lesson:** **A money surface gets ONE engine, never a fallback estimate -- on failure, say so
+  ("unavailable"), never invent a number. A bulk write on live money data needs an explicit
+  confirmation naming what's about to apply (`--confirm-count <n>` matching the dry run),
+  refused otherwise.**
+- **Guard:** `admin/billing/page.tsx` deleted `PLAN_PRICES`, shows "MRR unavailable" on error.
+  `backfill-subscription-reconciliation.mjs` requires `--confirm-count` matching the scan when
+  `--apply` runs unscoped. Sibling fix same round: the write's `updateMany` re-asserts tenant
+  state, closing a scan-to-write race.
