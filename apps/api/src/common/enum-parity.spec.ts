@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as PrismaEnums from "@prisma/client";
+import { PLAN_KEYS as API_PLAN_KEYS } from "../billing/plan-catalog.constants";
 
 /**
  * Guards the class of bug found by the Wave E DTO sweep (imp-10b): web and
@@ -261,6 +262,28 @@ describe("REG-743-N6: TenantClass mirror is pinned", () => {
     const expected = Object.values(PrismaEnums.TenantClass);
     expect(new Set(actual)).toEqual(new Set(expected));
     expect(expected.length).toBeGreaterThan(0);
+  });
+});
+
+// ─── REG-743-F4: PLAN_KEYS's two independent mirrors must not drift (L-072) ────
+
+/**
+ * PLAN_KEYS is NOT a generated Prisma enum (it's the plans-as-data catalog vocabulary), so it
+ * doesn't fit ENUM_TABLE above -- but `plan-catalog.constants.ts` deliberately mirrors it
+ * locally rather than value-importing `@routeflow/types` (a boot-crash-class rule: the API
+ * compiles to `dist/` via `nest build`, which does not bundle workspace deps, and
+ * `@routeflow/types` ships raw TypeScript with no build step — see
+ * `no-runtime-workspace-imports.spec.ts`). Two independent hand-typed copies of the same
+ * vocabulary is exactly the L-072 drift class this file exists to catch, so pin them
+ * set-equal here.
+ */
+describe("REG-743-F4: plan-catalog.constants PLAN_KEYS matches @routeflow/types PLAN_KEYS (L-072)", () => {
+  it("the API's local PLAN_KEYS mirror is set-equal to the shared package's PLAN_KEYS", () => {
+    const shared = Array.isArray((SHARED as Record<string, unknown>)["PLAN_KEYS"])
+      ? ((SHARED as Record<string, unknown>)["PLAN_KEYS"] as unknown[])
+      : [];
+    expect(new Set(API_PLAN_KEYS)).toEqual(new Set(shared));
+    expect(shared.length).toBeGreaterThan(0); // guard against a bad export silently vacuous-passing
   });
 });
 

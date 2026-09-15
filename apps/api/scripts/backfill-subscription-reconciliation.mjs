@@ -30,6 +30,8 @@
 //   ... --slug-prefix <prefix>  # scope the tenant scan/apply to slugs starting with <prefix> —
 //   for a db spec or a one-tenant prod rehearsal — never let a spec run an unscoped --apply on a
 //   shared DB.
+//   ... --confirm-count <n>  # REQUIRED with --apply whenever --slug-prefix is absent: must
+//   equal the dry run's exact change count, or the run refuses to write anything.
 
 import { pathToFileURL } from "node:url";
 import { PrismaClient } from "@prisma/client";
@@ -58,11 +60,35 @@ export function parseSlugPrefix(argv) {
   return value;
 }
 
+// F2 (review, fix round #3): an unscoped --apply writes prices and BillingEvent ledger rows
+// on live PRODUCTION tenants with nothing standing between "I ran the dry run" and "it wrote
+// to prod" — a copy-pasted command, a stale terminal, or a fat-fingered --apply is otherwise
+// indistinguishable from a reviewed decision. --confirm-count <n> makes the operator name the
+// exact count they reviewed in the dry-run table; main() then refuses to write unless it
+// matches the CURRENT scan's row count exactly, so a scan that changed between the dry run and
+// the --apply (a tenant churned, a webhook fired) is refused rather than silently applied
+// against a stale count. Never required with --slug-prefix -- a scoped run (a spec, a one-tenant
+// rehearsal) is already bounded by the prefix.
+export function parseConfirmCount(argv) {
+  const idx = argv.indexOf("--confirm-count");
+  if (idx === -1) return undefined;
+  if (argv.indexOf("--confirm-count", idx + 1) !== -1) {
+    throw new Error("--confirm-count may be given only once");
+  }
+  const raw = argv[idx + 1];
+  if (raw === undefined || raw.startsWith("--") || !/^\d+$/.test(raw)) {
+    throw new Error("--confirm-count requires a non-negative integer value");
+  }
+  return Number(raw);
+}
+
 async function main() {
   const apply = process.argv.includes("--apply");
   let slugPrefix;
+  let confirmCount;
   try {
     slugPrefix = parseSlugPrefix(process.argv);
+    confirmCount = parseConfirmCount(process.argv);
   } catch (err) {
     console.error(err.message);
     process.exit(1);
@@ -243,6 +269,29 @@ async function main() {
       return;
     }
 
+    // F2: an unscoped --apply (no --slug-prefix) writes prices and ledger rows on live
+    // PRODUCTION tenants -- require the operator to name the exact count they reviewed above,
+    // and refuse if it no longer matches this scan (a scoped run needs no confirmation: the
+    // prefix already bounds it).
+    if (!slugPrefix) {
+      if (confirmCount === undefined) {
+        console.error(
+          `\nRefusing to --apply without --slug-prefix or --confirm-count: this scan found ` +
+            `${rows.length} change(s) on live PRODUCTION tenants. Review the table above, then ` +
+            `re-run with --confirm-count ${rows.length} to proceed.`,
+        );
+        process.exit(1);
+      }
+      if (confirmCount !== rows.length) {
+        console.error(
+          `\nRefusing to --apply: --confirm-count ${confirmCount} does not match this scan's ` +
+            `${rows.length} change(s) -- the scan may have changed since you reviewed it. ` +
+            `Re-run without --apply to see the current count, then --confirm-count exactly that.`,
+        );
+        process.exit(1);
+      }
+    }
+
     // Every tenant is its own statement (never one enclosing transaction) — a raced
     // concurrent write (checkout webhook backfilling the row between scan and write, or
     // the tenant being deleted) must fail that one row, not roll back the whole run.
@@ -283,6 +332,12 @@ async function main() {
               basePriceSnapshot: null,
               stripeSubId: { not: null },
               planVersionId: r.scannedSubPlanVersionId,
+              // F3 (review, fix round #3): the scan's own tenant.findMany already required
+              // ACTIVE/PRODUCTION/not-deleted, but the write is a separate query moments
+              // later -- re-assert the same tenant state here so a tenant that churns
+              // (cancels, gets soft-deleted, or is reclassified) in that window books no
+              // +price, the same defense the row's own subscription fields already get above.
+              tenant: { status: "ACTIVE", class: "PRODUCTION", deletedAt: null },
             },
             data: subData,
           });

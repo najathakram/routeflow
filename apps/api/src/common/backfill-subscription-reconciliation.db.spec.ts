@@ -136,6 +136,20 @@ const CANCELLED_OUT_OF_SCOPE_SLUG = assertTestTenant(
   `qa-phase0-recon-${RUN_SUFFIX}-11`,
   "backfill-subscription-reconciliation.db.spec.ts",
 );
+// F2 (review, fix round #3): dedicated fixture for the --confirm-count gate, kept separate
+// from PARTIAL_SUB_SLUG (which an earlier test's --apply already backfills) so it stays
+// fixable (basePriceSnapshot null) no matter what order the tests in this file run in.
+const CONFIRM_COUNT_SLUG = assertTestTenant(
+  `qa-phase0-recon-${RUN_SUFFIX}-12`,
+  "backfill-subscription-reconciliation.db.spec.ts",
+);
+// F3 (review, fix round #3): a tenant that gets CANCELLED between scan and --apply — proves
+// the updateMany where-clause's re-asserted tenant state (status/class/deletedAt) refuses the
+// write rather than booking a price onto a tenant no longer in scope.
+const RACE_CANCEL_SLUG = assertTestTenant(
+  `qa-phase0-recon-${RUN_SUFFIX}-13`,
+  "backfill-subscription-reconciliation.db.spec.ts",
+);
 const ALL_SLUGS = [
   NO_SUB_SLUG,
   PARTIAL_SUB_SLUG,
@@ -148,6 +162,8 @@ const ALL_SLUGS = [
   NO_STRIPE_SUB_SLUG,
   DEMO_OUT_OF_SCOPE_SLUG,
   CANCELLED_OUT_OF_SCOPE_SLUG,
+  CONFIRM_COUNT_SLUG,
+  RACE_CANCEL_SLUG,
 ];
 
 describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
@@ -166,6 +182,8 @@ describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
   let tenantNoStripeSub: { id: string } | undefined;
   let tenantDemoOutOfScope: { id: string } | undefined;
   let tenantCancelledOutOfScope: { id: string } | undefined;
+  let tenantConfirmCount: { id: string } | undefined;
+  let tenantRaceCancel: { id: string } | undefined;
   let scalePrice: string;
   // A second, NEVER-published PlanVersion (GROWTH @ 149) that a subscription/tenant can be
   // pinned to — proves F3/N3 price-from-the-pinned-version and never-move-the-pin behavior
@@ -420,6 +438,36 @@ describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
         },
       },
     });
+
+    // F2 (review, fix round #3): fixable (ACTIVE, PRODUCTION, planKey+stripeSubId set, null
+    // snapshot) but kept in its OWN dedicated fixture so an unscoped --apply attempt never
+    // actually needs to write it — the --confirm-count gate must refuse before any write.
+    tenantConfirmCount = await prisma.tenant.create({
+      data: {
+        slug: CONFIRM_COUNT_SLUG,
+        name: CONFIRM_COUNT_SLUG,
+        status: "ACTIVE",
+        class: "PRODUCTION",
+        subscription: {
+          create: { planKey: "SCALE", basePriceSnapshot: null, stripeSubId: "sub_qa_confirm" },
+        },
+      },
+    });
+
+    // F3 (review, fix round #3): fixable at creation; a test flips it to CANCELLED before
+    // --apply runs to prove the write's own tenant-state guard (not just the scan filter)
+    // keeps it at $0.
+    tenantRaceCancel = await prisma.tenant.create({
+      data: {
+        slug: RACE_CANCEL_SLUG,
+        name: RACE_CANCEL_SLUG,
+        status: "ACTIVE",
+        class: "PRODUCTION",
+        subscription: {
+          create: { planKey: "SCALE", basePriceSnapshot: null, stripeSubId: "sub_qa_race" },
+        },
+      },
+    });
   });
 
   afterAll(async () => {
@@ -435,6 +483,8 @@ describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
       tenantNoStripeSub?.id,
       tenantDemoOutOfScope?.id,
       tenantCancelledOutOfScope?.id,
+      tenantConfirmCount?.id,
+      tenantRaceCancel?.id,
     ].filter((id): id is string => Boolean(id));
     if (tenantIds.length) {
       await prisma.billingEvent.deleteMany({ where: { tenantId: { in: tenantIds } } });
@@ -704,5 +754,79 @@ describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
         else process.env[key] = value;
       }
     }
+  });
+
+  // REG-743-F2 (review, fix round #3): an unscoped --apply (no --slug-prefix) must refuse to
+  // write anything without an operator explicitly confirming the exact count they reviewed.
+  it("REG-743-F2 refuses an unscoped --apply with no --confirm-count, and writes nothing", () => {
+    let threw = false;
+    try {
+      execSync(`node ${CLI} --apply`, { encoding: "utf-8", env: childEnv(dbUrl) });
+    } catch (err) {
+      threw = true;
+      const combined = `${(err as { stdout?: string }).stdout ?? ""}${(err as { stderr?: string }).stderr ?? ""}`;
+      expect(combined).toContain("Refusing to --apply without --slug-prefix or --confirm-count");
+    }
+    expect(threw).toBe(true);
+  });
+
+  it("REG-743-F2 refuses an unscoped --apply when --confirm-count does not match the scan", () => {
+    // Deliberately does not assert on any tenant row's state afterward: an UNSCOPED scan
+    // reads the whole shared local compose database, which 15+ other .db.spec.ts files (and
+    // other sessions' own script runs) write into concurrently -- this test only proves THIS
+    // invocation refuses and writes nothing ITSELF (the refusal fires before the write loop is
+    // ever reached), not that no other process priced some row in the interim.
+    let threw = false;
+    try {
+      execSync(`node ${CLI} --apply --confirm-count 999999`, {
+        encoding: "utf-8",
+        env: childEnv(dbUrl),
+      });
+    } catch (err) {
+      threw = true;
+      const combined = `${(err as { stdout?: string }).stdout ?? ""}${(err as { stderr?: string }).stderr ?? ""}`;
+      expect(combined).toContain("does not match this scan's");
+    }
+    expect(threw).toBe(true);
+  });
+
+  it("REG-743-F2 a --slug-prefix run never needs --confirm-count", () => {
+    // The scoped path this file's other --apply calls already use must stay unaffected by
+    // the new gate -- prove it directly rather than only relying on the earlier tests' success.
+    const output = execSync(`node ${CLI} --apply --slug-prefix ${CONFIRM_COUNT_SLUG}`, {
+      encoding: "utf-8",
+      env: childEnv(dbUrl),
+    });
+    expect(output).not.toContain("Refusing to --apply");
+  });
+
+  // REG-743-F3 (review, fix round #3): the write's own where-clause must independently
+  // require the tenant to still be ACTIVE/PRODUCTION/not-deleted, closing the window between
+  // the scan and the write -- not just rely on the scan's own filter (already covered by the
+  // CANCELLED_OUT_OF_SCOPE fixture above, which excludes at scan time).
+  it("REG-743-F3 the write's own where-clause refuses a tenant that is no longer ACTIVE/PRODUCTION, even though it matched at scan time", async () => {
+    await prisma.tenant.update({
+      where: { id: tenantRaceCancel!.id },
+      data: { status: "CANCELLED" },
+    });
+
+    // The exact conditional write the fixed script issues per row -- proving the where-clause
+    // SHAPE itself, independent of whether the scan would have excluded this row too.
+    const result = await prisma.tenantSubscription.updateMany({
+      where: {
+        tenantId: tenantRaceCancel!.id,
+        planKey: "SCALE",
+        basePriceSnapshot: null,
+        stripeSubId: { not: null },
+        planVersionId: null,
+        tenant: { status: "ACTIVE", class: "PRODUCTION", deletedAt: null },
+      },
+      data: { basePriceSnapshot: scalePrice },
+    });
+
+    // `count === 0` alone proves the where-clause's tenant-state re-assertion refused THIS
+    // write -- not a follow-up read of the row's current price, which a concurrent process
+    // elsewhere on this shared database could legitimately change for unrelated reasons.
+    expect(result.count).toBe(0);
   });
 });
