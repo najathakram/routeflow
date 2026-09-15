@@ -315,6 +315,37 @@ export function undeliveredRowKey(orderId: string, lineItemId: string): string {
   return `${orderId}:${lineItemId}`;
 }
 
+/**
+ * Driver-durability lane — the dedup key for one order's return submission at
+ * one stop visit, shared with `store/returnSubmissionStore.ts` (imported from
+ * there, defined here so the pure logic and the persisted store never drift).
+ *
+ * Scoped by STOP, not bare orderId: a `RouteRunStop` row is a one-time visit
+ * and its `deliveryMutations` are that visit's immutable record, so marking
+ * `stopId:orderId` submitted can never block a genuinely new, later return for
+ * the same order at a different stop visit (a different stopId).
+ */
+export function submittedReturnKey(stopId: string, orderId: string): string {
+  return `${stopId}:${orderId}`;
+}
+
+/**
+ * Driver-durability lane (REG-B?? undeliveredReturnLines has no awareness of
+ * whether a Return record already exists for a line, so an identical payload
+ * is re-derived on every render — `submittedOrderIds` used to be plain React
+ * state, lost on an app kill, which let the same return be re-submitted after
+ * a relaunch). Filters `payloads` down to the ones not yet marked submitted
+ * for THIS stop visit, via the persisted `useReturnSubmissionStore`'s
+ * `submitted` map (`store/returnSubmissionStore.ts`).
+ */
+export function pendingReturnPayloads(
+  payloads: UndeliveredReturnPayload[],
+  submitted: Readonly<Record<string, boolean>>,
+  stopId: string,
+): UndeliveredReturnPayload[] {
+  return payloads.filter((p) => !submitted[submittedReturnKey(stopId, p.orderId)]);
+}
+
 export interface ReturnSubmissionResult {
   orderId: string;
   ok: boolean;

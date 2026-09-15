@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Headers, Param, Post, Query, UseGuards } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
@@ -21,10 +21,16 @@ import { ProcessRefundDto } from "./dto/process-refund.dto";
 export class ReturnsController {
   constructor(private readonly returnsService: ReturnsService) {}
 
+  /** An optional `Idempotency-Key` header collapses a retried submission into the
+   * first one (mirrors routes.controller.ts). Omitting it is unchanged behaviour. */
   @Post()
   @Roles(UserRole.OPERATOR, UserRole.DRIVER, UserRole.CUSTOMER)
-  create(@Body() dto: any, @CurrentUser() user: JwtPayload) {
-    return this.returnsService.create(dto, user.sub, user.role);
+  create(
+    @Body() dto: any,
+    @CurrentUser() user: JwtPayload,
+    @Headers("idempotency-key") idempotencyKey?: string,
+  ) {
+    return this.returnsService.create(dto, user.sub, user.role, idempotencyKey);
   }
 
   @Get()

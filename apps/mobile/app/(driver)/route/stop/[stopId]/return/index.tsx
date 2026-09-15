@@ -17,6 +17,7 @@ import { orderQueryOptions } from "../../../../../../lib/api/orders";
 import { showToast } from "../../../../../../lib/toast";
 import { sumStopOrders } from "../../../../../../lib/run-money";
 import {
+  pendingReturnPayloads,
   summarizeSubmissions,
   toUndeliveredStop,
   undeliveredReturnLines,
@@ -25,6 +26,8 @@ import {
   type UndeliveredReturnPayload,
   type UndeliveredReturnRow,
 } from "../../../../../../lib/returns-logic";
+import { returnSubmitKey } from "../../../../../../lib/return-submit-key";
+import { useReturnSubmissionStore } from "../../../../../../store/returnSubmissionStore";
 
 /** Display label for a row's derived reason (REG-B128 assigns the reason from the
  * mutation type, not a driver-picked chip — see `returns-logic.ts`). */
@@ -131,12 +134,15 @@ export default function ReturnScreen() {
     return undeliveredReturnLines(toUndeliveredStop(stop, lineExtras), { damagedKeys });
   }, [stop, lineExtras, damagedKeys]);
   const createReturn = useCreateReturn();
-  // Orders whose return has already landed this session — a retry must never
-  // re-POST one (the server would either duplicate it or reject the whole batch
-  // on its cumulative over-return guard, hiding the orders that did succeed).
-  const [submittedOrderIds, setSubmittedOrderIds] = useState<ReadonlySet<string>>(
-    () => new Set<string>(),
-  );
+  // Orders whose return has already landed — a retry must never re-POST one
+  // (the server would either duplicate it or reject the whole batch on its
+  // cumulative over-return guard, hiding the orders that did succeed).
+  // REG-DRIVER-DUR-B: persisted (store/returnSubmissionStore.ts, keyed
+  // `stopId:orderId`) rather than plain useState — an offline-queued return
+  // that reached the queue but whose confirmation the driver never saw must
+  // survive an app kill, or the identical return gets re-derived and
+  // resubmitted on the next launch, double-crediting the customer.
+  const submitted = useReturnSubmissionStore((s) => s.submitted);
 
   const issue = () => {
     if (!stop) return;
@@ -152,14 +158,24 @@ export default function ReturnScreen() {
       showToast("Mark items as partial or refused first.");
       return;
     }
-    const pending = payloads.filter((p) => !submittedOrderIds.has(p.orderId));
-    if (pending.length === 0) {
-      backToStop();
-      return;
-    }
-    Promise.allSettled(pending.map((p) => createReturn.mutateAsync(p))).then((settled) => {
+    const pending = pendingReturnPayloads(payloads, submitted, stopId);
+    // REG-RETURNS-IDEM-2: `markSubmitted` writes to a PERSISTED store and nothing ever unmarks
+    // it, so a return that only ever reached the OFFLINE QUEUE and then hard-failed at drain
+    // used to bounce the driver silently back to the stop forever, with no return on record and
+    // no way to re-issue it. Every POST now carries the deterministic `returnSubmitKey`, so a
+    // deliberate re-tap is safe on both legs: one that DID land replays onto the original
+    // server-side (returns.service.ts collapses it, no second credit), and one that never
+    // reached the server is finally created. Blocking client-side is therefore no longer the
+    // thing keeping the customer from being credited twice — the key is.
+    const reissue = pending.length === 0;
+    const toSend = reissue ? payloads : pending;
+    Promise.allSettled(
+      toSend.map((p) =>
+        createReturn.mutateAsync({ ...p, idempotencyKey: returnSubmitKey(stopId, p) }),
+      ),
+    ).then((settled) => {
       const results: ReturnSubmissionResult[] = settled.map((s, i) => {
-        const orderId = pending[i]!.orderId;
+        const orderId = toSend[i]!.orderId;
         if (s.status === "fulfilled") return { orderId, ok: true };
         const e = s.reason as any;
         return {
@@ -174,18 +190,18 @@ export default function ReturnScreen() {
       // queued), so no default is needed here.
       const { done, failed, queued } = summarizeSubmissions(results);
       if (done.length > 0 || queued.length > 0) {
-        setSubmittedOrderIds((prev) => {
-          const next = new Set(prev);
-          for (const id of [...done, ...queued]) next.add(id);
-          return next;
-        });
+        for (const id of [...done, ...queued]) {
+          useReturnSubmissionStore.getState().markSubmitted(stopId, id);
+        }
       }
       if (failed.length === 0) {
         // REG-B307: a queued return is a pending success, not a failure.
         showToast(
           queued.length > 0
             ? "Offline — return queued and will sync when you reconnect"
-            : "Return submitted",
+            : reissue
+              ? "Return re-sent"
+              : "Return submitted",
         );
         backToStop();
         return;

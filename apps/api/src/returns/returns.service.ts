@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 
 const VALID_RETURN_REASONS = [
@@ -26,6 +27,10 @@ import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { roundMoney } from "@routeflow/pricing";
 import type { ProcessRefundDto } from "./dto/process-refund.dto";
 import { CREDIT_SOURCE_EXCLUDED } from "../invoices/invoice-status-sets";
+import { IdempotencyService } from "../common/idempotency.service";
+
+/** The shape `create` returns — reused to type a replayed (idempotent) result. */
+type CreatedReturn = Prisma.ReturnGetPayload<{ include: { items: true } }>;
 
 /** F08 B166/B75: options object for `findAll`/`findAllForUser` — `search` narrows by
  * return/order number or customer name; everything else is unchanged filtering. */
@@ -46,6 +51,11 @@ export class ReturnsService {
     private readonly gateway: RouteFlowGateway,
     private readonly ledger: RegulatedLedgerService,
     private readonly creditNotes: CreditNotesService,
+    // Provided by the @Global CommonModule in every running app. Declared
+    // @Optional so the four existing ReturnsService spec suites (which predate
+    // it and provide no mock) still resolve; a request carrying no
+    // Idempotency-Key never touches it, which is the no-header regression pin.
+    @Optional() private readonly idempotency?: IdempotencyService,
   ) {}
 
   private readonly logger = new Logger(ReturnsService.name);
@@ -63,7 +73,7 @@ export class ReturnsService {
     return `RET-${year}-${seq}`;
   }
 
-  async create(dto: any, userId: string, userRole?: string) {
+  async create(dto: any, userId: string, userRole?: string, idempotencyKey?: string) {
     if (!VALID_RETURN_REASONS.includes(dto.reason)) {
       throw new BadRequestException(
         `Invalid reason. Must be one of: ${VALID_RETURN_REASONS.join(", ")}`,
@@ -74,6 +84,20 @@ export class ReturnsService {
     // below and surfaced as a 500 ("dto.items is not iterable") instead of a 400.
     if (!Array.isArray(dto.items) || dto.items.length === 0) {
       throw new BadRequestException("At least one return item is required");
+    }
+
+    // A retried submission (offline replay, a remounted screen, a second device)
+    // previously created a SECOND return for the same goods — and once approved
+    // that is a double customer credit. A caller-supplied Idempotency-Key
+    // collapses the replay into the first result. The tenantId is INSIDE the
+    // scope because `keyHash` is globally unique and the lookup is un-scoped.
+    // Checked after the cheap DTO validation and before any read or write, the
+    // same placement RoutesService uses. No header => nothing below runs and the
+    // request behaves exactly as it did before.
+    const idemScope = `returns.create:${this.prisma.getTenantId() ?? "none"}:${dto.orderId}`;
+    if (idempotencyKey && this.idempotency) {
+      const cached = await this.idempotency.check<CreatedReturn>(idempotencyKey, idemScope);
+      if (cached) return cached;
     }
 
     const order = await this.prisma.forTenant().order.findUnique({
@@ -179,6 +203,12 @@ export class ReturnsService {
         include: { items: true },
       });
     });
+
+    // Stored BEFORE the emit so a replay returns above and never re-emits
+    // return.created. Best-effort by design (see IdempotencyService).
+    if (idempotencyKey && this.idempotency) {
+      await this.idempotency.save(idempotencyKey, idemScope, ret);
+    }
 
     this.gateway.emitReturnCreated(this.prisma.getTenantId(), {
       returnId: ret.id,

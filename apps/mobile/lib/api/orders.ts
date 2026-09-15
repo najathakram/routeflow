@@ -283,6 +283,30 @@ export function invalidateOrderCaches(qc: QueryClient) {
   void qc.invalidateQueries({ queryKey: ["admin", "orders"] });
 }
 
+/**
+ * Both an item edit and a new-order submit can rewrite money OUTSIDE the
+ * order itself, and neither used to tell the cache:
+ *  - `resyncOrderInvoicesForEdit` rewrites the linked invoice(s) on every
+ *    item edit (server: invoices.service.ts) — a mounted invoice screen kept
+ *    showing the pre-edit total. The `invoice.updated` socket emit
+ *    (useSocket.ts) is the primary fix; this covers the editing device when
+ *    the socket is down.
+ *  - Applying/creating a credit note against the order (both mutations accept
+ *    `appliedCreditNotes`) changes that credit's remaining balance, but the
+ *    server CLAMPS an over-application instead of rejecting it — so a stale
+ *    ["credit-notes"] cache silently keeps advertising the OLD balance for up
+ *    to its 60s staleTime, and the operator gets a truncated apply with no
+ *    message telling them why.
+ * Call this alongside {@link invalidateOrderCaches} from `useUpdateOrderItems`
+ * and `useCreateOrderAsDriver` ONLY — other order mutations (status changes,
+ * cancel, shipment, urgent toggle) don't touch either family.
+ */
+export function invalidateOrderMoneySideEffects(qc: QueryClient) {
+  void qc.invalidateQueries({ queryKey: ["credit-notes"] });
+  void qc.invalidateQueries({ queryKey: ["invoices"] });
+  void qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+}
+
 export function useCreateOrder() {
   const qc = useQueryClient();
   return useMutation<Order, Error, CreateOrderDto>({
@@ -384,6 +408,7 @@ export function useCreateOrderAsDriver() {
     onSuccess: (_, vars) => {
       if (vars.routeRunId) qc.invalidateQueries({ queryKey: ["route-runs", vars.routeRunId] });
       invalidateOrderCaches(qc);
+      invalidateOrderMoneySideEffects(qc);
     },
   });
 }
@@ -473,7 +498,10 @@ export function useUpdateOrderItems() {
           ...(appliedCreditNotes !== undefined ? { appliedCreditNotes } : {}),
         })
         .then((r) => r.data),
-    onSuccess: () => invalidateOrderCaches(qc),
+    onSuccess: () => {
+      invalidateOrderCaches(qc);
+      invalidateOrderMoneySideEffects(qc);
+    },
   });
 }
 

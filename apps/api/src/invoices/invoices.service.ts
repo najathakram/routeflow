@@ -2183,7 +2183,31 @@ export class InvoicesService {
       return updated;
     };
 
-    return tx ? run(tx) : this.prisma.tenantTransaction(run);
+    const updated = tx ? await run(tx) : await this.prisma.tenantTransaction(run);
+
+    // This rebuild REWRITES the money on every linked invoice but was the one
+    // rebuild path that told nobody, so a mounted invoice screen kept showing the
+    // pre-edit total until it was manually refetched. Emitted here, at the OUTER
+    // tail rather than inside `run`, so it lands POST-COMMIT on the only
+    // production call site (orders.service.ts updateOrderItems, which passes no
+    // `tx`). INVARIANT for a future caller: passing a `tx` makes the emit fire
+    // inside that caller's transaction, so a later rollback would publish an
+    // invoice update that never committed — emit-after-commit there instead.
+    // Exactly once per rebuilt invoice: rebuildSiblingDrafts returns one row per
+    // linked invoice (the partition bails on any shared/unprovenanced line).
+    if (updated) {
+      const tenantId = this.prisma.getTenantId();
+      for (const inv of updated) {
+        this.gateway.emitInvoiceUpdated(tenantId, {
+          invoiceId: inv.id,
+          invoiceNumber: inv.invoiceNumber,
+          customerId: inv.customerId,
+          status: inv.status,
+          total: Number(inv.total),
+        });
+      }
+    }
+    return updated;
   }
 
   /**

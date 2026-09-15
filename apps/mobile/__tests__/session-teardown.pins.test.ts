@@ -16,7 +16,7 @@
  *
  * The mock preamble mirrors `session-teardown.test.ts` exactly so the pin stays
  * green once `logout()` starts driving the real teardown (which touches the
- * location tracker, the query client and the 8 user-scoped stores).
+ * location tracker, the query client and the 9 user-scoped stores).
  */
 
 jest.mock("react-native", () => ({ Platform: { OS: "ios" } }));
@@ -90,6 +90,10 @@ jest.mock("../store/productPickerStore", () => ({
 jest.mock("../store/stopCartStore", () => ({
   STOP_CART_STORE_NAME: "routeflow-stop-cart-store",
   useStopCartStore: { getState: () => ({ reset: jest.fn() }) },
+}));
+jest.mock("../store/returnSubmissionStore", () => ({
+  RETURN_SUBMISSION_STORE_NAME: "routeflow-return-submissions",
+  useReturnSubmissionStore: { getState: () => ({ reset: jest.fn() }) },
 }));
 
 // Pin: the tenant store must NEVER be touched by sign-out teardown (Q2).

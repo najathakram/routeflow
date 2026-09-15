@@ -4,13 +4,16 @@
  */
 import {
   buildReturnItems,
+  pendingReturnPayloads,
   restockForReason,
   returnActionFlags,
   returnPillFor,
+  submittedReturnKey,
   summarizeSubmissions,
   toUndeliveredStop,
   undeliveredReturnLines,
   undeliveredRowKey,
+  type UndeliveredReturnPayload,
 } from "../lib/returns-logic";
 
 describe("returnActionFlags", () => {
@@ -423,6 +426,45 @@ describe("toUndeliveredStop", () => {
     // A missing subtotal stays null rather than becoming Number(null) === 0.
     expect(adapted.orders?.[0]?.lineItems?.[1]?.subtotal).toBeNull();
     expect(adapted.deliveryMutations).toHaveLength(1);
+  });
+});
+
+describe("submittedReturnKey (driver-durability lane)", () => {
+  it("scopes by stop AND order, not order alone", () => {
+    expect(submittedReturnKey("stop-1", "order-A")).toBe("stop-1:order-A");
+    expect(submittedReturnKey("stop-2", "order-A")).not.toBe(
+      submittedReturnKey("stop-1", "order-A"),
+    );
+  });
+});
+
+describe("pendingReturnPayloads (driver-durability lane, REG-DRIVER-DURABILITY-C)", () => {
+  const payloadFor = (orderId: string): UndeliveredReturnPayload => ({
+    orderId,
+    reason: "CUSTOMER_REFUSED",
+    items: [{ productId: "p1", qty: 1, restock: true, reason: "CUSTOMER_REFUSED" } as any],
+  });
+
+  it("REG-DRIVER-DURABILITY-C: excludes an already-submitted stop+order pair and keeps others — TODAY: helper does not exist", () => {
+    const payloads = [payloadFor("A"), payloadFor("B")];
+    const submitted = { "S1:A": true as const };
+
+    const pending = pendingReturnPayloads(payloads, submitted, "S1");
+
+    expect(pending.map((p) => p.orderId)).toEqual(["B"]);
+  });
+
+  it("REG-DRIVER-DURABILITY-C: returns everything when nothing has been submitted yet", () => {
+    const payloads = [payloadFor("A"), payloadFor("B")];
+
+    expect(pendingReturnPayloads(payloads, {}, "S1").map((p) => p.orderId)).toEqual(["A", "B"]);
+  });
+
+  it("REG-DRIVER-DURABILITY-C: a submitted key for a DIFFERENT stop never excludes the same order at THIS stop", () => {
+    const payloads = [payloadFor("A")];
+    const submitted = { "S2:A": true as const };
+
+    expect(pendingReturnPayloads(payloads, submitted, "S1").map((p) => p.orderId)).toEqual(["A"]);
   });
 });
 

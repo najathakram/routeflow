@@ -1,6 +1,7 @@
 import { usePodStore } from "../store/podStore";
 import { useRunSettlementStore } from "../store/runSettlementStore";
 import { useStopCartStore } from "../store/stopCartStore";
+import { useReturnSubmissionStore } from "../store/returnSubmissionStore";
 
 interface MaybePersisted {
   persist?: { rehydrate?: () => void | Promise<void> };
@@ -18,16 +19,16 @@ async function rehydrateOne(store: unknown): Promise<void> {
  * D3 (cause-ruling.md §3 / REG-B136) — rehydrate the user-scoped persisted
  * stores now that the signed-in user is known.
  *
- * `store/podStore.ts`, `store/runSettlementStore.ts` and
- * `store/stopCartStore.ts` key their storage by user id
- * (`lib/user-scoped-storage.ts`), which cannot be resolved at module
- * evaluation time — zustand's `persist` otherwise hydrates synchronously at
- * store creation, i.e. from the `anon` bucket, so a capture written under
- * the real user's key would never come back after an app kill. All three
- * stores therefore set `skipHydration: true` and this function is the ONE
- * explicit hydration point, called from `lib/auth-store.ts` right after the
- * user has been resolved (successful `login()`, and `initialize()` when a
- * stored user is found).
+ * `store/podStore.ts`, `store/runSettlementStore.ts`, `store/stopCartStore.ts`
+ * and `store/returnSubmissionStore.ts` (driver-durability lane) key their
+ * storage by user id (`lib/user-scoped-storage.ts`), which cannot be resolved
+ * at module evaluation time — zustand's `persist` otherwise hydrates
+ * synchronously at store creation, i.e. from the `anon` bucket, so a capture
+ * written under the real user's key would never come back after an app kill.
+ * All four stores therefore set `skipHydration: true` and this function is
+ * the ONE explicit hydration point, called from `lib/auth-store.ts` right
+ * after the user has been resolved (successful `login()`, and `initialize()`
+ * when a stored user is found).
  *
  * Optional-chained and swallowed per store: tests mock these modules with a
  * bare `getState`, and a hydration failure must never block sign-in.
@@ -36,4 +37,5 @@ export async function rehydrateUserScopedStores(): Promise<void> {
   await rehydrateOne(usePodStore);
   await rehydrateOne(useRunSettlementStore);
   await rehydrateOne(useStopCartStore);
+  await rehydrateOne(useReturnSubmissionStore);
 }
