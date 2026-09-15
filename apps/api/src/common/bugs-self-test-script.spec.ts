@@ -22,5 +22,5 @@ describe("bugs.mjs self-test contract (REG-B231, REG-B415)", () => {
 
     expect(res.status).toBe(0);
     expect(res.stdout).toContain("self-test: all checks passed");
-  });
+  }, 150_000);
 });

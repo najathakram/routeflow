@@ -509,7 +509,13 @@ version|audit-allowlist-retired)\\.spec\\.ts$"` (the third joined it
   `15.5.25`/`^15.5.25`) broke on every routine Next patch bump; now uses
   `src/common/next-version.ts`'s `pinnedToMajorLine(version, major)` helper (same fix shape as
   #745's sibling React-version guard), with its own `REG-B352` block pinning the tolerant matcher
-  itself. **`no-react-skew-hacks.spec.ts`
+  itself. **Fix round, same day:** a major-line-only check accepts any `15.x`, including a
+  downgrade to `15.0.0` that predates the fix and loses the CRITICAL-advisory protection — T1's
+  three assertions now call the sibling `meetsMinimumOnMajorLine(version, major, minMinor,
+minPatch)` helper (major must match exactly, minor/patch compared numerically >= the minimum)
+  with the minimum set to `15.5.25`; `pinnedToMajorLine` and its REG-B352 block are unchanged and
+  still exported, and REG-B352 gained four more cases covering `meetsMinimumOnMajorLine`'s own
+  edges (exact minimum, higher, same-major-lower-patch, different major). **`no-react-skew-hacks.spec.ts`
   (T2)** pins that `apps/web/Dockerfile`'s `npm install --force --no-save react@18…` line and
   `jest.config.js`'s single-react `moduleNameMapper` are BOTH gone — a half-reverted skew (one
   hack back, one still removed) breaks every RTL suite, so the pair is asserted together, not as
@@ -522,6 +528,18 @@ version|audit-allowlist-retired)\\.spec\\.ts$"` (the third joined it
   ALLOWLISTED-suppresses) a fixture audit reporting one of them — the allowlist itself stays
   available for a future, unrelated advisory (see the `security/audit-allowlist.json` bullet
   above and `ci-audit-script.spec.ts`'s "policy guard" describe update).
+- **`src/common/bugs-self-test-script.spec.ts` (REG-B231/REG-B415, fix/tooling-flaky-gates)** —
+  thin `spawnSync` wrapper around `node scripts/campaign/bugs.mjs self-test` (the lock-order-race
+  and lock-liveness checks these registry entries are about are real harness logic, not
+  jest-native, so this is the only jest-addressable proof point for them). The self-test run takes
+  ~100s, so it is excluded from the default `apps/api` jest lane (`package.json`'s
+  `testPathIgnorePatterns`) and runs instead only in the `test:repo-truth` lane
+  (`jest.repo-truth.config.js`'s `testRegex`) — its own turbo step, not the parallel worker pool
+  `ci-freshness-guard-script.spec.ts` and `prod-migrate-script.spec.ts` run in, so an 80-100s
+  CPU/subprocess-heavy test never re-introduces the load condition those two specs' L-163 fixes
+  exist to survive. Its one `it(...)` carries an explicit `150_000`ms third-argument timeout
+  (`apps/api/package.json`'s default `testTimeout` is 30000) since the run is fully synchronous
+  (`spawnSync`) and would otherwise depend on Jest's timer never getting a tick.
 - **`src/common/campaign-check-freshness.spec.ts` (2026-09-06, campaign-check report freshness,
   L-083)** — contract spec for `scripts/campaign-check.mjs`'s freshness rule and its new
   `--freshness-only` pre-step (see [`INDEX`](INDEX.md)'s "Bug-register burn-down campaign" row).
