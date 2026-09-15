@@ -515,6 +515,8 @@ export interface BuyerInvoiceDetail {
     /** BUY_N_GET_M snapshot carried from the order line — drives the "{n} free"
      *  label so a reduced subtotal doesn't read as a pricing error. */
     promoFreeUnits?: number | null;
+    /** Per-line note, buyer-visible. */
+    notes?: string | null;
   }>;
   payments: Array<{
     id: string;

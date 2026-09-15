@@ -887,3 +887,13 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   restored the two `accept()` assertions from nested `expect.objectContaining` to exact
   `toHaveBeenCalledWith`: objectContaining silently admits extra `where` keys, so the key-set
   (`{ id, status }`, no tenant key) was pinned nowhere.
+
+### L-147 · 2026-09-15 · domain · WP4 print-row state
+
+- **Symptom:** invoices-list Print used one `printingId` for every row; printing row A then
+  clicking row B cleared A's spinner, both buttons racing the same flag.
+- **Root cause:** a single scalar stood in for "this row's action is pending" across a list —
+  wrong once two rows can act at once.
+- **Lesson:** **Per-row async state in a list is keyed per row (`Set`/`Map` of ids), never one
+  scalar — a scalar assumes at most one row is ever in flight.**
+- **Guard:** `invoices/page.tsx` tracks `printingIds: Set<string>`; row `disabled={printingIds.has(inv.id)}`.

@@ -139,6 +139,8 @@ export interface BuyerOrder {
     /** BUY_N_GET_M: whole free SELLING units on this line — names the reduced
      *  `subtotal` so it doesn't read as a pricing error. */
     promoFreeUnits?: number | null;
+    /** Per-line note, buyer-visible. */
+    notes?: string | null;
     product?: { id: string; name: string; unit?: string };
   }>;
   /** P5-09: post-dispatch change requests, newest first. */
@@ -162,6 +164,8 @@ export interface BuyerInvoiceItem {
   /** BUY_N_GET_M: whole free SELLING units on this line — names the reduced
    *  `subtotal` so it doesn't read as a pricing error. */
   promoFreeUnits?: number | null;
+  /** Per-line note, buyer-visible. */
+  notes?: string | null;
   product?: { id: string; name: string; unit?: string };
 }
 
