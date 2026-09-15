@@ -423,7 +423,10 @@ function preflightPrompt(attempt) {
   return [
     'You are the PREFLIGHT gate for a task-loop pipeline run, attempt ' + attempt + ' of 3.',
     '1. Check host contention: count running node/npm/docker processes and current CPU load using whatever command this OS supports (Windows: `tasklist`; POSIX: `ps`/`uptime`). Count ONLY build-tool work: processes whose command line names jest, tsc, next, turbo, vitest, playwright, webpack, esbuild, docker, matlab, or npm run / npm test. Claude Code sessions and their MCP servers are node processes too (about 8 per open session) and do NOT count -- inspect command lines (Windows: PowerShell Get-CimInstance Win32_Process, or wmic process get commandline), never a bare tasklist count. Treat the host as contended only if more than 6 such build-tool processes are running, or CPU load looks pegged (>90% sustained across two samples a few seconds apart). Use judgment -- this is a heuristic, not a hard threshold from a config file.',
-    '2. Run `git status --short` -- treeClean is true only if it prints nothing.',
+    // E10: `-C "<workdir>"` when set -- a bare `git status --short` here would
+    // report on whatever tree the agent's shell happened to start in, not
+    // necessarily this run's actual target.
+    '2. Run `' + (workdir ? 'git -C "' + workdir + '" status --short' : 'git status --short') + '` -- treeClean is true only if it prints nothing.',
     // Fix round 1 (finding 4): the brief specifies (runId, scriptPath, args)
     // -- args is what actually lets a killed run be relaunched with the same
     // inputs; task ids alone cannot. scriptPath is genuinely not available
@@ -733,9 +736,18 @@ function groundingPrompt(paths) {
 function manifestPrompt(planned, commands, artifactPaths, planPathsArg) {
   return [
     'You are the context manifest builder. Report FACTS about this repository as it is right now. Do NOT summarize, interpret, judge or review the change -- later agents read the diff themselves and must not inherit your reading of it.',
-    "1. FILES. Run `git status --short` and `git diff --numstat` and list every changed and untracked file. ALSO list every file this run's tasks intend to touch, even if it does not exist yet:",
+    // E10: `-C "<workdir>"` when set, and existence/digest checks resolved
+    // against workdir too -- a bare `git status`/`git diff`/`git hash-object`
+    // or a plain `test -f <path>` here would read whatever tree the agent's
+    // shell happened to start in, and this manifest is the Baseline record
+    // every later digest comparison in this run (including the mutation-probe
+    // checksum) is checked against.
+    (workdir
+      ? '1. FILES. Run `git -C "' + workdir + '" status --short` and `git -C "' + workdir + '" diff --numstat` (never a bare `git` relying on your cwd) and list every changed and untracked file.'
+      : '1. FILES. Run `git status --short` and `git diff --numstat` and list every changed and untracked file.') +
+      " ALSO list every file this run's tasks intend to touch, even if it does not exist yet:",
     ...(planned.length ? planned.map((f) => '   - ' + f) : ['   (none supplied)']),
-    '   For each file report: path (repo-relative, forward slashes), status (modified | added | untracked | deleted | planned), exists (true if the path currently exists on disk -- check directly, never assume a planned file is absent), digest (`git hash-object <path>` when it exists, else empty string), and changedLines (added+deleted from --numstat; 0 when the file does not exist yet or no count is available).',
+    '   For each file report: path (repo-relative, forward slashes), status (modified | added | untracked | deleted | planned), exists (true if the path currently exists on disk' + (workdir ? ' at "' + workdir + '/<path>"' : '') + ' -- check directly, never assume a planned file is absent), digest (`' + (workdir ? 'git -C "' + workdir + '" hash-object <path>' : 'git hash-object <path>') + '` when it exists, else empty string), and changedLines (added+deleted from --numstat; 0 when the file does not exist yet or no count is available).',
     '2. RISK. Classify every file HIGH or LOW. HIGH iff the CHANGE (the diff hunks, or for a planned file that does not exist yet, the intended change) touches money/tax/pricing math, auth/permissions/session, tenancy or ownership scoping, migrations/schema, PII, or payments. A config string, an allow-list entry, a label, a doc, or a code-map edit is LOW even inside a finance/admin module -- risk follows the CHANGE, never the module it lives in. If you cannot read a file, or are not sure, classify it HIGH -- unknown is HIGH, never LOW.',
     commands.length
       ? '3. COMMANDS. For each command below decide STATICALLY whether it could run at all here (the npm script exists in the right package manifest, the file or binary it names exists, the directory it needs exists). Do NOT execute any of them -- another agent is running them right now. Return in validCommands only the ones that look runnable, spelled EXACTLY as given:\n' + commands.map((c) => '   - ' + c).join('\n')
@@ -1081,6 +1093,20 @@ function taskDir(id) { return runDir + '/tasks/' + id }
 // forward-slash paths correctly on Windows too, so this stays portable and
 // ASCII-only.
 function scriptCmd(name) { return scriptsDir ? 'node "' + scriptsDir + '/' + name + '"' : null }
+// E10: task-brief.mjs/review-pack.mjs/fix-brief.mjs all default their own
+// `--cwd` to process.cwd() when it is not passed, and use it to resolve
+// --plan/--out/--findings whenever those are not already absolute paths --
+// the same "trust the invoking agent's actual shell cwd" hazard as the bare
+// git calls fixed elsewhere in this file. Real symptom, same run: two tasks'
+// brief generation failed with "task-brief.mjs did not produce a brief.md"
+// (exit 3, "task id not found") even though the same section slices
+// correctly when re-tested directly against the real build-plan.md --
+// consistent with the script having read a stale/wrong-tree file because
+// nothing pinned its --cwd. Every script invocation below now passes `--cwd
+// "<workdir>"` explicitly when a workdir is set, so its path resolution never
+// depends on the invoking agent's actual shell state; unchanged (no flag)
+// when there is no workdir.
+const SCRIPT_CWD_FLAG = workdir ? ' --cwd "' + workdir + '"' : ''
 // The single HIGH/LOW rule every A8/A9 stage -- and pairsFor() above -- reads
 // through: an explicit t.risk always wins (including an explicit LOW); an
 // unclassified owned file defaults HIGH ("unknown is HIGH", matching the
@@ -1253,6 +1279,10 @@ const SCOPE_CHECK_SCHEMA = {
   type: 'object',
   properties: {
     ran: { type: 'boolean', description: 'true only if the command actually executed' },
+    // E10: only meaningful/required when this run has a workdir -- see
+    // workdirToplevelMatches below. Left out of `required` so a no-workdir
+    // run's contract is byte-identical to before this fix.
+    toplevel: { type: 'string', description: '`git -C "<workdir>" rev-parse --show-toplevel` output, single line; empty string when this run has no workdir' },
     files: {
       type: 'array',
       items: {
@@ -1296,12 +1326,54 @@ function isEngineOwnedPath(p) {
   const n = normPath(p)
   return ENGINE_OWNED_PATH_PREFIXES.some((prefix) => n === prefix.slice(0, -1) || n.startsWith(prefix))
 }
+// ---------- E10: scope-check/untracked-snapshot/revert must target workdir ----------
+// Real launch 2026-09-15 (tooling lane): scopeCheckPrompt, captureUntrackedSnapshot
+// and scopeRevertPrompt below said "from the repo root" with no `-C workdir` and no
+// mechanical proof of which tree that agent actually read/wrote -- REPO_NOTE's "cd
+// into workdir" is advisory only (E7 already proved that once for the main-checkout
+// guard) and nothing here caught the same failure for THESE three calls: several
+// mechanical Haiku agents ran git in the MAIN checkout instead of the worktree at
+// `workdir`. Evidence: every chain's scope check reported "touched non-test files"
+// that exist only in the main checkout (e.g. .claude/handoffs/*.md), and two revert
+// attempts failed outright. Rule: when `workdir` is set, every git call here is
+// spelled `git -C "<workdir>"` (never bare `git`), and the two READ calls
+// (scopeCheckPrompt, captureUntrackedSnapshot) also demand `toplevel` from a real
+// `git -C "<workdir>" rev-parse --show-toplevel` -- the engine (never the agent's own
+// say-so) compares it to `workdir` via workdirToplevelMatches before trusting the
+// result at all, exactly the "real git read, never the agent's own account"
+// principle E7's captureMainFingerprint already uses. A mismatch or missing toplevel
+// is treated exactly like a dead/unreadable agent (returns null) -- the SAME
+// fail-safe this file already applies everywhere else, so a bad read can only ever
+// cause "cannot prove scope" (no action taken), never a false revert/delete. When
+// `workdir` is not set, every prompt below is byte-identical to before this fix.
+function workdirToplevelMatches(toplevel) {
+  return !!(workdir && toplevel && normFsPath(toplevel) === normFsPath(workdir))
+}
+// Builds an ABSOLUTE path under `workdir` for a repo-root-relative path, in JS --
+// never by asking the agent to join the two strings itself (that is exactly the
+// kind of implicit-cwd trust this defect is about). No-op (returns the relative
+// path unchanged) when there is no workdir, so a no-workdir run's file-target text
+// is unchanged from before this fix.
+function absUnderWorkdir(relPath) {
+  if (!workdir) return relPath
+  const base = normPath(workdir).replace(/\/+$/, '')
+  const rel = normPath(relPath).replace(/^\/+/, '')
+  return base + '/' + rel
+}
 function scopeCheckPrompt() {
-  return 'Run `git status --porcelain` from the repo root and report every changed or untracked file as a repo-root-relative path: tracked:false ONLY for a line starting "??", tracked:true for every other status line. Report ran:true only if the command actually executed.'
+  return workdir
+    ? 'Run `git -C "' + workdir + '" rev-parse --show-toplevel` and report its single output line as toplevel -- this is a mechanical proof the read below ran against the right tree, never assumed. Then run `git -C "' + workdir + '" status --porcelain` (never a bare `git` relying on your cwd) and report every changed or untracked file as a repo-root-relative path: tracked:false ONLY for a line starting "??", tracked:true for every other status line. Report ran:true only if both commands actually executed.'
+    : 'Run `git status --porcelain` from the repo root and report every changed or untracked file as a repo-root-relative path: tracked:false ONLY for a line starting "??", tracked:true for every other status line. Report ran:true only if the command actually executed.'
 }
 const UNTRACKED_SNAPSHOT_SCHEMA = {
   type: 'object',
-  properties: { ran: { type: 'boolean' }, files: { type: 'array', items: { type: 'string' } } },
+  properties: {
+    ran: { type: 'boolean' },
+    // E10: same optional, only-required-with-workdir contract as SCOPE_CHECK_SCHEMA's
+    // own `toplevel` field above.
+    toplevel: { type: 'string', description: '`git -C "<workdir>" rev-parse --show-toplevel` output, single line; empty string when this run has no workdir' },
+    files: { type: 'array', items: { type: 'string' } },
+  },
   required: ['ran', 'files'],
 }
 // E9, rule 2: captures the untracked-file set BEFORE a test-author call runs,
@@ -1314,12 +1386,18 @@ const UNTRACKED_SNAPSHOT_SCHEMA = {
 // they never need to round-trip through this snapshot at all. Fail-safe: a
 // dead/unreadable agent returns null, and callers must then treat every
 // untracked path as "unknown, therefore not provably new" -- never as new.
+// E10: also null when workdir is set but the read's own `toplevel` does not
+// match it -- the same fail-safe, now covering "wrong tree" as well as "dead
+// agent".
 async function captureUntrackedSnapshot(label) {
   const res = await askAgent(
-    'Run `git status --porcelain --untracked-files=all` from the repo root. Report ran:true only if the command actually executed (an empty result still counts as executed), and files = every line that starts "??", with that prefix stripped, as repo-root-relative paths.',
+    workdir
+      ? 'Run `git -C "' + workdir + '" rev-parse --show-toplevel` and report its single output line as toplevel. Then run `git -C "' + workdir + '" status --porcelain --untracked-files=all` (never a bare `git` relying on your cwd). Report ran:true only if both commands actually executed (an empty status result still counts as executed), and files = every line that starts "??", with that prefix stripped, as repo-root-relative paths.'
+      : 'Run `git status --porcelain --untracked-files=all` from the repo root. Report ran:true only if the command actually executed (an empty result still counts as executed), and files = every line that starts "??", with that prefix stripped, as repo-root-relative paths.',
     { label, phase: 'Author tests', model: M.haiku, effort: CFG.effort.baseline, schema: UNTRACKED_SNAPSHOT_SCHEMA },
   )
   if (!res || !res.ran || !Array.isArray(res.files)) return null
+  if (workdir && !workdirToplevelMatches(res.toplevel)) return null
   return res.files.filter((f) => f && !isEngineOwnedPath(f))
 }
 // E9, rule 2: `items` are pre-classified {path, action} -- action 'checkout'
@@ -1328,13 +1406,24 @@ async function captureUntrackedSnapshot(label) {
 // engine has already mechanically confirmed is NEW (absent from the
 // before-snapshot). A path classified 'blocked-only' by the caller is never
 // included here at all -- it is reported as a finding and left untouched.
+// E10: when `workdir` is set, every git call is `-C "<workdir>"` and the
+// delete target is an absolute path under workdir BUILT HERE IN JS
+// (absUnderWorkdir), never left for the agent to join itself. Before acting
+// on anything, the prompt itself requires the agent to confirm `git -C
+// "<workdir>" rev-parse --show-toplevel` equals workdir -- on a mismatch it
+// must change nothing and report exitCode 1, so a wrong-tree agent can only
+// ever fail this closed, never revert or delete in the wrong place.
 function scopeRevertPrompt(items) {
+  const gitPrefix = workdir ? 'git -C "' + workdir + '" ' : 'git '
   return [
+    ...(workdir
+      ? ['Before doing anything else, run `' + gitPrefix + 'rev-parse --show-toplevel` and confirm its output is exactly "' + workdir + '" (a trailing slash or case difference on Windows is fine; anything else is not). If it does not match, or the command fails, change NOTHING at all and report exitCode 1 with reverted:[].']
+      : []),
     'Exactly these path(s) must come OUT of the working tree -- they were edited outside their task\'s declared scope. Handle ONLY the path(s) listed below, each EXACTLY as instructed, and touch nothing else:',
     ...items.map((v) => '- ' + v.path + ' -- ' + (v.action === 'checkout'
-      ? 'TRACKED: run `git checkout -- "' + v.path + '"`.'
-      : 'UNTRACKED and already confirmed new (did not exist before this task\'s agent ran): delete this ONE file directly (a single-file delete, never a directory or recursive delete).')),
-    'Before acting on any path, run `git ls-files -- "<path>"` to confirm its tracked state matches what is listed above (non-empty output = tracked, empty = untracked). If a path\'s real state contradicts its listed action, STOP for that path only, change nothing, and report it in `reverted` as "<path> (tracked-state mismatch, skipped)" -- never guess or fall back to the other action.',
+      ? 'TRACKED: run `' + gitPrefix + 'checkout -- "' + v.path + '"`.'
+      : 'UNTRACKED and already confirmed new (did not exist before this task\'s agent ran): delete this ONE file directly' + (workdir ? ' at the absolute path "' + absUnderWorkdir(v.path) + '"' : '') + ' (a single-file delete, never a directory or recursive delete).')),
+    'Before acting on any path, run `' + gitPrefix + 'ls-files -- "<path>"` to confirm its tracked state matches what is listed above (non-empty output = tracked, empty = untracked). If a path\'s real state contradicts its listed action, STOP for that path only, change nothing, and report it in `reverted` as "<path> (tracked-state mismatch, skipped)" -- never guess or fall back to the other action.',
     'NEVER use `git reset`, `git clean`, `git stash`, or any directory/recursive delete for this -- uncommitted work from this run and from OTHER tasks lives elsewhere in this shared tree and those would destroy it.',
     'Report exitCode 0 only if every listed path was actually handled as instructed (checked out, deleted, or explicitly skipped on a mismatch), and reverted with the paths you actually handled.',
   ].join('\n')
@@ -1384,6 +1473,9 @@ async function enforceTestAuthorScope(t, label, beforeUntracked) {
   const isNew = (p) => !!beforeSet && !beforeSet.has(normPath(p))
   const scope = await askAgent(scopeCheckPrompt(), { label: label + ':scope', phase: 'Author tests', model: M.haiku, effort: CFG.effort.baseline, schema: SCOPE_CHECK_SCHEMA })
   if (!scope || !scope.ran || !Array.isArray(scope.files)) return null
+  // E10: a confirmed wrong-tree read is fail-safe identical to a dead agent --
+  // never trust scope.files if the mechanical toplevel proof does not match workdir.
+  if (workdir && !workdirToplevelMatches(scope.toplevel)) return null
   const violations = []
   for (const f of scope.files) {
     if (!f || !f.path) continue
@@ -1656,6 +1748,10 @@ const SIBLING_HITS_SCHEMA = {
       },
     },
     truncated: { type: 'array', items: { type: 'string' }, description: 'the patterns whose hit list had to be capped; empty when none was' },
+    // E10 (follow-up): only meaningful/required when this run has a workdir --
+    // see workdirToplevelMatches. Left out of `required` so a no-workdir run's
+    // contract is byte-identical to before this fix.
+    toplevel: { type: 'string', description: '`git -C "<workdir>" rev-parse --show-toplevel` output, single line; empty string when this run has no workdir' },
   },
   required: ['hits'],
 }
@@ -1714,7 +1810,7 @@ const UI_EVIDENCE_SCHEMA = {
 function briefPrompt(t) {
   return [
     'Run this exact command from the repo root, then report its result:',
-    scriptCmd('task-brief.mjs') + ' --plan ' + (_args.buildPlanPath || '(no build plan supplied)') + ' --task ' + t.id + ' --out ' + taskDir(t.id) + '/brief.md',
+    scriptCmd('task-brief.mjs') + ' --plan ' + (_args.buildPlanPath || '(no build plan supplied)') + ' --task ' + t.id + ' --out ' + taskDir(t.id) + '/brief.md' + SCRIPT_CWD_FLAG,
     'The script prints its result as the LAST stdout line: one JSON object {out, bytes, truncated, sections, exitCode}. Report exactly that object -- do not paraphrase or re-derive it. Report the process exit code as exitCode: it must be 0 and out must be the brief.md path actually written, or this call failed.',
   ].join('\n')
 }
@@ -2185,7 +2281,7 @@ function packPrompt(t) {
       // reviewer would see nothing to review. Falls back to _args.baselineSha
       // (run-wide, when the per-task capture is unavailable) then 'worktree'
       // (the pre-existing behavior), same fallback order as before.
-      ' --base ' + (t.implBaseSha || _args.baselineSha || 'worktree') + ' --cap ' + CFG.caps.packBytes + ' --out ' + taskDir(t.id) + '/pack.md',
+      ' --base ' + (t.implBaseSha || _args.baselineSha || 'worktree') + ' --cap ' + CFG.caps.packBytes + ' --out ' + taskDir(t.id) + '/pack.md' + SCRIPT_CWD_FLAG,
     !radiusFlag ? '(No --radius flag: this task declared no [before, after] context-line pair, so review-pack.mjs\'s own Call-Sites-derived radius stands on its own.)' : '',
     !testPlanFlag ? '(No --test-plan flag: this run has no test plan path in scope -- --test-plan is optional, so the Test-plan excerpt section is simply omitted.)' : '',
     'Report the process exit code as exitCode, and out/bytes/truncated/sections from its LAST stdout JSON line. exitCode must be 0 and out must be the pack.md path actually written, or this call failed.',
@@ -2457,7 +2553,7 @@ function fixBriefScriptPrompt(t, openFindings, round) {
     'First, write this EXACT JSON to "' + findingsPath + '" (create the directory first if needed):',
     JSON.stringify(openFindings),
     'Then run this exact command from the repo root, and report its result:',
-    scriptCmd('fix-brief.mjs') + ' --findings ' + findingsPath + ' --cap ' + CFG.caps.fableBriefBytes + ' --out ' + taskDir(t.id) + '/fix-r' + round + '.md',
+    scriptCmd('fix-brief.mjs') + ' --findings ' + findingsPath + ' --cap ' + CFG.caps.fableBriefBytes + ' --out ' + taskDir(t.id) + '/fix-r' + round + '.md' + SCRIPT_CWD_FLAG,
     'The script prints its result as the LAST stdout line: one JSON object {out, bytes, truncated, sections, exitCode}. Report exactly that object. Report the process exit code as exitCode: it must be 0 and out must be the fix-brief path actually written, or this call failed.',
   ].join('\n')
 }
@@ -2525,14 +2621,22 @@ async function fixRound(t, round, openFindings) {
 // Fix round 1, finding 2: a small Haiku `git rev-parse HEAD` call, used both
 // to capture a round's real fixBaseSha before it starts and to capture the
 // new HEAD after the executor's (committed) work lands.
+// E10: `-C "<workdir>"` when set -- a bare `git rev-parse HEAD` run in the
+// wrong tree would silently return the MAIN checkout's HEAD, and every
+// re-review pack downstream would then diff the wrong repo's history.
 async function captureGitSha(label, phaseName) {
-  const res = await askAgent('Run `git rev-parse HEAD` from the repo root and report its single output line as sha.', { label, phase: phaseName, model: M.haiku, effort: CFG.effort.baseline, schema: GIT_SHA_SCHEMA })
+  const res = await askAgent(
+    workdir
+      ? 'Run `git -C "' + workdir + '" rev-parse HEAD` (never a bare `git` relying on your cwd) and report its single output line as sha.'
+      : 'Run `git rev-parse HEAD` from the repo root and report its single output line as sha.',
+    { label, phase: phaseName, model: M.haiku, effort: CFG.effort.baseline, schema: GIT_SHA_SCHEMA },
+  )
   return res && res.sha ? res.sha : null
 }
 function rereviewPackPrompt(t, round, fixBaseSha) {
   return [
     'Run this exact command from the repo root, then report its result:',
-    scriptCmd('review-pack.mjs') + ' --plan ' + _args.buildPlanPath + ' --base ' + fixBaseSha + ' --files ' + (t.files || []).join(',') + ' --cap ' + CFG.caps.packBytes + ' --out ' + taskDir(t.id) + '/pack-r' + round + '.md',
+    scriptCmd('review-pack.mjs') + ' --plan ' + _args.buildPlanPath + ' --base ' + fixBaseSha + ' --files ' + (t.files || []).join(',') + ' --cap ' + CFG.caps.packBytes + ' --out ' + taskDir(t.id) + '/pack-r' + round + '.md' + SCRIPT_CWD_FLAG,
     'This pack scopes to ONLY the fix diff from round ' + round + ' -- everything changed since commit ' + fixBaseSha + ' -- not the whole task change.',
     'Report the process exit code as exitCode, and out/bytes/truncated/sections from its LAST stdout JSON line.',
   ].join('\n')
@@ -3007,16 +3111,25 @@ for (const wave of waves) {
 }
 
 // ---------- A10 (revert-probe): sequential probes + ONE checksum:after ----------
+// E10: `-C "<workdir>"` for every git call here when a workdir is set, and
+// the revert/restore target is the ABSOLUTE path under workdir (built here in
+// JS via absUnderWorkdir, never left for the agent to join) -- step 3's shell
+// redirect (`> "<file>"`) is NOT a git command, so `-C` alone would not have
+// fixed it: only an absolute redirect target is safe regardless of the
+// agent's actual shell cwd. Byte-identical to before this fix when there is
+// no workdir.
 function revertProbePrompt(t) {
+  const gitPrefix = workdir ? 'git -C "' + workdir + '" ' : 'git '
+  const target = absUnderWorkdir(t.file)
   return [
     'You are the FIX-REVERT PROBE for task ' + t.id + '. The fix in "' + t.file + '" is what makes a named test pass. You will back the file up OUTSIDE the repo, revert it to its COMMITTED (HEAD) content, prove the named test FAILS without the fix, then restore your backup exactly.',
-    'Target file: ' + t.file,
+    'Target file: ' + target,
     'Test that MUST FAIL without the fix -- run ONLY this, nothing else: ' + t.test,
-    '1. CHECK IT IS TRACKED: run `git ls-files -- "' + t.file + '"`. If it prints nothing, or `git show HEAD:' + t.file + '` cannot produce content, report fallback="untracked", caught=false, restored=true, and STOP -- there is no committed version to revert to.',
+    '1. CHECK IT IS TRACKED: run `' + gitPrefix + 'ls-files -- "' + t.file + '"`. If it prints nothing, or `' + gitPrefix + 'show HEAD:' + t.file + '` cannot produce content, report fallback="untracked", caught=false, restored=true, and STOP -- there is no committed version to revert to.',
     '2. BACK UP, OUTSIDE THE REPO: copy the file into the OS temp directory under a unique name (a file copy, never git). Report that absolute path as backupPath.',
-    '3. REVERT: `git show HEAD:' + t.file + ' > "' + t.file + '"` (Git Bash, so the bytes land unchanged). NEVER use `git checkout`, `git restore`, `git stash` or `git reset` -- uncommitted work from this run lives elsewhere in this tree and those commands would destroy it.',
+    '3. REVERT: `' + gitPrefix + 'show HEAD:' + t.file + ' > "' + target + '"` (Git Bash, so the bytes land unchanged' + (workdir ? '; the redirect target is an absolute path, never relative to your shell cwd' : '') + '). NEVER use `git checkout`, `git restore`, `git stash` or `git reset` -- uncommitted work from this run lives elsewhere in this tree and those commands would destroy it.',
     '4. RUN ONLY: ' + t.test + '. Reverting the fix re-introduces the bug, so the test MUST FAIL on an assertion -- caught=true ONLY then. A pass, a skip, or a collection/compile error means caught=false.',
-    '5. RESTORE: copy the backup back over "' + t.file + '". Again: never git checkout/restore/stash/reset.',
+    '5. RESTORE: copy the backup back over "' + target + '". Again: never git checkout/restore/stash/reset.',
     'Report caught, restored, evidence (the assertion failure message, or the output proving the test is blind to the fix), backupPath, and fallback (empty string unless step 1 applied). An independent checksum agent checks your restore afterward against the digest recorded before this run touched the file -- never claim restored:true without having actually compared the file to your backup.',
   ].join('\n')
 }
@@ -3061,9 +3174,13 @@ async function runRevertProbeTask(t) {
   }
   return { ...t, status: blockerFindings.length ? 'open' : 'complete', clean: !blockerFindings.length, probe: res, blockerFindings }
 }
+// E10: `-C "<workdir>"` when set -- a bare `git hash-object` here would hash
+// whatever tree the agent's shell happened to start in, defeating the whole
+// point of comparing this digest against Baseline's.
 function checksumAfterPrompt(files) {
+  const gitPrefix = workdir ? 'git -C "' + workdir + '" ' : 'git '
   return [
-    'You are a mechanical checksum recorder, read only. Compute `git hash-object <file>` for each file below and report it exactly.',
+    'You are a mechanical checksum recorder, read only. Compute `' + gitPrefix + 'hash-object <file>`' + (workdir ? ' (never a bare `git` relying on your cwd)' : '') + ' for each file below and report it exactly.',
     ...files.map((f) => '- ' + f),
     'Rules: read only -- do NOT modify, create, delete, format or restore any file, and do NOT run tests, builds, or installs. Report each digest as lowercase hex; the exact string "unreadable" if the file could not be read.',
     'Context: these files were deliberately reverted and then restored by other agents. Your digests are the independent evidence of whether the restore actually happened -- they are compared, IN SCRIPT, against the digests recorded for these same files before any of this ran.',
@@ -3251,12 +3368,29 @@ const hasHighRiskTask = tasks.some((t) => isHighRisk(t))
 // Adapted from pipeline.js.bak-2026-09-12 @1615 (siblingGrepPrompt) and
 // @1628 (siblingJudgePrompt). args.siblingPatterns is the caller-supplied
 // contract, unchanged from the old engine's shape.
+// E10 (follow-up, lead review 2026-09-15): this grepper searched "the source
+// tree" with no repo pin at all -- in bugfix mode a stale MAIN checkout on the
+// wrong branch (the accrual lane's actual failure) gives the sibling sweep
+// false evidence, the same class of "which tree did this mechanical agent
+// actually read" hazard as scopeCheckPrompt/captureUntrackedSnapshot above.
+// Same rule: when `workdir` is set, the search root is pinned to the
+// ABSOLUTE workdir path (never a bare search relying on the agent's cwd), and
+// the result also carries a mechanical `toplevel` proof from a real `git -C
+// "<workdir>" rev-parse --show-toplevel` -- the call site below discards the
+// whole sweep (treated exactly like a dead grep agent) on a mismatch, never
+// partially trusting a wrong-tree hit. Byte-identical when there is no
+// workdir.
 function siblingGrepPrompt(patterns) {
   return [
     'You are the SIBLING SWEEP grepper -- mechanical and read-only. A defect is being fixed in this run; the patterns below name its SHAPE. Find every other place in this repository that matches, so a judge can decide which of them are the same bug in a second place. You judge NOTHING.',
+    ...(workdir
+      ? ['Run `git -C "' + workdir + '" rev-parse --show-toplevel` first and report its single output line as toplevel -- this is a mechanical proof the sweep below ran against the right tree, never assumed.']
+      : []),
     'Patterns -- run each one separately and report which pattern produced each hit:',
     ...patterns.map((p, i) => '  ' + (i + 1) + '. /' + p.pattern + '/' + (p.note ? ' -- ' + p.note : '')),
-    'Use ripgrep (or `grep -rnE`) over the source tree, EXCLUDING node_modules, dist, build output and .next. Report each hit as its pattern, the repo-relative path, the line number, and the matching line verbatim (trimmed to about 200 characters).',
+    workdir
+      ? 'Use ripgrep (or `grep -rnE`) with the search root pinned to the absolute path "' + workdir + '" (e.g. `rg -n <pattern> "' + workdir + '"`, or `cd "' + workdir + '" && grep -rnE ...`) -- never a bare search relying on your cwd -- EXCLUDING node_modules, dist, build output and .next. Report each hit as its pattern, the repo-relative path, the line number, and the matching line verbatim (trimmed to about 200 characters).'
+      : 'Use ripgrep (or `grep -rnE`) over the source tree, EXCLUDING node_modules, dist, build output and .next. Report each hit as its pattern, the repo-relative path, the line number, and the matching line verbatim (trimmed to about 200 characters).',
     'Cap each pattern at 40 hits: if one matches more, report the first 40 and name that pattern in truncated -- never silently drop the rest.',
     'Read only: do NOT modify, create or delete any file, and do NOT run builds, tests or installs.',
   ].join('\n')
@@ -3285,7 +3419,11 @@ let siblingSweep = {
 if (mode === 'bugfix' && rawSiblingPatterns.length) {
   siblingSweep.patterns = rawSiblingPatterns.length
   const grep = await askAgent(siblingGrepPrompt(rawSiblingPatterns), { label: 'sibling-grep', phase: 'Verify', model: M.haiku, effort: CFG.effort.siblingGrep, schema: SIBLING_HITS_SCHEMA })
-  if (!grep) {
+  // E10 (follow-up): a confirmed wrong-tree sweep is fail-safe identical to a
+  // dead grep agent -- never trust grep.hits if the mechanical toplevel proof
+  // does not match workdir, the same discard-on-mismatch rule scopeCheckPrompt
+  // and captureUntrackedSnapshot already apply.
+  if (!grep || (workdir && !workdirToplevelMatches(grep.toplevel))) {
     siblingSweep.skipped = 'grep-died'
   } else {
     const hits = (Array.isArray(grep.hits) ? grep.hits : []).filter((h) => h && h.file)
@@ -3339,7 +3477,7 @@ function fableFinalReadPrompt(findingsSoFar) {
   return [
     'You are the FINAL READ over this run\'s accumulated findings and diff. This run touched at least one HIGH-risk file, which earns one more adversarial pass before the run reports itself done.',
     'Findings already recorded this run: ' + JSON.stringify(findingsSoFar),
-    'Read the actual diff (`git diff` against the run\'s baseline) for anything those findings missed.',
+    'Read the actual diff (`' + (workdir ? 'git -C "' + workdir + '" diff' : 'git diff') + '` against the run\'s baseline) for anything those findings missed.',
     'Report ONLY genuinely new findings this run has not already recorded (severity critical|important|minor, file, line, summary, detail). An empty findings list is a good answer.',
   ].join('\n')
 }
