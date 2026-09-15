@@ -1,68 +1,87 @@
 # CRM cloud session status
 
-**2026-09-15 ~20:40Z** · session `routeflow-62` · reporting branch `feat/crm-phase1` · slice branch
-`feat/crm-phase1-core` · run dir `.claude/pipeline/2026-09-15-crm-core-phase1/`
+**2026-09-15 ~21:10Z** · session `routeflow-62` · branch `feat/crm-phase1` · run dir
+`.claude/pipeline/2026-09-15-crm-core-phase1/`
 
-**Engine in use: `02d58b81…`, 224,133 B, `node --check` passes, worktree clean.** Not `b71f6c8e`.
+**Engine: `02d58b81…`, 224,133 B, `node --check` passes, worktree clean.** Not `b71f6c8e`.
 
 | Stage | State |
 |---|---|
-| S0 triage | done — `s0-triage.md` (+ addendum recording all your rulings) |
-| S0.5 context pack | done — `context-pack.md`, 8,191 B (cap 8,192) |
-| S1 discovery | **done — PASS, narrowed** — `discovery.md` |
-| S2 spec | next |
-| S3 UX · S4 tests · S5 build plan | after S2 |
+| S0 triage · S0.5 pack · S1 discovery | done |
+| **S2 spec** | **done — 33 requirements, PASS** |
+| S3 UX + design-system derivation | next |
+| S4 test plan · S5 build plan | after S3 |
 | S6 approval | **your "S5 approved" gates every code push** |
 
-## S1 outcome
+## S2 outcome
 
-**PASS, but narrowed into an option with a kill criterion rather than a six-phase commitment.**
-The reframe: "we need a CRM" is solution language; the cause is that **RouteFlow has no record
-for a business that is not yet a customer** — `Customer.userId` is required and unique, so every
-Customer is a login and everything before the first order lives off-product.
+33 requirements (32 MUST, 1 SHOULD), each with a priority and a verification method, six of them
+negative. Full lifecycle sweep, nine states across three surfaces, a deploy-day gate table and a
+rollback story. **One material correction and one new ruling needed.**
 
-- **Success signal**: share of RouteFlow's own live prospects held in `routeflow-hq` as a
-  `CrmLead` (OPEN/QUALIFIED) with a dated next step ≤ 14 days. Baseline **0 of N**; target ≥ 90 %
-  in 30 days plus ≥ 1 real conversion. Read by one read-only SQL query **you** run on prod —
-  never this pipeline.
-- **Kill criterion**: **< 50 % at 30 days → Phase 2 does not open.**
-- **Recorded honestly**: no tenant incident triggered this, there is no deadline, and "no paying
-  tenant asked for it" is carried as assumption A5 rather than argued away. Four items are
-  marked *Frappe-because, not rep-because* and S2 is told to keep each minimal: pipeline-stage
-  probability on leads, `CrmLeadSource` as a table, `CrmSettings`, and the `Message`-thread union.
-- The rejected alternative is on the record too: nullable `Customer.userId` or a PROSPECT status
-  on `Customer` — rejected because `Customer` owns tier, terms, consent, address, soft-cap, grace
-  and every customer-scoped denominator, so a prospect parked there leaks into all of them.
+### A4 is REFUTED — conversion CAN 403, and I verified it myself
 
-**One reviewer correction applied before commit.** Fable's Q3/A7 said your key convention forbids
-a `flag.crm` plan flag. It does not: that rule governs grantable **addon** keys, whereas plan
-flags are an already-dotted namespace — all seven `DARK_PLAN_FLAGS` entries are dotted
-(`plan-flag.guard.ts:21-29`), plus `flag.msrp` outside the set. The conclusion (addon gate only)
-is unchanged, but it is now a **choice**, not a constraint, so S2 does not inherit a false limit.
+S1 assumed, and the plan implied, that the customer soft-cap gate always fails open. It does not.
+`assertCustomerCapNotExceeded()` (`customers.service.ts:625-664`) fails open on lookup errors and
+on the breaching create — but when the tenant is **over cap and `graceStartedAt` is older than
+`GRACE_DAYS`**, it throws `ForbiddenException(buildPlanGateBody("meter.customers"))`.
 
-## Questions (none block S2 starting; all three want answering before S5)
+So `POST /crm/leads/:id/convert` can return 403 on a cap a rep has no visibility into. R20 requires
+the plan-gate body to pass through **unchanged**, with the lead untouched and no `User` minted, so
+the rep sees the real upgrade prompt rather than a generic failure. The gate is customer-only, so
+CSV lead import (R22) runs none of it. **This is a behaviour change you should be aware of, not a
+footnote.**
 
-- **Q1 — Has `routeflow-hq` (Phase 0 T12–T15) actually merged to master?** `plan.md` §5 sequences
-  Phase 1 after it and nothing in the repo confirms it. If it has not, the dogfood target moves.
-- **Q2 — Your off-system prospect count N.** Needed for the §6 baseline; only you or the owner can
-  state it. Without it the signal is "0 of unknown", which is vacuous.
-- **Q3 — Does nav want a second gate (`flag.crm`) beside `crm_core`?** My recommendation: **no** —
-  one grantable key is simpler and the addon gate already drives screen visibility.
+### The grant-path trap is real
 
-Still open from earlier rounds, in `LEAD-REQUESTS-R2.md`: **#12** (no phone normaliser exists —
-may I add the first one, and where), **#13** (`withAdvisoryLock` has no CRM family; the allow-list
-is closed — borrow `order-merge` keyed on lead id, or add a `crm` family), **#14** (the L-113 /
-L-115 citation).
+`AddonGuard` reads the raw `TenantAddon.addonKey` and `enableAddon` upserts it raw, with no SKU
+check for `crm_core` — so the key the gate reads is the key the grant writes. **But** the
+platform-admin panel offers a hardcoded `AVAILABLE_ADDONS` list
+(`apps/web/app/(platform-admin)/admin/tenants/[id]/page.tsx:103`) and `crm_core` is not in it —
+nor, as it happens, is `crm_gohighlevel`. Without R28 the addon is grantable **by API only**.
+
+### A3 confirmed — convert takes no body
+
+`CreateCustomerDto` requires only `username`, `businessName`, `contactName`; everything else is
+optional. A lead satisfies all three (`username` derived server-side the way `CustomerFormModal`
+already does it), so no fill-in-the-gaps modal is needed. The only optional body is
+`{existingCustomerId}` for the dedup "link to existing" path.
+
+### Two assumptions killed at S2 review (I verified both)
+
+- **A10** — `RolesGuard` honours a two-role `@Roles`: `auth/guards/roles.guard.ts:50` is
+  `requiredRoles.some(r => satisfied.includes(r))`, and `users.controller.ts:34` already ships
+  `@Roles(OPERATOR, TENANT_ADMIN)`. R23/R24 are safe. (Note the guard is under `auth/guards/`, not
+  `auth/` — the spec cited the wrong path and it is fixed.)
+- **A9** — web nav can read active addons: `useHasAddon`/`useTenantAddons` are already imported in
+  `app/(dashboard)/layout.tsx:73-74` and used at `:1060` for sales agents. React-query dedupes on
+  queryKey, so CRM adds no extra fetch. R27 now also requires the **existing skeleton-placeholder
+  pattern** while the addons query is in flight or errored — a gated nav entry must never pop in
+  or out.
+
+## Q4 — a new ruling I need from you
+
+Your #6 ruling was "clear `ownerUserId` only when the owner's own assignment is cancelled,
+re-derive otherwise". That is unambiguous for a **non-owner** unassign. It is ambiguous for the
+case it names: **the owner's own assignment is cancelled while other assignees remain.**
+
+I encoded **re-derive to the newest remaining assignee, else null** (R10), because it follows from
+"owner is a projection of most-recently-assigned" and it avoids a lead silently losing its owner
+while people are still on it. R9 separately pins the upstream wrinkle test by name. **One assertion
+flips if you rule null instead.** Please rule.
+
+## Still open
+
+- **#12** phone normaliser placement — none exists; R21 normalises both sides at query time either
+  way, since stored `Customer.phone`/`mobile` are raw.
+- **#13** advisory-lock family name — **R19 cannot ship without it**: `withAdvisoryLock` throws on
+  an unregistered family, so "name pending" is a real blocker by S5, not a nicety.
+- **Q1** has `routeflow-hq` merged · **Q2** prospect count N · **Q3** second gate for nav.
 
 ## Compliance
 
-No code written. No bug or lesson id minted. No host-heavy step attempted. No PR. Nothing pushed
-beyond docs. Test-tenant policy and the no-live-client-identifier rule observed throughout.
+No code written. No bug or lesson id minted. No host-heavy step attempted. No PR. Docs-only pushes.
+Test-tenant policy and the no-live-client-identifier rule observed.
 
-Housekeeping: `LEAD-REQUESTS.md` holds rounds 1–1b (#1–#11); **round 2 onward is in
-`LEAD-REQUESTS-R2.md`** — split per round because each MCP push must re-send the whole file. Say
-the word and I will fold it back.
-
-Also: the repo's own `stop.mjs` hook reserializes `.claude/campaign/bugs/B388.md` and `B389.md`
-(`tags:` whitespace) on every turn, so every session here produces spurious diffs. I revert it each
-time rather than carry it into the CRM branch — flagging in case you want it fixed at source.
+`spec.md` is 16,429 B against a 16 KiB target I set myself — 45 bytes over, left alone rather than
+cutting content to hit a number I invented.
