@@ -14,13 +14,20 @@ const SCRIPT = path.resolve(REPO_ROOT, "scripts/campaign/bugs.mjs");
 
 describe("bugs.mjs self-test contract (REG-B231, REG-B415)", () => {
   it("exits 0 and reports all checks passed", () => {
+    // Observed runtime under this session's varying host load: 63s-131s. The spawnSync
+    // timeout must sit comfortably above the worst observed case, and the outer jest
+    // timeout must sit above THAT -- an inner bound tighter than the outer one means
+    // spawnSync kills the child first, returning status:null/signal:'SIGTERM' (not a
+    // real self-test failure) with an assertion failure that reads like one. Same class
+    // this whole file exists to guard against (B231/B415), just one level up.
     const res = spawnSync(process.execPath, [SCRIPT, "self-test"], {
       cwd: REPO_ROOT,
       encoding: "utf8",
-      timeout: 120_000,
+      timeout: 240_000,
     });
 
+    expect(res.signal).toBeNull();
     expect(res.status).toBe(0);
     expect(res.stdout).toContain("self-test: all checks passed");
-  }, 150_000);
+  }, 270_000);
 });
