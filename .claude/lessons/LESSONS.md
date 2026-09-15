@@ -51,25 +51,6 @@
 - **Guard:** none yet — propose `-p routeflow` in `local:up`/`local:down`/`local:reset`, or a
   top-level `name: routeflow`.
 
-### L-083 · 2026-09-06 · tooling · campaign-check freshness
-
-- **Symptom:** four pushes in one day were refused twelve minutes into `npm run verify` with "no test titled
-  with REG-B###", although the tests existed and passed — the machine-local Jest report campaign-check reads
-  was simply older than the ledger rows it was asked to prove.
-- **Root cause:** turbo replays a `test` task whose input tree it has seen before (a worktree whose workspace
-  matches master's after a merge), so the reporter never runs and `.campaign/runs/<ws>.json` keeps the tokens
-  of its last real run; the gate compared claims against that stale artifact as if it were current.
-- **Lesson:** **an artifact a gate consumes must carry its own provenance (its start time) and the gate must
-  compare it with the inputs it certifies — the newest commit touching the workspace's tests or the ledger —
-  and refuse a stale artifact by name, with the regeneration command, before it scans a single token.**
-- **Guard:** `scripts/campaign-check.mjs` freshness rule (full mode, before indexing) + `--freshness-only`
-  pre-step at the head of `npm run verify` that asks `turbo --dry-run=json` whether a replay is coming;
-  `apps/api/src/common/campaign-check-freshness.spec.ts` T1–T17 (T15–T17 added in fix-round 1: the
-  bound now uses `git log --first-parent` — a merge TREESAME to one parent for the path was judged
-  by the OLDER pre-merge commit otherwise — and clamps to `Date.now()` on a future-dated commit).
-  Addendum (chore/next-15): after committing, regenerate every T1 workspace's report (`cd
-apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns the reporter.
-
 ### L-074 · 2026-09-05 · tooling
 
 - **Symptom:** a prod-capable seed run through `railway run --service postgres` wrote to the LOCAL
@@ -177,6 +158,74 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
   `scripts/validate-code-map.stamp.self-test.mjs`. Sibling [[L-082]] — no shared guard between the
   two files, so a third such script would still need its own.
 
+### L-149 · 2026-09-15 · tooling · #743 fix-round T8 lesson-id staleness
+
+- **Symptom:** an engine task's brief hardcoded specific lesson ids (L-140/L-141) and a `nextId`
+  bump (143) to write at close-out. By the time the task ran, three intervening merges had moved
+  the real registry floor to `nextId` 146 — the hardcoded ids were already claimed elsewhere.
+- **Root cause:** the brief was authored against the registry's state at planning time. The task
+  itself ran LAST, after seven others and however long wall-clock that took — in a shared,
+  actively-written registry, "current state" at planning time and at execution time differ, and
+  nothing in the brief distinguished the two.
+- **Lesson:** **A task brief must never embed a point-in-time value from a shared, actively
+  written resource (a registry id, a counter, a "latest" anything) as a literal constant when the
+  task runs later than the brief was written — especially the LAST task in a run. Read the live
+  value at write time instead, and verify (grep for existing use, re-run the validator) first.**
+- **Guard:** none yet — a build-plan lint flagging a literal `L-\d+`/`nextId: \d+` inside any
+  non-first-wave task's `brief` would catch this class before launch.
+
+### L-151 · 2026-09-15 · tooling · #743 fix-round value-importing @routeflow/types crashed api boot
+
+- **Symptom:** two commits value-imported (not `import type`) a constant from `@routeflow/types`.
+  `tsc --noEmit`/`ts-jest` passed clean. `node dist/main.js` (real prod boot) would have crashed:
+  `nest build` doesn't bundle workspace deps, and that package ships raw TS with no build step, so
+  the import emits a `require("@routeflow/types")` into `dist/` that fails to parse.
+- **Root cause:** a guard test for this exact mistake already existed
+  (`no-runtime-workspace-imports.spec.ts`) but never ran against these commits — only the task's own
+  spec files ran, not the full suite, until this session ran it in full for the first time.
+- **Lesson:** **`tsc`/`ts-jest` passing is not proof a workspace-package import is safe at actual
+  runtime boot — only a guard test on the real imports (or an actual boot) proves it.** Run the FULL
+  suite at least once per fix round; a boot-crash guard does nothing if it never runs.
+- **Guard:** `no-runtime-workspace-imports.spec.ts` (pre-existing). Fix: derive the value from
+  `@prisma/client`'s real enum instead, or mirror it locally like the file's own `METER_KEYS`.
+
+### L-152 · 2026-09-15 · process · #743 fix round T5 "one MRR engine" claim
+
+- **Symptom:** T5 replaced two retired catalog-fallback estimators
+  (`_catalogPriceByPlanKey`/`_monthlyPriceUsd`) with one shared `priceSubscription()`/
+  `priceTenant()` path and described the change as making `MrrService` "the one MRR engine" —
+  a claim about EVERY caller of money-pricing logic, verified only against the one call site
+  (`getTenant()`) the task brief named.
+- **Root cause:** "the one caller that was migrated" and "every caller of the retired helper" are
+  different claims; a brief that names one caller can leave a sibling call site (another service,
+  a script, a test fixture computing the same figure independently) still on the old path with
+  nothing failing to say so — the retired helper being deleted only proves the ONE known caller
+  broke, not that no other caller existed.
+- **Lesson:** **Before declaring a function "the one X" or "the single source of truth" for
+  anything, grep the whole tree for the OLD mechanism's name/signature, not just the call site the
+  task brief already named — a deletion only proves what it broke, never what it missed.**
+- **Guard:** `mrr.service.spec.ts`'s `REG-743-N1` test proves `priceTenant()` and
+  `computeOverview()` sum to the same total for the same fixture (structural proof, not just "the
+  old helper is gone"). Sibling [[L-119]] — same theme, an earlier money-figure seam.
+
+### L-153 · 2026-09-15 · tooling · #743 fix round T3 child-process env leak into a prod-capable CLI
+
+- **Symptom:** two DB-lane specs spawn a prod-capable backfill CLI via `execSync` with
+  `env: {...process.env, DATABASE_URL: dbUrl}`. The CLI's own `resolveDatabaseUrl()` prioritizes
+  Railway TCP-proxy vars OVER `DATABASE_URL` when set — so a parent process with a leftover
+  Railway proxy export (e.g. an earlier `railway run` in the same shell) leaks into the child,
+  pointing a "local-only" test's CLI at the production database.
+- **Root cause:** `{...process.env, DATABASE_URL: dbUrl}` ADDS a key, it does not REMOVE any —
+  scrubbing is the caller's job and neither spec did it. Overriding one variable doesn't guarantee
+  which variable wins inside the child's OWN resolution precedence.
+- **Lesson:** **A child process inherits variables, not a guard — when a spawned CLI has its own
+  "A beats B" precedence, setting B in the child's env isn't enough. Delete every variable in the
+  higher-precedence set before spawning, and test by FAKING those vars on the parent to prove the
+  child still resolves correctly.**
+- **Guard:** `childEnv(dbUrl)` helper in both DB specs deletes every `RAILWAY_*`/`POSTGRES_*` key
+  before setting `DATABASE_URL`; each file's `REG-743-N2` test fakes Railway vars on the spec's
+  own `process.env` and asserts the child still resolves to the local host.
+
 ## testing
 
 ### L-066 · 2026-09-04 · testing · watchdog spec
@@ -201,37 +250,6 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
   slash.**
 - **Guard:** `apps/api/package.json` `jest.reporters` (campaign reporter) +
   `scripts/campaign-check.mjs`; the pre-push hook runs the suite unsplit.
-
-### L-061 · 2026-09-04 · testing · wave B′ P4
-
-- **Symptom:** a fail-closed `default:` added beside Prisma's named `$allModels` handlers threw on
-  every scoped query. Only the DB lane caught it — a unit test calling the handler directly stayed
-  green.
-- **Root cause:** Prisma composes `$allModels.$allOperations` WITH the named per-operation handlers
-  rather than choosing the most specific one: a named handler's `query()` runs the catch-all next.
-- **Lesson:** **A client-extension catch-all cannot coexist with a named map — write ONE
-  `$allOperations` switch with an explicit default. And a spec that calls an extension handler
-  directly proves nothing about how the framework COMPOSES it: exercise the composed chain (a real
-  client, or the DB lane).**
-- **Guard:** `prisma-isolation.spec.ts` drives the real `_tenantExtension`; `local:test:db` runs on
-  `apps/api/src/prisma/**` PRs (`db-migrations.yml` paths).
-
-### L-060 · 2026-09-03 · testing · wave B′ P4
-
-- **Symptom:** a spec commissioned as a "pin" (`tenant-findunique.db.spec.ts`) shipped 8/17 RED. Its
-  own header said the block was red "before the fix", but the package was scoped test-only, so no
-  fix was written and the branch's `npm run local:test:db` acceptance could not pass.
-- **Root cause:** the brief asked for tests that _pin_ an invariant (cross-tenant
-  `findUniqueOrThrow` throws) without anyone first checking the invariant held. It did not:
-  `findUniqueOrThrow` was in neither tenancy layer of `prisma.service.ts` — absent from
-  `POST_FILTER_METHODS`/`SCOPED_METHODS` in `_wrapTxWithTenant` and from `_tenantExtension`'s
-  `$allModels` map — so it returned another tenant's row on `forTenant()` and inside
-  `tenantTransaction()`.
-- **Lesson:** **A "pin" brief must state the expected colour per test, and any test that comes out
-  red escalates the package from `test:` to `fix:` on the spot.** A red pin is a live defect
-  report, never a spec to ship as-is — and "we only add tests" is not a reason to leave one red.
-- **Guard:** the RED BAR block now asserts `code: "P2025"` (Prisma's own not-found shape), so a
-  regression that returns the row — or throws something else — fails the DB lane.
 
 ### L-050 · 2026-09-02 · testing · #598
 
@@ -337,29 +355,6 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
   column) beats a new table every time.**
 - **Guard:** the bug-pipeline S2 refutation step now asks "does the primitive already exist?"
   explicitly.
-
-### L-047 · 2026-09-04 · domain · F25
-
-- **Symptom:** run dates, licence expiries and dashboard dates shifted a day for viewers west of
-  UTC; on-time % was judged against the UTC day-end for tenants in New York; a driver location
-  POST was rejected on a platform sentinel `-1`.
-- **Root cause:** calendar dates stored as UTC midnight were read with local getters or
-  `toLocaleDateString`; one writer stored local `23:59:59`; analytics never read
-  `TenantConfig.timezone`; a sentinel reached a `@Min(0)` DTO unmapped.
-- **Lesson:** **A calendar date is a string, not an instant: store it as UTC midnight, render and
-  edit it only through the shared calendar-date helper (web/mobile mirrors), and evaluate day
-  boundaries in the TENANT's timezone through the one api helper — never `setHours`, local
-  getters or `toLocaleDateString` on a date-only field. A device sentinel (iOS `-1` for unknown
-  heading/speed) never reaches a bounded DTO unmapped — map it to null at the client seam and
-  mirror every server bound there, or one unknown field 400s the whole payload.**
-  A test for any of this must take the zone as DATA: under `TZ=UTC` — CI and the API image —
-  host-local and UTC components are identical, so a host-clock oracle is green on the buggy
-  body, and an in-file `process.env.TZ` pin is inert under jest (the sandbox gets a copy of
-  `process.env`).
-- **Guard:** REG-B59 e2e under `timezoneId`; REG-B118 tenant-tz jest with a DST fixture;
-  REG-B90/B91 mobile helper tests + the mirror-identity pin; the revenue-trend pin uses a Date
-  whose local getters disagree with its ISO view; REG-B185 DTO spec ([[L-026]] client sentinels
-  never reach a validator unmapped).
 
 ### L-072 · 2026-09-03 · domain · wave E `imp-10b`
 
@@ -742,6 +737,43 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   `toHaveBeenCalledWith`: objectContaining silently admits extra `where` keys, so the key-set
   (`{ id, status }`, no tenant key) was pinned nowhere.
 
+### L-133 · 2026-09-14 · process · Phase 0 T10 deferred-gap markers
+
+- **Symptom:** the T9-T11 lane's plan pseudocode said `UpdateTenantPlanDto`/`ActivateSubscriptionDto`
+  "already use `@IsEnum(TenantPlan)`... nothing to do" for Task 10. The actual code (written by an
+  earlier lane) instead used `@IsIn(SELECTABLE_TENANT_PLANS)`, which deliberately EXCLUDED
+  GROWTH/SCALE with comments and dedicated specs both saying "not yet selectable — Phase 0 Task 10
+  gap." Following the plan text as written would have left that gap open while marking Task 10 done.
+- **Root cause:** the plan was written against an earlier snapshot of the code; a later lane (T1-T6)
+  had since built a more careful interim state (a real gap, explicitly fenced off with forward
+  references to the exact task that would close it) that the plan's pseudocode never anticipated.
+- **Lesson:** **Before implementing a task from a written plan, grep the touched files for the
+  task's own number/name in comments and spec titles ("Phase 0 Task N gap", "TODO: TaskN").** A
+  prior lane often leaves an explicit, load-bearing marker naming exactly what the next task must
+  close — trust that marker over the plan's stale pseudocode, and treat closing it as in-scope even
+  when the plan text says "nothing to do here."
+- **Guard:** `planKeyFromEnum()` now identity-maps GROWTH/SCALE, `SELECTABLE_TENANT_PLANS` includes
+  them, and both DTO specs flipped from "rejects" to "accepts" (`update-tenant-plan.dto.spec.ts`,
+  `activate-subscription.dto.spec.ts`).
+
+### L-134 · 2026-09-14 · testing
+
+- **Symptom:** a new `*.db.spec.ts` passed locally but CI's "Replay migrations on a fresh
+  database" job failed its `beforeAll` with "No PUBLISHED PlanVersion … run `local:seed` first",
+  then `afterAll` threw `Cannot read properties of undefined (reading 'id')` and Jest hung on an
+  unclosed pool.
+- **Root cause:** `local:seed` publishes the plan catalog (global reference data `PlanVersion`
+  starts empty of); CI's replay job runs `test:db` on a freshly migrated DB with no seed at all,
+  so a spec assuming seeded reference data is green locally and red in CI.
+- **Lesson:** **A db spec creates every row it reads — including global reference data — in its
+  own `beforeAll` (use an existing row if present, else create a minimal one and remember it),
+  tears down only what it created, guards cleanup on the fixture existing, and always closes the
+  pool in `afterAll` even when `beforeAll` threw.**
+- **Guard:** CI's migration-replay job (fresh DB, no seed) is the standing check;
+  `backfill-subscription-reconciliation.db.spec.ts` is the reference pattern. Derive any fabricated
+  integer key/version from the table (`max(col) + 1`), never `Date.now()` — a timestamp overflowed
+  `PlanVersion.version` (int4) only on CI's fresh DB, the one environment you cannot run locally.
+
 ### L-147 · 2026-09-15 · domain · WP4 print-row state
 
 - **Symptom:** invoices-list Print used one `printingId` for every row; printing row A then
@@ -787,3 +819,21 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   (unaudited — dozens of hits, most single-instance and safe): `grep -rn '\.mutate([a-zA-Z].*{$'
 apps/web/app --include=*.tsx -A1 | grep -B1 onSuccess` — narrow to `.map()`-rendered LIST rows
   sharing one hook before assuming any hit is a real instance of this bug.
+
+### L-157 · 2026-09-15 · domain · #743 review round #3 (F1/F2)
+
+- **Symptom:** an admin MRR card fell back to a client-side per-plan price estimate when the
+  server rollup failed -- a free pilot showed at full list price. A reconciliation script's
+  `--apply` wrote real prices to live PRODUCTION tenants with nothing between "ran the dry run"
+  and "wrote to prod" -- a stale terminal was indistinguishable from a reviewed decision.
+- **Root cause:** both were "best-effort" conveniences added without asking what happens when
+  the safety net itself is wrong: a fallback estimate is a second, unaudited pricing engine; an
+  unconfirmed bulk write on money data has no seam between intent and action.
+- **Lesson:** **A money surface gets ONE engine, never a fallback estimate -- on failure, say so
+  ("unavailable"), never invent a number. A bulk write on live money data needs an explicit
+  confirmation naming what's about to apply (`--confirm-count <n>` matching the dry run),
+  refused otherwise.**
+- **Guard:** `admin/billing/page.tsx` deleted `PLAN_PRICES`, shows "MRR unavailable" on error.
+  `backfill-subscription-reconciliation.mjs` requires `--confirm-count` matching the scan when
+  `--apply` runs unscoped. Sibling fix same round: the write's `updateMany` re-asserts tenant
+  state, closing a scan-to-write race.

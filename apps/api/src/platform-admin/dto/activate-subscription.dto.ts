@@ -14,8 +14,8 @@ export const EXTERNAL_PAYMENT_METHODS = [
 export type ExternalPaymentMethod = (typeof EXTERNAL_PAYMENT_METHODS)[number];
 
 export class ActivateSubscriptionDto {
-  // GROWTH/SCALE are valid TenantPlan enum members but not yet selectable here — see
-  // SELECTABLE_TENANT_PLANS in plan-catalog.constants.ts (Phase 0 Task 10 gap).
+  // GROWTH/SCALE are selectable here as of Phase 0 Task 10 — see SELECTABLE_TENANT_PLANS in
+  // plan-catalog.constants.ts.
   @IsIn(SELECTABLE_TENANT_PLANS)
   plan!: TenantPlan;
 

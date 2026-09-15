@@ -2,10 +2,9 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { PLAN_KEYS } from "@routeflow/types";
 import { superAdminClient } from "@/lib/admin-api";
 import { planLabel } from "../../../_components/AdminBadge";
-
-const PLANS = ["STARTER", "PROFESSIONAL", "ENTERPRISE"] as const;
 
 interface CreatedTenant {
   slug: string;
@@ -258,7 +257,7 @@ export default function AdminCreateTenantPage() {
               onChange={onChange("plan")}
               className="h-10 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
             >
-              {PLANS.map((p) => (
+              {PLAN_KEYS.map((p) => (
                 <option key={p} value={p}>
                   {planLabel(p)}
                 </option>
