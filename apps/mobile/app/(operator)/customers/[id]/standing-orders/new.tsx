@@ -22,6 +22,7 @@ import { ProductPickerSheet } from "../../../../../components/ProductPickerSheet
 import { useCreateOrderTemplate } from "../../../../../lib/api/order-templates";
 import { ISO_DAY_OPTIONS, validateTemplateForm } from "../../../../../lib/order-templates-logic";
 import { showToast } from "../../../../../lib/toast";
+import { hasUnsavedStandingOrder } from "../../../../../lib/discard-guard";
 
 interface Line {
   productId: string;
@@ -91,7 +92,7 @@ export default function NewStandingOrderScreen() {
       onSubmit={submit}
       onCancel={() => router.back()}
       submitting={createTemplate.isPending}
-      warnIfDirty={!!(name || lines.length)}
+      confirmDiscardIfDirty={hasUnsavedStandingOrder({ name, lines })}
     >
       <FormSection>
         <FormField label="Name">

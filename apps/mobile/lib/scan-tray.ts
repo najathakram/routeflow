@@ -84,6 +84,7 @@ function catalogRow(
   product: TrayProduct,
   unitPrice: number,
   overridable: boolean,
+  freeUnits: number,
 ): TrayRow | null {
   const qty = effectiveQty(line, product.unitsPerBox);
   if (qty <= 0) return null;
@@ -104,6 +105,7 @@ function catalogRow(
       boxes: line.boxes ?? null,
       pieces: line.pieces ?? null,
       unitsPerBox: product.unitsPerBox ?? null,
+      freeUnits,
     }),
     unitsPerBox: product.unitsPerBox ?? null,
     unlisted: false,
@@ -124,6 +126,12 @@ export interface TrayRowsInput {
    * the footer/submit which also ignore overrides there. Default: always true.
    */
   overridable?: (product: TrayProduct) => boolean;
+  /**
+   * Whole SELLING units a BUY_N_GET_M promo makes free for this line, passed
+   * straight into `computeLineSubtotal`'s `freeUnits` so the row nets the same
+   * saving the footer does. Default 0: every existing caller is unaffected.
+   */
+  freeUnitsFor?: (id: string, line: TrayLine) => number;
 }
 
 /**
@@ -138,6 +146,7 @@ export function trayRowsFrom({
   lookup,
   priceFor,
   overridable,
+  freeUnitsFor,
 }: TrayRowsInput): TrayRow[] {
   const rank = new Map<string, number>();
   scanOrder.forEach((id, i) => {
@@ -153,7 +162,16 @@ export function trayRowsFrom({
   for (const [id, line] of Object.entries(items)) {
     const product = lookup(id);
     if (!product) continue;
-    push(catalogRow(id, line, product, priceFor(product), overridable?.(product) ?? true));
+    push(
+      catalogRow(
+        id,
+        line,
+        product,
+        priceFor(product),
+        overridable?.(product) ?? true,
+        freeUnitsFor?.(id, line) ?? 0,
+      ),
+    );
   }
   for (const u of unlisted) {
     if (u.qty <= 0) continue;

@@ -78,6 +78,7 @@ export interface OriginalLine {
   unitPrice: number;
   name?: string | null;
   notes?: string | null;
+  overrideReason?: string | null;
 }
 
 export function buildOrderItemDiff(args: {
@@ -165,20 +166,28 @@ export function buildOrderItemDiff(args: {
 
     const qtyChanged = Math.abs(line.qty - orig.qty) > EPS;
     const priceChanged = Math.abs(line.unitPrice - orig.unitPrice) > EPS;
+    // A reason-only correction (unitPrice unchanged) is still a change — without
+    // this, buildOrderItemDiff dropped it silently: the UI showed the corrected
+    // reason as saved, but a reload reverted it (M1).
+    const reasonChanged = (line.overrideReason ?? "") !== (orig.overrideReason ?? "");
     // A note-only edit is still a change (send the new value; empty clears it).
     const notesChanged = noteVal !== (orig.notes ?? "").trim();
-    if (qtyChanged || priceChanged || notesChanged) {
+    if (qtyChanged || priceChanged || reasonChanged || notesChanged) {
       out.push({
         id: line.lineId,
         action: "UPDATE",
         qty: line.qty, // server's UPDATE branch requires qty present
         ...boxFields,
-        ...(priceChanged
-          ? {
-              unitPrice: line.unitPrice,
-              ...(line.overrideReason ? { overrideReason: line.overrideReason } : {}),
-            }
-          : {}),
+        // unitPrice is gated on priceChanged ALONE (R9): the server's edit
+        // branch derives isManualOverride from whether the sent price differs
+        // from the stored one, so echoing it back on a reason-only edit would
+        // read as "not manual" and risk re-deriving a SPECIAL/manually-priced
+        // line's billed price.
+        ...(priceChanged ? { unitPrice: line.unitPrice } : {}),
+        // overrideReason is sent whenever it changed, empty string included —
+        // omitting it on a clear is the same bug M1 fixed, for the opposite
+        // direction (the server keeps whatever it last had).
+        ...(reasonChanged ? { overrideReason: line.overrideReason ?? "" } : {}),
         ...(notesChanged ? { notes: noteVal } : {}),
       });
     }

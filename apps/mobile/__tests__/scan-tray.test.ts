@@ -2,6 +2,8 @@
  * Split-view scan tray: the just-scanned line must be the FIRST row, and its
  * money must be the same money the builder footer already shows.
  */
+import { readFileSync } from "fs";
+import { join } from "path";
 import {
   bumpScanOrder,
   nextFlash,
@@ -190,5 +192,127 @@ describe("trayRowsFrom", () => {
       priceFor: () => 3,
     });
     expect(out[0].name).toBe("Acme Cola - Cherry");
+  });
+
+  describe("freeUnitsFor (REG-shared-a2)", () => {
+    it("REG-shared-a2-01: without freeUnitsFor, subtotal is byte-identical to today", () => {
+      // Same boxed line as the "prices a boxed line" case above, with no
+      // freeUnitsFor supplied at all — the omitted-field default path.
+      const line: TrayLine = { qty: 7, boxes: 1, pieces: 1 };
+      const out = trayRowsFrom({ items: { case6: line }, scanOrder: ["case6"], lookup, priceFor });
+      expect(out[0].subtotal).toBe(
+        computeLineSubtotal({ unitPrice: 12, qty: 7, boxes: 1, pieces: 1, unitsPerBox: 6 }),
+      );
+      expect(out[0].subtotal).toBe(14);
+    });
+
+    it("REG-shared-a2-02: with freeUnitsFor returning n, subtotal nets n free units via computeLineSubtotal", () => {
+      const line: TrayLine = { qty: 12, boxes: 2, pieces: 0 };
+      const out = trayRowsFrom({
+        items: { case6: line },
+        scanOrder: ["case6"],
+        lookup,
+        priceFor,
+        freeUnitsFor: () => 1,
+      });
+      expect(out[0].subtotal).toBe(
+        computeLineSubtotal({
+          unitPrice: 12,
+          qty: 12,
+          boxes: 2,
+          pieces: 0,
+          unitsPerBox: 6,
+          freeUnits: 1,
+        }),
+      );
+      // Sanity: the free unit actually changed the price versus the no-promo case.
+      expect(out[0].subtotal).not.toBe(
+        computeLineSubtotal({ unitPrice: 12, qty: 12, boxes: 2, pieces: 0, unitsPerBox: 6 }),
+      );
+    });
+
+    it("REG-shared-a2-03: freeUnitsFor receives the id and the line", () => {
+      const seen: Array<{ id: string; line: TrayLine }> = [];
+      const line: TrayLine = { qty: 3, unitPrice: 1.99 };
+      trayRowsFrom({
+        items: { single: line },
+        scanOrder: ["single"],
+        lookup,
+        priceFor,
+        freeUnitsFor: (id, l) => {
+          seen.push({ id, line: l });
+          return 0;
+        },
+      });
+      expect(seen).toEqual([{ id: "single", line }]);
+    });
+  });
+});
+
+/**
+ * Source-text pin for `components/ScanTray.tsx`'s optional price-edit
+ * affordance (seed2-scan-tray-has-no-price-control). Mobile Jest is
+ * `testEnvironment: "node"` (jest.config.js) with no React renderer, so this
+ * reads the component as text rather than mounting it — the style of
+ * `edit-items-scan-price.test.ts`.
+ */
+describe("ScanTray.tsx price-edit affordance (REG-shared-scantray-price)", () => {
+  const SCAN_TRAY_PATH = join(__dirname, "..", "components", "ScanTray.tsx");
+  const scanTraySrc = readFileSync(SCAN_TRAY_PATH, "utf8");
+
+  it("REG-shared-scantray-price-01: ScanTrayProps declares an optional onEditPrice", () => {
+    expect(scanTraySrc).toMatch(/onEditPrice\?:\s*\(id:\s*string\)\s*=>\s*void/);
+  });
+
+  it("REG-shared-scantray-price-02: the row renders a tappable price affordance only when onEditPrice is supplied", () => {
+    // Guarded by the prop, not rendered unconditionally.
+    expect(scanTraySrc).toMatch(/onEditPrice\s*\?\s*\(/);
+    // The affordance is a real press target with the exact accessibility
+    // contract the design calls for.
+    expect(scanTraySrc).toMatch(/accessibilityRole="button"/);
+    expect(scanTraySrc).toMatch(/accessibilityLabel=\{`Edit price for \$\{name\}`\}/);
+  });
+
+  it("REG-shared-scantray-price-03: onEditPrice is threaded from ScanTray down to the row item", () => {
+    expect(scanTraySrc).toMatch(/onEditPrice,?\s*\}:\s*RowProps/);
+    // renderItem passes it through and lists it as a memo dependency.
+    expect(scanTraySrc).toMatch(/onEditPrice=\{onEditPrice\}/);
+    expect(scanTraySrc).toMatch(
+      /\[flash, reduceMotion, onChangeQty, onIncrement, onDecrement, onRemove, onEditPrice\]/,
+    );
+  });
+});
+
+/**
+ * Source-text pin for `packages/ui/src/mobile/ios/SearchBar.tsx` forwarding
+ * `autoFocus` and exposing a ref, in the same read-as-text style (no renderer
+ * under mobile Jest).
+ */
+describe("SearchBar.tsx autoFocus + forwardRef (REG-shared-searchbar-autofocus)", () => {
+  const SEARCH_BAR_PATH = join(
+    __dirname,
+    "..",
+    "..",
+    "..",
+    "packages",
+    "ui",
+    "src",
+    "mobile",
+    "ios",
+    "SearchBar.tsx",
+  );
+  const searchBarSrc = readFileSync(SEARCH_BAR_PATH, "utf8");
+
+  it("REG-shared-searchbar-autofocus-01: SearchBarProps declares an optional autoFocus", () => {
+    expect(searchBarSrc).toMatch(/autoFocus\?:\s*boolean/);
+  });
+
+  it("REG-shared-searchbar-autofocus-02: the underlying TextInput receives autoFocus", () => {
+    expect(searchBarSrc).toMatch(/autoFocus=\{autoFocus\}/);
+  });
+
+  it("REG-shared-searchbar-autofocus-03: SearchBar is wrapped in React.forwardRef<TextInput, SearchBarProps>", () => {
+    expect(searchBarSrc).toMatch(/React\.forwardRef<TextInput,\s*SearchBarProps>/);
+    expect(searchBarSrc).toMatch(/<TextInput\s*\n\s*ref=\{ref\}/);
   });
 });

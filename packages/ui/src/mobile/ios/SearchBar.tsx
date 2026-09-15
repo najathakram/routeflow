@@ -16,19 +16,19 @@ export interface SearchBarProps {
    * next wedge scan lands in the same box without a tap.
    */
   onSubmitEditing?: () => void;
+  /** Focus the field as soon as it mounts. Default: unfocused, as today. */
+  autoFocus?: boolean;
 }
 
-export function SearchBar({
-  value,
-  onChangeText,
-  placeholder = "Search",
-  trailing,
-  onSubmitEditing,
-}: SearchBarProps) {
+export const SearchBar = React.forwardRef<TextInput, SearchBarProps>(function SearchBar(
+  { value, onChangeText, placeholder = "Search", trailing, onSubmitEditing, autoFocus },
+  ref,
+) {
   return (
     <View style={styles.wrap}>
       <Ionicons name="search" size={16} color={ios.gray[1]} />
       <TextInput
+        ref={ref}
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}
@@ -38,6 +38,7 @@ export function SearchBar({
         onSubmitEditing={onSubmitEditing}
         blurOnSubmit={onSubmitEditing ? false : undefined}
         returnKeyType={onSubmitEditing ? "search" : undefined}
+        autoFocus={autoFocus}
       />
       {/* clearButtonMode is iOS-NATIVE only — a no-op on Android and
           react-native-web (the primary operator surface), which previously had
@@ -57,7 +58,7 @@ export function SearchBar({
       {trailing}
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   wrap: {

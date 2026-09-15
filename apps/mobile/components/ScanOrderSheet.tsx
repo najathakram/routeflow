@@ -3,15 +3,17 @@ import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
-import type { ScanFeedback, ScanOutcome } from "../lib/scan-loop";
+import type { ScanOutcome } from "../lib/scan-loop";
 import type { ScanFlash, TrayRow } from "../lib/scan-tray";
 import { scanHaptic } from "../lib/haptics";
+import {
+  INITIAL_SCAN_SLOT,
+  reduceScanSlot,
+  scanSlotEffects,
+  type ScanFeedbackSlotState,
+} from "../lib/scan-feedback-slot";
 import { ScanCamera, useScanCameraPermission } from "./ScanCamera";
 import { ScanTray, type ScanTrayHandle } from "./ScanTray";
-
-const ERROR_PILL_MS = 2600;
-/** An actionable pill has to survive long enough to be read AND tapped. */
-const ACTION_PILL_MS = 8000;
 
 export interface ScanOrderSheetProps {
   visible: boolean;
@@ -38,6 +40,16 @@ export interface ScanOrderSheetProps {
   onIncrement: (id: string) => void;
   onDecrement: (id: string) => void;
   onRemove: (id: string) => void;
+  /**
+   * Edit a tray line's price without leaving the camera. Optional: a surface
+   * that has no price editor (or no permission to reprice) omits it and the
+   * tray renders no price affordance at all, exactly as before.
+   *
+   * The host owns the editor AND the rules — a SPECIAL-tier line is the
+   * customer's permanent price and must stay locked (NewOrderScreen's
+   * `isSpecialFor`), so this only ever reports the tapped row id.
+   */
+  onEditPrice?: (id: string) => void;
   /** Leave scanning for the full builder (prices, notes, customer, submit). */
   onReview: () => void;
   onDone: () => void;
@@ -64,62 +76,64 @@ export function ScanOrderSheet({
   onIncrement,
   onDecrement,
   onRemove,
+  onEditPrice,
   onReview,
   onDone,
 }: ScanOrderSheetProps) {
   const insets = useSafeAreaInsets();
   const { granted, request } = useScanCameraPermission(visible);
   const trayRef = React.useRef<ScanTrayHandle>(null);
-  const [error, setError] = React.useState<ScanFeedback | null>(null);
-  const errorTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The pill is a state MACHINE (lib/scan-feedback-slot.ts), not a setter pair:
+  // a settled outcome owns the slot whichever way it went, so a successful
+  // scan now clears the previous scan's miss pill instead of letting
+  // `No product for "X"` sit over the camera — Create button live — while the
+  // item is already in the tray.
+  const [slot, setSlot] = React.useState<ScanFeedbackSlotState>(INITIAL_SCAN_SLOT);
+  const error = slot.pill;
   // F30 / R2, REG-B192: ScanCamera now buffers instead of silently dropping a
   // scan that arrives while a lookup is in flight — this surfaces that state
   // so the operator sees "looking up…" instead of dead frames.
   const [isResolving, setIsResolving] = React.useState(false);
 
-  React.useEffect(
-    () => () => {
-      if (errorTimer.current) clearTimeout(errorTimer.current);
-    },
-    [],
-  );
+  // One timer per pill, keyed on the slot nonce: a replacement pill cancels
+  // its predecessor's expiry on cleanup, and unmount clears it too.
+  const { nonce, ttlMs } = slot;
+  React.useEffect(() => {
+    if (ttlMs == null) return;
+    const timer = setTimeout(
+      () => setSlot((prev) => reduceScanSlot(prev, { type: "expire", nonce })),
+      ttlMs,
+    );
+    return () => clearTimeout(timer);
+  }, [nonce, ttlMs]);
 
   // The camera unmounts when the sheet closes (below) without necessarily
   // reaching its own resolve-complete callback — don't strand the indicator on.
+  // Nor the pill: a miss from the previous scan session must not greet the
+  // operator over a fresh camera.
   React.useEffect(() => {
-    if (!visible) setIsResolving(false);
+    if (visible) return;
+    setIsResolving(false);
+    setSlot((prev) => reduceScanSlot(prev, { type: "reset" }));
   }, [visible]);
 
-  const dismissError = () => {
-    if (errorTimer.current) clearTimeout(errorTimer.current);
-    errorTimer.current = null;
-    setError(null);
-  };
-
-  const showError = (feedback: ScanFeedback) => {
-    setError(feedback);
-    if (errorTimer.current) clearTimeout(errorTimer.current);
-    errorTimer.current = setTimeout(
-      () => setError(null),
-      feedback.action ? ACTION_PILL_MS : ERROR_PILL_MS,
-    );
-  };
+  const dismissError = () => setSlot((prev) => reduceScanSlot(prev, { type: "dismiss" }));
 
   const handleOutcome = (outcome: ScanOutcome) => {
-    if (outcome?.feedback?.kind === "error") {
-      scanHaptic("error");
-      showError(outcome.feedback);
-      return;
+    // Functional update: a burst of scans can settle between renders, and each
+    // must fold onto the slot the one before it left.
+    setSlot((prev) => reduceScanSlot(prev, { type: "outcome", outcome }));
+    for (const effect of scanSlotEffects(outcome)) {
+      if (effect === "error-cue") scanHaptic("error");
+      if (effect === "close-sheet") onDone();
+      if (effect === "added-cue") {
+        scanHaptic("added");
+        // Web has no haptics (haptics.ts no-ops there) and the app plays no
+        // sound, so without this a mobile-web scan lands with zero confirmation.
+        if (typeof navigator !== "undefined") navigator.vibrate?.(30);
+      }
+      if (effect === "scroll-tray-top") trayRef.current?.scrollToTop();
     }
-    if (outcome?.close) {
-      onDone();
-      return;
-    }
-    scanHaptic("added");
-    // Web has no haptics (haptics.ts no-ops there) and the app plays no sound,
-    // so without this a mobile-web scan lands with zero confirmation.
-    if (typeof navigator !== "undefined") navigator.vibrate?.(30);
-    trayRef.current?.scrollToTop();
   };
 
   const itemsLabel = `${totalItems} item${totalItems === 1 ? "" : "s"}`;
@@ -217,6 +231,7 @@ export function ScanOrderSheet({
             onIncrement={onIncrement}
             onDecrement={onDecrement}
             onRemove={onRemove}
+            onEditPrice={onEditPrice}
             ListEmptyComponent={
               <Text style={styles.empty}>Scan an item — it lands here instantly.</Text>
             }

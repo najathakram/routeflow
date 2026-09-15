@@ -16,7 +16,7 @@
  *
  * The mock preamble mirrors `session-teardown.test.ts` exactly so the pin stays
  * green once `logout()` starts driving the real teardown (which touches the
- * location tracker, the query client and the 7 user-scoped stores).
+ * location tracker, the query client and the 8 user-scoped stores).
  */
 
 jest.mock("react-native", () => ({ Platform: { OS: "ios" } }));
@@ -44,12 +44,24 @@ jest.mock("../lib/query-client", () => ({
   queryClient: { cancelQueries: jest.fn(), clear: jest.fn() },
 }));
 
-// The teardown clears the two persisted user-scoped blobs (REG-B136-F) —
-// stub the native storage under lib/user-scoped-storage.ts so this pin never
-// reaches a real AsyncStorage.
+// The teardown clears the persisted user-scoped blobs (REG-B136-F) and
+// prefix-sweeps the staged-edit keyspace (REG-EDIT-SWEEP) — stub the native
+// storage so this pin never reaches a real AsyncStorage.
+const pinsGetAllKeys = jest.fn(async (): Promise<string[]> => [
+  "routeflow-tenant",
+  "offline-queue",
+  "rf.edit-items.v1:u1:o1",
+]);
+const pinsMultiRemove = jest.fn(async (_keys: readonly string[]): Promise<void> => undefined);
 jest.mock("@react-native-async-storage/async-storage", () => ({
   __esModule: true,
-  default: { getItem: jest.fn(), setItem: jest.fn(), removeItem: jest.fn() },
+  default: {
+    getItem: jest.fn(),
+    setItem: jest.fn(),
+    removeItem: jest.fn(),
+    getAllKeys: () => pinsGetAllKeys(),
+    multiRemove: (keys: readonly string[]) => pinsMultiRemove(keys),
+  },
 }));
 
 jest.mock("../store/podStore", () => ({
@@ -74,6 +86,10 @@ jest.mock("../store/listUiStore", () => ({
 }));
 jest.mock("../store/productPickerStore", () => ({
   useProductPickerStore: { getState: () => ({ reset: jest.fn() }) },
+}));
+jest.mock("../store/stopCartStore", () => ({
+  STOP_CART_STORE_NAME: "routeflow-stop-cart-store",
+  useStopCartStore: { getState: () => ({ reset: jest.fn() }) },
 }));
 
 // Pin: the tenant store must NEVER be touched by sign-out teardown (Q2).
@@ -104,6 +120,18 @@ describe("pin (Q2): sign-out teardown never clears the tenant store", () => {
   it("the branded tenant survives a sign-out on a shared tablet", async () => {
     await useAuthStore.getState().logout();
     expect(tenantClearMock).not.toHaveBeenCalled();
+  });
+
+  it("the staged-edit prefix sweep stays inside its own keyspace", async () => {
+    // P1 again, for the sweep added with the staged-edit snapshot: it
+    // enumerates EVERY AsyncStorage key, so a mis-scoped prefix would take the
+    // branded tenant and the identity-stamped offline queue with it.
+    await useAuthStore.getState().logout();
+
+    const swept = pinsMultiRemove.mock.calls.flatMap((c) => [...c[0]]);
+    expect(swept).toContain("rf.edit-items.v1:u1:o1");
+    expect(swept).not.toContain("routeflow-tenant");
+    expect(swept).not.toContain("offline-queue");
   });
 });
 
