@@ -12,7 +12,7 @@ import {
 } from "class-validator";
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { PLAN_KEYS } from "../../billing/plan-catalog.constants";
-import { TENANT_CLASS_VALUES } from "@routeflow/types";
+import { TENANT_CLASS_VALUES } from "../../tenant/tenant-class";
 
 export class CreateTenantDto {
   @ApiProperty()

@@ -24,3 +24,11 @@ export function classifyTenantSlug(slug: string): TenantClass {
   if (EXACT_TEST_SLUGS.has(slug) || TEST_SLUG_PREFIX.test(slug)) return TenantClass.TEST;
   return TenantClass.PRODUCTION;
 }
+
+/**
+ * Derived from the real `@prisma/client` enum — safe to value-import at runtime (the client
+ * ships compiled JS), unlike `@routeflow/types`'s equivalent `TENANT_CLASS_VALUES`, which is
+ * raw TypeScript and crashes `node dist/main.js` at boot on a value import (see
+ * `no-runtime-workspace-imports.spec.ts`). Consumed by `create-tenant.dto.ts`'s `@IsIn`.
+ */
+export const TENANT_CLASS_VALUES = Object.values(TenantClass);

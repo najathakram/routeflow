@@ -6,11 +6,15 @@
  * written and read against — plan keys, flag keys, addon SKUs, and meter keys.
  */
 
-// REG-743-F1/L-072: imported from @routeflow/types (the shared, enum-parity-pinned source)
-// rather than hand-declared here a second time — this file previously carried its own copy.
-// Re-exported too, since the rest of this file and its own importers use it as PLAN_KEYS.
-import { PLAN_KEYS, type PlanKey } from "@routeflow/types";
-export { PLAN_KEYS, type PlanKey };
+// REG-743-F1: mirrors @routeflow/types's PLAN_KEYS here (like METER_KEYS below), rather than
+// value-importing it. The API compiles to dist/ via `nest build`, which does not bundle
+// workspace deps; @routeflow/types ships raw TypeScript with no build step, so a value import
+// crashes `node dist/main.js` at boot (see no-runtime-workspace-imports.spec.ts) — only
+// @routeflow/pricing ships a compiled `main` and may be value-imported here. The previous
+// hand-typed copy this replaced was `["STARTER", "PROFESSIONAL", "ENTERPRISE"]`, missing
+// GROWTH/SCALE and carrying a non-existent "PROFESSIONAL" key.
+export const PLAN_KEYS = ["STARTER", "GROWTH", "SCALE", "ENTERPRISE"] as const;
+export type PlanKey = (typeof PLAN_KEYS)[number];
 
 /** Default trial length in days. First consumer is `tenants.service.ts` (public
  * self-signup); `platform-admin.service.ts`'s Create Tenant path still hardcodes its
