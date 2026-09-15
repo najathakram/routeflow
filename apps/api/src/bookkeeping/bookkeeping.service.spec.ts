@@ -194,6 +194,23 @@ describe("BookkeepingService", () => {
       expect(result.customer).toEqual(MOCK_INVOICE.customer);
     });
 
+    it("REG-B421: totalPaid is cash-only; creditApplied/advanceApplied surface the rest", async () => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        ...MOCK_INVOICE,
+        total: 870,
+        payments: [
+          { amount: 232, status: "PAID", method: "CASH" },
+          { amount: 638, status: "PAID", method: "CREDIT_NOTE" },
+        ],
+      });
+
+      const result: any = await service.findOne("txn-1");
+
+      expect(result.totalPaid).toBe(232);
+      expect(result.creditApplied).toBe(638);
+      expect(result.advanceApplied).toBe(0);
+    });
+
     it("should throw NotFoundException when transaction does not exist", async () => {
       prisma.invoice.findUnique.mockResolvedValue(null);
       await expect(service.findOne("nonexistent")).rejects.toThrow(NotFoundException);
@@ -443,6 +460,8 @@ describe("BookkeepingService", () => {
       if (cond && typeof cond === "object") {
         if (cond.gte !== undefined && !(value && value >= cond.gte)) return false;
         if (cond.lte !== undefined && !(value && value <= cond.lte)) return false;
+        // B421: RECEIVED_METHOD_FILTER is `{ not: "CREDIT_NOTE" }`.
+        if (cond.not !== undefined && value === cond.not) return false;
         return true;
       }
       return value === cond;
@@ -462,6 +481,7 @@ describe("BookkeepingService", () => {
     };
     const payment = (over: Record<string, any>) => ({
       status: "PAID",
+      method: "CASH",
       settledAt: null,
       createdAt: new Date("2020-01-01T00:00:00Z"),
       invoice: invoiceRel,
@@ -516,6 +536,30 @@ describe("BookkeepingService", () => {
 
       // SETTLED_IN (bank date inside) + LEGACY (no bank date, paidAt inside).
       expect(result.totalIn).toBe(400);
+    });
+
+    it("REG-B421: a CREDIT_NOTE application never increments totalIn; an ADVANCE application does", async () => {
+      const CREDIT_NOTE_APPLIED = payment({
+        id: "pay-credit-note",
+        amount: 638,
+        method: "CREDIT_NOTE",
+        paidAt: new Date("2026-02-10T00:00:00Z"),
+      });
+      const ADVANCE_APPLIED = payment({
+        id: "pay-advance",
+        amount: 50,
+        method: "ADVANCE",
+        paidAt: new Date("2026-02-11T00:00:00Z"),
+      });
+      prisma.invoicePayment.findMany.mockImplementation(async (args: any) =>
+        [...ALL, CREDIT_NOTE_APPLIED, ADVANCE_APPLIED].filter((p) => matchesWhere(p, args.where)),
+      );
+
+      const result = await service.getCashFlow(FROM, TO);
+
+      // 400 (SETTLED_IN + LEGACY, as above) + 50 (ADVANCE) -- the 638
+      // CREDIT_NOTE never lands in totalIn.
+      expect(result.totalIn).toBe(450);
     });
 
     it("getPaymentsReceivedReport includes/excludes rows on the effective date", async () => {
@@ -587,8 +631,8 @@ describe("BookkeepingService", () => {
     const NOW = new Date();
     // Simulated DB rows for the one invoice's payments.
     const FAKE_PAYMENTS = [
-      { amount: 200, status: "PAID", createdAt: NOW },
-      { amount: 300, status: "DRAFT", createdAt: NOW }, // must NOT count as collected
+      { amount: 200, status: "PAID", method: "CASH", createdAt: NOW },
+      { amount: 300, status: "DRAFT", method: "CASH", createdAt: NOW }, // must NOT count as collected
     ];
     // The unpaid invoice those payments sit on, and the balance it must still show.
     const INVOICE_TOTAL = 1000;
@@ -616,7 +660,11 @@ describe("BookkeepingService", () => {
       const where = args?.where ?? {};
       const sum = FAKE_PAYMENTS.filter(
         (p) =>
-          matchesStatus(p.status, where.status) && matchesCreatedAt(p.createdAt, where.createdAt),
+          matchesStatus(p.status, where.status) &&
+          // B421: matchesStatus is really a generic Prisma string-filter
+          // matcher (plain/equals/not/in) — reused here for `where.method`.
+          matchesStatus(p.method, where.method) &&
+          matchesCreatedAt(p.createdAt, where.createdAt),
       ).reduce((s, p) => s + p.amount, 0);
       return { _sum: { amount: sum } };
     };
@@ -648,6 +696,39 @@ describe("BookkeepingService", () => {
 
       expect(result.totalCollected).toBe(200);
       expect(result.revenue).toBe(200);
+    });
+
+    it("REG-B421: totalCollected/paymentsThisWeek/getFinanceDashboard receipts exclude a CREDIT_NOTE, keep an ADVANCE", async () => {
+      const withCreditAndAdvance = [
+        ...FAKE_PAYMENTS,
+        { amount: 638, status: "PAID", method: "CREDIT_NOTE", createdAt: NOW },
+        { amount: 50, status: "PAID", method: "ADVANCE", createdAt: NOW },
+      ];
+      prisma.invoicePayment.aggregate.mockImplementation(async (args: any) => {
+        const where = args?.where ?? {};
+        const sum = withCreditAndAdvance
+          .filter(
+            (p) =>
+              matchesStatus(p.status, where.status) &&
+              matchesStatus(p.method, where.method) &&
+              matchesCreatedAt(p.createdAt, where.createdAt),
+          )
+          .reduce((s, p) => s + p.amount, 0);
+        return { _sum: { amount: sum } };
+      });
+
+      // 200 (PAID CASH) + 50 (ADVANCE) = 250. The 638 CREDIT_NOTE and the 300
+      // DRAFT never land in any of these three "money received" figures.
+      const dashboard = await service.getMobileDashboard();
+      expect(dashboard.totalCollected).toBe(250);
+      expect(dashboard.revenue).toBe(250);
+
+      const summary = await service.getSummary();
+      expect(summary.paymentsThisWeek).toBe(250);
+
+      const finance = await service.getFinanceDashboard();
+      expect(finance.monthlySales.totalReceipts).toBe(250);
+      expect(finance.summaryTable.today.receipts).toBe(250);
     });
 
     it("T-B11s: getFinanceDashboard's monthly receipts total $200, not $500 (PAID + DRAFT)", async () => {

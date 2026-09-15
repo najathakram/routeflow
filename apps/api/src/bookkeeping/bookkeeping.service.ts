@@ -28,7 +28,12 @@ import { PlatformConfigService } from "../platform-admin/platform-config.service
 import Anthropic from "@anthropic-ai/sdk";
 import { compressDocument } from "../storage/compress.util";
 import { IRS_SYSTEM_CATEGORIES } from "./irs-categories.constant";
-import { CONFIRMED_PAYMENT, sumConfirmed } from "../invoices/payment-predicates";
+import {
+  CONFIRMED_PAYMENT,
+  RECEIVED_METHOD_FILTER,
+  splitConfirmed,
+  sumConfirmed,
+} from "../invoices/payment-predicates";
 
 /**
  * Receipt-extraction model. Receipts are small documents where a misread line
@@ -111,7 +116,9 @@ export class BookkeepingService implements OnModuleInit {
       // F03/R1: the ledger's paid total counts CONFIRMED (PAID) money only — a
       // DRAFT payment isn't collected, nor is a VOID (bounced) one (P5-12). The
       // rows themselves are still returned unfiltered so the UI can badge them.
-      const paid = sumConfirmed(inv.payments);
+      // B421: totalPaid is cash-only — a CREDIT_NOTE or ADVANCE application
+      // must not render as cash the tenant collected on this transaction.
+      const { cash: paid, creditApplied, advanceApplied } = splitConfirmed(inv.payments);
       let ledgerStatus: TxnStatus;
       if (inv.status === InvoiceStatus.PAID) ledgerStatus = TxnStatus.PAID;
       else if (inv.status === InvoiceStatus.PARTIAL) ledgerStatus = TxnStatus.PARTIAL;
@@ -123,6 +130,8 @@ export class BookkeepingService implements OnModuleInit {
         createdAt: inv.issueDate,
         totalOwed: Number(inv.total),
         totalPaid: paid,
+        creditApplied,
+        advanceApplied,
         customer: inv.customer,
         order: inv.order ?? { orderNumber: inv.invoiceNumber },
         payments: inv.payments,
@@ -145,7 +154,9 @@ export class BookkeepingService implements OnModuleInit {
     // F03/R1: the ledger's paid total counts CONFIRMED (PAID) money only — a
     // DRAFT payment isn't collected, nor is a VOID (bounced) one (P5-12). The
     // rows themselves are still returned unfiltered so the UI can badge them.
-    const paid = sumConfirmed(inv.payments);
+    // B421: totalPaid is cash-only — a CREDIT_NOTE or ADVANCE application
+    // must not render as cash the tenant collected on this transaction.
+    const { cash: paid, creditApplied, advanceApplied } = splitConfirmed(inv.payments);
     let ledgerStatus: TxnStatus;
     if (inv.status === InvoiceStatus.PAID) ledgerStatus = TxnStatus.PAID;
     else if (inv.status === InvoiceStatus.PARTIAL) ledgerStatus = TxnStatus.PARTIAL;
@@ -157,6 +168,8 @@ export class BookkeepingService implements OnModuleInit {
       createdAt: inv.issueDate,
       totalOwed: Number(inv.total),
       totalPaid: paid,
+      creditApplied,
+      advanceApplied,
       customer: inv.customer,
       order: inv.order ?? { orderNumber: inv.invoiceNumber },
       payments: inv.payments,
@@ -240,8 +253,13 @@ export class BookkeepingService implements OnModuleInit {
       else if (updated.status === InvoiceStatus.PARTIAL) ledgerStatus = TxnStatus.PARTIAL;
       else ledgerStatus = TxnStatus.UNPAID;
 
-      // F03/R1: same CONFIRMED basis as findAll/findOne above.
-      const paid2 = sumConfirmed(updated.payments);
+      // F03/R1: same CONFIRMED basis as findAll/findOne above. B421: cash-only
+      // totalPaid, same as findAll/findOne above.
+      const {
+        cash: paid2,
+        creditApplied: creditApplied2,
+        advanceApplied: advanceApplied2,
+      } = splitConfirmed(updated.payments);
       return {
         id: updated.id,
         status: ledgerStatus,
@@ -249,6 +267,8 @@ export class BookkeepingService implements OnModuleInit {
         createdAt: updated.issueDate,
         totalOwed: Number(updated.total),
         totalPaid: paid2,
+        creditApplied: creditApplied2,
+        advanceApplied: advanceApplied2,
         customer: updated.customer,
         order: updated.order ?? { orderNumber: updated.invoiceNumber },
         payments: updated.payments,
@@ -1028,7 +1048,16 @@ export class BookkeepingService implements OnModuleInit {
     const CfPayStatus = PaymentStatus;
     const [payments, expenses, bills] = await Promise.all([
       this.prisma.forTenant().invoicePayment.findMany({
-        where: { status: CfPayStatus.PAID, ...settledDateFilter(fromDate, toDate) },
+        // B421: cash-flow's "totalIn" is money genuinely received — a
+        // CREDIT_NOTE application is never cash, but an ADVANCE application
+        // is (bookkeeping never reads AdvancePayment directly, so this row
+        // is the only place that already-real cash is ever recorded; see
+        // RECEIVED_METHOD_FILTER's own doc). Excludes ONLY CREDIT_NOTE.
+        where: {
+          status: CfPayStatus.PAID,
+          method: RECEIVED_METHOD_FILTER,
+          ...settledDateFilter(fromDate, toDate),
+        },
         orderBy: { paidAt: "asc" },
       }),
       this.prisma.forTenant().expense.findMany({
@@ -1087,8 +1116,14 @@ export class BookkeepingService implements OnModuleInit {
         }),
         // F03/R1/T-B11s: weekly receipts are CONFIRMED (PAID) money only —
         // getCashFlow's basis, not the historical "everything but VOID" one.
+        // B421: same RECEIVED_METHOD_FILTER as getCashFlow.totalIn — a
+        // CREDIT_NOTE application is not a "receipt", an ADVANCE application is.
         this.prisma.forTenant().invoicePayment.aggregate({
-          where: { ...CONFIRMED_PAYMENT, createdAt: { gte: sevenDaysAgo } },
+          where: {
+            ...CONFIRMED_PAYMENT,
+            method: RECEIVED_METHOD_FILTER,
+            createdAt: { gte: sevenDaysAgo },
+          },
           _sum: { amount: true },
         }),
         this.prisma.forTenant().invoice.count({
@@ -1140,8 +1175,14 @@ export class BookkeepingService implements OnModuleInit {
       // Total collected (YTD invoice payments) — CONFIRMED (PAID) only (F03/R1/
       // T-B11s): an unconfirmed DRAFT payment is not money in hand any more than
       // a VOID (bounced, P5-12) one is; this must match getCashFlow's basis.
+      // B421: same RECEIVED_METHOD_FILTER — a CREDIT_NOTE application was
+      // never "collected", an ADVANCE application already was (at deposit time).
       this.prisma.forTenant().invoicePayment.aggregate({
-        where: { ...CONFIRMED_PAYMENT, createdAt: { gte: startOfYear } },
+        where: {
+          ...CONFIRMED_PAYMENT,
+          method: RECEIVED_METHOD_FILTER,
+          createdAt: { gte: startOfYear },
+        },
         _sum: { amount: true },
       }),
       // Total expenses (YTD)
@@ -1253,8 +1294,13 @@ export class BookkeepingService implements OnModuleInit {
         }),
         // F03/R1/T-B11s: receipts are CONFIRMED (PAID) money only — matches
         // getCashFlow's basis, not the historical "everything but VOID" one.
+        // B421: same RECEIVED_METHOD_FILTER as getCashFlow.totalIn.
         this.prisma.forTenant().invoicePayment.aggregate({
-          where: { ...CONFIRMED_PAYMENT, createdAt: { gte: mStart, lte: mEnd } },
+          where: {
+            ...CONFIRMED_PAYMENT,
+            method: RECEIVED_METHOD_FILTER,
+            createdAt: { gte: mStart, lte: mEnd },
+          },
           _sum: { amount: true },
         }),
         this.prisma.forTenant().expense.aggregate({
@@ -1299,8 +1345,9 @@ export class BookkeepingService implements OnModuleInit {
           _sum: { total: true },
         }),
         // F03/R1/T-B11s: same CONFIRMED (PAID) basis as monthlySales.totalReceipts.
+        // B421: same RECEIVED_METHOD_FILTER too.
         this.prisma.forTenant().invoicePayment.aggregate({
-          where: { ...CONFIRMED_PAYMENT, createdAt: { gte: from } },
+          where: { ...CONFIRMED_PAYMENT, method: RECEIVED_METHOD_FILTER, createdAt: { gte: from } },
           _sum: { amount: true },
         }),
       ]);
