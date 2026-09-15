@@ -25,6 +25,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { NumberingService } from "../import/numbering.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 describe("ReturnsService.create → cumulative over-return / double-refund race (B10)", () => {
@@ -63,6 +64,10 @@ describe("ReturnsService.create → cumulative over-return / double-refund race 
         { provide: RouteFlowGateway, useValue: { emitReturnCreated: jest.fn() } },
         { provide: RegulatedLedgerService, useValue: {} },
         { provide: CreditNotesService, useValue: {} },
+        {
+          provide: NumberingService,
+          useValue: { reserveNext: jest.fn().mockResolvedValue("RET-2026-0001") },
+        },
       ],
     }).compile();
 

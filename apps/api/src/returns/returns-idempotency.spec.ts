@@ -21,6 +21,7 @@ import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { IdempotencyService } from "../common/idempotency.service";
+import { NumberingService } from "../import/numbering.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 describe("ReturnsService.create — Idempotency-Key replay guard (REG-RET-IDEM)", () => {
@@ -81,6 +82,10 @@ describe("ReturnsService.create — Idempotency-Key replay guard (REG-RET-IDEM)"
         { provide: RegulatedLedgerService, useValue: {} },
         { provide: CreditNotesService, useValue: {} },
         { provide: IdempotencyService, useValue: idempotency },
+        {
+          provide: NumberingService,
+          useValue: { reserveNext: jest.fn().mockResolvedValue("RET-2026-0001") },
+        },
       ],
     }).compile();
 

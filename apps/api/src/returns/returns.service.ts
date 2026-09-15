@@ -28,6 +28,7 @@ import { roundMoney } from "@routeflow/pricing";
 import type { ProcessRefundDto } from "./dto/process-refund.dto";
 import { CREDIT_SOURCE_EXCLUDED } from "../invoices/invoice-status-sets";
 import { IdempotencyService } from "../common/idempotency.service";
+import { NumberingService } from "../import/numbering.service";
 
 /** The shape `create` returns — reused to type a replayed (idempotent) result. */
 type CreatedReturn = Prisma.ReturnGetPayload<{ include: { items: true } }>;
@@ -51,6 +52,7 @@ export class ReturnsService {
     private readonly gateway: RouteFlowGateway,
     private readonly ledger: RegulatedLedgerService,
     private readonly creditNotes: CreditNotesService,
+    private readonly numbering: NumberingService,
     // Provided by the @Global CommonModule in every running app. Declared
     // @Optional so the four existing ReturnsService spec suites (which predate
     // it and provide no mock) still resolve; a request carrying no
@@ -66,11 +68,16 @@ export class ReturnsService {
     return !NO_RESTOCK_REASONS.has(reason ?? "");
   }
 
-  private generateReturnNumber(): string {
-    const now = new Date();
-    const year = now.getFullYear();
-    const seq = Date.now().toString().slice(-6);
-    return `RET-${year}-${seq}`;
+  // B353: the last-six-digits-of-Date.now() scheme collided every ~16.7
+  // minutes (1e6 ms). RETURN's DocumentNumberType/DEFAULTS entry was seeded
+  // for exactly this call (see numbering.service.ts). Runs on the caller's
+  // OWN transaction (`opts.tx`) — this is always invoked from inside
+  // `create()`'s `tenantTransaction`, and reserving standalone here would be
+  // a nested transaction (numbering.service.ts's `reserveNext` doc comment).
+  private async generateReturnNumber(tx: Prisma.TransactionClient): Promise<string> {
+    const year = new Date().getFullYear();
+    const tenantId = this.prisma.getTenantId() ?? undefined;
+    return this.numbering.reserveNext("RETURN", { year, tenantId, tx });
   }
 
   async create(dto: any, userId: string, userRole?: string, idempotencyKey?: string) {
@@ -179,9 +186,10 @@ export class ReturnsService {
         alreadyReturned[item.productId] = previouslyReturned + Number(item.qty);
       }
 
+      const returnNumber = await this.generateReturnNumber(tx);
       return tx.return.create({
         data: {
-          returnNumber: this.generateReturnNumber(),
+          returnNumber,
           orderId: dto.orderId,
           customerId: order.customerId,
           reason: dto.reason,

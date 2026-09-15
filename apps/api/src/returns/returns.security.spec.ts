@@ -13,6 +13,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { NumberingService } from "../import/numbering.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { ExecutionContext, HttpStatus } from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -114,6 +115,10 @@ describe("RF-081 ReturnsService.findOneForUser – IDOR prevention", () => {
         { provide: RouteFlowGateway, useValue: gateway },
         { provide: RegulatedLedgerService, useValue: ledger },
         { provide: CreditNotesService, useValue: { create: jest.fn() } },
+        {
+          provide: NumberingService,
+          useValue: { reserveNext: jest.fn().mockResolvedValue("RET-2026-0001") },
+        },
       ],
     }).compile();
 
