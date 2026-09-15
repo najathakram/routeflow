@@ -15,7 +15,25 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen } from "@/test-utils/render";
-import EstimatesPage from "./page";
+import EstimatesPage, { defaultExpiryDate } from "./page";
+
+// #711 delta review: defaultExpiryDate() still computed via `.toISOString()`
+// (UTC) after defaultIssueDate() was fixed to local — west of UTC in the
+// evening the two defaults could disagree by a day. Unit-tested directly
+// with REAL (unmocked) Date arithmetic, not through the component-level
+// getter spies below: those spy Date.prototype's local getters globally, so
+// the Date object defaultExpiryDate constructs internally for "issue + 30
+// days" would ALSO read the spied (frozen) values instead of its own real
+// computed date, defeating an arithmetic assertion.
+describe("defaultExpiryDate", () => {
+  it("adds 30 local-calendar days to the given issue date", () => {
+    expect(defaultExpiryDate("2026-09-13")).toBe("2026-10-13");
+  });
+
+  it("rolls over a month/year boundary correctly", () => {
+    expect(defaultExpiryDate("2026-12-15")).toBe("2027-01-14");
+  });
+});
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
