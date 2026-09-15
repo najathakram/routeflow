@@ -106,6 +106,10 @@ export async function teardownUserSession(options: TeardownOptions = {}): Promis
   // operator left behind must never be offered for restore to the next login
   // on a shared device.
   await clearStorageByPrefix(editItemsSnapshotUserPrefix(userId));
+  // Belt-and-braces: the write path now refuses to stage under `anon` at all,
+  // but a pre-existing anon-bucket key (an older build, a path this pass
+  // missed) must not survive teardown either — same B136/B137/B140 reason.
+  await clearStorageByPrefix(editItemsSnapshotUserPrefix(null));
 }
 
 /**

@@ -178,12 +178,16 @@ export function buildOrderItemDiff(args: {
         action: "UPDATE",
         qty: line.qty, // server's UPDATE branch requires qty present
         ...boxFields,
-        ...(priceChanged || reasonChanged
-          ? {
-              unitPrice: line.unitPrice,
-              ...(line.overrideReason ? { overrideReason: line.overrideReason } : {}),
-            }
-          : {}),
+        // unitPrice is gated on priceChanged ALONE (R9): the server's edit
+        // branch derives isManualOverride from whether the sent price differs
+        // from the stored one, so echoing it back on a reason-only edit would
+        // read as "not manual" and risk re-deriving a SPECIAL/manually-priced
+        // line's billed price.
+        ...(priceChanged ? { unitPrice: line.unitPrice } : {}),
+        // overrideReason is sent whenever it changed, empty string included —
+        // omitting it on a clear is the same bug M1 fixed, for the opposite
+        // direction (the server keeps whatever it last had).
+        ...(reasonChanged ? { overrideReason: line.overrideReason ?? "" } : {}),
         ...(notesChanged ? { notes: noteVal } : {}),
       });
     }

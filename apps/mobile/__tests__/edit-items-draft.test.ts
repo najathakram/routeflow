@@ -203,7 +203,9 @@ describe("edit-items-draft: the dirty check is the Save payload (REG-EDIT-DRAFT-
     ).toEqual([]);
 
     // Operator corrects ONLY the reason text — unitPrice identical to the
-    // original 24. Before the fix this was dropped silently (M1).
+    // original 24. Before the fix this was dropped silently (M1). unitPrice
+    // is NOT in the payload (F3): sending it on a reason-only edit would read
+    // as a re-price to the server's isManualOverride check (R9).
     const reasonOnly = draftFixture();
     reasonOnly.p1 = { ...reasonOnly.p1, overrideReason: "Damaged case, restocking fee waived" };
     expect(
@@ -215,7 +217,6 @@ describe("edit-items-draft: the dirty check is the Save payload (REG-EDIT-DRAFT-
         qty: 24,
         boxes: 2,
         pieces: 0,
-        unitPrice: 24,
         overrideReason: "Damaged case, restocking fee waived",
       },
     ]);

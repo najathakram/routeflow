@@ -519,7 +519,10 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
    */
   const snapshotWriteRef = useRef<() => Promise<void>>(async () => undefined);
   snapshotWriteRef.current = async () => {
-    if (!order || !id || savedRef.current) return;
+    // userId undefined means auth hasn't resolved yet (cold open / deep link)
+    // — never stage under the shared `anon` bucket, where the next operator to
+    // sign in on this device could be offered it (B136/B137/B140 class).
+    if (!order || !id || savedRef.current || userId == null) return;
     try {
       if (!dirty) {
         await AsyncStorage.removeItem(snapshotKey);

@@ -191,6 +191,20 @@ describe("edit-items.tsx staged-edit autosave (REG-EDIT-AUTOSAVE)", () => {
     expect(moduleCode).not.toMatch(/from "react-native"/);
     expect(moduleCode).not.toMatch(/async-storage/);
   });
+
+  it("REG-MSCAN-A4-anon: the write ref never stages while userId is undefined (no anon key)", () => {
+    // F1: userId undefined (cold open / deep link, before initialize() resolves
+    // the stored user) must be a hard no-write, never a fall-through to the
+    // shared `anon` bucket the next operator on this device could be offered
+    // (B136/B137/B140 class). session-teardown.ts's belt-and-braces sweep of
+    // that bucket is unit-tested in session-teardown.test.ts.
+    const writeRefBody = (parentSrc.match(
+      /snapshotWriteRef\.current = async \(\) => \{[\s\S]*?\n  \};/,
+    ) ?? [""])[0];
+    expect(writeRefBody).toMatch(
+      /if \(!order \|\| !id \|\| savedRef\.current \|\| userId == null\) return;/,
+    );
+  });
 });
 
 /**

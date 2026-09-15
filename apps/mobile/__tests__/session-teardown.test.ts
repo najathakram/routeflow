@@ -389,27 +389,43 @@ describe("REG-EDIT-SWEEP: sign-out sweeps the staged-edit KEYSPACE", () => {
     multiRemoveMock.mockResolvedValue(undefined);
   });
 
-  it("REG-EDIT-SWEEP-B: logout removes EVERY staged order edit of the outgoing user, and no one else's", async () => {
+  it("REG-EDIT-SWEEP-B: logout removes EVERY staged order edit of the outgoing user, and no one else's — AND the anon bucket (F1)", async () => {
     const mine = [editItemsSnapshotKey("o1", "u1"), editItemsSnapshotKey("o2", "u1")];
-    const theirs = [
-      editItemsSnapshotKey("o1", "u2"),
-      editItemsSnapshotKey("o3", "u10"),
-      editItemsSnapshotKey("o4", null),
-    ];
-    getAllKeysMock.mockResolvedValue([...mine, ...theirs, "routeflow-pod-store:u1", "tokens"]);
+    const anon = [editItemsSnapshotKey("o4", null)];
+    const theirs = [editItemsSnapshotKey("o1", "u2"), editItemsSnapshotKey("o3", "u10")];
+    getAllKeysMock.mockResolvedValue([
+      ...mine,
+      ...anon,
+      ...theirs,
+      "routeflow-pod-store:u1",
+      "tokens",
+    ]);
 
     useAuthStore.setState({ user: OPERATOR as any, isAuthenticated: true, activeRole: "operator" });
     await useAuthStore.getState().logout();
 
     expect(getAllKeysMock).toHaveBeenCalled();
-    expect(multiRemoveMock).toHaveBeenCalledTimes(1);
-    const swept = multiRemoveMock.mock.calls[0][0] as string[];
-    expect([...swept].sort()).toEqual([...mine].sort());
-    // "u1" must not sweep "u10" (the trailing separator), another user, the
-    // anon bucket, or an unrelated key.
+    // Two separate sweeps: the outgoing user's own prefix, then the anon
+    // bucket belt-and-braces (F1) — one multiRemove call per non-empty match.
+    expect(multiRemoveMock).toHaveBeenCalledTimes(2);
+    const swept = multiRemoveMock.mock.calls.flatMap((call) => call[0] as string[]);
+    expect([...swept].sort()).toEqual([...mine, ...anon].sort());
+    // "u1" must not sweep "u10" (the trailing separator), another user, or an
+    // unrelated key.
     for (const key of [...theirs, "routeflow-pod-store:u1", "tokens"]) {
       expect(swept).not.toContain(key);
     }
+  });
+
+  it("REG-MSCAN-A4-anon: teardown sweeps the anon bucket even when the outgoing user has nothing staged", async () => {
+    const anonOnly = [editItemsSnapshotKey("o9", null)];
+    getAllKeysMock.mockResolvedValue([...anonOnly, "tokens"]);
+
+    useAuthStore.setState({ user: OPERATOR as any, isAuthenticated: true, activeRole: "operator" });
+    await useAuthStore.getState().logout();
+
+    expect(multiRemoveMock).toHaveBeenCalledTimes(1);
+    expect(multiRemoveMock.mock.calls[0][0]).toEqual(anonOnly);
   });
 
   it("REG-EDIT-SWEEP-C: nothing to sweep issues no multiRemove", async () => {

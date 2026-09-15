@@ -89,8 +89,25 @@ describe("buildOrderItemDiff", () => {
     // original) currently emits [] — the UI shows the corrected reason as saved,
     // but reload reverts to the stale one.
     expect(out).toEqual([
-      { id: "L1", action: "UPDATE", qty: 10, unitPrice: 4, overrideReason: "corrected reason" },
+      { id: "L1", action: "UPDATE", qty: 10, overrideReason: "corrected reason" },
     ]);
+  });
+
+  it("F3: a reason-only edit sends NO unitPrice — R9's server-side isManualOverride must not be re-derived off an echoed price", () => {
+    const out = run({
+      catalog: [cat({ lineId: "L1", qty: 10, unitPrice: 4, overrideReason: "second look" })],
+      originals: [origLine({ id: "L1", qty: 10, unitPrice: 4, overrideReason: "deal" })],
+    });
+    expect(out).toEqual([{ id: "L1", action: "UPDATE", qty: 10, overrideReason: "second look" }]);
+    expect(out[0]).not.toHaveProperty("unitPrice");
+  });
+
+  it("F2: clearing a reason sends overrideReason as an explicit empty string, never omitted", () => {
+    const out = run({
+      catalog: [cat({ lineId: "L1", qty: 10, unitPrice: 4, overrideReason: undefined })],
+      originals: [origLine({ id: "L1", qty: 10, unitPrice: 4, overrideReason: "deal" })],
+    });
+    expect(out).toEqual([{ id: "L1", action: "UPDATE", qty: 10, overrideReason: "" }]);
   });
 
   it("new catalog line at the tier base sends NO unitPrice", () => {
