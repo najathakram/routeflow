@@ -258,6 +258,27 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
   `scripts/validate-code-map.stamp.self-test.mjs`. Sibling [[L-082]] — no shared guard between the
   two files, so a third such script would still need its own.
 
+### L-149 · 2026-09-15 · tooling · #743 fix-round T8 lesson-id staleness
+
+- **Symptom:** an engine task's brief hardcoded specific lesson ids (L-140/L-141) and a specific
+  `nextId` bump (143) to write at close-out. By the time the task would have actually run, three
+  intervening merges had already moved the real registry floor to `nextId` 146 — the hardcoded
+  ids were already claimed by other lanes before the engine even launched.
+- **Root cause:** the brief was authored during planning, against the registry's state at that
+  moment. The task itself was scheduled to run LAST, after seven other tasks and however long the
+  engine takes wall-clock — in a shared, actively-written registry, "the current state" at
+  planning time and "the current state" at execution time are different facts, and nothing in the
+  brief distinguished them.
+- **Lesson:** **A build/task brief must never embed a point-in-time value from a shared, actively
+  written resource (a registry id, a counter, a "latest" anything) as a literal constant when the
+  task executes later than the brief was written — especially the LAST task in a multi-stage run.
+  Instruct the task to read the live value at write time instead, and to verify (grep for
+  existing use, re-run the validator) before committing to it.**
+- **Guard:** none yet — propose a build-plan lint that flags a literal `L-\d+`/`nextId: \d+` inside
+  any task's `brief` field for a task with a non-empty `dependsOn` chain (i.e., not the first
+  wave), since those are exactly the tasks whose "current state" assumption is stale by
+  construction.
+
 ## testing
 
 ### L-093 · 2026-09-08 · testing · #665
