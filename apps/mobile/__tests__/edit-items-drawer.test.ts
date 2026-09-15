@@ -205,6 +205,25 @@ describe("edit-items.tsx staged-edit autosave (REG-EDIT-AUTOSAVE)", () => {
       /if \(!order \|\| !id \|\| savedRef\.current \|\| userId == null\) return;/,
     );
   });
+
+  it("REG-MSCAN-A4-anon-read: the restore-snapshot read never touches the anon bucket either", () => {
+    // PR-3 follow-up: F1 closed the WRITE side (test above), but the read
+    // effect still resolved `snapshotKey` off `userId` unconditionally — on a
+    // cold open / deep link, before initialize() resolves the stored user,
+    // that key is the shared `anon` bucket, and a leftover snapshot parked
+    // there (a device that predates F1, or hasn't been through a teardown
+    // sweep yet) could be read and offered to restore for the instant before
+    // auth settles. Guard the read the same way the write is guarded.
+    const restoreEffect = (parentSrc.match(
+      /useEffect\(\(\) => \{\s*let alive = true;[\s\S]*?AsyncStorage\.getItem\(snapshotKey\)[\s\S]*?\n {2}\}, \[snapshotKey, userId\]\);/,
+    ) ?? [""])[0];
+    expect(restoreEffect).toMatch(/if \(userId == null\) \{\s*setRestoreChecked\(true\);\s*return;/);
+    // The guard must run BEFORE the AsyncStorage call, not after.
+    const guardAt = restoreEffect.indexOf("userId == null");
+    const readAt = restoreEffect.indexOf("AsyncStorage.getItem(snapshotKey)");
+    expect(guardAt).toBeGreaterThan(-1);
+    expect(readAt).toBeGreaterThan(guardAt);
+  });
 });
 
 /**

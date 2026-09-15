@@ -426,6 +426,18 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     setRestored(null);
     setRestoreChecked(false);
     setRestoreState("idle");
+    // B280 follow-up (PR-3): userId undefined means auth hasn't resolved yet
+    // (cold open / deep link) — snapshotKey resolves to the shared `anon`
+    // bucket, and reading it here could offer a PRIOR operator's leftover
+    // snapshot for the instant before auth settles (the write side already
+    // refuses this bucket — REG-MSCAN-A4-anon). Skip the read entirely; the
+    // effect re-fires (via the `snapshotKey` dep) once userId resolves to a
+    // real id and reads the correct per-user key then. `restoreChecked` still
+    // flips so the autosave effect below isn't blocked forever.
+    if (userId == null) {
+      setRestoreChecked(true);
+      return;
+    }
     AsyncStorage.getItem(snapshotKey)
       .then((raw) => {
         if (!alive) return;
@@ -438,7 +450,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     return () => {
       alive = false;
     };
-  }, [snapshotKey]);
+  }, [snapshotKey, userId]);
 
   /**
    * Apply the snapshot. DECLARED AFTER the hydration effect above and sharing
