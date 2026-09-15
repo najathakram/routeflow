@@ -665,23 +665,15 @@ version|audit-allowlist-retired)\\.spec\\.ts$"` (the third joined it
   walks `apps/api/{src,scripts}`, root `scripts/`, `.github/workflows/`,
   `.claude/skills/**/scripts/`, plus the `Dockerfile`/`prisma.config.ts`/both `package.json`s/
   `docker-compose.yml`, strips `//`/`#`/`/* */`/`<!-- -->` comment bodies via a **hand-rolled
-  character scanner** (`stripCLikeComments`) — not a single alternation regex, which is unsound:
-  prose inside a `//` comment routinely has an unescaped apostrophe ("it's", "repair-integrity
-  .mjs's default-read-only stance" — real text this file caught in `repair-f03.spec.ts`), and a
-  flat regex has no notion of "already inside a comment", so it reads that apostrophe as opening a
-  `'…'` string and greedily swallows everything up to the next raw `'` anywhere later in the file.
-  The scanner instead skips `//`/`/* */` spans character-by-character to their terminator without
-  ever re-entering quote-detection inside them, and separately preserves real `"…"`/`'…'`/`` `…` ``
-  string literals verbatim (so a same-line `"https://x.dev"` doesn't let its `//` swallow a later
-  `"schema.prisma"` reference — unit-tested directly against the helper). A quote with no closing
-  partner before end-of-line (an apostrophe inside a regex literal, e.g. `scripts/campaign/bugs.mjs`)
-  is emitted as text rather than opened as a string, since a `'`/`"` literal cannot span a raw
-  newline — and asserts none of the
-  ≥400 candidates (real walk ~817; floor raised from the original vacuous-guard value of 30) still
-  names the retired `prisma/schema.prisma` path outside comments; allow-lists (each asserted in its
-  own case) `split-prisma-schema.mjs` (names that path by design via `--from`/`--from-ref`) and
-  this spec's own T1 sibling (its negative-existence check (b) must name the retired path
-  literally) — `apps/api/prisma/migrations/**` is never scanned.
+  character scanner** (`stripCLikeComments`), not a single alternation regex — a flat regex has no
+  notion of "already inside a comment", so an unescaped apostrophe inside a `//` comment ("it's")
+  opens a `'…'` string and swallows everything to the next raw `'`. The scanner skips comment spans
+  character-by-character without re-entering quote-detection inside them, and preserves real
+  string literals verbatim (unit-tested directly). Asserts none of the ≥400 candidates (real walk
+  ~817; floor raised from the original vacuous-guard value of 30) still names the retired
+  `prisma/schema.prisma` path outside comments; allow-lists `split-prisma-schema.mjs` (names that
+  path by design via `--from`/`--from-ref`) and this spec's own T1 sibling (its negative-existence
+  check (b) must name the retired path literally) — `apps/api/prisma/migrations/**` never scanned.
   **`msrp.ts` (NEW 2026-08-22, PR-B — ⚠️ IN FLIGHT on `feat/msrp-on-invoices`, NOT on master)** —
   suggested-retail resolution. `resolveMsrp({customerMsrp, segmentMsrp, productMsrp})` =
   customer override → \*\*segment (a deliberate STUB: present in the signature and every call
