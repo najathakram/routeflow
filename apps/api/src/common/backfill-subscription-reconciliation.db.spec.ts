@@ -98,6 +98,14 @@ const UNKNOWN_KEY_SLUG = assertTestTenant(
   `qa-phase0-recon-${RUN_SUFFIX}-5`,
   "backfill-subscription-reconciliation.db.spec.ts",
 );
+// Legacy-alias fixture: stored planKey is the pre-rename "BUSINESS", resolved against the
+// published catalog's "SCALE" row (plan-catalog.constants.ts's LEGACY_PLAN_KEY_ALIASES maps
+// BUSINESS -> SCALE). Distinct from UNKNOWN_KEY_SLUG above — this key IS mappable and must
+// resolve and backfill, never land in the "not in the resolved catalog version" bucket.
+const LEGACY_ALIAS_SLUG = assertTestTenant(
+  `qa-phase0-recon-${RUN_SUFFIX}-5b`,
+  "backfill-subscription-reconciliation.db.spec.ts",
+);
 // --- T2 fixtures (REG-743-F3, REG-743-N3, REG-743-F4, REG-743-F5) ---
 // A subscription pinned to an OLDER (non-published) PlanVersion — must be priced from that
 // version, and the pin must never be moved to the published version (F3, B327's sibling: the
@@ -156,6 +164,7 @@ const ALL_SLUGS = [
   TEST_CLASS_SLUG,
   ENTERPRISE_SLUG,
   UNKNOWN_KEY_SLUG,
+  LEGACY_ALIAS_SLUG,
   OLD_PIN_SLUG,
   NULL_TENANT_PIN_SLUG,
   PINNED_TENANT_PIN_SLUG,
@@ -176,6 +185,7 @@ describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
   let tenantTestClass: { id: string } | undefined;
   let tenantEnterprise: { id: string } | undefined;
   let tenantUnknownKey: { id: string } | undefined;
+  let tenantLegacyAlias: { id: string } | undefined;
   let tenantOldPin: { id: string } | undefined;
   let tenantNullPin: { id: string } | undefined;
   let tenantPinnedPin: { id: string } | undefined;
@@ -342,6 +352,27 @@ describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
       },
     });
 
+    // Legacy-alias fixture: stored planKey "BUSINESS" (pre-rename) against the published
+    // catalog's "SCALE" definition. Must resolve via LEGACY_PLAN_KEY_ALIASES (BUSINESS ->
+    // SCALE), price at scalePrice, and backfill — never land in the unknown-key bucket the
+    // way UNKNOWN_KEY_SLUG (a genuinely unmappable "RETIRED_LEGACY_TIER") does.
+    tenantLegacyAlias = await prisma.tenant.create({
+      data: {
+        slug: LEGACY_ALIAS_SLUG,
+        name: LEGACY_ALIAS_SLUG,
+        status: "ACTIVE",
+        class: "PRODUCTION",
+        plan: "PROFESSIONAL",
+        subscription: {
+          create: {
+            planKey: "BUSINESS",
+            basePriceSnapshot: null,
+            stripeSubId: "sub_qa_legacy_alias",
+          },
+        },
+      },
+    });
+
     // REG-743-F3: pinned to the OLDER (never-published) GROWTH@149 version, already carrying
     // that planVersionId on the subscription itself. Must be priced 149 (from its own pin),
     // never repriced off the published catalog, and the pin must never move.
@@ -477,6 +508,7 @@ describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
       tenantTestClass?.id,
       tenantEnterprise?.id,
       tenantUnknownKey?.id,
+      tenantLegacyAlias?.id,
       tenantOldPin?.id,
       tenantNullPin?.id,
       tenantPinnedPin?.id,
@@ -518,6 +550,35 @@ describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
       where: { tenantId: tenantPartial!.id },
     });
     expect(partial?.basePriceSnapshot).toBeNull();
+  });
+
+  it("a legacy-aliased planKey (BUSINESS) resolves against the catalog's renamed SCALE definition and backfills", async () => {
+    const output = execSync(`node ${CLI} --apply --slug-prefix ${LEGACY_ALIAS_SLUG}`, {
+      encoding: "utf-8",
+      env: childEnv(dbUrl),
+    });
+
+    // Must NOT land in the manual-decision bucket the way UNKNOWN_KEY_SLUG's genuinely
+    // unmappable "RETIRED_LEGACY_TIER" does below — BUSINESS is a known legacy alias
+    // (LEGACY_PLAN_KEY_ALIASES: BUSINESS -> SCALE), not an unmappable typo/retired key.
+    expect(output).not.toContain("planKey not in the resolved catalog version");
+    expect(output).toContain("1 change(s)");
+
+    const sub = await prisma.tenantSubscription.findUnique({
+      where: { tenantId: tenantLegacyAlias!.id },
+    });
+    // The stored planKey itself is left untouched (never rewritten to the current name) —
+    // only basePriceSnapshot/planVersionId are backfilled, priced from the catalog's SCALE
+    // definition that BUSINESS normalizes to.
+    expect(sub?.planKey).toBe("BUSINESS");
+    expect(String(sub?.basePriceSnapshot)).toBe(scalePrice);
+
+    const events = await prisma.billingEvent.findMany({
+      where: { tenantId: tenantLegacyAlias!.id },
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe("reconciliation.snapshot_backfilled");
+    expect(String(events[0].amountDelta)).toBe(scalePrice);
   });
 
   it("apply backfills the partial subscription, reports the pilot untouched, excludes TEST class", async () => {
