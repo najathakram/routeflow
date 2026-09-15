@@ -8,7 +8,7 @@ import { InvoicePdfTemplate } from "./invoice-pdf-template";
 import { deriveInvoiceVariant, type InvoicePdfVariant } from "./invoice-pdf-variant";
 import { invoiceItemCode } from "./invoice-item-code";
 import { roundMoney } from "@routeflow/pricing";
-import { sumConfirmed } from "./payment-predicates";
+import { splitConfirmed } from "./payment-predicates";
 
 import bwipjs from "bwip-js";
 
@@ -177,7 +177,9 @@ export class InvoicePdfService {
     // computed on the CONFIRMED (PAID) basis only — never a reduce over the
     // broader `inv.payments` listing above, which still carries DRAFT rows so
     // the template can list them (labeled "Pending confirmation").
-    const totalPaid = sumConfirmed(inv.payments);
+    // B421: totalPaid is cash-only — a credit note or advance applied to this
+    // invoice must not render as money the customer paid.
+    const { cash: totalPaid, creditApplied, advanceApplied } = splitConfirmed(inv.payments);
 
     // F03/R9: same tenant setting the invoice detail endpoint honors
     // (invoices.service.ts's findOneOrThrow, `invoice.hideOriginalPrice`) — rides
@@ -192,6 +194,8 @@ export class InvoicePdfService {
       generatedAt: new Date(),
       depositAmount,
       totalPaid,
+      creditApplied,
+      advanceApplied,
       hideOriginalPrice,
     };
 

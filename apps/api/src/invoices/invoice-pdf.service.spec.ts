@@ -210,6 +210,52 @@ describe("InvoicePdfService.generateAndUpload — payment truth (T-B97, R1, REG-
       mockCapturedInvoice.totalPaid != null ? Number(mockCapturedInvoice.totalPaid) : rowSum;
     expect(shownPaid).toBe(300);
   });
+
+  it("REG-B421: splits a CREDIT_NOTE and ADVANCE payment out of the cash-only totalPaid", async () => {
+    const prisma = createMockPrisma();
+    // A credit-note application and an advance application both create a real
+    // PAID InvoicePayment row — neither is cash the customer paid today, so
+    // neither may land in totalPaid (the "Amount Paid" figure).
+    const paymentRows = [
+      {
+        id: "pay-cash",
+        amount: 232,
+        status: "PAID",
+        method: "CASH",
+        paidAt: new Date(),
+        creditNote: null,
+      },
+      {
+        id: "pay-credit",
+        amount: 638,
+        status: "PAID",
+        method: "CREDIT_NOTE",
+        paidAt: new Date(),
+        creditNote: { creditNoteNumber: "CN-1042", reason: "Return" },
+      },
+      {
+        id: "pay-advance",
+        amount: 100,
+        status: "PAID",
+        method: "ADVANCE",
+        paidAt: new Date(),
+        creditNote: null,
+      },
+    ];
+    prisma.invoice.findUnique.mockImplementation(async (args: any) => ({
+      ...baseInvoiceFixture({ subtotal: 970, total: 970 }),
+      payments: paymentRows.filter((p) => matchesStatus(p.status, args?.include?.payments?.where)),
+    }));
+    prisma.tenantConfig.findUnique.mockResolvedValue(TENANT_CONFIG as any);
+
+    const service = await makeService(prisma, makeStorage(), null);
+    await service.generateAndUpload("inv-1");
+
+    expect(mockCapturedInvoice).not.toBeNull();
+    expect(Number(mockCapturedInvoice.totalPaid)).toBe(232);
+    expect(Number(mockCapturedInvoice.creditApplied)).toBe(638);
+    expect(Number(mockCapturedInvoice.advanceApplied)).toBe(100);
+  });
 });
 
 describe("InvoicePdfService.generateAndUpload — hide-original-price setting (T-B103, R9, REG-B103)", () => {
