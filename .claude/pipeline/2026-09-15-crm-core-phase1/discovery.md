@@ -98,7 +98,7 @@ Support gets "why no CRM" (gate) and "convert made a login" (two doc lines); CSV
 |---|---|---|---|---|---|
 | A1 | hq operators enter prospects on day one | signal unreadable | ask owner: prospect count, where, moved at flip? | 5 min | pending |
 | A2 | `routeflow-hq` (T12–T15) on master first | no dogfood tenant | lead, `LEAD-REPLIES.md` | 5 min | pending |
-| A3 | lead fields satisfy `CreateCustomerDto` | convert needs a modal | read `apps/api/src/customers/dto/create-customer.dto.ts` at S2 | 10 min | pending |
+| A3 | lead fields satisfy `CreateCustomerDto` | convert needs a modal | read `apps/api/src/customers/dto/create-customer.dto.ts` at S2 | 10 min | **killed at S2 — confirmed, no modal** |
 
 **Strongest objection:** "Seven tenant-scoped models, an irreversible migration, a new Nest
 module, web and Expo screens — for a feature no paying tenant asked for, in a delivery product.
@@ -135,10 +135,12 @@ does; the timeline union is per record, page-capped at S2.
 |---|---|---|---|---|---|
 | A1 | §2/§6 hq tracks prospects off-system, will move them in | inferred | Q2 answer | signal, §5 | unverified |
 | A2 | §6/§11 hq tenant on master | plan §5 | `LEAD-REPLIES.md` | dogfood target | unverified |
-| A3 | §9 lead fields satisfy `CreateCustomerDto` | pack | read the DTO | conversion scope | unverified |
-| A4 | §3/§7 soft-cap fails open; convert never 403s | pack | read `customers.service.ts` create | conversion UX | unverified |
+| A3 | §9 lead fields satisfy `CreateCustomerDto` | pack | read the DTO | conversion scope | **CONFIRMED at S2** — only `username`/`businessName`/`contactName` are required; convert takes no body |
+| A4 | §3/§7 soft-cap fails open; convert never 403s | pack | read `customers.service.ts` create | conversion UX | **REFUTED at S2** — `assertCustomerCapNotExceeded()` (`:625-664`) fails open only on lookup errors and on the breaching create; over cap **with grace expired it throws `ForbiddenException`**, so convert CAN 403. Spec'd as R20 |
 | A5 | §2/§5 pilot pays $97+/mo for GHL; no paying tenant asked for native CRM | plan §2/§4 | owner | §5, §9 | unverified |
 | A6 | §2 reps prospect daily along routes | industry norm | pilot interview | mobile weight | unverified |
+| A9 | web NAV can read active addons (nav gating) | pack | read `app/(dashboard)/layout.tsx` | nav gate | **KILLED at S2 review** — `useHasAddon`/`useTenantAddons` imported at `:73-74`, used at `:1060`; react-query dedupes on queryKey so CRM adds no extra fetch |
+| A10 | `RolesGuard` honours a two-role `@Roles` list | inferred | read the guard | **KILLED at S2 review** — `auth/guards/roles.guard.ts:50` is `requiredRoles.some(r => satisfied.includes(r))`, and `users.controller.ts:34` already ships `@Roles(OPERATOR, TENANT_ADMIN)`. R23 is safe |
 | A7 | §11 addon gate alone, no plan flag | **choice, not a constraint** — one grantable key is simpler and the addon gate already drives screen visibility; `flag.crm` is available if the lead wants nav gated separately | lead | nav gate | unverified |
 
 ## STOP GATE — S1 → S2
