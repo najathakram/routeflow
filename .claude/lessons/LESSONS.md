@@ -853,3 +853,16 @@ apps/web/app --include=*.tsx -A1 | grep -B1 onSuccess` — narrow to `.map()`-re
 - **Guard:** `page.test.tsx`'s REG-743-F1 cases — an extra non-`PLAN_KEYS` catalog row is excluded
   from rendered options; a catalog with zero `PLAN_KEYS`-eligible rows falls back to exactly
   `PLAN_KEYS`.
+
+### L-161 · 2026-09-15 · tooling · T12-T15 review round F1/F2 (house-tenant script + mirror re-validation)
+
+- **Symptom:** `bootstrap-house-tenant.mjs` called `new PrismaClient()` with no driver adapter —
+  Prisma 7 throws. `TenantMirrorService#upsert` trusted a once-resolved `platform.houseTenantId`
+  forever, so a config key later pointing at a deleted/reclassified tenant would write admin data
+  into it.
+- **Root cause:** a resolved or pattern-copied dependency was trusted without re-checking it
+  against its current siblings or current row.
+- **Lesson:** **A prod-targeting script must match its siblings' PrismaPg/pg.Pool client setup,
+  never a bare `new PrismaClient()`. A writer resolving a special row by id must re-validate its
+  identity/class on every write, not just once.**
+- **Guard:** `bootstrap-house-tenant.db.spec.ts`, `tenant-mirror.service.spec.ts`.
