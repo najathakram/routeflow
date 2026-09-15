@@ -388,6 +388,53 @@ describe("RegulatedLedgerService", () => {
       });
     });
 
+    // ─── PR-1a (§5): idempotency key widened from returnId alone to (returnId, orderId) ───
+
+    it("PR-1a: the prior-reversal check is keyed on (returnId, orderId), not returnId alone", async () => {
+      arrange({ sales: [saleRow()], items: [{ id: "ii-1", productId: "p1" }] });
+      await service.reverseReturnEntries({
+        returnId: "ret-1",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 3]]),
+        db: prisma,
+      });
+      // Revert probe: dropping `orderId` from this where clause (back to `{ returnId,
+      // entryType: "REVERSAL" }`) fails this exact-match assertion.
+      expect(prisma.regulatedSalesLedger.findMany).toHaveBeenNthCalledWith(1, {
+        where: { returnId: "ret-1", orderId: "ord-1", entryType: "REVERSAL" },
+        select: { id: true },
+      });
+    });
+
+    it("PR-1a: the SAME returnId across TWO source orders reverses BOTH — a REVERSAL already booked for order A does not block order B", async () => {
+      // Order A: reverses normally.
+      arrange({
+        sales: [saleRow({ orderId: "ord-a", invoiceItemId: "ii-a" })],
+        items: [{ id: "ii-a", productId: "p1" }],
+      });
+      await service.reverseReturnEntries({
+        returnId: "ret-1",
+        orderId: "ord-a",
+        returnedByProduct: new Map([["p1", 3]]),
+        db: prisma,
+      });
+      expect(prisma.regulatedSalesLedger.createMany).toHaveBeenCalledTimes(1);
+
+      // Order B, SAME returnId: nothing reversed yet for (ret-1, ord-b) — the widened
+      // key must not treat this as already-reversed just because (ret-1, ord-a) is.
+      arrange({
+        sales: [saleRow({ orderId: "ord-b", invoiceItemId: "ii-b" })],
+        items: [{ id: "ii-b", productId: "p1" }],
+      });
+      await service.reverseReturnEntries({
+        returnId: "ret-1",
+        orderId: "ord-b",
+        returnedByProduct: new Map([["p1", 3]]),
+        db: prisma,
+      });
+      expect(prisma.regulatedSalesLedger.createMany).toHaveBeenCalledTimes(2);
+    });
+
     it("RF-3: carries the SALE's trackedSubcategoryId onto the return REVERSAL row", async () => {
       arrange({
         sales: [saleRow({ trackedSubcategoryId: "sub-cig" })],

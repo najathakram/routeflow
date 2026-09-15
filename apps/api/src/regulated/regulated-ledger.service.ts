@@ -212,9 +212,14 @@ export class RegulatedLedgerService {
     const { returnId, orderId, returnedByProduct, db } = params;
     if (!returnedByProduct || returnedByProduct.size === 0) return;
 
-    // Idempotency: this return already reversed → no-op.
+    // Idempotency key is (returnId, orderId), not returnId alone (PR-1a/§5): an INLINE
+    // return's goods can be sold across MULTIPLE source orders, and this method is called
+    // once PER source order (`orderId` here is the SOURCE order, `ret.orderId` for a
+    // STANDARD caller — see receive()). Keying on returnId alone would treat the second
+    // source order's call as an already-reversed no-op. A STANDARD return has exactly one
+    // source order, so this is a no-op change for it.
     const prior = await db.regulatedSalesLedger.findMany({
-      where: { returnId, entryType: "REVERSAL" },
+      where: { returnId, orderId, entryType: "REVERSAL" },
       select: { id: true },
     });
     if (prior.length > 0) return;
