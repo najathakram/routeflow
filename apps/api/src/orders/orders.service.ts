@@ -4403,10 +4403,56 @@ export class OrdersService implements OnApplicationBootstrap {
                     trackedSubcategoryId: product.trackedSubcategoryId ?? null,
                   },
                 });
-              } else if (item.qty !== undefined || item.boxes != null || item.pieces != null) {
+              } else if (
+                item.qty !== undefined ||
+                item.boxes != null ||
+                item.pieces != null ||
+                // F3 (independent review, PR-2): a qty-less payload carrying ONLY
+                // overrideReason/notes (mobile's "damaged, no qty change" edit) never
+                // reached this branch at all — the gate was qty/split-only, so the
+                // reason-only and notes-only writes below were unreachable dead code
+                // for exactly the payload shape that needs them.
+                item.overrideReason !== undefined ||
+                item.notes !== undefined
+              ) {
                 const li = order.lineItems.find((li) => li.id === item.id);
                 if (!li) continue;
+
+                // N4 (independent review round 2, PR-2): a payload carrying ONLY
+                // overrideReason/notes (no qty/boxes/pieces/unitPrice at all) must never fall
+                // through into the qty/box normalization below — that logic can RE-DERIVE a
+                // different boxes/pieces/subtotal than what is stored (e.g. a box-split line
+                // with no unitsPerBox snapshot falls back to a LIVE product lookup, whose box
+                // size can differ from what was used at sale time), silently mutating money
+                // fields a reason-only edit was never meant to touch. This is its own minimal,
+                // fully separate write.
                 const isUnlisted = !li.productId;
+                const isReasonOrNotesOnly =
+                  item.qty === undefined &&
+                  item.boxes == null &&
+                  item.pieces == null &&
+                  item.unitPrice === undefined &&
+                  (item.overrideReason !== undefined || item.notes !== undefined);
+                if (isReasonOrNotesOnly) {
+                  await tx.orderItem.update({
+                    where: { id: item.id },
+                    data: {
+                      // Round 3 finding 1 (independent review, PR-2): `name` is not a pricing
+                      // field — an unlisted line's rename must survive this fast path exactly
+                      // like the full path below allows it, or a payload combining a rename
+                      // with a reason/notes edit silently drops the rename.
+                      ...(isUnlisted && item.name !== undefined ? { name: item.name } : {}),
+                      ...(item.notes !== undefined ? { notes: item.notes } : {}),
+                      ...(item.overrideReason !== undefined
+                        ? {
+                            overrideReason: item.overrideReason ?? null,
+                            overriddenBy: user?.sub ?? null,
+                          }
+                        : {}),
+                    },
+                  });
+                  continue;
+                }
                 // A zero boxes+pieces payload is "not using box entry", not "zero
                 // quantity" (see create()) — a POSITIVE check keeps it from
                 // silently discarding a real item.qty typed alongside it (the
@@ -4543,9 +4589,23 @@ export class OrdersService implements OnApplicationBootstrap {
                         : {
                             priceType: PriceType.MANUAL,
                             originalPrice: catalogPrice,
-                            overrideReason: item.overrideReason ?? null,
                             overriddenBy: user?.sub ?? null,
                           }
+                      : {}),
+                    // F2 server half: independent of isManualOverride/isUnlisted — a
+                    // reason-only edit (price unchanged, so isManualOverride is false)
+                    // was silently dropped because this field lived inside that branch.
+                    // Written whenever the payload carries the key at all, empty string
+                    // included, mirroring order-item-diff.ts's client-side fix.
+                    // F4 (independent review, PR-2): overriddenBy must move WITH
+                    // overrideReason — writing the reason alone left the attribution
+                    // stale (whoever last touched the isManualOverride branch, or null),
+                    // so an audit/dispute of THIS edit pointed at the wrong operator.
+                    ...(item.overrideReason !== undefined
+                      ? {
+                          overrideReason: item.overrideReason ?? null,
+                          overriddenBy: user?.sub ?? null,
+                        }
                       : {}),
                   },
                 });

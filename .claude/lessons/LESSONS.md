@@ -228,13 +228,6 @@
 
 ## testing
 
-### L-066 · 2026-09-04 · testing · watchdog spec
-
-- **Symptom:** a spec green on CI failed on every loaded dev box, pushing people to skip the pre-push gate.
-- **Root cause:** a fixed 500 ms `setTimeout` stood in for "the spawned child has booted"; bare Node boot here is 0.6–6 s. A poll alone still fails: the api lane's undeclared Jest cap is 5 s.
-- **Lesson:** **A fixed delay is never a readiness signal. Wait on the observable (log line, exit, stream) with a capped poll, kill the child in `finally`, and give the async test its own timeout above the cap.**
-- **Guard:** `visibility-watchdog-script.spec.ts` slow-boot repro (`NODE_OPTIONS=--require slow-boot.cjs`, 1.5 s) stays green.
-
 ### L-063 · 2026-09-04 · testing · imp-04
 
 - **Symptom:** after apps/api's suite was split into two `npx jest` invocations,
@@ -280,54 +273,7 @@
   it is unverified.**
 - **Guard:** none — judgment. Grep `isWeb`/`Platform.OS` in any file a fix touches.
 
-### L-113 · 2026-09-12 · testing · CRM GoHighLevel handoff
-
-- **Symptom:** the handoff's ExternalRef lookup used `where: { source: "gohighlevel" }` though
-  the Prisma column is `externalSource`; 99 unit tests stayed green since every Prisma call was a
-  `jest.fn()` mock typed `any` — a real client throws on statement one, so no customer is ever
-  created in prod.
-- **Root cause:** a mock-boundary spec proves control flow, not the schema contract.
-- **Lesson:** **every new Prisma call site needs a proof its `where`/`data` matches the schema —
-  a DB-lane spec, or a unit spec asserting the exact `where` against a
-  `Prisma.<Model>WhereInput` literal so `tsc` rejects an unknown column — an `any`-typed mock
-  proves nothing about columns.**
-- **Guard:** `gohighlevel-handoff.service.spec.ts` #1 (filters on `externalSource`, never
-  `source`) + the Opus review in fix-plan.md round 2.
-
-### L-115 · 2026-09-12 · testing · #703 (W16 outage)
-
-- **Symptom:** #702 shipped a controller with per-handler `@UseGuards(AddonGuard)` in a module
-  that never imported `BillingModule`; unit specs (boundary mocks), lint and `tsc` were all green,
-  the Docker healthcheck hid the boot crash, and prod API answered 502 for 26 minutes
-  (`UnknownDependenciesException` at InstanceLoader).
-- **Root cause:** Nest resolves a guard's constructor params from the REGISTERING module's scope;
-  nothing in the gate chain compiles the Nest container, so a missing module import is invisible
-  until the process boots.
-- **Lesson:** **module wiring is a boot-time contract that boundary mocks and the type-checker
-  cannot see — any diff touching `*.module.ts` or adding a guarded controller needs a proof the
-  container compiles (the compose boot gate `local:up` → `local:validate`, or a repo-truth spec on
-  the wiring shape) before it is pushed.**
-- **Guard:** `apps/api/src/common/addon-guard-module-import.spec.ts` (every `AddonGuard` controller's
-  registering module imports `BillingModule`; proven red on the pre-fix tree) + lane rule: compose
-  boot before any push that changes module wiring.
-
 ## domain
-
-### L-104 · 2026-09-11 · domain · B215
-
-- **Symptom:** a same-key retry of a staff order merge folded the same cart in twice; once the key
-  committed with the fold, the retry replayed instead — and skipped the post-fold invoice resync +
-  credit sync/settle, leaving the order's invoice and credits out of sync forever.
-- **Root cause:** the key committed INSIDE the fold's transaction while the convergent tail after
-  it stayed outside, so "already done" was true of the irreversible step and false of everything
-  after it. The same diff's new Prisma model also failed `schema-folder.spec.ts`'s model-count
-  pin.
-- **Lesson:** **An idempotency key must cover the whole unit of work: commit the key with the
-  irreversible step, and make every step after it convergent and re-run on replay; append-only
-  steps (a revision snapshot) stay behind the key. Any Prisma model change puts
-  `apps/api/src/common/schema-folder.spec.ts` in the radius.**
-- **Guard:** REG-B215 T2b + T16 in `orders.merge-idempotency.spec.ts`; the `schema-folder.spec.ts`
-  model-count pin.
 
 ### L-100 · 2026-09-08 · domain · #678
 
@@ -401,22 +347,6 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
   lets every plane self-test point `machineRoot()` at its own temp root; the five real-runs.jsonl
   invariants became a temp-root-only check, and plane-learning's `T-concurrent-writer` proves
   isolation under a genuine concurrent writer. Related [[L-114]].
-
-### L-117 · 2026-09-13 · tooling · fresh-worktree first push
-
-- **Symptom:** a linked worktree's first push went out with NO verify (no hook output at all);
-  after `npm ci` the next push was REFUSED at the final `campaign-check` ("no test titled with
-  REG-B### found in the jest report") although every test existed and passed (#704, 2026-09-12).
-- **Root cause:** husky's `.husky/_` hooks exist only after `npm ci`, so a fresh worktree pushes
-  silently unverified; once installed, turbo replays shared-worktree-cache HITS for `test`, jest
-  never runs there, `.campaign/runs/<ws>.json` are never written and the gate fails on absence
-  (sibling of [[L-083]]: there the report was stale, here it does not exist).
-- **Lesson:** **A new worktree is push-ready only after `npm ci` has installed the hooks AND one
-  uncached `npx turbo run test --force --concurrency=2` has written the campaign reports; never
-  trust a push's exit code — read the hook output and confirm the remote head.**
-- **Guard:** `campaign-check` refuses the missing-report case (the refusal itself); CI verify on
-  the PR head is the merge gate for the no-hook case; P-BUILD step 1 and P-CLOUD-0 step 7 carry
-  the routine. Candidate: `scripts/worktree-audit.mjs` flags a worktree without `.husky/_`.
 
 ### L-118 · 2026-09-13 · domain · F38 at-door money (B305)
 
@@ -670,6 +600,60 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   people to stop reading CI failures.**
 - **Guard:** both assertions now match `/^\^19\./` instead of `.toBe("^19.2.0")` in
   `apps/api/src/common/no-react-skew-hacks.spec.ts`.
+
+### L-146 · 2026-09-14 · domain · B221 driver return-list scoping
+
+- **Symptom:** `GET /returns` is `@Roles(OPERATOR, DRIVER, CUSTOMER)` on the controller, but
+  `ReturnsService.findAllForUser` had a scoping branch for CUSTOMER only — a DRIVER fell through
+  to the unscoped, tenant-wide `findAll`, seeing every return in the tenant rather than just
+  ones on orders assigned to their own route runs.
+- **Root cause:** the role was added to the endpoint's authorization list (so a driver COULD
+  call it at all) without a matching branch in the service's OWN scoping logic — `@Roles` and
+  tenant-scoping (`forTenant()`) both silently read as "this is handled," but neither actually
+  restricts results to the CALLER's own data once past the tenant boundary.
+- **Lesson:** **`@Roles(...)` is authorization (can this role call the endpoint at all), never
+  scoping (which rows can this specific caller see). Adding a role to an endpoint's allow-list
+  is only half the change — grep the SERVICE method's own list-scoping for a branch per role
+  actually granted access, and add one for any that's missing, or the new role inherits
+  whichever existing branch's fallthrough happens to run (often the most-privileged one).**
+- **Guard:** `ReturnsService.findAllForUser`'s DRIVER branch (resolves the caller's `Driver` row,
+  scopes via `where.order = {routeRun: {driverId}}`); `returns.security.spec.ts`'s B221 suite.
+  Sibling pattern already fixed once in `credit-notes.service.ts` (DRIVER denied outright there,
+  a different but equally deliberate choice — the point is BOTH required an explicit branch).
+
+### L-155 · 2026-09-15 · domain · PR-2 fix round (F2: retired-writer branch vs legacy data)
+
+- **Symptom:** B348 removed a `cancel()` branch handling ReturnStatus PROCESSED, reasoning "no
+  writer sets this anymore" (confirmed by grep) — independent review restored it: rows already
+  PROCESSED from before the writer was retired still need cancel() to undo their stock/ledger
+  effects, and removing the branch stranded that reversal for every such legacy row.
+- **Root cause:** "no live writer" was verified against CODE (a grep for the enum value) and
+  treated as equivalent to "no live DATA in that state" — a retired write path leaves its
+  already-written rows behind; the enum member stayed real in the schema.
+- **Lesson:** **Before deleting a branch that HANDLES an enum/state value because nothing WRITES
+  it anymore, that is a claim about existing DATA, not code — verify with a query (or an
+  explicit prod count) before removing the read/update-side handling, not a grep for writers.**
+- **Guard:** `returns-ledger.spec.ts`'s PROCESSED-cancel case pins the restored behavior; the
+  comment on the branch cites the exact prod check (`GROUP BY status`) that would retire it.
+
+### L-158 · 2026-09-15 · domain · PR-2 fix round 3 (idempotency guard: ordering + fail-closed)
+
+- **Symptom:** two findings on one newly-built idempotency guard (returns.service.ts create()).
+  (a) the replay check ran AFTER order/DELIVERED/ownership validation, so a retry whose order
+  state changed for unrelated reasons since an already-successful attempt wrongly 404/400'd
+  instead of returning the saved result. (b) the lock acquisition was built fail-open like the
+  guard's other methods, but a failed lock has no other backstop against the race it prevents —
+  fail-open there silently defeats the whole guard.
+- **Root cause:** (a) validation predating the guard stayed in its original position instead of
+  being re-examined against the new replay path. (b) fail-open was applied uniformly, without
+  asking whether each method has an independent backstop if it fails.
+- **Lesson:** **Adding a replay guard around an existing operation: (1) the replay check runs
+  BEFORE any validation reading MUTABLE state the original attempt already passed; (2) fail-open
+  is a per-method decision — a step with NO other backstop against the harm it prevents (a lock
+  closing a race) must fail CLOSED, even when siblings safely fail open because a domain-level
+  guard backstops them.**
+- **Guard:** `returns-idempotency.spec.ts`'s retry-after-state-changed case;
+  `idempotency.service.spec.ts` REG-IDEM-SVC-9; `returns-idempotency.db.spec.ts` (real Postgres).
 
 ### L-130 · 2026-09-13 · domain · F27 B15 (estimates)
 

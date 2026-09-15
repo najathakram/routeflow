@@ -4,13 +4,16 @@
  */
 import {
   buildReturnItems,
+  pendingReturnPayloads,
   restockForReason,
   returnActionFlags,
   returnPillFor,
+  submittedReturnKey,
   summarizeSubmissions,
   toUndeliveredStop,
   undeliveredReturnLines,
   undeliveredRowKey,
+  type UndeliveredReturnPayload,
 } from "../lib/returns-logic";
 
 describe("returnActionFlags", () => {
@@ -50,7 +53,7 @@ describe("returnActionFlags", () => {
   });
 
   it("terminal statuses offer nothing", () => {
-    for (const s of ["REFUNDED", "PROCESSED", "REJECTED", "CANCELLED"] as const) {
+    for (const s of ["REFUNDED", "REJECTED", "CANCELLED"] as const) {
       const f = returnActionFlags(s);
       expect(f.terminal).toBe(true);
       expect(
@@ -62,6 +65,22 @@ describe("returnActionFlags", () => {
           f.canRefund,
       ).toBe(false);
     }
+  });
+
+  it("B348: PROCESSED is retired — offers no actions, but is no longer specially flagged terminal either", () => {
+    // No writer anywhere sets this status; the OR-branch that treated it as
+    // equivalent to REFUNDED/REJECTED/CANCELLED was dead defensive code.
+    const f = returnActionFlags("PROCESSED");
+    expect(f.terminal).toBe(false);
+    expect(
+      f.canApprove ||
+        f.canReject ||
+        f.canMarkInTransit ||
+        f.canReceive ||
+        f.canResolveWithoutReceipt ||
+        f.canRefund ||
+        f.canCancel,
+    ).toBe(false);
   });
 });
 
@@ -426,6 +445,45 @@ describe("toUndeliveredStop", () => {
   });
 });
 
+describe("submittedReturnKey (driver-durability lane)", () => {
+  it("scopes by stop AND order, not order alone", () => {
+    expect(submittedReturnKey("stop-1", "order-A")).toBe("stop-1:order-A");
+    expect(submittedReturnKey("stop-2", "order-A")).not.toBe(
+      submittedReturnKey("stop-1", "order-A"),
+    );
+  });
+});
+
+describe("pendingReturnPayloads (driver-durability lane, REG-DRIVER-DURABILITY-C)", () => {
+  const payloadFor = (orderId: string): UndeliveredReturnPayload => ({
+    orderId,
+    reason: "CUSTOMER_REFUSED",
+    items: [{ productId: "p1", qty: 1, restock: true, reason: "CUSTOMER_REFUSED" } as any],
+  });
+
+  it("REG-DRIVER-DURABILITY-C: excludes an already-submitted stop+order pair and keeps others — TODAY: helper does not exist", () => {
+    const payloads = [payloadFor("A"), payloadFor("B")];
+    const submitted = { "S1:A": true as const };
+
+    const pending = pendingReturnPayloads(payloads, submitted, "S1");
+
+    expect(pending.map((p) => p.orderId)).toEqual(["B"]);
+  });
+
+  it("REG-DRIVER-DURABILITY-C: returns everything when nothing has been submitted yet", () => {
+    const payloads = [payloadFor("A"), payloadFor("B")];
+
+    expect(pendingReturnPayloads(payloads, {}, "S1").map((p) => p.orderId)).toEqual(["A", "B"]);
+  });
+
+  it("REG-DRIVER-DURABILITY-C: a submitted key for a DIFFERENT stop never excludes the same order at THIS stop", () => {
+    const payloads = [payloadFor("A")];
+    const submitted = { "S2:A": true as const };
+
+    expect(pendingReturnPayloads(payloads, submitted, "S1").map((p) => p.orderId)).toEqual(["A"]);
+  });
+});
+
 describe("returnPillFor", () => {
   it("maps every status to a labeled pill (no raw enum leaks)", () => {
     expect(returnPillFor("IN_TRANSIT").label).toBe("In transit");
@@ -433,5 +491,9 @@ describe("returnPillFor", () => {
     expect(returnPillFor("REFUNDED").variant).toBe("green");
     // Unknown status degrades gracefully to gray + the raw string.
     expect(returnPillFor("WEIRD")).toEqual({ variant: "gray", label: "WEIRD" });
+  });
+
+  it("B348: PROCESSED (retired, no writer) degrades to the same default as any unrecognised status", () => {
+    expect(returnPillFor("PROCESSED")).toEqual({ variant: "gray", label: "PROCESSED" });
   });
 });

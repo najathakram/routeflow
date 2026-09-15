@@ -5,9 +5,10 @@ import { AuthModule } from "../auth/auth.module";
 import { StorageModule } from "../storage/storage.module";
 import { BillingModule } from "../billing/billing.module";
 import { SystemConfigModule } from "../system-config/system-config.module";
+import { GatewaysModule } from "../gateways/gateways.module";
 
 @Module({
-  imports: [AuthModule, StorageModule, BillingModule, SystemConfigModule],
+  imports: [AuthModule, StorageModule, BillingModule, SystemConfigModule, GatewaysModule],
   controllers: [ProductsController],
   providers: [ProductsService],
   exports: [ProductsService],

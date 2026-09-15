@@ -5,9 +5,9 @@
  * ONE teardown function (`lib/session-teardown.ts#teardownUserSession`)
  * BEFORE `apiLogout()` (tokens still valid): stop background GPS for BOTH
  * realms, mark the offline queue's owner, `queryClient.cancelQueries()` then
- * `.clear()`, and reset the 8 user-scoped stores (stopCartStore added to the
- * original 7) — the tenant store is never touched (Q2, shared-tablet
- * branded login).
+ * `.clear()`, and reset the 9 user-scoped stores (driver-durability lane
+ * added `stopCartStore`/`returnSubmissionStore` to the original 7) — the
+ * tenant store is never touched (Q2, shared-tablet branded login).
  *
  * Mobile Jest is pure-logic only (jest.config.js testMatch) — this drives the
  * REAL `useAuthStore.logout()` with every native/store dependency mocked, the
@@ -129,6 +129,11 @@ jest.mock("../store/stopCartStore", () => ({
   STOP_CART_STORE_NAME: "routeflow-stop-cart-store",
   useStopCartStore: { getState: () => ({ reset: stopCartStoreReset }) },
 }));
+const returnSubmissionStoreReset = jest.fn();
+jest.mock("../store/returnSubmissionStore", () => ({
+  RETURN_SUBMISSION_STORE_NAME: "routeflow-return-submissions",
+  useReturnSubmissionStore: { getState: () => ({ reset: returnSubmissionStoreReset }) },
+}));
 
 // The Q2 pin — "sign-out teardown NEVER clears the tenant store" — is green
 // before AND after the fix, so it does not belong in this red-gate file: it
@@ -159,6 +164,7 @@ const USER_SCOPED_RESETS: Array<[string, jest.Mock]> = [
   ["listUiStore", listUiStoreReset],
   ["productPickerStore", productPickerStoreReset],
   ["stopCartStore", stopCartStoreReset],
+  ["returnSubmissionStore", returnSubmissionStoreReset],
 ];
 
 describe("useAuthStore.logout() teardown (T1, REG-B150 / REG-B140)", () => {
@@ -355,7 +361,7 @@ describe("REG-B136-F: sign-out clears the persisted blobs by pre-resolved user i
     expect(removeItemMock).toHaveBeenCalledWith("routeflow-pod-store:u-1");
   });
 
-  it("logout deletes all THREE persisted keys under the signed-in user's id (driver-durability lane added stopCartStore)", async () => {
+  it("logout deletes all FOUR persisted keys under the signed-in user's id (driver-durability lane added two)", async () => {
     useAuthStore.setState({ user: OPERATOR as any, isAuthenticated: true, activeRole: "operator" });
 
     await useAuthStore.getState().logout();
@@ -365,6 +371,7 @@ describe("REG-B136-F: sign-out clears the persisted blobs by pre-resolved user i
         "routeflow-pod-store:u1",
         "routeflow-run-settlement:u1",
         "routeflow-stop-cart-store:u1",
+        "routeflow-return-submissions:u1",
       ]),
     );
     // Never the anon bucket — that is the bug this pins.
@@ -467,9 +474,9 @@ describe("REG-B136-F: identity is resolved before anything can delete the tokens
     expect(identityAt).toBeLessThan(stopAt);
   });
 
-  it("session-teardown clears all THREE persisted stores after the resets", () => {
+  it("session-teardown clears all FOUR persisted stores after the resets", () => {
     const clears = teardownSrc.match(/clearUserScopedStorage\s*\(/g) ?? [];
-    expect(clears).toHaveLength(3);
+    expect(clears).toHaveLength(4);
     const lastResetAt = teardownSrc.lastIndexOf("resetIfPresent(use");
     expect(lastResetAt).toBeGreaterThan(-1);
     expect(teardownSrc.search(/clearUserScopedStorage\s*\(/)).toBeGreaterThan(lastResetAt);
@@ -505,14 +512,14 @@ describe("REG-B136-F: identity is resolved before anything can delete the tokens
  * REG-B140-D — cross-tab logout (web build). Before this fix,
  * `installCrossTabLogoutListener`'s "storage" handler only dropped the
  * in-memory user; it never ran the shared teardown, so tab B kept the prior
- * user's GPS tracking, query cache, and the 8 user-scoped stores alive after
+ * user's GPS tracking, query cache, and the 9 user-scoped stores alive after
  * tab A signed out elsewhere. This describe gets its own fresh module graph
  * (`jest.resetModules()` + a dynamic import) because `installCrossTabLogoutListener`
  * is a module-level, install-once singleton gated on `Platform.OS === "web"`
  * and a real `window` — neither of which the rest of this file (OS "ios", no
  * window) exercises. `react-native` is re-mocked to "web" via `jest.doMock`
  * for just this block; every other static mock in this file (session-teardown,
- * the 8 stores, api-client, auth, etc.) survives `resetModules()` unchanged.
+ * the 9 stores, api-client, auth, etc.) survives `resetModules()` unchanged.
  */
 describe("REG-B140-D: cross-tab logout tears down (web build)", () => {
   let storageHandler: ((e: { key: string | null; newValue: string | null }) => void) | null = null;
