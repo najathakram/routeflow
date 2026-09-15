@@ -156,6 +156,9 @@ const ALL_REPO_DIRS = [];
 const REPO_PREFIX = "stop-gate5-spec-";
 const countSpecTmpDirs = () =>
   readdirSync(tmpdir()).filter((n) => n.startsWith(REPO_PREFIX)).length;
+// F4's own leftover check, shared verbatim with the REG-B411 case below so the two can never
+// drift apart into a real check and a stale copy of it.
+const f4Leftover = () => ALL_REPO_DIRS.filter((dir) => existsSync(dir));
 function trackRepoDir(dir) {
   REPO_DIRS.push(dir);
   ALL_REPO_DIRS.push(dir);
@@ -677,14 +680,24 @@ function writeStatusShard(dir) {
   // it belongs to another process, not this run.
   const siblingDir = mkdtempSync(join(tmpdir(), REPO_PREFIX));
   try {
-    // F4's own check, verbatim (see the F4 section below).
-    const leftover = ALL_REPO_DIRS.filter((dir) => existsSync(dir));
+    // The shared F4 check (see the F4 section below) — calling the same
+    // helper, not a local copy, so this case can never drift from what F4
+    // actually runs.
+    const leftover = f4Leftover();
     const f4Check = leftover.length === 0;
+    // Load-bearing: prove the planted sibling dir actually changed the ambient
+    // count, i.e. the OLD `countSpecTmpDirs() === tmpDirsBefore` formula (the
+    // one B411 fixed away from) WOULD have tripped here even though this
+    // run's own dirs are genuinely all cleaned up. Without this, deleting the
+    // sibling-directory lines would leave the case passing identically and it
+    // would never catch a regression back to the old formula.
+    const oldFormulaWouldTrip = countSpecTmpDirs() !== tmpDirsBefore;
     report(
       "REG-B411 — F4's per-dir check must not false-trip on a concurrent sibling's dir when this run's own dirs are genuinely all gone",
-      genuinelyClean && f4Check,
+      genuinelyClean && f4Check && oldFormulaWouldTrip,
       `      REPO_DIRS after cleanup: ${REPO_DIRS.length} (expected 0 — this run's own dirs are genuinely gone)\n` +
         `      F4's own check (ALL_REPO_DIRS.every(!existsSync)): ${f4Check} (leftover=${JSON.stringify(leftover)})\n` +
+        `      old ambient-count formula would trip: ${oldFormulaWouldTrip} (before=${tmpDirsBefore}, now=${countSpecTmpDirs()}) — proves the sibling dir is load-bearing\n` +
         `      a concurrent sibling's stop-gate5-spec-* dir (untracked, not in ALL_REPO_DIRS) must never flip this run's own check to FAIL`,
     );
   } finally {
@@ -700,7 +713,7 @@ function writeStatusShard(dir) {
 // window (REG-B411), even though this run's own dirs are genuinely all
 // cleaned up. Per-dir existsSync is immune to a sibling's unrelated dirs.
 cleanupRepos();
-const leftoverDirs = ALL_REPO_DIRS.filter((dir) => existsSync(dir));
+const leftoverDirs = f4Leftover();
 report(
   "F4 — leaves no stop-gate5-spec-* dir behind",
   leftoverDirs.length === 0,

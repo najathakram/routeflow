@@ -853,5 +853,5 @@ apps/web/app --include=*.tsx -A1 | grep -B1 onSuccess` — narrow to `.map()`-re
   ambient/shared count as a stand-in for it — a real subprocess's timing and a global directory
   count both vary with host load and concurrent siblings independent of correctness.**
 - **Guard:** `ci-freshness-guard-script.spec.ts` (c0d45b0f — behavioral assertions only, no
-  `elapsedMs` check); `stop.gate5.spec.mjs` F4 (5c57af58 — iterates `REPO_DIRS`, asserts each no
-  longer exists, drops the ambient count comparison).
+  `elapsedMs` check); `stop.gate5.spec.mjs` F4 (5c57af58 — iterates `ALL_REPO_DIRS`, asserts each
+  no longer exists, drops the ambient count comparison).
