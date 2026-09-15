@@ -1,6 +1,6 @@
 # Architect questions — the interrogation before any code
 
-The questions a senior engineer with twenty years of production scars asks _before_ the first
+The questions a senior engineer with twenty years of production scars asks *before* the first
 file is opened. Five gates, one per pipeline stage. Cite a question as `G2·Q7`.
 
 ## How to use this
@@ -39,7 +39,7 @@ Stage S1. Output: [`discovery.md`](../templates/DISCOVERY.md).
    the build cost plus the cost of running it forever?
 10. Who owns this after it ships: who maintains it, who gets paged, who fixes it in six months — and
     has that person seen this?
-11. What does building this displace? Name what is _not_ getting done instead.
+11. What does building this displace? Name what is *not* getting done instead.
 12. What new questions will support and ops receive once this exists, and what is the self-serve
     answer that stops them becoming tickets?
 
@@ -66,7 +66,7 @@ Stage S2/S3. Output: [`spec.md`](../templates/SPEC.md) — every answer becomes 
 1. State the core capability in one sentence a customer would recognize.
 2. What are the core use cases, in priority order? Which single one, if it worked, would make this
    worth shipping?
-3. What is the _complete_ experience — what must exist beside it so it doesn't feel half-built? Walk
+3. What is the *complete* experience — what must exist beside it so it doesn't feel half-built? Walk
    the lifecycle: create, read, list/filter/search, edit, delete/undo, permissions, audit trail,
    notification, export, and the reverse of every action.
 4. What states must every surface handle: empty, loading, partial, error, offline, unauthorized,
@@ -76,8 +76,8 @@ Stage S2/S3. Output: [`spec.md`](../templates/SPEC.md) — every answer becomes 
    the same thing?
 7. What happens on deploy day to users and data that already exist? Is a backfill needed? If this is
    gated by a flag/plan/entitlement, **what UI or script actually grants it**, and does the granting
-   path write the exact key the gate reads? _A gate nothing can grant is a self-inflicted outage —
-   every user gets a 403 on a feature that shipped._
+   path write the exact key the gate reads? *A gate nothing can grant is a self-inflicted outage —
+   every user gets a 403 on a feature that shipped.*
 8. What is the default for existing users, and is that default safe if nobody ever touches it?
 9. What is the rollback story if this is wrong in production?
 10. What data does this create or collect? Who can see it, how long is it kept, can it be exported
@@ -155,8 +155,8 @@ Stage S3/S5. Output: the risks and alternatives sections of the spec and build p
 Stage S5. Output: build-plan risk notes, and the `scale` decision (`small` vs `major`).
 
 1. **Blast radius:** what is the worst thing a bug here can do — money wrong, data lost, cross-tenant
-   leak, a message sent to a real customer, a driver sent to the wrong address? _Blast radius, not
-   code volume, sets test depth and review scale._
+   leak, a message sent to a real customer, a driver sent to the wrong address? *Blast radius, not
+   code volume, sets test depth and review scale.*
 2. Does this touch money, auth, tenancy, PII, migrations, or anything irreversible? If so, escalate
    scale to `major` and add property-based tests.
 3. What if it runs twice, or two people do it at once? Is it idempotent, and what wins on conflict?
@@ -207,7 +207,7 @@ Stage S4. Output: [`test-plan.md`](../templates/TEST-PLAN.md). Method and comman
 1. For each requirement, what observable behavior proves it? Write it Given/When/Then.
 2. What is the lowest level that can fail for the right reason — unit, property, contract,
    integration, or e2e? Put the test there.
-3. What is the oracle: what makes the expected value _known_, rather than copied out of the
+3. What is the oracle: what makes the expected value *known*, rather than copied out of the
    implementation you are about to write?
 4. Which invariants deserve property-based tests — money, quantities, dates, permissions?
 5. Would this test fail today, before the change? If nothing can fail, the requirement is not yet
@@ -239,7 +239,7 @@ Stage S4. Output: [`test-plan.md`](../templates/TEST-PLAN.md). Method and comman
 - **Q3 (oracle).** "Expected totals come from the worked example in the spec, computed by hand and
   confirmed by the requester — not from running the new code and pasting its output."
 - **Q5 (fails today).** "Ran the new spec against the current build: it fails on `expected 3 rows,
-received 0` — an assertion failure, not an import or config error."
+  received 0` — an assertion failure, not an import or config error."
 - **Q7 (flake).** "No sleeps. The spec waits on an auto-retrying assertion that the row is visible,
   and the fixture creates its own record, so no concurrent run can move it."
 

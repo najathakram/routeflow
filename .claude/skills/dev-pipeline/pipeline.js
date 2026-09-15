@@ -1,776 +1,631 @@
 export const meta = {
   name: 'dev-pipeline',
-  description: 'Fable-planned, test-first delivery engine. ALL planning is already done by FABLE before this engine starts — the discovery (why/who/cost), spec (R#s), test plan (T#s: oracle, vacuity, mutation) and build plan it executes are Fable-authored artifacts; Sonnet NEVER plans. Here: a Haiku baseline proves the verify commands, grounds the Fable artifacts and builds the risk manifest; Sonnet transcribes the Fable-planned tests into code; a verified RED proves they can fail; Sonnet implements to the Fable build plan; then the review lenses run through lessons-fed lenses (deep lenses — correctness, spec-compliance, edge-cases-and-security, operability — on Opus 5, xhigh only on a HIGH-risk file; pattern lenses — test-quality, design-system, scope-coverage — on Sonnet 5 at high), refute lazily (Sonnet 5 for a routine finding, Opus 5 only for a blocker/major finding on a HIGH-risk file), judge the UI a Sonnet driver exercised (Sonnet 5 unless the manifest has a HIGH-risk file), mutation-probe on Sonnet 5, and execute HIGH-risk fixes on Opus 5 — TOKEN-CLASS ROUTING, owner ruling 2026-09-10: Opus is reserved for the verdicts the difficulty earns — while Fable 5.1 decides: split votes, the final pass over an Opus read of a Sonnet-built digest, and the design of every fix that Sonnet and Opus implement. Every agent runs at an explicit model AND effort; nothing inherits the interactive session.',
-  whenToUse: 'Invoked by the dev-pipeline skill after FABLE has authored the planning artifacts (S1-S5: the why/what/proof questions — see the skill MODEL POLICY; planning is never Sonnet or Haiku). args: { planPath, discoveryPath?, specPath?, uxSpecPath?, testPlanPath?, designSystemPath?, lessonsPath?, startedAt?, scale, workdir, context, testPackages?, redGate?, packages, verifyCommands, uiVerify?, mutationProbe?, formatCommand?, fixPlanning?, mode?, radiusFiles?, siblingPatterns? }. mode: \'bugfix\' selects the bug-fix preset (behavioral red bar, radius pack, harness check, sibling sweep, fix-revert probes); absent or anything else is the default \'feature\' preset. Corroboration-skip in Verify (owner ruling 2026-09-11, CFG.skipRefuteOnCorroborated) applies in BOTH modes, not a bugfix-only behaviour.',
+  description: 'Task-loop delivery engine: per-task test authoring, a red gate, implementation, and one adversarial review, run in dependsOn-ordered parallel waves, with Haiku running every mechanical gate and Fable ruling on HIGH-risk reviews and fixes.',
   phases: [
-    { title: 'Baseline', detail: 'Haiku runs the verify commands against the untouched tree to find broken ones, ground-checks every FABLE-authored planning artifact against the repo, and builds the context manifest: changed/planned files, each with a HIGH or LOW risk class', model: 'claude-haiku-4-5' },
-    { title: 'Author tests', detail: 'Sonnet transcribes the FABLE-authored test plan into failing tests in conflict-free waves — Sonnet plans nothing: a gap in the plan is raised as a finding, never improvised; implementation code is forbidden', model: 'claude-sonnet-5' },
-    { title: 'Red gate', detail: 'run the new tests and audit the RED at two levels: STRUCTURAL (every test fails on an assertion, none pass/error/skip — remediated once if not) and BEHAVIORAL (each fails on its own expected value — a shortfall is recorded and proven later by probing every mutation target)', model: 'claude-opus-5' },
-    { title: 'Implement', detail: 'Sonnet engineers execute the FABLE build plan, one per work package, in conflict-free waves — deviations are reported, not decided', model: 'claude-sonnet-5' },
-    { title: 'Gate & Review', detail: 'Haiku build/test gate FIRST — one build-fix agent and a re-gate on failure — then the review lenses over the integrated diff, carrying the project lessons register, at a depth set by the risk class of the files: deep lenses on Opus 5 (xhigh only with a HIGH-risk file), pattern lenses (test-quality, design-system, scope-coverage) on Sonnet 5 at high', model: 'claude-opus-5 + claude-sonnet-5' },
-    { title: 'Verify', detail: 'lazy adversarial refutation (major scale): one refuter per finding, on Sonnet 5 at high unless the finding is a blocker/major on a HIGH-risk file (then Opus 5); a second refuter and the Fable tie-break only when the first one refutes. Runs beside UI verify', model: 'claude-sonnet-5 + claude-opus-5' },
-    { title: 'UI verify', detail: 'Playwright-driven (fallback: browser MCP) exercise of the real UI at every viewport — a Sonnet driver, then a Sonnet judge unless the manifest has a HIGH-risk file (then Opus 5). Runs beside Verify', model: 'claude-sonnet-5 (claude-opus-5 with a HIGH-risk file)' },
-    { title: 'Mutation probe', detail: 'one deliberate defect per target must turn its test RED, then restore-and-verify (major scale only; every target when the red gate had a behavioral shortfall) — mechanical with one judgment call, on Sonnet 5', model: 'claude-sonnet-5' },
-    { title: 'Fix', detail: 'a Sonnet brief (excerpts + call sites, read-only) then ONE Fable 5.1 decision over every finding in the round — fix / dispute / defer, the design, the invariant, the test, the executor tier and the waves — and executors that implement the design instead of improvising: mechanical on Sonnet @ low, designed LOW-risk on Sonnet @ medium, HIGH-risk files and broad synthetic keys on Opus 5 @ high; a design that does not fit comes back as designMismatch and Fable re-decides it; then a scoped re-check beside the dispute slate; the final full gate runs beside the Final pass', model: 'claude-opus-5' },
-    { title: 'Final pass', detail: 'Fable 5.1 adversarial pass over the HIGH-risk files of the finished diff (major scale, skipped and recorded when the diff has no HIGH-risk file; retried once on Opus if Fable declines): hunts what the Opus lenses missed; anything found lands in remainingFindings and keeps clean false', model: 'claude-fable-5-1' },
+    { title: 'Baseline' },
+    { title: 'Author tests' },
+    { title: 'Red gate' },
+    { title: 'Implement' },
+    { title: 'Gate & Review' },
+    { title: 'Verify' },
+    { title: 'UI verify' },
+    { title: 'Mutation probe' },
+    { title: 'Fix' },
+    { title: 'Final pass' },
   ],
 }
 
-// ══════════════ CONFIG — every tuning knob lives here ══════════════
+// pipeline.js -- task-loop engine rebuild.
+// docs/superpowers/plans/2026-09-12-task-loop-rebuild.md (S1-S6, Part A tasks
+// A1-A17). Old engine preserved at pipeline.js.bak-2026-09-12. This file grows
+// task-by-task; through A1-A3 it is meta + config + plan validation only, and
+// every valid plan still reports itself unimplemented so the dry-run harness
+// has something real to observe RED against (scenario A) until A4+ lands.
+
+// ---- CONFIG -- every tuning knob lives here ----
 const CFG = {
-  // MODELS — full ids, never bare aliases: an alias resolves to whatever the harness
-  // currently maps it to (a bare 'sonnet' can land on the pricier Sonnet 4.6).
-  testModel: 'claude-sonnet-5',        // test authors
-  implementModel: 'claude-sonnet-5',   // implementation engineers
-  reviewModel: 'claude-opus-5',        // review lenses, refuters, red auditor, UI verifier, mutation probes, fixers
-  // FABLE IS THE BRAIN, NEVER THE HANDS (owner ruling 2026-09-03): Fable does no
-  // reading, gathering or long writing in this engine — it DECIDES from briefs
-  // that Sonnet and Opus prepare. It helps the review at exactly two points
-  // (owner policy 2026-08-31, amended 2026-09-02/03): the tie-break judge on a
-  // split refutation vote (decides from the refuters' cited evidence, opens no
-  // file), and the FINAL PASS decider on a major diff with HIGH-risk files: a
-  // Sonnet packager gathers the diff, an Opus reader does the adversarial read
-  // and produces candidates with evidence, and Fable rules on the candidates —
-  // real or not, severity, and where the reader must look again if its coverage
-  // was thin (one focused re-read, then a final decision).
-  tieBreakModel: 'claude-fable-5-1',
-  finalPassReaderModel: 'claude-opus-5',
-  finalPassModel: 'claude-fable-5-1',
-  // Fable's safety classifiers can decline a request outright (it surfaces here as
-  // a dead agent). An unadjudicated last read is never clean, so the decision is
-  // retried once on this model and the result records who actually decided.
-  finalPassFallbackModel: 'claude-opus-5',
-  // 'skip' (default, owner ruling 2026-09-02): a major diff with NO HIGH-risk file
-  // gets no final pass — its rationale (money/tenancy/authorization edges between
-  // packages) does not apply, and the old fallback quietly read the WHOLE diff at
-  // Fable prices. 'opus' = read the whole diff on finalPassFallbackModel instead.
-  // 'fable' = the old behaviour. Whatever happens is recorded in finalPass.skipped.
-  finalPassWhenNoHighRisk: 'skip',
-  gateModel: 'claude-haiku-4-5',       // mechanical command-runner (build/test/lint/red-run/manifest)
-  // C1 CHECKPOINTS (plan Part 3 §C1): a Haiku agent writes a durable phase card
-  // after every endPhase, so a dead session resumes from the last one instead of
-  // losing the whole run. It never decides anything — it writes the JSON it is
-  // handed, verbatim, and (once per run) makes the snapshot commit.
-  checkpointModel: 'claude-haiku-4-5',
-  // Fixes whose content is fully determined once the defect is named. Anything
-  // needing a decision about what the code SHOULD do stays on reviewModel.
-  mechanicalFixModel: 'claude-sonnet-5',
-  // FIX PLANNING (owner ruling 2026-09-03): Fable DECIDES every fix in a round, in
-  // one pass, from a brief a Sonnet agent builds — it reads no file and runs no
-  // command. Executors then implement the design and never improvise: a design that
-  // does not fit the code comes back as `designMismatch` and Fable re-decides it
-  // next round. false — or args.fixPlanning === false for one run — restores
-  // exactly today's per-group routing (fixRoute: mechanical vs judgment).
-  fixPlanning: true,
-  fixBriefModel: 'claude-sonnet-5',        // builds the brief (excerpts + callers), read-only
-  fixPlannerModel: 'claude-fable-5-1',     // decides
-  fixPlannerFallbackModel: 'claude-opus-5',// decides if Fable declines (a dead agent), at xhigh
-  // The DESIGNED-fix executor tier: a planned change on a LOW-risk file. Same model
-  // as the mechanical fixer, one tier of effort above it (it implements a design
-  // rather than transcribing a named defect). HIGH-risk files and broad synthetic
-  // keys are upgraded to reviewModel BY THE ENGINE, whatever the planner says.
-  fixExecuteSonnetModel: 'claude-sonnet-5',
-  // Breadth pass over the LOW-risk partition — used ONLY when cascadeReview is on.
-  cascadeModel: 'claude-sonnet-5',
-  // ── BUGFIX MODE (args.mode === 'bugfix') — the same engine, one preset. Every
-  // agent below runs ONLY in that mode; feature mode never launches them.
-  // radius pack: the diff hunks, touched export signatures and call sites of the
-  // files the fix changes, gathered once so every review lens reads the evidence
-  // instead of re-deriving it. Mechanical gathering — the cheap tier.
-  radiusPackModel: 'claude-sonnet-5',
-  // harness check: the existing specs' mocks and fixtures against the service-surface
-  // changes the build plan names. F13's costliest blocker cascade was ONE stale mock
-  // that six review lenses each reported independently, after the fact.
-  harnessCheckModel: 'claude-sonnet-5',
-  // sibling sweep: grep the defect's SHAPE across the repo (mechanical), then judge
-  // each hit (a decision — it runs on reviewModel).
-  siblingGrepModel: 'claude-sonnet-5',
-  // Output-token list prices per MTok [input, output] used ONLY to estimate what
-  // each phase cost (phaseReport[].estUsd). Refresh from the claude-api skill's
-  // "Current Models" table and bump asOf; an estimate at stale prices is labelled.
+  // MODELS -- full ids, never bare aliases: an alias resolves to whatever the
+  // harness currently maps it to (a bare 'sonnet' can land on a different
+  // Sonnet build than the one this run was priced and routed for).
+  models: {
+    fable: 'claude-fable-5-1',
+    sonnet: 'claude-sonnet-5',
+    haiku: 'claude-haiku-4-5',
+    // Owner ruling 2026-09-13 (supersedes 2026-09-10 "Fable replaces Opus everywhere"):
+    // implementation — writing code to a file — is NEVER Fable; it is Sonnet.
+    // What to write (design, root cause, fix design) is Opus. Review on HIGH-risk
+    // is Opus. Fable keeps only planning (S1–S5) and the final-pass read.
+    opus: 'claude-opus-5',
+    fallbackModel: 'claude-opus-5',
+  },
+  // Effort per role. 'implement' is the default implementer tier; a task with
+  // risk 'HIGH' keeps Sonnet but escalates to 'implementHigh' effort (ruling 2026-09-13).
+  effort: {
+    baseline: 'low',
+    testAuthor: 'medium',
+    redCheck: 'low',
+    implement: 'medium',
+    implementHigh: 'high',
+    pack: 'low',
+    review: 'high',
+    fixExec: 'medium',
+    fixDesign: 'high',
+    checkpoint: 'low',
+    uiDrive: 'medium',
+    // A10/A11/A12/A13 roles (bugfix task types, ui-verify, sibling sweep,
+    // Final pass): root-cause/sibling-judge/final-read are judgment calls
+    // (high, on Sonnet or Fable per isHighRisk); probe/checksum are Haiku
+    // mechanics (checksum stays 'low' like every other script-runner call;
+    // probe gets 'medium' -- a revert-probe backs up, reverts, runs one
+    // test and restores, more procedure than a one-line script run).
+    rootCause: 'high',
+    probe: 'medium',
+    checksum: 'low',
+    siblingGrep: 'low',
+    siblingJudge: 'high',
+    finalRead: 'high',
+  },
+  caps: {
+    toolCalls: 12, // withToolCap(): every Fable AND Opus agent call is capped at this many tool calls (judgment over a pack, never exploration).
+    fableBriefBytes: 8192,
+    packBytes: 40960,
+    briefBytes: 1536, // per-task args.tasks[].brief cap (Baseline enforces this).
+    planBytes: {
+      small: { build: 12288, test: 8192 },
+      major: { build: 32768, test: 24576 },
+    },
+  },
+  maxFixRounds: 4,
+  // PROFILES (S6): 'lean' = superpowers parity (no separate test author, no
+  // probes, reviewer always Sonnet, Baseline skips the final-command check);
+  // 'standard' = the full S1-S5 design. args.profile overrides the default
+  // (scale:'small' + no HIGH-risk task/manifest file -> 'lean', else 'standard').
+  profiles: {
+    lean: { separateTestAuthor: false, baselineFinal: false, probes: false, reviewerAlwaysSonnet: true },
+    standard: { separateTestAuthor: true, baselineFinal: true, probes: true, reviewerAlwaysSonnet: false },
+  },
+  // List prices per MTok, used ONLY to estimate what each phase cost
+  // (phaseReport[].estUsd). Refresh from the claude-api skill's "Current
+  // Models" table and bump asOf -- an estimate at stale prices is labelled.
+  // T2 cost-plan (2026-09-14): four classes, not two -- a run with heavy
+  // cache reuse (this engine's own askAgent warmups included) was previously
+  // priced as if every counted token were a fresh output token, which is why
+  // the run's own estimate under-reported true cost roughly 4.3x against the
+  // ledger's real usage-based numbers. estUsd() below still falls back to
+  // the old single-rate (output) math when a caller can only supply a raw
+  // scalar token count with no class breakdown (today's only real source,
+  // budget.spent() -- see A14) -- flagged approx in that case.
   prices: {
     asOf: '2026-06-24',
-    'claude-fable-5-1': [10, 50],
-    'claude-opus-5': [5, 25],
-    'claude-sonnet-5': [2, 10],
-    'claude-haiku-4-5': [1, 5],
+    'claude-fable-5-1': { input: 10, output: 50, cacheWrite1h: 20, cacheRead: 0.25 },
+    'claude-opus-5': { input: 5, output: 25, cacheWrite1h: 10, cacheRead: 0.50 },
+    'claude-sonnet-5': { input: 2, output: 10, cacheWrite1h: 4, cacheRead: 0.20 },
+    'claude-haiku-4-5': { input: 1, output: 5, cacheWrite1h: 2, cacheRead: 0.10 },
   },
-  lenses: {
-    small: ['correctness', 'test-quality'],
-    major: ['correctness', 'spec-compliance', 'test-quality', 'edge-cases-and-security', 'operability', 'scope-coverage'],
-    // 'design-system' is appended below when uxSpecPath or designSystemPath is present.
-  },
-  // On `small`, run ONE reviewer carrying every base lens brief instead of one
-  // agent per lens. Reviewer independence is worth paying for on a large diff,
-  // not on one or two files. The conditional 'design-system' lens stays its own
-  // agent, and a dead merged agent still blocks on BOTH lens names.
-  mergeLensesOnSmall: true,
-  // Adversarial verifiers per finding. A finding is dropped only if ALL
-  // refuters ran AND all of them refuted it (conservative: better to fix a
-  // maybe-real issue than silently drop a blocker; a dead refuter is
-  // no-evidence, never a refutation). 0 = skip the Verify phase.
-  refuteVotes: { small: 0, major: 2 },
-  // LAZY SECOND VOTE (owner ruling 2026-09-02). Measured refute rates are 1–12%
-  // of votes, yet every refutable finding paid the full slate up front (F06: 35
-  // votes, 2 refutations, ~22% of the run's tokens). Now the first refuter votes
-  // alone; the remaining votes — and the Fable tie-break — are cast ONLY when it
-  // says refuted. The drop rule is unchanged: a finding is discarded only when
-  // the full slate ran and agreed (or the judge ruled), so a first vote to keep
-  // ends the matter exactly as two votes to keep did before.
-  lazySecondVote: true,
-  // VERIFY ON DISPUTE (owner ruling 2026-09-02, evening). Pre-verifying every
-  // finding paid ~30 Opus refuters per run to overturn one or two (F13 on the
-  // lazy slate: 30 first votes, 2 refuted; F06 before it: 35 votes, 2 refuted).
-  // Now only findings where a WRONG FIX is expensive get an independent slate
-  // before the fixer: those on HIGH-risk files, plus any finding whose cited
-  // location does not check out. Everything else goes to the fixer, which
-  // REFUTES FIRST and marks what it disputes; disputed findings then get the lazy
-  // Opus slate (and the Fable tie-break) before anything is dropped. The drop
-  // rule never changes: two Opus refuters agree, or the judge rules. Sonnet's
-  // only part is the mechanical location check — it never casts a vote.
-  verify: {
-    mode: 'on-dispute',   // 'on-dispute' | 'all' (pre-refute every refutable finding, as before)
-    // ONE cheap agent checks every finding's cited location up front; a finding
-    // that cites code that is not there is pre-refuted whatever its risk class.
-    locationCheck: true,
-    // Pre-refutation is batched: ONE refuter per FILE judges every finding on
-    // that file (one read of the plan, the prefix and the file instead of N).
-    // Independence comes from the escalation, not from the first vote.
-    batchPerFile: true,
-  },
-  locationCheckModel: 'claude-sonnet-5',
-  // UI VERIFY is two agents (owner ruling 2026-09-03): a Sonnet DRIVER writes and
-  // runs the Playwright spec and captures the evidence (screenshots, console,
-  // network, a11y, per flow and viewport) as facts; an Opus JUDGE reads that
-  // evidence and the screenshots and decides what is a defect. Driving is
-  // transcription of the UX spec's flows; the verdict stays on the review model.
-  uiDriverModel: 'claude-sonnet-5',
-  // FINAL PASS gets a Sonnet PACKAGER: the complete diff hunks of the HIGH-risk
-  // files plus the call sites of every changed export, written to one digest
-  // Fable reads first. Fable's 87k-token F14 pass was mostly context gathering,
-  // which it over-does at higher effort; the read and the verdict stay on Fable.
-  finalPassPackagerModel: 'claude-sonnet-5',
-  // RED GATE VERDICT (owner ruling 2026-09-02). The audit reports two levels:
-  // STRUCTURAL (every new test fails on an assertion — none passes, errors, or is
-  // skipped) and BEHAVIORAL (each test fails on its OWN expected value, not on a
-  // stub's uniform `undefined`). Two of three measured runs (F06, F14) failed only
-  // the behavioral bar, burned the remediation round without changing the outcome,
-  // and were proven by the mutation probe instead. So on 'structural' the
-  // remediation round and the blocker fire only for a structural failure; a
-  // behavioral shortfall becomes a minor `(red-gate)` note and forces the mutation
-  // probe over EVERY target (major scale — small has no probe, so it keeps the
-  // full 'behavioral' bar). 'behavioral' = the old rule at both scales.
-  redGate: { remediateOn: 'structural' },
-  // MEASURED TRADE, OFF: start implementation wave 1 while the red audit runs.
-  // Saves the audit's wall-clock; costs a wasted wave when the audit finds a
-  // requirement already satisfied. overlap.redAudit records what happened so the
-  // flag can be judged from the ledger before it is ever defaulted on.
-  overlapImplementWithRedAudit: false,
-  // WHICH findings are worth two Opus refuters. Refutation exists to stop a
-  // fixer mutating working code on a false positive — that risk is real for a
-  // money/auth/tenancy claim and negligible for a stale comment or a naming nit,
-  // where a wrong fix costs less than the agents spent avoiding it. Measured on
-  // a real major run (F06, 2026-09-01): 35 votes cast, 2 refutations, ~22% of
-  // the whole run's tokens, and 13 of the 22 raw findings were minor. So: refute
-  // by severity, and ALWAYS refute anything on a HIGH-risk file whatever its
-  // severity (that is where a wrongly-dropped finding is expensive). Everything
-  // else goes straight to the fix loop, where the scoped re-check still catches
-  // a bad fix. Set to ['blocker','major','minor'] to restore refute-everything.
-  refuteSeverities: ['blocker', 'major'],
-  maxFixRounds: 2,
-  // P5 (owner ruling 2026-09-11e): in 9/9 ledger rows where the terminal final
-  // pass found a major, fixRounds was already at the cap, so the finding never
-  // got a paid fix — only remainingFindings. On major scale, when the iteration
-  // about to run is the LAST budgeted round, run the final pass FIRST and fold
-  // its findings into that round instead of only reading the diff after the
-  // loop is already over. The terminal final pass (the sign-off read) is
-  // unaffected and always still runs.
-  finalPassBeforeLastRound: true,
-  // Exactly ONE remediation round is allowed on broken/vacuous tests before
-  // implementation starts. More than one means the test plan is wrong, not the tests.
-  maxTestRemediationRounds: 1,
-  // Runtime cap: never have more than this many agents in flight at once.
+  // C1-style checkpoints (A13): a Haiku agent writes a durable phase card,
+  // fire-and-forget, after each task/phase completes.
+  checkpoint: { enabled: true, maxSummaryKb: 32, payloadFindingChars: 200 },
   maxConcurrent: 16,
-  // When the user set a "+Nk" token budget, don't open a new fix round
-  // with fewer than this many tokens remaining.
-  budgetFloor: 30000,
-  // EFFORT — a per-role decision made HERE. No agent inherits the interactive
-  // session's effort: subagents inherit it by default, so a Fable session at
-  // xhigh/max used to run every Opus lens, fixer, probe and the Fable final pass
-  // at xhigh/max too (12 of 25 call sites had no ceiling). Effort drives thinking
-  // tokens AND turn duration, so every ceiling below is a cost and a speed lever;
-  // depth where a miss is expensive (HIGH risk) is the one place it steps up.
-  // `high` is the API's and Claude Code's default; `xhigh` is reserved; `max`
-  // is never a default. Uniform effort inside one fan-out also lets the harness
-  // share the prompt-prefix cache across those agents.
-  effort: {
-    gate: 'low',
-    manifest: 'low',
-    checksum: 'low',
-    grounding: 'low',
-    mechanicalFix: 'low',
-    // FIX PLANNING. The brief is mechanical gathering (excerpts + call sites); the
-    // plan is the round's one real decision, so it takes the Fable default; the
-    // fallback decider gets xhigh because it is deciding without Fable. A designed
-    // fix on a LOW-risk file is a transcription of Fable's design, hence medium.
-    fixBrief: 'low',
-    fixPlan: 'high',
-    fixPlanFallback: 'xhigh',
-    fixExecuteSonnet: 'medium',
-    // Sonnet TRANSCRIBES Fable's test plan and build plan; medium first, and the
-    // Opus build-fix agent is the escalation when a gate fails. A plan may still
-    // raise one package to high (or another model) with its own effort/model.
-    tests: 'medium',
-    // A9 (CFG.cheapFirst): the FIRST attempt at an unrisen package, before any
-    // plan-set effort override. A package that comes back not "done" is rerun
-    // once at `tests` (above) — never a third attempt.
-    testsCheap: 'low',
-    implement: 'medium',
-    // "Never tiered down" now means never below the Opus default. It is the
-    // evidence that the tests can fail.
-    redAudit: 'high',
-    // R1 CALIBRATION: test-remediation now runs on CFG.routing.testRemediationModel
-    // (Sonnet) — medium matches its L2 (transcribe/build) level, not the Opus
-    // verdict tier it left.
-    redRemediate: 'medium',
-    // R1 CALIBRATION: build-fix runs on CFG.routing.buildFixRoutineModel (Sonnet)
-    // unless the manifest has a HIGH-risk file (buildFixModelFor()) — high either
-    // way, since a fully-specified break is the same amount of work regardless of
-    // which model reads it.
-    buildFix: 'high',
-    judgmentFix: 'high',
-    // R1 CALIBRATION: recheck runs on CFG.routing.recheckRoutineModel (Sonnet)
-    // unless the manifest has a HIGH-risk file (recheckModelFor()) — high either
-    // way, matching the L3 routine-verdict tier this role now sits at.
-    recheck: 'high',
-    // correctness / spec-compliance / edge-cases-and-security / operability read
-    // for defects that only show up when you trace the whole path. high on an
-    // ordinary diff; xhigh when the manifest classed any file HIGH risk.
-    lensDeep: 'high',
-    lensDeepHighRisk: 'xhigh',
-    // test-quality / design-system / scope-coverage match patterns against a
-    // known list. TOKEN-CLASS ROUTING (2026-09-10): these now run on
-    // CFG.routing.patternLensModel (Sonnet), not Opus — Sonnet's routine-verdict
-    // tier is `high`, not `medium`. Their FILE COVERAGE is never reduced.
-    lensPattern: 'high',
-    // Refuter effort. TOKEN-CLASS ROUTING (2026-09-10): a routine refuter (no
-    // HIGH-risk file, or a HIGH-risk file with nothing worse than a minor
-    // finding) now runs on CFG.routing.routineRefuterModel (Sonnet) at `high` —
-    // the same "Sonnet does the routine verdict at high" tier as the lenses
-    // above. refuteHighRisk (a blocker/major finding on a HIGH-risk file) stays
-    // on Opus, where a wrongly-dropped finding is expensive.
-    refute: 'high',
-    refuteHighRisk: 'high',
-    tieBreak: 'high',
-    // Mechanical: does the cited code exist where the finding says it does.
-    locationCheck: 'low',
-    // C1 checkpoint writer: verbatim JSON write (+ once-per-run commit). Floor effort.
-    checkpoint: 'low',
-    // UI verify: the Sonnet driver authors and runs the spec (careful, not deep);
-    // the Opus judge reads the evidence and rules.
-    uiDrive: 'medium',
-    uiJudge: 'high',
-    // Final pass: the Sonnet packager only collects diff hunks and call sites.
-    finalPassPackage: 'low',
-    // The probe injects one defect and restores by file copy — a mechanical
-    // script with one judgment call (which defect). medium.
-    mutate: 'medium',
-    // A5: the test-author remediation on a surviving mutant is the same tier as
-    // authoring tests generally (CFG.effort.tests) — it is a designed test change,
-    // not a mechanical script.
-    mutationRemediate: 'medium',
-    cascadeAudit: 'high',
-    // BUGFIX MODE. Three mechanical gatherers at the floor, and one judgment call
-    // (which sibling hits are the same defect) one tier above it.
-    radiusPack: 'low',
-    harnessCheck: 'low',
-    siblingGrep: 'low',
-    siblingJudge: 'medium',
-    // The last read is on Opus at xhigh (where a miss is expensive); the decision
-    // is on Fable at high over a compact brief — F14's 87k-token single Fable
-    // agent was mostly context gathering, which is no longer Fable's job. The
-    // fallback decider (Opus) gets xhigh because it is deciding without Fable.
-    finalPassRead: 'xhigh',
-    finalPass: 'high',
-    finalPassFallback: 'xhigh',
-  },
-  // ── MEASURED TRADES — unproven, OFF by default. Each one trades evidence for
-  // cost, so each ships with the audit field that says whether the trade held.
-  // Never flip one on without reading that number from real runs.
-  // cascadeReview: Sonnet covers the LOW-risk partition, Opus covers HIGH plus
-  // everything Sonnet flagged. Risk: a subtle defect in a LOW-risk file that
-  // Sonnet misses is never seen by Opus. Audited by cascadeAudit.missedFindings.
-  cascadeReview: false,
-  // densityEscalation: if the floor lenses find nothing on a green, small diff,
-  // skip the remaining lenses. Risk: defects the floor lenses do not look for.
-  // Audited by escalation.lensesSkipped.
-  densityEscalation: false,
-  // The stated size threshold for densityEscalation. A bigger diff never
-  // escalates, and an UNKNOWN size counts as over the threshold.
-  densityThreshold: { files: 8, changedLines: 400 },
-  // C1 CHECKPOINTS. enabled requires args.runDir too (see endPhase) — no runDir,
-  // no checkpoints, and the legacy call shape is byte-identical. snapshotCommit
-  // gates the ONE per-run `wip(pipeline):` commit at the first green Gate & Review;
-  // it never pushes and it refuses on main/master. maxSummaryKb bounds the FINAL
-  // checkpoint's result.json (details live in the per-phase files, not there).
-  // payloadFindingChars bounds each one-line finding summary a phase card carries
-  // — never `detail`, which can be arbitrarily long.
-  checkpoint: { enabled: true, snapshotCommit: true, maxSummaryKb: 32, payloadFindingChars: 200 },
-  // TOKEN-CLASS ROUTING (owner ruling 2026-09-10). Measured on a 113-agent run
-  // ($205 total): Opus $180 — of which $109 was cache READS (219M tokens) plus
-  // $67 cache WRITES and only $2.70 output; Fable $11, almost entirely cache
-  // writes for a ~20-token reply; Sonnet $11.50 for ALL of the run's volume. The
-  // rule this run bought: Fable = cache work only — short rulings over a compact
-  // brief (CFG.caps.fableBriefBytes); Sonnet = all the in/out — reading, writing,
-  // packing, and routine verdicts, at `high`; Opus = verdicts the difficulty
-  // actually earns (a HIGH-risk file, a blocker/major refutation there, the
-  // red-gate audit, the final-pass read, security, HIGH-risk fix execution) read
-  // over a compact pack under a tool-call cap (CFG.caps.opusToolCalls); Haiku =
-  // mechanics. highRiskOnlyOpus records the one thing that is allowed to escalate
-  // a routine role back to Opus: a HIGH-risk file (or a blocker/major finding on
-  // one) — never scale or lens name alone. A demotion that drops a phase's
-  // confirmed findings over ten true-telemetry runs (see pipeline-ledger.mjs
-  // routingScorecard) is reverted.
-  routing: {
-    patternLensModel: 'claude-sonnet-5',    // test-quality / design-system / scope-coverage lenses
-    routineRefuterModel: 'claude-sonnet-5', // refuters on a non-HIGH-risk file, or a minor finding even on one
-    probeModel: 'claude-sonnet-5',          // mutation probe: inject a defect, restore, one judgment call
-    uiJudgeModel: 'claude-sonnet-5',        // UI verdict when the manifest has no HIGH-risk file
-    highRiskOnlyOpus: true,
-    // R1 CALIBRATION (owner ruling 2026-09-11, ROUTING-PLAN.md §9b — 23 engine
-    // runs / 1,342 agent-calls). Three roles the scorecard showed paying Opus
-    // prices for a Sonnet-shaped decision: test-remediation ($3.51/call vs
-    // $1.10 for sibling labels — always Sonnet, no risk gate), recheck (always
-    // Opus, $109/run — more than the final-pass read; Sonnet unless the
-    // manifest has a HIGH-risk file), build-fix ($6.09/call for a fully
-    // specified break; Sonnet-first, Opus only on a HIGH-risk file). The
-    // correctness lens (A4) is the deliberate exception and is NEVER routed
-    // through these — see unitModel()'s assertion.
-    testRemediationModel: 'claude-sonnet-5',
-    recheckRoutineModel: 'claude-sonnet-5',
-    buildFixRoutineModel: 'claude-sonnet-5',
-  },
-  // INPUT / TURN CAPS (owner ruling 2026-09-10). Every Opus prompt in this engine
-  // (lenses, refuters, the red-gate audit, the final-pass reader, judgment
-  // fixers) carries a standing clause capping it to opusToolCalls tool calls
-  // before it must stop and report `needsMoreContext` — Opus reads the pack
-  // Sonnet already built, it does not re-discover the repo. Every Fable prompt
-  // (the fix planner, the final-pass decider, the tie-break judge) gets its
-  // brief truncated to fableBriefBytes, with a marker, when a packager handed it
-  // too much. packBytes bounds the packs/digests Sonnet builds for those two
-  // roles to read.
-  caps: { opusToolCalls: 12, fableBriefBytes: 8192, packBytes: 40960 },
-  // A2 EXECUTION-VERIFIED CONFIRMED (owner ruling 2026-09-11, skills-upgrade
-  // ruling §A2 — ADOPT NOW). A lens finding is 'plausible' by default; it
-  // becomes 'execution' when a fixer's verifiedFixes entry (a named test, red
-  // on the original tree, green on the patched one) is corroborated by that
-  // round's own independent re-gate, or 'ruled' when Fable's fix-plan decision
-  // confirms it from cited evidence for a finding with no runnable check.
-  // confirmedByPhase and confirmedFindings count 'execution' + 'ruled' only;
-  // 'plausible' survivors are listed separately in resultObj.plausibleFindings.
-  // false restores the old behaviour byte-for-byte: every survivor of
-  // refutation counts as confirmed, and plausibleFindings is always empty.
-  executionVerified: true,
-  // A3 SKIP REFUTATION ON INDEPENDENT AGREEMENT (owner ruling 2026-09-11,
-  // skills-upgrade ruling §A3 — ADOPT NOW). A finding 2+ independent lenses
-  // reported (corroborationCount(f) >= 2, from the SAME dedupe/cluster output
-  // that produces corroboratedBy) is not the kind a refuter overturns — it
-  // bypasses the pre-refutation slate entirely and goes straight to the
-  // refute-first fixer, exactly like a bugfix-mode radius-pack finding always
-  // has. Previously this only ran in bugfix mode (`bugfix ? ... : []`); this
-  // flag makes it the general rule in feature mode too. A mis-cited finding is
-  // STILL pre-refuted whatever its corroboration — the location signal costs
-  // nothing and corroboration is not evidence for a citation that does not
-  // check out. false restores exactly the old bugfix-only gate.
-  skipRefuteOnCorroborated: true,
-  // A5 MUTANT FEEDBACK WITH ACCEPTANCE BAR (owner ruling 2026-09-11, skills-upgrade
-  // ruling §A5 — ADOPT NOW). A surviving mutant (a probe whose named test did NOT
-  // catch the injected defect) returns to ONE Sonnet test-author for ONE
-  // remediation round; the test it adds/strengthens is kept ONLY if a re-probe of
-  // the SAME mutation shows it now caught AND the gate stays green
-  // (mutationAcceptanceBar: 'kills-mutant') — otherwise it is reverted from the
-  // backup the remediator is required to take, and the round is recorded either
-  // way in mutationResult.remediation. false skips this entirely (today's
-  // behaviour: a surviving mutant is only ever a finding, never remediated here).
-  mutationRemediate: true,
-  mutationAcceptanceBar: 'kills-mutant',
-  // A6 FLAKY QUARANTINE AT THE GATE (owner ruling 2026-09-11, skills-upgrade
-  // ruling §A6 — ADOPT NOW). On a gate failure whose report names the specific
-  // failedTests, spend this many EXTRA reruns of exactly the failing command(s)
-  // on the SAME, unmodified tree. A test that fails in SOME but not ALL of those
-  // reruns is flaky: recorded in result.quarantined[] (name, runs, failures) and
-  // excluded from the red-bar/fix trigger — but it never counts as green either,
-  // so a command is only forced to pass:true once EVERY one of its originally-
-  // failing tests is accounted for as flaky or non-reproducing; a test failing
-  // every rerun is left exactly as reported, a genuine blocker. 0 = off: a gate
-  // failure is trusted on the first read, exactly as before A6.
-  flakyReruns: 3,
-  // A8 CACHE DISCIPLINE DEFAULTS (owner ruling 2026-09-11, skills-upgrade ruling
-  // §A8 — ADOPT NOW). cacheWarmup: one trivial agent per DISTINCT model about to
-  // be used in a lens wave, run to completion and discarded before the real
-  // fan-out — its only job is writing the shared RUN_PREFIX into that model's
-  // cache so every real agent in the wave reads warm instead of each writing
-  // its own copy (measured: a fan-out launched in the same instant showed
-  // cache_read=0 on every agent). uniformLensEffort: every unit in ONE lens
-  // wave shares the DEEPEST effort any OTHER UNIT ON THE SAME MODEL would have
-  // used alone (corrected 2026-09-11c, C1 — was per-wave, now per model family,
-  // since prompt caches never cross models and per-wave could push a Sonnet
-  // pattern lens up to an Opus deep lens's xhigh it never earned). Model
-  // routing (unitModel/DEEP_LENSES) is untouched, only the effort number.
-  // false on either restores exactly today's behaviour (no warmer; each unit's
-  // own unitEffort()).
-  cacheWarmup: true,
-  uniformLensEffort: true,
-  // A9 RUN CHEAP, RERUN FAILURES (owner ruling 2026-09-11, skills-upgrade ruling
-  // §A9 — ADOPT NOW). Author-tests packages run at CFG.effort.testsCheap first;
-  // only a package that comes back NOT "done" is rerun, once, at the ordinary
-  // default (CFG.effort.tests) — the rerun's result is authoritative either way.
-  // A package the plan itself gave an explicit effort is never cheapened (a
-  // plan's own call overrides this knob, exactly as it already overrides
-  // CFG.effort.tests). rerunCount is recorded on testAuthoring. Gates and other
-  // already-floor ('low') mechanical steps have no cheaper tier to run at, so
-  // this knob has no further effect there today — it exists so a future role
-  // that gains a real cheap/default split does not need a new flag.
-  cheapFirst: true,
 }
-// A3 HARD CAPS (owner ruling 2026-09-11): corroboration-skip removes a
-// pre-refutation safety net for the findings it applies to, so these ceilings
-// are ENFORCED here, not just documented in a comment. maxFixRounds ≤ 3 on
-// major scale; refuteVotes ≤ 2 automated votes per finding (a split first/
-// second vote always resolves on Fable's tie-break — never a third automated
-// refuter round; see judgeFindings()). A run that wants more must raise the
-// cap here deliberately, not drift past it silently.
-if (CFG.maxFixRounds > 3) throw new Error(`A3 hard cap: CFG.maxFixRounds is ${CFG.maxFixRounds}, must be <= 3`)
-for (const k of Object.keys(CFG.refuteVotes)) {
-  if (CFG.refuteVotes[k] > 2) throw new Error(`A3 hard cap: CFG.refuteVotes.${k} is ${CFG.refuteVotes[k]}, must be <= 2 automated votes (a split goes to Fable's tie-break, never a third automated round)`)
-}
-// ═══════════════════════════════════════════════════════════════════
 
+// ---------- A3: task-graph validation ----------
+// Every args.tasks[].type the engine recognizes. Anything else is a
+// (build-plan) blocker -- an unrecognized type would otherwise silently take
+// the 'feature' path and skip whatever gating its real type needed.
+const TASK_TYPES = ['feature', 'root-cause', 'repro-test', 'fix', 'revert-probe', 'docs', 'ui-verify']
+
+// Fix round 1 (task review, finding 3): match the shape the rest of the
+// engine's findings use (pipeline.js.bak-2026-09-12 @741-746, @3064-3071) --
+// `phase` (consumed by A13 checkpoint payloads and phaseReport), no `line`/
+// `source` (no consumer plans to read either).
+function toBuildPlanBlocker(message) {
+  return { file: '(build-plan)', severity: 'blocker', phase: 'Baseline', summary: message, detail: message }
+}
+
+// Normalize path spellings so 'src\\a.ts', './src/a.ts', and 'src/a.ts' are
+// one key (fix round 1, finding 1; lifted from pipeline.js.bak-2026-09-12
+// @2080). Without this the shared-file rule below is defeated by spelling
+// alone: two tasks that touch the SAME file under different-looking paths
+// were never compared as equal.
+function normPath(p) {
+  return (p || '').replace(/\\/g, '/').replace(/^\.\//, '')
+}
+
+// The set of task ids reachable by walking dependsOn edges from `id`,
+// transitively (NOT including `id` itself). Dedupe-by-seen makes this safe
+// against a dependsOn cycle: a cycle just stops contributing new ids once
+// every member has been visited once. NOTE: in a cycle this can include
+// `id` itself, and can make dependsPathExists() below report two cyclic
+// tasks as "ordered" -- detectGraphIssues() catches that case directly with
+// its own dedicated cycle blocker, so this quirk is never the only guard.
+function ancestorIds(id, byId) {
+  const seen = new Set()
+  const stack = [id]
+  while (stack.length) {
+    const cur = stack.pop()
+    const t = byId.get(cur)
+    if (!t) continue
+    for (const dep of t.dependsOn || []) {
+      if (seen.has(dep)) continue
+      seen.add(dep)
+      stack.push(dep)
+    }
+  }
+  return seen
+}
+
+// A10: returns the actual ancestor task OBJECTS of a given type (not just a
+// boolean) -- fixGateStage needs the real root-cause task(s) to look up their
+// results by id, not merely proof that one exists (validateTasks' own job).
+function ancestorsOfType(id, byId, type) {
+  const out = []
+  for (const aid of ancestorIds(id, byId)) {
+    const t = byId.get(aid)
+    if (t && t.type === type) out.push(t)
+  }
+  return out
+}
+function hasAncestorOfType(id, byId, type) {
+  return ancestorsOfType(id, byId, type).length > 0
+}
+
+// True when either task is a (transitive) dependsOn ancestor of the other --
+// i.e. the plan already orders them, so scheduling them into separate waves
+// (A7's buildWaves) is a safe, INTENDED serialization rather than a plan gap.
+function dependsPathExists(aId, bId, byId) {
+  return ancestorIds(aId, byId).has(bId) || ancestorIds(bId, byId).has(aId)
+}
+
+// Fix round 1 (task review, finding 2): walks each task's dependsOn edges
+// (buildWaves-style DFS, pipeline.js.bak-2026-09-12 @2851-2907) to surface
+// the three graph defects that OLD engine's buildWaves used to just silently
+// drop the ordering constraint for: an unknown dependsOn id, a self-edge,
+// and a cycle. Any of these makes the declared ordering constraint vanish --
+// exactly the failure buildWaves' own issues[] (@2862-2875) existed to
+// surface there; here it is a hard (build-plan) blocker instead, since no
+// wave scheduler runs yet to fall back on. A cycle is reported once, from
+// whichever side's DFS reaches the other side while it is still on the
+// stack.
+function detectGraphIssues(tasks, byId) {
+  const findings = []
+  const state = {} // id -> 1 = on the stack (in progress), 2 = done
+  function visit(t) {
+    if (state[t.id] === 2) return
+    if (state[t.id] === 1) return
+    state[t.id] = 1
+    for (const dep of t.dependsOn || []) {
+      const d = byId.get(dep)
+      if (!d) {
+        findings.push(toBuildPlanBlocker(`Task ${t.id} declares dependsOn "${dep}", which matches no task id -- that ordering constraint was DROPPED.`))
+        continue
+      }
+      if (d === t) {
+        findings.push(toBuildPlanBlocker(`Task ${t.id} declares dependsOn on itself -- ignored.`))
+        continue
+      }
+      if (state[d.id] === 1) {
+        findings.push(toBuildPlanBlocker(`Circular dependsOn between ${t.id} and ${d.id} -- the cycle cannot be ordered.`))
+        continue
+      }
+      visit(d)
+    }
+    state[t.id] = 2
+  }
+  for (const t of tasks) visit(t)
+  return findings
+}
+
+// Runs BEFORE any agent() call. Returns a list of (build-plan) blockers for a
+// structurally invalid plan:
+//  - a task id declared more than once (fix round 1: duplicate ids collapse
+//    silently in a Map, so every other check below would only ever see the
+//    LAST task with that id)
+//  - a task whose type is not one of TASK_TYPES
+//  - an unknown dependsOn id, a dependsOn self-edge, or a dependsOn cycle
+//    (fix round 1, finding 2)
+//  - a `fix` task with no `root-cause` AND no `repro-test` ancestor via
+//    dependsOn (either missing is enough to block -- a fix must be able to
+//    point at a confirmed cause and a test that proves the bug's own wrong
+//    value)
+//  - a `revert-probe` task with no `fix` ancestor via dependsOn
+//  - two tasks that both touch the same file (compared via normPath, fix
+//    round 1 finding 1) with no dependsOn path between them in either
+//    direction -- buildWaves (A7) would still serialize them safely, but an
+//    unordered shared-file edit is a plan gap worth surfacing before any
+//    agent starts work on it
+function validateTasks(tasks) {
+  const list = tasks || []
+  const findings = []
+  const byId = new Map()
+  for (const t of list) byId.set(t.id, t)
+
+  const seenIds = new Set()
+  for (const t of list) {
+    if (seenIds.has(t.id)) {
+      findings.push(toBuildPlanBlocker(`Task id "${t.id}" is declared more than once -- task ids must be unique.`))
+    }
+    seenIds.add(t.id)
+  }
+
+  for (const t of list) {
+    if (!TASK_TYPES.includes(t.type)) {
+      findings.push(toBuildPlanBlocker(`Task ${t.id} declares type "${t.type}", which is not one of ${TASK_TYPES.join('|')}.`))
+    }
+  }
+
+  findings.push(...detectGraphIssues(list, byId))
+
+  for (const t of list) {
+    if (t.type === 'fix') {
+      const hasRootCause = hasAncestorOfType(t.id, byId, 'root-cause')
+      const hasReproTest = hasAncestorOfType(t.id, byId, 'repro-test')
+      if (!hasRootCause || !hasReproTest) {
+        const missing = [!hasRootCause ? '"root-cause"' : null, !hasReproTest ? '"repro-test"' : null].filter(Boolean).join(' and ')
+        findings.push(toBuildPlanBlocker(`Task ${t.id} is type "fix" but has no ${missing} task among its dependsOn ancestors -- a fix must depend (directly or transitively) on both.`))
+      }
+    }
+    if (t.type === 'revert-probe' && !hasAncestorOfType(t.id, byId, 'fix')) {
+      findings.push(toBuildPlanBlocker(`Task ${t.id} is type "revert-probe" but has no "fix" task among its dependsOn ancestors.`))
+    }
+  }
+
+  // E5 (2026-09-15, first real launch): a path listed in BOTH a task's `files`
+  // and its `tests` is a plan contradiction -- the test-author scope guard
+  // (enforceTestAuthorScope) reverts any author edit to a `files` path, so a
+  // spec declared on both sides would be wiped the moment the author writes it.
+  // "Spec-is-the-fix" tasks (the defect is the spec's own assertion) declare
+  // `files: []` and `tests: [spec]` instead.
+  for (const t of list) {
+    const testSet = new Set((t.tests || []).map(normPath))
+    const both = (t.files || []).filter((f) => testSet.has(normPath(f)))
+    if (both.length) {
+      findings.push(toBuildPlanBlocker(`Task ${t.id} lists ${both.join(', ')} in BOTH files and tests -- a test path may appear only in tests (use files: [] when the fix lives in the spec itself).`))
+    }
+  }
+
+  // Fix round 1 (finding 2): shared-file detection was `files`-only -- two
+  // tasks that both extend the same TEST file, with no dependsOn ordering
+  // between them, slipped through unblocked. Overlap over
+  // `[...files, ...tests]` on BOTH sides now.
+  for (let i = 0; i < list.length; i++) {
+    for (let j = i + 1; j < list.length; j++) {
+      const a = list[i]
+      const b = list[j]
+      const aOwned = [...(a.files || []), ...(a.tests || [])]
+      const bPaths = new Set([...(b.files || []), ...(b.tests || [])].map(normPath))
+      const shared = aOwned.filter((f) => bPaths.has(normPath(f)))
+      if (shared.length && !dependsPathExists(a.id, b.id, byId)) {
+        findings.push(toBuildPlanBlocker(`Tasks ${a.id} and ${b.id} both touch ${shared.join(', ')} but neither depends on the other -- add a dependsOn edge (either direction) or split the file between them.`))
+      }
+    }
+  }
+
+  return findings
+}
+
+// ---------- args ----------
 // The Workflow runner may deliver `args` as a JSON string (scriptPath mode) or
-// as an object — normalize so destructuring works either way.
+// as an object -- normalize so destructuring works either way.
 const _args = typeof args === 'string' ? JSON.parse(args) : (args || {})
 const {
-  planPath,
-  discoveryPath = '',
-  specPath = '',
-  uxSpecPath = '',
-  testPlanPath = '',
-  designSystemPath = '',
-  // The project's lessons register (`.claude/lessons/LESSONS.md` where one exists).
-  // Every reviewer, refuter, fixer and the final pass carry it: the rules a project
-  // has already paid for are the cheapest quality it can buy.
-  lessonsPath = '',
-  // ISO timestamp the orchestrator took when it launched the run. Scripts cannot
-  // read the clock (it would break resume), so wall-clock is measured outside and
-  // this is only echoed back into the result for the ledger.
-  startedAt = '',
-  packages = [],
-  testPackages = [],
+  tasks = [],
+  verifyCommands = {},
   scale = 'small',
-  verifyCommands = [],
-  context = '',
-  workdir = '',
-  // C1 checkpoints: absolute path a Haiku agent writes phase cards and the final
-  // result summary into. Absent (the default) = the legacy, checkpoint-free path.
+  mode = 'feature',
   runDir = '',
+  lessonsPath = '',
+  startedAt = null,
+  workdir = '',
+  // Fix 1 (real smoke-run finding): the 4 helper-script invocations
+  // (task-brief.mjs, review-pack.mjs x2, fix-brief.mjs) are bare relative
+  // paths that only resolve when the invoking agent's cwd happens to be
+  // dev-pipeline's own directory -- never true for a real run, since every
+  // agent is told (via REPO_NOTE) to cd into `workdir`, the TARGET repo,
+  // first. This sandboxed, ASCII-only source has no os.homedir()/
+  // process.env to derive its own scripts directory, so the launcher MUST
+  // supply the real, absolute path to it here.
+  scriptsDir = '',
 } = _args
-// args.fixPlanning === false turns the Fable fix planner OFF for THIS run (the fix
-// loop then routes exactly as it did before the planner existed: mechanical fixes
-// on the cheap model, everything else on the review model). Any other value — and
-// an absent key — leaves CFG.fixPlanning in charge. It is a per-run escape hatch,
-// never a way to turn the planner ON where CFG has it off.
-const fixPlanningOn = !!CFG.fixPlanning && _args.fixPlanning !== false
 
-// ONE ENGINE, TWO PRESETS (owner ruling 2026-09-03). args.mode === 'bugfix' is what
-// the bug-pipeline skill passes; anything else — including an absent key — is
-// 'feature', which is byte-identical to the engine before this preset existed.
-// EVERY bugfix behaviour below is gated on this flag and nothing else.
-const MODE = _args.mode === 'bugfix' ? 'bugfix' : 'feature'
-const bugfix = MODE === 'bugfix'
-
-if (!planPath) throw new Error('args.planPath is required (path to the Fable-authored build plan)')
-if (!Array.isArray(packages) || !packages.length) {
-  throw new Error('args.packages must be a non-empty array of { id, title, files, brief }')
+// A3: validate the task graph BEFORE any agent() call -- a structurally
+// invalid plan (unknown type, a fix/revert-probe missing its required
+// ancestor, two tasks sharing a file with no ordering between them) is much
+// cheaper to catch here than after a wave of agents has already run against
+// it.
+const planBlockers = validateTasks(tasks)
+if (planBlockers.length) {
+  return { clean: false, remainingFindings: planBlockers, phaseReport: [], aborted: 'invalid-plan' }
 }
 
-// verifyCommands: a plain array runs the same commands every gate round (legacy).
-// {perRound: [...], final: [...]} runs the cheap set on the initial gate and every
-// fix-round regate, then one authoritative FULL gate after the loop — the full
-// suite still decides `clean`, it just stops re-running on every intermediate round.
-const vc = Array.isArray(verifyCommands)
-  ? { perRound: verifyCommands, final: verifyCommands }
-  : {
-      perRound: verifyCommands.perRound || [],
-      final: verifyCommands.final || verifyCommands.perRound || [],
-    }
+// A10: a lookup every later stage needs -- fixGateStage walks dependsOn
+// ancestors by id, implementPrompt looks up a `fix` task's repro-test
+// dependency for the tests it must satisfy. Built once, from the validated
+// plan, since ancestorIds()/ancestorsOfType() both take a byId map as an
+// argument rather than assuming one global.
+const tasksById = new Map(tasks.map((t) => [t.id, t]))
 
-// New optional stages. Each is skipped entirely when its arg is absent, so a
-// legacy { planPath, packages, scale, verifyCommands, context, workdir } call
-// runs exactly as it did before (plus the new review lenses).
-const testPkgs = Array.isArray(testPackages) ? testPackages : []
-const redGateCfg = _args.redGate && Array.isArray(_args.redGate.commands) && _args.redGate.commands.length
-  ? { commands: _args.redGate.commands, expect: _args.redGate.expect || 'fail' }
-  : null
-// Presence of the object is the whole switch — nothing inside it is required.
-// uiDrivePrompt already derives a missing url from the repo's dev-server config
-// and defaults an empty flow list to "the surface this change touches". Rejecting
-// the config because one key was omitted would hand back a browser-less run that
-// can still report clean, with nothing in the output saying the phase was skipped.
-const uiCfg = _args.uiVerify && typeof _args.uiVerify === 'object' && !Array.isArray(_args.uiVerify)
-  ? _args.uiVerify
-  : null
-const mutationTargets = _args.mutationProbe && Array.isArray(_args.mutationProbe.targets)
-  ? _args.mutationProbe.targets.filter((t) => t && t.file && t.test)
-  : []
-const mutationEnabled = scale === 'major' && mutationTargets.length > 0
-
-// ---------- bugfix-mode inputs (all inert in feature mode) ----------
-// The blast radius the review lenses are pointed at. Default: the union of every
-// package's declared files — the TEST packages' as well as the work packages'. The
-// pack is handed to the lenses as PRIMARY EVIDENCE, and a pack that omitted the new
-// spec files would tell the test-quality lens that the tests are outside its evidence.
-const radiusFiles = bugfix
-  ? uniquePaths(
-      Array.isArray(_args.radiusFiles) && _args.radiusFiles.length
-        ? _args.radiusFiles
-        : [].concat(...testPkgs.map((p) => p.files || []), ...packages.map((p) => p.files || [])),
-    )
-  : []
-// Regexes naming the SHAPE of the defect being fixed (Fable's ruling in the bug
-// skill authors them). Absent = no sweep, in either mode.
-// Every real caller since 2026-09-08 passes {regex, note} objects, not {pattern,
-// note} (see .claude/pipeline/2026-09-08-numbering-siblings/pipeline-args.json) —
-// the old filter kept only a literal .pattern string and silently dropped every
-// one of those, so 4/4 bugfix runs on 2026-09-10 never swept. Normalise both
-// shapes to {pattern, note}; an entry with neither is dropped here and counted
-// in the supplied-vs-kept mismatch check below (never a silent skip).
-const rawSiblingPatterns = Array.isArray(_args.siblingPatterns) ? _args.siblingPatterns : []
-const siblingPatterns = rawSiblingPatterns
-  .map((p) => {
-    if (!p || typeof p !== 'object') return null
-    const src = typeof p.pattern === 'string' && p.pattern.trim() ? p.pattern : (typeof p.regex === 'string' && p.regex.trim() ? p.regex : null)
-    return src ? { pattern: src, note: typeof p.note === 'string' ? p.note : '' } : null
-  })
-  .filter(Boolean)
-// Existing spec files whose mocks/fixtures are checked against the plan's
-// service-surface changes BEFORE a test author touches them.
-const harnessFiles = bugfix ? uniquePaths([].concat(...testPkgs.map((p) => p.files || []))) : []
-const wantRadiusPack = bugfix && radiusFiles.length > 0
-const wantHarnessCheck = bugfix && harnessFiles.length > 0
-const wantSiblingSweep = bugfix && siblingPatterns.length > 0
-// mutationProbe.targets[].revertFix is a bugfix-mode field: it asks the probe to put
-// the FIX back to its committed content instead of inventing a defect. In feature mode
-// there is no fix to revert, so it is ignored — loudly, never silently.
-if (!bugfix && mutationTargets.some((t) => t.revertFix === true)) {
-  log('Note: mutationProbe.targets[].revertFix is a BUGFIX-MODE field — this run is in feature mode, so every target gets the standard mutation probe')
+// ---------- A4: prompt scaffolding (lifted from scripts/light-loop.js @136-189) ----------
+// Byte-identical for every agent in this run, so agents sharing model+effort in
+// the same wave read it from the prompt cache instead of paying for it again.
+const REPO_NOTE =
+  (workdir
+    // E7 (real launch 2026-09-15, Lite lane): "cd into workdir" alone is
+    // advisory -- two implementer agents ignored it and edited the MAIN
+    // checkout instead while workdir was a separate worktree, and nothing
+    // caught it. Spell out the two mechanical requirements a git call and a
+    // file edit must both satisfy, not just the intent.
+    ? 'ALL work happens in the git worktree at "' + workdir + '" -- your process may start elsewhere, so `cd` into it before ANY command, and use ABSOLUTE paths under "' + workdir + '" for every file read/edit. Run EVERY git command as `git -C "' + workdir + '"` (never a bare `git` relying on your cwd). NEVER read, write, or run a command against any path outside "' + workdir + '", including another checkout of this same repository. '
+    : 'You are working in the current directory, a git working tree. ') +
+  'Never delete, move, stash, checkout, or "tidy" any file you did not create. ' +
+  'Never run `git add -A`, `git stash`, `git checkout --`, `git reset --hard`, or `git push --force`. ' +
+  'Edit files surgically: change only the lines the task needs.'
+const ARTIFACT_NOTE = lessonsPath
+  ? 'Lessons register (apply every entry relevant to what you review, write, or fix; cite the entry id when one changes your conclusion): "' + lessonsPath + '"'
+  : ''
+const GROUNDED_NOTE =
+  'Before reporting, audit each claim against a tool result from this session. Report only what you can point to evidence for; if something is not verified, say so explicitly. If a command failed or was skipped, say so with the output.'
+const SCRATCH_NOTE = 'Scratch files only under the OS temp directory, never inside the repo.'
+const SCOPE_NOTE =
+  "If, while working or testing, you find a pre-existing bug, a performance concern, or behavior the task doesn't mention, don't fix, optimize or extend it in this change unless the requested behavior cannot work without it; report it as a follow-up in your summary. Where the task is ambiguous, implement the reading its wording and the surrounding code most directly support, state that assumption in your summary, and don't build for the other readings as well. Verify your work however you like; scratch scripts and quick checks need not be kept. Commit tests only where the task asks for them or this repository already keeps tests for this kind of change, sized like the neighboring test files -- roughly one focused test per stated behavior -- and don't turn scratch checks into additional permanent test files. This is about extras only: implement every behavior the task asks for, completely."
+const BATCH_NOTE =
+  "First privately list what you need next; then request every item that doesn't depend on another's result in this one response."
+function RUN_PREFIX() {
+  return [REPO_NOTE, ARTIFACT_NOTE, GROUNDED_NOTE, SCRATCH_NOTE, SCOPE_NOTE, BATCH_NOTE].filter(Boolean).join('\n')
+}
+// The tag every prompt carries after RUN_PREFIX(). session-usage.mjs attributes
+// tokens per phase by matching this exact shape; the middle dot is a literal
+// U+00B7 character at runtime, escaped here so the source stays ASCII-only.
+const TAG = (phase, label) => 'PHASE: ' + phase + ' \u00b7 LABEL: ' + label
+// A14: every askAgent() call carries a real ledger phase name in o.phase
+// (confirmed at every call site in this file); this tallies how many calls
+// -- REAL usage, never a hardcoded placeholder -- were attributed to each,
+// regardless of whether the call was ever awaited or what it returned. Read
+// by phaseReport assembly at the end of the run.
+const phaseAgentCounts = {}
+function askAgent(prompt, opts) {
+  const o = opts || {}
+  phaseAgentCounts[o.phase] = (phaseAgentCounts[o.phase] || 0) + 1
+  return agent(RUN_PREFIX() + '\n' + TAG(o.phase, o.label) + '\n' + prompt, o)
+}
+// One lightweight call per (model, effort) pair before a wave that shares it,
+// so the real calls in that wave land on a warm cache instead of each writing
+// its own copy.
+const warmedThisRun = new Set()
+async function warmUp(model, effort, phase) {
+  const key = model + ':' + effort
+  if (warmedThisRun.has(key)) return
+  warmedThisRun.add(key)
+  await askAgent('Reply with exactly: OK', { label: 'warmup', phase, model, effort })
+}
+async function warmUpWave(pairs, phase) {
+  for (const pair of pairs) await warmUp(pair[0], pair[1], phase)
+}
+// TOOL-CALL CAP (mirrors light-loop's withOpusCap, renamed for the Fable-only
+// routing table -- S3: Opus is the fallback tier only). Applied to every
+// Fable agent call from A8 onward.
+function withToolCap(promptText) {
+  return promptText + '\n\nRead the pack / brief provided. Open a source file only for a hunk it cites. Hard cap: ' + CFG.caps.toolCalls + ' tool calls; if you need more, stop and report `needsMoreContext` with what is missing.'
 }
 
-let lenses = (CFG.lenses[scale] || CFG.lenses.small).slice()
-if (uxSpecPath || designSystemPath) lenses.push('design-system')
-const votes = CFG.refuteVotes[scale] || 0
-
-// One review agent per UNIT, not per lens. Off the small-scale merge every unit
-// carries exactly one lens, so nothing changes; on `small` the base lenses share
-// one agent while the conditional 'design-system' lens keeps its own (it is
-// scale-independent and reads different artifacts). unit.lenses is what the
-// dead-agent handler names, so a merged agent that dies blocks on every lens it
-// was carrying.
-// Rebuilt, not mutated, when bugfix mode gates a lens off after Baseline — the
-// unit list and the lens list must never disagree about what ran.
-const mergeSmall = !!CFG.mergeLensesOnSmall && scale === 'small'
-function buildReviewUnits(lensList) {
-  const units = []
-  if (mergeSmall) {
-    const base = lensList.filter((l) => l !== 'design-system')
-    if (base.length) units.push({ label: base.length > 1 ? 'small-combined' : base[0], lenses: base })
-    if (lensList.indexOf('design-system') !== -1) units.push({ label: 'design-system', lenses: ['design-system'] })
-  } else {
-    for (const l of lensList) units.push({ label: l, lenses: [l] })
-  }
-  return units
+// ---------- A5: Preflight (alias Baseline) ----------
+const runId = typeof _args.runId === 'string' && _args.runId ? _args.runId : 'wf_' + (String(runDir).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || 'run')
+const PREFLIGHT_SCHEMA = {
+  type: 'object',
+  properties: {
+    contended: { type: 'boolean', description: 'true if the host is too busy to run this pipeline reliably right now (process/CPU contention)' },
+    treeClean: { type: 'boolean' },
+    resumeWritten: { type: 'boolean' },
+    note: { type: 'string' },
+  },
+  required: ['contended', 'treeClean', 'resumeWritten', 'note'],
 }
-let reviewUnits = buildReviewUnits(lenses)
-
-// THE FLOOR: these two always run, at full strength, over ALL changed files —
-// no flag, no risk class and no escalation may narrow their file coverage.
-const FLOOR_LENSES = ['correctness', 'test-quality']
-// Lenses that must trace whole paths to find anything keep the session's effort;
-// everything else matches patterns and runs at CFG.effort.lensPattern.
-const DEEP_LENSES = ['correctness', 'spec-compliance', 'edge-cases-and-security', 'operability']
-// A unit carrying several lenses takes the DEEPEST effort any of them needs.
-// Deep lenses step up to xhigh only when Baseline classed a file HIGH risk — the
-// place a missed defect is expensive. Called only after Baseline (riskSummary is
-// filled there); on the small-scale merged unit this means test-quality runs at
-// the deep lens's effort, which is documented and accepted.
-function unitEffort(unitLenses) {
-  if (!unitLenses.some((l) => DEEP_LENSES.indexOf(l) !== -1)) return CFG.effort.lensPattern
-  return riskSummary.high > 0 ? CFG.effort.lensDeepHighRisk : CFG.effort.lensDeep
+function preflightPrompt(attempt) {
+  return [
+    'You are the PREFLIGHT gate for a task-loop pipeline run, attempt ' + attempt + ' of 3.',
+    '1. Check host contention: count running node/npm/docker processes and current CPU load using whatever command this OS supports (Windows: `tasklist`; POSIX: `ps`/`uptime`). Count ONLY build-tool work: processes whose command line names jest, tsc, next, turbo, vitest, playwright, webpack, esbuild, docker, matlab, or npm run / npm test. Claude Code sessions and their MCP servers are node processes too (about 8 per open session) and do NOT count -- inspect command lines (Windows: PowerShell Get-CimInstance Win32_Process, or wmic process get commandline), never a bare tasklist count. Treat the host as contended only if more than 6 such build-tool processes are running, or CPU load looks pegged (>90% sustained across two samples a few seconds apart). Use judgment -- this is a heuristic, not a hard threshold from a config file.',
+    '2. Run `git status --short` -- treeClean is true only if it prints nothing.',
+    // Fix round 1 (finding 4): the brief specifies (runId, scriptPath, args)
+    // -- args is what actually lets a killed run be relaunched with the same
+    // inputs; task ids alone cannot. scriptPath is genuinely not available
+    // anywhere in this engine's scope (not in _args, not exposed by any
+    // Workflow global) -- write that fact literally rather than guessing a
+    // substitute for it.
+    '3. Write "' + runDir + '/RESUME.md" (create the directory first if needed) with exactly three things: this runId "' + runId + '"; scriptPath -- write the literal text "unavailable (no scriptPath in args or exposed by any Workflow global in this engine)", never a guess; and args -- the exact JSON object below, verbatim, so a killed run can be relaunched with the same inputs:\n' + JSON.stringify(_args) + '\nSet resumeWritten=true only if the write actually succeeded.',
+    'Report contended, treeClean, resumeWritten, and note (one line).',
+  ].join('\n')
 }
-// A8 UNIFORM LENS EFFORT (owner ruling 2026-09-11, CFG.uniformLensEffort; CORRECTED
-// 2026-09-11c, engine wave 3C, C1: PER MODEL FAMILY, not per wave). Prompt caches
-// never cross models, so sharing ONE effort number across every unit in a wave
-// only paid off for whichever model family happened to set it — and could
-// silently escalate a Sonnet pattern lens to xhigh it never earned, something a
-// HIGH-risk wave used to do every time (see the corrected dry-run scenario A and
-// the new A8b). Sonnet units carry pattern lenses ONLY (see unitModel/DEEP_LENSES)
-// and always resolve to CFG.effort.lensPattern regardless of what the Opus units
-// in the same wave need, so in practice this only ever changes anything for the
-// Opus family. Returns a Map<model, effort> — one shared (deepest) effort per
-// DISTINCT model in the wave, never mixed across models.
-const EFFORT_ORDER = ['low', 'medium', 'high', 'xhigh']
-function waveEffortByModel(units) {
-  const byModel = new Map()
-  for (const u of units) {
-    const model = unitModel(u.lenses)
-    const e = unitEffort(u.lenses)
-    const cur = byModel.get(model)
-    if (cur === undefined || EFFORT_ORDER.indexOf(e) > EFFORT_ORDER.indexOf(cur)) byModel.set(model, e)
-  }
-  return byModel
-}
-// A8 CACHE WARMUP (owner ruling 2026-09-11, CFG.cacheWarmup). ONE trivial agent
-// per DISTINCT model about to be used in a wave, dispatched and awaited BEFORE
-// the real fan-out — its result is never read, only its cache write matters.
-// opusCapped() is applied unconditionally (a no-op for anything but Opus) so an
-// Opus warmer never violates the standing tool-call-cap invariant every other
-// Opus prompt in this engine carries.
-const WARM_SCHEMA = { type: 'object', properties: { ack: { type: 'string', description: "reply with exactly 'OK'" } }, required: ['ack'] }
-async function warmModels(models, phaseName) {
-  if (!CFG.cacheWarmup || !models || !models.length) return
-  const distinct = [...new Set(models)]
-  await parallel(distinct.map((m) => () =>
-    askAgent(opusCapped(`${RUN_PREFIX()}\n\nReply with exactly: OK`, m), { label: `warm:${m}`, phase: phaseName, model: m, effort: 'low', schema: WARM_SCHEMA })))
-}
-// TOKEN-CLASS ROUTING (owner ruling 2026-09-10, CFG.routing). A unit carrying
-// any DEEP lens (it has to trace the whole path, not match a pattern) stays on
-// Opus, xhigh only kicking in via unitEffort above when a file is HIGH risk. A
-// unit carrying ONLY pattern lenses (test-quality / design-system /
-// scope-coverage) now runs on the cheaper Sonnet tier instead — same floor
-// coverage, same effort ladder, different model.
-function unitModel(unitLenses) {
-  const hasDeep = unitLenses.some((l) => DEEP_LENSES.indexOf(l) !== -1)
-  const model = hasDeep ? CFG.reviewModel : CFG.routing.patternLensModel
-  // A4 ASSERTION (owner ruling 2026-09-11): the correctness lens must never be
-  // demoted off Opus by ANY calibration routing change — it is the deliberate
-  // exception the R1 Sonnet-routing rows do not touch. A future edit that
-  // routes 'correctness' through a cheaper model trips this immediately
-  // instead of silently shipping.
-  if (unitLenses.indexOf('correctness') !== -1 && model !== CFG.reviewModel) {
-    throw new Error(`A4 violation: correctness lens routed to ${model}, must stay on ${CFG.reviewModel}`)
-  }
-  return model
-}
-// R1 CALIBRATION (owner ruling 2026-09-11, ROUTING-PLAN.md §9b). recheck and
-// build-fix default to their CFG.routing.*RoutineModel (Sonnet) and escalate
-// to CFG.reviewModel (Opus) ONLY when the manifest carries a HIGH-risk file —
-// the same riskSummary.high signal the UI-judge escalation already uses.
-function recheckModelFor() {
-  return riskSummary.high > 0 ? CFG.reviewModel : CFG.routing.recheckRoutineModel
-}
-function buildFixModelFor() {
-  return riskSummary.high > 0 ? CFG.reviewModel : CFG.routing.buildFixRoutineModel
-}
-const isFloorUnit = (u) => u.lenses.some((l) => FLOOR_LENSES.indexOf(l) !== -1)
-// OPUS TOOL-CALL CAP (owner ruling 2026-09-10, CFG.caps.opusToolCalls). Applied
-// at the call site — not baked into a prompt builder — so a role that sometimes
-// routes to Sonnet (lenses, refuters, UI judge, judgment fixers) carries the
-// clause only on the runs where it actually lands on Opus. The two Fable
-// deciders (fix planner, final-pass decider) are deliberately exempt even on
-// their Opus fallback: their prompt already says outright "you do not read the
-// repository, run commands or gather anything", so a tool-call cap would
-// contradict the contract those prompts already carry.
-const OPUS_MODEL_ID = 'claude-opus-5'
-function opusCapped(promptText, model) {
-  if (model !== OPUS_MODEL_ID) return promptText
-  return `${promptText}\n\nRead the pack / brief provided. Open a source file only for a hunk the pack cites. Hard cap: ${CFG.caps.opusToolCalls} tool calls; if you need more, stop and report \`needsMoreContext\` with what is missing.`
-}
-// FABLE BRIEF CAP (owner ruling 2026-09-10, CFG.caps.fableBriefBytes). Fable
-// decides from a compact brief and never gathers, so a brief over the cap is
-// truncated HERE, in the script, rather than trusted to fit on its own — the
-// packager that built it gets the marker as a note to tighten next round.
-// Applied to the brief text whichever model actually reads it (Fable, or its
-// Opus fallback when Fable declines): it is the same content either way.
-// Twin of scripts/light-loop.js's utf8ByteLength/utf8Truncate (kept
-// byte-for-byte identical — see the comment there). Buffer-free so a cut
-// never lands inside a multi-byte UTF-8 sequence or a surrogate pair.
-function utf8ByteLength(s) {
-  let n = 0
-  for (const ch of s) { const c = ch.codePointAt(0); n += c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4 }
-  return n
-}
-function utf8Truncate(s, maxBytes) {
-  let bytes = 0
-  let result = ''
-  for (const ch of s) {
-    const cp = ch.codePointAt(0)
-    const size = cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4
-    if (bytes + size > maxBytes) break
-    bytes += size
-    result += ch
+async function runPreflight() {
+  let result = null
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    result = await askAgent(preflightPrompt(attempt), { label: 'preflight', phase: 'Baseline', model: CFG.models.haiku, effort: CFG.effort.baseline, schema: PREFLIGHT_SCHEMA })
+    if (result && !result.contended) break
   }
   return result
 }
-function capFableBrief(promptText) {
-  const cap = CFG.caps.fableBriefBytes
-  if (utf8ByteLength(promptText) <= cap) return { text: promptText, truncated: false }
-  // E6 (owner ruling 2026-09-11, wave 3): the marker names the ACTUAL cap in
-  // force, not a hardcoded "8 KB" that silently goes stale the moment
-  // CFG.caps.fableBriefBytes is retuned.
-  const marker = `\n\n[truncated at ${cap} bytes — packager must tighten]`
-  const keepBytes = Math.max(0, cap - utf8ByteLength(marker))
-  return { text: utf8Truncate(promptText, keepBytes) + marker, truncated: true }
-}
-
-// Findings raised before the review phase (test authoring, red gate) that must
-// still reach the fix loop and keep `clean` false.
-const carried = []
-
-// Defect (owner ruling 2026-09-11e): args.siblingPatterns supplied>0 with kept===0,
-// or supplied!==kept after normalisation (see siblingPatterns above), must never
-// read as an ordinary "no-patterns" skip — that hid 4/4 real sweeps on 2026-09-10.
-// A '(build-plan)' finding is UNFIXABLE (bypasses the fix loop, keeps `clean`
-// false) because the defect is in the args this run was called with, not in code.
-// Pushed here (immediately after `carried` exists), not beside the rest of the
-// sibling-sweep section below, because `findings.push(...carried)` runs BEFORE
-// that section — a later push would silently miss the cutoff, same class of bug
-// as the one this whole package fixes.
-if (rawSiblingPatterns.length && siblingPatterns.length !== rawSiblingPatterns.length) {
-  if (bugfix) {
-    log(`ERROR: siblingPatterns supplied but not usable — ${rawSiblingPatterns.length} supplied, ${siblingPatterns.length} kept after normalisation`)
-    carried.push({
-      file: '(build-plan)',
-      severity: 'blocker',
-      phase: 'Baseline',
-      summary: 'siblingPatterns supplied but not usable',
-      detail: `args.siblingPatterns carried ${rawSiblingPatterns.length} entr${rawSiblingPatterns.length === 1 ? 'y' : 'ies'}; only ${siblingPatterns.length} normalised to a usable {pattern, note} (a string .pattern or .regex). The rest carried neither key, so no sweep ran for them.`,
-      fixHint: 'Pass each sibling pattern as { pattern: "<regex>", note: "..." } (or { regex: "<regex>", note: "..." } — both are normalised), never an object with neither key.',
-    })
-  } else {
-    log('Note: args.siblingPatterns supplied but unusable; ignored in feature mode (sibling sweep does not run)')
+// ---------- A14: per-phase token telemetry ----------
+// Adapted from pipeline.js.bak-2026-09-12 @2498-2536 (readSpent/startPhase/
+// endPhase/estUsd). budget.spent() is one cumulative scalar for the whole
+// run; startPhase/endPhase bracket it around each of the five sandbox
+// `phase()` markers this engine actually calls (Baseline, Implement,
+// Mutation probe, Verify, Final pass) so their `tokens` are a real, measured
+// delta -- never a hardcoded placeholder. The other five ledger phase names
+// (Author tests, Red gate, Gate & Review, Fix, UI verify) run only AS PART
+// OF the per-task chain inside the Implement wave loop (interleaved across
+// tasks in parallel waves, plus the post-loop ui-reverify pass) -- a single
+// shared scalar cannot isolate their own token cost under that concurrency,
+// so phaseReport assembly reports them tokens:null, overlappedWith:
+// 'Implement', exactly the old engine's own markOverlapped philosophy: an
+// unknown reading is never reported as a guessed number. agents/rawFindings
+// for every phase (anchor or overlapped) are real tallies -- phaseAgentCounts
+// (every askAgent call) and findings.filter(f => f.phase === title) (every
+// finding actually recorded under that name) -- never placeholders either.
+function readSpent() {
+  try {
+    if (!budget || typeof budget.spent !== 'function') return null
+    const v = budget.spent()
+    return typeof v === 'number' && Number.isFinite(v) ? v : null
+  } catch (e) {
+    return null
   }
 }
-
-// ---------- schemas ----------
-const IMPL_SCHEMA = {
-  type: 'object',
-  properties: {
-    status: { type: 'string', enum: ['done', 'partial', 'blocked'] },
-    filesChanged: { type: 'array', items: { type: 'string' } },
-    deviations: { type: 'string', description: 'anything the plan asked for that you did not or could not do, and why; empty string if none' },
-    notes: { type: 'string', description: 'anything the reviewer must know; empty string if none' },
-  },
-  required: ['status', 'filesChanged', 'deviations', 'notes'],
+const PHASE_TITLES = ['Baseline', 'Author tests', 'Red gate', 'Implement', 'Gate & Review', 'Verify', 'UI verify', 'Mutation probe', 'Fix', 'Final pass']
+const phaseStats = {}
+for (const title of PHASE_TITLES) phaseStats[title] = { at: null, sum: 0, unknown: false, open: 0, contaminated: false }
+// T2 cost-plan: the actual token-delta bracket, shared by startPhase/endPhase
+// (the five run-level anchors, called once each) AND meterStage (below, the
+// five per-task phases). `open` counts brackets currently open for `title`;
+// a SECOND one opening before the first closes means two tasks in the same
+// wave entered the same titled phase concurrently -- budget.spent() is one
+// shared cumulative scalar, so a delta computed across that overlap would
+// double-count or misattribute tokens between them. Mark the title
+// permanently `contaminated` (unknown) the moment that happens rather than
+// ever report a guessed number; bracketClose no-ops for every nested/
+// overlapping close once contaminated (or while still open elsewhere).
+function bracketOpen(title) {
+  const s = phaseStats[title]
+  s.open += 1
+  if (s.open > 1) {
+    s.contaminated = true
+    return
+  }
+  s.at = readSpent()
+  if (s.at == null) s.unknown = true
 }
+function bracketClose(title) {
+  const s = phaseStats[title]
+  s.open = Math.max(0, s.open - 1)
+  if (s.contaminated || s.open > 0) return
+  const now = readSpent()
+  if (s.at == null || now == null) s.unknown = true
+  else s.sum += Math.max(0, now - s.at)
+  s.at = null
+}
+function startPhase(title) {
+  phase(title)
+  bracketOpen(title)
+}
+function endPhase(title) {
+  bracketClose(title)
+}
+// T2 cost-plan: wraps a per-task stage function (chainForType, below) in the
+// SAME bracket the five run-level anchors use, so Author tests/Red gate/
+// Gate & Review/Fix/UI verify stop reporting estUsd:null unconditionally --
+// they get a real number whenever exactly one task is in that titled stage
+// at a time, and an honest `contaminated` (see bracketOpen) otherwise. Never
+// calls phase() itself -- that global per-run marker stays owned by
+// startPhase/the five anchors; this only adds the token-delta bookkeeping.
+function meterStage(title, stageFn) {
+  return async (t) => {
+    bracketOpen(title)
+    try {
+      return await stageFn(t)
+    } finally {
+      bracketClose(title)
+    }
+  }
+}
+function estUsd(tokens, model) {
+  const p = CFG.prices[model]
+  if (!p) return null
+  // Rich usage {input, output, cacheWrite1h, cacheRead} token counts, priced
+  // at each class's own rate -- the correct math once a caller can supply
+  // it. No caller in this engine can yet: budget.spent() (readSpent, above)
+  // is one cumulative scalar with no input/output/cache split, so every
+  // current call falls through to the scalar fallback below.
+  if (tokens && typeof tokens === 'object') {
+    const { input = 0, output = 0, cacheWrite1h = 0, cacheRead = 0 } = tokens
+    const usd = (input / 1e6) * p.input + (output / 1e6) * p.output + (cacheWrite1h / 1e6) * p.cacheWrite1h + (cacheRead / 1e6) * p.cacheRead
+    return { usd: Math.round(usd * 100) / 100, approx: false }
+  }
+  if (tokens == null) return null
+  // Fallback: a single scalar token count with no class breakdown, priced
+  // entirely at the output rate as the old engine did -- the higher of the
+  // two base rates, so this over-estimates rather than under- (the safer
+  // direction for a cost gate). Flagged approx so a reader never mistakes
+  // it for the real input/output/cache mix.
+  return { usd: Math.round((tokens / 1e6) * p.output * 100) / 100, approx: true }
+}
+
+startPhase('Baseline')
+const preflight = await runPreflight()
+if (preflight && preflight.contended) {
+  // Abort here means ZERO further agent calls of any kind -- the preflight
+  // attempts already spent are the only cost of a contended host.
+  return { aborted: 'host-contention', phaseReport: [] }
+}
+
+// ---------- A6: Baseline (gates, grounding, manifest, risk, harness check) ----------
+const normCmd = (c) => (c || '').trim().replace(/\s+/g, ' ')
+function uniqueCommands(list) {
+  const seen = new Set()
+  const out = []
+  for (const c of list) {
+    const k = normCmd(c)
+    if (!k || seen.has(k)) continue
+    seen.add(k)
+    out.push(c)
+  }
+  return out
+}
+function uniquePaths(list) {
+  const seen = new Set()
+  const out = []
+  for (const p of list) {
+    if (!p) continue
+    const k = normPath(p)
+    if (seen.has(k)) continue
+    seen.add(k)
+    out.push(p)
+  }
+  return out
+}
+// Commands that already failed on the untouched baseline tree. Their later
+// failures say nothing about this change, so a later gate (A8+) excludes
+// them from its pass/fail decision via isBadCommand()/gateProblem() below;
+// Baseline itself also strips them out of manifestResult.validCommands (B),
+// so every later phase reading the manifest never sees a known-broken
+// command again.
+const badCommandSet = new Set()
+const isBadCommand = (c) => badCommandSet.has(normCmd(c))
+// Reused by every later gate call site (A8+): a `real` (non-baseline-broken)
+// failure blocks; a gate that only failed on already-broken commands does not.
+function gateProblem(g) {
+  if (!g) return 'The gate agent died or was skipped, so no verification evidence exists for this run.'
+  const results = Array.isArray(g.results) ? g.results : []
+  const failed = results.filter((r) => r && r.pass === false)
+  const real = failed.filter((r) => !isBadCommand(r.command))
+  if (real.length) return JSON.stringify(real)
+  if (g.pass === true) return null
+  if (failed.length) return null // every failure was a command already broken at baseline
+  return 'The gate reported pass:false but listed no failing command -- treat it as unverified, not as a pass.'
+}
+
+const perRoundCmds = Array.isArray(verifyCommands.perRound) ? verifyCommands.perRound : []
+const finalCmds = Array.isArray(verifyCommands.final) ? verifyCommands.final : []
+const baselineCommands = uniqueCommands([...perRoundCmds, ...finalCmds])
+const planPaths = uniquePaths([_args.buildPlanPath, _args.testPlanPath].filter(Boolean))
+// Fix round 1 (finding 3): groundingPrompt fact-checks claims a PLANNING
+// artifact makes about the repo -- that is the build/test plan, not the
+// lessons register (a reference doc, not a planning artifact making claims
+// about this run). Grounding lessonsPath too would be a separate, deliberate
+// decision this round does not make -- it stays excluded here on purpose.
+const groundingArtifacts = uniquePaths([...planPaths])
+// Files this run's tasks intend to touch -- they may not exist yet, so the
+// manifest classifies them alongside the diff (created vs edited, C). A10:
+// also include every revert-probe's single `file` -- the checksum:after
+// in-script comparison (below, Implement phase) reads its "before" digest
+// from THIS manifest, so a probed file the manifest never saw would have no
+// baseline to compare against.
+const plannedFiles = uniquePaths([
+  ...[].concat(...tasks.map((t) => t.files || []), ...tasks.map((t) => t.tests || [])),
+  ...tasks.filter((t) => t.type === 'revert-probe' && t.file).map((t) => t.file),
+])
+
 const GATE_SCHEMA = {
   type: 'object',
   properties: {
     pass: { type: 'boolean' },
-    // cwd (owner ruling 2026-09-11e, RUN-LOG train4-run-c): the verbatim first line
-    // of `pwd`, printed BEFORE any verify command — the only way this engine can
-    // learn where a gate agent actually ran, since askAgent has no cwd option. A
-    // wrong-directory "environment repair" round cost $21 on a one-file fix, and
-    // two runs recorded green Jest gates that executed nothing.
-    cwd: { type: 'string', description: 'run `node -p process.cwd()` (works in bash and PowerShell) and report its single output line verbatim as `cwd`' },
+    cwd: { type: 'string' },
     results: {
       type: 'array',
       items: {
@@ -778,70 +633,14 @@ const GATE_SCHEMA = {
         properties: {
           command: { type: 'string' },
           pass: { type: 'boolean' },
-          summary: { type: 'string', description: 'one line if passed; the key error lines verbatim if failed' },
-          executed: { type: 'number', description: 'how many tests (or files checked) the tool reports it actually ran; 0 when it ran nothing (cache replay, skipped step, empty filter); -1 when the tool prints no count' },
-          exitCode: { type: 'number', description: "this command's real exit code" },
-          // A6 FLAKY QUARANTINE (owner ruling 2026-09-11, CFG.flakyReruns). Optional.
-          // When a command failed, name the SPECIFIC failing tests (not just files) —
-          // this is what lets a later rerun tell a flaky test apart from a genuinely
-          // broken one. Omit or leave empty for a passing command, or when the tool's
-          // output does not name individual tests.
-          failedTests: { type: 'array', items: { type: 'string' }, description: 'exact names of the tests that failed, when the command failed and the tool names them' },
+          executed: { type: 'number' },
+          summary: { type: 'string' },
         },
-        required: ['command', 'pass', 'summary', 'executed', 'exitCode'],
+        required: ['command', 'pass'],
       },
     },
   },
-  required: ['pass', 'cwd', 'results'],
-}
-// The red gate EXPECTS failure, so pass/fail is meaningless there — the auditor
-// needs the raw runner output instead.
-const RED_RUN_SCHEMA = {
-  type: 'object',
-  properties: {
-    ran: { type: 'boolean', description: 'true if every command actually executed — a FAILING test run still counts as executed' },
-    // Optional (unlike GATE_SCHEMA's cwd): the red run is audited by redAuditPrompt
-    // from its `results[].output`, not gated on workdir by the engine, but it gets
-    // the same CWD_NOTE instruction so a wrong-directory red run is at least
-    // visible on the transcript. See CWD_NOTE's comment.
-    cwd: { type: 'string', description: 'the verbatim first line of `pwd`, printed before any command in this run' },
-    results: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          command: { type: 'string' },
-          exitCode: { type: 'number' },
-          output: { type: 'string', description: 'runner output verbatim: every failing test name with its failure message and first stack lines, plus the pass/fail/skip counts' },
-        },
-        required: ['command', 'exitCode', 'output'],
-      },
-    },
-  },
-  required: ['ran', 'results'],
-}
-const RED_AUDIT_SCHEMA = {
-  type: 'object',
-  properties: {
-    structurallyRed: { type: 'boolean', description: 'true ONLY if every new test ran and failed on an ASSERTION — none passed, none errored (syntax/import/config/fixture), none was skipped or left uncollected' },
-    behaviorallyRed: { type: 'boolean', description: 'true ONLY if, on top of structurallyRed, each test failed on its OWN expected value from the test plan — a suite where every assertion fails identically on a stub\'s undefined has proven the wiring, not the oracles' },
-    properlyRed: { type: 'boolean', description: 'structurallyRed AND behaviorallyRed' },
-    tests: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          test: { type: 'string', description: 'test name and file' },
-          outcome: { type: 'string', enum: ['assertion-failure', 'error', 'passed', 'not-run'] },
-          note: { type: 'string' },
-        },
-        required: ['test', 'outcome', 'note'],
-      },
-    },
-    blockers: { type: 'array', items: { type: 'string' }, description: 'one line per problem; prefix structural problems with "STRUCTURAL:" and behavioral shortfalls with "BEHAVIORAL:"' },
-    remediation: { type: 'string', description: 'the exact edits a test author should make to fix the STRUCTURAL problems; empty string if structurallyRed' },
-  },
-  required: ['structurallyRed', 'behaviorallyRed', 'properlyRed', 'tests', 'blockers', 'remediation'],
+  required: ['pass', 'results'],
 }
 const FINDINGS_SCHEMA = {
   type: 'object',
@@ -851,21 +650,12 @@ const FINDINGS_SCHEMA = {
       items: {
         type: 'object',
         properties: {
-          file: { type: 'string', description: 'repo-relative path' },
-          line: { type: 'number' },
           severity: { type: 'string', enum: ['blocker', 'major', 'minor'] },
-          summary: { type: 'string', description: 'one-sentence statement of the defect' },
-          detail: { type: 'string', description: 'concrete failure scenario: inputs/state -> wrong behavior' },
-          fixHint: { type: 'string' },
-          // Routes the fix to the right model. The reviewer that found the defect
-          // classifies it: it already understands the finding, so this is free.
-          fixComplexity: {
-            type: 'string',
-            enum: ['mechanical', 'judgment'],
-            description: 'mechanical = the fix is fully determined once the defect is named (wrong path, broken link, stale cross-reference, renumbering, missing import, budget overrun); judgment = the fix requires deciding what the code should do (logic, edge cases, security, API shape, or any HIGH-risk file). When unsure, say judgment.',
-          },
+          file: { type: 'string' },
+          summary: { type: 'string' },
+          detail: { type: 'string' },
         },
-        required: ['file', 'severity', 'summary', 'detail', 'fixComplexity'],
+        required: ['severity', 'file', 'summary', 'detail'],
       },
     },
   },
@@ -882,76 +672,24 @@ const MANIFEST_SCHEMA = {
         properties: {
           path: { type: 'string', description: 'repo-relative path with forward slashes' },
           status: { type: 'string', description: 'modified | added | untracked | deleted | planned' },
-          risk: { type: 'string', enum: ['HIGH', 'LOW'], description: 'HIGH if the path or content touches money/pricing/tax, auth/permissions, tenancy or ownership scoping, migrations/schema, PII, or payments; LOW otherwise; unknown or unreadable is HIGH' },
+          exists: { type: 'boolean', description: 'true if this path currently exists on disk right now -- a planned file may be false' },
+          digest: { type: 'string', description: '`git hash-object` digest when the file exists; empty string otherwise' },
+          risk: { type: 'string', enum: ['HIGH', 'LOW'], description: 'HIGH iff the CHANGE (diff hunks, or the intended change for a file that does not exist yet) touches money/tax/pricing math, auth/permissions/session, tenancy/ownership scoping, migrations/schema, PII, or payments -- never merely that the file lives in such a module; config strings, allow-lists, labels, docs and code-map edits are LOW even inside such a module. Unknown or unreadable is HIGH.' },
           changedLines: { type: 'number', description: 'added+deleted lines from `git diff --numstat`; 0 when the file does not exist yet' },
         },
-        required: ['path', 'status', 'risk', 'changedLines'],
+        required: ['path', 'status', 'exists', 'digest', 'risk', 'changedLines'],
       },
     },
     validCommands: { type: 'array', items: { type: 'string' }, description: 'the supplied verify commands that can actually run in this repo, spelled exactly as given' },
     artifacts: { type: 'array', items: { type: 'string' }, description: 'the supplied artifact paths that exist on disk' },
+    planBytes: {
+      type: 'object',
+      description: '`wc -c` of the build/test plan artifacts, when supplied',
+      properties: { build: { type: 'number' }, test: { type: 'number' } },
+    },
   },
   required: ['files', 'validCommands', 'artifacts'],
 }
-const MUTATION_SCHEMA = {
-  type: 'object',
-  properties: {
-    file: { type: 'string' },
-    defect: { type: 'string', description: 'the one deliberate defect you injected, in one line' },
-    caught: { type: 'boolean', description: 'true ONLY if the named test FAILED on an assertion while the defect was in place' },
-    restored: { type: 'boolean', description: 'true ONLY if the file is byte-identical to the backup you took before mutating' },
-    evidence: { type: 'string', description: 'the assertion failure message, or the passing output that proves the test is blind to this behavior' },
-    backupPath: { type: 'string', description: 'absolute path of the backup you took, in the OS temp directory; still set it when the restore failed and you left the backup in place' },
-    // The probe's OWN before/after digests. They are the only evidence that can tell
-    // an unrestored file apart from one whose pre-probe baseline was taken on
-    // different content (another process wrote the tree between the two).
-    preHash: { type: 'string', description: 'lowercase hex SHA-256 of the file as you found it, computed BEFORE you mutated it; empty string if you could not compute one' },
-    postHash: { type: 'string', description: 'lowercase hex SHA-256 of the file AFTER you restored it; empty string if you could not compute one' },
-    // Optional, bugfix mode: which probe procedure actually ran. The engine fills it
-    // in when the agent omits it, so a probe is never recorded as the wrong kind.
-    kind: {
-      type: 'string',
-      enum: ['mutation', 'revert-fix'],
-      description: 'mutation = you injected a deliberate defect; revert-fix = you reverted the file to its committed content to prove the test fails without the fix',
-    },
-    fallback: {
-      type: 'string',
-      description: 'set to the exact string "untracked" ONLY when you were asked to revert the fix but the file has no committed version to revert to, so you ran the standard mutation probe instead; empty string otherwise',
-    },
-  },
-  required: ['file', 'defect', 'caught', 'restored', 'evidence'],
-}
-// A5 MUTANT FEEDBACK (owner ruling 2026-09-11, CFG.mutationRemediate).
-const MUTATION_REMEDIATE_SCHEMA = {
-  type: 'object',
-  properties: {
-    filesChanged: { type: 'array', items: { type: 'string' }, description: 'every test file you actually edited; empty if you made no change' },
-    backupPath: { type: 'string', description: 'absolute path, in the OS temp directory, of the backup you took before editing (the FIRST file if you touched more than one)' },
-    note: { type: 'string', description: 'one line: what you strengthened and why it now catches the mutation, or why you made no change' },
-  },
-  required: ['filesChanged', 'backupPath', 'note'],
-}
-const MUTATION_REVERT_SCHEMA = {
-  type: 'object',
-  properties: {
-    restored: { type: 'boolean', description: 'true ONLY if you byte-compared the restored file against the backup and they matched' },
-    note: { type: 'string' },
-  },
-  required: ['restored', 'note'],
-}
-// BUGFIX MODE: the radius pack — the diff hunks, touched export signatures and call
-// sites the review lenses read as PRIMARY EVIDENCE instead of re-deriving the change.
-const RADIUS_PACK_SCHEMA = {
-  type: 'object',
-  properties: {
-    pack: { type: 'string', description: 'the assembled pack text, ready to paste into a reviewer prompt' },
-    truncated: { type: 'boolean', description: 'true ONLY if you had to leave content out to stay inside the size cap' },
-    files: { type: 'array', items: { type: 'string' }, description: 'the radius files the pack actually covers' },
-  },
-  required: ['pack', 'truncated', 'files'],
-}
-// BUGFIX MODE: what the existing test harness will break on, found BEFORE the tests
-// are written rather than after six lenses each report the same stale mock.
 const HARNESS_SCHEMA = {
   type: 'object',
   properties: {
@@ -960,18 +698,947 @@ const HARNESS_SCHEMA = {
       items: {
         type: 'object',
         properties: {
-          file: { type: 'string', description: 'repo-relative path of the spec, fixture or mock helper' },
+          file: { type: 'string' },
           line: { type: 'number' },
-          issue: { type: 'string', description: 'what will break, concretely: which mock/fixture, against which planned change' },
-          remedy: { type: 'string', description: 'one line: the edit that fixes it' },
+          issue: { type: 'string' },
+          remedy: { type: 'string' },
         },
-        required: ['file', 'line', 'issue', 'remedy'],
+        required: ['file', 'issue'],
       },
     },
   },
   required: ['issues'],
 }
-// BUGFIX MODE: the sibling sweep, in two halves — mechanical hits, then verdicts.
+
+function baselineGatePrompt(commands) {
+  return [
+    "You are the BASELINE gate. Nothing has been written yet: you run the project's verification commands against the working tree exactly as you find it, to learn which of them work AT ALL.",
+    'Run these commands from the repo root, one at a time, in order:',
+    ...commands.map((c) => '- ' + c),
+    'Rules: do NOT fix anything, do NOT create, modify or delete any file, do NOT install anything, and do NOT adjust, re-flag or substitute a command that fails -- run each one EXACTLY as written. A failure here is the information we want, not a problem to solve.',
+    'Report each command: pass:true only if it actually ran and succeeded; pass:false if it exits nonzero, errors, or cannot be run at all (missing script, missing binary, wrong path, wrong directory) -- with the key error lines quoted verbatim in summary. Also report `executed` = the number of tests (or files checked) the tool says it ran, -1 when it prints no count. Overall pass = every command passed. Report the working directory you ran in as `cwd`.',
+  ].join('\n')
+}
+function groundingPrompt(paths) {
+  return [
+    'You are the artifact grounding check. The planning artifacts below make factual claims about THIS repository. Find the claims that are false.',
+    'Artifacts -- read every one in full:',
+    ...paths.map((p) => '- ' + p),
+    'Extract every MECHANICALLY CHECKABLE claim: file paths, directory paths, shell commands, package-manifest scripts, config keys, and exported symbols (functions, classes, constants, types) attributed to a specific file. Ignore every other kind of statement.',
+    'Verify each against the repo as it is right now: the path exists; the script exists in the package manifest; the config key exists in that config file; the symbol is actually exported by the file said to export it. Use `ls`, `cat` and `grep` -- do not guess, and do not edit anything.',
+    "Report ONLY claims that do not hold. Use file: '(artifact)' for every finding, and in detail give the artifact path, the claim quoted exactly, and what the repo actually contains instead. severity: major for a path, directory, command, script or config key that does not exist; minor for a symbol you could not resolve.",
+    'Do NOT report a path, file or symbol the artifacts say this change WILL CREATE -- it is supposed to be missing. Do NOT critique wording, design, completeness, feasibility, or quality -- an empty findings list is a good answer.',
+  ].join('\n')
+}
+function manifestPrompt(planned, commands, artifactPaths, planPathsArg) {
+  return [
+    'You are the context manifest builder. Report FACTS about this repository as it is right now. Do NOT summarize, interpret, judge or review the change -- later agents read the diff themselves and must not inherit your reading of it.',
+    "1. FILES. Run `git status --short` and `git diff --numstat` and list every changed and untracked file. ALSO list every file this run's tasks intend to touch, even if it does not exist yet:",
+    ...(planned.length ? planned.map((f) => '   - ' + f) : ['   (none supplied)']),
+    '   For each file report: path (repo-relative, forward slashes), status (modified | added | untracked | deleted | planned), exists (true if the path currently exists on disk -- check directly, never assume a planned file is absent), digest (`git hash-object <path>` when it exists, else empty string), and changedLines (added+deleted from --numstat; 0 when the file does not exist yet or no count is available).',
+    '2. RISK. Classify every file HIGH or LOW. HIGH iff the CHANGE (the diff hunks, or for a planned file that does not exist yet, the intended change) touches money/tax/pricing math, auth/permissions/session, tenancy or ownership scoping, migrations/schema, PII, or payments. A config string, an allow-list entry, a label, a doc, or a code-map edit is LOW even inside a finance/admin module -- risk follows the CHANGE, never the module it lives in. If you cannot read a file, or are not sure, classify it HIGH -- unknown is HIGH, never LOW.',
+    commands.length
+      ? '3. COMMANDS. For each command below decide STATICALLY whether it could run at all here (the npm script exists in the right package manifest, the file or binary it names exists, the directory it needs exists). Do NOT execute any of them -- another agent is running them right now. Return in validCommands only the ones that look runnable, spelled EXACTLY as given:\n' + commands.map((c) => '   - ' + c).join('\n')
+      : '3. COMMANDS. None were supplied -- return an empty validCommands.',
+    artifactPaths.length
+      ? '4. ARTIFACTS. Return in artifacts the subset of these paths that EXIST on disk:\n' + artifactPaths.map((p) => '   - ' + p).join('\n')
+      : '4. ARTIFACTS. None were supplied -- return an empty artifacts list.',
+    planPathsArg.length
+      ? '5. PLAN SIZE. Run `wc -c` on each of these planning artifacts and report the total bytes as planBytes (build = the build-plan-shaped path(s), test = the test-plan-shaped path(s); 0 for a kind not supplied):\n' + planPathsArg.map((p) => '   - ' + p).join('\n')
+      : '5. PLAN SIZE. None supplied -- return planBytes {build:0, test:0}.',
+    'Read only. Do NOT modify, create or delete any file, do NOT run builds, tests or installs, and do NOT run any command that writes.',
+  ].join('\n')
+}
+function harnessCheckPrompt(files) {
+  return [
+    'You are the TEST-HARNESS INTEGRITY check -- read-only, and you run BEFORE any test is written. This is a bugfix-mode run; the tasks in this plan change a service surface, and the test files listed already exist or are about to be extended. Find where the EXISTING harness will break against that change.',
+    'Test files this run will write or extend:',
+    ...files.map((f) => '- ' + f),
+    "For every one of those test files that ALREADY EXISTS -- and every shared fixture, factory, builder or mock helper it imports -- check its mocks and fixtures against the tasks' briefs: a mocked service missing a method a task adds a call to, a fixture value a new validator will reject, a stub whose return shape no longer matches, a hardcoded DTO literal missing a newly required field, a spy asserting a signature that changed. Skip files that do not exist yet; say nothing about them.",
+    'Report ONE issue per inconsistency: file, line, what will break, and a one-line remedy. Report NOTHING else. An empty issues list is a good answer. This check never blocks the run -- it only informs the test authors.',
+    'Read only: do NOT modify, create or delete any file, and do NOT run builds, tests or installs.',
+  ].join('\n')
+}
+
+// "created" (a build-plan blocker candidate) means the manifest reports the
+// target ABSENT -- an existing planned file is "edited" and never blocked
+// (C). --passWithNoTests is demanded only when EVERY target this command
+// names is absent; a command mixing an existing and a not-yet-created
+// target is fine.
+function validateJestCommands(commands, existsMap) {
+  const problems = []
+  for (const cmd of commands) {
+    if (!/\bjest\b/i.test(cmd)) continue
+    const tokens = cmd.trim().split(/\s+/).filter(Boolean)
+    const jestIdx = tokens.findIndex((t) => /\bjest\b/i.test(t))
+    const rest = tokens.slice(jestIdx + 1)
+    if (rest.includes('--passWithNoTests')) continue
+    const VALUE_FLAGS = new Set(['-t', '--testNamePattern', '--testPathPattern', '-c', '--config', '--rootDir', '--selectProjects', '--maxWorkers', '-w', '--testTimeout'])
+    const stripQuotes = (s) => s.replace(/^['"]|['"]$/g, '')
+    const targets = []
+    for (let i = 0; i < rest.length; i++) {
+      const tok = stripQuotes(rest[i])
+      if (!tok) continue
+      if (tok.startsWith('-')) {
+        if (VALUE_FLAGS.has(tok)) i++
+        continue
+      }
+      targets.push(tok)
+    }
+    if (!targets.length) continue
+    const cdMatch = /^cd\s+([^\s&]+)\s*&&\s*/.exec(cmd.trim())
+    const cdDir = cdMatch ? stripQuotes(cdMatch[1]) : null
+    const resolveTarget = (t) => {
+      const isAbsolute = /^([a-zA-Z]:)?[\\/]/.test(t)
+      if (cdDir && !isAbsolute) return cdDir + '/' + t
+      return t
+    }
+    const absentTargets = targets.filter((t) => existsMap.get(normPath(resolveTarget(t))) === false)
+    if (absentTargets.length && absentTargets.length === targets.length) {
+      problems.push({
+        file: '(build-plan)',
+        severity: 'blocker',
+        phase: 'Baseline',
+        summary: "Jest command's target path(s) do not exist yet, with no --passWithNoTests: `" + cmd + '`',
+        detail: 'Every target this command names (' + targets.join(', ') + ') is reported ABSENT by the baseline manifest, and without --passWithNoTests Jest exits nonzero on zero matched test files, so this gate is void until those files land.',
+        fixHint: 'Add --passWithNoTests if running before the test files exist is intentional, or point this command at files that already exist.',
+      })
+    }
+  }
+  return problems
+}
+
+const findings = []
+let baselineResult = {
+  ran: false,
+  commands: baselineCommands,
+  badCommands: [],
+  gate: { ran: false, pass: null, results: [] },
+  grounding: { ran: false, artifacts: groundingArtifacts, findings: [] },
+}
+let manifestResult = { ran: false, files: [], validCommands: [], artifacts: [], planBytes: { build: 0, test: 0 } }
+const existsMap = new Map()
+const riskMap = new Map()
+const wantHarnessCheck = mode === 'bugfix' && plannedFiles.length > 0
+let harnessCheck = { ran: false, issues: [], skipped: mode === 'bugfix' ? (wantHarnessCheck ? null : 'no-planned-files') : 'feature-mode' }
+
+{
+  const baselineOut = await parallel([
+    () => (baselineCommands.length ? askAgent(baselineGatePrompt(baselineCommands), { label: 'baseline-gate', phase: 'Baseline', model: CFG.models.haiku, effort: CFG.effort.baseline, schema: GATE_SCHEMA }) : Promise.resolve(null)),
+    () => (groundingArtifacts.length ? askAgent(groundingPrompt(groundingArtifacts), { label: 'baseline-grounding', phase: 'Baseline', model: CFG.models.haiku, effort: CFG.effort.baseline, schema: FINDINGS_SCHEMA }) : Promise.resolve(null)),
+    () => askAgent(manifestPrompt(plannedFiles, baselineCommands, groundingArtifacts, planPaths), { label: 'baseline-manifest', phase: 'Baseline', model: CFG.models.haiku, effort: CFG.effort.baseline, schema: MANIFEST_SCHEMA }),
+    () => (wantHarnessCheck ? askAgent(harnessCheckPrompt(plannedFiles), { label: 'harness-check', phase: 'Baseline', model: CFG.models.sonnet, effort: 'low', schema: HARNESS_SCHEMA }) : Promise.resolve(null)),
+  ])
+
+  if (baselineCommands.length) {
+    const bGate = baselineOut[0]
+    if (bGate) {
+      const bResults = Array.isArray(bGate.results) ? bGate.results : []
+      for (const r of bResults) {
+        if (!r || r.pass !== false) continue
+        const cmd = r.command || ''
+        if (!normCmd(cmd) || isBadCommand(cmd)) continue
+        badCommandSet.add(normCmd(cmd))
+        baselineResult.badCommands.push(cmd)
+        findings.push({
+          file: '(gate-command)',
+          severity: 'major',
+          phase: 'Baseline',
+          summary: '`' + cmd + '` already fails on the unmodified baseline tree -- the command is broken, not the code',
+          detail: 'Baseline output: ' + (r.summary || '(none reported)') + '. This command failed BEFORE any agent wrote anything, so its failures during this run are not evidence about the change. It is excluded from every later gate and cannot make the result unclean.',
+        })
+      }
+      baselineResult.gate = { ran: true, pass: !!bGate.pass, results: bResults }
+    } else {
+      baselineResult.gate = { ran: true, pass: null, results: [] }
+    }
+  }
+
+  if (groundingArtifacts.length) {
+    const bGround = baselineOut[1]
+    if (bGround) {
+      const groundFindings = (Array.isArray(bGround.findings) ? bGround.findings : []).map((f) => ({
+        ...f,
+        file: '(artifact)',
+        phase: 'Baseline',
+        severity: f.severity === 'blocker' ? 'major' : f.severity,
+      }))
+      baselineResult.grounding = { ran: true, artifacts: groundingArtifacts, findings: groundFindings }
+      findings.push(...groundFindings)
+    } else {
+      baselineResult.grounding = { ran: true, artifacts: groundingArtifacts, findings: [] }
+    }
+  }
+
+  const bManifest = baselineOut[2]
+  // Fix round 1 (finding 1): a dead/skipped manifest agent used to leave
+  // existsMap/riskMap silently empty with no record of why -- surfaced now as
+  // a major finding instead of a quiet fall-through to "every file looks
+  // fine".
+  if (!bManifest) {
+    findings.push({
+      file: '(baseline-manifest)',
+      severity: 'major',
+      phase: 'Baseline',
+      summary: 'The baseline manifest agent returned nothing -- every file defaults to HIGH risk and "created vs edited" existence facts are unavailable.',
+      detail: 'baseline-manifest died or was skipped, so existsMap/riskMap carry no per-file facts except any tasks[].risk override. Every unclassified file is therefore treated as HIGH risk (unknown-is-HIGH) rather than silently LOW, and every planned file the Jest-target check considers is treated as ABSENT, which may produce a spurious (build-plan) blocker for a file that already exists.',
+    })
+  }
+  const mFiles = bManifest && Array.isArray(bManifest.files) ? bManifest.files.filter((f) => f && f.path) : []
+  for (const f of mFiles) {
+    const k = normPath(f.path)
+    existsMap.set(k, f.exists !== false) // absent ONLY when explicitly false
+    riskMap.set(k, f.risk === 'LOW' ? 'LOW' : 'HIGH')
+  }
+  // tasks[].risk explicit ALWAYS wins over the classifier -- applied to every
+  // file the task owns.
+  for (const t of tasks) {
+    if (t.risk !== 'HIGH' && t.risk !== 'LOW') continue
+    for (const f of [...(t.files || []), ...(t.tests || [])]) riskMap.set(normPath(f), t.risk)
+  }
+  // tasks[].introducesObservable (boolean; or the brief containing the
+  // literal token INTRODUCES-OBSERVABLE) -- E4: a task whose whole point is
+  // to make a not-yet-existing observable appear (e.g. a CLI line, a log
+  // message) cannot pre-implementation red-gate on that observable's
+  // absence looking like "the vulnerability" -- the only honest RED state is
+  // "nothing printed / import-undefined". redCheckStage (below) reads this
+  // flag via taskIntroducesObservable() to accept that structural RED
+  // without remediation; it is read there, not validated here.
+  if (bManifest) {
+    manifestResult = {
+      ran: true,
+      files: mFiles.map((f) => {
+        const k = normPath(f.path)
+        return { path: k, status: f.status || '', exists: existsMap.get(k), digest: f.digest || '', risk: riskMap.get(k) || 'HIGH', changedLines: typeof f.changedLines === 'number' ? f.changedLines : 0 }
+      }),
+      // B: strip every already-known-broken command -- every LATER gate that
+      // reads validCommands (instead of re-discovering them itself) never
+      // sees a command this run already proved broken.
+      validCommands: (Array.isArray(bManifest.validCommands) ? bManifest.validCommands : []).filter((c) => !isBadCommand(c)),
+      artifacts: Array.isArray(bManifest.artifacts) ? bManifest.artifacts : [],
+      planBytes: bManifest.planBytes && typeof bManifest.planBytes === 'object' ? { build: Number(bManifest.planBytes.build) || 0, test: Number(bManifest.planBytes.test) || 0 } : { build: 0, test: 0 },
+    }
+  }
+
+  // (c) plan-size cap: over CFG.caps.planBytes[scale] -> a major (artifact)
+  // finding, routed to a Sonnet low trim pass (never a silent proceed).
+  const planCap = CFG.caps.planBytes[scale] || CFG.caps.planBytes.small
+  if (manifestResult.planBytes.build > planCap.build) {
+    findings.push({ file: '(artifact)', severity: 'major', phase: 'Baseline', summary: 'Build plan is ' + manifestResult.planBytes.build + ' bytes, over the "' + scale + '" cap of ' + planCap.build, detail: 'Route to a Sonnet low trim pass before Author tests/Implement read it.' })
+  }
+  if (manifestResult.planBytes.test > planCap.test) {
+    findings.push({ file: '(artifact)', severity: 'major', phase: 'Baseline', summary: 'Test plan is ' + manifestResult.planBytes.test + ' bytes, over the "' + scale + '" cap of ' + planCap.test, detail: 'Route to a Sonnet low trim pass before Author tests/Implement read it.' })
+  }
+
+  // (a)/C: Jest-target validation, driven by the manifest's own exists facts
+  // instead of blindly assuming every planned file is absent.
+  findings.push(...validateJestCommands(baselineCommands, existsMap))
+
+  if (wantHarnessCheck) {
+    const hc = baselineOut[3]
+    harnessCheck = { ran: !!hc, issues: hc && Array.isArray(hc.issues) ? hc.issues : [], skipped: null }
+  }
+  baselineResult.ran = true
+}
+
+// ---------- A7: waves (dependsOn order, disjoint-file scheduling) ----------
+// Lifted from pipeline.js.bak-2026-09-12 @2851-2907 (param renamed `pkgs` ->
+// `tasks`, `package` -> `task` in the issue text). A3's detectGraphIssues()
+// already blocks an unknown/self/cyclic dependsOn edge before any agent
+// runs, so these issues[] should never fire on a plan that reached this
+// point -- kept as defensive redundancy, matching the old engine's own
+// belt-and-suspenders shape.
+function buildWaves(tasks) {
+  const issues = []
+  const byId = new Map()
+  for (const t of tasks) byId.set(t.id, t)
+
+  const ordered = []
+  const state = {} // id -> 1 = on the stack, 2 = emitted
+  function visit(t) {
+    if (state[t.id] === 2) return
+    if (state[t.id] === 1) return // cycle -- reported below; do not recurse forever
+    state[t.id] = 1
+    for (const dep of t.dependsOn || []) {
+      const d = byId.get(dep)
+      if (!d) {
+        issues.push('Task ' + t.id + ' declares dependsOn "' + dep + '", which matches no task id -- that ordering constraint was DROPPED and ' + t.id + ' may have run concurrently with, or before, the work it depends on.')
+        continue
+      }
+      if (d === t) {
+        issues.push('Task ' + t.id + ' declares dependsOn on itself -- ignored.')
+        continue
+      }
+      if (state[d.id] === 1) {
+        issues.push('Circular dependsOn between ' + t.id + ' and ' + d.id + ' -- the cycle cannot be ordered, so one of those edges was DROPPED.')
+        continue
+      }
+      visit(d)
+    }
+    state[t.id] = 2
+    ordered.push(t)
+  }
+  for (const t of tasks) visit(t)
+
+  const waves = []
+  const waveOf = {} // task id -> wave index
+  // Fix round 1 (finding 2): compare `[...files, ...tests]` (not `files`
+  // alone -- two tasks extending the same test file are a write conflict
+  // too) through `normPath` (not raw strings -- so this agrees with
+  // validateTasks' own shared-file rule about what counts as "the same
+  // file").
+  const ownedOf = (q) => new Set([...(q.files || []), ...(q.tests || [])].map(normPath))
+  for (const t of ordered) {
+    const files = ownedOf(t)
+    const minWave = (t.dependsOn || []).reduce((m, dep) => (waveOf[dep] != null ? Math.max(m, waveOf[dep] + 1) : m), 0)
+    let idx = -1
+    for (let i = minWave; i < waves.length; i++) {
+      if (!waves[i].some((q) => [...ownedOf(q)].some((f) => files.has(f)))) { idx = i; break }
+    }
+    if (idx === -1) { waves.push([t]); idx = waves.length - 1 }
+    else waves[idx].push(t)
+    waveOf[t.id] = idx
+  }
+  return { waves, issues }
+}
+// Which (model, effort) pairs a wave's real agent calls (A8+) will use --
+// warmed once per pair before the wave dispatches, so those calls land on a
+// warm prompt cache. Delegates straight to isHighRisk() (defined further
+// down; function declarations hoist, so this is safe -- pairsFor is only
+// ever CALLED from the wave loop at the bottom of the script, long after
+// isHighRisk's declaration has been processed). Fix round 1, finding 12:
+// this used to keep its own separate copy of the HIGH/LOW rule and, in
+// keeping a separate copy, missed isHighRisk's explicit `t.risk === 'LOW'`
+// override -- an explicitly LOW-risk task could still warm the Fable pair
+// here while every other A8/A9 stage correctly routed it to Sonnet.
+// Delegating means the two structurally cannot disagree again.
+function pairsFor(wave) {
+  const seen = new Set()
+  const pairs = []
+  for (const t of wave) {
+    const high = isHighRisk(t)
+    const model = CFG.models.sonnet // implementation is never Fable (ruling 2026-09-13); HIGH keeps implementHigh effort
+    const effort = high ? CFG.effort.implementHigh : CFG.effort.implement
+    const key = model + ':' + effort
+    if (seen.has(key)) continue
+    seen.add(key)
+    pairs.push([model, effort])
+  }
+  return pairs
+}
+// ---------- A8/A9: per-task chain ----------
+const M = CFG.models
+
+// A15: profile selection (S6). args.profile, when literally 'lean' or
+// 'standard', always wins; otherwise a small-scale run with no HIGH-risk
+// task anywhere -- neither an explicit risk:'HIGH' on a task nor a
+// Baseline-manifest file marked HIGH -- defaults to 'lean' (superpowers
+// parity: no separate test author, no probes, reviewer always Sonnet,
+// Baseline skips the final-command check); everything else defaults to
+// 'standard' (the full S1-S5 design this engine already implements).
+// manifestResult is fully populated by the time this runs (Baseline's
+// `await parallel(...)` above already resolved).
+// Fix (repro-test red-check under lean): 'lean's "skip the separate test
+// author, let the RED check parse the implementer's own RED section"
+// design was conceived for `feature`-type tasks, which DO have an
+// implementer whose report can carry an observed RED-then-GREEN. A
+// `repro-test` task's chain (chainForType, below) has NO implementer at
+// all -- [briefStage, testAuthorStage, redCheckStage, finishStage] -- so
+// under lean both testAuthorStage and redCheckStage short-circuit
+// (profile.separateTestAuthor:false) and the task makes ZERO agent calls,
+// reporting a fabricated clean:true having proven nothing about the bug's
+// reproduction. mode:'bugfix' runs and any run containing a repro-test
+// task are exactly the cases that depend on that mechanical, behavioral
+// RED check (the house Pipeline Law's "repro-first tests that must fail
+// on the bug's own wrong value") -- so both force 'standard' here, the
+// SAME way explicitHigh/manifestHigh already do, and under the same
+// args.profile-always-wins precedence. This does NOT touch lean's
+// behavior for ordinary feature-type runs.
+const explicitHigh = tasks.some((t) => t.risk === 'HIGH')
+const manifestHigh = (manifestResult.files || []).some((f) => f.risk === 'HIGH')
+const hasReproTest = tasks.some((t) => t.type === 'repro-test')
+const forceStandardForBugfix = mode === 'bugfix' || hasReproTest
+const profileName =
+  _args.profile === 'lean' || _args.profile === 'standard'
+    ? _args.profile
+    : scale === 'small' && !explicitHigh && !manifestHigh && !forceStandardForBugfix
+      ? 'lean'
+      : 'standard'
+const profile = CFG.profiles[profileName]
+
+function taskDir(id) { return runDir + '/tasks/' + id }
+// Fix 1: builds the 'node "<abs path>/<script>.mjs"' prefix every one of the
+// 4 helper-script invocations uses, from the launcher-supplied scriptsDir --
+// never a bare relative 'node scripts/<script>.mjs' (that only resolves when
+// the invoking agent's cwd happens to be dev-pipeline's own directory, never
+// true for a real run). Returns null when scriptsDir is empty so each call
+// site can treat "no scriptsDir" as a hard, visible blocker instead of
+// silently falling back to the broken relative form -- a silent fallback
+// would just reproduce this exact bug for anyone who forgets to pass the new
+// arg (see the missing-scriptsDir handling at each call site below).
+// Forward slashes only, and the path double-quoted (it may contain spaces,
+// e.g. under "C:\\Users\\<name>\\..."): Node's child_process/shell resolves
+// forward-slash paths correctly on Windows too, so this stays portable and
+// ASCII-only.
+function scriptCmd(name) { return scriptsDir ? 'node "' + scriptsDir + '/' + name + '"' : null }
+// The single HIGH/LOW rule every A8/A9 stage -- and pairsFor() above -- reads
+// through: an explicit t.risk always wins (including an explicit LOW); an
+// unclassified owned file defaults HIGH ("unknown is HIGH", matching the
+// Baseline manifest's own rule). Fix round 1, finding 12: pairsFor() now
+// calls this directly instead of keeping a separate copy of the rule.
+function isHighRisk(t) {
+  if (t.risk === 'HIGH' || t.risk === 'LOW') return t.risk === 'HIGH'
+  const owned = [...(t.files || []), ...(t.tests || [])].map(normPath)
+  return owned.some((f) => riskMap.get(f) !== 'LOW')
+}
+// Every judgment-tier call (Fable AND Opus) gets the tool-call cap: they read the
+// pack and never explore — an Opus reviewer past 12 tool calls is mis-routed and
+// its cost is cache reads (lead ruling 2026-09-14, after the cost investigation).
+function fableSafe(model, promptText) { return (model === M.fable || model === M.opus) ? withToolCap(promptText) : promptText }
+
+// Fix 2 (real smoke-run finding): this schema originally had no exitCode
+// field, so a script invocation that failed to even resolve its own path
+// (Fix 1's bug) was silently swallowed -- the agent reported a fabricated
+// placeholder ("task-brief-script-missing", bytes:0) that briefStage/the
+// fix-brief call site accepted blindly as a real path, degrading silently
+// instead of blocking. `exitCode` is required so those call sites can tell
+// "the script ran and wrote its output" apart from "the agent reported
+// something, but the script never actually ran" -- the exact distinction
+// PACK_SCRIPT_SCHEMA/packStage already made correctly (proven by the real
+// smoke run, which produced a genuine (pack) blocker).
+const SCRIPT_RESULT_SCHEMA = {
+  type: 'object',
+  properties: {
+    out: { type: 'string', description: 'path the script wrote its output to' },
+    bytes: { type: 'number' },
+    truncated: { type: 'boolean' },
+    sections: { type: 'array', items: { type: 'string' } },
+    exitCode: { type: 'number', description: 'the script process exit code -- 0 only if its output file was actually written' },
+  },
+  required: ['out', 'bytes', 'truncated', 'exitCode'],
+}
+// Lifted from pipeline.js.bak-2026-09-12 @799-822 (RED_RUN_SCHEMA), verbatim
+// shape -- the red run's job is to capture output, not to judge it.
+const RED_RUN_SCHEMA = {
+  type: 'object',
+  properties: {
+    ran: { type: 'boolean', description: 'true if every command actually executed -- a FAILING test run still counts as executed' },
+    cwd: { type: 'string' },
+    results: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          command: { type: 'string' },
+          exitCode: { type: 'number' },
+          output: { type: 'string', description: 'runner output verbatim: every failing test name with its failure message, plus pass/fail/skip counts' },
+        },
+        required: ['command', 'exitCode', 'output'],
+      },
+    },
+  },
+  required: ['ran', 'results'],
+}
+// Adapted from pipeline.js.bak-2026-09-12 @823-845 (RED_AUDIT_SCHEMA):
+// trimmed to the STRUCTURAL half only (behaviorallyRed/properlyRed are a
+// repro-test/A10 concern over a task's stated wrongValue, out of this
+// task group's scope).
+const RED_AUDIT_SCHEMA = {
+  type: 'object',
+  properties: {
+    structurallyRed: { type: 'boolean', description: 'true ONLY if every named test ran and failed on an ASSERTION -- none passed, none errored, none was skipped' },
+    tests: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          test: { type: 'string' },
+          outcome: { type: 'string', enum: ['assertion-failure', 'error', 'passed', 'not-run'] },
+          note: { type: 'string' },
+        },
+        required: ['test', 'outcome', 'note'],
+      },
+    },
+    blockers: { type: 'array', items: { type: 'string' } },
+    remediation: { type: 'string', description: 'the exact edits a test author should make to fix the STRUCTURAL problem(s); empty string if structurallyRed' },
+  },
+  required: ['structurallyRed', 'tests', 'blockers', 'remediation'],
+}
+// Lifted from pipeline.js.bak-2026-09-12 @754-763 (IMPL_SCHEMA) verbatim;
+// reused as-is for every fix-round executor report too (A9) -- same shape.
+const IMPL_SCHEMA = {
+  type: 'object',
+  properties: {
+    status: { type: 'string', enum: ['done', 'partial', 'blocked'] },
+    filesChanged: { type: 'array', items: { type: 'string' } },
+    deviations: { type: 'string', description: 'anything the plan asked for that you did not or could not do, and why; empty string if none' },
+    notes: { type: 'string', description: 'anything the reviewer must know; empty string if none' },
+  },
+  required: ['status', 'filesChanged', 'deviations', 'notes'],
+}
+// S3's reviewer verdict schema, as specified in the task 8 brief verbatim.
+const REVIEW_SCHEMA = {
+  type: 'object',
+  properties: {
+    specCompliance: { type: 'string', enum: ['pass', 'fail', 'partial'] },
+    findings: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          severity: { type: 'string', enum: ['critical', 'important', 'minor'] },
+          file: { type: 'string' },
+          line: { type: 'number' },
+          summary: { type: 'string' },
+          scenario: { type: 'string', description: 'the concrete input/state that produces the wrong behavior' },
+        },
+        required: ['severity', 'file', 'summary', 'scenario'],
+      },
+    },
+    assessment: { type: 'string', enum: ['approved', 'needs-fixes'] },
+  },
+  required: ['specCompliance', 'findings', 'assessment'],
+}
+// Adapted from pipeline.js.bak-2026-09-12 @1237-1270 (FIX_PLAN_SCHEMA):
+// dropped `waves`/`route`/`ruled` -- this run's fix loop is single-task and
+// sequential (no cross-finding concurrency to schedule, no Opus routing to
+// pick), so those fields would just go unread. `key` replaces the old
+// numeric index, matching fixKey() below.
+const FIX_DESIGN_SCHEMA = {
+  type: 'object',
+  properties: {
+    decisions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          key: { type: 'string', description: 'the finding key this decision is about, copied exactly from the findings list' },
+          action: { type: 'string', enum: ['fix', 'dispute', 'defer'] },
+          design: { type: 'string', description: 'for "fix": 2-6 sentences -- what changes, where, and what must NOT change' },
+          invariant: { type: 'string' },
+          tests: { type: 'string' },
+          reason: { type: 'string' },
+        },
+        required: ['key', 'action', 'design', 'invariant', 'tests', 'reason'],
+      },
+    },
+    note: { type: 'string', description: 'this round\'s plan in one paragraph' },
+  },
+  required: ['decisions', 'note'],
+}
+// Fix round 1, finding 1/2: packStage's and the re-review's review-pack.mjs
+// calls must never be trusted on a bare `out` path alone -- a non-zero exit
+// or a missing pack.md must become a task blocker, never a silent fallback.
+// `exitCode` is required so the engine can tell "the script ran and wrote
+// pack.md" apart from "the agent reported something, but the script failed".
+const PACK_SCRIPT_SCHEMA = {
+  type: 'object',
+  properties: {
+    out: { type: 'string', description: 'path the script wrote its output to' },
+    bytes: { type: 'number' },
+    truncated: { type: 'boolean' },
+    sections: { type: 'array', items: { type: 'string' } },
+    exitCode: { type: 'number', description: 'the review-pack.mjs process exit code -- 0 only if pack.md was actually written' },
+  },
+  required: ['out', 'bytes', 'truncated', 'exitCode'],
+}
+const GIT_SHA_SCHEMA = { type: 'object', properties: { sha: { type: 'string' } }, required: ['sha'] }
+// Real launch wf_a3822206-ba6, task T1: the TEST-AUTHOR agent added an
+// implementation-file mirror (outside t.tests) to make its own test pass,
+// so the red gate correctly refused the task but reported a confusing
+// "declared test was green" blocker instead of the real defect. Never trust
+// the test author's own report of what it touched -- mechanically check,
+// the same `git status --porcelain` pattern as captureGitSha, on Haiku.
+const SCOPE_CHECK_SCHEMA = {
+  type: 'object',
+  properties: {
+    ran: { type: 'boolean', description: 'true only if the command actually executed' },
+    files: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'repo-root-relative path' },
+          tracked: { type: 'boolean', description: 'false ONLY for a "??" (untracked) status line' },
+        },
+        required: ['path', 'tracked'],
+      },
+    },
+  },
+  required: ['ran', 'files'],
+}
+const SCOPE_REVERT_SCHEMA = {
+  type: 'object',
+  properties: {
+    exitCode: { type: 'number', description: '0 only if every listed path was actually reverted or deleted' },
+    reverted: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['exitCode', 'reverted'],
+}
+// E9: paths the ENGINE ITSELF owns -- every run's own artifact directory
+// (spec.md, build-plan.md, test-plan.md, RESUME.md, phases/, tasks/) plus
+// the run-wide bookkeeping files that live one level up (agent-log.jsonl,
+// cost-ledger.jsonl, approach-rotation.json) -- all under '.claude/pipeline/'.
+// Real incident 2026-09-15 (Lite L2): a test-author touched its OWN run's
+// artifact dir and agent-log.jsonl; enforceTestAuthorScope had no notion of
+// "engine bookkeeping, not a scope violation" and flagged both as untracked
+// + unplanned, then its remediation DELETED the run's own spec/build-plan/
+// test-plan/RESUME.md -- every later task then had nothing to read and 9
+// tasks cascaded to blocked. These paths must never be flagged, never sent
+// to remediation, and never deleted, no matter what touches them.
+// Normalised with normPath so '\\' and './' spellings all match the same way
+// normPath already makes every other comparison in this file spelling-proof.
+const ENGINE_OWNED_PATH_PREFIXES = [
+  '.claude/pipeline/',
+  ...(runDir ? [normPath(runDir).replace(/\/+$/, '') + '/'] : []),
+].map(normPath)
+function isEngineOwnedPath(p) {
+  const n = normPath(p)
+  return ENGINE_OWNED_PATH_PREFIXES.some((prefix) => n === prefix.slice(0, -1) || n.startsWith(prefix))
+}
+function scopeCheckPrompt() {
+  return 'Run `git status --porcelain` from the repo root and report every changed or untracked file as a repo-root-relative path: tracked:false ONLY for a line starting "??", tracked:true for every other status line. Report ran:true only if the command actually executed.'
+}
+const UNTRACKED_SNAPSHOT_SCHEMA = {
+  type: 'object',
+  properties: { ran: { type: 'boolean' }, files: { type: 'array', items: { type: 'string' } } },
+  required: ['ran', 'files'],
+}
+// E9, rule 2: captures the untracked-file set BEFORE a test-author call runs,
+// the same "real git read, never the agent's own account" principle E7's
+// captureMainFingerprint uses. enforceTestAuthorScope's remediation is only
+// ever allowed to delete an UNTRACKED path that is NEW in this task's own
+// after-snapshot (i.e. absent here) -- an untracked path already present
+// before the agent ran is pre-existing content nobody may delete, no matter
+// whose scope it falls outside. Engine-owned paths are stripped here too, so
+// they never need to round-trip through this snapshot at all. Fail-safe: a
+// dead/unreadable agent returns null, and callers must then treat every
+// untracked path as "unknown, therefore not provably new" -- never as new.
+async function captureUntrackedSnapshot(label) {
+  const res = await askAgent(
+    'Run `git status --porcelain --untracked-files=all` from the repo root. Report ran:true only if the command actually executed (an empty result still counts as executed), and files = every line that starts "??", with that prefix stripped, as repo-root-relative paths.',
+    { label, phase: 'Author tests', model: M.haiku, effort: CFG.effort.baseline, schema: UNTRACKED_SNAPSHOT_SCHEMA },
+  )
+  if (!res || !res.ran || !Array.isArray(res.files)) return null
+  return res.files.filter((f) => f && !isEngineOwnedPath(f))
+}
+// E9, rule 2: `items` are pre-classified {path, action} -- action 'checkout'
+// for a TRACKED violation (always safe: HEAD's own content IS the
+// pre-existing content), action 'delete' for an UNTRACKED violation this
+// engine has already mechanically confirmed is NEW (absent from the
+// before-snapshot). A path classified 'blocked-only' by the caller is never
+// included here at all -- it is reported as a finding and left untouched.
+function scopeRevertPrompt(items) {
+  return [
+    'Exactly these path(s) must come OUT of the working tree -- they were edited outside their task\'s declared scope. Handle ONLY the path(s) listed below, each EXACTLY as instructed, and touch nothing else:',
+    ...items.map((v) => '- ' + v.path + ' -- ' + (v.action === 'checkout'
+      ? 'TRACKED: run `git checkout -- "' + v.path + '"`.'
+      : 'UNTRACKED and already confirmed new (did not exist before this task\'s agent ran): delete this ONE file directly (a single-file delete, never a directory or recursive delete).')),
+    'Before acting on any path, run `git ls-files -- "<path>"` to confirm its tracked state matches what is listed above (non-empty output = tracked, empty = untracked). If a path\'s real state contradicts its listed action, STOP for that path only, change nothing, and report it in `reverted` as "<path> (tracked-state mismatch, skipped)" -- never guess or fall back to the other action.',
+    'NEVER use `git reset`, `git clean`, `git stash`, or any directory/recursive delete for this -- uncommitted work from this run and from OTHER tasks lives elsewhere in this shared tree and those would destroy it.',
+    'Report exitCode 0 only if every listed path was actually handled as instructed (checked out, deleted, or explicitly skipped on a mismatch), and reverted with the paths you actually handled.',
+  ].join('\n')
+}
+// Runs after every test-author call (initial AND remediation), before the
+// red-check reads the result. Returns null when the author stayed in scope
+// (the common case, and fail-safe on a dead/unreadable scope-check agent --
+// never block a task on this guard's own failure). On a violation, only the
+// SAFE-TO-ACT-ON offending paths are reverted so the red gate that follows
+// sees an honest tree, and a blocker finding is returned for the caller to
+// attach either way.
+//
+// PARALLEL-WAVE HAZARD: several tasks' agents run concurrently in the SAME
+// worktree (buildWaves groups independent tasks into one wave), so a plain
+// `git status --porcelain` at this moment can show OTHER in-flight tasks'
+// own implementation edits too -- not just this test author's. Attributing
+// every changed/untracked path to THIS task and reverting all of them would
+// destroy a sibling task's real work. So the violation set is deliberately
+// narrow and never touches a path that belongs to another task's plan:
+//   1. any changed/untracked path inside THIS task's own t.files (its own
+//      implementation set -- unambiguously this test author's doing), plus
+//   2. any UNTRACKED path that is new AND not planned by ANYONE (not in
+//      t.tests, and not in any task's files/tests across the whole run) --
+//      a stray file nobody's plan accounts for.
+// A tracked, modified path that belongs to another task's files/tests is
+// never flagged or reverted here, even if it happens to also fail rule 2's
+// "not in t.tests" test -- it is excluded by rule 1 requiring t.files, and
+// rule 2 applies only to untracked paths. E9 layers two more restrictions on
+// top: an ENGINE-OWNED path (see isEngineOwnedPath) is never even considered
+// a violation, and an UNTRACKED violation is only ever DELETED when
+// `beforeUntracked` (this task's own pre-agent-call snapshot) mechanically
+// proves it is new -- a pre-existing untracked path the agent merely touched
+// is reported as a blocker and left on disk, never deleted (rule 3: when
+// nothing is left that remediation may safely act on, the task still blocks,
+// the run still continues, and the sibling/dependent handling is unchanged).
+async function enforceTestAuthorScope(t, label, beforeUntracked) {
+  const ownFiles = new Set(t.files || [])
+  const ownTests = new Set(t.tests || [])
+  const plannedAnywhere = new Set()
+  for (const other of tasks) {
+    for (const f of other.files || []) plannedAnywhere.add(f)
+    for (const f of other.tests || []) plannedAnywhere.add(f)
+  }
+  // null means the before-snapshot itself failed (dead/unreadable agent) --
+  // fail-safe means "cannot prove new", i.e. isNew must default to false.
+  const beforeSet = Array.isArray(beforeUntracked) ? new Set(beforeUntracked.map(normPath)) : null
+  const isNew = (p) => !!beforeSet && !beforeSet.has(normPath(p))
+  const scope = await askAgent(scopeCheckPrompt(), { label: label + ':scope', phase: 'Author tests', model: M.haiku, effort: CFG.effort.baseline, schema: SCOPE_CHECK_SCHEMA })
+  if (!scope || !scope.ran || !Array.isArray(scope.files)) return null
+  const violations = []
+  for (const f of scope.files) {
+    if (!f || !f.path) continue
+    if (isEngineOwnedPath(f.path)) continue
+    let rule = null
+    if (ownFiles.has(f.path)) rule = 'in this task\'s own implementation files (t.files)'
+    else if (!f.tracked && !ownTests.has(f.path) && !plannedAnywhere.has(f.path)) rule = 'untracked and not in any task\'s files/tests -- unplanned'
+    if (!rule) continue
+    if (f.tracked) violations.push({ path: f.path, rule, action: 'checkout' })
+    else if (isNew(f.path)) violations.push({ path: f.path, rule, action: 'delete' })
+    else violations.push({ path: f.path, rule, action: 'blocked-only', note: 'untracked but present before this task\'s agent ran -- reported, never deleted' })
+  }
+  if (!violations.length) return null
+  const actable = violations.filter((v) => v.action !== 'blocked-only')
+  const blockedOnly = violations.filter((v) => v.action === 'blocked-only')
+  // Rule 3: nothing actable (every violation is pre-existing untracked
+  // content) -- do not even call the remediation agent; there is nothing it
+  // may safely do. The task still blocks below.
+  const revert = actable.length
+    ? await askAgent(scopeRevertPrompt(actable), { label: label + ':scope-revert', phase: 'Author tests', model: M.haiku, effort: CFG.effort.baseline, schema: SCOPE_REVERT_SCHEMA })
+    : null
+  return {
+    blockerFindings: [
+      {
+        file: '(scope)',
+        severity: 'blocker',
+        phase: 'Author tests',
+        summary: 'test author touched non-test files: ' + violations.map((v) => v.path).join(', '),
+        detail: 'Task ' + t.id + '\'s declared tests are ' + JSON.stringify(t.tests || []) +
+          '; per-path rule matched: ' + violations.map((v) => v.path + ' (' + v.rule + ')').join('; ') + '. ' +
+          (actable.length
+            ? (revert && revert.exitCode === 0
+                ? 'Reverted to HEAD / deleted before the red gate ran: ' + JSON.stringify(revert.reverted || actable.map((v) => v.path)) + '.'
+                : 'Revert attempt did NOT confirm success (exitCode=' + (revert && revert.exitCode) + ') -- treat the tree as suspect.')
+            : 'Nothing here was safe to revert -- every violating path is pre-existing untracked content this task\'s agent touched but did not create; ') +
+          (blockedOnly.length
+            ? ' Pre-existing untracked content this task\'s agent also touched is left in place and never deleted: ' + JSON.stringify(blockedOnly.map((v) => v.path)) + '.'
+            : ''),
+      },
+    ],
+  }
+}
+// ---------- E7: main-checkout workdir guard + implement liveness ----------
+// Real launch 2026-09-15 (Lite lane): REPO_NOTE's "cd into workdir" is
+// advisory text only -- two implementer agents ignored it and edited the
+// MAIN checkout (C:\ClaudeCode\routeflow) while their workdir was a
+// worktree (...\.claude\worktrees\rf-lite-L1); their tasks then stalled
+// with only brief.md written, and nothing detected either failure. Two
+// mechanical guards, same "never trust the agent's own account, check via a
+// real git read" principle as enforceTestAuthorScope above:
+//   1. withWorkdirGuard fingerprints the MAIN checkout (HEAD sha + a scoped
+//      `git status --porcelain`) before and after any implement/test-author/
+//      fix agent call, and flags a violation if it moved while workdir is a
+//      SEPARATE worktree. Skipped entirely when workdir IS the main
+//      checkout (nothing to compare against), and fail-safe like the scope
+//      guard: a dead/unreadable fingerprint agent never blocks a task on
+//      the GUARD's own failure -- only a CONFIRMED drift does.
+//   2. checkImplementLiveness catches the OTHER half of the same incident:
+//      an implementer that reports a non-blocked status but changed nothing
+//      and never wrote its report.md. Mechanically confirmed (report.md
+//      existence + a real `git status --porcelain` count), never trusted
+//      off the self-reported filesChanged array alone -- an agent confused
+//      about its own cwd cannot be trusted to accurately self-report an
+//      empty change either.
+function normFsPath(p) {
+  return (p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+}
+const MAIN_DIR_SCHEMA = { type: 'object', properties: { ran: { type: 'boolean' }, dir: { type: 'string' } }, required: ['ran', 'dir'] }
+const FINGERPRINT_SCHEMA = { type: 'object', properties: { ran: { type: 'boolean' }, sha: { type: 'string' }, status: { type: 'string' } }, required: ['ran', 'sha', 'status'] }
+const LIVENESS_SCHEMA = { type: 'object', properties: { ran: { type: 'boolean' }, reportExists: { type: 'boolean' }, changedCount: { type: 'number' } }, required: ['ran', 'reportExists', 'changedCount'] }
+// Memoized for the whole run -- workdir/its main checkout never change mid-run.
+let _mainCheckoutDirPromise = null
+async function mainCheckoutDir() {
+  if (!workdir) return null
+  if (!_mainCheckoutDirPromise) {
+    _mainCheckoutDirPromise = (async () => {
+      const res = await askAgent(
+        'Run `git -C "' + workdir + '" rev-parse --path-format=absolute --git-common-dir` and report its single output line as dir (the absolute .git/common directory), and ran:true only if the command actually executed.',
+        { label: 'workdir-guard:main-dir', phase: 'Workdir guard', model: M.haiku, effort: CFG.effort.baseline, schema: MAIN_DIR_SCHEMA },
+      )
+      if (!res || !res.ran || !res.dir) return null
+      // The main checkout root is the PARENT of that .git/common dir, for
+      // both an ordinary checkout (dir = "<root>/.git") and a worktree
+      // (--git-common-dir also resolves to the MAIN checkout's ".git").
+      return res.dir.replace(/[\\/]+[^\\/]+[\\/]*$/, '')
+    })()
+  }
+  return _mainCheckoutDirPromise
+}
+async function captureMainFingerprint(main, label) {
+  const res = await askAgent(
+    'Run `git -C "' + main + '" rev-parse HEAD` and then `git -C "' + main + '" status --porcelain=v1 -- apps packages scripts .github`. Report sha as the first command\'s single output line, status as the exact second command\'s stdout (empty string if it printed nothing), and ran:true only if both commands actually executed.',
+    { label, phase: 'Workdir guard', model: M.haiku, effort: CFG.effort.baseline, schema: FINGERPRINT_SCHEMA },
+  )
+  return res && res.ran ? { sha: res.sha, status: res.status } : null
+}
+// Wraps a file-touching agent call (implement/test-author/fix). `call` is a
+// thunk making the real askAgent(...) call. Returns { response, violation }:
+// `response` is always the real call's result, untouched; `violation` is a
+// ready-to-attach blockerFinding, or null when the guard does not apply
+// (no workdir, or workdir IS the main checkout) or found no drift.
+async function withWorkdirGuard(t, label, call) {
+  // E8: an agent that ends its turn without calling StructuredOutput can make
+  // the underlying agent()/thunk REJECT instead of resolving to null. Every
+  // file-touching agent call in this engine (test-author, implement,
+  // docs-implement, every fix executor) routes through this one function, so
+  // catching that rejection HERE and folding it into the SAME null-response
+  // contract every stage already tolerates (`red || {...}`, `impl ? impl.status
+  // : '(dead agent)'`) is enough to stop a non-compliant agent from crashing
+  // the whole run instead of just blocking its one task. Never swallowed
+  // silently -- logged so the failure is still visible in the run's console.
+  const safeCall = async () => {
+    try {
+      return await call()
+    } catch (e) {
+      console.log('[' + label + '] agent call threw -- treating as a dead/declined agent: ' + (e && e.message))
+      return null
+    }
+  }
+  const main = await mainCheckoutDir()
+  if (!main || normFsPath(main) === normFsPath(workdir)) return { response: await safeCall(), violation: null }
+  const before = await captureMainFingerprint(main, label + ':guard-before')
+  const response = await safeCall()
+  if (!before) return { response, violation: null }
+  const after = await captureMainFingerprint(main, label + ':guard-after')
+  if (!after || (after.sha === before.sha && after.status === before.status)) return { response, violation: null }
+  const beforeLines = new Set((before.status || '').split('\n').filter(Boolean))
+  const changed = (after.status || '').split('\n').filter((l) => l && !beforeLines.has(l))
+  return {
+    response,
+    violation: {
+      file: '(workdir)',
+      severity: 'blocker',
+      phase: 'Workdir guard',
+      summary: 'Task ' + t.id + '\'s agent (' + label + ') changed the MAIN checkout at "' + main + '" while its workdir is the separate worktree "' + workdir + '" -- ' +
+        (changed.length ? 'changed paths: ' + changed.join(', ') : 'HEAD moved ' + before.sha + ' -> ' + after.sha) + '.',
+      detail: 'before: ' + JSON.stringify(before) + '; after: ' + JSON.stringify(after),
+    },
+  }
+}
+function livenessCheckPrompt(t) {
+  return 'Check whether "' + taskDir(t.id) + '/report.md" exists (reportExists), and run `git -C "' + workdir + '" status --porcelain` (never a bare git relying on your cwd) to count changed/untracked entries (changedCount, an integer). Report ran:true only if both checks actually executed.'
+}
+// Called only when the implementer's OWN report already looks empty
+// (non-blocked status, no filesChanged) -- a mechanical second opinion
+// before trusting that as "nothing to do" rather than "silently stalled".
+// Fail-safe: a dead/unreadable liveness agent returns null (no block); only
+// a CONFIRMED empty workdir (no report.md AND zero git-status entries)
+// blocks the task.
+async function checkImplementLiveness(t, impl, label, phaseName) {
+  if (!impl || impl.status === 'blocked') return null
+  if (Array.isArray(impl.filesChanged) && impl.filesChanged.length > 0) return null
+  const liveness = await askAgent(livenessCheckPrompt(t), { label: label + ':liveness', phase: phaseName, model: M.haiku, effort: CFG.effort.baseline, schema: LIVENESS_SCHEMA })
+  if (!liveness || !liveness.ran) return null
+  if (liveness.reportExists || liveness.changedCount > 0) return null
+  return {
+    file: '(implement)',
+    severity: 'blocker',
+    phase: phaseName,
+    summary: 'Task ' + t.id + '\'s agent (' + label + ') reported status ' + impl.status + ' but left no changed files and no report.md -- no work in workdir.',
+    detail: JSON.stringify({ impl, liveness }),
+  }
+}
+// Fix round 1, finding 2/9: the fix loop needs a real commit boundary per
+// round to scope a re-review pack to just that round's diff -- every fix
+// executor (rounds 1-2, and the round-3/4 designer-executor) is told to
+// commit its own change, the same pattern the rest of this rebuild's
+// implementers use.
+const COMMIT_NOTE = 'Commit your change when you are done (a small, scoped commit) so this round\'s exact diff can be captured and re-reviewed -- never leave it uncommitted.'
+const REREVIEW_SCHEMA = {
+  type: 'object',
+  properties: {
+    perFinding: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          key: { type: 'string' },
+          status: { type: 'string', enum: ['ADDRESSED', 'NOT ADDRESSED'] },
+          evidence: { type: 'string', description: 'file:line evidence for the verdict -- never the fixer\'s own say-so' },
+        },
+        required: ['key', 'status', 'evidence'],
+      },
+    },
+    newFindings: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          severity: { type: 'string', enum: ['critical', 'important', 'minor'] },
+          file: { type: 'string' },
+          line: { type: 'number' },
+          summary: { type: 'string' },
+          scenario: { type: 'string' },
+        },
+        required: ['severity', 'file', 'summary', 'scenario'],
+      },
+    },
+  },
+  required: ['perFinding', 'newFindings'],
+}
+
+// ---------- A10: bugfix task type schemas ----------
+// root-cause: adapted from the plan's Task 10 literal shape.
+const ROOT_CAUSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    reproduced: { type: 'boolean', description: 'true ONLY if you actually observed the bug happen on the current tree, not merely read code and inferred it would' },
+    causeConfirmed: { type: 'boolean', description: 'true ONLY if the brief\'s named cause is what actually produces the wrong value -- false if you reproduced a DIFFERENT bug, or the named cause is not what is happening' },
+    wrongValueObserved: { type: 'string', description: 'the actual wrong value/output you saw, verbatim' },
+    note: { type: 'string' },
+  },
+  required: ['reproduced', 'causeConfirmed', 'wrongValueObserved', 'note'],
+}
+// revert-probe: adapted from pipeline.js.bak-2026-09-12 @1646 (revertProbePrompt)
+// and its MUTATION_SCHEMA @896 -- trimmed to the fields this rebuild's
+// in-script checksum comparison actually reads (preHash/postHash dropped:
+// Baseline's own manifest digest is the "before" record here, and the
+// dedicated checksum:after agent below is the "after" one -- neither needs
+// the probe agent's own hash claim, which is never trusted as sole evidence).
+const REVERT_PROBE_SCHEMA = {
+  type: 'object',
+  properties: {
+    caught: { type: 'boolean', description: 'true ONLY if the named test FAILED on an assertion once the fix was reverted' },
+    restored: { type: 'boolean', description: 'true ONLY if you are confident the file is byte-identical to the backup you took before reverting -- an independent checksum agent verifies this afterward, so never claim it without having actually compared' },
+    evidence: { type: 'string', description: 'the assertion failure message, or the output proving the test is blind to the fix' },
+    backupPath: { type: 'string', description: 'absolute path of the backup, in the OS temp directory' },
+    fallback: { type: 'string', description: 'set to the exact string "untracked" ONLY when the file had no committed HEAD version to revert to; empty string otherwise' },
+  },
+  required: ['caught', 'restored', 'evidence'],
+}
+// checksum:after -- adapted from pipeline.js.bak-2026-09-12 @1016
+// (CHECKSUM_SCHEMA), but git hash-object (matching MANIFEST_SCHEMA's own
+// digest field, @495 above) instead of sha256sum -- so the in-script
+// comparison below is apples to apples against the Baseline manifest's
+// per-file `digest`.
+const CHECKSUM_SCHEMA = {
+  type: 'object',
+  properties: {
+    files: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          file: { type: 'string', description: 'the path exactly as it was given to you' },
+          digest: { type: 'string', description: '`git hash-object <file>` digest, lowercase hex; the exact string "unreadable" if the file could not be read' },
+        },
+        required: ['file', 'digest'],
+      },
+    },
+  },
+  required: ['files'],
+}
+// sibling sweep -- adapted from pipeline.js.bak-2026-09-12 @975/@995
+// (SIBLING_HITS_SCHEMA / SIBLING_VERDICT_SCHEMA), verbatim shape.
 const SIBLING_HITS_SCHEMA = {
   type: 'object',
   properties: {
@@ -988,7 +1655,7 @@ const SIBLING_HITS_SCHEMA = {
         required: ['pattern', 'file', 'line', 'excerpt'],
       },
     },
-    truncated: { type: 'array', items: { type: 'string' }, description: 'the patterns whose hit list you had to cap; empty when none was capped' },
+    truncated: { type: 'array', items: { type: 'string' }, description: 'the patterns whose hit list had to be capped; empty when none was' },
   },
   required: ['hits'],
 }
@@ -1002,7 +1669,7 @@ const SIBLING_VERDICT_SCHEMA = {
         properties: {
           index: { type: 'number', description: 'the [#index] of the hit this verdict is about' },
           verdict: { type: 'string', enum: ['defect', 'same-class-but-guarded', 'unrelated'] },
-          severity: { type: 'string', enum: ['blocker', 'major', 'minor'], description: 'the severity this hit deserves if it is a defect; for the other verdicts give "minor"' },
+          severity: { type: 'string', enum: ['blocker', 'major', 'minor'], description: 'the severity this hit deserves if it is a defect; "minor" for the other verdicts' },
           evidence: { type: 'string', description: 'ONE sentence: for "defect" the concrete failure scenario; for "same-class-but-guarded" the guard that prevents it; for "unrelated" why the match is incidental' },
         },
         required: ['index', 'verdict', 'severity', 'evidence'],
@@ -1011,73 +1678,16 @@ const SIBLING_VERDICT_SCHEMA = {
   },
   required: ['verdicts'],
 }
-// The restore is verified by two agents that never touch the files, one before
-// the probes and one after — self-report is not verification.
-const CHECKSUM_SCHEMA = {
-  type: 'object',
-  properties: {
-    files: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          file: { type: 'string', description: 'the path exactly as it was given to you' },
-          checksum: { type: 'string', description: 'lowercase hex SHA-256 digest with no spaces; the exact string "unreadable" if the file could not be read' },
-        },
-        required: ['file', 'checksum'],
-      },
-    },
-  },
-  required: ['files'],
-}
-// C1 checkpoint agent (Haiku, low): writes the phase card (or the final result
-// summary) to disk and, at most once per run, the snapshot commit. A malformed
-// or dead checkpoint agent is non-fatal — see endPhase — so every field here
-// must default safely.
-const CHECKPOINT_SCHEMA = {
-  type: 'object',
-  properties: {
-    written: { type: 'boolean', description: 'true only if the JSON file was actually written to disk' },
-    path: { type: 'string', description: 'the absolute path you wrote, exactly as given to you' },
-    committed: { type: 'boolean', description: 'true only if you ran git commit and it succeeded' },
-    sha: { type: ['string', 'null'], description: 'the short commit sha if committed=true, else null' },
-    note: { type: 'string', description: 'one line: what happened, or why written/committed is false' },
-  },
-  required: ['written', 'path', 'committed', 'sha', 'note'],
-}
-const VERDICT_SCHEMA = {
-  type: 'object',
-  properties: {
-    refuted: { type: 'boolean', description: 'true ONLY if you demonstrated the finding is wrong or cannot happen' },
-    reason: { type: 'string' },
-  },
-  required: ['refuted', 'reason'],
-}
-// One refuter, several findings on the same file: one verdict per index.
-const BATCH_VERDICT_SCHEMA = {
-  type: 'object',
-  properties: {
-    verdicts: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          index: { type: 'number', description: 'the [#index] of the finding this verdict is about' },
-          refuted: { type: 'boolean', description: 'true ONLY if you demonstrated THIS finding is wrong, impossible, or explicitly intended by the plan' },
-          reason: { type: 'string' },
-        },
-        required: ['index', 'refuted', 'reason'],
-      },
-    },
-  },
-  required: ['verdicts'],
-}
-// What the UI driver hands the UI judge: facts per flow per viewport, no verdicts.
+
+// ---------- A10b: ui-verify task type schema ----------
+// Adapted from pipeline.js.bak-2026-09-12 @1076-1101 (UI_EVIDENCE_SCHEMA):
+// what the driver hands the judge -- facts per flow per viewport, no
+// verdicts. Same required shape verbatim.
 const UI_EVIDENCE_SCHEMA = {
   type: 'object',
   properties: {
-    completed: { type: 'boolean', description: 'true ONLY if every listed flow was driven at every listed viewport (a flow that could not be driven is reported with status "blocked", and completed=false)' },
-    specPath: { type: 'string', description: 'repo-relative path of the Playwright spec you wrote and ran; empty if the browser MCP fallback was used' },
+    completed: { type: 'boolean', description: 'true ONLY if every listed flow was driven at every listed viewport -- a flow that could not be driven is reported with status "blocked", and this stays false' },
+    specPath: { type: 'string', description: 'repo-relative path of the Playwright spec you wrote and ran; empty if a browser-driving fallback was used' },
     flows: {
       type: 'array',
       items: {
@@ -1086,12 +1696,12 @@ const UI_EVIDENCE_SCHEMA = {
           flow: { type: 'string' },
           viewport: { type: 'string' },
           status: { type: 'string', enum: ['passed', 'failed', 'blocked'] },
-          screenshot: { type: 'string', description: 'absolute or repo-relative path of the screenshot taken at the end of this flow at this viewport' },
+          screenshot: { type: 'string', description: 'path of the screenshot taken at the end of this flow at this viewport; empty if blocked' },
           assertions: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, passed: { type: 'boolean' } }, required: ['text', 'passed'] } },
           consoleErrors: { type: 'array', items: { type: 'string' }, description: 'every console error or unhandled rejection captured during this flow, verbatim' },
           networkFailures: { type: 'array', items: { type: 'string' }, description: 'every request that 4xx/5xx, aborted or timed out: method, URL, status' },
-          a11y: { type: 'array', items: { type: 'string' }, description: 'accessibility facts observed: focus order, missing accessible names, contrast or target-size measurements' },
-          notes: { type: 'string', description: 'anything else observed, stated as fact (what rendered, what the DOM classes were), never as a verdict' },
+          a11y: { type: 'array', items: { type: 'string' }, description: 'accessibility facts observed, stated as fact -- never a verdict' },
+          notes: { type: 'string' },
         },
         required: ['flow', 'viewport', 'status', 'screenshot', 'assertions', 'consoleErrors', 'networkFailures', 'a11y', 'notes'],
       },
@@ -1100,4452 +1710,1942 @@ const UI_EVIDENCE_SCHEMA = {
   },
   required: ['completed', 'specPath', 'flows', 'processesStopped'],
 }
-// What the final-pass packager hands Fable.
-const DIGEST_SCHEMA = {
-  type: 'object',
-  properties: {
-    digestPath: { type: 'string', description: 'absolute path of the digest file you wrote in the OS temp directory' },
-    files: { type: 'number', description: 'how many files the digest covers' },
-    hunks: { type: 'number', description: 'how many diff hunks it contains' },
-    note: { type: 'string', description: 'anything Fable must know about gaps in the digest (a file that could not be diffed, a binary, a truncated hunk)' },
-  },
-  required: ['digestPath', 'files', 'hunks', 'note'],
+
+function briefPrompt(t) {
+  return [
+    'Run this exact command from the repo root, then report its result:',
+    scriptCmd('task-brief.mjs') + ' --plan ' + (_args.buildPlanPath || '(no build plan supplied)') + ' --task ' + t.id + ' --out ' + taskDir(t.id) + '/brief.md',
+    'The script prints its result as the LAST stdout line: one JSON object {out, bytes, truncated, sections, exitCode}. Report exactly that object -- do not paraphrase or re-derive it. Report the process exit code as exitCode: it must be 0 and out must be the brief.md path actually written, or this call failed.',
+  ].join('\n')
 }
-// What the final-pass decider (Fable) returns: a ruling per candidate and, when
-// the reader's coverage looks thin, where it must look again.
-const DECISION_SCHEMA = {
-  type: 'object',
-  properties: {
-    verdicts: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          index: { type: 'number', description: 'the [#index] of the candidate' },
-          real: { type: 'boolean', description: 'true if the candidate is a genuine defect in the finished change, judged from its evidence' },
-          severity: { type: 'string', enum: ['blocker', 'major', 'minor'] },
-          reason: { type: 'string', description: 'one or two sentences: why it is (or is not) real, from the evidence given' },
+// Fix 1/Fix 2 (real smoke-run finding): task-brief.mjs shares
+// review-pack.mjs's cwd-dependent invocation risk, and this stage's script
+// result previously had no exitCode field -- a nonzero exit (or a missing
+// scriptsDir, which makes the command unbuildable in the first place) was
+// silently accepted as a real brief.md path. Mirrors packStage's exitCode
+// check and blocker shape exactly: a task must never be handed a brief path
+// that was never actually written.
+async function briefStage(t) {
+  if (!scriptsDir) {
+    return {
+      ...t,
+      blocked: true,
+      blockerFindings: [
+        {
+          file: '(brief)',
+          severity: 'blocker',
+          phase: 'Author tests',
+          summary: 'Task ' + t.id + ' cannot run task-brief.mjs -- no scriptsDir was supplied to this run.',
+          detail: 'args.scriptsDir (the absolute path to dev-pipeline\'s scripts directory) is required so this invocation does not depend on the invoking agent\'s cwd, which is always the target workdir -- never dev-pipeline\'s own directory -- in a real run.',
         },
-        required: ['index', 'real', 'severity', 'reason'],
-      },
-    },
-    gaps: { type: 'array', items: { type: 'string' }, description: 'specific places or interactions the reader did not cover but should have (a file pair, a state path, a caller) — empty when the read was sufficient. Each entry becomes the focus of ONE more read.' },
-    note: { type: 'string', description: 'the decision in one paragraph, for the close-out' },
-  },
-  required: ['verdicts', 'gaps', 'note'],
-}
-// The mechanical location check: does the cited code exist where the finding says.
-const LOCATION_SCHEMA = {
-  type: 'object',
-  properties: {
-    checks: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          index: { type: 'number' },
-          locationValid: { type: 'boolean', description: 'true ONLY if the cited file exists and the code at or near the cited line is what the finding describes (the named function, call, branch, query or statement is there)' },
-          note: { type: 'string' },
-        },
-        required: ['index', 'locationValid', 'note'],
-      },
-    },
-  },
-  required: ['checks'],
-}
-const FIX_SCHEMA = {
-  type: 'object',
-  properties: {
-    fixed: { type: 'array', items: { type: 'string' }, description: 'summaries of findings you fixed' },
-    skipped: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          index: { type: 'number', description: 'the [#index] of the finding, from the numbered list in your task. Always include it: a paraphrased summary cannot be matched back, and an unmatched report is a finding nobody acts on' },
-          summary: { type: 'string' },
-          reason: { type: 'string' },
-        },
-        required: ['summary', 'reason'],
-      },
-      description: 'findings that are real but cannot be fixed here, with the concrete reason',
-    },
-    // REFUTE FIRST: a finding the fixer can show is not real. It is never dropped
-    // on the fixer's word — an adversarial slate re-judges every dispute.
-    disputed: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          index: { type: 'number', description: 'the [#index] of the finding, from the numbered list in your task. Always include it: it is how a dispute is matched back when the summary is paraphrased' },
-          summary: { type: 'string', description: 'the finding summary, copied EXACTLY as given' },
-          reason: { type: 'string', description: 'the exact code or plan line that proves the finding is wrong, impossible, or intended' },
-        },
-        required: ['summary', 'reason'],
-      },
-      description: 'findings you did NOT fix because you can demonstrate they are not real; independent refuters re-judge them before anything is dropped',
-    },
-    filesChanged: { type: 'array', items: { type: 'string' } },
-    // A2 EXECUTION-VERIFIED CONFIRMED (owner ruling 2026-09-11). Optional and
-    // additive to `fixed` — only when you actually ran a NAMED test that failed
-    // on the original code and passes after your change, report it here so the
-    // finding counts as execution-verified rather than merely plausible.
-    verifiedFixes: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          index: { type: 'number', description: 'the [#index] of the finding this verifies, from your numbered list' },
-          summary: { type: 'string', description: 'the finding summary, copied EXACTLY as given' },
-          test: { type: 'string', description: 'the exact test name or command you ran' },
-          redOn: { type: 'string', description: 'what you saw running it against the ORIGINAL code (must show the defect)' },
-          greenOn: { type: 'string', description: 'what you saw running it against your PATCHED code (must show it fixed)' },
-        },
-        required: ['summary', 'test', 'redOn', 'greenOn'],
-      },
-      description: 'ONLY findings you proved with a real red-then-green test run. Never invent one to inflate confidence.',
-    },
-  },
-  required: ['fixed', 'skipped', 'filesChanged'],
-}
-// What the Sonnet brief builder hands the fix planner: facts around each finding,
-// gathered mechanically. No judgment, no proposed fix.
-const FIX_BRIEF_SCHEMA = {
-  type: 'object',
-  properties: {
-    items: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          index: { type: 'number', description: 'the [#index] of the finding this item is about' },
-          file: { type: 'string', description: 'the path exactly as the finding spells it' },
-          line: { type: 'number', description: 'the cited line, or 0 when the finding cites none' },
-          excerpt: { type: 'string', description: 'the code around the cited line — about 60 lines centred on it, or the whole file when it is under 80 lines; the empty string for a synthetic key in parentheses, a missing file, or code you could not locate' },
-          callers: { type: 'array', items: { type: 'string' }, description: 'up to 8 call sites of the exported symbol enclosing the cited line, each "path:line — calling expression"' },
-          note: { type: 'string', description: 'ONE line of anything mechanical the planner must know (file missing, line past the end of the file, symbol not found, excerpt truncated); empty string when there is nothing to say' },
-        },
-        required: ['index', 'file', 'line', 'excerpt', 'callers', 'note'],
-      },
-    },
-  },
-  required: ['items'],
-}
-// What the Fable fix planner returns: one decision per finding, plus the concurrency
-// it wants. The engine enforces the HIGH-risk / broad-key upgrade to 'opus' and
-// re-derives conflict safety itself — the plan names order, never write safety.
-const FIX_PLAN_SCHEMA = {
-  type: 'object',
-  properties: {
-    decisions: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          index: { type: 'number', description: 'the [#index] of the finding this decision is about' },
-          action: { type: 'string', enum: ['fix', 'dispute', 'defer'] },
-          design: { type: 'string', description: 'for "fix": 2-6 sentences — what changes, where, and what must NOT change; empty for the other actions' },
-          invariant: { type: 'string', description: 'for "fix": the invariant the change must preserve' },
-          tests: { type: 'string', description: 'for "fix": the test to add or strengthen, naming the T#/REG token when one exists' },
-          route: { type: 'string', enum: ['mechanical', 'sonnet', 'opus'], description: 'mechanical = the design is a pure transcription; sonnet = a designed change on a LOW-risk file; opus = a HIGH-risk file, a synthetic key, or a design that still leaves a judgment to the executor' },
-          reason: { type: 'string', description: 'for "dispute": the proof the finding is not real; for "defer": the question this run cannot answer; for "fix": why this design and this route' },
-          // A2 EXECUTION-VERIFIED CONFIRMED (owner ruling 2026-09-11). Optional.
-          // Set true ONLY for a "fix" you are confirming as REAL from evidence
-          // already cited in this brief, for a finding with NO runnable check
-          // (no test could show it red/green either way). Never set it as a
-          // substitute for a runnable check that exists but nobody ran.
-          ruled: { type: 'boolean', description: 'true only when confirming a no-runnable-check finding as real from cited evidence' },
-        },
-        required: ['index', 'action', 'design', 'invariant', 'tests', 'route', 'reason'],
-      },
-    },
-    waves: {
-      type: 'array',
-      items: { type: 'array', items: { type: 'number' } },
-      description: 'groups of "fix" indices that may execute concurrently; a later wave depends on the earlier ones. Every index you marked "fix" appears in exactly one wave, and two findings on the same file share a wave.',
-    },
-    note: { type: 'string', description: 'the round\'s plan in one paragraph, for the close-out' },
-  },
-  required: ['decisions', 'waves', 'note'],
-}
-
-// ---------- prompts ----------
-const REPO_NOTE =
-  (workdir
-    ? `ALL work happens in the git worktree at "${workdir}" — your process may start elsewhere, so \`cd\` into it before ANY command (git, npm, node) and use ABSOLUTE paths under it for every file read/edit. Do not touch files outside it. `
-    : 'You are working in the current directory, a git working tree on Windows. ') +
-  'Never commit, stage, revert, or delete files unless the plan explicitly says to. ' +
-  'New files from earlier stages may be untracked, so `git diff` alone can miss them — ' +
-  'use `git status --short` and read untracked files directly.'
-
-// Formatting is a REPO convention, not a universal one — Prettier, Biome, dprint,
-// eslint --fix, gofmt, black, or nothing at all. This skill runs in any repo, so
-// never hardcode a tool: use the exact command the build plan supplies in
-// args.formatCommand, otherwise tell the agent to find and run whatever formatter
-// THIS repo already configures (and to skip the step when there is none).
-const formatCommand = typeof _args.formatCommand === 'string' ? _args.formatCommand.trim() : ''
-const FORMAT_NOTE = formatCommand
-  ? `Before reporting, run \`${formatCommand}\` (from the repo root${workdir ? ` at "${workdir}"` : ''}) on the files you modified so formatting hooks never trip downstream.`
-  : `Before reporting, format the files you modified the way THIS repo formats code: look for a formatter in its package.json scripts (format / fmt / lint:fix) or a formatter config file, and run that tool on the files you touched, so formatting hooks never trip downstream. If this repo configures no formatter, or it does not handle the file types you changed, skip this step — never install a formatter and never reformat to a tool this repo does not use.`
-
-// Extra planning artifacts, listed only when they exist — a legacy invocation
-// keeps the exact prompts it had before.
-const extraArtifacts = [
-  discoveryPath ? `- discovery (WHY: problem, user, success signal): "${discoveryPath}"` : '',
-  specPath ? `- spec (WHAT: requirements R#, priorities, verification method): "${specPath}"` : '',
-  uxSpecPath ? `- UX spec (screens, states, copy, a11y): "${uxSpecPath}"` : '',
-  testPlanPath ? `- test plan (HOW WE KNOW: tests T#, oracles, R#->T# coverage matrix): "${testPlanPath}"` : '',
-  designSystemPath ? `- design system derived from this codebase (tokens, components, states): "${designSystemPath}"` : '',
-  lessonsPath ? `- lessons register (rules THIS project has already paid for — read it and apply every entry relevant to what you review, write or fix; cite the entry id when one changes your conclusion): "${lessonsPath}"` : '',
-].filter(Boolean)
-const ARTIFACT_NOTE = extraArtifacts.length
-  ? `Planning artifacts — read the ones your task depends on; they are the only context you get:\n${extraArtifacts.join('\n')}`
-  : ''
-
-// Two lines every agent that reports gets, and one for every agent that edits.
-// Progress claims audited against tool results nearly eliminate fabricated status
-// on current models; targeted edits are cheaper and regress less than rewrites.
-const GROUNDED_NOTE =
-  'Before reporting, audit each claim against a tool result from this session. Report only what you can point to evidence for; if something is not verified, say so explicitly. If tests fail, say so with the output; if a step was skipped, say that.'
-const EDIT_NOTE =
-  'Edit files surgically: change the lines the task needs and leave the rest byte-identical. Never rewrite a whole file when a targeted edit gives the same result.'
-// Gate runners: a cached task runner replays an old green with zero tests run.
-const EXECUTION_NOTE =
-  'Test commands must actually EXECUTE: when a command goes through a caching task runner (turbo, nx, a warm test cache) add that runner\'s cache-bypass flag or invoke the underlying test runner directly with the SAME filter — never a narrower one. Report `executed` = the number of tests (or files checked) the tool says it ran, -1 when it prints no count. A test command that ran 0 tests, or a step reported as skipped, is pass:false with the summary "ran nothing": a green that ran nothing is not green.'
-// CWD PROOF (owner ruling 2026-09-11e, RUN-LOG train4-run-c: a wrong-cwd
-// "environment repair" round cost $21 on a one-file fix, and two runs recorded
-// green Jest gates that executed nothing). askAgent has no cwd option, so this is
-// the only way the engine learns where a gate agent actually ran: every gate
-// prompt makes the agent print it, verbatim, first. Detection only — it cannot
-// stop a wrong-directory run, only catch it after the fact.
-const CWD_NOTE =
-  'Before running anything else, run `node -p process.cwd()` (works in bash and PowerShell) and report its single output line VERBATIM as `cwd` (top-level, not per-command). Report every command\'s real exit code as `exitCode`.'
-
-// SCOPE_NOTE and BATCH_NOTE (owner ruling 2026-09-11, package P4): copied
-// verbatim from Anthropic's Fable 5.1 prompting guide (fable-5-1-guide.md,
-// "Keep changes and tests to what the task asks for" and "Batch independent
-// tool calls in agent loops") into the shared RUN_PREFIX. Appended at the END
-// of the prefix so every agent in a run still shares one byte-identical
-// prefix for the prompt cache.
-const SCOPE_NOTE =
-  "If, while working or testing, you find a pre-existing bug, a performance concern, or behavior the task doesn't mention, don't fix, optimize or extend it in this change unless the requested behavior cannot work without it; report it as a follow-up in your summary. Where the task is ambiguous, implement the reading its wording and the surrounding code most directly support, state that assumption in your summary, and don't build for the other readings as well. Verify your work however you like; scratch scripts and quick checks need not be kept. Commit tests only where the task asks for them or this repository already keeps tests for this kind of change, sized like the neighboring test files — roughly one focused test per stated behavior — and don't turn scratch checks into additional permanent test files. This is about extras only: implement every behavior the task asks for, completely."
-const BATCH_NOTE =
-  "First privately list what you need next; then request every item that doesn't depend on another's result in this one response."
-
-// The block every prompt opens with. It is IDENTICAL for every agent in a run, so
-// agents launched together on the same model and effort read it from the prompt
-// cache instead of paying for it again — which is why the role line comes AFTER
-// it, not before. manifestNote is filled by Baseline, so this is a function.
-function RUN_PREFIX() {
-  return [REPO_NOTE, ARTIFACT_NOTE, manifestNote, GROUNDED_NOTE, SCOPE_NOTE, BATCH_NOTE]
-    .filter(Boolean)
-    .join('\n')
-}
-
-// PHASE/LABEL ATTRIBUTION (C2, plan Part 3 §C2). Every prompt gets a one-line tag
-// so a transcript replay (model-routing/scripts/session-usage.mjs) can attribute
-// tokens to a phase and a label without guessing from prose. The tag goes AFTER
-// the shared RUN_PREFIX() block when the prompt opens with it — RUN_PREFIX must
-// stay byte-identical at the START of the prompt so agents sharing model+effort
-// in one wave still share the prompt-prefix cache; the tag differs per agent, so
-// it can never be part of the cached prefix itself. A prompt that does not open
-// with RUN_PREFIX() (the mechanical Haiku runners below, which inline REPO_NOTE
-// instead) gets the tag as its first line.
-const ROLE_TAG = (phase, label) => `PHASE: ${phase} · LABEL: ${label}`
-
-// Every real call site already passes both; 'unknown' only guards a future call
-// site that forgets one — it must never throw.
-function askAgent(prompt, opts) {
-  const o = opts || {}
-  const tag = ROLE_TAG(o.phase || 'unknown', o.label || 'unknown')
-  const prefix = RUN_PREFIX()
-  // Prompts opening with the full RUN_PREFIX() get the tag after it (existing
-  // behaviour). The mechanical Haiku runners (redRunPrompt et al.) instead open
-  // with REPO_NOTE alone — those must ALSO get the tag after that shared block,
-  // not before it, so two gate prompts on the same model+effort still share
-  // REPO_NOTE as their common byte prefix for the prompt cache. Anything else
-  // (a prompt with no shared opening block at all) gets the tag first, as before.
-  let tagged
-  if (prefix && prompt.indexOf(prefix) === 0) {
-    tagged = prompt.slice(0, prefix.length) + '\n' + tag + prompt.slice(prefix.length)
-  } else if (REPO_NOTE && prompt.indexOf(REPO_NOTE) === 0) {
-    tagged = prompt.slice(0, REPO_NOTE.length) + '\n' + tag + prompt.slice(REPO_NOTE.length)
-  } else {
-    tagged = tag + '\n' + prompt
+      ],
+    }
   }
-  return agent(tagged, opts)
+  const brief = await askAgent(briefPrompt(t), { label: 'brief:' + t.id, phase: 'Author tests', model: M.haiku, effort: CFG.effort.baseline, schema: SCRIPT_RESULT_SCHEMA })
+  if (!brief || brief.exitCode !== 0 || !brief.out) {
+    return {
+      ...t,
+      blocked: true,
+      blockerFindings: [
+        {
+          file: '(brief)',
+          severity: 'blocker',
+          phase: 'Author tests',
+          summary: 'Task ' + t.id + '\'s task-brief.mjs run did not produce a brief.md -- downstream stages must never be handed a path that was never actually written.',
+          detail: brief ? ('exitCode=' + brief.exitCode + ' out=' + JSON.stringify(brief.out || '')) : 'the brief-building agent returned nothing',
+        },
+      ],
+    }
+  }
+  return { ...t, briefPath: brief.out }
 }
 
-// ---------- shared preflight facts ----------
-// Filled by the Baseline phase and pasted into every later prompt. It is a
-// manifest of FACTS (paths, statuses, risk classes, what exists), never a summary
-// of the change: sharing an INTERPRETATION would hand every lens the same blind
-// spot, which is exactly what having several lenses is for. Empty until Baseline
-// runs — every prompt function reads it at call time, which is always after.
-let manifestNote = ''
-// BUGFIX MODE: what the harness-integrity check found, per TEST PACKAGE id. Filled in
-// Baseline and pasted into that package's author prompt, so the stale mock is fixed in
-// the same edit that writes the test instead of surfacing as a blocker cascade later.
-// Empty in feature mode, which leaves authorTestsPrompt byte-identical.
-const harnessNotes = new Map()
-// Harness issues whose file belongs to no test package, parked on the first package.
-const harnessSharedNotes = new Map()
-// BUGFIX MODE: the radius pack text every review lens carries as PRIMARY EVIDENCE.
-// Empty string = no pack (feature mode, no radius files, a dead packer, or a truncated
-// pack), and the lenses then read the repo exactly as they do in feature mode.
-let radiusPackText = ''
-// Files this run intends to touch, from the plan's own package file lists. They
-// do not exist yet at preflight, so they are classified alongside the diff.
-const plannedFiles = uniquePaths(
-  [].concat(...testPkgs.map((p) => p.files || []), ...packages.map((p) => p.files || [])),
-)
-
-// Every finding must be routed to a fixer, so every agent that emits findings
-// must classify them. Stated identically everywhere so the tags mean one thing.
-const FIX_COMPLEXITY_NOTE = [
-  `Every finding MUST carry fixComplexity — you found the defect, so you already know which kind of fix it needs:`,
-  `- "mechanical": the fix is fully determined the moment the defect is named — a wrong path, a broken link, a stale cross-reference, a renumbering, a missing import, a budget overrun.`,
-  `- "judgment": the fix requires deciding what the code SHOULD do — logic, edge cases, security, API shape, or anything in a HIGH-risk file.`,
-  `When you are unsure, say "judgment". Findings on HIGH-risk files are routed to a judgment fixer whatever you tag them.`,
-].join('\n')
-
-// Risk sets DEPTH per file; it never sets COVERAGE. Every file in scope is read.
-const RISK_DEPTH_NOTE = [
-  `DEPTH BY RISK: spend maximum depth on every HIGH-risk file — trace each branch, each caller, each failure mode, adversarially. LOW-risk files get a careful standard read.`,
-  `Depth is per file, never a filter: read EVERY file in your scope, and never skip one because it is LOW. A file the manifest does not classify is HIGH by default.`,
-].join('\n')
-
-function pkgIdLine(p) {
-  const bits = []
-  if (p.satisfies) bits.push(`satisfies requirement(s): ${[].concat(p.satisfies).join(', ')}`)
-  if (p.provenBy) bits.push(`proven by test(s): ${[].concat(p.provenBy).join(', ')}`)
-  return bits.length ? `This package ${bits.join('; ')}. Those IDs are the acceptance criteria you are judged on.` : ''
-}
-
-function authorTestsPrompt(p) {
+function testAuthorPrompt(t) {
   return [
-    RUN_PREFIX(),
-    `You are the test author for ONE test package. You write TESTS ONLY — writing implementation or production code in this phase is FORBIDDEN. ${EDIT_NOTE}`,
-    context ? `Task context from the orchestrator: ${context}` : '',
-    `1. Read ${testPlanPath ? `the test plan at "${testPlanPath}"` : `the plan at "${planPath}"`} in full. Your package is "${p.id}: ${p.title}".`,
-    `2. Package brief: ${p.brief}`,
-    // BUGFIX MODE: inconsistencies a read-only check already found between the
-    // EXISTING harness and the service-surface changes this plan makes.
-    harnessNotes.get(p.id)
-      ? `HARNESS NOTES — fix these in the same edit:\n${harnessNotes.get(p.id)}`
-      : '',
-    // Issues in a file NO package owns (a shared fixture, a mock helper) go to the
-    // FIRST test package, deterministically: an issue handed to every author would
-    // put several concurrent editors on one file none of them owns.
-    harnessSharedNotes.get(p.id)
-      ? `SHARED HARNESS (owned by no package) — fix in your edit:
-${harnessSharedNotes.get(p.id)}`
-      : '',
-    pkgIdLine(p),
-    `3. Read the repo's EXISTING tests first and match them: the runner, its config, the directory layout, the naming convention, the fixtures and helpers. Do not introduce a new test runner, assertion library, or mocking library — use what is already there.`,
-    `4. Write or extend ONLY these files: ${(p.files || []).join(', ') || '(as specified in the test plan for this package)'}. If a test genuinely needs another file, do NOT touch it — report it under deviations.`,
-    `5. Every test must: name the requirement/test ID it proves (T#/R#) in its title or a comment; assert OBSERVABLE behavior against the CONCRETE expected value the plan names (a number, a status, a row, a message) so that it fails on ITS OWN value rather than merely on a stub's undefined, never a value read out of an implementation; have one reason to fail; and include the negative/error case the plan names. No sleeps or time-based waits — wait on a deterministic condition. No skipped or focused tests. No snapshot assertions unless the repo already relies on them.`,
-    `6. These tests run BEFORE the implementation exists, so they MUST fail — and they must fail on an ASSERTION, not on a syntax error, an unresolvable import, or a broken config. Run only your own new test file(s) once to confirm the failure is an assertion failure. If an import cannot resolve because the module does not exist yet, you may create the smallest possible signature-only stub (the exported name, no behavior, returning undefined/null — never throwing, never returning a value that would satisfy an assertion); the implementation phase replaces it.`,
-    `7. Never make a test pass by weakening it, deleting an assertion, skipping it, or asserting on a mock you configured yourself.`,
-    `8. ${FORMAT_NOTE}`,
-    `9. Report honestly: status=done only if every test in the package is written and fails for the right reason; partial/blocked otherwise, with deviations explaining exactly what is missing.`,
-  ].filter(Boolean).join('\n')
-}
-
-function redRunPrompt(commands, expect) {
-  return [
-    REPO_NOTE,
-    `You are a mechanical test runner for the RED gate.`,
-    `Run these commands from the repo root, one at a time, in order:`,
-    ...commands.map((c) => `- ${c}`),
-    `These commands are EXPECTED to ${expect === 'pass' ? 'PASS' : 'FAIL'} — a nonzero exit is the expected outcome here, NOT a problem for you to solve.`,
-    `Rules: do NOT fix anything, do NOT modify any file, do NOT narrow the test filter. The ONE flag you may add is a caching task runner's cache-bypass flag (or call the underlying test runner directly with the same filter): a replayed cached result would hide the RED. For each command report its exit code and the runner output VERBATIM: every failing test name with its failure message and the first lines of its stack, plus the pass/fail/skip counts. Truncate only the middle of very long output — never truncate a failure message. ran=false only if a command could not be executed at all, or if it executed zero tests.`,
-    CWD_NOTE,
+    'You are the TEST AUTHOR for task ' + t.id + '. Read the task brief at "' + (t.briefPath || taskDir(t.id) + '/brief.md') + '" for exactly what to test.',
+    'Write the tests named in this task\'s tests list, and ONLY those tests -- no implementation code:',
+    ...(t.tests || []).map((f) => '- ' + f),
+    t.type === 'repro-test'
+      ? 'This is a REPRO-TEST task: assert the CORRECT behavior. The current (buggy) tree must fail it -- your failure output must literally contain the bug\'s own wrong value, "' + (t.wrongValue || '') + '", not just fail for any reason.'
+      : 'The behavior under test does not exist yet, so every test you write MUST fail right now.',
+    'Run them and report the runner output verbatim (every failing test name, its failure message, and the pass/fail/skip counts) as results[].output. Report ran:true only if the command(s) you ran actually executed (a failing run still counts as executed).',
+    'Then write "' + taskDir(t.id) + '/tests-report.md" containing that same observed RED output.',
+    'Do NOT implement the behavior. Do NOT modify any file outside this task\'s tests list.',
+    'SCOPE, non-negotiable: you may create or edit ONLY the files listed in `tests` above. You must not create, edit, or delete any other file -- in particular none of this task\'s implementation `files`, and nothing under packages/. If a test cannot be written without an implementation symbol that does not exist yet, write the test against the symbol\'s name anyway and let it fail on import/undefined -- that IS the red state. Report blockedOn (in notes/deviations if your schema has no such field) instead of implementing it yourself.',
   ].join('\n')
 }
-
-function redAuditPrompt(runOut, testFileList, attempt) {
-  return [
-    RUN_PREFIX(),
-    `You are the RED-gate auditor. The tests for this change were just written and NOTHING has been implemented against them yet. Decide whether they are RED, at two levels.`,
-    `Test runner output (attempt ${attempt}): ${JSON.stringify(runOut)}`,
-    `New/changed test files: ${testFileList || '(discover them yourself with `git status --short` and `git diff --name-only`)'}`,
-    `1. READ the test files themselves. Runner output alone cannot tell you whether an assertion is vacuous — open every new test.`,
-    `2. Classify EVERY new test: "assertion-failure" = it ran and failed on an assertion about behavior (GOOD); "error" = syntax, unresolved import/module-not-found, type, config, fixture or setup failure, i.e. it never reached its assertion (BAD); "passed" (BAD); "not-run" = skipped, filtered out, or never collected (BAD).`,
-    `3. structurallyRed = true ONLY if every new test is "assertion-failure". A single error, pass, or not-run makes it false — those are STRUCTURAL problems, and remediation must name the exact edits that fix them.`,
-    `4. behaviorallyRed = true ONLY if, on top of that, each test failed on its OWN expected value from the test plan. A suite where every assertion fails identically on a stub's undefined has proven the wiring, not the oracles — report that as a BEHAVIORAL shortfall (one line per test, prefixed "BEHAVIORAL:"), which a later mutation probe will test directly. properlyRed = structurallyRed AND behaviorallyRed.`,
-    `5. A PASSING new test is a structural blocker, not a bonus. It means one of two things and you must say which: the assertion is vacuous/tautological, or the behavior already exists and the requirement needs rewriting (in which case the work package may be unnecessary).`,
-    `6. Also flag tests that will later pass for the WRONG reason: no meaningful assertion, asserting on a mock the test itself configured, expected values that could only have come from an implementation, sleeps or time-based waits, skipped/focused tests, or no requirement ID.`,
-    `Put one line per problem in blockers (prefixed STRUCTURAL: or BEHAVIORAL:), and in remediation write the exact edits a test author should make for the structural ones. Do NOT edit any file yourself.`,
-  ].filter(Boolean).join('\n')
+async function testAuthorStage(t) {
+  if (!profile.separateTestAuthor) return { ...t, redRun: { ran: false, results: [], skipped: 'lean-profile' } }
+  // E9, rule 2: snapshot BEFORE the author touches anything, so the scope
+  // guard below can mechanically tell a file the author just created (safe
+  // to delete on a violation) from one that already existed (never deleted).
+  const beforeUntracked = await captureUntrackedSnapshot('tests:' + t.id + ':scope-before')
+  const { response: red, violation } = await withWorkdirGuard(t, 'tests:' + t.id, () =>
+    askAgent(testAuthorPrompt(t), { label: 'tests:' + t.id, phase: 'Author tests', model: M.sonnet, effort: CFG.effort.testAuthor, schema: RED_RUN_SCHEMA }),
+  )
+  if (violation) return { ...t, redRun: red || { ran: false, results: [] }, blocked: true, blockerFindings: [violation] }
+  const scopeBlock = await enforceTestAuthorScope(t, 'tests:' + t.id, beforeUntracked)
+  if (scopeBlock) return { ...t, redRun: red || { ran: false, results: [] }, blocked: true, blockerFindings: scopeBlock.blockerFindings }
+  return { ...t, redRun: red || { ran: false, results: [] } }
 }
 
-function testRemediationPrompt(audit, testFileList) {
+function redCheckPrompt(t, redRun) {
   return [
-    RUN_PREFIX(),
-    `You are the test-remediation engineer. This is the ONE remediation round allowed before implementation starts. ${EDIT_NOTE}`,
-    `The RED-gate auditor rejected the new tests: ${JSON.stringify(audit)}`,
-    `Test files in scope: ${testFileList || '(the new/changed test files — find them with `git status --short`)'}`,
-    `Fix the TEST files only. Implementation/production code is FORBIDDEN in this round.`,
-    `A test failing because the behavior does not exist yet is CORRECT and must stay failing — your job is to make it fail on an ASSERTION instead of on an error: import the exact module path the plan specifies, build the inputs, and assert the expected observable value. If the module does not exist yet you may create a signature-only stub (exported name, no behavior, returning undefined/null — never throwing, never returning a value that satisfies an assertion).`,
-    `Never make a test pass by weakening it, deleting it, skipping it, or asserting on a mock. If a test now passes, say so plainly in skipped with the reason — a passing pre-implementation test means the requirement or the assertion is wrong, and faking it is worse than reporting it.`,
-    FORMAT_NOTE,
-  ].filter(Boolean).join('\n')
-}
-
-function implementPrompt(p) {
-  return [
-    RUN_PREFIX(),
-    `You are the implementation engineer for ONE work package of a planned code change. ${EDIT_NOTE}`,
-    context ? `Task context from the orchestrator: ${context}` : '',
-    `1. Read the plan file at "${planPath}" in full. Your package is "${p.id}: ${p.title}".`,
-    `2. Package brief: ${p.brief}`,
-    pkgIdLine(p),
-    testPlanPath
-      ? `2b. The tests for this change were written FIRST and are currently RED. Make them pass by implementing the behavior. You may NOT edit, weaken, skip or delete a test to get green — if a test looks wrong, leave it and report it under deviations.`
+    'You are the RED-GATE check for task ' + t.id + '. The task\'s declared test files are:',
+    ...(t.tests || []).map((f) => '- ' + f),
+    'Below is the test author\'s reported run of those NEW tests, which must all have failed on an assertion (not errored, skipped, or passed):',
+    JSON.stringify(redRun),
+    t.type === 'repro-test'
+      ? 'This is a REPRO-TEST task: the failure output must ALSO literally contain the bug\'s own wrong value, "' + (t.wrongValue || '') + '" -- a structurally red test whose output never mentions that string does not prove this test catches THIS bug. Note that gap explicitly if it applies.'
       : '',
-    `3. Implement exactly what the plan specifies for this package. Where the plan gives exact code, use it; where it gives intent, follow the surrounding code's style and conventions.`,
-    `4. Edit or create ONLY these files: ${(p.files || []).join(', ') || '(as specified in the plan for this package)'}. If correctness genuinely requires touching another file, do NOT touch it — report it under deviations instead.`,
-    `5. Do not run builds, dev servers, or test suites — a later gate stage does that. Quick syntax sanity checks are fine.`,
-    `6. ${FORMAT_NOTE}`,
-    `7. Report honestly: status=done only if the package is fully implemented; partial/blocked otherwise, with deviations explaining exactly what is missing.`,
+    taskIntroducesObservable(t)
+      ? 'This task INTRODUCES the observable its tests assert on (e.g. a CLI line or log message that does not exist before Implement) -- a "feature absent" failure (an error/import-undefined outcome, or any other non-pass outcome) is EXPECTED and acceptable here, not a defect to remediate. The only thing that still blocks is a test that actually PASSED -- report that outcome accurately as "passed" if it happened, never soften it.'
+      : '',
+    'For each named test decide its outcome. structurallyRed is true ONLY if every one is assertion-failure. List every problem in blockers, and if not structurallyRed, say in remediation exactly what the test author must fix (syntax, import, fixture, config -- never the assertion itself).',
   ].filter(Boolean).join('\n')
 }
-
-// The baseline gate answers one question: which of these commands work AT ALL,
-// on the tree as the caller left it? A command that already fails here is broken,
-// and its later failures say nothing about the change.
-function baselineGatePrompt(commands) {
+function redRemediationPrompt(t, audit, behavioralGap) {
   return [
-    REPO_NOTE,
-    `You are the BASELINE gate. Nothing has been written yet: you run the project's verification commands against the working tree exactly as you find it, to learn which of them work AT ALL.`,
-    `Run these commands from the repo root, one at a time, in order:`,
-    ...commands.map((c) => `- ${c}`),
-    `Rules: do NOT fix anything, do NOT create, modify or delete any file, do NOT install anything, and do NOT adjust, re-flag or substitute a command that fails — run each one EXACTLY as written. A failure here is the information we want, not a problem to solve.`,
-    `Report each command: pass:true only if it actually ran and succeeded; pass:false if it exits nonzero, errors, or cannot be run at all (missing script, missing binary, wrong path, wrong directory) — with the key error lines quoted verbatim in summary. Also report \`executed\` = the number of tests (or files checked) the tool says it ran, -1 when it prints no count; at baseline a zero count is information, not a failure. Overall pass = every command passed.`,
-    CWD_NOTE,
+    'Your tests for task ' + t.id + ' did not pass the ' + (behavioralGap ? 'BEHAVIORAL' : 'structural') + ' RED check.',
+    'Problems: ' + JSON.stringify((audit && audit.blockers) || []),
+    'Remediation requested: ' + ((audit && audit.remediation) || '(none given)'),
+    behavioralGap
+      ? 'The test(s) fail on an assertion, but the failure output never literally contained the bug\'s own wrong value, "' + (t.wrongValue || '') + '". Strengthen the assertion or its failure message so the output includes that exact string -- do not weaken any other assertion.'
+      : 'Fix ONLY the structural problem (syntax, import, fixture, config) so each test actually runs and fails on its own assertion. Do not weaken any assertion.',
+    'Re-run and report the same shape as before.',
+    'SCOPE, non-negotiable: you may create or edit ONLY the files listed in `tests` for this task. You must not create, edit, or delete any other file -- in particular none of `files` (the implementation set) and nothing under packages/. If a test cannot be written without an implementation symbol, write the test against the symbol name and let it fail on import/undefined -- that IS the red state; report blockedOn instead of implementing.',
   ].join('\n')
 }
-
-// The manifest removes the one thing every later agent would otherwise re-derive
-// independently: what changed and what to open. It does NOT tell them what the
-// change means — reviewers still read the diff themselves.
-function manifestPrompt(planned, commands, artifactPaths) {
-  return [
-    REPO_NOTE,
-    `You are the context manifest builder. Report FACTS about this repository as it is right now. Do NOT summarize, interpret, judge or review the change — later agents read the diff themselves and must not inherit your reading of it.`,
-    `1. FILES. Run \`git status --short\` and \`git diff --numstat\` and list every changed and untracked file. ALSO list every file the plan intends to touch, even if it does not exist yet (status "planned"):`,
-    ...(planned.length ? planned.map((f) => `   - ${f}`) : ['   (none supplied)']),
-    `   For each file report: path (repo-relative, forward slashes), status (modified | added | untracked | deleted | planned), and changedLines (added+deleted from --numstat; 0 when the file does not exist yet or no count is available).`,
-    `2. RISK. Classify every file HIGH or LOW. HIGH if its path OR its content touches money/pricing/tax, auth/permissions/session, tenancy or ownership scoping, migrations/schema, PII, or payments. LOW otherwise. If you cannot read a file, or you are not sure, classify it HIGH — unknown is HIGH, never LOW.`,
-    commands.length
-      ? `3. COMMANDS. For each command below decide STATICALLY whether it could run at all here (the npm script exists in the right package manifest, the file or binary it names exists, the directory it needs exists). Do NOT execute any of them — another agent is running them right now. Return in validCommands only the ones that look runnable, spelled EXACTLY as given:\n${commands.map((c) => `   - ${c}`).join('\n')}`
-      : `3. COMMANDS. None were supplied — return an empty validCommands.`,
-    artifactPaths.length
-      ? `4. ARTIFACTS. Return in artifacts the subset of these paths that EXIST on disk:\n${artifactPaths.map((p) => `   - ${p}`).join('\n')}`
-      : `4. ARTIFACTS. None were supplied — return an empty artifacts list.`,
-    `Read only. Do NOT modify, create or delete any file, do NOT run builds, tests or installs, and do NOT run any command that writes.`,
-  ].join('\n')
+// Fix round 1, finding 8: the auditor's own `structurallyRed` claim is never
+// trusted alone -- it is corroborated mechanically: the red run actually
+// executed, at least one test was actually named, and every named test's
+// own per-test outcome is assertion-failure. A lying or confused auditor
+// (structurallyRed:true over an empty tests[], or over a run that never
+// actually executed) cannot pass a test that errored, was never collected,
+// or was skipped.
+function isStructurallyRed(redRun, audit) {
+  const ran = !!(redRun && redRun.ran)
+  const tests = audit && Array.isArray(audit.tests) ? audit.tests : []
+  return ran && tests.length > 0 && tests.every((o) => o && o.outcome === 'assertion-failure')
 }
-
-// Artifacts assert things about the repo; some of those assertions are invented,
-// and downstream agents then treat them as fact. This is a mechanical existence
-// check, nothing more.
-function groundingPrompt(paths) {
-  return [
-    REPO_NOTE,
-    `You are the artifact grounding check. The planning artifacts below make factual claims about THIS repository. Find the claims that are false.`,
-    `Artifacts — read every one in full:`,
-    ...paths.map((p) => `- ${p}`),
-    `Extract every MECHANICALLY CHECKABLE claim: file paths, directory paths, shell commands, package-manifest scripts, config keys, and exported symbols (functions, classes, constants, types) attributed to a specific file. Ignore every other kind of statement.`,
-    `Verify each against the repo as it is right now: the path exists; the script exists in the package manifest; the config key exists in that config file; the symbol is actually exported by the file said to export it. Use \`ls\`, \`cat\` and \`grep\` — do not guess, and do not edit anything.`,
-    `Report ONLY claims that do not hold. Use file: '(artifact)' for every finding, and in detail give the artifact path, the claim quoted exactly, and what the repo actually contains instead. severity: major for a path, directory, command, script or config key that does not exist; minor for a symbol you could not resolve.`,
-    `Do NOT report a path, file or symbol the artifacts say this change WILL CREATE — it is supposed to be missing. Do NOT critique wording, design, completeness, feasibility, or quality; other reviewers own that and anything of the sort from you is noise. An empty findings list is a good answer.`,
-    `Correcting a false claim in an artifact is normally "mechanical" — tag it that way unless fixing it would need a decision about what the code should do.`,
-    FIX_COMPLEXITY_NOTE,
-  ].join('\n')
+// E4: true when the task's own declaration says it INTRODUCES the observable
+// its tests assert on (a not-yet-existing CLI line, log message, etc.), so
+// "feature absent" (import/undefined, or any other non-pass outcome) is the
+// only possible pre-implementation RED state -- accept either the explicit
+// boolean or the literal token in the inline brief text.
+function taskIntroducesObservable(t) {
+  return t.introducesObservable === true || (typeof t.brief === 'string' && t.brief.includes('INTRODUCES-OBSERVABLE'))
 }
-
-function gatePrompt(commands) {
-  return [
-    REPO_NOTE,
-    `You are a mechanical verification gate.`,
-    `Run these commands from the repo root, one at a time, in order:`,
-    ...commands.map((c) => `- ${c}`),
-    `Rules: do NOT fix anything, do NOT modify any file. Report each command honestly — a nonzero exit or error output = pass:false with the key error lines quoted verbatim in summary. Overall pass = every command passed.`,
-    `When a command fails, also report failedTests: the exact name of every individual test that failed (not just the file) whenever the tool's output names them. This is what lets a later rerun on the SAME tree tell a flaky test apart from a genuinely broken one — leave it empty only when the tool truly does not name individual tests.`,
-    EXECUTION_NOTE,
-    CWD_NOTE,
-  ].join('\n')
+// E4: the structural-RED-accepted path for an introducesObservable task --
+// every declared test must have actually run and NONE may have passed
+// (assertion-failure, error/import-undefined, or not-run all count as
+// "failed" here; a single passed test still blocks, same as any other
+// task -- that is the T1 case the scope guard also prevents).
+function isStructuralRedAccepted(t, redRun, audit) {
+  if (!taskIntroducesObservable(t)) return false
+  const ran = !!(redRun && redRun.ran)
+  const tests = audit && Array.isArray(audit.tests) ? audit.tests : []
+  return ran && tests.length > 0 && tests.every((o) => o && o.outcome !== 'passed')
 }
-
-// ---------- bugfix-mode prompts ----------
-// THE RADIUS PACK (Sonnet, low, read-only): one gathering pass so that six review
-// lenses do not each re-derive the same diff, and so that a bug review stays inside
-// the defect's blast radius (F13: 31/31 surviving findings were inside it, 0 outside).
-function radiusPackPrompt(files) {
-  return [
-    RUN_PREFIX(),
-    `You are the RADIUS PACK builder — mechanical and read-only. Assemble ONE text pack that lets a reviewer judge this change without running git or hunting for call sites. Gather; judge nothing, and propose nothing.`,
-    `Radius files — the files this change touches:`,
-    ...files.map((f) => `- ${f}`),
-    `For EACH radius file, in this order: (1) its complete current diff hunks (\`git diff HEAD -- <file>\`) with about 30 lines of context around each hunk — never summarize or elide a hunk, and include an untracked file whole; (2) the signature of every exported function, method, class or constant the diff touches; (3) up to 6 call sites per touched export, each as "path:line — the calling expression" (\`grep -rn\` over the source tree, excluding node_modules, dist, build output and .next).`,
-    `SIZE CAP: about 40,000 characters for the whole pack. If it does not fit, drop CALL SITES first and keep every diff hunk whole — and set truncated=true. Report truncated honestly: a pack that claims to be complete and is not would send every reviewer a partial view of the change as if it were the whole one.`,
-    `Return the pack text in \`pack\`, the files it covers in \`files\`, and truncated. Read only: do NOT modify, create or delete any file, and do NOT run builds, tests or installs.`,
-  ].filter(Boolean).join('\n')
+// A10 (repro-test): a mechanical, script-level check -- never trust the
+// auditor's prose about whether the wrong value showed up. The RED check for
+// this type is BEHAVIORAL, not merely structural: the failure output must
+// literally contain t.wrongValue (adapted from pipeline.js.bak-2026-09-12's
+// RED-check-area logic around @1646, per the plan's own wording).
+function isBehaviorallyRed(redRun, wrongValue) {
+  if (!wrongValue) return true // nothing declared to check against
+  const results = redRun && Array.isArray(redRun.results) ? redRun.results : []
+  return results.some((r) => r && typeof r.output === 'string' && r.output.includes(wrongValue))
 }
-
-// THE HARNESS CHECK (Sonnet, low, read-only): the existing specs' mocks and fixtures
-// against the service-surface changes the build plan names. F13's costliest blocker
-// cascade was ONE stale mock, reported after the fact by six lenses independently.
-function harnessCheckPrompt(files) {
-  return [
-    RUN_PREFIX(),
-    `You are the TEST-HARNESS INTEGRITY check — read-only, and you run BEFORE any test is written. The build plan changes a service surface; the test files below already exist or are about to be extended. Find where the EXISTING harness will break against that change.`,
-    `Test files this run will write or extend:`,
-    ...files.map((f) => `- ${f}`),
-    `1. Read the build plan at "${planPath}"${testPlanPath ? ` and the test plan at "${testPlanPath}"` : ''} and list the service-surface changes they name: methods added or renamed, DTO fields added/removed/renamed, validation added, constructor or dependency changes, changed return shapes.`,
-    `2. For every one of those test files that ALREADY EXISTS — and every shared fixture, factory, builder or mock helper it imports — check its mocks and fixtures against that list: a mocked service missing a method the plan adds a call to, a fixture value a new validator will reject, a stub whose return shape no longer matches, a hardcoded DTO literal missing a newly required field, a spy asserting a signature that changed. Skip files that do not exist yet; say nothing about them.`,
-    `3. Report ONE issue per inconsistency: file, line, what will break (concretely, naming the mock or fixture and the planned change it contradicts), and a one-line remedy. Report NOTHING else — no coverage opinions, no style, no review of the plan or the code. An empty issues list is a good answer.`,
-    `Read only: do NOT modify, create or delete any file, and do NOT run builds, tests or installs.`,
-  ].filter(Boolean).join('\n')
-}
-
-// THE SIBLING GREP (Sonnet, low, read-only): mechanical hits for the defect's shape.
-function siblingGrepPrompt(patterns) {
-  return [
-    RUN_PREFIX(),
-    `You are the SIBLING SWEEP grepper — mechanical and read-only. A defect is being fixed in this run; the patterns below name its SHAPE. Find every other place in this repository that matches, so a judge can decide which of them are the same bug in a second place. You judge NOTHING.`,
-    `Patterns — run each one separately and report which pattern produced each hit:`,
-    ...patterns.map((p, i) => `  ${i + 1}. /${p.pattern}/${p.note ? ` — ${p.note}` : ''}`),
-    `Use ripgrep (or \`grep -rnE\`) over the source tree, EXCLUDING node_modules, dist, build output and .next. Report each hit as its pattern, the repo-relative path, the line number, and the matching line verbatim (trimmed to about 200 characters).`,
-    `Cap each pattern at 40 hits: if one matches more, report the first 40 and name that pattern in \`truncated\` — never silently drop the rest.`,
-    `Read only: do NOT modify, create or delete any file, and do NOT run builds, tests or installs.`,
-  ].filter(Boolean).join('\n')
-}
-
-// THE SIBLING JUDGE (reviewModel, medium): which hits are the same defect, live.
-function siblingJudgePrompt(patterns, hits) {
-  return [
-    RUN_PREFIX(),
-    `You are the SIBLING SWEEP judge. A defect is being fixed in this run. The hits below match its SHAPE elsewhere in the repository. Decide, for each hit, whether the same defect is live there.`,
-    context ? `Task context from the orchestrator: ${context}` : '',
-    `Read the plan at "${planPath}" for what the defect actually is, then open each hit's location and enough of its surroundings to decide. The patterns that produced these hits:`,
-    ...patterns.map((p, i) => `  ${i + 1}. /${p.pattern}/${p.note ? ` — ${p.note}` : ''}`),
-    `Verdicts: "defect" = the same defect is live here, and you can state the concrete failure scenario; "same-class-but-guarded" = the shape matches but something already prevents the failure, and you can NAME that guard; "unrelated" = the match is incidental.`,
-    `Hits:`,
-    ...hits.map((h, i) => `[#${i}] ${h.file}:${h.line || '?'} — ${String(h.excerpt || '').slice(0, 200)}   (pattern: ${h.pattern || '?'})`),
-    `One verdict per index, each with ONE sentence of evidence and the severity it deserves. "same-class-but-guarded" requires the guard by name: if you cannot name it, say "defect" and put what you could not rule out in evidence — every finding you raise goes to a fixer that refutes before it changes anything, and to an adversarial slate before anything is dropped.`,
-  ].filter(Boolean).join('\n')
-}
-
-// THE FIX-REVERT PROBE (bugfix mode, reviewModel): the mutation probe's inverse. A bug
-// fix already HAS the defect the test must catch — the one in the committed content —
-// so the probe puts that back instead of inventing a new one. No git restore command
-// ever touches this tree: uncommitted work from this very run lives in it.
-function revertProbePrompt(t) {
-  return [
-    RUN_PREFIX(),
-    `You are the FIX-REVERT probe for ONE target. The fix in this file is what makes a named test pass. You will put the file back to its COMMITTED content, prove the test fails without the fix, and then restore the fix EXACTLY as it was.`,
-    `Target file: ${t.file}`,
-    `Behavior the fix restores: ${t.behavior || '(the behavior the named test claims to prove)'}`,
-    `Test that MUST FAIL without the fix — run ONLY this, nothing else: ${t.test}`,
-    `Do exactly this, in order:`,
-    `1. CHECK IT IS TRACKED: run \`git ls-files -- "${t.file}"\`. If it prints nothing — or if \`git show HEAD:${t.file}\` cannot produce content — then this file has no committed version to revert to. In that case run the STANDARD MUTATION PROBE instead: back the file up outside the repo, inject exactly ONE small behavior-breaking defect that still compiles (flip a comparison, drop a rounding/normalization call, skip a filter or a scope condition, move a boundary by one), run the named test, then restore from the backup and byte-compare. Report kind="mutation" and fallback="untracked", and skip steps 2-4.`,
-    `2. BACK UP, OUTSIDE THE REPO: copy the file into the OS temp directory (Git Bash: "$TMPDIR" when set, else /tmp; a Windows shell: %TEMP%) under a unique name such as "revertprobe-<package-or-target>-<basename>". Use a file copy (\`cp\`), never git. NEVER put the backup beside the file or anywhere else inside the repo — a leftover backup in the tree becomes a shipped file. Report that absolute path as backupPath, and record a checksum of the file as you found it (\`sha256sum\` in Git Bash, or \`certutil -hashfile <file> SHA256\`) — REPORT it as preHash.`,
-    `3. REVERT THE FIX: overwrite the working file with its committed content — \`git show HEAD:${t.file} > "${t.file}"\` (redirect the output into the file; use Git Bash so the bytes land unchanged). Do NOT use \`git checkout\`, \`git restore\`, \`git stash\` or \`git reset\`: uncommitted work from this very run lives elsewhere in this tree and those commands would destroy it.`,
-    `4. RUN: run ONLY the named test. Reverting the fix re-introduces the bug, so the test MUST FAIL on an assertion about behavior — caught=true ONLY then. A pass, a skip, or a collection/compile error means caught=false: report it with the output that proves the test is blind to the fix.`,
-    `5. RESTORE: copy the temp backup back over "${t.file}". Again: NEVER \`git checkout\`/\`restore\`/\`stash\`/\`reset\`.`,
-    `6. VERIFY THE RESTORE: recompute the checksum — REPORT it as postHash — and byte-compare the backup against the file (\`cmp -s\`). They must be IDENTICAL. Only then delete the temp backup and set restored=true.`,
-    `If the restore does not verify: set restored=false, LEAVE THE TEMP BACKUP IN PLACE, report its absolute path in backupPath, and state exactly what differs. That is an emergency the orchestrator must see — never report restored=true on a file you did not byte-compare.`,
-    `Report kind="revert-fix" (or "mutation" with fallback="untracked" if step 1 sent you down that path), caught, restored, backupPath, preHash, postHash, \`defect\` = one line naming the fix you reverted, and evidence: the assertion failure message if the test failed, or the passing output that proves it does not cover the fix if it did not.`,
-    `Independent checksum agents recorded this file before you started and will recheck it after you finish, so an unreported or partial restore WILL be detected — report honestly.`,
-  ].filter(Boolean).join('\n')
-}
-
-// The trailing clauses are rules this project paid for (its lessons register):
-// each one was a defect that shipped green under a plainer version of the lens.
-const LENS_BRIEFS = {
-  correctness:
-    'logic errors, broken or changed behavior, wrong edge handling, regressions in code the change touches, mismatches between what the code does and what its callers expect; for any status field or state machine, walk multi-step PATHS (two individually legal transitions that compose into a forbidden state), never just single edges; for any cancel/undo/reverse/reopen path, check the reversal enumerates EVERY field the forward path wrote, not only the one the request named; when one write is the record of another write having happened, both must hang off one named condition',
-  'spec-compliance':
-    'requirements that are unimplemented, half-implemented, or implemented differently than specified — walk EVERY requirement in the spec and EVERY acceptance criterion in the build plan and check the code actually delivers it; then walk the test plan coverage matrix and check it is HONEST: no requirement silently untested, no test claiming a requirement it does not exercise, no acceptance criterion with no test at all, no work package whose satisfies/provenBy IDs do not match what it shipped; also check reported deviations against the plan; treat a location a plan or bug report names as a HYPOTHESIS — re-derive which call sites can actually reach the bad state before accepting that the fix at the named site is complete',
-  'test-quality':
-    'the anti-slop lens, aimed at the TESTS: vacuous or tautological assertions; tests that would pass without this change; over-mocking so the mock is what is being tested; assertions on implementation detail instead of observable behavior; missing negative and error cases; sleeps or time-based waits instead of deterministic conditions; skipped or focused tests; tests with no requirement ID; an existing test that asserts the OLD behaviour and still passes (it asserts the bug — it must be inverted, not routed around); a Platform / isWeb / OS branch whose other side nothing executes; a suite whose green ran zero tests',
-  'edge-cases-and-security':
-    'unhandled inputs and error paths, race conditions, injection/XSS, leaked secrets, unsafe file/network operations, failure modes under bad data; plus authorization on every new endpoint, tenant/ownership scoping on every new query, and any unscoped bulk write; a guard, interceptor or filter whose triggering input cannot exist at the point in the pipeline where it runs (a global guard reading a user that no route guard has set yet) is not protection — name the input that makes it act and prove it exists there',
-  operability:
-    'the 20-year-DevOps lens: observability on every new failure path (at 2am, what in the logs says this broke); rollback and back-compat; migration reversibility; feature flag / plan / entitlement gating AND who can actually grant it — a gate nothing can turn on is a self-inflicted outage; blast radius; idempotency and double-submit; N+1 and unbounded queries; deploy-day behavior for the users and data that already exist',
-  'design-system':
-    'new UI inventing tokens, spacing, colors or components instead of reusing the derived system; a new component that an existing one could have composed; missing hover/focus/disabled/loading/empty/error states; accessibility (focus order, labels, contrast, target size); responsive behavior at every supported viewport; motion consistency',
-  // Every other lens asks "is what is here correct?". This one asks "what did the
-  // plan forget?" — the blind spot no amount of diff-reading closes.
-  'scope-coverage':
-    'files, modules, call sites, migrations, or config that this change plausibly must touch but which appear in NO work package — orphans the plan forgot. Also: work packages that satisfy no requirement (scope creep), requirements no package satisfies (holes), and sibling code that does the same job in a second place and will now drift. Search by the STATE being mutated (who else writes this status, deletes this row, credits this stock), never only by the feature name — the paths that violate an invariant are the ones that never mention it',
-}
-
-// Extra marching orders for lenses whose method differs from "read the diff".
-const LENS_NOTES = {
-  'scope-coverage':
-    'For "scope-coverage" you must look BEYOND the diff: read the artifacts for the full requirement list and the full package list, then search the repo for the code that already does this job (grep for the same function names, routes, config keys, copy strings, or table names) and for every call site of anything the change altered. Name the real file path in the finding when one exists; use "(scope)" only when the gap is a missing package or an unsatisfied requirement with no file to point at.',
-}
-
-// scope: null = the whole change (the default). An array of paths narrows the
-// FILES this reviewer owns — used only by the cascade partition, where another
-// reviewer in the same run owns the rest.
-// ownsUnlisted: this reviewer ALSO owns every changed file the partition never
-// named. The partition comes from the preflight manifest, which was built before
-// the tests and the implementation existed, so a file created during the run
-// belongs to no partition — without an owner it would be reviewed by nobody.
-function reviewPrompt(lensNames, implSummaries, scope, ownsUnlisted) {
-  const list = [].concat(lensNames)
-  const notes = list.map((l) => LENS_NOTES[l]).filter(Boolean)
-  const scoped = Array.isArray(scope) && scope.length
-  return [
-    RUN_PREFIX(),
-    // BUGFIX MODE, and only when the pack was actually built: the change's blast
-    // radius, gathered once. Empty everywhere else, which leaves this prompt
-    // byte-identical to the feature-mode one.
-    // CONTAINMENT IS NOT FOR EVERY LENS (owner ruling 2026-09-03). "scope-coverage"
-    // exists to find what the plan FORGOT — the sibling that mutates the same state
-    // and was never enrolled in the new rule (L-029) — so containing it inside the
-    // radius would delete its whole job. It gets the pack as a starting MAP and keeps
-    // its beyond-the-diff mandate instead. A unit carrying scope-coverage alongside
-    // other lenses takes the permissive wording: the broader mandate must never be
-    // narrowed by a travelling companion.
-    radiusPackText
-      ? [
-          `RADIUS PACK — the diff hunks, touched export signatures and call sites of the files this fix changes, gathered for you:`,
-          radiusPackText,
-          list.indexOf('scope-coverage') !== -1
-            ? `The radius pack above is your starting map; your mandate is what lies BEYOND it — callers, siblings, and state the diff's files share.`
-            : `PRIMARY EVIDENCE: the radius pack above. Open other files only to confirm a specific suspicion, and report any finding OUTSIDE these files only with the caller-path evidence that makes it reachable.`,
-        ].join('\n')
-      : '',
-    list.length === 1
-      ? `You are a senior code reviewer looking ONLY through the "${list[0]}" lens: ${LENS_BRIEFS[list[0]]}.`
-      : `You are a senior code reviewer carrying ${list.length} lenses in a single pass. Work them ONE AT A TIME, in order, and report the findings of every one — a conclusion under one lens never excuses skipping another.\n${list.map((l) => `- "${l}": ${LENS_BRIEFS[l]}`).join('\n')}`,
-    `1. Read the plan at "${planPath}" — it defines intended behavior and acceptance criteria.`,
-    `2. See the change: run \`git status --short\` and \`git diff\`; read any untracked new files listed in status. The manifest says WHICH files moved; it does not say what the change means — form that judgment from the diff yourself.`,
-    scoped
-      ? `2b. YOUR FILES — review these${ownsUnlisted ? '' : ' and only these'}:\n${scope.map((f) => `   - ${f}`).join('\n')}\n   Another reviewer in this same run owns the ${ownsUnlisted ? 'other files the manifest names' : 'rest'}. Read anything else you need for context, but report findings only about your files.`
-      : '',
-    ownsUnlisted
-      ? `2c. FILES THE PARTITION MISSED ARE ALSO YOURS${scoped ? '' : ', AND ARE YOUR ONLY SCOPE'}. The manifest's file list — which every reviewer's scope in this run was cut from — was built at preflight, BEFORE the tests and the implementation were written, so any file created or touched since then is on NO reviewer's list. Run \`git status --short\` and \`git diff --name-only\`: every changed or untracked file named neither above nor in the CONTEXT MANIFEST is yours, at full depth${scoped ? '' : ' — and it is the only thing to report on here, because every file the manifest DOES name is owned by another reviewer in this run'}. Nobody else will look at those files.`
-      : '',
-    RISK_DEPTH_NOTE,
-    `3. Implementation engineers reported: ${JSON.stringify(implSummaries)}`,
-    ...notes,
-    `4. Report findings ONLY for defects you are confident about and can point to concretely (file + failure scenario). Do not report style nits, hypotheticals you did not check in the code, or praise. An empty findings list is a valid, good answer.`,
-    `Severity guide: blocker = breaks the change or violates the plan's acceptance criteria; major = real defect users/devs will hit; minor = real but low-impact.`,
-    FIX_COMPLEXITY_NOTE,
-  ].filter(Boolean).join('\n')
-}
-
-// A broken build makes the whole review round worthless, so it is repaired BEFORE
-// the lenses are spent, not after them.
-function buildFixPrompt(gateResults) {
-  return [
-    RUN_PREFIX(),
-    `You are the build-fix engineer. The project's verification commands FAILED on the integrated change, so no review of this tree would be worth anything until it builds and runs. ${EDIT_NOTE}`,
-    `Failing gate output: ${JSON.stringify(gateResults)}`,
-    `Run the failing command(s) yourself, find the real cause, fix it with the MINIMAL correct change, and re-run until they pass.`,
-    `Do NOT weaken, skip or delete a test to get green, do NOT delete or comment out the failing code, and do NOT redesign anything: this round exists to make the tree build and run, not to change what it does. A reviewer sees it next.`,
-    `Anything you cannot fix that way goes in skipped with a concrete reason — the review runs either way.`,
-    FORMAT_NOTE,
-  ].filter(Boolean).join('\n')
-}
-
-// The cascade's evidence: an Opus reviewer re-reads a deterministic sample of what
-// the cheap pass cleared. Its finding count is the whole argument for or against
-// ever turning CFG.cascadeReview on by default.
-function spotAuditPrompt(files, implSummaries) {
-  return [
-    RUN_PREFIX(),
-    `You are the cascade SPOT AUDIT. A cheaper reviewer already reviewed the files below and reported NOTHING on them. Re-review them yourself, at full depth, through these lenses:`,
-    ...FLOOR_LENSES.map((l) => `- "${l}": ${LENS_BRIEFS[l]}`),
-    `1. Read the plan at "${planPath}" — it defines intended behavior and acceptance criteria.`,
-    `2. Audit exactly these files — read each one and its diff (\`git diff -- <path>\`, and read it whole if it is untracked):`,
-    ...files.map((f) => `   - ${f}`),
-    `3. Implementation engineers reported: ${JSON.stringify(implSummaries)}`,
-    `Report every real defect the cheaper reviewer missed, each with a file and a concrete failure scenario. Do not report style nits or hypotheticals. An empty findings list is a valid, good answer — and it is the evidence that the cheap pass was sufficient.`,
-    FIX_COMPLEXITY_NOTE,
-  ].filter(Boolean).join('\n')
-}
-
-// ONE refuter for every pre-refutable finding on ONE file: the plan, the prefix
-// and the file are read once instead of once per finding.
-function refuteBatchPrompt(fileKey, list) {
-  return [
-    RUN_PREFIX(),
-    `You are an adversarial verifier. Reviewers claim the defects below exist in or about "${fileKey}". Judge EACH one on its own and try to REFUTE it.`,
-    `Read the plan at "${planPath}" and the actual code at each cited location (and its callers if relevant). Trace each failure scenario concretely.`,
-    `Claimed findings:`,
-    ...list.map((f, i) => `[#${i}] ${JSON.stringify(f)}`),
-    `Return one verdict per index. Set refuted=true ONLY if you can demonstrate that finding is wrong, impossible, or explicitly intended by the plan — cite the exact code, spec requirement, or plan line that proves it. If the scenario holds, or you are uncertain, refuted=false. A verdict on one finding never decides another.`,
-  ].filter(Boolean).join('\n')
-}
-
-// Mechanical and read-only: is the cited code where the finding says it is.
-function locationCheckPrompt(list) {
-  return [
-    RUN_PREFIX(),
-    `You are the finding LOCATION check — mechanical and read-only. For each finding below, open the cited file at the cited line (read about 15 lines either side) and decide ONLY whether the code there is what the finding describes: the named function, call, branch, query or statement actually exists at or near that location. Do NOT judge whether the defect is real — another agent does that.`,
-    `Findings:`,
-    ...list.map((f, i) => `[#${i}] ${f.file}:${f.line || '?'} — ${f.summary}${f.detail ? ` :: ${String(f.detail).slice(0, 240)}` : ''}`),
-    `Return one entry per index. locationValid=false when the file does not exist, the cited line is far outside the file, or nothing near it matches the finding's description (a stale or invented citation). When in doubt say false — an invalid location only sends the finding to a stricter reviewer; it never drops it.`,
-  ].filter(Boolean).join('\n')
-}
-
-function refutePrompt(finding) {
-  return [
-    RUN_PREFIX(),
-    `You are an adversarial verifier. A reviewer claims this defect exists. Your job is to try to REFUTE it.`,
-    `The claimed finding: ${JSON.stringify(finding)}`,
-    `Read the plan at "${planPath}" and the actual code at the cited location (and its callers if relevant). Trace the failure scenario concretely.`,
-    `Set refuted=true ONLY if you can demonstrate the defect is wrong, impossible, or explicitly intended by the plan — cite the exact code, spec requirement, or plan line that proves it. If the scenario holds, or you are uncertain, set refuted=false.`,
-  ].filter(Boolean).join('\n')
-}
-
-function uiCfgParts(cfg) {
+async function redCheckStage(t) {
+  if (t.blocked) return t
+  if (!profile.separateTestAuthor) return t
+  const wantsBehavioral = t.type === 'repro-test'
+  let redRun = t.redRun || { ran: false, results: [] }
+  let audit = await askAgent(redCheckPrompt(t, redRun), { label: 'red-check:' + t.id, phase: 'Red gate', model: M.haiku, effort: CFG.effort.redCheck, schema: RED_AUDIT_SCHEMA })
+  let structOk = isStructurallyRed(redRun, audit)
+  let behaviorOk = wantsBehavioral ? isBehaviorallyRed(redRun, t.wrongValue) : true
+  // A14: attempts=1|2 is retained on the task so the run-level redGate
+  // summary can sum real per-task attempt counts instead of guessing.
+  if (structOk && behaviorOk) return { ...t, redRun, redAudit: audit, redAttempts: 1, behaviorallyRed: wantsBehavioral ? true : undefined }
+  // E4: a task that declares introducesObservable never gets a "properly"
+  // structurallyRed audit -- its tests fail on the observable's absence
+  // (import/undefined, not an assertion), which isStructurallyRed correctly
+  // refuses. Classify that as an ACCEPTED structural RED instead of routing
+  // into remediation, which can never fix a "feature absent" failure. Still
+  // blocks (falls through below) if any declared test actually passed.
+  if (isStructuralRedAccepted(t, redRun, audit)) {
+    console.log('[' + t.id + '] structural RED accepted: the task introduces the observable')
+    return {
+      ...t,
+      redRun,
+      redAudit: { ...audit, structurallyRed: true, accepted: true, note: 'structural RED accepted: the task introduces the observable' },
+      redAttempts: 1,
+      structurallyRed: true,
+      structuralRedAccepted: true,
+      behaviorallyRed: wantsBehavioral ? true : undefined,
+    }
+  }
+  // ONE test-author remediation attempt, then a hard blocker (brief D).
+  // E9, rule 2: same before-snapshot discipline as the initial call above --
+  // this remediation call gets its OWN before-snapshot, since it is a fresh
+  // agent invocation that can create its own new untracked files.
+  const beforeUntrackedRemediate = await captureUntrackedSnapshot('tests:' + t.id + ':remediate:scope-before')
+  const remediated = await askAgent(redRemediationPrompt(t, audit, wantsBehavioral && structOk && !behaviorOk), { label: 'tests:' + t.id + ':remediate', phase: 'Author tests', model: M.sonnet, effort: CFG.effort.testAuthor, schema: RED_RUN_SCHEMA })
+  redRun = remediated || redRun
+  const scopeBlock = await enforceTestAuthorScope(t, 'tests:' + t.id + ':remediate', beforeUntrackedRemediate)
+  if (scopeBlock) return { ...t, redRun, redAudit: audit, redAttempts: 2, blocked: true, blockerFindings: scopeBlock.blockerFindings }
+  audit = await askAgent(redCheckPrompt(t, redRun), { label: 'red-check:' + t.id + ':r2', phase: 'Red gate', model: M.haiku, effort: CFG.effort.redCheck, schema: RED_AUDIT_SCHEMA })
+  structOk = isStructurallyRed(redRun, audit)
+  behaviorOk = wantsBehavioral ? isBehaviorallyRed(redRun, t.wrongValue) : true
+  if (structOk && behaviorOk) return { ...t, redRun, redAudit: audit, redAttempts: 2, behaviorallyRed: wantsBehavioral ? true : undefined }
+  if (isStructuralRedAccepted(t, redRun, audit)) {
+    console.log('[' + t.id + '] structural RED accepted: the task introduces the observable')
+    return {
+      ...t,
+      redRun,
+      redAudit: { ...audit, structurallyRed: true, accepted: true, note: 'structural RED accepted: the task introduces the observable' },
+      redAttempts: 2,
+      structurallyRed: true,
+      structuralRedAccepted: true,
+      behaviorallyRed: wantsBehavioral ? true : undefined,
+    }
+  }
   return {
-    flows: cfg.flows && cfg.flows.length ? cfg.flows : ['exercise the surface this change touches, end to end'],
-    viewports: cfg.viewports && cfg.viewports.length ? cfg.viewports : ['desktop'],
-    checks: cfg.checks && cfg.checks.length ? cfg.checks : ['console-errors', 'network-failures', 'a11y', 'design-system'],
+    ...t,
+    redRun,
+    redAudit: audit,
+    redAttempts: 2,
+    behaviorallyRed: wantsBehavioral ? false : undefined,
+    blocked: true,
+    blockerFindings: [
+      {
+        file: '(red-gate)',
+        severity: 'blocker',
+        phase: 'Red gate',
+        summary: 'Task ' + t.id + '\'s tests never proved they can fail on an assertion' + (wantsBehavioral ? ' containing the bug\'s own wrong value' : '') + ', after one remediation attempt.',
+        detail: JSON.stringify((audit && audit.blockers) || ['no red-check evidence -- the red-check agent died or was skipped, both attempts']) +
+          (wantsBehavioral && structOk && !behaviorOk ? ' -- structurally red, but the failure output never contained the wrong value "' + t.wrongValue + '"' : ''),
+      },
+    ],
   }
 }
 
-// THE DRIVER (Sonnet): operates the real UI and reports FACTS — no verdicts.
-function uiDrivePrompt(cfg, priorFindings) {
-  const { flows, viewports, checks } = uiCfgParts(cfg)
-  const wants = (name) => checks.indexOf(name) !== -1
-  const isRerun = Array.isArray(priorFindings)
+// A10 (fix): a `fix` task authors no tests of its own -- it consumes the
+// tests its `repro-test` dependency wrote (validateTasks already requires
+// one exists among its ancestors). Look that ancestor up by walking
+// dependsOn, so the implementer is told exactly which tests it must turn
+// GREEN instead of reading an empty t.tests list.
+function testsForImplementer(t) {
+  if (t.type !== 'fix') return t.tests || []
+  const reproTests = ancestorsOfType(t.id, tasksById, 'repro-test')
+  return [].concat(...reproTests.map((rt) => rt.tests || []))
+}
+function implementPrompt(t) {
+  const tests = testsForImplementer(t)
   return [
-    RUN_PREFIX(),
-    `You are the UI evidence collector. Exercise the REAL running UI and record what happened as facts — screenshots, assertions, console, network, accessibility measurements. You do NOT decide what is a defect: a separate judge reads your evidence, so capture everything it could need and never assert a visual or behavioral result from reading source.`,
-    isRerun
-      ? `THIS IS A RE-VERIFICATION. Fix engineers have since edited the code in response to the first browser pass, but they verified their work by READING SOURCE, which cannot prove a visual or behavioral result. Re-drive every flow from scratch at every viewport and take FRESH screenshots. For each earlier finding below, drive the exact flow and viewport it names and record in that flow's notes what the rendered UI shows now — fact, not verdict. Earlier findings: ${JSON.stringify(priorFindings)}`
-      : '',
-    context ? `Task context from the orchestrator: ${context}` : '',
-    `Target URL: ${cfg.url || '(not given — derive it from the dev-server config in this repo)'}`,
-    cfg.startCommand
-      ? `Start the app with: ${cfg.startCommand}. You OWN that process: STOP it before you report, even if the run fails, a flow blows up, or you run out of ideas. Leave no server, browser, or held port behind.`
-      : `Assume the app is already reachable at the target URL. If it is not, start it the way this repo documents — and stop whatever you started before you report.`,
-    `PREFERRED TOOL — Playwright, in this repo's existing location: find playwright.config.* and the existing e2e/spec directory, and write your spec THERE, matching the existing specs' naming, fixtures, and auth/storage-state setup. Run it headless. Use semantic locators (getByRole / getByLabel / getByText) over CSS or XPath; add a stable test id only where semantics genuinely cannot address the element. Use web-first auto-retrying assertions (\`await expect(locator).toBeVisible()\`). NEVER waitForTimeout or any sleep. NEVER check visibility and then act on the same element in a separate step — the element can move between the check and the click; act on the locator and let the assertion retry. Create the data each flow needs and scope it to a disposable account/tenant; never assert against data someone else can change.`,
-    `FALLBACK — only if this repo has no Playwright and adding it is out of scope for this change: drive the browser MCP tools (\`mcp__Claude_Browser__navigate\`, \`read_page\`, \`computer\`, \`read_console_messages\`, \`read_network_requests\`, \`resize_window\`) and gather the same evidence.`,
-    `Flows to drive, each end to end, asserting the outcome the UX spec or plan states for it:`,
-    ...flows.map((f, i) => `  ${i + 1}. ${f}`),
-    `Viewports: run every flow at each of: ${viewports.join(', ')}. Resize before the flow, not during it.`,
-    `Capture per flow per viewport: ${[
-      wants('console-errors') ? 'every console error or unhandled rejection, verbatim' : '',
-      wants('network-failures') ? 'every request that 4xx/5xx, aborts or times out (method, URL, status)' : '',
-      wants('a11y') ? 'accessibility facts — tab order actually observed, controls without an accessible name, focus-ring visibility, contrast and touch-target measurements at the mobile viewport' : '',
-      wants('design-system') ? `the rendered surface's tokens and components as facts (class names, computed colors/spacing where they matter) so the judge can compare them with ${designSystemPath ? `the design system at "${designSystemPath}"` : 'the repo\'s design system'}${uxSpecPath ? ` and the UX spec at "${uxSpecPath}"` : ''}` : '',
-      'the assertions you ran and whether each passed',
-    ].filter(Boolean).join('; ')}.`,
-    `Take a screenshot at the end of every flow at every viewport and record its path — it is how the judge and the fixer see what you saw. Write screenshots into the repo's existing test-output/artifacts directory, never into a source directory.`,
-    `A flow you could not drive is status "blocked" with the reason in notes, and completed=false. Do not fix anything and do not commit. Stop every process you started before reporting, and say so in processesStopped.`,
+    'You are the IMPLEMENTER for task ' + t.id + '. Read the task brief at "' + (t.briefPath || taskDir(t.id) + '/brief.md') + '" and make the RED tests pass:',
+    ...tests.map((f) => '- ' + f),
+    t.type === 'fix' ? 'This is a FIX task: those tests belong to your repro-test dependency, not to you -- you author no tests of your own.' : '',
+    'Files you own for this task:',
+    ...(t.files || []).map((f) => '- ' + f),
+    !profile.separateTestAuthor
+      ? 'This run has no separate test author: write the tests yourself, run them once to confirm they FAIL first (paste that RED output), then implement and paste the GREEN output, both in report.md.'
+      : 'The tests already exist and are RED. Implement the minimal correct change to make them pass -- do not weaken any assertion.',
+    (verifyCommands.perRound || []).length ? 'Also run, scoped to this task\'s files where possible: ' + (verifyCommands.perRound || []).join(' ; ') : '',
+    // Fix round 2, finding 2: without this, round 1's fix-base capture (at
+    // the very start of the fix loop) still points at the pre-task commit --
+    // the round-1 re-review pack then ends up diffing the ORIGINAL
+    // implementation PLUS the round-1 fix together, even though its own
+    // prompt tells the reviewer the pack scopes to ONLY the fix diff. Reuse
+    // the exact fix-executor COMMIT_NOTE (not a new one) so a real commit
+    // exists here too, before ANY fix-base capture happens for round 1.
+    COMMIT_NOTE,
+    'Write "' + taskDir(t.id) + '/report.md" with the GREEN evidence, the files you changed, and any deviation from the brief.',
   ].filter(Boolean).join('\n')
 }
-
-// THE JUDGE (Opus): reads the evidence and the screenshots, never operates the app.
-function uiJudgePrompt(cfg, evidence, priorFindings) {
-  const { flows, viewports, checks } = uiCfgParts(cfg)
-  const isRerun = Array.isArray(priorFindings)
-  return [
-    RUN_PREFIX(),
-    `You are the UI verification judge. A driver agent has just exercised the real running UI and recorded the evidence below. Decide what in it is a defect. Read the screenshot files it names (open them — they are images), the UX spec and design system where given, and the plan's acceptance criteria. Do NOT start the app or drive a browser yourself; if the evidence is insufficient to judge a flow, that is itself a finding.`,
-    `Flows that were supposed to be driven: ${flows.map((f, i) => `${i + 1}. ${f}`).join(' | ')} at viewports ${viewports.join(', ')}; checks requested: ${checks.join(', ')}.`,
-    `Evidence: ${JSON.stringify(evidence)}`,
-    isRerun
-      ? `THIS IS A RE-VERIFICATION after a fix round. For each earlier finding below, rule from the FRESH evidence whether it is gone in the rendered UI or still there; report it again if it is still there, and report anything the fixes broke. Earlier findings: ${JSON.stringify(priorFindings)}`
-      : '',
-    `Rules: a console error or unhandled rejection is a finding, quoted verbatim; a failed or aborted request is a finding with method, URL and status; a flow with status failed or blocked, or one that was not driven at a listed viewport, is a blocker (the change is unexercised there); accessibility gaps against the requested checks are findings; ${checks.indexOf('design-system') !== -1 ? `an invented color/spacing/component, or a missing hover/focus/disabled/loading/empty/error state, judged against ${designSystemPath ? `"${designSystemPath}"` : 'the repo\'s design system'}${uxSpecPath ? ` and "${uxSpecPath}"` : ''}, is a finding; ` : ''}evidence.completed=false or processesStopped=false is a finding in its own right.`,
-    `Report ONLY defects the evidence shows, each naming the flow, the viewport and the evidence (console line, request, screenshot path). An empty findings list is a valid, good answer when the evidence is complete and clean. Severity: blocker = the flow cannot be completed, or the change's acceptance criteria fail in the browser; major = a real defect users will hit; minor = real but low-impact.`,
-    `${FIX_COMPLEXITY_NOTE}\nA defect seen in a running browser is normally "judgment": its fix has to be re-observed rendered, and reading source cannot prove it.`,
-  ].filter(Boolean).join('\n')
+async function implementStage(t) {
+  if (t.blocked) return t
+  const high = isHighRisk(t)
+  const model = M.sonnet // implementation is never Fable (ruling 2026-09-13)
+  const effort = high ? CFG.effort.implementHigh : CFG.effort.implement
+  // Fix round 2, finding 2: captured BEFORE the implementer runs (and,
+  // per COMMIT_NOTE above, likely commits) so packStage's FIRST review has a
+  // real pre-implement base to diff against -- `--base worktree` (git diff
+  // HEAD) would otherwise go empty the moment the implementer's own commit
+  // makes the working tree match HEAD.
+  const implBaseSha = await captureGitSha('impl-base:' + t.id, 'Implement')
+  const { response: impl, violation } = await withWorkdirGuard(t, 'impl:' + t.id, () =>
+    askAgent(fableSafe(model, implementPrompt(t)), { label: 'impl:' + t.id, phase: 'Implement', model, effort, schema: IMPL_SCHEMA }),
+  )
+  if (violation) return { ...t, implBaseSha, implement: impl || { status: 'blocked', filesChanged: [], deviations: '', notes: '' }, blocked: true, blockerFindings: [violation] }
+  // Fix round 1, finding 7: a blocked or dead implementer must become a task
+  // blocker BEFORE pack/review ever run -- never review code that was never
+  // actually written. 'partial' still proceeds (the reviewer judges it).
+  if (!impl || impl.status === 'blocked') {
+    return {
+      ...t,
+      implBaseSha,
+      implement: impl || { status: 'blocked', filesChanged: [], deviations: '', notes: 'implementer agent returned nothing' },
+      blocked: true,
+      blockerFindings: [
+        {
+          file: '(implement)',
+          severity: 'blocker',
+          phase: 'Implement',
+          summary: 'Task ' + t.id + '\'s implementer did not produce a working change -- status ' + (impl ? impl.status : '(dead agent)') + '.',
+          detail: impl ? JSON.stringify(impl) : 'the implementer agent returned nothing',
+        },
+      ],
+    }
+  }
+  // E7 layer 3: a non-blocked report with an empty footprint gets one more,
+  // mechanical check before being trusted as real work.
+  const liveBlock = await checkImplementLiveness(t, impl, 'impl:' + t.id, 'Implement')
+  if (liveBlock) return { ...t, implBaseSha, implement: impl, blocked: true, blockerFindings: [liveBlock] }
+  return { ...t, implBaseSha, implement: impl }
 }
 
-// Read-only digest agents. They bracket the probes so that the restore is checked
-// by something other than the agent that could have broken it.
-function checksumPrompt(files, when) {
+// ---------- A10 (fix): root-cause gate ----------
+// validateTasks (A3) already blocks a `fix` with no `root-cause` ancestor at
+// PLAN-VALIDATION time -- structural. This is the RUNTIME half the plan
+// calls for: even a structurally valid fix must not proceed past its
+// dependency until that dependency's OWN reported result says the bug is
+// real. `resultsById` (populated by the wave loop, below) holds every
+// already-finished task's result by id -- root-cause tasks always run in an
+// earlier wave than their dependent fix (dependsOn ordering, A7), so the
+// result is guaranteed to be there by the time this runs. Every stage after
+// this one (implementStage, packStage, reviewStage, fixLoopStage) already
+// early-returns on t.blocked, so setting it here is sufficient to stop the
+// whole rest of the chain -- "the fix task ends in a blocked/open state, not
+// silently proceed as if nothing happened."
+async function fixGateStage(t) {
+  if (t.type !== 'fix') return t
+  const rcTasks = ancestorsOfType(t.id, tasksById, 'root-cause')
+  const rcResults = rcTasks.map((rc) => resultsById.get(rc.id)).filter(Boolean)
+  const confirmed = rcResults.length > 0 && rcResults.every((r) => r.rootCause && r.rootCause.reproduced === true && r.rootCause.causeConfirmed === true)
+  if (confirmed) return t
+  const detail = rcResults.length
+    ? 'root-cause result(s): ' + JSON.stringify(rcResults.map((r) => r.rootCause))
+    : 'no root-cause result is available for this fix\'s dependency -- it may itself have died, been skipped, or been blocked'
+  const ruling = makeRuling(
+    t.id,
+    'blocked',
+    'this fix\'s root-cause dependency did not confirm reproduced && causeConfirmed -- ' + detail,
+    'implementing a fix for a bug that was never confirmed reproducible risks shipping a no-op change while the real defect ships unfixed',
+  )
+  return {
+    ...t,
+    blocked: true,
+    status: 'open',
+    clean: false,
+    rulings: [ruling],
+    blockerFindings: [
+      {
+        file: '(root-cause)',
+        severity: 'blocker',
+        phase: 'Implement',
+        summary: 'Task ' + t.id + ' (fix) is blocked -- its root-cause dependency did not confirm reproduced && causeConfirmed.',
+        detail,
+      },
+    ],
+  }
+}
+
+// ---------- A10 (root-cause) ----------
+function rootCausePrompt(t) {
   return [
-    REPO_NOTE,
-    `You are a mechanical checksum recorder. Compute a SHA-256 digest for each file below and report it.`,
-    `Files:`,
-    ...files.map((f) => `- ${f}`),
-    `Use \`sha256sum <file>\` in Git Bash, or \`certutil -hashfile <file> SHA256\`. Report the digest as lowercase hex with no spaces.`,
-    `Rules: read only. Do NOT modify, create, delete, format or restore any file. Do NOT run tests, builds, installs, or any git command. Do not "helpfully" repair anything you notice.`,
-    `Return exactly one entry per file, using the path EXACTLY as written above. If a file cannot be read, return its checksum as the exact string "unreadable".`,
-    when === 'after'
-      ? `Context: these files were deliberately mutated and then restored by another agent. Your digests are the independent evidence of whether the restore actually happened.`
-      : `Context: these files are about to be deliberately mutated and then restored. Your digests are the baseline that restore is checked against.`,
+    'You are the ROOT-CAUSE investigator for task ' + t.id + '. Read the task brief at "' + (t.briefPath || taskDir(t.id) + '/brief.md') + '" for the bug this run is about to fix.',
+    'Reproduce the bug on the CURRENT tree with the smallest probe that shows it (a scratch script, a REPL call, or the smallest failing check you can run and immediately discard) -- do NOT implement a fix, and do not write a permanent test file here (that is the repro-test task\'s job).',
+    'Confirm or refute the brief\'s NAMED cause: read the code path it points to and verify the wrong value it predicts actually appears.',
+    'Report reproduced (true ONLY if you actually observed the bug happen, not merely read code and inferred it would), causeConfirmed (true ONLY if the brief\'s named cause is what actually produces the wrong value -- false if you reproduced a DIFFERENT bug, or the named cause is not what is happening), wrongValueObserved (the actual wrong value/output you saw, verbatim), and note.',
   ].join('\n')
 }
-
-function mutationPrompt(t) {
-  return [
-    RUN_PREFIX(),
-    `You are the mutation probe for ONE target. You will deliberately break working code, prove a named test catches it, and then put the code back EXACTLY as it was.`,
-    `Target file: ${t.file}`,
-    `Behavior that must be protected: ${t.behavior || '(the behavior the named test claims to prove)'}`,
-    `Test that must catch the break — run ONLY this, nothing else: ${t.test}`,
-    `Do exactly this, in order:`,
-    `1. BACK UP, OUTSIDE THE REPO: copy the file into the OS temp directory (Git Bash: "$TMPDIR" when set, else /tmp; a Windows shell: %TEMP%) under a unique name such as "mutprobe-<package-or-target>-<basename>". Use a file copy (\`cp\`), never git. NEVER put the backup beside the file or anywhere else inside the repo — a leftover backup in the tree becomes a shipped file. Report that absolute path as backupPath, and record a checksum of the original (\`sha256sum\` in Git Bash, or \`certutil -hashfile <file> SHA256\`) — REPORT it as preHash.`,
-    `2. MUTATE: inject exactly ONE small, deliberate, behavior-breaking defect that a correct implementation would never contain — flip a comparison, drop a rounding/normalization call, return the wrong branch, skip a filter or a scope/ownership condition, move a boundary by one. Do NOT introduce a syntax or type error: the code must still build, or the test would go red for the wrong reason.`,
-    `3. RUN: run ONLY the named test. The mutation is CAUGHT only if that test now FAILS on an assertion about behavior. A pass, a skip, or a collection/compile error means NOT caught — report caught=false with the output that proves it.`,
-    `4. RESTORE: copy the temp backup back over "${t.file}". NEVER use \`git checkout\`, \`git restore\`, \`git stash\`, \`git reset\`, or any other git command to restore — uncommitted implementation work from this very run lives in this tree and git would destroy it.`,
-    `5. VERIFY THE RESTORE: recompute the checksum — REPORT it as postHash — and byte-compare the backup against the file (\`cmp -s\`). They must be IDENTICAL. Only then delete the temp backup and set restored=true.`,
-    `If the restore does not verify: set restored=false, LEAVE THE TEMP BACKUP IN PLACE, report its absolute path in backupPath, and state exactly what differs. That is an emergency the orchestrator must see — never report restored=true on a file you did not byte-compare.`,
-    `Report caught, restored, backupPath, preHash, postHash, the one-line defect you injected, and evidence: the assertion failure message if caught, or the passing/erroring output that proves the test is blind to this behavior if not. preHash and postHash are load-bearing: independent agents digest this file before and after the whole probe run, and yours are what tells a file you failed to restore apart from one whose baseline was taken while another process was writing the tree.`,
-    `Independent checksum agents recorded this file before you started and will recheck it after you finish, so an unreported or partial restore WILL be detected — report honestly.`,
-  ].filter(Boolean).join('\n')
+// Fix round 1, finding 1: a root-cause task's OWN files/tests/risk are
+// naturally empty (a pure investigation, per the plan and every fixture) --
+// the real risk classification lives on its DEPENDENT `fix` task instead
+// (dependsOn: [rootCauseId, reproTestId], often risk:'HIGH' for a real
+// money/auth/tenancy bug). Without this, a HIGH-risk fix's root-cause
+// investigation silently ran on Sonnet -- find any `fix` task that has this
+// root-cause task as an ancestor and defer to isHighRisk() on THAT task
+// (never reimplementing its HIGH/LOW merge here). `tasks` is the top-level
+// validated array every stage already closes over (tasksById is built from
+// it just above); no extra parameter needs threading through.
+// Fix round 2, finding 1: the original check was `(ot.dependsOn ||
+// []).includes(rcId)` -- a DIRECT edge only. A fix task that depends on this
+// root-cause task through an intermediate task (fix -> repro-test ->
+// root-cause, which validateTasks itself explicitly accepts as a valid
+// ancestor chain) was invisible to it, so that fix's HIGH-risk classification
+// never propagated back. Reuses ancestorIds() -- the SAME transitive
+// dependsOn walk fixGateStage/validateTasks already use for this identical
+// relationship -- instead of a second, direct-only mechanism. `.some()`
+// promotes on ANY qualifying dependent fix, regardless of how many other
+// dependents (direct or transitive) are LOW-risk.
+function hasHighRiskDependentFix(rcId) {
+  return tasks.some((ot) => ot.type === 'fix' && ancestorIds(ot.id, tasksById).has(rcId) && isHighRisk(ot))
 }
-
-// A5 MUTANT FEEDBACK WITH ACCEPTANCE BAR (owner ruling 2026-09-11, CFG.mutationRemediate).
-// A surviving mutant (the probe's own test did NOT catch the injected defect) goes to
-// ONE Sonnet test-author round. It must back up whatever test file(s) it touches, the
-// SAME OS-temp-dir convention the probe itself uses, so a failed acceptance bar can be
-// reverted mechanically rather than trusted to an improvised undo.
-function mutationRemediatePrompt(t, probe) {
-  return [
-    RUN_PREFIX(),
-    `You are the MUTATION-REMEDIATION test author. A mutation probe deliberately broke "${t.file}" and the named test did NOT catch it — the test is too weak, not the implementation (the probe already restored the file to its correct content before you were called).`,
-    `Target file: ${t.file}`,
-    `Behavior that must be protected: ${t.behavior || '(the behavior the named test claims to prove)'}`,
-    `Test that FAILED to catch the mutation: ${t.test}`,
-    `The defect the probe injected (already reverted): ${probe && probe.defect ? probe.defect : '(not recorded)'}`,
-    `Why it slipped through: ${probe && probe.evidence ? probe.evidence : '(no evidence recorded)'}`,
-    `Do exactly this, in order:`,
-    `1. BACK UP, OUTSIDE THE REPO, every test file you are about to touch: copy each into the OS temp directory (Git Bash: "$TMPDIR" when set, else /tmp; a Windows shell: %TEMP%) under a unique name such as "mutremediate-<basename>". Use a file copy (\`cp\`), never git. Report the FIRST one as backupPath (if you touch more than one file, note the rest in note).`,
-    `2. STRENGTHEN OR ADD exactly the test(s) needed so this specific mutation — the one described above — would be caught. Do not change the implementation. Do not weaken or delete any existing assertion; add or sharpen only.`,
-    `3. Run the test(s) against the CURRENT (correct) code and confirm they still PASS — a test that fails on correct code is not acceptable and must not be reported as changed.`,
-    `Report filesChanged (every file you actually edited), backupPath (from step 1), and note (one line — what you strengthened and why it now catches the mutation). The engine re-injects the SAME mutation next and checks whether your test now catches it; if it does not, or the suite breaks, your change is reverted from backupPath and this round is recorded as not kept — so do not claim a change you did not make.`,
-  ].filter(Boolean).join('\n')
-}
-// Mechanical revert: copy the pre-remediation backup back over every file the
-// remediation touched. Never git — the same reason the probe restore never uses it.
-function mutationRemediateRevertPrompt(t, rem) {
-  return [
-    RUN_PREFIX(),
-    `You are the MUTATION-REMEDIATION REVERT agent — mechanical. A test-author's change to "${(rem.filesChanged || [t.file]).join(', ')}" did not meet the acceptance bar (it did not catch the mutation on re-probe, or it broke the gate), so it is being reverted.`,
-    `Copy the backup at "${rem.backupPath}" back over "${(rem.filesChanged || [t.file])[0]}" (a file copy, never git). If filesChanged names more than one file and only one backup was reported, restore what you can from the backup and report exactly what you could NOT revert in note — never claim a full revert you did not verify.`,
-    `Byte-compare the restored file against the backup (\`cmp -s\`) before reporting restored=true. Report restored and note.`,
-  ].filter(Boolean).join('\n')
-}
-// THE BRIEF (Sonnet, low): the facts the fix planner decides from. Mechanical and
-// read-only — the planner opens no file, so anything it is not told here it cannot
-// know. Judgment of any kind belongs to the planner, not to this agent.
-function fixBriefPrompt(round, list) {
-  return [
-    RUN_PREFIX(),
-    `You are the FIX BRIEF builder for fix round ${round} — mechanical and read-only. A planner decides every fix in this round from what you write down, and it opens no file itself. Gather the facts; judge nothing.`,
-    `Return one item per finding, carrying that finding's index:`,
-    `- excerpt: the code around the cited line — about 60 lines centred on it, or the WHOLE file when the file is under 80 lines. A finding whose "file" is a name in parentheses names a PHASE, not a file ((gate), (red-gate), (mutation), (tests), (artifact), (gate-command), (implementation)): return an empty excerpt for those, and for a file that does not exist.`,
-    `- callers: up to 8 call sites of the exported function, method, class or constant that ENCLOSES the cited line — grep the repo (excluding node_modules, dist and build output) and give each as "path:line — the calling expression". Empty when the code is not reachable from an export, or you cannot find any.`,
-    `- note: ONE line of anything MECHANICAL the planner must know — the file does not exist, the cited line is past the end of the file, the enclosing symbol could not be located, the excerpt was truncated. Empty string when there is nothing to say.`,
-    `Findings:`,
-    ...list.map((f, i) => `[#${i}] ${f.file}:${f.line || '?'} — ${f.summary}`),
-    `Do NOT decide whether a finding is real, do NOT propose a fix, and do NOT create, modify or delete any file. Read only.`,
-  ].filter(Boolean).join('\n')
-}
-
-// THE PLANNER (Fable, high): ONE decision over every finding in the round. No
-// RUN_PREFIX — it is a decider, like the tie-break judge and the final-pass
-// decider: it reads no file and runs no command (Fable is the brain, never the
-// hands, owner ruling 2026-09-03), so everything it may rule on is in this prompt.
-function fixPlanPrompt(round, list, briefItems, briefRan) {
-  return [
-    `You are the FIX PLANNER for round ${round} of a code review's fix loop. You decide; you do not read the repository, run commands or gather anything — everything you may rule on is below. Where the evidence is insufficient, choose "fix" with a conservative design: a dropped real defect ships.`,
-    context ? `Task context from the orchestrator: ${context}` : '',
-    `The run's own oracles: ${runOracles()}`,
-    briefRan
-      ? ''
-      : `NOTE: the brief agent died, so there are NO code excerpts and NO call sites below. Decide from the findings themselves and keep every design conservative.`,
-    `Decide EVERY finding by its index, and give action, design, invariant, tests, route and reason for each:`,
-    `- "fix" — the design in 2 to 6 sentences: what changes, where, and what must NOT change; plus the invariant the change has to preserve and the test to add or strengthen (name the T#/REG token when one exists). The executor implements your design exactly and is forbidden to improvise, so an under-specified design is a wasted round.`,
-    `- "dispute" — ONLY when the excerpt or the failure scenario itself proves the finding is not real; put that proof in reason. Independent adversarial refuters re-judge every dispute, so you never drop a finding on your own. A finding marked disputeUpheld has already survived that slate and may NOT be disputed again.`,
-    `- "defer" — ONLY when the fix needs a decision this run cannot make (a planning defect or an owner call) — NEVER for difficulty. Put the question in reason. A deferred finding is not fixed this run: it stays open in the result as an owner question, with your reason, and the run cannot be clean while it is there. A hard fix is still a "fix".`,
-    `- route: "mechanical" only when the design is a pure transcription (a rename, an import, a path, stale text); "sonnet" for a designed change on a LOW-risk file; "opus" for anything on a HIGH-risk file, any finding whose file is a name in parentheses, and anything whose design still leaves a judgment to the executor. The engine upgrades HIGH-risk files and broad parenthesised keys to "opus" whatever you say — spend your routing decision on everything else.`,
-    `- waves: groups of indices that may execute CONCURRENTLY; every later wave runs strictly after the earlier ones. Put each index you marked "fix" in exactly one wave, and keep two findings on the same file in the same wave — the engine serializes by file either way, and it discards the whole wave list if an index is missing, named twice, or one file is split across waves.`,
-    `- ruled (A2, optional, "fix" only): set true ONLY when you are confirming this finding as REAL from evidence already cited above, for a finding with NO runnable check (nothing a test could show red or green either way). Leave it false/absent when a check exists — that finding earns execution evidence from its executor instead, never your say-so.`,
-    `A finding marked designMismatch carries the last executor's report of why your previous design did not fit the code it found — re-decide that finding with the report in hand, not by repeating the design.`,
-    `Indices refer to the numbered list below, INCLUDING the findings you dispute or defer — the numbering never shifts under you, and every field that takes an index (decisions, waves) uses that one numbering.`,
-    `Findings to decide:`,
-    ...list.map((f, i) => {
-      const b = briefItems.get(i)
-      const callers = b && Array.isArray(b.callers) ? b.callers.filter(Boolean) : []
-      return [
-        `[#${i}] [${f.severity || '?'}] ${f.file}${f.line ? ':' + f.line : ''} — ${f.summary}`,
-        `    scenario: ${f.detail || '(none given)'}`,
-        f.fixHint ? `    reviewer's fix hint: ${f.fixHint}` : '',
-        `    fixComplexity: ${f.fixComplexity || 'judgment'}${f.source ? `; source: ${f.source}` : ''}${f.phase ? `; raised by: ${f.phase}` : ''}`,
-        f.disputeUpheld ? `    disputeUpheld: a previous fixer disputed this and the independent refuters UPHELD it — you may not dispute it again.` : '',
-        f.designMismatch ? `    designMismatch: ${f.designMismatch}` : '',
-        b && b.note ? `    brief note: ${b.note}` : '',
-        callers.length ? `    call sites of the enclosing export:\n${callers.map((c) => `      ${c}`).join('\n')}` : '',
-        b && b.excerpt ? `    code around the cited line:\n${String(b.excerpt).split('\n').map((l) => `      ${l}`).join('\n')}` : '    code: (none supplied)',
-      ].filter(Boolean).join('\n')
-    }),
-    `Finally, in note: this round's plan in one paragraph, for the close-out.`,
-  ].filter(Boolean).join('\n')
-}
-
-// route: 'mechanical' (this group is running on the cheap fixer) or 'judgment'.
-// designs: the planner's decision per finding, aligned with `group` — null/absent
-// when the fix planner is off or declined, which leaves this prompt byte-identical
-// to what it was before the planner existed.
-function fixPrompt(fileKey, group, route, designs) {
-  const planned = Array.isArray(designs) && designs.some(Boolean)
-  return [
-    RUN_PREFIX(),
-    `You are the fix engineer for confirmed review findings. ${EDIT_NOTE}`,
-    `Read the plan at "${planPath}" for intended behavior, then fix each confirmed finding below with the MINIMAL correct change. Findings are in or about "${fileKey}":`,
-    JSON.stringify(group, null, 2),
-    `Those findings are numbered [#0], [#1], — in the order they appear above. Whenever you report one under \`skipped\` or \`disputed\`, give its \`index\` as well as its summary: a summary you paraphrase cannot be matched back to the finding, and a report nobody can match is a defect nobody acts on.`,
-    planned
-      ? [
-          `A planner (Fable 5.1) has already DECIDED each of these fixes, by the same indices:`,
-          ...group.map((f, i) => (designs[i]
-            ? `FABLE'S DESIGN for [#${i}]: ${designs[i].design || '(no design given — use the reviewer\'s fix hint)'} | invariant: ${designs[i].invariant || '(none given)'} | tests: ${designs[i].tests || '(none given)'}`
-            : '')),
-          `Implement the design exactly. If the design does not fit the code you find, do NOT improvise: put the finding in \`skipped\` with a reason starting "design mismatch:" and what you actually found. The planner re-decides it next round with your report — an improvised fix against a wrong design is the one outcome nothing downstream can catch.`,
-        ].filter(Boolean).join('\n')
-      : '',
-    route === 'mechanical'
-      ? `Every finding here was classified MECHANICAL: its fix is fully determined by the defect itself — a wrong path, a broken link, a stale cross-reference, a renumbering, a missing import, a budget overrun. Make exactly that fix. Do not redesign, do not refactor, and do not change behavior. If a finding turns out to need a decision about what the code SHOULD do, do NOT guess: put it in skipped with the reason "needs a judgment fixer", which routes it correctly on the next round.`
-      : `These findings need judgment: decide what the code should actually do, then make the smallest change that does it.`,
-    `REFUTE FIRST. Before changing code for any finding, verify it in the actual code. If you can DEMONSTRATE that a finding is wrong, impossible, or explicitly intended by the plan, do NOT touch the code for it: put it in \`disputed\` with its summary copied exactly and the exact code or plan line that proves it. Independent adversarial refuters re-judge every dispute, so a dispute never silently drops a finding — and a wrong fix on a false finding is worse than a dispute. \`skipped\` is for findings that are real but cannot be fixed here.`,
-    `EXECUTION EVIDENCE (A2): if a runnable test actually failed against the ORIGINAL code and passes after your change, report it in \`verifiedFixes\` (summary, the exact test, what redOn/greenOn showed) — this is what promotes a finding from plausible to execution-verified. Never fabricate a run you did not do.`,
-    group.some((f) => f.disputeUpheld)
-      ? `Findings marked "disputeUpheld": a previous fixer disputed them and the independent refuters UPHELD them. Fix these — disputing them again is not allowed.`
-      : '',
-    `You may edit whichever files the fixes genuinely require, but keep changes minimal and in-style. Never fake a fix.`,
-    FORMAT_NOTE,
-    fileKey === '(gate)' ? `For gate failures: run the failing command(s) yourself, fix the cause, and re-run until they pass.` : '',
-    fileKey === '(red-gate)'
-      ? `For red-gate findings: the named test never proved it can fail. Strengthen it so it asserts the real observable behavior and would have failed before this change existed. Never weaken, skip, or delete it. If the behavior genuinely already existed before this change, put that in skipped and say so plainly — that is a planning defect, not something to paper over.`
-      : '',
-    fileKey === '(mutation)'
-      ? `For mutation-probe findings, in this order: (a) RESTORATION FIRST — if a finding says a file was not restored, or that its checksum changed across the probe, put that file back by copying the backup the finding names (it is in the OS temp directory) over the file, byte-compare them (\`cmp -s\`), then delete the backup; if no backup path is named, look for a ${PROBE_BACKUP_GLOB} copy of the file in the OS temp directory, and if there is none, reconstruct the correct content by hand from the plan and say so plainly. NEVER \`git checkout\`/\`restore\`/\`stash\`/\`reset\` — uncommitted work from this run would be destroyed. (b) then strengthen or add the named test so it fails when that behavior breaks. Never weaken the implementation to match a weak test.`
-      : '',
-    fileKey === '(gate-command)'
-      ? `For "(gate-command)" findings: the named verification command ALREADY failed on the unmodified tree, before any of this work existed — the command is broken, not the code. Do NOT change product code, tests, or config to make it pass, and do NOT invent a replacement command. Fix it only if the cause is a genuine, safe repo-level repair. Otherwise put it in skipped with the reason "broken verification command — must be corrected in the build plan", which is exactly the right answer here.`
-      : '',
-    fileKey === '(artifact)'
-      ? `For "(artifact)" findings: a planning artifact asserts something about this repo that is not true. Correct the ARTIFACT text so it matches reality — you may edit the artifact file at the path named in the finding even if it lies outside the worktree, and nothing else outside it. Change code only when the plan genuinely requires that file, script or symbol to exist and this change was supposed to create it. Never invent a path, script or export just to make a claim true.`
-      : '',
-    fileKey === '(tests)'
-      ? `For test-authoring findings: finish or repair the test package. Tests only — do not use this round to write implementation code.`
-      : '',
-    group.some((f) => f.source === 'ui-verify')
-      ? `At least one finding above is marked "source": "ui-verify" — it was observed by DRIVING THE REAL UI, and its detail cites the flow, the viewport and a screenshot. Reading the source cannot prove such a fix. After you change the code, re-drive that flow at that viewport with Playwright (or the browser MCP fallback: \`mcp__Claude_Browser__navigate\`, \`read_page\`, \`computer\`, \`read_console_messages\`, \`read_network_requests\`, \`resize_window\`), take a FRESH screenshot, and re-read the console and network. Cite the new screenshot path in your report. If you cannot drive the UI, put the finding in skipped saying the fix is unverified — never claim a visual fix you did not see rendered. Stop any dev server or browser you started.`
-      : '',
-  ].filter(Boolean).join('\n')
-}
-
-// scopeFiles = what the fixers changed + the locations the findings cite. Re-reading
-// the whole change every round buys nothing: only these files can have moved.
-// heldOut: findings this round deliberately did NOT hand to a fixer — the fix
-// planner disputed them (the adversarial slate is judging them right now) or
-// deferred them (they need a decision this run cannot make). Both are already
-// recorded; re-litigating them here would either double-count or quietly bury one.
-// Empty on the legacy path, which leaves this prompt exactly as it was.
-function recheckPrompt(fixedFindings, fixReports, scopeFiles, heldOut) {
-  const scoped = Array.isArray(scopeFiles) && scopeFiles.length
-  const held = heldOut || { disputed: [], deferred: [] }
-  return [
-    RUN_PREFIX(),
-    `You are the re-check reviewer after a fix round.`,
-    `1. Read the plan at "${planPath}".`,
-    `2. These findings were supposed to be fixed: ${JSON.stringify(fixedFindings)}`,
-    `3. The fixers reported: ${JSON.stringify(fixReports)}`,
-    scoped
-      ? `4. SCOPE — these are the files the fixers changed plus the locations the findings cite. Read THESE; do not re-read the rest of the change, which nothing in this round touched:\n${scopeFiles.map((f) => `   - ${f}`).join('\n')}\n   Verify in the ACTUAL CODE that each finding is genuinely resolved. If a file you had to open anyway shows a regression the fixes introduced, report it — but do not go hunting outside this scope.`
-      : `4. Verify in the ACTUAL CODE that each finding is genuinely resolved, and skim the files the fixers changed for regressions the fixes introduced.`,
-    RISK_DEPTH_NOTE,
-    `Report as findings: anything still broken (carry it over) plus any NEW defect the fixes introduced. Empty findings = everything is clean. Do not re-litigate findings the fixers skipped with a sound reason — drop those. Findings the fixers listed under \`disputed\` are being re-judged by independent refuters right now — do not rule on them either way; leave them out of your report.`,
-    held.disputed && held.disputed.length
-      ? `The fix planner DISPUTED these findings, so no fixer touched them and the same adversarial slate is judging them right now — leave them out of your report too:\n${held.disputed.map((s) => `   - ${s}`).join('\n')}`
-      : '',
-    held.deferred && held.deferred.length
-      ? `The fix planner DEFERRED these findings — they need a decision this run cannot make, they are already recorded as open, and this run will not fix them. Do not report them and do not treat them as resolved:\n${held.deferred.map((s) => `   - ${s}`).join('\n')}`
-      : '',
-    FIX_COMPLEXITY_NOTE,
-  ].filter(Boolean).join('\n')
-}
-
-// ---------- helpers ----------
-// Normalize path spellings so 'src\\a.ts', './src/a.ts', and 'src/a.ts' are one key.
-function normPath(p) {
-  return (p || '').replace(/\\/g, '/').replace(/^\.\//, '')
-}
-
-// Also the single funnel where every finding acquires a routing tag: an agent that
-// omitted fixComplexity, and every finding this script authors itself, defaults to
-// 'judgment' — the safe side of the mechanical/judgment decision.
-// Identity of a finding across phases. f.target names the REAL file a
-// synthetic-key finding ('(mutation)', …) is about. Without it those findings are
-// separated only by the first 60 chars of their summary, so two targets whose
-// paths share a long prefix collapse into one and the second file is never named
-// to any fixer.
-const findingKey = (f) => `${normPath(f.file)}::${normPath(f.target || '')}::${f.line || ''}::${(f.summary || '').toLowerCase().slice(0, 60)}`
-// How a fixer's echoed summary is matched back to the finding it disputes.
-const normSummary = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 60)
-// CORROBORATION. dedupe() keeps the FIRST finding for a key and discards the rest, so
-// the fact that several independent lenses reported the same defect used to be thrown
-// away with the duplicates. Count it at merge time instead: findingKey -> the set of
-// DISTINCT review agents that reported it. Evidence for why: on F13 the run's top
-// blocker was reported by 6 lenses independently, and the refuter overturn rate was
-// 16% — a finding several lenses saw is not the kind a refuter usually overturns.
-const corroborationOf = new Map()
-function noteCorroboration(label, list) {
-  for (const f of list || []) {
-    if (!f || !f.file) continue
-    const k = findingKey(f)
-    const set = corroborationOf.get(k) || new Set()
-    set.add(label)
-    corroborationOf.set(k, set)
-  }
-}
-// 1 for a finding no lens corroborated (or that no lens raised at all).
-function corroborationCount(f) {
-  const set = corroborationOf.get(findingKey(f))
-  return set && set.size ? set.size : 1
-}
-// C2 LENS REPORT (owner ruling 2026-09-11c, engine wave 3C, "A7 signal-not-volume
-// per-lens telemetry"). Two module-level collections, filled in as the run
-// happens (findings are deduped/mutated/rewrapped downstream, so this is
-// captured at the ONLY point every raw review finding is still attributable to
-// the exact lens that raised it):
-//   lensRawFindings — one entry per RAW finding a review unit returned, before
-//     dedupe/merge, tagged with the lens name, model and effort that call used.
-//   dropReasonByKey — every findingKey() the shared slate (judgeFindings) ever
-//     dropped, at BOTH call sites (Verify's initial pass and the fix loop's
-//     dispute judging) — judgeFindings is the one function both go through, so
-//     one instrumentation point covers "overturned" everywhere a finding can
-//     be refuted away.
-const lensRawFindings = []
-const dropReasonByKey = new Map()
-// buildLensReport() runs at close-out, after confirmedInitial's findings carry
-// their final .verification (execution/ruled/plausible) — see near resultObj.
-// A merged small-scale unit (mergeLensesOnSmall, unit.lenses.length > 1) has no
-// per-finding lens attribution from the model's own response, so its raw
-// findings are tagged with the unit's pseudo-name (e.g. "small-combined")
-// rather than guessed apart — an honest row for what actually ran as one agent,
-// not a fabricated split.
-function buildLensReport() {
-  const finalStateByKey = new Map()
-  for (const f of confirmedInitial) finalStateByKey.set(findingKey(f), f.verification)
-  const byLens = new Map()
-  for (const r of lensRawFindings) {
-    let row = byLens.get(r.lens)
-    if (!row) {
-      row = { lens: r.lens, model: r.model, effort: r.effort, rawFindings: 0, corroborated: 0, executionConfirmed: 0, ruled: 0, plausible: 0, overturned: 0 }
-      byLens.set(r.lens, row)
+async function rootCauseStage(t) {
+  const high = isHighRisk(t) || hasHighRiskDependentFix(t.id)
+  const model = high ? M.opus : M.sonnet // root cause = "what to write": Opus on HIGH (ruling 2026-09-13)
+  const rc = await askAgent(fableSafe(model, rootCausePrompt(t)), { label: 'root-cause:' + t.id, phase: 'Implement', model, effort: CFG.effort.rootCause, schema: ROOT_CAUSE_SCHEMA })
+  if (!rc) {
+    return {
+      ...t,
+      blocked: true,
+      status: 'open',
+      clean: false,
+      rootCause: null,
+      blockerFindings: [
+        {
+          file: '(root-cause)',
+          severity: 'blocker',
+          phase: 'Implement',
+          summary: 'Task ' + t.id + '\'s root-cause investigator died or was skipped -- no dependent fix can be safely gated.',
+          detail: 'a dead root-cause agent must never read as confirmed -- every dependent fix stays blocked (fail-safe, matching the dead-manifest/dead-reviewer pattern used elsewhere in this engine)',
+        },
+      ],
     }
-    row.rawFindings++
-    row.model = r.model
-    row.effort = r.effort
-    const corrSet = corroborationOf.get(r.key)
-    if (corrSet && corrSet.size > 1) row.corroborated++
-    const state = finalStateByKey.get(r.key)
-    if (state === 'execution') row.executionConfirmed++
-    else if (state === 'ruled') row.ruled++
-    else if (state === 'plausible') row.plausible++
-    if (dropReasonByKey.has(r.key)) row.overturned++
   }
-  return [...byLens.values()]
-}
-function dedupe(findings) {
-  const seen = new Set()
-  const out = []
-  for (const f of findings) {
-    const key = findingKey(f)
-    if (seen.has(key)) continue
-    seen.add(key)
-    out.push(f.fixComplexity === 'mechanical' || f.fixComplexity === 'judgment' ? f : { ...f, fixComplexity: 'judgment' })
-  }
-  return out
+  return { ...t, rootCause: rc }
 }
 
-function groupByFile(findings) {
-  const groups = {}
-  for (const f of findings) {
-    const key = normPath(f.file) || '(unknown)'
-    ;(groups[key] = groups[key] || []).push(f)
-  }
-  return Object.entries(groups)
+// ---------- A10 (docs) ----------
+function docsImplementPrompt(t) {
+  return [
+    'You are the IMPLEMENTER for docs task ' + t.id + '. Read the task brief at "' + (t.briefPath || taskDir(t.id) + '/brief.md') + '".',
+    'Files you own for this task:',
+    ...(t.files || []).map((f) => '- ' + f),
+    'This is a DOCS task: there are no tests to write or pass. Make the documentation change the brief describes.',
+    t.check ? 'Then run this exact check command and report its result verbatim in notes: ' + t.check : '',
+    COMMIT_NOTE,
+    'Write "' + taskDir(t.id) + '/report.md" with what you changed and any deviation from the brief.',
+  ].filter(Boolean).join('\n')
 }
-
-// ---------- risk ----------
-// Filled from the preflight manifest. UNKNOWN IS HIGH, always: a file nobody
-// classified gets the deepest review, the judgment fixer and the mutation probe —
-// never the cheap path. Risk sets DEPTH and ROUTING; it never removes a file from
-// a lens's coverage.
-const riskMap = {}
-const changedLinesMap = {}
-// The manifest's own status word per path ('modified' | 'added' | 'untracked' |
-// 'deleted' | 'planned'), used by the bugfix fix-revert probe to tell a file that HAS
-// committed content to revert to from one that does not. Unknown = '' = no claim.
-const statusMap = {}
-const fileStatus = (p) => statusMap[normPath(p)] || ''
-// A file with no committed content cannot be reverted to HEAD. 'planned' and
-// 'untracked' say so outright; every other status (including an unknown one) leaves
-// the decision to the probe agent's own `git ls-files` / `git show HEAD:` check.
-const hasNoHeadContent = (p) => {
-  const s = fileStatus(p)
-  return s === 'untracked' || s === 'planned'
-}
-function fileRisk(p) {
-  const k = normPath(p)
-  return Object.prototype.hasOwnProperty.call(riskMap, k) ? riskMap[k] : 'HIGH'
-}
-const isHighRisk = (p) => fileRisk(p) === 'HIGH'
-const changedLinesOf = (p) => changedLinesMap[normPath(p)] || 0
-// E3 (owner ruling 2026-09-11, wave 3): every synthetic finding key the engine
-// itself emits as a `file`/`fileKey` value — collected by grepping every '(...)'
-// literal this script creates, not by shape. A lens-supplied `file` like
-// '(architecture)' is NOT one of these: it is a normal finding — plausible,
-// refutable, routed as a real path — and keeps its `file` verbatim. Only the
-// engine's own vocabulary counts as "names a phase, not a file".
-const SYNTHETIC_KEYS = new Set([
-  '(artifact)', '(gate)', '(gate-command)', '(red-gate)', '(mutation)',
-  '(mutation-remediation)', '(tests)', '(review)', '(implementation)',
-  '(ui-verify)', '(build-plan)', '(broad-fix)', '(ui-fix)', '(unknown)',
-  '(final-pass)',
-])
-const isRealPath = (f) => typeof f === 'string' && f.length > 0 && !SYNTHETIC_KEYS.has(f)
-// What a probe's temp backup is called, for the fixer that may have to restore from
-// it. Bugfix mode adds the fix-revert probe, which names its backups differently — a
-// fixer told to look for the wrong glob finds nothing and reconstructs by hand.
-const PROBE_BACKUP_GLOB = bugfix ? '"mutprobe-*" / "revertprobe-*"' : '"mutprobe-*"'
-
-// ---------- fix routing ----------
-// Where the fix tokens went, in the three tiers a round can use: `mechanical` (the
-// cheap fixer), `sonnetDesigned` (a Fable-designed change on a LOW-risk file — only
-// ever non-zero with CFG.fixPlanning on) and `judgment` (the review model: HIGH-risk
-// files, broad synthetic keys, and everything the legacy route calls judgment).
-// It is what RAN; fixPlanning.rounds[].routes is what Fable ASKED FOR. The two
-// diverge at exactly one place: where the engine upgraded a group to the review
-// model (a HIGH-risk file, a broad synthetic key, or a ui-verify finding).
-const fixRouting = { mechanical: 0, sonnetDesigned: 0, judgment: 0 }
-// Route rank, so a group takes the DEEPEST tier any of its findings needs.
-const ROUTE_RANK = { mechanical: 0, sonnet: 1, opus: 2 }
-// The engine's own upgrade, applied whatever the planner said: a HIGH-risk file, a
-// synthetic key whose fix is not textual, or a group carrying a finding observed by
-// DRIVING THE UI is executed on the review model. The two key exceptions are exactly
-// the ones fixRoute() already carves out — rewriting a false claim in an artifact,
-// and correcting a verification command broken before this run. The ui-verify clause
-// matches fixRoute()'s: such a fix has to be re-observed rendered in a browser, which
-// reading source cannot do, so it never goes to a cheaper executor however simple the
-// design looks.
-function forcesOpus(fileKey, group) {
-  if (!isRealPath(fileKey)) return fileKey !== '(artifact)' && fileKey !== '(gate-command)'
-  if (isHighRisk(fileKey)) return true
-  return Array.isArray(group) && group.some((f) => f && f.source === 'ui-verify')
-}
-// The tier each route actually runs at. 'judgment' is the legacy spelling of 'opus'.
-function executorTier(route) {
-  if (route === 'mechanical') return { model: CFG.mechanicalFixModel, effort: CFG.effort.mechanicalFix, counter: 'mechanical' }
-  if (route === 'sonnet') return { model: CFG.fixExecuteSonnetModel, effort: CFG.effort.fixExecuteSonnet, counter: 'sonnetDesigned' }
-  return { model: CFG.reviewModel, effort: CFG.effort.judgmentFix, counter: 'judgment' }
-}
-// The reviewer that found a defect tagged how it must be fixed. Mechanical work
-// goes to the cheap model; anything needing a decision — and everything touching a
-// HIGH-risk file — stays on the review model. Missing tag = judgment.
-function fixRoute(fileKey, group) {
-  // A synthetic key's fix is a decision (repair a build, restore a mutated file,
-  // strengthen a test) whatever the tag says. The exceptions are the two whose
-  // fix is textual: rewriting a false claim in an artifact, and correcting a
-  // verification command that was already broken before this run started.
-  if (!isRealPath(fileKey) && fileKey !== '(artifact)' && fileKey !== '(gate-command)') return 'judgment'
-  if (isRealPath(fileKey) && isHighRisk(fileKey)) return 'judgment'
-  for (const f of group) {
-    if (f.fixComplexity !== 'mechanical') return 'judgment'
-    if (f.source === 'ui-verify') return 'judgment' // must be re-observed in a browser
-    if (isRealPath(f.file) && isHighRisk(f.file)) return 'judgment'
-  }
-  return 'mechanical'
-}
-
-// Command spellings differ only in whitespace; one key per command.
-const normCmd = (c) => (c || '').trim().replace(/\s+/g, ' ')
-function uniqueCommands(list) {
-  const seen = new Set()
-  const out = []
-  for (const c of list) {
-    const k = normCmd(c)
-    if (!k || seen.has(k)) continue
-    seen.add(k)
-    out.push(c)
-  }
-  return out
-}
-
-function uniquePaths(list) {
-  const seen = new Set()
-  const out = []
-  for (const p of list) {
-    if (!p) continue
-    const k = normPath(p)
-    if (seen.has(k)) continue
-    seen.add(k)
-    out.push(p)
-  }
-  return out
-}
-
-// Commands that already failed on the untouched baseline tree. Their later
-// failures say nothing about this change, so they are excluded from the pass/fail
-// decision — filled by the Baseline phase, empty when it did not run.
-const badCommandSet = new Set()
-const isBadCommand = (c) => badCommandSet.has(normCmd(c))
-
-// CWD ENFORCEMENT (owner ruling 2026-09-11e, RUN-LOG train4-run-c). Detection
-// only — askAgent has no cwd option, so this cannot stop a gate agent from
-// running in the wrong directory, only catch it after the fact from the `cwd`
-// it was told to self-report (CWD_NOTE). Applied to every GATE_SCHEMA result
-// the moment it comes back, before ANYTHING else reads .pass — several call
-// sites read g.pass directly (bGate.pass, gateStillGreen, finalGate's `pass:
-// gate.pass`), not only through gateProblem(), so the correction has to live in
-// the raw object, not just in gateProblem's verdict. It sets a top-level
-// `cwdMismatch` reason rather than injecting a synthetic per-command result row
-// on purpose: a per-command row would flow through the Baseline phase's
-// badCommandSet exclusion (a workdir mismatch is not "this command is broken",
-// it is "nothing here ran where it should have") and a REPEATED mismatch at a
-// later gate would then be silently excluded as "already broken at baseline".
-// sanitizeCwd: a gate agent on PowerShell may report Get-Location's table
-// output ("\nPath\n----\nC:\\ClaudeCode\\routeflow") instead of a single path
-// line — strip the header/rule lines and take the first real content line.
-function sanitizeCwd(raw) {
-  const s = typeof raw === 'string' ? raw : ''
-  const lines = s.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !/^(Path|-+)$/i.test(l))
-  return lines.length ? lines[0] : ''
-}
-function enforceCwd(g, label) {
-  if (!g || !workdir) return g
-  const cwd = sanitizeCwd(g.cwd)
-  if (!cwd) {
-    log(`WARNING: gate did not report cwd; cwd enforcement skipped (${label})`)
-    return { ...g, cwdUnreported: true }
-  }
-  const norm = (p) => p.replace(/\\/g, '/').replace(/^\/mnt\/([a-zA-Z])(?=\/|$)/, '$1:').replace(/^\/([a-zA-Z])(?=\/|$)/, '$1:').replace(/\/+$/, '').toLowerCase()
-  if (norm(cwd) === norm(workdir)) return g
-  log(`!!! Gate cwd mismatch (${label}): ran in "${cwd}", not the workdir "${workdir}" — treating this gate as pass:false`)
-  return { ...g, pass: false, cwdMismatch: `ran outside workdir: ${cwd}` }
-}
-// Returns null when a gate result is acceptable, else the detail string for a
-// '(gate)' finding. Only failures of commands that WORK at baseline count. An
-// unknown — dead agent, or pass:false with no per-command evidence — is never
-// acceptable: it must not read as success.
-// Commands whose green means "tests ran and passed" — the only ones where a zero
-// execution count is a lie. Typecheck and lint legitimately "run" no tests.
-const isTestCommand = (c) => /\b(jest|vitest|mocha|playwright|test|tests|spec|e2e)\b/i.test(c || '')
-function gateProblem(g) {
-  if (!g) return 'The gate agent died or was skipped, so no verification evidence exists for this run.'
-  if (g.cwdMismatch) return g.cwdMismatch
-  if (g.skipped) return null
-  const results = Array.isArray(g.results) ? g.results : []
-  const failed = results.filter((r) => r && r.pass === false)
-  const real = failed.filter((r) => !isBadCommand(r.command))
-  if (real.length) return JSON.stringify(real)
-  // A green that executed nothing is not green: a cache replay or a skipped step
-  // reports success with zero tests run (this project's L-034 / L-041 class).
-  const hollow = results.filter((r) => r && r.pass === true && r.executed === 0 && isTestCommand(r.command) && !isBadCommand(r.command))
-  if (hollow.length) return `Reported green but EXECUTED NOTHING: ${JSON.stringify(hollow)}. A test command that ran zero tests (cache replay, skipped step, empty filter) proves nothing — force execution and re-run.`
-  if (g.pass === true) return null
-  if (failed.length) return null // every failure was a command already broken at baseline
-  return `The gate reported pass:false but listed no failing command — treat it as unverified, not as a pass. Raw results: ${JSON.stringify(results)}`
-}
-
-// A6 FLAKY QUARANTINE AT THE GATE (owner ruling 2026-09-11, CFG.flakyReruns).
-// Called on a gate that FAILED (gateProblem(g) truthy), before that failure is
-// trusted as the red-bar/fix trigger. No-op (zero reruns spent) unless the gate
-// report actually names failedTests — this is a strict addition to evidence
-// that exists, never a substitute for reading a failure honestly. A test that
-// fails in every rerun is left exactly as reported (isBadCommand-excluded
-// commands are never touched — they are already excluded from gateProblem).
-async function applyFlakyQuarantine(g, commands, labelPrefix) {
-  const quarantined = []
-  const quarantineAbandoned = []
-  if (!CFG.flakyReruns || !g || !Array.isArray(g.results)) return { gate: g, quarantined, quarantineAbandoned }
-  const flakyCandidates = g.results.filter((r) => r && r.pass === false && !isBadCommand(r.command) && Array.isArray(r.failedTests) && r.failedTests.length)
-  if (!flakyCandidates.length) return { gate: g, quarantined, quarantineAbandoned }
-  log(`Flaky quarantine: ${flakyCandidates.length} failing command(s) named specific tests — spending ${CFG.flakyReruns} rerun(s) on the same tree before trusting the failure`)
-  const reruns = []
-  for (let i = 1; i <= CFG.flakyReruns; i++) {
-    reruns.push(await askAgent(gatePrompt(commands), { label: `${labelPrefix}:r${i}`, phase: 'Gate & Review', model: CFG.gateModel, effort: CFG.effort.gate, schema: GATE_SCHEMA }))
-  }
-  // A null/malformed rerun is NO EVIDENCE, never a pass. A dead rerun call proves
-  // nothing about ANY command in this batch, so it forces every flaky candidate
-  // back to "leave exactly as reported" rather than letting it slip through as
-  // "did not reproduce" (an empty failedTests set from a dead call would otherwise
-  // read identically to a genuine non-reproduction).
-  const deadReruns = reruns.filter((rr) => !rr || !Array.isArray(rr.results))
-  const newResults = g.results.map((r) => {
-    if (flakyCandidates.indexOf(r) === -1) return r
-    if (deadReruns.length) {
-      quarantineAbandoned.push({ command: r.command, reason: 'dead rerun' })
-      log(`Flaky quarantine: "${r.command}" — ${deadReruns.length}/${CFG.flakyReruns} rerun(s) returned no evidence (null or missing results[]) — abandoning quarantine, leaving the failure exactly as reported`)
-      return r
+async function docsImplementStage(t) {
+  if (t.blocked) return t
+  const high = isHighRisk(t)
+  const model = M.sonnet // implementation is never Fable (ruling 2026-09-13)
+  const effort = high ? CFG.effort.implementHigh : CFG.effort.implement
+  const implBaseSha = await captureGitSha('impl-base:' + t.id, 'Implement')
+  const { response: impl, violation } = await withWorkdirGuard(t, 'impl:' + t.id, () =>
+    askAgent(fableSafe(model, docsImplementPrompt(t)), { label: 'impl:' + t.id, phase: 'Implement', model, effort, schema: IMPL_SCHEMA }),
+  )
+  if (violation) return { ...t, implBaseSha, implement: impl || { status: 'blocked', filesChanged: [], deviations: '', notes: '' }, blocked: true, blockerFindings: [violation] }
+  if (!impl || impl.status === 'blocked') {
+    return {
+      ...t,
+      implBaseSha,
+      implement: impl || { status: 'blocked', filesChanged: [], deviations: '', notes: 'implementer agent returned nothing' },
+      blocked: true,
+      blockerFindings: [
+        {
+          file: '(implement)',
+          severity: 'blocker',
+          phase: 'Implement',
+          summary: 'Docs task ' + t.id + '\'s implementer did not produce a working change -- status ' + (impl ? impl.status : '(dead agent)') + '.',
+          detail: impl ? JSON.stringify(impl) : 'the implementer agent returned nothing',
+        },
+      ],
     }
-    const testFailCount = new Map(r.failedTests.map((name) => [name, 0]))
-    for (const rr of reruns) {
-      const rrResult = rr.results.find((x) => x && x.command === r.command)
-      const rrFailed = new Set(rrResult && Array.isArray(rrResult.failedTests) ? rrResult.failedTests : [])
-      for (const name of testFailCount.keys()) if (rrFailed.has(name)) testFailCount.set(name, testFailCount.get(name) + 1)
+  }
+  const liveBlock = await checkImplementLiveness(t, impl, 'impl:' + t.id, 'Implement')
+  if (liveBlock) return { ...t, implBaseSha, implement: impl, blocked: true, blockerFindings: [liveBlock] }
+  return { ...t, implBaseSha, implement: impl }
+}
+
+function packPrompt(t) {
+  // Fix round 1, finding 1: review-pack.mjs's --radius takes a [before,
+  // after] context-line count PAIR, not a file list -- it auto-discovers
+  // radius files itself from its own Call-Sites hits. Emit the flag only
+  // when the task declares that exact numeric pair; otherwise omit it
+  // entirely and let the script's own Call-Sites-derived radius stand on
+  // its own (a valid, already-tested mode of that script).
+  const r = Array.isArray(t.radius) ? t.radius : null
+  const radiusFlag = r && r.length === 2 && Number.isFinite(Number(r[0])) && Number.isFinite(Number(r[1])) ? ' --radius ' + Number(r[0]) + ',' + Number(r[1]) : ''
+  // Fix round 2, finding 1: --test-plan is OPTIONAL (SKILL.md:259, S2 task
+  // contract) -- but review-pack.mjs treats ANY non-empty --test-plan value
+  // as a real file path and throws a ContentError trying to read it (it only
+  // skips the Test-plan-excerpt section when the flag is absent entirely).
+  // Passing a placeholder like "(none)" therefore turned EVERY run that
+  // legitimately omits a test plan into an unconditional (pack) blocker.
+  // Omit the flag entirely when absent -- the same "omit when absent, never
+  // emit a placeholder path" treatment radiusFlag already uses above.
+  const testPlanFlag = _args.testPlanPath ? ' --test-plan ' + _args.testPlanPath : ''
+  return [
+    'Run this exact command from the repo root, then report its result:',
+    scriptCmd('review-pack.mjs') + ' --plan ' + (_args.buildPlanPath || '(none)') + testPlanFlag +
+      ' --files ' + (t.files || []).join(',') + radiusFlag +
+      // Fix round 2, finding 2: implementPrompt now tells the implementer to
+      // commit (COMMIT_NOTE, below) before this stage runs, so by the time
+      // THIS call happens the change may already be committed. `--base
+      // worktree` maps to `git diff HEAD`, which goes EMPTY the moment the
+      // working tree matches a just-made commit -- so this must diff from
+      // the real pre-implement sha (captured in implementStage, before the
+      // implementer/commit ran), never from 'HEAD-relative worktree', or the
+      // reviewer would see nothing to review. Falls back to _args.baselineSha
+      // (run-wide, when the per-task capture is unavailable) then 'worktree'
+      // (the pre-existing behavior), same fallback order as before.
+      ' --base ' + (t.implBaseSha || _args.baselineSha || 'worktree') + ' --cap ' + CFG.caps.packBytes + ' --out ' + taskDir(t.id) + '/pack.md',
+    !radiusFlag ? '(No --radius flag: this task declared no [before, after] context-line pair, so review-pack.mjs\'s own Call-Sites-derived radius stands on its own.)' : '',
+    !testPlanFlag ? '(No --test-plan flag: this run has no test plan path in scope -- --test-plan is optional, so the Test-plan excerpt section is simply omitted.)' : '',
+    'Report the process exit code as exitCode, and out/bytes/truncated/sections from its LAST stdout JSON line. exitCode must be 0 and out must be the pack.md path actually written, or this call failed.',
+  ].filter(Boolean).join('\n')
+}
+async function packStage(t) {
+  if (t.blocked) return t
+  // Fix 1: scriptsDir missing means scriptCmd() could not even build a
+  // command -- never dispatch an agent to run an unbuildable command (which
+  // would just resolve to the old broken relative form); block immediately,
+  // same shape as a real review-pack.mjs failure below.
+  if (!scriptsDir) {
+    return {
+      ...t,
+      blocked: true,
+      blockerFindings: [
+        {
+          file: '(pack)',
+          severity: 'blocker',
+          phase: 'Gate & Review',
+          summary: 'Task ' + t.id + ' cannot run review-pack.mjs -- no scriptsDir was supplied to this run.',
+          detail: 'args.scriptsDir (the absolute path to dev-pipeline\'s scripts directory) is required so this invocation does not depend on the invoking agent\'s cwd, which is always the target workdir -- never dev-pipeline\'s own directory -- in a real run.',
+        },
+      ],
     }
-    let anyGenuine = false
-    for (const [name, failures] of testFailCount) {
-      if (failures === CFG.flakyReruns) {
-        anyGenuine = true // failed EVERY rerun — a confirmed, non-flaky failure
-      } else if (failures > 0) {
-        // Some but not all — the literal A6 quarantine signature.
-        quarantined.push({ name, command: r.command, runs: CFG.flakyReruns, failures })
+  }
+  const pack = await askAgent(packPrompt(t), { label: 'pack:' + t.id, phase: 'Gate & Review', model: M.haiku, effort: CFG.effort.pack, schema: PACK_SCRIPT_SCHEMA })
+  // Fix round 1, finding 1: a non-zero exit or a missing pack.md is a task
+  // blocker -- never a silent fallback to a default path. The reviewer must
+  // never be handed a file that was not actually built.
+  if (!pack || pack.exitCode !== 0 || !pack.out) {
+    return {
+      ...t,
+      blocked: true,
+      blockerFindings: [
+        {
+          file: '(pack)',
+          severity: 'blocker',
+          phase: 'Gate & Review',
+          summary: 'Task ' + t.id + '\'s review-pack.mjs run did not produce a pack.md -- the reviewer must never be handed a file that was never actually built.',
+          detail: pack ? ('exitCode=' + pack.exitCode + ' out=' + JSON.stringify(pack.out || '')) : 'the pack-building agent returned nothing',
+        },
+      ],
+    }
+  }
+  return { ...t, packPath: pack.out }
+}
+
+function reviewPrompt(t) {
+  return [
+    'You are the ADVERSARIAL REVIEWER for task ' + t.id + '. Read the pack at "' + t.packPath + '" -- it has the spec excerpt, the diff, call sites, and the test-plan excerpt.',
+    'Judge: spec compliance against this task\'s requirements, code quality, test quality (tests assert real behavior, not mocks), and correctness. You may run ONE focused test when reading raises a specific doubt.',
+    'Report specCompliance, findings[] (severity critical|important|minor, file, line, summary, scenario -- the concrete input/state that produces the wrong behavior), and assessment (approved only if there is no critical or important finding).',
+  ].join('\n')
+}
+async function reviewStage(t) {
+  if (t.blocked) return t
+  const high = isHighRisk(t)
+  const model = profile.reviewerAlwaysSonnet ? M.sonnet : (high ? M.opus : M.sonnet) // review on HIGH: Opus (ruling 2026-09-13)
+  const review = await askAgent(fableSafe(model, reviewPrompt(t)), { label: 'review:' + t.id, phase: 'Gate & Review', model, effort: CFG.effort.review, schema: REVIEW_SCHEMA })
+  // Fix round 1, finding 4: a dead/null reviewer must never read as a clean
+  // pass (matching the red-gate and dead-manifest fail-safe pattern already
+  // used above) -- it is a task blocker instead of an empty findings list.
+  if (!review) {
+    return {
+      ...t,
+      blocked: true,
+      blockerFindings: [
+        {
+          file: '(review)',
+          severity: 'blocker',
+          phase: 'Gate & Review',
+          summary: 'Task ' + t.id + '\'s reviewer agent died or was skipped -- a dead reviewer is not a pass.',
+          detail: 'reviewStage received no response; without an adversarial review this task cannot be confirmed correct, so it is blocked rather than defaulting to an empty (clean-looking) findings list.',
+        },
+      ],
+    }
+  }
+  return { ...t, review }
+}
+
+// ---------- A10b: ui-verify task type ----------
+// Adapted from pipeline.js.bak-2026-09-12 @1819 (uiDrivePrompt) and @1852
+// (uiJudgePrompt). In the old engine the driver and judge were separate
+// engine-wide phases with their own agents; here `ui-verify` is a TASK TYPE,
+// so the driver is the task's own dedicated stage and the judge IS the
+// task's reviewStage (folded in below) -- one review call per plan.
+function uiCfgFrom(t) {
+  return {
+    url: t.url || '',
+    startCommand: t.startCommand || '',
+    flows: Array.isArray(t.flows) && t.flows.length ? t.flows : ['exercise the surface this change touches, end to end'],
+    viewports: Array.isArray(t.viewports) && t.viewports.length ? t.viewports : ['desktop'],
+    checks: Array.isArray(t.checks) && t.checks.length ? t.checks : ['console-errors', 'network-failures', 'a11y'],
+  }
+}
+function uiDrivePrompt(t, cfg, priorFindings) {
+  const isRerun = Array.isArray(priorFindings)
+  return [
+    'You are the UI evidence collector for task ' + t.id + '. Exercise the REAL running UI and record what happened as FACTS -- screenshots, assertions, console, network, accessibility measurements. You do NOT decide what is a defect: a separate judge reads your evidence.',
+    'You OWN the app process for this task: start it, drive every flow, and STOP it yourself before you report -- even if a flow fails, blows up, or you run out of ideas. Leave no server, browser, or held port behind; report that in processesStopped.',
+    'Target URL: ' + (cfg.url || '(not given -- derive it from the dev-server config in this repo)'),
+    cfg.startCommand ? 'Start the app with: ' + cfg.startCommand + '. You own that process end to end.' : 'Assume the app is already reachable at the target URL; if not, start it the way this repo documents, and still stop whatever you started before you report.',
+    isRerun ? 'THIS IS A RE-VERIFICATION: a fix round has since touched files this task watches. Re-drive every flow from scratch at every viewport with FRESH screenshots. Earlier findings: ' + JSON.stringify(priorFindings) : '',
+    'Flows to drive, each end to end:',
+    ...cfg.flows.map((f, i) => (i + 1) + '. ' + f),
+    'Viewports: run every flow at each of: ' + cfg.viewports.join(', ') + '. Resize before the flow, not during it.',
+    'Capture per flow per viewport: every console error/unhandled rejection verbatim; every request that 4xx/5xx, aborts or times out (method, URL, status); accessibility facts (focus order, missing accessible names, contrast/target-size); and the assertions you ran and whether each passed. Take a screenshot at the end of every flow at every viewport and record its path.',
+    'A flow you could not drive is status "blocked" with the reason in notes -- and completed=false overall when any flow is blocked, failed, or was not driven at a listed viewport. Do not fix anything and do not commit.',
+    'Also write your complete evidence object, matching the schema exactly, to "' + taskDir(t.id) + '/ui-evidence.json".',
+  ].filter(Boolean).join('\n')
+}
+async function uiDriveStage(t) {
+  if (t.blocked) return t
+  const cfg = uiCfgFrom(t)
+  const evidence = await askAgent(uiDrivePrompt(t, cfg, null), { label: 'ui-drive:' + t.id, phase: 'UI verify', model: M.sonnet, effort: CFG.effort.uiDrive, schema: UI_EVIDENCE_SCHEMA })
+  if (!evidence) {
+    return {
+      ...t,
+      uiCfg: cfg,
+      evidence: null,
+      blocked: true,
+      blockerFindings: [
+        {
+          file: '(ui-verify)',
+          severity: 'blocker',
+          phase: 'UI verify',
+          summary: 'Task ' + t.id + '\'s UI driver died or was skipped -- no browser evidence exists for these flows.',
+          detail: 'do not treat the change as clean; re-run this task or drive the flows manually',
+        },
+      ],
+    }
+  }
+  return { ...t, uiCfg: cfg, evidence, evidencePath: taskDir(t.id) + '/ui-evidence.json' }
+}
+// Adapted from pipeline.js.bak-2026-09-12 @1852 (uiJudgePrompt), folded into
+// this task type's OWN reviewStage (one review call, not a separate judge
+// agent) -- the plan: "the judge IS the task's reviewer (one agent)".
+function uiJudgePrompt(t, cfg, evidence, priorFindings) {
+  const isRerun = Array.isArray(priorFindings)
+  return [
+    'You are the UI verification judge for task ' + t.id + '. A driver agent has just exercised the real running UI and recorded the evidence below. Decide what in it is a defect. Do NOT start the app or drive a browser yourself; if the evidence is insufficient to judge a flow, that is itself a finding.',
+    'Flows that were supposed to be driven: ' + cfg.flows.join(' | ') + ' at viewports ' + cfg.viewports.join(', ') + '; checks requested: ' + cfg.checks.join(', ') + '.',
+    'Evidence: ' + JSON.stringify(evidence),
+    isRerun ? 'THIS IS A RE-VERIFICATION after a fix round. For each earlier finding, rule from the FRESH evidence whether it is gone in the rendered UI or still there; report it again if still there. Earlier findings: ' + JSON.stringify(priorFindings) : '',
+    'Rules: a console error or unhandled rejection is a finding, quoted verbatim; a failed or aborted request is a finding with method, URL and status; accessibility gaps against the requested checks are findings; a flow with status "failed" or "blocked", or one not driven at a listed viewport, is a BLOCKER (severity critical) -- the change is unexercised there, not merely a finding; evidence.completed=false or processesStopped=false is a finding in its own right.',
+    'Report specCompliance, findings[] (severity critical|important|minor, file, line, summary, scenario), and assessment (approved only if there is no critical or important finding).',
+  ].filter(Boolean).join('\n')
+}
+async function uiReviewStage(t) {
+  if (t.blocked) return t
+  const high = isHighRisk(t)
+  const model = profile.reviewerAlwaysSonnet ? M.sonnet : (high ? M.opus : M.sonnet) // UI judge on HIGH: Opus (ruling 2026-09-13)
+  const review = await askAgent(fableSafe(model, uiJudgePrompt(t, t.uiCfg, t.evidence, null)), { label: 'review:' + t.id, phase: 'UI verify', model, effort: CFG.effort.review, schema: REVIEW_SCHEMA })
+  if (!review) {
+    return {
+      ...t,
+      blocked: true,
+      blockerFindings: [
+        {
+          file: '(ui-verify)',
+          severity: 'blocker',
+          phase: 'UI verify',
+          summary: 'Task ' + t.id + '\'s UI judge died or was skipped -- evidence exists but nobody ruled on it.',
+          detail: 'a browser pass with no verdict is unverified, never clean',
+        },
+      ],
+    }
+  }
+  // A blocked flow is a blocker in its own right (not merely a finding the
+  // judge chooses to raise) -- corroborated mechanically, the same
+  // fail-safe philosophy as isStructurallyRed()/gateProblem() above: a judge
+  // that stays silent on a blocked flow does not make the flow un-blocked.
+  const blockedFlows = (t.evidence && Array.isArray(t.evidence.flows) ? t.evidence.flows : []).filter((f) => f && f.status === 'blocked')
+  const findings = Array.isArray(review.findings) ? review.findings.slice() : []
+  for (const bf of blockedFlows) {
+    const already = findings.some((f) => f.file === '(ui-verify)' && f.scenario === (bf.notes || ''))
+    if (already) continue
+    findings.push({
+      severity: 'critical',
+      file: '(ui-verify)',
+      line: 0,
+      summary: 'Flow "' + bf.flow + '" at viewport "' + bf.viewport + '" could not be driven -- blocked.',
+      scenario: bf.notes || '(no reason given)',
+    })
+  }
+  const assessment = blockedFlows.length ? 'needs-fixes' : review.assessment
+  return { ...t, review: { ...review, findings, assessment } }
+}
+
+// A10/A10b: every non-fixLoop-bearing task type (root-cause, repro-test) --
+// and any type whose fixLoopStage never ran because it blocked earlier --
+// still needs a terminal status so progressLineFor()/the run-level
+// anyTaskNotClean check has something to read. fixLoopStage already sets
+// status on every path it reaches; this is a no-op there.
+function finishStage(t) {
+  if (t.blocked) return t
+  if (t.status) return t
+  return { ...t, status: 'complete', rounds: t.rounds || 0, clean: t.clean !== false }
+}
+
+// ---------- A9: fix loop, round-routing table ----------
+// r1-2: plain executor, same tier as the task's own risk. r3: Fable designs
+// (a decide-only call) then a separate Fable call executes the design. r4:
+// designer AND executor collapse into ONE Fable call (executorIsDesigner) --
+// the last-resort round skips the extra round-trip.
+function fixRoundPlan(round, t) {
+  const hi = isHighRisk(t)
+  // Ruling 2026-09-13: the fix EXECUTOR (writes code) is always Sonnet; the fix DESIGNER
+  // (decides what to write, rounds >= 3) is Opus. The round-4 "executorIsDesigner" collapse
+  // is retired — one model must never both decide and implement.
+  if (round <= 2) return { model: M.sonnet, effort: CFG.effort.fixExec, designer: false }
+  return { model: M.opus, effort: CFG.effort.fixDesign, designer: true }
+}
+function fixKey(i) { return '#' + i }
+function listFindingsForPrompt(list) {
+  return list.map((f, i) => '[' + fixKey(i) + '] [' + (f.severity || '?') + '] ' + f.file + (f.line ? ':' + f.line : '') + ' -- ' + f.summary + (f.scenario ? ' :: ' + f.scenario : ''))
+}
+function fixExecPrompt(t, round, openFindings, design) {
+  const decisions = design && Array.isArray(design.decisions) ? design.decisions : []
+  return [
+    'You are the FIX EXECUTOR for task ' + t.id + ', round ' + round + ' of ' + CFG.maxFixRounds + '. Only critical/important findings reach this loop -- a minor finding never does.',
+    // Fix round 1, finding 9: bring this up to implementPrompt's own
+    // standard -- the brief/prior-report path and the owned-files list were
+    // missing here.
+    'Task brief: "' + (t.briefPath || taskDir(t.id) + '/brief.md') + '". Prior implementer report: "' + taskDir(t.id) + '/report.md".',
+    'Files you own for this task:',
+    ...(t.files || []).map((f) => '- ' + f),
+    'Findings to fix, keyed for reference:',
+    ...listFindingsForPrompt(openFindings),
+    decisions.length
+      ? 'A planner has already decided each finding by the same keys; implement its design exactly. If a design does not fit the code you find, say so in notes rather than improvising:\n' +
+        decisions.map((d) => '  ' + (d.key || '?') + ': ' + (d.action || 'fix') + ' -- ' + (d.design || '(no design given)')).join('\n')
+      : 'Decide and implement the minimal correct fix for each finding yourself.',
+    (verifyCommands.perRound || []).length
+      ? 'Also run, scoped to this task\'s files where possible, to confirm your fix does not regress the suite: ' + (verifyCommands.perRound || []).join(' ; ')
+      : '',
+    COMMIT_NOTE,
+    'Report status, filesChanged, deviations, and notes.',
+  ].filter(Boolean).join('\n')
+}
+function fixDesignPrompt(t, round, openFindings, briefRes) {
+  return [
+    'You are the FIX PLANNER for task ' + t.id + ', round ' + round + '. You decide; you do not read the repository or run commands -- everything you may rule on is below' +
+      (briefRes && briefRes.out ? ' plus the code brief at "' + briefRes.out + '"' : ' (the brief agent produced nothing -- decide from the findings alone, conservatively)') + '.',
+    'Where the evidence is insufficient, choose "fix" with a conservative design: a dropped real defect ships.',
+    'Findings, keyed for reference:',
+    ...listFindingsForPrompt(openFindings),
+    'For each finding give key, action (fix|dispute|defer -- dispute only when you can prove the finding is not real; defer only for a decision this run cannot make), a 2-6 sentence design, the invariant it must preserve, the test to add or strengthen, and reason.',
+  ].join('\n')
+}
+function fixDesignAndExecPrompt(t, round, openFindings, briefRes) {
+  return [
+    fixDesignPrompt(t, round, openFindings, briefRes),
+    'This is the LAST fix round (round ' + CFG.maxFixRounds + '): after deciding, make the change yourself in this same turn instead of handing the design to a separate executor.',
+    (verifyCommands.perRound || []).length
+      ? 'Also run, scoped to this task\'s files where possible, to confirm your fix does not regress the suite: ' + (verifyCommands.perRound || []).join(' ; ')
+      : '',
+    COMMIT_NOTE,
+    'Report status, filesChanged, deviations, and notes (same shape as an implementer report).',
+  ].filter(Boolean).join('\n')
+}
+function fixBriefScriptPrompt(t, openFindings, round) {
+  // Fix round 1, finding 3: the engine has no filesystem access, so nothing
+  // wrote the findings JSON fix-brief.mjs's readFileSync expects -- inline
+  // the exact JSON and explicitly instruct the agent to write it FIRST.
+  const findingsPath = taskDir(t.id) + '/fix-r' + round + '-findings.json'
+  return [
+    'First, write this EXACT JSON to "' + findingsPath + '" (create the directory first if needed):',
+    JSON.stringify(openFindings),
+    'Then run this exact command from the repo root, and report its result:',
+    scriptCmd('fix-brief.mjs') + ' --findings ' + findingsPath + ' --cap ' + CFG.caps.fableBriefBytes + ' --out ' + taskDir(t.id) + '/fix-r' + round + '.md',
+    'The script prints its result as the LAST stdout line: one JSON object {out, bytes, truncated, sections, exitCode}. Report exactly that object. Report the process exit code as exitCode: it must be 0 and out must be the fix-brief path actually written, or this call failed.',
+  ].join('\n')
+}
+async function fixRound(t, round, openFindings) {
+  const plan = fixRoundPlan(round, t)
+  const label = 'fix:' + t.id + ':r' + round
+  if (!plan.designer) {
+    const { response: exec, violation } = await withWorkdirGuard(t, label, () =>
+      askAgent(fableSafe(plan.model, fixExecPrompt(t, round, openFindings, null)), { label, phase: 'Fix', model: plan.model, effort: plan.effort, schema: IMPL_SCHEMA }),
+    )
+    return { plan, design: null, exec, guardViolation: violation }
+  }
+  // Fix round 1, finding 6: a Fable-session caller can rule the fix design
+  // inline and pass it as args.fixPlanOverride to skip the brief + design
+  // calls entirely (light-loop.js:550-551 pattern) -- checked before either
+  // is dispatched.
+  if (_args.fixPlanOverride) {
+    const design = _args.fixPlanOverride
+    const { response: exec, violation } = await withWorkdirGuard(t, label, () =>
+      askAgent(withToolCap(fixExecPrompt(t, round, openFindings, design)), { label, phase: 'Fix', model: plan.model, effort: plan.effort, schema: IMPL_SCHEMA }),
+    )
+    return { plan, design, exec, designOverridden: true, guardViolation: violation }
+  }
+  // Fix 1/Fix 2 (real smoke-run finding): fix-brief.mjs shares
+  // task-brief.mjs's exact schema and cwd-dependent invocation risk. A
+  // missing scriptsDir (command unbuildable) or a nonzero exit must never be
+  // trusted as if it produced a real brief -- but unlike packStage's hard
+  // gate, this brief is supplementary context the design step already has an
+  // explicit "produced nothing" fallback for (fixDesignPrompt, above), so a
+  // failure here degrades to that SAME conservative fallback rather than
+  // blocking the whole task. The failure is still never silent: it is
+  // surfaced as a (brief) gap finding, folded into the run's findings by
+  // fixLoopStage below -- the identical non-fatal-but-visible pattern
+  // rereviewStage already uses for a failed re-review pack a few lines down.
+  const briefRaw = scriptsDir
+    ? await askAgent(fixBriefScriptPrompt(t, openFindings, round), { label: 'fix-brief:' + t.id + ':r' + round, phase: 'Fix', model: M.haiku, effort: CFG.effort.baseline, schema: SCRIPT_RESULT_SCHEMA })
+    : null
+  const briefOk = !!(briefRaw && briefRaw.exitCode === 0 && briefRaw.out)
+  const brief = briefOk ? briefRaw : null
+  const briefGap = briefOk ? null : {
+    file: '(brief)',
+    severity: 'major',
+    phase: 'Fix',
+    summary: 'Fix-brief for task ' + t.id + ' round ' + round + ' could not run or failed to build -- the design step proceeded from the findings alone.',
+    detail: !scriptsDir
+      ? 'no scriptsDir (args.scriptsDir) is available in this run, so fix-brief.mjs\'s command could not be built.'
+      : briefRaw ? ('exitCode=' + briefRaw.exitCode + ' out=' + JSON.stringify(briefRaw.out || '')) : 'the fix-brief agent returned nothing',
+  }
+  if (plan.executorIsDesigner) {
+    // UNREACHABLE since 2026-09-13 — executorIsDesigner is never set (see fixRouting). Kept for
+    // resume-compat with older runs; if ever reached it runs on Opus, never Fable.
+    const { response: exec, violation } = await withWorkdirGuard(t, label, () =>
+      askAgent(withToolCap(fixDesignAndExecPrompt(t, round, openFindings, brief)), { label, phase: 'Fix', model: M.opus, effort: plan.effort, schema: IMPL_SCHEMA }),
+    )
+    return { plan, design: null, exec, briefGap, guardViolation: violation }
+  }
+  const design = await askAgent(fixDesignPrompt(t, round, openFindings, brief), { label: 'fix-plan:' + t.id + ':r' + round, phase: 'Fix', model: M.opus, effort: CFG.effort.fixDesign, schema: FIX_DESIGN_SCHEMA })
+  // executor is Sonnet regardless of plan.model (which names the DESIGNER at rounds >= 3) — ruling 2026-09-13
+  const { response: exec, violation } = await withWorkdirGuard(t, label, () =>
+    askAgent(withToolCap(fixExecPrompt(t, round, openFindings, design)), { label, phase: 'Fix', model: M.sonnet, effort: CFG.effort.fixExec, schema: IMPL_SCHEMA }),
+  )
+  return { plan, design, exec, briefGap, guardViolation: violation }
+}
+
+// Fix round 1, finding 2: a small Haiku `git rev-parse HEAD` call, used both
+// to capture a round's real fixBaseSha before it starts and to capture the
+// new HEAD after the executor's (committed) work lands.
+async function captureGitSha(label, phaseName) {
+  const res = await askAgent('Run `git rev-parse HEAD` from the repo root and report its single output line as sha.', { label, phase: phaseName, model: M.haiku, effort: CFG.effort.baseline, schema: GIT_SHA_SCHEMA })
+  return res && res.sha ? res.sha : null
+}
+function rereviewPackPrompt(t, round, fixBaseSha) {
+  return [
+    'Run this exact command from the repo root, then report its result:',
+    scriptCmd('review-pack.mjs') + ' --plan ' + _args.buildPlanPath + ' --base ' + fixBaseSha + ' --files ' + (t.files || []).join(',') + ' --cap ' + CFG.caps.packBytes + ' --out ' + taskDir(t.id) + '/pack-r' + round + '.md',
+    'This pack scopes to ONLY the fix diff from round ' + round + ' -- everything changed since commit ' + fixBaseSha + ' -- not the whole task change.',
+    'Report the process exit code as exitCode, and out/bytes/truncated/sections from its LAST stdout JSON line.',
+  ].join('\n')
+}
+function rereviewPrompt(t, round, openFindings, packPath) {
+  return [
+    'You are the RE-REVIEWER for task ' + t.id + ' after fix round ' + round + '. Read the pack at "' + packPath + '" -- it is scoped to ONLY this round\'s fix diff.',
+    'For each prior finding below, report ADDRESSED or NOT ADDRESSED with file:line evidence -- never take the fixer\'s word for it:',
+    ...listFindingsForPrompt(openFindings),
+    'Report newFindings ONLY for defects introduced inside the fix diff itself -- never re-litigate something the original review already passed.',
+  ].join('\n')
+}
+// Fix round 1, finding 2: the old version passed a literal placeholder
+// string as --base and omitted the required --plan (review-pack.mjs's
+// parseArgs exits 2 on a missing --plan), and never captured or used the
+// pack path it built. Now: real --plan, a real captured fixBaseSha, and the
+// returned pack path is what the re-reviewer actually reads. If no plan
+// path is in scope, or no base sha could be captured, that is a
+// controller-visible gap -- surfaced as a (pack) finding, never spent on a
+// call that would just fail.
+async function rereviewStage(t, round, openFindings, fixBaseSha) {
+  // Fix 1: a missing scriptsDir joins the existing "cannot run" gap checks
+  // below -- scriptCmd() could not build a command, so never dispatch an
+  // agent to run one.
+  if (!_args.buildPlanPath || !fixBaseSha || !scriptsDir) {
+    return {
+      perFinding: openFindings.map((f, i) => ({ key: fixKey(i), status: 'NOT ADDRESSED', evidence: 'no build plan path, base sha, or scriptsDir in scope -- review-pack.mjs cannot run without --plan, a real --base, and a resolvable script path' })),
+      newFindings: [],
+      gapFinding: {
+        file: '(pack)',
+        severity: 'major',
+        phase: 'Fix',
+        summary: 'Re-review pack for task ' + t.id + ' round ' + round + ' could not run: ' + (!_args.buildPlanPath ? 'no build plan path (_args.buildPlanPath) is available in this run' : !fixBaseSha ? 'no base sha was captured for this round' : 'no scriptsDir (args.scriptsDir) is available in this run') + '.',
+        detail: 'review-pack.mjs requires --plan, a real --base ref, and a resolvable scripts directory; without them the call would fail, so it was not attempted. Every finding in this round defaults to NOT ADDRESSED (fail-safe).',
+      },
+    }
+  }
+  const packRes = await askAgent(rereviewPackPrompt(t, round, fixBaseSha), { label: 'pack:' + t.id + ':r' + round, phase: 'Fix', model: M.haiku, effort: CFG.effort.pack, schema: PACK_SCRIPT_SCHEMA })
+  if (!packRes || packRes.exitCode !== 0 || !packRes.out) {
+    return {
+      perFinding: openFindings.map((f, i) => ({ key: fixKey(i), status: 'NOT ADDRESSED', evidence: 're-review pack failed to build (exitCode=' + (packRes && packRes.exitCode) + ')' })),
+      newFindings: [],
+      gapFinding: {
+        file: '(pack)',
+        severity: 'major',
+        phase: 'Fix',
+        summary: 'Re-review pack for task ' + t.id + ' round ' + round + ' failed to build.',
+        detail: packRes ? JSON.stringify(packRes) : 'the pack-building agent returned nothing',
+      },
+    }
+  }
+  const high = isHighRisk(t)
+  const model = high ? M.opus : M.sonnet // re-review on HIGH: Opus (ruling 2026-09-13)
+  const rr = await askAgent(fableSafe(model, rereviewPrompt(t, round, openFindings, packRes.out)), { label: 're-review:' + t.id + ':r' + round, phase: 'Fix', model, effort: CFG.effort.review, schema: REREVIEW_SCHEMA })
+  // A dead/skipped re-reviewer must never read as silent success (same
+  // fail-safe philosophy as gateProblem()/the dead-manifest handling above):
+  // every prior finding defaults to NOT ADDRESSED.
+  return rr || { perFinding: openFindings.map((f, i) => ({ key: fixKey(i), status: 'NOT ADDRESSED', evidence: 're-reviewer returned nothing' })), newFindings: [] }
+}
+function makeRuling(taskId, decision, why, costIfWrong) {
+  return { taskId, decision, why, costIfWrong, line: 'Ruling: ' + decision + ' -- ' + why + ' -- ' + costIfWrong }
+}
+async function fixLoopStage(t) {
+  if (t.blocked) return t
+  const review = t.review || { specCompliance: 'partial', findings: [], assessment: 'needs-fixes' }
+  const allFindings = Array.isArray(review.findings) ? review.findings : []
+  const minorFindings = allFindings.filter((f) => f.severity === 'minor')
+  let openFindings = allFindings.filter((f) => f.severity === 'critical' || f.severity === 'important')
+  // Fix round 1, finding 2: (pack) gaps surfaced by a round's re-review
+  // (no plan path, no base sha, or a failed pack build) -- merged into the
+  // run's findings at the end, never silently dropped.
+  const packGaps = []
+  // Fix round 1, finding 11: retain every round's {plan, design, exec}
+  // evidence (plus the captured commit shas) on the task, for A14's
+  // fixRouting/redGate aggregation and so a Ruling can cite something real.
+  const roundHistory = []
+  // Fix (confirmedFindings undercount): a round's re-review (rr.newFindings,
+  // below) can discover defects introduced by THAT round's own fix diff --
+  // distinct from the prior findings it is checking ADDRESSED/NOT ADDRESSED.
+  // Those used to flow into openFindings/minorFindings for the NEXT round
+  // only, never written back onto anything A14's confirmedFindings assembly
+  // (~line 2699) reads (tr.review.findings alone) -- so a task whose round 1
+  // fix triggered 2 brand-new criticals, both then fixed and confirmed clean
+  // in round 2, ended with confirmedFindings holding only the ORIGINAL
+  // finding: an unbounded undercount on a genuinely successful run. Every
+  // round's newly-discovered critical/important findings (the severities
+  // that actually enter this loop -- never the filtered-out minors) are
+  // accumulated here and folded into the review this function returns, so
+  // confirmedFindings reads the UNION of every finding ever confirmed for
+  // this task across every round.
+  const discoveredFindings = []
+
+  // Only critical/important enter the loop; minor -> progress line, never a
+  // fix round (brief I).
+  if (!openFindings.length) return { ...t, status: 'complete', rounds: 0, clean: true, minorFindings, rulings: [], roundHistory, packGaps }
+
+  for (let round = 1; round <= CFG.maxFixRounds; round++) {
+    const roundOpen = openFindings
+    const fixBaseSha = await captureGitSha('fix-base:' + t.id + ':r' + round, 'Fix')
+    const roundResult = await fixRound(t, round, roundOpen)
+    // E7: a confirmed main-checkout drift stops the loop immediately -- the
+    // tree this round's fix landed in is suspect, so no further round or
+    // re-review should run against it.
+    if (roundResult.guardViolation) {
+      return {
+        ...t,
+        blocked: true,
+        status: 'open',
+        clean: false,
+        minorFindings,
+        roundHistory,
+        packGaps,
+        blockerFindings: [roundResult.guardViolation],
       }
-      // failures === 0: did not reproduce in any rerun — cleared, neither
-      // quarantined nor treated as genuine, but never what forces pass:true
-      // on its own if a sibling test on the same command IS genuine.
     }
-    if (anyGenuine) return r // still a real failure — leave it exactly as reported
-    log(`Flaky quarantine: "${r.command}" has NO confirmed-genuine failure left after ${CFG.flakyReruns} rerun(s) — treating it as passed for the gate/fix trigger (raw failure kept for the audit trail)`)
-    return { ...r, pass: true, flakyOverride: true }
-  })
-  if (quarantined.length) log(`Flaky quarantine: ${quarantined.length} test(s) quarantined — ${quarantined.map((q) => `${q.name} (${q.failures}/${q.runs})`).join(', ')}`)
-  // Recompute the top-level pass too — gateProblem() reads it as a fallback when
-  // no per-result failure remains, so a stale pass:false from the ORIGINAL
-  // (pre-quarantine) gate would still read as "failed, no command named" and
-  // block on nothing real.
-  return { gate: { ...g, results: newResults, pass: newResults.every((r) => r && r.pass !== false) }, quarantined, quarantineAbandoned }
-}
-
-// One rule for what counts as a digest, used by both the agents' reports and the
-// probes' self-reported preHash/postHash: lowercase hex, no spaces, or nothing at all.
-function normHash(v) {
-  const h = String(v == null ? '' : v).replace(/\s+/g, '').toLowerCase()
-  return /^[0-9a-f]{32,}$/.test(h) ? h : ''
-}
-// Digest reports -> { normalizedPath: digest }. Anything that is not a hex digest
-// becomes '', so two unreadable files never compare equal to each other.
-function checksumMap(report) {
-  const m = {}
-  if (!report || !Array.isArray(report.files)) return m
-  for (const row of report.files) {
-    if (!row || !row.file) continue
-    m[normPath(row.file)] = normHash(row.checksum)
+    // Fix 2: a failed fix-brief (roundResult.briefGap) folds into the same
+    // packGaps channel a failed re-review pack already uses -- never silent,
+    // surfaced into this task's findings via the merge at A14 below.
+    if (roundResult.briefGap) packGaps.push(roundResult.briefGap)
+    const headAfter = await captureGitSha('fix-head:' + t.id + ':r' + round, 'Fix')
+    const rr = await rereviewStage(t, round, roundOpen, fixBaseSha)
+    if (rr.gapFinding) packGaps.push(rr.gapFinding)
+    roundHistory.push({ round, plan: roundResult.plan, design: roundResult.design, exec: roundResult.exec, fixBaseSha, headAfter })
+    const perFinding = Array.isArray(rr.perFinding) ? rr.perFinding : []
+    const addressed = new Set(perFinding.filter((p) => p && p.status === 'ADDRESSED').map((p) => p.key))
+    const stillOpen = roundOpen.filter((f, i) => !addressed.has(fixKey(i)))
+    const newFindings = Array.isArray(rr.newFindings) ? rr.newFindings : []
+    minorFindings.push(...newFindings.filter((f) => f.severity === 'minor'))
+    const newOpen = newFindings.filter((f) => f.severity === 'critical' || f.severity === 'important')
+    discoveredFindings.push(...newOpen)
+    openFindings = [...stillOpen, ...newOpen]
+    if (!openFindings.length) {
+      return {
+        ...t,
+        status: 'complete',
+        rounds: round,
+        clean: true,
+        minorFindings,
+        rulings: [],
+        roundHistory,
+        packGaps,
+        review: { ...review, findings: [...allFindings, ...discoveredFindings] },
+      }
+    }
   }
-  return m
-}
-
-// ---------- per-phase telemetry ----------
-// Every phase entry is bracketed by a budget.spent() reading so the cost of a
-// phase is measured, not guessed, and a phase that only ever produces refuted
-// noise becomes visible across runs.
-const PHASE_TITLES = ['Baseline', 'Author tests', 'Red gate', 'Implement', 'Gate & Review', 'Verify', 'UI verify', 'Mutation probe', 'Fix', 'Final pass']
-// What each phase spends its tokens ON. A phase that mixes tiers says so, because
-// "Red gate: 40k" means something different at Haiku prices than at Opus prices.
-// These are the phase DEFAULTS; a per-package `model` override from the plan moves
-// individual agents without changing this line.
-const PHASE_MODELS = {
-  Baseline: `${CFG.gateModel} (gate/grounding/manifest)${wantHarnessCheck ? ` + ${CFG.harnessCheckModel} (harness check)` : ''}`,
-  'Author tests': CFG.testModel,
-  'Red gate': `${CFG.gateModel} (run) + ${CFG.reviewModel} (audit/remediate)`,
-  Implement: CFG.implementModel,
-  // R1 CALIBRATION (owner ruling 2026-09-11): build-fix and recheck now default
-  // to their CFG.routing.*RoutineModel (Sonnet), escalating to CFG.reviewModel
-  // only when the manifest has a HIGH-risk file — same pattern as UI verify below.
-  'Gate & Review': `${CFG.gateModel} (gate/regate) + ${CFG.routing.buildFixRoutineModel} (build-fix; ${CFG.reviewModel} when the manifest has a HIGH-risk file) + ${CFG.reviewModel} (lenses${CFG.cascadeReview ? ', HIGH-risk partition, spot audit' : ''})${CFG.cascadeReview ? ` + ${CFG.cascadeModel} (LOW-risk partition)` : ''}${wantRadiusPack ? ` + ${CFG.radiusPackModel} (radius pack)` : ''}`,
-  'UI verify': `${CFG.uiDriverModel} (driver) + ${CFG.routing.uiJudgeModel} (judge; ${CFG.reviewModel} when the manifest has a HIGH-risk file)`,
-  'Mutation probe': `${CFG.gateModel} (checksums) + ${CFG.routing.probeModel} (probes)${CFG.mutationRemediate ? ` + ${CFG.testModel} (remediation on a surviving mutant)` : ''}`,
-  Fix: fixPlanningOn
-    ? `${CFG.fixBriefModel} (brief) + ${CFG.fixPlannerModel} (plans every fix in the round; ${CFG.fixPlannerFallbackModel} if it declines) + ${CFG.mechanicalFixModel} (mechanical executors) + ${CFG.fixExecuteSonnetModel} (designed LOW-risk executors) + ${CFG.reviewModel} (HIGH-risk and broad-key executors) + ${CFG.routing.recheckRoutineModel} (recheck; ${CFG.reviewModel} when the manifest has a HIGH-risk file) + ${CFG.gateModel} (regate)`
-    : `${CFG.reviewModel} (judgment fixers) + ${CFG.routing.recheckRoutineModel} (recheck; ${CFG.reviewModel} when the manifest has a HIGH-risk file) + ${CFG.mechanicalFixModel} (mechanical fixers) + ${CFG.gateModel} (regate)`,
-  Verify: `${CFG.locationCheckModel} (location check) + ${CFG.routing.routineRefuterModel} (refuters, per file; ${CFG.reviewModel} for a blocker/major finding on a HIGH-risk file) + ${CFG.tieBreakModel} (split-vote tie-break)${wantSiblingSweep ? ` + ${CFG.siblingGrepModel} (sibling grep) + ${CFG.reviewModel} (sibling judge)` : ''}`,
-  'Final pass': `${CFG.finalPassPackagerModel} (diff digest) + ${CFG.finalPassReaderModel} (adversarial read → candidates) + ${CFG.finalPassModel} (decides; ${CFG.finalPassFallbackModel} if it declines)`,
-}
-// The effort each phase's agents run at — reported beside the model so a
-// phaseReport row can be priced and compared across runs.
-const PHASE_EFFORTS = {
-  Baseline: `${CFG.effort.gate}${wantHarnessCheck ? ` / ${CFG.effort.harnessCheck} harness check` : ''}`,
-  'Author tests': `${CFG.effort.tests} (a package's own effort wins)`,
-  'Red gate': `${CFG.effort.gate} run / ${CFG.effort.redAudit} audit / ${CFG.effort.redRemediate} remediation`,
-  Implement: `${CFG.effort.implement} (a package's own effort wins)`,
-  'Gate & Review': `${CFG.effort.gate} gate / ${CFG.effort.buildFix} build-fix / deep lenses ${CFG.effort.lensDeep} (${CFG.effort.lensDeepHighRisk} when any file is HIGH risk) / pattern lenses ${CFG.effort.lensPattern}${wantRadiusPack ? ` / ${CFG.effort.radiusPack} radius pack` : ''}`,
-  Verify: `location check ${CFG.effort.locationCheck} / refuters ${CFG.effort.refute} (${CFG.effort.refuteHighRisk} on HIGH-risk findings) / tie-break ${CFG.effort.tieBreak}${wantSiblingSweep ? ` / ${CFG.effort.siblingGrep} sibling grep / ${CFG.effort.siblingJudge} sibling judge` : ''}`,
-  'UI verify': `${CFG.effort.uiDrive} driver / ${CFG.effort.uiJudge} judge`,
-  'Mutation probe': `${CFG.effort.checksum} checksums / ${CFG.effort.mutate} probes`,
-  Fix: fixPlanningOn
-    ? `${CFG.effort.fixBrief} brief / ${CFG.effort.fixPlan} plan (${CFG.effort.fixPlanFallback} on the fallback planner) / ${CFG.effort.mechanicalFix} mechanical / ${CFG.effort.fixExecuteSonnet} designed LOW-risk / ${CFG.effort.judgmentFix} HIGH-risk and broad keys / ${CFG.effort.recheck} re-check / ${CFG.effort.gate} gates`
-    : `${CFG.effort.mechanicalFix} mechanical / ${CFG.effort.judgmentFix} judgment / ${CFG.effort.recheck} re-check / ${CFG.effort.gate} gates`,
-  'Final pass': `${CFG.effort.finalPassPackage} digest / ${CFG.effort.finalPassRead} read / ${CFG.effort.finalPass} decide (${CFG.effort.finalPassFallback} on the fallback decider)`,
-}
-// The model whose OUTPUT price a phase's tokens are estimated at. An estimate,
-// labelled as one: budget.spent() is one scalar per phase, and a mixed phase
-// (Haiku gate + Opus lenses) is priced at its dominant tier.
-const PHASE_PRIMARY = {
-  Baseline: CFG.gateModel,
-  'Author tests': CFG.testModel,
-  'Red gate': CFG.reviewModel,
-  Implement: CFG.implementModel,
-  'Gate & Review': CFG.reviewModel,
-  Verify: CFG.reviewModel,
-  'UI verify': CFG.reviewModel,
-  'Mutation probe': CFG.routing.probeModel,
-  Fix: CFG.reviewModel,
-  'Final pass': CFG.finalPassModel,
-}
-function estUsd(tokens, model) {
-  const p = CFG.prices[model]
-  if (tokens == null || !p) return null
-  return Math.round((tokens / 1e6) * p[1] * 100) / 100
-}
-const phaseStats = {}
-for (const t of PHASE_TITLES) phaseStats[t] = { ran: false, agents: 0, rawFindings: 0, sum: 0, unknown: false, at: null, overlappedWith: null, note: '' }
-// Two phases that run beside each other would each count the other's tokens in
-// their budget.spent() bracket. The pair runs under ONE bracket — the primary's —
-// and the secondary records its agents and findings, points at the primary, and
-// reports tokens: null (an unknown reading is never reported as 0).
-function markOverlapped(title, primary, agents, rawFindings) {
-  const s = phaseStats[title]
-  s.ran = true
-  s.agents += agents || 0
-  s.rawFindings += rawFindings || 0
-  s.overlappedWith = primary
-  s.unknown = true
-  s.note = `ran concurrently with ${primary}; its tokens are counted under ${primary}`
-}
-// What the wall-clock overlaps actually did this run — the ledger reads this.
-const overlapInfo = { verifyWithUiVerify: false, finalGateWithFinalPass: false, redAuditWithImplement: null }
-function readSpent() {
-  try {
-    if (!budget || typeof budget.spent !== 'function') return null
-    const v = budget.spent()
-    return typeof v === 'number' && Number.isFinite(v) ? v : null
-  } catch (e) {
-    return null
-  }
-}
-function startPhase(title) {
-  phase(title)
-  const s = phaseStats[title]
-  s.ran = true
-  s.at = readSpent()
-  if (s.at == null) s.unknown = true
-}
-// ── C1 CHECKPOINTS (plan Part 3 §C1) ─────────────────────────────────────────
-// State a legacy run (no args.runDir) never touches.
-let ckSeq = 0
-let snapshotCommitted = false
-const checkpointLog = []
-// A6 FLAKY QUARANTINE (owner ruling 2026-09-11): every test applyFlakyQuarantine()
-// quarantined this run, across every gate call site it ran at. Surfaced verbatim
-// on resultObj.quarantined.
-const quarantinedLog = []
-// E1 (owner ruling 2026-09-11, wave 3): commands whose quarantine was ABANDONED
-// because a rerun returned null or lacked results[] — no evidence, so the
-// original red result was left exactly as reported. Surfaced on
-// resultObj.quarantineAbandoned so a dead rerun is never silently invisible.
-const quarantineAbandonedLog = []
-// A10 CHECKPOINT IDEMPOTENCY (owner ruling 2026-09-11). RUN_ID identifies this
-// run the same way the snapshot-commit message already does (runSlugOf(runDir)
-// — the run directory's own basename). checkpointAttempts counts how many
-// times THIS process has written a checkpoint for a given phase title (or
-// 'final'), so a phase whose checkpoint runs more than once in one process
-// still gets a distinct key rather than a repeated one.
-const RUN_ID = runSlugOf(runDir) || 'run'
-// E4 (owner ruling 2026-09-11, wave 3): on a RESUMED run the orchestrator has
-// already inspected this run dir's existing phases/*.json and passes back the
-// highest `attempt` it found per phase as args.priorCheckpoints — an array of
-// {phase, attempt}. This script has no fs of its own and never reads the run
-// dir directly; it only ever trusts what it is handed. Defaults to [] (a fresh
-// run: every phase starts at attempt 1, exactly as before this change).
-const checkpointAttempts = new Map(
-  (Array.isArray(args.priorCheckpoints) ? args.priorCheckpoints : [])
-    .filter((p) => p && typeof p.phase === 'string' && Number.isFinite(p.attempt))
-    .map((p) => [p.phase, p.attempt])
-)
-function nextCheckpointAttempt(key) {
-  const n = (checkpointAttempts.get(key) || 0) + 1
-  checkpointAttempts.set(key, n)
-  return n
-}
-
-function slugify(str) {
-  return String(str).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'x'
-}
-// The run's own slug, for the commit message — derived from runDir's basename
-// (pure string ops: this script has no fs). 'run' when runDir is absent/odd.
-function runSlugOf(dir) {
-  if (!dir) return 'run'
-  const parts = String(dir).replace(/[\\/]+$/, '').split(/[\\/]/)
-  return parts[parts.length - 1] || 'run'
-}
-// One phaseReport row, computed the same way here and in the final phaseReport
-// map below — so a per-phase checkpoint card and the run's own summary never
-// disagree about what a phase cost.
-function buildPhaseRow(t) {
-  const s = phaseStats[t]
-  const tokens = s.unknown ? null : s.sum
-  const primary = t === 'Final pass' && finalPassResult && finalPassResult.model ? finalPassResult.model : PHASE_PRIMARY[t]
+  // Cap reached (brief F): a Ruling, never a silent discard -- surfaced on
+  // the task AND merged into the run's own rulings[] below. Fix round 1,
+  // finding 11: cite the last round's actual executor report, not a bare
+  // count with nothing real behind it.
+  const lastRound = roundHistory[roundHistory.length - 1]
+  const lastExecNote = lastRound && lastRound.exec
+    ? 'last executor report: status=' + lastRound.exec.status + (lastRound.exec.notes ? ', notes=' + lastRound.exec.notes : '')
+    : 'no executor report on the final round'
+  const ruling = makeRuling(
+    t.id,
+    'open',
+    openFindings.length + ' finding(s) still open after ' + CFG.maxFixRounds + ' fix round(s); ' + lastExecNote,
+    'the confirmed defect(s) above ship unfixed',
+  )
   return {
-    phase: t,
-    ran: s.ran,
-    agents: s.agents,
-    rawFindings: s.rawFindings,
-    tokens,
-    model: PHASE_MODELS[t] || null,
-    effort: PHASE_EFFORTS[t] || null,
-    estUsd: estUsd(tokens, primary),
-    overlappedWith: s.overlappedWith,
-    note: s.note || '',
+    ...t,
+    status: 'open',
+    rounds: CFG.maxFixRounds,
+    clean: false,
+    minorFindings,
+    remaining: openFindings,
+    rulings: [ruling],
+    roundHistory,
+    packGaps,
+    review: { ...review, findings: [...allFindings, ...discoveredFindings] },
   }
 }
-// Cumulative totals across every phase that has ACTUALLY RUN so far. Skipping
-// phases with ran:false is also what keeps this TDZ-safe: buildPhaseRow('Final
-// pass') only runs here once 'Final pass' itself has ran:true, by which point
-// finalPassResult is guaranteed to already exist.
-function cumulativeTotals() {
-  let agents = 0, tokens = 0, tokensUnknown = false, estUsdTotal = 0
-  for (const t of PHASE_TITLES) {
-    const s = phaseStats[t]
-    if (!s.ran) continue
-    agents += s.agents
-    if (s.unknown) tokensUnknown = true
-    else tokens += s.sum
-    const row = buildPhaseRow(t)
-    if (row.estUsd != null) estUsdTotal += row.estUsd
-  }
-  return { agents, tokens: tokensUnknown ? null : tokens, estUsd: Math.round(estUsdTotal * 100) / 100 }
+
+// A10/A10b: per-type stage chain. `revert-probe` is deliberately absent --
+// it never runs through runTask/pipeline() at all (it must execute strictly
+// sequentially across probes, never via wave-level parallel()); see the
+// dedicated sequential loop in the Implement phase below.
+// T2 cost-plan: briefStage/testAuthorStage/redCheckStage/packStage/
+// reviewStage/fixLoopStage/uiDriveStage/uiReviewStage each tag their own
+// askAgent calls with one of these five phase names already (for
+// phaseAgentCounts/findings attribution) -- meterStage makes phaseReport's
+// tokens/estUsd agree with that same attribution instead of reporting
+// estUsd:null for all five. implementStage/rootCauseStage/docsImplementStage
+// tag themselves 'Implement' and fixGateStage runs no agent at all, so none
+// of those need wrapping -- they are already inside the run-level Implement
+// bracket (startPhase('Implement')/endPhase('Implement') around the whole
+// wave loop, above) with no separate title to disambiguate.
+const briefMeter = meterStage('Author tests', briefStage)
+function chainForType(type) {
+  if (type === 'root-cause') return [briefMeter, rootCauseStage, finishStage]
+  if (type === 'repro-test') return [briefMeter, meterStage('Author tests', testAuthorStage), meterStage('Red gate', redCheckStage), finishStage]
+  if (type === 'fix') return [briefMeter, fixGateStage, implementStage, meterStage('Gate & Review', packStage), meterStage('Gate & Review', reviewStage), meterStage('Fix', fixLoopStage), finishStage]
+  if (type === 'docs') return [briefMeter, docsImplementStage, meterStage('Gate & Review', packStage), meterStage('Gate & Review', reviewStage), meterStage('Fix', fixLoopStage), finishStage]
+  if (type === 'ui-verify') return [briefMeter, meterStage('UI verify', uiDriveStage), meterStage('UI verify', uiReviewStage), meterStage('Fix', fixLoopStage), finishStage]
+  return [briefMeter, meterStage('Author tests', testAuthorStage), meterStage('Red gate', redCheckStage), implementStage, meterStage('Gate & Review', packStage), meterStage('Gate & Review', reviewStage), meterStage('Fix', fixLoopStage), finishStage]
 }
-// `findings` (declared later, at the top of the review stage) does not exist
-// yet during Baseline/Author tests/Red gate/Implement's checkpoints — that is a
-// TDZ ReferenceError, not an empty array, so both readers below go through
-// try/catch and default to empty/zero rather than letting a checkpoint kill the
-// run it is only supposed to be recording.
-function findingsSeverityCounts() {
-  const out = { blocker: 0, major: 0, minor: 0 }
+// E8: an agent that ends its turn with no usable result (no StructuredOutput,
+// or a thunk that outright rejects) must block only the ONE task it was
+// working on, never crash the run. withWorkdirGuard already catches this at
+// the agent-call boundary for every file-touching stage (test-author,
+// implement, docs-implement, every fix executor); this is the outer safety
+// net for anything else that still throws out of a task's stage chain (a
+// stage not routed through withWorkdirGuard, or a genuine programmer error).
+// Keeps the original task's id/type/dependsOn via the spread, so dependents
+// still see this as a real, blocked dependency result (fixGateStage's own
+// resultsById lookup, for example) rather than a missing one.
+function blockedTaskFromEngineFailure(t, phaseName, err) {
+  return {
+    ...t,
+    blocked: true,
+    status: 'open',
+    clean: false,
+    blockerFindings: [
+      {
+        file: '(engine)',
+        severity: 'blocker',
+        phase: phaseName,
+        summary: 'Task ' + t.id + ': an agent in ' + phaseName + ' ended without a usable result (no StructuredOutput / thunk rejected) -- task blocked, run continues.',
+        detail: err ? (err.message || String(err)) : '(no error captured)',
+      },
+    ],
+  }
+}
+async function runTask(t) {
+  let out
   try {
-    for (const f of findings) {
-      if (f && f.severity && Object.prototype.hasOwnProperty.call(out, f.severity)) out[f.severity]++
-    }
-  } catch (e) { /* not declared yet this early in the run */ }
+    ;[out] = await pipeline([t], ...chainForType(t.type))
+  } catch (e) {
+    out = blockedTaskFromEngineFailure(t, 'Implement', e)
+  }
+  if (!out) out = blockedTaskFromEngineFailure(t, 'Implement', null)
+  fireCheckpoint('checkpoint:' + t.id, { task: out, progressLine: progressLineFor(out) })
   return out
 }
-function phaseFindingSummaries(title) {
-  const cap = CFG.checkpoint.payloadFindingChars
-  try {
-    return findings.filter((f) => f && f.phase === title).map((f) => String(f && f.summary || '').slice(0, cap))
-  } catch (e) {
-    return []
-  }
+
+// ---------- A13: fire-and-forget checkpoints ----------
+// Escapes every non-ASCII character (code point >= 0x80) to \uXXXX so a JSON
+// payload -- which may legitimately carry an agent's own non-ASCII findings
+// text -- stays ASCII-safe to hand to a WRITER agent. (The regex's safe range
+// \x00-\x7f is "ASCII", not "printable ASCII": control bytes like DEL/0x7F
+// pass through unescaped too, which is fine -- this is about the DATA a
+// payload carries, never about pipeline.js's own SOURCE: the ASCII-only scan
+// in dry-run.mjs enforces that separately, on this file's bytes.)
+function asciiSafeJson(payload) {
+  return JSON.stringify(payload).replace(/[^\x00-\x7f]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'))
 }
-// A10 (owner ruling 2026-09-11): a minimal, TDZ-safe partial "resultObj" built
-// from whatever is already live at THIS point in the run — same try/catch
-// pattern as findingsSeverityCounts/phaseFindingSummaries above, because
-// `findings` does not exist yet during Baseline/Author tests/Red gate/Implement.
-// Passed through buildFinalSummary() — the SAME bounding function the final
-// checkpoint already uses — so the per-phase card's bounded result-so-far is
-// never a second, divergent notion of "bounded".
-function buildResultSoFarPartial() {
-  let liveFindings = []
-  try { liveFindings = findings } catch (e) { liveFindings = carried }
-  // Same TDZ guard as cumulativeTotals(): buildPhaseRow('Final pass') reads
-  // finalPassResult, which does not exist until that phase has actually run —
-  // skip any not-yet-run phase rather than let a JS-level identifier lookup
-  // (not a data question) throw out of a checkpoint.
-  const phaseReport = PHASE_TITLES.map((t) => (phaseStats[t].ran ? buildPhaseRow(t) : { phase: t, ran: false, agents: 0, rawFindings: 0, tokens: 0, model: null, effort: null, estUsd: 0, overlappedWith: null, note: '' }))
-  return {
-    mode: MODE,
-    scale,
-    startedAt: startedAt || null,
-    phaseReport,
-    remainingFindings: liveFindings,
-    // Never claimed mid-run — only the final resultObj may say the run is clean.
-    clean: null,
-  }
+const CHECKPOINT_SCHEMA = {
+  type: 'object',
+  properties: {
+    written: { type: 'boolean', description: 'true ONLY if the JSON.parse self-check on the freshly written card exited 0' },
+    path: { type: 'string' },
+    note: { type: 'string' },
+  },
+  required: ['written', 'note'],
 }
-// The one Haiku agent per phase: writes the phase card (and, at most once per
-// run, makes the snapshot commit). Never decides anything, never blocks the
-// run — a dead or malformed response is logged into checkpointLog and the
-// pipeline continues exactly as it would with checkpoints off.
-async function runCheckpoint(title, gateGreen) {
-  if (!CFG.checkpoint.enabled || !runDir) return
+// Every checkpoint alias in this file is 'checkpoint:<id>' (runTask),
+// 'checkpoint:<id>:ui-reverify' (A10b) or 'checkpoint:sibling-sweep:<i>'
+// (A11) -- none of those are one of the ten canonical ledger phase names, so
+// this derives a reasonable one from the alias's own shape for the writer's
+// own PHASE/LABEL tag (session-usage.mjs attribution), rather than passing
+// the alias itself as `phase`.
+function checkpointPhase(alias) {
+  if (/:ui-reverify$/.test(alias)) return 'UI verify'
+  if (/^checkpoint:sibling-sweep:/.test(alias)) return 'Verify'
+  return 'Gate & Review'
+}
+let ckSeq = 0
+const checkpoints = []
+// The real checkpoint writer (adapted from scripts/light-loop.js @350-370): a
+// Haiku agent writes ONE durable JSON card per checkpoint, appends the
+// payload's own progressLine (if any) to the run's progress ledger, then
+// self-checks its own output with `node -e "JSON.parse(...)"` before it may
+// report written:true -- a malformed card (the real incident this fixes,
+// 04-implement.json) is never silently accepted as a success. Never throws:
+// a dead/declined agent, or an askAgent() exception, both resolve to a
+// written:false record instead.
+async function checkpoint(alias, payload) {
   ckSeq += 1
   const seq = String(ckSeq).padStart(2, '0')
-  const path = `${runDir}/phases/${seq}-${slugify(title)}.json`
-  const wantCommit = !!(gateGreen && CFG.checkpoint.snapshotCommit && !snapshotCommitted)
-  // A10: idempotency key + the bounded result-so-far, via the SAME summary
-  // builder the final checkpoint uses — a resume reads this card and restarts
-  // exactly the incomplete step, instead of re-deriving partial state by hand.
-  const attempt = nextCheckpointAttempt(title)
-  const idempotencyKey = `${RUN_ID}:${title}:${attempt}`
-  const { summary: resultSoFar, truncated: resultSoFarTruncated } = buildFinalSummary(buildResultSoFarPartial(), CFG.checkpoint.maxSummaryKb)
-  const payload = {
-    seq: ckSeq,
-    idempotencyKey,
-    phase: buildPhaseRow(title),
-    totals: cumulativeTotals(),
-    findingsBySeverity: findingsSeverityCounts(),
-    findingSummaries: phaseFindingSummaries(title),
-    mode: MODE,
-    scale,
-    startedAt: startedAt || null,
-    args: { planPath, discoveryPath, specPath, uxSpecPath, testPlanPath, designSystemPath, lessonsPath, workdir, runDir },
-    resultSoFar,
-    resultSoFarTruncated,
-  }
-  if (wantCommit) payload.commit = { message: `wip(pipeline): ${runSlugOf(runDir)} checkpoint ${title}` }
+  const safeName = alias.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  const cardPath = runDir + '/phases/' + seq + '-' + safeName + '.json'
+  const body = asciiSafeJson(payload)
+  const progressLine = payload && typeof payload.progressLine === 'string' ? payload.progressLine : ''
   const prompt = [
-    `You are the CHECKPOINT WRITER — mechanical. The only things you may change on disk are the one file named below, and (ONLY when told to) one commit.`,
-    `1. Run \`mkdir -p "${runDir}/phases"\`.`,
-    `2. Write EXACTLY this JSON, verbatim, to "${path}" (create or overwrite; do not reformat, add, or drop a field):`,
-    JSON.stringify(payload),
-    `3. Touch NOTHING else — no other file, no other directory.`,
-    payload.commit
-      ? [
-          `4. Run \`git rev-parse --abbrev-ref HEAD\`. If the branch is "main" or "master", do NOT commit — report committed=false and say why in note.`,
-          `5. Otherwise run \`git add -u && git add "${runDir}"\` (stages tracked changes plus only this run's own directory), then \`git commit -q -m "${payload.commit.message}"\`, then \`git rev-parse --short HEAD\` and report that as sha. NEVER run \`git add -A\`, NEVER add any untracked file outside "${runDir}", and NEVER run \`git push\`.`,
-        ].join('\n')
-      : `4. Do NOT run git add, git commit, or git push — no commit was requested this time.`,
-    `Report written (true only if the JSON file was actually written), path (the absolute path you wrote), committed, sha (null unless you committed), and note (one line: what happened, or why written/committed is false).`,
+    'You are the CHECKPOINT WRITER -- mechanical. The only files you may touch are the one card path below and, if a progress line is given, the run progress ledger.',
+    '1. Run `mkdir -p "' + runDir + '/phases"`.',
+    '2. Write EXACTLY this JSON, verbatim, to "' + cardPath + '" (create or overwrite):',
+    body,
+    progressLine
+      ? '3. APPEND this exact line, followed by a newline, to "' + runDir + '/progress.md" (create the file first if it does not exist): ' + progressLine
+      : '3. (no progress line was supplied for this checkpoint -- do not touch progress.md)',
+    '4. SELF-CHECK: run `node -e "JSON.parse(require(\'fs\').readFileSync(\'' + cardPath + '\', \'utf8\'))"`. Report written:true ONLY if that command exits 0 (the card parses as valid JSON) -- if it exits nonzero, report written:false and quote the parse error in note.',
+    '5. Touch NOTHING else -- no other file, no commit, no git command.',
+    'Report written, path (absolute), and note.',
   ].join('\n')
-  let result = null
+  let res = null
   try {
-    result = await askAgent(prompt, { label: `checkpoint:${title}`, phase: title, model: CFG.checkpointModel, effort: CFG.effort.checkpoint, schema: CHECKPOINT_SCHEMA })
+    res = await askAgent(prompt, { label: alias, phase: checkpointPhase(alias), model: M.haiku, effort: CFG.effort.checkpoint, schema: CHECKPOINT_SCHEMA })
   } catch (e) {
-    result = null
+    res = null
   }
-  if (result && result.written && payload.commit && result.committed) snapshotCommitted = true
-  checkpointLog.push({
+  const record = {
     seq: ckSeq,
-    phase: title,
-    path,
-    written: !!(result && result.written),
-    committed: !!(result && result.committed),
-    sha: (result && result.sha) || null,
-    note: (result && result.note) || (result ? '' : 'checkpoint agent died or returned nothing — non-fatal, run continues'),
-  })
+    alias,
+    payload,
+    path: cardPath,
+    written: !!(res && res.written),
+    note: (res && res.note) || (res ? '' : 'checkpoint agent died or returned nothing -- non-fatal, run continues'),
+  }
+  checkpoints.push(record)
+  return record
 }
-// Strips the fields the plan names as too large for a ≤ maxSummaryKb summary;
-// details live in the phase files, not in result.json. Falls back to trimming
-// remainingFindings.detail, then to a bare count, if it is still over cap —
-// truncation is reported honestly rather than silently overflowing the cap.
-function buildFinalSummary(full, maxKb) {
-  // Base strip: always applied, regardless of size. confirmedFindings,
-  // redGate, mutationProbe, finalPass, uiVerify, manifest, confirmedByPhase,
-  // overlap and checkpoints are all KEPT here — only fixReports (whole),
-  // uiVerify.evidence, mutationProbe.results, and phaseReport[].note beyond
-  // 200 chars are dropped. phaseReport[].note itself is kept (truncated),
-  // never deleted — buildRow in pipeline-ledger.mjs reads it.
-  const strip = (o) => {
-    const c = { ...o }
-    delete c.fixReports
-    if (Array.isArray(c.phaseReport)) {
-      c.phaseReport = c.phaseReport.map((r) => {
-        if (!r || typeof r !== 'object') return r
-        const rest = { ...r }
-        if (typeof rest.note === 'string') rest.note = rest.note.slice(0, 200)
-        return rest
-      })
-    }
-    if (c.uiVerify && typeof c.uiVerify === 'object') c.uiVerify = { ...c.uiVerify, evidence: undefined }
-    if (c.mutationProbe && typeof c.mutationProbe === 'object') c.mutationProbe = { ...c.mutationProbe, results: undefined }
-    return c
-  }
-  // Only ever used once the summary is still over cap after the base strip
-  // and the remainingFindings.detail truncation below — collapses a
-  // findings array down to stubs. NEVER a string: a string reads back as []
-  // in pipeline-ledger.mjs's arrOrEmpty, which would record 0 remaining (or
-  // 0 confirmed) on exactly the runs that overflowed the cap.
-  const toStubs = (arr) =>
-    Array.isArray(arr) ? arr.map((f) => ({ file: (f && f.file) ?? null, severity: (f && f.severity) ?? null, phase: (f && f.phase) ?? null })) : arr
-  let summary = strip(full)
-  const capBytes = maxKb * 1024
-  if (JSON.stringify(summary).length <= capBytes) return { summary, truncated: false }
-  if (Array.isArray(summary.remainingFindings)) {
-    summary = { ...summary, remainingFindings: summary.remainingFindings.map((f) => (f && f.detail ? { ...f, detail: String(f.detail).slice(0, 200) } : f)) }
-  }
-  if (JSON.stringify(summary).length <= capBytes) return { summary, truncated: true }
-  summary = {
-    ...summary,
-    remainingFindings: toStubs(full.remainingFindings),
-    confirmedFindings: toStubs(full.confirmedFindings),
-    // A2: plausibleFindings is a sibling list of the same shape — stub it the
-    // same way so a large one cannot be the reason the cap is still missed.
-    plausibleFindings: toStubs(full.plausibleFindings),
-  }
-  return { summary, truncated: true }
+// Fire-and-forget: the caller never awaits this directly. Every pending
+// checkpoint promise is collected here and drained with Promise.allSettled
+// right before the run's own result assembly, so result.checkpoints[] is
+// always complete by the time a caller sees it -- never a race.
+const pendingCheckpoints = []
+function fireCheckpoint(alias, payload) { pendingCheckpoints.push(checkpoint(alias, payload).catch(() => null)) }
+
+// ---------- A14: result writer ----------
+// Adapted from scripts/light-loop.js's own Result phase (@~642-655), plus
+// the same JSON.parse self-check A13's checkpoint() introduced (the real
+// incident that fix prevents -- a malformed checkpoint card -- applies
+// exactly as much to result.json, the one file every downstream tool reads).
+const RESULT_WRITE_SCHEMA = {
+  type: 'object',
+  properties: {
+    written: { type: 'boolean', description: 'true ONLY if the JSON.parse self-check on the freshly written result.json exited 0' },
+    path: { type: 'string' },
+    endedAt: { type: 'string', description: 'the real UTC ISO timestamp the writer captured -- pipeline.js itself has no Date.now()' },
+    note: { type: 'string' },
+  },
+  required: ['written', 'endedAt', 'note'],
 }
-// C1 FINAL CHECKPOINT: one more Haiku agent, at run end, writes runDir/result.json
-// as the size-capped summary and lists the phase files this run already wrote
-// (checkpointLog already has every path — no need to `ls` for them).
-async function runFinalCheckpoint(full) {
-  const { summary, truncated } = buildFinalSummary(full, CFG.checkpoint.maxSummaryKb)
-  // FLAT, not { summary, truncated, phaseFiles } — pipeline-ledger.mjs's
-  // `append` refuses (exit 2) any result.json without a top-level
-  // phaseReport array, and buildRow reads top-level mode/scale/clean/etc.
-  // directly off the file. checkpointTruncated (not `truncated`, which
-  // would collide with nothing here but reads oddly next to the summary's
-  // own fields) records whether buildFinalSummary had to shrink anything.
-  // A10: 'final' shares the same attempt counter namespace as the per-phase
-  // titles — none of PHASE_TITLES is spelled 'final', so there is no collision.
-  const idempotencyKey = `${RUN_ID}:final:${nextCheckpointAttempt('final')}`
-  const payload = { ...summary, idempotencyKey, checkpointTruncated: truncated, phaseFiles: checkpointLog.map((c) => c.path) }
-  const path = `${runDir}/result.json`
+async function runResult(payload) {
+  const resultPath = runDir + '/result.json'
+  const body = asciiSafeJson(payload)
   const prompt = [
-    `You are the CHECKPOINT WRITER — mechanical. The only thing you may change on disk is the one file named below.`,
-    `Write EXACTLY this JSON, verbatim, to "${path}" (create or overwrite; do not reformat, add, or drop a field):`,
-    JSON.stringify(payload),
-    `Touch NOTHING else. Do NOT run git add, git commit, or git push.`,
-    `Report written (true only if the file was actually written), path (the absolute path you wrote), committed (always false here), sha (always null here), and note (one line).`,
+    'You are the RESULT WRITER -- mechanical, the last step of this run.',
+    '1. Get the current UTC ISO timestamp (e.g. `node -e "console.log(new Date().toISOString())"`, or the OS equivalent) -- that is endedAt.',
+    '2. Write EXACTLY this JSON to "' + resultPath + '" (create or overwrite), with your real endedAt merged in as the top-level "endedAt" field -- change nothing else:',
+    body,
+    '3. SELF-CHECK: run `node -e "JSON.parse(require(\'fs\').readFileSync(\'' + resultPath + '\', \'utf8\'))"`. Report written:true ONLY if that command exits 0 (the file parses as valid JSON) -- if it exits nonzero, report written:false and quote the parse error in note.',
+    '4. Touch NOTHING else.',
+    'Report written, path, endedAt (the value you actually wrote), and note.',
   ].join('\n')
-  let result = null
+  let res = null
   try {
-    result = await askAgent(prompt, { label: 'checkpoint:final', phase: 'Close-out', model: CFG.checkpointModel, effort: CFG.effort.checkpoint, schema: CHECKPOINT_SCHEMA })
+    res = await askAgent(prompt, { label: 'result', phase: 'Final pass', model: M.haiku, effort: CFG.effort.baseline, schema: RESULT_WRITE_SCHEMA })
   } catch (e) {
-    result = null
+    res = null
   }
-  checkpointLog.push({
-    seq: ckSeq + 1,
-    phase: 'Close-out',
-    path,
-    written: !!(result && result.written),
-    committed: false,
-    sha: null,
-    note: (result && result.note) || (result ? '' : 'final checkpoint agent died or returned nothing — non-fatal, resultObj still returns normally'),
-  })
+  return res
 }
-
-// A phase entered more than once (fix rounds, UI re-verify) accumulates. One
-// unreadable segment marks the whole phase unknown — a missing reading is not 0.
-// gateGreen is passed ONLY by the Gate & Review call site — it is what gates
-// the once-per-run snapshot commit; every other call site leaves it undefined.
-async function endPhase(title, agents, rawFindings, gateGreen, opts = {}) {
-  const s = phaseStats[title]
-  const now = readSpent()
-  if (s.at == null || now == null) s.unknown = true
-  else s.sum += Math.max(0, now - s.at)
-  s.at = null
-  s.agents += agents || 0
-  s.rawFindings += rawFindings || 0
-  if (!opts.skipCheckpoint) await runCheckpoint(title, gateGreen)
-}
-
-// parallel() is a barrier over everything handed to it, so cap the in-flight
-// count by running the thunks in fixed-size groups.
-async function runConcurrent(thunks, size) {
-  const limit = Math.max(1, size || CFG.maxConcurrent)
-  const out = []
-  for (let i = 0; i < thunks.length; i += limit) {
-    const batch = await parallel(thunks.slice(i, i + limit))
-    out.push(...batch)
-  }
-  return out
-}
-
-// Packages that share files must not run concurrently — schedule into waves.
-// Returns { waves, issues }: issues are declared-ordering defects in the plan
-// (a dependsOn id no package declares, or a dependency cycle) that would
-// otherwise vanish silently.
-function buildWaves(pkgs) {
-  // Two ordering constraints, both honored:
-  //  - packages sharing a file never run concurrently (write-conflict safety)
-  //  - a package with dependsOn: ["WP1", ...] runs strictly AFTER every named
-  //    dependency's wave (no more forcing order via fake file-list overlaps)
-  const issues = []
-  const byId = new Map()
-  for (const p of pkgs) byId.set(p.id, p)
-
-  // Wave assignment reads waveOf, which is filled as it walks — so a dependency
-  // listed AFTER its dependent would contribute nothing and the constraint would
-  // disappear (or invert). Depth-first topological pass first: every package is
-  // scheduled only once all of its declared dependencies are.
-  const ordered = []
-  const state = {} // id -> 1 = on the stack, 2 = emitted
-  function visit(p) {
-    if (state[p.id] === 2) return
-    if (state[p.id] === 1) return // cycle — reported below; do not recurse forever
-    state[p.id] = 1
-    for (const dep of p.dependsOn || []) {
-      const d = byId.get(dep)
-      if (!d) {
-        issues.push(`Package ${p.id} declares dependsOn "${dep}", which matches no package id — that ordering constraint was DROPPED and ${p.id} may have run concurrently with, or before, the work it depends on.`)
-        continue
-      }
-      if (d === p) {
-        issues.push(`Package ${p.id} declares dependsOn on itself — ignored.`)
-        continue
-      }
-      if (state[d.id] === 1) {
-        issues.push(`Circular dependsOn between ${p.id} and ${d.id} — the cycle cannot be ordered, so one of those edges was DROPPED.`)
-        continue
-      }
-      visit(d)
+function progressLineFor(t) {
+  // E8: a null/undefined task (a wave/parallel slot that never got normalised
+  // back to a real task object) must render a line, never throw.
+  if (!t) return 'Task ?: no result'
+  if (t.status === 'complete') return 'Task ' + t.id + ': complete (' + (t.rounds ? t.rounds + ' fix round(s), ' : '') + 'review clean)'
+  if (t.status === 'open') {
+    // Fix round 1, finding 4: fixGateStage (and rootCauseStage's dead-agent
+    // path) both produce status:'open' + blocked:true WITHOUT ever entering
+    // the fix-round loop (no t.rounds set) -- the generic "fix round X/Y"
+    // wording below implied a fix round was attempted when none was. Only
+    // this specific shape (blocked, no rounds recorded) gets the accurate
+    // wording; a task that genuinely ran 0 rounds because it was clean on
+    // first review has status:'complete' already, never 'open', so it never
+    // reaches this branch at all.
+    // Fix round 2, finding 3 (dead code): the original condition also
+    // checked `t.fixRounds == null` -- `fixRounds` is never set anywhere in
+    // this file (the real field is `rounds`, checked just above); that
+    // clause was always true and never changed this branch's behavior.
+    if (t.blocked && t.rounds == null) {
+      return 'Task ' + t.id + ': blocked before fix loop (' + ((t.rulings && t.rulings.length) || 0) + ' ruling(s), not clean)'
     }
-    state[p.id] = 2
-    ordered.push(p)
+    return 'Task ' + t.id + ': fix round ' + (t.rounds || 0) + '/' + CFG.maxFixRounds + ' (' + ((t.rulings && t.rulings.length) || 0) + ' ruling(s), not clean)'
   }
-  for (const p of pkgs) visit(p)
-
-  const waves = []
-  const waveOf = {} // package id -> wave index
-  for (const p of ordered) {
-    const files = new Set(p.files || [])
-    const minWave = (p.dependsOn || []).reduce(
-      (m, dep) => (waveOf[dep] != null ? Math.max(m, waveOf[dep] + 1) : m),
-      0,
-    )
-    let idx = -1
-    for (let i = minWave; i < waves.length; i++) {
-      if (!waves[i].some((q) => (q.files || []).some((f) => files.has(f)))) { idx = i; break }
-    }
-    if (idx === -1) { waves.push([p]); idx = waves.length - 1 }
-    else waves[idx].push(p)
-    waveOf[p.id] = idx
-  }
-  return { waves, issues }
+  if (t.blocked) return 'Task ' + t.id + ': blocked (' + ((t.blockerFindings && t.blockerFindings.length) || 0) + ' blocker(s))'
+  return 'Task ' + t.id + ': ' + (t.status || 'pending')
 }
 
-// Fixers used to run strictly serially because they can touch shared files —
-// which is exactly what buildWaves already solves for implementers, so reuse it.
-// The DECLARED group (one file key) is the conflict key, so fixers on disjoint
-// files run concurrently and only overlapping ones serialize. RESIDUAL RISK,
-// accepted knowingly: a fixer may legitimately edit a file outside its group, and
-// the conflict key cannot see that. Groups whose fix can touch anything (a broken
-// build, an unrestored mutation, a test package) therefore share one sentinel
-// file, so they never run beside each other, and they depend on every file-scoped
-// group, so they run after those have finished.
-const isBroadFixKey = (k) => !isRealPath(k) && k !== '(artifact)'
-// A ui-verify fix is re-driven in a real browser: the fixer starts the app's dev
-// server, holds its port and drives a browser session, then stops what it started.
-// Those are shared resources the file-based conflict key cannot see — two such
-// fixers at once collide on the port, or one stops the server the other is mid-flow
-// on. They therefore take a second sentinel file and serialize against each other,
-// while still running beside ordinary source fixers.
-const isUiFixGroup = (group) => group.some((f) => f && f.source === 'ui-verify')
-function buildFixWaves(fixGroups) {
-  const scopedKeys = fixGroups.map(([k]) => k).filter((k) => !isBroadFixKey(k))
-  const pkgs = fixGroups.map(([key, group]) => {
-    const broad = isBroadFixKey(key)
-    const files = [broad ? '(broad-fix)' : normPath(key)]
-    // Broad groups already share '(broad-fix)', so they never run beside anything.
-    if (!broad && isUiFixGroup(group)) files.push('(ui-fix)')
-    const p = { id: key, files, group }
-    if (broad && scopedKeys.length) p.dependsOn = scopedKeys.slice()
-    return p
-  })
-  return buildWaves(pkgs)
+endPhase('Baseline')
+startPhase('Implement')
+// A10 (revert-probe): excluded from the wave graph entirely -- it runs in a
+// dedicated, strictly-sequential loop after the main wave loop (below),
+// never through parallel(). buildWaves/validateTasks both already accept
+// dependsOn edges FROM a revert-probe TO the fix it probes; running it
+// afterward, once every wave (including the fix's) has already finished,
+// satisfies that ordering trivially.
+const waveTasks = tasks.filter((t) => t.type !== 'revert-probe')
+const { waves, issues: waveIssues } = buildWaves(waveTasks)
+for (const issue of waveIssues) findings.push(toBuildPlanBlocker(issue))
+const taskResults = []
+// A10 (fix): fixGateStage looks up its root-cause dependency's OWN result by
+// id -- populated wave by wave, so by the time a `fix` task's wave runs,
+// every wave before it (which dependsOn ordering guarantees includes its
+// root-cause) has already recorded its result here.
+const resultsById = new Map()
+const RUN_ARTIFACTS_SCHEMA = {
+  type: 'object',
+  properties: { ran: { type: 'boolean' }, missing: { type: 'array', items: { type: 'string' } } },
+  required: ['ran', 'missing'],
 }
-
-// ---------- fix planning: routing and scheduling from Fable's plan ----------
-// A group's tier is the DEEPEST one the planner gave any of its findings, then the
-// engine's own upgrade. A finding the planner left unrouted — or routed to something
-// this engine does not recognise — counts as 'opus': never the cheap side.
-function plannedGroupRoute(fileKey, group, decisionOf) {
-  if (forcesOpus(fileKey, group)) return 'opus'
-  let route = 'mechanical'
-  for (const f of group) {
-    const d = decisionOf.get(f)
-    const cand = d && ROUTE_RANK[d.route] != null ? d.route : 'opus'
-    if (ROUTE_RANK[cand] > ROUTE_RANK[route]) route = cand
-  }
-  return route
+// E9, defence in depth (rule 4): task-brief.mjs and review-pack.mjs are
+// handed _args.buildPlanPath/_args.testPlanPath as bare paths and trust they
+// still exist on disk. The Baseline manifest checked that ONCE, before any
+// agent wrote anything -- but the E9 incident is exactly a case of one of
+// these files vanishing MID-RUN (a scope-guard remediation deleted the run's
+// own build-plan.md/test-plan.md). Without this, every task from that point
+// on independently fails to read its brief/pack and blocks with its own
+// unrelated-looking finding, burying the one real cause under N cascades.
+// Checked once per wave boundary (cheap, Haiku) -- fail-safe: a dead/
+// unreadable check agent never aborts the run on the GUARD's own failure,
+// only a CONFIRMED missing path does.
+async function checkRunArtifactsPresent(label) {
+  if (!planPaths.length) return null
+  const res = await askAgent(
+    'For each path below, check directly whether it exists on disk right now (e.g. `test -f "<path>" && echo EXISTS || echo MISSING`, or the OS equivalent) and report every one that is MISSING in `missing`:\n' +
+      planPaths.map((p) => '- ' + p).join('\n') +
+      '\nReport ran:true only if every check actually executed.',
+    { label, phase: 'Implement', model: M.haiku, effort: CFG.effort.baseline, schema: RUN_ARTIFACTS_SCHEMA },
+  )
+  if (!res || !res.ran || !Array.isArray(res.missing) || !res.missing.length) return null
+  return res.missing
 }
-// The planner names CONCURRENCY; the engine keeps owning WRITE SAFETY. Returns
-// Map(groupKey -> wave index) when the plan's waves are usable, else null: an
-// executable index left out, one named twice, or one file split across two waves.
-function plannerWaveOrder(toFixList, execSet, rawWaves) {
-  if (!Array.isArray(rawWaves)) return null
-  const need = new Set(execSet)
-  const waveOfKey = new Map()
-  const seen = new Set()
-  let w = 0
-  for (const wave of rawWaves) {
-    if (!Array.isArray(wave)) return null
-    for (const idx of wave) {
-      const f = typeof idx === 'number' ? toFixList[idx] : null
-      // An index the planner disputed or deferred may still appear here; it simply
-      // has nothing to schedule. Only the executable set has to be covered exactly.
-      if (!f || !need.has(f)) continue
-      if (seen.has(f)) return null
-      seen.add(f)
-      const key = normPath(f.file) || '(unknown)'
-      if (waveOfKey.has(key) && waveOfKey.get(key) !== w) return null
-      waveOfKey.set(key, w)
-    }
-    w++
-  }
-  return seen.size === need.size ? waveOfKey : null
-}
-// The plan's ordering applied THROUGH buildWaves, not instead of it: the file-overlap
-// rule, the broad-fix sentinel and the ui-fix sentinel all still hold, so the planner
-// can never put two fixers on one file or float a build repair up beside them.
-function buildPlannedFixWaves(fixGroups, waveOfKey) {
-  const scopedKeys = fixGroups.map(([k]) => k).filter((k) => !isBroadFixKey(k))
-  const pkgs = fixGroups.map(([key, group]) => {
-    const broad = isBroadFixKey(key)
-    const files = [broad ? '(broad-fix)' : normPath(key)]
-    if (!broad && isUiFixGroup(group)) files.push('(ui-fix)')
-    const p = { id: key, files, group }
-    // A broad group already depends on every file-scoped group — a stronger
-    // constraint than anything the planner can express, so leave it exactly there.
-    if (broad) {
-      if (scopedKeys.length) p.dependsOn = scopedKeys.slice()
-    } else {
-      const mine = waveOfKey.get(key)
-      const deps = scopedKeys.filter((k) => k !== key && mine != null && waveOfKey.get(k) != null && waveOfKey.get(k) < mine)
-      if (deps.length) p.dependsOn = deps
-    }
-    return p
-  })
-  return buildWaves(pkgs)
-}
-
-const DEAD_IMPL = { status: 'blocked', filesChanged: [], deviations: 'agent died or was skipped', notes: '' }
-
-// Findings no fixer can act on: the phase that would have produced the evidence
-// never ran ('(review)', '(ui-verify)'), or the defect is in a planning input this
-// run has already consumed ('(build-plan)' — the waves it describes are done).
-// They bypass the fix loop and land in remainingFindings, keeping `clean` false.
-const UNFIXABLE_FILES = ['(review)', '(ui-verify)', '(build-plan)']
-const isUnfixable = (f) => UNFIXABLE_FILES.indexOf(f.file) !== -1
-
-// A dependsOn that names no package, or a cycle, means the plan's declared
-// ordering did not happen — surface it instead of letting it vanish.
-function carryWaveIssues(issues, where, phaseName) {
-  for (const issue of issues) {
-    log(`!!! ${where}: ${issue}`)
-    carried.push({
-      file: '(build-plan)',
-      severity: 'blocker',
-      phase: phaseName,
-      // The issue text leads the summary so two different broken edges do not
-      // dedupe into one (dedupe keys on file + the first 60 chars of summary).
-      summary: issue,
-      detail: `Declared ordering in the ${where} packages was not applied. dependsOn is the ONLY ordering mechanism these waves honour, so the affected package may have run concurrently with — or before — the work it depends on.`,
-      fixHint: 'Fix the dependsOn ids in the build plan (they must match package ids exactly, and must not form a cycle), then re-run: this run cannot re-schedule waves it has already executed.',
-    })
-  }
-}
-
-// ═══════════ Phase 1: Baseline — the tree BEFORE any agent writes anything ═══════════
-// Three cheap Haiku checks, concurrently:
-//  - run every verify command against the untouched tree. A command that fails
-//    HERE is broken, not evidence about this change; excluding it from the
-//    pass/fail decision kills the false-blocker class where a wrong command
-//    condemns correct code.
-//  - ground the planning artifacts: every mechanically checkable claim they make
-//    about the repo, verified. An invented path or script is confabulation the
-//    whole run would otherwise inherit as fact.
-//  - build the context manifest: which files moved or are planned, each one's risk
-//    class, which commands can run, which artifacts exist. Facts only. It removes
-//    the work every later agent would otherwise redo — deriving what changed and
-//    what to open — without handing them a shared INTERPRETATION of the change,
-//    which would give every lens the same blind spot.
-// COMMAND VALIDATION BEFORE BASELINE (owner ruling 2026-09-11e; RUN-LOG
-// train4-run-a: "BOTH recorded final Jest gates were void"). Purely mechanical —
-// no agent spent, no filesystem access (this engine has none; every FS fact
-// normally comes from an agent) — so it catches two Jest command shapes that can
-// report green while verifying nothing, before a single token is spent on this
-// run. The "target does not exist yet" half is necessarily approximate: it can
-// only check the command's targets against files THIS RUN's own plan declares
-// (plannedFiles), an exact match only — a directory-shaped target like "src"
-// must never match on a mere prefix, or almost every real command would trip it.
-function validateJestCommands(commands) {
-  const problems = []
-  const known = plannedFiles.map(normPath)
-  for (const cmd of commands) {
-    if (!/\bjest\b/i.test(cmd)) continue
-    const tokens = cmd.trim().split(/\s+/).filter(Boolean)
-    const reporterIdx = tokens.indexOf('--reporters=default')
-    const next = tokens[reporterIdx + 1]
-    if (reporterIdx !== -1 && next !== undefined && !next.startsWith('-')) {
-      problems.push({
-        file: '(build-plan)',
-        severity: 'blocker',
-        phase: 'Baseline',
-        summary: `Jest command has --reporters=default before its last argument: \`${cmd}\``,
-        detail: `--reporters=default is followed by a positional argument that yargs will swallow into --reporters; put a flag after it or move it last. This silently narrows or drops the command's intended scope while still reporting green (RUN-LOG train4-run-a: "BOTH recorded final Jest gates were void").`,
-        fixHint: 'Move --reporters=default to the end of this command in verifyCommands, or put a flag (not a bare path) immediately after it.',
-      })
-    }
-    const jestIdx = tokens.findIndex((t) => /\bjest\b/i.test(t))
-    const rest = tokens.slice(jestIdx + 1)
-    if (rest.includes('--passWithNoTests')) continue
-    // Flags that take a following value: that value is never itself a target
-    // (e.g. `-t "REG-B26"` must not contribute 'REG-B26' as a target path).
-    const VALUE_FLAGS = new Set([
-      '-t', '--testNamePattern', '--testPathPattern', '-c', '--config',
-      '--rootDir', '--selectProjects', '--maxWorkers', '-w', '--testTimeout',
-    ])
-    const stripQuotes = (s) => s.replace(/^['"]|['"]$/g, '')
-    const targets = []
-    for (let i = 0; i < rest.length; i++) {
-      const tok = stripQuotes(rest[i])
-      if (!tok) continue
-      if (tok.startsWith('-')) {
-        if (VALUE_FLAGS.has(tok)) i++
-        continue
-      }
-      targets.push(tok)
-    }
-    // A leading `cd <dir> &&` means every relative target is actually relative to
-    // <dir>, not the repo root — compare it against plannedFiles the same way.
-    const cdMatch = /^cd\s+([^\s&]+)\s*&&\s*/.exec(cmd.trim())
-    const cdDir = cdMatch ? stripQuotes(cdMatch[1]) : null
-    const resolveTarget = (t) => {
-      const isAbsolute = /^([a-zA-Z]:)?[\\/]/.test(t)
-      if (cdDir && !isAbsolute) return `${cdDir}/${t}`
-      return t
-    }
-    if (targets.length && targets.every((t) => known.includes(normPath(resolveTarget(t))))) {
-      problems.push({
-        file: '(build-plan)',
-        severity: 'blocker',
-        phase: 'Baseline',
-        summary: `Jest command's target path(s) are only files this run's own plan will create, with no --passWithNoTests: \`${cmd}\``,
-        detail: `Every target this command names (${targets.join(', ')}) matches ONLY a file the build/test plan declares as something this run will create — none is known to exist yet — and without --passWithNoTests Jest exits nonzero on zero matched test files, so this gate is void until those files land.`,
-        fixHint: 'Add --passWithNoTests if running before the test files exist is intentional, or point this command at files that already exist.',
-      })
-    }
-  }
-  return problems
-}
-// The tree at this moment IS the baseline, whatever state the caller left it in —
-// uncommitted work included.
-const baselineCommands = uniqueCommands([...vc.perRound, ...vc.final])
-carried.push(...validateJestCommands(baselineCommands))
-const groundingArtifacts = uniquePaths([planPath, discoveryPath, specPath, uxSpecPath, testPlanPath, designSystemPath])
-let baselineResult = {
-  ran: false,
-  note: 'Baseline = the working tree exactly as the caller left it, uncommitted work included; that tree is what the commands ran against.',
-  commands: baselineCommands,
-  badCommands: [],
-  gate: { ran: false, completed: false, pass: null, results: [] },
-  grounding: { ran: false, completed: false, artifacts: groundingArtifacts, findings: [] },
-}
-// The manifest is what every later prompt carries, so it is built even when there
-// is nothing else for this phase to do.
-let manifestResult = {
-  ran: false,
-  completed: false,
-  note: 'No manifest: every file is treated as HIGH risk, which is the conservative default.',
-  files: [],
-  validCommands: [],
-  artifacts: [],
-}
-let riskSummary = { high: 0, low: 0 }
-// FABLE BRIEF CAP flags (owner ruling 2026-09-10, CFG.caps.fableBriefBytes). Set
-// by capFableBrief() when a Fable-decider prompt (tie-break judge, fix planner,
-// final-pass decider) was over the byte cap and had to be truncated — recorded
-// on the relevant result object so a stale/over-long packager is visible in the
-// phase report, not just silently clipped.
-let tieBreakBriefTruncated = false
-let fixPlanBriefTruncated = false
-let finalPassBriefTruncated = false
-// BUGFIX MODE: what the existing test harness will break on. Never blocks the run — a
-// dead agent records ran:false and the test authors simply do not get the notes.
-let harnessCheck = {
-  ran: false,
-  issues: [],
-  skipped: bugfix ? (wantHarnessCheck ? null : 'no-test-packages') : 'feature-mode',
-  note: '',
-}
-{
-  startPhase('Baseline')
-  const carriedAt = carried.length
-  if (bugfix) log(`MODE: bugfix — radius pack ${wantRadiusPack ? `over ${radiusFiles.length} file(s)` : 'off (no radius files)'}, harness check ${wantHarnessCheck ? `over ${harnessFiles.length} test file(s)` : 'off (no test packages)'}, sibling sweep ${wantSiblingSweep ? `over ${siblingPatterns.length} pattern(s)` : 'off (no patterns)'}, behavioral red bar, corroboration skip in Verify`)
-  log(`Baseline: ${baselineCommands.length} verify command(s), ${groundingArtifacts.length} artifact(s) to ground, ${plannedFiles.length} planned file(s) to classify`)
-  const baselineOut = await parallel([
-    () =>
-      baselineCommands.length
-        ? askAgent(baselineGatePrompt(baselineCommands), { label: 'baseline-gate', phase: 'Baseline', model: CFG.gateModel, effort: CFG.effort.gate, schema: GATE_SCHEMA })
-        : Promise.resolve(null),
-    () =>
-      groundingArtifacts.length
-        ? askAgent(groundingPrompt(groundingArtifacts), { label: 'baseline-grounding', phase: 'Baseline', model: CFG.gateModel, effort: CFG.effort.grounding, schema: FINDINGS_SCHEMA })
-        : Promise.resolve(null),
-    () =>
-      askAgent(manifestPrompt(plannedFiles, baselineCommands, groundingArtifacts), {
-        label: 'baseline-manifest', phase: 'Baseline', model: CFG.gateModel, effort: CFG.effort.manifest, schema: MANIFEST_SCHEMA,
-      }),
-    // BUGFIX MODE: read-only, beside the manifest. Its issues are appended to the
-    // matching test package's brief, so the stale mock is fixed in the same edit.
-    () =>
-      wantHarnessCheck
-        ? askAgent(harnessCheckPrompt(harnessFiles), {
-            label: 'harness-check', phase: 'Baseline', model: CFG.harnessCheckModel, effort: CFG.effort.harnessCheck, schema: HARNESS_SCHEMA,
-          })
-        : Promise.resolve(null),
-  ])
-
-  if (baselineCommands.length) {
-    const bGate = enforceCwd(baselineOut[0], 'baseline-gate')
-    if (bGate) {
-      const bResults = Array.isArray(bGate.results) ? bGate.results : []
-      for (const r of bResults) {
-        if (!r || r.pass !== false) continue
-        const cmd = r.command || ''
-        if (!normCmd(cmd) || isBadCommand(cmd)) continue
-        badCommandSet.add(normCmd(cmd))
-        baselineResult.badCommands.push(cmd)
-        // Exactly ONE finding per broken command. The command leads the summary so
-        // two broken commands never dedupe into one.
-        carried.push({
-          file: '(gate-command)',
-          severity: 'major',
-          summary: `\`${cmd}\` already fails on the unmodified baseline tree — the command is broken, not the code`,
-          detail: `Baseline output: ${r.summary || '(none reported)'}. This command failed BEFORE any agent wrote anything, so its failures during this run are not evidence about the change. It is excluded from the pass/fail decision and cannot make the result unclean. It still runs every round, so a change in its behavior stays visible.`,
-          fixHint: 'Fix this in the PLAN, not in the code: correct or drop the command in verifyCommands (wrong script name, wrong directory, wrong flags), or install the prerequisite it needs, then re-run.',
-          phase: 'Baseline',
-          // Correcting or dropping a broken command is textual, not a decision
-          // about what the code should do.
-          fixComplexity: 'mechanical',
-        })
-      }
-      baselineResult.gate = { ran: true, completed: true, pass: !!bGate.pass, results: bResults }
-      log(`Baseline gate: ${baselineResult.badCommands.length}/${baselineCommands.length} command(s) already broken${baselineResult.badCommands.length ? ` — excluded from the verdict: ${baselineResult.badCommands.join(' | ')}` : ''}`)
-    } else {
-      // No baseline evidence = no exclusions. Conservative: every later gate
-      // failure still counts against the run.
-      baselineResult.gate = { ran: true, completed: false, pass: null, results: [] }
-      log('Baseline gate: agent died or was skipped — no command is known-broken, so every later gate failure counts against this run')
-    }
-  }
-
-  if (groundingArtifacts.length) {
-    const bGround = baselineOut[1]
-    if (bGround) {
-      const groundFindings = dedupe(
-        (bGround.findings || []).map((f) => ({
-          ...f,
-          // Keep the artifact it came from in the text; the '(artifact)' key is
-          // what routes it to the right fixer.
-          detail: f.file && normPath(f.file) !== '(artifact)' ? `In ${f.file}: ${f.detail || ''}` : f.detail || '',
-          file: '(artifact)',
-          // A mechanical existence check is major at worst — it must never open
-          // the run with a blocker.
-          severity: f.severity === 'blocker' ? 'major' : f.severity,
-          phase: 'Baseline',
-        })),
-      )
-      baselineResult.grounding = { ran: true, completed: true, artifacts: groundingArtifacts, findings: groundFindings }
-      carried.push(...groundFindings)
-      log(`Artifact grounding: ${groundFindings.length} ungrounded claim(s) across ${groundingArtifacts.length} artifact(s)`)
-    } else {
-      baselineResult.grounding = { ran: true, completed: false, artifacts: groundingArtifacts, findings: [] }
-      log('Artifact grounding: agent died or was skipped — the artifacts are unchecked; the review lenses still read them')
-    }
-  }
-  // ---- context manifest + risk classification ----
-  const bManifest = baselineOut[2]
-  const mFiles = bManifest && Array.isArray(bManifest.files) ? bManifest.files.filter((f) => f && f.path) : []
-  if (mFiles.length) {
-    for (const f of mFiles) {
-      const k = normPath(f.path)
-      // Anything that is not exactly 'LOW' is HIGH — a garbled or missing class
-      // must never buy a file the cheap path.
-      riskMap[k] = f.risk === 'LOW' ? 'LOW' : 'HIGH'
-      const n = typeof f.changedLines === 'number' && Number.isFinite(f.changedLines) ? Math.max(0, f.changedLines) : 0
-      changedLinesMap[k] = n
-      statusMap[k] = typeof f.status === 'string' ? f.status.trim().toLowerCase() : ''
-    }
-    for (const k of Object.keys(riskMap)) riskSummary[riskMap[k] === 'LOW' ? 'low' : 'high']++
-    // One row per PATH: a file can appear both in `git status` and in the plan's
-    // package file lists, and a duplicate row would double-count it everywhere it
-    // is used (the cascade partitions, the density threshold, the prompt note).
-    const seenPaths = new Set()
-    const manifestFiles = []
-    for (const f of mFiles) {
-      const k = normPath(f.path)
-      if (seenPaths.has(k)) continue
-      seenPaths.add(k)
-      manifestFiles.push({ path: k, status: f.status || '', risk: riskMap[k], changedLines: changedLinesMap[k] })
-    }
-    manifestResult = {
-      ran: true,
-      completed: true,
-      note: 'Facts gathered before any agent wrote anything. Unknown or unreadable files are classified HIGH.',
-      files: manifestFiles,
-      validCommands: Array.isArray(bManifest.validCommands) ? bManifest.validCommands : [],
-      artifacts: Array.isArray(bManifest.artifacts) ? bManifest.artifacts : [],
-    }
-    // Cap what every later prompt carries: a huge diff must not turn the manifest
-    // into the largest thing in each context window.
-    const shown = manifestResult.files.slice(0, 80)
-    manifestNote = [
-      `CONTEXT MANIFEST (facts collected at preflight, before any agent wrote anything). It tells you WHICH files moved and what to open — it does NOT tell you what the change means, and it is not a review. Read the diff yourself.`,
-      `- files (path [status, risk]): ${shown.map((f) => `${f.path} [${f.status || '?'}, ${f.risk}]`).join(', ')}${manifestResult.files.length > shown.length ? `, …and ${manifestResult.files.length - shown.length} more` : ''}`,
-      `- risk: ${riskSummary.high} HIGH, ${riskSummary.low} LOW. HIGH = the path or content touches money/pricing/tax, auth/permissions, tenancy or ownership scoping, migrations/schema, PII, or payments. A file NOT listed here is HIGH by default.`,
-      manifestResult.validCommands.length ? `- verification commands that can run in this repo: ${manifestResult.validCommands.join(' | ')}` : '',
-      baselineResult.badCommands.length ? `- verification commands ALREADY BROKEN on the untouched tree (their failures are not evidence about this change): ${baselineResult.badCommands.join(' | ')}` : '',
-      manifestResult.artifacts.length ? `- planning artifacts that exist on disk: ${manifestResult.artifacts.join(', ')}` : '',
-    ].filter(Boolean).join('\n')
-    log(`Context manifest: ${manifestResult.files.length} file(s) — ${riskSummary.high} HIGH risk, ${riskSummary.low} LOW`)
-  } else {
-    // No manifest = no classification = everything HIGH. fileRisk() already
-    // returns HIGH for anything unlisted, so leaving riskMap empty IS the
-    // conservative default; say so loudly rather than letting it read as LOW.
-    riskSummary = { high: plannedFiles.length, low: 0 }
-    manifestResult = {
-      ran: true,
-      completed: false,
-      note: 'The manifest agent died or returned nothing. Every file is therefore treated as HIGH risk: deepest review, judgment fixers, mutation probes not skipped.',
-      files: [],
-      validCommands: [],
-      artifacts: [],
-    }
-    manifestNote = `CONTEXT MANIFEST: unavailable — the preflight manifest agent died. Treat EVERY file as HIGH risk and review it at maximum depth. Establish what changed yourself with \`git status --short\` and \`git diff\`.`
-    log('Context manifest: agent died or was skipped — every file is treated as HIGH risk')
-  }
-
-  // ---- harness-integrity check (bugfix mode) ----
-  // Its issues go to the test author that OWNS the file, verbatim. An issue whose file
-  // belongs to no test package has no author to hand it to: it is recorded and logged,
-  // never silently dropped.
-  if (wantHarnessCheck) {
-    const hc = baselineOut[3]
-    if (hc) {
-      const issues = (Array.isArray(hc.issues) ? hc.issues : []).filter((i) => i && i.file && i.issue)
-      const ownerOf = new Map()
-      for (const p of testPkgs) for (const f of p.files || []) ownerOf.set(normPath(f), p.id)
-      const byPkg = new Map()
-      const unassigned = []
-      for (const i of issues) {
-        const owner = ownerOf.get(normPath(i.file))
-        const line = `- ${i.file}:${i.line || '?'} — ${i.issue}${i.remedy ? ` | remedy: ${i.remedy}` : ''}`
-        if (owner) byPkg.set(owner, (byPkg.get(owner) ? `${byPkg.get(owner)}\n` : '') + line)
-        else unassigned.push(line)
-      }
-      for (const [id, text] of byPkg) harnessNotes.set(id, text)
-      // An issue in a file no package owns (a shared fixture, a mock helper) still has
-      // to reach an author: it goes to the FIRST test package, labelled as shared. One
-      // deterministic owner, so no two concurrent authors edit the same unowned file.
-      const sharedOwner = unassigned.length && testPkgs.length ? testPkgs[0].id : null
-      if (sharedOwner) harnessSharedNotes.set(sharedOwner, unassigned.join('\n'))
-      harnessCheck = {
-        ran: true,
-        issues,
-        skipped: null,
-        note: unassigned.length
-          ? `${unassigned.length} issue(s) name a file no test package owns; they were routed to the first test package (${sharedOwner || 'none — there is no test package to route them to'}) under "SHARED HARNESS", and are in issues[] either way: ${unassigned.join(' ;; ')}`
-          : '',
-      }
-      log(`Harness check: ${issues.length} harness inconsistency(ies) across ${harnessFiles.length} test file(s) — ${byPkg.size} package brief(s) carry the notes${unassigned.length ? `; ${unassigned.length} shared-harness issue(s) routed to ${sharedOwner || 'nobody (no test package)'}` : ''}`)
-    } else {
-      harnessCheck = { ran: false, issues: [], skipped: 'agent-died', note: 'The harness-integrity agent died or was skipped, so the existing mocks and fixtures were never checked against the planned change. It never blocks the run; the test authors simply got no notes.' }
-      log('Harness check: agent died or was skipped — the existing mocks/fixtures are unchecked against the plan (non-blocking)')
-    }
-  }
-
-  baselineResult.ran = true
-  await endPhase('Baseline', (baselineCommands.length ? 1 : 0) + (groundingArtifacts.length ? 1 : 0) + 1 + (wantHarnessCheck ? 1 : 0), carried.length - carriedAt)
-}
-
-// ═══════════ design-system lens gating (bugfix mode) ═══════════
-// Measured on F13: the design-system lens reported 3 findings, all 3 overturned, none
-// survived — on a bug fix with no UI file in it. So in bugfix mode the lens runs only
-// when the change actually touches a UI file. Feature mode is untouched: there the
-// lens's presence is decided by the UX/design-system artifacts alone.
-const isUiFile = (p) => {
-  const k = normPath(p)
-  if (/^packages\/ui\//.test(k)) return true
-  return /^apps\/(web|mobile)\//.test(k) && /\.(tsx|jsx|css)$/.test(k)
-}
-if (bugfix && lenses.indexOf('design-system') !== -1) {
-  const uiScope = uniquePaths([...manifestResult.files.map((f) => f.path), ...plannedFiles])
-  const uiHits = uiScope.filter(isUiFile)
-  if (uiHits.length) {
-    log(`Design-system lens KEPT: the change touches UI file(s) — ${uiHits.slice(0, 6).join(', ')}${uiHits.length > 6 ? `, …and ${uiHits.length - 6} more` : ''}`)
-  } else if (!manifestResult.completed || !uiScope.length) {
-    // No trustworthy file list. Unknown is never a reason to review less.
-    log('Design-system lens KEPT: the preflight manifest did not complete, so the changed-file list cannot be trusted to contain no UI file')
-  } else {
-    lenses = lenses.filter((l) => l !== 'design-system')
-    reviewUnits = buildReviewUnits(lenses)
-    log(`Design-system lens GATED OFF: none of the ${uiScope.length} changed/planned file(s) is a UI file (apps/web|apps/mobile *.tsx/.jsx/.css, or packages/ui) — lensesRun records the ${lenses.length} lens(es) that ran`)
-  }
-}
-
-// ═══════════ Phase 2: Author tests (Sonnet) — skipped when testPackages is absent ═══════════
-let testAuthoring = { ran: false, packages: [], rerunCount: 0 }
-let testFiles = []
-if (testPkgs.length) {
-  startPhase('Author tests')
-  const carriedAtTests = carried.length
-  const { waves: testWaves, issues: testWaveIssues } = buildWaves(testPkgs)
-  carryWaveIssues(testWaveIssues, 'test', 'Author tests')
-  log(`Authoring ${testPkgs.length} test package(s) in ${testWaves.length} wave(s) from ${testPlanPath || planPath}`)
-  const testResults = []
-  for (const wave of testWaves) {
-    const results = await runConcurrent(
-      wave.map((p) => () =>
-        askAgent(authorTestsPrompt(p), {
-          label: `tests:${p.id}`,
-          phase: 'Author tests',
-          model: p.model || CFG.testModel,
-          // A9 RUN CHEAP, RERUN FAILURES (owner ruling 2026-09-11, CFG.cheapFirst):
-          // a package with no plan-set effort runs at the cheap tier first; a
-          // package the plan itself pinned an effort on is never cheapened.
-          effort: p.effort || (CFG.cheapFirst ? CFG.effort.testsCheap : CFG.effort.tests),
-          schema: IMPL_SCHEMA,
-        }).then((r) => ({ package: p.id, ...(r || DEAD_IMPL) }))
-      )
-    )
-    testResults.push(...results.filter(Boolean))
-  }
-  // A9: exactly ONE rerun, at the ordinary default effort, for a package that
-  // ran at the cheap tier and came back not "done" — its rerun result REPLACES
-  // the cheap attempt's, never both. rerunCount is the honest record of how
-  // much this knob actually spent on this run.
-  let testRerunCount = 0
-  if (CFG.cheapFirst) {
-    const pkgsById = new Map(testPkgs.map((p) => [p.id, p]))
-    const toRerun = testResults.filter((r) => r.status !== 'done' && pkgsById.has(r.package) && !pkgsById.get(r.package).effort)
-    if (toRerun.length) {
-      log(`Author tests: ${toRerun.length} package(s) came back not "done" at the cheap tier — rerunning once at ${CFG.effort.tests}`)
-      const reruns = await runConcurrent(
-        toRerun.map((r) => () => {
-          const p = pkgsById.get(r.package)
-          return askAgent(authorTestsPrompt(p), {
-            label: `tests:${p.id}:rerun`,
-            phase: 'Author tests',
-            model: p.model || CFG.testModel,
-            effort: CFG.effort.tests,
-            schema: IMPL_SCHEMA,
-          }).then((rr) => ({ package: p.id, ...(rr || DEAD_IMPL) }))
-        })
-      )
-      testRerunCount = reruns.length
-      for (const rr of reruns) {
-        const idx = testResults.findIndex((x) => x.package === rr.package)
-        if (idx !== -1) testResults[idx] = rr
-      }
-    }
-  }
-  testAuthoring = {
-    ran: true,
-    rerunCount: testRerunCount,
-    packages: testResults.map((r) => ({
-      package: r.package, status: r.status, filesChanged: r.filesChanged, deviations: r.deviations,
-    })),
-  }
-  for (const p of testPkgs) testFiles.push(...(p.files || []))
-  for (const r of testResults) {
-    if (r.status !== 'done') {
-      carried.push({
-        file: '(tests)',
-        severity: 'blocker',
-        summary: `Test package ${r.package} is ${r.status}`,
-        detail: r.deviations || r.notes || 'no detail reported',
-        phase: 'Author tests',
-      })
-    }
-  }
-  log(`Test authoring: ${testResults.filter((r) => r.status === 'done').length}/${testResults.length} package(s) done`)
-  await endPhase('Author tests', testPkgs.length, carried.length - carriedAtTests)
-}
-
-// ═══════════ Phase 3: Red gate — verified RED (Haiku runs, Opus audits) ═══════════
-// A test that has never failed proves nothing. Every new test must fail on an
-// ASSERTION (not an import/syntax/config error) and none may pass. Exactly ONE
-// remediation round is allowed before implementation starts.
-let redGateResult = { ran: false, properlyRed: null, structurallyRed: null, behaviorallyRed: null, remediateOn: null, attempts: 0, audits: [], remediation: null }
-// Returns { agents, raw }; the caller owns the phase bracket so the phase can run
-// alone or beside Implement (CFG.overlapImplementWithRedAudit).
-async function runRedGate() {
-  const carriedAtRed = carried.length
-  let redAgents = 0
-  const testFileList = testFiles.join(', ')
-  // Which bar triggers the remediation round and the blocker. Small scale has no
-  // mutation probe to prove oracle bite later, so it keeps the full behavioral bar.
-  // BUGFIX MODE forces 'behavioral' at every scale: the new test IS the repro, and a
-  // repro that fails on a stub's uniform `undefined` has not reproduced the bug.
-  const remediateOn = bugfix
-    ? 'behavioral'
-    : scale === 'major' && CFG.redGate.remediateOn === 'structural'
-      ? 'structural'
-      : 'behavioral'
-  const meetsBar = (v) => (remediateOn === 'structural' ? !!v.structurallyRed : !!v.properlyRed)
-  let attempt = 0
-  let audit = null
-  let remediationReport = null
-  const audits = []
-  while (attempt < 1 + CFG.maxTestRemediationRounds) {
-    attempt++
-    redAgents++
-    const run = await askAgent(redRunPrompt(redGateCfg.commands, redGateCfg.expect), {
-      label: `red-run:a${attempt}`, phase: 'Red gate', model: CFG.gateModel, effort: CFG.effort.gate, schema: RED_RUN_SCHEMA,
-    })
-    redAgents++
-    const runOut = run || { ran: false, results: [{ command: redGateCfg.commands.join(' && '), exitCode: -1, output: 'red-gate runner agent died or was skipped — no output captured' }] }
-    // The audit is the evidence that the tests can fail: the Opus default, never below it.
-    audit = await askAgent(opusCapped(redAuditPrompt(runOut, testFileList, attempt), CFG.reviewModel), {
-      label: `red-audit:a${attempt}`, phase: 'Red gate', model: CFG.reviewModel, effort: CFG.effort.redAudit, schema: RED_AUDIT_SCHEMA,
-    })
-    // A dead auditor is NOT a pass — there is no evidence the tests can fail.
-    const verdict = audit || { properlyRed: false, structurallyRed: false, behaviorallyRed: false, tests: [], blockers: ['STRUCTURAL: red-gate auditor died or was skipped — no verified RED evidence exists'], remediation: '' }
-    // Older audits reported only properlyRed; read it as both levels.
-    if (typeof verdict.structurallyRed !== 'boolean') verdict.structurallyRed = !!verdict.properlyRed
-    if (typeof verdict.behaviorallyRed !== 'boolean') verdict.behaviorallyRed = !!verdict.properlyRed
-    verdict.properlyRed = verdict.structurallyRed && verdict.behaviorallyRed
-    audits.push({ attempt, ran: !!run, structurallyRed: verdict.structurallyRed, behaviorallyRed: verdict.behaviorallyRed, properlyRed: verdict.properlyRed, tests: verdict.tests || [], blockers: verdict.blockers || [] })
-    audit = verdict
-    log(`Red gate attempt ${attempt}: structural ${verdict.structurallyRed ? 'RED' : 'NOT red'}, behavioral ${verdict.behaviorallyRed ? 'RED' : 'shortfall'} — ${(verdict.blockers || []).length} note(s); bar = ${remediateOn}`)
-    if (meetsBar(verdict)) break
-    if (attempt >= 1 + CFG.maxTestRemediationRounds) break
-    log(`Red gate: running the single allowed test-remediation round (${remediateOn} failure)`)
-    redAgents++
-    remediationReport = await askAgent(opusCapped(testRemediationPrompt(verdict, testFileList), CFG.routing.testRemediationModel), {
-      label: 'red-remediate', phase: 'Red gate', model: CFG.routing.testRemediationModel, effort: CFG.effort.redRemediate, schema: FIX_SCHEMA,
-    })
-    if (!remediationReport) log(`Red gate: remediation agent died — re-running the red gate on the tests as they stand`)
-  }
-  const last = audit || {}
-  redGateResult = {
-    ran: true,
-    remediateOn,
-    properlyRed: !!last.properlyRed,
-    structurallyRed: !!last.structurallyRed,
-    behaviorallyRed: !!last.behaviorallyRed,
-    attempts: attempt,
-    audits,
-    remediation: remediationReport || null,
-  }
-  if (!meetsBar(last)) {
-    const blockers = last.blockers || []
-    // BUGFIX MODE, behavioral-only shortfall: the tests DO fail on assertions, they
-    // just do not each fail on their own expected value. That is a repro that does not
-    // reproduce — major, and `redOk` below keeps the run unclean either way — while a
-    // STRUCTURAL failure (a test that errored, passed or never ran) stays a blocker.
-    const behavioralOnly = bugfix && last.structurallyRed === true && last.behaviorallyRed !== true
-    carried.push({
-      file: '(red-gate)',
-      severity: behavioralOnly ? 'major' : 'blocker',
-      phase: 'Red gate',
-      summary: behavioralOnly
-        ? 'Red gate is structurally RED but the repro does not reproduce — no test fails on its own expected value from the test plan'
-        : `Red gate never went ${remediateOn === 'structural' ? 'structurally' : 'properly'} RED — the new tests are not proven able to fail`,
-      detail: behavioralOnly
-        ? `On a bug fix the new test IS the repro: it must fail on the bug's OWN wrong value, not on a stub's uniform undefined, or it proves the wiring rather than the defect. Auditor notes: ${JSON.stringify(blockers)}. Per-test outcomes: ${JSON.stringify(last.tests || [])}. Remediation asked for: ${last.remediation || '(none reported)'}`
-        : `A test that has never failed proves nothing. Auditor notes: ${JSON.stringify(blockers)}. Per-test outcomes: ${JSON.stringify(last.tests || [])}. Remediation asked for: ${last.remediation || '(none reported)'}`,
-      fixHint: behavioralOnly
-        ? 'Assert the concrete wrong value the bug produces today (and the right one after the fix), so the test fails on the defect itself.'
-        : 'Strengthen the vacuous tests, or rewrite the requirement if the behavior already exists.',
-    })
-  } else if (!last.behaviorallyRed) {
-    // Structurally red, behaviorally unproven. On a major run the mutation probe
-    // now covers EVERY target (its risk gate reads properlyRed), which is the
-    // direct proof of oracle bite. Only when no probe can run does the shortfall
-    // become a finding — otherwise it is a recorded fact, not a fix-loop item.
-    if (mutationEnabled) {
-      log(`Red gate: behavioral shortfall recorded — the mutation probe will cover all ${mutationTargets.length} target(s) instead of a remediation round`)
-    } else {
-      carried.push({
-        file: '(red-gate)',
-        severity: 'minor',
-        phase: 'Red gate',
-        summary: 'Red gate is structurally RED but the oracles are unproven — every new test fails the same way, and this run declares no mutation targets to prove them later',
-        detail: `Auditor notes: ${JSON.stringify(last.blockers || [])}. Per-test outcomes: ${JSON.stringify(last.tests || [])}. Declare mutationProbe.targets for these tests, or strengthen the assertions so each fails on its own expected value.`,
-        fixHint: 'Strengthen each test to assert the concrete expected value from the test plan.',
-        fixComplexity: 'judgment',
-      })
-    }
-  }
-  return { agents: redAgents, raw: carried.length - carriedAtRed }
-}
-
-// ═══════════ Phase 3: Implement (Sonnet) ═══════════
-const implResults = []
-let implSummaries = []
-// Returns { agents, raw }; the caller owns the phase bracket.
-async function runImplement() {
-  const carriedAtImpl = carried.length
-  const { waves, issues: waveIssues } = buildWaves(packages)
-  carryWaveIssues(waveIssues, 'implementation', 'Implement')
-  log(`Implementing ${packages.length} package(s) in ${waves.length} wave(s) from ${planPath}`)
-  for (const wave of waves) {
-    const results = await runConcurrent(
-      wave.map((p) => () =>
-        askAgent(implementPrompt(p), {
-          label: `impl:${p.id}`,
-          phase: 'Implement',
-          // p.model: surgical per-package upgrade (e.g. the one money-critical
-          // engine package on a major task) without moving the whole fleet.
-          model: p.model || CFG.implementModel,
-          // p.effort: the plan's per-package override; otherwise the transcription default.
-          effort: p.effort || CFG.effort.implement,
-          schema: IMPL_SCHEMA,
-        }).then((r) => ({ package: p.id, ...(r || DEAD_IMPL) }))
-      )
-    )
-    implResults.push(...results.filter(Boolean))
-  }
-  implSummaries = implResults.map((r) => ({
-    package: r.package, status: r.status, filesChanged: r.filesChanged, deviations: r.deviations,
-  }))
-  // Its findings ('(implementation)' blockers, plan-ordering issues) are raised in the
-  // next phase's code but AUTHORED here — attribute them to the phase that produced them.
-  return { agents: packages.length, raw: (carried.length - carriedAtImpl) + implResults.filter((r) => r.status !== 'done').length }
-}
-
-if (redGateCfg && CFG.overlapImplementWithRedAudit) {
-  // MEASURED TRADE: the red audit reads test files; implementers edit production
-  // files; a remediation round edits test files only — so they do not collide.
-  // What it risks is a wave of implementation on a package the audit would have
-  // sent back. One bracket (Implement, the larger spend); the red gate points at it.
-  startPhase('Implement')
-  log('overlapImplementWithRedAudit is ON — implementation wave(s) start while the red gate runs')
-  const [rg, im] = await parallel([runRedGate, runImplement])
-  await endPhase('Implement', im ? im.agents : 0, im ? im.raw : 0)
-  markOverlapped('Red gate', 'Implement', rg ? rg.agents : 0, rg ? rg.raw : 0)
-  if (!rg) log('!!! Red gate threw while overlapped with Implement — no RED evidence exists; the verdict treats the red gate as failed')
-  if (!rg) redGateResult = { ...redGateResult, ran: true, properlyRed: false, structurallyRed: false, behaviorallyRed: false, remediateOn: CFG.redGate.remediateOn }
-  overlapInfo.redAuditWithImplement = { ran: true, redGateMetBar: !!(rg && (redGateResult.remediateOn === 'structural' ? redGateResult.structurallyRed : redGateResult.properlyRed)), redGateAttempts: redGateResult.attempts }
-} else {
-  if (redGateCfg) {
-    startPhase('Red gate')
-    const rg = await runRedGate()
-    await endPhase('Red gate', rg.agents, rg.raw)
-  }
-  startPhase('Implement')
-  const im = await runImplement()
-  await endPhase('Implement', im.agents, im.raw)
-}
-
-// ═══════════ Phase 4: Gate FIRST, then Review ═══════════
-// The gate no longer runs concurrently with the lenses. If the build is broken,
-// concurrent lenses spend a whole review round on code that does not compile — so
-// gate, repair once, re-gate, and only then spend the reviewers. Seconds of
-// wall-clock; a full review round of tokens saved on every broken build.
-startPhase('Gate & Review')
-let reviewAgents = 0
-let gate
-// BUGFIX MODE: the radius pack is gathered BESIDE the gate — the gate runs commands,
-// the packer reads git, and the lenses (which are what the pack is for) come after
-// both. built:false = the lenses read the repo exactly as they do in feature mode.
-let radiusPack = {
-  built: false,
-  truncated: false,
-  files: radiusFiles,
-  skipped: bugfix ? (wantRadiusPack ? null : 'no-radius-files') : 'feature-mode',
-}
-const packThunk = () =>
-  askAgent(radiusPackPrompt(radiusFiles), {
-    label: 'radius-pack', phase: 'Gate & Review', model: CFG.radiusPackModel, effort: CFG.effort.radiusPack, schema: RADIUS_PACK_SCHEMA,
-  })
-const gateThunk = () =>
-  askAgent(gatePrompt(vc.perRound), { label: 'gate', phase: 'Gate & Review', model: CFG.gateModel, effort: CFG.effort.gate, schema: GATE_SCHEMA })
-let packOut = null
-if (vc.perRound.length && wantRadiusPack) {
-  reviewAgents += 2
-  const both = await parallel([gateThunk, packThunk])
-  gate = enforceCwd(both[0], 'gate') || { pass: false, results: [], summaryError: 'gate agent died' }
-  packOut = both[1]
-} else if (vc.perRound.length) {
-  reviewAgents++
-  gate = enforceCwd(await gateThunk(), 'gate') || { pass: false, results: [], summaryError: 'gate agent died' }
-} else {
-  gate = { pass: true, results: [], skipped: true }
-  if (wantRadiusPack) {
-    reviewAgents++
-    packOut = await packThunk()
-  }
-}
-if (wantRadiusPack) {
-  const truncated = !!(packOut && packOut.truncated)
-  const text = packOut && typeof packOut.pack === 'string' ? packOut.pack.trim() : ''
-  if (text && !truncated) {
-    radiusPackText = text
-    radiusPack = {
-      built: true,
-      truncated: false,
-      files: Array.isArray(packOut.files) && packOut.files.length ? packOut.files : radiusFiles,
-      skipped: null,
-    }
-    log(`Radius pack: ${text.length} char(s) over ${radiusPack.files.length} file(s) — every review lens reads it as PRIMARY EVIDENCE`)
-  } else {
-    // A partial pack presented as the whole change is worse than no pack: a reviewer
-    // would treat the missing hunks as unchanged. So a truncated or empty pack is
-    // discarded and the lenses fall back to reading the repo themselves.
-    radiusPack = { built: false, truncated, files: radiusFiles, skipped: !packOut ? 'agent-died' : truncated ? 'truncated' : 'empty-pack' }
-    log(`!!! Radius pack UNUSABLE (${radiusPack.skipped}) — the review lenses run exactly as in feature mode, reading the change themselves`)
-  }
-}
-// gateProblem ignores commands that were ALREADY broken at baseline — their
-// failures say nothing about this change, so they must not buy a build-fix agent.
-// A dead gate agent is a problem, never a pass.
-let buildFixReport = null
-let gateIssue = gateProblem(gate)
-if (gateIssue && vc.perRound.length) {
-  const fq = await applyFlakyQuarantine(gate, vc.perRound, 'gate-flaky-rerun')
-  gate = fq.gate
-  quarantinedLog.push(...fq.quarantined)
-  quarantineAbandonedLog.push(...fq.quarantineAbandoned)
-  gateIssue = gateProblem(gate)
-}
-if (gateIssue) {
-  log(`Gate FAILED before review — one build-fix agent, then a re-gate, before any reviewer is spent: ${gateIssue.slice(0, 300)}`)
-  reviewAgents++
-  const buildFixModel = buildFixModelFor()
-  buildFixReport = await askAgent(opusCapped(buildFixPrompt(gate.results && gate.results.length ? gate.results : gateIssue), buildFixModel), {
-    label: 'build-fix', phase: 'Gate & Review', model: buildFixModel, effort: CFG.effort.buildFix, schema: FIX_SCHEMA,
-  })
-  if (!buildFixReport) log('Build fix: agent died or was skipped — re-gating the tree as it stands')
-  if (vc.perRound.length) {
-    reviewAgents++
-    gate = enforceCwd(await askAgent(gatePrompt(vc.perRound), { label: 'regate:after-build-fix', phase: 'Gate & Review', model: CFG.gateModel, effort: CFG.effort.gate, schema: GATE_SCHEMA }), 'regate:after-build-fix') ||
-      { pass: false, results: [], summaryError: 're-gate agent died after the build fix' }
-    gateIssue = gateProblem(gate)
-    if (gateIssue) {
-      const fq = await applyFlakyQuarantine(gate, vc.perRound, 'regate-after-build-fix-flaky-rerun')
-      gate = fq.gate
-      quarantinedLog.push(...fq.quarantined)
-      quarantineAbandonedLog.push(...fq.quarantineAbandoned)
-      gateIssue = gateProblem(gate)
-    }
-  }
-  // The review runs either way: a still-broken build is reviewed anyway, because
-  // the lenses' findings are what tell the fix loop why it is broken.
-  log(`Re-gate after build fix: ${gateIssue ? 'STILL FAILING — the review runs anyway, on a tree that does not build' : 'passed'}`)
-}
-
-// ---- review lenses ----
-let lensDied = false
-let findings = []
-// Runs one review unit (one agent carrying one or more lenses). A unit that dies
-// blocks on EVERY lens it was carrying — a merged agent must not silently take two
-// dimensions down with it.
-async function runReviewUnit(unit, model, scope, tag, ownsUnlisted, waveEff) {
-  const label = `review:${unit.label}${tag ? `:${tag}` : ''}`
-  // A8 (corrected 2026-09-11c, C1): waveEff — this unit's MODEL FAMILY's deepest
-  // effort in the wave — wins when CFG.uniformLensEffort put one there;
-  // otherwise this unit picks its own, exactly as before A8.
-  const effort = waveEff || unitEffort(unit.lenses)
-  // C2: a single-lens unit is tagged with its real lens name; a merged unit
-  // (mergeLensesOnSmall) has no per-finding attribution from the model's
-  // response, so it is tagged with the unit's own label ("small-combined")
-  // rather than guessed apart.
-  const lensName = unit.lenses.length === 1 ? unit.lenses[0] : unit.label
-  const r = await askAgent(opusCapped(reviewPrompt(unit.lenses, implSummaries, scope, ownsUnlisted), model), {
-    label,
-    phase: 'Gate & Review',
-    model,
-    effort,
-    schema: FINDINGS_SCHEMA,
-  })
-  if (r) {
-    const out = (r.findings || []).map((f) => ({ ...f, phase: 'Gate & Review', lens: f.lens || lensName }))
-    // Count WHO reported what before the merge throws the duplicates away.
-    noteCorroboration(label, out)
-    // C2: raw, pre-dedupe attribution for result.lensReport — every finding this
-    // call actually returned, whatever happens to it later (dedupe, refutation,
-    // fix-loop dispute).
-    for (const f of out) lensRawFindings.push({ key: findingKey(f), lens: lensName, model, effort })
-    return { completed: true, findings: out }
-  }
-  lensDied = true
+function blockedTaskFromMissingRunArtifacts(t, missing) {
   return {
-    completed: false,
-    findings: unit.lenses.map((l) => ({
-      file: '(review)',
-      severity: 'blocker',
-      phase: 'Gate & Review',
-      lens: l,
-      summary: `Review lens "${l}" did not complete${tag ? ` (${tag} pass)` : ''} — the change is un-reviewed on this dimension`,
-      detail: 'The review agent died or was skipped, so no findings exist for this lens. Do not treat the change as clean; re-run the pipeline or review this dimension manually.',
-    })),
+    ...t,
+    blocked: true,
+    status: 'open',
+    clean: false,
+    blockerFindings: [
+      {
+        file: '(run-artifacts)',
+        severity: 'blocker',
+        phase: 'Implement',
+        summary: 'RUN ARTIFACTS MISSING -- the run was stopped before this task ran rather than cascading into a confusing per-task failure.',
+        detail: 'This run\'s build/test plan path(s) no longer exist on disk: ' + missing.join(', ') + '. They were present at Baseline; task-brief.mjs and review-pack.mjs cannot run without them, so the run aborted at a wave boundary instead of letting every remaining task fail independently.',
+      },
+    ],
   }
 }
-
-// Files the reviewers are looking at, partitioned by risk. Only used by the
-// cascade; the default path scopes nothing and every unit sees the whole change.
-const manifestPaths = manifestResult.files.map((f) => f.path)
-const lowRiskFiles = manifestPaths.filter((p) => fileRisk(p) === 'LOW')
-const highRiskFiles = manifestPaths.filter((p) => fileRisk(p) !== 'LOW')
-let cascadeAudit = null
-
-// One review stage over a set of units. Off the cascade this is a single
-// concurrent fan-out at the review model over the whole change — unchanged.
-async function reviewStage(units, stageTag) {
-  if (!units.length) return { findings: [], agents: 0 }
-  // No cascade, or no manifest to partition on: one concurrent fan-out at the
-  // review model over the WHOLE change. Without a file list the cascade would
-  // review nothing at all, and the floor is not negotiable — so it falls back.
-  if (!CFG.cascadeReview || !manifestPaths.length) {
-    if (CFG.cascadeReview) log('Cascade review: no manifest to partition on — falling back to a full review at the review model')
-    // A8: warm every distinct model this wave is about to use, THEN compute the
-    // effort each MODEL FAMILY shares (its deepest unit's — C1, 2026-09-11c),
-    // before the fan-out.
-    await warmModels(units.map((u) => unitModel(u.lenses)), 'Gate & Review')
-    const waveEffByModel = CFG.uniformLensEffort ? waveEffortByModel(units) : null
-    const out = await runConcurrent(units.map((u) => () => {
-      const model = unitModel(u.lenses)
-      return runReviewUnit(u, model, null, stageTag, undefined, waveEffByModel ? waveEffByModel.get(model) : null)
-    }))
-    return { findings: [].concat(...out.map((o) => o.findings)), agents: units.length }
-  }
-  // NOTE: the cascade partitions and the spot audit predate bugfix mode — they get no radius pack and feed no corroboration count. Latent while cascadeReview is off.
-  // MEASURED TRADE (CFG.cascadeReview): the cheap model takes the LOW-risk
-  // partition for breadth; the review model takes HIGH risk plus every file the
-  // cheap pass flagged. What this gives up: a subtle defect in a LOW-risk file
-  // that the cheap pass misses is never seen by the review model. The spot audit
-  // below is the measurement of exactly that.
-  let out = []
-  let agents = 0
-  let flagged = []
-  // E5 (owner ruling 2026-09-11, wave 3): the cascade path used to skip BOTH the
-  // A8 cache warm-up and the A8 per-model-family uniform effort — every unit ran
-  // cold, and effort came from unitEffort(u.lenses) per unit instead of one shared
-  // (deepest) figure per model family. Warm every distinct model EITHER partition
-  // is about to use, and compute the same waveEffByModel the non-cascade branch
-  // above uses, BEFORE either fan-out — so flipping CFG.cascadeReview can never
-  // reintroduce a cold, mixed-effort wave.
-  await warmModels([CFG.cascadeModel, ...units.map((u) => unitModel(u.lenses))], 'Gate & Review')
-  const cascadeEffByModel = CFG.uniformLensEffort ? waveEffortByModel(units) : null
-  if (lowRiskFiles.length) {
-    const lowOut = await runConcurrent(units.map((u) => () => runReviewUnit(u, CFG.cascadeModel, lowRiskFiles, `${stageTag || 'cascade'}-low`, undefined, cascadeEffByModel ? cascadeEffByModel.get(CFG.cascadeModel) : null)))
-    agents += units.length
-    const lowFindings = [].concat(...lowOut.map((o) => o.findings))
-    out = out.concat(lowFindings)
-    flagged = uniquePaths(lowFindings.map((f) => f.file).filter(isRealPath))
-  }
-  // The deep pass owns the HIGH-risk partition, everything the cheap pass flagged,
-  // AND every changed file the preflight manifest never listed. Both partitions are
-  // drawn from that manifest, which predates the test-authoring and implementation
-  // phases, so a file those phases created belongs to neither — it would otherwise
-  // be reviewed by no lens at all, a coverage loss the spot audit (sampled from the
-  // same manifest list) is structurally blind to. It therefore runs even when the
-  // deep scope is empty: the unlisted remainder is still somebody's job.
-  const deepScope = uniquePaths([...highRiskFiles, ...flagged])
-  const highOut = await runConcurrent(units.map((u) => () => runReviewUnit(u, unitModel(u.lenses), deepScope, `${stageTag || 'cascade'}-high`, true, cascadeEffByModel ? cascadeEffByModel.get(unitModel(u.lenses)) : null)))
-  agents += units.length
-  out = out.concat([].concat(...highOut.map((o) => o.findings)))
-  // Spot audit: the review model re-reads a deterministic sample of what the cheap
-  // pass cleared — the three largest LOW-risk files by changed lines (no randomness
-  // exists in this runtime). missedFindings is the number that says whether this
-  // trade is ever worth turning on by default.
-  const cleared = lowRiskFiles
-    .filter((p) => flagged.indexOf(p) === -1)
-    .sort((a, b) => (changedLinesOf(b) - changedLinesOf(a)) || (a < b ? -1 : a > b ? 1 : 0))
-    .slice(0, 3)
-  if (cleared.length) {
-    agents++
-    const auditReport = await askAgent(opusCapped(spotAuditPrompt(cleared, implSummaries), CFG.reviewModel), {
-      label: `cascade-audit${stageTag ? `:${stageTag}` : ''}`, phase: 'Gate & Review', model: CFG.reviewModel, effort: CFG.effort.cascadeAudit, schema: FINDINGS_SCHEMA,
-    })
-    const auditFindings = auditReport ? (auditReport.findings || []).map((f) => ({ ...f, phase: 'Gate & Review' })) : []
-    out = out.concat(auditFindings)
-    const prior = cascadeAudit || { sampled: [], missedFindings: 0, completed: true }
-    cascadeAudit = {
-      sampled: uniquePaths([...prior.sampled, ...cleared]),
-      // A dead auditor measured nothing — say so instead of reporting 0 missed.
-      missedFindings: auditReport ? prior.missedFindings + auditFindings.length : prior.missedFindings,
-      completed: prior.completed && !!auditReport,
+for (const wave of waves) {
+  const missingArtifacts = await checkRunArtifactsPresent('run-artifacts-check:' + (wave[0] ? wave[0].id : 'wave'))
+  if (missingArtifacts) {
+    // Each remaining task gets its own (run-artifacts) blockerFinding below,
+    // which the existing per-task merge (`if (Array.isArray(tr.blockerFindings))
+    // findings.push(...tr.blockerFindings)`) already carries into
+    // result.remainingFindings -- the same path AX/BA's per-task findings
+    // use, so no separate top-level push is needed here.
+    console.log('[run-artifacts] MISSING: ' + missingArtifacts.join(', ') + ' -- stopping the run instead of cascading every remaining task into blocked')
+    for (const t of waveTasks) {
+      if (resultsById.has(t.id)) continue
+      const blocked = blockedTaskFromMissingRunArtifacts(t, missingArtifacts)
+      resultsById.set(t.id, blocked)
+      taskResults.push(blocked)
     }
-    if (!auditReport) log('!!! Cascade spot audit died — the cascade ran WITHOUT the evidence that justifies it')
-    else log(`Cascade spot audit: ${auditFindings.length} defect(s) the cheap pass missed in ${cleared.join(', ')}`)
+    break
   }
-  return { findings: out, agents }
+  await warmUpWave(pairsFor(wave), 'Implement')
+  const rawWaveResults = await parallel(wave.map((t) => () => runTask(t)))
+  // E8 safety net: runTask (above) is now built to never reject or resolve
+  // empty, but parallel() is a Workflow-provided primitive this engine does
+  // not control -- if a slot still comes back null/undefined (a rejected
+  // thunk the harness swallowed, a killed worker, anything), map it back to
+  // the task actually scheduled in that slot rather than let a downstream
+  // consumer (progressLineFor, resultsById, remainingFindings) dereference a
+  // null.
+  const waveResults = rawWaveResults.map((r, i) => r || blockedTaskFromEngineFailure(wave[i], 'Implement', new Error('parallel() returned no result for this task slot')))
+  for (const r of waveResults) resultsById.set(r.id, r)
+  taskResults.push(...waveResults)
 }
 
-// MEASURED TRADE (CFG.densityEscalation): run the floor lenses first; if they find
-// nothing on a green, small diff, skip the rest on the defect-clustering argument.
-// Off by default. escalation.lensesSkipped is what keeps a skipped lens visible.
-let escalation = { enabled: !!CFG.densityEscalation, triggered: false, lensesSkipped: [], reason: '', threshold: CFG.densityThreshold }
-if (!CFG.densityEscalation) {
-  const all = await reviewStage(reviewUnits, '')
-  findings.push(...all.findings)
-  reviewAgents += all.agents
-} else {
-  const floorUnits = reviewUnits.filter(isFloorUnit)
-  const extraUnits = reviewUnits.filter((u) => !isFloorUnit(u))
-  const floorOut = await reviewStage(floorUnits, 'floor')
-  findings.push(...floorOut.findings)
-  reviewAgents += floorOut.agents
-  const totalChangedLines = manifestResult.files.reduce((n, f) => n + (f.changedLines || 0), 0)
-  // An UNKNOWN diff size counts as over the threshold: no manifest, no escalation.
-  const sizeKnown = manifestResult.completed && manifestResult.files.length > 0
-  const small = sizeKnown && manifestResult.files.length <= CFG.densityThreshold.files && totalChangedLines <= CFG.densityThreshold.changedLines
-  const floorClean = floorOut.findings.length === 0 && !lensDied
-  const reason = !extraUnits.length
-    ? 'no further lenses to skip'
-    : !floorClean
-      ? 'the floor lenses reported findings (or one died), so defect density is not zero'
-      : gateIssue
-        ? 'the gate is not green'
-        : !sizeKnown
-          ? 'the diff size is unknown (no manifest) — unknown counts as over the threshold'
-          : !small
-            ? `the diff is over the stated threshold (${manifestResult.files.length} files / ${totalChangedLines} changed lines vs ${CFG.densityThreshold.files} / ${CFG.densityThreshold.changedLines})`
-            : ''
-  if (extraUnits.length && !reason) {
-    escalation = { ...escalation, triggered: true, lensesSkipped: [].concat(...extraUnits.map((u) => u.lenses)), reason: `floor lenses clean, gate green, diff within ${CFG.densityThreshold.files} files / ${CFG.densityThreshold.changedLines} changed lines` }
-    log(`!!! Density escalation: SKIPPED lens(es) ${escalation.lensesSkipped.join(', ')} — ${escalation.reason}. These dimensions were NOT reviewed.`)
-  } else {
-    escalation = { ...escalation, triggered: false, reason: reason || 'no further lenses to skip' }
-    const extraOut = await reviewStage(extraUnits, 'extra')
-    findings.push(...extraOut.findings)
-    reviewAgents += extraOut.agents
+// ---------- A10 (revert-probe): sequential probes + ONE checksum:after ----------
+function revertProbePrompt(t) {
+  return [
+    'You are the FIX-REVERT PROBE for task ' + t.id + '. The fix in "' + t.file + '" is what makes a named test pass. You will back the file up OUTSIDE the repo, revert it to its COMMITTED (HEAD) content, prove the named test FAILS without the fix, then restore your backup exactly.',
+    'Target file: ' + t.file,
+    'Test that MUST FAIL without the fix -- run ONLY this, nothing else: ' + t.test,
+    '1. CHECK IT IS TRACKED: run `git ls-files -- "' + t.file + '"`. If it prints nothing, or `git show HEAD:' + t.file + '` cannot produce content, report fallback="untracked", caught=false, restored=true, and STOP -- there is no committed version to revert to.',
+    '2. BACK UP, OUTSIDE THE REPO: copy the file into the OS temp directory under a unique name (a file copy, never git). Report that absolute path as backupPath.',
+    '3. REVERT: `git show HEAD:' + t.file + ' > "' + t.file + '"` (Git Bash, so the bytes land unchanged). NEVER use `git checkout`, `git restore`, `git stash` or `git reset` -- uncommitted work from this run lives elsewhere in this tree and those commands would destroy it.',
+    '4. RUN ONLY: ' + t.test + '. Reverting the fix re-introduces the bug, so the test MUST FAIL on an assertion -- caught=true ONLY then. A pass, a skip, or a collection/compile error means caught=false.',
+    '5. RESTORE: copy the backup back over "' + t.file + '". Again: never git checkout/restore/stash/reset.',
+    'Report caught, restored, evidence (the assertion failure message, or the output proving the test is blind to the fix), backupPath, and fallback (empty string unless step 1 applied). An independent checksum agent checks your restore afterward against the digest recorded before this run touched the file -- never claim restored:true without having actually compared the file to your backup.',
+  ].join('\n')
+}
+async function runRevertProbeTask(t) {
+  // E8: fold a thrown/rejected probe-agent call into the SAME null-response
+  // shape the `!res` branch below already handles -- a non-compliant probe
+  // agent must not crash the sequential revert-probe loop.
+  let res = null
+  try {
+    res = await askAgent(revertProbePrompt(t), { label: 'probe:' + t.id, phase: 'Mutation probe', model: M.haiku, effort: CFG.effort.probe, schema: REVERT_PROBE_SCHEMA })
+  } catch (e) {
+    res = null
   }
-}
-// Everything above came from THIS phase; `carried` below did not.
-const reviewRawCount = findings.length
-// CORROBORATION, counted in both modes (it is free — the lenses have already run) and
-// acted on only in bugfix mode. In bugfix mode the surviving finding also CARRIES the
-// count, so the planner and the fixer see that several independent lenses saw it; in
-// feature mode nothing reads it, so nothing is added to the finding and every later
-// prompt stays byte-identical.
-let corroboratedFindings = 0
-for (const set of corroborationOf.values()) if (set.size > 1) corroboratedFindings++
-// A3 (owner ruling 2026-09-11): corroboratedBy is attached under the SAME flag
-// that makes it act on control flow in Verify (CFG.skipRefuteOnCorroborated) —
-// originally bugfix-only (`if (bugfix)`), now general. false restores exactly
-// the old bugfix-only annotation.
-if (CFG.skipRefuteOnCorroborated) {
-  findings = findings.map((f) => {
-    const n = corroborationCount(f)
-    return n > 1 ? { ...f, corroboratedBy: n } : f
-  })
-  if (corroboratedFindings) log(`Corroboration: ${corroboratedFindings} finding(s) were reported by 2+ independent lenses — they skip pre-refutation in Verify and go straight to the refute-first fixers`)
-}
-// Blockers raised before implementation (test authoring, red gate) join the loop here.
-findings.push(...carried)
-findings = dedupe(findings)
-
-// Blocked/partial packages and gate failures become findings so the fix loop handles them.
-for (const r of implResults) {
-  if (r.status !== 'done') {
-    findings.push({ file: '(implementation)', severity: 'blocker', phase: 'Implement', summary: `Package ${r.package} is ${r.status}`, detail: r.deviations || r.notes || 'no detail reported' })
-  }
-}
-// The VERDICT reads gateProblem(), never the agent's raw `pass`. A command that
-// already failed on the untouched baseline tree is a broken COMMAND, not a defect:
-// it can never become a '(gate)' blocker and can never make `clean` false — that is
-// the whole point of the baseline gate. gateProblem still fails a dead gate agent
-// and a pass:false with no per-command evidence. gateIssue is exactly
-// gateProblem(gate) for the gate as it now stands (re-read after any build fix).
-if (gateIssue) {
-  findings.push({ file: '(gate)', severity: 'blocker', phase: 'Gate & Review', summary: 'Verification gate failed', detail: gateIssue })
-}
-log(`Gate ${gate.skipped ? 'skipped (no commands)' : gateIssue ? 'FAILED' : 'passed'}; ${findings.length} raw finding(s) from ${reviewAgents} review-phase agent(s) over ${lenses.length} lens(es)`)
-// gateGreen gates the ONCE-PER-RUN C1 snapshot commit: only Gate & Review ever
-// passes it, and only a truly green gate (no gateIssue) offers the commit.
-await endPhase('Gate & Review', reviewAgents, reviewRawCount + (gateIssue ? 1 : 0), !gateIssue)
-
-// ═══════════ Phase 5: Verify — adversarial refutation (major only) ═══════════
-// Synthetic findings ('(gate)', '(implementation)', '(review)', '(tests)', '(red-gate)')
-// are facts, not opinions — they skip refutation.
-let verifyStats = {
-  ran: false, mode: CFG.verify.mode, lazy: !!CFG.lazySecondVote,
-  judged: 0, dropped: 0, votesCast: 0, firstVoteRefuted: 0, firstVoteRefutedRate: null, tieBreaks: 0,
-  locationChecked: 0, locationInvalid: 0, preRefuted: 0, deferredToFixer: 0,
-  disputed: 0, disputesDropped: 0, disputesUpheld: 0,
-  // How many findings 2+ independent lenses reported (counted in BOTH modes), and how
-  // many of those skipped pre-refutation because of it (bugfix mode only).
-  corroborated: corroboratedFindings, corroboratedSkipped: 0,
-  // FABLE BRIEF CAP (CFG.caps.fableBriefBytes): true if any tie-break judge's
-  // brief in this run (Verify phase or the Fix-phase dispute slate) was over
-  // the byte cap and had to be truncated.
-  briefTruncated: false,
-}
-// effort.refute is never lowered below medium: this verdict decides whether a
-// real blocker gets thrown away. A finding on a HIGH-risk file gets high.
-const refuteEffort = (f) => (isHighRisk(f.file) ? CFG.effort.refuteHighRisk : CFG.effort.refute)
-// TOKEN-CLASS ROUTING (owner ruling 2026-09-10, CFG.routing). Opus is reserved
-// for where a wrongly-dropped finding is expensive: a blocker or major finding
-// on a HIGH-risk file. Everything else — a non-HIGH-risk file, or a minor
-// finding even on a HIGH-risk one — runs the same verdict on the cheaper
-// Sonnet tier, at the same `high` effort.
-const refuteModelFor = (f) => (isHighRisk(f.file) && (f.severity === 'blocker' || f.severity === 'major') ? CFG.reviewModel : CFG.routing.routineRefuterModel)
-const castVote = (f, i, phaseName) => {
-  const model = refuteModelFor(f)
-  return askAgent(opusCapped(refutePrompt(f), model), { label: `refute${i + 1}:${f.file}`, phase: phaseName, model, effort: refuteEffort(f), schema: VERDICT_SCHEMA })
-}
-
-// THE SLATE. Judges a list of findings and returns { kept, dropped, agents, votesCast,
-// firstRefuted, tieBreaks }. First votes are cast ONE REFUTER PER FILE (the plan,
-// the prefix and the file are read once for every finding on it); only a first
-// vote to REFUTE buys the rest of the slate for that finding, and a split goes to
-// the Fable judge. Used before the fixer (HIGH-risk / invalid-location findings)
-// and after it (findings a fixer disputed). The drop rule is identical in both
-// places: the FULL slate survived and agreed, or the judge ruled.
-async function judgeFindings(list, phaseName) {
-  const out = { kept: [], dropped: [], agents: 0, votesCast: 0, firstRefuted: 0, tieBreaks: 0 }
-  if (!list.length) return out
-  const lazy = !!CFG.lazySecondVote && votes > 1
-  const firstVerdicts = new Map()
-  if (CFG.verify.batchPerFile) {
-    const groups = groupByFile(list)
-    await runConcurrent(groups.map(([fileKey, group]) => async () => {
-      out.agents++
-      out.votesCast += group.length
-      const effort = group.some((f) => isHighRisk(f.file)) ? CFG.effort.refuteHighRisk : CFG.effort.refute
-      // Same rule as castVote's refuteModelFor, at group granularity: Opus only
-      // when this file is HIGH risk AND at least one finding on it is blocker/major.
-      const model = group.some((f) => isHighRisk(f.file) && (f.severity === 'blocker' || f.severity === 'major')) ? CFG.reviewModel : CFG.routing.routineRefuterModel
-      const r = await askAgent(opusCapped(refuteBatchPrompt(fileKey, group), model), {
-        label: `refute-batch:${fileKey}`, phase: phaseName, model, effort, schema: BATCH_VERDICT_SCHEMA,
-      })
-      const byIndex = new Map((r && Array.isArray(r.verdicts) ? r.verdicts : []).map((v) => [v.index, v]))
-      // A missing verdict is no evidence — the finding is kept.
-      group.forEach((f, i) => firstVerdicts.set(f, byIndex.has(i) ? { refuted: byIndex.get(i).refuted === true, reason: byIndex.get(i).reason || '' } : null))
-    }))
-  } else {
-    await runConcurrent(list.map((f) => async () => {
-      out.agents++
-      out.votesCast++
-      const v = await castVote(f, 0, phaseName)
-      firstVerdicts.set(f, v ? { refuted: v.refuted === true, reason: v.reason || '' } : null)
-    }))
-  }
-  await runConcurrent(list.map((f) => async () => {
-    const first = firstVerdicts.get(f)
-    // LAZY SLATE: a first vote to keep — or a dead refuter, which is no evidence —
-    // ends it exactly as a full slate voting keep would have.
-    if (!first) { out.kept.push(f); return }
-    if (first.refuted === true) out.firstRefuted++
-    if (lazy && first.refuted !== true) { out.kept.push(f); return }
-    let valid = [first]
-    if (votes > 1) {
-      out.agents += votes - 1
-      out.votesCast += votes - 1
-      const rest = (await parallel(Array.from({ length: votes - 1 }, (_, i) => () => castVote(f, i + 1, phaseName))))
-        .filter(Boolean).map((v) => ({ refuted: v.refuted === true, reason: v.reason || '' }))
-      valid = [first, ...rest]
-    }
-    // Dropped only if the FULL slate of refuters survived and every one of them
-    // refuted it. A dead refuter is no-evidence, not a vote to discard — otherwise
-    // one dead agent silently lowers the bar for throwing away a real blocker.
-    let dropped = valid.length === votes && valid.every((v) => v.refuted)
-    // SPLIT vote with the full slate alive: instead of defaulting keep — which sends
-    // a disputed maybe-false-positive to a fixer that would MUTATE working code over
-    // it — one Fable judge reads the finding plus every verdict and decides. A dead
-    // judge keeps the conservative default (keep). Owner policy 2026-08-31.
-    if (!dropped && valid.length === votes && valid.some((v) => v.refuted)) {
-      out.tieBreaks++
-      out.agents++
-      // The judge DECIDES from the evidence the refuters cited; it opens no file
-      // and runs nothing (Fable is the brain, never the hands — 2026-09-03).
-      // FABLE BRIEF CAP: this brief is bounded to CFG.caps.fableBriefBytes.
-      const tbBrief = capFableBrief(
-        [
-          `You are the tie-break judge on a disputed code-review finding. You decide from the material below only — do not read the repository or run commands. If the cited evidence does not settle it, keep the finding (refuted=false): a fixer re-verifies before touching code, and a real defect dropped here ships.`,
-          `The finding: ${JSON.stringify(f)}`,
-          `${valid.length} refuters SPLIT on it. Their verdicts and the evidence each cited, verbatim:`,
-          ...valid.map((v, i) => `- refuter ${i + 1}: refuted=${v.refuted} — ${v.reason}`),
-          `Weigh the arguments against each other and give the final verdict. refuted=true discards the finding permanently; refuted=false sends it to the fix loop.`,
-        ].join('\n'),
-      )
-      if (tbBrief.truncated) tieBreakBriefTruncated = true
-      const judge = await askAgent(
-        tbBrief.text,
-        { label: `tiebreak:${f.file}`, phase: phaseName, model: CFG.tieBreakModel, effort: CFG.effort.tieBreak, schema: VERDICT_SCHEMA },
-      )
-      if (judge && judge.refuted === true) dropped = true
-    }
-    // C2: judgeFindings is the ONE function both the initial Verify slate and the
-    // fix loop's dispute judging go through, so this single mark covers
-    // "overturned" (refuted/dropped) everywhere a finding can be dropped.
-    if (dropped) { out.dropped.push(f); dropReasonByKey.set(findingKey(f), true) }
-    else out.kept.push(f)
-  }), CFG.maxConcurrent)
-  return out
-}
-
-// Returns { findings, agents } computed from a SNAPSHOT of `findings` taken when it
-// starts, so it can run beside UI verify without either overwriting the other.
-async function runVerify() {
-  // Severity x risk gate (CFG.refuteSeverities). A finding skips the slate entirely
-  // only when it is BOTH below the severity bar AND on a file Baseline classed LOW
-  // risk — unknown/unlisted files are HIGH by construction. Skipped findings are
-  // NOT dropped: they go to the fix loop unrefuted.
-  const snapshot = findings.slice()
-  const refutable = (f) =>
-    CFG.refuteSeverities.indexOf(f.severity) !== -1 || isHighRisk(f.file)
-  const opinions = snapshot.filter((f) => !f.file.startsWith('(') && refutable(f))
-  const unrefuted = snapshot.filter((f) => !f.file.startsWith('(') && !refutable(f))
-  const facts = snapshot.filter((f) => f.file.startsWith('('))
-  if (unrefuted.length) {
-    log(`Verify: ${unrefuted.length} finding(s) below the refutation bar (severity not in [${CFG.refuteSeverities.join(', ')}] and LOW-risk file) go to the fix loop unrefuted`)
-  }
-  let agents = 0
-  // 1. LOCATION CHECK (Sonnet, one agent, mechanical): a finding that cites code
-  //    that is not there is pre-refuted whatever its risk class.
-  const invalid = new Set()
-  if (CFG.verify.locationCheck && opinions.length) {
-    agents++
-    const lc = await askAgent(locationCheckPrompt(opinions), {
-      label: 'location-check', phase: 'Verify', model: CFG.locationCheckModel, effort: CFG.effort.locationCheck, schema: LOCATION_SCHEMA,
-    })
-    for (const c of lc && Array.isArray(lc.checks) ? lc.checks : []) {
-      if (c && c.locationValid === false && opinions[c.index]) invalid.add(opinions[c.index])
-    }
-    verifyStats.locationChecked = lc ? opinions.length : 0
-    verifyStats.locationInvalid = invalid.size
-    if (!lc) log('Verify: location check agent died — no finding is treated as mis-cited; nothing is dropped on that account')
-  }
-  // 2. PARTITION. Pre-refute where a wrong fix is expensive (HIGH-risk file) or the
-  //    citation failed; defer the rest to the fixer, which refutes first and
-  //    escalates what it disputes to this same slate.
-  const wouldPreRefute = CFG.verify.mode === 'all'
-    ? opinions
-    : opinions.filter((f) => isHighRisk(f.file) || invalid.has(f))
-  //    A3 (owner ruling 2026-09-11, CFG.skipRefuteOnCorroborated): a finding 2+
-  //    independent lenses reported is not the kind a refuter overturns (F13: 16%
-  //    overturn rate overall; the top blocker was reported 6 times independently),
-  //    so it skips the pre-refutation slate even on a HIGH-risk file. It is NOT
-  //    dropped and NOT trusted: the fixer still refutes first, and anything it
-  //    disputes reaches the same adversarial slate. Originally bugfix-mode only
-  //    (`bugfix ? ... : []`); the flag makes it the general rule in feature mode too.
-  //    A MIS-CITED finding is pre-refuted whatever its corroboration (owner ruling
-  //    2026-09-03): several lenses can echo the same wrong line out of the same hunk,
-  //    and the location signal already exists and costs nothing to honour.
-  const corroboratedSkip = CFG.skipRefuteOnCorroborated ? wouldPreRefute.filter((f) => !invalid.has(f) && corroborationCount(f) >= 2) : []
-  const corroboratedButMisCited = CFG.skipRefuteOnCorroborated ? wouldPreRefute.filter((f) => invalid.has(f) && corroborationCount(f) >= 2) : []
-  if (corroboratedButMisCited.length) {
-    log(`Verify: ${corroboratedButMisCited.length} corroborated finding(s) are STILL pre-refuted — the location check could not find the code they cite (${corroboratedButMisCited.map((f) => `${f.file}:${f.line || '?'}`).join(', ')})`)
-  }
-  const preRefute = corroboratedSkip.length ? wouldPreRefute.filter((f) => corroboratedSkip.indexOf(f) === -1) : wouldPreRefute
-  if (corroboratedSkip.length) {
-    log(`Verify: ${corroboratedSkip.length} corroborated finding(s) skip pre-refutation (${corroboratedSkip.map((f) => `${f.file} ×${corroborationCount(f)}`).join(', ')}) — they go to the refute-first fixer, which escalates anything it disputes`)
-  }
-  const deferred = opinions
-    .filter((f) => preRefute.indexOf(f) === -1)
-    .map((f) => ({ ...f, verifyDeferred: true }))
-  const marked = preRefute.map((f) => (invalid.has(f) ? { ...f, locationInvalid: true } : f))
-  // 3. THE SLATE on the pre-refutable set.
-  const j = await judgeFindings(marked, 'Verify')
-  agents += j.agents
-  verifyStats = {
-    ...verifyStats,
-    ran: true,
-    judged: marked.length,
-    dropped: j.dropped.length,
-    votesCast: j.votesCast,
-    firstVoteRefuted: j.firstRefuted,
-    firstVoteRefutedRate: marked.length ? Math.round((j.firstRefuted / marked.length) * 1000) / 1000 : null,
-    tieBreaks: j.tieBreaks,
-    preRefuted: marked.length,
-    deferredToFixer: deferred.length,
-    corroboratedSkipped: corroboratedSkip.length,
-    briefTruncated: tieBreakBriefTruncated,
-  }
-  log(`Adversarial verify (${CFG.verify.mode}, per-file slate): ${marked.length} finding(s) pre-refuted with ${j.votesCast} vote(s) from ${j.agents} agent(s), ${j.dropped.length} dropped, ${j.tieBreaks} tie-break(s); ${deferred.length} LOW-risk finding(s) deferred to the refute-first fixer${invalid.size ? `; ${invalid.size} mis-cited` : ''}${unrefuted.length ? `; ${unrefuted.length} kept unrefuted below the bar` : ''}`)
-  // `unrefuted` and `deferred` are carried through verbatim — skipping the slate
-  // must never be a silent way to lose a finding. This phase authors no findings.
-  return { findings: [...facts, ...j.kept, ...deferred, ...unrefuted], agents }
-}
-
-// ═══════════ Phase 6: UI verify — drive the real UI (skipped when uiVerify is absent) ═══════════
-// Evidence from a running browser, not an opinion about source — these findings
-// skip refutation and go straight into the fix loop.
-let uiVerifyResult = { ran: false, completed: false, viewports: [], findings: [] }
-const UI_DEAD = {
-  file: '(ui-verify)',
-  severity: 'blocker',
-  phase: 'UI verify',
-  summary: 'UI verification did not complete — the change was never exercised in a browser',
-  detail: 'The UI verification agent died or was skipped, so no browser evidence exists for these flows. Do not treat the change as clean; re-run this phase or drive the flows manually. Check that no dev server or browser was left running.',
-}
-// Drive (Sonnet collects evidence) then judge (Opus rules on it). Returns
-// { findings, evidence, completed, agents } — the caller tags and appends.
-async function uiDriveAndJudge(priorFindings) {
-  const rerun = Array.isArray(priorFindings)
-  const evidence = await askAgent(uiDrivePrompt(uiCfg, priorFindings), {
-    label: rerun ? 'ui-redrive' : 'ui-drive', phase: 'UI verify', model: CFG.uiDriverModel, effort: CFG.effort.uiDrive, schema: UI_EVIDENCE_SCHEMA,
-  })
-  if (!evidence) return { findings: [], evidence: null, completed: false, agents: 1 }
-  // TOKEN-CLASS ROUTING (owner ruling 2026-09-10): the UI judge stays on
-  // Sonnet at high unless the manifest has a HIGH-risk file, in which case it
-  // escalates to Opus like every other role in CFG.routing.
-  const judgeModel = riskSummary.high > 0 ? CFG.reviewModel : CFG.routing.uiJudgeModel
-  const verdict = await askAgent(opusCapped(uiJudgePrompt(uiCfg, evidence, priorFindings), judgeModel), {
-    label: rerun ? 'ui-rejudge' : 'ui-judge', phase: 'UI verify', model: judgeModel, effort: CFG.effort.uiJudge, schema: FINDINGS_SCHEMA,
-  })
-  if (!verdict) {
-    // Evidence exists but nobody ruled on it — that is unverified, never clean.
+  if (!res) {
     return {
-      findings: [{ file: '(ui-verify)', severity: 'blocker', summary: 'UI evidence was collected but the judge did not rule on it — the browser pass is unverified', detail: `Evidence bundle: ${JSON.stringify(evidence).slice(0, 2000)}`, fixComplexity: 'judgment' }],
-      evidence, completed: false, agents: 2,
+      ...t,
+      status: 'open',
+      blocked: true,
+      clean: false,
+      probe: null,
+      rulings: [makeRuling(t.id, 'unverified', 'the revert-probe agent died or was skipped', 'a real restore failure, or a test that does not actually catch this fix, could go undetected')],
+      blockerFindings: [
+        {
+          file: '(mutation)',
+          severity: 'blocker',
+          phase: 'Mutation probe',
+          summary: 'Task ' + t.id + '\'s revert-probe agent died or was skipped.',
+          detail: 'no evidence exists that "' + t.test + '" actually catches, or that "' + t.file + '" was restored after, this probe',
+        },
+      ],
     }
   }
-  return { findings: dedupe(verdict.findings || []), evidence, completed: true, agents: 2 }
-}
-
-// Returns { add, agents, raw } — the findings to append, never appended itself,
-// so it can run beside Verify.
-async function runUiVerify() {
-  const uiViewports = uiCfg.viewports && uiCfg.viewports.length ? uiCfg.viewports : ['desktop']
-  log(`UI verify: ${(uiCfg.flows || []).length || 1} flow(s) at ${uiViewports.join(', ')}${uiCfg.url ? ` against ${uiCfg.url}` : ''} — ${CFG.uiDriverModel} drives, ${riskSummary.high > 0 ? CFG.reviewModel : CFG.routing.uiJudgeModel} judges`)
-  const out = await uiDriveAndJudge()
-  // Tag them: a UI finding carries a real source path, so it lands in the generic
-  // per-file fix group — the tag is what tells that fixer the result must be
-  // re-observed in a browser, not re-read in the source.
-  const uiFindings = out.findings.map((f) => ({ ...f, source: 'ui-verify', phase: 'UI verify' }))
-  uiVerifyResult = { ran: true, completed: out.completed, viewports: uiViewports, evidence: out.evidence, findings: uiFindings, reVerify: null }
-  if (out.evidence) {
-    log(`UI verify: ${uiFindings.length} finding(s) judged from the driver's evidence (${(out.evidence.flows || []).length} flow×viewport record(s), completed=${out.evidence.completed})`)
-    return { add: uiFindings, agents: out.agents, raw: uiFindings.length }
-  }
-  log(`UI verify: driver died — recorded as a blocker`)
-  return { add: [UI_DEAD], agents: out.agents, raw: 1 }
-}
-
-// ═══════════ Sibling sweep — the same defect in a second place (bugfix mode) ═══════════
-// The bug being fixed has a SHAPE, and the shape usually repeats. Two agents: a cheap
-// grep for the shape, then a judge that says which hits are the same defect live. Its
-// findings are NOT pre-refuted — the fixers refute first and the dispute slate judges
-// what they dispute, which is the cheaper place to catch a false positive here.
-let siblingSweep = {
-  ran: false,
-  // supplied = the raw array length BEFORE normalisation; patterns = AFTER (what
-  // actually runs). Invariant: patterns === args.siblingPatterns.length, or the
-  // blocker below is present — the two are allowed to differ ONLY with evidence.
-  supplied: rawSiblingPatterns.length,
-  patterns: siblingPatterns.length,
-  hits: 0,
-  findings: 0,
-  skipped: !siblingPatterns.length
-    ? (rawSiblingPatterns.length ? 'unusable-patterns' : 'no-patterns')
-    : bugfix ? null : 'feature-mode',
-}
-if (siblingPatterns.length && !bugfix) {
-  log('Note: args.siblingPatterns is a BUGFIX-MODE argument — this run is in feature mode, so no sibling sweep ran and the patterns were ignored')
-}
-// Returns { add, agents, raw } so it can run beside Verify / UI verify.
-async function runSiblingSweep() {
-  log(`Sibling sweep: ${siblingPatterns.length} pattern(s) — ${CFG.siblingGrepModel}@${CFG.effort.siblingGrep} greps, ${CFG.reviewModel}@${CFG.effort.siblingJudge} judges`)
-  let agents = 1
-  const grep = await askAgent(siblingGrepPrompt(siblingPatterns), {
-    label: 'sibling-grep', phase: 'Verify', model: CFG.siblingGrepModel, effort: CFG.effort.siblingGrep, schema: SIBLING_HITS_SCHEMA,
-  })
-  if (!grep) {
-    siblingSweep = { ...siblingSweep, ran: false, skipped: 'grep-died' }
-    log('!!! Sibling sweep: the grep agent died or was skipped — no sibling of this defect was looked for (non-blocking)')
-    return { add: [], agents, raw: 0 }
-  }
-  const hits = (Array.isArray(grep.hits) ? grep.hits : []).filter((h) => h && h.file)
-  const truncated = Array.isArray(grep.truncated) ? grep.truncated.filter(Boolean) : []
-  if (truncated.length) log(`Sibling sweep: hit list CAPPED for pattern(s) ${truncated.join(', ')} — there may be more siblings than were judged`)
-  if (!hits.length) {
-    siblingSweep = { ...siblingSweep, ran: true, hits: 0, findings: 0, skipped: null, truncated }
-    log('Sibling sweep: no match anywhere else in the repo — the defect looks unique to the file being fixed')
-    return { add: [], agents, raw: 0 }
-  }
-  agents++
-  const judged = await askAgent(opusCapped(siblingJudgePrompt(siblingPatterns, hits), CFG.reviewModel), {
-    label: 'sibling-judge', phase: 'Verify', model: CFG.reviewModel, effort: CFG.effort.siblingJudge, schema: SIBLING_VERDICT_SCHEMA,
-  })
-  if (!judged) {
-    // Hits nobody ruled on are not defects and not clearances — they are unjudged.
-    // Recorded loudly; the sweep is a breadth aid and never blocks the fix it rides on.
-    siblingSweep = { ...siblingSweep, ran: false, hits: hits.length, findings: 0, skipped: 'judge-died', truncated }
-    log(`!!! Sibling sweep: the judge died or was skipped — ${hits.length} hit(s) of this defect's shape are UNJUDGED and reached no fixer (non-blocking; re-run the sweep or read them by hand)`)
-    return { add: [], agents, raw: 0 }
-  }
-  const byIndex = new Map((Array.isArray(judged.verdicts) ? judged.verdicts : []).map((v) => [v.index, v]))
-  const add = []
-  const counts = { defect: 0, guarded: 0, unrelated: 0, unjudged: 0 }
-  hits.forEach((h, i) => {
-    const v = byIndex.get(i)
-    if (!v) { counts.unjudged++; return }
-    if (v.verdict !== 'defect') { counts[v.verdict === 'same-class-but-guarded' ? 'guarded' : 'unrelated']++; return }
-    counts.defect++
-    add.push({
-      file: h.file,
-      line: typeof h.line === 'number' ? h.line : 0,
-      severity: v.severity === 'blocker' || v.severity === 'minor' ? v.severity : 'major',
-      // file:line lead the summary so two siblings never dedupe into one finding.
-      summary: `${h.file}:${h.line || '?'} carries the same defect as the bug being fixed — ${String(v.evidence || '').slice(0, 140)}`,
-      detail: `Found by the sibling sweep with pattern /${h.pattern || '?'}/. Matching line: ${String(h.excerpt || '').slice(0, 200)}. Judge's evidence: ${v.evidence || '(none given)'}. This is a SECOND occurrence of the defect this run is fixing; it was not pre-refuted, so verify it in the code before changing anything.`,
-      fixHint: 'Apply the same fix (or the same guard) here, in the same shape as the primary fix, and cover it with a test.',
-      // The same decision the primary fix needs: judgment, not transcription.
-      fixComplexity: 'judgment',
-      source: 'sibling-sweep',
-      phase: 'Verify',
-    })
-  })
-  siblingSweep = { ...siblingSweep, ran: true, hits: hits.length, findings: add.length, skipped: null, truncated, verdicts: counts }
-  log(`Sibling sweep: ${hits.length} hit(s) — ${counts.defect} same defect, ${counts.guarded} same shape but guarded, ${counts.unrelated} unrelated${counts.unjudged ? `, ${counts.unjudged} left unjudged by the judge` : ''}`)
-  return { add, agents, raw: add.length }
-}
-
-// Verify (refuters read code) and UI verify (drives the app) are both read-only
-// with respect to the tree, so they run beside each other under one bracket. The
-// bugfix sibling sweep is read-only too, and joins whichever of them runs.
-const verifyWanted = votes > 0 && findings.length > 0
-const uiWanted = !!uiCfg
-const sweepWanted = wantSiblingSweep
-// A sweep that threw is not a sweep that found nothing.
-const sweepThrew = () => {
-  siblingSweep = { ...siblingSweep, ran: false, skipped: 'threw' }
-  log('!!! Sibling sweep threw — no sibling of this defect was looked for (non-blocking)')
-}
-if (verifyWanted && uiWanted) {
-  startPhase('Verify')
-  overlapInfo.verifyWithUiVerify = true
-  const [v, u, sw] = await parallel(sweepWanted ? [runVerify, runUiVerify, runSiblingSweep] : [runVerify, runUiVerify])
-  if (v) findings = v.findings
-  else log('!!! Verify threw — every finding is kept unrefuted')
-  if (u) findings.push(...u.add)
-  else { uiVerifyResult = { ...uiVerifyResult, ran: true, completed: false }; findings.push(UI_DEAD) }
-  if (sweepWanted) {
-    if (sw) findings.push(...sw.add)
-    else sweepThrew()
-  }
-  await endPhase('Verify', (v ? v.agents : 0) + (sw ? sw.agents : 0), sw ? sw.raw : 0)
-  markOverlapped('UI verify', 'Verify', u ? u.agents : 1, u ? u.raw : 1)
-} else if (verifyWanted) {
-  startPhase('Verify')
-  if (sweepWanted) {
-    const [v, sw] = await parallel([runVerify, runSiblingSweep])
-    if (v) findings = v.findings
-    else log('!!! Verify threw — every finding is kept unrefuted')
-    if (sw) findings.push(...sw.add)
-    else sweepThrew()
-    await endPhase('Verify', (v ? v.agents : 0) + (sw ? sw.agents : 0), sw ? sw.raw : 0)
-  } else {
-    const v = await runVerify()
-    findings = v.findings
-    await endPhase('Verify', v.agents, 0)
-  }
-} else if (uiWanted) {
-  startPhase('UI verify')
-  if (sweepWanted) {
-    // The sweep's agents are labelled phase 'Verify' (that is where they belong), but
-    // the Verify bracket never opened this run, so their tokens are counted here.
-    const [u, sw] = await parallel([runUiVerify, runSiblingSweep])
-    if (u) findings.push(...u.add)
-    else { uiVerifyResult = { ...uiVerifyResult, ran: true, completed: false }; findings.push(UI_DEAD) }
-    if (sw) findings.push(...sw.add)
-    else sweepThrew()
-    phaseStats['UI verify'].note = 'includes the bugfix sibling sweep, which ran beside it'
-    await endPhase('UI verify', (u ? u.agents : 1) + (sw ? sw.agents : 0), (u ? u.raw : 1) + (sw ? sw.raw : 0))
-  } else {
-    const u = await runUiVerify()
-    findings.push(...u.add)
-    await endPhase('UI verify', u.agents, u.raw)
-  }
-} else if (sweepWanted) {
-  startPhase('Verify')
-  const sw = await runSiblingSweep()
-  findings.push(...sw.add)
-  await endPhase('Verify', sw.agents, sw.raw)
-}
-if (sweepWanted) findings = dedupe(findings)
-
-// ═══════════ Phase 7: Mutation probe — prove the tests would catch a regression ═══════════
-// Major scale only. STRICTLY SEQUENTIAL: each probe leaves a deliberately broken
-// file on disk for the length of its test run, so two at once would poison each
-// other's results. Backup-and-restore by file copy ONLY — a git restore here
-// would wipe the uncommitted implementation this very run just produced.
-let mutationResult = {
-  ran: false, targets: 0, results: [], allCaught: true, allRestored: true,
-  // null ONLY when the phase never ran. false whenever the independent before/after
-  // digests did not prove the files came back — a dead checksum agent included.
-  restoredVerified: null,
-  checksumMismatches: [],
-  // Files whose pre-probe baseline was taken on different content than the probes
-  // themselves saw — something outside this run wrote the tree between the two. Not
-  // a restore failure, and never counted as one.
-  baselineDisturbed: [],
-  skippedTargets: [],
-  // A5: one entry per surviving mutant CFG.mutationRemediate attempted to fix;
-  // empty whenever the phase never ran, no target survived, or the flag is off.
-  remediation: [],
-  // Why the phase did not run, when it did not: 'small-scale' | 'no-targets' |
-  // 'risk-gated' (every target skipped) | null when it ran.
-  skipped: !mutationEnabled ? (scale !== 'major' ? 'small-scale' : 'no-targets') : null,
-}
-// RISK GATE. The red gate already proves each NEW test can fail for the right
-// reason; the probe proves the suite catches a regression. That evidence overlaps,
-// so the probe is spent only where it is not redundant: a HIGH-risk file, or a run
-// where the red gate never happened. EVERY skip is logged and recorded — a probe
-// that was silently skipped must never read like a probe that passed.
-const probeTargets = []
-const skippedProbes = []
-if (mutationEnabled) {
-  for (const t of mutationTargets) {
-    if (isHighRisk(t.file)) probeTargets.push(t)
-    // Only a red gate that actually went RED is the overlapping evidence this
-    // skip trades on. A red gate that ran and FAILED proved the opposite, so the
-    // probe is the run's last regression evidence — never skip it there.
-    else if (!redGateResult.ran || redGateResult.properlyRed !== true) probeTargets.push(t)
-    else skippedProbes.push({ file: t.file, test: t.test, reason: 'LOW-risk file and the red gate already proved these tests fail for the right reason — overlapping evidence, so no probe was spent here' })
-  }
-  for (const s of skippedProbes) log(`Mutation probe SKIPPED for ${s.file} (test "${s.test}") — ${s.reason}. This is NOT evidence that the test catches a regression.`)
-  if (!probeTargets.length) {
-    mutationResult = {
-      ...mutationResult,
-      targets: mutationTargets.length,
-      probed: 0,
-      skippedTargets: skippedProbes,
-      skipped: 'risk-gated',
-      note: 'Every target was skipped by the risk gate, so NO probe ran. allCaught/allRestored describe the probes that ran — here, none. This run has no mutation evidence.',
-    }
-    phaseStats['Mutation probe'].note = 'skipped: every target risk-gated (LOW-risk file and a red gate that already went red)'
-    log(`Mutation probe: all ${mutationTargets.length} target(s) skipped by the risk gate — the phase produced NO regression evidence this run`)
-  }
-}
-if (mutationEnabled && probeTargets.length) {
-  startPhase('Mutation probe')
-  const mutTargetFiles = uniquePaths(probeTargets.map((t) => t.file))
-  const mutFindingsAt = findings.length
-  log(`Mutation probe: ${probeTargets.length} of ${mutationTargets.length} target(s) probed (${skippedProbes.length} skipped by the risk gate), sequential; ${mutTargetFiles.length} file(s) checksummed before and after`)
-  // Step 1 — PRE-checksums, by an agent that only reads. This is the record the
-  // restore is judged against, taken before any file has been touched.
-  const preReport = await askAgent(checksumPrompt(mutTargetFiles, 'before'), {
-    label: 'mutation-checksum:before', phase: 'Mutation probe', model: CFG.gateModel, effort: CFG.effort.checksum, schema: CHECKSUM_SCHEMA,
-  })
-  const probes = []
-  for (const t of probeTargets) {
-    // BUGFIX MODE: a target marked revertFix already HAS the defect the test must
-    // catch — the committed content — so the probe reverts the fix instead of
-    // inventing a new defect. A file with no committed version to revert to (the
-    // manifest says untracked/planned) falls back to the standard mutation, recorded.
-    const wantsRevert = bugfix && t.revertFix === true
-    const noHead = wantsRevert && hasNoHeadContent(t.file)
-    const useRevert = wantsRevert && !noHead
-    if (noHead) log(`Fix-revert probe for ${t.file} FELL BACK to the standard mutation probe — the manifest reports it "${fileStatus(t.file)}", so there is no committed content to revert to`)
-    // TOKEN-CLASS ROUTING (owner ruling 2026-09-10): the probe is mechanical
-    // (inject one defect, verify it caught, restore) with one judgment call —
-    // CFG.routing.probeModel (Sonnet) at medium, not the review model.
-    const r = await askAgent(useRevert ? revertProbePrompt(t) : mutationPrompt(t), {
-      label: `mutate:${t.file}`, phase: 'Mutation probe', model: CFG.routing.probeModel, effort: CFG.effort.mutate, schema: MUTATION_SCHEMA,
-    })
-    // The probe agent may report its own fallback (its `git ls-files` check found no
-    // committed content). Either way the run records which procedure actually ran.
-    const agentFellBack = !!(r && r.fallback === 'untracked')
-    const kind = useRevert && !agentFellBack ? 'revert-fix' : 'mutation'
-    const fallbackNote = wantsRevert && (noHead || agentFellBack) ? 'untracked' : ''
-    // A dead probe may have left the file mutated — assume the worst, loudly.
-    const probe = r
-      ? { ...r, target: t.test, kind, ...(fallbackNote ? { fallback: fallbackNote } : {}) }
-      : { file: t.file, target: t.test, kind, ...(fallbackNote ? { fallback: fallbackNote } : {}), defect: `(unknown — ${kind === 'revert-fix' ? 'fix-revert' : 'mutation'} probe agent died)`, caught: false, restored: false, evidence: `The ${kind === 'revert-fix' ? 'fix-revert' : 'mutation'} probe agent died or was skipped. It may have left the file reverted or deliberately broken, and its backup copy in the OS temp directory (named "${kind === 'revert-fix' ? 'revertprobe' : 'mutprobe'}-*").` }
-    probes.push(probe)
-    // The backup lives in the OS temp directory, never beside the file — a leftover
-    // backup inside the repo becomes a shipped file.
-    const backupRef = probe.backupPath ? `"${probe.backupPath}"` : `the "${probe.kind === 'revert-fix' ? 'revertprobe' : 'mutprobe'}-*" copy of this file in the OS temp directory`
-    if (!probe.restored) {
-      log(`!!! MUTATION RESTORE FAILED for ${t.file} — a deliberate defect may still be in the working tree. Restore it from ${backupRef} by file copy; do NOT use git. Evidence: ${probe.evidence}`)
-      findings.push({
-        file: '(mutation)',
-        severity: 'blocker',
-        phase: 'Mutation probe',
-        // target keeps two unrestored files in the same directory from deduping
-        // into one finding — the summary alone is not a discriminator here.
-        target: t.file,
-        summary: `Mutation probe did not restore ${t.file} — a deliberate defect may still be in the working tree`,
-        detail: `Injected defect: ${probe.defect}. Evidence: ${probe.evidence}. Restore the file by copying ${backupRef} over it and byte-comparing them; NEVER use git checkout/restore/stash here, uncommitted implementation work would be destroyed.`,
-        fixHint: `cp ${backupRef} "${t.file}" then cmp -s the two, then delete the backup.`,
-      })
-    }
-    if (!probe.caught) {
-      const reverted = probe.kind === 'revert-fix'
-      findings.push({
-        file: '(mutation)',
-        severity: 'blocker',
-        phase: 'Mutation probe',
-        target: t.file,
-        summary: reverted
-          ? `Test "${t.test}" still PASSED with the fix in ${t.file} reverted to its committed content — it does not actually cover the fix`
-          : `Test "${t.test}" did not fail when ${t.file} was deliberately broken — it does not actually cover this behavior`,
-        detail: reverted
-          ? `Protected behavior: ${t.behavior || '(as named in the test plan)'}. The probe put the file back to HEAD, which re-introduces the bug, and the test still did not fail: ${probe.evidence}. The test passes for a reason other than the fix — it is not a regression test for this bug.`
-          : `Protected behavior: ${t.behavior || '(as named in the test plan)'}. Injected defect: ${probe.defect}. Result: ${probe.evidence}. The test is passing for a reason other than the behavior it claims to prove.`,
-        fixHint: 'Strengthen or add the test so this exact defect turns it red; do not weaken the implementation to match a weak test.',
-      })
-    }
-  }
-  // Step 3 — POST-checksums, by a second read-only agent that never touched a file.
-  const postReport = await askAgent(checksumPrompt(mutTargetFiles, 'after'), {
-    label: 'mutation-checksum:after', phase: 'Mutation probe', model: CFG.gateModel, effort: CFG.effort.checksum, schema: CHECKSUM_SCHEMA,
-  })
-  // The SCRIPT compares step 1 against step 3. A probe agent's own `restored: true`
-  // is a self-report by the one party that could have broken the file — it can never
-  // clear itself. Absent evidence is UNVERIFIED, never restored.
-  const preMap = checksumMap(preReport)
-  const postMap = checksumMap(postReport)
-  const checksumMismatches = []
-  const baselineDisturbed = []
-  // THE BASELINE CAN MOVE UNDER US. The before-agent digests the tree at one moment;
-  // anything outside this run that writes a file between then and the probes makes an
-  // untouched file look unrestored, and the fixer that finding dispatches is told to
-  // "reconstruct the correct content by hand" — on a file that was never broken.
-  // The probes' OWN before/after digests settle it: if every probe on the file saw the
-  // same content before and after its mutation, and that content is what the file
-  // holds now, the file is intact and it was the BASELINE that was stale. Anything
-  // less than that — a probe with no hashes, probes that disagree, a self-report that
-  // does not match the final state — keeps today's behaviour exactly.
-  function baselineWasDisturbed(k, after) {
-    if (!after) return false
-    const own = probes.filter((pr) => normPath(pr.file) === k)
-    if (!own.length) return false
-    return own.every((pr) => {
-      const pre = normHash(pr.preHash)
-      const post = normHash(pr.postHash)
-      return pre && pre === post && post === after
+  const blockerFindings = []
+  if (res.fallback !== 'untracked' && !res.caught) {
+    blockerFindings.push({
+      file: '(mutation)',
+      severity: 'blocker',
+      phase: 'Mutation probe',
+      summary: 'Test "' + t.test + '" did not fail when the fix in ' + t.file + ' was reverted -- it does not actually cover the fix.',
+      detail: res.evidence || '(no evidence reported)',
     })
   }
-  let restoredVerified
-  if (!preReport || !postReport) {
-    restoredVerified = false
-    const which = !preReport && !postReport ? 'Both checksum agents' : !preReport ? 'The BEFORE checksum agent' : 'The AFTER checksum agent'
+  return { ...t, status: blockerFindings.length ? 'open' : 'complete', clean: !blockerFindings.length, probe: res, blockerFindings }
+}
+function checksumAfterPrompt(files) {
+  return [
+    'You are a mechanical checksum recorder, read only. Compute `git hash-object <file>` for each file below and report it exactly.',
+    ...files.map((f) => '- ' + f),
+    'Rules: read only -- do NOT modify, create, delete, format or restore any file, and do NOT run tests, builds, or installs. Report each digest as lowercase hex; the exact string "unreadable" if the file could not be read.',
+    'Context: these files were deliberately reverted and then restored by other agents. Your digests are the independent evidence of whether the restore actually happened -- they are compared, IN SCRIPT, against the digests recorded for these same files before any of this ran.',
+  ].join('\n')
+}
+endPhase('Implement')
+startPhase('Mutation probe')
+const revertProbeTasks = tasks.filter((t) => t.type === 'revert-probe')
+let mutationProbe = { ran: false, skipped: 'no-revert-probe-tasks', probed: 0, allCaught: null, restoredVerified: null, results: [] }
+if (revertProbeTasks.length) {
+  const probedResults = []
+  for (const rt of revertProbeTasks) {
+    // eslint-disable-next-line no-await-in-loop -- deliberately sequential
+    const probed = await runRevertProbeTask(rt)
+    probedResults.push(probed)
+    resultsById.set(rt.id, probed)
+  }
+  taskResults.push(...probedResults)
+  // Exactly ONE checksum:after call total, covering every probed file --
+  // never one per probe -- compared IN SCRIPT (never the probe agents' own
+  // self-reported restored:true) against the digest Baseline's manifest
+  // already recorded for that file at the start of the run.
+  const probedFiles = uniquePaths(revertProbeTasks.map((t) => t.file).filter(Boolean))
+  // E8: same non-fatal treatment as runRevertProbeTask above -- restoredVerified
+  // already tolerates a falsy afterRes.
+  let afterRes = null
+  try {
+    afterRes = await askAgent(checksumAfterPrompt(probedFiles), { label: 'checksum:after', phase: 'Mutation probe', model: M.haiku, effort: CFG.effort.checksum, schema: CHECKSUM_SCHEMA })
+  } catch (e) {
+    afterRes = null
+  }
+  const afterMap = new Map((afterRes && Array.isArray(afterRes.files) ? afterRes.files : []).map((f) => [normPath(f.file), f.digest]))
+  const beforeMap = new Map(manifestResult.files.map((f) => [f.path, f.digest]))
+  let restoredVerified = !!afterRes
+  const mismatches = []
+  for (const f of probedFiles) {
+    const k = normPath(f)
+    const before = beforeMap.get(k)
+    const after = afterMap.get(k)
+    if (!before || !after || before !== after) {
+      restoredVerified = false
+      mismatches.push(f)
+    }
+  }
+  if (!restoredVerified) {
     findings.push({
       file: '(mutation)',
       severity: 'blocker',
       phase: 'Mutation probe',
-      summary: 'Mutation restore is UNVERIFIED — the independent checksum evidence is missing',
-      detail: `${which} died or was skipped, so nothing outside the probe agents confirms that ${mutTargetFiles.join(', ')} came back byte-identical. Unverified is not restored: a deliberately injected defect may still be in the working tree.`,
-      fixHint: `Byte-compare each mutation target against the ${PROBE_BACKUP_GLOB} backup in the OS temp directory (or against the intended implementation) by hand before trusting this tree; NEVER git checkout/restore/stash here, uncommitted work from this run would be destroyed.`,
+      summary: 'Revert-probe restore is UNVERIFIED for: ' + (mismatches.length ? mismatches.join(', ') : '(the checksum:after agent died or was skipped)'),
+      detail: 'the in-script comparison of `git hash-object` digests -- Baseline\'s recorded digest vs this checksum:after agent\'s -- did not match, or no after-digest exists. Never trust a probe agent\'s own restored:true self-report as the sole evidence.',
     })
-    log(`!!! Mutation restore UNVERIFIED — ${which.toLowerCase()} died; treat every target as possibly still mutated`)
-  } else {
-    restoredVerified = true
-    for (const f of mutTargetFiles) {
-      const k = normPath(f)
-      const before = preMap[k]
-      const after = postMap[k]
-      if (before && after && before === after) continue
-      if (baselineWasDisturbed(k, after)) {
-        baselineDisturbed.push(f)
-        log(`Mutation probe: ${f} — the pre-probe baseline digest does not match, but every probe on it reports the SAME digest before and after its mutation, and that digest is the file's current content. The baseline was taken on different content (something outside this run wrote the tree); the file is intact, so this is NOT a restore failure.`)
-        continue
-      }
-      restoredVerified = false
-      checksumMismatches.push(f)
-      // checksumMap blanks anything that is not a hex digest, so two unreadable
-      // files never compare equal — a missing digest is a mismatch, not a match.
-      const unreadable = !before || !after
-      const why = unreadable
-        ? 'a checksum agent could not read the file, so there is no evidence either way'
-        : `digest changed across the probe: ${before} -> ${after}`
-      findings.push({
-        file: '(mutation)',
-        severity: 'blocker',
-        phase: 'Mutation probe',
-        target: f,
-        summary: `${f} is ${unreadable ? 'not verifiably back to' : 'NOT back to'} its pre-probe content after the mutation probe`,
-        detail: `Independent before/after checksums disagree for ${f}: ${why}. The probe agent reported restored=${JSON.stringify((probes.find((p) => normPath(p.file) === k) || {}).restored)}, but that is a self-report from the agent that mutated the file. A deliberately injected defect may still be in the working tree.`,
-        fixHint: `Copy the backup the probe reported (its backupPath, in the OS temp directory) over "${f}", byte-compare with \`cmp -s\`, then delete the backup. NEVER git checkout/restore/stash — uncommitted work from this run would be destroyed.`,
-      })
-      log(`!!! MUTATION CHECKSUM MISMATCH for ${f} — ${why}`)
-    }
   }
-  mutationResult = {
+  mutationProbe = {
     ran: true,
-    targets: mutationTargets.length,
-    probed: probeTargets.length,
-    // Targets the risk gate did not spend a probe on. They are NOT evidence of
-    // anything: allCaught below speaks only for the probes that actually ran.
-    skippedTargets: skippedProbes,
-    results: probes,
-    allCaught: probes.every((p) => p.caught === true),
-    allRestored: probes.every((p) => p.restored === true),
-    restoredVerified,
-    checksumMismatches,
-    baselineDisturbed,
-    note: baselineDisturbed.length
-      ? `The pre-probe baseline digest disagreed with the post-probe one for ${baselineDisturbed.join(', ')}, but every probe on those files reported the same digest before and after its own mutation, and that digest is what the file holds now: the BASELINE was taken on different content (something outside this run wrote the tree), not the file left unrestored. They are excluded from checksumMismatches and do not affect restoredVerified.`
-      : '',
-  }
-  log(`Mutation probe: ${probes.filter((p) => p.caught).length}/${probes.length} caught, ${probes.filter((p) => p.restored).length}/${probes.length} self-reported restored, restore independently verified: ${restoredVerified}${baselineDisturbed.length ? `; ${baselineDisturbed.length} file(s) had a disturbed pre-probe baseline and were cleared by the probes' own digests: ${baselineDisturbed.join(', ')}` : ''}${skippedProbes.length ? `; ${skippedProbes.length} target(s) skipped by the risk gate and NOT probed` : ''}`)
-  // A5 MUTANT FEEDBACK WITH ACCEPTANCE BAR (owner ruling 2026-09-11,
-  // CFG.mutationRemediate). This is informational feedback for FUTURE runs, not
-  // a retroactive fix for THIS one: allCaught/mutationOk above already recorded
-  // the one-shot oracle result and are never revised by it (same philosophy as
-  // "a later fix round clearing a mutation finding is NOT evidence the test now
-  // catches the defect"). A kept remediation only means the strengthened test
-  // survives in the tree; a reverted one leaves no trace beyond this record.
-  const mutationRemediation = []
-  let mutAgents = 0
-  if (CFG.mutationRemediate) {
-    for (const t of probeTargets) {
-      const probe = probes.find((p) => normPath(p.file) === normPath(t.file) && p.target === t.test)
-      if (!probe || probe.caught !== false) continue
-      mutAgents++
-      const remAgent = await askAgent(mutationRemediatePrompt(t, probe), {
-        label: `mutation-remediate:${t.file}`, phase: 'Mutation probe', model: CFG.testModel, effort: CFG.effort.mutationRemediate, schema: MUTATION_REMEDIATE_SCHEMA,
-      })
-      if (!remAgent || !Array.isArray(remAgent.filesChanged) || !remAgent.filesChanged.length) {
-        mutationRemediation.push({ file: t.file, test: t.test, attempted: !!remAgent, kept: false, reason: remAgent ? 'remediation agent made no change' : 'remediation agent died or was skipped' })
-        continue
-      }
-      // Re-probe the SAME mutation: does the strengthened test now catch it?
-      mutAgents++
-      const reProbe = await askAgent(mutationPrompt(t), {
-        label: `mutate-reprobe:${t.file}`, phase: 'Mutation probe', model: CFG.routing.probeModel, effort: CFG.effort.mutate, schema: MUTATION_SCHEMA,
-      })
-      const caughtNow = !!(reProbe && reProbe.caught)
-      // ACCEPTANCE BAR ('kills-mutant'): caught now, AND the suite the change
-      // might have broken is still green — a careless test can pass its own
-      // probe and still wreck the build.
-      let gateStillGreen = true
-      let regateProblem = null
-      let regateCwdMismatch = false
-      if (caughtNow && vc.perRound.length) {
-        mutAgents++
-        const g = enforceCwd(await askAgent(gatePrompt(vc.perRound), { label: `gate:mutation-remediate:${t.file}`, phase: 'Mutation probe', model: CFG.gateModel, effort: CFG.effort.gate, schema: GATE_SCHEMA }), `gate:mutation-remediate:${t.file}`)
-        gateStillGreen = !!(g && g.pass)
-        regateProblem = g ? (g.cwdMismatch || (g.pass ? null : 'gate red')) : 'no gate result'
-        regateCwdMismatch = !!(g && g.cwdMismatch)
-      }
-      const kept = CFG.mutationAcceptanceBar === 'kills-mutant' ? caughtNow && gateStillGreen : caughtNow
-      // E2 (owner ruling 2026-09-11, wave 3): a rejected remediation's revert is
-      // verified, never trusted on the reverting agent's own say-so. `restored:true`
-      // is a self-report from the party that just edited the file; the independent
-      // evidence is a SEPARATE read-only checksum agent (the same before/after
-      // pattern the mutation probes use) confirming the file now matches its backup.
-      let reverted = false
-      let revertVerified = false
-      let revertProblem = ''
-      if (!kept) {
-        if (!remAgent.backupPath) {
-          revertProblem = 'no backupPath was reported for the rejected edit, so it could not be reverted'
-        } else {
-          mutAgents++
-          const revertResult = await askAgent(mutationRemediateRevertPrompt(t, remAgent), {
-            label: `mutation-remediate-revert:${t.file}`, phase: 'Mutation probe', model: CFG.gateModel, effort: CFG.effort.checksum, schema: MUTATION_REVERT_SCHEMA,
-          })
-          if (!revertResult) {
-            revertProblem = 'the revert agent died or was skipped'
-          } else if (revertResult.restored !== true) {
-            revertProblem = `the revert agent reported restored=false${revertResult.note ? ` (${revertResult.note})` : ''}`
-          } else {
-            reverted = true
-            const revertedFile = (remAgent.filesChanged || [t.file])[0]
-            mutAgents++
-            const cmp = await askAgent(checksumPrompt([revertedFile, remAgent.backupPath], 'after'), {
-              label: `mutation-remediate-revert-checksum:${t.file}`, phase: 'Mutation probe', model: CFG.gateModel, effort: CFG.effort.checksum, schema: CHECKSUM_SCHEMA,
-            })
-            const cmpMap = checksumMap(cmp)
-            const fileDigest = cmpMap[normPath(revertedFile)]
-            const backupDigest = cmpMap[normPath(remAgent.backupPath)]
-            revertVerified = !!fileDigest && !!backupDigest && fileDigest === backupDigest
-            if (!revertVerified) revertProblem = 'the independent checksum agent could not confirm the reverted file matches its backup'
-          }
-        }
-      }
-      mutationRemediation.push({
-        file: t.file,
-        test: t.test,
-        attempted: true,
-        filesChanged: remAgent.filesChanged,
-        caughtAfter: caughtNow,
-        gateStillGreen,
-        regateProblem,
-        kept,
-        ...(kept ? {} : { reverted, revertVerified }),
-        reason: kept
-          ? 'the re-probe caught the mutant and the gate stayed green'
-          : !caughtNow
-            ? 'the re-probe still did not catch the mutant — reverted'
-            : regateCwdMismatch
-              ? 'regate-cwd-mismatch'
-              : 'regate-red',
-      })
-      if (!kept && !revertVerified) {
-        // A rejected test edit that cannot be PROVEN gone is treated as still in
-        // the tree — this is a blocker, not a log line, so the run cannot close clean.
-        findings.push({
-          file: '(mutation-remediation)',
-          severity: 'blocker',
-          phase: 'Mutation probe',
-          target: t.file,
-          summary: `Rejected test edit to ${t.file} may remain in the tree`,
-          detail: `Mutation remediation on ${t.file} was rejected (${!caughtNow ? 'the re-probe still did not catch the mutant' : 'the gate broke after the change'}), and the revert could not be independently verified: ${revertProblem}.`,
-          fixHint: `Byte-compare ${t.file} against ${remAgent.backupPath || 'its backup'} by hand (\`cmp -s\`) and restore it by file copy if it still carries the rejected edit; NEVER git checkout/restore/stash here.`,
-        })
-      }
-      log(`Mutation remediation for ${t.file}: ${kept ? 'KEPT' : `REVERTED (verified=${revertVerified})`} — caughtAfter=${caughtNow}, gateStillGreen=${gateStillGreen}`)
-    }
-  }
-  mutationResult = { ...mutationResult, remediation: mutationRemediation }
-  await endPhase('Mutation probe', 2 + probes.length + mutAgents, findings.length - mutFindingsAt)
-}
-
-findings = dedupe(findings)
-const confirmedInitial = [...findings]
-
-// ═══════════ Phase 8: Fix rounds — Fable plans, Sonnet/Opus execute, re-check after each ═══════════
-// finalGate tracks the LAST gate run, so the returned gate never goes stale
-// when a fix round regresses the build after an initially green gate.
-let finalGate = { pass: gate.pass, skipped: !!gate.skipped, results: gate.results || [], cwdMismatch: gate.cwdMismatch }
-// What this run has actually PROVEN, in one line. Two deciders read it — the fix
-// planner on every round and the final-pass decider at the end — and they must be
-// told the same thing, so it is built in exactly one place.
-function runOracles() {
-  return `red gate ${redGateResult.ran ? `structural=${redGateResult.structurallyRed} behavioral=${redGateResult.behaviorallyRed} attempts=${redGateResult.attempts}` : 'not run'}; mutation probe ${mutationResult.ran ? `${(mutationResult.results || []).filter((p) => p.caught).length}/${mutationResult.probed} caught, restore verified=${mutationResult.restoredVerified}` : `not run (${mutationResult.skipped})`}; gate ${gateProblem(finalGate) === null ? 'green' : 'RED'}; lens findings confirmed before fixing: ${confirmedInitial.length}`
-}
-const fixReportsAll = []
-// One entry per round: what Fable decided and who decided it. completed:false means
-// neither the planner nor its fallback ruled, and the round ran on legacy routing.
-const fixPlanRounds = []
-// Findings the planner DEFERRED: the fix needs a decision this run cannot make. They
-// are held out of every later round's toFix, but stay in `findings` carrying
-// `deferred`, so they reach remainingFindings and keep `clean` false.
-const deferredKeys = new Set()
-// The owner questions this run could not answer, in the order they were raised.
-// The close-out surfaces these: a deferral is a decision waiting on a person.
-const deferredQuestions = []
-let round = 0
-// A2 EXECUTION-VERIFIED CONFIRMED (owner ruling 2026-09-11, CFG.executionVerified).
-// Keyed by findingKey() rather than object identity, because a finding that
-// survives a round comes back as a FRESH object from the recheck agent, not
-// the same reference the fixer saw. 'execution' = a fixer's verifiedFixes
-// entry (test/redOn/greenOn) corroborated by that round's own green re-gate;
-// 'ruled' = Fable's fix-plan decision marked `ruled: true` from cited evidence
-// (a finding with no runnable check); absent = 'plausible'. Filled in at
-// close-out for every finding still in confirmedInitial.
-const verificationByKey = new Map()
-// ═══════════ Phase 10: Final pass — Fable over the HIGH-risk diff (major only) ═══════════
-// The in-pipeline form of the house close-out rule (a Fable pass over the
-// money-critical diff caught a CRITICAL that three Opus lenses and their refuters
-// had passed clean). Token discipline: the strongest model reads ONLY the
-// HIGH-risk files' final diffs plus what the run already knows — never the whole
-// tree — and when the diff has no HIGH-risk file at all the pass is skipped and
-// recorded (CFG.finalPassWhenNoHighRisk), instead of quietly reading everything.
-// Its findings do NOT get a fix round on their own: at the terminal call they
-// land in remainingFindings, keeping `clean` false; on major scale, before the
-// LAST budgeted round (P5, CFG.finalPassBeforeLastRound), they are folded into
-// that round's findings instead, so a paid fixer gets to act on them.
-// MOVED HERE (owner ruling 2026-09-11e, package P5) from its old spot right
-// after the fix loop: `fpPlan` must exist before the loop starts so a
-// pre-last-round call inside it can read the same plan the terminal call uses —
-// scale, riskMap and CFG never change mid-run, so computing it once, earlier,
-// changes nothing about what it decides.
-let finalPassResult = { ran: false, completed: false, skipped: scale === 'major' ? null : 'small-scale', reader: null, model: null, effort: null, fallback: false, files: [], candidates: 0, gaps: [], secondRead: false, decision: '', findings: [], briefTruncated: false }
-// Snapshots of every runFinalPass() call before the terminal one — see the
-// snapshot-before-overwrite at the top of runFinalPass(). Nothing else reads
-// this; it exists so resultObj.finalPass.priorPasses can carry per-call detail
-// (candidates/gaps/decision/findings/origin) without changing the top-level
-// finalPass shape, which stays the terminal call's values exactly as before.
-let finalPassRuns = []
-function finalPassPlan() {
-  if (scale !== 'major') return { run: false, skipped: 'small-scale', files: [], model: null, whole: false }
-  const listed = Object.keys(riskMap)
-  const highFiles = listed.filter((k) => riskMap[k] === 'HIGH')
-  if (highFiles.length) return { run: true, skipped: null, files: highFiles, model: CFG.finalPassModel, whole: false }
-  // No manifest means every file is HIGH by construction — the read is not skipped.
-  if (!listed.length) return { run: true, skipped: null, files: [], model: CFG.finalPassModel, whole: true }
-  if (CFG.finalPassWhenNoHighRisk === 'skip') return { run: false, skipped: 'no-high-risk-files', files: [], model: null, whole: false }
-  return {
-    run: true,
     skipped: null,
-    files: listed,
-    model: CFG.finalPassWhenNoHighRisk === 'opus' ? CFG.finalPassFallbackModel : CFG.finalPassModel,
-    whole: true,
+    probed: probedResults.length,
+    allCaught: probedResults.every((r) => r.probe && (r.probe.caught || r.probe.fallback === 'untracked')),
+    restoredVerified,
+    results: probedResults.map((r) => r.probe),
   }
 }
-const fpPlan = finalPassPlan()
-while (round < CFG.maxFixRounds) {
-  const unfixable = findings.filter(isUnfixable)
-  const deferredHeld = findings.filter((f) => !isUnfixable(f) && deferredKeys.has(findingKey(f)))
-  let toFix = findings.filter((f) => !isUnfixable(f) && !deferredKeys.has(findingKey(f)))
-  if (!toFix.length) break
-  if (budget.total && budget.remaining() < CFG.budgetFloor) {
-    log(`Token budget nearly exhausted (${Math.round(budget.remaining() / 1000)}k left) — stopping before fix round ${round + 1}`)
-    break
-  }
-  // P5 (owner ruling 2026-09-11e): on major scale, when the iteration about to
-  // run is the LAST budgeted round, run the final pass FIRST instead of only
-  // after the loop — in every ledger row where the terminal pass found a
-  // major, fixRounds was already at the cap and the finding never got a paid
-  // fix. `round` here is still the count of ROUNDS ALREADY RUN (pre-increment),
-  // so `=== CFG.maxFixRounds - 1` means the round about to start is the last
-  // one. Gated on `fpPlan.run` too — CFG.finalPassWhenNoHighRisk can mean the
-  // final pass is not supposed to run at all, and this reorder must not run it
-  // anyway. The terminal final pass after the loop is untouched and still runs.
-  if (scale === 'major' && CFG.finalPassBeforeLastRound && round === CFG.maxFixRounds - 1 && fpPlan.run) {
-    startPhase('Final pass')
-    const pre = await runFinalPass('pre-last-round')
-    const preTagged = pre.add.map((f) => ({ ...f, phase: 'Final pass', origin: 'pre-last-round' }))
-    findings = dedupe([...findings, ...preTagged])
-    await endPhase('Final pass', pre.agents, pre.raw, undefined, { skipCheckpoint: true })
-    log(`Final pass ran BEFORE fix round ${round + 1} (the last budgeted round): ${preTagged.length} finding(s) folded in for this round to fix`)
-    // Re-derive this round's scope now that the pre-last-round findings are in.
-    toFix = findings.filter((f) => !isUnfixable(f) && !deferredKeys.has(findingKey(f)))
-  }
-  round++
-  startPhase('Fix')
-  log(`Fix round ${round}: ${toFix.length} finding(s)${deferredHeld.length ? `; ${deferredHeld.length} deferred earlier and held out of this round` : ''}`)
+endPhase('Mutation probe')
+// The A10b ui-reverify pass below makes real 'ui-redrive:'/'ui-rejudge:'
+// agent calls, but not inside any sandbox `phase()` bracket of its own -- it
+// conceptually belongs with the per-task chain (re-running a task's own UI
+// verification after a fix round touched its files), so its tokens are
+// folded into 'Implement' via overlappedWith, same as every other per-task
+// chain stage; ending the Mutation probe bracket HERE (before this pass
+// runs) keeps that phase's own measured tokens limited to its actual probe/
+// checksum work.
 
-  // ---- FIX PLANNING (owner ruling 2026-09-03): Fable decides, executors implement ----
-  // One Sonnet brief (excerpts + call sites, read-only), then ONE Fable decision over
-  // every finding in the round: fix / dispute / defer, the design, the invariant, the
-  // test, the executor tier and the waves. Fable opens no file and runs nothing, so
-  // the brief is everything it knows. A dead brief still lets the planner run (it is
-  // told the excerpts are missing); a dead planner AND a dead fallback drop the round
-  // back to exactly the legacy routing, recorded as completed:false.
-  const decisionOf = new Map()
-  let plannerDisputed = []
-  let deferredNow = []
-  let execFindings = toFix
-  let planAgents = 0
-  let planEntry = null
-  // PLANNING FLOOR: a round whose every finding is a synthetic key names phases, not
-  // code — repair the build, restore a mutated file, strengthen a test. There is no
-  // excerpt to brief, no file to route and no design to write: the content of each fix
-  // is already determined by the phase that raised it. Spending a Sonnet brief and a
-  // Fable decision there buys nothing, so the round runs on legacy routing and says so.
-  const syntheticOnly = toFix.every((f) => !isRealPath(f.file))
-  if (fixPlanningOn && syntheticOnly) {
-    log(`Fix round ${round}: every finding is a synthetic key (${uniquePaths(toFix.map((f) => f.file)).join(', ')}) — no brief and no planner; the round runs on legacy routing`)
-    planEntry = {
-      round,
-      completed: false,
-      skipped: 'synthetic-only',
-      briefCompleted: false,
-      model: null,
-      fallback: false,
-      actions: { fix: 0, dispute: 0, defer: 0 },
-      routes: { mechanical: 0, sonnet: 0, opus: 0 },
-      waves: [],
-      note: 'every finding named a phase, not a file — nothing for a planner to design',
-    }
-    fixPlanRounds.push(planEntry)
-  } else if (fixPlanningOn) {
-    planAgents++
-    const brief = await askAgent(fixBriefPrompt(round, toFix), {
-      label: `fix-brief:r${round}`, phase: 'Fix', model: CFG.fixBriefModel, effort: CFG.effort.fixBrief, schema: FIX_BRIEF_SCHEMA,
+// ---------- A10b: ui-verify re-run after an overlapping fix round ----------
+// Fix round 1, finding 2: this must ALSO fire for the ui-verify task's OWN
+// fix round, not only another task's -- a diff-reading re-review (the
+// generic fixLoopStage/rereviewStage every task type shares) cannot confirm
+// a console error, a blocked flow, a failed request, or an a11y violation
+// actually cleared; ui-verify's whole purpose is that a diff read is not
+// sufficient evidence for this task type. The fix is to unify the trigger,
+// not build a second mechanism: `taskResults.some(...)` below used to
+// exclude `other.id === t.id`, which is exactly why a same-task fix round
+// never re-drove the browser. Dropping that exclusion means the SAME
+// "this task's watched files just changed" check now also sees the task's
+// own roundHistory (populated by its own fixLoopStage run earlier in this
+// same wave loop, so the data is already there) -- re-driving unconditionally
+// whenever ANY fix round (this task's own, or another's) touches a file
+// this task watches, exactly as the reviewer recommended over trying to
+// heuristically classify which findings were "UI-only".
+for (const t of taskResults) {
+  if (t.type !== 'ui-verify' || t.blocked) continue
+  const uiFiles = new Set((t.files || []).map(normPath))
+  if (!uiFiles.size) { t.reVerify = 0; continue }
+  const overlaps = taskResults.some((other) => {
+    return (other.roundHistory || []).some((rh) => {
+      const fc = rh.exec && Array.isArray(rh.exec.filesChanged) ? rh.exec.filesChanged : []
+      return fc.some((f) => uiFiles.has(normPath(f)))
     })
-    const briefItems = new Map()
-    for (const it of brief && Array.isArray(brief.items) ? brief.items : []) {
-      if (it && typeof it.index === 'number') briefItems.set(it.index, it)
-    }
-    if (!brief) log(`Fix round ${round}: the brief agent died — the planner is told it has no excerpts and decides conservatively`)
-    let planner = CFG.fixPlannerModel
-    let planEffort = CFG.effort.fixPlan
-    let fallback = false
-    planAgents++
-    // FABLE BRIEF CAP: built once and reused verbatim on the fallback retry — it
-    // is the same brief whichever model reads it.
-    const planBrief = capFableBrief(fixPlanPrompt(round, toFix, briefItems, !!brief))
-    if (planBrief.truncated) fixPlanBriefTruncated = true
-    let plan = await askAgent(planBrief.text, {
-      label: `fix-plan:r${round}`, phase: 'Fix', model: planner, effort: planEffort, schema: FIX_PLAN_SCHEMA,
-    })
-    // Fable's safety classifiers can decline a request outright (it surfaces as a
-    // dead agent). One retry on the fallback decider, exactly as the final pass does.
-    if (!plan && planner !== CFG.fixPlannerFallbackModel) {
-      log(`Fix planner on ${planner} died or declined — retrying once on ${CFG.fixPlannerFallbackModel} at ${CFG.effort.fixPlanFallback}`)
-      planner = CFG.fixPlannerFallbackModel
-      planEffort = CFG.effort.fixPlanFallback
-      fallback = true
-      planAgents++
-      plan = await askAgent(planBrief.text, {
-        label: `fix-plan:r${round}:fallback`, phase: 'Fix', model: planner, effort: planEffort, schema: FIX_PLAN_SCHEMA,
-      })
-    }
-    const actions = { fix: 0, dispute: 0, defer: 0 }
-    const routes = { mechanical: 0, sonnet: 0, opus: 0 }
-    if (plan) {
-      for (const d of Array.isArray(plan.decisions) ? plan.decisions : []) {
-        if (!d || typeof d.index !== 'number') continue
-        const f = toFix[d.index]
-        if (!f || decisionOf.has(f)) continue
-        let action = d.action === 'dispute' || d.action === 'defer' ? d.action : 'fix'
-        // ENGINE-ENFORCED: a finding the slate already upheld may not be disputed
-        // again, and a synthetic key is not something the slate can judge — both
-        // become ordinary fixes rather than a quiet way out of the loop.
-        if (action === 'dispute' && (f.disputeUpheld || !isRealPath(f.file))) {
-          log(`Fix round ${round}: the planner's dispute of "${f.summary}" was overridden — ${f.disputeUpheld ? 'the refuters already upheld it' : 'a synthetic key cannot be refuted'}; it is fixed instead`)
-          action = 'fix'
-        }
-        decisionOf.set(f, { ...d, action, route: ROUTE_RANK[d.route] != null ? d.route : 'opus' })
-        actions[action]++
-      }
-      // Silence never drops, defers or cheapens a finding: an unruled one is fixed,
-      // on the deepest tier, from the reviewer's own hint.
-      for (const f of toFix) {
-        if (decisionOf.has(f)) continue
-        decisionOf.set(f, { action: 'fix', design: '', invariant: '', tests: '', route: 'opus', reason: 'the planner returned no decision for this finding — fix it from the reviewer\'s hint' })
-        actions.fix++
-      }
-      for (const f of toFix) {
-        const d = decisionOf.get(f)
-        if (d.action === 'fix') routes[d.route]++
-      }
-      plannerDisputed = toFix.filter((f) => decisionOf.get(f).action === 'dispute')
-      deferredNow = toFix
-        .filter((f) => decisionOf.get(f).action === 'defer')
-        .map((f) => {
-          deferredKeys.add(findingKey(f))
-          const reason = decisionOf.get(f).reason || 'the fix planner deferred this finding: it needs a decision this run cannot make'
-          deferredQuestions.push({ file: f.file, summary: f.summary, reason })
-          return { ...f, deferred: reason }
-        })
-      execFindings = toFix.filter((f) => decisionOf.get(f).action === 'fix')
-      // A2: Fable can mark a 'fix' decision `ruled: true` when it is confirming,
-      // from evidence cited in the brief, a finding with no runnable check —
-      // never a substitute for execution evidence when a check DOES exist.
-      if (CFG.executionVerified) {
-        for (const f of execFindings) {
-          const d = decisionOf.get(f)
-          if (d && d.ruled === true) verificationByKey.set(findingKey(f), { level: 'ruled' })
-        }
-      }
-      log(`Fix plan r${round} (${planner}@${planEffort}${fallback ? ', fallback' : ''}): ${actions.fix} fix / ${actions.dispute} dispute / ${actions.defer} defer; routes ${routes.mechanical} mechanical / ${routes.sonnet} sonnet / ${routes.opus} opus`)
-    } else {
-      // Nobody ruled. The round is NOT skipped — it runs exactly as it did before
-      // the planner existed, and the result says the plan never happened.
-      decisionOf.clear()
-      log(`!!! Fix round ${round}: both the planner and its fallback died — the round runs on legacy routing (mechanical vs judgment) and is recorded as unplanned`)
-    }
-    planEntry = {
-      round,
-      completed: !!plan,
-      skipped: null,
-      briefCompleted: !!brief,
-      model: plan ? planner : null,
-      fallback,
-      actions,
-      routes,
-      waves: plan && Array.isArray(plan.waves) ? plan.waves : [],
-      note: (plan && plan.note) || (plan ? '' : 'the planner and its fallback both declined — this round used legacy routing'),
-      // FABLE BRIEF CAP (CFG.caps.fableBriefBytes): true if this round's planner
-      // brief was over the byte cap and had to be truncated.
-      briefTruncated: planBrief.truncated,
-    }
-    fixPlanRounds.push(planEntry)
-  }
-  const planned = !!(planEntry && planEntry.completed)
-
-  // Fixers no longer run strictly sequentially. They are scheduled by the SAME
-  // wave logic the implementers use: fixers on disjoint files run concurrently,
-  // and the ones that can touch anything (a broken build, an unrestored mutation)
-  // serialize after them. Each group is routed by the planner's tier for its
-  // findings — or, unplanned, by complexity: mechanical fixes go to the cheap model,
-  // judgment fixes and anything touching a HIGH-risk file stay on the review model.
-  const fixReports = []
-  const fixGroups = groupByFile(execFindings)
-  const waveOfKey = planned ? plannerWaveOrder(toFix, execFindings, planEntry.waves) : null
-  if (planned && !waveOfKey) {
-    log(`Fix round ${round}: the planner's waves were unusable (an index missing, one named twice, or one file split across waves) — scheduling this round with the engine's own conflict-free waves`)
-  }
-  const scheduled = waveOfKey ? buildPlannedFixWaves(fixGroups, waveOfKey) : buildFixWaves(fixGroups)
-  const fixWaves = scheduled.waves
-  for (const issue of scheduled.issues) log(`!!! Fix scheduling: ${issue}`)
-  for (const wave of fixWaves) {
-    const waveOut = await runConcurrent(
-      wave.map((p) => () => {
-        const route = planned ? plannedGroupRoute(p.id, p.group, decisionOf) : fixRoute(p.id, p.group)
-        const tier = executorTier(route)
-        fixRouting[tier.counter]++
-        const designs = planned
-          ? p.group.map((f) => {
-              const d = decisionOf.get(f)
-              return d && d.action === 'fix' ? { design: d.design, invariant: d.invariant, tests: d.tests } : null
-            })
-          : null
-        return askAgent(opusCapped(fixPrompt(p.id, p.group, route === 'mechanical' ? 'mechanical' : 'judgment', designs), tier.model), {
-          label: `fix:${p.id}`,
-          phase: 'Fix',
-          model: tier.model,
-          effort: tier.effort,
-          schema: FIX_SCHEMA,
-        }).then((r) => (r ? { target: p.id, route, ...r } : null))
-      }),
-    )
-    fixReports.push(...waveOut.filter(Boolean))
-  }
-  fixReportsAll.push({ round, plan: planEntry, reports: fixReports })
-
-  // Matching an executor's report back to the finding it is about. INDEX FIRST: the
-  // executor was given its findings numbered, and an index cannot be paraphrased.
-  // The summary match stays as the fallback for a report that omits one (a legacy
-  // report, or an agent that ignored the field), and both are scoped to the group
-  // that executor was actually handed — a fixer cannot speak for another one's file.
-  const groupOfKey = new Map(fixGroups)
-  function reportTargets(report, entry) {
-    const group = groupOfKey.get(report.target) || []
-    if (entry && typeof entry.index === 'number' && group[entry.index]) return [group[entry.index]]
-    const ns = normSummary(entry && entry.summary)
-    return ns ? group.filter((f) => normSummary(f.summary) === ns) : []
-  }
-
-  // DESIGN MISMATCH: an executor told to implement a design it could not fit reports
-  // it instead of improvising. The finding is never dropped — it returns to the next
-  // round carrying the executor's report, which the planner re-decides from.
-  const mismatchOf = new Map()
-  if (planned) {
-    for (const r of fixReports) {
-      for (const sk of Array.isArray(r.skipped) ? r.skipped : []) {
-        const reason = String((sk && sk.reason) || '').trim()
-        if (!/^design mismatch:/i.test(reason)) continue
-        for (const f of reportTargets(r, sk)) if (!mismatchOf.has(f)) mismatchOf.set(f, reason)
-      }
-    }
-  }
-  const mismatched = execFindings.filter((f) => mismatchOf.has(f)).map((f) => ({ ...f, designMismatch: mismatchOf.get(f) }))
-  if (mismatched.length) log(`Fix round ${round}: ${mismatched.length} finding(s) came back as "design mismatch" — the planner re-decides them next round with the executor's report`)
-
-  // The re-check reads only what this round could have moved: the files the fixers
-  // changed plus the locations the findings cite. It still reports a regression it
-  // trips over in a file it had to open anyway.
-  const recheckScope = uniquePaths([
-    ...[].concat(...fixReports.map((r) => r.filesChanged || [])),
-    ...execFindings.map((f) => f.file).filter(isRealPath),
-  ])
-  // REFUTE-FIRST DISPUTES: findings a fixer declined to fix with proof, plus the ones
-  // the planner disputed before any fixer saw them. Neither is dropped on one agent's
-  // word — the same adversarial slate judges them, beside the re-gate and the
-  // re-check (all read-only). Dropped ⇒ gone; upheld ⇒ back into the loop marked
-  // disputeUpheld, which neither the next planner nor the next fixer may dispute.
-  const execDisputed = new Set()
-  for (const r of fixReports) {
-    for (const d of Array.isArray(r.disputed) ? r.disputed : []) {
-      for (const f of reportTargets(r, d)) execDisputed.add(f)
-    }
-  }
-  const disputed = plannerDisputed.concat(
-    execFindings.filter((f) => isRealPath(f.file) && !f.disputeUpheld && execDisputed.has(f)),
-  )
-  if (disputed.length) log(`Fix round ${round}: ${disputed.length} finding(s) disputed (${plannerDisputed.length} by the planner, ${disputed.length - plannerDisputed.length} by their fixer) — the adversarial slate judges them before anything is dropped`)
-  // Re-check: re-run the gate, verify the fixes landed, and judge the disputes, concurrently.
-  const recheckModel = recheckModelFor()
-  const recheck = await parallel([
-    () =>
-      vc.perRound.length
-        ? askAgent(gatePrompt(vc.perRound), { label: `regate:r${round}`, phase: 'Fix', model: CFG.gateModel, effort: CFG.effort.gate, schema: GATE_SCHEMA })
-        : Promise.resolve({ pass: true, results: [], skipped: true }),
-    () => askAgent(opusCapped(recheckPrompt(execFindings, fixReports, recheckScope, {
-      disputed: plannerDisputed.map((f) => `${f.file}: ${f.summary}`),
-      deferred: deferredNow.map((f) => `${f.file}: ${f.summary}`),
-    }), recheckModel), { label: `recheck:r${round}`, phase: 'Fix', model: recheckModel, effort: CFG.effort.recheck, schema: FINDINGS_SCHEMA }),
-    () => judgeFindings(disputed, 'Fix'),
-  ])
-  const regate = enforceCwd(recheck[0], `regate:r${round}`) || { pass: false, results: [] }
-  finalGate = { pass: regate.pass, skipped: !!regate.skipped, results: regate.results || [], cwdMismatch: regate.cwdMismatch }
-  // A2: an executor's self-reported verifiedFixes entry (a named test, red on
-  // the original tree, green on the patched one) is evidence ONLY when this
-  // round's INDEPENDENT re-gate also came back green — self-report alone is
-  // never enough. 'execution' wins over 'ruled' when both somehow apply.
-  if (CFG.executionVerified && regate.pass) {
-    for (const r of fixReports) {
-      for (const v of Array.isArray(r.verifiedFixes) ? r.verifiedFixes : []) {
-        if (!v || !v.test || !v.redOn || !v.greenOn) continue
-        for (const f of reportTargets(r, v)) {
-          verificationByKey.set(findingKey(f), { level: 'execution', verifiedBy: { test: v.test, redOn: v.redOn, greenOn: v.greenOn } })
-        }
-      }
-    }
-  }
-  // If the re-check agent died, carry the findings over — never assume clean. What
-  // it carries is what a fixer actually touched: deferred and disputed findings are
-  // put back by their own paths below, and duplicating them here would double-count.
-  const rechecked = recheck[1] ? dedupe(recheck[1].findings || []) : execFindings
-  // A dead slate keeps every dispute (conservative), exactly like a dead refuter.
-  const dj = recheck[2] || { kept: disputed, dropped: [], agents: 0, votesCast: 0, firstRefuted: 0, tieBreaks: 0 }
-  const droppedKeys = new Set(dj.dropped.map(findingKey))
-  const upheld = dj.kept.map((f) => ({ ...f, disputeUpheld: true }))
-  verifyStats.disputed += disputed.length
-  verifyStats.disputesDropped += dj.dropped.length
-  verifyStats.disputesUpheld += upheld.length
-  verifyStats.votesCast += dj.votesCast
-  verifyStats.tieBreaks += dj.tieBreaks
-  // FABLE BRIEF CAP: fold in any tie-break brief truncated here or in Verify.
-  verifyStats.briefTruncated = verifyStats.briefTruncated || tieBreakBriefTruncated
-  if (disputed.length) {
-    log(`Disputes: ${dj.dropped.length} refuted and dropped, ${upheld.length} upheld and sent back to the fix loop (${dj.votesCast} vote(s), ${dj.tieBreaks} tie-break(s))`)
-  }
-  const fixNotes = []
-  if (fixPlanningOn) {
-    fixNotes.push(planned
-      ? 'Fable-planned fixes (Sonnet brief -> Fable plan -> executors implementing the design)'
-      : planEntry && planEntry.skipped === 'synthetic-only'
-        ? 'Fable-planned fixes skipped for a round of synthetic keys only — legacy routing'
-        : 'Fable-planned fixes attempted, but the planner and its fallback declined — this round used legacy routing')
-  }
-  if (disputed.length) fixNotes.push('includes the adversarial slate on disputed findings')
-  if (fixNotes.length) phaseStats.Fix.note = fixNotes.join('; ')
-  // Deferred findings ride through the round untouched, carrying the planner's
-  // reason: nothing fixed them, and nothing may quietly drop them either.
-  findings = [...unfixable, ...deferredHeld, ...deferredNow, ...rechecked].filter((f) => !droppedKeys.has(findingKey(f)))
-  // Upheld disputes come back whatever the re-check said about them (it was told
-  // to leave them out), and carry the mark the next fixer must honour.
-  for (const u of upheld) {
-    const k = findingKey(u)
-    if (findings.some((f) => findingKey(f) === k)) findings = findings.map((f) => (findingKey(f) === k ? { ...f, disputeUpheld: true } : f))
-    else findings.push(u)
-  }
-  // A design that did not fit the code returns whatever the re-check said, carrying
-  // the executor's report so the next plan is re-decided from it, not repeated.
-  for (const m of mismatched) {
-    const k = findingKey(m)
-    if (findings.some((f) => findingKey(f) === k)) findings = findings.map((f) => (findingKey(f) === k ? { ...f, designMismatch: m.designMismatch } : f))
-    else findings.push(m)
-  }
-  // Same baseline filter as the initial gate: a command broken before this run
-  // started must not be re-raised as a blocker every round, which would burn both
-  // fix rounds on a command the fix loop is explicitly told not to "fix".
-  const regateIssue = gateProblem(regate)
-  if (regateIssue) {
-    findings.push({ file: '(gate)', severity: 'blocker', phase: 'Fix', summary: 'Verification gate still failing after fixes', detail: regateIssue })
-  }
-  // Re-dedupe every round: a carried-over finding plus a fresh synthetic '(gate)'
-  // entry would otherwise stack up once per round and overstate how many distinct
-  // problems remain in the list the orchestrator surfaces.
-  findings = dedupe(findings)
-  log(`After round ${round}: ${findings.length} finding(s) remain (${fixGroups.length} fixer(s) in ${fixWaves.length} wave(s)${waveOfKey ? ', scheduled from the plan' : ''}; routing so far: ${fixRouting.mechanical} mechanical / ${fixRouting.sonnetDesigned} sonnet-designed / ${fixRouting.judgment} judgment)`)
-  // The brief and the planner, one fixer per file group, the regate, the recheck,
-  // and the dispute slate. Rounds accumulate.
-  await endPhase('Fix', planAgents + fixGroups.length + 2 + dj.agents, regateIssue ? 1 : 0)
-}
-
-// ═══════════ UI re-verify — a UI fix is only proven in a browser ═══════════
-// The fix loop checks its own work by READING SOURCE (recheckPrompt), which cannot
-// show whether a rendered surface is actually fixed: a fixer adds a focus-ring class,
-// the re-check reads the class, and nothing ever re-renders the page. So whenever any
-// fixing happened after a UI pass, drive the real UI once more. This runs BEFORE the
-// final full gate, so any spec the agent writes is covered by that gate.
-if (uiCfg && round > 0) {
-  startPhase('UI verify')
-  const priorUi = uiVerifyResult.findings || []
-  log(`UI re-verify after ${round} fix round(s): re-driving ${(uiCfg.flows || []).length || 1} flow(s) at ${(uiVerifyResult.viewports || ['desktop']).join(', ')}`)
-  const re = await uiDriveAndJudge(priorUi)
-  const reReport = re.evidence ? { findings: re.findings } : null
-  const reFindings = re.findings.map((f) => ({ ...f, source: 'ui-verify', phase: 'UI verify' }))
-  uiVerifyResult = { ...uiVerifyResult, reVerify: { completed: re.completed, evidence: re.evidence, findings: reFindings } }
-  if (reReport) {
-    // A completed re-verification IS the browser evidence a dead first pass lacked,
-    // over the same flows and viewports — so its blocker is answered. Everything the
-    // re-run still sees is pushed below and keeps `clean` false.
-    findings = findings.filter((f) => f.file !== '(ui-verify)')
-    findings.push(...reFindings)
-    log(`UI re-verify: ${reFindings.length} finding(s) still visible in the running UI`)
-  } else {
+  })
+  if (!overlaps) { t.reVerify = 0; continue }
+  const priorFindings = t.review && Array.isArray(t.review.findings) ? t.review.findings : []
+  // eslint-disable-next-line no-await-in-loop
+  const evidence2 = await askAgent(uiDrivePrompt(t, t.uiCfg, priorFindings), { label: 'ui-redrive:' + t.id, phase: 'UI verify', model: M.sonnet, effort: CFG.effort.uiDrive, schema: UI_EVIDENCE_SCHEMA })
+  t.reVerify = 1
+  if (!evidence2) {
     findings.push({
       file: '(ui-verify)',
       severity: 'blocker',
       phase: 'UI verify',
-      summary: 'UI re-verification did not complete — the UI fixes were never seen rendered',
-      detail: 'Fixes were applied to findings that came from driving the real UI, but the re-verification agent died or was skipped, so no browser evidence exists that they worked. Source review cannot substitute. Re-run this phase or drive the flows manually, and check that no dev server or browser was left running.',
+      summary: 'Task ' + t.id + '\'s UI re-drive died after a fix round touched files it watches.',
+      detail: 'no fresh browser evidence exists after the fix -- treat the change as unverified, not clean',
     })
-    log(`UI re-verify: agent died — recorded as a blocker`)
+    continue
   }
-  findings = dedupe(findings)
-  await endPhase('UI verify', re.agents, reReport ? reFindings.length : 1)
-}
-
-// ═══════════ Final authoritative gate (tiered mode only) ═══════════
-// When perRound is a cheap subset, the FULL command set must still decide the
-// result exactly once — after the last fix round, whatever its outcome.
-const tiered = JSON.stringify(vc.final) !== JSON.stringify(vc.perRound)
-const wantFullGate = tiered && vc.final.length > 0
-// Returns { add, agents, raw }; sets finalGate. Runs alone or beside the final pass.
-async function runFinalGate() {
-  const fullGate = enforceCwd(await askAgent(gatePrompt(vc.final), {
-    label: 'final-gate', phase: 'Fix', model: CFG.gateModel, effort: CFG.effort.gate, schema: GATE_SCHEMA,
-  }), 'final-gate')
-  const fg = fullGate || { pass: false, results: [], summaryError: 'final gate agent died' }
-  finalGate = { pass: fg.pass, skipped: false, results: fg.results || [], cwdMismatch: fg.cwdMismatch }
-  const fgIssue = gateProblem(fg)
-  log(`Final full gate ${fgIssue ? 'FAILED' : 'passed'}${!fgIssue && fg.pass !== true ? ' (its only failures were commands already broken at baseline)' : ''}`)
-  return {
-    add: fgIssue ? [{ file: '(gate)', severity: 'blocker', phase: 'Fix', summary: 'FULL verification gate failed after fix rounds', detail: fgIssue }] : [],
-    agents: 1,
-    raw: fgIssue ? 1 : 0,
-  }
-}
-
-// One dedupe before the last read so `known` never overstates what the run found.
-findings = dedupe(findings)
-
-// finalPassResult / finalPassPlan() / fpPlan now live BEFORE the fix loop (P5,
-// owner ruling 2026-09-11e) — see the comment there. Everything below still
-// reads the same `fpPlan` const; nothing here changed.
-// THE PACKAGER (Sonnet): one digest with the complete diff hunks of the files the
-// final pass will read plus the call sites of every changed export — so the
-// strongest model spends its effort judging, not gathering.
-function finalPassPackagePrompt(files, whole) {
-  return [
-    RUN_PREFIX(),
-    `You are the final-pass PACKAGER — mechanical and read-only. Build ONE markdown digest that lets a reviewer judge ${whole ? 'the whole change' : 'the HIGH-risk part of this change'} without running git or hunting for call sites.`,
-    `Files: ${whole ? 'every changed or untracked file (`git status --short`)' : files.join(', ')}.`,
-    `Digest contents, in this order: (1) for each file, its COMPLETE current diff (\`git diff HEAD -- <file>\`, unified with function context; an untracked file is included whole) — never summarize or elide a hunk; (2) for every exported function, method, class or constant whose signature or body changed, one line per call site across the repo (\`grep -rn\` over apps/ and packages/, excluding node_modules, dist and .next): path:line and the calling expression; (3) a short list of any file you could not diff (binary, too large) so the reader knows the gap.`,
-    `Write the digest to the OS temp directory (Git Bash: "$TMPDIR" when set, else /tmp; a Windows shell: %TEMP%) under a unique name such as "final-pass-digest-<short>.md" and return its ABSOLUTE path. Do not modify, create or delete anything inside the repository; do not run builds or tests; do not judge anything.`,
-  ].filter(Boolean).join('\n')
-}
-
-// THE READER (Opus, xhigh): the adversarial read itself. Produces CANDIDATES with
-// evidence; it does not have the last word.
-function finalPassReadPrompt(files, known, whole, digest, focus) {
-  return [
-    RUN_PREFIX(),
-    `You are the FINAL adversarial reader over a finished, already-reviewed change. Six lenses, refuters, a mutation probe and fix rounds have run; your job is to find what they ALL missed and hand each suspicion, with its evidence, to a decider who rules on it.`,
-    focus && focus.length
-      ? `FOCUSED RE-READ. The decider judged the first read's coverage thin exactly here — read these and only these, at full depth:\n${focus.map((g) => `- ${g}`).join('\n')}`
-      : `Look for: any defect a hostile reviewer would raise on the whole diff that file-scoped review structurally misses — cross-file invariants no single-file lens could see; spec requirements satisfied literally but violated in spirit; money/tenancy/authorization edges in the interaction BETWEEN packages; sibling paths that reach the same state and were never enrolled in the new rule; multi-step state paths that compose into a forbidden state.`,
-    digest && digest.digestPath
-      ? `Read the planning artifacts (spec, test plan, build plan), then the DIGEST at "${digest.digestPath}": it holds the complete diff hunks of ${whole ? 'every changed file' : `the HIGH-risk files (${files.join(', ')})`} plus the call sites of every changed export${digest.note ? ` — gaps the packager reported: ${digest.note}` : ''}. Work from the digest; open a source file only to confirm a specific suspicion it raises. Do not re-derive the diff with git — that work is done.`
-      : `Read the planning artifacts (spec, test plan, build plan) and then the FINAL state and diff of ${whole ? 'every changed file — run `git status --short` and `git diff` / `git diff HEAD` yourself' : `exactly these HIGH-risk files (run \`git diff\` / \`git diff HEAD\` yourself, scoped to them; read surrounding context in the files as needed): ${files.join(', ')}`}.`,
-    `Already known to this run — do not re-report these or variants of them:\n${known || '(none)'}`,
-    `Report every suspicion you can state as a concrete failure scenario, with the evidence in detail (the lines, the callers, the state path) — the decider rules only from what you write down, so an under-evidenced candidate is a lost candidate. Never style or taste. An empty list means you found nothing after genuine effort; say in the last candidate's place nothing — the decider judges coverage separately.`,
-    FIX_COMPLEXITY_NOTE,
-  ].filter(Boolean).join('\n')
-}
-
-// THE DECIDER (Fable, high): rules from a compact brief. No files, no commands.
-function finalPassDecidePrompt(brief) {
-  return [
-    `You are the FINAL decider on a finished code change. You decide; you do not read the repository, run commands or gather anything — everything you may rule on is below. Where the evidence does not settle a candidate, keep it (real=true) — a fixer re-verifies before touching code, and a dropped real defect ships.`,
-    `Change: ${brief.change}`,
-    `Scope read: ${brief.scope}`,
-    `The run's own oracles: ${brief.oracles}`,
-    `Findings already confirmed and fixed or still open (do not re-raise): \n${brief.known || '(none)'}`,
-    brief.pass === 2 ? `This is the SECOND read, focused on the gaps you named: ${brief.focus.join(' | ')}. Rule on the new candidates and do not name further gaps — the run ends here.` : '',
-    `Candidates from the reader:\n${brief.candidates.length ? brief.candidates.map((c, i) => `[#${i}] [${c.severity}] ${c.file}${c.line ? ':' + c.line : ''} — ${c.summary}\n    evidence: ${String(c.detail || '').slice(0, 900)}`).join('\n') : '(none — the reader reported nothing)'}`,
-    `Rule on each candidate: real or not, with the severity it deserves and one or two sentences of reason drawn from its evidence. Then judge COVERAGE: given the change, the files read and what the run already caught, name the specific interactions the reader should have covered and did not (a caller left unread, a sibling path to the same state, a multi-step sequence) — or an empty list if the read was sufficient. Be selective: each gap costs one more full read. State the decision in one paragraph for the close-out.`,
-  ].filter(Boolean).join('\n')
-}
-// Returns { add, agents, raw }; sets finalPassResult. Three roles: the Sonnet
-// packager gathers, the Opus reader reads and produces candidates with evidence,
-// and Fable decides from a brief — real or not, severity, and where one focused
-// re-read is owed. Fable's classifiers can decline outright (a dead decider); the
-// decision is then retried once on the fallback model, because candidates nobody
-// ruled on are kept, never dropped — an unadjudicated pass is not a clean one.
-async function runFinalPass(origin = 'terminal') {
-  // Snapshot-before-overwrite: capture whatever the previous invocation left
-  // in finalPassResult before this call makes its own assignment, so a
-  // pre-last-round call's detail survives once the terminal call overwrites
-  // finalPassResult. No-op on the first call of a run (finalPassResult.ran
-  // starts false).
-  if (finalPassResult.ran) finalPassRuns.push({ ...finalPassResult })
-  const known = [...confirmedInitial, ...findings]
-    .map((f) => `- [${f.severity || '?'}] ${f.file}: ${f.summary}`)
-    .join('\n')
-  const scopeText = fpPlan.whole ? 'the whole diff' : `${fpPlan.files.length} HIGH-risk file(s): ${fpPlan.files.join(', ')}`
-  let agents = 0
-  // 1. PACKAGE (Sonnet, low). A dead packager just means the reader gathers itself.
-  agents++
-  const digest = await askAgent(finalPassPackagePrompt(fpPlan.files, fpPlan.whole), {
-    label: 'final-pass:package', phase: 'Final pass', model: CFG.finalPassPackagerModel, effort: CFG.effort.finalPassPackage, schema: DIGEST_SCHEMA,
-  })
-  if (digest && digest.digestPath) log(`Final pass digest: ${digest.files} file(s), ${digest.hunks} hunk(s) at ${digest.digestPath}${digest.note ? ` — ${digest.note}` : ''}`)
-  else log('Final pass digest: packager died — the reader gathers the diff itself')
-  // 2. READ (Opus, xhigh) → candidates.
-  const read = async (focus, tag) => {
-    agents++
-    const r = await askAgent(opusCapped(finalPassReadPrompt(fpPlan.files, known, fpPlan.whole, digest, focus), CFG.finalPassReaderModel), {
-      label: `final-pass:read${tag}`, phase: 'Final pass', model: CFG.finalPassReaderModel, effort: CFG.effort.finalPassRead, schema: FINDINGS_SCHEMA,
-    })
-    return r && Array.isArray(r.findings) ? r.findings : null
-  }
-  // 3. DECIDE (Fable, high; Opus xhigh if Fable declines) from a brief.
-  // The same line the fix planner was given every round — one statement of what this
-  // run has proven, never two slightly different ones.
-  const oracles = runOracles()
-  let decider = CFG.finalPassModel
-  let effort = CFG.effort.finalPass
-  let fallback = false
-  const decide = async (candidates, pass, focus) => {
-    const brief = { change: context || `see ${planPath}`, scope: scopeText, oracles, known, candidates, pass, focus }
-    agents++
-    // FABLE BRIEF CAP: built once and reused verbatim on the fallback retry.
-    const decideBrief = capFableBrief(finalPassDecidePrompt(brief))
-    if (decideBrief.truncated) finalPassBriefTruncated = true
-    let d = await askAgent(decideBrief.text, { label: `final-pass:decide${pass === 2 ? ':2' : ''}`, phase: 'Final pass', model: decider, effort, schema: DECISION_SCHEMA })
-    if (!d && decider !== CFG.finalPassFallbackModel) {
-      log(`Final pass decider on ${decider} died or declined — retrying once on ${CFG.finalPassFallbackModel} at ${CFG.effort.finalPassFallback}`)
-      decider = CFG.finalPassFallbackModel
-      effort = CFG.effort.finalPassFallback
-      fallback = true
-      agents++
-      d = await askAgent(decideBrief.text, { label: `final-pass:decide${pass === 2 ? ':2' : ''}:fallback`, phase: 'Final pass', model: decider, effort, schema: DECISION_SCHEMA })
-    }
-    return d
-  }
-  const apply = (candidates, decision) => {
-    // No decision = every candidate stands, unadjudicated. Never clean by default.
-    if (!decision) return candidates.map((c) => ({ ...c, phase: 'Final pass', unadjudicated: true }))
-    const byIndex = new Map((decision.verdicts || []).map((v) => [v.index, v]))
-    return candidates
-      .map((c, i) => ({ c, v: byIndex.get(i) }))
-      .filter(({ v }) => !v || v.real === true)
-      .map(({ c, v }) => ({ ...c, phase: 'Final pass', severity: (v && v.severity) || c.severity, decision: v ? v.reason : 'no verdict returned for this candidate — kept', unadjudicated: !v }))
-  }
-
-  const first = await read(null, '')
-  if (!first) {
-    // A dead reader is an UNREAD pass, not a clean one.
-    finalPassResult = { ran: true, completed: false, skipped: null, reader: CFG.finalPassReaderModel, model: null, effort: null, fallback: false, files: fpPlan.files, candidates: 0, gaps: [], secondRead: false, decision: '', findings: [], briefTruncated: finalPassBriefTruncated, origin }
-    log('Final pass reader died — raised a major finding; the pass is unread, not clean')
-    return {
-      add: [{ file: '(final-pass)', severity: 'major', phase: 'Final pass', summary: 'The final-pass reader died — the HIGH-risk diff was never given its last adversarial read', detail: `Re-run the final pass over: ${scopeText}`, fixComplexity: 'judgment' }],
-      agents, raw: 0,
+  t.evidence = evidence2
+  const model2 = isHighRisk(t) ? M.opus : M.sonnet // second UI judge on HIGH: Opus (ruling 2026-09-13)
+  // eslint-disable-next-line no-await-in-loop
+  const review2 = await askAgent(fableSafe(model2, uiJudgePrompt(t, t.uiCfg, evidence2, priorFindings)), { label: 'ui-rejudge:' + t.id, phase: 'UI verify', model: model2, effort: CFG.effort.review, schema: REVIEW_SCHEMA })
+  if (review2) {
+    t.review = review2
+    // Fix round 2, finding 2 (cause a): every OTHER findings-merge site in
+    // this file routes a review's raw severity ('critical'/'important'/
+    // 'minor') through mapReviewSeverity before it reaches the run-wide
+    // findings[] result.clean (~below) strictly checks severity==='blocker'
+    // on -- this push used to skip that mapping, so a real disagreement
+    // reported as raw 'critical' was invisible to result.clean.
+    const mapped = (Array.isArray(review2.findings) ? review2.findings : []).map((f) => ({ ...f, severity: mapReviewSeverity(f.severity), phase: 'UI verify', source: 'ui-reverify' }))
+    findings.push(...mapped)
+    // Fix round 2, finding 2 (cause b): a genuine ui-reverify disagreement
+    // (mapped to blocker or major) must also flip THIS task's own
+    // status/clean -- not just add an entry to the run-wide findings[] --
+    // because anyTaskNotClean (below) reads tr.status/tr.clean per task, and
+    // progressLineFor()/the checkpoint already fired for this task in
+    // runTask (before this post-loop pass ever runs) captured a frozen
+    // "review clean" progress line that a later mutation to t.review cannot
+    // retroactively correct. Mutating t.status/t.clean here IS still in
+    // time for anyTaskNotClean, which runs after this whole A10b loop --
+    // but a fresh, explicit checkpoint is fired too (the same append-only
+    // fireCheckpoint pattern the sibling sweep uses below) so the
+    // progress ledger itself carries the corrected line, rather than
+    // leaving the stale one from the per-task checkpoint as the only record.
+    const disagreement = mapped.some((f) => f.severity === 'blocker' || f.severity === 'major')
+    if (disagreement) {
+      t.status = 'open'
+      t.clean = false
+      const line = 'Task ' + t.id + ': ui-reverify found a real disagreement after a fix round (' + mapped.filter((f) => f.severity === 'blocker' || f.severity === 'major').length + ' finding(s), not clean)'
+      fireCheckpoint('checkpoint:' + t.id + ':ui-reverify', { task: t, progressLine: line })
     }
   }
-  let decision = await decide(first, 1, [])
-  let out = apply(first, decision)
-  let gaps = decision && Array.isArray(decision.gaps) ? decision.gaps.filter(Boolean).slice(0, 6) : []
-  let secondRead = false
-  let candidates = first.length
-  if (gaps.length) {
-    log(`Final pass decider named ${gaps.length} coverage gap(s) — one focused re-read: ${gaps.join(' | ')}`)
-    const second = await read(gaps, ':2')
-    secondRead = true
-    if (second) {
-      candidates += second.length
-      const decision2 = await decide(second, 2, gaps)
-      out = out.concat(apply(second, decision2))
-      if (decision2 && decision2.note) decision = { ...decision, note: `${decision.note || ''}\nSecond read: ${decision2.note}` }
+}
+
+// Merge every task's own findings into the run-wide findings/rulings --
+// never silently discarded (brief F). critical/important survive only on a
+// task that hit the fix-round cap (status:'open'); a 'complete' task's
+// findings were all ADDRESSED, so nothing further is pushed for it besides
+// its (non-blocking) minor findings.
+function mapReviewSeverity(s) { return s === 'critical' ? 'blocker' : s === 'important' ? 'major' : 'minor' }
+const rulings = []
+for (const tr of taskResults) {
+  if (Array.isArray(tr.blockerFindings)) findings.push(...tr.blockerFindings)
+  if (Array.isArray(tr.packGaps)) findings.push(...tr.packGaps)
+  if (Array.isArray(tr.minorFindings)) {
+    for (const f of tr.minorFindings) {
+      findings.push({ file: f.file, severity: 'minor', phase: 'Gate & Review', summary: f.summary, detail: f.scenario || f.detail || '' })
+    }
+  }
+  if (tr.status === 'open' && Array.isArray(tr.remaining)) {
+    for (const f of tr.remaining) {
+      findings.push({ file: f.file, severity: mapReviewSeverity(f.severity), phase: 'Fix', summary: f.summary, detail: f.scenario || f.detail || '' })
+    }
+  }
+  if (Array.isArray(tr.rulings)) rulings.push(...tr.rulings)
+}
+// Fix round 1, finding 5: an 'important' finding that survives the cap maps
+// to 'major' (never 'blocker'), so the severity-only check below would miss
+// it entirely. Run-level clean must also fail when any task's OWN status
+// says it did not finish clean, independent of how its findings map.
+const anyTaskNotClean = taskResults.some((tr) => tr.status === 'open' || tr.clean === false)
+
+// Shared by the sibling sweep and Final pass below: true if any task this
+// run touches is HIGH risk, explicit or from the Baseline manifest --
+// isHighRisk() already implements exactly that rule.
+const hasHighRiskTask = tasks.some((t) => isHighRisk(t))
+
+// ---------- A11: post-loop sibling sweep (mode:'bugfix' only) ----------
+// Adapted from pipeline.js.bak-2026-09-12 @1615 (siblingGrepPrompt) and
+// @1628 (siblingJudgePrompt). args.siblingPatterns is the caller-supplied
+// contract, unchanged from the old engine's shape.
+function siblingGrepPrompt(patterns) {
+  return [
+    'You are the SIBLING SWEEP grepper -- mechanical and read-only. A defect is being fixed in this run; the patterns below name its SHAPE. Find every other place in this repository that matches, so a judge can decide which of them are the same bug in a second place. You judge NOTHING.',
+    'Patterns -- run each one separately and report which pattern produced each hit:',
+    ...patterns.map((p, i) => '  ' + (i + 1) + '. /' + p.pattern + '/' + (p.note ? ' -- ' + p.note : '')),
+    'Use ripgrep (or `grep -rnE`) over the source tree, EXCLUDING node_modules, dist, build output and .next. Report each hit as its pattern, the repo-relative path, the line number, and the matching line verbatim (trimmed to about 200 characters).',
+    'Cap each pattern at 40 hits: if one matches more, report the first 40 and name that pattern in truncated -- never silently drop the rest.',
+    'Read only: do NOT modify, create or delete any file, and do NOT run builds, tests or installs.',
+  ].join('\n')
+}
+function siblingJudgePrompt(patterns, hits) {
+  return [
+    'You are the SIBLING SWEEP judge. A defect is being fixed in this run. The hits below match its SHAPE elsewhere in the repository. Decide, for each hit, whether the same defect is live there.',
+    'The patterns that produced these hits:',
+    ...patterns.map((p, i) => '  ' + (i + 1) + '. /' + p.pattern + '/' + (p.note ? ' -- ' + p.note : '')),
+    'Verdicts: "defect" = the same defect is live here, and you can state the concrete failure scenario; "same-class-but-guarded" = the shape matches but something already prevents the failure, and you can NAME that guard; "unrelated" = the match is incidental.',
+    'Hits:',
+    ...hits.map((h, i) => '[#' + i + '] ' + h.file + ':' + (h.line || '?') + ' -- ' + String(h.excerpt || '').slice(0, 200) + '   (pattern: ' + (h.pattern || '?') + ')'),
+    'One verdict per index, each with ONE sentence of evidence and the severity it deserves. "same-class-but-guarded" requires the guard by name -- if you cannot name it, say "defect" instead.',
+  ].join('\n')
+}
+startPhase('Verify')
+const rawSiblingPatterns = Array.isArray(_args.siblingPatterns) ? _args.siblingPatterns : []
+let siblingSweep = {
+  ran: false,
+  supplied: rawSiblingPatterns.length,
+  patterns: 0,
+  hits: 0,
+  findings: 0,
+  skipped: mode !== 'bugfix' ? 'feature-mode' : (rawSiblingPatterns.length ? null : 'no-patterns'),
+}
+if (mode === 'bugfix' && rawSiblingPatterns.length) {
+  siblingSweep.patterns = rawSiblingPatterns.length
+  const grep = await askAgent(siblingGrepPrompt(rawSiblingPatterns), { label: 'sibling-grep', phase: 'Verify', model: M.haiku, effort: CFG.effort.siblingGrep, schema: SIBLING_HITS_SCHEMA })
+  if (!grep) {
+    siblingSweep.skipped = 'grep-died'
+  } else {
+    const hits = (Array.isArray(grep.hits) ? grep.hits : []).filter((h) => h && h.file)
+    siblingSweep.hits = hits.length
+    if (!hits.length) {
+      siblingSweep.ran = true
     } else {
-      out.push({ file: '(final-pass)', severity: 'major', phase: 'Final pass', summary: 'The focused second read died — the coverage gaps the decider named were never read', detail: gaps.join(' | '), fixComplexity: 'judgment' })
+      const judgeModel = hasHighRiskTask ? M.opus : M.sonnet // final-pass judge on HIGH: Opus (ruling 2026-09-13)
+      const judged = await askAgent(fableSafe(judgeModel, siblingJudgePrompt(rawSiblingPatterns, hits)), { label: 'sibling-judge', phase: 'Verify', model: judgeModel, effort: CFG.effort.siblingJudge, schema: SIBLING_VERDICT_SCHEMA })
+      if (!judged) {
+        siblingSweep.skipped = 'judge-died'
+      } else {
+        const byIndex = new Map((Array.isArray(judged.verdicts) ? judged.verdicts : []).map((v) => [v.index, v]))
+        let sibFindingCount = 0
+        hits.forEach((h, i) => {
+          const v = byIndex.get(i)
+          if (!v || v.verdict !== 'defect') return
+          sibFindingCount++
+          const f = {
+            file: h.file,
+            line: typeof h.line === 'number' ? h.line : 0,
+            severity: v.severity === 'blocker' || v.severity === 'minor' ? v.severity : 'major',
+            summary: h.file + ':' + (h.line || '?') + ' -- ' + v.evidence,
+            detail: v.evidence,
+            phase: 'Verify',
+            source: 'sibling-sweep',
+          }
+          findings.push(f)
+          fireCheckpoint('checkpoint:sibling-sweep:' + i, { finding: f, progressLine: 'Sibling sweep: ' + f.file + ':' + f.line + ' -- ' + f.summary })
+        })
+        siblingSweep.ran = true
+        siblingSweep.findings = sibFindingCount
+      }
     }
   }
-  const unadjudicated = out.filter((f) => f.unadjudicated).length
-  if (unadjudicated) out.push({ file: '(final-pass)', severity: 'major', phase: 'Final pass', summary: `${unadjudicated} final-pass candidate(s) were never ruled on — kept as findings, the pass is unadjudicated`, detail: 'The decider died on Fable and the fallback model, or returned no verdict for these indices.', fixComplexity: 'judgment' })
-  finalPassResult = {
-    ran: true, completed: !!decision, skipped: null,
-    reader: CFG.finalPassReaderModel, model: decider, effort, fallback,
-    files: fpPlan.files, candidates, gaps, secondRead, decision: decision ? decision.note || '' : '',
-    findings: out,
-    briefTruncated: finalPassBriefTruncated,
-    origin,
-  }
-  log(`Final pass: ${CFG.finalPassReaderModel}@${CFG.effort.finalPassRead} read ${scopeText}${secondRead ? ' (+1 focused re-read)' : ''}, ${candidates} candidate(s); ${decider}@${effort}${fallback ? ' (fallback)' : ''} decided: ${out.length} finding(s) stand`)
-  return { add: out, agents, raw: out.length }
+}
+if (rawSiblingPatterns.length && mode !== 'bugfix') {
+  log('Note: args.siblingPatterns is a BUGFIX-MODE argument -- this run is in feature mode, so no sibling sweep ran and the patterns were ignored')
 }
 
-if (wantFullGate && fpPlan.run) {
-  // The full gate runs commands; the final pass reads. Nothing they touch overlaps,
-  // so they share one bracket — the Final pass's, which therefore also carries the
-  // (Haiku-priced, small) gate agent. Recorded in overlapInfo and the phase note.
-  startPhase('Final pass')
-  overlapInfo.finalGateWithFinalPass = true
-  const [g, fp] = await parallel([runFinalGate, runFinalPass])
-  if (g) findings.push(...g.add)
-  else { finalGate = { pass: false, skipped: false, results: [] }; findings.push({ file: '(gate)', severity: 'blocker', phase: 'Fix', summary: 'FULL verification gate did not run after fix rounds', detail: 'The final gate threw while running beside the final pass — no full-suite evidence exists.' }) }
-  if (fp) findings.push(...fp.add)
-  else { finalPassResult = { ...finalPassResult, ran: true, completed: false }; findings.push({ file: '(final-pass)', severity: 'major', phase: 'Final pass', summary: 'The final-pass agent threw — the HIGH-risk diff was never given its last adversarial read', detail: `Re-run the final pass over: ${fpPlan.whole ? 'the whole diff' : fpPlan.files.join(', ')}`, fixComplexity: 'judgment' }) }
-  phaseStats['Final pass'].note = 'includes the final full gate (Haiku), which ran beside the final pass'
-  await endPhase('Final pass', (fp ? fp.agents : 1) + 1, fp ? fp.raw : 0)
-} else {
-  if (wantFullGate) {
-    startPhase('Fix')
-    const g = await runFinalGate()
-    findings.push(...g.add)
-    await endPhase('Fix', g.agents, g.raw)
-  }
-  if (fpPlan.run) {
-    startPhase('Final pass')
-    const fp = await runFinalPass()
-    findings.push(...fp.add)
-    await endPhase('Final pass', fp.agents, fp.raw)
-  } else if (scale === 'major') {
-    finalPassResult = { ...finalPassResult, ran: false, completed: false, skipped: fpPlan.skipped }
-    phaseStats['Final pass'].note = `skipped: ${fpPlan.skipped}`
-    log(`Final pass SKIPPED — ${fpPlan.skipped} (CFG.finalPassWhenNoHighRisk = '${CFG.finalPassWhenNoHighRisk}'); recorded, not silently omitted`)
-  }
+// ---------- A12: Final pass ----------
+function finalGatePrompt(commands) {
+  return [
+    'You are the FINAL gate. Run the full verification suite once, from the repo root, in order:',
+    ...commands.map((c) => '- ' + c),
+    'Rules: do NOT fix anything, do NOT create, modify or delete any file, and do NOT adjust or substitute a command that fails -- run each one EXACTLY as written.',
+    'Report each command: pass:true only if it actually ran and succeeded; pass:false if it exits nonzero, errors, or cannot be run at all -- with the key error lines quoted verbatim in summary. Report `executed` and overall pass. Report the working directory you ran in as `cwd`.',
+  ].join('\n')
 }
-// One last dedupe so remainingFindings never overstates how many distinct
-// problems are left — that list is what the orchestrator shows the user.
-findings = dedupe(findings)
+function fableFinalReadPrompt(findingsSoFar) {
+  return [
+    'You are the FINAL READ over this run\'s accumulated findings and diff. This run touched at least one HIGH-risk file, which earns one more adversarial pass before the run reports itself done.',
+    'Findings already recorded this run: ' + JSON.stringify(findingsSoFar),
+    'Read the actual diff (`git diff` against the run\'s baseline) for anything those findings missed.',
+    'Report ONLY genuinely new findings this run has not already recorded (severity critical|important|minor, file, line, summary, detail). An empty findings list is a good answer.',
+  ].join('\n')
+}
+endPhase('Verify')
+startPhase('Final pass')
+const [finalGateResult, fableReadResult] = await parallel([
+  () => (finalCmds.length ? askAgent(finalGatePrompt(finalCmds), { label: 'final-gate', phase: 'Final pass', model: M.haiku, effort: CFG.effort.baseline, schema: GATE_SCHEMA }) : Promise.resolve(null)),
+  hasHighRiskTask ? () => askAgent(withToolCap(fableFinalReadPrompt(findings)), { label: 'final-read', phase: 'Final pass', model: M.fable, effort: CFG.effort.finalRead, schema: FINDINGS_SCHEMA }) : () => Promise.resolve(null),
+])
+if (finalCmds.length) {
+  const problem = gateProblem(finalGateResult)
+  if (problem) findings.push({ file: '(final-gate)', severity: 'blocker', phase: 'Final pass', summary: 'The final verify suite did not pass clean.', detail: problem })
+}
+if (hasHighRiskTask && fableReadResult && Array.isArray(fableReadResult.findings)) {
+  findings.push(...fableReadResult.findings.map((f) => ({ ...f, phase: 'Final pass' })))
+}
+const finalPass = {
+  ran: true,
+  skipped: hasHighRiskTask ? null : 'no-high-risk',
+  model: hasHighRiskTask ? M.fable : null,
+  completed: finalCmds.length ? gateProblem(finalGateResult) === null : true,
+}
+endPhase('Final pass')
 
-// ═══════════ Result (read by the orchestrating session) ═══════════
-// `clean` is deliberately conservative: a remaining finding, a failed gate, a dead
-// lens, a red gate that never went red, a mutation target left unrestored, a mutation
-// the named test failed to catch, a restore no independent checksum could confirm, or
-// a work/test package that never reached "done" all mean the run is NOT clean,
-// whatever else went well.
-// Through the baseline filter, not the raw flag: a command that already failed on
-// the untouched tree can never make `clean` false. gateProblem() still rejects a
-// dead gate agent and a pass:false that named no failing command, so an UNVERIFIED
-// gate is not a passing one. finalGate carries `results`, which that filter needs.
-const gateOk = gateProblem(finalGate) === null
-// Under the 'structural' bar a behavioral shortfall is proven (or not) by the
-// mutation probe, whose allCaught is a separate conjunct below; under the
-// 'behavioral' bar (small scale) the red gate itself must be properly red.
-const redOk = !redGateResult.ran || (redGateResult.remediateOn === 'structural' ? redGateResult.structurallyRed === true : redGateResult.properlyRed === true)
-// allCaught is folded in exactly the way properlyRed is: both are one-shot test-quality
-// oracles that are never re-run, so a later fix round clearing their '(mutation)' /
-// '(red-gate)' finding is NOT evidence the test now catches the defect. Without this,
-// a run could return clean:true beside mutationProbe.allCaught:false.
-const mutationOk = mutationResult.allRestored === true && mutationResult.allCaught === true
-// The probes' self-report is not evidence. A skipped mutation phase is neutral; a
-// phase that ran without independent before/after checksum agreement is NOT — an
-// unverified restore may have left a deliberate defect in the tree.
-const restoredVerifiedOk = !mutationResult.ran || mutationResult.restoredVerified === true
-// Package status is a PHASE RESULT, not an opinion, so the verdict reads it
-// directly — exactly as redOk/mutationOk do. Its '(implementation)' / '(tests)'
-// finding goes through the fix loop, where a fixer that cannot finish the package
-// skips it with a reason and the re-check is told to drop what was skipped with a
-// sound reason; without these conjuncts a blocked package can end the run as clean.
-const implOk = implResults.every((r) => r && r.status === 'done')
-const testsOk = testAuthoring.packages.every((p) => p && p.status === 'done')
-if (!implOk || !testsOk) {
-  log(`!!! NOT clean: ${implResults.filter((r) => !r || r.status !== 'done').length} work package(s) and ${testAuthoring.packages.filter((p) => !p || p.status !== 'done').length} test package(s) never reached status "done" — see implementation[] / testAuthoring.packages[]`)
-}
+// A10b: the run-level uiVerify field, populated from every ui-verify task
+// this run scheduled (instead of staying null) -- one task is the common
+// case, so its evidence is reported directly; more than one reports an
+// array so no evidence is silently dropped.
+const uiTasks = taskResults.filter((t) => t.type === 'ui-verify')
+const uiVerify = uiTasks.length
+  ? { ran: true, reVerify: uiTasks.reduce((s, t) => s + (t.reVerify || 0), 0), evidence: uiTasks.length === 1 ? uiTasks[0].evidence : uiTasks.map((t) => t.evidence) }
+  : null
 
-// ---------- self-instrumentation ----------
-// What each phase cost and what it produced, in phase order. Report this at
-// close-out and cut any phase that has produced no CONFIRMED finding across ten
-// real runs. `tokens: null` means the reading was unavailable — an unknown cost
-// must never read as a free one, so it is never reported as 0.
-// buildPhaseRow is the SAME function each per-phase C1 checkpoint used, so this
-// final report can never disagree with what the phase cards already wrote.
-const phaseReport = PHASE_TITLES.map(buildPhaseRow)
-const estimatedCostUsd = Math.round(phaseReport.reduce((n, r) => n + (r.estUsd || 0), 0) * 100) / 100
-// A2 EXECUTION-VERIFIED CONFIRMED: resolve every survivor's verification level
-// from verificationByKey (filled in by the fix loop above). A SYNTHETIC-key
-// finding — '(red-gate)', '(mutation)', '(gate)', '(gate-command)', '(artifact)',
-// '(implementation)', '(tests)' — is already a mechanically observed fact (a
-// command failed, a digest mismatched), never a lens's opinion, so it is
-// 'execution' from the moment it is raised, same as before A2 existed. Only a
-// REAL-FILE finding (a lens's claim about actual code) starts 'plausible' and
-// needs the fix loop's before/after evidence or a Fable ruling to be promoted.
-// With the flag off, everything counts exactly as it always did and
-// plausibleFindings is empty — byte-identical to pre-A2 behaviour.
-for (const f of confirmedInitial) {
-  const v = verificationByKey.get(findingKey(f))
-  f.verification = !isRealPath(f.file) ? 'execution' : (v ? v.level : 'plausible')
-  if (v && v.verifiedBy) f.verifiedBy = v.verifiedBy
+// A13: drain every fire-and-forget checkpoint before this run reports itself
+// done, so result.checkpoints[] (built above, inside checkpoint() itself) is
+// always complete by the time a caller reads it -- never a race with a
+// checkpoint agent that is still mid-flight.
+await Promise.allSettled(pendingCheckpoints)
+
+// ---------- A14: result assembly ----------
+// phaseReport: EVERY title now goes through the same bracket (T2 cost-plan)
+// -- the five run-level anchors via startPhase/endPhase around their single
+// whole-run span, the other five via meterStage around each per-task stage
+// call (chainForType, above). Each gets a real, measured tokens delta
+// whenever its bracket closed clean, or an honest estUnknown:true (never a
+// guessed number) when the reading was unavailable, stuck at the same value
+// across real agent calls, or CONTAMINATED -- two tasks in the same wave
+// entered the same titled stage concurrently, so budget.spent()'s one
+// shared cumulative scalar cannot isolate either one's own delta.
+// ANCHOR_PHASES still marks which five are non-overlapping spans: those
+// five's per-task chain (Author tests/Red gate/Gate & Review/Fix/UI verify)
+// physically runs INSIDE the single Implement bracket (the whole wave loop),
+// so Implement's own delta already includes every one of their tokens --
+// adding the non-anchor five into estimatedCostUsd too would double-count.
+// They keep overlappedWith:'Implement' and stay OUT of the sum; their own
+// tokens/estUsd are populated (when not unknown) purely for visibility, same
+// philosophy as the old engine's markOverlapped. agents/rawFindings are real
+// tallies for every title either way: phaseAgentCounts (every askAgent()
+// call, instrumented at askAgent itself) and findings.filter(f => f.phase
+// === title) (every finding actually recorded under that name).
+const ANCHOR_PHASES = new Set(['Baseline', 'Implement', 'Mutation probe', 'Verify', 'Final pass'])
+const PHASE_PRIMARY = {
+  Baseline: { model: M.haiku, effort: CFG.effort.baseline },
+  'Author tests': { model: M.sonnet, effort: CFG.effort.testAuthor },
+  'Red gate': { model: M.haiku, effort: CFG.effort.redCheck },
+  Implement: { model: M.sonnet, effort: CFG.effort.implement },
+  'Gate & Review': { model: M.sonnet, effort: CFG.effort.review },
+  Verify: { model: M.sonnet, effort: CFG.effort.siblingJudge },
+  'UI verify': { model: M.sonnet, effort: CFG.effort.review },
+  'Mutation probe': { model: M.haiku, effort: CFG.effort.probe },
+  Fix: { model: M.sonnet, effort: CFG.effort.fixExec },
+  'Final pass': { model: M.haiku, effort: CFG.effort.baseline },
 }
-const plausibleFindings = CFG.executionVerified ? confirmedInitial.filter((f) => f.verification === 'plausible') : []
-const verifiedConfirmed = CFG.executionVerified ? confirmedInitial.filter((f) => f.verification !== 'plausible') : confirmedInitial
-// How many of each phase's RAW findings SURVIVED refutation (and the fact/evidence
-// findings, which are never refutable). rawFindings high + confirmed 0, run after
-// run, is a phase paying only for noise. Counts execution/ruled findings only
-// (A2) — a plausible one that nothing ever verified is not "confirmed".
 const confirmedByPhase = {}
-for (const t of PHASE_TITLES) confirmedByPhase[t] = 0
-for (const f of verifiedConfirmed) {
-  const p = f && f.phase
-  if (p && Object.prototype.hasOwnProperty.call(confirmedByPhase, p)) confirmedByPhase[p]++
+const phaseReport = PHASE_TITLES.map((title) => {
+  const agents = phaseAgentCounts[title] || 0
+  const rawFindings = findings.filter((f) => f.phase === title).length
+  // No separate confirmation/refuter pass exists in this rebuild (one
+  // adversarial reviewer per task decides directly) -- every finding
+  // recorded under a phase IS this run's confirmed count for it.
+  confirmedByPhase[title] = rawFindings
+  const primary = PHASE_PRIMARY[title]
+  const isAnchor = ANCHOR_PHASES.has(title)
+  const s = phaseStats[title]
+  // Known limitation (ENGINE-NOTES.md, 2026-09-10): budget.spent() silently
+  // read 0 on 26% of phases in production -- it is still the best available
+  // telemetry source (no per-call usage data exists anywhere else to sum
+  // instead), and the field is honestly named estUsd/tokens rather than
+  // claimed as ground truth, with pipeline-ledger.mjs layering real
+  // --usage-based trueCostUsd on top. A STUCK reading -- budget.spent()
+  // reports the identical value at both ends of this bracket, so tokens
+  // computes to a false 0 even though real agent calls happened -- looks
+  // identical to "this phase legitimately spent nothing" unless flagged.
+  const stuckZero = !s.unknown && !s.contaminated && s.sum === 0 && agents > 0
+  const estUnknown = s.unknown || s.contaminated || stuckZero
+  const tokens = estUnknown ? null : s.sum
+  const est = estUnknown ? null : estUsd(tokens, primary.model)
+  const note = s.unknown
+    ? 'budget.spent() reading unavailable for at least one bracket -- tokens unknown, not zero'
+    : s.contaminated
+      ? 'two or more tasks entered this phase concurrently in the same wave -- budget.spent() is one shared cumulative scalar, so no reliable per-phase delta exists here; tokens unknown, not zero'
+      : stuckZero
+        ? 'budget.spent() read the SAME value at both ends of this phase despite ' + agents + ' agent call(s) -- a known stuck-reading failure mode (ENGINE-NOTES.md 2026-09-10), tokens:0 here is not proof this phase was free'
+        : isAnchor
+          ? ''
+          : 'runs nested inside the single Implement bracket (the whole wave loop) -- this tokens/estUsd figure is shown for visibility only and is ALREADY included in Implement\'s own total, so it is excluded from estimatedCostUsd (see overlappedWith) to avoid double-counting'
+  return {
+    phase: title,
+    ran: agents > 0,
+    agents,
+    rawFindings,
+    tokens,
+    estUsd: est ? est.usd : null,
+    estUsdApprox: est ? est.approx : null,
+    estUnknown,
+    model: primary.model,
+    effort: primary.effort,
+    overlappedWith: isAnchor ? null : 'Implement',
+    note,
+  }
+})
+// Only the five ANCHOR_PHASES are additive spans (see the big comment
+// above) -- summing the other five in too would double-count tokens already
+// captured inside Implement's own bracket. estUnknownPhases lists every
+// anchor whose reading is missing/stuck/contaminated so a reader can tell
+// estimatedCostUsd is a sum of KNOWN anchors, never a sum that silently
+// treated an unknown as 0 (T2 cost-plan).
+const anchorReports = phaseReport.filter((p) => ANCHOR_PHASES.has(p.phase))
+const estUnknownPhases = anchorReports.filter((p) => p.estUnknown).map((p) => p.phase)
+const estimatedCostUsd = Math.round(anchorReports.reduce((s, p) => s + (p.estUsd || 0), 0) * 100) / 100
+
+// redGate: aggregated from the per-task RED checks (redCheckStage already
+// attaches redAudit/redRun/redAttempts to every task it actually ran on --
+// none, in a 'lean' profile run, since redCheckStage is a no-op there).
+const redAudited = taskResults.filter((tr) => tr.redAudit)
+const redProbedRepro = redAudited.filter((tr) => tr.type === 'repro-test')
+const redGate = {
+  ran: redAudited.length > 0,
+  structurallyRed: redAudited.length ? redAudited.every((tr) => isStructurallyRed(tr.redRun, tr.redAudit)) : null,
+  behaviorallyRed: redProbedRepro.length ? redProbedRepro.every((tr) => tr.behaviorallyRed !== false) : null,
+  attempts: redAudited.reduce((s, tr) => s + (tr.redAttempts || 0), 0),
+  audits: redAudited.map((tr) => ({
+    taskId: tr.id,
+    structurallyRed: tr.structuralRedAccepted ? true : isStructurallyRed(tr.redRun, tr.redAudit),
+    structuralRedAccepted: !!tr.structuralRedAccepted,
+    behaviorallyRed: tr.behaviorallyRed === undefined ? null : tr.behaviorallyRed,
+    attempts: tr.redAttempts || 0,
+    blockers: (tr.redAudit && tr.redAudit.blockers) || [],
+  })),
 }
 
-// Which lenses actually ran: the full set in feature mode, minus anything bugfix mode
-// gated off and anything the density escalation skipped. It is the honest answer to
-// "which dimensions was this change reviewed on".
-const lensesRun = lenses.filter((l) => escalation.lensesSkipped.indexOf(l) === -1)
+// gate: the run's own overall pass/fail (Final pass's own gate command, if
+// any, plus no outstanding blocker and no task left un-clean).
+const gate = {
+  pass: (!finalCmds.length || gateProblem(finalGateResult) === null) && !findings.some((f) => f.severity === 'blocker') && !anyTaskNotClean,
+  results: finalGateResult && Array.isArray(finalGateResult.results) ? finalGateResult.results : [],
+}
 
-// C2 (owner ruling 2026-09-11c, engine wave 3C, "A7"): built AFTER confirmedInitial's
-// findings carry their final .verification, so executionConfirmed/ruled/plausible
-// below are accurate. See buildLensReport()'s definition for what a merged
-// small-scale unit's row means.
-const lensReport = buildLensReport()
+const riskSummary = {
+  totalTasks: tasks.length,
+  highRiskTasks: tasks.filter((t) => isHighRisk(t)).length,
+  explicitHighRiskTasks: tasks.filter((t) => t.risk === 'HIGH').length,
+  manifestHighRiskFiles: (manifestResult.files || []).filter((f) => f.risk === 'HIGH').length,
+}
 
-// C1: hoisted into a variable (not returned directly) so the final checkpoint
-// below can read it before it goes back to the orchestrator. checkpointLog is
-// the SAME array every runCheckpoint() call pushed onto, so the final entry
-// pushed after this object is built still shows up in resultObj.checkpoints —
-// no re-assignment needed.
-const resultObj = {
-  plan: planPath,
-  // 'feature' (the default) or 'bugfix' — which preset of this one engine ran.
-  mode: MODE,
-  artifacts: {
-    plan: planPath,
-    discovery: discoveryPath,
-    spec: specPath,
-    uxSpec: uxSpecPath,
-    testPlan: testPlanPath,
-    designSystem: designSystemPath,
-  },
-  scale,
-  // Echoed from args for the ledger (scripts cannot read the clock); the
-  // orchestrator stamps the end time when the result returns.
-  startedAt: startedAt || null,
-  // Output-only cost estimate at CFG.prices (labelled with its date) — the number
-  // the ledger tracks run over run. Unknown phases contribute nothing, and say so
-  // in their own row (tokens: null).
-  estimatedCostUsd,
-  pricesAsOf: CFG.prices.asOf,
-  // What each wall-clock overlap did this run.
-  overlap: overlapInfo,
-  // Refutation economics: how many votes were actually cast, how often the first
-  // refuter voted to discard (what the lazy slate keys on), and the tie-breaks.
-  verify: verifyStats,
-  // The tree BEFORE any agent wrote anything: which verify commands were already
-  // broken (excluded from the verdict), whether the baseline gate and the artifact
-  // grounding agents actually completed (completed:false means unchecked, which a
-  // zero finding count cannot tell you), and the honest note that the baseline is
-  // whatever state the caller left the tree in.
-  baseline: baselineResult,
-  // Preflight facts every later agent was given, and the risk split that set review
-  // depth, fix routing and which mutation targets were probed.
-  manifest: manifestResult,
-  riskSummary,
-  // Where fix tokens went. mechanical = the cheap fixer; sonnetDesigned = a
-  // Fable-designed change on a LOW-risk file; judgment = the review model.
-  fixRouting,
-  // The Fable fix planner, per round. enabled:false = the flag (or args.fixPlanning)
-  // turned it off and the loop routed exactly as it did before the planner existed.
-  // A round with completed:false is one where Fable AND the fallback declined: it
-  // ran on legacy routing, and its findings were fixed without a design.
-  // `deferred` is the owner's queue: every question the planner could not answer,
-  // each one still open in remainingFindings and each one keeping `clean` false.
-  fixPlanning: { enabled: fixPlanningOn, rounds: fixPlanRounds, deferred: deferredQuestions, briefTruncated: fixPlanBriefTruncated },
-  // MEASURED TRADES. Both null when their flag is off — a null here means the trade
-  // was not taken, never that it was taken and found harmless.
-  // cascadeAudit.missedFindings > 0 means the cheap breadth pass let real defects
-  // through: that number is the argument against ever enabling cascadeReview.
-  cascadeAudit,
-  // escalation.lensesSkipped names every dimension that was NOT reviewed.
-  escalation: CFG.densityEscalation ? escalation : null,
-  // The dimensions this change was actually reviewed on.
-  lensesRun,
-  // C2: one row per lens name that ran — rawFindings/corroborated/executionConfirmed/
-  // ruled/plausible/overturned, computed from lensRawFindings + corroborationOf +
-  // confirmedInitial's final .verification + dropReasonByKey. Read by
-  // model-routing/scripts/pipeline-ledger.mjs's extractLenses().
-  lensReport,
-  // ── BUGFIX-MODE STAGES. Each one records whether it RAN, because "no issues" and
-  // "never looked" must never read the same way.
-  // radiusPack.built:false = the review lenses read the change themselves, exactly as
-  // in feature mode (no pack, or one that came back truncated).
-  radiusPack,
-  // siblingSweep: the same defect's shape, hunted across the repo. skipped names why
-  // when it did not run ('no-patterns' | 'feature-mode' | 'grep-died' | 'judge-died').
-  siblingSweep,
-  // harnessCheck: the existing specs' mocks/fixtures against the plan's service-surface
-  // changes, checked BEFORE the tests were written. Never blocks; ran:false = unchecked.
-  harnessCheck,
-  testAuthoring,
-  redGate: redGateResult,
-  implementation: implSummaries,
-  gate: finalGate, // the LAST gate run (initial gate, or the latest fix-round regate)
-  buildFix: buildFixReport, // the one pre-review repair round, null when the gate was green
-  uiVerify: uiVerifyResult,
-  mutationProbe: mutationResult,
-  // The Fable last read over the HIGH-risk diff (major only). ran:false with
-  // `skipped` naming why ('small-scale' | 'no-high-risk-files'); completed:false =
-  // the agent died on the primary AND the fallback model and a '(final-pass)'
-  // finding keeps the run dirty; `model`/`effort`/`fallback` say which model
-  // actually read. Its findings are already folded into remainingFindings.
-  finalPass: { ...finalPassResult, priorPasses: finalPassRuns },
-  // A2: execution/ruled survivors only; a merely 'plausible' one lives in
-  // plausibleFindings instead — see CFG.executionVerified.
-  confirmedFindings: verifiedConfirmed,
-  plausibleFindings,
+// fixRouting/fixPlanning: aggregated from every task's roundHistory (each
+// round already retains its real {plan, design, exec} evidence -- Fix round
+// 1, finding 11 -- specifically FOR this aggregation).
+const fixRoutingRounds = taskResults.flatMap((tr) =>
+  (tr.roundHistory || []).map((rh) => ({ taskId: tr.id, round: rh.round, model: (rh.plan && rh.plan.model) || null, designer: !!(rh.plan && rh.plan.designer) })),
+)
+const fixRouting = {
+  totalRounds: fixRoutingRounds.length,
+  sonnetRounds: fixRoutingRounds.filter((r) => r.model === M.sonnet).length,
+  fableRounds: fixRoutingRounds.filter((r) => r.model === M.fable).length,
+  designedRounds: fixRoutingRounds.filter((r) => r.designer).length,
+}
+const fixRounds = taskResults.length ? Math.max(0, ...taskResults.map((t) => t.rounds || 0)) : 0
+const deferredDecisions = taskResults.flatMap((tr) =>
+  (tr.roundHistory || []).flatMap((rh) =>
+    (rh.design && Array.isArray(rh.design.decisions) ? rh.design.decisions : [])
+      .filter((d) => d && d.action === 'defer')
+      .map((d) => ({ taskId: tr.id, round: rh.round, key: d.key, reason: d.reason || '' })),
+  ),
+)
+const fixPlanning = {
+  enabled: fixRoutingRounds.some((r) => r.designer),
+  rounds: fixRoutingRounds,
+  deferred: deferredDecisions,
+  // Not wired to fix-brief.mjs's own per-round {truncated} flag -- that
+  // script's result is read but not retained on roundHistory today, and no
+  // ledger consumer reads this sub-field, so it is left an honest false
+  // rather than invented.
+  briefTruncated: false,
+}
+
+// confirmedFindings: every finding this run's reviewers actually confirmed
+// for a task, regardless of whether a later fix round resolved it --
+// distinct from remainingFindings (still-open only). Reads tr.review.findings,
+// which is the task's LATEST review pass, not necessarily its first: fixLoopStage
+// now folds every round's re-review newFindings (critical/important -- the
+// severities that actually entered the fix loop, never the filtered-out
+// minors) back into the review it returns, so for a fix/docs/ui-verify task
+// this is the UNION of every finding ever confirmed across every round, not
+// just the initial pass (previously only the initial review.findings were
+// read here, an unbounded undercount whenever a later round's re-review
+// discovered something new -- see fixLoopStage's own comment). For a
+// ui-verify task that the post-loop A10b pass re-drives (a fix round
+// anywhere touched a file it watches), t.review is overwritten wholesale to
+// that SECOND browser pass's own result (review2, set earlier above in the
+// A10b loop) -- so confirmedFindings for a re-verified ui-verify task
+// reflects the re-drive's own findings, not whatever fixLoopStage had
+// accumulated for it beforehand.
+const confirmedFindings = []
+for (const tr of taskResults) {
+  if (tr.review && Array.isArray(tr.review.findings)) {
+    for (const f of tr.review.findings) confirmedFindings.push({ ...f, severity: mapReviewSeverity(f.severity), taskId: tr.id, phase: 'Gate & Review' })
+  }
+}
+
+// tasks[]: every existing field taskResults already carries (every scenario
+// that reads a deeper field off result.tasks[] keeps working) PLUS the two
+// NEW summary fields S5 names.
+function reportPathFor(t) {
+  if (t.type === 'root-cause') return taskDir(t.id) + '/root-cause.md'
+  if (t.type === 'repro-test') return taskDir(t.id) + '/tests-report.md'
+  if (t.type === 'ui-verify') return taskDir(t.id) + '/ui-evidence.json'
+  if (t.type === 'revert-probe') return null
+  return taskDir(t.id) + '/report.md'
+}
+const tasksOut = taskResults.map((t) => ({
+  ...t,
+  reviewVerdict: t.review ? t.review.assessment || t.review.specCompliance || null : null,
+  reportPath: reportPathFor(t),
+}))
+
+// T2 cost-plan: printed, not just carried in the payload -- a reader
+// scanning run output (not the JSON) must not mistake estimatedCostUsd for
+// a complete total when one or more anchor phases came back unknown.
+if (estUnknownPhases.length) {
+  console.log('estimate incomplete (phases: ' + estUnknownPhases.join(', ') + ')')
+}
+
+// Legacy/removed fields from the old engine: explicitly nulled (never
+// simply absent), each with its own reason in legacyNotes rather than a
+// silent gap.
+const legacyNotes = {
+  overlap: "old engine tracked Gate & Review/UI-verify wall-clock overlap explicitly; this rebuild expresses concurrency via phaseReport[].overlappedWith instead",
+  verify: "old engine's Verify phase ran a location-check + per-file refuters + a tie-break vote; this rebuild's Verify phase is the bugfix-only sibling sweep (see result.siblingSweep) -- there is no equivalent verify-lens summary to report",
+  cascadeAudit: 'old engine partitioned Gate & Review into a HIGH-risk cascade plus a sampled LOW-risk spot audit; this rebuild runs one adversarial reviewer per task, so there is no cascade to audit',
+  escalation: 'old engine could skip review lenses under token pressure and record which; this rebuild has no lens fan-out to escalate or skip',
+  lensesRun: "old engine ran up to seven review lenses per file; this rebuild runs one adversarial reviewer per task (see result.tasks[].reviewVerdict)",
+  lensReport: 'see legacyNotes.lensesRun',
+  radiusPack: "old engine built a separate radius-only pack section; this rebuild folds radius excerpts into review-pack.mjs's own --radius section, already part of pack.md",
+  plausibleFindings: 'old engine quarantined a lens\'s low-confidence findings separately before a tie-break vote; this rebuild has one reviewer per task, so there is no separate plausible/quarantined split',
+  quarantined: 'see legacyNotes.plausibleFindings',
+}
+
+const payload = {
+  phaseReport,
   confirmedByPhase,
-  phaseReport, // report at close-out; cut a phase with no confirmed finding in ten runs
-  fixRounds: round,
-  fixReports: fixReportsAll,
-  remainingFindings: findings, // non-empty = NOT clean; orchestrator must surface these
-  clean: findings.length === 0 && gateOk && !lensDied && redOk && mutationOk && restoredVerifiedOk && implOk && testsOk,
-  // C1: every checkpoint attempt this run made (per-phase + the final one below).
-  // Same array reference as checkpointLog, so the entry runFinalCheckpoint() adds
-  // AFTER this object exists still appears here — see the comment above.
-  checkpoints: checkpointLog,
-  // A6: every test the gate's flaky-rerun quarantined this run — excluded from
-  // the red-bar/fix trigger, and never counted as green either. Empty when
-  // CFG.flakyReruns is 0 or no gate failure ever named specific failedTests.
-  quarantined: quarantinedLog,
-  // E1: commands whose flaky quarantine was abandoned for lack of evidence (a
-  // dead/malformed rerun) — the original red result stands. Empty when every
-  // rerun this run ever made returned a usable results[].
-  quarantineAbandoned: quarantineAbandonedLog,
+  confirmedFindings,
+  baseline: baselineResult,
+  manifest: manifestResult,
+  harnessCheck,
+  remainingFindings: findings,
+  clean: !findings.some((f) => f.severity === 'blocker') && !anyTaskNotClean,
+  tasks: tasksOut,
+  rulings,
+  checkpoints,
+  mutationProbe,
+  uiVerify,
+  siblingSweep,
+  finalPass,
+  redGate,
+  gate,
+  riskSummary,
+  fixRouting,
+  fixRounds,
+  fixPlanning,
+  estimatedCostUsd,
+  estUnknownPhases,
+  pricesAsOf: CFG.prices.asOf,
+  startedAt,
+  mode,
+  scale,
+  runId,
+  profile: profileName,
+  // C6 (Task 42): approach names the METHODOLOGY (this engine vs
+  // superpowers vs raw), never the bugfix/feature divergence -- that is
+  // `mode`. This engine only ever produces dev-pipeline-approach runs, in
+  // either mode, per the house "one shared engine, mode is the only
+  // divergence" convention -- so this is a literal constant, not derived
+  // from mode/scale/profile.
+  approach: 'dev-pipeline',
+  overlap: null,
+  verify: null,
+  cascadeAudit: null,
+  escalation: null,
+  lensesRun: null,
+  lensReport: null,
+  radiusPack: null,
+  plausibleFindings: null,
+  quarantined: null,
+  legacyNotes,
 }
-
-// C1 FINAL CHECKPOINT — writes <runDir>/result.json as a size-capped summary of
-// resultObj (details live in the phase files, not here) and lists those phase
-// files. No-op when checkpoints are off or runDir was never supplied, so a
-// legacy call (no args.runDir) reaches `return resultObj` with zero extra work.
-if (CFG.checkpoint.enabled && runDir) {
-  await runFinalCheckpoint(resultObj)
-}
-return resultObj
+const written = await runResult(payload)
+const result = { ...payload, endedAt: (written && written.endedAt) || null }
+return result

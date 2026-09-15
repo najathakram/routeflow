@@ -30,12 +30,12 @@ section is its summary.
 
 Price per MTok, the four classes that matter:
 
-| Model     | Fresh input | Cache write (5m / 1h) | **Cache read** | **Output** |
-| --------- | ----------- | --------------------- | -------------- | ---------- |
-| Fable 5.1 | $10         | $12.50 / $20          | **$0.25**      | **$50**    |
-| Opus 5    | $5          | $6.25 / $10           | **$0.50**      | $25        |
-| Sonnet 5  | $2          | $2.50 / $4            | $0.20          | $10        |
-| Haiku 4.5 | $1          | $1.25 / $2            | $0.10          | $5         |
+| Model | Fresh input | Cache write (5m / 1h) | **Cache read** | **Output** |
+|---|---|---|---|---|
+| Fable 5.1 | $10 | $12.50 / $20 | **$0.25** | **$50** |
+| Opus 5 | $5 | $6.25 / $10 | **$0.50** | $25 |
+| Sonnet 5 | $2 | $2.50 / $4 | $0.20 | $10 |
+| Haiku 4.5 | $1 | $1.25 / $2 | $0.10 | $5 |
 
 Measured on one 113-agent engine run ($205 true): Opus $180, of which **$109 was cache reads and $67
 cache writes — $2.70 was verdict output**; Fable $11 was cache writes for a 20-token reply; Sonnet did all
@@ -85,7 +85,7 @@ When it is on, this skill still governs: the token-class ruling (§0) applies to
 `effort` is explicit per agent (`low` for mechanics), `pipeline()` over barriers, paths not content,
 schemas not prose, two refutation votes except on HIGH-risk, loop-until-dry with ≤ 2 dry rounds, worktree
 isolation only for concurrent editors, and a `+Nk` budget directive on the turn as the hard ceiling.
-Ultracode is never cheaper per turn than one low-effort call; it is cheaper per _accepted result_ only
+Ultracode is never cheaper per turn than one low-effort call; it is cheaper per *accepted result* only
 where single-pass error rates are high — the scorecard decides where that is.
 
 **Telling the owner when to switch (automatic advisory).** The switch is the owner's; the advice is not
@@ -101,7 +101,7 @@ $10/$50 in/out); parallel sessions only for independent workstreams.
 
 ### `route-task.mjs` contract
 
-`.claude/skills/model-routing/scripts/route-task.mjs` scores one ask against the five signals above —
+`~/.claude/skills/model-routing/scripts/route-task.mjs` scores one ask against the five signals above —
 breadth, risk, boundedness, novelty, verifiability — and never calls a model itself. Three flags:
 `--advise` (the `UserPromptSubmit` hook's mode, ≤ 400 bytes, prints engine + ultracode + per-role
 model/effort into context and nothing else); `--json` (the same verdict as a machine-readable object, for
@@ -117,16 +117,16 @@ a peer to the lead Fable session.
 
 ## 1. Routing table
 
-| Work                                                                                                                                                                                                                                                                                                                                                                                                                                                | Model                                                                    | Effort                                                                                                                | Why                                                                                                                                                                              |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Planning, specs, architecture, decisions under ambiguity, cross-file invariants, the final-pass DECISION over candidates an Opus reader produced from a Sonnet-built digest, tie-break judgments from cited evidence, the design of every fix over a Sonnet-built brief, the bug-pipeline fix ruling over an evidence brief and an Opus cause refutation                                                                                            | **Fable 5.1** (`claude-fable-5-1`) — the session itself when it is Fable | `high`; `ultrathink` (one turn) or `xhigh` only for framing money / auth / tenancy / schema work                      | Best on above-frontier work; a wrong plan poisons every cheaper stage after it. Hand it the gathered facts and let it judge: at higher effort it over-gathers context on its own |
-| The correctness lens on EVERY file (ruling A4: ~64% of self-generated errors survive same-family self-checking, so Sonnet code needs an Opus correctness read), deep lenses (spec-compliance, edge-cases-and-security, operability) on HIGH-risk files, refutation of blocker/major findings there, red-gate audit, final-pass read, HIGH-risk judgment fixes, UI verdicts on HIGH-risk surfaces — always over a Sonnet-built pack, ≤ 12 tool calls | **Opus 5** (`claude-opus-5`)                                             | `high`; `xhigh` for deep lenses only when the diff has HIGH-risk files                                                | Fable-class verdicts at half the price — but its cache read ($0.50) is the dearest of all, so it judges a compact pack and never explores (token-class ruling, §0)               |
-| Pattern review lenses (style, consistency, test-quality, design-system), refutation of findings on routine files, mutation probes, UI verdicts on routine surfaces, build repair on routine files                                                                                                                                                                                                                                                   | **Sonnet 5** (`claude-sonnet-5`)                                         | `high` (`medium` for the mutation probe)                                                                              | Same quality on saturated coding at a fifth of Opus's in/out price; the scorecard reverts any row where its confirmed-finding rate drops                                         |
-| Tests and implementation transcribed from a Fable plan, mechanical fixes, migrations, sweeps, reading / exploration fan-outs, context packs, mechanical checks (does a cited location exist)                                                                                                                                                                                                                                                        | **Sonnet 5** (`claude-sonnet-5`)                                         | `medium` for transcription (`high` for the one money/tenancy package); `low` for mechanical edits, readers and checks | Executes a decided spec well; never plans — a gap in the plan is a finding, not a guess                                                                                          |
-| Running commands, checksums, manifests, anything with a checkable output                                                                                                                                                                                                                                                                                                                                                                            | **Haiku 4.5** (`claude-haiku-4-5`)                                       | `low`                                                                                                                 | Cheapest and fastest; wrong on judgment                                                                                                                                          |
-| Context pack / repo facts gathering (read-only)                                                                                                                                                                                                                                                                                                                                                                                                     | **Sonnet 5** (`claude-sonnet-5`)                                         | `medium` (read-only)                                                                                                  | Gathers paths and facts for a planner to decide from; never rules on what it finds                                                                                               |
-| Plan transcription (test/build plan from Fable's ruling)                                                                                                                                                                                                                                                                                                                                                                                            | **Sonnet 5** (`claude-sonnet-5`)                                         | `medium`                                                                                                              | Expands a decided ruling into the full template; a gap it finds is raised, never guessed                                                                                         |
-| Grounding / tree-fact checks / per-phase checkpoints / close-out                                                                                                                                                                                                                                                                                                                                                                                    | **Haiku 4.5** (`claude-haiku-4-5`)                                       | `low`                                                                                                                 | Mechanical verification and verbatim summarization only; wrong on judgment                                                                                                       |
+| Work | Model | Effort | Why |
+|---|---|---|---|
+| Planning, specs, architecture, decisions under ambiguity, cross-file invariants, the final-pass DECISION over candidates an Opus reader produced from a Sonnet-built digest, tie-break judgments from cited evidence, the design of every fix over a Sonnet-built brief, the bug-pipeline fix ruling over an evidence brief and an Opus cause refutation | **Fable 5.1** (`claude-fable-5-1`) — the session itself when it is Fable | `high`; `ultrathink` (one turn) or `xhigh` only for framing money / auth / tenancy / schema work | Best on above-frontier work; a wrong plan poisons every cheaper stage after it. Hand it the gathered facts and let it judge: at higher effort it over-gathers context on its own |
+| The correctness lens on EVERY file (ruling A4: ~64% of self-generated errors survive same-family self-checking, so Sonnet code needs an Opus correctness read), deep lenses (spec-compliance, edge-cases-and-security, operability) on HIGH-risk files, refutation of blocker/major findings there, red-gate audit, final-pass read, HIGH-risk judgment fixes, UI verdicts on HIGH-risk surfaces — always over a Sonnet-built pack, ≤ 12 tool calls | **Opus 5** (`claude-opus-5`) | `high`; `xhigh` for deep lenses only when the diff has HIGH-risk files | Fable-class verdicts at half the price — but its cache read ($0.50) is the dearest of all, so it judges a compact pack and never explores (token-class ruling, §0). Inside dev-pipeline's task-loop engine (2026-09-12 rebuild) this role is Fable 5.1; Opus is kept only as `CFG.fallbackModel` for a Fable refusal (task loop: Fable, Opus fallback) |
+| Pattern review lenses (style, consistency, test-quality, design-system), refutation of findings on routine files, mutation probes, UI verdicts on routine surfaces, build repair on routine files | **Sonnet 5** (`claude-sonnet-5`) | `high` (`medium` for the mutation probe) | Same quality on saturated coding at a fifth of Opus's in/out price; the scorecard reverts any row where its confirmed-finding rate drops |
+| Tests and implementation transcribed from a Fable plan, mechanical fixes, migrations, sweeps, reading / exploration fan-outs, context packs, mechanical checks (does a cited location exist) | **Sonnet 5** (`claude-sonnet-5`) | `medium` for transcription (`high` for the one money/tenancy package); `low` for mechanical edits, readers and checks | Executes a decided spec well; never plans — a gap in the plan is a finding, not a guess |
+| Running commands, checksums, manifests, anything with a checkable output | **Haiku 4.5** (`claude-haiku-4-5`) | `low` | Cheapest and fastest; wrong on judgment |
+| Context pack / repo facts gathering (read-only) | **Sonnet 5** (`claude-sonnet-5`) | `medium` (read-only) | Gathers paths and facts for a planner to decide from; never rules on what it finds |
+| Plan transcription (test/build plan from Fable's ruling) | **Sonnet 5** (`claude-sonnet-5`) | `medium` | Expands a decided ruling into the full template; a gap it finds is raised, never guessed |
+| Grounding / tree-fact checks / per-phase checkpoints / close-out | **Haiku 4.5** (`claude-haiku-4-5`) | `low` | Mechanical verification and verbatim summarization only; wrong on judgment |
 
 Pin full model ids in scripts and agent definitions: a bare alias resolves to whatever the harness maps it
 to today (a bare `sonnet` can land on Sonnet 4.6 at $3/$15). Effort names do not mean the same depth
@@ -153,7 +153,7 @@ Requires the owner's explicit yes before any run uses it; nothing in this file e
   one turn with `ultrathink`; set the session default with `/effort <level>` or
   `settings.json → modelSettings[model].effortLevel`.
 - **Sweep effort before escalating model** (owner ruling 2026-09-10): before moving a task up a model
-  tier, try one step up the effort ladder on the _same_ model first and let `route-task.mjs` log
+  tier, try one step up the effort ladder on the *same* model first and let `route-task.mjs` log
   score-vs-spend at each step; escalate the model only when the effort sweep does not close the quality
   gap.
 
@@ -205,7 +205,7 @@ Requires the owner's explicit yes before any run uses it; nothing in this file e
 - Verify on dispute, not everything: pre-verify only where a wrong fix is expensive (HIGH-risk files, mis-cited
   findings), one Opus refuter per file; let the fixer refute first elsewhere and send only disputes to the slate.
   Measured: 30 first votes overturned 2 findings on F13; the slate's value is in the disputed tail, not the bulk.
-- Delegate asynchronously and keep working; write the RESUME card when a long run _starts_, not after a
+- Delegate asynchronously and keep working; write the RESUME card when a long run *starts*, not after a
   kill. Opus **fast mode** (2.5× tokens/s, priced like Fable, main loop only) is the right choice for an
   interactive mechanical loop where latency matters more than reasoning.
 - Drop phases the ledger says never convert (see §6); never drop coverage.
@@ -228,7 +228,7 @@ targeted-edit line to every editor, and the long-deliverable note only when a re
 ## 6. Measure, then tune
 
 - After every dev-pipeline run, close out with one command:
-  `node .claude/skills/dev-pipeline/scripts/closeout.mjs <runDir> --latest` — it runs
+  `node ~/.claude/skills/dev-pipeline/scripts/closeout.mjs <runDir> --latest` — it runs
   `scripts/session-usage.mjs` (true tokens from the session transcript, per phase via the engine's
   `PHASE · LABEL` tags), then `pipeline-ledger.mjs append … --usage <session-usage.json>`
   → `.claude/pipeline/cost-ledger.jsonl`, then the RUN-LOG / lessons / code-map stubs. Read `summary`
@@ -242,10 +242,33 @@ targeted-edit line to every editor, and the long-deliverable note only when a re
   not rise is not sharing its prefix.
 - Prices in the cards are dated. Refresh from the `claude-api` skill's Current Models table when they age.
 
+### Approach routing
+
+Which **methodology** runs a task — `dev-pipeline` (profile `lean`/`standard`), `superpowers`, `raw` (no
+framework), or `bug-pipeline` (dev-pipeline's own bugfix mode) — is a separate decision from the routing
+table above (that table picks the *engine*/model/effort once an approach is already running).
+`model-routing/scripts/approach.mjs next --task "<head>"` pins the decision **before** the session
+launches (isolation is a per-session plugin-enable switch that cannot flip mid-session), via
+`route-task.mjs`'s `decideApproach`:
+
+| Precedence | Condition | Approach |
+|---|---|---|
+| 1 | an explicit pin is already set for this session | whatever it pins |
+| 2 | known-defect signal (registry id, "crash"/"broken"/"regression" wording) | `bug-pipeline` |
+| 3 | HIGH-risk, or major/wide-breadth, or UI work | `dev-pipeline` `standard` |
+| 4 | trivial (bounded, LOW breadth, LOW risk) | `raw` |
+| 5 | everything else ("small LOW-risk") | rotation `dev-pipeline → superpowers → raw`, advanced once per session |
+
+Full protocol — the quality rubric every ledger row carries, the one-task-per-session isolation rule,
+contamination rules, minimum n = 10 before `compare` ranks an arm, and how to read
+`pipeline-ledger.mjs compare`'s output — is [EVAL-PROTOCOL](references/EVAL-PROTOCOL.md).
+
 ## 7. How the house taxonomies map onto this ladder
 
-`dev-pipeline` routes by **stage** (Fable plans, Sonnet transcribes, Opus reviews, Haiku gates, Fable
-final pass on HIGH-risk files); the RouteFlow `team` agents route by **role** (tech-lead Fable/high,
+`dev-pipeline` routes by **stage** (Fable plans and reviews/implements HIGH-risk tasks, Sonnet
+transcribes and reviews routine tasks, Haiku gates — Opus kept only as `CFG.fallbackModel` for a Fable
+refusal since the 2026-09-12 task-loop rebuild; task loop: Fable, Opus fallback); the RouteFlow `team`
+agents route by **role** (tech-lead Fable/high,
 builder Sonnet/medium, qa-engineer Sonnet/high, feature-reviewer Opus/high); `bug-hunt` routes by
 **defect class** (conservation invariants and forensics on Fable, concurrency and security on Opus,
 mechanical sweeps on Sonnet behind a strong verifier). All three are the same ladder. The one open

@@ -12,7 +12,7 @@ description: >
 
 # Skill: Lessons Learned
 
-A **lessons-learned register** is a durable, capped list of _generalizable rules_ a project has
+A **lessons-learned register** is a durable, capped list of *generalizable rules* a project has
 paid for — kept at `.claude/lessons/`, in-repo so it travels with the repo (unlike the
 per-profile memory dir). It exists so the same mistake is never debugged twice: read it before
 major work, append after every bug fix.
@@ -32,14 +32,13 @@ Five workflows: **Consult**, **Record** (after every bug fix), **Compact** (enfo
   degrades the model's attention across its whole context as it grows, independent of how many
   tokens remain — so the cap holds even on a session with tokens to spare. Entries
   grouped under category headings — `process · tooling ·
-testing · deploy · domain · security · perf` — newest first within a category. Heading must
+  testing · deploy · domain · security · perf` — newest first within a category. Heading must
   be **exactly** `### L-NNN · <date> · <category>[ · <ref>]` (a validator matches entries with
   `/^### (L-(\d+))\b/` — a bare `L-017` in prose or a different heading level doesn't count).
   Schema:
 
   ```markdown
   ### L-017 · 2026-08-31 · deploy · #565
-
   - **Symptom:** first native APK run spun forever on launch.
   - **Root cause:** native keystore rejects `:` in keys; token writes silently failed.
   - **Lesson:** **Native storage validates key charsets web storage never did — test the
@@ -55,7 +54,7 @@ testing · deploy · domain · security · perf` — newest first within a categ
   `none — judgment`.
 
 - **`LESSONS-DIGEST.md`** (generated — never hand-edit) — one `- L-NNN · <category> · <Lesson
-sentence>` line per entry, no Symptom/Root cause/Guard. **Read this first, before
+  sentence>` line per entry, no Symptom/Root cause/Guard. **Read this first, before
   `LESSONS.md`:** skim all active rules in a fraction of the register's size, then open the
   full entry for an id carried into a plan. Made by `validate-lessons.mjs --digest` (§4) —
   target ≤ 6,000 bytes once compacted to ≤ 30 entries, hard cap 12,000 bytes.
@@ -64,12 +63,11 @@ sentence>` line per entry, no Symptom/Root cause/Guard. **Read this first, befor
   Not read by default.
 
 - **`_meta.json`** — `{ nextId, activeCount, archivedCount, maxEntries, maxBytes, updatedAt,
-schemaVersion }`. Bookkeeping ONLY — never accumulate prose here (an unbounded notes field
-  elsewhere once grew to ~90K chars, ~38K tokens/read). `nextId`/`activeCount`/`archivedCount` are
-  now **derived** from the heading counts in `LESSONS.md`/`ARCHIVE.md` (owner ruling
-  2026-09-14) — a stale stored value only warns, never fails the build, and `--digest` re-stamps
-  it, so two PRs each individually correct about their own counter no longer conflict on
-  `_meta.json` when merged. `maxEntries`/`maxBytes` are the
+  schemaVersion }`. Bookkeeping ONLY — never accumulate prose here (an unbounded notes field
+  elsewhere once grew to ~90K chars, ~38K tokens/read). `nextId` sits above every id ever issued
+  (archived ids retire, never reissue); `activeCount`/`archivedCount` must equal the heading
+  counts in `LESSONS.md`/`ARCHIVE.md` — checked by validator, since a git union-merge can leave
+  both sides' counts individually correct and the total wrong; `maxEntries`/`maxBytes` are the
   caps as data (raising one is a field edit); `updatedAt` doubles as the enforcement hook's
   acknowledge-without-entry escape.
 
@@ -96,7 +94,7 @@ At the start of any major task, implementation, or bug fix:
 failure. Recording the lesson finishes the fix, like updating a test.
 
 1. Find the root cause one level past the proximate cause — ask "why" until the answer is a
-   _system property_ (a missing guard, a wrong assumption class), not an event.
+   *system property* (a missing guard, a wrong assumption class), not an event.
 2. Append an entry under the right category: next `L-NNN` from `_meta.json.nextId`, today's
    date, category, PR/commit ref, then Symptom / Root cause / **Lesson** / Guard.
 3. Bump `_meta.json` (`nextId`, `activeCount`, `updatedAt`) and regenerate `LESSONS-DIGEST.md`
@@ -135,15 +133,14 @@ files, run against this register:
 `LESSONS-DIGEST.md` is generated, never hand-edited. Run `validate-lessons.mjs --digest` after
 any Record (§2) or Compact (§3): it turns each `### L-NNN` entry's **Lesson** bullet into one
 `- L-NNN · <category> · <sentence>` line, and refuses over its own byte cap — fix by compacting
-(§3), never by hand-shrinking. `--digest` also re-stamps any stale `activeCount`/`nextId` in
-`_meta.json` to the derived value in the same run (owner ruling 2026-09-14).
+(§3), never by hand-shrinking. An `activeCount` mismatch (COUNT MISMATCH) must be fixed first.
 
 ## 5. Bootstrap — create it for a project
 
 1. Create `.claude/lessons/` with a header-only `LESSONS.md`, an `ARCHIVE.md` stub, and
    `_meta.json` (`nextId: 1`, `activeCount: 0`).
 2. **Seed if sources exist:** distill durable rules from the project's memory dir
-   (`feedback_*`, ⚠️-flagged lines), old postmortems, or a bug register — one entry per _rule_,
+   (`feedback_*`, ⚠️-flagged lines), old postmortems, or a bug register — one entry per *rule*,
    not per incident.
 3. Copy [`reference/validate-lessons.mjs`](reference/validate-lessons.mjs) into the project's
    `scripts/` and wire it into the verify chain (`npm run verify` or the project's equivalent
@@ -163,7 +160,7 @@ the `## Retro — <date> · trueTelemetryCount=<N>` marker to RUN-LOG.md (the on
 lesson whose Guard is a real test may be archived, a lesson without a Guard may not — the Guard is what
 makes "never again" true. Quality is the floor: a lesson is never dropped to make byte room; compaction
 archives whole entries verbatim (§3) — it never merges or shrinks a live one. Canonical text:
-`.claude/skills/dev-pipeline/references/LEARNING-CLAUSE.md`.
+`~/.claude/skills/dev-pipeline/references/LEARNING-CLAUSE.md`.
 
 ## Guardrails — do NOT
 
@@ -195,6 +192,6 @@ nobody checks; skip `--digest` and `LESSONS-DIGEST.md` silently drifts from `LES
 - **Stop hook** — [`reference/stop-hook.mjs`](reference/stop-hook.mjs): blocks turn-close when
   bug-fix-shaped work (a `fix/*` branch with source changes, or `fix:` commits since the
   register last changed) left `.claude/lessons/` untouched. This one stays genuinely optional —
-  the routine in `~/.claude/CLAUDE.md` (lead machine) is the primary, model-driven mechanism for making sure a
+  the routine in `~/.claude/CLAUDE.md` is the primary, model-driven mechanism for making sure a
   fix records its lesson. (RouteFlow integrates the stop-hook logic directly into its existing
   `.claude/hooks/stop.mjs` as Gate 3.)
