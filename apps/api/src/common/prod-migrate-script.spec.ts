@@ -149,6 +149,16 @@ describe("prod-migrate.mjs contract (R4)", () => {
       // null, indistinguishable from a real wrong value by the bare toBe(2) below. Assert
       // res.signal first so a timeout-kill fails here with a clear, distinguishable message
       // instead of the misleading "Expected 2, Received null".
+      //
+      // FIX3 note: the brief also called for applying this same res.signal-then-status
+      // precondition to "RT3's new case" (REG-B418, a timeout-kill fixture spawned with the
+      // same {timeout: 30_000} shape as run()) and reporting which outcome resulted. RT3 never
+      // landed -- it is recorded blocked upstream in
+      // .claude/pipeline/2026-09-15-tooling-flaky-gates/phases/07-checkpoint-rt3.json
+      // (progress.md: "Task RT3: blocked (1 blocker(s))", an unrelated untracked-file guard
+      // failure in the test-author step, not a defect in this spec). No REG-B418 case exists in
+      // this file to apply the precondition to, so there is no second outcome to report -- this
+      // is the only assertion FIX3 has scope to change until RT3 is unblocked and lands.
       expect(res.signal).toBeNull();
       expect(res.status).toBe(2);
     });
