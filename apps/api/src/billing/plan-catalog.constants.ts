@@ -16,10 +16,14 @@
 export const PLAN_KEYS = ["STARTER", "GROWTH", "SCALE", "ENTERPRISE"] as const;
 export type PlanKey = (typeof PLAN_KEYS)[number];
 
-/** Default trial length in days. First consumer is `tenants.service.ts` (public
- * self-signup); `platform-admin.service.ts`'s Create Tenant path still hardcodes its
- * own 7-day value and is NOT wired to this constant yet — unifying it is a later
- * trial-length task, not done here. */
+/**
+ * Default trial length in days. Consumed by `tenants.service.ts` (public self-signup) AND
+ * `platform-admin.service.ts`'s Create Tenant path (`dto.trialLengthDays ?? TRIAL_LENGTH_DAYS`)
+ * — both are wired to this constant; REG-743-F6 (a declaration defect, not a code defect) fixes
+ * an earlier version of this comment that claimed the admin path still hardcoded its own 7-day
+ * value. The admin path also accepts an explicit 1-90 day override
+ * (`CreateTenantDto.trialLengthDays`, REG-743-N7) that takes precedence over this default.
+ */
 export const TRIAL_LENGTH_DAYS = 14;
 
 /**
@@ -181,6 +185,11 @@ export const BILLING_EVENTS = {
   // PlatformAdminService.updateTenantClass) — that's the transition that moves revenue in or
   // out of MrrService's scope, so it's the one worth a ledger row.
   TENANT_CLASS_CHANGED: "tenant.class_changed",
+  // REG-743-N8: emitted by scripts/backfill-subscription-reconciliation.mjs on a successful
+  // --apply write. Declared here for discoverability even though the .mjs CANNOT import this
+  // TS const (it's a plain script, no compile step) — it re-types the same string literal
+  // itself; keep the two in sync by hand if this key's string ever changes.
+  RECONCILIATION_SNAPSHOT_BACKFILLED: "reconciliation.snapshot_backfilled",
 } as const;
 export type BillingEventType = (typeof BILLING_EVENTS)[keyof typeof BILLING_EVENTS];
 
