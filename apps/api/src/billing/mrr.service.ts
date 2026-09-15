@@ -58,7 +58,7 @@ export class MrrService {
     const [subs, addons, trialTenants, readOnlyTenants, ledgerAgg, momAgg] = await Promise.all([
       this.prisma.tenantSubscription.findMany({
         where: payingWhere,
-        select: { planKey: true, basePriceSnapshot: true, discount: true },
+        select: { tenantId: true, planKey: true, basePriceSnapshot: true, discount: true },
       }),
       this.prisma.tenantAddon.findMany({
         // Mirror `payingWhere`: only count add-ons whose tenant has a PAYING base plan
@@ -73,7 +73,7 @@ export class MrrService {
             subscription: { planKey: { not: null } },
           },
         },
-        select: { priceSnapshot: true, quantity: true },
+        select: { tenantId: true, priceSnapshot: true, quantity: true },
       }),
       this.prisma.tenant.count({
         where: { status: "TRIAL", deletedAt: null, class: "PRODUCTION" },
@@ -91,14 +91,34 @@ export class MrrService {
       }),
     ]);
 
+    // REG-743-N1 (L-119): group add-ons by tenant so each subscription's contribution is
+    // priced through the exact same `priceSubscription()` a single tenant's card
+    // (`priceTenant()`) calls — the platform total is a sum of per-tenant prices BY
+    // CONSTRUCTION, not two independently-aggregated queries that can drift apart.
+    const addonsByTenant = new Map<string, { priceSnapshot: unknown; quantity: number }[]>();
+    for (const a of addons) {
+      const list = addonsByTenant.get(a.tenantId) ?? [];
+      list.push(a);
+      addonsByTenant.set(a.tenantId, list);
+    }
+
     let baseMrr = 0;
+    let addonMrr = 0;
     let discountTotal = 0;
+    let mrr = 0;
     const byPlanMap = new Map<string, { tenants: number; baseMrr: number }>();
     for (const s of subs) {
       const base = s.basePriceSnapshot != null ? Number(s.basePriceSnapshot) : 0;
       const discount = Number(s.discount ?? 0);
+      const tenantAddons = addonsByTenant.get(s.tenantId) ?? [];
+      const addonSum = tenantAddons.reduce(
+        (sum, a) => sum + (a.priceSnapshot != null ? Number(a.priceSnapshot) : 0) * a.quantity,
+        0,
+      );
       baseMrr += base;
       discountTotal += discount;
+      addonMrr += addonSum;
+      mrr += this.priceSubscription(s, tenantAddons);
       const key = s.planKey as string;
       const row = byPlanMap.get(key) ?? { tenants: 0, baseMrr: 0 };
       row.tenants += 1;
@@ -106,15 +126,10 @@ export class MrrService {
       byPlanMap.set(key, row);
     }
 
-    const addonMrr = addons.reduce(
-      (sum, a) => sum + (a.priceSnapshot != null ? Number(a.priceSnapshot) : 0) * a.quantity,
-      0,
-    );
-
     baseMrr = roundMoney(baseMrr);
     const roundedAddon = roundMoney(addonMrr);
     const roundedDiscount = roundMoney(discountTotal);
-    const mrr = roundMoney(baseMrr + roundedAddon - roundedDiscount);
+    mrr = roundMoney(mrr);
 
     const byPlan: MrrPlanRow[] = [...byPlanMap.entries()]
       .map(([planKey, v]) => ({ planKey, tenants: v.tenants, baseMrr: v.baseMrr }))
@@ -132,5 +147,62 @@ export class MrrService {
       ledgerMrr: roundMoney(Number(ledgerAgg._sum.amountDelta ?? 0)),
       momDelta: roundMoney(Number(momAgg._sum.amountDelta ?? 0)),
     };
+  }
+
+  /**
+   * Pure per-row pricing: base snapshot − discount + Σ(addon price × qty), rounded. No
+   * tenant/status/class gate — `computeOverview()` and `priceTenant()` both apply that
+   * themselves, over rows already scoped to paying PRODUCTION tenants.
+   */
+  priceSubscription(
+    sub: { basePriceSnapshot: unknown; discount?: unknown },
+    addons: { priceSnapshot: unknown; quantity: number }[],
+  ): number {
+    const base = sub.basePriceSnapshot != null ? Number(sub.basePriceSnapshot) : 0;
+    const discount = Number(sub.discount ?? 0);
+    const addonSum = addons.reduce(
+      (sum, a) => sum + (a.priceSnapshot != null ? Number(a.priceSnapshot) : 0) * a.quantity,
+      0,
+    );
+    return roundMoney(base - discount + addonSum);
+  }
+
+  /**
+   * REG-743-N1 (L-119): the one function a single tenant's admin-detail card prices through —
+   * the SAME gate `computeOverview()` applies (non-PRODUCTION or non-ACTIVE → $0, no
+   * exceptions; no subscription or no planKey → $0, never a catalog-price guess), so the card
+   * and the platform-wide rollup can never diverge by construction. Replaces the retired
+   * `_monthlyPriceUsd`/`_catalogPriceByPlanKey` catalog-fallback estimator.
+   */
+  async priceTenant(tenantId: string): Promise<number> {
+    // Gate must match computeOverview()'s payingWhere EXACTLY (review finding) — it also
+    // requires deletedAt: null. Without it, a soft-deleted tenant that a webhook later
+    // flips back to ACTIVE (deletedAt untouched by that CAS) prices nonzero here while
+    // still contributing $0 to the dashboard: the exact divergence this function exists
+    // to close, just relocated.
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: {
+        status: true,
+        class: true,
+        deletedAt: true,
+        subscription: { select: { planKey: true, basePriceSnapshot: true, discount: true } },
+      },
+    });
+    if (
+      !tenant ||
+      tenant.status !== "ACTIVE" ||
+      tenant.class !== "PRODUCTION" ||
+      tenant.deletedAt != null ||
+      !tenant.subscription ||
+      tenant.subscription.planKey == null
+    ) {
+      return 0;
+    }
+    const addons = await this.prisma.tenantAddon.findMany({
+      where: { tenantId, active: true },
+      select: { priceSnapshot: true, quantity: true },
+    });
+    return this.priceSubscription(tenant.subscription, addons);
   }
 }

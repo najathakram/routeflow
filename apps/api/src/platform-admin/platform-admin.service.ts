@@ -35,6 +35,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { UpdateTenantStatusDto } from "./dto/update-tenant-status.dto";
 import { UpdateTenantPlanDto } from "./dto/update-tenant-plan.dto";
 import { CreateTenantDto } from "./dto/create-tenant.dto";
+import { classifyTenantSlug } from "../tenant/tenant-class";
 import { IRS_SYSTEM_CATEGORIES } from "../bookkeeping/irs-categories.constant";
 import { ActivateSubscriptionDto } from "./dto/activate-subscription.dto";
 import { UpdateTenantConfigDto } from "./dto/update-tenant-config.dto";
@@ -179,7 +180,11 @@ export class PlatformAdminService {
 
   async getTenant(id: string) {
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    const [tenant, orders30d, catalogPriceByPlanKey] = await Promise.all([
+    // REG-743-N1 (L-119): priced through MrrService.priceTenant() — the SAME function
+    // computeOverview() sums for the platform-wide dashboard — instead of the retired
+    // catalog-fallback estimator. priceTenant() applies its own class/status/planKey gate,
+    // so this call site no longer branches on tenant.status itself.
+    const [tenant, orders30d, estMrrUsd] = await Promise.all([
       this.prisma.tenant.findUnique({
         where: { id },
         include: {
@@ -200,17 +205,13 @@ export class PlatformAdminService {
       // Read-only order count (orders module untouched); raw client is correct
       // here since a super-admin request carries no tenant scope.
       this.prisma.order.count({ where: { tenantId: id, createdAt: { gte: thirtyDaysAgo } } }),
-      this._catalogPriceByPlanKey(),
+      this.mrrService.priceTenant(id),
     ]);
     if (!tenant) throw new NotFoundException(`Tenant ${id} not found`);
     return {
       ...this._formatTenant(tenant),
       orders30d,
-      // Only an ACTIVE tenant is paying; trials/suspended/cancelled contribute $0.
-      estMrrUsd:
-        tenant.status === "ACTIVE"
-          ? roundMoney(this._monthlyPriceUsd(tenant, catalogPriceByPlanKey))
-          : 0,
+      estMrrUsd,
     };
   }
 
@@ -240,6 +241,19 @@ export class PlatformAdminService {
     const trialDays = dto.trialLengthDays ?? TRIAL_LENGTH_DAYS;
     const trialEndsAt = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000);
 
+    // REG-743-F7: Tenant.class defaults to PRODUCTION at the schema level and was never set
+    // explicitly here — fail-open onto PRODUCTION regardless of slug. Resolve from an explicit
+    // caller-supplied class first, else derive it from the slug; fail CLOSED when the caller
+    // asks for PRODUCTION on a slug the classifier itself would never call PRODUCTION (never
+    // silently trust a caller-supplied class that contradicts the slug's own policy).
+    const slugClass = classifyTenantSlug(slug);
+    const resolvedClass = dto.class ?? slugClass;
+    if (dto.class === "PRODUCTION" && slugClass !== "PRODUCTION") {
+      throw new BadRequestException(
+        `Slug "${slug}" classifies as ${slugClass} — cannot create it as class PRODUCTION`,
+      );
+    }
+
     const result = await this.prisma.$transaction(async (tx) => {
       const tenant = await tx.tenant.create({
         data: {
@@ -247,6 +261,7 @@ export class PlatformAdminService {
           name: businessName,
           status: "TRIAL",
           plan: tenantPlan,
+          class: resolvedClass,
           trialEndsAt,
         },
       });
@@ -325,6 +340,7 @@ ${paymentSection}
     await this.recordAdminAction(result.tenant.id, adminId, AdminAuditAction.TENANT_CREATED, {
       slug: result.tenant.slug,
       plan: result.tenant.plan,
+      class: result.tenant.class,
       adminUsername: result.user.username,
     });
 
@@ -982,8 +998,12 @@ ${paymentSection}
     for (let i = months - 1; i >= 0; i--) {
       const start = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const end = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
+      // REG-743-N4: PRODUCTION-only, matching every other admin count (Phase 0 T9) — a
+      // qa-*/e2e-*/ux-audit-* or routeflow-demo tenant created during this window must not
+      // move the growth chart shown next to newTenantsThisMonth (getStats()), which T9
+      // already scoped.
       const count = await this.prisma.tenant.count({
-        where: { createdAt: { gte: start, lt: end } },
+        where: { createdAt: { gte: start, lt: end }, class: "PRODUCTION" },
       });
       results.push({
         month: start.toISOString().slice(0, 7), // "2026-01"
@@ -996,8 +1016,12 @@ ${paymentSection}
   // ─── Billing overview ─────────────────────────────────────────────────────────
 
   async getBillingOverview() {
+    // REG-743-N4: every count here is PRODUCTION-only, matching MrrService/getStats() —
+    // a qa-*/e2e-*/ux-audit-* or routeflow-demo tenant's subscription/trial status must
+    // never move the conversion-rate figures this admin page computes from these counts.
     const [subscriptions, totalTenants, trialTenants] = await Promise.all([
       this.prisma.tenantSubscription.findMany({
+        where: { tenant: { class: "PRODUCTION", deletedAt: null } },
         include: {
           tenant: {
             select: { id: true, slug: true, name: true, status: true, plan: true },
@@ -1005,8 +1029,10 @@ ${paymentSection}
         },
         orderBy: { updatedAt: "desc" },
       }),
-      this.prisma.tenant.count(),
-      this.prisma.tenant.count({ where: { status: TenantStatus.TRIAL } }),
+      this.prisma.tenant.count({ where: { class: "PRODUCTION", deletedAt: null } }),
+      this.prisma.tenant.count({
+        where: { status: TenantStatus.TRIAL, class: "PRODUCTION", deletedAt: null },
+      }),
     ]);
 
     const activeSubscriptions = subscriptions.filter(
@@ -1407,42 +1433,6 @@ ${paymentSection}
     });
     if (!tenant) throw new NotFoundException(`Tenant ${id} not found`);
     return tenant;
-  }
-
-  /** Monthly USD price per current-catalog planKey, from the published PlanVersion.
-   *  Keys are normalized so a still-published legacy catalog (rows keyed TEAM/
-   *  BUSINESS) answers the GROWTH/SCALE lookups callers make — otherwise every
-   *  tenant on those plans would price at $0 until the new catalog is published.
-   *  Empty map when the catalog is unseeded — callers treat a missing key as $0. */
-  private async _catalogPriceByPlanKey(): Promise<Map<string, number>> {
-    const version = await this.planCatalogService.getPublishedVersion();
-    return new Map(
-      (version?.definitions ?? []).map((d) => [
-        normalizePlanKey(d.planKey) ?? d.planKey,
-        d.monthlyPrice != null ? Number(d.monthlyPrice) : 0,
-      ]),
-    );
-  }
-
-  /**
-   * Real monthly USD price for a tenant's subscription: the pinned
-   * `basePriceSnapshot` (grandfathered price) when set, else the published
-   * catalog's monthlyPrice for the tenant's normalized planKey, else $0 (unseeded
-   * catalog, or a planKey the current catalog doesn't carry). Replaces the retired
-   * STOPGAP_PLAN_MONTHLY_USD constant, which knew only STARTER/PROFESSIONAL/
-   * ENTERPRISE and silently priced everything else — including GROWTH/SCALE — at $0.
-   */
-  private _monthlyPriceUsd(
-    tenant: {
-      plan: string;
-      subscription: { planKey: string | null; basePriceSnapshot: Prisma.Decimal | null } | null;
-    },
-    catalogPriceByPlanKey: Map<string, number>,
-  ): number {
-    const snapshot = tenant.subscription?.basePriceSnapshot;
-    if (snapshot != null) return Number(snapshot);
-    const planKey = normalizePlanKey(tenant.subscription?.planKey) ?? planKeyFromEnum(tenant.plan);
-    return catalogPriceByPlanKey.get(planKey) ?? 0;
   }
 
   private _formatTenant(t: any) {

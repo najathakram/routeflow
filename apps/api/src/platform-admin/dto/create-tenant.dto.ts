@@ -12,6 +12,7 @@ import {
 } from "class-validator";
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { PLAN_KEYS } from "../../billing/plan-catalog.constants";
+import { TENANT_CLASS_VALUES } from "@routeflow/types";
 
 export class CreateTenantDto {
   @ApiProperty()
@@ -58,4 +59,15 @@ export class CreateTenantDto {
   @Min(1)
   @Max(90)
   trialLengthDays?: number;
+
+  @ApiPropertyOptional({
+    enum: TENANT_CLASS_VALUES,
+    description:
+      "Explicit tenant class override. Defaults to the slug's own classification " +
+      "(classifyTenantSlug); a caller-supplied PRODUCTION that contradicts the slug's own " +
+      "class is rejected (REG-743-F7).",
+  })
+  @IsOptional()
+  @IsIn(TENANT_CLASS_VALUES)
+  class?: (typeof TENANT_CLASS_VALUES)[number];
 }

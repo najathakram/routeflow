@@ -4,17 +4,41 @@ function make() {
   const prisma = {
     tenantSubscription: {
       findMany: jest.fn().mockResolvedValue([
-        { planKey: "STARTER", basePriceSnapshot: 59, discount: 0 },
-        { planKey: "BUSINESS", basePriceSnapshot: 349, discount: 10 },
+        { tenantId: "t-starter", planKey: "STARTER", basePriceSnapshot: 59, discount: 0 },
+        { tenantId: "t-business", planKey: "BUSINESS", basePriceSnapshot: 349, discount: 10 },
       ]),
     },
     tenantAddon: {
-      findMany: jest.fn().mockResolvedValue([{ priceSnapshot: 12, quantity: 2 }]),
+      // Keyed to t-starter only — proves add-ons are grouped per tenant (T5), not summed
+      // once and applied to every subscription. Filters by `where.tenantId` when present
+      // (priceTenant()'s own scoped query) so it behaves like a real Prisma call, not a
+      // static fixture that would leak t-starter's addon into every other tenant's total.
+      findMany: jest.fn().mockImplementation(({ where }: any) => {
+        const all = [{ tenantId: "t-starter", priceSnapshot: 12, quantity: 2 }];
+        return Promise.resolve(
+          where?.tenantId ? all.filter((a) => a.tenantId === where.tenantId) : all,
+        );
+      }),
     },
     tenant: {
       count: jest
         .fn()
         .mockImplementation(({ where }: any) => Promise.resolve(where.status === "TRIAL" ? 3 : 1)),
+      findUnique: jest.fn().mockImplementation(({ where }: any) => {
+        const byId: Record<string, any> = {
+          "t-starter": {
+            status: "ACTIVE",
+            class: "PRODUCTION",
+            subscription: { planKey: "STARTER", basePriceSnapshot: 59, discount: 0 },
+          },
+          "t-business": {
+            status: "ACTIVE",
+            class: "PRODUCTION",
+            subscription: { planKey: "BUSINESS", basePriceSnapshot: 349, discount: 10 },
+          },
+        };
+        return Promise.resolve(byId[where.id] ?? null);
+      }),
     },
     billingEvent: {
       // ledger (no createdAt filter) vs 30-day window (has createdAt) — both now also carry
@@ -156,5 +180,43 @@ describe("MrrService.computeOverview", () => {
 
     expect(o.mrr).toBe(249);
     expect(o.payingTenants).toBe(1);
+  });
+
+  // REG-743-N1 (L-119): priceTenant() must equal that SAME tenant's own contribution to
+  // computeOverview()'s total — the card and the platform-wide rollup are proven to be the
+  // same function here, not just asserted to be by their shared source code.
+  it("REG-743-N1 priceTenant equals the tenant's own share of computeOverview for the same fixture", async () => {
+    const { svc, prisma } = make();
+    const overview = await svc.computeOverview();
+
+    const starterPrice = await svc.priceTenant("t-starter");
+    const businessPrice = await svc.priceTenant("t-business");
+
+    expect(starterPrice).toBe(59 + 24); // base 59, no discount, + its own addon (12 × 2)
+    expect(businessPrice).toBe(349 - 10); // base 349 − discount 10, no addons of its own
+    expect(starterPrice + businessPrice).toBe(overview.mrr);
+
+    // priceTenant() gates the SAME way computeOverview() does — non-PRODUCTION or
+    // non-ACTIVE tenants never reach the pricing math at all.
+    prisma.tenant.findUnique.mockResolvedValueOnce({
+      status: "ACTIVE",
+      class: "DEMO",
+      subscription: { planKey: "GROWTH", basePriceSnapshot: 249, discount: 0 },
+    });
+    expect(await svc.priceTenant("t-demo")).toBe(0);
+
+    prisma.tenant.findUnique.mockResolvedValueOnce(null);
+    expect(await svc.priceTenant("t-missing")).toBe(0);
+
+    // Review finding: the gate must also match payingWhere's deletedAt: null — a
+    // soft-deleted tenant a webhook later flips back to status ACTIVE (deletedAt
+    // untouched by that write) must still price $0, never a stale snapshot.
+    prisma.tenant.findUnique.mockResolvedValueOnce({
+      status: "ACTIVE",
+      class: "PRODUCTION",
+      deletedAt: new Date("2026-01-01"),
+      subscription: { planKey: "GROWTH", basePriceSnapshot: 249, discount: 0 },
+    });
+    expect(await svc.priceTenant("t-deleted")).toBe(0);
   });
 });
