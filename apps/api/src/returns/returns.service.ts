@@ -38,6 +38,8 @@ type CreatedReturn = Prisma.ReturnGetPayload<{ include: { items: true } }>;
 export interface FindAllReturnsOptions {
   orderId?: string;
   customerId?: string;
+  /** B221: scopes to returns on orders assigned to this driver's route run. */
+  driverId?: string;
   status?: string;
   reason?: string;
   search?: string;
@@ -244,6 +246,20 @@ export class ReturnsService {
       }
       return this.findAll({ ...options, customerId: customer.id });
     }
+    // B221: findAll's own tenant scoping (forTenant()) is not USER scoping — a
+    // driver with no branch here saw every return in the tenant, not just
+    // returns on orders assigned to their own route runs.
+    if (user.role === "DRIVER") {
+      const driver = await this.prisma
+        .forTenant()
+        .driver.findFirst({ where: { userId: user.sub } });
+      if (!driver) {
+        const page = options.page ?? 1;
+        const limit = options.limit ?? 20;
+        return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
+      }
+      return this.findAll({ ...options, driverId: driver.id });
+    }
     return this.findAll(options);
   }
 
@@ -259,11 +275,16 @@ export class ReturnsService {
    * `refundEstimateReason`, so a real $0 is distinguishable from a refusal.
    */
   async findAll(options: FindAllReturnsOptions = {}) {
-    const { orderId, customerId, status, reason, search, page = 1, limit = 20 } = options;
+    const { orderId, customerId, driverId, status, reason, search, page = 1, limit = 20 } = options;
     const skip = (page - 1) * limit;
     const where: any = {};
     if (orderId) where.orderId = orderId;
     if (customerId) where.customerId = customerId;
+    // A relation filter, not a scalar FK — Return carries no driverId of its
+    // own (RETURN → orderId → Order.routeRunId → RouteRun.driverId). An order
+    // with no route run assigned (routeRunId null) can never match, which is
+    // correct: it was never on any driver's route.
+    if (driverId) where.order = { routeRun: { driverId } };
     if (status) where.status = status;
     if (reason) where.reason = reason;
     if (search) {
