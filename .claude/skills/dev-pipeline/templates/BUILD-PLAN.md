@@ -275,17 +275,20 @@ test/implementation id space; a task authors its own tests and its own implement
 
   // ---- the task graph (REQUIRED, non-empty) — ONE array; no separate test/implementation id space ----
   // dependsOn is the ONLY ordering mechanism; disjoint-file tasks in the same wave run in
-  // parallel. `brief` names the R#s this task satisfies and the T#s it's proven by (carry the
-  // coverage cross-check below into the text — the engine reads `brief`/`tests[]`, not separate
-  // `satisfies`/`provenBy` keys).
+  // parallel. The brief lives UNDER this task's `### <id> — <title>` heading in this build plan,
+  // NOT in a `brief:` string. task-brief.mjs slices that heading into tasks/<id>/brief.md, and
+  // that file is the only brief any agent reads. The engine never reads an inline `brief` except
+  // to scan it for the INTRODUCES-OBSERVABLE token (prefer `introducesObservable: true`), and
+  // CFG.caps.briefBytes is not enforced. Name the R#s satisfied and the T#s that prove it in that
+  // heading's text; there are no separate `satisfies`/`provenBy` keys.
   tasks: [
     {
       id: 'WP1', title: '<title>',
       type: 'feature',                    // feature (default) | root-cause | repro-test | fix | revert-probe | docs | ui-verify
       files: ['<path/a>', '<path/b>'],     // exact repo-relative paths this task owns
       tests: ['<test file path>'],         // from the merged TP section; name the T# each one proves in brief
-      brief: '<what to do — satisfies R1, R2; provenBy T1, T3 — exact code for the tricky parts, <= 1.5 KB>',
-      dependsOn: [],
+      dependsOn: [],                       // brief: under `### WP1 — <title>` above, never inline
+      // radius: [5, 10],                  // optional [before, after] context lines for review-pack.mjs --radius; never paths
     },
     {
       id: 'WP2', title: '<title>',
@@ -319,8 +322,8 @@ test/implementation id space; a task authors its own tests and its own implement
   //       brief: "<must fail on the bug's own wrong value — name the exact wrongValue the RED check greps for>" },
   //     { id: 'FIX1', title: '<the fix>', type: 'fix', files: ['<path>'], tests: [], dependsOn: ['RC1', 'RT1'],
   //       brief: '<the minimal correct change; a fix task has no tests of its own>' },
-  //     { id: 'RP1', title: '<revert probe>', type: 'revert-probe', files: ['<path>'], tests: [], dependsOn: ['FIX1'],
-  //       brief: '<the file to revert + the ONE test that must go RED reverted, then be restored>' },
+  //     // revert-probe: SINGULAR `file` + `test` strings (the engine reads only t.file / t.test)
+  //     { id: 'RP1', title: '<revert probe>', type: 'revert-probe', file: '<path>', test: '<the one test command that must go RED reverted>', dependsOn: ['FIX1'] },
   //   ]
 
   // ---- gates: every command must already exist in this repo ----

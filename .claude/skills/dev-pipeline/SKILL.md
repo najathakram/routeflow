@@ -310,10 +310,15 @@ Launch rules (the long form of each, with the incidents behind it, is in [ENGINE
       id: 'T1', title: '<title>', type: 'feature',   // type: feature (default) | root-cause | repro-test | fix | revert-probe | docs | ui-verify
       files: ['<path/a>', '<path/b>'],       // exact repo-relative paths this task owns
       tests: ['<test file path (name the T# it proves in brief)>'],
-      brief: '<what to do, the R#/T# it satisfies/proves, exact code for the tricky parts — <= 1.5 KB, CFG.caps.briefBytes>',
+      // NO agent reads a `brief:` string. Every agent reads <runDir>/tasks/<id>/brief.md, which task-brief.mjs
+      // slices from this task's `### <id> — <title>` heading in build-plan.md. Write the brief (what to do, the
+      // R#/T# it satisfies/proves, exact code for the tricky parts) UNDER THAT HEADING. CFG.caps.briefBytes is
+      // declared but not enforced. The engine scans an inline `brief` only for the INTRODUCES-OBSERVABLE
+      // token; prefer `introducesObservable: true` instead.
       dependsOn: [],                          // the ONLY ordering mechanism; disjoint-file tasks in the same wave run in parallel
       risk: 'HIGH',                           // optional; explicit risk always wins over Baseline's classifier
-      radius: ['<path>'],                     // optional — review-pack.mjs adds a Radius section around these files' call sites
+      radius: [5, 10],                        // optional — [before, after] context lines; review-pack.mjs --radius 5,10 excerpts that window
+                                              // around each call-site hit. Never paths (a path is a usage error, exit 2). Omit = no Radius flag.
     },
     { id: 'T2', title: '<title>', type: 'feature', files: ['<path/c>'], tests: ['<test file path>'], brief: '<...>', dependsOn: ['T1'] },
 
@@ -326,8 +331,9 @@ Launch rules (the long form of each, with the incidents behind it, is in [ENGINE
       brief: '<must fail on the bug\'s own wrong value -- name the exact wrongValue the RED check greps for>' },
     { id: 'FIX1', title: '<the fix>', type: 'fix', files: ['<path>'], tests: [], dependsOn: ['RC1', 'RT1'],
       brief: '<the minimal correct change; a fix task has no tests of its own>' },
-    { id: 'RP1', title: '<revert probe>', type: 'revert-probe', files: ['<path>'], tests: [], dependsOn: ['FIX1'],
-      brief: '<the file to revert and the ONE test that must go RED on the reverted file, then be restored>' },
+    // revert-probe takes SINGULAR `file` (the fix file to revert) and `test` (the ONE test command that must go RED
+    // reverted) -- the probe prompt and checksum:after read only t.file / t.test; `files`/`tests` arrays are ignored.
+    { id: 'RP1', title: '<revert probe>', type: 'revert-probe', file: '<path>', test: '<the one test command>', dependsOn: ['FIX1'] },
 
     // A `ui-verify` task (D6) carries its own driver config on the task record.
     { id: 'UI1', title: '<verify the flow>', type: 'ui-verify', files: [], tests: [], dependsOn: ['T2'],

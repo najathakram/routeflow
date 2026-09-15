@@ -425,8 +425,14 @@ checkpoint) -> **Final** (full verify suite plus HIGH-risk-only mutation/revert 
 read) -> `result.json`.
 
 **Task contract**: `args.tasks[]` replaces `testPackages`/`packages`/`redGate`:
-`{ id, title, files[], tests[] (paths + T# ids), brief (<= 1.5 KB), dependsOn[], risk?: 'HIGH'|'LOW',
-type?: 'feature'|'root-cause'|'repro-test'|'fix'|'revert-probe'|'docs'|'ui-verify' }`.
+`{ id, title, files[], tests[] (paths + T# ids), dependsOn[], risk?: 'HIGH'|'LOW', radius?: [before, after],
+introducesObservable?: true, type?: 'feature'|'root-cause'|'repro-test'|'fix'|'revert-probe'|'docs'|'ui-verify' }`;
+a `revert-probe` task takes singular `file` and `test` strings instead of `files[]`/`tests[]`. `radius` is a
+numeric context-line pair passed as `review-pack.mjs --radius <before>,<after>`; a path is a usage error.
+**The brief is the `### <id>` heading section of build-plan.md**, sliced by task-brief.mjs into
+`tasks/<id>/brief.md`, which is the only brief any agent reads. An inline `tasks[].brief` string is never
+read by an agent: the engine only scans it for the INTRODUCES-OBSERVABLE token. `CFG.caps.briefBytes` is
+declared but unenforced.
 `verifyCommands.{perRound,final}`, `lessonsPath`, `runDir`, `startedAt`, `scale`, `mode`, `workdir`,
 `context` stay. Three Node scripts (`dev-pipeline/scripts/{task-brief,review-pack,fix-brief}.mjs`), run
 by Haiku agents, slice the plan/test-plan/findings into per-task artifacts under
