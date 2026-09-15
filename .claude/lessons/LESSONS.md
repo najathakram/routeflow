@@ -198,6 +198,30 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
   "predates this boot" verdict; the owner-write fixture clears the lock dir before its own precondition
   (`scripts/campaign/bugs.mjs` self-test, step 6 of `npm run verify`).
 
+### L-138 · 2026-09-15 · testing · #711 review round (F1 issue-date default)
+
+- **Symptom:** a review fix at the cited line (the create-modal's `issueDate` `useState`
+  initializer) looked complete and type-checked clean, but a "reset on open" `useEffect` a few
+  lines down independently recomputed the SAME default with the SAME buggy expression
+  (`new Date().toISOString().slice(0, 10)`, the UTC calendar date, not the operator's local one)
+  — every time the modal opened, that effect overwrote the fixed initial value with the still-wrong
+  one. Caught only because the new regression test opened the modal and read the rendered input's
+  actual value, rather than asserting on the initializer expression in isolation.
+- **Root cause:** the same wrong default had been copy-pasted (or independently re-derived) at a
+  second call site the review didn't name; fixing the cited line alone left the component's
+  observable behavior unchanged, since the effect runs after mount and wins.
+- **Lesson:** **A review finding that names one line of a bug is a starting point, not the full
+  blast radius — grep the component/file for other call sites computing the same value the same
+  way before declaring the fix done, and prove it with a test that exercises the real interaction
+  (open the modal, click the button) and reads the rendered/observable state, never one that only
+  asserts on the helper function in isolation.**
+- **Guard:** `apps/web/app/(dashboard)/estimates/page.f1-issue-date-default.test.tsx` opens the
+  create-modal and reads the actual `<input type="date">` value under a mocked local-vs-UTC date
+  split (`Date.prototype` getter spies, not `process.env.TZ` reassignment — a Jest worker can cache
+  its process-level timezone before a test file's own `TZ` write takes effect, so that approach
+  silently no-ops; confirmed by reproducing the false-pass first). Both call sites in
+  `estimates/page.tsx` now share one `defaultIssueDate()` helper.
+
 ### L-139 · 2026-09-14 · tooling · B420 GIT_* env leak into self-test throwaway repos
 
 - **Symptom:** a pre-push hook's `validate-code-map.stamp.self-test.mjs` renamed a live worktree's
