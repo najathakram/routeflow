@@ -337,6 +337,11 @@ export interface AdminInvoice {
   issueDate?: string;
   balanceDue?: number;
   paidAmount?: number;
+  /** Confirmed credit-note applications (B421) — reduces balanceDue but is
+   *  never cash received. */
+  creditApplied?: number;
+  /** Confirmed advance-payment applications (B421) — same treatment. */
+  advanceApplied?: number;
   isOverdue?: boolean;
   /** Order this invoice was generated from. Raw scalar the API already returns
    *  (findOne/findAll use Prisma `include`, not a restrictive `select`) — was

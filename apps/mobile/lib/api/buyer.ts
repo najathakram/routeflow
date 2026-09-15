@@ -203,6 +203,11 @@ export interface BuyerInvoice {
   paidAmount?: number;
   amountDue?: number;
   balanceDue?: number;
+  /** Confirmed credit-note applications (B421) — reduces balanceDue but is
+   *  never cash the buyer paid. */
+  creditApplied?: number;
+  /** Confirmed advance-payment applications (B421) — same treatment. */
+  advanceApplied?: number;
   isOverdue?: boolean;
   customer?: { id: string; businessName: string };
   items?: BuyerInvoiceItem[];

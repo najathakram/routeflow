@@ -631,6 +631,19 @@ export default function InvoiceDetailScreen() {
             <Text style={styles.balanceSub}>
               of {fmtCurrency(invoice.total)} · paid {fmtCurrency(invoice.paidAmount ?? 0)}
             </Text>
+            {/* B421: confirmed but non-cash — reduces the balance but is never
+                counted in "paid" above. Neutral styling, own line so a
+                narrow screen never wraps this mid-figure. */}
+            {Number(invoice.creditApplied ?? 0) > 0 ? (
+              <Text style={styles.balanceSub}>
+                Credits applied {fmtCurrency(invoice.creditApplied ?? 0)}
+              </Text>
+            ) : null}
+            {Number(invoice.advanceApplied ?? 0) > 0 ? (
+              <Text style={styles.balanceSub}>
+                Advance applied {fmtCurrency(invoice.advanceApplied ?? 0)}
+              </Text>
+            ) : null}
             <Pressable
               style={styles.dueRow}
               onPress={() => {
