@@ -224,9 +224,15 @@ describe("edit-items.tsx last-added strip is per scan session (REG-B263-F)", () 
 // Review round (2026-09-08): the design-of-record invariant "margin-floor ack
 // ... as today" has to hold on the NEW surface too — a typed below-floor price
 // is flagged identically on the picker's last-added strip and on the line row:
-// same floor derivation, same `needsMarginAck` predicate, same guard, same
-// Set-to-floor writer. The strip deliberately has NO "Sell anyway", so the ack
-// keeps exactly one writer.
+// same floor derivation, same guard, same Set-to-floor writer. The strip
+// deliberately has NO "Sell anyway", so the ack keeps exactly one writer.
+// B280 (2026-09-15): the below-floor PREDICATE moved from `needsMarginAck` (a
+// separate cent-rounded price comparison against `priceForMarginFloor`'s
+// output) to `marginClass` (the same exact-fraction `classifyMargin` call the
+// label already reads) — the two bases could disagree by up to half a cent,
+// so the strip could flag/not-flag a line the row disagreed with. The tests
+// below that pinned `needsMarginAck` specifically are updated in place; see
+// edit-items-drawer.test.ts's own REG-B280 block for the dedicated pin.
 describe("edit-items.tsx picker-strip below-floor parity (REG-B263-G)", () => {
   // The whole strip branch (`{scanOpen && lastAdded ? ( ... ) : null}`), not
   // just its first row — the below-floor affordance lives in the second row.
@@ -239,14 +245,11 @@ describe("edit-items.tsx picker-strip below-floor parity (REG-B263-G)", () => {
       ? ""
       : pickerSrc.slice(stripStart, pickerSrc.indexOf("canEditPrice && pickerPriceEditItem"));
 
-  it("REG-B263-G: the screen imports needsMarginAck from the shared money helper", () => {
-    expect(source).toMatch(
-      /import\s*\{[^}]*\bneedsMarginAck\b[^}]*\}\s*from\s*"[^"]*lib\/price-override"/,
+  it("REG-B263-G / B280: the strip flags a below-floor price through the SAME marginClass the label reads, not a separate helper", () => {
+    expect(strip).toMatch(
+      /\(marginClass === "belowCost" \|\| marginClass === "belowFloor"\) \?/,
     );
-  });
-
-  it("REG-B263-G: the strip flags a below-floor price through needsMarginAck", () => {
-    expect(strip).toMatch(/needsMarginAck\(\s*lastAdded\s*,\s*lastAdded\.unitPrice\s*,/);
+    expect(strip).not.toMatch(/needsMarginAck\(/);
   });
 
   it("REG-B263-G: the strip's below-floor guard reads the same ack + floor the row does", () => {
@@ -328,7 +331,7 @@ describe("edit-items.tsx below-floor label parity (REG-B263-H)", () => {
     "",
   ])[0];
 
-  it("REG-B263-H: the strip's below-floor row decides through needsMarginAck and matches the list row's wording", () => {
+  it("REG-B263-H: the strip's below-floor row decides through the SAME basis as its label and matches the list row's wording", () => {
     // Fixture sanity first: if the list row's own literals ever change
     // shape, fail LOUDLY here rather than have the comparisons below pass by
     // both sides matching empty strings.
@@ -338,7 +341,12 @@ describe("edit-items.tsx below-floor label parity (REG-B263-H)", () => {
     // Design invariant (c): the row's visibility stays decided by the ONE
     // helper — re-pinned here alongside the label fix so a change that swaps
     // the gate out while "fixing" the label is caught in the same place.
-    expect(strippedPicker).toMatch(/needsMarginAck\(/);
+    // B280: that ONE helper is now `marginClass` (previously `needsMarginAck`,
+    // a separate cent-rounded price comparison that could disagree with this
+    // exact-fraction classification at the half-cent boundary).
+    expect(strippedPicker).toMatch(
+      /\(marginClass === "belowCost" \|\| marginClass === "belowFloor"\) \?/,
+    );
 
     // TODAY (before this fix): the strip renders the bare literal "Below
     // cost" — no backtick, no template, no `marginClass` branch — so neither

@@ -76,23 +76,6 @@
 - **Guard:** `apps/web/jest.config.js`'s inline comment on `testMatch`; the web suite count (19
   spec files) pinned in `.claude/code-map/web.md`.
 
-### L-067 · 2026-09-04 · tooling · #597
-
-- **Symptom:** eight defects from one script: "updated" edits that changed nothing, mangled authored
-  text, a regex parsed as a comment, a record claiming a proof it never held.
-- **Root cause:** each write and derivation trusted something other than its own result — a STRING
-  `replace` expands `$1`/`$&` out of the CALLER's text; an anchored replace that misses returns the
-  subject unchanged; a regex routed through a script's template literal loses a backslash layer; a
-  derived field read a proxy, not the field it names.
-- **Lesson:** **A write must prove its own effect; a derived field comes from the field it
-  represents, never a correlate. Function replacement for authored text; compare before/after and
-  fail when equal ("wrote" ≠ "changed"); `proof` from `row.proof`, "event recorded" from the
-  append's return; write regex/escape-heavy edits directly, never through an intermediate script's
-  string layer; EXECUTE the function you patched — `node -c` proves it parses, not that it runs.**
-- **Guard:** `bugs self-test` (step 6 of `npm run verify`): `$`-safety, one `## History` per record,
-  ledger id-uniqueness, real `cmds.render` on a fixture, sync done→queued→done, reopen leaves the
-  proof clear.
-
 ### L-068 · 2026-09-04 · tooling · #597
 
 - **Symptom:** a proven ledger row silently back to `queued`; a live lock stolen, admitting three
@@ -767,6 +750,40 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
 - **Lesson:** **Per-row async state in a list is keyed per row (`Set`/`Map` of ids), never one
   scalar — a scalar assumes at most one row is ever in flight.**
 - **Guard:** `invoices/page.tsx` tracks `printingIds: Set<string>`; row `disabled={printingIds.has(inv.id)}`.
+
+### L-150 · 2026-09-15 · domain · B264/B265/B266 mobile scan FABs
+
+- **Symptom:** a `BarcodeFab` mounted inside a `FormSheet`-wrapped screen rendered but scrolled away
+  with the form content instead of floating fixed — the defect the floating-FAB pattern exists to
+  prevent, moved one layer down.
+- **Root cause:** `FormSheet`'s `children` render inside `FormSheet`'s OWN internal `ScrollView`
+  (`components/FormSheet.tsx`), not under the screen's stable outer container. `position:
+"absolute"` there is relative to the scrolling content box, not the viewport, so it moves with
+  the scroll. Every other `BarcodeFab` consumer uses a plain `SafeAreaView` + sibling `ScrollView`,
+  where this trap doesn't exist.
+- **Lesson:** **A wrapper whose `children` land inside its OWN scrolling container is not a safe
+  parent for an absolutely-positioned floating element — check the wrapper's own source for where
+  `children` actually renders before assuming position is unaffected. Mount the floating element
+  as a SIBLING of the wrapper instead (a Fragment), never inside its `children`.**
+- **Guard:** `apps/mobile/__tests__/scan-affordance-siblings.test.ts` pins the FAB's mount position
+  on all three screens (`fabAt > formSheetCloseAt`).
+
+### L-154 · 2026-09-15 · domain · PR-3 independent review F1/F4 (moved logic, new entry point)
+
+- **Symptom:** two findings, same root shape. F1: a handler copied from `ProductPickerSheet.onScanned`
+  (single-shot) into a `continuous` `BarcodeFab` returned no `ScanOutcome`, so the scanner showed zero
+  feedback per scan — the sheet's own `setScanOpen(false)` had masked the missing return there. F4: a
+  cost-prefill rule moved verbatim from an `onSelect` only prefilled an EMPTY field, so scanning A then
+  B billed B at A's cost — true of the original tap-search-tap flow too, but the scan FAB makes it routine.
+- **Root cause:** both fixes reused logic that carried an implicit assumption from its ORIGINAL context
+  (single-shot, slow-to-trigger) into a NEW entry point (continuous, one-tap) that invalidates it; neither
+  review checked whether the new surface's usage pattern (fires often, fires fast) still holds it.
+- **Lesson:** **Moving/copying logic into a new entry point is not done once it compiles and matches
+  structurally — audit whether the new surface's usage pattern still holds every assumption the original
+  context relied on implicitly. A rule safe because triggering it was slow/rare stops being safe once a
+  faster trigger sits on the same code.**
+- **Guard:** `scan-affordance-siblings.test.ts` (REG-F1) and `purchase-receive-logic.test.ts` (REG-F4) pin
+  the fix; F4's rule is now an exported, unit-tested `nextUnitCost` instead of living only inline.
 
 ### L-156 · 2026-09-15 · tooling · B420 mistiered proof, no lawful reclassify path
 

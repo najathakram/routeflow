@@ -63,6 +63,23 @@
 
 ## tooling
 
+### L-067 · 2026-09-04 · tooling · #597
+
+- **Symptom:** eight defects from one script: "updated" edits that changed nothing, mangled authored
+  text, a regex parsed as a comment, a record claiming a proof it never held.
+- **Root cause:** each write and derivation trusted something other than its own result — a STRING
+  `replace` expands `$1`/`$&` out of the CALLER's text; an anchored replace that misses returns the
+  subject unchanged; a regex routed through a script's template literal loses a backslash layer; a
+  derived field read a proxy, not the field it names.
+- **Lesson:** **A write must prove its own effect; a derived field comes from the field it
+  represents, never a correlate. Function replacement for authored text; compare before/after and
+  fail when equal ("wrote" ≠ "changed"); `proof` from `row.proof`, "event recorded" from the
+  append's return; write regex/escape-heavy edits directly, never through an intermediate script's
+  string layer; EXECUTE the function you patched — `node -c` proves it parses, not that it runs.**
+- **Guard:** `bugs self-test` (step 6 of `npm run verify`): `$`-safety, one `## History` per record,
+  ledger id-uniqueness, real `cmds.render` on a fixture, sync done→queued→done, reopen leaves the
+  proof clear.
+
 ### L-009 · 2026-08-29 · tooling · #501
 
 - **Symptom:** `npm run verify` printed a full jest pass after a 19-package dependency bump —

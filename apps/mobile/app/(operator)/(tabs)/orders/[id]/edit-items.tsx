@@ -79,7 +79,7 @@ import { createScanAcceptGuard } from "../../../../../lib/scan-accept-guard";
 import { sanitizeIntInput } from "../../../../../lib/qty";
 import { QTY_INPUT_WIDTH } from "../../../../../lib/row-layout";
 import { resolveProductByCode } from "../../../../../lib/barcode-resolve";
-import { applyPriceOverride, needsMarginAck } from "../../../../../lib/price-override";
+import { applyPriceOverride } from "../../../../../lib/price-override";
 import { BarcodeScanner } from "../../../../../components/BarcodeScanner";
 import { BarcodeFab } from "../../../../../components/BarcodeFab";
 import { scanFabHidden } from "../../../../../lib/scan-fab-visibility";
@@ -426,6 +426,18 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     setRestored(null);
     setRestoreChecked(false);
     setRestoreState("idle");
+    // B280 follow-up (PR-3): userId undefined means auth hasn't resolved yet
+    // (cold open / deep link) — snapshotKey resolves to the shared `anon`
+    // bucket, and reading it here could offer a PRIOR operator's leftover
+    // snapshot for the instant before auth settles (the write side already
+    // refuses this bucket — REG-MSCAN-A4-anon). Skip the read entirely; the
+    // effect re-fires (via the `snapshotKey` dep) once userId resolves to a
+    // real id and reads the correct per-user key then. `restoreChecked` still
+    // flips so the autosave effect below isn't blocked forever.
+    if (userId == null) {
+      setRestoreChecked(true);
+      return;
+    }
     AsyncStorage.getItem(snapshotKey)
       .then((raw) => {
         if (!alive) return;
@@ -438,7 +450,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     return () => {
       alive = false;
     };
-  }, [snapshotKey]);
+  }, [snapshotKey, userId]);
 
   /**
    * Apply the snapshot. DECLARED AFTER the hydration effect above and sharing
@@ -2661,16 +2673,25 @@ function ProductPicker({
             ) : null}
           </View>
           {/* Review round: a below-floor price is flagged on THIS surface too
-              — same predicate (`needsMarginAck`), same floor, same guard as
-              the line row. No ack control here: acknowledging stays a
-              line-list tap, so `floorAcked` keeps exactly one writer.
+              — same guard as the line row. No ack control here: acknowledging
+              stays a line-list tap, so `floorAcked` keeps exactly one writer.
               Finding B263-H: the label ALSO reads `marginClass` (same
               `classifyMargin` call the row uses) so "Below cost" vs "Below
-              floor" can't disagree with the row for the same line. */}
+              floor" can't disagree with the row for the same line.
+              B280: this gate used to be `needsMarginAck` — a SEPARATE,
+              cent-rounded price comparison against `lastAddedFloor`
+              (`priceForMarginFloor`'s rounded output) — while the row's own
+              gate (`below`, DraftItemCard) and this same strip's label above
+              both classify by the EXACT fraction (`classifyMargin`). At the
+              half-cent boundary the two bases disagree, so the strip could
+              flag/not-flag a line the row disagreed with. Gate on
+              `marginClass` (the exact-fraction classification already
+              computed above for the label) instead — one basis, both
+              surfaces, never disagree. */}
           {canEditPrice &&
           lastAddedFloor != null &&
           !lastAddedAcked &&
-          needsMarginAck(lastAdded, lastAdded.unitPrice, lastAddedFloor) ? (
+          (marginClass === "belowCost" || marginClass === "belowFloor") ? (
             <View style={styles.pickerLastAddedRow}>
               <Text style={styles.pickerLastAddedBelow}>
                 {marginClass === "belowCost"
