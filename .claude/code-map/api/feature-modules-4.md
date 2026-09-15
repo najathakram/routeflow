@@ -120,7 +120,7 @@
 ### `estimates/`
 
 - **controller** `estimates` — create, list, get, send, accept, decline, convert-to-invoice, void.
-- **service** — `create`, `findAll`, `findOne`, `send`, `accept`, `decline`, `convertToInvoice`, `void`. side effects: Estimate(+Item) writes; Invoice on convert; email.
+- **service** — `create` (**F27/B79, aa47ee9e:** persists `dto.issueDate` → `Estimate.issueDate` (nullable; the column pre-existed with no write path)), `findAll`, `findOne`, `send` (DRAFT→SENT status flip only — **no email is sent**, B17; the web copy now says "Mark as sent"), `accept`, `decline`, `convertToInvoice` (ACCEPTED only; returns the created Invoice keyed `id` — the web navigates on `id`, B15-NAV), `void`. side effects: Estimate(+Item) writes; Invoice on convert. **B70 (laundering CONVERTED→ACCEPTED via bare `send`/`decline` updates) is fixed via a `claimTransition(id, to, refusal, exclude)` helper — `TERMINAL_ESTIMATE_STATUSES = ["CONVERTED", "DECLINED"]`; `accept()` deliberately excludes only `["CONVERTED"]` (not the full terminal set) to preserve the pre-existing `DECLINED→ACCEPTED` invariant — see `.claude/lessons/LESSONS.md` L-132.**
 
 ### `vendor-bills/`
 

@@ -1443,3 +1443,81 @@ mechanism, so archiving loses no enforcement.
   `uuidIds: true` seeds + the uuid-id cases in plane-sync/plane-apply self-tests; Landmine 15
   (live shapes) in the harness build plan. Related [[L-111]] (hook/branch gate), [[L-074]]
   (fixture realism).
+
+## Archived 2026-09-13 — headroom for L-132 (F27 B70) + byte cap
+
+Three active entries archived to clear headroom for L-132 (F27 B70, renumbered from L-119, then
+again from L-131 to avoid a second collision, during
+the 2026-09-14 rebase to avoid colliding with master's own L-119) and bring the register back
+under its 40 KB byte cap: L-035, L-027, L-010. All three carry `none — judgment` guards (no landed
+enforcement mechanism) and zero outside citations (repo-wide grep excluding `.claude/lessons/**`,
+`.claude/pipeline/**`, worktrees, and code-map CHANGELOG/`_meta.json`) — same disqualification
+class the register already used for L-004/L-026 (oldest, uncited, judgment-only). L-025 was
+checked and kept: it is cited from `apps/mobile/lib/skip-stop.ts`. L-055 was checked and kept: it
+is heavily cited across `apps/api/src/prisma/prisma-isolation.spec.ts`, `prisma.service.ts`, and
+multiple code-map CHANGELOG entries — not a candidate despite similar age.
+
+### L-035 · 2026-09-01 · process · #TBD
+
+- **Symptom:** B120's POD archive was designed onto a generic `AuditLog` row; review found
+  `RouteRunStop.podHistory` already existed, unused, with a schema comment naming the exact entry
+  shape and the words "F10 wires the write".
+- **Root cause:** an earlier enablement batch pre-added the column FOR this batch, and the design
+  was drawn from the register's suggested fix without grepping the schema for what was already
+  provisioned.
+- **Lesson:** **Before designing where something is stored, grep the schema for a column addressed
+  to your batch — the schema comment IS the spec.** Enablement batches leave columns waiting; a
+  field with no readers is a contract, not dead weight.
+- **Guard:** none — judgment. The mismatch also showed up as a blocker (the shared test mock had
+  no `auditLog` model), so "the harness fights you" is a hint you are off the intended path.
+
+### L-027 · 2026-09-01 · process
+
+- **Symptom:** with several sessions running in git worktrees, a repo-file gate was about to be
+  satisfied by writing into a _different_ session's working tree — surfacing later as a mystery diff
+  in someone else's PR.
+- **Root cause:** worktrees are nested inside the main checkout, and hooks resolve their paths
+  against that main checkout, not the worktree the session is working in. Whatever branch the shared
+  checkout happens to be parked on is the file the gate points at.
+- **Lesson:** **Never satisfy a gate by writing into whatever tree the hook happens to run from —
+  defer the write to your own worktree and say plainly why. Keep the shared checkout on the
+  integration branch; it is the only sane resting state for a tree that hooks resolve against.**
+- **Guard:** none — judgment. A gate demanding a repo file while you work in a worktree is the cue
+  to check which tree that path actually lands in.
+
+### L-010 · 2026-08-29 · tooling
+
+- **Symptom:** one workspace's tests "failed" under verify while the same code passed everywhere
+  else.
+- **Root cause:** worker exhaustion under host load — the task exited 1 with **no test report at
+  all**; nothing ever ran.
+- **Lesson:** **A bare non-zero task exit with no test report is environmental — re-run that
+  workspace directly before debugging; CI on clean runners is the authoritative gate.**
+- **Guard:** none — judgment (triage: direct `npx jest`, then filtered turbo).
+
+## Archived 2026-09-15 — headroom for L-146 (B221) + byte cap
+
+One active entry archived to bring the merged register (fix/mobile-scan-lane-d + origin/master
+#711) back under its 65,536-byte cap after both sides' new entries (L-146; F27's L-130/131/132)
+landed side by side with no id collision. L-073 was the candidate: zero outside citations
+(repo-wide grep across `apps/`, `scripts/`, `packages/` for `.ts`/`.tsx`/`.mjs`/`.cjs`/`.js`, and
+no `[[L-073]]` backlink from another live entry) and its operational substance — the Prisma
+schema-folder split, `--check`'s block-identity proof, `local:drift` as the output-side oracle —
+is already carried forward in CLAUDE.md's "Deployment & DB safety (Railway)" section, so archiving
+it loses no load-bearing knowledge. L-070 and L-093 were checked and kept: L-070 is referenced by
+another live entry's prose (`[[L-070]] class`); L-093 is the only documentation for its
+Next.js-redirect gotcha (no equivalent CLAUDE.md coverage).
+
+### L-073 · 2026-09-04 · tooling · wave E `imp-10a`
+
+- **Symptom:** "generated client `index.d.ts` byte-identical before/after" failed on a
+  provably-lossless schema-folder split and would have read as a blocking regression.
+- **Root cause:** a multi-file schema concatenates in filename order, so a split reorders every
+  generated declaration (`modelProps` union, `ModelName` map, top-level re-exports) though content
+  stayed set-identical.
+- **Lesson:** **Never make a generated artifact's byte identity the oracle for a source
+  reorganization — pin the SEMANTICS instead** (block/name multisets on the input, an empty
+  `migrate diff` on the output).
+- **Guard:** `split-prisma-schema.mjs --check` proves block-identity + `MODEL_DOMAIN` placement;
+  `npm run local:drift` is the output-side oracle — both cheap/re-runnable, unlike a `.d.ts` diff.
+  Its comment stripper treats a quote left unterminated on its line as regex text, never a string opener.
