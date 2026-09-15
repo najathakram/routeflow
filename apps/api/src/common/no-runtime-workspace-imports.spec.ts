@@ -30,16 +30,89 @@ function collectSourceFiles(dir: string, out: string[] = []): string[] {
   return out;
 }
 
+// Strips `/* ... */` and `// ...` comments before pattern-matching — several of this file's own
+// header comments (and trip-grouping.ts's/shipping.ts's) mention `require("@routeflow/types")` or
+// `import "@routeflow/types"` in PROSE to explain why the file avoids them; matching raw source
+// would flag that documentation as a live offender. Naive by design (no string-literal awareness),
+// which only risks a false NEGATIVE if a "//" or "/*" ever appeared inside an actual offending
+// import/require's string — not a realistic shape for a package specifier.
+function stripComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+}
+
+// Every shape that emits a literal runtime reference to "@routeflow/types" into `dist/` —
+// `import type ...` / `export type ...` are erased at compile time and deliberately excluded;
+// everything below survives into the compiled output and crashes `node dist/main.js` at boot.
+const RUNTIME_TYPES_IMPORT_PATTERNS = [
+  // import Foo from "@routeflow/types"; / import { Foo } from "..."; / import * as Foo from "...";
+  /(^|\n)\s*import\s+(?!type\b)[^;]*from\s+["']@routeflow\/types["']/,
+  // import "@routeflow/types"; — bare side-effect import, no `from` clause.
+  /(^|\n)\s*import\s*["']@routeflow\/types["']/,
+  // export { Foo } from "..."; / export * from "..."; / export * as ns from "...";
+  /(^|\n)\s*export\s+(?!type\b)[^;]*from\s+["']@routeflow\/types["']/,
+  // require("@routeflow/types") / require('@routeflow/types')
+  /require\s*\(\s*["']@routeflow\/types["']\s*\)/,
+];
+
 describe("API runtime imports", () => {
   it("never value-imports @routeflow/types from a compiled source file", () => {
     const offenders = collectSourceFiles(SRC_ROOT).filter((file) => {
-      const source = readFileSync(file, "utf8");
-      // `import type ... from "@routeflow/types"` is erased at compile time; a
-      // plain `import ... from` (or a `require`) is not.
-      return /(^|\n)\s*import\s+(?!type\b)[^;]*from\s+["']@routeflow\/types["']/.test(source);
+      const source = stripComments(readFileSync(file, "utf8"));
+      return RUNTIME_TYPES_IMPORT_PATTERNS.some((pattern) => pattern.test(source));
     });
 
     expect(offenders).toEqual([]);
+  });
+});
+
+describe("RUNTIME_TYPES_IMPORT_PATTERNS — offender-detection coverage", () => {
+  const isOffender = (source: string) =>
+    RUNTIME_TYPES_IMPORT_PATTERNS.some((pattern) => pattern.test(source));
+
+  it("catches a plain value import", () => {
+    expect(isOffender(`import { Foo } from "@routeflow/types";`)).toBe(true);
+    expect(isOffender(`import Foo from "@routeflow/types";`)).toBe(true);
+    expect(isOffender(`import * as Foo from "@routeflow/types";`)).toBe(true);
+  });
+
+  it("catches a bare side-effect import with no `from` clause", () => {
+    expect(isOffender(`import "@routeflow/types";`)).toBe(true);
+    expect(isOffender(`import '@routeflow/types';`)).toBe(true);
+  });
+
+  it("catches a re-export", () => {
+    expect(isOffender(`export { Foo } from "@routeflow/types";`)).toBe(true);
+    expect(isOffender(`export * from "@routeflow/types";`)).toBe(true);
+    expect(isOffender(`export * as types from "@routeflow/types";`)).toBe(true);
+  });
+
+  it("catches a require(...) call", () => {
+    expect(isOffender(`const { Foo } = require("@routeflow/types");`)).toBe(true);
+    expect(isOffender(`const types = require('@routeflow/types');`)).toBe(true);
+  });
+
+  it("never flags a type-only import or re-export (erased at compile time)", () => {
+    expect(isOffender(`import type { Foo } from "@routeflow/types";`)).toBe(false);
+    expect(isOffender(`export type { Foo } from "@routeflow/types";`)).toBe(false);
+    expect(isOffender(`export type * from "@routeflow/types";`)).toBe(false);
+  });
+
+  it("never flags an unrelated import", () => {
+    expect(isOffender(`import { Foo } from "@routeflow/pricing";`)).toBe(false);
+    expect(isOffender(`import "./local-module";`)).toBe(false);
+  });
+
+  it("never flags any of the four forms when they only appear in a comment (docs explaining why the file avoids them)", () => {
+    const block = stripComments(`/**
+ * emits a literal \`require("@routeflow/types")\` at build time, so avoid
+ * \`import "@routeflow/types"\`, \`export * from "@routeflow/types"\`, etc.
+ */
+export const real = 1;`);
+    const line = stripComments(
+      `// see also: import { Foo } from "@routeflow/types" for the shape\nexport const real = 2;`,
+    );
+    expect(isOffender(block)).toBe(false);
+    expect(isOffender(line)).toBe(false);
   });
 });
 
