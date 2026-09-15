@@ -179,46 +179,34 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
 
 ### L-149 · 2026-09-15 · tooling · #743 fix-round T8 lesson-id staleness
 
-- **Symptom:** an engine task's brief hardcoded specific lesson ids (L-140/L-141) and a specific
-  `nextId` bump (143) to write at close-out. By the time the task would have actually run, three
-  intervening merges had already moved the real registry floor to `nextId` 146 — the hardcoded
-  ids were already claimed by other lanes before the engine even launched.
-- **Root cause:** the brief was authored during planning, against the registry's state at that
-  moment. The task itself was scheduled to run LAST, after seven other tasks and however long the
-  engine takes wall-clock — in a shared, actively-written registry, "the current state" at
-  planning time and "the current state" at execution time are different facts, and nothing in the
-  brief distinguished them.
-- **Lesson:** **A build/task brief must never embed a point-in-time value from a shared, actively
+- **Symptom:** an engine task's brief hardcoded specific lesson ids (L-140/L-141) and a `nextId`
+  bump (143) to write at close-out. By the time the task ran, three intervening merges had moved
+  the real registry floor to `nextId` 146 — the hardcoded ids were already claimed elsewhere.
+- **Root cause:** the brief was authored against the registry's state at planning time. The task
+  itself ran LAST, after seven others and however long wall-clock that took — in a shared,
+  actively-written registry, "current state" at planning time and at execution time differ, and
+  nothing in the brief distinguished the two.
+- **Lesson:** **A task brief must never embed a point-in-time value from a shared, actively
   written resource (a registry id, a counter, a "latest" anything) as a literal constant when the
-  task executes later than the brief was written — especially the LAST task in a multi-stage run.
-  Instruct the task to read the live value at write time instead, and to verify (grep for
-  existing use, re-run the validator) before committing to it.**
-- **Guard:** none yet — propose a build-plan lint that flags a literal `L-\d+`/`nextId: \d+` inside
-  any task's `brief` field for a task with a non-empty `dependsOn` chain (i.e., not the first
-  wave), since those are exactly the tasks whose "current state" assumption is stale by
-  construction.
+  task runs later than the brief was written — especially the LAST task in a run. Read the live
+  value at write time instead, and verify (grep for existing use, re-run the validator) first.**
+- **Guard:** none yet — a build-plan lint flagging a literal `L-\d+`/`nextId: \d+` inside any
+  non-first-wave task's `brief` would catch this class before launch.
 
 ### L-151 · 2026-09-15 · tooling · #743 fix-round value-importing @routeflow/types crashed api boot
 
-- **Symptom:** two fix-round commits changed `plan-catalog.constants.ts` and `create-tenant.dto.ts`
-  to `import { X } from "@routeflow/types"` as VALUE imports (not `import type`). `tsc --noEmit`
-  and `ts-jest` both passed clean on every affected file. `node dist/main.js` — the API's real prod
-  boot command — would have crashed at startup: `nest build` doesn't bundle workspace deps, and
-  `@routeflow/types` ships raw TypeScript with no build step, so the value import emits a literal
-  `require("@routeflow/types")` into `dist/` that fails to parse.
-- **Root cause:** a guard test for exactly this class of mistake already existed
-  (`no-runtime-workspace-imports.spec.ts`) but never ran against these two commits — the fix round
-  had only run the spec files for the task at hand, not the full `apps/api` suite, until this
-  session ran it in full for the first time since those commits landed.
-- **Lesson:** **`tsc --noEmit` and `ts-jest` passing is not proof a workspace-package import is
-  safe at a service's actual runtime boot — only a guard test that inspects the real import
-  statements (or an actual `node dist/main.js`) proves it.** Run the FULL test suite at least once
-  per fix round, not only the specs for the files just touched; a boot-crash-class guard test is
-  cheap and fast but does nothing if it never gets invoked.
-- **Guard:** `apps/api/src/common/no-runtime-workspace-imports.spec.ts` (pre-existing). Fix:
-  `tenant-class.ts` now derives `TENANT_CLASS_VALUES` from the real `@prisma/client` enum instead
-  of `@routeflow/types`; `plan-catalog.constants.ts` reverts `PLAN_KEYS` to a local mirror matching
-  the same file's own `METER_KEYS`/`ADDON_SKUS` convention.
+- **Symptom:** two commits value-imported (not `import type`) a constant from `@routeflow/types`.
+  `tsc --noEmit`/`ts-jest` passed clean. `node dist/main.js` (real prod boot) would have crashed:
+  `nest build` doesn't bundle workspace deps, and that package ships raw TS with no build step, so
+  the import emits a `require("@routeflow/types")` into `dist/` that fails to parse.
+- **Root cause:** a guard test for this exact mistake already existed
+  (`no-runtime-workspace-imports.spec.ts`) but never ran against these commits — only the task's own
+  spec files ran, not the full suite, until this session ran it in full for the first time.
+- **Lesson:** **`tsc`/`ts-jest` passing is not proof a workspace-package import is safe at actual
+  runtime boot — only a guard test on the real imports (or an actual boot) proves it.** Run the FULL
+  suite at least once per fix round; a boot-crash guard does nothing if it never runs.
+- **Guard:** `no-runtime-workspace-imports.spec.ts` (pre-existing). Fix: derive the value from
+  `@prisma/client`'s real enum instead, or mirror it locally like the file's own `METER_KEYS`.
 
 ### L-152 · 2026-09-15 · process · #743 fix round T5 "one MRR engine" claim
 
@@ -242,24 +230,20 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
 ### L-153 · 2026-09-15 · tooling · #743 fix round T3 child-process env leak into a prod-capable CLI
 
 - **Symptom:** two DB-lane specs spawn a prod-capable backfill CLI via `execSync` with
-  `env: {...process.env, DATABASE_URL: dbUrl}`. `resolveDatabaseUrl()` (the CLI's own DB
-  resolution) prioritizes Railway TCP-proxy vars OVER `DATABASE_URL` when all five are set — so a
-  parent test process whose OWN environment still carries a leftover Railway proxy export (e.g.
-  from an earlier `railway run` in the same shell) would leak straight into the child, pointing a
-  "local-only" test's CLI invocation at the production database.
+  `env: {...process.env, DATABASE_URL: dbUrl}`. The CLI's own `resolveDatabaseUrl()` prioritizes
+  Railway TCP-proxy vars OVER `DATABASE_URL` when set — so a parent process with a leftover
+  Railway proxy export (e.g. an earlier `railway run` in the same shell) leaks into the child,
+  pointing a "local-only" test's CLI at the production database.
 - **Root cause:** `{...process.env, DATABASE_URL: dbUrl}` ADDS a key, it does not REMOVE any —
-  scrubbing is the caller's job, and neither spec did it. A child process inherits its parent's
-  full environment by default; overriding one variable is not the same as guaranteeing which
-  variable wins inside the child's own resolution logic.
-- **Lesson:** **A child process does not inherit a guard, only variables — when a spawned CLI has
-  its own "env var A beats env var B" precedence, setting B in the child's env is not enough to
-  guarantee A is absent. Explicitly delete every variable in the higher-precedence set before
-  spawning, and add a test that FAKES the higher-precedence vars on the parent process to prove
-  the child still resolves correctly.**
-- **Guard:** `childEnv(dbUrl)` helper in both DB specs (`backfill-tenant-class.db.spec.ts`,
-  `backfill-subscription-reconciliation.db.spec.ts`) deletes every `RAILWAY_*`/`POSTGRES_*` key
-  before setting `DATABASE_URL`; each file's `REG-743-N2` test injects fake Railway vars onto the
-  spec's own `process.env` and asserts the child CLI still resolves and prints the local host.
+  scrubbing is the caller's job and neither spec did it. Overriding one variable doesn't guarantee
+  which variable wins inside the child's OWN resolution precedence.
+- **Lesson:** **A child process inherits variables, not a guard — when a spawned CLI has its own
+  "A beats B" precedence, setting B in the child's env isn't enough. Delete every variable in the
+  higher-precedence set before spawning, and test by FAKING those vars on the parent to prove the
+  child still resolves correctly.**
+- **Guard:** `childEnv(dbUrl)` helper in both DB specs deletes every `RAILWAY_*`/`POSTGRES_*` key
+  before setting `DATABASE_URL`; each file's `REG-743-N2` test fakes Railway vars on the spec's
+  own `process.env` and asserts the child still resolves to the local host.
 
 ## testing
 
@@ -847,20 +831,18 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
 
 ### L-134 · 2026-09-14 · testing
 
-- **Symptom:** a new `*.db.spec.ts` passed against the compose stack but CI's "Replay migrations
-  on a fresh database" job failed its `beforeAll` with "No PUBLISHED PlanVersion … run
-  `npm run local:seed` first", then `afterAll` threw `Cannot read properties of undefined
-(reading 'id')` and Jest hung on an unclosed pool.
-- **Root cause:** `local:seed` publishes the plan catalog (global reference data the `PlanVersion`
-  table starts empty of); CI's replay job runs `test:db` on a freshly migrated DB with no seed at
-  all, so any spec that assumes seeded reference data is green locally and red in CI.
-- **Lesson:** **a db spec creates every row it reads — including global reference data — in its
-  own `beforeAll` (use an existing row if present, create a minimal one otherwise, remember what
-  it created), tears down only what it created, guards every cleanup on the fixture existing, and
-  always closes the pool in `afterAll` even when `beforeAll` threw.**
-- **Guard:** CI's migration-replay job (fresh DB, no seed) is the standing check; the spec
-  `apps/api/src/common/backfill-subscription-reconciliation.db.spec.ts` is the reference pattern.
-  When a spec fabricates a reference row, derive any integer key or version from the table
-  (`max(col) + 1`), never from `Date.now()` — `PlanVersion.version` is int4 and a timestamp-derived
-  value overflowed it only on CI's fresh database, i.e. the one environment the fix targeted; a fix
-  aimed at an environment you cannot run must be traced against that environment's schema and limits.
+- **Symptom:** a new `*.db.spec.ts` passed locally but CI's "Replay migrations on a fresh
+  database" job failed its `beforeAll` with "No PUBLISHED PlanVersion … run `local:seed` first",
+  then `afterAll` threw `Cannot read properties of undefined (reading 'id')` and Jest hung on an
+  unclosed pool.
+- **Root cause:** `local:seed` publishes the plan catalog (global reference data `PlanVersion`
+  starts empty of); CI's replay job runs `test:db` on a freshly migrated DB with no seed at all,
+  so a spec assuming seeded reference data is green locally and red in CI.
+- **Lesson:** **A db spec creates every row it reads — including global reference data — in its
+  own `beforeAll` (use an existing row if present, else create a minimal one and remember it),
+  tears down only what it created, guards cleanup on the fixture existing, and always closes the
+  pool in `afterAll` even when `beforeAll` threw.**
+- **Guard:** CI's migration-replay job (fresh DB, no seed) is the standing check;
+  `backfill-subscription-reconciliation.db.spec.ts` is the reference pattern. Derive any fabricated
+  integer key/version from the table (`max(col) + 1`), never `Date.now()` — a timestamp overflowed
+  `PlanVersion.version` (int4) only on CI's fresh DB, the one environment you cannot run locally.
