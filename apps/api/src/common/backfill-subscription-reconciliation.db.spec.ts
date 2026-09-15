@@ -526,6 +526,11 @@ describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
     expect(events).toHaveLength(1);
     expect(events[0].type).toBe("reconciliation.snapshot_backfilled");
     expect(events[0].tenantId).toBe(tenantPartial!.id);
+    // Review finding (fix round #2): this write moves the tenant from $0 to scalePrice inside
+    // MrrService's payingWhere — the event MUST carry that as a signed amountDelta, or
+    // ledgerMrr never learns about the move (and a later churn's real -scalePrice delta would
+    // have no matching +scalePrice ever booked).
+    expect(String(events[0].amountDelta)).toBe(scalePrice);
   });
 
   it("a second apply reports 0 changes and appends no new events (incl. the ENTERPRISE row)", async () => {

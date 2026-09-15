@@ -4,10 +4,13 @@
 // rows with planKey set) sees every real tenant, WITHOUT ever inventing a subscription: the
 // five free pilots (and any other PRODUCTION tenant with no subscription row) must never
 // become paying MRR just because this script ran. Only one failure mode is fixed here — a
-// TenantSubscription row exists, already carries a planKey and a Stripe subscription, but is
-// missing basePriceSnapshot (Stripe-originated rows created before the checkout webhook set
-// the price snapshot). Five things are deliberately never written and are only ever listed for
-// a human:
+// TenantSubscription row exists, already carries a planKey and a real Stripe subscription
+// (stripeSubId), but is missing basePriceSnapshot. NOTE: `onCheckoutCompleted`
+// (billing.service.ts) never sets planKey itself, so a row Stripe's OWN checkout webhook
+// created never reaches this fixable population — it's excluded below at "no planKey". The
+// rows this script can actually write are legacy/hand-written ones that already carry a
+// planKey (e.g. a manual activation later given a stripeSubId) but were never snapshotted.
+// Five things are deliberately never written and are only ever listed for a human:
 //   - a tenant with no subscription row at all ("no subscription — manual decision"),
 //   - a subscription row with no planKey set ("no planKey — manual decision"),
 //   - a subscription row with a planKey but no stripeSubId, i.e. a manually-activated free
@@ -261,38 +264,54 @@ async function main() {
         // overwritten by it.
         const subData = { basePriceSnapshot: r.price };
         if (r.subPlanVersionWasNull) subData.planVersionId = r.targetVersionId;
-        const result = await prisma.tenantSubscription.updateMany({
-          where: {
-            tenantId: r.tenantId,
-            planKey: r.planKey,
-            basePriceSnapshot: null,
-            stripeSubId: { not: null },
-            planVersionId: r.scannedSubPlanVersionId,
-          },
-          data: subData,
+        // Review finding (fix round #2): this write moves the tenant's MrrService
+        // contribution from $0 to r.price (basePriceSnapshot null -> set, inside
+        // payingWhere) exactly like reconcilePriceLedger()/updateTenantPriceOverride()'s
+        // own null-snapshot backfill do — both of those emit the signed delta in the SAME
+        // transaction as the write, and this one must too, or ledgerMrr never learns about
+        // the move: a later churn on this tenant then emits a real -r.price with no matching
+        // +r.price ever booked, permanently under-counting ledgerMrr. The three writes
+        // (subscription, event, tenant pin) are wrapped in ONE per-row transaction so a
+        // failure between them can never book a price with no ledger row (or vice versa) —
+        // this does NOT reintroduce the one-failed-row-rolls-back-the-run risk the file
+        // header warns against, since each row still gets its OWN transaction.
+        const result = await prisma.$transaction(async (tx) => {
+          const updated = await tx.tenantSubscription.updateMany({
+            where: {
+              tenantId: r.tenantId,
+              planKey: r.planKey,
+              basePriceSnapshot: null,
+              stripeSubId: { not: null },
+              planVersionId: r.scannedSubPlanVersionId,
+            },
+            data: subData,
+          });
+          if (updated.count === 1) {
+            await tx.billingEvent.create({
+              data: {
+                tenantId: r.tenantId,
+                type: "reconciliation.snapshot_backfilled",
+                payload: {
+                  planKey: r.planKey,
+                  price: r.price,
+                  planVersionId: r.targetVersionId,
+                  scriptRun: new Date().toISOString(),
+                },
+                amountDelta: r.price,
+              },
+            });
+            // N3: the Tenant's own planVersionId pin is separate from the subscription's —
+            // backfill it too when null, never overwriting one that's already set.
+            if (r.tenantPlanVersionWasNull) {
+              await tx.tenant.updateMany({
+                where: { id: r.tenantId, planVersionId: null },
+                data: { planVersionId: r.targetVersionId },
+              });
+            }
+          }
+          return updated;
         });
         if (result.count === 1) {
-          await prisma.billingEvent.create({
-            data: {
-              tenantId: r.tenantId,
-              type: "reconciliation.snapshot_backfilled",
-              payload: {
-                planKey: r.planKey,
-                price: r.price,
-                planVersionId: r.targetVersionId,
-                scriptRun: new Date().toISOString(),
-              },
-              amountDelta: null,
-            },
-          });
-          // N3: the Tenant's own planVersionId pin is separate from the subscription's —
-          // backfill it too when null, never overwriting one that's already set.
-          if (r.tenantPlanVersionWasNull) {
-            await prisma.tenant.updateMany({
-              where: { id: r.tenantId, planVersionId: null },
-              data: { planVersionId: r.targetVersionId },
-            });
-          }
           applied++;
         } else {
           skipped.push({

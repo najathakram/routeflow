@@ -209,6 +209,11 @@ export default function BillingPage() {
         <AdminStatCard
           label="Active Subscriptions"
           value={data.activeSubscriptions}
+          // REG-743: activeSubscriptions counts every subscription ROW on an ACTIVE
+          // PRODUCTION tenant, including a free pilot or a legacy row with no planKey — never
+          // leave that number sitting unexplained beside an MRR total that may say $0 for
+          // some of them; payingTenants is the count that actually contributes money.
+          sub={mrrData ? `${mrrData.payingTenants} actually paying` : undefined}
           icon={<CreditCard className="h-5 w-5" />}
         />
         <AdminStatCard

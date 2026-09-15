@@ -31,8 +31,11 @@ export interface MrrOverview {
   /**
    * REG-743-N5/F2 (visibility, not a policy change): a paying-scoped (ACTIVE, PRODUCTION,
    * planKey set) subscription row with a null basePriceSnapshot that ALSO prices at $0 net —
-   * the exact shape a Stripe-originated row takes before the checkout webhook sets its price.
-   * Computed from the same per-row `priceSubscription()` result as `payingTenants` (never a
+   * a legacy/hand-written row that carries a planKey and a real Stripe subscription but was
+   * never snapshotted (NOT the Stripe checkout-webhook shape: `onCheckoutCompleted` never
+   * sets planKey itself, so that row lands in `activeWithoutSubscription` instead — see
+   * `scripts/backfill-subscription-reconciliation.mjs`'s header for the reachable population
+   * this mirrors). Computed from the same per-row `priceSubscription()` result as `payingTenants` (never a
    * separate raw-column check), so a null snapshot rescued by add-on revenue is counted as
    * paying, never double-labeled "unpriced" — see F4 in the REG-743 fix-round review. $0 is
    * the CORRECT figure for these; this count exists so that figure is never silent.
