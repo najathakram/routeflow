@@ -785,12 +785,24 @@ saving)` → `confirm(...)`). Specs: `__tests__/discard-guard.test.ts`,
   persisted store (joins podStore/runSettlementStore/stopCartStore), registered in both
   `session-teardown.ts` (step 4/5, `RETURN_SUBMISSION_STORE_NAME`) and `session-hydrate.ts`
   (`rehydrateUserScopedStores`) — see `mobile/tests-1.md`'s session-teardown entry for the
-  9-store/4-persisted-blob count this pushed to.
+  9-store/4-persisted-blob count this pushed to. **F1 (independent review, PR-2, 2026-09-15)**
+  added `nonces: Record<string,string>` + `getOrCreateNonce(key)` (key = `submittedReturnKey`'s
+  own `stopId:orderId` convention) + `mintNonce()` (v4-shaped UUID, `Math.random`, mirrors
+  `lib/order-submit-key.ts`'s `mintCartSessionKey`) — a per-ATTEMPT nonce baked into the
+  Idempotency-Key so a retry of one pending attempt collapses server-side while a later,
+  content-identical return does not (see below). `markSubmitted` clears the landed key's nonce;
+  `reset()`/`partialize` cover `nonces` too.
 - **`lib/return-submit-key.ts`** (new) + **`app/(driver)/route/stop/[stopId]/return/index.tsx`**
   — an offline-safe idempotency key for a driver's return submission, mirrored server-side by
   `common/idempotency.service.ts` on `POST /returns`'s `Idempotency-Key` header (api side: this
   file's `api/where-to-find.md` Returns row) — closes the double-submit-on-replay class this
-  lane exists for (B307).
+  lane exists for (B307). **F1:** `returnSubmitKey(stopId, payload, nonce)` now takes the nonce
+  from `returnSubmissionStore` as a REQUIRED 3rd argument (was stopId+payload alone, deterministic
+  by content — which is exactly what silently collapsed a genuinely new later return for
+  identical goods into an earlier landed one). The screen's `issue()` computes it per order via
+  `getOrCreateNonce(submittedReturnKey(stopId, p.orderId))` before calling `mutateAsync`. Tests:
+  mobile `__tests__/return-submit-key.test.ts` (`REG-RETURNS-IDEM-A..D`, base identity + wiring
+  pins + nonce lifecycle + the end-to-end same/different-key claim).
 - **B221/B353/B348** (api-side fixes riding in this same lane, no mobile code changes): driver
   return-list scoping, sequential return numbering via `NumberingService`, retired
   `ReturnStatus.PROCESSED` cleanup — full detail in `api/where-to-find.md`'s Returns row.
