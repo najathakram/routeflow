@@ -1,85 +1,74 @@
 # CRM cloud session status
 
-**2026-09-15 ~21:45Z** · session `routeflow-62` · branch `feat/crm-phase1` · run dir
+**2026-09-15 ~22:10Z** · session `routeflow-62` · branch `feat/crm-phase1` · run dir
 `.claude/pipeline/2026-09-15-crm-core-phase1/`
 
 **Engine: `02d58b81…`, 224,133 B, `node --check` passes, worktree clean.**
 
 | Stage | State |
 |---|---|
-| S0 · S0.5 · S1 · S2 | done |
-| **S3 UX + design system** | **done** |
-| S4 test plan | next |
-| S5 build plan | after S4 |
+| S0 · S0.5 · S1 · S2 · S3 | done |
+| **S4 test plan** | **done — 50 tests, all 34 requirements covered** |
+| S5 build plan | next — **its summary comes to you before any building** |
 | S6 approval | **your "S5 approved" gates every code push** |
 
-## S3 found three places where my own spec described an app we don't have
+## S4 outcome
 
-All three verified against source before I changed anything. This is the value of S3 — S4 would
-otherwise have written tests for fiction.
+50 tests, T1–T50. Coverage walk is complete: every R1–R34 has ≥ 1 T#, every T# names its R#,
+nothing deliberately untested. Negative tests, mutation probes, flake controls and expected
+red-gate failure messages are all in the file.
 
-1. **Mobile offline: writes are NOT blocked, they QUEUE.** The shipped interceptor
-   (`apps/mobile/lib/api-client.ts:120-166`) queues every non-FormData mutation on a hard
-   transport failure; a *timeout* is deliberately excluded (REG-B196, because a timeout may have
-   committed server-side). My spec said "writes blocked, no queue". Corrected — and it creates a
-   real requirement, **new R34**: a queued CRM write can replay, so `POST /crm/activities` and
-   `POST /crm/tasks` must not duplicate. Convert is already idempotent (R19), notes and tasks are
-   not. Mechanism (client idempotency key vs. a dedupe tuple) is S5's call; the no-duplicate
-   property is the requirement.
-2. **`refetchOnWindowFocus` is `false` globally** (`apps/web/app/providers.tsx:67`) and no screen
-   overrides it. My spec's "stale → refetch on focus" would have made CRM the one exception in the
-   app. Corrected to the repo's actual 30 s `staleTime` + invalidate-on-mutation.
-3. **There is no 403 page.** The role guard redirects to `/dashboard`
-   (`apps/web/app/(dashboard)/layout.tsx:303-313`). My spec said a typed URL gives a 403 page.
-   Corrected. **R23's API-level 403 is unchanged** — that contract still holds and is still tested.
+**Tier split — this matters for what I can actually prove here:**
+- **Bare checkout, this session (T1–T18):** 13 api unit specs, 3 web RTL, 2 mobile Jest.
+- **Needs your host (T19–T50):** 28 `*.db.spec.ts` via `local:test:db`, the compose boot gate,
+  Playwright, the screenshot matrix, and the Expo design review. That is 32 of 50 tests I can
+  write but cannot run.
 
-## Component inventory — and what is genuinely MISSING
+**Strongest oracles**, so you can judge whether they'd really fail on a wrong implementation:
+- **T38** (dedup, Frappe #16 as a deliberate divergence): a customer with `phone:"(555) 010-0100"`
+  stored raw and a *different* email; querying `?phone=555.010.0100` returns exactly 1 match. Fails
+  if either side isn't normalised, or if someone "fixes" it back to upstream's email-only rule.
+- **T35/T36** (convert idempotency): second convert — sequential and concurrent — returns the same
+  `customerId` with tenant `Customer` count N+1, **not** N+2.
+- **T37** (cap 403): body `toStrictEqual(buildPlanGateBody("meter.customers", upgrade))` passed
+  through unchanged, `User` count unchanged, lead still `OPEN` with `convertedCustomerId:null`.
+- **T39/T40**: DRIVER and CUSTOMER each 403 — a filtered empty 200 fails the test, by design.
 
-17 shared web exports, 5 app composites, 17 mobile exports, all cited. Missing as *shared*
-components, each currently local markup somewhere: Pagination, Load-more (no `useInfiniteQuery`
-anywhere in the repo), Tooltip (native `title=`), Popover/Combobox, Checkbox (raw input), a single
-DatePicker, a live-region helper, **any web offline pattern at all**, and **any 403 page**.
+## Two infrastructure gaps I verified myself
 
-I am **not** proposing to build a shared component library for CRM — that would be a visible
-change to RouteFlow and is outside this slice. CRM copies the neighbouring screen's local pattern,
-exactly as `estimates` and `deliveries` already do. Flagging the list because "there is no shared
-pagination component" is a fact the build plan must not trip over.
+**1. There is no DRIVER identity anywhere in the e2e stack.** `apps/web/e2e/setup/auth.setup.ts`
+produces only super-admin, operator and customer storage states (its own docstring says so), and
+`apps/api/scripts/e2e-seed.js` seeds **zero** DRIVER users — `grep -c DRIVER` returns 0.
 
-## The shared design-system cache already existed — I re-derived it and put back what was dropped
+So the Playwright role-deny flow runs as **CUSTOMER**, and the DRIVER denial is proven at the db
+level instead (T39, a real 403 against the compiled app). **Recommendation: accept that for
+Phase 1.** Adding a DRIVER seed identity plus a storage state changes shared e2e infrastructure
+used by every project, which is outside this slice and not something I'll do unasked. Your call if
+you want it done properly now.
 
-`.claude/pipeline/design-system.md` was **not** new: 17.7 KB, derived 2026-08-31 @ `26037bd4`. Per
-the routing rule ("cache exists → re-check") S3 re-derived it from current source, which is right —
-but it also dropped a `## Order-edit page notes` section belonging to a different run. I restored
-that section. Re-deriving stale content is correct; deleting another run's notes out of a shared
-repo-level cache is not. Now 13,099 B.
+**2. `post-deploy-check` has no CRM probe** and I have not added one — the gate is dark, so there is
+nothing to probe until it flips, and touching that script affects every deploy. Flagged for the
+flip diff, not for this PR.
 
-## Questions
+**A new Playwright project is genuinely needed.** House shape is one project per spec file
+(`playwright.config.ts:65-300`), so `crm-core` → `apps/web/e2e/48-crm-core.spec.ts`. The
+`local:e2e` allow-list is the inline `--project=` list in root `package.json:38` (8 projects today)
+plus `apps/web/e2e/LOCAL-LANE.md`. Both need the entry added.
 
-**Q5 — cap-403 upgrade prompt is bigger than CRM.** R20 wants the convert 403 to surface as a real
-upgrade prompt. No mutation path in the app renders one today — only GETs do (`PlanGateNotice`,
-plus the `READ_ONLY` branch in `providers.tsx:44-52`). Doing it "properly" means a `PLAN_GATE`
-branch in `MutationCache.onError`, which touches **every mutation in the app**, not just CRM.
-I have spec'd it as a **handler scoped to the convert call only**. Say the word if you want the
-global branch instead — but that is a cross-cutting change and I will not make it on my own.
+## Open rulings — #13 is now the one that can block
 
-**Q6 — CALL `outcome` enum.** Mobile offers Reached / No answer / Left voicemail (via the existing
-`chooseAction` helper). Confirm those three or give me the set.
-
-**Q4 still open** (owner's own unassign with other assignees remaining — I encoded re-derive).
-**#12** phone normaliser placement · **#13** advisory-lock family name (**still a hard blocker for
-R19 by S5** — `withAdvisoryLock` throws on an unregistered family) · **Q1** hq merged · **Q2**
-prospect count N · **Q3** second gate.
-
-## What is pushed vs. committed
-
-Pushed here: this file. **Committed locally but not yet pushed**: `spec.md` (with the three
-corrections + R34), `ux-spec.md`, the re-derived `design-system.md`, and `discovery.md`'s refreshed
-assumption rows. They land together in the S4 push — each MCP push has to re-send whole files, so I
-am batching the artifacts rather than sending ~55 KB twice. Say if you want them sooner.
+- **#13 advisory-lock family** — **this is the blocker.** `withAdvisoryLock` throws on an
+  unregistered family, so R19 cannot ship and T36 cannot name one. Either let me borrow
+  `order-merge` keyed on lead id (my recommendation — `customers.service.ts:1374` already borrows
+  it for advance payments), or approve a new `crm` family in `LOCK_FAMILIES`.
+- **Q4** owner-on-unassign tie-break — T27 has the single `toBe(userC.id)` line named as the flip point.
+- **Q5** cap-403 prompt scope — flow 9 is written for the convert-scoped handler; a global
+  `MutationCache` branch changes the assertion target.
+- **Q6** CALL outcome enum — T5 pins `["REACHED","NO_ANSWER","LEFT_VOICEMAIL"]`.
+- **#12** phone normaliser placement — T6 assumes `digitsOnly` in `lead-rules.ts`.
+- **Q1** hq merged · **Q2** prospect count N · **Q3** second gate.
 
 ## Compliance
 
 No code written. No bug or lesson id minted. No host-heavy step attempted. No PR. Docs-only pushes.
-Test tenants and `acme` placeholders throughout. `spec.md` is now 17,933 B, over a 16 KiB target I
-set myself — the overflow is R34, Q5 and Q6, which I would rather keep than trim to hit my own
-number.
+Test tenants (`qa-crm-<run8>` after `assertTestTenant`) and `acme` placeholders throughout.
