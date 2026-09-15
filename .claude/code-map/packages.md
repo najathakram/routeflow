@@ -4,18 +4,20 @@ Shared workspace packages (types, UI, configs) consumed by apps via npm workspac
 
 ## Where to find (this area)
 
-| Need                                                            | File → symbol                                                              |
-| --------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Money math (line totals, tax, promos, tiers)                    | `packages/pricing/src/` → `pricing.ts`, `tier-pricing.ts`                  |
-| Payment-confirmation predicate (B421 cash/credit/advance split) | `packages/pricing/src/payment-confirmation.ts`                             |
-| Enums (UserRole, OrderStatus, ...)                              | `packages/types/index.ts` → `export enum X`                                |
-| Type interfaces (User, Order, PaginatedResponse)                | `packages/types/index.ts` → `export interface X`                           |
-| Web components (Button, Table, Modal, ...)                      | `packages/ui/src/web/` → `index.ts` barrel                                 |
-| Mobile RN components                                            | `packages/ui/src/mobile/index.ts`                                          |
-| iOS-specific components                                         | `packages/ui/src/mobile/ios/index.ts`                                      |
-| Design tokens (colors, spacing, fonts)                          | `packages/ui/src/tokens.ts`                                                |
-| ESLint flat presets                                             | `packages/eslint-config/` → base.js, next.js, react-internal.js            |
-| TypeScript presets                                              | `packages/typescript-config/` → base.json, nextjs.json, react-library.json |
+| Need                                                                                                                         | File → symbol                                                              |
+| ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Money math (line totals, tax, promos, tiers)                                                                                 | `packages/pricing/src/` → `pricing.ts`, `tier-pricing.ts`                  |
+| Payment-confirmation predicate (B421 cash/credit/advance split)                                                              | `packages/pricing/src/payment-confirmation.ts`                             |
+| Held/capacity money (PR-1: PENDING, HELD_STATUSES, remainingCapacity)                                                        | `packages/pricing/src/payment-confirmation.ts`                             |
+| Check-lifecycle transition table (`CHECK_TRANSITIONS`, used by `apps/api/src/invoices/invoices.service.ts` `setCheckStatus`) | `packages/types/api/checks.ts`                                             |
+| Enums (UserRole, OrderStatus, ...)                                                                                           | `packages/types/index.ts` → `export enum X`                                |
+| Type interfaces (User, Order, PaginatedResponse)                                                                             | `packages/types/index.ts` → `export interface X`                           |
+| Web components (Button, Table, Modal, ...)                                                                                   | `packages/ui/src/web/` → `index.ts` barrel                                 |
+| Mobile RN components                                                                                                         | `packages/ui/src/mobile/index.ts`                                          |
+| iOS-specific components                                                                                                      | `packages/ui/src/mobile/ios/index.ts`                                      |
+| Design tokens (colors, spacing, fonts)                                                                                       | `packages/ui/src/tokens.ts`                                                |
+| ESLint flat presets                                                                                                          | `packages/eslint-config/` → base.js, next.js, react-internal.js            |
+| TypeScript presets                                                                                                           | `packages/typescript-config/` → base.json, nextjs.json, react-library.json |
 
 ## Packages
 
@@ -81,6 +83,23 @@ string` (B20 — free-form intake note, e.g. "DAMAGED_BOX") and its `restock?` d
   ledger read hit its own `take` cap) — B110. Mirrored by `apps/mobile/lib/api/customers.ts`
   `CustomerStatement`/`AccountSummary` (not shared — mobile predates the shared-DTO sweep for this
   file) and `apps/web/lib/api/customers.ts` `CustomerStatement`.
+- **`api/checks.ts` (NEW, post-dated check payments PR-1, 2026-09-15)** — the ONE canonical
+  `CHECK_TRANSITIONS` (check-lifecycle forward-transition map) + re-exported `CheckStatus` type,
+  replacing three byte-identical hand-written mirrors (api `invoices.service.ts`, web
+  `invoices/[id]/page.tsx`, mobile `payments-logic.ts` — the last also dropped its own local
+  `CheckStatus` type). V1 ONLY by design (independent Opus review, binding) — do not add
+  `CHECK_TRANSITIONS_V2` here; that's a later PR's `CheckTransitionService`. Guarded by
+  `apps/api/src/common/check-transitions-parity.spec.ts`. Mobile's Jest `@routeflow/types` stub
+  (`apps/mobile/__tests__/__mocks__/@routeflow/types.js`) hand-copies `CHECK_TRANSITIONS` too
+  (a real runtime value, not just a type) — keep both in sync.
+- **`api/enums.ts` — post-dated check payments PR-1 (2026-09-15):** `PAYMENT_STATUS_VALUES`
+  gains `"PENDING"`; new `CHECK_RETURN_REASON_VALUES`/`CheckReturnReason` (pinned by
+  `enum-parity.spec.ts`'s `ENUM_TABLE`, which bumped `PINNED_PRISMA_ENUM_COUNT` 84→85 for the
+  new `CheckReturnReason` Prisma enum). `NotificationEvent` gains `CHECK_RETURNED` (no shared
+  mirror — server-only, consumed via `@prisma/client` directly in
+  `apps/api/src/messaging/messaging-config.service.ts`'s `EVENT_CHANNELS`/`DEFAULT_TEMPLATES`
+  (exhaustiveness entries only, `[INTERNAL]`) and `NO_TRIGGER_EVENTS` — no firing site yet, so it
+  is deliberately NOT added to `DEFAULT_ON`).
 - **Enums** (synced with Prisma): `UserRole`, `UserStatus`; `OrderStatus`, `ItemStatus`;
   `RouteRunStatus`, `RouteRunStopStatus`; `TxnStatus`, `PaymentMethod` (2026-08-21: backfilled
   from a stale 4 values to all 8 — `CASH,CHECK,ACH,OTHER,CREDIT_NOTE,ADVANCE,CREDIT_CARD,ZELLE`
@@ -162,6 +181,17 @@ now asserts every `@routeflow/*` the API imports resolves to a built `main`). Th
 produces `dist` before anything typechecks. api/web/mobile all import the bare specifier
 `@routeflow/pricing` — no relative imports, no mirrors to keep in sync.
 
+- **`payment-confirmation.ts` — post-dated check payments PR-1 (2026-09-15), additive-only:**
+  gains `HELD_STATUSES = ["PAID","PENDING"]`/`HELD_PAYMENT`/`isHeldPayment`/`sumHeld` (money
+  currently held: confirmed OR a post-dated check on file not yet cleared) and
+  `collectedDateOf(p)` (`settledAt ?? paidAt`). **`remainingCapacity(total, payments)`** —
+  a capacity GUARD, not a display figure — subtracts every payment with `status !== "VOID"`
+  (DRAFT + PAID + PENDING), via an internal `sumNotVoid`, deliberately NEVER `sumHeld`/
+  `sumConfirmed`: N4 (independent Opus review, binding, quoted in the function's own doc) ruled
+  capacity must keep counting DRAFT (today's `recordPayment`/`updatePayment`/credit-note apply/
+  advance apply/mobile edit-cap sites all gate on `status !== VOID`). Nothing in this PR wires
+  these into a real call site — that's the design's §3.4 table, later PRs.
+  `apps/api/src/invoices/payment-predicates.ts` re-exports all of the above too.
 - Golden tests live here: `src/pricing.spec.ts`, `src/tier-pricing.spec.ts`, `src/golden.spec.ts`
   (+ `src/golden.fixtures.ts`, the hand-worked money table, moved from api's old
   `pricing-parity.fixtures.ts`), `src/payment-confirmation.spec.ts` (the core REG-B421 cases —
