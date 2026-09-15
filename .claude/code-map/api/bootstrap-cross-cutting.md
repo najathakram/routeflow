@@ -502,10 +502,14 @@ version|audit-allowlist-retired)\\.spec\\.ts$"` (the third joined it
 - **`src/common/{next-version,no-react-skew-hacks,client-page-params,audit-allowlist-retired}.spec.ts`
   (2026-09-10, `chore/next-15` #5b3b3c4e, S4 T1/T2/T3/T6)** — the Next 15 upgrade's repo-truth
   lane additions (see above); none import runtime code, all `fs.readFileSync` the tree directly
-  (house convention, matches `no-dead-deps.spec.ts`). **`next-version.spec.ts` (T1)** pins
-  `apps/web/package.json`'s exact `next`/`eslint-config-next`/`@next/swc-win32-x64-msvc` literals
-  (`15.5.25`/`15.5.25`/`^15.5.25`) — clears the two CRITICAL advisories the
-  `security/audit-allowlist.json` entries (now retired) were carrying. **`no-react-skew-hacks.spec.ts`
+  (house convention, matches `no-dead-deps.spec.ts`). **`next-version.spec.ts` (T1)** clears the
+  two CRITICAL advisories the `security/audit-allowlist.json` entries (now retired) were carrying
+  by pinning `apps/web/package.json`'s `next`/`eslint-config-next`/`@next/swc-win32-x64-msvc` to
+  the major-15 line — **B352 (2026-09-15) fix:** the original exact-literal pins (`15.5.25`/
+  `15.5.25`/`^15.5.25`) broke on every routine Next patch bump; now uses
+  `src/common/next-version.ts`'s `pinnedToMajorLine(version, major)` helper (same fix shape as
+  #745's sibling React-version guard), with its own `REG-B352` block pinning the tolerant matcher
+  itself. **`no-react-skew-hacks.spec.ts`
   (T2)** pins that `apps/web/Dockerfile`'s `npm install --force --no-save react@18…` line and
   `jest.config.js`'s single-react `moduleNameMapper` are BOTH gone — a half-reverted skew (one
   hack back, one still removed) breaks every RTL suite, so the pair is asserted together, not as
