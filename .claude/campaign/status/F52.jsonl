@@ -1,0 +1,1 @@
+{"id":"B420","batch":"F52","tier":"T1","state":"proven","pr":747,"proof":"REG-B420: an ambient GIT_DIR/GIT_WORK_TREE never touches the victim's branches/HEAD/config, jest in scripts/validate-code-map.stamp.self-test.mjs","evidence":null,"buildPlan":null}
