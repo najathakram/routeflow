@@ -15,9 +15,10 @@
 //   - a subscription row with no planKey set ("no planKey — manual decision"),
 //   - a subscription row with a planKey but no stripeSubId, i.e. a manually-activated free
 //     pilot ("no Stripe subscription — manual decision" — B327: never remove this filter),
-//   - a planKey that isn't in the resolved PlanVersion's catalog at all ("planKey not in the
-//     resolved catalog version — manual decision") — distinct from a catalog-known plan priced
-//     at null,
+//   - a planKey that isn't in the resolved PlanVersion's catalog at all, even after normalizing
+//     known legacy aliases (TEAM/BUSINESS/PROFESSIONAL — see LEGACY_PLAN_KEY_ALIASES below)
+//     ("planKey not in the resolved catalog version — manual decision") — distinct from a
+//     catalog-known plan priced at null,
 //   - a planKey that version prices at null, e.g. ENTERPRISE ("custom-priced (null price) —
 //     skipped") — excluded from the re-flag predicate so a second run reports 0 changes.
 // Only PRODUCTION-class, ACTIVE-status tenants are in scope — DEMO/TEST/INTERNAL and any
@@ -43,6 +44,51 @@ import { resolveDatabaseUrl, redactUrl, scrubSecrets } from "./lib/railway-db-ur
 // connection string out of an error message even when the failure happens before or after
 // `main()`'s own try/finally.
 let databaseUrl;
+
+// Re-typed copy of LEGACY_PLAN_KEY_ALIASES / normalizePlanKey / findPlanDefinition
+// (apps/api/src/billing/plan-catalog.constants.ts) — this .mjs script cannot value-import that
+// TS source (no-runtime-workspace-imports.spec.ts's constraint: the API compiles via `nest
+// build`, which does not bundle workspace deps, and this file also isn't compiled at all — it
+// runs directly via `node`). Mirrors the same duplicate-by-hand pattern already used twice in
+// this file (BILLING_EVENTS.RECONCILIATION_SNAPSHOT_BACKFILLED above, REG-743-N8) and by
+// backfill-tenant-class.mjs's own `classify()`. Keep in sync by hand if the TS source's alias
+// map ever changes. Historical plan keys from catalog versions published before the
+// Starter/Growth/Scale rename — a pinned older PlanVersion's own definitions, or a tenant's
+// stored planKey, can legitimately carry either the old or the new name.
+export const LEGACY_PLAN_KEY_ALIASES = {
+  TEAM: "GROWTH",
+  BUSINESS: "SCALE",
+  PROFESSIONAL: "SCALE",
+};
+
+// Mirrors normalizePlanKey(): Object.hasOwn (not a bare index) so "constructor"/"__proto__"/
+// "toString"/etc. can never resolve to an inherited Object.prototype member instead of falling
+// through unchanged. Anything not a known legacy alias (current keys, and genuine typos/unknown
+// keys alike) passes through as-is — this function only ever narrows a legacy name to its
+// current one, it never validates.
+export function normalizeLegacyPlanKey(planKey) {
+  return Object.hasOwn(LEGACY_PLAN_KEY_ALIASES, planKey)
+    ? LEGACY_PLAN_KEY_ALIASES[planKey]
+    : planKey;
+}
+
+// Mirrors findPlanDefinition(): normalizes BOTH the stored planKey and each catalog
+// definition's own key before comparing, so a rename-era mismatch resolves in either direction
+// — a legacy-aliased stored key (BUSINESS) against a renamed catalog (SCALE), or a pinned older
+// version whose own rows still carry the pre-rename name against a tenant stored with the
+// current one. Returns the definition's OWN key (as literally stored in `defs`) so the caller
+// still looks the price up by the key the catalog actually uses — never the normalized form,
+// which may not be a key in `defs` at all. A genuine typo/retired key normalizes to itself and
+// matches nothing, so it still falls through to the "not in the resolved catalog version"
+// manual-decision bucket.
+export function findCatalogPlanKey(defs, planKey) {
+  if (!planKey) return undefined;
+  const want = normalizeLegacyPlanKey(planKey);
+  for (const key of defs.keys()) {
+    if (normalizeLegacyPlanKey(key) === want) return key;
+  }
+  return undefined;
+}
 
 // Parses the optional `--slug-prefix <prefix>` flag: value required, given at most once, and
 // never empty — so a spec or rehearsal that scopes this platform-wide script cannot silently
@@ -199,10 +245,15 @@ async function main() {
         continue;
       }
       const defs = definitionsByVersion.get(targetVersionId);
-      if (!defs || !defs.has(planKey)) {
-        // planKey isn't in the resolved version's catalog AT ALL — distinct from a
-        // catalog-known plan priced at null (ENTERPRISE). We can't tell a typo from a
-        // retired key from a key that version's catalog just never had, so this always
+      // Legacy-aliased keys (TEAM/BUSINESS/PROFESSIONAL) resolve here via findCatalogPlanKey —
+      // a stored key and a pinned catalog version can legitimately disagree across the
+      // STARTER/GROWTH/SCALE rename (see LEGACY_PLAN_KEY_ALIASES above). Only a genuinely
+      // unknown/typo'd key falls through to the manual-decision bucket below.
+      const matchedKey = defs ? findCatalogPlanKey(defs, planKey) : undefined;
+      if (!defs || matchedKey === undefined) {
+        // planKey isn't in the resolved version's catalog AT ALL, even after normalization —
+        // distinct from a catalog-known plan priced at null (ENTERPRISE). We can't tell a typo
+        // from a retired key from a key that version's catalog just never had, so this always
         // needs a human, never an idempotent skip.
         skipped.push({
           slug: t.slug,
@@ -212,7 +263,7 @@ async function main() {
         });
         continue;
       }
-      const price = defs.get(planKey);
+      const price = defs.get(matchedKey);
       if (price == null) {
         // ENTERPRISE (or any plan that version prices at null) is custom-priced — skip
         // idempotently and keep it OUT of `rows` so a second run never re-flags it and
