@@ -16,7 +16,11 @@ import { PrismaService } from "../prisma/prisma.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { roundMoney } from "@routeflow/pricing";
-import { CONFIRMED_PAYMENT, sumConfirmed } from "../invoices/payment-predicates";
+import {
+  CONFIRMED_PAYMENT,
+  RECEIVED_METHOD_FILTER,
+  sumConfirmed,
+} from "../invoices/payment-predicates";
 import {
   CREDIT_NOT_APPLICABLE,
   KPI_SUMMARY_EXCLUDED,
@@ -346,8 +350,15 @@ export class CustomersService {
       }),
       this.prisma.forTenant().invoicePayment.aggregate({
         _sum: { amount: true },
-        // CONFIRMED (PAID) basis — the same one `sumConfirmed` applies row-wise.
-        where: { ...CONFIRMED_PAYMENT, invoice: { customerId: customer.id } },
+        // B421: feeds `lifetimeReceived` below — "money genuinely received",
+        // so CREDIT_NOTE is excluded (never cash) but ADVANCE stays (an
+        // advance application is the only place that already-real cash is
+        // ever recorded — see RECEIVED_METHOD_FILTER's own doc).
+        where: {
+          ...CONFIRMED_PAYMENT,
+          method: RECEIVED_METHOD_FILTER,
+          invoice: { customerId: customer.id },
+        },
       }),
     ]);
 
@@ -361,7 +372,12 @@ export class CustomersService {
 
     // CONFIRMED (PAID) basis — a DRAFT (unconfirmed) payment must never count
     // as paid (F03/sumConfirmed); VOID (e.g. a bounced check, P5-12) already
-    // doesn't.
+    // doesn't. B421: `amountPaid` here is NEVER returned to the client — it
+    // only feeds `total - amountPaid` (outstanding/runningBalance below), so
+    // it deliberately stays the FULL confirmed total (sumConfirmed, not
+    // splitConfirmed's cash-only figure): a credit note or advance genuinely
+    // reduces what's outstanding on this invoice, same basis as
+    // invoices.service.ts's own balanceDue.
     const withPaid = <T extends { payments: { amount: unknown; status: string }[] }>(rows: T[]) =>
       rows.map((i) => ({ ...i, amountPaid: sumConfirmed(i.payments) }));
 
@@ -1049,10 +1065,13 @@ export class CustomersService {
       }),
       this.prisma.forTenant().invoicePayment.aggregate({
         _sum: { amount: true },
-        // CONFIRMED (PAID) basis — the same one `sumConfirmed` applies row-wise
-        // above: a DRAFT (unconfirmed) or VOID (bounced check) payment is not
-        // money received.
-        where: { ...CONFIRMED_PAYMENT, invoice: { customerId } },
+        // B421: feeds `lifetimeReceived` below — "money genuinely received",
+        // so CREDIT_NOTE is excluded (never cash) but ADVANCE stays (an
+        // advance application is the only place that already-real cash is
+        // ever recorded — see RECEIVED_METHOD_FILTER's own doc). A DRAFT
+        // (unconfirmed) or VOID (bounced check) payment is not money
+        // received either way, via CONFIRMED_PAYMENT.
+        where: { ...CONFIRMED_PAYMENT, method: RECEIVED_METHOD_FILTER, invoice: { customerId } },
       }),
     ]);
 
@@ -1068,7 +1087,12 @@ export class CustomersService {
 
     // CONFIRMED (PAID) basis — a DRAFT (unconfirmed) payment must never count
     // as paid (F03/sumConfirmed); VOID (e.g. a bounced check, P5-12) already
-    // doesn't.
+    // doesn't. B421: `amountPaid` here is NEVER returned to the client — it
+    // only feeds `total - amountPaid` (outstanding/runningBalance below), so
+    // it deliberately stays the FULL confirmed total (sumConfirmed, not
+    // splitConfirmed's cash-only figure): a credit note or advance genuinely
+    // reduces what's outstanding on this invoice, same basis as
+    // invoices.service.ts's own balanceDue.
     const withPaid = <T extends { payments: { amount: unknown; status: string }[] }>(rows: T[]) =>
       rows.map((i) => ({ ...i, amountPaid: sumConfirmed(i.payments) }));
 
@@ -1665,7 +1689,12 @@ export class CustomersService {
         // bounced/reversed payment (VOID in P5-12) was never really received, so neither
         // may inflate a month's income. Same predicate as getCashFlow / the bookkeeping
         // dashboards, so this chart cannot diverge from them.
+        // B421: this comment's own promise didn't hold until now — a CREDIT_NOTE
+        // application (never cash) had no method filter here either. Same
+        // RECEIVED_METHOD_FILTER as getCashFlow's totalIn (B421, 8/N): excludes
+        // only CREDIT_NOTE, keeps ADVANCE.
         ...CONFIRMED_PAYMENT,
+        method: RECEIVED_METHOD_FILTER,
         paidAt: { gte: sixMonthsAgo },
       },
       select: { amount: true, paidAt: true },

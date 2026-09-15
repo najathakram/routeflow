@@ -12,6 +12,7 @@ export {
   CONFIRMED_PAYMENT,
   CONFIRMED_STATUS,
   CREDIT_NOTE_METHOD,
+  RECEIVED_METHOD_FILTER,
   resolveConfirmedAmounts,
   splitConfirmed,
   sumConfirmed,

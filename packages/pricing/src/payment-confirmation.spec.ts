@@ -4,6 +4,7 @@ import {
   CONFIRMED_PAYMENT,
   CONFIRMED_STATUS,
   CREDIT_NOTE_METHOD,
+  RECEIVED_METHOD_FILTER,
   resolveConfirmedAmounts,
   splitConfirmed,
   sumConfirmed,
@@ -133,6 +134,12 @@ describe("resolveConfirmedAmounts", () => {
 describe("CASH_METHOD_FILTER", () => {
   it("excludes exactly CREDIT_NOTE and ADVANCE, nothing else", () => {
     expect(CASH_METHOD_FILTER).toEqual({ notIn: [CREDIT_NOTE_METHOD, ADVANCE_METHOD] });
+  });
+});
+
+describe("RECEIVED_METHOD_FILTER", () => {
+  it("excludes only CREDIT_NOTE, keeping ADVANCE (a customer/tenant-wide 'received' figure)", () => {
+    expect(RECEIVED_METHOD_FILTER).toEqual({ not: CREDIT_NOTE_METHOD });
   });
 });
 

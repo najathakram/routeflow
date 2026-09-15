@@ -4,6 +4,7 @@ import {
   CONFIRMED_PAYMENT,
   CONFIRMED_STATUS,
   CREDIT_NOTE_METHOD,
+  RECEIVED_METHOD_FILTER,
   resolveConfirmedAmounts,
   splitConfirmed,
   sumConfirmed,
@@ -27,6 +28,7 @@ describe("payment-predicates re-exports @routeflow/pricing verbatim", () => {
     expect(CREDIT_NOTE_METHOD).toBe(Pricing.CREDIT_NOTE_METHOD);
     expect(ADVANCE_METHOD).toBe(Pricing.ADVANCE_METHOD);
     expect(CASH_METHOD_FILTER).toEqual(Pricing.CASH_METHOD_FILTER);
+    expect(RECEIVED_METHOD_FILTER).toEqual(Pricing.RECEIVED_METHOD_FILTER);
   });
 
   it("REG-B421 smoke case still resolves correctly through the facade", () => {

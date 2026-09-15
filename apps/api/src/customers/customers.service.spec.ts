@@ -20,6 +20,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { CreateCustomerDto } from "./dto/create-customer.dto";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
 import { withAdvisoryLock as mockedWithAdvisoryLock } from "../common/db-locks";
+import { RECEIVED_METHOD_FILTER } from "../invoices/payment-predicates";
 
 // B310: a real advisory lock serializes concurrent callers sharing a key on a dedicated
 // Postgres connection (see db-locks.db.spec.ts for that primitive's own coverage). A plain
@@ -1258,6 +1259,20 @@ describe("CustomersService", () => {
         }),
       );
     });
+
+    it("REG-B421: the monthly-income query excludes CREDIT_NOTE, keeping ADVANCE (RECEIVED_METHOD_FILTER)", async () => {
+      prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
+      prisma.invoicePayment.findMany.mockResolvedValue([]);
+      prisma.expense.findMany.mockResolvedValue([]);
+
+      await service.getIncomeChart("cust-1");
+
+      expect(prisma.invoicePayment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ method: RECEIVED_METHOD_FILTER }),
+        }),
+      );
+    });
   });
 
   // ─── T2 (REG-B169) — orderBy carries an id tiebreaker (createdAt ties are
@@ -1446,6 +1461,9 @@ describe("CustomersService", () => {
       expect(paymentAggArgs.where.status).toBe("PAID");
       expect(paymentAggArgs.where.invoice).toEqual({ customerId: "cust-1" });
       expect(paymentAggArgs.take).toBeUndefined();
+      // REG-B421: lifetimeReceived excludes CREDIT_NOTE (never cash) but keeps
+      // ADVANCE (the only place that already-real cash is ever recorded).
+      expect(paymentAggArgs.where.method).toEqual(RECEIVED_METHOD_FILTER);
     });
 
     it("a small history (5 open invoices / 2 credit notes / 1 advance, all under the caps) reports transactionsTruncated false", async () => {
@@ -1788,6 +1806,9 @@ describe("CustomersService", () => {
       // Scoped to the CALLER's own customer row, resolved from the JWT.
       expect(paymentAggArgs.where.invoice).toEqual({ customerId: MOCK_CUSTOMER.id });
       expect(paymentAggArgs.take).toBeUndefined();
+      // REG-B421: lifetimeReceived excludes CREDIT_NOTE (never cash) but keeps
+      // ADVANCE (the only place that already-real cash is ever recorded).
+      expect(paymentAggArgs.where.method).toEqual(RECEIVED_METHOD_FILTER);
     });
 
     it("a lifetime with no billed history at all reports $0.00, never NaN (M1)", async () => {

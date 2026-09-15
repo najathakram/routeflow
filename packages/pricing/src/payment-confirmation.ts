@@ -55,8 +55,25 @@ export const CREDIT_NOTE_METHOD = "CREDIT_NOTE";
 export const ADVANCE_METHOD = "ADVANCE";
 const CREDIT_METHODS = [CREDIT_NOTE_METHOD, ADVANCE_METHOD] as const;
 
-/** Prisma `method: { notIn: [...] }` filter for a cash-like-only aggregate. */
-export const CASH_METHOD_FILTER = { notIn: [...CREDIT_METHODS] };
+/** Prisma `method: { notIn: [...] }` filter for a cash-like-only aggregate
+ *  (excludes BOTH CREDIT_NOTE and ADVANCE) — an invoice-level "how much cash
+ *  did THIS invoice collect" figure. `as const` so `notIn`'s array stays the
+ *  specific `"CREDIT_NOTE" | "ADVANCE"` literal union, not a widened
+ *  `string[]` — Prisma's generated enum filter (`EnumPaymentMethodFilter`)
+ *  requires the narrow union; a plain `string[]` fails `tsc` at the call
+ *  site even though this package can't import that Prisma type to check
+ *  against directly. */
+export const CASH_METHOD_FILTER = { notIn: [...CREDIT_METHODS] } as const;
+
+/** Prisma `method: { not: ... }` filter for a "money genuinely received (at
+ *  SOME point)" aggregate — excludes ONLY CREDIT_NOTE, keeps ADVANCE. Use
+ *  this (never `CASH_METHOD_FILTER`) for a tenant- or customer-wide
+ *  lifetime/cash-flow figure: an ADVANCE application's `InvoicePayment` row
+ *  is the only place that already-real cash is ever recorded (see this
+ *  module's own doc above), so dropping it here would make real cash
+ *  disappear rather than just reflect its true collection date. `as const`
+ *  for the same narrow-literal reason as `CASH_METHOD_FILTER` above. */
+export const RECEIVED_METHOD_FILTER = { not: CREDIT_NOTE_METHOD } as const;
 
 export interface ConfirmablePaymentRow {
   // `unknown` (not `number | string`) so a Prisma row's `amount: Decimal` — the
