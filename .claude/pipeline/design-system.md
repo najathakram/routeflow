@@ -1,158 +1,124 @@
 # RouteFlow design system (DERIVED)
 
-DERIVED from the codebase on 2026-08-31 at master `26037bd4`. Repo-level cache for the
-dev-pipeline design-system lens — **extend, don't reinvent**. Every claim below cites a real
-path; nothing here is a proposal.
+Re-derived 2026-09-15 on `feat/crm-phase1` (replaces the 2026-08-31 cache). **Extend, don't
+reinvent.** Every row cites a path; anything uncited does not exist.
 
-## Tokens
+## Tokens (web)
 
-Source of truth is the shared Tailwind preset + CSS custom properties. `apps/web/tailwind.config.ts`
-consumes `packages/config/tailwind.config.ts` via `presets: [preset]`; there is **no**
-tailwind config in `packages/ui`.
+Source: `packages/config/tailwind.config.ts` (preset + `tailwindcss-animate`) via
+`apps/web/tailwind.config.ts` (adds `background/foreground/primary`, semantic `fontSize`). CSS
+vars: `apps/web/app/globals.css` `:root` ("Ledger").
 
-- **CSS vars** — `apps/web/app/globals.css` (`:root`, called "Ledger" tokens):
-  - ink neutrals `--ink-900 #0f1b2d` / `--ink-700 #33425b` / `--ink-500 #5c6b82` / `--ink-400 #8b97ac`,
-    plus `--ink-*-rgb` triples so Tailwind opacity modifiers work (`text-navy/70`, `bg-navy/10`).
-  - surfaces `--paper #ffffff`, `--canvas #f7f9fc`, `--sunken #edf1f6`, `--line #e2e8f0`, `--line-strong #d6dee8`.
-  - brand teal `--brand-700/600/500/300/50`; `--primary: var(--brand-500)` (+ `-strong/-deep/-soft/-mist/-foreground`).
-  - `--accent{,-strong,-deep,-soft}` = the per-surface knob; `--background: var(--paper)`, `--foreground: var(--ink-700)`.
-  - status: `--success #16a34a` / `--warning #d97706` / `--danger #dc2626` / `--info #0284c7`, each with a `-bg`.
-  - shape/elevation: `--r-ctl 6px`, `--r-card 10px`, `--sh-card`, `--sh-drop`, `--sh-modal`.
-  - density knob: `--row-h 44px`, `--text-body 13.5px` (operator).
-- **Surface classes** override accent + density: `.surface-buyer` (emerald `#059669`, `--row-h 52px`,
-  `--text-body 14px`), `.surface-admin` (indigo `#4f46e5`, slate chrome). Applied at
-  `apps/web/app/(dashboard)/layout.tsx:1288` (`surface-operator`),
-  `apps/web/app/buyer/portal/layout.tsx:248`, `apps/web/app/(platform-admin)/layout.tsx:145`.
-- **Tailwind color scales** (`packages/config/tailwind.config.ts`): `brand.50–900` (500 `#14A39F`),
-  `buyer.50–900`, `canvas{DEFAULT,mid,light}` (marketing dark navy), `ink.{900,700,500,400}`,
-  `navy{DEFAULT,light}`, `accent{DEFAULT,strong,deep,soft}`, `paper`, `sunken`, `line{,strong}`,
-  `success/warning/danger/info` each `{DEFAULT,bg}`, `surface{DEFAULT,raised,border}`.
-  `apps/web/tailwind.config.ts` adds `background`, `foreground`, `primary{DEFAULT,foreground}`
-  (tenant-overridable at runtime by `apps/web/components/tenant-provider.tsx`).
-- **Radius** (`borderRadius`): `sm 4px`, `ctl 6px` (controls), `DEFAULT 8px`, `card 10px`,
-  `lg 12px`, `xl 16px`, `full`.
-- **Shadow**: `card 0 1px 2px rgba(15,27,45,.05)`, `dropdown 0 8px 24px rgba(15,27,45,.14)`,
-  `modal 0 24px 64px rgba(15,27,45,.28)`. Hairline-first — border + `shadow-card`, not big elevation.
-- **Type**: `font-sans` = Spline Sans (`--font-spline`) → Inter fallback; `font-mono` = Spline Sans Mono;
-  `font-display` = Instrument Serif. Loaded in `apps/web/app/layout.tsx:2` via `next/font/google`.
-  Semantic scale (duplicated in both configs and `packages/ui/src/typography.ts`):
-  `display 2rem/2.5 -0.03em 700`, `heading-1 1.5rem/2 600`, `heading-2 1.25rem/1.75 600`,
-  `body 1rem/1.5`, `body-sm .875rem/1.25`, `label .875rem/1.25 500`, `caption .75rem/1`.
-  In practice dashboard code uses raw px (`text-[13px]`, `text-[12.5px]`, `text-[11px]`) far more
-  than the semantic names.
-- **Component-layer utilities** (`globals.css` `@layer components`): `.money` (mono + tabular-nums,
-  used for every currency figure), `.mono`, `.overline` (11px/600/uppercase/.08em), `.font-display`,
-  `.strike` (pre-discount price). Utilities: `.text-balance`, `.scrollbar-hide`, `.focus-ring`
-  (`outline-none ring-2 ring-brand-500 ring-offset-2`), `.skeleton` (shimmer, reduced-motion aware).
-- **Spacing**: no custom spacing scale — stock Tailwind. No `darkMode` key in either config; the
-  `.dark` block in `globals.css:109-119` is **commented out** and there are **zero `dark:` classes**
-  in `apps/web/app` + `apps/web/components`. Dark mode is effectively not implemented.
-- RN token mirror (mobile only, not web): `packages/ui/src/tokens.ts` (`colors`, `ios.*`).
+- **Ink** `--ink-900 #0f1b2d` / `-700 #33425b` / `-500 #5c6b82` / `-400 #8b97ac` (+`-rgb` so
+  `text-navy/70`, `bg-navy/10` work; `navy` = ink-900).
+- **Surfaces** `--paper #fff`, `--canvas #f7f9fc` (body), `--sunken #edf1f6`, `--line #e2e8f0`,
+  `--line-strong #d6dee8`; Tailwind `surface{DEFAULT,raised #f7f9fc,border #e2e8f0}`.
+- **Brand** `brand.50–900` (500 `#14A39F`); `--primary: var(--brand-500)` (tenant-overridable,
+  `components/tenant-provider.tsx`); `--accent*` per surface — `.surface-operator` on
+  `app/(dashboard)/layout.tsx` (`--row-h 44px`, `--text-body 13.5px`).
+- **Status** `success #16a34a/#dcfce7`, `warning #d97706/#fef3c7`, `danger #dc2626/#fee2e2`,
+  `info #0284c7/#e0f2fe` → `text-danger`, `bg-danger-bg`, `border-danger/30`.
+- **Radius** `sm 4` `ctl 6` (controls) `DEFAULT 8` `card 10` `lg 12` `xl 16` `full`.
+- **Shadow** `card 0 1px 2px rgba(15,27,45,.05)` · `dropdown 0 8px 24px .14` · `modal 0 24px 64px .28`.
+- **Type** `font-sans` Spline Sans (`app/layout.tsx:26`, next/font/google), `font-mono` Spline Sans
+  Mono, `font-display` Instrument Serif. **Geist in `apps/web/fonts/` is marketing-only**
+  (`app/fonts.ts`, scoped `.rf-marketing`). Semantic `display…caption` scale (dashboard code mostly uses raw `text-sm`/`text-xs`).
+- **Utilities** (`globals.css`): `.money` `.mono` `.overline` (11px/600/uppercase section label)
+  `.font-display` `.skeleton` (shimmer, reduced-motion off).
+- **Spacing/breakpoints** stock Tailwind, no `screens` override → `sm 640 md 768 lg 1024 xl 1280`.
+  No dark mode.
 
-## Components
+## Components — `@routeflow/ui/web` (`packages/ui/src/web/index.ts`)
 
-Shared web primitives live in `packages/ui/src/web/` (barrel `index.ts`, imported as
-`@routeflow/ui/web`). `apps/web/components/` holds app-specific composites; there is **no**
-`apps/web/components/ui/` shadcn folder.
+| Export | Props / variants (actual) |
+|---|---|
+| `Button` | `variant` primary·secondary·ghost·danger·link; `size` sm h-7·md h-[34px]·lg h-10; `loading` (→`Loader2`+`aria-busy`+disabled), `href`, `leftIcon`, `rightIcon` |
+| `Badge` | `variant` success·warning·danger·info·neutral **or** `status` (~45 keys incl. `CONVERTED`,`COMPLETED`,`CANCELLED`; **no** OPEN/QUALIFIED/LOST/DONE → pass `variant`+`label`) |
+| `Input` `Textarea` `Select` | `label` (auto id/htmlFor), `error` (→`aria-invalid`+`aria-describedby`+`text-xs text-danger`), `register`; `Select` = native `<select>` `options[{value,label,disabled}]`,`placeholder` |
+| `Modal` | Radix Dialog `open,onClose,title,description,footer,className,onEscapeKeyDown`; Title/Description always rendered; close `aria-label="Close"` |
+| `Table` | TanStack `data,columns,onRowClick,isLoading` (5 pulse rows),`emptyState` (default "No data available"), `aria-sort`; **no pagination** |
+| `Tabs` | `tabs[{key,label,badge}]`,`activeKey`,`onChange`; underline; `focus-visible:ring-inset` |
+| `Skeleton`/`SkeletonRows` | `shape` line·block·circle; `aria-hidden` |
+| `EmptyState` | `variant` orders·routes·customers·products·invoices·drivers·returns·inbox·data·custom; `icon,title,description,action` |
+| `useToast` | `toast({title,description,variant,duration 4000,action{label,onClick}})`; viewport `fixed bottom-4 right-4 w-96 max-w-[calc(100vw-2rem)]` |
+| `PageHeader` `Card` `cn` | `PageHeader{title,subtitle,action}` renders `h2` (top bar owns `h1`) |
 
-| Primitive                              | Path                 | Variants / sizes (actual cva or map keys)                                                                                                                                                                                                                             |
-| -------------------------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Button`                               | `web/Button.tsx`     | cva `variant`: `primary`, `secondary`, `ghost`, `danger`, `link`; `size`: `sm` (h-7), `md` (h-[34px], default), `lg` (h-10), all `rounded-ctl`; compoundVariants flatten `link` to `h-auto p-0 rounded-none`. Extra props `loading`, `href`, `leftIcon`, `rightIcon`. |
-| `Badge`                                | `web/Badge.tsx`      | `variant`: `success`,`warning`,`danger`,`info`,`neutral`; plus a `status` prop mapping ~40 domain statuses (`DRAFT`…`PROCESSED`) to variant+label. Pill: `h-[21px] rounded-full text-[11px] uppercase` with a 6px dot.                                                |
-| `Input` / `Textarea` / `PasswordInput` | `web/Input.tsx` etc. | no variants; `label`, `error`, `register` (react-hook-form) props.                                                                                                                                                                                                    |
-| `Select`                               | `web/Select.tsx`     | native `<select>` + `ChevronDown`; `options`, `placeholder`, `error`, `register`.                                                                                                                                                                                     |
-| `Modal`                                | `web/Modal.tsx`      | Radix Dialog; `title`, `description`, `footer`, `onEscapeKeyDown`. `rounded-xl … shadow-modal`, overlay `bg-black/40 backdrop-blur-sm`.                                                                                                                               |
-| `Table`                                | `web/Table.tsx`      | TanStack Table; `isLoading`, `emptyState`, `onRowClick`.                                                                                                                                                                                                              |
-| `Tabs`                                 | `web/Tabs.tsx`       | flat underline tabs; `tabs[{key,label,badge}]`.                                                                                                                                                                                                                       |
-| `Skeleton` / `SkeletonRows`            | `web/Skeleton.tsx`   | `shape`: `line`(default) \| `block` \| `circle`; `width`/`height`.                                                                                                                                                                                                    |
-| `EmptyState`                           | `web/EmptyState.tsx` | `variant`: `orders`,`routes`,`customers`,`products`,`invoices`,`drivers`,`returns`,`inbox`,`data`,`custom` → SVG illustration from `web/illustrations.tsx`.                                                                                                           |
-| `Toast` (`ToastProvider`/`useToast`)   | `web/Toast.tsx`      | `variant`: `success`,`error`,`warning`,`info`; optional `action` (Undo).                                                                                                                                                                                              |
-| `Avatar`                               | `web/Avatar.tsx`     | `size`: `sm` h-8 / `md` h-10 / `lg` h-14.                                                                                                                                                                                                                             |
-| `Card`, `StatCard`, `PageHeader`       | `web/`               | no variants; `StatCard` takes `trend`/`trendLabel`.                                                                                                                                                                                                                   |
+Composites: `components/ConfirmDialog.tsx` `{open,onClose,onConfirm,title,description,
+confirmLabel,variant danger·secondary,loading}`; `components/SortableTh.tsx`; `components/PlanGateNotice.tsx`
+(GET 403 PLAN_GATE → warning toast + `upgradeHint()`); `app/(dashboard)/_components/gates/PlanGates.tsx`
+`LockedPage{gate,title,children}` ("Not on your plan" card, `/choose-plan` CTA), `GraceBanner`, `InlineResolveModal`.
 
-**No Tooltip primitive exists** (`@radix-ui/react-tooltip` is not a dependency) — hover hints are
-native `title="…"` (497 occurrences in `apps/web/app` + `components`), e.g.
-`apps/web/app/(dashboard)/orders/[id]/page.tsx:1242` `title="Delete item"`.
+**MISSING (no shared export):** Pagination (local `estimates/page.tsx:965-1005` + `lib/hooks/useUrlPage.ts`),
+Load-more (local button `deliveries/_components/OrderPickerPanel.tsx:164-173`), Tooltip (native
+`title=`), Popover/Combobox (local `components/CategoryCombobox.tsx`), Checkbox (raw `<input
+type=checkbox class="h-3.5 w-3.5 rounded border-surface-border text-brand-500 focus:ring-brand-500">`
+`sales-agents/page.tsx:174`), single DatePicker (`<input type="date">`), live-region helper.
 
-**Disabled treatment** — three consistent patterns:
+## State patterns (list screens) — reuse verbatim
 
-- `Button`: cva base carries `disabled:pointer-events-none disabled:opacity-50`; `isDisabled = disabled || loading`;
-  the `href` branch adds `pointer-events-none opacity-50` + `aria-disabled` + `tabIndex={-1}` (`web/Button.tsx:9,73,79-81`).
-- `Input`/`Select`: `props.disabled && "opacity-50 cursor-not-allowed bg-surface-raised"` (`web/Input.tsx:30`, `web/Select.tsx:40`).
-- Raw buttons in app code: `disabled={mutation.isPending} … className="… disabled:opacity-50"`
-  (`apps/web/app/(dashboard)/orders/[id]/page.tsx:206-207, 251-252, 287-288`).
+- **Loading**: `Table isLoading`, or pulse rows `animate-pulse rounded bg-surface-raised`
+  (`customers/page.tsx:935-939`); detail: `h-6 w-48` bar + 3 `h-28` cards (`suppliers/[id]/page.tsx:399-410`);
+  addon resolving: `Loader2 h-8 w-8 animate-spin text-navy/70` centred (`sales-agents/page.tsx:133-138`).
+- **Empty**: `EmptyState` in `Table emptyState`, unfiltered vs filtered + secondary sm "Clear filters"
+  (`estimates/page.tsx:889-921`, `customers/page.tsx:955-975`).
+- **Error**: `rounded-lg border border-danger/30 bg-danger-bg px-4 py-3` + `text-sm text-danger`
+  (`customers/page.tsx:941-946`); retry: `<Button variant="secondary" size="sm" loading={isRefetching}>Try again</Button>`
+  (`finance/payment-requests/page.tsx:306-318`); not-found: same banner "Supplier not found."
+  (`suppliers/[id]/page.tsx:412-420`); crash: `app/(dashboard)/error.tsx`.
+- **Inline warning**: `role="alert"` `border-amber-300 bg-amber-50 text-amber-900` + `AlertTriangle` (`routes/page.tsx:246-256`).
+- **Mutations**: global `MutationCache.onError` toast (`app/providers.tsx:16-56`) — `HANDLED_CODES`
+  allowlist + `READ_ONLY` branch (warning toast, `action` → `/choose-plan`); own error UI ⇒ add the code. Queries: `retry` 0 on 403, `staleTime 30s`, **`refetchOnWindowFocus:false`** (`:67`), no override anywhere.
+- **401**: in-place re-auth dialog "You've been signed out" (`components/ReAuthProvider.tsx:125-145`).
+  **Role deny**: `router.replace("/dashboard")` via `CUSTOMER_ALLOWED`/`DRIVER_ALLOWED`
+  (`layout.tsx:239-241,305-313`) — **no 403 page exists**. **Ungranted addon page**: `LockedPage`
+  over `<Card className="h-64" />` (`sales-agents/page.tsx:141-151`).
+- **Offline (web)**: **none** — no `navigator.onLine`/indicator; network errors surface as axios "Network Error".
+- **Destructive**: `ConfirmDialog`. **Undo**: toast `action`.
 
-**Loading affordances actually in use** (3 real sites):
+## Icons · motion · a11y
 
-1. `Button loading` → swaps `leftIcon` for `<Loader2 className="h-4 w-4 animate-spin" />` and sets
-   `aria-busy` (`packages/ui/src/web/Button.tsx:83,96,99`); used ~15× on the order page, e.g.
-   `loading={updateItems.isPending}` at `orders/[id]/page.tsx:2661`, `loading={deleteOrder.isPending}` at `:2128`.
-2. Full-page gate: `if (isLoading) … <Loader2 className="h-8 w-8 animate-spin text-navy/70" />`
-   (`orders/[id]/page.tsx:1691-1694`).
-3. Skeletons: `Table` renders 5 rows of `h-4 w-full animate-pulse rounded bg-surface-border`
-   (`packages/ui/src/web/Table.tsx:104-110`); local `StatSkeleton` uses `animate-pulse … bg-navy/10`
-   (`apps/web/app/(dashboard)/dashboard/page.tsx:171-178`); `Skeleton` shimmer used in
-   `app/(dashboard)/analytics/page.tsx`, `products/[id]/DemandCard.tsx`, `components/RouteVariantsPanel.tsx`.
+- `lucide-react` only; `h-4 w-4` default, `h-3.5 w-3.5` table chrome, `h-8 w-8` spinners. Names
+  already imported (safe): `Contact` `Phone` `Mail` `Clock` `MessageSquare` `CheckSquare`
+  `CheckCircle2` `RotateCcw` `ArrowRightLeft` `ArrowLeft` `Plus` `Search` `Trash2` `AlertTriangle`
+  `Loader2` `Building2` `Users`. Bare checkout has no `node_modules` — verify any other name.
+- Motion: `transition-colors` 150ms; `animate-spin/pulse`; Radix `animate-in fade-in-0 zoom-in-95`
+  (`web/Modal.tsx:38-47`); sidebar `transition-[width] duration-200` (`layout.tsx:1314`). No framer-motion.
+- A11y: `focus-visible:ring-2 ring-offset-2` (Button), `focus:ring-2 focus:ring-brand-500` (inputs);
+  auto labels + `aria-invalid/describedby`; `aria-busy`; Modal titled; `role="alert"`/`"status"` ad hoc,
+  no shared live region; no jsx-a11y plugin or written contrast/target rule → **WCAG 2.2 AA by default**.
 
-## States & feedback
+## Mobile — `@routeflow/ui/mobile/ios`, tokens `@routeflow/ui/tokens`
 
-- **Toasts**: no third-party toast lib — in-house `ToastProvider` over `@radix-ui/react-toast`
-  (`packages/ui/src/web/Toast.tsx`), mounted in `apps/web/app/providers.tsx:66`. White card +
-  colored icon tile, `rounded-card border border-line shadow-dropdown`, 4000ms default, viewport
-  `fixed bottom-4 right-4 z-[100] w-96`.
-- **Global mutation errors** auto-toast: `MutationCache.onError` in `apps/web/app/providers.tsx:16-40`
-  emits `toast({ variant: "error" })` for every failed mutation, except a `HANDLED_CODES` allowlist
-  (`MERGE_CHOICE_REQUIRED`, `CHANGE_REQUEST_ALREADY_RESOLVED`, `EDIT_WINDOW_OPEN`, …) that components
-  turn into guided flows. **A new feature that shows its own error UI must add its code there.**
-- **Inline validation**: react-hook-form + zod via `@hookform/resolvers` `zodResolver`
-  (`app/(auth)/login/page.tsx`, `orders/_components/CreateOrderModal.tsx`,
-  `customers/_components/CustomerFormModal.tsx`, …). The `error` string prop on `Input`/`Select`
-  renders `<p class="text-xs text-danger">` wired by `aria-invalid` + `aria-describedby`.
-  Ad-hoc forms use a local error string, e.g. `customError` → `<p className="text-xs text-danger">`
-  (`orders/[id]/page.tsx:1450`).
-- **Empty states**: `EmptyState` (illustration + `font-display` title + `text-[12.5px] text-ink-500`
-  description + action), or `Table`'s `emptyState` prop / default `"No data available"`.
-- **Error banners**: local pattern `border border-danger/30 bg-danger-bg px-4 py-3`
-  (`app/(dashboard)/dashboard/page.tsx:181+` `ErrorBanner`).
-- **Destructive confirm**: `apps/web/components/ConfirmDialog.tsx` — Modal + `AlertTriangle`,
-  `variant: "danger" | "secondary"`, `loading` prop wired to the confirm `Button` while Cancel gets `disabled={loading}`.
+`ios.*` (`packages/ui/src/tokens.ts:83+`): `bg #F2F2F7` `bgElev #fff` `brand #0B6E6B` `brandWash`
+`system.{green,orange,red,yellow,purple}{Wash,Ink}` `separator` `rowMinH 44` `cardRadius 16`
+`listRadius 12`; font `Inter_400Regular`. Exports (`mobile/ios/index.ts`): `NavBar{largeTitle|inlineTitle,
+leading,trailing}` `NavBackButton{label}` `NavAction{label,bold}` `SearchBar` `FilterChipRow{chips,value,
+onChange}` `SegmentedControl` `Pill{variant brand·green·orange·red·gray·yellow·purple,dot,small}`
+`ListGroup{header,footer}`+`ListRow{icon,iconBg,title,subtitle,value,trailing,onPress,chevron}`
+`IosEmptyState{icon,title,subtitle,actionLabel,onActionPress}`; `@routeflow/ui/mobile`: `MobileButton` `MobileInput`. Operator list convention (`(operator)/credit-notes/index.tsx:47-90`,
+`customers/[id]/comments.tsx:113-135`): `SafeAreaView` → `NavBar largeTitle`+`NavAction "New"` →
+`SearchBar` → `FilterChipRow` → `ScrollView`+`RefreshControl` → loading `ActivityIndicator
+color={ios.brand}` (operator screens; `ShimmerBox` skeletons are driver/buyer only) → error "Couldn't
+load X. Pull to retry." → empty "No X yet."/"No X match." + `Pressable` "Add X". Detail: `NavBar
+inlineTitle`+`NavBackButton label`; Call/Text/Email via `Linking.openURL("tel:")` (`customers/[id].tsx:
+145-170`). Feedback: `lib/toast.ts showToast`, `lib/confirm.ts confirm(title,msg,onConfirm,{confirmText,
+destructive})`/`chooseAction(title,msg,actions)`. Offline: `components/OfflineBanner.tsx`; api-client
+**queues every** non-FormData mutation (`lib/api-client.ts:120-166`, rejects `isOfflineQueued`;
+`lib/offline-errors.ts classifyMutationError`). Addon: `lib/api/tobacco.ts useHasAddon`; More rows gated
+inline (`(operator)/(tabs)/more.tsx:164`); new section → `lib/operator-tabs.ts SECTION_TO_TAB` (`:41`).
 
-## Motion
+## How to add a dashboard screen
 
-- No framer-motion (not in `apps/web/package.json`; zero imports in `app`/`components`). Motion is
-  Tailwind + `tailwindcss-animate` (registered in the preset, `packages/config/tailwind.config.ts:5`).
-- Dominant idiom by count in `apps/web/app` + `components` + `packages/ui/src/web`:
-  `transition-colors` (700), `animate-spin` (155), `animate-pulse` (51), `transition-all` (29),
-  `transition-transform` (19), `transition-opacity` (19), `transition-shadow` (14).
-  Explicit durations are rare (`duration-200` ×9, `duration-150` ×1) — default 150ms is the norm.
-- Radix enter/exit uses `data-[state=open]:animate-in / data-[state=closed]:animate-out` with
-  `fade-*`, `zoom-*`, `slide-*` (`web/Modal.tsx:38-47`, `web/Toast.tsx:92-94`).
-- `.skeleton` shimmer is 1.4s and disabled under `prefers-reduced-motion` (`globals.css:199-208`).
-
-## Icons
-
-- `lucide-react` ^0.577.0, used everywhere (Radix icons are not a dependency).
-- Sizes by frequency: `h-4 w-4` (750) is the default, `h-3.5 w-3.5` (333) for dense/table chrome,
-  `h-5 w-5` (143), `h-3 w-3` (122) inside small text buttons, `h-8 w-8` (127) for page-level spinners.
-- Recurring semantics: `Loader2` = busy, `CheckCircle2`/`XCircle`/`AlertTriangle`/`Info` = toast +
-  confirm variants, `X` = close, `Search` = pickers, `RotateCcw` = undo, `ChevronDown` = select.
-
-## A11y
-
-- Focus: `focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2` + per-variant
-  ring color on `Button` (`web/Button.tsx:9,15-20`); `focus:ring-2 focus:ring-brand-500` on
-  `Input`/`Select`/`Modal` close; `focus-visible:ring-inset` on `Tabs` (`web/Tabs.tsx:29`).
-  The `.focus-ring` utility in `globals.css:188` exists but is **unused** in `apps/web`.
-- Labels/descriptions: `Input`/`Select` auto-derive `htmlFor`/`id` from `label`, set `aria-invalid` and
-  `aria-describedby={`${id}-error`}`.
-- Button sets `aria-busy={loading}`; anchor-form sets `aria-disabled` + `tabIndex={-1}`.
-- Modal always renders a `Dialog.Title` and `Dialog.Description` (`sr-only` when absent) —
-  `web/Modal.tsx:55-65`. Close buttons carry `aria-label="Close"` / `"Dismiss"`.
-- `Skeleton` is `aria-hidden="true"` (`web/Skeleton.tsx:23`).
-- `PageHeader` renders an `h2` on purpose: the dashboard top bar owns the page `h1`
-  (`web/PageHeader.tsx:18-20`).
-- `aria-label` appears 89× across `apps/web/app` + `components`; there is no live-region /
-  `role="status"` convention yet.
+- `apps/web/app/(dashboard)/<area>/page.tsx` (+`[id]/page.tsx`, `_components/`), `"use client"`,
+  `usePageTitle`, root `<div className="space-y-5 p-6"><PageHeader/>`.
+- `apps/web/lib/api/<area>.ts`: `useQuery({queryKey:["<area>",params],queryFn:()=>apiClient.get(url,
+  {params}).then(r=>r.data)})`; mutations invalidate `["<area>"]` (`lib/api/suppliers.ts:50-80`).
+  Search `useUrlSearch()` (300ms, URL-synced); paging `useUrlPage()`; addon `useHasAddon` (`tobacco.ts:18`).
+- Nav: `layout.tsx` `OPERATOR_NAV` (`:88-147`; `NavLeaf/NavGroup/NavSkeleton` `:83-86`); gated entries
+  spliced in `DashboardShell` (`:1094-1150`) with `{kind:"skeleton",key}` while `useTenantAddons().isLoading`
+  (rendered `:552-566`); role deny `*_ALLOWED` (`:239-241`).
+- Forms: RHF+zod in `Modal` (`customers/_components/CustomerFormModal.tsx:5-9`, `:414-424`).
+- Gate e2e neighbour: `e2e/18-sales-agents-gate.spec.ts:20-27` (`getByRole("navigation").getByText`).
 
 ## Order-edit page notes
 
