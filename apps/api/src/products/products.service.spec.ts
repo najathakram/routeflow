@@ -665,12 +665,19 @@ describe("ProductsService", () => {
           { id: "prod-c", reason: "Update failed" }, // raw Prisma text NOT disclosed
         ],
       });
-      // Each row goes through the full update() path, variant name doubling as `name`.
-      expect(update).toHaveBeenNthCalledWith(1, "prod-a", {
-        parentProductId: "parent-1",
-        variantName: "Strawberry",
-        name: "Strawberry",
-      });
+      // Each row goes through the full update() path, variant name doubling as
+      // `name` — suppressEmit:true since this loop can reassign N products in
+      // one request; bulkAssignParent fires ONE bulk-completion emit instead.
+      expect(update).toHaveBeenNthCalledWith(
+        1,
+        "prod-a",
+        {
+          parentProductId: "parent-1",
+          variantName: "Strawberry",
+          name: "Strawberry",
+        },
+        { suppressEmit: true },
+      );
     });
   });
 
