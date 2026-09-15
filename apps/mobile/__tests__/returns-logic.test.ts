@@ -67,7 +67,7 @@ describe("returnActionFlags", () => {
     }
   });
 
-  it("B348: PROCESSED is retired — offers no actions, but is no longer specially flagged terminal either", () => {
+  it("REG-B348: PROCESSED is retired — offers no actions, but is no longer specially flagged terminal either", () => {
     // No writer anywhere sets this status; the OR-branch that treated it as
     // equivalent to REFUNDED/REJECTED/CANCELLED was dead defensive code.
     const f = returnActionFlags("PROCESSED");
@@ -493,7 +493,7 @@ describe("returnPillFor", () => {
     expect(returnPillFor("WEIRD")).toEqual({ variant: "gray", label: "WEIRD" });
   });
 
-  it("B348: PROCESSED (retired, no writer) degrades to the same default as any unrecognised status", () => {
+  it("REG-B348: PROCESSED (retired, no writer) degrades to the same default as any unrecognised status", () => {
     expect(returnPillFor("PROCESSED")).toEqual({ variant: "gray", label: "PROCESSED" });
   });
 });
