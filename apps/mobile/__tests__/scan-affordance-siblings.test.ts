@@ -50,7 +50,7 @@ describe("purchase-orders/record.tsx scan affordance (REG-B264)", () => {
 
     // Both the picker's onSelect and the scan handler call the SAME function
     // — never two independent copies of the field-fill logic.
-    const onSelectBlock = (source.match(/onSelect=\{\(p\) => \{[\s\S]*?\n {8}\}\}/) ?? [""])[0];
+    const onSelectBlock = (source.match(/onSelect=\{\(p\) => \{[\s\S]*?\n\s*\}\}/) ?? [""])[0];
     expect(onSelectBlock).toMatch(/applyPickedProduct\(p\)/);
     // Two CALLS (the declaration reads `applyPickedProduct = (`, not
     // `applyPickedProduct(`, so it doesn't match this pattern itself).
@@ -60,6 +60,22 @@ describe("purchase-orders/record.tsx scan affordance (REG-B264)", () => {
   it("REG-B264: the FAB hides while either picker sheet is open", () => {
     const fabBlock = (source.match(/<BarcodeFab\b[\s\S]{0,200}?\/>/) ?? [""])[0];
     expect(fabBlock).toMatch(/hidden=\{productPickerOpen \|\| supplierPickerOpen\}/);
+  });
+
+  it("REG-F4: applyPickedProduct routes the cost-prefill decision through nextUnitCost, keyed on the OUTGOING product id", () => {
+    // Behavior (scan A then scan B never bills B at A's cost) is unit-tested
+    // in purchase-receive-logic.test.ts — this pins the WIRING: the isNewProduct
+    // comparison must run BEFORE setProductId reassigns it, and the decision
+    // must go through the shared helper, not a re-derived inline ternary.
+    const applyBody = (source.match(
+      /const applyPickedProduct = \(p: AdminProduct\) => \{[\s\S]*?\n {2}\};/,
+    ) ?? [""])[0];
+    const isNewAt = applyBody.indexOf("isNewProduct = p.id !== productId");
+    const setProductIdAt = applyBody.indexOf("setProductId(p.id)");
+    expect(isNewAt).toBeGreaterThan(-1);
+    expect(setProductIdAt).toBeGreaterThan(-1);
+    expect(setProductIdAt).toBeGreaterThan(isNewAt);
+    expect(applyBody).toMatch(/nextUnitCost\(cur, isNewProduct, prefill\)/);
   });
 });
 
@@ -96,15 +112,33 @@ describe("invoices/[id]/edit.tsx scan affordance (REG-B265)", () => {
 
   it("REG-B265: a scanned code resolves through resolveProductByCode and feeds the SAME addCatalogLine path a tapped pick uses", () => {
     const onScannedBody = (source.match(
-      /const onScanned = async \(code: string\) => \{[\s\S]*?\n {2}\};/,
+      /const onScanned = async \(code: string\): Promise<ScanOutcome> => \{[\s\S]*?\n {2}\};/,
     ) ?? [""])[0];
     expect(onScannedBody).toMatch(/resolveProductByCode<AdminProduct>\(/);
     expect(onScannedBody).toMatch(/if \(result\.archived\)/);
-    expect(onScannedBody).toMatch(/showToast\(archivedMessage\(result\.product\)\)/);
     expect(onScannedBody).toMatch(/addCatalogLine\(result\.product\)/);
     // The picker's own onSelect is the pre-existing addCatalogLine reference
     // (unchanged) — never a second, parallel line-adding function.
     expect(source).toMatch(/onSelect=\{addCatalogLine\}/);
+  });
+
+  it("REG-F1: onScanned returns a ScanOutcome on every path — continuous mode needs feedback per scan, not a toast", () => {
+    // TODAY (the bug): mounted `continuous`, so the scanner overlay stays up
+    // between scans (BarcodeFab.tsx's own overlay, zIndex 2000) and BarcodeScanner
+    // reads the handler's RETURN VALUE to show it — a bare `return;` (what a
+    // single-shot ProductPickerSheet's ownscanned can get away with, since ITS
+    // setScanOpen(false) makes a fallback toast visible) leaves every scan
+    // silent here. Fixed: every path returns { feedback: { kind, text } },
+    // never a toast for the scan outcome itself.
+    const onScannedBody = (source.match(
+      /const onScanned = async \(code: string\): Promise<ScanOutcome> => \{[\s\S]*?\n {2}\};/,
+    ) ?? [""])[0];
+    expect(onScannedBody).toMatch(/feedback:\s*\{\s*kind:/);
+    expect(onScannedBody).not.toMatch(/showToast\(/);
+    // Every branch (archived / added / not-found) returns, not just one.
+    expect(
+      (onScannedBody.match(/kind: "added"|kind: "error"/g) ?? []).length,
+    ).toBeGreaterThanOrEqual(3);
   });
 });
 
@@ -140,22 +174,34 @@ describe("customers/[id]/standing-orders/new.tsx scan affordance (REG-B266)", ()
 
   it("REG-B266: a scanned code resolves through resolveProductByCode and feeds the SAME addLine path a tapped pick uses", () => {
     const onScannedBody = (source.match(
-      /const onScanned = async \(code: string\) => \{[\s\S]*?\n {2}\};/,
+      /const onScanned = async \(code: string\): Promise<ScanOutcome> => \{[\s\S]*?\n {2}\};/,
     ) ?? [""])[0];
     expect(onScannedBody).toMatch(/resolveProductByCode<AdminProduct>\(/);
     expect(onScannedBody).toMatch(/if \(result\.archived\)/);
-    expect(onScannedBody).toMatch(/showToast\(archivedMessage\(result\.product\)\)/);
     expect(onScannedBody).toMatch(/addLine\(result\.product\)/);
 
     // Both the picker's onSelect and the scan handler call the SAME function
     // — the inline qty-increment-or-append logic was extracted into `addLine`
     // rather than duplicated for the scan path.
-    const onSelectBlock = (source.match(/onSelect=\{\(product\) => \{[\s\S]*?\n {8}\}\}/) ?? [
+    const onSelectBlock = (source.match(/onSelect=\{\(product\) => \{[\s\S]*?\n\s*\}\}/) ?? [
       "",
     ])[0];
     expect(onSelectBlock).toMatch(/addLine\(product\)/);
     // Two CALLS (the declaration reads `addLine = (`, not `addLine(`, so it
     // doesn't match this pattern itself).
     expect((stripComments(source).match(/addLine\(/g) ?? []).length).toBe(2);
+  });
+
+  it("REG-F1: onScanned returns a ScanOutcome on every path — continuous mode needs feedback per scan, not a toast", () => {
+    // Same finding as REG-B265's twin test (invoices/[id]/edit.tsx) — this
+    // screen is ALSO mounted `continuous`.
+    const onScannedBody = (source.match(
+      /const onScanned = async \(code: string\): Promise<ScanOutcome> => \{[\s\S]*?\n {2}\};/,
+    ) ?? [""])[0];
+    expect(onScannedBody).toMatch(/feedback:\s*\{\s*kind:/);
+    expect(onScannedBody).not.toMatch(/showToast\(/);
+    expect(
+      (onScannedBody.match(/kind: "added"|kind: "error"/g) ?? []).length,
+    ).toBeGreaterThanOrEqual(3);
   });
 });

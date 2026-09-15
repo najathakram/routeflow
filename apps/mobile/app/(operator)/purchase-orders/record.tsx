@@ -13,6 +13,7 @@ import { normalizeBoxesPieces } from "@routeflow/pricing";
 import { showToast } from "../../../lib/toast";
 import { archivedMessage, resolveProductByCode } from "../../../lib/barcode-resolve";
 import type { AdminProduct } from "../../../lib/api/admin";
+import { nextUnitCost } from "../../../lib/purchase-receive-logic";
 
 export default function QuickReceiveScreen() {
   const router = useRouter();
@@ -53,19 +54,21 @@ export default function QuickReceiveScreen() {
   // Shared by the picker's onSelect and the scan FAB (B264) so a scanned
   // product fills the form exactly like a tapped one.
   const applyPickedProduct = (p: AdminProduct) => {
+    // F4 (independent review, PR-3): capture BEFORE setProductId below, so
+    // this compares against the product being REPLACED, not the new one.
+    const isNewProduct = p.id !== productId;
     setProductId(p.id);
     setProductName(p.parent?.name ? `${p.parent.name} - ${p.name}` : p.name);
     setProductUnit(p.unit ?? "");
     const upb = Math.trunc(Number(p.unitsPerBox ?? 0));
     setUnitsPerBox(Number.isFinite(upb) ? upb : 0);
-    // Prefill the cost from the product's standard cost when empty (same
-    // behavior as the PO receive screen). `standardCost` is per PIECE, so
-    // scale it up when the cost field collects a box price.
+    // Prefill the cost from the product's standard cost — see
+    // lib/purchase-receive-logic.ts#nextUnitCost (F4, independent review)
+    // for the whenever-the-product-changes rule. `standardCost` is per
+    // PIECE, so scale it up when the cost field collects a box price.
     const std = p.standardCost != null ? Number(p.standardCost) : NaN;
     const prefill = upb > 1 ? std * upb : std;
-    setUnitCost((cur) =>
-      cur.trim() === "" && Number.isFinite(prefill) ? String(Number(prefill.toFixed(4))) : cur,
-    );
+    setUnitCost((cur) => nextUnitCost(cur, isNewProduct, prefill));
   };
 
   // B264: the receive screen had no scan entry outside the product picker
@@ -143,75 +146,53 @@ export default function QuickReceiveScreen() {
   // (invoice edit, B265) for why: FormSheet's children scroll, the FAB must not.
   return (
     <>
-    <FormSheet
-      title="Quick Receive"
-      submitLabel={mut.isPending ? "Recording…" : "Record receipt"}
-      submitting={mut.isPending}
-      onSubmit={submit}
-    >
-      <FormSection title="Product">
-        <FormField label="Product">
-          <Pressable style={styles.picker} onPress={pickProduct}>
-            <View style={styles.pickerInner}>
-              <Text style={[styles.pickerText, !productName && styles.placeholder]}>
-                {productName || "Select product…"}
-              </Text>
-              <Ionicons name="chevron-down" size={14} color={ios.label3} />
-            </View>
-          </Pressable>
-        </FormField>
-        {isBoxed ? (
-          <>
-            <View style={styles.row2}>
-              <View style={{ flex: 1 }}>
-                <FormField label="Boxes received">
-                  <FormTextInput
-                    value={boxes}
-                    onChangeText={setBoxes}
-                    placeholder="0"
-                    keyboardType="number-pad"
-                  />
-                </FormField>
+      <FormSheet
+        title="Quick Receive"
+        submitLabel={mut.isPending ? "Recording…" : "Record receipt"}
+        submitting={mut.isPending}
+        onSubmit={submit}
+      >
+        <FormSection title="Product">
+          <FormField label="Product">
+            <Pressable style={styles.picker} onPress={pickProduct}>
+              <View style={styles.pickerInner}>
+                <Text style={[styles.pickerText, !productName && styles.placeholder]}>
+                  {productName || "Select product…"}
+                </Text>
+                <Ionicons name="chevron-down" size={14} color={ios.label3} />
               </View>
-              <View style={{ flex: 1 }}>
-                <FormField label="+ Pieces">
-                  <FormTextInput
-                    value={pieces}
-                    onChangeText={setPieces}
-                    placeholder="0"
-                    keyboardType="number-pad"
-                  />
-                </FormField>
+            </Pressable>
+          </FormField>
+          {isBoxed ? (
+            <>
+              <View style={styles.row2}>
+                <View style={{ flex: 1 }}>
+                  <FormField label="Boxes received">
+                    <FormTextInput
+                      value={boxes}
+                      onChangeText={setBoxes}
+                      placeholder="0"
+                      keyboardType="number-pad"
+                    />
+                  </FormField>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <FormField label="+ Pieces">
+                    <FormTextInput
+                      value={pieces}
+                      onChangeText={setPieces}
+                      placeholder="0"
+                      keyboardType="number-pad"
+                    />
+                  </FormField>
+                </View>
               </View>
-            </View>
-            <FormField
-              label="Cost per box ($)"
-              hint={`1 box = ${unitsPerBox} ${productUnit || "units"}${
-                totalPieces > 0 ? ` · ${totalPieces} pcs total` : ""
-              }`}
-            >
-              <FormTextInput
-                value={unitCost}
-                onChangeText={setUnitCost}
-                placeholder="0.00"
-                keyboardType="decimal-pad"
-              />
-            </FormField>
-          </>
-        ) : (
-          <View style={styles.row2}>
-            <View style={{ flex: 1 }}>
-              <FormField label="Qty received">
-                <FormTextInput
-                  value={quantity}
-                  onChangeText={setQuantity}
-                  placeholder="0"
-                  keyboardType="number-pad"
-                />
-              </FormField>
-            </View>
-            <View style={{ flex: 1 }}>
-              <FormField label="Unit cost ($)">
+              <FormField
+                label="Cost per box ($)"
+                hint={`1 box = ${unitsPerBox} ${productUnit || "units"}${
+                  totalPieces > 0 ? ` · ${totalPieces} pcs total` : ""
+                }`}
+              >
                 <FormTextInput
                   value={unitCost}
                   onChangeText={setUnitCost}
@@ -219,64 +200,86 @@ export default function QuickReceiveScreen() {
                   keyboardType="decimal-pad"
                 />
               </FormField>
+            </>
+          ) : (
+            <View style={styles.row2}>
+              <View style={{ flex: 1 }}>
+                <FormField label="Qty received">
+                  <FormTextInput
+                    value={quantity}
+                    onChangeText={setQuantity}
+                    placeholder="0"
+                    keyboardType="number-pad"
+                  />
+                </FormField>
+              </View>
+              <View style={{ flex: 1 }}>
+                <FormField label="Unit cost ($)">
+                  <FormTextInput
+                    value={unitCost}
+                    onChangeText={setUnitCost}
+                    placeholder="0.00"
+                    keyboardType="decimal-pad"
+                  />
+                </FormField>
+              </View>
             </View>
-          </View>
-        )}
-      </FormSection>
+          )}
+        </FormSection>
 
-      <FormSection title="Optional">
-        <FormField label="Supplier">
-          <Pressable style={styles.picker} onPress={pickSupplier}>
-            <Text style={[styles.pickerText, !supplierName && styles.placeholder]}>
-              {supplierName || "Select supplier…"}
-            </Text>
-          </Pressable>
-        </FormField>
-        <FormField label="Reference">
-          <FormTextInput
-            value={reference}
-            onChangeText={setReference}
-            placeholder="Invoice #, delivery note…"
-          />
-        </FormField>
-        <FormField label="Notes">
-          <FormTextInput
-            value={notes}
-            onChangeText={setNotes}
-            placeholder="Any notes…"
-            multiline
-            numberOfLines={2}
-            style={{ minHeight: 56, textAlignVertical: "top" }}
-          />
-        </FormField>
-      </FormSection>
+        <FormSection title="Optional">
+          <FormField label="Supplier">
+            <Pressable style={styles.picker} onPress={pickSupplier}>
+              <Text style={[styles.pickerText, !supplierName && styles.placeholder]}>
+                {supplierName || "Select supplier…"}
+              </Text>
+            </Pressable>
+          </FormField>
+          <FormField label="Reference">
+            <FormTextInput
+              value={reference}
+              onChangeText={setReference}
+              placeholder="Invoice #, delivery note…"
+            />
+          </FormField>
+          <FormField label="Notes">
+            <FormTextInput
+              value={notes}
+              onChangeText={setNotes}
+              placeholder="Any notes…"
+              multiline
+              numberOfLines={2}
+              style={{ minHeight: 56, textAlignVertical: "top" }}
+            />
+          </FormField>
+        </FormSection>
 
-      <ProductPickerSheet
-        visible={productPickerOpen}
-        title="Product"
-        selectedId={productId}
-        onClose={() => setProductPickerOpen(false)}
-        onSelect={(p) => {
-          applyPickedProduct(p);
-          setProductPickerOpen(false);
-        }}
-      />
-      <OptionPickerSheet
-        visible={supplierPickerOpen}
-        title="Supplier"
-        options={(suppliers ?? []).map((s: any) => ({ id: s.id, label: s.name }))}
-        selectedId={supplierId}
-        nullable
-        nullLabel="None"
-        onClose={() => setSupplierPickerOpen(false)}
-        onSelect={(opt) => {
-          setSupplierId(opt.id);
-          setSupplierName(opt.id ? opt.label : "");
-          setSupplierPickerOpen(false);
-        }}
-      />
-    </FormSheet>
-    <BarcodeFab onScanned={onScanned} hidden={productPickerOpen || supplierPickerOpen} />
+        <ProductPickerSheet
+          visible={productPickerOpen}
+          title="Product"
+          selectedId={productId}
+          onClose={() => setProductPickerOpen(false)}
+          onSelect={(p) => {
+            applyPickedProduct(p);
+            setProductPickerOpen(false);
+          }}
+        />
+        <OptionPickerSheet
+          visible={supplierPickerOpen}
+          title="Supplier"
+          options={(suppliers ?? []).map((s: any) => ({ id: s.id, label: s.name }))}
+          selectedId={supplierId}
+          nullable
+          nullLabel="None"
+          onClose={() => setSupplierPickerOpen(false)}
+          onSelect={(opt) => {
+            setSupplierId(opt.id);
+            setSupplierName(opt.id ? opt.label : "");
+            setSupplierPickerOpen(false);
+          }}
+        />
+      </FormSheet>
+      <BarcodeFab onScanned={onScanned} hidden={productPickerOpen || supplierPickerOpen} />
     </>
   );
 }
