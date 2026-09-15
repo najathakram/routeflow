@@ -68,7 +68,11 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
     });
 
     it("exports LOCK_FAMILIES as the closed list of families that may own a pool", () => {
-      expect(mod.LOCK_FAMILIES).toEqual(["order-merge", "cron", "billing"]);
+      // F5 (independent review, PR-2) added "idempotency" — ReturnsService#create's
+      // check-then-create-then-save sequence (common/idempotency.service.ts) needed its own
+      // family, sized for its own short/request-path/lower-volume shape rather than sharing
+      // order-merge's pool.
+      expect(mod.LOCK_FAMILIES).toEqual(["order-merge", "cron", "billing", "idempotency"]);
     });
   });
 
@@ -308,28 +312,35 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
       );
     };
 
-    it("(p) each family gets its OWN pool, sized for its own peak (order-merge 8, cron 12, billing 4) and kept alive at the socket; a second order-merge acquisition reuses the first", async () => {
+    it("(p) each family gets its OWN pool, sized for its own peak (order-merge 8, cron 12, billing 4, idempotency 6) and kept alive at the socket; a second order-merge acquisition reuses the first", async () => {
       await mod._resetLockPoolForTests?.();
       mockPoolCtor.mockClear();
 
       await acquireOnce("order-merge");
       await acquireOnce("cron");
       await acquireOnce("billing");
+      await acquireOnce("idempotency");
       await acquireOnce("order-merge");
 
       // A cron WINNER pins its slot for the whole tick (minutes), and up to 7 ticks fire at once
       // on the monthly peak — out of ONE shared pool that left merges a single slot and 503s.
       // Per-family pools bound that peak inside cron's own pool.
-      expect(mockPoolCtor).toHaveBeenCalledTimes(3);
-      const [poolA, poolB, poolC] = mockPoolCtor.mock.results.map((r) => r.value);
+      expect(mockPoolCtor).toHaveBeenCalledTimes(4);
+      const [poolA, poolB, poolC, poolD] = mockPoolCtor.mock.results.map((r) => r.value);
       expect(poolA).not.toBe(poolB);
       expect(poolA).not.toBe(poolC);
+      expect(poolA).not.toBe(poolD);
       expect(poolB).not.toBe(poolC);
-      // The three families are sized differently ON PURPOSE: order-merge checkouts are short and
+      expect(poolB).not.toBe(poolD);
+      expect(poolC).not.toBe(poolD);
+      // The four families are sized differently ON PURPOSE: order-merge checkouts are short and
       // request-path with real checkout volume, cron must fit the monthly 7-holder peak PLUS a
-      // straggling hourly sweep (a cron holder that finds no slot skips its tick outright), and
+      // straggling hourly sweep (a cron holder that finds no slot skips its tick outright),
       // billing (enableAddon) is the same short request-path shape as order-merge but a far
-      // rarer settings action, so it gets a smaller pool rather than order-merge's size.
+      // rarer settings action so it gets a smaller pool, and idempotency (F5, PR-2:
+      // ReturnsService#create's check-then-create-then-save) is that same short/request-path
+      // shape again, sized a little under order-merge for a lower-volume caller (one driver's
+      // return submission, not every order edit).
       expect(callArgs(mockPoolCtor, 0)[0]).toMatchObject({
         max: 8,
         connectionTimeoutMillis: 5_000,
@@ -342,20 +353,24 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
         max: 4,
         connectionTimeoutMillis: 5_000,
       });
-      // ALL THREE pools keep TCP keepalive on: a lock connection is socket-idle for the whole
+      expect(callArgs(mockPoolCtor, 3)[0]).toMatchObject({
+        max: 6,
+        connectionTimeoutMillis: 5_000,
+      });
+      // ALL FOUR pools keep TCP keepalive on: a lock connection is socket-idle for the whole
       // critical section (a cron leader's work runs on the Prisma pool), so an idle-reap anywhere
       // on the path would end the session and release the advisory lock MID-TICK — another
       // replica would then win an election for a job still running. Probes every 30 s keep the
       // session honest.
-      for (const i of [0, 1, 2]) {
+      for (const i of [0, 1, 2, 3]) {
         expect(callArgs(mockPoolCtor, i)[0]).toMatchObject({
           keepAlive: true,
           keepAliveInitialDelayMillis: 30_000,
         });
       }
-      // The fourth acquisition built NO fourth pool: pools are memoized per family, so
-      // `order-merge` keeps one 8-slot pool rather than one per call site.
-      expect(mockPoolOn).toHaveBeenCalledTimes(3);
+      // The fifth acquisition (order-merge again) built NO fifth pool: pools are memoized per
+      // family, so `order-merge` keeps one 8-slot pool rather than one per call site.
+      expect(mockPoolOn).toHaveBeenCalledTimes(4);
     });
 
     it("(q) an unknown family rejects with TypeError and never takes a connection — the allow-list is closed", async () => {

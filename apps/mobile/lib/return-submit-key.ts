@@ -17,11 +17,22 @@
  *   to persist and nothing to rotate, clear or leak across users. There is no module-level
  *   storage here on purpose.
  *
- * IDENTITY = stopId + orderId + the sorted `productId:qty` pairs. Sorting is what makes the key
- * insensitive to the order `undeliveredReturnLines` happens to emit rows in (it walks
- * `deliveryMutations`, whose order is a server read detail, not a driver decision). Per-row
- * REASON is deliberately NOT part of the identity: the same goods going back on the same stop
- * are the same return whether or not the driver flipped the "Damaged" chip before retrying.
+ * IDENTITY = stopId + orderId + the sorted `productId:qty` pairs + a per-attempt NONCE. Sorting
+ * the pairs is what makes the key insensitive to the order `undeliveredReturnLines` happens to
+ * emit rows in (it walks `deliveryMutations`, whose order is a server read detail, not a driver
+ * decision). Per-row REASON is deliberately NOT part of the identity: the same goods going back
+ * on the same stop are the same return whether or not the driver flipped the "Damaged" chip
+ * before retrying.
+ *
+ * THE NONCE (F1, independent review, PR-2): stopId+orderId+goods alone is deterministic BY
+ * DESIGN — see below — but that determinism silently collapsed a genuinely NEW later return for
+ * identical goods into an earlier, already-landed one (the driver returns 2 units, then later
+ * finds 2 more of the same product), under-crediting the customer. `caller` supplies a value from
+ * `store/returnSubmissionStore.ts#getOrCreateNonce`, scoped per PENDING attempt: stable across
+ * retries of ONE attempt (a network timeout, an offline-queue replay, an app kill mid-request all
+ * reuse it, so those still collapse onto the same server-side return), cleared the moment that
+ * attempt lands — so the caller's NEXT call for the same stop+order gets a fresh value and a
+ * genuinely new return.
  *
  * The server hashes the header into `sha256(scope:key)` (`common/idempotency.service.ts`) under
  * scope `returns.create:<tenantId>:<orderId>`, so this value never needs to be short or opaque —
@@ -51,14 +62,20 @@ function headerSafe(value: string): string {
 }
 
 /**
- * The Idempotency-Key for ONE order's return at ONE stop. Every submit, retry, offline replay
- * and deliberate re-issue of the same goods must produce this exact value — that is what lets
- * the server collapse them into a single return rather than double-crediting the customer.
+ * The Idempotency-Key for ONE ATTEMPT at returning goods for one order at one stop. Every
+ * submit/retry/offline-replay of the SAME attempt must pass the SAME `nonce` (from
+ * `returnSubmissionStore#getOrCreateNonce`) to produce this exact value — that is what lets the
+ * server collapse them into a single return. A genuinely new attempt (the nonce was cleared
+ * because the prior one landed) produces a different value on purpose, even for identical goods.
  */
-export function returnSubmitKey(stopId: string, payload: ReturnSubmitKeyInput): string {
+export function returnSubmitKey(
+  stopId: string,
+  payload: ReturnSubmitKeyInput,
+  nonce: string,
+): string {
   const pairs = payload.items
     .map((i) => `${i.productId}:${i.qty}`)
     .sort()
     .join(",");
-  return headerSafe(`rtn:${stopId}:${payload.orderId}:${pairs}`);
+  return headerSafe(`rtn:${stopId}:${payload.orderId}:${pairs}:${nonce}`);
 }

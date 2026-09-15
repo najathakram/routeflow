@@ -40,12 +40,15 @@ describe("IdempotencyService (REG-IDEM-SVC)", () => {
 
   it("REG-IDEM-SVC-2 check() returns the parsed stored response", async () => {
     prisma.$queryRaw.mockResolvedValue([{ response: JSON.stringify({ id: "ret-1", qty: 3 }) }]);
-    await expect(service.check("key-1", "scope-a")).resolves.toEqual({ id: "ret-1", qty: 3 });
+    await expect(service.check("key-1", "tenant-a", "scope-a")).resolves.toEqual({
+      id: "ret-1",
+      qty: 3,
+    });
   });
 
   it("REG-IDEM-SVC-3 check() reads with a 24h cutoff and returns null for no row", async () => {
     prisma.$queryRaw.mockResolvedValue([]);
-    await expect(service.check("key-1", "scope-a")).resolves.toBeNull();
+    await expect(service.check("key-1", "tenant-a", "scope-a")).resolves.toBeNull();
 
     // The cutoff parameter is interpolated into the tagged template; assert it
     // is ~24h ago so shortening/removing the window fails here.
@@ -59,21 +62,42 @@ describe("IdempotencyService (REG-IDEM-SVC)", () => {
 
   it("REG-IDEM-SVC-4 check() FAILS OPEN — returns null, never throws, when the read rejects", async () => {
     prisma.$queryRaw.mockRejectedValue(new Error('relation "IdempotencyKey" does not exist'));
-    await expect(service.check("key-1", "scope-a")).resolves.toBeNull();
+    await expect(service.check("key-1", "tenant-a", "scope-a")).resolves.toBeNull();
   });
 
   it("REG-IDEM-SVC-5 save() upserts on keyHash and stores the JSON response", async () => {
-    await service.save("key-1", "scope-a", { id: "ret-1" });
+    await service.save("key-1", "tenant-a", "scope-a", { id: "ret-1" });
     const call = prisma.$executeRaw.mock.calls.at(-1)!;
     const sql = (call[0] as unknown as string[]).join("?");
     expect(sql).toContain('INSERT INTO "IdempotencyKey"');
     expect(sql).toContain('ON CONFLICT ("keyHash") DO UPDATE');
     expect(call.slice(1)).toContain(JSON.stringify({ id: "ret-1" }));
-    expect(call.slice(1)).toContain(service.keyHash("key-1", "scope-a"));
+    expect(call.slice(1)).toContain(service.hashFor("key-1", "tenant-a", "scope-a"));
   });
 
   it("REG-IDEM-SVC-6 save() FAILS OPEN — swallows a rejecting write", async () => {
     prisma.$executeRaw.mockRejectedValue(new Error("boom"));
-    await expect(service.save("key-1", "scope-a", { id: "ret-1" })).resolves.toBeUndefined();
+    await expect(
+      service.save("key-1", "tenant-a", "scope-a", { id: "ret-1" }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("REG-IDEM-SVC-7 F6: tenantId is required and folded into the hash — the same key+scopeSuffix under two different tenants never collides", () => {
+    // Before F6, `check`/`save` took a pre-built scope string a caller could
+    // assemble without ever mentioning tenantId — "every caller must
+    // remember" was a hope, not a guarantee. tenantId is now a required
+    // positional argument, so a caller cannot even COMPILE a scope that
+    // omits it.
+    const hashA = service.hashFor("key-1", "tenant-a", "returns.create:user-1:ord-1");
+    const hashB = service.hashFor("key-1", "tenant-b", "returns.create:user-1:ord-1");
+    expect(hashA).not.toBe(hashB);
+    // null (no tenant context) is its own distinct bucket, not a silent
+    // collision with any real tenantId string.
+    const hashNull = service.hashFor("key-1", null, "returns.create:user-1:ord-1");
+    expect(hashNull).not.toBe(hashA);
+    expect(hashNull).not.toBe(hashB);
+    // hashFor is exactly the hash check()/save() use internally — the F5 lock
+    // key (returns.service.ts) can never drift from the row it protects.
+    expect(hashA).toBe(service.keyHash("key-1", "tenant-a:returns.create:user-1:ord-1"));
   });
 });

@@ -28,12 +28,19 @@ import { PrismaService } from "../prisma/prisma.service";
  * what lets the guard degrade quietly on an environment where the table has
  * not been provisioned yet.
  *
- * SCOPING WARNING: `keyHash` is GLOBALLY unique and these queries run on the
- * un-scoped client, so a new caller MUST embed its tenantId in the scope string
- * (e.g. `returns.create:${tenantId}:${orderId}`) or a key could collide across
- * tenants. RoutesService's existing scopes are left exactly as they are —
- * retrofitting a tenantId into them would silently invalidate in-flight driver
- * keys.
+ * SCOPING (F6, independent review, PR-2): `keyHash` is GLOBALLY unique and these queries run on
+ * the un-scoped client, so a caller that built its own scope string could always forget the
+ * tenantId — "every caller must remember" is not a guarantee, it is a hope. `check`/`save` now
+ * take `tenantId` as a REQUIRED positional argument and build the final scope internally
+ * (`${tenantId ?? "none"}:${scopeSuffix}`), so a caller cannot construct a scope that omits it —
+ * the type system enforces the half of "SCOPING WARNING" that used to be a comment. `keyHash`
+ * itself is unchanged (a pure hash of whatever scope string it is given) so RoutesService's own
+ * three private RF-019 copies — which build their OWN scope strings by hand and are explicitly
+ * OUT of this fix (see below) — are untouched.
+ *
+ * RoutesService's existing scopes are left exactly as they are — retrofitting a tenantId into
+ * them would silently invalidate in-flight driver keys, and RULINGS R7 keeps RoutesService out
+ * of this diff.
  */
 @Injectable()
 export class IdempotencyService {
@@ -44,9 +51,27 @@ export class IdempotencyService {
     return createHash("sha256").update(`${scope}:${key}`).digest("hex");
   }
 
-  /** The stored response for this key+scope inside the 24h window, else null. */
-  async check<T = unknown>(key: string, scope: string): Promise<T | null> {
-    const hash = this.keyHash(key, scope);
+  /** Builds the tenant-qualified scope every `check`/`save` call is keyed on — the one place
+   *  that string is assembled, so it can never be built without a tenantId. */
+  private scopeFor(tenantId: string | null, scopeSuffix: string): string {
+    return `${tenantId ?? "none"}:${scopeSuffix}`;
+  }
+
+  /** The EXACT `keyHash` a `check`/`save` call for these arguments will use — public so a caller
+   *  that needs to serialize its own check-then-act sequence (F5: `withAdvisoryLock`, keyed on
+   *  this hash) can never compute a lock key that drifts from the row it is actually protecting. */
+  hashFor(key: string, tenantId: string | null, scopeSuffix: string): string {
+    return this.keyHash(key, this.scopeFor(tenantId, scopeSuffix));
+  }
+
+  /** The stored response for this key, scoped to tenant+scopeSuffix, inside the 24h window,
+   *  else null. */
+  async check<T = unknown>(
+    key: string,
+    tenantId: string | null,
+    scopeSuffix: string,
+  ): Promise<T | null> {
+    const hash = this.keyHash(key, this.scopeFor(tenantId, scopeSuffix));
     const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
     try {
       const rows = await this.prisma.$queryRaw<{ response: string }[]>`
@@ -61,9 +86,14 @@ export class IdempotencyService {
     }
   }
 
-  /** Best-effort store of this request's response under key+scope. */
-  async save(key: string, scope: string, response: unknown): Promise<void> {
-    const hash = this.keyHash(key, scope);
+  /** Best-effort store of this request's response under key, scoped to tenant+scopeSuffix. */
+  async save(
+    key: string,
+    tenantId: string | null,
+    scopeSuffix: string,
+    response: unknown,
+  ): Promise<void> {
+    const hash = this.keyHash(key, this.scopeFor(tenantId, scopeSuffix));
     try {
       const responseJson = JSON.stringify(response);
       await this.prisma.$executeRaw`

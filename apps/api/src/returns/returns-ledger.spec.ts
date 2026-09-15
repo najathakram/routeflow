@@ -93,7 +93,11 @@ describe("ReturnsService → regulated ledger (W5c)", () => {
     expect(ledger.unreverseReturnEntries).not.toHaveBeenCalled();
   });
 
-  it("B348: cancel() of a PROCESSED return does NOT touch the ledger — PROCESSED is retired, no writer ever sets it", async () => {
+  it("F2 (independent review, PR-2): cancel() of a PROCESSED return DOES un-reverse the ledger — legacy rows still need their effects undone", async () => {
+    // B348 removed this arm on the theory that no writer sets PROCESSED — true for CODE, not
+    // for pre-existing DATA. PROCESSED is a legacy ReturnStatus (still a live sales.prisma enum
+    // member): a return already sitting in that state from before whatever retired the writer
+    // must still have cancel() undo its stock/ledger effects, or the reversal is stranded.
     prisma.return.findUnique.mockResolvedValue({
       id: "ret-1",
       status: "PROCESSED",
@@ -104,10 +108,9 @@ describe("ReturnsService → regulated ledger (W5c)", () => {
 
     await service.cancel("ret-1", { sub: "u1", role: "OPERATOR" } as any);
 
-    // The cancel claim itself still succeeds (PROCESSED is not excluded from
-    // the →CANCELLED transition) — only the now-dead RECEIVED-or-PROCESSED
-    // stock/ledger undo must never fire for it.
-    expect(ledger.unreverseReturnEntries).not.toHaveBeenCalled();
+    expect(ledger.unreverseReturnEntries).toHaveBeenCalledWith(
+      expect.objectContaining({ returnId: "ret-1" }),
+    );
   });
 
   it("receive() aborts without reversing when the IN_TRANSIT claim loses the race", async () => {

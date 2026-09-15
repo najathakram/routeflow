@@ -43,13 +43,16 @@
  * admin/self-serve settings action, not a per-order hot path — nowhere near order-merge's
  * checkout volume — so 4 slots covers plausible concurrent enables across different tenants
  * without idling connections sized for a workload this family doesn't have; a caller that still
- * can't get a slot within its wait budget surfaces cleanly as a 503 to retry. Worst case is
- * therefore 12 + 8 + 4 = 24 lock connections; with Prisma's pool (default 10) that is 34 — far
- * below Postgres's `max_connections`, so the split costs nothing it cannot pay for.
+ * can't get a slot within its wait budget surfaces cleanly as a 503 to retry. `idempotency` gets
+ * `max: 6` (F5, PR-2) — the same short/request-path shape as order-merge, sized a little under it
+ * for a lower-volume caller (a driver return submission) without starving a plausible burst (one
+ * driver retrying a flaky connection across several stops). Worst case is therefore
+ * 12 + 8 + 4 + 6 = 30 lock connections; with Prisma's pool (default 10) that is 40 — far below
+ * Postgres's `max_connections`, so the split costs nothing it cannot pay for.
  * Exhausting the CRON pool surfaces as `LockUnavailableError`, which `@LeaderCron` turns into a
  * skipped tick plus a warn — never a request-path error. `LOCK_FAMILIES` is the closed
  * allow-list of families (they are code literals, never derived from data), enforced before any
- * connect, so a typo cannot silently stand up a FOURTH pool whose holders serialize against
+ * connect, so a typo cannot silently stand up a FIFTH pool whose holders serialize against
  * nobody while reading as locked.
  *
  * WHY KEEPALIVE (`keepAlive: true`, `keepAliveInitialDelayMillis: 30_000`, on BOTH families —
@@ -87,7 +90,7 @@ export type LockMode = "wait" | "try";
  * derived from data, so the list is closed: `withAdvisoryLock` rejects anything else BEFORE it
  * connects (see the header's "WHY ONE POOL PER FAMILY").
  */
-export const LOCK_FAMILIES = ["order-merge", "cron", "billing"] as const;
+export const LOCK_FAMILIES = ["order-merge", "cron", "billing", "idempotency"] as const;
 export type LockFamily = (typeof LOCK_FAMILIES)[number];
 export interface AdvisoryLockOptions {
   family: string;
@@ -128,7 +131,18 @@ const pools = new Map<string, Pool>();
  * fallback below is a real branch: `withAdvisoryLock` rejects an unknown family before `lockPool`
  * is ever reached, so it is unreachable in practice.
  */
-const POOL_MAX: Record<string, number | undefined> = { "order-merge": 8, cron: 12, billing: 4 };
+const POOL_MAX: Record<string, number | undefined> = {
+  "order-merge": 8,
+  cron: 12,
+  billing: 4,
+  // F5 (independent review, PR-2): `IdempotencyService`'s check-then-create-then-save is a
+  // check-then-act race with no lock (two concurrent replays of the same key both miss the
+  // check and both create) — a caller wraps its whole check/create/save sequence in this family.
+  // Same short, request-path hold-time shape as order-merge; sized a little under it since a
+  // driver return submission is rarer than an order edit, without starving a genuine burst
+  // (a driver retrying a flaky connection at several stops in a row).
+  idempotency: 6,
+};
 const DEFAULT_POOL_MAX = 8;
 function lockPool(family: string): Pool {
   let pool = pools.get(family);

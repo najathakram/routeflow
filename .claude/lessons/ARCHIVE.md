@@ -102,6 +102,13 @@
   params across every client — hardening a contract means checking its consumers.**
 - **Guard:** DTO regression specs (products, suppliers).
 
+### L-066 · 2026-09-04 · testing · watchdog spec
+
+- **Symptom:** a spec green on CI failed on every loaded dev box, pushing people to skip the pre-push gate.
+- **Root cause:** a fixed 500 ms `setTimeout` stood in for "the spawned child has booted"; bare Node boot here is 0.6–6 s. A poll alone still fails: the api lane's undeclared Jest cap is 5 s.
+- **Lesson:** **A fixed delay is never a readiness signal. Wait on the observable (log line, exit, stream) with a capped poll, kill the child in `finally`, and give the async test its own timeout above the cap.**
+- **Guard:** `visibility-watchdog-script.spec.ts` slow-boot repro (`NODE_OPTIONS=--require slow-boot.cjs`, 1.5 s) stays green.
+
 ## deploy
 
 ### L-019 · 2026-08-31 · deploy · #565
@@ -171,6 +178,18 @@
   `discount: 0` — `discount` is reserved for explicit operator discounts; never derive one from
   the other.**
 - **Guard:** invoices spec "does NOT double-count a price override".
+
+### L-098 · 2026-09-08 · domain · #673
+
+- **Symptom:** a keyboard user saw a fragmented purple focus ring and a wrapped arrow on the
+  Sign-in menu items.
+- **Root cause:** an interactive element containing several inline children (icon, label, glyph)
+  was left `display: inline`, so `:focus-visible` painted once per line box and the trailing
+  glyph wrapped.
+- **Lesson:** **Any focusable element that holds more than one child is a flex/grid/block
+  container with `white-space: nowrap` where the row must not break; the focus ring lives on the
+  element, never on its children; pin the rule with a CSS-rule test, never a source-text grep.**
+- **Guard:** the `signin-menu` assertions in `marketing-port.static.test.ts`.
 
 ## security
 

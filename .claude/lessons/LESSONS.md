@@ -261,13 +261,6 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
   `21-destructive-guards.spec.ts`; no shared toast-assertion helper exists yet — a gap this entry
   flags) applied at `apps/web/e2e/30-recurring-standing.spec.ts` (REG-B09, REG-B92).
 
-### L-066 · 2026-09-04 · testing · watchdog spec
-
-- **Symptom:** a spec green on CI failed on every loaded dev box, pushing people to skip the pre-push gate.
-- **Root cause:** a fixed 500 ms `setTimeout` stood in for "the spawned child has booted"; bare Node boot here is 0.6–6 s. A poll alone still fails: the api lane's undeclared Jest cap is 5 s.
-- **Lesson:** **A fixed delay is never a readiness signal. Wait on the observable (log line, exit, stream) with a capped poll, kill the child in `finally`, and give the async test its own timeout above the cap.**
-- **Guard:** `visibility-watchdog-script.spec.ts` slow-boot repro (`NODE_OPTIONS=--require slow-boot.cjs`, 1.5 s) stays green.
-
 ### L-063 · 2026-09-04 · testing · imp-04
 
 - **Symptom:** after apps/api's suite was split into two `npx jest` invocations,
@@ -407,18 +400,6 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
   token (the red gate reads titles).**
 - **Guard:** `apps/api/src/**/{credit-note,payment,import}-numbering.db.spec.ts` (REG-B267/B268/B269),
   `numbering.service.spec.ts`.
-
-### L-098 · 2026-09-08 · domain · #673
-
-- **Symptom:** a keyboard user saw a fragmented purple focus ring and a wrapped arrow on the
-  Sign-in menu items.
-- **Root cause:** an interactive element containing several inline children (icon, label, glyph)
-  was left `display: inline`, so `:focus-visible` painted once per line box and the trailing
-  glyph wrapped.
-- **Lesson:** **Any focusable element that holds more than one child is a flex/grid/block
-  container with `white-space: nowrap` where the row must not break; the focus ring lives on the
-  element, never on its children; pin the rule with a CSS-rule test, never a source-text grep.**
-- **Guard:** the `signin-menu` assertions in `marketing-port.static.test.ts`.
 
 ### L-096 · 2026-09-08 · domain · #671
 
@@ -827,6 +808,21 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   scopes via `where.order = {routeRun: {driverId}}`); `returns.security.spec.ts`'s B221 suite.
   Sibling pattern already fixed once in `credit-notes.service.ts` (DRIVER denied outright there,
   a different but equally deliberate choice — the point is BOTH required an explicit branch).
+
+### L-155 · 2026-09-15 · domain · PR-2 fix round (F2: retired-writer branch vs legacy data)
+
+- **Symptom:** B348 removed a `cancel()` branch handling ReturnStatus PROCESSED, reasoning "no
+  writer sets this anymore" (confirmed by grep) — independent review restored it: rows already
+  PROCESSED from before the writer was retired still need cancel() to undo their stock/ledger
+  effects, and removing the branch stranded that reversal for every such legacy row.
+- **Root cause:** "no live writer" was verified against CODE (a grep for the enum value) and
+  treated as equivalent to "no live DATA in that state" — a retired write path leaves its
+  already-written rows behind; the enum member stayed real in the schema.
+- **Lesson:** **Before deleting a branch that HANDLES an enum/state value because nothing WRITES
+  it anymore, that is a claim about existing DATA, not code — verify with a query (or an
+  explicit prod count) before removing the read/update-side handling, not a grep for writers.**
+- **Guard:** `returns-ledger.spec.ts`'s PROCESSED-cancel case pins the restored behavior; the
+  comment on the branch cites the exact prod check (`GROUP BY status`) that would retire it.
 
 ### L-130 · 2026-09-13 · domain · F27 B15 (estimates)
 

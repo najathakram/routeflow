@@ -18,6 +18,7 @@ import { showToast } from "../../../../../../lib/toast";
 import { sumStopOrders } from "../../../../../../lib/run-money";
 import {
   pendingReturnPayloads,
+  submittedReturnKey,
   summarizeSubmissions,
   toUndeliveredStop,
   undeliveredReturnLines,
@@ -162,17 +163,25 @@ export default function ReturnScreen() {
     // REG-RETURNS-IDEM-2: `markSubmitted` writes to a PERSISTED store and nothing ever unmarks
     // it, so a return that only ever reached the OFFLINE QUEUE and then hard-failed at drain
     // used to bounce the driver silently back to the stop forever, with no return on record and
-    // no way to re-issue it. Every POST now carries the deterministic `returnSubmitKey`, so a
-    // deliberate re-tap is safe on both legs: one that DID land replays onto the original
-    // server-side (returns.service.ts collapses it, no second credit), and one that never
-    // reached the server is finally created. Blocking client-side is therefore no longer the
-    // thing keeping the customer from being credited twice — the key is.
+    // no way to re-issue it. Every POST now carries `returnSubmitKey` keyed on a per-attempt
+    // nonce (F1, independent review): a retry of ONE pending attempt (offline-queue drain, an
+    // app kill mid-request, this same "reissue" tap before any of it landed) reuses the SAME
+    // nonce and collapses server-side onto one return — but once an attempt actually lands, its
+    // nonce is cleared (markSubmitted below), so tapping Issue again for the same stop+order
+    // — a genuinely NEW return, not a retry — mints a fresh nonce and creates a genuinely new
+    // return instead of silently replaying the old one.
     const reissue = pending.length === 0;
     const toSend = reissue ? payloads : pending;
     Promise.allSettled(
-      toSend.map((p) =>
-        createReturn.mutateAsync({ ...p, idempotencyKey: returnSubmitKey(stopId, p) }),
-      ),
+      toSend.map((p) => {
+        const nonce = useReturnSubmissionStore
+          .getState()
+          .getOrCreateNonce(submittedReturnKey(stopId, p.orderId));
+        return createReturn.mutateAsync({
+          ...p,
+          idempotencyKey: returnSubmitKey(stopId, p, nonce),
+        });
+      }),
     ).then((settled) => {
       const results: ReturnSubmissionResult[] = settled.map((s, i) => {
         const orderId = toSend[i]!.orderId;

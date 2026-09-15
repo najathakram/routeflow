@@ -4020,7 +4020,7 @@ describe("OrdersService", () => {
       // F2 server half: overrideReason used to live inside the isManualOverride
       // branch, so a reason-only edit (price unchanged, isManualOverride false)
       // silently dropped the new reason. Mirrors the client-side fix in
-      // order-item-diff.ts (F3).
+      // order-item-diff.ts (F3 mobile).
       prisma.order.findUnique.mockResolvedValue(draftOrder);
       prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 14.97, status: "PENDING" }]);
 
@@ -4039,7 +4039,45 @@ describe("OrdersService", () => {
       expect(updateArg.data.unitPrice).toBe(4.99);
       expect(updateArg.data).not.toHaveProperty("priceType");
       expect(updateArg.data).not.toHaveProperty("originalPrice");
-      expect(updateArg.data).not.toHaveProperty("overriddenBy");
+      // F4 (independent review, PR-2): overriddenBy must move WITH overrideReason — a
+      // reason-only edit that writes no attribution leaves an audit/dispute pointing at
+      // whoever last touched the (untouched, here) isManualOverride branch instead of the
+      // operator who actually made THIS edit.
+      expect(updateArg.data.overriddenBy).toBe("user-op");
+    });
+
+    it("REG-MSCAN-M1-server-noqty: a QTY-LESS reason-only UPDATE (no qty/boxes/pieces at all) still persists the reason + attribution", async () => {
+      // F3 (independent review, PR-2): the branch gate used to be
+      // `item.qty !== undefined || item.boxes != null || item.pieces != null` — a payload
+      // carrying ONLY overrideReason (mobile's "flag damaged, don't touch qty" edit) matched
+      // NONE of those and never reached the reason-write below at all, so
+      // prisma.orderItem.update was never even called. This is the exact payload shape the
+      // qty-inclusive REG-MSCAN-M1-server case above does not exercise.
+      prisma.order.findUnique.mockResolvedValue(draftOrder);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 14.97, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-1", action: "UPDATE", overrideReason: "damaged" }] },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "li-1" },
+          data: expect.objectContaining({
+            // qty/price fall back to the line's existing values — this edit never asked to
+            // change them.
+            qty: 3,
+            unitPrice: 4.99,
+            overrideReason: "damaged",
+            overriddenBy: "user-op",
+          }),
+        }),
+      );
+      const updateArg = prisma.orderItem.update.mock.calls[0][0] as any;
+      expect(updateArg.data).not.toHaveProperty("priceType");
+      expect(updateArg.data).not.toHaveProperty("originalPrice");
     });
 
     it("applies a price override on a PENDING order (not just DRAFT)", async () => {

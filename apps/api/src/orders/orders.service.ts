@@ -4403,7 +4403,18 @@ export class OrdersService implements OnApplicationBootstrap {
                     trackedSubcategoryId: product.trackedSubcategoryId ?? null,
                   },
                 });
-              } else if (item.qty !== undefined || item.boxes != null || item.pieces != null) {
+              } else if (
+                item.qty !== undefined ||
+                item.boxes != null ||
+                item.pieces != null ||
+                // F3 (independent review, PR-2): a qty-less payload carrying ONLY
+                // overrideReason/notes (mobile's "damaged, no qty change" edit) never
+                // reached this branch at all — the gate was qty/split-only, so the
+                // reason-only and notes-only writes below were unreachable dead code
+                // for exactly the payload shape that needs them.
+                item.overrideReason !== undefined ||
+                item.notes !== undefined
+              ) {
                 const li = order.lineItems.find((li) => li.id === item.id);
                 if (!li) continue;
                 const isUnlisted = !li.productId;
@@ -4551,8 +4562,15 @@ export class OrdersService implements OnApplicationBootstrap {
                     // was silently dropped because this field lived inside that branch.
                     // Written whenever the payload carries the key at all, empty string
                     // included, mirroring order-item-diff.ts's client-side fix.
+                    // F4 (independent review, PR-2): overriddenBy must move WITH
+                    // overrideReason — writing the reason alone left the attribution
+                    // stale (whoever last touched the isManualOverride branch, or null),
+                    // so an audit/dispute of THIS edit pointed at the wrong operator.
                     ...(item.overrideReason !== undefined
-                      ? { overrideReason: item.overrideReason ?? null }
+                      ? {
+                          overrideReason: item.overrideReason ?? null,
+                          overriddenBy: user?.sub ?? null,
+                        }
                       : {}),
                   },
                 });
