@@ -163,7 +163,7 @@ describe("RF-081 ReturnsService.findOneForUser – IDOR prevention", () => {
 
 // ─── B221: DRIVER list scoping ────────────────────────────────────────────────
 
-describe("B221 ReturnsService.findAllForUser – DRIVER scoping", () => {
+describe("REG-B221 ReturnsService.findAllForUser – DRIVER scoping", () => {
   let service: ReturnsService;
   let prisma: ReturnType<typeof createMockPrisma>;
 
@@ -193,7 +193,7 @@ describe("B221 ReturnsService.findAllForUser – DRIVER scoping", () => {
     (prisma.forTenant() as any).return.count.mockResolvedValue(0);
   });
 
-  it("B221-1: DRIVER's findAll is scoped to orders on their own route runs, not the tenant-wide list", async () => {
+  it("REG-B221-1: DRIVER's findAll is scoped to orders on their own route runs, not the tenant-wide list", async () => {
     (prisma.forTenant() as any).driver.findFirst.mockResolvedValue({ id: "drv-1" });
 
     await service.findAllForUser(DRIVER_JWT as any, {});
@@ -205,7 +205,7 @@ describe("B221 ReturnsService.findAllForUser – DRIVER scoping", () => {
     expect(call.where.order).toEqual({ routeRun: { driverId: "drv-1" } });
   });
 
-  it("B221-2: a DRIVER user with no Driver row sees NOTHING — never the unscoped tenant-wide list", async () => {
+  it("REG-B221-2: a DRIVER user with no Driver row sees NOTHING — never the unscoped tenant-wide list", async () => {
     (prisma.forTenant() as any).driver.findFirst.mockResolvedValue(null);
 
     const result = await service.findAllForUser(DRIVER_JWT as any, {});
@@ -214,7 +214,7 @@ describe("B221 ReturnsService.findAllForUser – DRIVER scoping", () => {
     expect((prisma.forTenant() as any).return.findMany).not.toHaveBeenCalled();
   });
 
-  it("B221-3: OPERATOR's findAll carries no driverId scoping and never resolves a driver row", async () => {
+  it("REG-B221-3: OPERATOR's findAll carries no driverId scoping and never resolves a driver row", async () => {
     await service.findAllForUser(OPERATOR_JWT as any, {});
 
     expect((prisma.forTenant() as any).driver.findFirst).not.toHaveBeenCalled();
@@ -222,7 +222,7 @@ describe("B221 ReturnsService.findAllForUser – DRIVER scoping", () => {
     expect(call.where.order).toBeUndefined();
   });
 
-  it("B221-4: a driverId filter combines with an explicit orderId as independent AND conditions", async () => {
+  it("REG-B221-4: a driverId filter combines with an explicit orderId as independent AND conditions", async () => {
     (prisma.forTenant() as any).driver.findFirst.mockResolvedValue({ id: "drv-1" });
 
     await service.findAllForUser(DRIVER_JWT as any, { orderId: "ord-1" });

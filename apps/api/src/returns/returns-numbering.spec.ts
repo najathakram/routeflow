@@ -79,7 +79,7 @@ describe("ReturnsService.create — return numbering via NumberingService (B353)
     service = mod.get(ReturnsService);
   });
 
-  it('B353-1: mints through reserveNext("RETURN", ...) — never a Date.now()-derived number', async () => {
+  it('REG-B353-1: mints through reserveNext("RETURN", ...) — never a Date.now()-derived number', async () => {
     const ret = await service.create(dto(), "user-1", "OPERATOR");
 
     expect(reserveNext).toHaveBeenCalledTimes(1);
@@ -91,7 +91,7 @@ describe("ReturnsService.create — return numbering via NumberingService (B353)
     expect(ret.returnNumber).toBe("RET-2026-0001");
   });
 
-  it("B353-2: reserves on the CALLER's own transaction, never a nested one", async () => {
+  it("REG-B353-2: reserves on the CALLER's own transaction, never a nested one", async () => {
     await service.create(dto(), "user-1", "OPERATOR");
 
     // The `tx` opts.reserveNext receives is the SAME object create()'s own
@@ -101,14 +101,14 @@ describe("ReturnsService.create — return numbering via NumberingService (B353)
     expect(optsArg.tx).toBe(txHandle);
   });
 
-  it("B353-3: the current calendar year is what gets reserved against", async () => {
+  it("REG-B353-3: the current calendar year is what gets reserved against", async () => {
     await service.create(dto(), "user-1", "OPERATOR");
 
     const optsArg = reserveNext.mock.calls[0][1];
     expect(optsArg.year).toBe(new Date().getFullYear());
   });
 
-  it("B353-4: two returns created back to back both mint through reserveNext (no in-process fallback number ever slips through)", async () => {
+  it("REG-B353-4: two returns created back to back both mint through reserveNext (no in-process fallback number ever slips through)", async () => {
     reserveNext.mockResolvedValueOnce("RET-2026-0001").mockResolvedValueOnce("RET-2026-0002");
 
     const first = await service.create(dto(), "user-1", "OPERATOR");
