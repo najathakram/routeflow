@@ -55,7 +55,7 @@ let databaseUrl;
 // map ever changes. Historical plan keys from catalog versions published before the
 // Starter/Growth/Scale rename — a pinned older PlanVersion's own definitions, or a tenant's
 // stored planKey, can legitimately carry either the old or the new name.
-const LEGACY_PLAN_KEY_ALIASES = {
+export const LEGACY_PLAN_KEY_ALIASES = {
   TEAM: "GROWTH",
   BUSINESS: "SCALE",
   PROFESSIONAL: "SCALE",
@@ -66,7 +66,7 @@ const LEGACY_PLAN_KEY_ALIASES = {
 // through unchanged. Anything not a known legacy alias (current keys, and genuine typos/unknown
 // keys alike) passes through as-is — this function only ever narrows a legacy name to its
 // current one, it never validates.
-function normalizeLegacyPlanKey(planKey) {
+export function normalizeLegacyPlanKey(planKey) {
   return Object.hasOwn(LEGACY_PLAN_KEY_ALIASES, planKey)
     ? LEGACY_PLAN_KEY_ALIASES[planKey]
     : planKey;
@@ -81,7 +81,7 @@ function normalizeLegacyPlanKey(planKey) {
 // which may not be a key in `defs` at all. A genuine typo/retired key normalizes to itself and
 // matches nothing, so it still falls through to the "not in the resolved catalog version"
 // manual-decision bucket.
-function findCatalogPlanKey(defs, planKey) {
+export function findCatalogPlanKey(defs, planKey) {
   if (!planKey) return undefined;
   const want = normalizeLegacyPlanKey(planKey);
   for (const key of defs.keys()) {
