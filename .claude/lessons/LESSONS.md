@@ -855,3 +855,20 @@ apps/web/app --include=*.tsx -A1 | grep -B1 onSuccess` — narrow to `.map()`-re
 - **Guard:** `ci-freshness-guard-script.spec.ts` (c0d45b0f — behavioral assertions only, no
   `elapsedMs` check); `stop.gate5.spec.mjs` F4 (5c57af58 — iterates `ALL_REPO_DIRS`, asserts each
   no longer exists, drops the ambient count comparison).
+
+### L-164 · 2026-09-15 · testing · B352 fix round (dropped security-advisory floor)
+
+- **Symptom:** loosening `next-version.spec.ts`'s exact-literal Next-version pin to a
+  major-line-only tolerance (the correct fix for B352's flakiness) silently accepted a downgrade
+  to `15.0.0` — but the two CRITICAL npm-audit advisories this guard exists to keep cleared are
+  only fixed in `15.5.24+`, so the loosened check dropped that protection. Caught by an
+  independent Opus review, not by the fix itself.
+- **Root cause:** an over-strict exact-match assertion was silently protecting TWO invariants at
+  once (the major line, and a minimum patch) — generalizing it to fix the one that was flaky
+  (the exact patch) dropped the other one nobody had named.
+- **Lesson:** **Before loosening an exact-match guard to a tolerant pattern, enumerate every
+  invariant the exact value was ALSO enforcing (read the guard's own header/rationale, not just
+  the flaky symptom) and keep each one explicit in the replacement — even if that means two
+  checks instead of one.**
+- **Guard:** `next-version.ts`'s `meetsMinimumOnMajorLine` (major exact + minor/patch >= a named
+  floor) sits beside `pinnedToMajorLine`, not instead of it (0e5246c4).
