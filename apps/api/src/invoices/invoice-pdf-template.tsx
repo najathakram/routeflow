@@ -3,7 +3,7 @@ import { Document, Page, Text, View, StyleSheet, Image, Link } from "@react-pdf/
 import { carrierLabel, getTrackingUrl } from "../common/shipping";
 import { formatQtySplit } from "@routeflow/pricing";
 import { promoNote, showOriginalPrice } from "./invoice-pdf-item";
-import { CREDIT_NOTE_METHOD, splitConfirmed } from "./payment-predicates";
+import { CREDIT_NOTE_METHOD, resolveConfirmedAmounts } from "./payment-predicates";
 
 type DecimalLike = { toNumber(): number } | number | string;
 
@@ -411,15 +411,15 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
   // can render below with a "Pending confirmation" label — so a fallback split
   // over it (for any caller that hasn't been updated to pass `totalPaid`) uses
   // the same shared predicate, never a bare PAID reduce that would count a
-  // credit note or advance application as cash (B421).
-  const confirmedFallback = splitConfirmed(invoice.payments);
-  const totalPaid = invoice.totalPaid != null ? toNum(invoice.totalPaid) : confirmedFallback.cash;
-  const creditApplied =
-    invoice.creditApplied != null ? toNum(invoice.creditApplied) : confirmedFallback.creditApplied;
-  const advanceApplied =
-    invoice.advanceApplied != null
-      ? toNum(invoice.advanceApplied)
-      : confirmedFallback.advanceApplied;
+  // credit note or advance application as cash (B421). All-or-nothing on
+  // `totalPaid`: `resolveConfirmedAmounts` never mixes a caller's own
+  // `totalPaid` with a freshly re-split `creditApplied`/`advanceApplied`,
+  // which would subtract the same credit twice and understate the balance.
+  const {
+    cash: totalPaid,
+    creditApplied,
+    advanceApplied,
+  } = resolveConfirmedAmounts(invoice, invoice.payments);
   const balance = total - totalPaid - creditApplied - advanceApplied;
   // B421: customer-facing wording is "Credit issued — CN-…" (brief ruling #3),
   // never folded into Amount Paid. Dedup + list every confirmed credit note

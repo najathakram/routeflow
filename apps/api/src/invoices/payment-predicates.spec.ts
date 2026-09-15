@@ -3,6 +3,7 @@ import {
   CASH_METHOD_FILTER,
   CONFIRMED_PAYMENT,
   CREDIT_NOTE_METHOD,
+  resolveConfirmedAmounts,
   splitConfirmed,
   sumConfirmed,
 } from "./payment-predicates";
@@ -73,6 +74,58 @@ describe("splitConfirmed", () => {
 
     expect(cash + creditApplied + advanceApplied).toBe(sumConfirmed(payments));
     expect(sumConfirmed(payments)).toBe(1558);
+  });
+});
+
+describe("resolveConfirmedAmounts", () => {
+  const payments = [
+    { amount: 232, status: "PAID", method: "CASH" },
+    { amount: 638, status: "PAID", method: CREDIT_NOTE_METHOD },
+    { amount: 100, status: "PAID", method: ADVANCE_METHOD },
+  ];
+
+  it("prefers a caller's own totalPaid, defaulting missing creditApplied/advanceApplied to 0", () => {
+    expect(resolveConfirmedAmounts({ totalPaid: 232 }, payments)).toEqual({
+      cash: 232,
+      creditApplied: 0,
+      advanceApplied: 0,
+    });
+  });
+
+  it("uses a caller's creditApplied/advanceApplied when given alongside totalPaid", () => {
+    expect(
+      resolveConfirmedAmounts(
+        { totalPaid: 232, creditApplied: 638, advanceApplied: 100 },
+        payments,
+      ),
+    ).toEqual({ cash: 232, creditApplied: 638, advanceApplied: 100 });
+  });
+
+  it("REG-B421 hardening: never mixes an old credit-inclusive totalPaid with a freshly split credit/advance -- falls back to splitConfirmed for ALL three only when totalPaid is absent", () => {
+    // A caller stuck on the pre-B421 shape passes the OLD full-inclusive sum
+    // (232 cash + 638 credit + 100 advance = 970) and nothing else. Deriving
+    // creditApplied/advanceApplied from `payments` here would double-subtract
+    // the 638 and 100 already folded into that 970.
+    expect(resolveConfirmedAmounts({ totalPaid: 970 }, payments)).toEqual({
+      cash: 970,
+      creditApplied: 0,
+      advanceApplied: 0,
+    });
+    // Only when totalPaid itself is absent do all three come from one split.
+    expect(resolveConfirmedAmounts({}, payments)).toEqual(splitConfirmed(payments));
+  });
+
+  it("tolerates a null/undefined payments array when falling back", () => {
+    expect(resolveConfirmedAmounts({}, null)).toEqual({
+      cash: 0,
+      creditApplied: 0,
+      advanceApplied: 0,
+    });
+    expect(resolveConfirmedAmounts({}, undefined)).toEqual({
+      cash: 0,
+      creditApplied: 0,
+      advanceApplied: 0,
+    });
   });
 });
 

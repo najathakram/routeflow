@@ -63,7 +63,26 @@ const invoice = {
       subtotal: 20,
     },
   ],
-  payments: [],
+  // B421: a CREDIT_NOTE + an ADVANCE row so the real (unmocked) render also
+  // exercises the "Credit issued" / "Advance applied" branches at least once —
+  // Jest never reaches them (this template is globally stubbed under Jest).
+  payments: [
+    {
+      id: "pay-smoke-credit",
+      amount: 5,
+      status: "PAID",
+      method: "CREDIT_NOTE",
+      paidAt: "2026-09-05T00:00:00.000Z",
+      creditNote: { creditNoteNumber: "CN-SMOKE-1", reason: "Smoke test" },
+    },
+    {
+      id: "pay-smoke-advance",
+      amount: 3,
+      status: "PAID",
+      method: "ADVANCE",
+      paidAt: "2026-09-06T00:00:00.000Z",
+    },
+  ],
   tenant: { businessName: "Acme Wholesale" },
 };
 

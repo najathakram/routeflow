@@ -100,6 +100,42 @@ function creditNoteOf(pmt: InvoicePayment): PaymentCreditNoteInfo | null {
   return withCn.creditNote ?? null;
 }
 
+/**
+ * B421: resolves the same three CONFIRMED-basis figures the API's
+ * `splitConfirmed` produces, preferring the server's own `paidAmount` over a
+ * local re-split of `payments`. All-or-nothing on `paidAmount` alone — a
+ * payload carrying an old, credit-inclusive `paidAmount` without the newer
+ * split fields must NOT get `creditApplied`/`advanceApplied` re-derived from
+ * `payments` too, which would subtract the same credit/advance twice and
+ * understate the balance. Only when `paidAmount` itself is absent do all
+ * three come from one local split over the same array. Exported for direct
+ * unit testing (this page has no RTL harness yet).
+ */
+export function resolveConfirmedAmounts(
+  invoice: Pick<Invoice, "paidAmount" | "creditApplied" | "advanceApplied">,
+  payments: InvoicePayment[],
+): { amountPaid: number; creditApplied: number; advanceApplied: number } {
+  if (invoice.paidAmount != null) {
+    return {
+      amountPaid: Number(invoice.paidAmount),
+      creditApplied: Number(invoice.creditApplied ?? 0),
+      advanceApplied: Number(invoice.advanceApplied ?? 0),
+    };
+  }
+  const confirmed = payments.filter((p) => p.status === "PAID");
+  return {
+    amountPaid: confirmed
+      .filter((p) => p.method !== "CREDIT_NOTE" && p.method !== "ADVANCE")
+      .reduce((s, p) => s + Number(p.amount), 0),
+    creditApplied: confirmed
+      .filter((p) => p.method === "CREDIT_NOTE")
+      .reduce((s, p) => s + Number(p.amount), 0),
+    advanceApplied: confirmed
+      .filter((p) => p.method === "ADVANCE")
+      .reduce((s, p) => s + Number(p.amount), 0),
+  };
+}
+
 const methodLabel = paymentMethodLabel;
 
 function methodBadgeClass(method: string) {
@@ -1547,10 +1583,9 @@ export default function InvoiceDetailPage() {
   // local sum is only a fallback for a payload that carries neither. The
   // `payments` array itself stays unfiltered — Payment History must keep
   // showing DRAFT rows so DraftPaymentBadge can mark them.
-  const amountPaid =
-    invoice.paidAmount != null
-      ? Number(invoice.paidAmount)
-      : payments.filter((p) => p.status === "PAID").reduce((s, p) => s + Number(p.amount), 0);
+  // B421: confirmed but non-cash — a credit note or advance applied to this
+  // invoice reduces balanceDue but must never render as "Paid"/cash received.
+  const { amountPaid, creditApplied, advanceApplied } = resolveConfirmedAmounts(invoice, payments);
   const status = invoice.status;
 
   // Draft/Final invoice-PDF stage. Default: DRAFT while it's still the
@@ -1564,7 +1599,7 @@ export default function InvoiceDetailPage() {
       ? Number(invoice.balanceDue)
       : status === "VOID" || status === "WRITTEN_OFF"
         ? 0
-        : Math.max(0, total - amountPaid);
+        : Math.max(0, total - amountPaid - creditApplied - advanceApplied);
   const discount = Number(invoice.discount ?? 0);
   const shippingFee = Number(invoice.shippingFee ?? 0);
 
@@ -2566,8 +2601,22 @@ export default function InvoiceDetailPage() {
                 )}
                 {amountPaid > 0 && (
                   <div className="flex justify-between py-0.5 text-success">
-                    <span>Paid to date</span>
+                    <span>Payments received</span>
                     <span className="money">-{fmt(amountPaid)}</span>
+                  </div>
+                )}
+                {/* B421: a credit note or advance reduces the balance but is never
+                    cash received — neutral styling, never text-success. */}
+                {creditApplied > 0 && (
+                  <div className="flex justify-between py-0.5 text-navy/70">
+                    <span>Credits applied</span>
+                    <span className="money">-{fmt(creditApplied)}</span>
+                  </div>
+                )}
+                {advanceApplied > 0 && (
+                  <div className="flex justify-between py-0.5 text-navy/70">
+                    <span>Advance applied</span>
+                    <span className="money">-{fmt(advanceApplied)}</span>
                   </div>
                 )}
                 <div
@@ -2842,9 +2891,23 @@ export default function InvoiceDetailPage() {
                 <dd className="money font-medium text-navy">{fmt(total)}</dd>
               </div>
               <div className="flex items-center justify-between">
-                <dt className="text-navy/70">Paid</dt>
+                <dt className="text-navy/70">Payments received</dt>
                 <dd className="money font-medium text-success">{fmt(amountPaid)}</dd>
               </div>
+              {/* B421: neutral styling — never text-success — a credit note or
+                  advance reduces the balance but isn't cash received. */}
+              {creditApplied > 0 && (
+                <div className="flex items-center justify-between">
+                  <dt className="text-navy/70">Credits applied</dt>
+                  <dd className="money font-medium text-navy">{fmt(creditApplied)}</dd>
+                </div>
+              )}
+              {advanceApplied > 0 && (
+                <div className="flex items-center justify-between">
+                  <dt className="text-navy/70">Advance applied</dt>
+                  <dd className="money font-medium text-navy">{fmt(advanceApplied)}</dd>
+                </div>
+              )}
               <div
                 className={cn(
                   "flex items-center justify-between border-t border-surface-border pt-2 font-semibold",

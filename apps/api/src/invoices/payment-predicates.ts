@@ -105,3 +105,41 @@ export function splitConfirmed(
   }
   return { cash, creditApplied, advanceApplied };
 }
+
+/** The subset of an already-serialized invoice/DTO carrying pre-split figures
+ *  (e.g. what `invoices.service.ts` now attaches via `splitConfirmed`). */
+export interface PrecomputedConfirmedAmounts {
+  totalPaid?: number | string | null;
+  creditApplied?: number | string | null;
+  advanceApplied?: number | string | null;
+}
+
+/**
+ * Resolves the same three figures `splitConfirmed` produces, preferring a
+ * caller's already-computed `totalPaid`/`creditApplied`/`advanceApplied` over
+ * re-deriving them from the raw `payments` array — for a rendering surface
+ * (a PDF/document template) that receives a server-computed DTO but must
+ * still degrade gracefully for a caller that hands it raw payments instead.
+ *
+ * All-or-nothing on `totalPaid` alone (B421 hardening, independent review):
+ * a caller that supplies `totalPaid` but omits `creditApplied`/
+ * `advanceApplied` gets `0` for those, NEVER a value re-derived from
+ * `payments` — mixing an old, credit-inclusive `totalPaid` with a freshly
+ * split `creditApplied` would subtract the same credit twice and understate
+ * the balance. Only when `totalPaid` itself is absent does this fall back to
+ * splitting `payments` for all three figures together, so the three always
+ * come from ONE consistent basis.
+ */
+export function resolveConfirmedAmounts(
+  precomputed: PrecomputedConfirmedAmounts,
+  payments: ReadonlyArray<ConfirmablePaymentRow> | null | undefined,
+): SplitConfirmedResult {
+  if (precomputed.totalPaid != null) {
+    return {
+      cash: Number(precomputed.totalPaid),
+      creditApplied: Number(precomputed.creditApplied ?? 0),
+      advanceApplied: Number(precomputed.advanceApplied ?? 0),
+    };
+  }
+  return splitConfirmed(payments);
+}
