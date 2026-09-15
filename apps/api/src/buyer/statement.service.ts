@@ -2,7 +2,13 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import { PrismaService } from "../prisma/prisma.service";
 import { monthRange, periodBucketOf } from "../regulated/period";
 import { roundMoney } from "@routeflow/pricing";
-import { CONFIRMED_PAYMENT, sumConfirmed } from "../invoices/payment-predicates";
+import {
+  ADVANCE_METHOD,
+  CONFIRMED_PAYMENT,
+  CREDIT_NOTE_METHOD,
+  splitConfirmed,
+  sumConfirmed,
+} from "../invoices/payment-predicates";
 
 /** Strict "YYYY-MM" — anything else is a 400 before any query runs. */
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
@@ -12,8 +18,17 @@ const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
  * A credit-note or advance application is itself an InvoicePayment row, so the
  * month's CONFIRMED payment rows ALREADY contain them — the statement splits
  * them into the `credits` bucket so nothing is ever double-counted.
+ *
+ * B421: sourced from the shared `@routeflow/pricing` constants (never a
+ * second, locally-declared method list — that drift is exactly how B421
+ * happened elsewhere) via `isCredit`, below. The two figures this produces
+ * (`payments`/`credits`) are pinned equal to `splitConfirmed`'s
+ * `cash`/`creditApplied + advanceApplied` over the SAME array by a spec —
+ * this file still needs the filtered ROW arrays for line items, which
+ * `splitConfirmed` (aggregate-only) doesn't return, so the partition stays
+ * local while the classification itself does not.
  */
-const CREDIT_METHODS = ["CREDIT_NOTE", "ADVANCE"] as const;
+const isCredit = (method: string) => method === CREDIT_NOTE_METHOD || method === ADVANCE_METHOD;
 
 export interface StatementLineItem {
   date: string;
@@ -92,6 +107,12 @@ export class StatementService {
           id: true,
           amount: true,
           method: true,
+          // B421: the `where` above already guarantees every row is PAID, but
+          // `splitConfirmed` re-checks `status` generically (it's a shared
+          // helper with no knowledge of this query's own filter) — without
+          // this field every row silently fails that check and the whole
+          // statement reports $0 payments/credits.
+          status: true,
           reference: true,
           paidAt: true,
           invoice: { select: { invoiceNumber: true } },
@@ -123,11 +144,16 @@ export class StatementService {
     const monthInvoices = invoices.filter((inv) => inv.issueDate >= from);
     const charges = roundMoney(monthInvoices.reduce((s, inv) => s + Number(inv.total), 0));
 
-    const isCredit = (method: string) => (CREDIT_METHODS as readonly string[]).includes(method);
     const paymentRows = monthPayments.filter((p) => !isCredit(p.method));
     const creditRows = monthPayments.filter((p) => isCredit(p.method));
-    const payments = roundMoney(paymentRows.reduce((s, p) => s + Number(p.amount), 0));
-    const credits = roundMoney(creditRows.reduce((s, p) => s + Number(p.amount), 0));
+    // B421: derived from the SAME shared helper every other surface uses,
+    // never a second re-filter of monthPayments — mathematically guaranteed
+    // equal to a reduce over paymentRows/creditRows above (both partition
+    // the identical already-CONFIRMED array by the identical method check),
+    // pinned by statement.service.spec.ts.
+    const { cash, creditApplied, advanceApplied } = splitConfirmed(monthPayments);
+    const payments = roundMoney(cash);
+    const credits = roundMoney(creditApplied + advanceApplied);
 
     let adjustments = roundMoney(closing - (opening + charges - payments - credits));
     if (Math.abs(adjustments) < 0.005) adjustments = 0;

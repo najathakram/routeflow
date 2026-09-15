@@ -682,8 +682,19 @@ export class EmailService {
      * PDF's Amount Paid. Undefined on a caller that hasn't been updated yet;
      * the tfoot then falls back to a single "Amount Due" = `total` row (the
      * pre-F03 rendering) instead of a misleading $0-paid line.
+     * B421: cash-only — a CREDIT_NOTE or ADVANCE application must never
+     * render here, which is exactly the client's original complaint reaching
+     * an email sent to their own customer.
      */
     totalPaid?: number;
+    /** Confirmed CREDIT_NOTE applications (B421) — reduces balanceDue but is
+     *  never cash the customer paid; rendered as its own neutral line. */
+    creditApplied?: number;
+    /** Confirmed ADVANCE applications (B421) — same treatment. */
+    advanceApplied?: number;
+    /** Credit note numbers backing `creditApplied` (B421) — "Credit issued —
+     *  CN-…". Empty/absent renders the line without a number. */
+    creditNoteNumbers?: string[];
     /**
      * CONFIRMED-basis outstanding balance (F03/R8) — what a reminder must
      * demand. NEVER pass `total` here: dunning a customer for the full amount
@@ -886,6 +897,12 @@ export class EmailService {
       total: number;
       /** CONFIRMED-basis amount already collected (F03/R8) — see sendInvoice's doc. */
       totalPaid?: number;
+      /** Confirmed CREDIT_NOTE applications (B421) — see sendInvoice's doc. */
+      creditApplied?: number;
+      /** Confirmed ADVANCE applications (B421) — see sendInvoice's doc. */
+      advanceApplied?: number;
+      /** Credit note numbers backing `creditApplied` (B421). */
+      creditNoteNumbers?: string[];
       /** CONFIRMED-basis outstanding balance (F03/R8) — see sendInvoice's doc. */
       balanceDue?: number;
       items: {
@@ -984,9 +1001,30 @@ export class EmailService {
                 <td style="padding:8px 12px;font-size:14px;font-weight:600;color:#16a34a;text-align:right;">${fmt(params.totalPaid)}</td>
               </tr>`
         : "";
+    // B421: a credit note or advance reduces the balance but is never cash the
+    // customer paid — neutral styling (never the Amount Paid green), same
+    // customer-facing wording as the PDF ("Credit issued — CN-…").
+    const creditNoteLabel =
+      params.creditNoteNumbers && params.creditNoteNumbers.length > 0
+        ? `Credit issued — ${params.creditNoteNumbers.join(", ")}`
+        : "Credit issued";
+    const creditAppliedRow =
+      params.creditApplied != null && params.creditApplied > 0
+        ? `<tr>
+                <td colspan="3" style="padding:8px 12px;font-size:13px;font-weight:600;color:#374151;text-align:right;">${creditNoteLabel}</td>
+                <td style="padding:8px 12px;font-size:14px;font-weight:600;color:#374151;text-align:right;">${fmt(params.creditApplied)}</td>
+              </tr>`
+        : "";
+    const advanceAppliedRow =
+      params.advanceApplied != null && params.advanceApplied > 0
+        ? `<tr>
+                <td colspan="3" style="padding:8px 12px;font-size:13px;font-weight:600;color:#374151;text-align:right;">Advance applied</td>
+                <td style="padding:8px 12px;font-size:14px;font-weight:600;color:#374151;text-align:right;">${fmt(params.advanceApplied)}</td>
+              </tr>`
+        : "";
     const totalsFooter =
       params.balanceDue != null
-        ? `${amountPaidRow}
+        ? `${amountPaidRow}${creditAppliedRow}${advanceAppliedRow}
               <tr style="background:#f9fafb;">
                 <td colspan="3" style="padding:12px;font-size:14px;font-weight:700;color:#1a2033;text-align:right;">Balance Due</td>
                 <td style="padding:12px;font-size:16px;font-weight:700;color:${params.balanceDue > 0 ? "#dc2626" : "#16a34a"};text-align:right;">${fmt(params.balanceDue)}</td>

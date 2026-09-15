@@ -235,14 +235,18 @@ test.describe("Payment-status truth (F03 / P4)", () => {
     // ── The same truth one card down: the balance summary is where this page
     // states how much money has actually been collected, so it must read the
     // server's CONFIRMED basis (findOne's paidAmount/balanceDue) — the $200 and
-    // $300 DRAFT rows are not collected money. "Paid" therefore shows only the
-    // $100 confirmed payment and "Balance Due" stays the invoice total minus
-    // that $100, agreeing to the cent with the invoices list row, the PDF and
-    // the reminder email. A page that summed every non-VOID payment here would
-    // print $600 paid directly beneath badges saying $500 of it is not counted.
-    // Asserted against the RENDERED invoice total rather than a hardcoded
-    // $1000 so a tenant tax/shipping setting can't turn a truth regression into
-    // a fixture-arithmetic failure.
+    // $300 DRAFT rows are not collected money. "Payments received" therefore
+    // shows only the $100 confirmed payment and "Balance Due" stays the
+    // invoice total minus that $100, agreeing to the cent with the invoices
+    // list row, the PDF and the reminder email. A page that summed every
+    // non-VOID payment here would print $600 received directly beneath badges
+    // saying $500 of it is not counted. Asserted against the RENDERED invoice
+    // total rather than a hardcoded $1000 so a tenant tax/shipping setting
+    // can't turn a truth regression into a fixture-arithmetic failure.
+    // Label renamed "Paid" -> "Payments received" by B421 (this dt/dd summary
+    // sits right above a possible "Credits applied"/"Advance applied" pair,
+    // so "Paid" alone would read as if it already included those) — this
+    // spec predates that rename and still asserts on the current wording.
     const summaryValue = (label: string) =>
       page
         .locator("dt", { hasText: new RegExp(`^${label}$`) })
@@ -258,7 +262,7 @@ test.describe("Payment-status truth (F03 / P4)", () => {
     };
     await expect(summaryValue("Balance Due")).toBeVisible({ timeout: 10_000 });
     const invoiceTotal = await readMoney("Invoice Total");
-    expect(await readMoney("Paid")).toBeCloseTo(100, 2);
+    expect(await readMoney("Payments received")).toBeCloseTo(100, 2);
     expect(await readMoney("Balance Due")).toBeCloseTo(invoiceTotal - 100, 2);
 
     // ── The proof (R2's other half): the invoices list's PaymentSummaryBar

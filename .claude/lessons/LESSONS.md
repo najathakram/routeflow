@@ -386,37 +386,6 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
 - **Guard:** STRIPE-CANCEL-1 ×15 in `subscription-mutation.service.spec.ts` + ×4 in
   `billing.service.spec.ts`. Class of B107.
 
-### L-122 · 2026-09-13 · domain · F39 (B310/B311/B315 wallet/invoice lost updates)
-
-- **Symptom:** B310 — `applyAdvancePaymentToInvoice` read `AdvancePayment.balance` and decremented
-  it as two separate statements inside one Prisma transaction; two concurrent applies of the same
-  advance both read the same balance and both passed the "has remaining balance" check, driving it
-  negative. B311 — `recordStandalonePayment`'s buyer/online overpay guard had the identical shape
-  one call away, on `Invoice` instead of `AdvancePayment`.
-- **Root cause:** a single Prisma `tenantTransaction` is NOT a lock — under READ COMMITTED, a plain
-  read inside it sees only what's already committed, so a check-then-act on a row neither
-  transaction has locked lets two concurrent callers both read the pre-decrement value and both
-  proceed; only an explicit row lock (or an equivalent serializing primitive) closes the window.
-- **Lesson:** **A balance/limit check followed by a write to the SAME row, inside one transaction,
-  is a check-then-act race unless something locks the row (or the caller) BEFORE the read — a
-  customer-keyed `withAdvisoryLock` when the critical section spans multiple tables/calls (the
-  house pattern for money serialization), or a plain `SELECT ... FOR UPDATE` inside the same tx
-  when it's one row — or, when the write is a single column and the cap is expressible in SQL
-  (B315's advance-restore), skip locking altogether: one atomic `UPDATE ... SET col = LEAST(cap,
-col + delta)` has no read-modify-write window at all. And such a fix is regression-testable
-  WITHOUT a live database: mock the lock
-  primitive (`withAdvisoryLock`, or the specific `$executeRaw` call) with a per-key promise chain
-  that genuinely serializes concurrent callers in call order, drive two concurrent calls through
-  the real service method, and assert on the wrong VALUE (balance negative, sum overpaid) — then
-  confirm the test is real by temporarily reverting the fix and watching it fail on that same
-  wrong value before restoring it.**
-- **Guard:** `apps/api/src/customers/customers.service.spec.ts` "B310: two concurrent applies of
-  the SAME advance never drive its balance negative" (promise-chain `withAdvisoryLock` mock);
-  `apps/api/src/invoices/invoices.service.spec.ts` "B311: a concurrent office payment can no
-  longer overpay the invoice past its live balance" (promise-chain `$executeRaw` mock, released
-  when the whole `tenantTransaction` call settles — not at the raw-query call site). Both verified
-  red-then-green by hand before commit.
-
 ### L-123 · 2026-09-14 · process · W1 seam rows
 
 - **Symptom:** an independent pre-merge review found two live defects in code three in-lane
@@ -638,42 +607,6 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
 - **Guard:** `returns-idempotency.spec.ts`'s retry-after-state-changed case;
   `idempotency.service.spec.ts` REG-IDEM-SVC-9; `returns-idempotency.db.spec.ts` (real Postgres).
 
-### L-130 · 2026-09-13 · domain · F27 B15 (estimates)
-
-- **Symptom:** the estimate detail page offered "Convert to Invoice" on DRAFT and SENT rows while
-  the API's convert claims ACCEPTED only, so the control failed every time it was shown; and a
-  successful convert navigated to `/invoices/undefined` because the page read `invoiceId` from a
-  response keyed `id`.
-- **Root cause:** the client computed its own enable predicate (`DRAFT || SENT || ACCEPTED`) from
-  a guess rather than the server's claim predicate, and hand-typed the mutation result instead of
-  the shape the endpoint returns.
-- **Lesson:** **A control that fires a server state transition renders on ONE predicate equal to
-  the server's claim predicate (same status set, from the shared enum), and a navigation off a
-  mutation result reads the field the server actually returns — a hand-typed response type is a
-  silent `undefined`.**
-- **Guard:** every Convert control in `estimates/[id]/page.tsx` renders on the single
-  `canConvert = status === "ACCEPTED"` binding (:220) since b47a74a5; `useConvertEstimateToInvoice`
-  typed `{ id }`. Pinned by `[id]/page.test.tsx` (zero controls on DRAFT/SENT, exactly two on
-  ACCEPTED, navigates on `data.id`) — landed 2026-09-13; B394 (B15-NAV) closes with this proof.
-
-### L-131 · 2026-09-13 · domain · F27 B17/B79 (estimates)
-
-- **Symptom:** the create form required an Issue Date the request never carried and the service
-  never wrote (the column had landed by migration earlier); every row rendered `createdAt` in its
-  place. "Send" flipped DRAFT→SENT with a toast claiming an email went out — no email path exists.
-- **Root cause:** a column landed with no write path — DTO, form payload and service `create`
-  were never audited for it — and UI copy described a side effect the endpoint does not have.
-- **Lesson:** **A migrated column with no write path is a bug the schema cannot show — when a
-  column lands, audit every write site (DTO → service `create`/`update` → form payload) in the
-  same change; and UI copy names only the effect the endpoint has (a status flip is "marked as
-  sent", never "sent").**
-- **Guard:** `estimates.service.ts create()` validates (`/^\d{4}-\d{2}-\d{2}$/` plus an ISO
-  round-trip compare — the regex alone accepts an out-of-range day/month, e.g. `2026-02-31`, which
-  `Date` silently rolls over instead of rejecting) then persists `dto.issueDate`; shared
-  `Estimate.issueDate?: string | null` in `packages/types/api/misc.ts`; the toast copy (aa47ee9e).
-  Pinned by `estimates.service.spec.ts` and `estimates.issue-date.db.spec.ts` (real Postgres) —
-  landed 2026-09-13. `CreateEstimateDto` now declares `issueDate?: string`, no more `as any` cast.
-
 ### L-132 · 2026-09-13 · domain · F27 B70 (estimates)
 
 - **Symptom:** a fix round made `accept()`'s atomic claim exclude the full terminal-status set
@@ -838,6 +771,64 @@ apps/web/app --include=*.tsx -A1 | grep -B1 onSuccess` — narrow to `.map()`-re
   `backfill-subscription-reconciliation.mjs` requires `--confirm-count` matching the scan when
   `--apply` runs unscoped. Sibling fix same round: the write's `updateMany` re-asserts tenant
   state, closing a scan-to-write race.
+
+### L-143 · 2026-09-15 · domain · B421 (credit-applied vs paid, full fix)
+
+- **Symptom:** a CREDIT_NOTE-method `InvoicePayment` row (`status: PAID`) rendered/counted as
+  cash everywhere a "Paid"/"received" figure was shown — invoice totals, the PDF, buyer portal,
+  mobile, and every bookkeeping cash-flow/dashboard figure.
+- **Root cause:** the one shared confirmed-payment predicate answered "is this confirmed"
+  (status), necessary but not sufficient for "is this cash" — nothing distinguished the two
+  questions, so every consumer answered both with the same number.
+- **Lesson:** **A "paid"/"received" DISPLAY figure is cash-only (excludes CREDIT_NOTE; ADVANCE
+  stays in a tenant-wide received figure, since its application is the only place that cash is
+  ever recorded) — but balance/status/outstanding figures keep the FULL confirmed total, since a
+  credit note or advance genuinely settles what's owed. Two questions, two filters, ONE shared
+  predicate.**
+- **Guard:** `@routeflow/pricing`'s `splitConfirmed`/`resolveConfirmedAmounts`/
+  `RECEIVED_METHOD_FILTER`/`CASH_METHOD_FILTER` are the one implementation api/web/mobile
+  import — never re-derive either filter at a second site. A shared helper that re-derives a
+  precondition generically (e.g. re-checking `.status`) will silently no-op for a caller whose
+  `select`/fixture never populated that field for its own prior reasons (a `where` already
+  enforcing it) — run that caller's existing tests before trusting a swap, never a type-check alone.
+
+### L-159 · 2026-09-15 · domain · B421 (PDF + web-detail rounds, independent review)
+
+- **Symptom:** a PDF template's fallback (for a caller not yet passing B421's new split fields)
+  re-derived `totalPaid`/`creditApplied`/`advanceApplied` independently, each gated on its OWN
+  `!= null` check — a caller passing an old, credit-inclusive `totalPaid` alone would get
+  `creditApplied`/`advanceApplied` re-split from raw payments too, subtracting the same
+  credit/advance a second time and understating the balance. The very next surface (a web page)
+  reinvented the identical bug before it even landed, independently of the first.
+- **Root cause:** three related figures each checked their own presence instead of sharing ONE
+  gate, so a partially-precomputed payload silently mixed two inconsistent bases.
+- **Lesson:** **When a fallback re-derives several related figures from raw data, gate ALL of
+  them on ONE presence check, never per-field — a caller supplying some but not all of a
+  precomputed set must get either the full precomputed set (missing members default to zero) or
+  the full re-derived set, never a mix.**
+- **Guard:** `payment-predicates.ts`'s `resolveConfirmedAmounts(precomputed, payments)` (API) and
+  the hand-rolled web mirror in `invoices/[id]/page.tsx` both gate on one field's presence; each
+  has a red-first regression test pinning the double-subtraction case.
+
+### L-143 · 2026-09-15 · domain · B421 (credit-applied vs paid, full fix)
+
+- **Symptom:** a CREDIT_NOTE-method `InvoicePayment` row (`status: PAID`) rendered/counted as
+  cash everywhere a "Paid"/"received" figure was shown — invoice totals, the PDF, buyer portal,
+  mobile, and every bookkeeping cash-flow/dashboard figure.
+- **Root cause:** the one shared confirmed-payment predicate answered "is this confirmed"
+  (status), necessary but not sufficient for "is this cash" — nothing distinguished the two
+  questions, so every consumer answered both with the same number.
+- **Lesson:** **A "paid"/"received" DISPLAY figure is cash-only (excludes CREDIT_NOTE; ADVANCE
+  stays in a tenant-wide received figure, since its application is the only place that cash is
+  ever recorded) — but balance/status/outstanding figures keep the FULL confirmed total, since a
+  credit note or advance genuinely settles what's owed. Two questions, two filters, ONE shared
+  predicate.**
+- **Guard:** `@routeflow/pricing`'s `splitConfirmed`/`resolveConfirmedAmounts`/
+  `RECEIVED_METHOD_FILTER`/`CASH_METHOD_FILTER` are the one implementation api/web/mobile
+  import — never re-derive either filter at a second site. A shared helper that re-derives a
+  precondition generically (e.g. re-checking `.status`) will silently no-op for a caller whose
+  `select`/fixture never populated that field for its own prior reasons (a `where` already
+  enforcing it) — run that caller's existing tests before trusting a swap, never a type-check alone.
 
 ### L-160 · 2026-09-15 · domain · T14 catalog-driven plan select vs server's PLAN_KEYS allow-list (REG-743-F1)
 
