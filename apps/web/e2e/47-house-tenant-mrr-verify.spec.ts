@@ -1,25 +1,44 @@
 /**
- * UI-drive evidence spec — Phase 0 W2 T12-T15 (house-tenant bootstrap,
- * TenantMirrorService, MRR/plan-label web edits).
+ * House-tenant / MRR reconciliation — post-deploy E2E (review round, 2026-09-15).
  *
- * Ad hoc verification spec, NOT part of the permanent suite numbering scheme
- * for a shipped feature — written by the UI evidence collector to exercise:
- *   1. Create a tenant with plan GROWTH; tenant list + detail page show "Growth".
- *   2. Dashboard MRR card shows an unlabeled figure with a "Reconciled to
- *      ledger" sub-line, no "Est." prefix.
- *   3. Billing Overview MRR figure equals the dashboard's, read immediately after.
+ * Permanent post-deploy suite member — runs via the "house-tenant-mrr" project, which mirrors
+ * "super-admin"'s shape exactly (same `setup` dependency, same `super-admin.json` storageState,
+ * SA creds from PLAYWRIGHT_SA_* only). Never in the local lane's allow-list, matching
+ * `01-super-admin.spec.ts` (LOCAL-LANE.md excludes both — no SA creds are seeded locally).
  *
- * Runs against the LOCAL dev stack (localhost:3001 / :3000), not Railway —
- * PLAYWRIGHT_BASE_URL is overridden per-test via page.goto with an absolute
- * URL where needed, and PLAYWRIGHT_SA_USERNAME/PASSWORD must be set to a
- * super-admin account that exists in the local dev DB (docker-compose).
+ * READ-ONLY: `routeflow-hq` is not an approved test tenant (CLAUDE.md's test-tenant policy), so
+ * this file only reads MRR figures, tenant lists and the mirror row — it must never create, edit
+ * or delete a row against `routeflow-hq` or any other live tenant. A prior draft created a
+ * throwaway tenant per run to verify the GROWTH plan label; that assertion is already covered by
+ * `01-super-admin.spec.ts`'s SA-06 (create tenant → appears in list), so it was removed here
+ * rather than kept as a second, redundant write against a live environment.
+ *
+ * Self-skips (every test) when `routeflow-hq` has not been bootstrapped yet (the owner has not
+ * run `apps/api/scripts/bootstrap-house-tenant.mjs --apply` against prod) — without this guard
+ * every post-deploy E2E run would go red on a precondition this feature's own rollout owns, not
+ * a regression.
  */
 
 import { test, expect, type Page } from "@playwright/test";
 import { apiBase } from "./helpers/api";
+import { HAS_SUPER_ADMIN_CREDS } from "./helpers/constants";
 
-const BASE_URL = "http://localhost:3001";
-const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
+test.skip(!HAS_SUPER_ADMIN_CREDS, "PLAYWRIGHT_SA_USERNAME / PLAYWRIGHT_SA_PASSWORD not set");
+
+const HOUSE_TENANT_SLUG = "routeflow-hq";
+
+/** Read-only existence check — never mutates `routeflow-hq` or any tenant row. */
+async function skipUnlessHouseTenantBootstrapped(page: Page): Promise<void> {
+  const res = await page.request.get(
+    `${apiBase(page.url())}/api/v1/platform-admin/tenants?search=${HOUSE_TENANT_SLUG}&limit=1`,
+  );
+  const body = res.ok() ? await res.json() : null;
+  const found = Boolean(body?.data?.some((t: { slug?: string }) => t.slug === HOUSE_TENANT_SLUG));
+  test.skip(
+    !found,
+    `house tenant ${HOUSE_TENANT_SLUG} not bootstrapped; run apps/api/scripts/bootstrap-house-tenant.mjs --apply`,
+  );
+}
 
 function attachEvidenceCollectors(page: Page) {
   const consoleErrors: string[] = [];
@@ -42,112 +61,20 @@ function attachEvidenceCollectors(page: Page) {
 }
 
 test.describe("House-tenant / MRR reconciliation — UI verify", () => {
+  // Storage state (super-admin.json) is pre-loaded by the "house-tenant-mrr" Playwright
+  // project (mirrors "super-admin"), so each test context starts already authenticated.
   test.beforeEach(async ({ page }) => {
-    await page.setViewportSize(DESKTOP_VIEWPORT);
-    await page.goto(`${BASE_URL}/admin-login`);
-    await page
-      .getByPlaceholder("Platform admin username")
-      .fill(process.env.PLAYWRIGHT_SA_USERNAME!);
-    await page.getByPlaceholder("Password").fill(process.env.PLAYWRIGHT_SA_PASSWORD!);
-    await page.getByRole("button", { name: "Sign in", exact: true }).click();
-    await page.waitForURL("**/admin/dashboard", { timeout: 30_000 });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/admin/dashboard");
+    await skipUnlessHouseTenantBootstrapped(page);
   });
 
-  test("Flow 1: create GROWTH tenant, list + detail show Growth", async ({ page }) => {
-    const { consoleErrors, networkFailures } = attachEvidenceCollectors(page);
-    try {
-      await page.goto(`${BASE_URL}/admin/tenants/new`);
-
-      const catalogRes = await page.request.get(`${apiBase(page.url())}/api/v1/billing/plans`);
-      expect(catalogRes.ok()).toBeTruthy();
-
-      const planSelect = page.getByRole("combobox").first();
-      await expect(planSelect).toBeVisible({ timeout: 15_000 });
-      const optionValues = await planSelect
-        .locator("option")
-        .evaluateAll((opts) => opts.map((o) => (o as HTMLOptionElement).value));
-      const optionLabels = await planSelect
-        .locator("option")
-        .evaluateAll((opts) => opts.map((o) => (o as HTMLOptionElement).textContent));
-
-      await page.screenshot({
-        path: "test-output/artifacts/flow1-tenant-new-plan-select-desktop.png",
-        fullPage: true,
-      });
-
-      // eslint-disable-next-line no-console
-      console.log(
-        JSON.stringify({ flow: 1, step: "plan-select-options", optionValues, optionLabels }),
-      );
-
-      const hasGrowthOption = optionValues.includes("GROWTH");
-      expect(
-        hasGrowthOption,
-        `plan select must offer a GROWTH option (got values=${JSON.stringify(optionValues)}, labels=${JSON.stringify(optionLabels)})`,
-      ).toBe(true);
-
-      await planSelect.selectOption("GROWTH");
-
-      const slug = `e2e-uidrive-${Date.now()}`;
-      await page.getByPlaceholder("e.g. acme-foods").fill(slug);
-      await page.getByPlaceholder("e.g. Acme Foods Ltd.").fill("UI Drive Growth Tenant");
-      await page.getByPlaceholder("admin@acme.com").fill(`admin@${slug}.com`);
-      await page.getByPlaceholder("acme_admin").fill(`${slug}_admin`);
-      await page.getByPlaceholder("Min. 8 characters").fill("AdminPass@123!");
-      await page.getByRole("button", { name: "Create Tenant", exact: true }).click();
-      await page.waitForURL(/\/admin\/tenants/, { timeout: 20_000 });
-
-      const row = page.getByRole("row").filter({ hasText: slug });
-      await expect(row).toBeVisible({ timeout: 15_000 });
-
-      const listPlanText = (await row.textContent()) ?? "";
-
-      await row.getByRole("link", { name: "View" }).click();
-      await page.waitForURL(/\/admin\/tenants\/.+/, { timeout: 15_000 });
-      await expect(page.getByRole("button", { name: /overview/i })).toBeVisible({
-        timeout: 10_000,
-      });
-
-      await page.screenshot({
-        path: "test-output/artifacts/flow1-tenant-detail-desktop.png",
-        fullPage: true,
-      });
-
-      const detailBodyText = (await page.locator("body").textContent()) ?? "";
-
-      // Assertions recorded as pass/fail facts — not fixed here.
-      const listShowsGrowth = listPlanText.includes("Growth");
-      const detailShowsGrowth = detailBodyText.includes("Growth");
-      const listShowsRawGrowth = listPlanText.includes("GROWTH");
-      const detailShowsRawGrowth = detailBodyText.includes("GROWTH");
-
-      // eslint-disable-next-line no-console
-      console.log(
-        JSON.stringify({
-          flow: 1,
-          slug,
-          listPlanText,
-          listShowsGrowth,
-          listShowsRawGrowth,
-          detailShowsGrowth,
-          detailShowsRawGrowth,
-        }),
-      );
-
-      expect(listShowsGrowth, "tenant list should render plan label 'Growth'").toBe(true);
-      expect(detailShowsGrowth, "tenant detail should render plan label 'Growth'").toBe(true);
-    } finally {
-      // eslint-disable-next-line no-console
-      console.log(JSON.stringify({ flow: 1, consoleErrors, networkFailures }));
-    }
-  });
-
-  test("Flow 2: dashboard MRR card — unlabeled figure + Reconciled to ledger sub-line, no Est. prefix", async ({
+  test("Flow 1: dashboard MRR card — unlabeled figure + Reconciled to ledger sub-line, no Est. prefix", async ({
     page,
   }) => {
     const { consoleErrors, networkFailures } = attachEvidenceCollectors(page);
     try {
-      await page.goto(`${BASE_URL}/admin/dashboard`);
+      await page.goto("/admin/dashboard");
       await expect(page.getByText(/loading dashboard/i)).toHaveCount(0, { timeout: 20_000 });
 
       const mrrElCount = await page.getByTestId("dashboard-mrr").count();
@@ -155,14 +82,14 @@ test.describe("House-tenant / MRR reconciliation — UI verify", () => {
       const estMrrCount = await page.getByText(/est\.\s*mrr/i).count();
 
       await page.screenshot({
-        path: "test-output/artifacts/flow2-dashboard-desktop.png",
+        path: "test-output/artifacts/flow1-dashboard-desktop.png",
         fullPage: true,
       });
 
       // eslint-disable-next-line no-console
       console.log(
         JSON.stringify({
-          flow: 2,
+          flow: 1,
           mrrElCount,
           ledgerElCount,
           estMrrCount,
@@ -181,22 +108,22 @@ test.describe("House-tenant / MRR reconciliation — UI verify", () => {
       }
     } finally {
       // eslint-disable-next-line no-console
-      console.log(JSON.stringify({ flow: 2, consoleErrors, networkFailures }));
+      console.log(JSON.stringify({ flow: 1, consoleErrors, networkFailures }));
     }
   });
 
-  test("Flow 3: Billing Overview MRR equals dashboard MRR (read immediately after)", async ({
+  test("Flow 2: Billing Overview MRR equals dashboard MRR (read immediately after)", async ({
     page,
   }) => {
     const { consoleErrors, networkFailures } = attachEvidenceCollectors(page);
     try {
-      await page.goto(`${BASE_URL}/admin/dashboard`);
+      await page.goto("/admin/dashboard");
       await expect(page.getByText(/loading dashboard/i)).toHaveCount(0, { timeout: 20_000 });
       const dashMrrLocator = page.getByTestId("dashboard-mrr");
       const dashMrrCount = await dashMrrLocator.count();
       const dashboardMrrText = dashMrrCount > 0 ? await dashMrrLocator.textContent() : null;
 
-      await page.goto(`${BASE_URL}/admin/billing`);
+      await page.goto("/admin/billing");
       await expect(page).not.toHaveURL(/error/);
       await expect(page.locator("main, h1, h2, [class*='card']").first()).toBeVisible({
         timeout: 15_000,
@@ -222,14 +149,14 @@ test.describe("House-tenant / MRR reconciliation — UI verify", () => {
       }
 
       await page.screenshot({
-        path: "test-output/artifacts/flow3-billing-overview-desktop.png",
+        path: "test-output/artifacts/flow2-billing-overview-desktop.png",
         fullPage: true,
       });
 
       // eslint-disable-next-line no-console
       console.log(
         JSON.stringify({
-          flow: 3,
+          flow: 2,
           dashMrrCount,
           dashboardMrrText,
           billingMrrLabelVisible,
@@ -241,7 +168,7 @@ test.describe("House-tenant / MRR reconciliation — UI verify", () => {
       expect(billingMrrLabelVisible, "Billing Overview MRR stat must be visible").toBe(true);
     } finally {
       // eslint-disable-next-line no-console
-      console.log(JSON.stringify({ flow: 3, consoleErrors, networkFailures }));
+      console.log(JSON.stringify({ flow: 2, consoleErrors, networkFailures }));
     }
   });
 });

@@ -636,5 +636,20 @@ export default defineConfig({
       dependencies: [],
       use: { ...devices["Desktop Chrome"] },
     },
+
+    // House-tenant / MRR reconciliation (spec 47, review round 2026-09-15) — mirrors
+    // "super-admin"'s auth shape exactly (same setup dependency, same storageState). NOT in
+    // LOCAL-LANE.md's allow-list, same as "super-admin": no SA creds are seeded locally, so
+    // this project's tests self-skip everywhere except where PLAYWRIGHT_SA_* is set (the
+    // post-deploy E2E run). Read-only against routeflow-hq — see the spec file's header.
+    {
+      name: "house-tenant-mrr",
+      testMatch: /47-house-tenant-mrr-verify\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "super-admin.json"),
+      },
+    },
   ],
 });
