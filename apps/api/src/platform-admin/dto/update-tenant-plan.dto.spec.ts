@@ -3,11 +3,9 @@ import { validate } from "class-validator";
 import { UpdateTenantPlanDto } from "./update-tenant-plan.dto";
 
 /**
- * Phase 0 (2026-09-13, PR #718 fix round): the `TenantPlan` Prisma enum widened to include
- * GROWTH and SCALE ahead of Task 10's catalog entries. `planKeyFromEnum()` in
- * plan-catalog.constants.ts doesn't know those two yet and silently falls to its default STARTER
- * branch, so this DTO must keep rejecting them until Task 10 lands — see
- * `SELECTABLE_TENANT_PLANS`.
+ * Phase 0 Task 10 closed the gap this file used to guard: `planKeyFromEnum()` in
+ * plan-catalog.constants.ts now identity-maps GROWTH/SCALE instead of falling through to its
+ * STARTER default, so SELECTABLE_TENANT_PLANS — and this DTO — accept them.
  */
 describe("UpdateTenantPlanDto — plan selectability", () => {
   const run = async (plan: unknown) => {
@@ -15,18 +13,23 @@ describe("UpdateTenantPlanDto — plan selectability", () => {
     return validate(dto);
   };
 
-  it("rejects GROWTH (not yet selectable — Phase 0 Task 10 gap)", async () => {
+  it("accepts GROWTH (Phase 0 Task 10)", async () => {
     const errors = await run("GROWTH");
-    expect(errors).not.toHaveLength(0);
+    expect(errors).toHaveLength(0);
   });
 
-  it("rejects SCALE (not yet selectable — Phase 0 Task 10 gap)", async () => {
+  it("accepts SCALE (Phase 0 Task 10)", async () => {
     const errors = await run("SCALE");
-    expect(errors).not.toHaveLength(0);
+    expect(errors).toHaveLength(0);
   });
 
   it("still accepts an existing selectable value", async () => {
     const errors = await run("ENTERPRISE");
     expect(errors).toHaveLength(0);
+  });
+
+  it("rejects a value outside the TenantPlan enum entirely", async () => {
+    const errors = await run("NOT_A_REAL_PLAN");
+    expect(errors).not.toHaveLength(0);
   });
 });

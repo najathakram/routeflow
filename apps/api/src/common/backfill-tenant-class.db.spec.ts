@@ -30,16 +30,17 @@
  * created fresh by this file and deleted in `afterAll`.
  *
  * The CLI itself is a whole-table dark backfill by design (every tenant, not a `--tenant=` scope
- * like the tobacco backfill) — running `--apply` in a shared local compose database therefore
- * reclassifies every OTHER tenant sitting in it too (e.g. a `qa-*`/`test` row left over from
- * another lane's run), not just this file's own two rows. `beforeAll` snapshots every tenant's
- * `class` before touching anything, and `afterAll` restores exactly the rows this file did not
- * create back to their snapshotted value — so this spec never leaves a durable side effect on
- * another session's data, independent of whether that data happened to reclassify "correctly".
+ * like the tobacco backfill) — running an unscoped `--apply` in a shared local compose database
+ * would therefore reclassify every OTHER tenant sitting in it too (e.g. a `qa-*`/`test` row left
+ * over from another lane's run, or another `.db.spec.ts` suite's own PRODUCTION fixtures running
+ * concurrently in a sibling Jest worker — this is exactly how L-129 was paid for). This spec
+ * instead passes `--slug-prefix <SLUG_PREFIX>` on every invocation so the CLI's scan/apply never
+ * touches a row outside its own fixtures — no whole-table snapshot/restore needed.
  */
 import { execSync } from "child_process";
 import { randomUUID } from "crypto";
 import path from "path";
+import { pathToFileURL } from "url";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
@@ -50,6 +51,34 @@ const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs")
 
 const API_DIR = path.resolve(__dirname, "../..");
 const CLI = path.resolve(API_DIR, "scripts/backfill-tenant-class.mjs");
+const RAILWAY_DB_URL_LIB_HREF = pathToFileURL(
+  path.resolve(API_DIR, "scripts/lib/railway-db-url.mjs"),
+).href;
+
+// REG-743-N2 helper: computes the same `redactUrl(url)` value the real CLI is expected to
+// print, via the actual `scripts/lib/railway-db-url.mjs` module (never a re-typed local
+// mirror of its redaction logic) — mirrors the ESM-shim pattern in `railway-db-url.spec.ts`
+// (ts-jest's CommonJS transform can't `import` a `.mjs` file directly).
+function redactUrlViaLib(url: string): string {
+  const script = `import { redactUrl } from "${RAILWAY_DB_URL_LIB_HREF}"; console.log(redactUrl(process.env.RDU_URL));`;
+  return execSync(`node --input-type=module -e ${JSON.stringify(script)}`, {
+    encoding: "utf-8",
+    env: { ...process.env, RDU_URL: url },
+  }).trim();
+}
+
+// REG-743-N2: every child CLI invocation in this file must get an env with every RAILWAY_*/
+// POSTGRES_* key scrubbed, so a leftover `railway run` proxy export (or the N2 test's own
+// deliberately-injected fake ones) can never make the CLI resolve anything but this spec's own
+// local `dbUrl` — mirrors the fix required in the real script callers, not just this test.
+function childEnv(dbUrl: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (key.startsWith("RAILWAY_") || key.startsWith("POSTGRES_")) delete env[key];
+  }
+  env.DATABASE_URL = dbUrl;
+  return env;
+}
 
 const RUN_SUFFIX = randomUUID().slice(0, 8);
 const TEST_TENANT_SLUG = assertTestTenant(
@@ -99,7 +128,7 @@ describeDb("backfill-tenant-class.mjs (db)", () => {
       where: { slug: { in: [TEST_TENANT_SLUG, PRODUCTION_SLUG] } },
       select: { slug: true, class: true },
     });
-    execSync(`node ${CLI}`, { encoding: "utf-8", env: { ...process.env, DATABASE_URL: dbUrl } });
+    execSync(`node ${CLI}`, { encoding: "utf-8", env: childEnv(dbUrl) });
     const after = await prisma.tenant.findMany({
       where: { slug: { in: [TEST_TENANT_SLUG, PRODUCTION_SLUG] } },
       select: { slug: true, class: true },
@@ -108,10 +137,18 @@ describeDb("backfill-tenant-class.mjs (db)", () => {
   });
 
   it("apply classifies each slug correctly", async () => {
-    execSync(`node ${CLI} --apply`, {
-      encoding: "utf-8",
-      env: { ...process.env, DATABASE_URL: dbUrl },
-    });
+    // Scoped per-slug (`--slug-prefix`), never a bare `--apply`: this CLI is a whole-table
+    // backfill (see file header), and 15 other `.db.spec.ts` files run concurrently against
+    // this same database — an unscoped apply here would also reclassify
+    // `backfill-subscription-reconciliation.db.spec.ts`'s own `qa-*` PRODUCTION-class fixtures
+    // (matched by `TEST_TENANT_PATTERN`) out from under it mid-run. TEST_TENANT_SLUG and
+    // PRODUCTION_SLUG don't share a common prefix (`qa-` vs `acme-`), so each needs its own call.
+    for (const slug of [TEST_TENANT_SLUG, PRODUCTION_SLUG]) {
+      execSync(`node ${CLI} --apply --slug-prefix ${slug}`, {
+        encoding: "utf-8",
+        env: childEnv(dbUrl),
+      });
+    }
     const rows = await prisma.tenant.findMany({
       where: { slug: { in: [TEST_TENANT_SLUG, PRODUCTION_SLUG] } },
       select: { slug: true, class: true },
@@ -125,11 +162,14 @@ describeDb("backfill-tenant-class.mjs (db)", () => {
     // Assert only on this file's own rows, not the printed global change count: 15 other
     // db.spec.ts files run concurrently against this same database and create/delete their own
     // tenants throughout the run, so a global "0 classification change(s)" assertion would flake
-    // whenever one of them happens to need reclassifying at the moment this runs.
-    execSync(`node ${CLI} --apply`, {
-      encoding: "utf-8",
-      env: { ...process.env, DATABASE_URL: dbUrl },
-    });
+    // whenever one of them happens to need reclassifying at the moment this runs. Scoped
+    // per-slug for the same reason as the first apply above — never a bare `--apply`.
+    for (const slug of [TEST_TENANT_SLUG, PRODUCTION_SLUG]) {
+      execSync(`node ${CLI} --apply --slug-prefix ${slug}`, {
+        encoding: "utf-8",
+        env: childEnv(dbUrl),
+      });
+    }
     const rows = await prisma.tenant.findMany({
       where: { slug: { in: [TEST_TENANT_SLUG, PRODUCTION_SLUG] } },
       select: { slug: true, class: true },
@@ -137,5 +177,55 @@ describeDb("backfill-tenant-class.mjs (db)", () => {
     const bySlug = Object.fromEntries(rows.map((r) => [r.slug, r.class]));
     expect(bySlug[TEST_TENANT_SLUG]).toBe("TEST");
     expect(bySlug[PRODUCTION_SLUG]).toBe("PRODUCTION");
+  });
+
+  it("REG-743-N2 the spawned CLI targets the spec's local database even when Railway proxy vars are present in the environment", () => {
+    // `resolveDatabaseUrl()` (scripts/lib/railway-db-url.mjs) picks the Railway TCP-proxy URL
+    // FIRST whenever these five vars are all set. Faking them on THIS spec process's own
+    // `process.env` (never the child's explicit env below) reproduces the exact shape of a
+    // `railway run --service postgres` shell that also has docker-compose's local vars
+    // exported — the failure mode N2 exists to close: `execSync` spreads
+    // `...process.env` into the child unfiltered, so a Railway-shaped environment leaks into
+    // a spec that must only ever touch its own local Postgres.
+    const savedEnv: Record<string, string | undefined> = {
+      RAILWAY_TCP_PROXY_DOMAIN: process.env.RAILWAY_TCP_PROXY_DOMAIN,
+      RAILWAY_TCP_PROXY_PORT: process.env.RAILWAY_TCP_PROXY_PORT,
+      POSTGRES_USER: process.env.POSTGRES_USER,
+      POSTGRES_PASSWORD: process.env.POSTGRES_PASSWORD,
+      POSTGRES_DB: process.env.POSTGRES_DB,
+    };
+    process.env.RAILWAY_TCP_PROXY_DOMAIN = "prod.invalid";
+    process.env.RAILWAY_TCP_PROXY_PORT = "5432";
+    process.env.POSTGRES_USER = "prod-user";
+    process.env.POSTGRES_PASSWORD = "prod-pass";
+    process.env.POSTGRES_DB = "prod-db";
+
+    try {
+      // Caught, not left to throw: today (pre-fix) the leaked Railway vars make the spawned
+      // CLI try to connect to `prod.invalid` and `execSync` throws (non-zero exit) before the
+      // assertion below ever runs — that would fail the WHOLE test with a raw "Command failed"
+      // error instead of a clean, reportable assertion failure. `error.stdout` still carries
+      // whatever the child printed (or, pre-fix, nothing) before it died, so the comparison
+      // below runs either way and fails on its own terms.
+      let output: string;
+      try {
+        output = execSync(`node ${CLI}`, {
+          encoding: "utf-8",
+          env: childEnv(dbUrl),
+        });
+      } catch (err) {
+        output = (err as { stdout?: string }).stdout ?? "";
+      }
+      const firstLine = output.split("\n")[0];
+      // Head: with the Railway vars leaked into the child, `resolveDatabaseUrl` resolves
+      // `prod.invalid` and the CLI fails to connect before ever printing this line — the
+      // spec's own local `dbUrl` must be what the CLI actually resolves and reports.
+      expect(firstLine).toBe(`Resolved database host: ${redactUrlViaLib(dbUrl)}`);
+    } finally {
+      for (const [key, value] of Object.entries(savedEnv)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
   });
 });

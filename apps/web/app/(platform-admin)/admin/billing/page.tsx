@@ -29,15 +29,6 @@ interface BillingOverview {
 
 type Subscription = BillingOverview["subscriptions"][number];
 
-// Fallback per-plan monthly prices, used only if the server MRR rollup is unavailable.
-// Keyed on the live TenantPlan enum values (STARTER | TEAM | BUSINESS | ENTERPRISE);
-// ENTERPRISE is custom-priced so it is intentionally omitted from the degraded estimate.
-const PLAN_PRICES: Record<string, number> = {
-  STARTER: 59,
-  TEAM: 149,
-  BUSINESS: 349,
-};
-
 /** Format a dollar amount with a fixed 2 decimals (locale-grouped), e.g. 339.05 → "339.05". */
 function fmtMoney(n: number): string {
   return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -62,6 +53,12 @@ interface MrrOverview {
   mrr: number;
   momDelta: number;
   payingTenants: number;
+  /** REG-743-N5/F2: ACTIVE PRODUCTION tenants priced $0 for visibility, not a bug signal. */
+  unpricedActiveTenants: number;
+  /** REG-743-N5/F2: has a real price snapshot, but a full discount nets it to $0. */
+  zeroPricedActiveTenants: number;
+  /** REG-743-N5/F3: no subscription row, or one with no planKey backfilled — nothing billable. */
+  activeWithoutSubscription: number;
 }
 
 // ─── Page ──────────────────────────────────────────────────────────────────────
@@ -69,6 +66,7 @@ interface MrrOverview {
 export default function BillingPage() {
   const [data, setData] = React.useState<BillingOverview | null>(null);
   const [mrrData, setMrrData] = React.useState<MrrOverview | null>(null);
+  const [mrrFailed, setMrrFailed] = React.useState(false);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -83,12 +81,14 @@ export default function BillingPage() {
       .then((res) => setData(res.data))
       .catch((err) => setError(err?.response?.data?.message ?? "Failed to load billing data"))
       .finally(() => setLoading(false));
-    // Server-side MRR rollup (price-snapshot accurate). Best-effort: the page still
-    // renders a client-side estimate if this endpoint is unavailable.
+    // Server-side MRR rollup (price-snapshot accurate) -- the ONLY MRR source this page
+    // renders. REG-743-F1: a client-side estimate here was a second pricing engine that
+    // could show a free pilot at full list price; on failure the card shows "MRR
+    // unavailable" instead of ever inventing a number.
     superAdminClient
       .get<MrrOverview>("/billing/admin/mrr")
       .then((res) => setMrrData(res.data))
-      .catch(() => setMrrData(null));
+      .catch(() => setMrrFailed(true));
   }, []);
 
   if (loading)
@@ -102,14 +102,6 @@ export default function BillingPage() {
       </div>
     );
   if (!data) return null;
-
-  // Prefer the server-side rollup (price-snapshot accurate); fall back to a client
-  // estimate from active subscriptions if the endpoint is unavailable.
-  const clientMrrEstimate = data.subscriptions
-    .filter((s) => s.tenantStatus === "ACTIVE" && !s.cancelAtPeriodEnd)
-    .reduce((sum, s) => sum + (PLAN_PRICES[s.currentPlan] ?? 0), 0);
-  const mrr = mrrData?.mrr ?? clientMrrEstimate;
-  const momDelta = mrrData?.momDelta ?? 0;
 
   const conversionRate =
     data.totalTenants > 0
@@ -191,11 +183,11 @@ export default function BillingPage() {
       {/* Summary Cards */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <AdminStatCard
-          label={mrrData ? "MRR" : "Est. MRR"}
-          value={`$${fmtMoney(mrr)}`}
+          label="MRR"
+          value={mrrData ? `$${fmtMoney(mrrData.mrr)}` : mrrFailed ? "MRR unavailable" : "—"}
           sub={
             mrrData
-              ? `${momDelta >= 0 ? "+" : "−"}$${fmtMoney(Math.abs(momDelta))} last 30d`
+              ? `${mrrData.momDelta >= 0 ? "+" : "−"}$${fmtMoney(Math.abs(mrrData.momDelta))} last 30d`
               : undefined
           }
           icon={<TrendingUp className="h-5 w-5" />}
@@ -203,6 +195,11 @@ export default function BillingPage() {
         <AdminStatCard
           label="Active Subscriptions"
           value={data.activeSubscriptions}
+          // REG-743: activeSubscriptions counts every subscription ROW on an ACTIVE
+          // PRODUCTION tenant, including a free pilot or a legacy row with no planKey — never
+          // leave that number sitting unexplained beside an MRR total that may say $0 for
+          // some of them; payingTenants is the count that actually contributes money.
+          sub={mrrData ? `${mrrData.payingTenants} actually paying` : undefined}
           icon={<CreditCard className="h-5 w-5" />}
         />
         <AdminStatCard
@@ -217,6 +214,37 @@ export default function BillingPage() {
           icon={<Users className="h-5 w-5" />}
         />
       </div>
+
+      {/* REG-743-N5/F2: visibility only — $0 is the correct MRR contribution for these
+          tenants, this just makes sure that figure is never silent. */}
+      {mrrData &&
+        (mrrData.unpricedActiveTenants > 0 ||
+          mrrData.zeroPricedActiveTenants > 0 ||
+          mrrData.activeWithoutSubscription > 0) && (
+          <div className="flex flex-wrap items-center gap-2">
+            {mrrData.unpricedActiveTenants > 0 && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-950/60 px-2 py-0.5 text-xs font-medium text-amber-400">
+                <AlertTriangle className="h-3 w-3" />
+                {mrrData.unpricedActiveTenants} active tenant
+                {mrrData.unpricedActiveTenants === 1 ? "" : "s"} missing a price snapshot
+              </span>
+            )}
+            {mrrData.zeroPricedActiveTenants > 0 && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-950/60 px-2 py-0.5 text-xs font-medium text-amber-400">
+                <AlertTriangle className="h-3 w-3" />
+                {mrrData.zeroPricedActiveTenants} active tenant
+                {mrrData.zeroPricedActiveTenants === 1 ? "" : "s"} priced $0 (full discount)
+              </span>
+            )}
+            {mrrData.activeWithoutSubscription > 0 && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-950/60 px-2 py-0.5 text-xs font-medium text-amber-400">
+                <AlertTriangle className="h-3 w-3" />
+                {mrrData.activeWithoutSubscription} active tenant
+                {mrrData.activeWithoutSubscription === 1 ? "" : "s"} with nothing billable on file
+              </span>
+            )}
+          </div>
+        )}
 
       {/* Subscription Table */}
       <AdminCard

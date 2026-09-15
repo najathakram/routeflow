@@ -282,3 +282,16 @@ export const CRM_HANDOFF_STATUS_VALUES = [
   "FAILED",
 ] as const;
 export type CrmHandoffStatus = (typeof CRM_HANDOFF_STATUS_VALUES)[number];
+
+// REG-743-F1: the billing plan keys a tenant can be created/downgraded to. Mirrors
+// `apps/api/src/billing/plan-catalog.constants.ts`'s `PLAN_KEYS` — the admin "New Tenant" form
+// previously hand-typed `["STARTER", "PROFESSIONAL", "ENTERPRISE"]`, a non-existent
+// "PROFESSIONAL" key with GROWTH/SCALE missing.
+export const PLAN_KEYS = ["STARTER", "GROWTH", "SCALE", "ENTERPRISE"] as const;
+export type PlanKey = (typeof PLAN_KEYS)[number];
+
+// REG-743-N6: pinned set-equal to the generated Prisma `TenantClass` enum (see
+// `enum-parity.spec.ts`'s `ENUM_TABLE` row) — consumed by `create-tenant.dto.ts`'s `@IsIn` and
+// the admin "New Tenant" form.
+export const TENANT_CLASS_VALUES = ["DEMO", "INTERNAL", "PRODUCTION", "TEST"] as const;
+export type TenantClass = (typeof TENANT_CLASS_VALUES)[number];
