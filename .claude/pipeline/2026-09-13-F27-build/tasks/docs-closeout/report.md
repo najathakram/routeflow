@@ -66,7 +66,7 @@ round re-verified every claim against HEAD and recorded the one new fact (fix-b7
 
 - **Uncommitted working-tree edits by another process** (`git diff --stat`):
   `estimates.service.spec.ts` (+451), `[id]/page.tsx` (toast copy → "`${estimateNumber} is marked
-  Sent. No email was sent.`", error title "Failed to mark estimate as sent"), and
+Sent. No email was sent.`", error title "Failed to mark estimate as sent"), and
   `estimates/page.tsx` — whose diff **removes the `issueDate,` line** from the create DTO. If that
   edit is committed as-is it regresses the B79 web half; the map/lesson claims describe HEAD only.
 - `.claude/pipeline/2026-09-13-F27-build/` task dirs and `phases/` are untracked; I commit only my
