@@ -14,6 +14,7 @@ import {
   CreditCard,
 } from "lucide-react";
 import { Badge, useToast } from "@routeflow/ui/web";
+import { resolveConfirmedAmounts } from "@routeflow/pricing";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerInvoice } from "@/lib/api/buyer";
 import { buyerApiClient } from "@/lib/buyer-api-client";
@@ -176,13 +177,29 @@ export default function BuyerInvoiceDetailPage() {
     );
   }
 
-  // P5-12: VOID payments (manually voided OR bounced checks) must not count
-  // toward the paid amount — a bounce re-opens the balance shown here.
-  const totalPaid =
-    invoice.payments
-      ?.filter((p) => p.status !== "VOID")
-      .reduce((s, p) => s + Number(p.amount), 0) ?? 0;
-  const balanceDue = Number(invoice.total) - totalPaid;
+  // B421: this used `status !== "VOID"` (so an unconfirmed DRAFT row also
+  // counted) AND summed every method (so a CREDIT_NOTE/ADVANCE application
+  // counted as cash) — TWO bugs the brief called out for this surface
+  // specifically. Prefer the server's own confirmed-basis fields (findOne
+  // has always returned them; only this page's type/usage was stale) via the
+  // shared resolveConfirmedAmounts, falling back to a correct CONFIRMED
+  // (status === "PAID") split only when the server fields are absent.
+  const {
+    cash: totalPaid,
+    creditApplied,
+    advanceApplied,
+  } = resolveConfirmedAmounts(
+    {
+      totalPaid: invoice.paidAmount,
+      creditApplied: invoice.creditApplied,
+      advanceApplied: invoice.advanceApplied,
+    },
+    invoice.payments ?? [],
+  );
+  const balanceDue =
+    invoice.balanceDue != null
+      ? Number(invoice.balanceDue)
+      : Math.max(0, Number(invoice.total) - totalPaid - creditApplied - advanceApplied);
   const paymentTermsLabel = invoicePaymentTermsLabel(invoice);
   const deposit = invoiceDepositFields(invoice);
 

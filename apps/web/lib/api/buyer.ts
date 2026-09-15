@@ -503,6 +503,17 @@ export interface BuyerInvoiceDetail {
   notes: string | null;
   terms: string | null;
   orderId: string | null;
+  /** Server-computed CASH-ONLY amount paid (B421) — the API's `findOne` has
+   *  always returned this field; the type simply hadn't declared it. */
+  paidAmount?: number;
+  /** Server-computed balance due — full confirmed total (cash + credit +
+   *  advance), same basis as every other surface. */
+  balanceDue?: number;
+  /** Confirmed credit-note applications (B421) — reduces balanceDue but is
+   *  never cash the buyer paid. */
+  creditApplied?: number;
+  /** Confirmed advance-payment applications (B421) — same treatment. */
+  advanceApplied?: number;
   items: Array<{
     id: string;
     description: string;
