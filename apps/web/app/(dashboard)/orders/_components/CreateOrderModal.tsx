@@ -1723,7 +1723,7 @@ export function CreateOrderModal({
                         "shrink-0 rounded p-1 transition-colors hover:bg-surface-raised",
                         li.note?.trim() ? "text-brand-500" : "text-navy/30 hover:text-navy",
                       )}
-                      title={li.note?.trim() ? "Add flavor / note" : "Add flavor / note"}
+                      title="Add flavor / note"
                     >
                       <StickyNote className="h-3.5 w-3.5" />
                     </button>
