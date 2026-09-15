@@ -367,7 +367,7 @@ export default function InvoicesPage() {
   const deleteInvoice = useDeleteInvoice();
   const [confirmDeleteId, setConfirmDeleteId] = React.useState<string | null>(null);
   const downloadPdf = useDownloadInvoicePdf();
-  const [printingId, setPrintingId] = React.useState<string | null>(null);
+  const [printingIds, setPrintingIds] = React.useState<ReadonlySet<string>>(() => new Set());
 
   const [urlFilters, setFilter, , setFilters] = useUrlFilters({
     status: "",
@@ -864,9 +864,10 @@ export default function InvoicesPage() {
                           <button
                             title="Print invoice"
                             aria-label={`Print invoice ${inv.invoiceNumber}`}
-                            disabled={printingId === inv.id}
+                            disabled={printingIds.has(inv.id)}
                             onClick={() => {
-                              setPrintingId(inv.id);
+                              if (printingIds.has(inv.id)) return;
+                              setPrintingIds((prev) => new Set(prev).add(inv.id));
                               downloadPdf.mutate(inv.id, {
                                 onSuccess: ({ blob }) => printPdfBlob(blob),
                                 onError: () =>
@@ -875,12 +876,17 @@ export default function InvoicesPage() {
                                     description: "Please try again.",
                                     variant: "error",
                                   }),
-                                onSettled: () => setPrintingId(null),
+                                onSettled: () =>
+                                  setPrintingIds((prev) => {
+                                    const next = new Set(prev);
+                                    next.delete(inv.id);
+                                    return next;
+                                  }),
                               });
                             }}
                             className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-navy transition-colors disabled:opacity-50"
                           >
-                            {printingId === inv.id ? (
+                            {printingIds.has(inv.id) ? (
                               <Loader2 className="h-4 w-4 animate-spin" />
                             ) : (
                               <Printer className="h-4 w-4" />

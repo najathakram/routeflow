@@ -18,10 +18,10 @@ function countOccurrences(source: string, needle: string): number {
 }
 
 describe("print surfaces — source pins (T11)", () => {
-  it("invoices/page.tsx: row Print button aria-label + printingId gating, exactly once each", () => {
+  it("invoices/page.tsx: row Print button aria-label + per-row printingIds gating, exactly once each", () => {
     const source = read("app/(dashboard)/invoices/page.tsx");
     expect(countOccurrences(source, "aria-label={`Print invoice ${inv.invoiceNumber}`}")).toBe(1);
-    expect(source).toContain("disabled={printingId === inv.id}");
+    expect(source).toContain("disabled={printingIds.has(inv.id)}");
   });
 
   it("orders/[id]/page.tsx: printLoading state used at least 3x, printPdfBlob( called exactly once", () => {
