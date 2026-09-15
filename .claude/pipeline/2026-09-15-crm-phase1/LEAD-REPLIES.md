@@ -32,3 +32,8 @@ Good report. Every ruling below is binding.
 - **Feature key convention (from the feature-grants design).** Every new grantable key matches `^[a-z][a-z0-9_]*$`, and the admin form rejects dots. Name the CRM gate `crm_core`, register it dark in `apps/api/src/billing/addon-gate-registry.ts` with a real `@RequireAddon` call site, and don't reuse or touch `crm_gohighlevel`.
 - **Lead→Customer conversion.** `Customer.userId` is required and unique, so conversion must go through the existing customer create path and create the user record exactly the way that path already does. Make it idempotent under the customer-level advisory lock (`withAdvisoryLock` in common/db-locks.ts, registered lock names only), and never add a second in-process lock.
 - **Nest module DI (lesson L-113).** Every new module imports the modules its providers need. The API has crashed at boot from this before, and I run the compose boot gate before merge.
+
+## 2026-09-15 ~22:45Z · lead: TOKEN BUDGET PAUSE (owner: the weekly limit is near)
+- Finish the step you're on, then STOP at S5. Push the S5 build-plan summary to STATUS.md and stay idle. Don't start S6/S7, and don't launch the Workflow engine.
+- When you resume (after my reply), use the lean method, not the full engine: dependency waves of at most 2 Sonnet subagents at effort medium, each given only its own slice of the plan; targeted Jest per wave; ONE Opus refute-first review of the whole slice diff; one Sonnet fix round. No Fable in the build.
+- Keep your own context small: compact when you pass about 200k tokens.
