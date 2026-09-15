@@ -1,87 +1,85 @@
 # CRM cloud session status
 
-**2026-09-15 ~21:10Z** · session `routeflow-62` · branch `feat/crm-phase1` · run dir
+**2026-09-15 ~21:45Z** · session `routeflow-62` · branch `feat/crm-phase1` · run dir
 `.claude/pipeline/2026-09-15-crm-core-phase1/`
 
-**Engine: `02d58b81…`, 224,133 B, `node --check` passes, worktree clean.** Not `b71f6c8e`.
+**Engine: `02d58b81…`, 224,133 B, `node --check` passes, worktree clean.**
 
 | Stage | State |
 |---|---|
-| S0 triage · S0.5 pack · S1 discovery | done |
-| **S2 spec** | **done — 33 requirements, PASS** |
-| S3 UX + design-system derivation | next |
-| S4 test plan · S5 build plan | after S3 |
+| S0 · S0.5 · S1 · S2 | done |
+| **S3 UX + design system** | **done** |
+| S4 test plan | next |
+| S5 build plan | after S4 |
 | S6 approval | **your "S5 approved" gates every code push** |
 
-## S2 outcome
+## S3 found three places where my own spec described an app we don't have
 
-33 requirements (32 MUST, 1 SHOULD), each with a priority and a verification method, six of them
-negative. Full lifecycle sweep, nine states across three surfaces, a deploy-day gate table and a
-rollback story. **One material correction and one new ruling needed.**
+All three verified against source before I changed anything. This is the value of S3 — S4 would
+otherwise have written tests for fiction.
 
-### A4 is REFUTED — conversion CAN 403, and I verified it myself
+1. **Mobile offline: writes are NOT blocked, they QUEUE.** The shipped interceptor
+   (`apps/mobile/lib/api-client.ts:120-166`) queues every non-FormData mutation on a hard
+   transport failure; a *timeout* is deliberately excluded (REG-B196, because a timeout may have
+   committed server-side). My spec said "writes blocked, no queue". Corrected — and it creates a
+   real requirement, **new R34**: a queued CRM write can replay, so `POST /crm/activities` and
+   `POST /crm/tasks` must not duplicate. Convert is already idempotent (R19), notes and tasks are
+   not. Mechanism (client idempotency key vs. a dedupe tuple) is S5's call; the no-duplicate
+   property is the requirement.
+2. **`refetchOnWindowFocus` is `false` globally** (`apps/web/app/providers.tsx:67`) and no screen
+   overrides it. My spec's "stale → refetch on focus" would have made CRM the one exception in the
+   app. Corrected to the repo's actual 30 s `staleTime` + invalidate-on-mutation.
+3. **There is no 403 page.** The role guard redirects to `/dashboard`
+   (`apps/web/app/(dashboard)/layout.tsx:303-313`). My spec said a typed URL gives a 403 page.
+   Corrected. **R23's API-level 403 is unchanged** — that contract still holds and is still tested.
 
-S1 assumed, and the plan implied, that the customer soft-cap gate always fails open. It does not.
-`assertCustomerCapNotExceeded()` (`customers.service.ts:625-664`) fails open on lookup errors and
-on the breaching create — but when the tenant is **over cap and `graceStartedAt` is older than
-`GRACE_DAYS`**, it throws `ForbiddenException(buildPlanGateBody("meter.customers"))`.
+## Component inventory — and what is genuinely MISSING
 
-So `POST /crm/leads/:id/convert` can return 403 on a cap a rep has no visibility into. R20 requires
-the plan-gate body to pass through **unchanged**, with the lead untouched and no `User` minted, so
-the rep sees the real upgrade prompt rather than a generic failure. The gate is customer-only, so
-CSV lead import (R22) runs none of it. **This is a behaviour change you should be aware of, not a
-footnote.**
+17 shared web exports, 5 app composites, 17 mobile exports, all cited. Missing as *shared*
+components, each currently local markup somewhere: Pagination, Load-more (no `useInfiniteQuery`
+anywhere in the repo), Tooltip (native `title=`), Popover/Combobox, Checkbox (raw input), a single
+DatePicker, a live-region helper, **any web offline pattern at all**, and **any 403 page**.
 
-### The grant-path trap is real
+I am **not** proposing to build a shared component library for CRM — that would be a visible
+change to RouteFlow and is outside this slice. CRM copies the neighbouring screen's local pattern,
+exactly as `estimates` and `deliveries` already do. Flagging the list because "there is no shared
+pagination component" is a fact the build plan must not trip over.
 
-`AddonGuard` reads the raw `TenantAddon.addonKey` and `enableAddon` upserts it raw, with no SKU
-check for `crm_core` — so the key the gate reads is the key the grant writes. **But** the
-platform-admin panel offers a hardcoded `AVAILABLE_ADDONS` list
-(`apps/web/app/(platform-admin)/admin/tenants/[id]/page.tsx:103`) and `crm_core` is not in it —
-nor, as it happens, is `crm_gohighlevel`. Without R28 the addon is grantable **by API only**.
+## The shared design-system cache already existed — I re-derived it and put back what was dropped
 
-### A3 confirmed — convert takes no body
+`.claude/pipeline/design-system.md` was **not** new: 17.7 KB, derived 2026-08-31 @ `26037bd4`. Per
+the routing rule ("cache exists → re-check") S3 re-derived it from current source, which is right —
+but it also dropped a `## Order-edit page notes` section belonging to a different run. I restored
+that section. Re-deriving stale content is correct; deleting another run's notes out of a shared
+repo-level cache is not. Now 13,099 B.
 
-`CreateCustomerDto` requires only `username`, `businessName`, `contactName`; everything else is
-optional. A lead satisfies all three (`username` derived server-side the way `CustomerFormModal`
-already does it), so no fill-in-the-gaps modal is needed. The only optional body is
-`{existingCustomerId}` for the dedup "link to existing" path.
+## Questions
 
-### Two assumptions killed at S2 review (I verified both)
+**Q5 — cap-403 upgrade prompt is bigger than CRM.** R20 wants the convert 403 to surface as a real
+upgrade prompt. No mutation path in the app renders one today — only GETs do (`PlanGateNotice`,
+plus the `READ_ONLY` branch in `providers.tsx:44-52`). Doing it "properly" means a `PLAN_GATE`
+branch in `MutationCache.onError`, which touches **every mutation in the app**, not just CRM.
+I have spec'd it as a **handler scoped to the convert call only**. Say the word if you want the
+global branch instead — but that is a cross-cutting change and I will not make it on my own.
 
-- **A10** — `RolesGuard` honours a two-role `@Roles`: `auth/guards/roles.guard.ts:50` is
-  `requiredRoles.some(r => satisfied.includes(r))`, and `users.controller.ts:34` already ships
-  `@Roles(OPERATOR, TENANT_ADMIN)`. R23/R24 are safe. (Note the guard is under `auth/guards/`, not
-  `auth/` — the spec cited the wrong path and it is fixed.)
-- **A9** — web nav can read active addons: `useHasAddon`/`useTenantAddons` are already imported in
-  `app/(dashboard)/layout.tsx:73-74` and used at `:1060` for sales agents. React-query dedupes on
-  queryKey, so CRM adds no extra fetch. R27 now also requires the **existing skeleton-placeholder
-  pattern** while the addons query is in flight or errored — a gated nav entry must never pop in
-  or out.
+**Q6 — CALL `outcome` enum.** Mobile offers Reached / No answer / Left voicemail (via the existing
+`chooseAction` helper). Confirm those three or give me the set.
 
-## Q4 — a new ruling I need from you
+**Q4 still open** (owner's own unassign with other assignees remaining — I encoded re-derive).
+**#12** phone normaliser placement · **#13** advisory-lock family name (**still a hard blocker for
+R19 by S5** — `withAdvisoryLock` throws on an unregistered family) · **Q1** hq merged · **Q2**
+prospect count N · **Q3** second gate.
 
-Your #6 ruling was "clear `ownerUserId` only when the owner's own assignment is cancelled,
-re-derive otherwise". That is unambiguous for a **non-owner** unassign. It is ambiguous for the
-case it names: **the owner's own assignment is cancelled while other assignees remain.**
+## What is pushed vs. committed
 
-I encoded **re-derive to the newest remaining assignee, else null** (R10), because it follows from
-"owner is a projection of most-recently-assigned" and it avoids a lead silently losing its owner
-while people are still on it. R9 separately pins the upstream wrinkle test by name. **One assertion
-flips if you rule null instead.** Please rule.
-
-## Still open
-
-- **#12** phone normaliser placement — none exists; R21 normalises both sides at query time either
-  way, since stored `Customer.phone`/`mobile` are raw.
-- **#13** advisory-lock family name — **R19 cannot ship without it**: `withAdvisoryLock` throws on
-  an unregistered family, so "name pending" is a real blocker by S5, not a nicety.
-- **Q1** has `routeflow-hq` merged · **Q2** prospect count N · **Q3** second gate for nav.
+Pushed here: this file. **Committed locally but not yet pushed**: `spec.md` (with the three
+corrections + R34), `ux-spec.md`, the re-derived `design-system.md`, and `discovery.md`'s refreshed
+assumption rows. They land together in the S4 push — each MCP push has to re-send whole files, so I
+am batching the artifacts rather than sending ~55 KB twice. Say if you want them sooner.
 
 ## Compliance
 
 No code written. No bug or lesson id minted. No host-heavy step attempted. No PR. Docs-only pushes.
-Test-tenant policy and the no-live-client-identifier rule observed.
-
-`spec.md` is 16,429 B against a 16 KiB target I set myself — 45 bytes over, left alone rather than
-cutting content to hit a number I invented.
+Test tenants and `acme` placeholders throughout. `spec.md` is now 17,933 B, over a 16 KiB target I
+set myself — the overflow is R34, Q5 and Q6, which I would rather keep than trim to hit my own
+number.
