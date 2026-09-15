@@ -30,6 +30,10 @@ import {
 import { isPendingOrderMirror } from "../../../../../lib/invoices-logic";
 import { computeLineSubtotal } from "@routeflow/pricing";
 import { showToast } from "../../../../../lib/toast";
+import {
+  hasUnsavedInvoiceLineEdits,
+  type InvoiceEditSnapshot,
+} from "../../../../../lib/discard-guard";
 
 /**
  * Invoice edit screen — DRAFT-only, mirroring web's invoices/[id]/edit page.
@@ -99,37 +103,62 @@ export default function EditInvoiceScreen() {
 
   // Hydrate once per invoice id — refetches must not clobber in-progress edits.
   const hydratedFor = useRef<string | null>(null);
+  // Snapshot taken at hydration, compared against the live form by `dirty`
+  // below (lib/discard-guard.ts#hasUnsavedInvoiceLineEdits). Null until the
+  // effect below has run once for this invoice.
+  const originalRef = useRef<InvoiceEditSnapshot | null>(null);
   useEffect(() => {
     if (!invoice || invoice.status !== "DRAFT" || hydratedFor.current === invoice.id) return;
     hydratedFor.current = invoice.id;
-    setLines(
-      (invoice.items ?? []).map((it) => ({
-        key: newKey(),
-        productId: it.productId ?? null,
-        description: it.description,
-        qty: Number(it.qty),
-        boxes: it.boxes ?? null,
-        pieces: it.boxes != null ? (it.pieces ?? 0) : null,
-        unitsPerBox: it.unitsPerBox ?? null,
-        unitPrice: Number(it.unitPrice),
-        discount: it.discount != null && Number(it.discount) > 0 ? Number(it.discount) : null,
-        taxRate: Number(it.taxRate ?? 0),
-        taxable: Number(it.taxRate ?? 0) > 0,
-        note: it.notes ?? "",
-        promoFreeUnits: it.promoFreeUnits ?? null,
-        promoBaseUnits: it.promoFreeUnits
-          ? Math.trunc(Number(it.boxes != null ? it.boxes : it.qty) || 0)
-          : null,
-      })),
-    );
-    setIssueDate(invoice.issueDate ? invoice.issueDate.slice(0, 10) : "");
-    setDueDate(invoice.dueDate ? invoice.dueDate.slice(0, 10) : "");
-    setInvDiscount(Number(invoice.discount) > 0 ? Number(invoice.discount) : null);
-    setShippingFee(Number(invoice.shippingFee) > 0 ? Number(invoice.shippingFee) : null);
-    setReferenceNumber(invoice.referenceNumber ?? "");
-    setSubject(invoice.subject ?? "");
-    setNotes(invoice.notes ?? "");
-    setTerms(invoice.terms ?? "");
+    const hydratedLines = (invoice.items ?? []).map((it) => ({
+      key: newKey(),
+      productId: it.productId ?? null,
+      description: it.description,
+      qty: Number(it.qty),
+      boxes: it.boxes ?? null,
+      pieces: it.boxes != null ? (it.pieces ?? 0) : null,
+      unitsPerBox: it.unitsPerBox ?? null,
+      unitPrice: Number(it.unitPrice),
+      discount: it.discount != null && Number(it.discount) > 0 ? Number(it.discount) : null,
+      taxRate: Number(it.taxRate ?? 0),
+      taxable: Number(it.taxRate ?? 0) > 0,
+      note: it.notes ?? "",
+      promoFreeUnits: it.promoFreeUnits ?? null,
+      promoBaseUnits: it.promoFreeUnits
+        ? Math.trunc(Number(it.boxes != null ? it.boxes : it.qty) || 0)
+        : null,
+    }));
+    setLines(hydratedLines);
+    const hydratedIssueDate = invoice.issueDate ? invoice.issueDate.slice(0, 10) : "";
+    const hydratedDueDate = invoice.dueDate ? invoice.dueDate.slice(0, 10) : "";
+    const hydratedInvDiscount = Number(invoice.discount) > 0 ? Number(invoice.discount) : null;
+    const hydratedShippingFee =
+      Number(invoice.shippingFee) > 0 ? Number(invoice.shippingFee) : null;
+    const hydratedReferenceNumber = invoice.referenceNumber ?? "";
+    const hydratedSubject = invoice.subject ?? "";
+    const hydratedNotes = invoice.notes ?? "";
+    const hydratedTerms = invoice.terms ?? "";
+    setIssueDate(hydratedIssueDate);
+    setDueDate(hydratedDueDate);
+    setInvDiscount(hydratedInvDiscount);
+    setShippingFee(hydratedShippingFee);
+    setReferenceNumber(hydratedReferenceNumber);
+    setSubject(hydratedSubject);
+    setNotes(hydratedNotes);
+    setTerms(hydratedTerms);
+    originalRef.current = {
+      lines: hydratedLines.map(
+        ({ key, unitsPerBox, taxRate, promoFreeUnits, promoBaseUnits, ...rest }) => rest,
+      ),
+      issueDate: hydratedIssueDate,
+      dueDate: hydratedDueDate,
+      invDiscount: hydratedInvDiscount,
+      shippingFee: hydratedShippingFee,
+      referenceNumber: hydratedReferenceNumber,
+      subject: hydratedSubject,
+      notes: hydratedNotes,
+      terms: hydratedTerms,
+    };
   }, [invoice]);
 
   const patch = (key: string, up: Partial<EditLine>) =>
@@ -216,6 +245,27 @@ export default function EditInvoiceScreen() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lines, invDiscount, shippingFee, isTaxExempt, tenantTaxRate]);
+
+  const dirty = useMemo(
+    () =>
+      hasUnsavedInvoiceLineEdits(
+        {
+          lines: lines.map(
+            ({ key, unitsPerBox, taxRate, promoFreeUnits, promoBaseUnits, ...rest }) => rest,
+          ),
+          issueDate,
+          dueDate,
+          invDiscount,
+          shippingFee,
+          referenceNumber,
+          subject,
+          notes,
+          terms,
+        },
+        originalRef.current,
+      ),
+    [lines, issueDate, dueDate, invDiscount, shippingFee, referenceNumber, subject, notes, terms],
+  );
 
   const submit = () => {
     if (!id || !invoice) return;
@@ -353,7 +403,7 @@ export default function EditInvoiceScreen() {
       subtitle={invoice.invoiceNumber}
       submitLabel={updateMut.isPending ? "Saving…" : "Save"}
       submitting={updateMut.isPending}
-      warnIfDirty
+      confirmDiscardIfDirty={dirty && !updateMut.isPending}
       onSubmit={submit}
     >
       {isTaxExempt ? (

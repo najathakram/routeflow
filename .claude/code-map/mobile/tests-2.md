@@ -174,6 +174,39 @@ The wholesaler-reported "scanned items go missing / land twice" cluster. Server 
   `Promise.race` here would discard only the VALUE — the ladder would keep running and `deps.accept`
   (a real cart write) would land after the operator was told "try again". Scoped signal only; api-client's
   own 15s axios timeout is untouched.
+  **Cross-mechanism dedup (2026-09-14, F30 open interleavings A/A'/B) — `lib/scan-accept-guard.ts`
+  (NEW, pure).** A screen's camera path (this ladder) and its settled-search auto-add effect can
+  both resolve the SAME physical scan independently, either double-adding or leaving the ladder
+  showing a false `No product for "X"` for a line the effect already added. `sameScanCode(a,b)` (the
+  same `normalizeScanCode` candidate-set intersection `gateScan` uses) plus
+  `createScanAcceptGuard<T>(): {begin(code): ScanClaim<T>, offer(code,product,unitKind): boolean}` —
+  one claim lives between `begin()` (an input event entering the ladder) and that invocation's own
+  `settle(resolution)`; while open, `offer()` for the SAME label parks its match on the claim
+  instead of adding, and `settle("unresolved")` redeems the parked match — `"accepted"`/`"refused"`
+  discard it. A superseding claim for the same label TAKES an already-parked match rather than
+  dropping it; a claim for a DIFFERENT label leaves the superseded one's own parked match to be
+  redeemed by ITS OWN settle. Deliberately NOT a code/time window (would swallow a deliberate
+  re-scan — the exact under-count `scan-loop.ts`'s 600ms cooldown and REG-B201 both guard against).
+  `makeScanHandler` gains optional `deps.acceptGuard?: ScanAcceptGuard<T>` — every return path now
+  routes through a local `settle(resolution, outcome)` closure; omitted on surfaces with no
+  search-box auto-add (drivers, substitute-mode pickers) and every branch runs unclaimed. Wired
+  into `NewOrderScreen.tsx` and `invoices/new.tsx`'s `handleBarcodeScanned`/settled-effect via a
+  `scanGuardRef`, and `edit-items.tsx`. Spec: `__tests__/scan-accept-guard.test.ts`.
+- **`lib/scan-feedback-slot.ts` (NEW, pure, 2026-09-14) — the scan sheet's pill is a state machine,
+  not a setter pair.** Lifted out of `components/ScanOrderSheet.tsx` to close
+  `scanordersheet-stale-error-pill-lingers-over-next-add`: the sheet used to write the error pill
+  from ONE branch only, so a scan miss (`No product for "X"`, live Create button) sat over the
+  camera for its full 8000ms actionable lifetime regardless of how many items scanned fine after
+  it — a success outcome carried no feedback of its own to overwrite it with.
+  `reduceScanSlot(state: ScanFeedbackSlotState, action: ScanSlotAction)`: THE RULE — a settled
+  outcome always owns the slot; an error shows its pill, anything else (accept, hand-off close, a
+  bare `undefined`) CLEARS it. `ScanFeedbackSlotState {pill, ttlMs, nonce}` — `nonce` climbs on
+  every transition so the host's `setTimeout` (keyed on it) can't wipe a fresher pill with a stale
+  expiry; `pillTtlMs` (`ERROR_PILL_MS`=2600 / `ACTION_PILL_MS`=8000) and `scanSlotEffects(outcome)`
+  → `("error-cue"|"added-cue"|"scroll-tray-top"|"close-sheet")[]` (the host does haptics/scroll,
+  this module stays React/RN-free). `ScanOrderSheet.tsx` now holds `slot` state and dispatches
+  `{type:"outcome"|"dismiss"|"reset"|"expire"}` through it instead of its old `error`/`errorTimer`
+  pair. Spec: `__tests__/scan-feedback-slot.test.ts`.
 - **`lib/barcode-resolve.ts` — a distinct `archived` outcome (R5, REG-B195).** New exported
   `BarcodeResolveArchived<T> {archived: true, product, source}` widens `BarcodeResolveResult`, plus
   `archivedMessage(product)` (the one shared line) and a `signal?` parameter threaded into both rungs.
@@ -586,11 +619,27 @@ userId)` to delete the two persisted blobs outright (a `persist` write from the 
   above can otherwise land in the `anon` bucket one async hop later and resurrect the cleared
   capture). Deliberately untouched: the tenant store (shared-tablet branded login survives
   sign-out) and the offline queue (identity-stamped, never flushed on sign-out).
+  **Driver-durability lane, Lane B half (2026-09-14) — now 8 stores + a per-order keyspace
+  sweep.** `store/stopCartStore.ts` (NEW, see below) joined the original 7 — same
+  `reset()`/persisted-blob pattern via `STOP_CART_STORE_NAME`. New step (6):
+  `lib/edit-items-draft.ts`'s staged order-edit snapshot is one AsyncStorage key PER ORDER
+  (`rf.edit-items.v1:<userId>:<orderId>`, RULINGS R1), not a single blob, so it can't be
+  addressed by `clearUserScopedStorage`; a new private `clearStorageByPrefix(prefix)` enumerates
+  `AsyncStorage.getAllKeys()` and `multiRemove`s every key under
+  `editItemsSnapshotUserPrefix(userId)` instead (best-effort, swallowed) — otherwise a staged
+  edit the outgoing operator left behind could be offered for restore to the next login on a
+  shared device (the B136/B137/B140 class). **2026-09-14 (PR #748 review, F1):** step (6) now
+  ALSO sweeps `editItemsSnapshotUserPrefix(null)` (the anon bucket) belt-and-braces, since
+  `edit-items.tsx`'s write ref could reach it whenever `userId` was undefined at write time
+  (cold open/deep link, before auth resolves) — the write ref itself now refuses to write at all
+  in that state, so this sweep only ever needs to catch a pre-existing key.
 - **`lib/session-hydrate.ts`** (new) — `rehydrateUserScopedStores(): Promise<void>` calls
   `persist.rehydrate()` on `podStore`/`runSettlementStore` (both now `skipHydration: true`,
   keyed by user id which isn't known at module-eval time); the ONE explicit hydration point,
   called from `lib/auth-store.ts` right after `login()`/`initialize()` resolves the user.
   Optional-chained and swallowed per store — a hydration failure never blocks sign-in.
+  **2026-09-14:** now also rehydrates `useStopCartStore` (3 stores total) — same reason, same
+  `skipHydration: true`/user-keyed-storage shape.
 - **`lib/query-client.ts`** (new) — `export const queryClient = new QueryClient()`, the single
   instance shared by `app/_layout.tsx`'s `QueryClientProvider` and `session-teardown.ts` (a client
   the layout allocated for itself would leave sign-out unable to clear it).
@@ -632,3 +681,100 @@ Promise<void>`, and the zustand `StateStorage` adapter `userScopedStorage` — k
   proved on #681/#682 and discharged to done in this follow-up; siblings B01/B02/B143 (F19, B143
   already done via #555) and B32/B23/B94/B95/B172 (F20) stay queued/untouched — out of scope
   for this wave.
+
+### 2026-09-14 — hunt-mobile-scan lanes A, B, C, E (dedup, discard-guard, lazy catalogue, price-edit)
+
+Five bug-fix lanes off `.claude/pipeline/2026-09-14-hunt-mobile-scan/plan.md`, landing as two PRs
+(PR-1: lanes A/B/C/E, mobile-only; PR-2: lane D, stacked on PR-1, api + driver-durability — see
+that PR's own bookkeeping commit for its entry). Lane A's lazy-load gate, `scan-accept-guard.ts`
+and `scan-feedback-slot.ts` are documented above (tests-1.md / tests-2.md's scan-ladder.ts entry);
+this section covers the rest of A/B/C/E.
+
+- **Lane A — `edit-items.tsx` staged-edit durability.** New `lib/edit-items-draft.ts` (NEW, pure —
+  no RN/AsyncStorage import; the screen owns every `getItem`/`setItem`/`removeItem`) is the pure
+  half of the editor: `DraftItem`/`UnlistedDraft`/`StagedEdit` shapes; `orderOriginals(order)` +
+  `stagedDiffItems(staged, originals)` (the ONE `buildOrderItemDiff` call both the dirty check and
+  Save share) + `hasUnsavedItemEdits`/`hasUnsavedWork`; `shouldRehydrateFromOrder({hydrated, dirty,
+justSaved})` (a background order refetch may re-`setDraft` from the server only on first
+  hydration, right after a save, or onto an already-clean editor — an unconditional effect used to
+  let ANY refetch silently discard staged work); the on-device snapshot
+  (`EDIT_ITEMS_SNAPSHOT_VERSION`/`_TTL_MS`=24h/`_AUTOSAVE_DEBOUNCE_MS`=900,
+  `snapshotBaseline(order)` as the staleness gate — NOT `order.updatedAt`, which bumps on
+  order-level writes that don't invalidate a staged LINE edit —
+  `make/serialize/deserializeEditItemsSnapshot`, `isSnapshotStale`); the keyspace
+  `editItemsSnapshotKey(orderId, userId)` / `EDIT_ITEMS_SNAPSHOT_KEY_PREFIX =
+"rf.edit-items.v1"` / `editItemsSnapshotUserPrefix(userId)` (one key PER ORDER — see
+  `session-teardown.ts`'s new step (6) above); and the picker drawer's rows
+  (`draftTrayRows` → `scan-tray.ts#trayRowsFrom`, `PICKER_TRAY_HANDLE_HEIGHT`=56,
+  `pickerTrayExpandedHeight(win)`, floored to never cover `BarcodeScanner`'s viewfinder). The
+  screen wires: a restore prompt (`restored`/`restoreChecked`/`restoreState` state reading
+  `AsyncStorage.getItem(snapshotKey)` on mount), lazy-gated product search (`browsing` state +
+  `useProductSearch({browsing})`, see tests-1.md), a `scanGuardRef` (`createScanAcceptGuard`,
+  see above), and **`canEditPriceFor(productId) = orderPriceEditable && pricingReady &&
+!isSpecialFor(productId)`** — `pricingReady` is in the AND deliberately: while the
+  customer/customer-price queries are in flight `cpMap` is empty and `isSpecialFor` would
+  answer false for a genuinely SPECIAL line (the exact window B62 was filed for). Specs:
+  `__tests__/edit-items-draft.test.ts`, `__tests__/edit-items-drawer.test.ts`,
+  `__tests__/picker-idle.test.ts`.
+
+- **Lane B — scan-tray price edit + reducer-driven feedback.** `lib/scan-tray.ts#trayRowsFrom`
+  gains `freeUnitsFor?: (id, line) => number` (threaded into `computeLineSubtotal`'s `freeUnits`
+  so a BUY_N_GET_M tray row nets the same saving the footer does; default 0, existing callers
+  unaffected). `components/ScanTray.tsx` gains `onEditPrice?: (id) => void` — when supplied, a
+  row's subtotal renders as a tappable control (pencil icon) opening the caller's price editor;
+  omitted, the row is plain text as before. `components/ScanOrderSheet.tsx` forwards it straight
+  through (plus the `reduceScanSlot` rewrite documented above). `components/NewOrderScreen.tsx`
+  (`ProductPickView`) adds **`onTrayEditPrice(id)`** (refuses with an inline toast — "Contract
+  price — not editable on this order" — for a SPECIAL-tier catalog line, mirrors `edit-items.tsx`'s
+  B263 lock) and a new **`LinePriceModal({open,name,unitPrice,onClose,onSave})`** (thin: collects
+  a number via `MoneyTextInput`, `onSave(null)` clears the override back to catalog price;
+  rounding/SPECIAL-lock/catalog-vs-unlisted stay with the caller) — the create surface's price
+  editor used to live only inside CartModal, reachable by leaving scan mode; this is the
+  create-side counterpart to the edit screen's existing one-tap edit. `app/(operator)/(tabs)/
+invoices/new.tsx`'s `InvoiceComposer` gets the same `scanGuardRef`/`browsing` lazy-load wiring
+  (see tests-1.md) plus a `productSearch: () => Array.from(productById.values())` local fast path
+  (page 1 is no longer preloaded, so the ladder's local rung now reads every line already on the
+  invoice, not just the current search page) and a `searchTermRef` (a native `onSubmitEditing`
+  fired against a stale render — before `clearSearch()`'s re-render lands — now reads the ref, not
+  render-scope `searchTerm`, so it can't resubmit a code that was just accepted).
+
+- **Lane C — `FormSheet.tsx` discard confirmation + `lib/discard-guard.ts` (NEW, pure).**
+  `FormSheetProps.warnIfDirty` renamed **`confirmDiscardIfDirty`**: unchanged web
+  `beforeunload` behavior PLUS, on every platform, tapping header-X/footer-Cancel now routes
+  through `lib/confirm.ts#confirm("Discard changes?", …, {destructive:true})` before actually
+  leaving (`beforeunload` never fires for an in-app `router.back()`). Choke point: gated on
+  FormSheet's OWN `submitting` prop via `shouldConfirmDiscard(dirty, submitting)`
+  (`dirty && !submitting`), not just the caller's flag — so a caller that forgot to factor
+  `submitting` into its own predicate still never prompts mid-submit. `discard-guard.ts` exports
+  that generic gate plus per-screen dirty predicates, each named for its screen:
+  `hasUnsavedStandingOrder({name,lines})` (`standing-orders/new.tsx`),
+  `hasUnsavedInvoiceDraft({items,unlisted})` (`invoices/new.tsx`'s composer — the preceding
+  CustomerPicker stage is deliberately unguarded, nothing to lose yet),
+  `InvoiceEditLineSnapshot`/`InvoiceEditSnapshot` + `hasUnsavedInvoiceLineEdits(current,original)`
+  (`invoices/[id]/edit.tsx` — compares every line + header field against the hydration-time
+  snapshot; `original===null` never reads as dirty), `hasTouchedReceiveForm({qtys,boxQtys,
+pieceQtys,notes})` (`purchase-orders/[id]/receive.tsx` — "touched" = present as an own key,
+  not value-vs-seed, an accepted false-positive), `hasUnsavedPayment({amount,reference,notes,
+bankCharges,paidAt,settledAt,photos,asDraft})` (`payments/record.tsx` — `allocs` excluded, a
+  pure function of `amount`). Wired: `CustomerForm.tsx` (`shouldConfirmDiscard(isDirty,
+submitting)`), `standing-orders/new.tsx`, `payments/record.tsx`, `purchase-orders/[id]/
+receive.tsx`, `invoices/[id]/edit.tsx` (new `dirty` memo + `originalRef` snapshot taken in the
+  hydration effect). `invoices/new.tsx`'s composer has no FormSheet, so it applies the same
+  choke-point rule directly on its own back button (`handleBack` → `shouldConfirmDiscard(dirty,
+saving)` → `confirm(...)`). Specs: `__tests__/discard-guard.test.ts`,
+  `__tests__/form-guard-callers.test.ts`, `__tests__/edit-items-drawer.test.ts`.
+
+- **Lane E — picker ergonomics.** `components/ProductPickerSheet.tsx` drops its `useAdminProducts`
+  fetch-all (`limit:0`, a 10,000-row clamp + one presigned thumbnail URL per row) for
+  `lib/use-product-search.ts#useAdminProductSearch` (see tests-1.md) — `browsing` state resets on
+  close, an `idle` empty state offers "Browse catalogue", and infinite-scroll paging is wired via
+  `onScroll`'s near-bottom check. A scanned variant's parent lookup (`standaloneOnly` mode) now
+  fetches `GET /products/:parentProductId` directly via `apiClient` instead of a local `products
+.find()` — the page rows are gated on a term/browse now, so a scanned variant would otherwise
+  always miss that local search. `app/(operator)/recurring-invoices/new.tsx`'s
+  `ProductPickerModal` gets the same `browsing`/`idle` lazy-load treatment (resets on `!open`).
+  `packages/ui/src/mobile/ios/SearchBar.tsx` — `React.forwardRef<TextInput, SearchBarProps>` +
+  new `autoFocus?: boolean` prop (default unfocused, unchanged); `invoices/new.tsx`'s search bar
+  now passes `autoFocus`. `lib/api/products.ts useProductsInfinite` params gain `scanCode?`;
+  `lib/api/admin.ts useAdminProducts`/`useAdminProductsInfinite` both gain a second
+  `options?: {enabled?}` arg (mirrors `products.ts`, lets a picker gate its fetch while closed).

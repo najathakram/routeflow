@@ -31,6 +31,12 @@ export interface ScanTrayProps {
   onIncrement: (id: string) => void;
   onDecrement: (id: string) => void;
   onRemove: (id: string) => void;
+  /**
+   * Optional price-edit affordance. When supplied, the row's subtotal renders
+   * as a tappable control that opens the caller's price editor for that line;
+   * when omitted the row renders exactly as before (subtotal is plain text).
+   */
+  onEditPrice?: (id: string) => void;
   ListEmptyComponent?: React.ComponentProps<typeof FlatList>["ListEmptyComponent"];
 }
 
@@ -65,6 +71,8 @@ interface RowProps {
   onIncrement: (id: string) => void;
   onDecrement: (id: string) => void;
   onRemove: (id: string) => void;
+  /** Present only when the tray was given `onEditPrice`. */
+  onEditPrice?: (id: string) => void;
 }
 
 const TrayRowItem = React.memo(function TrayRowItem({
@@ -79,6 +87,7 @@ const TrayRowItem = React.memo(function TrayRowItem({
   onIncrement,
   onDecrement,
   onRemove,
+  onEditPrice,
 }: RowProps) {
   const anim = React.useRef(new Animated.Value(0)).current;
 
@@ -114,9 +123,24 @@ const TrayRowItem = React.memo(function TrayRowItem({
         <Text style={styles.name} numberOfLines={2}>
           {name}
         </Text>
-        <Text style={styles.subtotal} numberOfLines={1}>
-          ${subtotal.toFixed(2)}
-        </Text>
+        {onEditPrice ? (
+          <Pressable
+            onPress={() => onEditPrice(id)}
+            hitSlop={8}
+            style={styles.subtotalEdit}
+            accessibilityRole="button"
+            accessibilityLabel={`Edit price for ${name}`}
+          >
+            <Text style={styles.subtotal} numberOfLines={1}>
+              ${subtotal.toFixed(2)}
+            </Text>
+            <Ionicons name="pencil" size={12} color={ios.label2} />
+          </Pressable>
+        ) : (
+          <Text style={styles.subtotal} numberOfLines={1}>
+            ${subtotal.toFixed(2)}
+          </Text>
+        )}
       </View>
       <View style={styles.rowBottom}>
         <Text style={styles.qtySummary} numberOfLines={1}>
@@ -154,7 +178,7 @@ const TrayRowItem = React.memo(function TrayRowItem({
  * or every row re-renders on each scan.
  */
 export const ScanTray = React.forwardRef<ScanTrayHandle, ScanTrayProps>(function ScanTray(
-  { rows, flash, onChangeQty, onIncrement, onDecrement, onRemove, ListEmptyComponent },
+  { rows, flash, onChangeQty, onIncrement, onDecrement, onRemove, onEditPrice, ListEmptyComponent },
   ref,
 ) {
   const listRef = React.useRef<FlatList<TrayRow>>(null);
@@ -182,9 +206,10 @@ export const ScanTray = React.forwardRef<ScanTrayHandle, ScanTrayProps>(function
         onIncrement={onIncrement}
         onDecrement={onDecrement}
         onRemove={onRemove}
+        onEditPrice={onEditPrice}
       />
     ),
-    [flash, reduceMotion, onChangeQty, onIncrement, onDecrement, onRemove],
+    [flash, reduceMotion, onChangeQty, onIncrement, onDecrement, onRemove, onEditPrice],
   );
 
   return (
@@ -229,6 +254,11 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_600SemiBold",
     color: ios.label,
     fontVariant: ["tabular-nums"],
+  },
+  subtotalEdit: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
   },
   qtySummary: {
     flex: 1,

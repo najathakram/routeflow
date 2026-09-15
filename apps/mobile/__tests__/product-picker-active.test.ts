@@ -42,7 +42,15 @@ const source = readSource("components/ProductPickerSheet.tsx");
 describe("ProductPickerSheet — archived products excluded from the tap list (B142)", () => {
   it("REG-B142-D the picker exposes an activeOnly prop that gates the isActive filter", () => {
     expect(source).toMatch(/activeOnly\s*=\s*false/);
-    const queryMatch = source.match(/useAdminProducts\(\{[\s\S]*?\}\)/);
+    // 2026-09-14 (hunt-mobile-scan): the sheet moved off the `limit: 0`
+    // fetch-all `useAdminProducts` onto the debounced, gateable
+    // `useAdminProductSearch`. The LOCATOR moved with it; the assertion did
+    // not — `isActive` must still be `activeOnly ? true : undefined`, which is
+    // what B142 actually guarantees. A locator left pointing at the old hook
+    // name would have matched nothing and failed (or, with a laxer regex,
+    // passed vacuously) while saying nothing about archived rows.
+    const queryMatch = source.match(/useAdminProductSearch<[^>]*>\(\{[\s\S]*?\}\)/);
+    expect(queryMatch).toBeTruthy();
     const queryBlock = queryMatch ? queryMatch[0] : "";
     expect(queryBlock).toMatch(/isActive:\s*activeOnly\s*\?\s*true\s*:\s*undefined/);
   });

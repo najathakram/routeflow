@@ -774,6 +774,51 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   `subscription-mutation.service.spec.ts` — one case per non-terminal status, plus one pinning
   that an unrecognised status still surfaces the error. Sibling [[L-127]].
 
+### L-145 · 2026-09-14 · domain · mobile scan-to-order, staged-edit persistence
+
+- **Symptom:** a reviewer flagged a new "don't lose the operator's staged edits" snapshot
+  (`edit-items-draft.ts`) as a likely R1 violation — R1 requires local persistence to go through
+  the user-scoped zustand `persist` store pattern (`podStore.ts`), never a raw AsyncStorage key,
+  specifically to prevent one user's work surfacing under the next login (B136/B137/B140).
+- **Root cause:** R1 was written against a single-blob-per-user shape (one cart, one draft). This
+  snapshot is one-per-ORDER, and an operator edits several orders per session — a single zustand
+  store holds one state object, not a dynamic per-order keyspace, so the literal store pattern
+  doesn't fit the shape. The code used a `rf.edit-items.v1:<userId>:<orderId>` AsyncStorage
+  keyspace instead, with `lib/session-teardown.ts` enumerating and wiping every key under a
+  user's prefix on logout.
+- **Lesson:** **A binding rule written for one shape (single blob) does not automatically bind a
+  different shape (a per-entity keyspace) the same way. Before flagging a deviation from a
+  pattern-shaped rule as a violation, check what invariant the rule actually protects — here, no
+  cross-user data leak — and whether the deviation still satisfies THAT, not just whether it uses
+  the literal mechanism. Verify the substitute mechanism is real (grep the teardown/hydrate wiring
+  itself), don't take a code comment's claim on faith.**
+- **Guard:** `session-teardown.ts` imports and calls `editItemsSnapshotUserPrefix` +
+  `clearStorageByPrefix` — grep for it before trusting this reasoning again on the same file.
+  `apps/mobile/lib/edit-items-draft.ts` carries the design-rationale comment inline.
+
+### L-144 · 2026-09-14 · domain · PR #748 review — a fallback key for an unresolved identity is a cross-user leak
+
+- **Symptom:** the same staged-edit keyspace [[L-145]] fixed can still deliver operator A's edit
+  to operator B on a shared tablet: `editItemsSnapshotKey` falls back to an `anon` bucket when
+  `useAuthStore`'s `user?.id` reads undefined — reachable on a cold open or deep link, before
+  `initialize()` resolves the stored user — and teardown swept only the resolved user's own
+  prefix, never `anon`.
+  - **Root cause:** "no user id yet" was treated as one more value to derive a key from (a
+    `?? "anon"` fallback), not as a distinct state that must refuse the write entirely. A fallback
+    bucket is by construction shared by every caller who ever hits the same unresolved state — the
+    cross-user leak is what a shared default key always is, discovered late because sign-in
+    normally resolves fast enough that the window is rarely hit.
+- **Lesson:** **An unresolved identity is not "no identity" — it is "don't know yet," and a
+  fallback default for it silently becomes a SHARED bucket every not-yet-authenticated caller
+  writes into. Never derive a user-scoped storage key with a `?? someDefault`; gate the write
+  itself on the id being resolved, and skip it (not write-then-hope-to-sweep-later) when it
+  isn't. A teardown sweep of the fallback bucket is legitimate belt-and-braces, never the fix on
+  its own.**
+- **Guard:** `edit-items.tsx`'s `snapshotWriteRef.current` refuses on `userId == null`
+  (`REG-MSCAN-A4-anon`, source-text pin in `edit-items-drawer.test.ts`);
+  `session-teardown.ts` step (6) also sweeps `editItemsSnapshotUserPrefix(null)`
+  (`REG-EDIT-SWEEP-B`/`REG-MSCAN-A4-anon` in `session-teardown.test.ts`).
+
 ### L-129 · 2026-09-14 · tooling · #745 react skew guard
 
 - **Symptom:** `no-react-skew-hacks.spec.ts` asserted `apps/web`'s `react`/`react-dom` deps
