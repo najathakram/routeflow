@@ -6756,7 +6756,6 @@ cmds["self-test"] = () => {
         ].join("\n"),
       );
       const argv = [orchestrator, SCRIPT_PATH, tmp, "1200"].map((a) => JSON.stringify(a)).join(" ");
-      const t0 = Date.now();
       let raced;
       try {
         raced = {
@@ -6766,7 +6765,6 @@ cmds["self-test"] = () => {
       } catch (e) {
         raced = { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
       }
-      const elapsedMs = Date.now() - t0;
       check("lock order (runtime): the orchestrator exited 0", raced.code, 0);
       const kids = JSON.parse(raced.out.trim().split("\n").pop());
       check(
