@@ -6,14 +6,24 @@
  * written and read against — plan keys, flag keys, addon SKUs, and meter keys.
  */
 
-/** The four plan keys (drive entitlement logic; the TenantPlan enum is a shadow). */
+// REG-743-F1: mirrors @routeflow/types's PLAN_KEYS here (like METER_KEYS below), rather than
+// value-importing it. The API compiles to dist/ via `nest build`, which does not bundle
+// workspace deps; @routeflow/types ships raw TypeScript with no build step, so a value import
+// crashes `node dist/main.js` at boot (see no-runtime-workspace-imports.spec.ts) — only
+// @routeflow/pricing ships a compiled `main` and may be value-imported here. The previous
+// hand-typed copy this replaced was `["STARTER", "PROFESSIONAL", "ENTERPRISE"]`, missing
+// GROWTH/SCALE and carrying a non-existent "PROFESSIONAL" key.
 export const PLAN_KEYS = ["STARTER", "GROWTH", "SCALE", "ENTERPRISE"] as const;
 export type PlanKey = (typeof PLAN_KEYS)[number];
 
-/** Default trial length in days. First consumer is `tenants.service.ts` (public
- * self-signup); `platform-admin.service.ts`'s Create Tenant path still hardcodes its
- * own 7-day value and is NOT wired to this constant yet — unifying it is a later
- * trial-length task, not done here. */
+/**
+ * Default trial length in days. Consumed by `tenants.service.ts` (public self-signup) AND
+ * `platform-admin.service.ts`'s Create Tenant path (`dto.trialLengthDays ?? TRIAL_LENGTH_DAYS`)
+ * — both are wired to this constant; REG-743-F6 (a declaration defect, not a code defect) fixes
+ * an earlier version of this comment that claimed the admin path still hardcoded its own 7-day
+ * value. The admin path also accepts an explicit 1-90 day override
+ * (`CreateTenantDto.trialLengthDays`, REG-743-N7) that takes precedence over this default.
+ */
 export const TRIAL_LENGTH_DAYS = 14;
 
 /**
@@ -175,6 +185,11 @@ export const BILLING_EVENTS = {
   // PlatformAdminService.updateTenantClass) — that's the transition that moves revenue in or
   // out of MrrService's scope, so it's the one worth a ledger row.
   TENANT_CLASS_CHANGED: "tenant.class_changed",
+  // REG-743-N8: emitted by scripts/backfill-subscription-reconciliation.mjs on a successful
+  // --apply write. Declared here for discoverability even though the .mjs CANNOT import this
+  // TS const (it's a plain script, no compile step) — it re-types the same string literal
+  // itself; keep the two in sync by hand if this key's string ever changes.
+  RECONCILIATION_SNAPSHOT_BACKFILLED: "reconciliation.snapshot_backfilled",
 } as const;
 export type BillingEventType = (typeof BILLING_EVENTS)[keyof typeof BILLING_EVENTS];
 
@@ -189,6 +204,14 @@ export function planKeyFromEnum(plan: string | null | undefined): PlanKey {
       return "GROWTH";
     case "BUSINESS":
     case "PROFESSIONAL":
+      return "SCALE";
+    // Phase 0 Task 10: GROWTH/SCALE are now also DIRECT TenantPlan enum values (not only
+    // legacy aliases mapped forward) — identity map them instead of falling through to the
+    // STARTER default, which used to silently under-price/under-entitle a tenant written with
+    // the new enum value directly.
+    case "GROWTH":
+      return "GROWTH";
+    case "SCALE":
       return "SCALE";
     case "ENTERPRISE":
       return "ENTERPRISE";
@@ -209,10 +232,8 @@ export type TenantPlanEnumValue =
 
 /**
  * `TenantPlan` values currently selectable on an admin-facing DTO (`UpdateTenantPlanDto`,
- * `ActivateSubscriptionDto`). Excludes GROWTH and SCALE: `@IsEnum(TenantPlan)` alone would accept
- * them now that the Prisma enum has widened, but `planKeyFromEnum()` doesn't know them yet and
- * falls through to its default STARTER branch — GROWTH/SCALE become selectable in Phase 0 Task 10
- * when planKeyFromEnum learns them.
+ * `ActivateSubscriptionDto`). Phase 0 Task 10 closed the GROWTH/SCALE gap: `planKeyFromEnum()`
+ * now identity-maps both, so they're safe to accept here too.
  */
 export const SELECTABLE_TENANT_PLANS: TenantPlanEnumValue[] = [
   "STARTER",
@@ -220,6 +241,8 @@ export const SELECTABLE_TENANT_PLANS: TenantPlanEnumValue[] = [
   "BUSINESS",
   "PROFESSIONAL",
   "ENTERPRISE",
+  "GROWTH",
+  "SCALE",
 ];
 
 /**

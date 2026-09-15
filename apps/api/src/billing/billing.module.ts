@@ -54,6 +54,10 @@ import { EntitlementsModule } from "./entitlements.module";
     // PlatformAdminModule (which already imports BillingModule) can inject it.
     ProrationService,
     EntitlementsModule,
+    // Phase 0 T9: PlatformAdminService.getStats() reads MrrService.computeOverview() as the
+    // one MRR engine instead of re-deriving its own estimate — was a provider only, so DI
+    // resolution failed until exported here.
+    MrrService,
   ],
 })
 export class BillingModule {}
