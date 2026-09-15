@@ -55,6 +55,7 @@ import { alertInfo, confirm, chooseAction } from "../../../../lib/confirm";
 import { formatQtySplit } from "@routeflow/pricing";
 import { freeUnitsLabel } from "../../../../lib/buyer-cart-logic";
 import { ACTIVATION_BUDGET_MS, sharePdf } from "../../../../lib/share-pdf";
+import { printPdf } from "../../../../lib/print-pdf";
 import {
   nextPdfSharePhase,
   smtpFallbackNotice,
@@ -140,6 +141,8 @@ export default function InvoiceDetailScreen() {
   const unapplyCredit = useUnapplyCreditNote();
   const deleteMut = useDeleteInvoice();
   const pdfMut = useInvoicePdf();
+  const printPdfMut = useInvoicePdf();
+  const [printing, setPrinting] = useState(false);
   const updateMut = useUpdateInvoice();
   const shipmentMut = useUpdateInvoiceShipment();
   const getImageUrlMut = useGetPaymentImageUrl();
@@ -450,6 +453,36 @@ export default function InvoiceDetailScreen() {
     );
   };
 
+  // Print tile — own mutation + own `printing` state so a tap here never
+  // races the Share tile's `pdfSharePhase`/`pdfMut` (mirrors handlePdf above,
+  // minus the retap-dance: printPdf itself owns web vs native routing).
+  const handlePrint = (variant: InvoicePdfVariant) => {
+    if (!id) return;
+    const filename = `${invoice.invoiceNumber || "invoice"}-${variant}.pdf`;
+    setPrinting(true);
+    printPdfMut.mutate(
+      { id, variant },
+      {
+        onSuccess: async (data) => {
+          if (!data?.url) {
+            setPrinting(false);
+            showToast("PDF is still generating, try again in a moment.");
+            return;
+          }
+          try {
+            await printPdf({ url: data.url, filename });
+          } finally {
+            setPrinting(false);
+          }
+        },
+        onError: (e: any) => {
+          setPrinting(false);
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
+        },
+      },
+    );
+  };
+
   const handleViewReceipt = (paymentId: string) => {
     setLoadingReceiptId(paymentId);
     getImageUrlMut.mutate(paymentId, {
@@ -725,6 +758,14 @@ export default function InvoiceDetailScreen() {
               // tap IS the share.
               disabled={pdfSharePhase === "preparing"}
               onPress={() => handlePdf(pdfVariant)}
+            />
+            <ActionTile
+              icon="print-outline"
+              label={
+                printing ? "Preparing PDF…" : `Print ${pdfVariant === "draft" ? "draft" : "final"}`
+              }
+              disabled={printing}
+              onPress={() => handlePrint(pdfVariant)}
             />
             {flags.canSendReminder ? (
               <ActionTile
