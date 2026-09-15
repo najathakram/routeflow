@@ -12,12 +12,14 @@ import {
 import { MoneyTextInput } from "../../../../../components/MoneyTextInput";
 import { ProductPickerSheet } from "../../../../../components/ProductPickerSheet";
 import { QtyStepper } from "../../../../../components/QtyStepper";
+import { BarcodeFab } from "../../../../../components/BarcodeFab";
 import {
   useAdminCustomer,
   useAdminInvoice,
   useBusinessSettings,
   type AdminProduct,
 } from "../../../../../lib/api/admin";
+import { archivedMessage, resolveProductByCode } from "../../../../../lib/barcode-resolve";
 import { useUpdateInvoice } from "../../../../../lib/api/invoices";
 import { alertInfo } from "../../../../../lib/confirm";
 import { ISO_DATE } from "../../../../../lib/invoice-terms";
@@ -198,6 +200,29 @@ export default function EditInvoiceScreen() {
         promoBaseUnits: null,
       },
     ]);
+  };
+
+  // B265: this screen had no scan entry outside the product picker sheet —
+  // mirrors ProductPickerSheet's own onScanned (same resolve -> archived/
+  // not-found handling), feeding scanned lines through the SAME addCatalogLine
+  // path a tapped pick uses.
+  const onScanned = async (code: string) => {
+    const trimmed = code.trim();
+    if (!trimmed) return;
+    try {
+      const result = await resolveProductByCode<AdminProduct>(trimmed);
+      if (result.archived) {
+        showToast(archivedMessage(result.product));
+        return;
+      }
+      if (!result.notFound) {
+        addCatalogLine(result.product);
+        return;
+      }
+    } catch {
+      // network error → fall through to the toast
+    }
+    showToast(`No product for "${trimmed}"`);
   };
 
   // An unlisted line is just a blank fully-editable card — no modal needed here
@@ -397,7 +422,13 @@ export default function EditInvoiceScreen() {
 
   const showTax = !isTaxExempt && (tenantTaxRate > 0 || lines.some((l) => l.taxRate > 0));
 
+  // BarcodeFab renders as a SIBLING of FormSheet, not a child: FormSheet's
+  // `children` land inside its own internal ScrollView, and an absolutely-
+  // positioned FAB in there would scroll away with the form instead of
+  // floating fixed on screen (matches movements.tsx/adjust-picker.tsx, which
+  // mount it as a sibling of their own ScrollView for the same reason).
   return (
+    <>
     <FormSheet
       title="Edit invoice"
       subtitle={invoice.invoiceNumber}
@@ -518,6 +549,8 @@ export default function EditInvoiceScreen() {
         onSelect={addCatalogLine}
       />
     </FormSheet>
+    <BarcodeFab onScanned={onScanned} continuous hidden={pickerOpen} />
+    </>
   );
 }
 

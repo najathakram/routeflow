@@ -6,10 +6,13 @@ import { ios } from "@routeflow/ui/tokens";
 import { FormField, FormSection, FormSheet, FormTextInput } from "../../../components/FormSheet";
 import { OptionPickerSheet } from "../../../components/OptionPickerSheet";
 import { ProductPickerSheet } from "../../../components/ProductPickerSheet";
+import { BarcodeFab } from "../../../components/BarcodeFab";
 import { useRecordPurchase } from "../../../lib/api/inventory";
 import { useSuppliers } from "../../../lib/api/purchase-orders";
 import { normalizeBoxesPieces } from "@routeflow/pricing";
 import { showToast } from "../../../lib/toast";
+import { archivedMessage, resolveProductByCode } from "../../../lib/barcode-resolve";
+import type { AdminProduct } from "../../../lib/api/admin";
 
 export default function QuickReceiveScreen() {
   const router = useRouter();
@@ -46,6 +49,47 @@ export default function QuickReceiveScreen() {
 
   const pickProduct = () => setProductPickerOpen(true);
   const pickSupplier = () => setSupplierPickerOpen(true);
+
+  // Shared by the picker's onSelect and the scan FAB (B264) so a scanned
+  // product fills the form exactly like a tapped one.
+  const applyPickedProduct = (p: AdminProduct) => {
+    setProductId(p.id);
+    setProductName(p.parent?.name ? `${p.parent.name} - ${p.name}` : p.name);
+    setProductUnit(p.unit ?? "");
+    const upb = Math.trunc(Number(p.unitsPerBox ?? 0));
+    setUnitsPerBox(Number.isFinite(upb) ? upb : 0);
+    // Prefill the cost from the product's standard cost when empty (same
+    // behavior as the PO receive screen). `standardCost` is per PIECE, so
+    // scale it up when the cost field collects a box price.
+    const std = p.standardCost != null ? Number(p.standardCost) : NaN;
+    const prefill = upb > 1 ? std * upb : std;
+    setUnitCost((cur) =>
+      cur.trim() === "" && Number.isFinite(prefill) ? String(Number(prefill.toFixed(4))) : cur,
+    );
+  };
+
+  // B264: the receive screen had no scan entry outside the product picker
+  // sheet — mirrors ProductPickerSheet's own onScanned (same resolve ->
+  // archived/not-found handling), feeding the SAME apply path a tapped pick
+  // uses rather than a second, parallel one.
+  const onScanned = async (code: string) => {
+    const trimmed = code.trim();
+    if (!trimmed) return;
+    try {
+      const result = await resolveProductByCode<AdminProduct>(trimmed);
+      if (result.archived) {
+        showToast(archivedMessage(result.product));
+        return;
+      }
+      if (!result.notFound) {
+        applyPickedProduct(result.product);
+        return;
+      }
+    } catch {
+      // network error → fall through to the toast
+    }
+    showToast(`No product for "${trimmed}"`);
+  };
 
   const submit = () => {
     if (!productId) {
@@ -95,7 +139,10 @@ export default function QuickReceiveScreen() {
     mut.mutate({ ...base, quantity: qty }, handlers);
   };
 
+  // BarcodeFab renders as a SIBLING of FormSheet, not a child — see edit.tsx
+  // (invoice edit, B265) for why: FormSheet's children scroll, the FAB must not.
   return (
+    <>
     <FormSheet
       title="Quick Receive"
       submitLabel={mut.isPending ? "Recording…" : "Record receipt"}
@@ -210,21 +257,7 @@ export default function QuickReceiveScreen() {
         selectedId={productId}
         onClose={() => setProductPickerOpen(false)}
         onSelect={(p) => {
-          setProductId(p.id);
-          setProductName(p.parent?.name ? `${p.parent.name} - ${p.name}` : p.name);
-          setProductUnit(p.unit ?? "");
-          const upb = Math.trunc(Number(p.unitsPerBox ?? 0));
-          setUnitsPerBox(Number.isFinite(upb) ? upb : 0);
-          // Prefill the cost from the product's standard cost when empty
-          // (same behavior as the PO receive screen). `standardCost` is per
-          // PIECE, so scale it up when the cost field collects a box price.
-          const std = p.standardCost != null ? Number(p.standardCost) : NaN;
-          const prefill = upb > 1 ? std * upb : std;
-          setUnitCost((cur) =>
-            cur.trim() === "" && Number.isFinite(prefill)
-              ? String(Number(prefill.toFixed(4)))
-              : cur,
-          );
+          applyPickedProduct(p);
           setProductPickerOpen(false);
         }}
       />
@@ -243,6 +276,8 @@ export default function QuickReceiveScreen() {
         }}
       />
     </FormSheet>
+    <BarcodeFab onScanned={onScanned} hidden={productPickerOpen || supplierPickerOpen} />
+    </>
   );
 }
 

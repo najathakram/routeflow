@@ -19,10 +19,13 @@ import {
   FormTextInput,
 } from "../../../../../components/FormSheet";
 import { ProductPickerSheet } from "../../../../../components/ProductPickerSheet";
+import { BarcodeFab } from "../../../../../components/BarcodeFab";
 import { useCreateOrderTemplate } from "../../../../../lib/api/order-templates";
 import { ISO_DAY_OPTIONS, validateTemplateForm } from "../../../../../lib/order-templates-logic";
 import { showToast } from "../../../../../lib/toast";
 import { hasUnsavedStandingOrder } from "../../../../../lib/discard-guard";
+import { archivedMessage, resolveProductByCode } from "../../../../../lib/barcode-resolve";
+import type { AdminProduct } from "../../../../../lib/api/admin";
 
 interface Line {
   productId: string;
@@ -54,6 +57,40 @@ export default function NewStandingOrderScreen() {
         .filter((l) => l.qty > 0),
     );
 
+  // Shared by the picker's onSelect and the scan FAB (B266) so a scanned
+  // product adds/increments a line exactly like a tapped one.
+  const addLine = (product: AdminProduct) =>
+    setLines((prev) => {
+      const existing = prev.find((l) => l.productId === product.id);
+      if (existing) {
+        return prev.map((l) => (l.productId === product.id ? { ...l, qty: l.qty + 1 } : l));
+      }
+      return [...prev, { productId: product.id, name: product.name, unit: product.unit, qty: 1 }];
+    });
+
+  // B266: this screen had no scan entry outside the product picker sheet —
+  // mirrors ProductPickerSheet's own onScanned (same resolve -> archived/
+  // not-found handling), feeding scanned lines through the SAME addLine path
+  // a tapped pick uses.
+  const onScanned = async (code: string) => {
+    const trimmed = code.trim();
+    if (!trimmed) return;
+    try {
+      const result = await resolveProductByCode<AdminProduct>(trimmed);
+      if (result.archived) {
+        showToast(archivedMessage(result.product));
+        return;
+      }
+      if (!result.notFound) {
+        addLine(result.product);
+        return;
+      }
+    } catch {
+      // network error → fall through to the toast
+    }
+    showToast(`No product for "${trimmed}"`);
+  };
+
   const submit = () => {
     const error = validateTemplateForm({
       name,
@@ -84,7 +121,10 @@ export default function NewStandingOrderScreen() {
     );
   };
 
+  // BarcodeFab renders as a SIBLING of FormSheet, not a child — see edit.tsx
+  // (invoice edit, B265) for why: FormSheet's children scroll, the FAB must not.
   return (
+    <>
     <FormSheet
       title="New standing order"
       subtitle="Orders generate automatically on the chosen days."
@@ -177,21 +217,14 @@ export default function NewStandingOrderScreen() {
         activeOnly
         onClose={() => setPickerOpen(false)}
         onSelect={(product) => {
-          setLines((prev) => {
-            const existing = prev.find((l) => l.productId === product.id);
-            if (existing) {
-              return prev.map((l) => (l.productId === product.id ? { ...l, qty: l.qty + 1 } : l));
-            }
-            return [
-              ...prev,
-              { productId: product.id, name: product.name, unit: product.unit, qty: 1 },
-            ];
-          });
+          addLine(product);
           setPickerOpen(false);
         }}
         title="Add product"
       />
     </FormSheet>
+    <BarcodeFab onScanned={onScanned} continuous hidden={pickerOpen} />
+    </>
   );
 }
 
