@@ -86,6 +86,7 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["CRM_CONNECTION_STATUS_VALUES", "CrmConnectionStatus"],
   ["CRM_TRIGGER_MODE_VALUES", "CrmTriggerMode"],
   ["CRM_HANDOFF_STATUS_VALUES", "CrmHandoffStatus"],
+  ["TENANT_CLASS_VALUES", "TenantClass"],
 ];
 
 describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
@@ -115,10 +116,11 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
  *   - enum REMOVED → drop its `ENUM_TABLE` row (if it had one), then bump the constant.
  * Bumping the number without that decision is the one way to defeat this tripwire.
  */
-// Triage for TenantClass (Phase 0 T1, 2026-09-13): server-only for now — the platform-admin
-// updateTenantClass endpoint and the dark backfill script are the only consumers this phase;
-// no web/mobile surface reads or hand-types it yet, so it deliberately gets no ENUM_TABLE row
-// or packages/types mirror. Add one when a later phase's UI needs the value client-side.
+// Triage for TenantClass (Phase 0 T1, 2026-09-13): originally left unmirrored — server-only,
+// no web/mobile surface read or hand-typed it. The 743 fix round (T1, F1/N6) adds the shared
+// `TENANT_CLASS_VALUES` mirror (`packages/types/api/enums.ts`) + an `ENUM_TABLE` row above,
+// consumed by `create-tenant.dto.ts`'s `@IsIn` and the admin "New Tenant" form — see
+// REG-743-N6 below.
 const PINNED_PRISMA_ENUM_COUNT = 84;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
@@ -240,6 +242,26 @@ describe("regression: hand-typed web/mobile enum mirrors must not re-drift (L-07
       }
     },
   );
+});
+
+// ─── REG-743-N6: TenantClass mirror is pinned (743 fix round, T1) ─────────────
+
+describe("REG-743-N6: TenantClass mirror is pinned", () => {
+  it("TenantClass mirror is pinned", () => {
+    // No `TENANT_CLASS_VALUES` export exists in packages/types/api/enums.ts yet
+    // (see the triage note above `PINNED_PRISMA_ENUM_COUNT`) — `SHARED` therefore
+    // has no such key and `readSharedEnums()`'s import guard falls through to an
+    // empty actual array, which can never equal the four real Prisma values.
+    // Fails on head with the empty-array vs. 4-member mismatch; passes once
+    // `packages/types/api/enums.ts` exports `TENANT_CLASS_VALUES`/`TenantClass`
+    // set-equal to `@prisma/client`'s `TenantClass` enum.
+    const actual = Array.isArray((SHARED as Record<string, unknown>)["TENANT_CLASS_VALUES"])
+      ? ((SHARED as Record<string, unknown>)["TENANT_CLASS_VALUES"] as unknown[])
+      : [];
+    const expected = Object.values(PrismaEnums.TenantClass);
+    expect(new Set(actual)).toEqual(new Set(expected));
+    expect(expected.length).toBeGreaterThan(0);
+  });
 });
 
 // ─── Regression: apps/mobile's hand-copied runtime stub must stay pinned (X2) ──

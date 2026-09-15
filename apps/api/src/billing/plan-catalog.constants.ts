@@ -6,9 +6,11 @@
  * written and read against — plan keys, flag keys, addon SKUs, and meter keys.
  */
 
-/** The four plan keys (drive entitlement logic; the TenantPlan enum is a shadow). */
-export const PLAN_KEYS = ["STARTER", "GROWTH", "SCALE", "ENTERPRISE"] as const;
-export type PlanKey = (typeof PLAN_KEYS)[number];
+// REG-743-F1/L-072: imported from @routeflow/types (the shared, enum-parity-pinned source)
+// rather than hand-declared here a second time — this file previously carried its own copy.
+// Re-exported too, since the rest of this file and its own importers use it as PLAN_KEYS.
+import { PLAN_KEYS, type PlanKey } from "@routeflow/types";
+export { PLAN_KEYS, type PlanKey };
 
 /** Default trial length in days. First consumer is `tenants.service.ts` (public
  * self-signup); `platform-admin.service.ts`'s Create Tenant path still hardcodes its
