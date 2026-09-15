@@ -1,4 +1,4 @@
-import { spawnSync, spawn } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -191,6 +191,12 @@ function fakeEnv(mode: string, extra: Record<string, string> = {}): NodeJS.Proce
 }
 
 describe("ci-freshness-guard.mjs contract", () => {
+  // FIX1 follow-up (RC1 finding): T1/T2 (REG-E2EGUARD-403, this `it` and the
+  // one below) do NOT share the flaky-timing mechanism that the "(pin) hang"
+  // case had (an `elapsedMs`/`toBeLessThan(5000)` assertion around a
+  // CPU-load-sensitive timeout race) — neither asserts on elapsed wall-clock
+  // time at all, only on `outputs.run`/`res.stdout`/`res.status`. So no fix
+  // was needed here; only the hang case's timing assertion was removed.
   it("T1 · REG-E2EGUARD-403 · YAML-driven: a 403 error body must NOT be read as the newest deployment sha (fail open)", () => {
     const { res, outFile } = runYamlDrivenFreshnessStep(fakeEnv("err403"));
     const outputs = readOutputs(outFile);
@@ -267,55 +273,6 @@ describe("ci-freshness-guard.mjs contract", () => {
     expect(res.stdout).toContain("::warning::");
     expect(res.status).toBe(0);
   }, 20_000);
-
-  it("RC1: hang with CPU saturation — timing assertion can trip; behavioral outputs still correct", () => {
-    // Induce real CPU contention by spawning busy-loop children saturating
-    // every core, then run the hang test. The 4.5 s margin is meant to absorb
-    // node/subprocess startup, not a real regression signal; under heavy load,
-    // elapsed time may exceed 5000 ms while behavioral outputs stay correct
-    // (run=true, warning present, exit 0).
-    const cpuSaturation: ReturnType<typeof spawn>[] = [];
-    const numCores = os.cpus().length;
-    try {
-      // Spawn busy-loop children to saturate every core; keep them alive
-      // during the test via stdio: ignore (async, not synchronized to exit).
-      for (let i = 0; i < numCores; i++) {
-        const child = spawn(process.execPath, ["-e", "while(1){}"], {
-          stdio: "ignore",
-        });
-        cpuSaturation.push(child);
-      }
-
-      // Run the hang test under CPU load.
-      const start = Date.now();
-      const { res, outFile } = runScriptDirect(
-        fakeEnv("hang", { CI_FRESHNESS_GH_TIMEOUT_MS: "500" }),
-      );
-      const elapsedMs = Date.now() - start;
-      const outputs = readOutputs(outFile);
-
-      // Behavioral outputs must be correct regardless of elapsed time:
-      // the script's own timeout fired and handled the hang correctly.
-      expect(outputs.run).toBe("true");
-      expect(res.stdout).toContain("::warning::");
-      expect(res.status).toBe(0);
-
-      // Under CPU load, elapsed time may exceed the 5 s margin — but only
-      // the lack of behavioral correctness signals a real regression.
-      // This case documents that timing alone is not diagnostic.
-    } finally {
-      // Clean up busy-loop children.
-      for (const proc of cpuSaturation) {
-        if (proc && proc.pid) {
-          try {
-            process.kill(proc.pid); // Kill the child process.
-          } catch {
-            // Process may have already exited.
-          }
-        }
-      }
-    }
-  }, 30_000);
 
   it("T3 (pin) missing DEPLOY_SHA: exits 0, fails open, warns", () => {
     const env = fakeEnv("match");
