@@ -187,7 +187,10 @@ export class RegulatedLedgerService {
    * ORDER (not an invoice) and carries only productId + qty, so we bridge: SALE
    * rows (by orderId) → InvoiceItem (by invoiceItemId) → productId. Partial returns
    * are PRO-RATED off each SALE row's snapshot (never re-read the live Product
-   * category, which may have drifted). Idempotent per `returnId`; everything already
+   * category, which may have drifted). Idempotent per `(returnId, orderId)` (PR-1a —
+   * widened from `returnId` alone so an INLINE return spanning multiple source orders
+   * reverses each independently; a STANDARD return has exactly one source order, so
+   * this is unchanged for it). Everything already
    * reversed on the ORDER LINE (earlier returns, invoice voids, credit notes AND
    * reconcile re-syncs) is subtracted so cumulative reversed qty/net can never exceed
    * the sold amount — and the cap is keyed on `orderItemId` (not the invoice item), so

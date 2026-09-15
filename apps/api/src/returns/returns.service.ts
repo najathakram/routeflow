@@ -157,7 +157,21 @@ export class ReturnsService {
         where: { id: dto.orderId },
         include: {
           customer: { select: { id: true, businessName: true } },
-          lineItems: { select: { productId: true, qty: true, unitPrice: true } },
+          // status/position feed returns-pieces.util.ts's CANCELLED exclusion and
+          // position-ordered axis pick (fix-round: these were missing, so both were
+          // silently no-ops against a real query — see returns-overreturn.spec.ts's
+          // CANCELLED-line probe, which only caught this because it mocked fields the
+          // real query never selected).
+          lineItems: {
+            select: {
+              productId: true,
+              qty: true,
+              unitPrice: true,
+              subtotal: true,
+              status: true,
+              position: true,
+            },
+          },
           invoices: { select: { id: true } },
         },
       });
@@ -377,7 +391,13 @@ export class ReturnsService {
                 },
               },
               lineItems: {
-                select: { productId: true, qty: true, unitPrice: true, subtotal: true },
+                select: {
+                  productId: true,
+                  qty: true,
+                  unitPrice: true,
+                  subtotal: true,
+                  status: true,
+                },
               },
             },
           },
@@ -622,13 +642,34 @@ export class ReturnsService {
 
     if (allInvoices.length === 0) {
       // Never invoiced (or its invoice rows are gone) — legacy order-line basis.
+      // PR-1a fix-round (Opus review F1): create()'s over-return cap now sums a
+      // product's qty across every non-CANCELLED line (soldPiecesForProduct), but this
+      // basis used to price off a SINGLE `.find()`-matched line's per-unit rate against
+      // the full (now-pooled) returned qty — a product split across two lines priced
+      // the whole return at one line's rate, over-crediting whenever the lines differ
+      // in price. Pool qty/subtotal per product the same way the invoiced branch below
+      // already does, so the cap and the price always agree.
+      const soldQtyByProduct = new Map<string, number>();
+      const soldSubtotalByProduct = new Map<string, number>();
+      for (const li of order?.lineItems ?? []) {
+        if (!li.productId || li.status === "CANCELLED") continue;
+        soldQtyByProduct.set(
+          li.productId,
+          (soldQtyByProduct.get(li.productId) ?? 0) + Number(li.qty),
+        );
+        soldSubtotalByProduct.set(
+          li.productId,
+          (soldSubtotalByProduct.get(li.productId) ?? 0) + Number(li.subtotal),
+        );
+      }
       let amount = 0;
       for (const item of items) {
-        const line = order?.lineItems?.find((li) => li.productId === item.productId);
-        if (!line) continue;
-        const lineQty = Number(line.qty);
-        const perUnit = lineQty > 0 ? Number(line.subtotal) / lineQty : Number(line.unitPrice);
-        amount += Number(item.qty) * perUnit;
+        const soldQty = soldQtyByProduct.get(item.productId) ?? 0;
+        if (soldQty <= 0) continue;
+        const soldSubtotal = soldSubtotalByProduct.get(item.productId) ?? 0;
+        const perUnit = soldSubtotal / soldQty;
+        const refundQty = Math.min(Number(item.qty), soldQty);
+        amount += refundQty * perUnit;
       }
       return { amount: roundMoney(amount), invoiceId: undefined, creditable: [] };
     }
@@ -713,7 +754,15 @@ export class ReturnsService {
                 items: { select: { productId: true, qty: true, subtotal: true } },
               },
             },
-            lineItems: { select: { productId: true, qty: true, unitPrice: true, subtotal: true } },
+            lineItems: {
+              select: {
+                productId: true,
+                qty: true,
+                unitPrice: true,
+                subtotal: true,
+                status: true,
+              },
+            },
           },
         },
       },
@@ -906,7 +955,15 @@ export class ReturnsService {
                 items: { select: { productId: true, qty: true, subtotal: true } },
               },
             },
-            lineItems: { select: { productId: true, qty: true, unitPrice: true, subtotal: true } },
+            lineItems: {
+              select: {
+                productId: true,
+                qty: true,
+                unitPrice: true,
+                subtotal: true,
+                status: true,
+              },
+            },
           },
         },
         customer: { select: { id: true, businessName: true } },
@@ -919,12 +976,17 @@ export class ReturnsService {
     // capture, not re-derived here.
     if (ret.kind === "INLINE") throw new BadRequestException(INLINE_RETURN_USE_INLINE_ENDPOINTS);
 
-    // Enrich each return item with orderedQty from the original order
+    // Enrich each return item with orderedQty from the original order. `orderedQty`
+    // uses the same pooled-across-lines basis as create()'s cap (soldPiecesForProduct,
+    // fix-round: the pre-fix single-line `.find()` here could show an operator a cap
+    // lower than what create() actually enforces); `unitPrice` stays a single line's
+    // rate — display-only — since a pooled per-unit rate has no one line to attribute
+    // it to.
     const enrichedItems = ret.items.map((item) => {
       const orderLine = ret.order?.lineItems?.find((li) => li.productId === item.productId);
       return {
         ...item,
-        orderedQty: orderLine ? Number(orderLine.qty) : null,
+        orderedQty: ret.order ? soldPiecesForProduct(ret.order as any, item.productId) : null,
         unitPrice: orderLine ? Number(orderLine.unitPrice) : null,
       };
     });

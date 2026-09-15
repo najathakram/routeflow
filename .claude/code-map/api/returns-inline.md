@@ -72,6 +72,36 @@ this file covers only the new `kind: INLINE` path, added incrementally per PR.
   which would deadlock every second call in the suite — every test there reuses one customer).
   `regulated-ledger.service.spec.ts` gains the widened-key probes.
 
+### Fix round (independent Opus refute-first review, same PR)
+
+- **F1 (money, the review's headline finding):** `priceReturn`'s never-invoiced legacy basis
+  (`allInvoices.length === 0` branch) still priced off a single `.find()`-matched line's per-unit
+  rate while `create()`'s cap now sums a product's qty across every non-CANCELLED line — a product
+  split across two differently-priced lines could price the WHOLE pooled return at one line's rate
+  and over-credit. Fixed by pooling qty/subtotal per product in that branch too (same pattern the
+  invoiced branch already uses), with `refundQty = min(returned, sold)` as a second backstop.
+- **F2:** `soldPiecesForProduct`'s CANCELLED exclusion and `firstNonCancelledLine`'s `position` sort
+  were silently no-ops in production — none of the four `order.lineItems` selects in
+  `returns.service.ts` (`create`/`findAll`/`processRefund`/`findOne`) fetched `status`/`position`.
+  Added both fields to all four selects (and `subtotal` where F1's fix needed it, `create`'s select
+  didn't have it before either). The existing "CANCELLED line doesn't count" test only passed
+  because its MOCK supplied fields the real query never selected — a real coverage hole, not a real
+  guarantee; the select fix is what actually closes it.
+- `findOne`'s `orderedQty` enrichment now also uses `soldPiecesForProduct` (was the same single-line
+  `.find()` as F1) so the operator UI's shown cap matches what `create()` actually enforces;
+  `unitPrice` stays a single line's rate (display-only, no one line to attribute a pooled rate to).
+- `regulated-ledger.service.spec.ts`'s "two source orders" test was rewritten: the original used the
+  file's shared `arrange()` helper, a call-order `mockResolvedValueOnce` queue that never inspects
+  `where` — it passed identically against the UN-widened key, so it proved nothing. New version
+  drives a real `where`-aware fake store keyed on `(returnId, orderId)`.
+- New `returns-customer-lock.spec.ts` — the condition-4 revert probe (concurrent lock exclusion) was
+  missing entirely; `returns-idempotency.spec.ts`'s shared mock releases the customer-hash lock
+  immediately by design (holding it would deadlock that file's many sequential same-customer tests),
+  so genuine mutual exclusion needed its own dedicated mock that holds the lock until the enclosing
+  transaction resolves, mirroring the real `pg_advisory_xact_lock`'s commit-time release. Two
+  concurrent STANDARD `create()`s on different orders for one customer stand in for the "STANDARD
+  vs. INLINE" pair the brief asked for, since no INLINE endpoint exists yet to seed a real one.
+
 ## Not yet built (tracked here so the next PR starts from this file, not a re-read)
 
 INLINE's own quote/capture/issue/approve/reject/cancel endpoints, `InlineReturnsService`, driver

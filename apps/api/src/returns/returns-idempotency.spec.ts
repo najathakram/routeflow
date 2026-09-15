@@ -374,7 +374,7 @@ describe("ReturnsService.create — Idempotency-Key replay guard (REG-RET-IDEM)"
     );
   });
 
-  it("REG-RET-IDEM-9 N1: 8 PARALLEL submissions for one order, each with a DISTINCT key, all succeed — different keys never serialize against each other", async () => {
+  it("REG-RET-IDEM-9 N1: 8 PARALLEL submissions for one order, each with a DISTINCT key, all succeed — different KEYS never serialize against each other (PR-1a: they now also share one CUSTOMER lock — see returns-customer-lock.spec.ts for that mutex's own proof)", async () => {
     // Proves the flip side of REG-RET-IDEM-7: the lock is keyed on the hash, so unrelated keys
     // must never queue behind one another the way two identical-key attempts correctly do. Round
     // 1's dedicated 6-connection pool could in principle starve under enough concurrent DIFFERENT
