@@ -475,9 +475,11 @@ export default function InvoiceDetailScreen() {
             setPrinting(false);
           }
         },
-        onError: (e: any) => {
+        onError: () => {
+          // R6.3 (pack.md 45-46): any fetch/download failure on the print path
+          // shows this exact toast, matching classifyPrintError's download-stage text.
           setPrinting(false);
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
+          showToast("Couldn't print the PDF.");
         },
       },
     );
