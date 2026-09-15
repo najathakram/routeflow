@@ -304,6 +304,93 @@ function extractRunId(text) {
   return m ? m[1] : null;
 }
 
+// E6 fix (2026-09-15): closeout used to have no single, authoritative place
+// this resolution happened, and the caller effectively fell back to guessing
+// a workflow id from the RUN DIRECTORY'S FOLDER NAME (a human slug like
+// "2026-09-14-743-fix-round", never the Workflow tool's own wf_<hex> id) --
+// that guess matches nothing in the session transcript, and closeout.mjs
+// used to swallow the resulting session-usage mismatch by keying off
+// usage.session instead of usage.workflows[...], attributing the WHOLE
+// SESSION's cost ($108.61) to one run that actually cost $7.33 (run
+// wf_a3822206-ba6). Resolution order, first hit wins, and the folder name
+// (`slug`) is NEVER consulted:
+//   1. --wf <runId> on the closeout.mjs command line (explicit override)
+//   2. a `runId:`/`wf_...` pattern in <runDir>/RESUME.md
+//   3. result.json's `runId` or `workflowId` field
+//   4. a `runId:`/`wf_...` pattern in <runDir>/progress.md
+// Finding nothing returns runId:null and the three paths checked, so the
+// caller can abort loudly instead of writing a ledger row for the wrong run.
+function resolveRunId({ flags, runDir, resumeText, result }) {
+  const resumePath = path.join(runDir, "RESUME.md");
+  const resultPath = path.join(runDir, "result.json");
+  const progressPath = path.join(runDir, "progress.md");
+
+  if (typeof flags.wf === "string" && flags.wf.trim()) {
+    return { runId: flags.wf.trim(), source: "--wf flag", resumePath, resultPath, progressPath };
+  }
+  const fromResume = extractRunId(resumeText);
+  if (fromResume) return { runId: fromResume, source: resumePath, resumePath, resultPath, progressPath };
+
+  const fromResult =
+    (typeof result?.runId === "string" && result.runId.trim() && result.runId) ||
+    (typeof result?.workflowId === "string" && result.workflowId.trim() && result.workflowId) ||
+    null;
+  if (fromResult) {
+    return { runId: fromResult, source: `${resultPath} (runId/workflowId)`, resumePath, resultPath, progressPath };
+  }
+
+  const fromProgress = extractRunId(readTextSafe(progressPath));
+  if (fromProgress) return { runId: fromProgress, source: progressPath, resumePath, resultPath, progressPath };
+
+  return { runId: null, source: null, resumePath, resultPath, progressPath };
+}
+
+// Matches a runId against usage.workflows the same way pipeline-ledger.mjs's
+// selectMatchedWorkflow does (exact key, "wf_" prefix stripped either way,
+// or a >= 8 char shared-prefix truncated match) -- kept in sync deliberately
+// so closeout's pre-flight gate and the ledger's own matching never disagree
+// about whether a run id "matched".
+function findMatchedWorkflowUsage(usage, runId) {
+  if (!usage || !usage.workflows || typeof usage.workflows !== "object" || !runId) return null;
+  const strip = (id) => (typeof id === "string" && id.startsWith("wf_") ? id.slice(3) : id);
+  const key = strip(runId);
+  if (Object.prototype.hasOwnProperty.call(usage.workflows, key)) return usage.workflows[key];
+  if (Object.prototype.hasOwnProperty.call(usage.workflows, runId)) return usage.workflows[runId];
+  let best = null;
+  let bestLen = 0;
+  for (const k of Object.keys(usage.workflows)) {
+    const sk = strip(k);
+    const shorter = sk.length <= key.length ? sk : key;
+    const longer = sk.length <= key.length ? key : sk;
+    if (shorter.length >= 8 && longer.startsWith(shorter) && shorter.length > bestLen) {
+      best = usage.workflows[k];
+      bestLen = shorter.length;
+    }
+  }
+  return best;
+}
+
+function hasMatchingWorkflow(usage, runId) {
+  return findMatchedWorkflowUsage(usage, runId) != null;
+}
+
+// approach: dev-pipeline|superpowers|raw. --approach flag wins, then a
+// RESUME.md mention, else "dev-pipeline" (this skill's own default arm).
+function extractApproach(text) {
+  if (!text) return null;
+  const m = text.match(/\bapproach:?\s*[`'"]?(dev-pipeline|superpowers|raw)[`'"]?\b/i);
+  return m ? m[1].toLowerCase() : null;
+}
+
+// engineSha: the staged-engine sha this run built against, if the workdir
+// recorded one. Never fatal -- a missing/unreadable file just means null.
+function resolveEngineSha(project) {
+  const text = readTextSafe(path.join(project, "local-assets", "tooling", "STAGED-ENGINE.md"));
+  if (!text) return null;
+  const m = text.match(/sha256:?\s*`?([0-9a-f]{16,64})`?/i);
+  return m ? m[1] : null;
+}
+
 // ---------------------------------------------------------------------------
 // step 2: session-usage
 // ---------------------------------------------------------------------------
@@ -316,6 +403,32 @@ function extractRunId(text) {
 // session-usage failure is FATAL (throws, nothing is written) instead of a
 // silent fallback.
 function stepSessionUsage({ flags, runDir, project, runId, dry, lightMode }) {
+  // Selftest-only stub (mirrors the SCHEMA_DRIFT_PRISMA_CLI pattern used
+  // elsewhere in this house): when CLOSEOUT_SELFTEST=1 AND
+  // CLOSEOUT_SELFTEST_USAGE_JSON names a file, read that file directly
+  // instead of spawning the real session-usage.mjs subprocess. Lets the
+  // selftest exercise "session-usage succeeded but usage.workflows has no
+  // entry for this runId" without needing a real session transcript.
+  if (
+    process.env.CLOSEOUT_SELFTEST === "1" &&
+    typeof process.env.CLOSEOUT_SELFTEST_USAGE_JSON === "string" &&
+    process.env.CLOSEOUT_SELFTEST_USAGE_JSON
+  ) {
+    let stubUsage;
+    try {
+      stubUsage = JSON.parse(fs.readFileSync(process.env.CLOSEOUT_SELFTEST_USAGE_JSON, "utf8"));
+    } catch (err) {
+      throw new CloseoutError(`selftest: cannot read CLOSEOUT_SELFTEST_USAGE_JSON -- ${err.message}`, 3);
+    }
+    return {
+      skipped: false,
+      reason: null,
+      usage: stubUsage,
+      telemetry: "true",
+      outFile: null,
+      usageOverrideReason: null,
+    };
+  }
   if (flags["no-usage"]) {
     const reasonFlag = typeof flags.reason === "string" ? flags.reason.trim() : "";
     if (!reasonFlag) {
@@ -639,6 +752,8 @@ function stepLedger(ctx) {
   if (startedAt) args.push("--started", startedAt);
   if (branch) args.push("--branch", branch);
   if (pr != null) args.push("--pr", String(pr));
+  if (ctx.approach) args.push("--approach", ctx.approach);
+  if (ctx.engineSha) args.push("--engine-sha", ctx.engineSha);
   if (usageResult && usageResult.outFile) {
     args.push("--usage", usageResult.outFile);
     if (ctx.runId) args.push("--run-id", ctx.runId);
@@ -965,9 +1080,43 @@ function stepLessons(ctx) {
 // ---------------------------------------------------------------------------
 
 function collectTouchedPaths(result) {
-  if (result?.manifest?.files && Array.isArray(result.manifest.files)) {
-    return result.manifest.files.map((f) => (f && typeof f.path === "string" ? f.path : null)).filter(Boolean);
+  // Priority 1 (A14 task-loop shape, not yet real anywhere -- covered by a
+  // synthetic selftest fixture only): result.tasks[].files, flattened +
+  // deduped across every task that carries an array `files` field. Tasks
+  // with no `files` or a non-array `files` are ignored, not fatal.
+  if (Array.isArray(result?.tasks) && result.tasks.length && result.tasks.some((t) => Array.isArray(t?.files))) {
+    const all = [];
+    for (const t of result.tasks) {
+      if (!Array.isArray(t?.files)) continue;
+      for (const f of t.files) {
+        if (typeof f === "string") all.push(f);
+      }
+    }
+    return [...new Set(all)].filter(Boolean);
   }
+  // Priority 2 (today's real shape): manifest.files, scoped to entries that
+  // are actually in-progress/landed source (not every dirty path in the
+  // tree -- handoff cards, .gitignore, and the code-map's own files used to
+  // all get flagged as "missing a code-map entry" alongside the handful of
+  // real source/spec/test files). Any non-deleted status counts -- a brand
+  // new `added`/`untracked` file is exactly the case most likely to need a
+  // NEW code-map TODO, since it has zero chance of already being mentioned
+  // in the code-map text; only `deleted` is excluded, since a deleted file
+  // needs no code-map entry.
+  const CODE_MAP_SCAN_STATUSES = ["planned", "modified", "added", "untracked"];
+  if (result?.manifest?.files && Array.isArray(result.manifest.files)) {
+    return result.manifest.files
+      .filter(
+        (f) =>
+          f &&
+          CODE_MAP_SCAN_STATUSES.includes(f.status) &&
+          typeof f.path === "string" &&
+          /^(apps|packages|scripts)\//.test(f.path)
+      )
+      .map((f) => f.path)
+      .filter(Boolean);
+  }
+  // Priority 3 (legacy fallback, unchanged semantics): result.touchedFiles.
   if (Array.isArray(result?.touchedFiles)) {
     return result.touchedFiles
       .map((f) => (typeof f === "string" ? f : f && typeof f.path === "string" ? f.path : null))
@@ -1042,7 +1191,11 @@ function lastCheckpointPhase(runDir) {
   if (!files.length) return null;
   const last = files[files.length - 1];
   const data = loadJsonSafe(path.join(phasesDir, last));
-  return data?.phase || last.replace(/\.json$/, "");
+  // A checkpoint's top-level `phase` is the buildPhaseRow() OBJECT
+  // ({phase, ran, agents, ...}), not a string -- .phase.phase is the title
+  // ("Fix"). Stringifying the object itself used to print "[object Object]"
+  // on every handoff card.
+  return data?.phase?.phase || last.replace(/\.json$/, "");
 }
 
 function buildHandoffCard(ctx) {
@@ -1306,8 +1459,28 @@ function runMain(argv) {
   let scale = result?.scale ?? pipelineArgs?.scale ?? resumeScale ?? null;
   let startedAt = result?.startedAt ?? pipelineArgs?.startedAt ?? extractStartedAt(resumeText) ?? null;
   const endedAt = new Date().toISOString();
-  const runId = result?.runId ?? extractRunId(resumeText) ?? null;
+  const runIdResolution = resolveRunId({ flags, runDir, resumeText, result });
+  const runId = runIdResolution.runId;
   const dateStr = todayStr();
+
+  // A real (non-light) run whose telemetry isn't explicitly waived must
+  // resolve a genuine runId -- see resolveRunId's header comment for why the
+  // folder name is never an acceptable substitute (E6, 2026-09-15). A light
+  // loop rarely runs through the Workflow tool at all (no wf_* id to find),
+  // and --no-usage --reason is an explicit, already-gated operator override,
+  // so neither is held to this.
+  const requireRunId = !lightMode && !flags["no-usage"];
+  if (requireRunId && !runId) {
+    throw new CloseoutError(
+      `cannot resolve a workflow run id for '${runDir}'. Looked in, in order: (1) --wf flag (not given), ` +
+        `(2) '${runIdResolution.resumePath}', (3) '${runIdResolution.resultPath}' (runId/workflowId fields), ` +
+        `(4) '${runIdResolution.progressPath}'. Refusing to guess one from the run directory's folder name and ` +
+        "refusing to fall back to the whole-session cost -- pass --wf <runId> explicitly, fix RESUME.md/" +
+        'result.json/progress.md, or use --light / --no-usage --reason "<why>" if this genuinely has no workflow.',
+      2
+    );
+  }
+  if (runId) warnings.push(`runId: resolved from ${runIdResolution.source}`);
 
   const usageResult = stepSessionUsage({ flags, runDir, project, runId, dry, lightMode });
   if (usageResult.skipped) warnings.push(`session-usage: skipped (${usageResult.reason})`);
@@ -1316,6 +1489,21 @@ function runMain(argv) {
   // deliberately NOT added to `candidates` below, so it never flips
   // process.exitCode under --dry.
   if (usageResult.status === "warn") warnings.push(usageResult.warnMessage);
+
+  // E6 fix (2026-09-15): session-usage.mjs succeeding is not enough -- it can
+  // still report a usage.workflows blob that has no entry for THIS runId
+  // (wrong id, stale transcript, run split across sessions, ...). Continuing
+  // past that used to silently key the ledger row off usage.session instead,
+  // i.e. the whole session's cost. Abort instead: nothing is written.
+  if (requireRunId && !dry && usageResult.usage && !hasMatchingWorkflow(usageResult.usage, runId)) {
+    const haveKeys = Object.keys(usageResult.usage.workflows || {});
+    throw new CloseoutError(
+      `session-usage.mjs found no usage.workflows entry for runId '${runId}' (have: ${haveKeys.join(", ") || "none"}). ` +
+        "Refusing to fall back to the session-wide aggregate cost -- verify the run id and --project/--session " +
+        'resolution, or pass --no-usage --reason "<why>" to explicitly skip true telemetry for this run.',
+      3
+    );
+  }
 
   if (lightMode) {
     result = buildLightResult({
@@ -1345,6 +1533,9 @@ function runMain(argv) {
     warnings.push(`--scale '${flags.scale}' is not 'small' or 'major' -- ignored`);
   }
 
+  const approach = (typeof flags.approach === "string" && flags.approach.trim()) || extractApproach(resumeText) || "dev-pipeline";
+  const engineSha = resolveEngineSha(project);
+
   const ledgerResult = stepLedger({
     flags,
     project,
@@ -1358,11 +1549,23 @@ function runMain(argv) {
     runId,
     mode,
     scale,
+    approach,
+    engineSha,
     branch: typeof flags.branch === "string" ? flags.branch : null,
     pr: typeof flags.pr === "string" ? flags.pr : null,
   });
 
-  const trueCost = usageResult.usage?.workflows?.[runId]?.total?.costUsd ?? usageResult.usage?.session?.total?.costUsd;
+  // session-usage.mjs keys usage.workflows by the run id WITHOUT its "wf_"
+  // prefix (dirName.slice("wf_".length)), while runId here (resolved from
+  // result.json or extractRunId's `wf_...` capture) always carries it -- an
+  // unstripped lookup misses every time and silently falls back to the
+  // whole-session cost instead of this run's own scoped total.
+  const matchedWfUsage = findMatchedWorkflowUsage(usageResult.usage, runId);
+  // requireRunId guarantees (by the abort above) that a matched workflow
+  // entry exists whenever one was mandatory -- so this session fallback only
+  // ever fires for the light-loop / --no-usage-override paths that were
+  // never held to the "must match a workflow" rule in the first place.
+  const trueCost = matchedWfUsage?.total?.costUsd ?? (requireRunId ? null : usageResult.usage?.session?.total?.costUsd);
   const costStr = fmtCost(trueCost, result?.estimatedCostUsd);
   const timeStr = fmtHM(usageResult.usage?.session?.activeMs) ?? fmtHM(result?.durationMs) ?? "n/a";
   const top3 = top3Confirmed(result?.confirmedByPhase);
@@ -1898,6 +2101,133 @@ function runSelftest() {
       `expected ledger row usageOverrideReason recorded, got '${JSON.stringify(overrideRow.usageOverrideReason)}'`
     );
 
+    // --- E6 (2026-09-15): run-id resolution never falls back to the folder
+    // name, and a missing/unmatched run id aborts loudly instead of writing
+    // a session-scoped ledger row. Three cases -----------------------------
+
+    // (i) RESUME.md carries a runId -> resolved, close-out proceeds.
+    const e6ResumeSlug = "e6-resume-runid";
+    const e6ResumeRunDir = path.join(project, ".claude", "pipeline", e6ResumeSlug);
+    fs.mkdirSync(e6ResumeRunDir, { recursive: true });
+    fs.copyFileSync(path.join(runDir, "result.json"), path.join(e6ResumeRunDir, "result.json"));
+    fs.writeFileSync(
+      path.join(e6ResumeRunDir, "RESUME.md"),
+      "# RESUME — E6 selftest fixture (bug-pipeline, mode bugfix, scale major)\n" +
+        "runId: wf_e6resumeok (task none)\n" +
+        "startedAt: 2026-09-02T02:00:00.000Z\n",
+      "utf8"
+    );
+    const rE6Resume = runMain([
+      e6ResumeRunDir,
+      "--project",
+      project,
+      "--runlog",
+      runLogPath,
+      "--ledger",
+      ledgerPath,
+      "--no-usage",
+      "--reason",
+      NO_USAGE_REASON,
+    ]);
+    assert(
+      rE6Resume.runId === "wf_e6resumeok",
+      `expected runId resolved from RESUME.md, got '${rE6Resume.runId}'`
+    );
+    assert(
+      rE6Resume.warnings.some((w) => w.includes("runId: resolved from") && w.includes("RESUME.md")),
+      "expected a warning naming RESUME.md as the runId source"
+    );
+
+    // (ii) No id anywhere (no --wf, no RESUME.md runId, no result.json
+    // runId/workflowId, no progress.md) -> non-zero exit (CloseoutError),
+    // NOTHING written -- never guess one from the folder name.
+    const e6NoIdSlug = "e6-no-runid-anywhere";
+    const e6NoIdRunDir = path.join(project, ".claude", "pipeline", e6NoIdSlug);
+    fs.mkdirSync(e6NoIdRunDir, { recursive: true });
+    const e6NoIdResult = JSON.parse(fs.readFileSync(path.join(runDir, "result.json"), "utf8"));
+    delete e6NoIdResult.runId;
+    delete e6NoIdResult.workflowId;
+    fs.writeFileSync(path.join(e6NoIdRunDir, "result.json"), JSON.stringify(e6NoIdResult), "utf8");
+    fs.writeFileSync(
+      path.join(e6NoIdRunDir, "RESUME.md"),
+      "# RESUME — E6 selftest fixture, no runId anywhere (bug-pipeline, mode bugfix, scale major)\n",
+      "utf8"
+    );
+    const ledgerLinesBeforeNoId = fs.readFileSync(ledgerPath, "utf8").split(/\r?\n/).filter(Boolean).length;
+    let threwNoId = null;
+    try {
+      runMain([e6NoIdRunDir, "--project", project, "--runlog", runLogPath, "--ledger", ledgerPath]);
+    } catch (err) {
+      threwNoId = err;
+    }
+    assert(threwNoId, "expected closeout to throw when no runId can be resolved anywhere");
+    assert(
+      threwNoId.name === "CloseoutError" && typeof threwNoId.code === "number" && threwNoId.code !== 0,
+      `expected a non-zero-exit CloseoutError, got '${threwNoId && threwNoId.name}' code=${threwNoId && threwNoId.code}`
+    );
+    assert(
+      /folder name/i.test(threwNoId.message) && /RESUME\.md/.test(threwNoId.message) && /progress\.md/.test(threwNoId.message),
+      `expected the error to name RESUME.md/result.json/progress.md and the folder-name refusal, got: ${threwNoId.message}`
+    );
+    const ledgerLinesAfterNoId = fs.readFileSync(ledgerPath, "utf8").split(/\r?\n/).filter(Boolean).length;
+    assert(
+      ledgerLinesAfterNoId === ledgerLinesBeforeNoId,
+      `expected no ledger row written when no runId resolves, got ${ledgerLinesBeforeNoId} -> ${ledgerLinesAfterNoId} lines`
+    );
+
+    // (iii) A runId resolves fine, but the (stubbed) session-usage JSON has
+    // no usage.workflows entry for it -> non-zero exit, NOTHING written --
+    // never fall back to usage.session (the exact E6 defect).
+    const e6MismatchSlug = "e6-usage-mismatch";
+    const e6MismatchRunDir = path.join(project, ".claude", "pipeline", e6MismatchSlug);
+    fs.mkdirSync(e6MismatchRunDir, { recursive: true });
+    fs.copyFileSync(path.join(runDir, "result.json"), path.join(e6MismatchRunDir, "result.json"));
+    fs.writeFileSync(
+      path.join(e6MismatchRunDir, "RESUME.md"),
+      "# RESUME — E6 selftest fixture, usage mismatch (bug-pipeline, mode bugfix, scale major)\n" +
+        "runId: wf_e6mismatch (task none)\n" +
+        "startedAt: 2026-09-02T02:00:00.000Z\n",
+      "utf8"
+    );
+    const e6StubUsagePath = path.join(tmpBase, "e6-stub-session-usage.json");
+    fs.writeFileSync(
+      e6StubUsagePath,
+      JSON.stringify({
+        v: 1,
+        sessionId: "sess-e6-selftest",
+        project,
+        session: { total: { costUsd: 108.61 }, activeMs: 32400000 },
+        // Deliberately NO entry for "e6mismatch" -- this is the whole-session
+        // blob a caller must never fall back to.
+        workflows: { "some-other-run": { total: { costUsd: 7.33 } } },
+      }),
+      "utf8"
+    );
+    const ledgerLinesBeforeMismatch = fs.readFileSync(ledgerPath, "utf8").split(/\r?\n/).filter(Boolean).length;
+    let threwMismatch = null;
+    process.env.CLOSEOUT_SELFTEST_USAGE_JSON = e6StubUsagePath;
+    try {
+      runMain([e6MismatchRunDir, "--project", project, "--runlog", runLogPath, "--ledger", ledgerPath]);
+    } catch (err) {
+      threwMismatch = err;
+    } finally {
+      delete process.env.CLOSEOUT_SELFTEST_USAGE_JSON;
+    }
+    assert(threwMismatch, "expected closeout to throw when session-usage has no workflow entry for this runId");
+    assert(
+      threwMismatch.name === "CloseoutError" && typeof threwMismatch.code === "number" && threwMismatch.code !== 0,
+      `expected a non-zero-exit CloseoutError, got '${threwMismatch && threwMismatch.name}' code=${threwMismatch && threwMismatch.code}`
+    );
+    assert(
+      /session-wide aggregate/i.test(threwMismatch.message),
+      `expected the error to explain the session-wide-aggregate refusal, got: ${threwMismatch.message}`
+    );
+    const ledgerLinesAfterMismatch = fs.readFileSync(ledgerPath, "utf8").split(/\r?\n/).filter(Boolean).length;
+    assert(
+      ledgerLinesAfterMismatch === ledgerLinesBeforeMismatch,
+      `expected no ledger row written on a usage-mismatch abort, got ${ledgerLinesBeforeMismatch} -> ${ledgerLinesAfterMismatch} lines`
+    );
+
     // --- P2(a): project resolution via git-common-dir -----------------------
     // A real git worktree, checked out from a real main repo -- proves
     // resolveProject (and therefore the default ledger path) lands on the
@@ -2089,6 +2419,156 @@ function runSelftest() {
       assert(
         fs.readFileSync(noTelLedger, "utf8") === noTelBefore,
         "expected a run with no true telemetry to leave the ledger byte-identical"
+      );
+    }
+
+    // --- B19: collectTouchedPaths/stepCodeMap scope the TODO scan to the
+    // run's actual touched files -- manifest entries filtered to
+    // status planned|modified|added|untracked (any non-deleted status) under
+    // apps|packages|scripts/ -- instead of every dirty path in the tree
+    // (handoff cards, .gitignore, and the code-map's own files are excluded
+    // by directory; only `deleted` rows are excluded by status, since a
+    // deleted file needs no code-map entry) ---------------------------------
+    {
+      const scopeProject = path.join(tmpBase, "codemap-scope-project");
+      const scopeCodeMapDir = path.join(scopeProject, ".claude", "code-map");
+      fs.mkdirSync(scopeCodeMapDir, { recursive: true });
+      fs.writeFileSync(path.join(scopeCodeMapDir, "area.md"), "# Area\n\nNo touched paths mentioned here.\n", "utf8");
+
+      const IN_SCOPE = [
+        "apps/api/src/foo.service.ts", // modified
+        "packages/pricing/src/bar.ts", // planned
+        "scripts/baz.mjs", // modified
+        "apps/web/app/page.tsx", // untracked -- a brand-new file is the most likely to need a NEW code-map TODO
+        "apps/mobile/src/new-screen.tsx", // added -- same reasoning as untracked
+      ];
+      const OUT_OF_SCOPE = [
+        ".claude/handoffs/2026-09-12-x.md", // right-ish status, wrong directory
+        ".gitignore", // wrong directory
+        "apps/api/src/deleted.service.ts", // right directory, wrong status (deleted) -- the one status that stays excluded
+      ];
+      const mixedManifestResult = {
+        manifest: {
+          files: [
+            { path: IN_SCOPE[0], status: "modified" },
+            { path: IN_SCOPE[1], status: "planned" },
+            { path: IN_SCOPE[2], status: "modified" },
+            { path: IN_SCOPE[3], status: "untracked" },
+            { path: IN_SCOPE[4], status: "added" },
+            { path: OUT_OF_SCOPE[0], status: "modified" },
+            { path: OUT_OF_SCOPE[1], status: "modified" },
+            { path: OUT_OF_SCOPE[2], status: "deleted" },
+          ],
+        },
+      };
+
+      const scopedTouched = collectTouchedPaths(mixedManifestResult);
+      assert(
+        Array.isArray(scopedTouched) && new Set(scopedTouched).size === IN_SCOPE.length,
+        `expected exactly ${IN_SCOPE.length} in-scope touched paths from the mixed manifest, got ${JSON.stringify(scopedTouched)}`
+      );
+      for (const p of IN_SCOPE) {
+        assert(scopedTouched.includes(p), `expected in-scope path '${p}' in collectTouchedPaths result`);
+      }
+      for (const p of OUT_OF_SCOPE) {
+        assert(!scopedTouched.includes(p), `expected out-of-scope path '${p}' NOT in collectTouchedPaths result`);
+      }
+
+      const scopedCodeMap = stepCodeMap({ project: scopeProject, result: mixedManifestResult });
+      assert(
+        scopedCodeMap.missing.length === IN_SCOPE.length,
+        `expected exactly ${IN_SCOPE.length} missing code-map entries for the mixed manifest, got ${scopedCodeMap.missing.length}: ${JSON.stringify(scopedCodeMap.missing)}`
+      );
+      assert(!scopedCodeMap.missing.includes(OUT_OF_SCOPE[1]), "expected '.gitignore' NOT flagged as a missing code-map entry");
+      assert(
+        !scopedCodeMap.missing.includes(OUT_OF_SCOPE[0]),
+        "expected the handoff card NOT flagged as a missing code-map entry"
+      );
+    }
+
+    // --- B19: result.tasks[].files (new task-loop shape, A14) takes
+    // priority over manifest.files entirely, flattened + deduped across
+    // tasks; not exercisable against any real result.json today, so this is
+    // a synthetic fixture -----------------------------------------------
+    {
+      const tasksResult = {
+        tasks: [
+          { id: "T1", files: ["apps/x.ts"] },
+          { id: "T2", files: ["packages/y.ts", "apps/x.ts"] },
+        ],
+        manifest: {
+          files: [{ path: "apps/should-be-ignored.ts", status: "modified" }],
+        },
+      };
+      const taskTouched = collectTouchedPaths(tasksResult);
+      assert(Array.isArray(taskTouched), "expected collectTouchedPaths to return an array for the tasks[] shape");
+      const taskTouchedSet = new Set(taskTouched);
+      assert(
+        taskTouchedSet.size === 2 && taskTouchedSet.has("apps/x.ts") && taskTouchedSet.has("packages/y.ts"),
+        `expected exactly {'apps/x.ts','packages/y.ts'} from tasks[].files (deduped), got ${JSON.stringify(taskTouched)}`
+      );
+      assert(
+        !taskTouched.includes("apps/should-be-ignored.ts"),
+        "expected manifest.files to be ignored entirely when result.tasks[] is present and usable"
+      );
+    }
+
+    // --- C6 (Task 42): a result.json carrying approach:'dev-pipeline',
+    // profile:'lean' lands on the ledger row with those EXACT values via the
+    // real `append` code path (stepLedger -> pipeline-ledger.mjs append,
+    // never append-manual), with NO --approach/--profile flag anywhere in
+    // stepLedger's args (confirmed by reading it: the append invocation
+    // passes only --run/--project/--ended/--started/--branch/--pr/--usage/
+    // --usage-override-reason/--telemetry -- never --approach or --profile).
+    // pipeline-ledger.mjs's own buildRow reads
+    // profile: pickField(result.profile, meta.profile) and
+    // approach: pickField(result.approach, meta.approach), and pickField
+    // prefers a non-empty resultVal over metaVal -- so with no CLI flag,
+    // meta.approach/meta.profile are undefined and result.json's own fields
+    // flow straight through untouched. This proves closeout.mjs needed ZERO
+    // production-code change once pipeline.js's A14 payload sets
+    // result.approach/result.profile: the pass-through is automatic. ------
+    {
+      const apSlug = "selftest-approach-profile";
+      const apRunDir = path.join(project, ".claude", "pipeline", apSlug);
+      fs.mkdirSync(apRunDir, { recursive: true });
+      const apResult = { ...loadJsonSafe(fixtureSrc), approach: "dev-pipeline", profile: "lean" };
+      fs.writeFileSync(path.join(apRunDir, "result.json"), JSON.stringify(apResult, null, 2) + "\n", "utf8");
+
+      const apCtx = {
+        flags: { ledger: ledgerPath },
+        project,
+        runDir: apRunDir,
+        slug: apSlug,
+        dry: false,
+        startedAt: "2026-09-12T00:00:00.000Z",
+        endedAt: "2026-09-12T01:00:00.000Z",
+        branch: null,
+        pr: null,
+        usageResult: null,
+        mode: "feature",
+        scale: "small",
+        result: {},
+      };
+      const apLedgerResult = stepLedger(apCtx);
+      assert(
+        apLedgerResult.status === "appended",
+        `expected the approach/profile fixture's ledger append to succeed, got '${apLedgerResult.status}' (${apLedgerResult.message})`
+      );
+      const apLedgerRows = fs
+        .readFileSync(apLedgerResult.ledgerPath, "utf8")
+        .split(/\r?\n/)
+        .filter(Boolean)
+        .map((l) => JSON.parse(l));
+      const apRow = apLedgerRows.find((r) => r.run === apSlug);
+      assert(apRow, "expected a ledger row for the approach/profile fixture run");
+      assert(
+        apRow.approach === "dev-pipeline",
+        `expected ledger row approach 'dev-pipeline' via result.json alone (no --approach flag passed), got '${JSON.stringify(apRow.approach)}'`
+      );
+      assert(
+        apRow.profile === "lean",
+        `expected ledger row profile 'lean' via result.json alone (no --profile flag passed), got '${JSON.stringify(apRow.profile)}'`
       );
     }
 

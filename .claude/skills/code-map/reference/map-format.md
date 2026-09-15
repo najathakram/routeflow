@@ -6,12 +6,12 @@ it is too long.
 
 ## Hard caps
 
-| File                                                                  | Cap                                               |
-| --------------------------------------------------------------------- | ------------------------------------------------- |
-| `INDEX.md`                                                            | ≤ 20,000 bytes total; no table row over 200 bytes |
-| `CHANGELOG.md`                                                        | ≤ 40,000 bytes, ≤ 30 dated entries                |
-| `<area>.md` entry                                                     | ~200–300 bytes each — signatures, never bodies    |
-| `<area>.md` (or any split-out `<area>/<module>.md` part) — total file | ≤ 100,000 bytes                                   |
+| File              | Cap                                    |
+| ----------------- | --------------------------------------- |
+| `INDEX.md`        | ≤ 20,000 bytes total; no table row over 200 bytes |
+| `CHANGELOG.md`    | ≤ 40,000 bytes, ≤ 30 dated entries       |
+| `<area>.md` entry | ~200–300 bytes each — signatures, never bodies |
+| `<area>.md` (or any split-out `<area>/<module>.md` part) — total file | ≤ 100,000 bytes |
 
 A row over 200 bytes is prose that belongs in the owning area file, not the table cell — see
 the "Where to find" convention below. An area file over the 100,000-byte total cap is prose
@@ -51,10 +51,10 @@ enforce these mechanically with [`reference/validate-code-map.mjs`](validate-cod
 
 ## Where to find (global)
 
-| topic                   | Start at                            |
-| ----------------------- | ----------------------------------- |
-| <feature or symptom>    | `<area>.md#<anchor>` — <one clause> |
-| <cross-cutting concern> | `path/...`                          |
+| topic                  | Start at                                        |
+| ----------------------- | ------------------------------------------------ |
+| <feature or symptom>   | `<area>.md#<anchor>` — <one clause>              |
+| <cross-cutting concern> | `path/...`                                      |
 
 Each row is a pointer, not a summary: `| topic | <area>.md#anchor — one clause |`. The actual
 prose — why, how, gotchas — lives in the area file under that anchored heading (`### <topic>`),
@@ -77,9 +77,9 @@ of how much there is to say about the topic.
 
 ## Where to find (this area)
 
-| Need   | File → symbol                  |
-| ------ | ------------------------------ |
-| <task> | `path/file.ts` → `funcOrClass` |
+| Need               | File → symbol                     |
+| ------------------ | --------------------------------- |
+| <task>             | `path/file.ts` → `funcOrClass`    |
 
 ## Modules / files
 
@@ -93,11 +93,10 @@ of how much there is to say about the topic.
   - side effects: <DB models touched / network / events / filesystem>, or `—`.
 
 ### `<next sub-module>/`
-
 ...
 ```
 
-Granularity rule: start at **module level** — enough to choose _which_ file to open. Deepen a
+Granularity rule: start at **module level** — enough to choose *which* file to open. Deepen a
 single file's entry (more exports, call-outs) only when a task actually needed that detail, so
 the map grows where work happens and stays thin elsewhere.
 
@@ -112,11 +111,11 @@ contents one hop away from it):
 ```markdown
 # api.md (table of contents — split at 2026-09-10, see CHANGELOG.md)
 
-| Module   | File              |
-| -------- | ----------------- |
-| billing  | `api/billing.md`  |
-| auth     | `api/auth.md`     |
-| webhooks | `api/webhooks.md` |
+| Module          | File                  |
+| ---------------- | --------------------- |
+| billing          | `api/billing.md`      |
+| auth             | `api/auth.md`         |
+| webhooks         | `api/webhooks.md`     |
 ```
 
 Consult pattern once a part file exists: **read the section, not the file.** Locate the anchor
