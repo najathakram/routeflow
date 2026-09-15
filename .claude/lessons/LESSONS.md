@@ -177,6 +177,74 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
   `scripts/validate-code-map.stamp.self-test.mjs`. Sibling [[L-082]] — no shared guard between the
   two files, so a third such script would still need its own.
 
+### L-149 · 2026-09-15 · tooling · #743 fix-round T8 lesson-id staleness
+
+- **Symptom:** an engine task's brief hardcoded specific lesson ids (L-140/L-141) and a `nextId`
+  bump (143) to write at close-out. By the time the task ran, three intervening merges had moved
+  the real registry floor to `nextId` 146 — the hardcoded ids were already claimed elsewhere.
+- **Root cause:** the brief was authored against the registry's state at planning time. The task
+  itself ran LAST, after seven others and however long wall-clock that took — in a shared,
+  actively-written registry, "current state" at planning time and at execution time differ, and
+  nothing in the brief distinguished the two.
+- **Lesson:** **A task brief must never embed a point-in-time value from a shared, actively
+  written resource (a registry id, a counter, a "latest" anything) as a literal constant when the
+  task runs later than the brief was written — especially the LAST task in a run. Read the live
+  value at write time instead, and verify (grep for existing use, re-run the validator) first.**
+- **Guard:** none yet — a build-plan lint flagging a literal `L-\d+`/`nextId: \d+` inside any
+  non-first-wave task's `brief` would catch this class before launch.
+
+### L-151 · 2026-09-15 · tooling · #743 fix-round value-importing @routeflow/types crashed api boot
+
+- **Symptom:** two commits value-imported (not `import type`) a constant from `@routeflow/types`.
+  `tsc --noEmit`/`ts-jest` passed clean. `node dist/main.js` (real prod boot) would have crashed:
+  `nest build` doesn't bundle workspace deps, and that package ships raw TS with no build step, so
+  the import emits a `require("@routeflow/types")` into `dist/` that fails to parse.
+- **Root cause:** a guard test for this exact mistake already existed
+  (`no-runtime-workspace-imports.spec.ts`) but never ran against these commits — only the task's own
+  spec files ran, not the full suite, until this session ran it in full for the first time.
+- **Lesson:** **`tsc`/`ts-jest` passing is not proof a workspace-package import is safe at actual
+  runtime boot — only a guard test on the real imports (or an actual boot) proves it.** Run the FULL
+  suite at least once per fix round; a boot-crash guard does nothing if it never runs.
+- **Guard:** `no-runtime-workspace-imports.spec.ts` (pre-existing). Fix: derive the value from
+  `@prisma/client`'s real enum instead, or mirror it locally like the file's own `METER_KEYS`.
+
+### L-152 · 2026-09-15 · process · #743 fix round T5 "one MRR engine" claim
+
+- **Symptom:** T5 replaced two retired catalog-fallback estimators
+  (`_catalogPriceByPlanKey`/`_monthlyPriceUsd`) with one shared `priceSubscription()`/
+  `priceTenant()` path and described the change as making `MrrService` "the one MRR engine" —
+  a claim about EVERY caller of money-pricing logic, verified only against the one call site
+  (`getTenant()`) the task brief named.
+- **Root cause:** "the one caller that was migrated" and "every caller of the retired helper" are
+  different claims; a brief that names one caller can leave a sibling call site (another service,
+  a script, a test fixture computing the same figure independently) still on the old path with
+  nothing failing to say so — the retired helper being deleted only proves the ONE known caller
+  broke, not that no other caller existed.
+- **Lesson:** **Before declaring a function "the one X" or "the single source of truth" for
+  anything, grep the whole tree for the OLD mechanism's name/signature, not just the call site the
+  task brief already named — a deletion only proves what it broke, never what it missed.**
+- **Guard:** `mrr.service.spec.ts`'s `REG-743-N1` test proves `priceTenant()` and
+  `computeOverview()` sum to the same total for the same fixture (structural proof, not just "the
+  old helper is gone"). Sibling [[L-119]] — same theme, an earlier money-figure seam.
+
+### L-153 · 2026-09-15 · tooling · #743 fix round T3 child-process env leak into a prod-capable CLI
+
+- **Symptom:** two DB-lane specs spawn a prod-capable backfill CLI via `execSync` with
+  `env: {...process.env, DATABASE_URL: dbUrl}`. The CLI's own `resolveDatabaseUrl()` prioritizes
+  Railway TCP-proxy vars OVER `DATABASE_URL` when set — so a parent process with a leftover
+  Railway proxy export (e.g. an earlier `railway run` in the same shell) leaks into the child,
+  pointing a "local-only" test's CLI at the production database.
+- **Root cause:** `{...process.env, DATABASE_URL: dbUrl}` ADDS a key, it does not REMOVE any —
+  scrubbing is the caller's job and neither spec did it. Overriding one variable doesn't guarantee
+  which variable wins inside the child's OWN resolution precedence.
+- **Lesson:** **A child process inherits variables, not a guard — when a spawned CLI has its own
+  "A beats B" precedence, setting B in the child's env isn't enough. Delete every variable in the
+  higher-precedence set before spawning, and test by FAKING those vars on the parent to prove the
+  child still resolves correctly.**
+- **Guard:** `childEnv(dbUrl)` helper in both DB specs deletes every `RAILWAY_*`/`POSTGRES_*` key
+  before setting `DATABASE_URL`; each file's `REG-743-N2` test fakes Railway vars on the spec's
+  own `process.env` and asserts the child still resolves to the local host.
+
 ## testing
 
 ### L-066 · 2026-09-04 · testing · watchdog spec
@@ -742,6 +810,43 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   `toHaveBeenCalledWith`: objectContaining silently admits extra `where` keys, so the key-set
   (`{ id, status }`, no tenant key) was pinned nowhere.
 
+### L-133 · 2026-09-14 · process · Phase 0 T10 deferred-gap markers
+
+- **Symptom:** the T9-T11 lane's plan pseudocode said `UpdateTenantPlanDto`/`ActivateSubscriptionDto`
+  "already use `@IsEnum(TenantPlan)`... nothing to do" for Task 10. The actual code (written by an
+  earlier lane) instead used `@IsIn(SELECTABLE_TENANT_PLANS)`, which deliberately EXCLUDED
+  GROWTH/SCALE with comments and dedicated specs both saying "not yet selectable — Phase 0 Task 10
+  gap." Following the plan text as written would have left that gap open while marking Task 10 done.
+- **Root cause:** the plan was written against an earlier snapshot of the code; a later lane (T1-T6)
+  had since built a more careful interim state (a real gap, explicitly fenced off with forward
+  references to the exact task that would close it) that the plan's pseudocode never anticipated.
+- **Lesson:** **Before implementing a task from a written plan, grep the touched files for the
+  task's own number/name in comments and spec titles ("Phase 0 Task N gap", "TODO: TaskN").** A
+  prior lane often leaves an explicit, load-bearing marker naming exactly what the next task must
+  close — trust that marker over the plan's stale pseudocode, and treat closing it as in-scope even
+  when the plan text says "nothing to do here."
+- **Guard:** `planKeyFromEnum()` now identity-maps GROWTH/SCALE, `SELECTABLE_TENANT_PLANS` includes
+  them, and both DTO specs flipped from "rejects" to "accepts" (`update-tenant-plan.dto.spec.ts`,
+  `activate-subscription.dto.spec.ts`).
+
+### L-134 · 2026-09-14 · testing
+
+- **Symptom:** a new `*.db.spec.ts` passed locally but CI's "Replay migrations on a fresh
+  database" job failed its `beforeAll` with "No PUBLISHED PlanVersion … run `local:seed` first",
+  then `afterAll` threw `Cannot read properties of undefined (reading 'id')` and Jest hung on an
+  unclosed pool.
+- **Root cause:** `local:seed` publishes the plan catalog (global reference data `PlanVersion`
+  starts empty of); CI's replay job runs `test:db` on a freshly migrated DB with no seed at all,
+  so a spec assuming seeded reference data is green locally and red in CI.
+- **Lesson:** **A db spec creates every row it reads — including global reference data — in its
+  own `beforeAll` (use an existing row if present, else create a minimal one and remember it),
+  tears down only what it created, guards cleanup on the fixture existing, and always closes the
+  pool in `afterAll` even when `beforeAll` threw.**
+- **Guard:** CI's migration-replay job (fresh DB, no seed) is the standing check;
+  `backfill-subscription-reconciliation.db.spec.ts` is the reference pattern. Derive any fabricated
+  integer key/version from the table (`max(col) + 1`), never `Date.now()` — a timestamp overflowed
+  `PlanVersion.version` (int4) only on CI's fresh DB, the one environment you cannot run locally.
+
 ### L-156 · 2026-09-15 · tooling · B420 mistiered proof, no lawful reclassify path
 
 - **Symptom:** B420 was correctly fixed and proven (T1), but its proof cited a standalone node
@@ -759,3 +864,21 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   single-field ledger edit (owner-approved, out of band) rather than fabricate a regression.
 - **Guard:** filed B426 (bugs.mjs needs a lawful `proven`→`already-fixed` reclassify path,
   distinct from `reopen`'s regression semantics) so this doesn't recur as a manual escape hatch.
+
+### L-157 · 2026-09-15 · domain · #743 review round #3 (F1/F2)
+
+- **Symptom:** an admin MRR card fell back to a client-side per-plan price estimate when the
+  server rollup failed -- a free pilot showed at full list price. A reconciliation script's
+  `--apply` wrote real prices to live PRODUCTION tenants with nothing between "ran the dry run"
+  and "wrote to prod" -- a stale terminal was indistinguishable from a reviewed decision.
+- **Root cause:** both were "best-effort" conveniences added without asking what happens when
+  the safety net itself is wrong: a fallback estimate is a second, unaudited pricing engine; an
+  unconfirmed bulk write on money data has no seam between intent and action.
+- **Lesson:** **A money surface gets ONE engine, never a fallback estimate -- on failure, say so
+  ("unavailable"), never invent a number. A bulk write on live money data needs an explicit
+  confirmation naming what's about to apply (`--confirm-count <n>` matching the dry run),
+  refused otherwise.**
+- **Guard:** `admin/billing/page.tsx` deleted `PLAN_PRICES`, shows "MRR unavailable" on error.
+  `backfill-subscription-reconciliation.mjs` requires `--confirm-count` matching the scan when
+  `--apply` runs unscoped. Sibling fix same round: the write's `updateMany` re-asserts tenant
+  state, closing a scan-to-write race.
