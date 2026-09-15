@@ -28,6 +28,32 @@ export interface MrrOverview {
   ledgerMrr: number;
   /** Net MRR change over the last 30 days (Σ amountDelta in that window). */
   momDelta: number;
+  /**
+   * REG-743-N5/F2 (visibility, not a policy change): a paying-scoped (ACTIVE, PRODUCTION,
+   * planKey set) subscription row with a null basePriceSnapshot that ALSO prices at $0 net —
+   * the exact shape a Stripe-originated row takes before the checkout webhook sets its price.
+   * Computed from the same per-row `priceSubscription()` result as `payingTenants` (never a
+   * separate raw-column check), so a null snapshot rescued by add-on revenue is counted as
+   * paying, never double-labeled "unpriced" — see F4 in the REG-743 fix-round review. $0 is
+   * the CORRECT figure for these; this count exists so that figure is never silent.
+   */
+  unpricedActiveTenants: number;
+  /**
+   * REG-743-N5/F2 (review finding F2): a paying-scoped row that DOES have a basePriceSnapshot
+   * but nets to exactly $0 anyway (e.g. a full discount) — the "free pilot with a real Stripe
+   * subscription" shape. Disjoint from `unpricedActiveTenants` (that one requires a null
+   * snapshot); together the two cover every payingWhere row `payingTenants` excludes.
+   */
+  zeroPricedActiveTenants: number;
+  /**
+   * REG-743-N5/F2 (review finding F3): an ACTIVE PRODUCTION tenant with nothing billable on
+   * file — no subscription row at all, OR a subscription row that never got a `planKey`
+   * backfilled (the legacy Stripe-only shape `billing.service.ts` already treats as a MRR
+   * no-op). Both shapes are structurally excluded from `payingWhere` and therefore invisible
+   * to every other count above; widened here rather than added as a separate field, since
+   * "no plan key" and "no subscription row" are the same claim for billing purposes.
+   */
+  activeWithoutSubscription: number;
 }
 
 /**
@@ -55,7 +81,21 @@ export class MrrService {
     // in-window events on ~7 month-end days a year.)
     const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-    const [subs, addons, trialTenants, readOnlyTenants, ledgerAgg, momAgg] = await Promise.all([
+    const activeProductionWhere = {
+      status: "ACTIVE" as const,
+      deletedAt: null,
+      class: "PRODUCTION" as const,
+    };
+
+    const [
+      subs,
+      addons,
+      trialTenants,
+      readOnlyTenants,
+      ledgerAgg,
+      momAgg,
+      activeWithoutSubscription,
+    ] = await Promise.all([
       this.prisma.tenantSubscription.findMany({
         where: payingWhere,
         select: { tenantId: true, planKey: true, basePriceSnapshot: true, discount: true },
@@ -89,6 +129,19 @@ export class MrrService {
         _sum: { amountDelta: true },
         where: { createdAt: { gte: monthAgo }, tenant: { class: "PRODUCTION" } },
       }),
+      // REG-743-N5/F2: visibility, not a policy change — $0 stays correct for these rows,
+      // this just makes sure it is never SILENT. unpricedActiveTenants/zeroPricedActiveTenants
+      // are NOT queried here — they're derived below from the same per-row priceSubscription()
+      // result as payingTenants (review finding F4: a raw basePriceSnapshot-null check would
+      // wrongly flag a row that add-ons still price above $0). Widened for review finding F3:
+      // a subscription row with no planKey never reaches `payingWhere` either, and is the
+      // same "nothing billable" claim as no subscription row at all.
+      this.prisma.tenant.count({
+        where: {
+          ...activeProductionWhere,
+          OR: [{ subscription: null }, { subscription: { planKey: null } }],
+        },
+      }),
     ]);
 
     // REG-743-N1 (L-119): group add-ons by tenant so each subscription's contribution is
@@ -106,6 +159,9 @@ export class MrrService {
     let addonMrr = 0;
     let discountTotal = 0;
     let mrr = 0;
+    let payingTenants = 0;
+    let unpricedActiveTenants = 0;
+    let zeroPricedActiveTenants = 0;
     const byPlanMap = new Map<string, { tenants: number; baseMrr: number }>();
     for (const s of subs) {
       const base = s.basePriceSnapshot != null ? Number(s.basePriceSnapshot) : 0;
@@ -118,11 +174,26 @@ export class MrrService {
       baseMrr += base;
       discountTotal += discount;
       addonMrr += addonSum;
-      mrr += this.priceSubscription(s, tenantAddons);
+      const rowPrice = this.priceSubscription(s, tenantAddons);
+      mrr += rowPrice;
       const key = s.planKey as string;
       const row = byPlanMap.get(key) ?? { tenants: 0, baseMrr: 0 };
-      row.tenants += 1;
       row.baseMrr = roundMoney(row.baseMrr + base - discount);
+      // REG-743-N5: a row's `payingWhere` match (a planKey) is not the same claim as "this
+      // tenant pays" — a null snapshot or a full discount prices it $0. Count it as paying
+      // ONLY when it actually contributes money, so "N paying tenants" and "$0" are never
+      // both true for the same row.
+      if (rowPrice > 0) {
+        payingTenants += 1;
+        row.tenants += 1;
+      } else if (s.basePriceSnapshot == null) {
+        // Missing a snapshot AND add-ons didn't rescue it above $0 — genuinely unpriced.
+        unpricedActiveTenants += 1;
+      } else {
+        // Has a snapshot, still nets to $0 (e.g. a full discount) — a real Stripe
+        // subscription that happens to be a free pilot, not a missing-data case.
+        zeroPricedActiveTenants += 1;
+      }
       byPlanMap.set(key, row);
     }
 
@@ -140,12 +211,15 @@ export class MrrService {
       baseMrr,
       addonMrr: roundedAddon,
       discountTotal: roundedDiscount,
-      payingTenants: subs.length,
+      payingTenants,
       trialTenants,
       readOnlyTenants,
       byPlan,
       ledgerMrr: roundMoney(Number(ledgerAgg._sum.amountDelta ?? 0)),
       momDelta: roundMoney(Number(momAgg._sum.amountDelta ?? 0)),
+      unpricedActiveTenants,
+      zeroPricedActiveTenants,
+      activeWithoutSubscription,
     };
   }
 

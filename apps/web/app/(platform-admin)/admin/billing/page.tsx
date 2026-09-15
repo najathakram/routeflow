@@ -62,6 +62,12 @@ interface MrrOverview {
   mrr: number;
   momDelta: number;
   payingTenants: number;
+  /** REG-743-N5/F2: ACTIVE PRODUCTION tenants priced $0 for visibility, not a bug signal. */
+  unpricedActiveTenants: number;
+  /** REG-743-N5/F2: has a real price snapshot, but a full discount nets it to $0. */
+  zeroPricedActiveTenants: number;
+  /** REG-743-N5/F3: no subscription row, or one with no planKey backfilled — nothing billable. */
+  activeWithoutSubscription: number;
 }
 
 // ─── Page ──────────────────────────────────────────────────────────────────────
@@ -217,6 +223,37 @@ export default function BillingPage() {
           icon={<Users className="h-5 w-5" />}
         />
       </div>
+
+      {/* REG-743-N5/F2: visibility only — $0 is the correct MRR contribution for these
+          tenants, this just makes sure that figure is never silent. */}
+      {mrrData &&
+        (mrrData.unpricedActiveTenants > 0 ||
+          mrrData.zeroPricedActiveTenants > 0 ||
+          mrrData.activeWithoutSubscription > 0) && (
+          <div className="flex flex-wrap items-center gap-2">
+            {mrrData.unpricedActiveTenants > 0 && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-950/60 px-2 py-0.5 text-xs font-medium text-amber-400">
+                <AlertTriangle className="h-3 w-3" />
+                {mrrData.unpricedActiveTenants} active tenant
+                {mrrData.unpricedActiveTenants === 1 ? "" : "s"} missing a price snapshot
+              </span>
+            )}
+            {mrrData.zeroPricedActiveTenants > 0 && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-950/60 px-2 py-0.5 text-xs font-medium text-amber-400">
+                <AlertTriangle className="h-3 w-3" />
+                {mrrData.zeroPricedActiveTenants} active tenant
+                {mrrData.zeroPricedActiveTenants === 1 ? "" : "s"} priced $0 (full discount)
+              </span>
+            )}
+            {mrrData.activeWithoutSubscription > 0 && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-950/60 px-2 py-0.5 text-xs font-medium text-amber-400">
+                <AlertTriangle className="h-3 w-3" />
+                {mrrData.activeWithoutSubscription} active tenant
+                {mrrData.activeWithoutSubscription === 1 ? "" : "s"} with nothing billable on file
+              </span>
+            )}
+          </div>
+        )}
 
       {/* Subscription Table */}
       <AdminCard
