@@ -3,6 +3,7 @@ import { TenantClass, UserRole } from "@prisma/client";
 import * as bcrypt from "bcrypt"; // match the hasher import used at customers.service.ts:484-509
 import * as crypto from "crypto";
 import { LeaderCron } from "../common/cron-lock";
+import { withAdvisoryLock } from "../common/db-locks";
 import { PrismaService } from "../prisma/prisma.service";
 import { PlatformConfigService } from "./platform-config.service";
 
@@ -57,6 +58,21 @@ export class TenantMirrorService {
     }
     if (tenantId === houseTenantId) return; // never mirror HQ into itself
 
+    // F2 (review round, 2026-09-15): the config key can be edited independently of this
+    // service, so a stale/wrong `platform.houseTenantId` (deleted, or reclassified off
+    // INTERNAL) must never let admins' emails/usernames get written into what is now a live
+    // client tenant. Checked on every call, not just at bootstrap time.
+    const houseTenant = await this.prisma.tenant.findUnique({
+      where: { id: houseTenantId },
+      select: { class: true, deletedAt: true },
+    });
+    if (!houseTenant || houseTenant.class !== TenantClass.INTERNAL || houseTenant.deletedAt) {
+      this.logger.error(
+        `Skipping mirror sync for ${tenantId}: configured house tenant ${houseTenantId} is missing, not class INTERNAL, or deleted.`,
+      );
+      return;
+    }
+
     // findUnique (not findUniqueOrThrow): a missing tenant is treated the same as "not
     // mirror-eligible" — this is a best-effort sync, never a source of a thrown error.
     const tenant = await this.prisma.tenant.findUnique({
@@ -78,36 +94,54 @@ export class TenantMirrorService {
     }
     if (!MIRROR_CLASSES.includes(tenant.class)) return; // same eligibility rule as the sweep
 
-    let customerId: string | null;
-    try {
-      customerId = await this.resolveMirrorCustomerId(tenantId, houseTenantId, tenant);
-    } catch (err) {
-      if (!isUniqueViolation(err)) throw err;
-      // A concurrent upsert() for the SAME tenant won the create race — createTenant(),
-      // updateTenantConfig() and the nightly sweep can all overlap. Re-resolve once: the retry
-      // finds the winner's row and takes the update path, instead of dropping this call's sync
-      // (every caller catches at `debug`, so a propagated P2002 is invisible until the next sweep).
-      this.logger.warn(`Mirror create for tenant ${tenantId} lost a concurrent race; retrying.`);
-      customerId = await this.resolveMirrorCustomerId(tenantId, houseTenantId, tenant);
-    }
-    if (!customerId) return;
+    // F3 (review round, 2026-09-15): resolveMirrorCustomerId's find-then-create and the
+    // ContactPerson find-then-create loop below are both unguarded races (ContactPerson has no
+    // unique key) — serialize per SOURCE tenant. A different key from the customer-merge lock
+    // (`order-merge` family, customer-id keyed), so this is never a second lock on a merge.
+    // `mode: "try"`: this whole service is best-effort, so a caller that loses the race skips
+    // this sync rather than blocking a live admin request — the next sweep or admin action
+    // retries it.
+    const result = await withAdvisoryLock(
+      { family: "tenant-mirror", key: tenantId, mode: "try" },
+      async () => {
+        let customerId: string | null;
+        try {
+          customerId = await this.resolveMirrorCustomerId(tenantId, houseTenantId, tenant);
+        } catch (err) {
+          if (!isUniqueViolation(err)) throw err;
+          // A concurrent upsert() for the SAME tenant won the create race — createTenant(),
+          // updateTenantConfig() and the nightly sweep can all overlap. Re-resolve once: the
+          // retry finds the winner's row and takes the update path, instead of dropping this
+          // call's sync (every caller catches at `debug`, so a propagated P2002 is invisible
+          // until the next sweep).
+          this.logger.warn(
+            `Mirror create for tenant ${tenantId} lost a concurrent race; retrying.`,
+          );
+          customerId = await this.resolveMirrorCustomerId(tenantId, houseTenantId, tenant);
+        }
+        if (!customerId) return;
 
-    for (const admin of tenant.users) {
-      const contact = await this.prisma.contactPerson.findFirst({
-        where: { customerId, email: admin.email },
-        select: { id: true },
-      });
-      if (!contact) {
-        await this.prisma.contactPerson.create({
-          data: {
-            customerId,
-            tenantId: houseTenantId,
-            firstName: admin.username,
-            lastName: "",
-            email: admin.email,
-          },
-        });
-      }
+        for (const admin of tenant.users) {
+          const contact = await this.prisma.contactPerson.findFirst({
+            where: { customerId, email: admin.email },
+            select: { id: true },
+          });
+          if (!contact) {
+            await this.prisma.contactPerson.create({
+              data: {
+                customerId,
+                tenantId: houseTenantId,
+                firstName: admin.username,
+                lastName: "",
+                email: admin.email,
+              },
+            });
+          }
+        }
+      },
+    );
+    if (!result.acquired) {
+      this.logger.warn(`Mirror sync for tenant ${tenantId} skipped: another sync is in progress.`);
     }
   }
 

@@ -72,7 +72,11 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
       // round 2 (N1, independent review round 2) retired it — ReturnsService#create now takes a
       // TRANSACTION-scoped pg_advisory_xact_lock on its own connection instead
       // (common/idempotency.service.ts#acquireLock), needing no dedicated pool at all.
-      expect(mod.LOCK_FAMILIES).toEqual(["order-merge", "cron", "billing"]);
+      // "tenant-mirror" (F3, Phase 0 T12-T15 review round, 2026-09-15) backs
+      // TenantMirrorService#upsert's session-scoped critical section (spans a $transaction PLUS
+      // a separate ContactPerson find-then-create loop — genuinely session-scoped, unlike the
+      // retired idempotency case above).
+      expect(mod.LOCK_FAMILIES).toEqual(["order-merge", "cron", "billing", "tenant-mirror"]);
     });
   });
 
@@ -360,6 +364,24 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
       // The fourth acquisition built NO fourth pool: pools are memoized per family, so
       // `order-merge` keeps one 8-slot pool rather than one per call site.
       expect(mockPoolOn).toHaveBeenCalledTimes(3);
+    });
+
+    it("(p2) tenant-mirror gets its own 4-slot pool, distinct from billing despite the same size", async () => {
+      await mod._resetLockPoolForTests?.();
+      mockPoolCtor.mockClear();
+
+      await acquireOnce("billing");
+      await acquireOnce("tenant-mirror");
+
+      expect(mockPoolCtor).toHaveBeenCalledTimes(2);
+      const [billingPool, mirrorPool] = mockPoolCtor.mock.results.map((r) => r.value);
+      expect(billingPool).not.toBe(mirrorPool);
+      expect(callArgs(mockPoolCtor, 1)[0]).toMatchObject({
+        max: 4,
+        connectionTimeoutMillis: 5_000,
+        keepAlive: true,
+        keepAliveInitialDelayMillis: 30_000,
+      });
     });
 
     it("(q) an unknown family rejects with TypeError and never takes a connection — the allow-list is closed", async () => {

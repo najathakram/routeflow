@@ -88,10 +88,14 @@ validate()` and `buyer/strategies/buyer-jwt.strategy.ts validate()` both now cop
 - **`getTenantEntitlements(tenantId)`** (2026-08-21) → `@Get tenants/:id/entitlements` (same `SuperAdminGuard` as its siblings) — the first admin-facing view of what a tenant _actually_ has: `{planKey, flags, addons, caps}` from `EntitlementsService.resolve()` + live `usage` from `MeterService.readAll()`. 404s first via `_findOrThrow`. `PlanCatalogService`/`EntitlementsService`/`MeterService` are injected through the already-imported `BillingModule` (it re-exports `EntitlementsModule`) — nothing is re-provided here.
 - **`platform-config.service.ts`** — KV config on the migration-owned `PlatformConfig` table. **No boot-time DDL (PR-1, `imp-03a`, 2026-09-03)** — `onModuleInit`'s `CREATE TABLE IF NOT EXISTS "PlatformConfig"`/`"AiUsageEvent"` + the `AiUsageEvent_createdAt_idx` index (and their `$executeRaw` tagged-template calls) are deleted; both tables are ordinary Prisma-migrated tables now, `onModuleInit`/`OnModuleInit` removed (nothing non-DDL remained in the method). `getAiConfig`/`updateAiConfig` (claude apiKey/model/maxTokens + `verifiedAt`), `resolveAnthropicKey/Model/MaxTokens`. **`AiUsageEvent`**: `recordAiUsage()` (raw insert, never throws — **WIRED 2026-08-28 into all four Anthropic call sites**: vendor-bill scan `ocr.vendor_bill`, statement scan `ocr.supplier_statement`, expense-receipt extract `ocr.expense_receipt`, route insights `insights.route`; tenant-tagged via `prisma.getTenantId()`; tokens recorded from the response right after a successful call — even if parsing then fails, the spend was real — `success:false` with 0 tokens when the call itself errors), `getAiUsage(days)` (raw aggregate → scans/tokens/est-spend/error-rate; classifies `ocr`/`ocr.*` → ocrScans, `forecast*` → forecastRuns, `insights.*` → `insightRuns` — the admin panel's "Route insights" row), `testConnection()` (pings Anthropic via fetch, stores `claude.verifiedAt`). **Phase 0 T12 house-tenant identity** — `getHouseTenantId()`/`setHouseTenantId(id)` thin wrappers
   over the existing private `getValue`/`setValue`, key `platform.houseTenantId`. Bootstrapped
-  once, out-of-band, by `apps/api/scripts/bootstrap-house-tenant.mjs` (idempotent: creates Tenant
-  `routeflow-hq` — `ACTIVE`/`ENTERPRISE`/`INTERNAL` — + its `TenantConfig` in one `$transaction`,
-  then sets the config key; a second run is a no-op; if the tenant exists but the key is missing,
-  repairs the key alone). Consumed by `tenant-mirror.service.ts` below.
+  once, out-of-band, by `apps/api/scripts/bootstrap-house-tenant.mjs` (**prod-targeting, F1 fix
+  round 2026-09-15**: builds its `PrismaClient` via `PrismaPg`/`pg.Pool` over `resolveDatabaseUrl()`
+  — never a bare `new PrismaClient()`, which throws "a driver adapter is required" under Prisma 7
+  — and prints the redacted resolved DB host before any write; dry run by default, `--apply` to
+  write. Idempotent: creates Tenant `routeflow-hq` — `ACTIVE`/`ENTERPRISE`/`INTERNAL` — + its
+  `TenantConfig` in one `$transaction`, then sets the config key; a second run is a no-op; if the
+  tenant exists but the key is missing, repairs the key alone. DB-lane spec:
+  `bootstrap-house-tenant.db.spec.ts`). Consumed by `tenant-mirror.service.ts` below.
 - **`resolveAnthropicKey(tenantKey)` is now THE key path for every AI feature** (tenant SystemConfig key → platform key → env; the three OCR services previously did their own storedKey‖env lookup) — `PlatformAdminModule` is imported by vendor-bills/supplier-statements/bookkeeping modules for it (acyclic: it only pulls Email+Billing). Controller: `@Get ai-config|ai-config/usage`, `@Patch ai-config`, `@Post ai-config/test`. Spec: `platform-config.service.spec.ts`.
 - **`tenant-mirror.service.ts` (Phase 0 T13, new)** — keeps one HQ `Customer` row per
   real (PRODUCTION/DEMO-class) tenant in sync on `routeflow-hq`. `upsert(tenantId)`: no-ops before
@@ -107,8 +111,19 @@ validate()` and `buyer/strategies/buyer-jwt.strategy.ts validate()` both now cop
   `$transaction` + explicit `tenantId` throughout — never `forTenant()`/`tenantCtx.run()` (matches
   `platform-admin.service.ts`'s own cross-tenant-write pattern; L-124's `forTenant()` warning
   doesn't apply here). Called best-effort from `createTenant()`/`updateTenantConfig()` — 14th ctor
-  dep on `PlatformAdminService`, registered in `platform-admin.module.ts`. Specs:
-  `tenant-mirror.service.spec.ts` (unit) + `tenant-mirror.service.db.spec.ts` (DB-lane schema
+  dep on `PlatformAdminService`, registered in `platform-admin.module.ts`.
+  **F2 (review round, 2026-09-15):** `upsert()` now loads the CONFIGURED house tenant by id on
+  every call (not just once, at bootstrap) and skips with `logger.error` unless it exists, is
+  class `INTERNAL`, and `deletedAt` is null — the config key can be edited independently of this
+  service, so a stale/wrong key must never write admin emails/usernames into what is now a live
+  client. **F3 (review round, 2026-09-15):** the `resolveMirrorCustomerId` find-then-create plus
+  the `ContactPerson` find-then-create loop (no unique key on `ContactPerson`) now run inside
+  `withAdvisoryLock({family:"tenant-mirror",key:tenantId,mode:"try"})` (`common/db-locks.ts` — new
+  family, `max: 4`) — a different key from the customer-merge lock (`order-merge` family), so this
+  is never a second lock on a merge; `try` mode matches the service's best-effort contract (a
+  caller that loses the race just skips, the next sweep/admin action retries). Specs:
+  `tenant-mirror.service.spec.ts` (unit — F2's house-tenant-validity cases, F4's P2002-retry
+  success/non-retry-on-non-P2002 cases) + `tenant-mirror.service.db.spec.ts` (DB-lane schema
   proof, L-113).
 - **`platform-admin-buyers.{service,controller}.ts`** — read-only cross-tenant buyer aggregation that does NOT touch the forbidden `buyer` module (`BuyerMergeService` isn't exported). `@Get buyer-directory` → per-buyer `{businessName (linked Customer), sellers (distinct ACTIVE CustomerLink.tenantId), orders90d (Order join)}` + segment counts (all/multi-seller/unverified) for the chips; `@Get buyer-merge-summary` → PENDING_REVIEW `BuyerMergeRequest`s enriched with per-account sellers+orders90d + `pendingCount`. Writes (approve/reject merge, suspend buyer) stay on the existing buyer-module endpoints. Spec: `platform-admin-buyers.service.spec.ts`.
 

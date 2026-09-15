@@ -43,8 +43,14 @@
  * admin/self-serve settings action, not a per-order hot path — nowhere near order-merge's
  * checkout volume — so 4 slots covers plausible concurrent enables across different tenants
  * without idling connections sized for a workload this family doesn't have; a caller that still
- * can't get a slot within its wait budget surfaces cleanly as a 503 to retry. Worst case is
- * therefore 12 + 8 + 4 = 24 lock connections; with Prisma's pool (default 10) that is 34 — far
+ * can't get a slot within its wait budget surfaces cleanly as a 503 to retry. `tenant-mirror`
+ * (F3, review round, 2026-09-15) gets `max: 4` for the same reason as `billing`: its callers are
+ * `createTenant()`/`updateTenantConfig()` (rare admin actions, one per source tenant) plus the
+ * nightly `mirrorSync()` sweep, which holds at most ONE slot at a time — its own loop awaits each
+ * tenant's `upsert()` serially, never fanning out. `mode: "try"`, matching the service's
+ * best-effort contract: a caller that loses the race skips this sync rather than blocking a
+ * live admin request, and the next sweep or admin action retries it. Worst case is therefore
+ * 12 + 8 + 4 + 4 = 28 lock connections; with Prisma's pool (default 10) that is 38 — far
  * below Postgres's `max_connections`, so the split costs nothing it cannot pay for.
  * Exhausting the CRON pool surfaces as `LockUnavailableError`, which `@LeaderCron` turns into a
  * skipped tick plus a warn — never a request-path error. `LOCK_FAMILIES` is the closed
@@ -96,7 +102,7 @@ export type LockMode = "wait" | "try";
  * derived from data, so the list is closed: `withAdvisoryLock` rejects anything else BEFORE it
  * connects (see the header's "WHY ONE POOL PER FAMILY").
  */
-export const LOCK_FAMILIES = ["order-merge", "cron", "billing"] as const;
+export const LOCK_FAMILIES = ["order-merge", "cron", "billing", "tenant-mirror"] as const;
 export type LockFamily = (typeof LOCK_FAMILIES)[number];
 export interface AdvisoryLockOptions {
   family: string;
@@ -141,6 +147,7 @@ const POOL_MAX: Record<string, number | undefined> = {
   "order-merge": 8,
   cron: 12,
   billing: 4,
+  "tenant-mirror": 4,
 };
 const DEFAULT_POOL_MAX = 8;
 function lockPool(family: string): Pool {

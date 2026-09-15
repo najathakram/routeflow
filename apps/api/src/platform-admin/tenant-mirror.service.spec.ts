@@ -99,6 +99,10 @@ const TENANT_T1 = {
   users: [{ id: "admin-1", username: "acme_owner", role: "TENANT_ADMIN" }],
 };
 
+// F2 (review round, 2026-09-15): the house tenant itself, as `upsert()` now reads it before any
+// write. Valid by default — class INTERNAL, not deleted.
+const VALID_HOUSE_TENANT = { id: HOUSE_ID, class: "INTERNAL", deletedAt: null };
+
 describe("TenantMirrorService (TP-B)", () => {
   let service: TenantMirror;
   let prisma: ReturnType<typeof createMockPrisma>;
@@ -128,6 +132,19 @@ describe("TenantMirrorService (TP-B)", () => {
     errorSpy.mockRestore();
   });
 
+  /**
+   * F2 (review round, 2026-09-15): `upsert()` now looks up the house tenant by id BEFORE the
+   * tenant being mirrored, so every test below must resolve BOTH ids from one
+   * `prisma.tenant.findUnique` mock. Branches on `where.id` rather than call order/count so it
+   * stays correct whether `upsert()` is called once or twice in a test.
+   */
+  function mockTenant(tenantFixture: unknown) {
+    (prisma.tenant.findUnique as jest.Mock).mockImplementation(
+      ({ where }: { where: { id: string } }) =>
+        Promise.resolve(where.id === HOUSE_ID ? VALID_HOUSE_TENANT : tenantFixture),
+    );
+  }
+
   /** R6/R7/R8's shared negative shape: nothing the mirror ever writes was touched. */
   function expectNoMirrorWrites() {
     expect(prisma.customer.findUnique).not.toHaveBeenCalled();
@@ -154,7 +171,7 @@ describe("TenantMirrorService (TP-B)", () => {
 
   describe("upsert(tenantId) — create then update (T13-1: R9, R10, R11, R21)", () => {
     it("creates a placeholder User + Customer in one $transaction, then only refreshes businessName on the second call", async () => {
-      prisma.tenant.findUnique.mockResolvedValue(TENANT_T1 as any);
+      mockTenant(TENANT_T1);
       (prisma.customer.findUnique as jest.Mock)
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce({ id: "cust-1", tenantId: HOUSE_ID });
@@ -229,14 +246,53 @@ describe("TenantMirrorService (TP-B)", () => {
     });
   });
 
+  describe("upsert(tenantId) — house tenant validity (F2, review round, 2026-09-15)", () => {
+    it("a misconfigured house tenant (PRODUCTION class, a live client) logs an error and writes nothing", async () => {
+      (prisma.tenant.findUnique as jest.Mock).mockImplementation(
+        ({ where }: { where: { id: string } }) =>
+          Promise.resolve(
+            where.id === HOUSE_ID
+              ? { id: HOUSE_ID, class: "PRODUCTION", deletedAt: null }
+              : TENANT_T1,
+          ),
+      );
+
+      await expect(service.upsert("t-1")).resolves.toBeUndefined();
+
+      // Positive control: the house tenant IS read (and its class inspected) before anything
+      // else — otherwise this "skip" assertion is satisfiable by a no-op that never checks it.
+      expect(prisma.tenant.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: HOUSE_ID } }),
+      );
+      // The tenant being mirrored is never even read once the house tenant fails validation.
+      expect(prisma.tenant.findUnique).not.toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: "t-1" } }),
+      );
+      expectNoMirrorWrites();
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      expect(String(errorSpy.mock.calls[0][0])).toMatch(/not class INTERNAL|missing.*deleted/i);
+    });
+
+    it("a deleted house tenant logs an error and writes nothing", async () => {
+      (prisma.tenant.findUnique as jest.Mock).mockImplementation(
+        ({ where }: { where: { id: string } }) =>
+          Promise.resolve(
+            where.id === HOUSE_ID
+              ? { id: HOUSE_ID, class: "INTERNAL", deletedAt: new Date() }
+              : TENANT_T1,
+          ),
+      );
+
+      await expect(service.upsert("t-1")).resolves.toBeUndefined();
+
+      expectNoMirrorWrites();
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe("upsert(tenantId) — class eligibility (T13-4: R8)", () => {
     it("skips a tenant whose class is not PRODUCTION/DEMO before ever reading the mirror", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({
-        id: "t-2",
-        name: "Internal Co",
-        class: "INTERNAL",
-        users: [],
-      } as any);
+      mockTenant({ id: "t-2", name: "Internal Co", class: "INTERNAL", users: [] });
 
       await service.upsert("t-2");
 
@@ -256,7 +312,7 @@ describe("TenantMirrorService (TP-B)", () => {
 
   describe("upsert(tenantId) — orphan placeholder reuse (T13-5: R12)", () => {
     it("reuses an orphaned placeholder User instead of creating a second one (avoids a P2002 loop)", async () => {
-      prisma.tenant.findUnique.mockResolvedValue(TENANT_T1 as any);
+      mockTenant(TENANT_T1);
       prisma.customer.findUnique.mockResolvedValue(null);
       prisma.user.findFirst.mockResolvedValue({ id: "u-old" } as any);
       prisma.customer.create.mockResolvedValue({ id: "cust-1" } as any);
@@ -270,9 +326,42 @@ describe("TenantMirrorService (TP-B)", () => {
     });
   });
 
+  describe("upsert(tenantId) — P2002 retry (F4, review round, 2026-09-15)", () => {
+    it("retries once and succeeds when the create loses a concurrent race (P2002)", async () => {
+      mockTenant(TENANT_T1);
+      prisma.customer.findUnique
+        .mockResolvedValueOnce(null) // first attempt: no existing mirror yet, tries to create
+        .mockResolvedValueOnce({ id: "cust-winner", tenantId: HOUSE_ID } as any); // retry: winner's row now visible
+      const p2002 = Object.assign(new Error("unique constraint"), { code: "P2002" });
+      (prisma.$transaction as jest.Mock).mockRejectedValueOnce(p2002);
+      prisma.customer.update.mockResolvedValue({ id: "cust-winner" } as any);
+
+      await expect(service.upsert("t-1")).resolves.toBeUndefined();
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1); // no second create attempt
+      expect(prisma.customer.update).toHaveBeenCalledWith({
+        where: { id: "cust-winner" },
+        data: { businessName: "Acme Wholesale" },
+      });
+      expect(warnSpy.mock.calls.some((c) => String(c[0]).match(/lost a concurrent race/i))).toBe(
+        true,
+      );
+    });
+
+    it("a non-P2002 error from the create rethrows without retrying", async () => {
+      mockTenant(TENANT_T1);
+      prisma.customer.findUnique.mockResolvedValueOnce(null);
+      (prisma.$transaction as jest.Mock).mockRejectedValueOnce(new Error("connection reset"));
+
+      await expect(service.upsert("t-1")).rejects.toThrow("connection reset");
+
+      expect(prisma.customer.findUnique).toHaveBeenCalledTimes(1); // no retry attempted
+    });
+  });
+
   describe("upsert(tenantId) — foreign-tenant guard (T13-6: R13)", () => {
     it("logs an error and never updates a mirror Customer that already lives in a foreign tenant", async () => {
-      prisma.tenant.findUnique.mockResolvedValue(TENANT_T1 as any);
+      mockTenant(TENANT_T1);
       prisma.customer.findUnique.mockResolvedValue({ id: "cust-9", tenantId: "other" } as any);
 
       await expect(service.upsert("t-1")).resolves.toBeUndefined();
@@ -285,7 +374,7 @@ describe("TenantMirrorService (TP-B)", () => {
 
   describe("upsert(tenantId) — no-admin tenant (T13-7: R15)", () => {
     it("falls contactName back to tenant.name and never throws when the tenant has zero TENANT_ADMIN users", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ ...TENANT_T1, users: [] } as any);
+      mockTenant({ ...TENANT_T1, users: [] });
       prisma.customer.findUnique.mockResolvedValue(null);
       prisma.user.findFirst.mockResolvedValue(null);
       prisma.user.create.mockResolvedValue({ id: "u-2" } as any);
@@ -307,13 +396,13 @@ describe("TenantMirrorService (TP-B)", () => {
       // R14's positive path: the DB lane (T13-9) deliberately dropped its ContactPerson
       // cardinality assertion, so the creation loop is proven here instead — on the UPDATE
       // path, which also pins the contact to the EXISTING mirror's customerId.
-      prisma.tenant.findUnique.mockResolvedValue({
+      mockTenant({
         ...TENANT_T1,
         users: [
           { username: "acme_owner", email: "owner@acme.test" },
           { username: "acme_ops", email: "ops@acme.test" },
         ],
-      } as any);
+      });
       prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", tenantId: HOUSE_ID } as any);
       prisma.customer.update.mockResolvedValue({ id: "cust-1" } as any);
       // The first admin already has a contact on the mirror; the second does not.
