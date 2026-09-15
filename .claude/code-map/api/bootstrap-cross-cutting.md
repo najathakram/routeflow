@@ -625,7 +625,9 @@ version|audit-allowlist-retired)\\.spec\\.ts$"` (the third joined it
   comes exclusively from SystemConfig `settings.taxRate` via `common/tax-rate.ts`.
 - **`src/common/`** — `EncryptionService` (AES-256-GCM, refuses placeholder key writes in prod),
   `RedisThrottlerStorage` (cross-instance rate limit, fails closed), ThrottlerExceptionFilter,
-  audit interceptor.
+  audit interceptor. **2026-09-14:** `IdempotencyService` (new) joins `providers`/`exports` — an
+  `Idempotency-Key`-header replay guard, `@Optional()`-injected by callers predating it
+  (`returns.service.ts`); detail in `api/where-to-find.md`'s Returns row.
   **`enum-parity.spec.ts` (2026-09-03, wave E / imp-10b)** — pins every `packages/types/api/enums.ts`
   const-array union set-equal to `Object.values()` of the matching `@prisma/client` generated enum
   (40 enums); the import is guarded (`require` in try/catch) so a missing/renamed export fails on
