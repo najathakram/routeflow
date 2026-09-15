@@ -89,6 +89,7 @@ import { SplitInvoiceModal } from "../_components/SplitInvoiceModal";
 import { InvoicePreviewModal, DivergenceNote } from "../../_components/LinkedDocPreviewModal";
 import { apiClient } from "@/lib/api-client";
 import { printPdfBlob } from "@/lib/print-pdf-blob";
+import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { CreditNotePicker, type CreditSelection } from "../_components/CreditNotePicker";
 
 // ─── Send Invoice Modal ────────────────────────────────────────────────────────
@@ -154,14 +155,17 @@ function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: 
   async function handleDownload() {
     setPdfLoading(true);
     try {
-      // Two-step: ask the API to render the PDF, then fetch the bytes through
-      // the authenticated apiClient. Cannot `window.open(url)` directly — the
-      // storage endpoint requires a JWT (RF-075) and a top-level new-tab
-      // navigation has no token in localStorage scope, so it returns 401.
+      // Two-step: ask the API to render the PDF, then fetch the bytes.
+      // Cannot `window.open(url)` directly — the storage endpoint requires a
+      // JWT (RF-075) and a top-level new-tab navigation has no token in
+      // localStorage scope, so it returns 401. `fetchPdfBlob` (not bare
+      // apiClient — review finding F3) picks the right transport: same-origin
+      // → auth'd apiClient; external presigned URL → bare axios, so the JWT
+      // is never sent to a third-party host.
       const meta = await apiClient.get<{ url: string }>(`/invoices/${data.invoiceId}/pdf`);
       if (!meta.data?.url) throw new Error("No PDF URL returned");
-      const pdfRes = await apiClient.get<Blob>(meta.data.url, { responseType: "blob" });
-      const blobUrl = URL.createObjectURL(pdfRes.data);
+      const blob = await fetchPdfBlob(meta.data.url, apiClient);
+      const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = blobUrl;
       a.download = `invoice-${data.invoiceId}.pdf`;
@@ -181,12 +185,13 @@ function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: 
     setPrintLoading(true);
     try {
       // Mirrors handleDownload's two-step fetch (RF-075 — the storage URL
-      // still requires a JWT), then hands the bytes to the shared print
-      // helper instead of triggering a download.
+      // still requires a JWT; fetchPdfBlob, not bare apiClient — review
+      // finding F3), then hands the bytes to the shared print helper
+      // instead of triggering a download.
       const meta = await apiClient.get<{ url: string }>(`/invoices/${data.invoiceId}/pdf`);
       if (!meta.data?.url) throw new Error("No PDF URL returned");
-      const pdfRes = await apiClient.get<Blob>(meta.data.url, { responseType: "blob" });
-      printPdfBlob(pdfRes.data);
+      const blob = await fetchPdfBlob(meta.data.url, apiClient);
+      printPdfBlob(blob);
     } catch {
       toast({ title: "Could not generate PDF", variant: "error" });
     } finally {

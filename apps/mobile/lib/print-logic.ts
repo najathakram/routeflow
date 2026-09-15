@@ -21,3 +21,14 @@ export function classifyPrintError(
 export function printTransport(os: string): "tab" | "native" {
   return os === "web" ? "tab" : "native";
 }
+
+/**
+ * `FileSystem.downloadAsync` RESOLVES (never rejects) on a non-2xx HTTP
+ * response — an error page/body would otherwise be saved to disk and handed
+ * to `Print.printAsync`/`Sharing.shareAsync` as if it were the PDF (review
+ * finding F2 on PR #756). Shared by `print-pdf.ts` and `share-pdf.ts`, which
+ * each throw when this is false so their existing catch blocks toast.
+ */
+export function isDownloadOk(status: number): boolean {
+  return status >= 200 && status < 300;
+}

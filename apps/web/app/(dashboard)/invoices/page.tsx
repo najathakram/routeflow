@@ -865,24 +865,31 @@ export default function InvoicesPage() {
                             title="Print invoice"
                             aria-label={`Print invoice ${inv.invoiceNumber}`}
                             disabled={printingIds.has(inv.id)}
-                            onClick={() => {
+                            onClick={async () => {
                               if (printingIds.has(inv.id)) return;
                               setPrintingIds((prev) => new Set(prev).add(inv.id));
-                              downloadPdf.mutate(inv.id, {
-                                onSuccess: ({ blob }) => printPdfBlob(blob),
-                                onError: () =>
-                                  toast({
-                                    title: "Failed to generate PDF",
-                                    description: "Please try again.",
-                                    variant: "error",
-                                  }),
-                                onSettled: () =>
-                                  setPrintingIds((prev) => {
-                                    const next = new Set(prev);
-                                    next.delete(inv.id);
-                                    return next;
-                                  }),
-                              });
+                              try {
+                                // mutateAsync (not mutate + per-call options) — TanStack
+                                // Query v5's useMutation is ONE shared observer, so
+                                // per-call onSuccess/onError/onSettled on a concurrent
+                                // .mutate() would be overwritten by whichever row calls
+                                // it last, silently dropping every other row's print,
+                                // error toast and spinner clear (review finding F1).
+                                const { blob } = await downloadPdf.mutateAsync(inv.id);
+                                printPdfBlob(blob);
+                              } catch {
+                                toast({
+                                  title: "Failed to generate PDF",
+                                  description: "Please try again.",
+                                  variant: "error",
+                                });
+                              } finally {
+                                setPrintingIds((prev) => {
+                                  const next = new Set(prev);
+                                  next.delete(inv.id);
+                                  return next;
+                                });
+                              }
                             }}
                             className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-navy transition-colors disabled:opacity-50"
                           >

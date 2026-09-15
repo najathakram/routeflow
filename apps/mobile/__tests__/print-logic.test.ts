@@ -1,4 +1,4 @@
-import { classifyPrintError, printTransport } from "../lib/print-logic";
+import { classifyPrintError, isDownloadOk, printTransport } from "../lib/print-logic";
 
 /**
  * WP3 — pure classification/transport helpers for the mobile print flow
@@ -32,5 +32,24 @@ describe("classifyPrintError", () => {
     expect(classifyPrintError(null)).toBe("failed");
     expect(classifyPrintError(undefined)).toBe("failed");
     expect(classifyPrintError({})).toBe("failed");
+  });
+});
+
+describe("isDownloadOk (review finding F2 on PR #756)", () => {
+  it("accepts every 2xx status", () => {
+    expect(isDownloadOk(200)).toBe(true);
+    expect(isDownloadOk(201)).toBe(true);
+    expect(isDownloadOk(299)).toBe(true);
+  });
+
+  it("rejects a redirect, a client error and a server error", () => {
+    expect(isDownloadOk(301)).toBe(false);
+    expect(isDownloadOk(404)).toBe(false);
+    expect(isDownloadOk(500)).toBe(false);
+  });
+
+  it("rejects the exact boundary values (200 is in, 300 is out)", () => {
+    expect(isDownloadOk(199)).toBe(false);
+    expect(isDownloadOk(300)).toBe(false);
   });
 });

@@ -5,7 +5,7 @@ import { Platform } from "react-native";
 import * as FileSystem from "expo-file-system/legacy";
 import { showToast } from "./toast";
 import { openPdfInTab } from "./share-pdf";
-import { classifyPrintError, printTransport } from "./print-logic";
+import { classifyPrintError, isDownloadOk, printTransport } from "./print-logic";
 
 export interface PrintPdfOptions {
   /** Fully-qualified (signed) PDF URL returned by `GET /invoices/:id/pdf`. */
@@ -44,7 +44,10 @@ export async function printPdf({ url, filename }: PrintPdfOptions): Promise<Prin
 
   try {
     const target = (FileSystem.cacheDirectory ?? "") + filename.replace(/[^\w.-]+/g, "_");
-    const { uri } = await FileSystem.downloadAsync(url, target);
+    const { uri, status } = await FileSystem.downloadAsync(url, target);
+    if (!isDownloadOk(status)) {
+      throw new Error(`PDF download failed (${status})`);
+    }
     await Print.printAsync({ uri });
     return "printed";
   } catch (err: any) {
