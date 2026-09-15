@@ -28,7 +28,7 @@ import { pathToFileURL } from "node:url";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
-import { resolveDatabaseUrl, scrubSecrets } from "./lib/railway-db-url.mjs";
+import { resolveDatabaseUrl, redactUrl, scrubSecrets } from "./lib/railway-db-url.mjs";
 
 // Hoisted to module scope (not `main()`-local) so the top-level `.catch` below can scrub a
 // connection string out of an error message even when the failure happens before or after
@@ -66,6 +66,7 @@ async function main() {
     console.error(err.message);
     process.exit(1);
   }
+  console.log(`Resolved database host: ${redactUrl(databaseUrl)}`);
   const pool = new Pool({ connectionString: databaseUrl });
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
 

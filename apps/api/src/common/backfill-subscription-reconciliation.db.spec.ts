@@ -29,6 +29,7 @@
 import { execSync } from "child_process";
 import { randomUUID } from "crypto";
 import path from "path";
+import { pathToFileURL } from "url";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
@@ -39,6 +40,34 @@ const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs")
 
 const API_DIR = path.resolve(__dirname, "../..");
 const CLI = path.resolve(API_DIR, "scripts/backfill-subscription-reconciliation.mjs");
+const RAILWAY_DB_URL_LIB_HREF = pathToFileURL(
+  path.resolve(API_DIR, "scripts/lib/railway-db-url.mjs"),
+).href;
+
+// REG-743-N2 helper: computes the same `redactUrl(url)` value the real CLI is expected to
+// print, via the actual `scripts/lib/railway-db-url.mjs` module (never a re-typed local
+// mirror of its redaction logic) — mirrors the ESM-shim pattern in `railway-db-url.spec.ts`
+// (ts-jest's CommonJS transform can't `import` a `.mjs` file directly).
+function redactUrlViaLib(url: string): string {
+  const script = `import { redactUrl } from "${RAILWAY_DB_URL_LIB_HREF}"; console.log(redactUrl(process.env.RDU_URL));`;
+  return execSync(`node --input-type=module -e ${JSON.stringify(script)}`, {
+    encoding: "utf-8",
+    env: { ...process.env, RDU_URL: url },
+  }).trim();
+}
+
+// REG-743-N2: every child CLI invocation in this file must get an env with every RAILWAY_*/
+// POSTGRES_* key scrubbed, so a leftover `railway run` proxy export (or the N2 test's own
+// deliberately-injected fake ones) can never make the CLI resolve anything but this spec's own
+// local `dbUrl` — mirrors the fix required in the real script callers, not just this test.
+function childEnv(dbUrl: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (key.startsWith("RAILWAY_") || key.startsWith("POSTGRES_")) delete env[key];
+  }
+  env.DATABASE_URL = dbUrl;
+  return env;
+}
 
 const RUN_SUFFIX = randomUUID().slice(0, 8);
 const NO_SUB_SLUG = assertTestTenant(
@@ -65,12 +94,56 @@ const UNKNOWN_KEY_SLUG = assertTestTenant(
   `qa-phase0-recon-${RUN_SUFFIX}-5`,
   "backfill-subscription-reconciliation.db.spec.ts",
 );
+// --- T2 fixtures (REG-743-F3, REG-743-N3, REG-743-F4, REG-743-F5) ---
+// A subscription pinned to an OLDER (non-published) PlanVersion — must be priced from that
+// version, and the pin must never be moved to the published version (F3, B327's sibling: the
+// script must never silently repin a tenant that was deliberately kept on an older price).
+const OLD_PIN_SLUG = assertTestTenant(
+  `qa-phase0-recon-${RUN_SUFFIX}-6`,
+  "backfill-subscription-reconciliation.db.spec.ts",
+);
+// N3: tenant.planVersionId starts null and must be set to the version actually used.
+const NULL_TENANT_PIN_SLUG = assertTestTenant(
+  `qa-phase0-recon-${RUN_SUFFIX}-7`,
+  "backfill-subscription-reconciliation.db.spec.ts",
+);
+// N3: tenant.planVersionId starts non-null (pinned to the older version) and must never be
+// overwritten, even though the subscription itself resolves against that same older version.
+const PINNED_TENANT_PIN_SLUG = assertTestTenant(
+  `qa-phase0-recon-${RUN_SUFFIX}-8`,
+  "backfill-subscription-reconciliation.db.spec.ts",
+);
+// F4: has a planKey and would otherwise price cleanly, but carries no `stripeSubId` — a
+// PRODUCTION tenant with a manually-managed (non-Stripe) subscription. Must be listed and
+// never written (B327 — never remove this filter).
+const NO_STRIPE_SUB_SLUG = assertTestTenant(
+  `qa-phase0-recon-${RUN_SUFFIX}-9`,
+  "backfill-subscription-reconciliation.db.spec.ts",
+);
+// F5: a DEMO-class tenant with an otherwise-eligible Stripe subscription — out of scope
+// entirely (the script's tenant scope is PRODUCTION-only, not PRODUCTION+DEMO).
+const DEMO_OUT_OF_SCOPE_SLUG = assertTestTenant(
+  `qa-phase0-recon-${RUN_SUFFIX}-10`,
+  "backfill-subscription-reconciliation.db.spec.ts",
+);
+// F5: a CANCELLED PRODUCTION tenant with an otherwise-eligible Stripe subscription — out of
+// scope entirely (the script's tenant scope requires status: ACTIVE).
+const CANCELLED_OUT_OF_SCOPE_SLUG = assertTestTenant(
+  `qa-phase0-recon-${RUN_SUFFIX}-11`,
+  "backfill-subscription-reconciliation.db.spec.ts",
+);
 const ALL_SLUGS = [
   NO_SUB_SLUG,
   PARTIAL_SUB_SLUG,
   TEST_CLASS_SLUG,
   ENTERPRISE_SLUG,
   UNKNOWN_KEY_SLUG,
+  OLD_PIN_SLUG,
+  NULL_TENANT_PIN_SLUG,
+  PINNED_TENANT_PIN_SLUG,
+  NO_STRIPE_SUB_SLUG,
+  DEMO_OUT_OF_SCOPE_SLUG,
+  CANCELLED_OUT_OF_SCOPE_SLUG,
 ];
 
 describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
@@ -83,7 +156,20 @@ describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
   let tenantTestClass: { id: string } | undefined;
   let tenantEnterprise: { id: string } | undefined;
   let tenantUnknownKey: { id: string } | undefined;
+  let tenantOldPin: { id: string } | undefined;
+  let tenantNullPin: { id: string } | undefined;
+  let tenantPinnedPin: { id: string } | undefined;
+  let tenantNoStripeSub: { id: string } | undefined;
+  let tenantDemoOutOfScope: { id: string } | undefined;
+  let tenantCancelledOutOfScope: { id: string } | undefined;
   let scalePrice: string;
+  // A second, NEVER-published PlanVersion (GROWTH @ 149) that a subscription/tenant can be
+  // pinned to — proves F3/N3 price-from-the-pinned-version and never-move-the-pin behavior
+  // independently of whatever the currently PUBLISHED catalog happens to contain. Always
+  // created (and torn down) by this spec — never collides with another lane's catalog since
+  // it is never PUBLISHED.
+  let oldPinVersionId: string;
+  const OLD_PIN_PRICE = "149";
   // Set only when this spec created the catalog itself (no PUBLISHED PlanVersion existed) —
   // afterAll deletes exactly this version's rows and nothing else.
   let createdVersionId: string | undefined;
@@ -138,6 +224,33 @@ describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
       publishedVersion.definitions.find((d) => d.planKey === "SCALE")?.monthlyPrice,
     );
 
+    // T2 fixture: a SUPERSEDED (never-published) PlanVersion with its own GROWTH definition,
+    // priced differently from anything in the published catalog — a subscription/tenant
+    // pinned here proves the script prices from (and never moves) an older pin rather than
+    // always repricing off the currently-published catalog.
+    const oldPinVersion = await prisma.planVersion.create({
+      data: {
+        version:
+          ((await prisma.planVersion.aggregate({ _max: { version: true } }))._max.version ?? 0) + 1,
+        status: "SUPERSEDED",
+        publishedAt: new Date(),
+        notes:
+          "qa fixture (older pin) — created by backfill-subscription-reconciliation.db.spec.ts",
+        definitions: {
+          create: [
+            {
+              planKey: "GROWTH",
+              name: "Growth",
+              monthlyPrice: OLD_PIN_PRICE,
+              isCustom: false,
+              featureFlags: [],
+            },
+          ],
+        },
+      },
+    });
+    oldPinVersionId = oldPinVersion.id;
+
     // Pilot-like: PRODUCTION, ACTIVE, no subscription row at all — must be reported and
     // NEVER written (F2: the script never invents a subscription, or the free pilots would
     // become paying MRR on --apply).
@@ -154,7 +267,9 @@ describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
         status: "ACTIVE",
         class: "PRODUCTION",
         plan: "PROFESSIONAL",
-        subscription: { create: { planKey: "SCALE", basePriceSnapshot: null } },
+        subscription: {
+          create: { planKey: "SCALE", basePriceSnapshot: null, stripeSubId: "sub_qa_partial" },
+        },
       },
     });
     // Excluded from reconciliation by class alone (not by slug) — proves the script's
@@ -188,6 +303,103 @@ describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
         subscription: { create: { planKey: "RETIRED_LEGACY_TIER", basePriceSnapshot: null } },
       },
     });
+
+    // REG-743-F3: pinned to the OLDER (never-published) GROWTH@149 version, already carrying
+    // that planVersionId on the subscription itself. Must be priced 149 (from its own pin),
+    // never repriced off the published catalog, and the pin must never move.
+    tenantOldPin = await prisma.tenant.create({
+      data: {
+        slug: OLD_PIN_SLUG,
+        name: OLD_PIN_SLUG,
+        status: "ACTIVE",
+        class: "PRODUCTION",
+        subscription: {
+          create: {
+            planKey: "GROWTH",
+            planVersionId: oldPinVersionId,
+            basePriceSnapshot: null,
+            stripeSubId: "sub_qa_old_pin",
+          },
+        },
+      },
+    });
+
+    // REG-743-N3 (fixture 1): tenant.planVersionId starts null; subscription.planVersionId
+    // also null — version resolution falls all the way through to the published version, and
+    // the tenant's null pin must be SET to that version.
+    tenantNullPin = await prisma.tenant.create({
+      data: {
+        slug: NULL_TENANT_PIN_SLUG,
+        name: NULL_TENANT_PIN_SLUG,
+        status: "ACTIVE",
+        class: "PRODUCTION",
+        subscription: {
+          create: { planKey: "SCALE", basePriceSnapshot: null, stripeSubId: "sub_qa_null_pin" },
+        },
+      },
+    });
+
+    // REG-743-N3 (fixture 2): tenant.planVersionId starts NON-null (already pinned to the
+    // older GROWTH@149 version) — that pin must never be overwritten, even though the
+    // subscription itself (planVersionId null) resolves against that same older version.
+    tenantPinnedPin = await prisma.tenant.create({
+      data: {
+        slug: PINNED_TENANT_PIN_SLUG,
+        name: PINNED_TENANT_PIN_SLUG,
+        status: "ACTIVE",
+        class: "PRODUCTION",
+        planVersionId: oldPinVersionId,
+        subscription: {
+          create: {
+            planKey: "GROWTH",
+            basePriceSnapshot: null,
+            stripeSubId: "sub_qa_pinned_pin",
+          },
+        },
+      },
+    });
+
+    // REG-743-F4: a planKey that would otherwise price cleanly (SCALE, in the published
+    // catalog) but no `stripeSubId` at all — a manually-managed (non-Stripe) subscription.
+    // Must be listed under its own "manual decision" bucket and NEVER written (B327: never
+    // remove this filter).
+    tenantNoStripeSub = await prisma.tenant.create({
+      data: {
+        slug: NO_STRIPE_SUB_SLUG,
+        name: NO_STRIPE_SUB_SLUG,
+        status: "ACTIVE",
+        class: "PRODUCTION",
+        subscription: { create: { planKey: "SCALE", basePriceSnapshot: null } },
+      },
+    });
+
+    // REG-743-F5 (fixture 1): DEMO class, otherwise fully eligible (planKey + stripeSubId) —
+    // out of scope entirely; the script's tenant scope is PRODUCTION-only.
+    tenantDemoOutOfScope = await prisma.tenant.create({
+      data: {
+        slug: DEMO_OUT_OF_SCOPE_SLUG,
+        name: DEMO_OUT_OF_SCOPE_SLUG,
+        status: "ACTIVE",
+        class: "DEMO",
+        subscription: {
+          create: { planKey: "SCALE", basePriceSnapshot: null, stripeSubId: "sub_qa_demo" },
+        },
+      },
+    });
+
+    // REG-743-F5 (fixture 2): PRODUCTION class but CANCELLED status, otherwise fully eligible
+    // — out of scope entirely; the script's tenant scope requires status: ACTIVE.
+    tenantCancelledOutOfScope = await prisma.tenant.create({
+      data: {
+        slug: CANCELLED_OUT_OF_SCOPE_SLUG,
+        name: CANCELLED_OUT_OF_SCOPE_SLUG,
+        status: "CANCELLED",
+        class: "PRODUCTION",
+        subscription: {
+          create: { planKey: "SCALE", basePriceSnapshot: null, stripeSubId: "sub_qa_cancelled" },
+        },
+      },
+    });
   });
 
   afterAll(async () => {
@@ -197,22 +409,36 @@ describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
       tenantTestClass?.id,
       tenantEnterprise?.id,
       tenantUnknownKey?.id,
+      tenantOldPin?.id,
+      tenantNullPin?.id,
+      tenantPinnedPin?.id,
+      tenantNoStripeSub?.id,
+      tenantDemoOutOfScope?.id,
+      tenantCancelledOutOfScope?.id,
     ].filter((id): id is string => Boolean(id));
     if (tenantIds.length) {
       await prisma.billingEvent.deleteMany({ where: { tenantId: { in: tenantIds } } });
       await prisma.tenantSubscription.deleteMany({ where: { tenantId: { in: tenantIds } } });
     }
+    // Clear the tenant-side FK to oldPinVersionId before deleting it (tenantPinnedPin is
+    // created with planVersionId pointing at it, and PlanVersion has no onDelete on that side).
+    await prisma.tenant.updateMany({
+      where: { slug: { in: ALL_SLUGS }, planVersionId: oldPinVersionId },
+      data: { planVersionId: null },
+    });
     await prisma.tenant.deleteMany({ where: { slug: { in: ALL_SLUGS } } });
     if (createdVersionId) {
       await prisma.planDefinition.deleteMany({ where: { planVersionId: createdVersionId } });
       await prisma.planVersion.delete({ where: { id: createdVersionId } });
     }
+    await prisma.planDefinition.deleteMany({ where: { planVersionId: oldPinVersionId } });
+    await prisma.planVersion.delete({ where: { id: oldPinVersionId } });
     await prisma.$disconnect();
     await pool.end();
   });
 
   it("dry run makes no writes", async () => {
-    execSync(`node ${CLI}`, { encoding: "utf-8", env: { ...process.env, DATABASE_URL: dbUrl } });
+    execSync(`node ${CLI}`, { encoding: "utf-8", env: childEnv(dbUrl) });
 
     const sub = await prisma.tenantSubscription.findUnique({
       where: { tenantId: tenantNoSub!.id },
@@ -227,7 +453,7 @@ describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
   it("apply backfills the partial subscription, reports the pilot untouched, excludes TEST class", async () => {
     const output = execSync(`node ${CLI} --apply`, {
       encoding: "utf-8",
-      env: { ...process.env, DATABASE_URL: dbUrl },
+      env: childEnv(dbUrl),
     });
 
     // F2: a pilot-like tenant (PRODUCTION class, no subscription) is reported — never
@@ -280,7 +506,7 @@ describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
   it("a second apply reports 0 changes and appends no new events (incl. the ENTERPRISE row)", async () => {
     const output = execSync(`node ${CLI} --apply`, {
       encoding: "utf-8",
-      env: { ...process.env, DATABASE_URL: dbUrl },
+      env: childEnv(dbUrl),
     });
 
     expect(output).toContain("0 change(s)");
@@ -296,5 +522,157 @@ describeDb("backfill-subscription-reconciliation.mjs (db)", () => {
     // basePriceSnapshot, so it's no longer flagged, and ENTERPRISE/unknown-key were never
     // flagged at all.
     expect(events).toHaveLength(1);
+  });
+
+  it("REG-743-F3 a subscription pinned to an older archived PlanVersion is priced from that version and its pin is not moved", async () => {
+    execSync(`node ${CLI} --apply --slug-prefix ${OLD_PIN_SLUG}`, {
+      encoding: "utf-8",
+      env: childEnv(dbUrl),
+    });
+
+    const sub = await prisma.tenantSubscription.findUnique({
+      where: { tenantId: tenantOldPin!.id },
+    });
+    // Priced from the OLDER pinned version's own GROWTH definition (149) — never repriced
+    // off whatever the currently-published catalog charges for GROWTH.
+    expect(String(sub?.basePriceSnapshot)).toBe(OLD_PIN_PRICE);
+    // The pin itself must never move — it was already non-null before this run.
+    expect(sub?.planVersionId).toBe(oldPinVersionId);
+  });
+
+  it("REG-743-N3 a null tenant pin is set to the version used; a non-null tenant pin is never overwritten", async () => {
+    execSync(`node ${CLI} --apply --slug-prefix ${NULL_TENANT_PIN_SLUG}`, {
+      encoding: "utf-8",
+      env: childEnv(dbUrl),
+    });
+    execSync(`node ${CLI} --apply --slug-prefix ${PINNED_TENANT_PIN_SLUG}`, {
+      encoding: "utf-8",
+      env: childEnv(dbUrl),
+    });
+
+    // Fixture 1: tenant.planVersionId started null — must be SET to the version the
+    // subscription actually resolved against (falls through to the published version here,
+    // since both the subscription's own pin and the tenant's pin were null).
+    const tenantAfterNull = await prisma.tenant.findUnique({ where: { id: tenantNullPin!.id } });
+    expect(tenantAfterNull?.planVersionId).not.toBeNull();
+    const subAfterNull = await prisma.tenantSubscription.findUnique({
+      where: { tenantId: tenantNullPin!.id },
+    });
+    expect(String(subAfterNull?.basePriceSnapshot)).toBe(scalePrice);
+    expect(subAfterNull?.planVersionId).toBe(tenantAfterNull?.planVersionId);
+
+    // Fixture 2: tenant.planVersionId started NON-null (pinned to the older GROWTH@149
+    // version) — that pin must be UNTOUCHED even though the subscription resolves against
+    // that same older version and gets its own (previously-null) planVersionId set.
+    const tenantAfterPinned = await prisma.tenant.findUnique({
+      where: { id: tenantPinnedPin!.id },
+    });
+    expect(tenantAfterPinned?.planVersionId).toBe(oldPinVersionId);
+    const subAfterPinned = await prisma.tenantSubscription.findUnique({
+      where: { tenantId: tenantPinnedPin!.id },
+    });
+    expect(String(subAfterPinned?.basePriceSnapshot)).toBe(OLD_PIN_PRICE);
+    expect(subAfterPinned?.planVersionId).toBe(oldPinVersionId);
+  });
+
+  it("REG-743-F4 a PRODUCTION ACTIVE row with planKey and no stripeSubId is listed and never written, no BillingEvent", async () => {
+    const output = execSync(`node ${CLI} --apply --slug-prefix ${NO_STRIPE_SUB_SLUG}`, {
+      encoding: "utf-8",
+      env: childEnv(dbUrl),
+    });
+
+    expect(output).toContain("no Stripe subscription — manual decision");
+
+    const sub = await prisma.tenantSubscription.findUnique({
+      where: { tenantId: tenantNoStripeSub!.id },
+    });
+    expect(sub?.basePriceSnapshot).toBeNull();
+    expect(sub?.planVersionId).toBeNull();
+    const events = await prisma.billingEvent.findMany({
+      where: { tenantId: tenantNoStripeSub!.id },
+    });
+    expect(events).toHaveLength(0);
+  });
+
+  it("REG-743-F5 a DEMO tenant's Stripe row is out of scope", async () => {
+    execSync(`node ${CLI} --apply --slug-prefix ${DEMO_OUT_OF_SCOPE_SLUG}`, {
+      encoding: "utf-8",
+      env: childEnv(dbUrl),
+    });
+
+    const sub = await prisma.tenantSubscription.findUnique({
+      where: { tenantId: tenantDemoOutOfScope!.id },
+    });
+    expect(sub?.basePriceSnapshot).toBeNull();
+    const events = await prisma.billingEvent.findMany({
+      where: { tenantId: tenantDemoOutOfScope!.id },
+    });
+    expect(events).toHaveLength(0);
+  });
+
+  it("REG-743-F5 a CANCELLED PRODUCTION tenant is out of scope", async () => {
+    execSync(`node ${CLI} --apply --slug-prefix ${CANCELLED_OUT_OF_SCOPE_SLUG}`, {
+      encoding: "utf-8",
+      env: childEnv(dbUrl),
+    });
+
+    const sub = await prisma.tenantSubscription.findUnique({
+      where: { tenantId: tenantCancelledOutOfScope!.id },
+    });
+    expect(sub?.basePriceSnapshot).toBeNull();
+    const events = await prisma.billingEvent.findMany({
+      where: { tenantId: tenantCancelledOutOfScope!.id },
+    });
+    expect(events).toHaveLength(0);
+  });
+
+  it("REG-743-N2 the spawned CLI targets the spec's local database even when Railway proxy vars are present in the environment", () => {
+    // `resolveDatabaseUrl()` (scripts/lib/railway-db-url.mjs) picks the Railway TCP-proxy URL
+    // FIRST whenever these five vars are all set. Faking them on THIS spec process's own
+    // `process.env` (never the child's explicit env below) reproduces the exact shape of a
+    // `railway run --service postgres` shell that also has docker-compose's local vars
+    // exported — the failure mode N2 exists to close: `execSync` spreads
+    // `...process.env` into the child unfiltered, so a Railway-shaped environment leaks into
+    // a spec that must only ever touch its own local Postgres.
+    const savedEnv: Record<string, string | undefined> = {
+      RAILWAY_TCP_PROXY_DOMAIN: process.env.RAILWAY_TCP_PROXY_DOMAIN,
+      RAILWAY_TCP_PROXY_PORT: process.env.RAILWAY_TCP_PROXY_PORT,
+      POSTGRES_USER: process.env.POSTGRES_USER,
+      POSTGRES_PASSWORD: process.env.POSTGRES_PASSWORD,
+      POSTGRES_DB: process.env.POSTGRES_DB,
+    };
+    process.env.RAILWAY_TCP_PROXY_DOMAIN = "prod.invalid";
+    process.env.RAILWAY_TCP_PROXY_PORT = "5432";
+    process.env.POSTGRES_USER = "prod-user";
+    process.env.POSTGRES_PASSWORD = "prod-pass";
+    process.env.POSTGRES_DB = "prod-db";
+
+    try {
+      // Caught, not left to throw: today (pre-fix) the leaked Railway vars make the spawned
+      // CLI try to connect to `prod.invalid` and `execSync` throws (non-zero exit) before the
+      // assertion below ever runs — that would fail the WHOLE test with a raw "Command failed"
+      // error instead of a clean, reportable assertion failure. `error.stdout` still carries
+      // whatever the child printed (or, pre-fix, nothing) before it died, so the comparison
+      // below runs either way and fails on its own terms.
+      let output: string;
+      try {
+        output = execSync(`node ${CLI}`, {
+          encoding: "utf-8",
+          env: childEnv(dbUrl),
+        });
+      } catch (err) {
+        output = (err as { stdout?: string }).stdout ?? "";
+      }
+      const firstLine = output.split("\n")[0];
+      // Head: with the Railway vars leaked into the child, `resolveDatabaseUrl` resolves
+      // `prod.invalid` and the CLI fails to connect before ever printing this line — the
+      // spec's own local `dbUrl` must be what the CLI actually resolves and reports.
+      expect(firstLine).toBe(`Resolved database host: ${redactUrlViaLib(dbUrl)}`);
+    } finally {
+      for (const [key, value] of Object.entries(savedEnv)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
   });
 });
