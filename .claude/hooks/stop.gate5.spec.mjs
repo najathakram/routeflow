@@ -28,6 +28,7 @@
 // a crash.
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -147,16 +148,26 @@ process.exit(0);
 // the final report (and again from an `exit` handler, which — unlike a
 // `finally` — still runs after the `process.exit()` calls this file uses).
 const REPO_DIRS = [];
+// ALL_REPO_DIRS additionally records every dir this run has EVER created,
+// across the whole run — unlike REPO_DIRS, it is never spliced/cleared, so
+// F4 (below) always has the full list to check, even after a mid-run
+// cleanupRepos() call (REG-B411's case empties REPO_DIRS early on purpose).
+const ALL_REPO_DIRS = [];
 const REPO_PREFIX = "stop-gate5-spec-";
 const countSpecTmpDirs = () =>
   readdirSync(tmpdir()).filter((n) => n.startsWith(REPO_PREFIX)).length;
+function trackRepoDir(dir) {
+  REPO_DIRS.push(dir);
+  ALL_REPO_DIRS.push(dir);
+  return dir;
+}
 function cleanupRepos() {
   for (const dir of REPO_DIRS.splice(0)) {
     try {
       rmSync(dir, { recursive: true, force: true });
     } catch {
       // a git repo dir that refuses to go must never turn a passing run red —
-      // the final count check reports it instead.
+      // F4's own per-dir existsSync check reports it instead.
     }
   }
 }
@@ -169,8 +180,7 @@ const tmpDirsBefore = countSpecTmpDirs();
 // lessons dir, no `.claude/campaign/bugs/` directory, no tracked
 // .ts/.js/.jsx/.tsx source) so a run exercises Gate 5 in isolation.
 function makeGate5Repo({ syncFixture = PLANE_SYNC_FIXTURE } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), REPO_PREFIX));
-  REPO_DIRS.push(dir);
+  const dir = trackRepoDir(mkdtempSync(join(tmpdir(), REPO_PREFIX)));
   git(dir, ["init", "-q"]);
   git(dir, ["config", "user.email", "stop-gate5-spec@example.com"]);
   git(dir, ["config", "user.name", "stop-gate5-spec"]);
@@ -380,8 +390,7 @@ function report(name, ok, detail) {
   });
   const realGit = (which.stdout || "").split(/\r?\n/)[0].trim();
 
-  const shimDir = mkdtempSync(join(tmpdir(), REPO_PREFIX));
-  REPO_DIRS.push(shimDir);
+  const shimDir = trackRepoDir(mkdtempSync(join(tmpdir(), REPO_PREFIX)));
   if (process.platform === "win32") {
     writeFileSync(
       join(shimDir, "git.cmd"),
@@ -644,15 +653,63 @@ function writeStatusShard(dir) {
   );
 }
 
+// ── REG-B411 — F4's (fixed) per-dir check must not false-trip when a
+// CONCURRENT sibling run creates its own stop-gate5-spec-* dir in the
+// before/after window, even though THIS run's own REPO_DIRS entries are
+// genuinely all cleaned up (root cause: .claude/campaign/bugs/B411.md — the
+// OLD ambient tmpdir-count check treated any stop-gate5-spec-* dir in the
+// tmp root as this run's own, so a sibling process creating one concurrently
+// flipped it to FAIL even though this run leaked nothing). Deterministic, no
+// host contention needed: this case does the cleanup itself, then plants an
+// unregistered dir matching the naming pattern to stand in for the sibling,
+// and re-runs F4's own check formula (below) verbatim against that state —
+// per-dir existsSync over ALL_REPO_DIRS, which the sibling's untracked dir
+// can never appear in.
+{
+  // "This run's own dirs are genuinely all cleaned up" — perform the same
+  // cleanup the real F4 section below performs, ahead of time (idempotent —
+  // F4's own `cleanupRepos()` call afterward is then a no-op).
+  cleanupRepos();
+  const genuinelyClean = REPO_DIRS.length === 0;
+
+  // Simulate a CONCURRENT sibling run: a stop-gate5-spec-* dir created
+  // directly, deliberately NOT registered in REPO_DIRS/ALL_REPO_DIRS since
+  // it belongs to another process, not this run.
+  const siblingDir = mkdtempSync(join(tmpdir(), REPO_PREFIX));
+  try {
+    // F4's own check, verbatim (see the F4 section below).
+    const leftover = ALL_REPO_DIRS.filter((dir) => existsSync(dir));
+    const f4Check = leftover.length === 0;
+    report(
+      "REG-B411 — F4's per-dir check must not false-trip on a concurrent sibling's dir when this run's own dirs are genuinely all gone",
+      genuinelyClean && f4Check,
+      `      REPO_DIRS after cleanup: ${REPO_DIRS.length} (expected 0 — this run's own dirs are genuinely gone)\n` +
+        `      F4's own check (ALL_REPO_DIRS.every(!existsSync)): ${f4Check} (leftover=${JSON.stringify(leftover)})\n` +
+        `      a concurrent sibling's stop-gate5-spec-* dir (untracked, not in ALL_REPO_DIRS) must never flip this run's own check to FAIL`,
+    );
+  } finally {
+    rmSync(siblingDir, { recursive: true, force: true });
+  }
+}
+
 // ── F4 — the scaffold repos this run created are all gone ────────────────────
+// Asserts each dir THIS RUN created (ALL_REPO_DIRS) individually no longer
+// exists, rather than comparing an ambient tmpdir-wide stop-gate5-spec-*
+// count before/after — that count check false-trips whenever a CONCURRENT
+// sibling run creates its own stop-gate5-spec-* dir in the before/after
+// window (REG-B411), even though this run's own dirs are genuinely all
+// cleaned up. Per-dir existsSync is immune to a sibling's unrelated dirs.
 cleanupRepos();
+const leftoverDirs = ALL_REPO_DIRS.filter((dir) => existsSync(dir));
 report(
   "F4 — leaves no stop-gate5-spec-* dir behind",
-  countSpecTmpDirs() === tmpDirsBefore,
-  `      tmpdir stop-gate5-spec-* count: before=${tmpDirsBefore} after=${countSpecTmpDirs()}`,
+  leftoverDirs.length === 0,
+  `      dirs created this run: ${ALL_REPO_DIRS.length}, still present: ${leftoverDirs.length}\n` +
+    (leftoverDirs.length > 0 ? `      leftover: ${JSON.stringify(leftoverDirs)}\n` : "") +
+    `      tmpdir stop-gate5-spec-* count (informational only): before=${tmpDirsBefore} after=${countSpecTmpDirs()}`,
 );
 
-const TOTAL_CASES = 10;
+const TOTAL_CASES = 11;
 if (failed > 0) {
   console.log(`\nstop.gate5.spec FAILED — ${failed}/${TOTAL_CASES} case(s).`);
   process.exit(1);
