@@ -47,8 +47,10 @@ import {
 import { resolveProductByCode } from "../../../../lib/barcode-resolve";
 import { makeScanHandler, runWedgeSubmit } from "../../../../lib/scan-ladder";
 import { createScanAttempt, createWedgeSubmitHandler } from "../../../../lib/wedge-submit";
+import { createScanAcceptGuard } from "../../../../lib/scan-accept-guard";
 import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../../../../lib/wedge-scan";
 import { useAuthStore } from "../../../../lib/auth-store";
+import { hasUnsavedInvoiceDraft, shouldConfirmDiscard } from "../../../../lib/discard-guard";
 // Compose "<Parent> - <Variant>" so variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../../../../lib/product-display";
 import { computeLineSubtotal, effectiveQty, getTierPrice } from "@routeflow/pricing";
@@ -67,7 +69,7 @@ import {
   todayPlusDays,
 } from "../../../../lib/invoice-terms";
 import { MoneyTextInput } from "../../../../components/MoneyTextInput";
-import { alertInfo, chooseAction } from "../../../../lib/confirm";
+import { alertInfo, chooseAction, confirm } from "../../../../lib/confirm";
 import { QtyStepper } from "../../../../components/QtyStepper";
 import { InlineCreateProductSheet } from "../../../../components/InlineCreateProductSheet";
 import { ProductPickerSheet } from "../../../../components/ProductPickerSheet";
@@ -354,6 +356,14 @@ function InvoiceComposer({
   const [unlistedPrefill, setUnlistedPrefill] = useState("");
   const [scannedById, setScannedById] = useState<Record<string, Product>>({});
   const [scanOpen, setScanOpen] = useState(false);
+  // Discard-confirm on the composer's own back button (this screen has no
+  // FormSheet). The preceding CustomerPicker stage is intentionally left
+  // unguarded — it renders before `items`/`unlisted` can hold anything, so
+  // it has nothing to lose (RULINGS.md R4, discard-guard.ts doc).
+  // `handleBack` itself is declared further below, once `saving` exists —
+  // see the FormSheet.tsx choke-point fix (finding #1): this screen has no
+  // FormSheet, so it must apply the same submitting-gated rule directly.
+  const dirty = hasUnsavedInvoiceDraft({ items, unlisted });
   // Newest-first ids for the scan tray + which row is flashing. Both are scan-UI
   // only: the invoice payload never reads them.
   const [scanOrder, setScanOrder] = useState<string[]>([]);
@@ -437,6 +447,13 @@ function InvoiceComposer({
     return s;
   }, [saleTrackedCategories]);
 
+  // Quiet by default — mirrors NewOrderScreen (see visibleCatalogRows): the
+  // list shows what is ON the invoice, with the full catalogue one tap away,
+  // because accepting a scan clears the search box and used to snap the list
+  // back to hundreds of rows. Declared ABOVE useProductSearch so the hook can
+  // read it — it used to sit 273 lines below its reader, a TDZ ReferenceError
+  // waiting to happen once the hook actually consumed it.
+  const [browsing, setBrowsing] = useState(false);
   // Debounced, server-filtered, paged — replaces the `limit: 0` fetch-all.
   // See NewOrderScreen and lib/use-product-search.ts.
   const {
@@ -450,7 +467,7 @@ function InvoiceComposer({
     hasNextPage,
     fetchNextPage,
     isFetchingNextPage,
-  } = useProductSearch<Product>({ category });
+  } = useProductSearch<Product>({ category, browsing });
 
   const productById = useMemo(
     () => mergeProductIndex<Product>(products, scannedById),
@@ -598,6 +615,22 @@ function InvoiceComposer({
     setScanFlash((prev) => nextFlash(prev, id));
   };
 
+  // Cross-mechanism scan-accept guard (F30 open interleavings A/A'/B —
+  // RULINGS.md, design/scan-guard.json): a search-box submit dispatched on a
+  // stale render must read the CURRENT term, not the one captured when the
+  // handler closure was built, and a single physical scan must yield exactly
+  // one add whether the camera or the settled-search effect resolves it
+  // first. `clearSearch` writes the ref SYNCHRONOUSLY, before the re-render
+  // that empties `search` lands, so a submit fired in that gap no-ops instead
+  // of resubmitting the code that was just accepted.
+  const searchTermRef = useRef("");
+  searchTermRef.current = searchTerm;
+  const clearSearch = () => {
+    searchTermRef.current = "";
+    setSearch("");
+  };
+  const scanGuardRef = useRef(createScanAcceptGuard<Product>());
+
   /**
    * Land a resolved product on the invoice. In scan mode the tray row IS the
    * confirmation, so no banner and no search reset (which would swap the list
@@ -611,7 +644,7 @@ function InvoiceComposer({
     bumpScanned(product.id);
     // Never set the search box to the scanned code — see NewOrderScreen: the
     // barcode endpoint resolves codes the text search cannot match.
-    setSearch("");
+    clearSearch();
     const label =
       unitKind === "piece" && Number(product.unitsPerBox ?? 0) > 1
         ? `Added 1 loose · ${displayName(product)}`
@@ -626,13 +659,20 @@ function InvoiceComposer({
   // lib/scan-ladder for why an ambiguous hit opens a picker instead of taking
   // matches[0], and why a miss must never close the scanner.
   const handleBarcodeScanned = makeScanHandler<Product>({
-    products,
+    // Getter, not the array value: page 1 is no longer preloaded (the
+    // catalogue fetch is gated on a term or Browse — see
+    // lib/use-product-search.ts), so reading `productById` keeps the local
+    // fast path useful for every line already on the invoice (a re-scan of
+    // the same SKU for a second case), not just whatever the current page
+    // happens to hold.
+    products: () => Array.from(productById.values()),
     accept: acceptScannedProduct,
     // Forward the ladder's abort signal — without it a lookup that blows the
     // scan deadline keeps running and still adds the line (F30 / R2).
     resolve: (c, signal) => resolveProductByCode<Product>(c, signal),
     onAmbiguous: setPickCode,
     onCreate: canCreateProducts ? setCreateCode : undefined,
+    acceptGuard: scanGuardRef.current,
   });
 
   // Wedge-scanner path — mirrors NewOrderScreen exactly (see its comment for
@@ -656,10 +696,10 @@ function InvoiceComposer({
       runWedgeSubmit({
         term: code,
         scan: handleBarcodeScanned,
-        clearSearch: () => setSearch(""),
+        clearSearch,
         showInline,
       }),
-    clearSearch: () => setSearch(""),
+    clearSearch,
   };
   const wedgeSubmitRef = useRef(
     createWedgeSubmitHandler({
@@ -667,7 +707,11 @@ function InvoiceComposer({
       clearSearch: () => wedgeDepsRef.current.clearSearch(),
     }),
   );
-  const handleSearchSubmit = () => wedgeSubmitRef.current(searchTerm);
+  // Reads the REF, not the render-scope `searchTerm`: a native submit
+  // dispatched against the last committed props (before clearSearch()'s
+  // re-render lands) would otherwise resubmit the code the effect just
+  // accepted — F30 open interleaving C.
+  const handleSearchSubmit = () => wedgeSubmitRef.current(searchTermRef.current);
 
   // Settled exact-match auto-add (no-terminator scanners): a per-scan ATTEMPT
   // — not a time window — decides whether a settle may fire (REG-B201); see
@@ -685,7 +729,9 @@ function InvoiceComposer({
     const { match } = findExactScanMatch(code, products);
     if (!match) return;
     if (!autoAddAttemptRef.current.shouldAutoAdd(code)) return;
-    const outcome = acceptScannedProduct(match, scanUnitKind(code, match));
+    const kind = scanUnitKind(code, match);
+    if (!scanGuardRef.current.offer(code, match, kind)) return;
+    const outcome = acceptScannedProduct(match, kind);
     if (outcome?.feedback?.kind === "added") showInline(outcome.feedback.text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchTerm, products, isSearching]);
@@ -719,11 +765,6 @@ function InvoiceComposer({
     [tenantCategories],
   );
 
-  // Quiet by default — mirrors NewOrderScreen (see visibleCatalogRows): the
-  // list shows what is ON the invoice, with the full catalogue one tap away,
-  // because accepting a scan clears the search box and used to snap the list
-  // back to hundreds of rows.
-  const [browsing, setBrowsing] = useState(false);
   const visible = useMemo(
     () =>
       visibleCatalogRows<Product>({
@@ -1088,6 +1129,20 @@ function InvoiceComposer({
   const [saleRecorded, setSaleRecorded] = useState(false);
   const canSave = totalItems > 0 && !saving && !saleRecorded;
 
+  // No FormSheet on this screen, so it applies the same choke-point rule as
+  // FormSheet.tsx's handleCancel directly: never prompt "Discard invoice?"
+  // while a create/sale request is in flight (finding #1).
+  const handleBack = () => {
+    if (shouldConfirmDiscard(dirty, saving)) {
+      confirm("Discard invoice?", "The lines on this invoice will be lost.", onBack, {
+        confirmText: "Discard",
+        destructive: true,
+      });
+      return;
+    }
+    onBack();
+  };
+
   const onTermsChange = (t: string) => {
     setTerms(t);
     setDueDate(dueDateFor(issueDate, t));
@@ -1304,7 +1359,10 @@ function InvoiceComposer({
   return (
     <>
       {/* One save trigger only — the footer Create. */}
-      <NavBar inlineTitle="New invoice" leading={<NavBackButton label="Back" onPress={onBack} />} />
+      <NavBar
+        inlineTitle="New invoice"
+        leading={<NavBackButton label="Back" onPress={handleBack} />}
+      />
 
       <View style={styles.customerChipWrap}>
         <Pressable style={styles.customerChip} onPress={onChangeCustomer}>
@@ -1322,6 +1380,7 @@ function InvoiceComposer({
         value={search}
         onChangeText={setSearch}
         onSubmitEditing={() => void handleSearchSubmit()}
+        autoFocus
         trailing={
           <View style={styles.searchTrailing}>
             {isSearching ? <ActivityIndicator size="small" color={ios.gray[1]} /> : null}

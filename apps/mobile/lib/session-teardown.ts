@@ -1,7 +1,9 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { queryClient } from "./query-client";
 import { stopLocationTracking } from "./location-tracker";
 import { getStoredUser } from "./auth";
 import { clearUserScopedStorage } from "./user-scoped-storage";
+import { editItemsSnapshotUserPrefix } from "./edit-items-draft";
 import { POD_STORE_NAME, usePodStore } from "../store/podStore";
 import { RUN_SETTLEMENT_STORE_NAME, useRunSettlementStore } from "../store/runSettlementStore";
 import { useMileageStore } from "../store/mileageStore";
@@ -9,6 +11,7 @@ import { useRouteStore } from "../store/routeStore";
 import { useDeliveryPlanStore } from "../store/delivery-plan-store";
 import { useListUiStore } from "../store/listUiStore";
 import { useProductPickerStore } from "../store/productPickerStore";
+import { STOP_CART_STORE_NAME, useStopCartStore } from "../store/stopCartStore";
 
 export type TeardownReason = "logout" | "session-expired" | "cross-tab";
 
@@ -36,9 +39,14 @@ export interface TeardownOptions {
  *    realm (which already stopped tracking on route completion elsewhere) and
  *    the operator realm (which had no stop site at all) go through the same
  *    call.
- *  - B140 — the query cache and the 7 user-scoped stores below survived a
+ *  - B140 — the query cache and the 8 user-scoped stores below survived a
  *    sign-out, so the next login on the same device could see the prior
- *    user's data flash on screen.
+ *    user's data flash on screen. (stopCartStore joined the original 7 —
+ *    same reset()/persisted-blob pattern, same reason.)
+ *  - B136 keyspace — the order-item editor's staged-edit snapshot is one key
+ *    PER ORDER (`rf.edit-items.v1:<userId>:<orderId>`), not a single blob, so
+ *    it cannot be addressed by a `clearUserScopedStorage(NAME, userId)` call.
+ *    Step (6) sweeps the outgoing user's whole prefix instead (RULINGS R1).
  *
  * Deliberately NOT touched here:
  *  - The tenant store (Q2 — a shared-tablet branded login must survive a
@@ -65,7 +73,7 @@ export async function teardownUserSession(options: TeardownOptions = {}): Promis
   await queryClient.cancelQueries();
   queryClient.clear();
 
-  // (4) Reset the 7 user-scoped stores. All 7 expose a `reset()`;
+  // (4) Reset the 8 user-scoped stores. All 8 expose a `reset()`;
   // `resetIfPresent` stays a defensive no-op so a store that ever loses one
   // can never turn a sign-out into a crash.
   resetIfPresent(usePodStore.getState());
@@ -75,8 +83,9 @@ export async function teardownUserSession(options: TeardownOptions = {}): Promis
   resetIfPresent(useDeliveryPlanStore.getState());
   resetIfPresent(useListUiStore.getState());
   resetIfPresent(useProductPickerStore.getState());
+  resetIfPresent(useStopCartStore.getState());
 
-  // (5) Remove the two PERSISTED user-scoped blobs by the id resolved in (0).
+  // (5) Remove the three PERSISTED user-scoped blobs by the id resolved in (0).
   // The `reset()` calls above kick off zustand-persist writes that are
   // fire-and-forget and resolve their own key one async hop later — by then
   // the tokens may be gone, so that write can land in the `anon` bucket and
@@ -88,7 +97,35 @@ export async function teardownUserSession(options: TeardownOptions = {}): Promis
   await Promise.all([
     clearUserScopedStorage(POD_STORE_NAME, userId),
     clearUserScopedStorage(RUN_SETTLEMENT_STORE_NAME, userId),
+    clearUserScopedStorage(STOP_CART_STORE_NAME, userId),
   ]);
+
+  // (6) Sweep the per-ORDER keyspaces. These are not one key per store but one
+  // key per order, so the only way to clear them is to enumerate and match a
+  // prefix. Same B136/B137/B140 reason as (5): a staged order edit the last
+  // operator left behind must never be offered for restore to the next login
+  // on a shared device.
+  await clearStorageByPrefix(editItemsSnapshotUserPrefix(userId));
+  // Belt-and-braces: the write path now refuses to stage under `anon` at all,
+  // but a pre-existing anon-bucket key (an older build, a path this pass
+  // missed) must not survive teardown either — same B136/B137/B140 reason.
+  await clearStorageByPrefix(editItemsSnapshotUserPrefix(null));
+}
+
+/**
+ * Remove every AsyncStorage key under `prefix`. Best-effort BY CONTRACT — a
+ * storage failure (an unavailable native module, a platform quirk, an older
+ * mock without `getAllKeys`) must degrade to "not swept", never turn a
+ * sign-out into a thrown error the way step (5)'s unguarded removes cannot.
+ */
+async function clearStorageByPrefix(prefix: string): Promise<void> {
+  try {
+    const keys = await AsyncStorage.getAllKeys();
+    const mine = (keys ?? []).filter((key) => key.startsWith(prefix));
+    if (mine.length > 0) await AsyncStorage.multiRemove(mine);
+  } catch {
+    // Best-effort — never break sign-out on a storage failure.
+  }
 }
 
 interface ResettableState {

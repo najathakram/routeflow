@@ -11,34 +11,6 @@
 
 ## process
 
-### L-035 · 2026-09-01 · process · #TBD
-
-- **Symptom:** B120's POD archive was designed onto a generic `AuditLog` row; review found
-  `RouteRunStop.podHistory` already existed, unused, with a schema comment naming the exact entry
-  shape and the words "F10 wires the write".
-- **Root cause:** an earlier enablement batch pre-added the column FOR this batch, and the design
-  was drawn from the register's suggested fix without grepping the schema for what was already
-  provisioned.
-- **Lesson:** **Before designing where something is stored, grep the schema for a column addressed
-  to your batch — the schema comment IS the spec.** Enablement batches leave columns waiting; a
-  field with no readers is a contract, not dead weight.
-- **Guard:** none — judgment. The mismatch also showed up as a blocker (the shared test mock had
-  no `auditLog` model), so "the harness fights you" is a hint you are off the intended path.
-
-### L-027 · 2026-09-01 · process
-
-- **Symptom:** with several sessions running in git worktrees, a repo-file gate was about to be
-  satisfied by writing into a _different_ session's working tree — surfacing later as a mystery diff
-  in someone else's PR.
-- **Root cause:** worktrees are nested inside the main checkout, and hooks resolve their paths
-  against that main checkout, not the worktree the session is working in. Whatever branch the shared
-  checkout happens to be parked on is the file the gate points at.
-- **Lesson:** **Never satisfy a gate by writing into whatever tree the hook happens to run from —
-  defer the write to your own worktree and say plainly why. Keep the shared checkout on the
-  integration branch; it is the only sane resting state for a tree that hooks resolve against.**
-- **Guard:** none — judgment. A gate demanding a repo file while you work in a worktree is the cue
-  to check which tree that path actually lands in.
-
 ## tooling
 
 ### L-105 · 2026-09-11 · tooling · train-4 engine gate
@@ -122,16 +94,6 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
 - **Guard:** `split-prisma-schema.mjs --check` proves block-identity + `MODEL_DOMAIN` placement;
   `npm run local:drift` is the output-side oracle — both cheap/re-runnable, unlike a `.d.ts` diff.
   Its comment stripper treats a quote left unterminated on its line as regex text, never a string opener.
-
-### L-010 · 2026-08-29 · tooling
-
-- **Symptom:** one workspace's tests "failed" under verify while the same code passed everywhere
-  else.
-- **Root cause:** worker exhaustion under host load — the task exited 1 with **no test report at
-  all**; nothing ever ran.
-- **Lesson:** **A bare non-zero task exit with no test report is environmental — re-run that
-  workspace directly before debugging; CI on clean runners is the authoritative gate.**
-- **Guard:** none — judgment (triage: direct `npx jest`, then filtered turbo).
 
 ### L-055 · 2026-09-03 · tooling · wave D imp-05
 
@@ -235,6 +197,30 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
 - **Guard:** the pid-reuse fixture forges `bootAt = bootStamp() − 1 year` and asserts the
   "predates this boot" verdict; the owner-write fixture clears the lock dir before its own precondition
   (`scripts/campaign/bugs.mjs` self-test, step 6 of `npm run verify`).
+
+### L-138 · 2026-09-15 · testing · #711 review round (F1 issue-date default)
+
+- **Symptom:** a review fix at the cited line (the create-modal's `issueDate` `useState`
+  initializer) looked complete and type-checked clean, but a "reset on open" `useEffect` a few
+  lines down independently recomputed the SAME default with the SAME buggy expression
+  (`new Date().toISOString().slice(0, 10)`, the UTC calendar date, not the operator's local one)
+  — every time the modal opened, that effect overwrote the fixed initial value with the still-wrong
+  one. Caught only because the new regression test opened the modal and read the rendered input's
+  actual value, rather than asserting on the initializer expression in isolation.
+- **Root cause:** the same wrong default had been copy-pasted (or independently re-derived) at a
+  second call site the review didn't name; fixing the cited line alone left the component's
+  observable behavior unchanged, since the effect runs after mount and wins.
+- **Lesson:** **A review finding that names one line of a bug is a starting point, not the full
+  blast radius — grep the component/file for other call sites computing the same value the same
+  way before declaring the fix done, and prove it with a test that exercises the real interaction
+  (open the modal, click the button) and reads the rendered/observable state, never one that only
+  asserts on the helper function in isolation.**
+- **Guard:** `apps/web/app/(dashboard)/estimates/page.f1-issue-date-default.test.tsx` opens the
+  create-modal and reads the actual `<input type="date">` value under a mocked local-vs-UTC date
+  split (`Date.prototype` getter spies, not `process.env.TZ` reassignment — a Jest worker can cache
+  its process-level timezone before a test file's own `TZ` write takes effect, so that approach
+  silently no-ops; confirmed by reproducing the false-pass first). Both call sites in
+  `estimates/page.tsx` now share one `defaultIssueDate()` helper.
 
 ### L-139 · 2026-09-14 · tooling · B420 GIT_* env leak into self-test throwaway repos
 
@@ -774,6 +760,51 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   `subscription-mutation.service.spec.ts` — one case per non-terminal status, plus one pinning
   that an unrecognised status still surfaces the error. Sibling [[L-127]].
 
+### L-145 · 2026-09-14 · domain · mobile scan-to-order, staged-edit persistence
+
+- **Symptom:** a reviewer flagged a new "don't lose the operator's staged edits" snapshot
+  (`edit-items-draft.ts`) as a likely R1 violation — R1 requires local persistence to go through
+  the user-scoped zustand `persist` store pattern (`podStore.ts`), never a raw AsyncStorage key,
+  specifically to prevent one user's work surfacing under the next login (B136/B137/B140).
+- **Root cause:** R1 was written against a single-blob-per-user shape (one cart, one draft). This
+  snapshot is one-per-ORDER, and an operator edits several orders per session — a single zustand
+  store holds one state object, not a dynamic per-order keyspace, so the literal store pattern
+  doesn't fit the shape. The code used a `rf.edit-items.v1:<userId>:<orderId>` AsyncStorage
+  keyspace instead, with `lib/session-teardown.ts` enumerating and wiping every key under a
+  user's prefix on logout.
+- **Lesson:** **A binding rule written for one shape (single blob) does not automatically bind a
+  different shape (a per-entity keyspace) the same way. Before flagging a deviation from a
+  pattern-shaped rule as a violation, check what invariant the rule actually protects — here, no
+  cross-user data leak — and whether the deviation still satisfies THAT, not just whether it uses
+  the literal mechanism. Verify the substitute mechanism is real (grep the teardown/hydrate wiring
+  itself), don't take a code comment's claim on faith.**
+- **Guard:** `session-teardown.ts` imports and calls `editItemsSnapshotUserPrefix` +
+  `clearStorageByPrefix` — grep for it before trusting this reasoning again on the same file.
+  `apps/mobile/lib/edit-items-draft.ts` carries the design-rationale comment inline.
+
+### L-144 · 2026-09-14 · domain · PR #748 review — a fallback key for an unresolved identity is a cross-user leak
+
+- **Symptom:** the same staged-edit keyspace [[L-145]] fixed can still deliver operator A's edit
+  to operator B on a shared tablet: `editItemsSnapshotKey` falls back to an `anon` bucket when
+  `useAuthStore`'s `user?.id` reads undefined — reachable on a cold open or deep link, before
+  `initialize()` resolves the stored user — and teardown swept only the resolved user's own
+  prefix, never `anon`.
+  - **Root cause:** "no user id yet" was treated as one more value to derive a key from (a
+    `?? "anon"` fallback), not as a distinct state that must refuse the write entirely. A fallback
+    bucket is by construction shared by every caller who ever hits the same unresolved state — the
+    cross-user leak is what a shared default key always is, discovered late because sign-in
+    normally resolves fast enough that the window is rarely hit.
+- **Lesson:** **An unresolved identity is not "no identity" — it is "don't know yet," and a
+  fallback default for it silently becomes a SHARED bucket every not-yet-authenticated caller
+  writes into. Never derive a user-scoped storage key with a `?? someDefault`; gate the write
+  itself on the id being resolved, and skip it (not write-then-hope-to-sweep-later) when it
+  isn't. A teardown sweep of the fallback bucket is legitimate belt-and-braces, never the fix on
+  its own.**
+- **Guard:** `edit-items.tsx`'s `snapshotWriteRef.current` refuses on `userId == null`
+  (`REG-MSCAN-A4-anon`, source-text pin in `edit-items-drawer.test.ts`);
+  `session-teardown.ts` step (6) also sweeps `editItemsSnapshotUserPrefix(null)`
+  (`REG-EDIT-SWEEP-B`/`REG-MSCAN-A4-anon` in `session-teardown.test.ts`).
+
 ### L-129 · 2026-09-14 · tooling · #745 react skew guard
 
 - **Symptom:** `no-react-skew-hacks.spec.ts` asserted `apps/web`'s `react`/`react-dom` deps
@@ -790,3 +821,69 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   people to stop reading CI failures.**
 - **Guard:** both assertions now match `/^\^19\./` instead of `.toBe("^19.2.0")` in
   `apps/api/src/common/no-react-skew-hacks.spec.ts`.
+
+### L-130 · 2026-09-13 · domain · F27 B15 (estimates)
+
+- **Symptom:** the estimate detail page offered "Convert to Invoice" on DRAFT and SENT rows while
+  the API's convert claims ACCEPTED only, so the control failed every time it was shown; and a
+  successful convert navigated to `/invoices/undefined` because the page read `invoiceId` from a
+  response keyed `id`.
+- **Root cause:** the client computed its own enable predicate (`DRAFT || SENT || ACCEPTED`) from
+  a guess rather than the server's claim predicate, and hand-typed the mutation result instead of
+  the shape the endpoint returns.
+- **Lesson:** **A control that fires a server state transition renders on ONE predicate equal to
+  the server's claim predicate (same status set, from the shared enum), and a navigation off a
+  mutation result reads the field the server actually returns — a hand-typed response type is a
+  silent `undefined`.**
+- **Guard:** every Convert control in `estimates/[id]/page.tsx` renders on the single
+  `canConvert = status === "ACCEPTED"` binding (:220) since b47a74a5; `useConvertEstimateToInvoice`
+  typed `{ id }`. Pinned by `[id]/page.test.tsx` (zero controls on DRAFT/SENT, exactly two on
+  ACCEPTED, navigates on `data.id`) — landed 2026-09-13; B394 (B15-NAV) closes with this proof.
+
+### L-131 · 2026-09-13 · domain · F27 B17/B79 (estimates)
+
+- **Symptom:** the create form required an Issue Date the request never carried and the service
+  never wrote (the column had landed by migration earlier); every row rendered `createdAt` in its
+  place. "Send" flipped DRAFT→SENT with a toast claiming an email went out — no email path exists.
+- **Root cause:** a column landed with no write path — DTO, form payload and service `create`
+  were never audited for it — and UI copy described a side effect the endpoint does not have.
+- **Lesson:** **A migrated column with no write path is a bug the schema cannot show — when a
+  column lands, audit every write site (DTO → service `create`/`update` → form payload) in the
+  same change; and UI copy names only the effect the endpoint has (a status flip is "marked as
+  sent", never "sent").**
+- **Guard:** `estimates.service.ts create()` validates (`/^\d{4}-\d{2}-\d{2}$/` plus an ISO
+  round-trip compare — the regex alone accepts an out-of-range day/month, e.g. `2026-02-31`, which
+  `Date` silently rolls over instead of rejecting) then persists `dto.issueDate`; shared
+  `Estimate.issueDate?: string | null` in `packages/types/api/misc.ts`; the toast copy (aa47ee9e).
+  Pinned by `estimates.service.spec.ts` and `estimates.issue-date.db.spec.ts` (real Postgres) —
+  landed 2026-09-13. `CreateEstimateDto` now declares `issueDate?: string`, no more `as any` cast.
+
+### L-132 · 2026-09-13 · domain · F27 B70 (estimates)
+
+- **Symptom:** a fix round made `accept()`'s atomic claim exclude the full terminal-status set
+  instead of CONVERTED alone, breaking the pre-existing invariant that a DECLINED estimate can
+  still be accepted — then edited the two pre-existing tests that caught this to match, and left
+  the PIN test that would have caught it `it.skip`'d. Shipped invisibly until an adversarial review
+  re-derived the invariant from the baseline.
+- **Root cause:** `voidEstimate()` writes the same enum value `decline()` does (no separate VOID
+  member exists), so one shared exclusion set applied to every transition method is wrong for
+  `accept()` alone, which has a pre-existing invariant the shared value must not block. The fix
+  widened a helper's default to a caller needing an exception, then edited that caller's own
+  regression test instead of the implementation.
+- **Lesson:** **When a change makes a pre-existing, already-passing test fail, that failure is the
+  finding — fix the implementation to keep satisfying it, never the test's assertion to match the
+  new behavior.** A shared helper's default allow/exclude-list is a hypothesis for every caller, not
+  a fact; a caller with its own documented invariant takes an explicit, narrower parameter.
+- **Guard:** `claimTransition(id, to, refusal, exclude = TERMINAL_ESTIMATE_STATUSES)` takes
+  `exclude`; `accept()` passes `["CONVERTED"]` explicitly, commented with why this doesn't reopen
+  the laundering chain. `PIN-B70 accept() still allows DECLINED->ACCEPTED` is live (un-skipped); a
+  new `REG-B70 accept() alone cannot re-open a CONVERTED estimate` test covers the direct path the
+  two pre-existing "laundered chain" tests miss (both short-circuit at `send()`, never reach
+  `accept()`). **Corollary the pre-merge review then had to add (2026-09-13):** the restored PIN
+  stubbed `updateMany` to `{ count: 1 }` unconditionally, so it pinned the exclusion list's SHAPE
+  while never proving a real DECLINED row matches it — a test that mocks the predicate under test
+  into always-succeeding is not a behavioral pin. It now also runs through
+  `createLaunderingHarness`, which evaluates the predicate against a stateful row. Same pass
+  restored the two `accept()` assertions from nested `expect.objectContaining` to exact
+  `toHaveBeenCalledWith`: objectContaining silently admits extra `where` keys, so the key-set
+  (`{ id, status }`, no tenant key) was pinned nowhere.

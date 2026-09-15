@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -371,6 +371,16 @@ function ProductPickerModal({
   onClose: () => void;
   onPick: (p: { id: string; name: string; pricePerUnit: number | string }) => void;
 }) {
+  // The catalogue no longer preloads at mount — it loads on a term or a
+  // deliberate "Browse catalogue" tap (owner ask 2026-09-14). `browsing`
+  // resets on close so the next open starts quiet again; the modal itself
+  // stays mounted for the life of the screen, so without this reset a browse
+  // from one open would leak into the next.
+  const [browsing, setBrowsing] = useState(false);
+  useEffect(() => {
+    if (!open) setBrowsing(false);
+  }, [open]);
+
   // Debounced + paged, replacing the `limit: 0` fetch-all. Gated on `open` so
   // a mounted-but-closed picker doesn't fetch the catalogue.
   const {
@@ -378,11 +388,12 @@ function ProductPickerModal({
     setSearch,
     products: pagedProducts,
     isLoading,
+    idle,
     isPlaceholder,
     hasNextPage,
     fetchNextPage,
     isFetchingNextPage,
-  } = useProductSearch<{ id: string }>({ enabled: open });
+  } = useProductSearch<{ id: string }>({ enabled: open, browsing });
   const products = pagedProducts as unknown as Array<{
     id: string;
     name: string;
@@ -410,6 +421,17 @@ function ProductPickerModal({
             <View style={styles.center}>
               <ActivityIndicator color={ios.brand} />
             </View>
+          ) : idle ? (
+            <View style={styles.center}>
+              <Text style={styles.empty}>Search for a product, or browse the catalogue.</Text>
+              <Pressable
+                onPress={() => setBrowsing(true)}
+                accessibilityRole="button"
+                accessibilityLabel="Browse the full catalogue"
+              >
+                <Text style={styles.empty}>Browse catalogue</Text>
+              </Pressable>
+            </View>
           ) : (
             <View style={styles.list}>
               {products.map((p) => (
@@ -430,7 +452,8 @@ function ProductPickerModal({
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
-  center: { padding: 40, alignItems: "center" },
+  center: { padding: 40, alignItems: "center", gap: 10 },
+  empty: { fontSize: 14, fontFamily: "Inter_400Regular", color: ios.label2 },
   list: { paddingHorizontal: 16, gap: 8, paddingVertical: 8 },
   pickRow: {
     flexDirection: "row",

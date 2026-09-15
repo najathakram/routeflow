@@ -28,6 +28,7 @@ import { roundMoney } from "@routeflow/pricing";
 import { productImageFile } from "../../../lib/product-image";
 import { showToast } from "../../../lib/toast";
 import { fmtCalendarDate } from "../../../lib/format-date";
+import { hasUnsavedPayment } from "../../../lib/discard-guard";
 
 /**
  * Standalone payment with multi-invoice allocation — one check at the door
@@ -276,7 +277,16 @@ function PaymentForm({
       subtitle={customerName}
       submitLabel={mut.isPending ? "Saving…" : asDraft ? "Save as draft" : "Save as paid"}
       submitting={mut.isPending}
-      warnIfDirty
+      confirmDiscardIfDirty={hasUnsavedPayment({
+        amount,
+        reference,
+        notes,
+        bankCharges,
+        paidAt,
+        settledAt,
+        photos,
+        asDraft,
+      })}
       onSubmit={submit}
     >
       <Pressable style={styles.changeCustomer} onPress={onChangeCustomer} hitSlop={6}>

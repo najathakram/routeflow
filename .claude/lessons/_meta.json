@@ -1,11 +1,11 @@
 {
-  "nextId": 140,
-  "activeCount": 51,
-  "archivedCount": 75,
+  "nextId": 147,
+  "activeCount": 54,
+  "archivedCount": 78,
   "maxEntries": 64,
   "maxBytes": 65536,
-  "updatedAt": "2026-09-14T23:05:50.766Z",
+  "updatedAt": "2026-09-15T01:35:12.899Z",
   "schemaVersion": 1,
-  "note": "Merge of L-129 (branch fix/F39-payments: a regression test guarding a dependency PIN should assert the invariant it protects, not the exact version string) with master's B420/#747 note (L-139, id reserved by the lead — nextId 140 clears the whole L-130-L-138 reserved block for other open-PR lanes — any throwaway-git-repo fixture must scrub all ten GIT_* env vars and assert its toplevel lands inside its own scratch dir). Both entries kept; activeCount 50 (master) -> 51 (+L-129, not on master).",
+  "note": "Merge of fix/F27 (this branch: L-130/131/132 estimates/#711-review lessons, L-138 review-fix-misses-a-sibling) with origin/master 5222dbcb (#748 mobile-scan-lanes: L-144 review lesson + L-145, mobile's own prior L-129 renumbered off master's real L-129 (#745 react-skew-guard, landed via #746/#747) which this branch's own L-129 had already separately renumbered away from during an earlier merge). All of both sides' entries kept side by side (L-129 master's real one, L-130/131/132/138 this branch's, L-139 master's B420 lesson, L-144/145 master's mobile-lane ones) since none collide post-renumber. nextId 147 clears past the highest used (L-145) plus this branch's own L-138; counts re-derived by validate-lessons.mjs --digest against the merged register, not hand-computed.",
   "notes": "2026-09-13 owner ruling: maxBytes 40,960 -> 49,152 so the 40-entry cap is the binding constraint (40 x ~1.05 KB); the byte cap had made the entry cap unreachable and left no eligible archive candidate. maxEntries 40 -> 48 in the same ruling: with bytes raised the entry cap became binding at 40/40 with no eligible archive candidate, so bytes alone unblocked nothing. 2026-09-14 owner ruling: maxBytes 49,152 -> 65,536 (register hit 49,142 after two waves in one day with no eligible archive candidate); maxEntries stays 48. House rule: an author trims any entry over 1.5 KB before it lands; never shorten a live entry afterwards. 2026-09-14 owner ruling: maxEntries 48 -> 64 to match the 65,536-byte cap (register reached 47/48 after the W1 wave); author-trim rule (>1.5 KB) unchanged."
 }
