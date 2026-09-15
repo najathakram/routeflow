@@ -4907,11 +4907,20 @@ describe("InvoicesService", () => {
       prisma.invoice.update.mock.calls.find((c: any) => c[0].where.id === id)?.[0];
 
     beforeEach(() => {
+      mockGateway.emitInvoiceUpdated.mockClear();
       prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false } as any);
       prisma.invoiceItem.deleteMany.mockResolvedValue({ count: 1 } as any);
+      // In production `db.invoice.update` returns the full model, so the emit
+      // payload's invoiceNumber/customerId/status/total are all present; mirror
+      // that here (echoing back the rebuilt status/total) instead of the bare
+      // {id, items} the older assertions needed.
       prisma.invoice.update.mockImplementation((args: any) =>
         Promise.resolve({
           id: args.where.id,
+          invoiceNumber: `INV-${args.where.id}`,
+          customerId: "cust-1",
+          status: args.data.status,
+          total: args.data.total,
           items: (args.data.items?.create ?? []).map((it: any, i: number) => ({
             ...it,
             id: `${args.where.id}-item-${i}`,
@@ -5064,6 +5073,76 @@ describe("InvoicesService", () => {
           .data.items.create.map((i: any) => i.orderItemId)
           .sort(),
       ).toEqual(["oi-newreg", "oi-reg"]);
+    });
+
+    // REG-INV-RESYNC — this rebuild rewrites the money on an already-ISSUED
+    // invoice but was the one rebuild path that emitted nothing, so an operator
+    // (or buyer) sitting on the invoice screen kept the pre-edit total until a
+    // manual refetch. Eleven sibling emit sites already existed; this one did not.
+    it("REG-INV-RESYNC-1 emits invoice.updated exactly once for the rebuilt invoice", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        inv({ payments: [{ amount: 30, status: "PAID" }] }),
+      ] as any);
+      prisma.order.findUnique.mockResolvedValue(mockOrder([line()]) as any);
+
+      await service.resyncOrderInvoicesForEdit("ord-1", prisma);
+
+      expect(mockGateway.emitInvoiceUpdated).toHaveBeenCalledTimes(1);
+      expect(mockGateway.emitInvoiceUpdated).toHaveBeenCalledWith("test-tenant", {
+        invoiceId: "inv-1",
+        invoiceNumber: "INV-inv-1",
+        customerId: "cust-1",
+        status: InvoiceStatus.PARTIAL,
+        total: 50,
+      });
+    });
+
+    it("REG-INV-RESYNC-2 emits ONCE PER rebuilt invoice on a split order — never twice for one", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        inv({ id: "inv-base", items: [{ orderItemId: "oi-std" }] }),
+        inv({ id: "inv-r1", items: [{ orderItemId: "oi-reg" }] }),
+      ] as any);
+      prisma.orderItem.findMany.mockResolvedValue([{ id: "oi-std" }, { id: "oi-reg" }] as any);
+      prisma.order.findUnique.mockResolvedValue(
+        mockOrder(
+          [
+            line(),
+            line({
+              id: "oi-reg",
+              productId: "p-reg",
+              trackedCategoryId: "cat-reg",
+              product: { name: "Cig", unitsPerBox: null, trackedCategoryId: "cat-reg" },
+            }),
+          ],
+          { subtotal: 100 },
+        ) as any,
+      );
+
+      await service.resyncOrderInvoicesForEdit("ord-1", prisma);
+
+      expect(mockGateway.emitInvoiceUpdated).toHaveBeenCalledTimes(2);
+      const ids = mockGateway.emitInvoiceUpdated.mock.calls.map((c: any) => c[1].invoiceId).sort();
+      expect(ids).toEqual(["inv-base", "inv-r1"]);
+    });
+
+    it("REG-INV-RESYNC-3 emits NOTHING when there is no linked invoice", async () => {
+      prisma.invoice.findMany.mockResolvedValue([] as any);
+
+      await service.resyncOrderInvoicesForEdit("ord-1", prisma);
+
+      expect(mockGateway.emitInvoiceUpdated).not.toHaveBeenCalled();
+    });
+
+    it("REG-INV-RESYNC-4 emits NOTHING when the partition is unclean (the bail path writes nothing)", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        inv({ id: "inv-a", items: [{ orderItemId: "oi-std" }] }),
+        inv({ id: "inv-b", items: [{ orderItemId: "oi-std" }] }),
+      ] as any);
+
+      await service.resyncOrderInvoicesForEdit("ord-1", prisma);
+
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+      expect(mockGateway.emitInvoiceUpdated).not.toHaveBeenCalled();
     });
   });
 

@@ -12,6 +12,10 @@ import { useDeliveryPlanStore } from "../store/delivery-plan-store";
 import { useListUiStore } from "../store/listUiStore";
 import { useProductPickerStore } from "../store/productPickerStore";
 import { STOP_CART_STORE_NAME, useStopCartStore } from "../store/stopCartStore";
+import {
+  RETURN_SUBMISSION_STORE_NAME,
+  useReturnSubmissionStore,
+} from "../store/returnSubmissionStore";
 
 export type TeardownReason = "logout" | "session-expired" | "cross-tab";
 
@@ -39,10 +43,11 @@ export interface TeardownOptions {
  *    realm (which already stopped tracking on route completion elsewhere) and
  *    the operator realm (which had no stop site at all) go through the same
  *    call.
- *  - B140 — the query cache and the 8 user-scoped stores below survived a
+ *  - B140 — the query cache and the 9 user-scoped stores below survived a
  *    sign-out, so the next login on the same device could see the prior
- *    user's data flash on screen. (stopCartStore joined the original 7 —
- *    same reset()/persisted-blob pattern, same reason.)
+ *    user's data flash on screen. (Driver-durability lane: stopCartStore and
+ *    returnSubmissionStore joined the original 7 — same reset()/persisted-
+ *    blob pattern, same reason.)
  *  - B136 keyspace — the order-item editor's staged-edit snapshot is one key
  *    PER ORDER (`rf.edit-items.v1:<userId>:<orderId>`), not a single blob, so
  *    it cannot be addressed by a `clearUserScopedStorage(NAME, userId)` call.
@@ -73,7 +78,7 @@ export async function teardownUserSession(options: TeardownOptions = {}): Promis
   await queryClient.cancelQueries();
   queryClient.clear();
 
-  // (4) Reset the 8 user-scoped stores. All 8 expose a `reset()`;
+  // (4) Reset the 9 user-scoped stores. All 9 expose a `reset()`;
   // `resetIfPresent` stays a defensive no-op so a store that ever loses one
   // can never turn a sign-out into a crash.
   resetIfPresent(usePodStore.getState());
@@ -84,8 +89,9 @@ export async function teardownUserSession(options: TeardownOptions = {}): Promis
   resetIfPresent(useListUiStore.getState());
   resetIfPresent(useProductPickerStore.getState());
   resetIfPresent(useStopCartStore.getState());
+  resetIfPresent(useReturnSubmissionStore.getState());
 
-  // (5) Remove the three PERSISTED user-scoped blobs by the id resolved in (0).
+  // (5) Remove the four PERSISTED user-scoped blobs by the id resolved in (0).
   // The `reset()` calls above kick off zustand-persist writes that are
   // fire-and-forget and resolve their own key one async hop later — by then
   // the tokens may be gone, so that write can land in the `anon` bucket and
@@ -98,6 +104,7 @@ export async function teardownUserSession(options: TeardownOptions = {}): Promis
     clearUserScopedStorage(POD_STORE_NAME, userId),
     clearUserScopedStorage(RUN_SETTLEMENT_STORE_NAME, userId),
     clearUserScopedStorage(STOP_CART_STORE_NAME, userId),
+    clearUserScopedStorage(RETURN_SUBMISSION_STORE_NAME, userId),
   ]);
 
   // (6) Sweep the per-ORDER keyspaces. These are not one key per store but one

@@ -26,6 +26,11 @@ Shared DTO/enum definitions. Entry: `index.ts` (no `src/`), re-exports `./api/*`
 - **`api/enums.ts` (2026-09-03, wave E / imp-10b)** — one `export const X_VALUES = [...] as const` +
   `export type X = (typeof X_VALUES)[number]` per Prisma enum a web/mobile `lib/api/*` file mirrors
   as a hand-typed string union (40 enums; values copied from `apps/api/prisma/schema.prisma`).
+  **`TENANT_CLASS_VALUES`/`TenantClass` added (2026-09-15, PR #743 fix round, T1 in progress)** —
+  same pattern, pinned set-equal to `@prisma/client`'s `TenantClass` by
+  `apps/api/src/common/enum-parity.spec.ts`. `PLAN_KEYS`/`PlanKey` (same file, same round) is
+  NOT a Prisma-enum mirror — it's pinned to the four non-legacy `TenantPlan` members instead,
+  re-exported by `apps/api/src/billing/plan-catalog.constants.ts` rather than hand-declared there.
   Pinned set-equal to `@prisma/client`'s generated enum by
   `apps/api/src/common/enum-parity.spec.ts` — this is the guard against the drift class that shipped
   three real bugs (see `L-072`): `VendorBillStatus` mirrors had invented `"FULL"`/omitted

@@ -311,6 +311,11 @@ export default function CustomerOrderDetailScreen() {
                         : `${Number(item.qty)} × $${Number(item.unitPrice).toFixed(2)}`}
                       {item.product?.unit ? ` / ${item.product.unit}` : ""}
                     </Text>
+                    {item.notes?.trim() ? (
+                      <Text style={styles.itemNote} numberOfLines={2}>
+                        {item.notes}
+                      </Text>
+                    ) : null}
                     {/* BUY_N_GET_M: name the free units, or the reduced line
                         total reads as a pricing error (web parity). */}
                     {freeUnitsLabel(item.promoFreeUnits) ? (
@@ -515,6 +520,7 @@ const styles = StyleSheet.create({
   },
   itemName: { fontSize: 15, fontFamily: "Inter_500Medium", color: ios.label },
   itemMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  itemNote: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
   itemFreeLabel: {
     fontSize: 11,
     fontFamily: "Inter_600SemiBold",

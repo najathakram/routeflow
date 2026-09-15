@@ -9,11 +9,18 @@
 // Usage:
 //   node apps/api/scripts/backfill-tenant-class.mjs           # dry run, prints table only
 //   node apps/api/scripts/backfill-tenant-class.mjs --apply   # writes the classification
+//   ... --slug-prefix <prefix>  # scope the scan/apply to slugs starting with <prefix> — for a
+//   db spec or a one-tenant prod rehearsal — never let a spec run an unscoped --apply on a shared DB.
 
 import { pathToFileURL } from "node:url";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
+import { resolveDatabaseUrl, redactUrl, scrubSecrets } from "./lib/railway-db-url.mjs";
+
+// Hoisted to module scope so the top-level `.catch` below can scrub a connection string out
+// of an error message.
+let databaseUrl;
 
 const DEMO_SLUG = "routeflow-demo";
 const HOUSE_TENANT_SLUG = "routeflow-hq";
@@ -27,17 +34,44 @@ export function classify(slug) {
   return "PRODUCTION";
 }
 
+// Parses the optional `--slug-prefix <prefix>` flag: value required, given at most once, and
+// never empty — so a spec or rehearsal that scopes this whole-table script cannot silently fall
+// back to an unscoped scan/apply on a shared DB.
+export function parseSlugPrefix(argv) {
+  const idx = argv.indexOf("--slug-prefix");
+  if (idx === -1) return undefined;
+  if (argv.indexOf("--slug-prefix", idx + 1) !== -1) {
+    throw new Error("--slug-prefix may be given only once");
+  }
+  const value = argv[idx + 1];
+  if (!value || value.startsWith("--")) {
+    throw new Error("--slug-prefix requires a non-empty value");
+  }
+  return value;
+}
+
 async function main() {
   const apply = process.argv.includes("--apply");
-  if (!process.env.DATABASE_URL) {
-    console.error("Missing env: DATABASE_URL");
+  let slugPrefix;
+  try {
+    slugPrefix = parseSlugPrefix(process.argv);
+  } catch (err) {
+    console.error(err.message);
     process.exit(1);
   }
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  try {
+    databaseUrl = resolveDatabaseUrl(process.env);
+  } catch (err) {
+    console.error(err.message);
+    process.exit(1);
+  }
+  console.log(`Resolved database host: ${redactUrl(databaseUrl)}`);
+  const pool = new Pool({ connectionString: databaseUrl });
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
 
   try {
     const tenants = await prisma.tenant.findMany({
+      where: slugPrefix ? { slug: { startsWith: slugPrefix } } : undefined,
       select: { id: true, slug: true, name: true, class: true },
       orderBy: { slug: "asc" },
     });
@@ -46,7 +80,11 @@ async function main() {
       .map((t) => ({ ...t, newClass: classify(t.slug) }))
       .filter((t) => t.newClass !== t.class);
 
-    console.log(`${tenants.length} tenants scanned, ${changes.length} classification change(s):`);
+    console.log(
+      `${tenants.length} tenants scanned, ${changes.length} classification change(s)${
+        slugPrefix ? ` (scoped to slug prefix "${slugPrefix}")` : ""
+      }:`,
+    );
     console.table(
       changes.map((c) => ({ slug: c.slug, name: c.name, from: c.class, to: c.newClass })),
     );
@@ -100,7 +138,8 @@ async function main() {
 const isMain = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;
 if (isMain) {
   main().catch((err) => {
-    console.error(err);
+    const msg = err?.message ?? String(err);
+    console.error(databaseUrl ? scrubSecrets(msg, databaseUrl) : msg);
     process.exit(1);
   });
 }

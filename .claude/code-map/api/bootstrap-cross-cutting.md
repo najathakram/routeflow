@@ -201,7 +201,9 @@ parent missing` when the Route row or its tenant is absent) and treats the DISTI
   writes in `--live` AND `--dry-run`; D10 proves a wrong `<n>` is exit 3; D11 drives the D7
   production shape end to end with no TTY and no token, then re-runs to "nothing to do".
 - **`common/tenant-class.util.ts`** — `classifyTenantSlug(slug): TenantClass` (pure). `routeflow-demo` → DEMO, `routeflow-hq` (house tenant) → INTERNAL, `scripts/lib/test-tenants.cjs`'s `TEST_TENANT_SLUGS`/`TEST_TENANT_PATTERN` → TEST, else PRODUCTION. Those two constants are **inlined here, not imported** — repo-root `scripts/` isn't copied into the API Docker image, so `nest build` passed under host tsc but failed TS2307 in the image build (F1, PR #718 fix round). Kept in lockstep by a spec assertion (`tenant-class.util.spec.ts`, `require`s the `.cjs` directly — specs are build-excluded so this is the one place allowed to reach outside `apps/api`).
-- **`scripts/backfill-tenant-class.mjs`** — dark, idempotent whole-table `Tenant.class` backfill (dry-run default, `--apply` to write); exports `classify(slug)`, a duplicate of `classifyTenantSlug` kept in an ordinary `.mjs` (no Nest/Prisma-client-type deps) so the CLI has zero framework startup cost. Cross-checked against `tenant-class.util.ts`'s `classifyTenantSlug` for every `TenantClass` over a fixture slug list in `tenant-class.util.spec.ts` (spawns `node --input-type=module` to import the real `classify` by `file://` URL — same shim shape as `backfill-legacy-tenant-ids-script.spec.ts`) so the two can never silently drift; DB-mechanics coverage (dry-run/apply/idempotent) stays in `backfill-tenant-class.db.spec.ts`.
+- **`tenant/tenant-class.ts` (REG-743-F7, T4, 2026-09-15)** — a THIRD, independent `classifyTenantSlug` port, not imported from `common/tenant-class.util.ts` — a bug in any ONE of the three (this, the util, `backfill-tenant-class.mjs`'s `classify()`) can't become the only source of truth. Used by `createTenant()`. Also exports **`TENANT_CLASS_VALUES = Object.values(TenantClass)`** (boot-crash fix) — the real `@prisma/client` enum, safe to value-import unlike `@routeflow/types`'s equivalent (raw TS, crashes boot; see `no-runtime-workspace-imports.spec.ts`); `create-tenant.dto.ts` imports it from here. Spec: `tenant-class.spec.ts`.
+- **`scripts/backfill-tenant-class.mjs`** — dark, idempotent whole-table `Tenant.class` backfill (dry-run default, `--apply` to write); exports `classify(slug)`, a duplicate of `classifyTenantSlug` kept in an ordinary `.mjs` (no Nest/Prisma-client-type deps) so the CLI has zero framework startup cost. DB URL resolved via `lib/railway-db-url.mjs resolveDatabaseUrl()`; the top-level `.catch` scrubs any connection string out of a thrown error via that module's `scrubSecrets` before printing. **REG-743-N2 (2026-09-15):** also prints `Resolved database host: <redactUrl(databaseUrl)>` as its first stdout line right after resolving, so a spec can assert what it actually connected to; its db spec now spawns it with a `childEnv` that strips every `RAILWAY_*`/`POSTGRES_*` key before setting `DATABASE_URL`, so a leftover Railway proxy export in the spec's own process can never leak into the child. Cross-checked against `tenant-class.util.ts`'s `classifyTenantSlug` for every `TenantClass` over a fixture slug list in `tenant-class.util.spec.ts` (spawns `node --input-type=module` to import the real `classify` by `file://` URL — same shim shape as `backfill-legacy-tenant-ids-script.spec.ts`) so the two can never silently drift; DB-mechanics coverage (dry-run/apply/idempotent) stays in `backfill-tenant-class.db.spec.ts`.
+- **`scripts/backfill-subscription-reconciliation.mjs` (T11; REG-743-F2/F3/F4/F5/N3, T2, `bb14ac9a`)** — dry-run default, `--apply` writes. Scans `class: "PRODUCTION"` (DEMO dropped), `status: "ACTIVE"` vs the PUBLISHED `PlanVersion`. Fixes ONE shape: `planKey` set, null `basePriceSnapshot`; never creates a row or a `planKey`. 5 skip reasons for a human: no subscription; no `planKey`; no `stripeSubId` (B327 — never price a manual free pilot); no resolvable version; `planKey` absent from the catalog; plus "custom-priced (null)" (ENTERPRISE). Candidate `planVersionId`s batch into one `findMany` via a `Map` (was a plain object — F5 risk). `updateMany` re-asserts the exact scanned `planVersionId` (F4) and a nested `tenant:{status:ACTIVE,class:PRODUCTION,deletedAt:null}` (F3 — a churned tenant books no price); `count===1` emits `reconciliation.snapshot_backfilled` with the real `amountDelta` in one per-row `$transaction`; `count===0` → RACED. Unscoped `--apply` needs `--confirm-count <n>` matching the scan or refuses (F2). Same host-print/scrub shape as `backfill-tenant-class.mjs`. DB spec: `backfill-subscription-reconciliation.db.spec.ts`.
 - **`scripts/ci-audit-critical.mjs` (2026-09-04)** — CI advisory gate: wraps `npm audit
 --omit=dev --audit-level=<level> --json` in `spawnSync` (`shell:false`, up to 3 attempts,
   15s/45s backoff, 120s per-attempt timeout, 64 MiB `maxBuffer`) so an `npm` registry
@@ -366,16 +368,22 @@ private …` immediately followed by a `gh repo view --json visibility` read-bac
   Cross-process critical
   section on a Postgres advisory lock (`pg_advisory_lock(hashtext(family), hashtext(key))`), held
   on DEDICATED `pg.Pool`s it owns itself — **one pool per family, sized per family** (`cron`
-  `max: 12`, `order-merge` `max: 8`, **`billing` `max: 4` (B342, 2026-09-13)** — short,
-  request-path checkouts like `order-merge`'s, but a far rarer settings action than per-order
-  volume): a cron winner pins a slot for its whole tick (≤ 7
+  `max: 12`, `order-merge` `max: 8`, **`billing` `max: 4` (B342, 2026-09-13)**): a cron winner
+  pins a slot for
+  its whole tick (≤ 7
   concurrently at the monthly peak, plus a straggling hourly sweep), which out of one shared
   `max: 8` pool left merges 1–3 slots and 503s. ALL THREE pools set `keepAlive: true` /
   `keepAliveInitialDelayMillis: 30_000` — a lock connection is SOCKET-IDLE for the whole hold (a
   cron tick's work runs on the Prisma pool), so an intermediate idle-reap would end the session,
   release the advisory lock mid-tick and let another replica win an election for a running job.
   `withAdvisoryLock` throws `TypeError` for a family outside `LOCK_FAMILIES`
-  BEFORE connecting, so a typo cannot stand up a fourth pool. **`billing`'s two call sites
+  BEFORE connecting, so a typo cannot stand up a fourth pool. **RETIRED (F5 round 2 / N1,
+  independent review round 2, PR-2, 2026-09-15):** a fourth `"idempotency"` family briefly lived
+  here (round 1, `max: 6`) backing `ReturnsService#create`'s check-then-create-then-save guard —
+  the review judged a dedicated 6-connection pool an unjustified extra failure surface; it now
+  takes a TRANSACTION-scoped `pg_advisory_xact_lock` on its own transaction's connection instead
+  (`common/idempotency.service.ts#acquireLock` — see the Returns row below), needing no pool
+  here at all. **`billing`'s two call sites
   (B342 admin path; F1 2026-09-13 tenant path):** `addon.service.ts enableAddon()` (admin grant)
   and `subscription-mutation.service.ts enableAddon()` (tenant self-serve, `POST
 /billing/addons/:sku/enable`) each wrap their existing-check → row-write window in ONE lock,
@@ -625,7 +633,9 @@ version|audit-allowlist-retired)\\.spec\\.ts$"` (the third joined it
   comes exclusively from SystemConfig `settings.taxRate` via `common/tax-rate.ts`.
 - **`src/common/`** — `EncryptionService` (AES-256-GCM, refuses placeholder key writes in prod),
   `RedisThrottlerStorage` (cross-instance rate limit, fails closed), ThrottlerExceptionFilter,
-  audit interceptor.
+  audit interceptor. **2026-09-14:** `IdempotencyService` (new) joins `providers`/`exports` — an
+  `Idempotency-Key`-header replay guard, `@Optional()`-injected by callers predating it
+  (`returns.service.ts`); detail in `api/where-to-find.md`'s Returns row.
   **`enum-parity.spec.ts` (2026-09-03, wave E / imp-10b)** — pins every `packages/types/api/enums.ts`
   const-array union set-equal to `Object.values()` of the matching `@prisma/client` generated enum
   (40 enums); the import is guarded (`require` in try/catch) so a missing/renamed export fails on
@@ -655,23 +665,15 @@ version|audit-allowlist-retired)\\.spec\\.ts$"` (the third joined it
   walks `apps/api/{src,scripts}`, root `scripts/`, `.github/workflows/`,
   `.claude/skills/**/scripts/`, plus the `Dockerfile`/`prisma.config.ts`/both `package.json`s/
   `docker-compose.yml`, strips `//`/`#`/`/* */`/`<!-- -->` comment bodies via a **hand-rolled
-  character scanner** (`stripCLikeComments`) — not a single alternation regex, which is unsound:
-  prose inside a `//` comment routinely has an unescaped apostrophe ("it's", "repair-integrity
-  .mjs's default-read-only stance" — real text this file caught in `repair-f03.spec.ts`), and a
-  flat regex has no notion of "already inside a comment", so it reads that apostrophe as opening a
-  `'…'` string and greedily swallows everything up to the next raw `'` anywhere later in the file.
-  The scanner instead skips `//`/`/* */` spans character-by-character to their terminator without
-  ever re-entering quote-detection inside them, and separately preserves real `"…"`/`'…'`/`` `…` ``
-  string literals verbatim (so a same-line `"https://x.dev"` doesn't let its `//` swallow a later
-  `"schema.prisma"` reference — unit-tested directly against the helper). A quote with no closing
-  partner before end-of-line (an apostrophe inside a regex literal, e.g. `scripts/campaign/bugs.mjs`)
-  is emitted as text rather than opened as a string, since a `'`/`"` literal cannot span a raw
-  newline — and asserts none of the
-  ≥400 candidates (real walk ~817; floor raised from the original vacuous-guard value of 30) still
-  names the retired `prisma/schema.prisma` path outside comments; allow-lists (each asserted in its
-  own case) `split-prisma-schema.mjs` (names that path by design via `--from`/`--from-ref`) and
-  this spec's own T1 sibling (its negative-existence check (b) must name the retired path
-  literally) — `apps/api/prisma/migrations/**` is never scanned.
+  character scanner** (`stripCLikeComments`), not a single alternation regex — a flat regex has no
+  notion of "already inside a comment", so an unescaped apostrophe inside a `//` comment ("it's")
+  opens a `'…'` string and swallows everything to the next raw `'`. The scanner skips comment spans
+  character-by-character without re-entering quote-detection inside them, and preserves real
+  string literals verbatim (unit-tested directly). Asserts none of the ≥400 candidates (real walk
+  ~817; floor raised from the original vacuous-guard value of 30) still names the retired
+  `prisma/schema.prisma` path outside comments; allow-lists `split-prisma-schema.mjs` (names that
+  path by design via `--from`/`--from-ref`) and this spec's own T1 sibling (its negative-existence
+  check (b) must name the retired path literally) — `apps/api/prisma/migrations/**` never scanned.
   **`msrp.ts` (NEW 2026-08-22, PR-B — ⚠️ IN FLIGHT on `feat/msrp-on-invoices`, NOT on master)** —
   suggested-retail resolution. `resolveMsrp({customerMsrp, segmentMsrp, productMsrp})` =
   customer override → \*\*segment (a deliberate STUB: present in the signature and every call

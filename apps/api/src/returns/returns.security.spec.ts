@@ -13,6 +13,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { NumberingService } from "../import/numbering.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { ExecutionContext, HttpStatus } from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -114,6 +115,10 @@ describe("RF-081 ReturnsService.findOneForUser – IDOR prevention", () => {
         { provide: RouteFlowGateway, useValue: gateway },
         { provide: RegulatedLedgerService, useValue: ledger },
         { provide: CreditNotesService, useValue: { create: jest.fn() } },
+        {
+          provide: NumberingService,
+          useValue: { reserveNext: jest.fn().mockResolvedValue("RET-2026-0001") },
+        },
       ],
     }).compile();
 
@@ -153,6 +158,78 @@ describe("RF-081 ReturnsService.findOneForUser – IDOR prevention", () => {
     await expect(service.findOneForUser("ret-nonexistent", OPERATOR_JWT as any)).rejects.toThrow(
       NotFoundException,
     );
+  });
+});
+
+// ─── B221: DRIVER list scoping ────────────────────────────────────────────────
+
+describe("B221 ReturnsService.findAllForUser – DRIVER scoping", () => {
+  let service: ReturnsService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+
+    const gateway = { emitReturnCreated: jest.fn() } as unknown as RouteFlowGateway;
+    const ledger = {
+      reverseReturnEntries: jest.fn(),
+      unreverseReturnEntries: jest.fn(),
+    } as unknown as RegulatedLedgerService;
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        ReturnsService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: RouteFlowGateway, useValue: gateway },
+        { provide: RegulatedLedgerService, useValue: ledger },
+        { provide: CreditNotesService, useValue: { create: jest.fn() } },
+        { provide: NumberingService, useValue: { reserveNext: jest.fn() } },
+      ],
+    }).compile();
+
+    service = module.get(ReturnsService);
+
+    (prisma.forTenant() as any).return.findMany.mockResolvedValue([]);
+    (prisma.forTenant() as any).return.count.mockResolvedValue(0);
+  });
+
+  it("B221-1: DRIVER's findAll is scoped to orders on their own route runs, not the tenant-wide list", async () => {
+    (prisma.forTenant() as any).driver.findFirst.mockResolvedValue({ id: "drv-1" });
+
+    await service.findAllForUser(DRIVER_JWT as any, {});
+
+    expect((prisma.forTenant() as any).driver.findFirst).toHaveBeenCalledWith({
+      where: { userId: DRIVER_JWT.sub },
+    });
+    const call = (prisma.forTenant() as any).return.findMany.mock.calls[0][0];
+    expect(call.where.order).toEqual({ routeRun: { driverId: "drv-1" } });
+  });
+
+  it("B221-2: a DRIVER user with no Driver row sees NOTHING — never the unscoped tenant-wide list", async () => {
+    (prisma.forTenant() as any).driver.findFirst.mockResolvedValue(null);
+
+    const result = await service.findAllForUser(DRIVER_JWT as any, {});
+
+    expect(result).toEqual({ data: [], meta: { total: 0, page: 1, limit: 20, totalPages: 0 } });
+    expect((prisma.forTenant() as any).return.findMany).not.toHaveBeenCalled();
+  });
+
+  it("B221-3: OPERATOR's findAll carries no driverId scoping and never resolves a driver row", async () => {
+    await service.findAllForUser(OPERATOR_JWT as any, {});
+
+    expect((prisma.forTenant() as any).driver.findFirst).not.toHaveBeenCalled();
+    const call = (prisma.forTenant() as any).return.findMany.mock.calls[0][0];
+    expect(call.where.order).toBeUndefined();
+  });
+
+  it("B221-4: a driverId filter combines with an explicit orderId as independent AND conditions", async () => {
+    (prisma.forTenant() as any).driver.findFirst.mockResolvedValue({ id: "drv-1" });
+
+    await service.findAllForUser(DRIVER_JWT as any, { orderId: "ord-1" });
+
+    const call = (prisma.forTenant() as any).return.findMany.mock.calls[0][0];
+    expect(call.where.orderId).toBe("ord-1");
+    expect(call.where.order).toEqual({ routeRun: { driverId: "drv-1" } });
   });
 });
 

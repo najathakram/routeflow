@@ -13,6 +13,7 @@ import {
   ChevronsUpDown,
   Trash2,
   Download,
+  Printer,
 } from "lucide-react";
 import { PageHeader, Button, cn, useToast, EmptyState } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -24,9 +25,11 @@ import {
   useInvoices,
   useInvoiceKpiSummary,
   useDeleteInvoice,
+  useDownloadInvoicePdf,
   type Invoice,
   type InvoiceStatus,
 } from "@/lib/api/invoices";
+import { printPdfBlob } from "@/lib/print-pdf-blob";
 import { apiClient } from "@/lib/api-client";
 import { useBookkeepingSummary } from "@/lib/api/bookkeeping";
 import { fmt, fmtCalendarDate, calendarDaysUntil } from "@/lib/formatting";
@@ -363,6 +366,8 @@ export default function InvoicesPage() {
   const { toast } = useToast();
   const deleteInvoice = useDeleteInvoice();
   const [confirmDeleteId, setConfirmDeleteId] = React.useState<string | null>(null);
+  const downloadPdf = useDownloadInvoicePdf();
+  const [printingIds, setPrintingIds] = React.useState<ReadonlySet<string>>(() => new Set());
 
   const [urlFilters, setFilter, , setFilters] = useUrlFilters({
     status: "",
@@ -855,6 +860,44 @@ export default function InvoicesPage() {
                             className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-navy transition-colors"
                           >
                             <Eye className="h-4 w-4" />
+                          </button>
+                          <button
+                            title="Print invoice"
+                            aria-label={`Print invoice ${inv.invoiceNumber}`}
+                            disabled={printingIds.has(inv.id)}
+                            onClick={async () => {
+                              if (printingIds.has(inv.id)) return;
+                              setPrintingIds((prev) => new Set(prev).add(inv.id));
+                              try {
+                                // mutateAsync (not mutate + per-call options) — TanStack
+                                // Query v5's useMutation is ONE shared observer, so
+                                // per-call onSuccess/onError/onSettled on a concurrent
+                                // .mutate() would be overwritten by whichever row calls
+                                // it last, silently dropping every other row's print,
+                                // error toast and spinner clear (review finding F1).
+                                const { blob } = await downloadPdf.mutateAsync(inv.id);
+                                printPdfBlob(blob);
+                              } catch {
+                                toast({
+                                  title: "Failed to generate PDF",
+                                  description: "Please try again.",
+                                  variant: "error",
+                                });
+                              } finally {
+                                setPrintingIds((prev) => {
+                                  const next = new Set(prev);
+                                  next.delete(inv.id);
+                                  return next;
+                                });
+                              }
+                            }}
+                            className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-navy transition-colors disabled:opacity-50"
+                          >
+                            {printingIds.has(inv.id) ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Printer className="h-4 w-4" />
+                            )}
                           </button>
                           {!isCustomer && inv.status === "DRAFT" && (
                             <button

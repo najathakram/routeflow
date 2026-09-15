@@ -12,12 +12,15 @@ import {
 import { MoneyTextInput } from "../../../../../components/MoneyTextInput";
 import { ProductPickerSheet } from "../../../../../components/ProductPickerSheet";
 import { QtyStepper } from "../../../../../components/QtyStepper";
+import { BarcodeFab } from "../../../../../components/BarcodeFab";
 import {
   useAdminCustomer,
   useAdminInvoice,
   useBusinessSettings,
   type AdminProduct,
 } from "../../../../../lib/api/admin";
+import { archivedMessage, resolveProductByCode } from "../../../../../lib/barcode-resolve";
+import type { ScanOutcome } from "../../../../../lib/scan-loop";
 import { useUpdateInvoice } from "../../../../../lib/api/invoices";
 import { alertInfo } from "../../../../../lib/confirm";
 import { ISO_DATE } from "../../../../../lib/invoice-terms";
@@ -198,6 +201,34 @@ export default function EditInvoiceScreen() {
         promoBaseUnits: null,
       },
     ]);
+  };
+
+  // B265: this screen had no scan entry outside the product picker sheet —
+  // mirrors ProductPickerSheet's own onScanned (same resolve -> archived/
+  // not-found handling), feeding scanned lines through the SAME addCatalogLine
+  // path a tapped pick uses.
+  // F1 (independent review, PR-3): mounted with `continuous`, so the scanner
+  // overlay stays up between scans and needs a ScanOutcome return every path
+  // to show feedback (BarcodeScanner.tsx reads outcome.feedback) -- the
+  // ProductPickerSheet handler this was copied from is a single-shot sheet
+  // (its own setScanOpen(false) makes the fallback toast visible), so the
+  // missing return went unnoticed there but leaves this FAB silent per scan.
+  const onScanned = async (code: string): Promise<ScanOutcome> => {
+    const trimmed = code.trim();
+    if (!trimmed) return;
+    try {
+      const result = await resolveProductByCode<AdminProduct>(trimmed);
+      if (result.archived) {
+        return { feedback: { kind: "error", text: archivedMessage(result.product) } };
+      }
+      if (!result.notFound) {
+        addCatalogLine(result.product);
+        return { feedback: { kind: "added", text: `${result.product.name} added` } };
+      }
+    } catch {
+      // network error → fall through to the toast
+    }
+    return { feedback: { kind: "error", text: `No product for "${trimmed}"` } };
   };
 
   // An unlisted line is just a blank fully-editable card — no modal needed here
@@ -397,127 +428,135 @@ export default function EditInvoiceScreen() {
 
   const showTax = !isTaxExempt && (tenantTaxRate > 0 || lines.some((l) => l.taxRate > 0));
 
+  // BarcodeFab renders as a SIBLING of FormSheet, not a child: FormSheet's
+  // `children` land inside its own internal ScrollView, and an absolutely-
+  // positioned FAB in there would scroll away with the form instead of
+  // floating fixed on screen (matches movements.tsx/adjust-picker.tsx, which
+  // mount it as a sibling of their own ScrollView for the same reason).
   return (
-    <FormSheet
-      title="Edit invoice"
-      subtitle={invoice.invoiceNumber}
-      submitLabel={updateMut.isPending ? "Saving…" : "Save"}
-      submitting={updateMut.isPending}
-      confirmDiscardIfDirty={dirty && !updateMut.isPending}
-      onSubmit={submit}
-    >
-      {isTaxExempt ? (
-        <Text style={styles.exemptHint}>Tax-exempt customer — no tax will be charged.</Text>
-      ) : null}
+    <>
+      <FormSheet
+        title="Edit invoice"
+        subtitle={invoice.invoiceNumber}
+        submitLabel={updateMut.isPending ? "Saving…" : "Save"}
+        submitting={updateMut.isPending}
+        confirmDiscardIfDirty={dirty && !updateMut.isPending}
+        onSubmit={submit}
+      >
+        {isTaxExempt ? (
+          <Text style={styles.exemptHint}>Tax-exempt customer — no tax will be charged.</Text>
+        ) : null}
 
-      {lines.map((l) => (
-        <LineCard
-          key={l.key}
-          line={l}
-          showTax={showTax}
-          rate={rateFor(l)}
-          removable={lines.length > 1}
-          onPatch={(up) => patch(l.key, up)}
-          onSetBoxes={(n) => setBoxes(l, n)}
-          onSetPieces={(n) => setPieces(l, n)}
-          onSetQty={(n) => patch(l.key, { qty: Math.max(0, Math.floor(n)) })}
-          onRemove={() => setLines((ls) => ls.filter((x) => x.key !== l.key))}
+        {lines.map((l) => (
+          <LineCard
+            key={l.key}
+            line={l}
+            showTax={showTax}
+            rate={rateFor(l)}
+            removable={lines.length > 1}
+            onPatch={(up) => patch(l.key, up)}
+            onSetBoxes={(n) => setBoxes(l, n)}
+            onSetPieces={(n) => setPieces(l, n)}
+            onSetQty={(n) => patch(l.key, { qty: Math.max(0, Math.floor(n)) })}
+            onRemove={() => setLines((ls) => ls.filter((x) => x.key !== l.key))}
+          />
+        ))}
+
+        <View style={styles.addRow}>
+          <Pressable style={styles.addBtn} onPress={() => setPickerOpen(true)} hitSlop={4}>
+            <Ionicons name="add-circle-outline" size={16} color={ios.brand} />
+            <Text style={styles.addBtnText}>Add item</Text>
+          </Pressable>
+          <Pressable style={styles.addBtn} onPress={addUnlistedLine} hitSlop={4}>
+            <Ionicons name="create-outline" size={16} color={ios.brand} />
+            <Text style={styles.addBtnText}>Add unlisted item</Text>
+          </Pressable>
+        </View>
+
+        <FormSection title="Details">
+          <FormField label="Issue date" hint="YYYY-MM-DD; blank keeps the original date.">
+            <FormTextInput
+              value={issueDate}
+              onChangeText={setIssueDate}
+              placeholder="YYYY-MM-DD"
+              keyboardType="numbers-and-punctuation"
+            />
+          </FormField>
+          <FormField label="Due date">
+            <FormTextInput
+              value={dueDate}
+              onChangeText={setDueDate}
+              placeholder="YYYY-MM-DD"
+              keyboardType="numbers-and-punctuation"
+            />
+          </FormField>
+          <FormField label="Reference number">
+            <FormTextInput
+              value={referenceNumber}
+              onChangeText={setReferenceNumber}
+              placeholder="PO / reference (optional)"
+            />
+          </FormField>
+          <FormField label="Subject">
+            <FormTextInput
+              value={subject}
+              onChangeText={setSubject}
+              placeholder="Shown on the invoice header (optional)"
+            />
+          </FormField>
+          <View style={styles.moneyRow}>
+            <View style={styles.moneyCol}>
+              <FormField label="Invoice discount ($)">
+                <MoneyTextInput
+                  value={invDiscount}
+                  onChangeValue={setInvDiscount}
+                  placeholder="0.00"
+                  style={styles.moneyInput}
+                  returnKeyType="done"
+                />
+              </FormField>
+            </View>
+            <View style={styles.moneyCol}>
+              <FormField label="Shipping fee ($)">
+                <MoneyTextInput
+                  value={shippingFee}
+                  onChangeValue={setShippingFee}
+                  placeholder="0.00"
+                  style={styles.moneyInput}
+                  returnKeyType="done"
+                />
+              </FormField>
+            </View>
+          </View>
+          <FormField label="Notes">
+            <FormTextInput value={notes} onChangeText={setNotes} multiline placeholder="Notes…" />
+          </FormField>
+          <FormField label="Terms">
+            <FormTextInput value={terms} onChangeText={setTerms} multiline placeholder="Terms…" />
+          </FormField>
+        </FormSection>
+
+        <View style={styles.totalsCard}>
+          <TotalRow label="Subtotal" value={totals.subtotal} />
+          {totals.taxTotal > 0 ? <TotalRow label="Tax" value={totals.taxTotal} /> : null}
+          {totals.discount > 0 ? <TotalRow label="Discount" value={-totals.discount} /> : null}
+          {totals.shippingFee > 0 ? <TotalRow label="Shipping" value={totals.shippingFee} /> : null}
+          <View style={[styles.totalRow, styles.totalRowMain]}>
+            <Text style={styles.totalLabelMain}>Total</Text>
+            <Text style={styles.totalValueMain}>${totals.total.toFixed(2)}</Text>
+          </View>
+        </View>
+
+        <ProductPickerSheet
+          visible={pickerOpen}
+          title="Add item"
+          activeOnly
+          onClose={() => setPickerOpen(false)}
+          onSelect={addCatalogLine}
         />
-      ))}
-
-      <View style={styles.addRow}>
-        <Pressable style={styles.addBtn} onPress={() => setPickerOpen(true)} hitSlop={4}>
-          <Ionicons name="add-circle-outline" size={16} color={ios.brand} />
-          <Text style={styles.addBtnText}>Add item</Text>
-        </Pressable>
-        <Pressable style={styles.addBtn} onPress={addUnlistedLine} hitSlop={4}>
-          <Ionicons name="create-outline" size={16} color={ios.brand} />
-          <Text style={styles.addBtnText}>Add unlisted item</Text>
-        </Pressable>
-      </View>
-
-      <FormSection title="Details">
-        <FormField label="Issue date" hint="YYYY-MM-DD; blank keeps the original date.">
-          <FormTextInput
-            value={issueDate}
-            onChangeText={setIssueDate}
-            placeholder="YYYY-MM-DD"
-            keyboardType="numbers-and-punctuation"
-          />
-        </FormField>
-        <FormField label="Due date">
-          <FormTextInput
-            value={dueDate}
-            onChangeText={setDueDate}
-            placeholder="YYYY-MM-DD"
-            keyboardType="numbers-and-punctuation"
-          />
-        </FormField>
-        <FormField label="Reference number">
-          <FormTextInput
-            value={referenceNumber}
-            onChangeText={setReferenceNumber}
-            placeholder="PO / reference (optional)"
-          />
-        </FormField>
-        <FormField label="Subject">
-          <FormTextInput
-            value={subject}
-            onChangeText={setSubject}
-            placeholder="Shown on the invoice header (optional)"
-          />
-        </FormField>
-        <View style={styles.moneyRow}>
-          <View style={styles.moneyCol}>
-            <FormField label="Invoice discount ($)">
-              <MoneyTextInput
-                value={invDiscount}
-                onChangeValue={setInvDiscount}
-                placeholder="0.00"
-                style={styles.moneyInput}
-                returnKeyType="done"
-              />
-            </FormField>
-          </View>
-          <View style={styles.moneyCol}>
-            <FormField label="Shipping fee ($)">
-              <MoneyTextInput
-                value={shippingFee}
-                onChangeValue={setShippingFee}
-                placeholder="0.00"
-                style={styles.moneyInput}
-                returnKeyType="done"
-              />
-            </FormField>
-          </View>
-        </View>
-        <FormField label="Notes">
-          <FormTextInput value={notes} onChangeText={setNotes} multiline placeholder="Notes…" />
-        </FormField>
-        <FormField label="Terms">
-          <FormTextInput value={terms} onChangeText={setTerms} multiline placeholder="Terms…" />
-        </FormField>
-      </FormSection>
-
-      <View style={styles.totalsCard}>
-        <TotalRow label="Subtotal" value={totals.subtotal} />
-        {totals.taxTotal > 0 ? <TotalRow label="Tax" value={totals.taxTotal} /> : null}
-        {totals.discount > 0 ? <TotalRow label="Discount" value={-totals.discount} /> : null}
-        {totals.shippingFee > 0 ? <TotalRow label="Shipping" value={totals.shippingFee} /> : null}
-        <View style={[styles.totalRow, styles.totalRowMain]}>
-          <Text style={styles.totalLabelMain}>Total</Text>
-          <Text style={styles.totalValueMain}>${totals.total.toFixed(2)}</Text>
-        </View>
-      </View>
-
-      <ProductPickerSheet
-        visible={pickerOpen}
-        title="Add item"
-        activeOnly
-        onClose={() => setPickerOpen(false)}
-        onSelect={addCatalogLine}
-      />
-    </FormSheet>
+      </FormSheet>
+      <BarcodeFab onScanned={onScanned} continuous hidden={pickerOpen} />
+    </>
   );
 }
 

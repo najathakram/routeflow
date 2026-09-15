@@ -93,12 +93,31 @@ export interface CreateReturnDto {
   notes?: string;
   items: CreateReturnItemDto[];
   photoUrls?: string[];
+  /**
+   * Sent as the `Idempotency-Key` HEADER (never in the body — the server reads it off the
+   * header only, `returns.controller.ts`). A duplicate POST under the same key — a remounted
+   * screen, a deliberate re-issue, an offline-queue replay — returns the ORIGINAL return
+   * instead of creating a second one, which is what keeps a retry from double-crediting the
+   * customer. Derive it with `lib/return-submit-key#returnSubmitKey`.
+   */
+  idempotencyKey?: string;
 }
 
 export function useCreateReturn() {
   const qc = useQueryClient();
   return useMutation<Return, Error, CreateReturnDto>({
-    mutationFn: (dto) => apiClient.post("/returns", dto).then((r) => r.data),
+    // `idempotencyKey` travels as a HEADER, never in the body (the same idiom as
+    // `useCreateOrderAsDriver` in lib/api/orders.ts) — api-client also preserves that header
+    // across an offline-queue replay, so a replayed return collapses onto the original
+    // instead of minting a second credit.
+    mutationFn: ({ idempotencyKey, ...body }) =>
+      apiClient
+        .post(
+          "/returns",
+          body,
+          idempotencyKey ? { headers: { "idempotency-key": idempotencyKey } } : {},
+        )
+        .then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["returns"] }),
   });
 }

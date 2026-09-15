@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import { ios } from "@routeflow/ui/tokens";
 import { NavAction, NavBackButton, NavBar, SegmentedControl } from "@routeflow/ui/mobile/ios";
@@ -46,7 +47,10 @@ import {
   reconciledAmountDue,
   shortPickCategoryTax,
 } from "../../../../../lib/run-money";
-import { classifyMutationError } from "../../../../../lib/offline-errors";
+import {
+  classifyMutationError,
+  isStopAlreadyCompletedError,
+} from "../../../../../lib/offline-errors";
 import {
   buildDeliveries,
   freeUnitSizeFor,
@@ -92,6 +96,7 @@ function fullOrderTotal(order: RouteRunOrder): number {
 
 export default function PaymentScreen() {
   const router = useRouter();
+  const qc = useQueryClient();
   const params = useLocalSearchParams<{ stopId: string; runId?: string }>();
   const stopId = params.stopId;
 
@@ -507,6 +512,20 @@ export default function PaymentScreen() {
           );
           return;
         }
+        router.replace("/(driver)/route");
+        return;
+      }
+      // REG-DRIVER-DUR-C: completeWithPayment mints a fresh idempotency key on
+      // every manual retry, so RF-019 cannot collapse a retry after a lost
+      // response — but the server refuses ANY write once the stop is
+      // COMPLETED, before its transaction. So this 400 on a retry means the
+      // FIRST attempt already landed; treat it as success (refresh + navigate)
+      // instead of surfacing the raw server message and re-arming the button.
+      if (isStopAlreadyCompletedError(e)) {
+        await qc.invalidateQueries({ queryKey: ["route-runs", runId] });
+        await qc.invalidateQueries({ queryKey: ["route-runs", "active"] });
+        setClosing(false);
+        showToast("Stop already completed");
         router.replace("/(driver)/route");
         return;
       }

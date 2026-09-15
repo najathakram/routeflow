@@ -11,6 +11,7 @@ import { PlatformPricingService } from "../billing/platform-pricing.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { BillingEventService } from "../billing/billing-event.service";
 import { MeterService } from "../billing/meter.service";
+import { MrrService } from "../billing/mrr.service";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -34,6 +35,7 @@ describe("PlatformAdminService — audit provenance", () => {
   let billingEventService: { emit: jest.Mock };
   let meterService: { readAll: jest.Mock };
   let platformPricingService: { resolveTenantPricing: jest.Mock };
+  let mrrService: { computeOverview: jest.Mock; priceTenant: jest.Mock };
 
   const ADMIN_ID = "super-1";
   const TENANT_ID = "tenant-1";
@@ -44,6 +46,8 @@ describe("PlatformAdminService — audit provenance", () => {
     (prisma as any).tenantSubscription = {
       upsert: jest.fn().mockResolvedValue({}),
       findUnique: jest.fn().mockResolvedValue(null),
+      // getBillingOverview()'s subscriptions list (REG-743-N4).
+      findMany: jest.fn().mockResolvedValue([]),
       // B216: updateStatus()'s admin-reactivation downgrade-disarm write.
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       // ADMIN-UPDATEPLAN-1: updatePlan()'s downgrade-scheduling write (mirrors
@@ -71,6 +75,23 @@ describe("PlatformAdminService — audit provenance", () => {
     billingEventService = { emit: jest.fn().mockResolvedValue({}) };
     meterService = { readAll: jest.fn() };
     platformPricingService = { resolveTenantPricing: jest.fn() };
+    // Default: zeroed overview — the getStats-enrichment describe block below overrides
+    // per-case to prove getStats() reads MrrService, not a re-derived estimate.
+    mrrService = {
+      computeOverview: jest.fn().mockResolvedValue({
+        mrr: 0,
+        baseMrr: 0,
+        addonMrr: 0,
+        discountTotal: 0,
+        payingTenants: 0,
+        trialTenants: 0,
+        readOnlyTenants: 0,
+        byPlan: [],
+        ledgerMrr: 0,
+        momDelta: 0,
+      }),
+      priceTenant: jest.fn().mockResolvedValue(0),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -97,6 +118,7 @@ describe("PlatformAdminService — audit provenance", () => {
         { provide: MeterService, useValue: meterService },
         { provide: TenantStatusGuard, useValue: { invalidate: jest.fn() } },
         { provide: AuditService, useValue: { log: auditLog } },
+        { provide: MrrService, useValue: mrrService },
       ],
     }).compile();
 
@@ -933,20 +955,15 @@ describe("PlatformAdminService — audit provenance", () => {
   });
 
   describe("getStats enrichment", () => {
-    it("computes estMrrUsd from basePriceSnapshot else the catalog price for the tenant's normalized planKey — a GROWTH tenant contributes its real price, never $0", async () => {
+    // Phase 0 T9: getStats() no longer re-derives MRR from the catalog price — it reads
+    // MrrService.computeOverview() as the one MRR engine (already class-scoped to
+    // PRODUCTION, see mrr.service.spec.ts). `estMrrUsd` stays as an alias of `mrr` until
+    // Phase 0 T12 updates the dashboard to read the new fields directly.
+    it("sources MRR from MrrService, not the legacy estimator", async () => {
       prisma.tenant.findMany.mockImplementation((args: any) => {
         if (args?.where?.status?.not === "CANCELLED") {
           return Promise.resolve([
-            // Grandfathered: keeps its pinned $59 snapshot even though the catalog
-            // now prices STARTER at $99.
-            {
-              status: "ACTIVE",
-              plan: "STARTER",
-              subscription: { planKey: "STARTER", basePriceSnapshot: 59 },
-            },
-            // No snapshot; only the legacy `plan` enum. planKeyFromEnum("TEAM") now
-            // maps to GROWTH (the v8 rename) — this is exactly what
-            // STOPGAP_PLAN_MONTHLY_USD priced at $0.
+            { status: "ACTIVE", plan: "STARTER", subscription: { planKey: "STARTER" } },
             { status: "ACTIVE", plan: "TEAM", subscription: null },
             // TRIAL: counted in planBreakdown, excluded from MRR.
             { status: "TRIAL", plan: "STARTER", subscription: null },
@@ -954,46 +971,44 @@ describe("PlatformAdminService — audit provenance", () => {
         }
         return Promise.resolve([]);
       });
-      planCatalogService.getPublishedVersion.mockResolvedValue({
-        definitions: [
-          { planKey: "STARTER", monthlyPrice: 99 },
-          { planKey: "GROWTH", monthlyPrice: 249 },
-          { planKey: "SCALE", monthlyPrice: 499 },
-          { planKey: "ENTERPRISE", monthlyPrice: null },
-        ],
+      mrrService.computeOverview.mockResolvedValue({
+        mrr: 748,
+        baseMrr: 748,
+        addonMrr: 0,
+        discountTotal: 0,
+        payingTenants: 2,
+        trialTenants: 1,
+        readOnlyTenants: 0,
+        byPlan: [],
+        ledgerMrr: 748,
+        momDelta: 0,
       });
 
       const stats = await service.getStats();
 
-      expect(stats.estMrrUsd).toBe(59 + 249);
+      expect(stats.mrr).toBe(748);
+      expect(stats.ledgerMrr).toBe(748);
+      // estMrrUsd is an alias of the MrrService total (web admin dashboard still reads it
+      // until Phase 0 T12) — never a re-derived estimate.
+      expect(stats.estMrrUsd).toBe(stats.mrr);
+      expect(mrrService.computeOverview).toHaveBeenCalled();
       expect(stats.planBreakdown).toEqual({ STARTER: 2, GROWTH: 1 });
     });
 
-    it("prices tenants against a still-published legacy catalog — TEAM/BUSINESS rows answer GROWTH/SCALE lookups", async () => {
-      prisma.tenant.findMany.mockImplementation((args: any) => {
-        if (args?.where?.status?.not === "CANCELLED") {
-          return Promise.resolve([
-            { status: "ACTIVE", plan: "TEAM", subscription: null },
-            { status: "ACTIVE", plan: "PROFESSIONAL", subscription: null },
-          ]);
-        }
-        return Promise.resolve([]);
-      });
-      // The publish script is a manual post-deploy step: until it runs, the
-      // published version is still keyed TEAM/BUSINESS.
-      planCatalogService.getPublishedVersion.mockResolvedValue({
-        definitions: [
-          { planKey: "STARTER", monthlyPrice: 59 },
-          { planKey: "TEAM", monthlyPrice: 149 },
-          { planKey: "BUSINESS", monthlyPrice: 349 },
-          { planKey: "ENTERPRISE", monthlyPrice: null },
-        ],
-      });
+    it("scopes every tenant-count query in getStats() by class: PRODUCTION", async () => {
+      prisma.tenant.findMany.mockResolvedValue([]);
 
-      const stats = await service.getStats();
+      await service.getStats();
 
-      expect(stats.estMrrUsd).toBe(149 + 349);
-      expect(stats.planBreakdown).toEqual({ GROWTH: 1, SCALE: 1 });
+      // tenant.count is called for total/active/trial/suspended/newThisMonth — every call
+      // except the (tenantless) SUPER_ADMIN user count must carry class: "PRODUCTION".
+      for (const call of (prisma.tenant.count as jest.Mock).mock.calls) {
+        expect(call[0].where.class).toBe("PRODUCTION");
+      }
+      const planScanCall = (prisma.tenant.findMany as jest.Mock).mock.calls.find(
+        (c: any[]) => c[0]?.where?.status?.not === "CANCELLED",
+      );
+      expect(planScanCall[0].where.class).toBe("PRODUCTION");
     });
 
     it("attaches userCount to trials and a human riskReason to at-risk tenants", async () => {
@@ -1029,6 +1044,104 @@ describe("PlatformAdminService — audit provenance", () => {
       const stats = await service.getStats();
       expect(stats.trialsExpiringSoon[0].userCount).toBe(4);
       expect(stats.atRiskTenants[0].riskReason).toBe("Suspended");
+    });
+  });
+
+  describe("getTenant — estMrrUsd card (REG-743-N1)", () => {
+    // N1/L-119: the card must price through MrrService.priceTenant() — the SAME function
+    // computeOverview() sums — never the retired catalog-fallback estimator
+    // (_monthlyPriceUsd/_catalogPriceByPlanKey, deleted). A DEMO tenant or a snapshot-less
+    // ACTIVE tenant must show $0 here, matching what they contribute to the dashboard total,
+    // never a nonzero catalog-price guess.
+    it("REG-743-N1 prices the card through MrrService.priceTenant, never the catalog", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+        plan: "GROWTH",
+        subscription: { planKey: "GROWTH", basePriceSnapshot: null },
+      } as any);
+      mrrService.priceTenant.mockResolvedValue(249);
+
+      const tenant = await service.getTenant(TENANT_ID);
+
+      expect(mrrService.priceTenant).toHaveBeenCalledWith(TENANT_ID);
+      expect(tenant.estMrrUsd).toBe(249);
+      // The catalog-fallback path must be completely gone — nothing here should ever
+      // consult the published catalog for a single tenant's card again.
+      expect(planCatalogService.getPublishedVersion).not.toHaveBeenCalled();
+    });
+
+    // Review finding: this proves getTenant() RELAYS priceTenant()'s answer faithfully
+    // (no re-derivation, no override) — it does NOT itself exercise the DEMO/class gate,
+    // which lives entirely inside priceTenant() and is proven non-vacuously in
+    // mrr.service.spec.ts's own REG-743-N1 case (real DEMO/deleted/missing fixtures).
+    // getTenant() no longer reads tenant.class or tenant.subscription.basePriceSnapshot
+    // at all, so a fixture "shaped like" a DEMO tenant here would prove nothing beyond
+    // what the first REG-743-N1 case above already does.
+    it("REG-743-N1 relays whatever priceTenant() returns, without re-deriving or overriding it (e.g. a DEMO tenant priced $0)", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme-demo",
+        status: "ACTIVE",
+        plan: "GROWTH",
+        subscription: { planKey: "GROWTH", basePriceSnapshot: null },
+      } as any);
+      mrrService.priceTenant.mockResolvedValue(0);
+
+      const tenant = await service.getTenant(TENANT_ID);
+
+      expect(tenant.estMrrUsd).toBe(0);
+    });
+
+    it("REG-743-N1 never falls back to the catalog even when priceTenant() answers $0", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme-pilot",
+        status: "ACTIVE",
+        plan: "SCALE",
+        subscription: { planKey: "SCALE", basePriceSnapshot: null },
+      } as any);
+      mrrService.priceTenant.mockResolvedValue(0);
+      // Even if the catalog WOULD price SCALE at something nonzero, the card must never
+      // fall back to it — this spy having zero calls is itself part of the proof.
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        definitions: [{ planKey: "SCALE", monthlyPrice: 499 }],
+      });
+
+      const tenant = await service.getTenant(TENANT_ID);
+
+      expect(tenant.estMrrUsd).toBe(0);
+      expect(planCatalogService.getPublishedVersion).not.toHaveBeenCalled();
+    });
+  });
+
+  // N4: neither figure had ANY class filter on head — a qa-*/e2e-*/routeflow-demo tenant's
+  // subscription/trial/creation-month could move the conversion rate or growth chart the
+  // admin dashboard renders next to MrrService's PRODUCTION-only revenue numbers.
+  describe("getBillingOverview / getGrowthStats — PRODUCTION scope (REG-743-N4)", () => {
+    it("REG-743-N4 getBillingOverview scopes every tenant query by class PRODUCTION", async () => {
+      (prisma as any).tenantSubscription.findMany.mockResolvedValue([]);
+      prisma.tenant.count.mockResolvedValue(0);
+
+      await service.getBillingOverview();
+
+      const subsArgs = (prisma as any).tenantSubscription.findMany.mock.calls[0][0];
+      expect(subsArgs.where.tenant.class).toBe("PRODUCTION");
+      for (const call of (prisma.tenant.count as jest.Mock).mock.calls) {
+        expect(call[0].where.class).toBe("PRODUCTION");
+      }
+    });
+
+    it("REG-743-N4 getGrowthStats scopes every monthly count by class PRODUCTION", async () => {
+      prisma.tenant.count.mockResolvedValue(0);
+
+      await service.getGrowthStats(2);
+
+      expect((prisma.tenant.count as jest.Mock).mock.calls.length).toBeGreaterThan(0);
+      for (const call of (prisma.tenant.count as jest.Mock).mock.calls) {
+        expect(call[0].where.class).toBe("PRODUCTION");
+      }
     });
   });
 
@@ -1143,6 +1256,90 @@ describe("PlatformAdminService — audit provenance", () => {
         }),
       );
       expect((prisma as any).driver.create).not.toHaveBeenCalled();
+    });
+  });
+
+  // Phase 0 Task 10: the admin Create Tenant path used to hardcode a 7-day trial
+  // independent of TRIAL_LENGTH_DAYS (public self-signup's constant); it now defaults to
+  // that shared constant and accepts an explicit override.
+  describe("createTenant — trial length", () => {
+    const validCreateDto = {
+      slug: "acme-wholesale",
+      businessName: "Acme Wholesale",
+      adminEmail: "owner@acme.example.com",
+      adminUsername: "acme_owner",
+    } as any;
+
+    beforeEach(() => {
+      prisma.tenant.findUnique.mockResolvedValue(null); // slug not taken
+      prisma.user.findFirst.mockResolvedValue(null); // no existing admin collision
+      prisma.tenant.create.mockImplementation((args: any) =>
+        Promise.resolve({ id: TENANT_ID, ...args.data }),
+      );
+      prisma.user.create.mockResolvedValue({ id: "admin-1" } as any);
+    });
+
+    it("defaults trial length to TRIAL_LENGTH_DAYS when no override is given", async () => {
+      const result = await service.createTenant(validCreateDto);
+
+      const expectedMs = 14 * 24 * 60 * 60 * 1000; // TRIAL_LENGTH_DAYS
+      const actualMs = (result.trialEndsAt as Date).getTime() - Date.now();
+      expect(Math.abs(actualMs - expectedMs)).toBeLessThan(5000);
+    });
+
+    it("honors an explicit trialLengthDays override", async () => {
+      const result = await service.createTenant({ ...validCreateDto, trialLengthDays: 30 });
+
+      const expectedMs = 30 * 24 * 60 * 60 * 1000;
+      const actualMs = (result.trialEndsAt as Date).getTime() - Date.now();
+      expect(Math.abs(actualMs - expectedMs)).toBeLessThan(5000);
+    });
+  });
+
+  // F7 (Phase 0 fix round, REG-743-F7): `Tenant.class` defaults to PRODUCTION at the schema
+  // level (tenancy.prisma:87) and createTenant() never set it explicitly, so every new tenant
+  // fail-opened onto PRODUCTION regardless of its slug. createTenant must now resolve a class
+  // from `dto.class ?? classifyTenantSlug(slug)`, write it explicitly on tx.tenant.create, and
+  // reject a caller-supplied class of PRODUCTION when the slug's own classifier disagrees
+  // (fail closed on contradiction) rather than silently trusting the caller.
+  describe("createTenant — explicit tenant class (F7)", () => {
+    const baseDto = {
+      businessName: "Acme Wholesale",
+      adminEmail: "owner@acme.example.com",
+      adminUsername: "acme_owner",
+    } as any;
+
+    beforeEach(() => {
+      prisma.tenant.findUnique.mockResolvedValue(null); // slug not taken
+      prisma.user.findFirst.mockResolvedValue(null); // no existing admin collision
+      prisma.tenant.create.mockImplementation((args: any) =>
+        Promise.resolve({ id: TENANT_ID, ...args.data }),
+      );
+      prisma.user.create.mockResolvedValue({ id: "admin-1" } as any);
+    });
+
+    it("REG-743-F7 createTenant writes class TEST for a qa-* slug", async () => {
+      await service.createTenant({ ...baseDto, slug: "qa-smoke-1" });
+
+      expect(prisma.tenant.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ class: "TEST" }) }),
+      );
+    });
+
+    it("REG-743-F7 createTenant writes class PRODUCTION for an ordinary slug", async () => {
+      await service.createTenant({ ...baseDto, slug: "acme-wholesale" });
+
+      expect(prisma.tenant.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ class: "PRODUCTION" }) }),
+      );
+    });
+
+    it("REG-743-F7 rejects class PRODUCTION on an e2e-* slug", async () => {
+      await expect(
+        service.createTenant({ ...baseDto, slug: "e2e-smoke-1", class: "PRODUCTION" } as any),
+      ).rejects.toThrow(/production/i);
+
+      expect(prisma.tenant.create).not.toHaveBeenCalled();
     });
   });
 
