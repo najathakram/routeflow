@@ -838,3 +838,18 @@ apps/web/app --include=*.tsx -A1 | grep -B1 onSuccess` — narrow to `.map()`-re
   `backfill-subscription-reconciliation.mjs` requires `--confirm-count` matching the scan when
   `--apply` runs unscoped. Sibling fix same round: the write's `updateMany` re-asserts tenant
   state, closing a scan-to-write race.
+
+### L-160 · 2026-09-15 · domain · T14 catalog-driven plan select vs server's PLAN_KEYS allow-list (REG-743-F1)
+
+- **Symptom:** the catalog-driven plan `<select>` on `admin/tenants/new/page.tsx` rendered every
+  row `fetchPlanCatalog()` returned; `create-tenant.dto.ts` validates `@IsIn(PLAN_KEYS)`, a
+  narrower allow-list, so a legacy or not-yet-launched catalog row would 400 on submit.
+- **Root cause:** two sources of truth for "which plans can this form offer" — the published
+  pricing catalog (business config, can carry legacy/future rows) and the server's accepted-value
+  enum — were conflated; the UI trusted the broader one.
+- **Lesson:** **When a form's options come from a dynamic/business-config source rather than a
+  hardcoded enum, filter to whatever narrower set the server actually validates against — a
+  catalog superset is not a submittable set.**
+- **Guard:** `page.test.tsx`'s REG-743-F1 cases — an extra non-`PLAN_KEYS` catalog row is excluded
+  from rendered options; a catalog with zero `PLAN_KEYS`-eligible rows falls back to exactly
+  `PLAN_KEYS`.
