@@ -135,6 +135,29 @@ describe("REG-DRIVER-DURABILITY-A: stopCartStore persists under a user-scoped ke
   });
 });
 
+describe("REG-DRIVER-DURABILITY-B: returnSubmissionStore persists likewise", () => {
+  const src = stripComments(
+    readFileSync(join(__dirname, "..", "store", "returnSubmissionStore.ts"), "utf8"),
+  );
+
+  it("wires zustand's persist middleware, built on the podStore.ts recipe", () => {
+    expect(src).toMatch(/from\s+["']zustand\/middleware["']/);
+    expect(src).toMatch(/persist\s*\(/);
+  });
+
+  it("persists through the shared user-scoped storage and skips import-time hydration", () => {
+    const persistMatch = src.match(/persist\s*\(([\s\S]*)$/);
+    expect(persistMatch).not.toBeNull();
+    const persistBlock = persistMatch ? persistMatch[1] : "";
+    expect(persistBlock).toMatch(/createJSONStorage\(\s*\(\)\s*=>\s*userScopedStorage\s*\)/);
+    expect(persistBlock).toMatch(/skipHydration\s*:\s*true/);
+  });
+
+  it("exposes a reset() so sign-out teardown can clear it (RULINGS.md R1)", () => {
+    expect(src).toMatch(/\breset\s*:\s*\(\s*\)\s*=>\s*(?:set\s*\(|\{)/);
+  });
+});
+
 describe("REG-B136-C: pendingPodArtifacts skips artifacts the server already holds", () => {
   const dataUrlA = "data:image/jpeg;base64,AAAA";
   const dataUrlB = "data:image/jpeg;base64,BBBB";
@@ -262,16 +285,18 @@ describe("REG-B136-E: every sign-in path explicitly rehydrates the user-scoped s
  * REG-B136-G — behavioral counterpart to REG-B136-E above: `login()` /
  * `loginWithGoogle()` / `initialize()` calling `rehydrateUserScopedStores()`
  * only proves the ONE call site exists, not that it actually reaches all
- * THREE skipHydration stores. `lib/session-hydrate.ts` is the sole hydration
- * point (all three stores set `skipHydration: true`, see REG-B136-A/B above,
- * plus `store/stopCartStore.ts` added by the driver-durability lane) — an
- * emptied body here turns this file red without touching auth-store.ts at
- * all, which is exactly the gap REG-B136-E's source-text pin cannot see.
+ * FOUR skipHydration stores. `lib/session-hydrate.ts` is the sole hydration
+ * point (all four stores set `skipHydration: true`, see REG-B136-A/B above,
+ * plus `store/stopCartStore.ts`/`store/returnSubmissionStore.ts` added by the
+ * driver-durability lane) — an emptied body here turns this file red without
+ * touching auth-store.ts at all, which is exactly the gap REG-B136-E's
+ * source-text pin cannot see.
  */
-describe("REG-B136-G: rehydrateUserScopedStores hydrates all three skipHydration stores", () => {
+describe("REG-B136-G: rehydrateUserScopedStores hydrates all four skipHydration stores", () => {
   const podRehydrate = jest.fn();
   const runSettlementRehydrate = jest.fn();
   const stopCartRehydrate = jest.fn();
+  const returnSubmissionRehydrate = jest.fn();
 
   jest.mock("../store/podStore", () => ({
     usePodStore: { persist: { rehydrate: (...args: unknown[]) => podRehydrate(...args) } },
@@ -286,15 +311,21 @@ describe("REG-B136-G: rehydrateUserScopedStores hydrates all three skipHydration
       persist: { rehydrate: (...args: unknown[]) => stopCartRehydrate(...args) },
     },
   }));
+  jest.mock("../store/returnSubmissionStore", () => ({
+    useReturnSubmissionStore: {
+      persist: { rehydrate: (...args: unknown[]) => returnSubmissionRehydrate(...args) },
+    },
+  }));
 
   beforeEach(() => {
     jest.resetModules();
     podRehydrate.mockReset();
     runSettlementRehydrate.mockReset();
     stopCartRehydrate.mockReset();
+    returnSubmissionRehydrate.mockReset();
   });
 
-  it("calls persist.rehydrate() on ALL THREE stores — TODAY (emptied body): 0 calls on any", async () => {
+  it("calls persist.rehydrate() on ALL FOUR stores — TODAY (emptied body): 0 calls on any", async () => {
     const { rehydrateUserScopedStores } = await import("../lib/session-hydrate");
 
     await rehydrateUserScopedStores();
@@ -302,6 +333,7 @@ describe("REG-B136-G: rehydrateUserScopedStores hydrates all three skipHydration
     expect(podRehydrate).toHaveBeenCalledTimes(1);
     expect(runSettlementRehydrate).toHaveBeenCalledTimes(1);
     expect(stopCartRehydrate).toHaveBeenCalledTimes(1);
+    expect(returnSubmissionRehydrate).toHaveBeenCalledTimes(1);
   });
 
   it("a rejecting rehydrate on one store never blocks the others, or the caller — best-effort per store", async () => {
@@ -312,5 +344,6 @@ describe("REG-B136-G: rehydrateUserScopedStores hydrates all three skipHydration
 
     expect(runSettlementRehydrate).toHaveBeenCalledTimes(1);
     expect(stopCartRehydrate).toHaveBeenCalledTimes(1);
+    expect(returnSubmissionRehydrate).toHaveBeenCalledTimes(1);
   });
 });

@@ -4016,6 +4016,179 @@ describe("OrdersService", () => {
       expect(updateArg.data.unitPrice).toBe(4.99);
     });
 
+    it("REG-MSCAN-M1-server: a reason-only UPDATE persists the new reason and leaves unitPrice/priceType untouched", async () => {
+      // F2 server half: overrideReason used to live inside the isManualOverride
+      // branch, so a reason-only edit (price unchanged, isManualOverride false)
+      // silently dropped the new reason. Mirrors the client-side fix in
+      // order-item-diff.ts (F3 mobile).
+      prisma.order.findUnique.mockResolvedValue(draftOrder);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 14.97, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [
+            { id: "li-1", action: "UPDATE", qty: 3, unitPrice: 4.99, overrideReason: "damaged" },
+          ],
+        },
+        operatorPayload,
+      );
+
+      const updateArg = prisma.orderItem.update.mock.calls[0][0] as any;
+      expect(updateArg.data.overrideReason).toBe("damaged");
+      expect(updateArg.data.unitPrice).toBe(4.99);
+      expect(updateArg.data).not.toHaveProperty("priceType");
+      expect(updateArg.data).not.toHaveProperty("originalPrice");
+      // F4 (independent review, PR-2): overriddenBy must move WITH overrideReason — a
+      // reason-only edit that writes no attribution leaves an audit/dispute pointing at
+      // whoever last touched the (untouched, here) isManualOverride branch instead of the
+      // operator who actually made THIS edit.
+      expect(updateArg.data.overriddenBy).toBe("user-op");
+    });
+
+    it("REG-MSCAN-M1-server-noqty: a QTY-LESS reason-only UPDATE (no qty/boxes/pieces at all) still persists the reason + attribution, and touches NOTHING else (N4)", async () => {
+      // F3 (independent review round 1, PR-2): the branch gate used to be
+      // `item.qty !== undefined || item.boxes != null || item.pieces != null` — a payload
+      // carrying ONLY overrideReason (mobile's "flag damaged, don't touch qty" edit) matched
+      // NONE of those and never reached the reason-write below at all, so
+      // prisma.orderItem.update was never even called. This is the exact payload shape the
+      // qty-inclusive REG-MSCAN-M1-server case above does not exercise.
+      //
+      // N4 (independent review round 2, PR-2): once reachable, this payload shape must take a
+      // fully separate, MINIMAL write — not fall through into the qty/box normalization logic
+      // and re-derive qty/unitPrice from the line's stored values. See the box-split case below
+      // for why "falls back to the stored value" is not actually safe.
+      prisma.order.findUnique.mockResolvedValue(draftOrder);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 14.97, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-1", action: "UPDATE", overrideReason: "damaged" }] },
+        operatorPayload,
+      );
+
+      const updateArg = prisma.orderItem.update.mock.calls[0][0] as any;
+      expect(updateArg.where).toEqual({ id: "li-1" });
+      expect(updateArg.data.overrideReason).toBe("damaged");
+      expect(updateArg.data.overriddenBy).toBe("user-op");
+      // Nothing qty/box/price-related is even COMPUTED for this payload shape, let alone written.
+      expect(updateArg.data).not.toHaveProperty("qty");
+      expect(updateArg.data).not.toHaveProperty("boxes");
+      expect(updateArg.data).not.toHaveProperty("pieces");
+      expect(updateArg.data).not.toHaveProperty("unitsPerBox");
+      expect(updateArg.data).not.toHaveProperty("unitPrice");
+      expect(updateArg.data).not.toHaveProperty("subtotal");
+      expect(updateArg.data).not.toHaveProperty("priceType");
+      expect(updateArg.data).not.toHaveProperty("originalPrice");
+      expect(updateArg.data).not.toHaveProperty("promoFreeUnits");
+      expect(updateArg.data).not.toHaveProperty("name");
+      // And no product lookup either — the whole point is this payload shape never needs one.
+      expect(prisma.product.findFirst).not.toHaveBeenCalled();
+    });
+
+    it("N4 (independent review round 2, PR-2): a REASON-ONLY edit of a box-split line with NO unitsPerBox snapshot never re-derives qty/boxes/pieces from a live product lookup", async () => {
+      // The line's OWN unitsPerBox snapshot is missing — under the pre-N4 code this fell back to
+      // a LIVE product lookup + normalizeBoxesPieces re-derivation for EVERY edit reaching this
+      // branch, including a reason-only one. If the live product's box size has since changed
+      // (a real possibility — box size is a catalog setting, not sale-time-frozen), that
+      // re-derivation can silently produce different boxes/pieces/subtotal than what is stored.
+      // A reason-only edit must never reach that logic at all, so a live product handed back a
+      // DELIBERATELY different box size here would prove nothing changed if it fired.
+      const boxSplitOrder = {
+        ...draftOrder,
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: "prod-1",
+            qty: 24,
+            boxes: 2,
+            pieces: null,
+            unitPrice: 10,
+            subtotal: 240,
+            status: "PENDING",
+            priceType: "STANDARD",
+            originalPrice: null,
+            // unitsPerBox deliberately OMITTED — no cached snapshot, the exact gap that used to
+            // trigger a live lookup.
+          },
+        ],
+      };
+      prisma.order.findUnique.mockResolvedValue(boxSplitOrder);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 240, status: "PENDING" }]);
+      prisma.product.findFirst.mockResolvedValue({
+        unitsPerBox: 6,
+        pricePerUnit: 10,
+        category: null,
+      });
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-1", action: "UPDATE", overrideReason: "damaged" }] },
+        operatorPayload,
+      );
+
+      expect(prisma.product.findFirst).not.toHaveBeenCalled();
+      const updateArg = prisma.orderItem.update.mock.calls[0][0] as any;
+      expect(updateArg.data).not.toHaveProperty("qty");
+      expect(updateArg.data).not.toHaveProperty("boxes");
+      expect(updateArg.data).not.toHaveProperty("pieces");
+      expect(updateArg.data).not.toHaveProperty("unitsPerBox");
+      expect(updateArg.data).not.toHaveProperty("unitPrice");
+      expect(updateArg.data).not.toHaveProperty("subtotal");
+      expect(updateArg.data.overrideReason).toBe("damaged");
+      expect(updateArg.data.overriddenBy).toBe("user-op");
+    });
+
+    it("round 3 finding 1 (independent review, PR-2): a reason/notes-only edit that ALSO renames an unlisted line must still write the new name — the N4 fast path must not drop it", async () => {
+      // N4's fast path (added round 2) writes only overrideReason/overriddenBy/notes — it never
+      // carried `item.name` through, so an unlisted line's rename silently vanished whenever the
+      // SAME payload also included a reason or notes (which is exactly what routes a rename
+      // through this branch at all: the outer gate has no `item.name` clause of its own).
+      const unlistedOrder = {
+        ...draftOrder,
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: null,
+            name: "Old Name",
+            qty: 3,
+            unitPrice: 4.99,
+            subtotal: 14.97,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+            priceType: "STANDARD",
+            originalPrice: null,
+          },
+        ],
+      };
+      prisma.order.findUnique.mockResolvedValue(unlistedOrder);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 14.97, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [
+            {
+              id: "li-1",
+              action: "UPDATE",
+              name: "New Name",
+              notes: "renamed at customer's request",
+            },
+          ],
+        },
+        operatorPayload,
+      );
+
+      const updateArg = prisma.orderItem.update.mock.calls[0][0] as any;
+      expect(updateArg.data.name).toBe("New Name");
+      expect(updateArg.data.notes).toBe("renamed at customer's request");
+      expect(updateArg.data).not.toHaveProperty("qty");
+      expect(updateArg.data).not.toHaveProperty("unitPrice");
+    });
+
     it("applies a price override on a PENDING order (not just DRAFT)", async () => {
       // The web + mobile UIs now expose price/discount editing on PENDING and
       // CONFIRMED orders, not only DRAFT. The service must honor the override on

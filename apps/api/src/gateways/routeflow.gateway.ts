@@ -125,6 +125,17 @@ export interface BuyerPaymentRequestPayload {
   requestedAt: string;
 }
 
+/**
+ * A catalog write — a product was created, edited, archived, or bulk-written.
+ * Operators-room only: handleConnection joins CUSTOMER sockets to a per-customer
+ * room, so no tenant-wide customer room exists to carry this to buyer catalogs.
+ */
+export interface ProductUpdatedPayload {
+  /** The product that changed; null for a bulk write (clients invalidate the family). */
+  productId: string | null;
+  action: "created" | "updated" | "archived" | "bulk";
+}
+
 /** CRM (GoHighLevel) lead handoff — spec R24. Never sent for a dry-run preview. */
 export interface CrmHandoffPayload {
   customerId: string;
@@ -228,6 +239,11 @@ export class RouteFlowGateway implements OnGatewayConnection, OnGatewayDisconnec
 
   emitLowStock(tenantId: string | null, payload: LowStockPayload) {
     this.server.to(this.tenantRoom(tenantId, "operators")).emit("inventory.low.stock", payload);
+  }
+
+  /** Catalog write — operators' product caches (scan, picker, list) are stale. */
+  emitProductUpdated(tenantId: string | null, payload: ProductUpdatedPayload) {
+    this.server.to(this.tenantRoom(tenantId, "operators")).emit("product.updated", payload);
   }
 
   emitOrderCreated(tenantId: string | null, payload: OrderCreatedPayload) {

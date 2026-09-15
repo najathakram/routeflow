@@ -68,6 +68,10 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
     });
 
     it("exports LOCK_FAMILIES as the closed list of families that may own a pool", () => {
+      // F5 round 1 (independent review round 1, PR-2) briefly added "idempotency" here;
+      // round 2 (N1, independent review round 2) retired it — ReturnsService#create now takes a
+      // TRANSACTION-scoped pg_advisory_xact_lock on its own connection instead
+      // (common/idempotency.service.ts#acquireLock), needing no dedicated pool at all.
       expect(mod.LOCK_FAMILIES).toEqual(["order-merge", "cron", "billing"]);
     });
   });

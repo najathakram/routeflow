@@ -11,6 +11,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { NumberingService } from "../import/numbering.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 describe("ReturnsService → regulated ledger (W5c)", () => {
@@ -28,6 +29,10 @@ describe("ReturnsService → regulated ledger (W5c)", () => {
         { provide: RouteFlowGateway, useValue: { emitReturnCreated: jest.fn() } },
         { provide: RegulatedLedgerService, useValue: ledger },
         { provide: CreditNotesService, useValue: { create: jest.fn() } },
+        {
+          provide: NumberingService,
+          useValue: { reserveNext: jest.fn().mockResolvedValue("RET-2026-0001") },
+        },
       ],
     }).compile();
     service = mod.get(ReturnsService);
@@ -86,6 +91,26 @@ describe("ReturnsService → regulated ledger (W5c)", () => {
     await service.cancel("ret-1", { sub: "u1", role: "OPERATOR" } as any);
 
     expect(ledger.unreverseReturnEntries).not.toHaveBeenCalled();
+  });
+
+  it("F2 (independent review, PR-2): cancel() of a PROCESSED return DOES un-reverse the ledger — legacy rows still need their effects undone", async () => {
+    // B348 removed this arm on the theory that no writer sets PROCESSED — true for CODE, not
+    // for pre-existing DATA. PROCESSED is a legacy ReturnStatus (still a live sales.prisma enum
+    // member): a return already sitting in that state from before whatever retired the writer
+    // must still have cancel() undo its stock/ledger effects, or the reversal is stranded.
+    prisma.return.findUnique.mockResolvedValue({
+      id: "ret-1",
+      status: "PROCESSED",
+      orderId: "ord-1",
+      customerId: "cust-1",
+      items: [{ productId: "p1", qty: 2, restock: false }],
+    });
+
+    await service.cancel("ret-1", { sub: "u1", role: "OPERATOR" } as any);
+
+    expect(ledger.unreverseReturnEntries).toHaveBeenCalledWith(
+      expect.objectContaining({ returnId: "ret-1" }),
+    );
   });
 
   it("receive() aborts without reversing when the IN_TRANSIT claim loses the race", async () => {

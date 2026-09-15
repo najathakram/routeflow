@@ -368,16 +368,22 @@ private …` immediately followed by a `gh repo view --json visibility` read-bac
   Cross-process critical
   section on a Postgres advisory lock (`pg_advisory_lock(hashtext(family), hashtext(key))`), held
   on DEDICATED `pg.Pool`s it owns itself — **one pool per family, sized per family** (`cron`
-  `max: 12`, `order-merge` `max: 8`, **`billing` `max: 4` (B342, 2026-09-13)** — short,
-  request-path checkouts like `order-merge`'s, but a far rarer settings action than per-order
-  volume): a cron winner pins a slot for its whole tick (≤ 7
+  `max: 12`, `order-merge` `max: 8`, **`billing` `max: 4` (B342, 2026-09-13)**): a cron winner
+  pins a slot for
+  its whole tick (≤ 7
   concurrently at the monthly peak, plus a straggling hourly sweep), which out of one shared
   `max: 8` pool left merges 1–3 slots and 503s. ALL THREE pools set `keepAlive: true` /
   `keepAliveInitialDelayMillis: 30_000` — a lock connection is SOCKET-IDLE for the whole hold (a
   cron tick's work runs on the Prisma pool), so an intermediate idle-reap would end the session,
   release the advisory lock mid-tick and let another replica win an election for a running job.
   `withAdvisoryLock` throws `TypeError` for a family outside `LOCK_FAMILIES`
-  BEFORE connecting, so a typo cannot stand up a fourth pool. **`billing`'s two call sites
+  BEFORE connecting, so a typo cannot stand up a fourth pool. **RETIRED (F5 round 2 / N1,
+  independent review round 2, PR-2, 2026-09-15):** a fourth `"idempotency"` family briefly lived
+  here (round 1, `max: 6`) backing `ReturnsService#create`'s check-then-create-then-save guard —
+  the review judged a dedicated 6-connection pool an unjustified extra failure surface; it now
+  takes a TRANSACTION-scoped `pg_advisory_xact_lock` on its own transaction's connection instead
+  (`common/idempotency.service.ts#acquireLock` — see the Returns row below), needing no pool
+  here at all. **`billing`'s two call sites
   (B342 admin path; F1 2026-09-13 tenant path):** `addon.service.ts enableAddon()` (admin grant)
   and `subscription-mutation.service.ts enableAddon()` (tenant self-serve, `POST
 /billing/addons/:sku/enable`) each wrap their existing-check → row-write window in ONE lock,
@@ -627,7 +633,9 @@ version|audit-allowlist-retired)\\.spec\\.ts$"` (the third joined it
   comes exclusively from SystemConfig `settings.taxRate` via `common/tax-rate.ts`.
 - **`src/common/`** — `EncryptionService` (AES-256-GCM, refuses placeholder key writes in prod),
   `RedisThrottlerStorage` (cross-instance rate limit, fails closed), ThrottlerExceptionFilter,
-  audit interceptor.
+  audit interceptor. **2026-09-14:** `IdempotencyService` (new) joins `providers`/`exports` — an
+  `Idempotency-Key`-header replay guard, `@Optional()`-injected by callers predating it
+  (`returns.service.ts`); detail in `api/where-to-find.md`'s Returns row.
   **`enum-parity.spec.ts` (2026-09-03, wave E / imp-10b)** — pins every `packages/types/api/enums.ts`
   const-array union set-equal to `Object.values()` of the matching `@prisma/client` generated enum
   (40 enums); the import is guarded (`require` in try/catch) so a missing/renamed export fails on
@@ -657,23 +665,15 @@ version|audit-allowlist-retired)\\.spec\\.ts$"` (the third joined it
   walks `apps/api/{src,scripts}`, root `scripts/`, `.github/workflows/`,
   `.claude/skills/**/scripts/`, plus the `Dockerfile`/`prisma.config.ts`/both `package.json`s/
   `docker-compose.yml`, strips `//`/`#`/`/* */`/`<!-- -->` comment bodies via a **hand-rolled
-  character scanner** (`stripCLikeComments`) — not a single alternation regex, which is unsound:
-  prose inside a `//` comment routinely has an unescaped apostrophe ("it's", "repair-integrity
-  .mjs's default-read-only stance" — real text this file caught in `repair-f03.spec.ts`), and a
-  flat regex has no notion of "already inside a comment", so it reads that apostrophe as opening a
-  `'…'` string and greedily swallows everything up to the next raw `'` anywhere later in the file.
-  The scanner instead skips `//`/`/* */` spans character-by-character to their terminator without
-  ever re-entering quote-detection inside them, and separately preserves real `"…"`/`'…'`/`` `…` ``
-  string literals verbatim (so a same-line `"https://x.dev"` doesn't let its `//` swallow a later
-  `"schema.prisma"` reference — unit-tested directly against the helper). A quote with no closing
-  partner before end-of-line (an apostrophe inside a regex literal, e.g. `scripts/campaign/bugs.mjs`)
-  is emitted as text rather than opened as a string, since a `'`/`"` literal cannot span a raw
-  newline — and asserts none of the
-  ≥400 candidates (real walk ~817; floor raised from the original vacuous-guard value of 30) still
-  names the retired `prisma/schema.prisma` path outside comments; allow-lists (each asserted in its
-  own case) `split-prisma-schema.mjs` (names that path by design via `--from`/`--from-ref`) and
-  this spec's own T1 sibling (its negative-existence check (b) must name the retired path
-  literally) — `apps/api/prisma/migrations/**` is never scanned.
+  character scanner** (`stripCLikeComments`), not a single alternation regex — a flat regex has no
+  notion of "already inside a comment", so an unescaped apostrophe inside a `//` comment ("it's")
+  opens a `'…'` string and swallows everything to the next raw `'`. The scanner skips comment spans
+  character-by-character without re-entering quote-detection inside them, and preserves real
+  string literals verbatim (unit-tested directly). Asserts none of the ≥400 candidates (real walk
+  ~817; floor raised from the original vacuous-guard value of 30) still names the retired
+  `prisma/schema.prisma` path outside comments; allow-lists `split-prisma-schema.mjs` (names that
+  path by design via `--from`/`--from-ref`) and this spec's own T1 sibling (its negative-existence
+  check (b) must name the retired path literally) — `apps/api/prisma/migrations/**` never scanned.
   **`msrp.ts` (NEW 2026-08-22, PR-B — ⚠️ IN FLIGHT on `feat/msrp-on-invoices`, NOT on master)** —
   suggested-retail resolution. `resolveMsrp({customerMsrp, segmentMsrp, productMsrp})` =
   customer override → \*\*segment (a deliberate STUB: present in the signature and every call

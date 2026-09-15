@@ -596,7 +596,7 @@ export default function ReturnDetailPage() {
             </Button>
           )}
 
-          {(status === "REFUNDED" || status === "PROCESSED") && (
+          {status === "REFUNDED" && (
             <span className="text-sm italic text-navy/70">Return fully processed.</span>
           )}
 
