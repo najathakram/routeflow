@@ -4543,9 +4543,16 @@ export class OrdersService implements OnApplicationBootstrap {
                         : {
                             priceType: PriceType.MANUAL,
                             originalPrice: catalogPrice,
-                            overrideReason: item.overrideReason ?? null,
                             overriddenBy: user?.sub ?? null,
                           }
+                      : {}),
+                    // F2 server half: independent of isManualOverride/isUnlisted — a
+                    // reason-only edit (price unchanged, so isManualOverride is false)
+                    // was silently dropped because this field lived inside that branch.
+                    // Written whenever the payload carries the key at all, empty string
+                    // included, mirroring order-item-diff.ts's client-side fix.
+                    ...(item.overrideReason !== undefined
+                      ? { overrideReason: item.overrideReason ?? null }
                       : {}),
                   },
                 });

@@ -4016,6 +4016,32 @@ describe("OrdersService", () => {
       expect(updateArg.data.unitPrice).toBe(4.99);
     });
 
+    it("REG-MSCAN-M1-server: a reason-only UPDATE persists the new reason and leaves unitPrice/priceType untouched", async () => {
+      // F2 server half: overrideReason used to live inside the isManualOverride
+      // branch, so a reason-only edit (price unchanged, isManualOverride false)
+      // silently dropped the new reason. Mirrors the client-side fix in
+      // order-item-diff.ts (F3).
+      prisma.order.findUnique.mockResolvedValue(draftOrder);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 14.97, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [
+            { id: "li-1", action: "UPDATE", qty: 3, unitPrice: 4.99, overrideReason: "damaged" },
+          ],
+        },
+        operatorPayload,
+      );
+
+      const updateArg = prisma.orderItem.update.mock.calls[0][0] as any;
+      expect(updateArg.data.overrideReason).toBe("damaged");
+      expect(updateArg.data.unitPrice).toBe(4.99);
+      expect(updateArg.data).not.toHaveProperty("priceType");
+      expect(updateArg.data).not.toHaveProperty("originalPrice");
+      expect(updateArg.data).not.toHaveProperty("overriddenBy");
+    });
+
     it("applies a price override on a PENDING order (not just DRAFT)", async () => {
       // The web + mobile UIs now expose price/discount editing on PENDING and
       // CONFIRMED orders, not only DRAFT. The service must honor the override on
