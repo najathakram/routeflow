@@ -155,6 +155,10 @@ message}` (mirrors the pattern already correct in `skip-stop.ts:48-57`) — `api
   AsyncStorage snapshot (`lib/edit-items-draft.ts`, restore-on-reopen) replace the old always-fetch
   picker and unprotected in-progress edit — `canEditPriceFor` now also requires `pricingReady`
   (B62). Full detail: `mobile/tests-2.md`'s "2026-09-14 — hunt-mobile-scan lanes A-E" section.
+  **PR #748 review fix round:** the staged-edit write ref now refuses to persist while
+  `useAuthStore`'s `user?.id` is undefined (cold open/deep link) — no snapshot is ever written
+  under the shared `anon` key bucket, closing a B136/B137-class cross-operator leak on a shared
+  device; `session-teardown.ts` also sweeps the anon prefix belt-and-braces.
 - **Share retap made synchronous (2026-08-27, Samsung Internet dead-end):** `lib/share-pdf.ts`
   `canShareFilesHere()` now probes FILE support via a sync `canShare({files:[probe]})` (Samsung
   Internet exposes share()/canShare() but rejects files — it was taking the file-share path and

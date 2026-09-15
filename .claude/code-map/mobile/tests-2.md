@@ -628,7 +628,11 @@ userId)` to delete the two persisted blobs outright (a `persist` write from the 
   `AsyncStorage.getAllKeys()` and `multiRemove`s every key under
   `editItemsSnapshotUserPrefix(userId)` instead (best-effort, swallowed) — otherwise a staged
   edit the outgoing operator left behind could be offered for restore to the next login on a
-  shared device (the B136/B137/B140 class).
+  shared device (the B136/B137/B140 class). **2026-09-14 (PR #748 review, F1):** step (6) now
+  ALSO sweeps `editItemsSnapshotUserPrefix(null)` (the anon bucket) belt-and-braces, since
+  `edit-items.tsx`'s write ref could reach it whenever `userId` was undefined at write time
+  (cold open/deep link, before auth resolves) — the write ref itself now refuses to write at all
+  in that state, so this sweep only ever needs to catch a pre-existing key.
 - **`lib/session-hydrate.ts`** (new) — `rehydrateUserScopedStores(): Promise<void>` calls
   `persist.rehydrate()` on `podStore`/`runSettlementStore` (both now `skipHydration: true`,
   keyed by user id which isn't known at module-eval time); the ONE explicit hydration point,
