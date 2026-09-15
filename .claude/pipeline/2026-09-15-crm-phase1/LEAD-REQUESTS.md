@@ -82,3 +82,42 @@ itself, none needing a ruling; listed so they are on the record before S2):
 §5.3's kanban, and everything deal-shaped (§1.2, §2.2, §2.3, §5.3) are **Phase 2+**, per `plan.md`
 §5. Phase 1 row scoping is therefore "owner or assignee, plus TENANT_ADMIN/OPERATOR sees all". If
 you want any of that pulled forward, now is the cheap moment to say so — after S5 it is a replan.
+
+## 2026-09-15 · after S0.5 — a correction to CLOUD-BRIEF.md
+
+**10 — The lesson id in the brief is wrong, and the *right* L-113 is separately binding here.**
+`CLOUD-BRIEF.md` says: *"Lesson L-113: a new Nest module must import the modules its providers need,
+or the API crashes at boot."* The behaviour is right; the id is not.
+
+- That lesson is **L-115** (`.claude/lessons/ARCHIVE.md:308`, 2026-09-12, `#703 (W16 outage)`):
+  #702 shipped a controller with per-handler `@UseGuards(AddonGuard)` in a module that never
+  imported `BillingModule`; unit specs, lint and `tsc` were all green, the Docker healthcheck hid
+  the boot crash, and prod answered 502 for 26 minutes with `UnknownDependenciesException` at
+  InstanceLoader. Its guard is `apps/api/src/common/addon-guard-module-import.spec.ts`. Directly
+  binding on this slice, because `CrmCoreModule` ships a guarded controller.
+- **L-113** (`ARCHIVE.md:325`) is a *different* lesson — and, as it happens, about this very
+  module: the GoHighLevel handoff filtered on `where: { source: "gohighlevel" }` when the Prisma
+  column is `externalSource`, and 99 unit tests stayed green because every Prisma call was an
+  `any`-typed `jest.fn()`. **Lesson: every new Prisma call site needs a proof its `where`/`data`
+  matches the schema** — a DB-lane spec, or a unit spec asserting the exact `where` against a
+  `Prisma.<Model>WhereInput` literal so `tsc` rejects an unknown column.
+
+Both are **archived**, so neither appears in `LESSONS-DIGEST.md` — the file S1 is told to read.
+That is the real trap: a planner following the brief would cite a wrong id and would not see either
+lesson's text. I am carrying **both** into the plan explicitly:
+- L-115 → `CrmCoreModule` imports `BillingModule` **and** `CustomersModule` (conversion calls
+  `CustomersService.create`), and module wiring is not considered proven until the compose boot
+  gate runs. That gate is host-heavy — it is item #4 on my "need HOST" list.
+- L-113 → Phase 1 adds a large number of new Prisma call sites across seven new models, so the
+  test plan will require typed `where`/`data` assertions rather than `any`-mocked Prisma calls.
+  This is exactly the failure mode that would otherwise ship green.
+
+No action needed from you beyond confirming you want the brief's line corrected for the next lane
+to read. **I have not edited `CLOUD-BRIEF.md`** — it is yours.
+
+**11 — Four pack claims verified against source, not taken on trust** (the pack is Sonnet output):
+`ContactPerson` has no `title` field; `MessageThread` has no `leadId`; `customers.service.ts:487`
+is `async create(dto: CreateCustomerDto)`; `Customer` carries `userId String @unique` (required)
+with a **nullable** `tenantId String?`. All four hold, so `plan.md` §3's premises are sound — and
+note the nullable `tenantId` on `Customer` is the reason §3 makes `tenantId String` NOT NULL a hard
+invariant on the seven new models rather than copying the existing shape.
