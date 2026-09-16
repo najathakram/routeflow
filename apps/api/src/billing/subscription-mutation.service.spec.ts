@@ -492,6 +492,22 @@ describe("SubscriptionMutationService.upgrade", () => {
       expect.any(String),
       expect.any(String),
       result.proratedNow,
+      null, // this fixture's sub.periodEnd
+    );
+  });
+
+  it("N3: passes the subscription's CURRENT periodEnd through to notifyUpgradeConfirmed's dedup key", async () => {
+    const periodEnd = new Date("2026-10-01T00:00:00.000Z");
+    const { svc, billingNotification } = make({
+      sub: { planKey: "STARTER", cycle: "MONTHLY", periodStart: null, periodEnd },
+    });
+    await svc.upgrade("t1", "BUSINESS", "admin");
+    expect(billingNotification.notifyUpgradeConfirmed).toHaveBeenCalledWith(
+      "t1",
+      expect.any(String),
+      expect.any(String),
+      expect.any(Number),
+      periodEnd,
     );
   });
 

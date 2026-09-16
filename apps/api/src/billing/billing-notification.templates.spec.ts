@@ -6,6 +6,7 @@ import {
   upgradeConfirmedTemplate,
   cancelledTemplate,
   suspendedTemplate,
+  billingSettingsUrl,
 } from "./billing-notification.templates";
 
 describe("billing-notification.templates", () => {
@@ -14,6 +15,54 @@ describe("billing-notification.templates", () => {
       expect(escapeHtml(`<script>alert("xss")</script> & 'quote'`)).toBe(
         "&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt; &amp; &#39;quote&#39;",
       );
+    });
+  });
+
+  describe("fix round (finding 4): the layout brand is always RouteFlow, never the tenant's business name", () => {
+    const ORIGINAL_ENV = process.env;
+    afterEach(() => {
+      process.env = ORIGINAL_ENV;
+    });
+
+    it("a hostile/unusual business name never leaks into the header brand slot", () => {
+      const t = trialEndingTemplate({
+        businessName: "NOT RouteFlow Inc",
+        adminName: "Jamie",
+        milestone: "TRIAL_ENDING_7D",
+        trialEndsAt: "Sep 23, 2026",
+      });
+      // The header/footer brand text is "RouteFlow" exactly, appearing before any
+      // tenant-supplied text — the tenant's own business name still appears in the body.
+      expect(t.html).toMatch(/font-weight:700;color:#ffffff;letter-spacing:-0\.5px;">RouteFlow</);
+      expect(t.html).toContain("This is an automated email from RouteFlow.");
+      expect(t.html).toContain("NOT RouteFlow Inc"); // still present, in the body copy
+    });
+  });
+
+  describe("fix round (finding 5): the CTA base URL uses WEB_URL, not FRONTEND_URL/localhost", () => {
+    const ORIGINAL_ENV = process.env;
+    afterEach(() => {
+      process.env = ORIGINAL_ENV;
+    });
+
+    it("uses WEB_URL when set, stripping a trailing slash", () => {
+      process.env = { ...ORIGINAL_ENV, WEB_URL: "https://app.routeflow.info/" };
+      expect(billingSettingsUrl()).toBe("https://app.routeflow.info/settings/billing");
+    });
+
+    it("falls back to FRONTEND_URL when WEB_URL is unset", () => {
+      process.env = {
+        ...ORIGINAL_ENV,
+        WEB_URL: undefined,
+        FRONTEND_URL: "https://legacy.routeflow.info",
+      };
+      expect(billingSettingsUrl()).toBe("https://legacy.routeflow.info/settings/billing");
+    });
+
+    it("falls back to the real production domain, never localhost, when NEITHER is set", () => {
+      process.env = { ...ORIGINAL_ENV, WEB_URL: undefined, FRONTEND_URL: undefined };
+      expect(billingSettingsUrl()).toBe("https://www.routeflow.info/settings/billing");
+      expect(billingSettingsUrl()).not.toContain("localhost");
     });
   });
 

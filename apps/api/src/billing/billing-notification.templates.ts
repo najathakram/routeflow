@@ -7,6 +7,13 @@
 // value goes through escapeHtml() — this repo has no prior escaping convention for email
 // templates (buildInvoiceEmail and the merge-email builders interpolate unescaped), so this
 // file is the first to add it; it applies only to the templates below, not to existing ones.
+//
+// Fix round (Opus review of 1dba2bca, finding 4): these are PLATFORM emails (sent via
+// EmailService.sendPlatform, never the tenant's own SMTP/branding) — the layout BRAND is
+// always "RouteFlow", never the tenant's business name. The tenant's business name still
+// appears in the body copy, where it belongs.
+
+const PLATFORM_BRAND = "RouteFlow";
 
 const fmtMoney = (n: number): string =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -20,8 +27,8 @@ export function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
-function baseLayout(params: { businessName: string; tagline: string; bodyHtml: string }): string {
-  const businessName = escapeHtml(params.businessName);
+function baseLayout(params: { tagline: string; bodyHtml: string }): string {
+  const brand = escapeHtml(PLATFORM_BRAND);
   const tagline = escapeHtml(params.tagline);
   return `<!DOCTYPE html>
 <html lang="en">
@@ -33,7 +40,7 @@ function baseLayout(params: { businessName: string; tagline: string; bodyHtml: s
 
         <!-- Header -->
         <tr><td style="background:#1a2033;padding:28px 32px;">
-          <p style="margin:0;font-size:22px;font-weight:700;color:#ffffff;letter-spacing:-0.5px;">${businessName}</p>
+          <p style="margin:0;font-size:22px;font-weight:700;color:#ffffff;letter-spacing:-0.5px;">${brand}</p>
           <p style="margin:4px 0 0;font-size:13px;color:rgba(255,255,255,0.6);">${tagline}</p>
         </td></tr>
 
@@ -44,7 +51,7 @@ function baseLayout(params: { businessName: string; tagline: string; bodyHtml: s
 
         <!-- Footer -->
         <tr><td style="background:#f9fafb;padding:20px 32px;border-top:1px solid #f0f0f0;">
-          <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;">This is an automated email from ${businessName}.</p>
+          <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;">This is an automated email from ${brand}.</p>
         </td></tr>
 
       </table>
@@ -60,12 +67,19 @@ function ctaButtonHtml(url: string, label: string): string {
   </td></tr></table>`;
 }
 
-function frontendBaseUrl(): string {
-  return process.env.FRONTEND_URL ?? "http://localhost:3001";
+// Fix round (finding 5): WEB_URL is the repo-wide convention for a user-facing link
+// (payment-requests.service.ts, stripe-connect.controller.ts) — FRONTEND_URL is not in
+// .env.example and is only used by a few older billing.service.ts call sites. Falls back to
+// the real production domain, not localhost, so a misconfigured env never ships a dead link.
+function webBaseUrl(): string {
+  return (process.env.WEB_URL ?? process.env.FRONTEND_URL ?? "https://www.routeflow.info").replace(
+    /\/$/,
+    "",
+  );
 }
 
 export function billingSettingsUrl(): string {
-  return `${frontendBaseUrl()}/settings/billing`;
+  return `${webBaseUrl()}/settings/billing`;
 }
 
 export interface BillingEmailTemplate {
@@ -94,7 +108,6 @@ export function trialEndingTemplate(params: {
       ? `Your RouteFlow trial for <strong>${escapeHtml(params.businessName)}</strong> ended on ${escapeHtml(params.trialEndsAt)}. Your account is now read-only until you choose a plan.`
       : `Your RouteFlow trial for <strong>${escapeHtml(params.businessName)}</strong> ends on ${escapeHtml(params.trialEndsAt)}. Choose a plan to keep everything running without interruption.`;
   const html = baseLayout({
-    businessName: params.businessName,
     tagline: "Trial",
     bodyHtml: `
       <p style="margin:0 0 8px;font-size:15px;color:#6b7280;">Hi ${escapeHtml(params.adminName)},</p>
@@ -115,12 +128,12 @@ export function downgradeScheduledTemplate(params: {
 }): BillingEmailTemplate {
   const manageUrl = billingSettingsUrl();
   const html = baseLayout({
-    businessName: params.businessName,
     tagline: "Plan change scheduled",
     bodyHtml: `
       <p style="margin:0 0 8px;font-size:15px;color:#6b7280;">Hi ${escapeHtml(params.adminName)},</p>
       <p style="margin:0 0 16px;font-size:15px;color:#374151;">
-        We've scheduled a downgrade from <strong>${escapeHtml(params.fromPlanName)}</strong> to
+        We've scheduled a downgrade for <strong>${escapeHtml(params.businessName)}</strong> from
+        <strong>${escapeHtml(params.fromPlanName)}</strong> to
         <strong>${escapeHtml(params.toPlanName)}</strong>, effective ${escapeHtml(params.effectiveAt)}.
         Nothing changes until then.
       </p>
@@ -130,7 +143,7 @@ export function downgradeScheduledTemplate(params: {
       ${ctaButtonHtml(manageUrl, "Manage your plan")}
     `,
   });
-  const text = `Hi ${params.adminName},\n\nWe've scheduled a downgrade from ${params.fromPlanName} to ${params.toPlanName}, effective ${params.effectiveAt}. Nothing changes until then.\n\nManage your plan: ${manageUrl}`;
+  const text = `Hi ${params.adminName},\n\nWe've scheduled a downgrade for ${params.businessName} from ${params.fromPlanName} to ${params.toPlanName}, effective ${params.effectiveAt}. Nothing changes until then.\n\nManage your plan: ${manageUrl}`;
   return {
     subject: `Downgrade scheduled — ${params.businessName}`,
     html,
@@ -146,18 +159,18 @@ export function downgradeAppliedTemplate(params: {
 }): BillingEmailTemplate {
   const manageUrl = billingSettingsUrl();
   const html = baseLayout({
-    businessName: params.businessName,
     tagline: "Plan changed",
     bodyHtml: `
       <p style="margin:0 0 8px;font-size:15px;color:#6b7280;">Hi ${escapeHtml(params.adminName)},</p>
       <p style="margin:0 0 16px;font-size:15px;color:#374151;">
-        Your plan has changed from <strong>${escapeHtml(params.fromPlanName)}</strong> to
+        <strong>${escapeHtml(params.businessName)}</strong>'s plan has changed from
+        <strong>${escapeHtml(params.fromPlanName)}</strong> to
         <strong>${escapeHtml(params.toPlanName)}</strong>, effective today.
       </p>
       ${ctaButtonHtml(manageUrl, "View your plan")}
     `,
   });
-  const text = `Hi ${params.adminName},\n\nYour plan has changed from ${params.fromPlanName} to ${params.toPlanName}, effective today.\n\nView your plan: ${manageUrl}`;
+  const text = `Hi ${params.adminName},\n\n${params.businessName}'s plan has changed from ${params.fromPlanName} to ${params.toPlanName}, effective today.\n\nView your plan: ${manageUrl}`;
   return {
     subject: `Your plan is now ${params.toPlanName} — ${params.businessName}`,
     html,
@@ -177,19 +190,18 @@ export function upgradeConfirmedTemplate(params: {
   const manageUrl = billingSettingsUrl();
   const amount = fmtMoney(params.proratedAmount);
   const html = baseLayout({
-    businessName: params.businessName,
     tagline: "Plan upgraded",
     bodyHtml: `
       <p style="margin:0 0 8px;font-size:15px;color:#6b7280;">Hi ${escapeHtml(params.adminName)},</p>
       <p style="margin:0 0 16px;font-size:15px;color:#374151;">
-        You've upgraded from <strong>${escapeHtml(params.fromPlanName)}</strong> to
+        <strong>${escapeHtml(params.businessName)}</strong> has upgraded from <strong>${escapeHtml(params.fromPlanName)}</strong> to
         <strong>${escapeHtml(params.toPlanName)}</strong>. A prorated charge of
         <strong>${escapeHtml(amount)}</strong> has been applied for the remainder of this billing period.
       </p>
       ${ctaButtonHtml(manageUrl, "View your plan")}
     `,
   });
-  const text = `Hi ${params.adminName},\n\nYou've upgraded from ${params.fromPlanName} to ${params.toPlanName}. A prorated charge of ${amount} has been applied for the remainder of this billing period.\n\nView your plan: ${manageUrl}`;
+  const text = `Hi ${params.adminName},\n\n${params.businessName} has upgraded from ${params.fromPlanName} to ${params.toPlanName}. A prorated charge of ${amount} has been applied for the remainder of this billing period.\n\nView your plan: ${manageUrl}`;
   return {
     subject: `Upgrade confirmed — ${params.businessName}`,
     html,
@@ -203,7 +215,6 @@ export function cancelledTemplate(params: {
 }): BillingEmailTemplate {
   const manageUrl = billingSettingsUrl();
   const html = baseLayout({
-    businessName: params.businessName,
     tagline: "Subscription cancelled",
     bodyHtml: `
       <p style="margin:0 0 8px;font-size:15px;color:#6b7280;">Hi ${escapeHtml(params.adminName)},</p>
@@ -232,7 +243,6 @@ export function suspendedTemplate(params: {
 }): BillingEmailTemplate {
   const manageUrl = billingSettingsUrl();
   const html = baseLayout({
-    businessName: params.businessName,
     tagline: "Account suspended",
     bodyHtml: `
       <p style="margin:0 0 8px;font-size:15px;color:#6b7280;">Hi ${escapeHtml(params.adminName)},</p>

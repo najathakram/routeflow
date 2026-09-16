@@ -730,6 +730,7 @@ export class SubscriptionMutationService {
         fromDef?.name ?? fromKey,
         def.name,
         proratedNow,
+        sub.periodEnd,
       );
     } catch (e) {
       this.logger.error(

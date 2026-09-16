@@ -38,7 +38,9 @@ const EXPECTED_FILES = [
 // pin in the same PR. (2026-09-13, Phase 0 T1: +1 enum — TenantClass.)
 // (2026-09-15, post-dated check payments PR-1: +1 enum — CheckReturnReason.)
 // (2026-09-15, Returns Inside Order Creation PR-1a: +1 enum — ReturnKind.)
-const EXPECTED_MODEL_COUNT = 128;
+// (2026-09-16, N3 billing lifecycle emails: +1 model — BillingNotificationLog; enum count
+// untouched.)
+const EXPECTED_MODEL_COUNT = 129;
 const EXPECTED_ENUM_COUNT = 86;
 
 function listSchemaFiles(): string[] {
