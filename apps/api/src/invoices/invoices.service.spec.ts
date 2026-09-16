@@ -3154,6 +3154,85 @@ describe("InvoicesService", () => {
     });
   });
 
+  // PR-2 review (routeflow-Lead, 2026-09-16) REG: deletePayment and voidPayment took
+  // no Invoice lock at all — a concurrent updatePayment/recordPayment (which DO lock)
+  // on the same invoice could deadlock against them, or race on a stale balance read.
+  // Both now take the same FOR UPDATE lock, in the same order, before touching the
+  // payment row — mirroring updatePayment's own lock REG test.
+  describe("deletePayment — row lock (PR-2 REG, mirrors updatePayment)", () => {
+    it("locks the Invoice row (FOR UPDATE) BEFORE reading it", async () => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-del-lock",
+        status: InvoiceStatus.SENT,
+        total: 100,
+        dueDate: null,
+        payments: [{ id: "pay-del-lock", amount: 50, status: "PAID", method: "CASH" }],
+      });
+      prisma.invoice.update.mockResolvedValue({
+        id: "inv-del-lock",
+        invoiceNumber: "INV-DEL",
+        customerId: "cust-1",
+        total: 100,
+      });
+      const tx = {
+        invoice: prisma.invoice,
+        invoicePayment: prisma.invoicePayment,
+        advancePayment: prisma.advancePayment,
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      prisma.tenantTransaction.mockImplementationOnce((fn: any) => fn(tx));
+
+      await service.deletePayment("inv-del-lock", "pay-del-lock");
+
+      expect(tx.$executeRaw).toHaveBeenCalled();
+      const sql = (tx.$executeRaw.mock.calls[0][0] as any).join("?");
+      expect(sql).toContain('"Invoice"');
+      expect(sql).toContain("FOR UPDATE");
+      expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.invoice.findUnique.mock.invocationCallOrder[0],
+      );
+    });
+  });
+
+  describe("voidPayment — row lock (PR-2 REG, mirrors updatePayment)", () => {
+    it("locks the Invoice row (FOR UPDATE) BEFORE reading the payment", async () => {
+      prisma.invoicePayment.findFirst.mockResolvedValue({
+        id: "pay-void-lock",
+        invoiceId: "inv-void-lock",
+        status: "PAID",
+        method: "CASH",
+        amount: 30,
+      });
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-void-lock",
+        invoiceNumber: "INV-VOID-LOCK",
+        customerId: "cust-1",
+        status: InvoiceStatus.PARTIAL,
+        total: 100,
+        dueDate: null,
+        paidAt: null,
+        payments: [],
+      });
+      const tx = {
+        invoice: prisma.invoice,
+        invoicePayment: prisma.invoicePayment,
+        advancePayment: prisma.advancePayment,
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      prisma.tenantTransaction.mockImplementationOnce((fn: any) => fn(tx));
+
+      await service.voidPayment("inv-void-lock", "pay-void-lock");
+
+      expect(tx.$executeRaw).toHaveBeenCalled();
+      const sql = (tx.$executeRaw.mock.calls[0][0] as any).join("?");
+      expect(sql).toContain('"Invoice"');
+      expect(sql).toContain("FOR UPDATE");
+      expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.invoicePayment.findFirst.mock.invocationCallOrder[0],
+      );
+    });
+  });
+
   describe("voidInvoiceInTx — atomic claim under concurrent void (T-B84 / R6 / REG-B84)", () => {
     it("two concurrent voidInvoice calls on one SENT invoice: exactly one succeeds, invoicedQty releases exactly once", async () => {
       prisma.invoice.findUnique.mockResolvedValue({
@@ -5818,6 +5897,38 @@ describe("InvoicesService", () => {
         // off CONFIRMED (PAID) only, so the DRAFT sibling contributes nothing to it.
         const invoiceData = (prisma.invoice.update.mock.calls[0][0] as any).data;
         expect(invoiceData.status).not.toBe(InvoiceStatus.PAID);
+      });
+
+      // PR-2 review (routeflow-Lead, 2026-09-16): `remaining` hitting 0 does not mean
+      // the invoice is actually PAID — a DRAFT sibling can reserve the entire
+      // capacity while zero dollars are confirmed. The error message must say so.
+      it("says capacity is reserved by unconfirmed payments, not 'already fully paid', when capacity is exhausted by a DRAFT sibling", async () => {
+        prisma.invoice.findUnique.mockResolvedValue({
+          id: "inv-cap-3",
+          status: InvoiceStatus.SENT,
+          total: 100,
+          dueDate: null,
+          // Capacity fully reserved by an unconfirmed DRAFT — zero dollars confirmed.
+          payments: [{ id: "pay-draft-full", status: "DRAFT", amount: 100, method: "CHECK" }],
+        });
+
+        await expect(
+          service.recordPayment("inv-cap-3", { amount: 10, method: "CASH" } as any),
+        ).rejects.toThrow(/reserved by unconfirmed payments/i);
+      });
+
+      it("still says 'already fully paid' when the invoice is genuinely fully CONFIRMED", async () => {
+        prisma.invoice.findUnique.mockResolvedValue({
+          id: "inv-cap-4",
+          status: InvoiceStatus.SENT,
+          total: 100,
+          dueDate: null,
+          payments: [{ id: "pay-paid-full", status: "PAID", amount: 100, method: "CASH" }],
+        });
+
+        await expect(
+          service.recordPayment("inv-cap-4", { amount: 10, method: "CASH" } as any),
+        ).rejects.toThrow(/already fully paid/i);
       });
     });
   });

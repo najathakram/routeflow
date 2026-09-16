@@ -4987,7 +4987,17 @@ export class InvoicesService {
       const paymentStatus = dto.status ?? "PAID";
 
       if (paymentStatus === "PAID") {
-        if (remaining <= 0) throw new BadRequestException("Invoice is already fully paid");
+        if (remaining <= 0) {
+          // PR-2 review (routeflow-Lead, 2026-09-16): `remaining` is capacity
+          // (DRAFT+PAID+PENDING), so it can hit 0 while `alreadyPaid` (CONFIRMED
+          // only) is still below the total — the invoice isn't actually fully
+          // paid, its remaining capacity is reserved by unconfirmed payments.
+          throw new BadRequestException(
+            alreadyPaid >= total - 0.001
+              ? "Invoice is already fully paid"
+              : "Invoice's remaining balance is already reserved by unconfirmed payments",
+          );
+        }
         if (dto.amount > remaining + 0.001)
           throw new BadRequestException(
             `Payment exceeds remaining balance of ${remaining.toFixed(2)}`,
@@ -5471,6 +5481,13 @@ export class InvoicesService {
   async deletePayment(invoiceId: string, paymentId: string) {
     let imageKey: string | null = null;
     const updated = await this.prisma.tenantTransaction(async (tx) => {
+      // PR-2 review (routeflow-Lead, 2026-09-16): same Invoice FOR UPDATE lock as
+      // updatePayment/recordPayment, taken BEFORE touching the payment row, and in
+      // the same order — deletePayment and voidPayment previously took no lock at
+      // all, so a concurrent updatePayment/recordPayment on the same invoice could
+      // deadlock against them (each waiting on a row the other already touched) or
+      // simply race on a stale remaining-balance read.
+      await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${invoiceId} FOR UPDATE`;
       const inv = await tx.invoice.findUnique({
         where: { id: invoiceId },
         include: { payments: true },
@@ -5793,6 +5810,12 @@ export class InvoicesService {
 
   async voidPayment(invoiceId: string, paymentId: string) {
     return this.prisma.tenantTransaction(async (tx) => {
+      // PR-2 review (routeflow-Lead, 2026-09-16): same Invoice FOR UPDATE lock as
+      // updatePayment/recordPayment/deletePayment, taken BEFORE touching the
+      // payment row, and in the same order — voidPayment previously took no lock
+      // at all, so a concurrent updatePayment/recordPayment/deletePayment on the
+      // same invoice could deadlock against it or race on a stale balance read.
+      await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${invoiceId} FOR UPDATE`;
       const payment = await tx.invoicePayment.findFirst({
         where: { id: paymentId, invoiceId },
       });
