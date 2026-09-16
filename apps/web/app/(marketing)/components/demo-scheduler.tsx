@@ -110,11 +110,17 @@ export function DemoScheduler() {
       .catch((error: unknown) => {
         if (cancelled || (error as Error).name === "AbortError") return;
         setAvailability(null);
-        setLoadError(
-          error instanceof BookingError
-            ? error.message
-            : "We could not load available times. Please try again.",
-        );
+        // Always a fixed, generic message here — never `error.message`.
+        // `DemoBookingService.getAvailability` never throws (every fail-closed
+        // branch resolves with `days: []`), so anything landing in this catch
+        // is a transport-level failure (network down, a routing mismatch, a
+        // raw 500) with no curated, user-safe text behind it. A framework
+        // 404's literal body is `Cannot GET /api/v1/public/demo-bookings/...`
+        // — showing that verbatim on an unauthenticated public page leaks
+        // internal API structure for zero benefit; "try again" is the only
+        // actionable response regardless of the real cause.
+        setLoadError("We could not load available times. Please try again.");
+        void error;
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
