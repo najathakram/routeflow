@@ -1515,6 +1515,13 @@ function FeatureOverridesSection({ tenant }: { tenant: TenantDetail }) {
                 effect.
               </p>
             )}
+            {form.featureKey === "flag.credit_limits" && (
+              <p className="mt-1 text-xs text-amber-400">
+                Polarity trap: holding this flag TURNS ON the customer credit-limit check. GRANT
+                enforces the limit; DENY disables it (removes a financial safety check), not the
+                other way around.
+              </p>
+            )}
           </div>
 
           <div>
