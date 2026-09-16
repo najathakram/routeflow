@@ -374,6 +374,10 @@ export class PlatformAdminController {
       area: f.area,
       kind: f.kind,
       internal: f.internal ?? false,
+      // Opus review of 8130b204, item 2: `via` lets the web warn before creating an override
+      // that has no wired consultation point. "none" is a verified-no-gate key by definition
+      // (catalog metadata only) -- an override there can never have any effect.
+      via: f.gate.via,
     }));
   }
 

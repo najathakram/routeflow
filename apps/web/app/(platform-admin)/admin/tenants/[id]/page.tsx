@@ -1274,6 +1274,7 @@ interface FeatureRegistryOption {
   area: string;
   kind: string;
   internal: boolean;
+  via: string;
 }
 
 const OVERRIDE_EXPIRY_PRESETS = [
@@ -1367,6 +1368,7 @@ function FeatureOverridesSection({ tenant }: { tenant: TenantDetail }) {
   }
 
   const activeOverrides = overrides.filter((o) => !o.revokedAt);
+  const selectedRegistryEntry = registry.find((r) => r.key === form.featureKey);
 
   return (
     <div className="mt-6">
@@ -1499,6 +1501,12 @@ function FeatureOverridesSection({ tenant }: { tenant: TenantDetail }) {
                 </option>
               ))}
             </select>
+            {selectedRegistryEntry?.via === "none" && (
+              <p className="mt-1 text-xs text-amber-400">
+                This key has no wired gate (catalog metadata only) — an override here will have no
+                effect.
+              </p>
+            )}
           </div>
 
           <div>
