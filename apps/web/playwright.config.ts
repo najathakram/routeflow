@@ -669,5 +669,18 @@ export default defineConfig({
         storageState: path.join(AUTH_DIR, "super-admin.json"),
       },
     },
+
+    // Feature grants PR-1 (2026-09-16) — every endpoint the spec touches is mocked (same
+    // pattern as "super-admin"'s auth shape), so it needs only the storageState token, never a
+    // live API. Viewport is set per test.describe (1440/768/390) inside the spec itself.
+    {
+      name: "feature-overrides",
+      testMatch: /48-feature-overrides\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "super-admin.json"),
+      },
+    },
   ],
 });
