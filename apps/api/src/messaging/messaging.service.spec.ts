@@ -2,6 +2,7 @@ import { Test } from "@nestjs/testing";
 import { MessageChannel, MeterKey, NotificationEvent } from "@prisma/client";
 import { MessagingService } from "./messaging.service";
 import { MESSAGE_PROVIDER } from "./providers/message-provider.interface";
+import { DEFAULT_TEMPLATES } from "./messaging-config.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { MeterService } from "../billing/meter.service";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -249,6 +250,51 @@ describe("MessagingService (P6-2 engine)", () => {
       });
       expect(outcomes).toHaveLength(0);
       expect(provider.send).not.toHaveBeenCalled();
+    });
+
+    it("N1 (Opus review): ignores a stale persisted rule for a channel EVENT_CHANNELS no longer allows for this event", async () => {
+      // INVOICE_SENT:EMAIL was seeded ON for existing tenants before N1 removed EMAIL
+      // from INVOICE_SENT's channels — a persisted, still-enabled row for it must
+      // never fire again, or (now that EmailChannelProvider makes EMAIL real) it
+      // would duplicate the real PDF invoice email invoices.service.ts already sends.
+      prisma.notificationRule.findMany.mockResolvedValue([
+        { channel: MessageChannel.EMAIL },
+        { channel: MessageChannel.PORTAL },
+      ]);
+      prisma.messageTemplate.findFirst.mockResolvedValue({
+        body: "Hi {{customerName}}, invoice {{invoiceNumber}} is ready.",
+        isActive: true,
+        waTemplateName: null,
+      });
+
+      const outcomes = await service.notify(NotificationEvent.INVOICE_SENT, {
+        customerId: "cust-1",
+        senderId: "op-1",
+        vars: { customerName: "Acme", invoiceNumber: "INV-1" },
+      });
+
+      expect(outcomes).toHaveLength(1);
+      expect(outcomes[0].channel).toBe(MessageChannel.PORTAL);
+      expect(provider.send).not.toHaveBeenCalled();
+    });
+
+    it("passes DEFAULT_TEMPLATES[eventKey].label as the subject to the provider", async () => {
+      prisma.notificationRule.findMany.mockResolvedValue([{ channel: MessageChannel.EMAIL }]);
+      prisma.messageTemplate.findFirst.mockResolvedValue({
+        body: "Hi {{customerName}}, your order {{orderNumber}} is confirmed.",
+        isActive: true,
+        waTemplateName: null,
+      });
+
+      await service.notify(NotificationEvent.ORDER_CONFIRMED, {
+        customerId: "cust-1",
+        senderId: "op-1",
+        vars: { customerName: "Acme", orderNumber: "ORD-1" },
+      });
+
+      expect(provider.send.mock.calls[0][0].subject).toBe(
+        DEFAULT_TEMPLATES[NotificationEvent.ORDER_CONFIRMED].label,
+      );
     });
 
     it("REG-B182 T7: seeds the default matrix for a never-visited tenant (empty rule table), then dispatches from it", async () => {

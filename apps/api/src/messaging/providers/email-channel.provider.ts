@@ -2,7 +2,10 @@ import { Injectable, Logger } from "@nestjs/common";
 import { MessageChannel } from "@prisma/client";
 import { EmailService } from "../../email/email.service";
 import { MessageProvider, SendInput, SendResult } from "./message-provider.interface";
-import { buildNotificationEmailHtml } from "./email-notification-template";
+import {
+  buildNotificationEmailHtml,
+  buildNotificationEmailText,
+} from "./email-notification-template";
 
 /**
  * Real EMAIL transport for the messaging engine (N1, fixes B145/F23's
@@ -33,15 +36,22 @@ export class EmailChannelProvider implements MessageProvider {
     }
 
     const subject = input.subject ?? "Update from RouteFlow";
-    const html = buildNotificationEmailHtml({ title: subject, bodyText: input.body });
 
     // EmailService.send() is documented as honest-by-result and never-throw
     // (R5), but MessageProvider.send()'s own contract is stricter — "MUST
     // NEVER throw" — and messaging.service.ts's sendMessage() has no try/catch
     // around provider.send(). Defense in depth: don't take EmailService's
-    // contract on faith for a promise this interface makes explicitly.
+    // contract on faith for a promise this interface makes explicitly. The
+    // tenant-name lookup rides inside the same try — a DB hiccup there must
+    // not throw out of this provider either.
     try {
-      const result = await this.emailService.send({ to: input.to, subject, html });
+      // Opus review (N1): the template hard-coded "RouteFlow" — this is
+      // buyer-facing mail and must carry the SAME tenant brand invoice emails
+      // do, not the platform's own name.
+      const brandName = await this.emailService.getTenantBusinessName();
+      const html = buildNotificationEmailHtml({ title: subject, bodyText: input.body, brandName });
+      const text = buildNotificationEmailText({ title: subject, bodyText: input.body, brandName });
+      const result = await this.emailService.send({ to: input.to, subject, html, text });
       if (!result.delivered) {
         this.logger.warn(
           `send to ${input.to} not delivered (transport=${result.transport}): ` +

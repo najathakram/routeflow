@@ -107,13 +107,46 @@ flag OFF ⇒ the engine returns before touching a commission table and every rou
   trigger" to asserting it now does. **Migration** `20260916061500_notify_n1_cancelled_event_and_order_status_email_pref`
   generated via the no-DB path (host disk-space outage on the build machine ruled out
   `prisma migrate dev`'s usual live-Postgres diff) — `prisma migrate diff --from-schema <an
-`origin/master`schema-folder export via`git archive`> --to-schema apps/api/prisma/schema
+origin/master schema-folder export via git archive> --to-schema apps/api/prisma/schema
 --script`, reviewed by eye: exactly `ALTER TYPE "NotificationEvent" ADD VALUE 'CANCELLED'` +
   `ALTER TABLE "Customer" ADD COLUMN "orderStatusEmails" BOOLEAN NOT NULL DEFAULT true` — additive
   only, matches the schema edits exactly. NOT YET applied/proven against a real database (that
   needs `npm run local:drift` or a real deploy, done later once host disk headroom is confirmed,
-  not by this session). Nothing is committed yet — holding on git per the coordinating session's
-  explicit "DISK OK" signal (a fleet-wide disk-space outage on the shared build machine).
+  not by this session). Committed 6b2a7a8f.
+  **Opus review fix round (2026-09-16, same day) — 6 findings, all fixed, no further round:**
+  (1) BLOCKER — `notify()` selected rules by `{eventKey, enabled}` alone, never intersecting
+  `EVENT_CHANNELS`; a tenant with a persisted, still-enabled `INVOICE_SENT:EMAIL` row (seeded
+  before N1 removed EMAIL from that event) would keep firing it forever, and once
+  `EmailChannelProvider` made EMAIL real, would duplicate the PDF invoice email
+  `invoices.service.ts` already sends — invisibly, since the settings matrix no longer even
+  renders that cell to switch off. Fixed: `notify()` now filters `rules` through
+  `EVENT_CHANNELS[eventKey]` before dispatch (red-first test: "ignores a stale persisted rule…").
+  New migration `20260916070000_notify_n1_backfill_notification_rules` disables any such
+  persisted `INVOICE_SENT:EMAIL` rule + deactivates its template for existing tenants.
+  (2) MAJOR — the email template hard-coded "RouteFlow" in buyer-facing mail; `EmailService`'s
+  private `getTenantBusinessName()` is now PUBLIC (N1 callers only, no other change) and
+  `EmailChannelProvider` resolves the tenant's real brand for both the HTML and the new
+  plain-text alternative, escaped like everything else in the template.
+  (3) MAJOR (rollout consistency) — existing tenants had `ORDER_CONFIRMED`/`OUT_FOR_DELIVERY`/
+  `DELIVERED:EMAIL` persisted OFF (from before this PR); `seedDefaultsFor`'s `skipDuplicates`
+  never touches pre-existing rows, while the brand-new `CANCELLED` event seeds ON on first use —
+  left alone, existing tenants would email buyers on cancellation ONLY. The same backfill
+  migration above also flips those three pre-existing cells to enabled=true. PR note: pilot
+  tenants must be told their buyers now receive order-status email (owner default = ON).
+  (4) MINOR tests added: HTML-escaping of a `<`-bearing body, `subject === DEFAULT_TEMPLATES[
+eventKey].label` end-to-end via `notify()`.
+  (5) MINOR — `EmailService.send()` gained an optional `text` (plain-text alternative, both
+  nodemailer and Resend accept it), passed from the provider alongside `html`.
+  `DEFAULT_TEMPLATES[DELIVERED].body` gained `{{deliveredAt}}`, wired at all three firing sites
+  (`orders.service.ts`, `routes.service.ts` ×2) — a driver first name and a POD photo link were
+  scoped OUT of this round: the driver's display name isn't trivially available at the two
+  driver-completion call sites without a new query, and a photo-link clause would render as a
+  dangling label on stops with no photo across every channel this shared body serves (SMS/WA/
+  PORTAL too, not just EMAIL) — a real regression risk for a "no further round" fix, not an
+  oversight.
+  (6) Note (not a fix): `ORDER_CHANGED_AT_DOOR:EMAIL` is now a real transport outside the
+  buyer opt-out set (`orderStatusEmails` only gates the 4 order-status events) — spec-conformant,
+  owner decides later whether to extend the opt-out.
   See `local-assets/handoff/2026-09-16/NOTIFY-SPEC.md` for the full ruled spec (N2/N3/N4 are
   separate follow-on PRs, not part of N1).
 - **Post-dated check payments PR-1 (2026-09-15), additive-only:** `NotificationEvent` gains

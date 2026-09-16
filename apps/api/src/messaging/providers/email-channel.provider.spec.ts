@@ -10,8 +10,11 @@ import { EmailService } from "../../email/email.service";
  * MessageProvider contract: transports() declares EMAIL only, send() never
  * throws, and a delivered/failed EmailService result maps to sent/failed.
  */
-function makeProvider(sendImpl: jest.Mock) {
-  const emailService = { send: sendImpl } as unknown as EmailService;
+function makeProvider(sendImpl: jest.Mock, businessName = "RouteFlow") {
+  const emailService = {
+    send: sendImpl,
+    getTenantBusinessName: jest.fn().mockResolvedValue(businessName),
+  } as unknown as EmailService;
   return new EmailChannelProvider(emailService);
 }
 
@@ -25,9 +28,9 @@ describe("EmailChannelProvider", () => {
     expect(provider.transports(MessageChannel.INTERNAL)).toBe(false);
   });
 
-  it("send() calls EmailService.send() with the subject + an HTML body, maps a delivered result to 'sent'", async () => {
+  it("send() calls EmailService.send() with the subject + an HTML+text body, maps a delivered result to 'sent'", async () => {
     const send = jest.fn().mockResolvedValue({ delivered: true, transport: "smtp", id: "eml-1" });
-    const provider = makeProvider(send);
+    const provider = makeProvider(send, "Acme Distributors");
 
     const result = await provider.send({
       tenantId: "t1",
@@ -44,6 +47,41 @@ describe("EmailChannelProvider", () => {
     expect(arg.subject).toBe("Order confirmed");
     expect(arg.html).toContain("Hi Acme Test Buyer, your order ORD-1 is confirmed.");
     expect(arg.html).toContain("<!DOCTYPE html>");
+    expect(arg.text).toContain("Hi Acme Test Buyer, your order ORD-1 is confirmed.");
+  });
+
+  it("Opus review (N1): brands the email with the TENANT's business name, not a hard-coded 'RouteFlow'", async () => {
+    const send = jest.fn().mockResolvedValue({ delivered: true, transport: "smtp", id: "eml-1" });
+    const provider = makeProvider(send, "Acme Distributors");
+
+    await provider.send({
+      tenantId: "t1",
+      channel: MessageChannel.EMAIL,
+      to: "buyer@acme-test.example",
+      body: "Hello",
+      subject: "Order confirmed",
+    });
+
+    const arg = send.mock.calls[0][0];
+    expect(arg.html).toContain("Acme Distributors");
+    expect(arg.text).toContain("Acme Distributors");
+  });
+
+  it("Opus review (N1): escapes HTML-significant characters in the body (e.g. a customer name containing '<')", async () => {
+    const send = jest.fn().mockResolvedValue({ delivered: true, transport: "smtp", id: "eml-1" });
+    const provider = makeProvider(send);
+
+    await provider.send({
+      tenantId: "t1",
+      channel: MessageChannel.EMAIL,
+      to: "buyer@acme-test.example",
+      body: "Hi Acme <script>alert(1)</script>, your order is confirmed.",
+      subject: "Order confirmed",
+    });
+
+    const html = send.mock.calls[0][0].html as string;
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;script&gt;");
   });
 
   it("falls back to a generic subject when the caller didn't supply one", async () => {
@@ -89,6 +127,25 @@ describe("EmailChannelProvider", () => {
         body: "Hello",
       }),
     ).resolves.toMatchObject({ status: "failed" });
+  });
+
+  it("never throws even if getTenantBusinessName() itself rejects", async () => {
+    const send = jest.fn();
+    const emailService = {
+      send,
+      getTenantBusinessName: jest.fn().mockRejectedValue(new Error("db down")),
+    } as unknown as EmailService;
+    const provider = new EmailChannelProvider(emailService);
+
+    await expect(
+      provider.send({
+        tenantId: "t1",
+        channel: MessageChannel.EMAIL,
+        to: "buyer@acme-test.example",
+        body: "Hello",
+      }),
+    ).resolves.toMatchObject({ status: "failed" });
+    expect(send).not.toHaveBeenCalled();
   });
 
   it("returns 'failed' without calling EmailService for a non-EMAIL channel (defensive — transports() should have gated this upstream)", async () => {

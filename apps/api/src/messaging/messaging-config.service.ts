@@ -57,7 +57,13 @@ export const DEFAULT_TEMPLATES: Record<NotificationEvent, { label: string; body:
   },
   [NotificationEvent.DELIVERED]: {
     label: "Delivered",
-    body: "Hi {{customerName}}, order {{orderNumber}} was delivered. Total: {{orderTotal}}. Thank you!",
+    // N1 (Opus review): {{deliveredAt}} added — always available at every firing
+    // site (orders.service.ts's changeStatus, routes.service.ts's completeStop/
+    // completeWithPayment), unlike a driver name (not trivially available at the
+    // driver-completion call sites without a new query) or a POD photo link
+    // (would render as a dangling label on stops with no photo across every
+    // channel this shared body serves) — both deliberately deferred, not missed.
+    body: "Hi {{customerName}}, order {{orderNumber}} was delivered on {{deliveredAt}}. Total: {{orderTotal}}. Thank you!",
   },
   [NotificationEvent.CANCELLED]: {
     label: "Order cancelled",

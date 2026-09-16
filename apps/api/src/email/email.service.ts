@@ -319,7 +319,14 @@ export class EmailService {
     return this.platformFrom;
   }
 
-  private async getTenantBusinessName(): Promise<string> {
+  /**
+   * The tenant's display name for outbound email, "RouteFlow" when there's no
+   * tenant context or no businessName configured. Public (N1) — EmailChannelProvider
+   * (the messaging engine's EMAIL transport) calls this to brand order-status/POD
+   * notification emails the same way invoice emails are branded, rather than
+   * hard-coding "RouteFlow" for every tenant.
+   */
+  async getTenantBusinessName(): Promise<string> {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) return "RouteFlow";
     const cfg = await this.prisma.tenantConfig.findFirst({ where: { tenantId } });
@@ -756,7 +763,15 @@ export class EmailService {
    * whose `result.error` was never inspected), which is why the UI said "sent" when
    * nothing went out.
    */
-  async send(params: { to: string; subject: string; html: string; replyTo?: string }): Promise<{
+  async send(params: {
+    to: string;
+    subject: string;
+    html: string;
+    replyTo?: string;
+    /** Plain-text alternative (N1) — both nodemailer and Resend accept it alongside
+     *  `html`; email clients that can't/won't render HTML fall back to this. */
+    text?: string;
+  }): Promise<{
     delivered: boolean;
     transport: "smtp" | "resend" | "none";
     id?: string;
@@ -815,6 +830,7 @@ export class EmailService {
           to: params.to,
           subject: params.subject,
           html: params.html,
+          text: params.text,
           replyTo,
         });
         this.logger.log(
@@ -843,6 +859,7 @@ export class EmailService {
           to: params.to,
           subject: params.subject,
           html: params.html,
+          text: params.text,
           replyTo,
         });
         if ((result as any)?.error) {

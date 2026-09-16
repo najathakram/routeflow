@@ -3,7 +3,7 @@ import { MessageChannel, MeterKey, NotificationEvent, UserRole, UserStatus } fro
 import { PrismaService } from "../prisma/prisma.service";
 import { MeterService } from "../billing/meter.service";
 import { MESSAGE_PROVIDER, type MessageProvider } from "./providers/message-provider.interface";
-import { DEFAULT_TEMPLATES, seedDefaultsFor } from "./messaging-config.service";
+import { DEFAULT_TEMPLATES, EVENT_CHANNELS, seedDefaultsFor } from "./messaging-config.service";
 import {
   isInvoicePolicyViolation,
   isMetered,
@@ -245,6 +245,14 @@ export class MessagingService {
         rules = await db.notificationRule.findMany({ where: { eventKey, enabled: true } });
       }
     }
+    // N1 (Opus review): a persisted NotificationRule can predate this event's current
+    // EVENT_CHANNELS membership — e.g. INVOICE_SENT:EMAIL was seeded ON for existing
+    // tenants before EMAIL was removed from that event's channel list; without this
+    // filter the stale row keeps firing forever (and once EmailChannelProvider made
+    // EMAIL a real transport, would duplicate the PDF invoice email
+    // invoices.service.ts already sends for real). Only channels EVENT_CHANNELS[eventKey]
+    // currently allows are ever dispatched, regardless of what's persisted.
+    rules = rules.filter((r) => EVENT_CHANNELS[eventKey].includes(r.channel));
     const outcomes: SendOutcome[] = [];
     for (const rule of rules) {
       const template = await db.messageTemplate.findFirst({

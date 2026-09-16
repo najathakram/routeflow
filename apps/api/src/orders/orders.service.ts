@@ -3215,7 +3215,7 @@ export class OrdersService implements OnApplicationBootstrap {
           : {}),
         ...(messagingEvent === NotificationEvent.OUT_FOR_DELIVERY ? { driverName } : {}),
         ...(messagingEvent === NotificationEvent.DELIVERED
-          ? { orderTotal: formatMoney(updated.total) }
+          ? { orderTotal: formatMoney(updated.total), deliveredAt: formatDate(new Date()) }
           : {}),
       };
       this.messaging
