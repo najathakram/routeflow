@@ -23,16 +23,38 @@ import nodemailer from "nodemailer";
 
 const env = process.env;
 
+/** Mirrors EmailService.parseSmtpPort — any positive integer, else 587. */
+function parseSmtpPort(raw) {
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : 587;
+}
+
+/** Mirrors EmailService.parseSmtpSecure — true/1/yes, case-insensitive. */
+function parseSmtpSecure(raw) {
+  return /^(true|1|yes)$/i.test(raw ?? "");
+}
+
 function resolveProvider() {
-  if (env.SMTP_HOST) {
+  // Mirrors EmailService's constructor precedence exactly: platform SMTP requires
+  // ALL THREE of host/user/pass — a partial config (e.g. SMTP_HOST set but
+  // SMTP_USER/SMTP_PASS missing) must never report "configured" while every real
+  // send would 535 on empty credentials, so it falls through like the real service.
+  const smtpFullyConfigured = !!(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS);
+  if (env.SMTP_HOST && !smtpFullyConfigured) {
+    console.error(
+      "WARNING: SMTP_HOST is set but SMTP_USER/SMTP_PASS are missing — EmailService " +
+        "ignores platform SMTP in this state and falls through to Resend (or logging-only).",
+    );
+  }
+  if (smtpFullyConfigured) {
     return {
       provider: "smtp",
       config: {
         host: env.SMTP_HOST,
-        port: Number(env.SMTP_PORT ?? 587),
-        secure: env.SMTP_SECURE === "true",
-        user: env.SMTP_USER ?? "",
-        pass: env.SMTP_PASS ?? "",
+        port: parseSmtpPort(env.SMTP_PORT),
+        secure: parseSmtpSecure(env.SMTP_SECURE),
+        user: env.SMTP_USER,
+        pass: env.SMTP_PASS,
       },
     };
   }
@@ -42,17 +64,25 @@ function resolveProvider() {
   return { provider: "none", config: null };
 }
 
+/** Fixed mask — never reveals any character of the secret, only whether it's set. */
 function redact(secret) {
-  if (!secret) return "(not set)";
-  if (secret.length <= 4) return "****";
-  return `${secret.slice(0, 2)}${"*".repeat(Math.max(secret.length - 4, 4))}${secret.slice(-2)}`;
+  return secret ? "(set, redacted)" : "(not set)";
 }
 
 async function main() {
   const { provider, config } = resolveProvider();
+  if (provider === "smtp" && !env.EMAIL_FROM) {
+    console.error(
+      `WARNING: EMAIL_FROM is not set while platform SMTP is configured — EmailService ` +
+        `derives the sender from SMTP_USER (${env.SMTP_USER}) instead of the Resend-shaped ` +
+        "default, to keep SPF/DKIM aligned. Set EMAIL_FROM explicitly to control the display name.",
+    );
+  }
   const emailFrom =
-    env.EMAIL_FROM ??
-    "RouteFlow <invoices@send.routeflow.info> (built-in default — EMAIL_FROM not set)";
+    provider === "smtp" && !env.EMAIL_FROM
+      ? `RouteFlow <${env.SMTP_USER}> (derived from SMTP_USER — EMAIL_FROM not set)`
+      : (env.EMAIL_FROM ??
+        "RouteFlow <invoices@send.routeflow.info> (built-in default — EMAIL_FROM not set)");
 
   console.log("── RouteFlow platform email — resolved configuration ──");
   console.log(`Provider : ${provider}`);
@@ -126,4 +156,7 @@ async function main() {
   }
 }
 
-main();
+main().catch((err) => {
+  console.error(`FAILED — unexpected error: ${err?.message ?? err}`);
+  process.exitCode = 1;
+});

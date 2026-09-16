@@ -102,7 +102,8 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:8025:8025" # web UI — bind to localhost only
-      - "1025:1025" # SMTP — reachable from the api container by service name
+      - "127.0.0.1:1025:1025" # SMTP — bind to localhost only; the api container reaches
+      #   mailpit:1025 over the internal Compose network regardless of this host binding
     profiles:
       - app
 
