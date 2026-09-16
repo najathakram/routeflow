@@ -2297,7 +2297,10 @@ export default function InvoiceDetailPage() {
           {canRecordPayment && (
             <DropdownMenu
               trigger={
-                <button className="flex items-center gap-1.5 rounded-lg border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy shadow-card transition-colors hover:bg-surface-raised">
+                <button
+                  data-testid="record-payment-trigger"
+                  className="flex items-center gap-1.5 rounded-lg border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy shadow-card transition-colors hover:bg-surface-raised"
+                >
                   <CreditCard className="h-3.5 w-3.5" />
                   Record Payment
                   <ChevronDown className="h-3.5 w-3.5" />

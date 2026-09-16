@@ -106,8 +106,14 @@ test.describe("Apply advance to invoice (F09 / B13)", () => {
       page.locator("#main-content").getByRole("heading", { name: invoice.invoiceNumber }),
     ).toBeVisible({ timeout: 15_000 });
 
-    await page.getByRole("button", { name: "Record Payment" }).click();
-    await page.getByRole("menuitem", { name: "Apply Advance" }).click();
+    // Scoped by testid, not accessible name: the invoice detail page also has a
+    // sidebar shortcut button AND the (always-mounted) payment modal's own submit
+    // button both labeled "Record Payment" — `getByRole("button", {name:...})`
+    // resolves to all three. The dropdown's items are plain <button>s (no
+    // role="menuitem" — this hand-rolled DropdownMenu doesn't set one), so the
+    // second click is a button lookup too.
+    await page.getByTestId("record-payment-trigger").click();
+    await page.getByRole("button", { name: "Apply Advance" }).click();
 
     await expect(page.getByRole("dialog", { name: "Apply advance" })).toBeVisible({
       timeout: 10_000,
