@@ -48,14 +48,14 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { cn, Avatar, ToastProvider } from "@routeflow/ui/web";
+import { cn, Avatar, Card, ToastProvider } from "@routeflow/ui/web";
 import { TenantLogo } from "@/components/TenantLogo";
 import { BRAND_MARK_SRC } from "@/components/brand";
 import { PortalSwitchLink } from "@/components/PortalSwitchLink";
 import { setLastPortalCookie } from "@/lib/presence-cookies";
 import { CommandPalette, useCommandPalette } from "@/components/CommandPalette";
 import { ReadOnlyBanner } from "@/components/ReadOnlyBanner";
-import { useSubscription } from "@/lib/api/billing";
+import { useSubscription, type SubscriptionView } from "@/lib/api/billing";
 import { useAuth } from "@/lib/auth-context";
 import {
   getImpersonation,
@@ -76,6 +76,7 @@ import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useI18n, LOCALES, LOCALE_LABELS } from "@/lib/i18n";
 import { useDriveMode } from "@/lib/drive-mode";
 import { matchPlanGatedRoute, planFlagVisible } from "@/lib/plan-gated-nav";
+import type { FlagKey } from "@routeflow/types";
 import { LockedPage } from "./_components/gates/PlanGates";
 
 // ─── Nav types & structure ────────────────────────────────────────────────────
@@ -342,10 +343,16 @@ function RouteGuard({ children }: { children: React.ReactNode }) {
   // GATED_PREFIXES/CUSTOMER_ALLOWED/DRIVER_ALLOWED checks below already cover their
   // access. `enabled: isStaffRole` mirrors the endpoint's own @Roles(OPERATOR) gate.
   const isStaffRole = user?.role !== "CUSTOMER" && user?.role !== "DRIVER";
-  // Only `resolved` is needed here: the lock condition below requires resolved===true,
-  // and react-query's isSuccess/isError are mutually exclusive, so an errored fetch
-  // already falls out of the "resolved" branch below without reading isError.
-  const { data: subscription, isSuccess: subscriptionResolved } = useSubscription({
+  // `isError` is read too (B449): while a plan-gated route's flags are still
+  // resolving we must show neither the real page nor the lock — only once we
+  // know which applies. An errored fetch counts as "done deciding" the same
+  // way success does (fail OPEN, render the page), so it must not be stuck on
+  // the resolving branch forever.
+  const {
+    data: subscription,
+    isSuccess: subscriptionResolved,
+    isError: subscriptionErrored,
+  } = useSubscription({
     staleTime: 60_000,
     enabled: isStaffRole,
   });
@@ -396,13 +403,57 @@ function RouteGuard({ children }: { children: React.ReactNode }) {
   // Lite-L2 (WP8/R4.5): a deep link/bookmark into a plan-gated route the tenant's
   // current plan doesn't grant renders the locked panel in place of the page — never
   // a redirect (unlike the addon-gated prefixes above), so the URL stays intact and
-  // "See plans" is one click away. Only once `subscriptionResolved` — while unresolved
-  // or on a fetch failure, render the page as today (a server-side PLAN_GATE 403, if
-  // any, is still caught by the existing PlanGateNotice toast).
+  // "See plans" is one click away.
   const planGateKey = isStaffRole ? matchPlanGatedRoute(pathname) : null;
+
+  return (
+    <PlanGateBoundary
+      planGateKey={planGateKey}
+      subscription={subscription}
+      subscriptionResolved={subscriptionResolved}
+      subscriptionErrored={subscriptionErrored}
+    >
+      {children}
+    </PlanGateBoundary>
+  );
+}
+
+/**
+ * The plan-flag gate decision for one route, isolated from RouteGuard's
+ * addon-redirect effect so it's unit-testable on its own (PlanGateBoundary.test.tsx).
+ *
+ * B449: while `planGateKey` is set and the answer is still resolving, this must
+ * render NEITHER the real page NOR the lock — mounting the page here would fire
+ * its data queries and let a LITE tenant see a flash of gated content (plus
+ * whatever inline error those 403s produce) before the lock appears a moment
+ * later. Once resolved (success OR error — a fetch failure fails OPEN, same as
+ * before), render exactly one of: the lock (children never mount, so the
+ * gated page's own queries never fire) or the real page.
+ */
+export function PlanGateBoundary({
+  planGateKey,
+  subscription,
+  subscriptionResolved,
+  subscriptionErrored,
+  children,
+}: {
+  planGateKey: FlagKey | null;
+  subscription: SubscriptionView | undefined;
+  subscriptionResolved: boolean;
+  subscriptionErrored: boolean;
+  children: React.ReactNode;
+}) {
   const flags = subscription?.flags;
   const planLocked =
     !!planGateKey && subscriptionResolved && flags !== undefined && !flags.includes(planGateKey);
+
+  if (planGateKey && !subscriptionResolved && !subscriptionErrored) {
+    return (
+      <div className="flex min-h-[60vh] w-full items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+      </div>
+    );
+  }
 
   if (planLocked) {
     return (
@@ -420,7 +471,7 @@ function RouteGuard({ children }: { children: React.ReactNode }) {
         }}
         secondary="Want it? Contact us to upgrade."
       >
-        {children}
+        <Card className="h-64" />
       </LockedPage>
     );
   }
