@@ -20,6 +20,11 @@ import { StatementPdfService } from "../buyer/statement-pdf.service";
 // entries first, exactly as invoices.service's voidInvoiceInTx/deleteInvoice and
 // orders.service's deleteOrder (B65) already do.
 import { RegulatedModule } from "../regulated/regulated.module";
+// Portal invites need to actually send an email (see sendPortalInvite in
+// customers.service.ts) — EmailModule has no imports of its own (see
+// email.module.ts), so it cannot be the tail of a cycle back here; a prior
+// comment claiming a circular-module issue was mistaken.
+import { EmailModule } from "../email/email.module";
 
 @Module({
   imports: [
@@ -29,6 +34,7 @@ import { RegulatedModule } from "../regulated/regulated.module";
     EntitlementsModule,
     CommissionsModule,
     RegulatedModule,
+    EmailModule,
   ],
   controllers: [CustomersController],
   providers: [CustomersService, StatementService, StatementPdfService],

@@ -1,3 +1,5 @@
+Status: IMPLEMENTED
+
 # Build plan: train 4 Run B — B215 (a same-key retry of a staff order merge folds the same items twice)
 
 > **Status: IMPLEMENTED (light-loop round 2).** The fix shipped; the design below is the plan as WRITTEN. Read

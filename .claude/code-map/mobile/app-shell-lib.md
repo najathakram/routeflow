@@ -180,4 +180,21 @@ planName={sub.data?.planName ?? "current"} />` in place of the section's own sta
   Invoices/Estimates/Credit Notes/Returns/Analytics/Reports/Messages rows each wrapped in
   `planFlagVisible(usePlanFlag("flag.<key>"))` (seven `usePlanFlag` calls) instead of always
   rendering; unchanged rows (Payments, Shipments, Purchase Orders, etc.) are not gated.
+- **Invoice balance = cash-received only (B421, 2026-09-16):** `lib/api/admin.ts` `AdminInvoice`
+  and `lib/api/buyer.ts` `BuyerInvoice` each gained `creditApplied?: number` and
+  `advanceApplied?: number` — confirmed credit-note/advance-payment applications that reduce
+  `balanceDue` but were never cash paid; mirrors web's same fields on `Invoice`/`BuyerInvoice`.
+  Consumed by `app/(operator)/(tabs)/invoices/[id].tsx` and
+  `app/(customer)/invoices/[id].tsx` totals rendering. Test:
+  `__tests__/invoice-credit-advance-pins.test.ts` (new, source-text pin).
+- **Post-dated check payments PR-1 (2026-09-16):** `lib/check-badge.ts` `CheckBadgeVariant`
+  gains `"orange"`; `checkBadgeFor` now checks `p.status === "PENDING"` BEFORE the
+  `checkStatus` switch (a post-dated check on file, not yet clearable — `checkStatus` is
+  typically `RECORDED` so the switch would otherwise mask it) → `{label: "Post-dated ·
+  pending", variant: "orange"}`. `lib/payments-logic.ts`: local `CheckStatus` type and
+  `CHECK_TRANSITIONS` const (P5-12 mirror of the server's `invoices.service.ts` table) are
+  REMOVED and re-exported from `@routeflow/types` (`packages/types/api/checks.ts`) instead —
+  now the one canonical copy shared with API + web; no behavior change, V1-only (no
+  `CHECK_TRANSITIONS_V2` here yet). Test: `__tests__/check-badge.test.ts` updated for the new
+  variant/branch.
 - **mobile↔web parity waves (2026-07-11, #225):** ~14 waves of mobile-only fixes bringing mobile to web parity across scan UX, money flows, compliance, invoicing, returns, and the buyer portal — see the dedicated "Where to find" rows above (Returns, Continuous barcode scan, Always-visible scanned cart rows, Incremental order-item edit, Regulated-license guard, Buyer favorites/finances/licenses, Buyer cart promotions, Scan-driven stock count, Product cost-basis tools + photos, Post-delivery invoice send, Invoice write-off/payment edit, Save order as draft/reopen/recurring create, Live margin hint). Also: `store/cartStore.ts` `CartItem` gained `category` (so CATEGORY-scoped buyer promos can match a cart line); `package.json` added `expo-image-manipulator ~55.0.16` (JPEG transcode for product-photo upload — needs a native rebuild on deploy); `lib/api/admin.ts` `AdminOrder.customer` widened with `mobile`/`email` (feeds the send-invoice sheet) + new `useAdminProductsInfinite` (pages the whole catalog, was a single `limit:100` call that silently dropped rows past 100 — same fix on the buyer side via `useBuyerProductsInfinite` in `lib/api/buyer.ts`). Two waves described in the PR's commit messages (ProductForm "Variant of" create-link UI, product-detail "Variant(s)" card) did **not** land in the final reconciled merge — verified absent from `ProductForm.tsx`/`products/[id].tsx`; only the photo-upload half of that wave (12) is present.

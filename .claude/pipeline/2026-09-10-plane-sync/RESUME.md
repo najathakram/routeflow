@@ -1,3 +1,5 @@
+Status: IMPLEMENTED
+
 # RESUME — 2026-09-10-plane-sync
 
 Prepared: 2026-09-11T01:40:36Z (prep-only session; engine NOT launched yet).

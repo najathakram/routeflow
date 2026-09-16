@@ -1,3 +1,5 @@
+Status: IMPLEMENTED
+
 # Discovery — 2026-09-11-plane-harness (Fable 5.1)
 
 **Status:** IMPLEMENTED (commit a05cea78 on feat/plane-harness, 2026-09-12; light loop — engine launch classifier-blocked) (owner ask 2026-09-11: "establish harnesses to automatically tackle Plane, and update them"; DECIDE-27 supersedes "no sync code").
