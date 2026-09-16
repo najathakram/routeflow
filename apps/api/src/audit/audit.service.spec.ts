@@ -45,4 +45,24 @@ describe("AuditService.log (B165)", () => {
       service.log({ tenantId: "t1", userId: "u1", action: "POST /x", entityType: "x" }),
     ).resolves.toBeUndefined();
   });
+
+  // B212-class fix: the catch used to be entirely silent (no logger call at
+  // all), so a real DB failure on the audit trail — the exact record
+  // impersonation accountability (B138/B165) relies on — was indistinguishable
+  // from "no action happened". Still never rethrows.
+  it("logs a failing write instead of swallowing it silently", async () => {
+    prisma.auditLog.create.mockRejectedValue(new Error("column missing"));
+    const loggerErrorSpy = jest.spyOn((service as any).logger, "error");
+
+    await service.log({
+      tenantId: "t1",
+      userId: "u1",
+      action: "POST /orders",
+      entityType: "orders",
+    });
+
+    expect(loggerErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Failed to write audit log"),
+    );
+  });
 });

@@ -94,9 +94,9 @@
   `<area>.<method>`, validated by `NAME_RE` at class-definition time. Skips are never errors:
   `acquired:false` → `logger.debug`, `LockUnavailableError` → `logger.warn`, both return
   `undefined`; anything the BODY throws propagates (the scheduler's own try/catch logs it).
-  ⚠️ **Behaviour change:** an overlapping tick on the SAME process is skipped too — all 13 jobs
+  ⚠️ **Behaviour change:** an overlapping tick on the SAME process is skipped too — all 15 jobs
   are idempotent sweeps, so that is the safer default. ⚠️ **A skipped tick does NOT cost the same
-  everywhere** (header, "WHAT A SKIPPED TICK ACTUALLY COSTS"): 11 jobs re-derive from state and
+  everywhere** (header, "WHAT A SKIPPED TICK ACTUALLY COSTS"): most jobs re-derive from state and
   self-repair, but `tobacco-report.generateMonthlyReports` (only `now − 1 month`) and
   `order-templates.generateDailyOrders` (only today's weekday) lose a whole month/day that needs a
   manual re-run — follow-on is a catch-up window in those two. Residual, deliberate: a body that
@@ -105,7 +105,8 @@
   (mocks `./db-locks`; case (f) registers a job in a `ScheduleModule.forRoot()` test module and
   then `fireOnTick()`s it, asserting the REGISTERED tick went through `withAdvisoryLock` with
   family `cron`/key/`mode:"try"`), `src/common/no-bare-cron.spec.ts` (static tripwire: 0 bare
-  `@Cron(` in `src`, exactly 13 `@LeaderCron(` sites with 13 unique names, and — spec files
+  `@Cron(` in `src`, exactly 15 `@LeaderCron(` sites with 15 unique names — incl.
+  `platform-admin.mirrorSync` (2026-09-15) — and, spec files
   included — no file but `common/cron-lock.ts` IMPORTS the `Cron` identifier from
   `@nestjs/schedule`), `src/common/cron-lock.db.spec.ts` (real Postgres — two concurrent ticks run
   the body once).

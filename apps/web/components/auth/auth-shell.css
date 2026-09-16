@@ -241,6 +241,15 @@
   font-size: 0.875rem;
   margin-bottom: 20px;
 }
+/* Danger-tone variant of the success card: same shape (padding/radius), the
+   background swaps to the existing danger.bg token (#fee2e2 — Tailwind
+   `bg-danger-bg`, packages/config/tailwind.config.ts) so a failure state
+   never renders inside the mint success panel. Source order after
+   .rf-auth-success matters — both are plain class selectors of equal
+   specificity, so the later rule wins when both classes are applied. */
+.rf-auth-success--danger {
+  background: #fee2e2;
+}
 @media (max-width: 850px) {
   .rf-auth {
     grid-template-columns: 1fr;

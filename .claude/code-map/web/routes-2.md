@@ -71,6 +71,14 @@ AgentFormModal` in a nested modal (`isAgentModalOpen` state); on create it selec
 - **Shipment card gating (`orders/[id]/page.tsx`, `invoices/[id]/page.tsx`)** — `ShipmentCard` now
   renders only when `order.fulfillPath === "SHIP"` or the row already carries a
   `shippingCarrier`/`shippingTrackingNumber` (historical rows), instead of unconditionally.
+- **Rescue PR B (2026-09-15) — `ApplyAdvanceModal` on `invoices/[id]/page.tsx` (B13):** lists the
+  invoice's customer's open `useCustomerAdvancePayments` rows (balance > 0), applies the picked
+  one via `useApplyAdvanceToInvoice` (server caps at `min(wallet balance, invoice balance)` — no
+  client-side money math). Wired into the "Record Payment" dropdown's new "Apply Advance" item,
+  shown only when `invoice.customerId` is set, same gate as Record Payment/Write Off. Mirrors
+  mobile's `ApplyAdvanceSheet` (`apps/mobile/app/(operator)/(tabs)/invoices/[id].tsx`) — mobile was
+  previously the only client for this action. Test: `apps/web/e2e/38-apply-advance.spec.ts` (T2,
+  Playwright — proof pending a host grant, not yet run locally).
   The invoice page can't see `fulfillPath` (its `order` select doesn't carry it, deliberately not
   widened), so it gates on `!invoice.orderId || carrier || trackingNumber`: an order-linked invoice
   gets tracking mirrored down from `orders.service.updateShipment`, but a STANDALONE invoice has no

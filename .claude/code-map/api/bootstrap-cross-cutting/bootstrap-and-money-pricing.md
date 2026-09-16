@@ -77,20 +77,57 @@
   (`returns.service.ts`); detail in `api/where-to-find.md`'s Returns row.
   **`enum-parity.spec.ts` (2026-09-03, wave E / imp-10b)** — pins every `packages/types/api/enums.ts`
   const-array union set-equal to `Object.values()` of the matching `@prisma/client` generated enum
-  (40 enums); the import is guarded (`require` in try/catch) so a missing/renamed export fails on
+  (41 enums, incl. `RETURN_KIND_VALUES`→`ReturnKind` and `CHECK_RETURN_REASON_VALUES`→
+  `CheckReturnReason`, both new rows landed 2026-09-15); the import is guarded (`require` in
+  try/catch) so a missing/renamed export fails on
   its own value, not a suite-crashing "Cannot find module". A second `describe` block reads the raw
   source text of the specific web/mobile files that drifted (`VendorBillStatus`, `POStatus`→
   `PurchaseOrderStatus`, `BuyerPromotion.type`→`PromotionType`, `EstimateStatus` on both apps) and
   asserts they no longer hand-declare a conflicting literal union — the permanent regression guard
-  for L-072. ⚠️ `ENUM_TABLE` is a deliberate **40-of-80 SUBSET** (only the enums a client actually
+  for L-072. ⚠️ `ENUM_TABLE` is a deliberate SUBSET (only the enums a client actually
   mirrors), so an equality assertion against the generated set would be WRONG; the close-out review
   (2026-09-05) added a third `describe` that pins the COUNT instead —
-  `Object.keys(PrismaEnums.$Enums).length === PINNED_PRISMA_ENUM_COUNT` (80) — as a triage
+  `Object.keys(PrismaEnums.$Enums).length === PINNED_PRISMA_ENUM_COUNT` (86, was 84 — 2026-09-15
+  triage: `CheckReturnReason` + `ReturnKind`, both new enums mirrored the same PR, unlike
+  `PaymentStatus`/`NotificationEvent` gaining a value on an already-tracked enum, which never
+  moves this count) — as a triage
   tripwire: a new/removed generated enum must be triaged into `ENUM_TABLE` (or deliberately left
-  unmirrored) BEFORE the constant is bumped. **`schema-folder.spec.ts` (2026-09-04, wave E / imp-10a, T1; cases (g)/(h) reworked
+  unmirrored) BEFORE the constant is bumped. **2026-09-15 (WP1 T2/T3, lite-L2):** two more
+  `describe` blocks — LITE `PLAN_KEYS`(5)/`FLAG_KEYS`(21) parity between
+  `billing/plan-catalog.constants.ts` and `@routeflow/types`, and `Prisma.TenantPlan` containing
+  `LITE`; plus a migration-shape check that exactly one `*_tenant_plan_lite` migration dir exists
+  and its SQL is the exact additive `ALTER TYPE "TenantPlan" ADD VALUE 'LITE';` (no DROP/RENAME/
+  ALTER COLUMN). Also pins the mobile `@routeflow/types` stub's hand-copied `CHECK_TRANSITIONS`
+  (unswept by the `*_VALUES` sweep — no `_VALUES` suffix) deep-equal to the canonical
+  `packages/types/api/checks.ts` export.
+- **`src/common/check-transitions.ts`** (post-dated check payments PR-1, 2026-09-15) — API-local
+  mirror of the check-lifecycle forward-transition table (`CHECK_TRANSITIONS: Record<CheckStatus,
+  readonly CheckStatus[]>` — RECORDED→[DEPOSITED,BOUNCED], DEPOSITED→[CLEARED,BOUNCED],
+  CLEARED→[BOUNCED], BOUNCED→[]). Canonical copy is `packages/types/api/checks.ts`
+  (`@routeflow/types`, value-imported directly by web/mobile — both transpile workspace TS at
+  build time); the API can't value-import that raw-TS package at runtime (see
+  `no-runtime-workspace-imports.spec.ts`) so it keeps this hand-copy instead, same convention as
+  `common/trip-grouping.ts`/`shipping.ts`. V1 ONLY — no `CHECK_TRANSITIONS_V2` here. Spec:
+  `check-transitions-parity.spec.ts` — pins this mirror deep-equal to the canonical export, and
+  reads each of the three historical hand-duplicated call sites' CURRENT source
+  (`invoices.service.ts`, web's invoice detail page, mobile's `payments-logic.ts`) to assert none
+  still hand-declares a local `CHECK_TRANSITIONS`/`CheckStatus` (L-072-class regression guard).
+- **`src/common/plan-flag-guard-module-import.spec.ts`** (WP5a/5b/5c, 2026-09-15) — pure-metadata
+  check (no Nest app boot): every module whose controller applies `@UseGuards(PlanFlagGuard)`
+  (`EstimatesModule`/`RecurringInvoicesModule`/`CreditNotesModule`/`SuppliersModule`/
+  `MessagesModule`/`CustomersModule`) must list `EntitlementsModule` in its own `imports` —
+  `PlanFlagGuard` is only provided/exported there, so a missing import is a DI-resolution boot
+  crash that this catches at unit-test time instead of `nest build`/boot. **`tsconfig.plan-gate-
+  specs.json`** (`apps/api/`, sibling build config) — extends `tsconfig.json`, `include`-only the
+  six `*.plan-gate.spec.ts` files across billing/customers/credit-notes/messages/
+  recurring-invoices/suppliers/estimates (no `exclude`) — a dedicated tsc project for that one
+  spec-file family; see each module's own spec for its individual plan-gate behavior.
+- **`schema-folder.spec.ts`** (2026-09-04, wave E / imp-10a, T1; cases (g)/(h) reworked
   wave E structure; case (h) RETIRED 2026-09-11)** — pins `prisma/schema/` to exactly the 7 domain
-  files, 126 model + 80 enum
-  blocks total, `_base.prisma` holding only datasource+generator, every model/enum name unique,
+  files, 128 model + 86 enum blocks (215 total; pinned literals, bumped in the same PR as a real
+  model/enum add — 2026-09-15 +2 enums: `CheckReturnReason` (post-dated check payments PR-1),
+  `ReturnKind` (Returns Inside Order Creation PR-1a)),
+  `_base.prisma` holding only datasource+generator, every model/enum name unique,
   `prisma.config.ts` pointing `schema` at the folder with an explicit `migrations.path`. Case (g)
   spawns `split-prisma-schema.mjs --check` with **no original given** — must exit 0, stdout
   contains `structural invariants hold`, never `block-identical`. **Case (h) is RETIRED** (a
