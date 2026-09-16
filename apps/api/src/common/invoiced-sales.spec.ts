@@ -1,4 +1,5 @@
-import { InvoiceStatus, Prisma } from "@prisma/client";
+import { CreditNoteStatus, InvoiceStatus, Prisma } from "@prisma/client";
+import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 import {
   ACCRUAL_REVENUE_STATUSES,
   REAL_INVOICE_STATUSES,
@@ -6,6 +7,7 @@ import {
   costAt,
   estimateCogs,
   fetchAccrualNetSales,
+  fetchAccrualNetSalesByCustomer,
   fetchBadDebtExpense,
   fetchCostIndex,
   fetchInvoicedSaleLines,
@@ -21,7 +23,8 @@ const D = (n: number | string) => new Prisma.Decimal(n);
  *  anything else (e.g. invoiceItem) is structurally impossible, pinning the
  *  through-Invoice rule at the type/shape level. `invoiceAgg`/`creditNoteAgg`/
  *  `returnAgg` back the B440/B455/B456 accrual-net-sales aggregates
- *  (`creditNote`/`return` added 2026-09-16, B440). */
+ *  (`creditNote`/`return` added 2026-09-16, B440); `*GroupBy` back
+ *  `fetchAccrualNetSalesByCustomer`. */
 const stubDb = (
   opts: {
     invoices?: any[];
@@ -30,16 +33,26 @@ const stubDb = (
     invoiceAgg?: any;
     creditNoteAgg?: any;
     returnAgg?: any;
+    invoiceGroupBy?: any[];
+    creditNoteGroupBy?: any[];
+    returnGroupBy?: any[];
   } = {},
 ) => ({
   invoice: {
     findMany: jest.fn().mockResolvedValue(opts.invoices ?? []),
     aggregate: jest.fn().mockResolvedValue(opts.invoiceAgg ?? { _sum: {} }),
+    groupBy: jest.fn().mockResolvedValue(opts.invoiceGroupBy ?? []),
   },
   stockMovement: { findMany: jest.fn().mockResolvedValue(opts.movements ?? []) },
   product: { findMany: jest.fn().mockResolvedValue(opts.products ?? []) },
-  creditNote: { aggregate: jest.fn().mockResolvedValue(opts.creditNoteAgg ?? { _sum: {} }) },
-  return: { aggregate: jest.fn().mockResolvedValue(opts.returnAgg ?? { _sum: {} }) },
+  creditNote: {
+    aggregate: jest.fn().mockResolvedValue(opts.creditNoteAgg ?? { _sum: {} }),
+    groupBy: jest.fn().mockResolvedValue(opts.creditNoteGroupBy ?? []),
+  },
+  return: {
+    aggregate: jest.fn().mockResolvedValue(opts.returnAgg ?? { _sum: {} }),
+    groupBy: jest.fn().mockResolvedValue(opts.returnGroupBy ?? []),
+  },
 });
 
 describe("fetchInvoicedSaleLines", () => {
@@ -140,13 +153,16 @@ describe("accrual net sales (B440/B455/B456)", () => {
     // import) so a corrupted constant is caught here independently of
     // REG-B440-predicate — P1's revert-probe requires both to go red.
     expect(invoiceArgs.where).toEqual({
+      tenantId: "tenant-1",
       status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID] },
       issueDate: window,
     });
     expect(invoiceArgs.where.paidAt).toBeUndefined();
 
     const cnArgs = db.creditNote.aggregate.mock.calls[0][0];
+    expect(cnArgs.where.tenantId).toBe("tenant-1");
     expect(cnArgs.where.createdAt).toEqual(window);
+    expect(cnArgs.where.status).toEqual({ not: CreditNoteStatus.VOID });
     expect(cnArgs.where.appliedAt).toBeUndefined();
 
     expect(result).toEqual({ gross: 500, creditNotes: 200, externalRefunds: 50, net: 250 });
@@ -167,17 +183,23 @@ describe("accrual net sales (B440/B455/B456)", () => {
     expect(result.externalRefunds).toBe(50);
 
     const returnArgs = withReturn.return.aggregate.mock.calls[0][0];
-    expect(returnArgs.where).toEqual({ refundMethod: "EXTERNAL_REFUND", refundedAt: window });
+    expect(returnArgs.where).toEqual({
+      tenantId: "tenant-1",
+      refundMethod: "EXTERNAL_REFUND",
+      refundedAt: window,
+    });
     expect(returnArgs._sum).toEqual({ refundAmount: true });
   });
 
-  it("REG-B456-basis: fetchBadDebtExpense keys on {status:WRITTEN_OFF, writtenOffAt:window} -- never issueDate -- and sums the unpaid balance at write-off (payments include credit-note-applied amounts, same relation getBadDebtsReport already reads)", async () => {
+  it("REG-B456-basis: fetchBadDebtExpense keys on {status:WRITTEN_OFF, writtenOffAt:window} -- never issueDate -- reads only CONFIRMED payments, and sums the unpaid balance at write-off (payments include credit-note-applied amounts, same relation getBadDebtsReport already reads)", async () => {
     const db = stubDb({
       invoices: [
         {
           total: D(500),
+          taxAmount: D(0),
           issueDate: new Date("2026-01-01"), // outside `window` -- must not gate this query
-          payments: [{ amount: D(150) }, { amount: D(50) }], // cash 150 + credit-note-applied 50
+          // cash 150 + credit-note-applied 50, both CONFIRMED (PAID).
+          payments: [{ amount: D(150) }, { amount: D(50) }],
         },
       ],
     });
@@ -185,10 +207,32 @@ describe("accrual net sales (B440/B455/B456)", () => {
     const total = await fetchBadDebtExpense(db, "tenant-1", window);
 
     const args = db.invoice.findMany.mock.calls[0][0];
+    expect(args.where.tenantId).toBe("tenant-1");
     expect(args.where.status).toBe(InvoiceStatus.WRITTEN_OFF);
     expect(args.where.writtenOffAt).toEqual(window);
     expect(args.where.issueDate).toBeUndefined();
+    // Fix-round finding 1: a VOIDed (bounced) or DRAFT (unconfirmed) payment
+    // row must never look like recovered money.
+    expect(args.select.payments.where).toEqual(CONFIRMED_PAYMENT);
     expect(total).toBe(300);
+  });
+
+  it("REG-B456-tax (fix-round finding 3): bad-debt expense is the PRE-TAX share of the unpaid balance -- uncollected sales tax is a liability reversal, not an expense", async () => {
+    const db = stubDb({
+      invoices: [
+        {
+          total: D(500),
+          taxAmount: D(50),
+          issueDate: new Date("2026-01-01"),
+          payments: [], // fully unpaid
+        },
+      ],
+    });
+
+    const total = await fetchBadDebtExpense(db, "tenant-1", window);
+
+    // unpaid 500 * (500-50)/500 -> 450, not the tax-inclusive 500.
+    expect(total).toBe(450);
   });
 
   it("REG-B440-tax (2026-09-16 amendment): gross excludes BOTH regular and category tax via one taxAmount subtraction; shipping/discount stay in gross", async () => {
@@ -203,6 +247,52 @@ describe("accrual net sales (B440/B455/B456)", () => {
     const result = await fetchAccrualNetSales(db, "tenant-1", window);
 
     expect(result.gross).toBe(395);
+  });
+
+  it("REG-B440-bycustomer (fix-round finding 4): fetchAccrualNetSalesByCustomer groups by customerId across all three reads, unions the customer set, and never clamps a CN-only customer's negative net", async () => {
+    const db = stubDb({
+      invoiceGroupBy: [{ customerId: "c1", _sum: { total: D(500), taxAmount: D(0) } }],
+      creditNoteGroupBy: [
+        { customerId: "c1", _sum: { amount: D(200) } },
+        { customerId: "c2", _sum: { amount: D(200) } },
+      ],
+      returnGroupBy: [{ customerId: "c1", _sum: { refundAmount: D(50) } }],
+    });
+
+    const result = await fetchAccrualNetSalesByCustomer(db, "tenant-1", window);
+
+    const invoiceArgs = db.invoice.groupBy.mock.calls[0][0];
+    expect(invoiceArgs.by).toEqual(["customerId"]);
+    expect(invoiceArgs.where).toEqual({
+      tenantId: "tenant-1",
+      status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID] },
+      issueDate: window,
+    });
+
+    const cnArgs = db.creditNote.groupBy.mock.calls[0][0];
+    expect(cnArgs.by).toEqual(["customerId"]);
+    expect(cnArgs.where).toEqual({
+      tenantId: "tenant-1",
+      createdAt: window,
+      status: { not: CreditNoteStatus.VOID },
+    });
+
+    const returnArgs = db.return.groupBy.mock.calls[0][0];
+    expect(returnArgs.by).toEqual(["customerId"]);
+    expect(returnArgs.where).toEqual({
+      tenantId: "tenant-1",
+      refundMethod: "EXTERNAL_REFUND",
+      refundedAt: window,
+    });
+
+    expect(result.size).toBe(2); // union of c1 (all 3 reads) and c2 (CN only)
+    expect(result.get("c1")).toEqual({
+      gross: 500,
+      creditNotes: 200,
+      externalRefunds: 50,
+      net: 250,
+    });
+    expect(result.get("c2")).toEqual({ gross: 0, creditNotes: 200, externalRefunds: 0, net: -200 });
   });
 });
 

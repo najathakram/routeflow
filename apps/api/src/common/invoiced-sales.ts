@@ -1,5 +1,6 @@
 import { CostingMethod, CreditNoteStatus, InvoiceStatus } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
+import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 
 /**
  * Invoiced-sales sourcing for the analytics / forecasting / COGS readers.
@@ -75,22 +76,23 @@ export interface InvoicedSalesDb {
 /**
  * Additive surface for the B440 accrual-net-sales helpers — extends
  * `InvoicedSalesDb` rather than widening it, so `fetchInvoicedSaleLines`'s own
- * (narrower) callers/stubs are untouched.
+ * (narrower) callers/stubs are untouched. Return types are `any`, matching
+ * `InvoicedSalesDb`'s own convention — a stricter structural `_sum` shape
+ * makes the REAL Prisma delegate (whose `.aggregate()`/`.groupBy()` return
+ * types are far richer) fail assignability against this interface.
  */
 export interface AccrualSalesDb extends InvoicedSalesDb {
   invoice: InvoicedSalesDb["invoice"] & {
-    aggregate(args: any): Promise<{ _sum: { total?: unknown; taxAmount?: unknown } }>;
-    groupBy(
-      args: any,
-    ): Promise<{ customerId: string; _sum: { total?: unknown; taxAmount?: unknown } }[]>;
+    aggregate(args: any): Promise<any>;
+    groupBy(args: any): Promise<any[]>;
   };
   creditNote: {
-    aggregate(args: any): Promise<{ _sum: { amount?: unknown } }>;
-    groupBy(args: any): Promise<{ customerId: string; _sum: { amount?: unknown } }[]>;
+    aggregate(args: any): Promise<any>;
+    groupBy(args: any): Promise<any[]>;
   };
   return: {
-    aggregate(args: any): Promise<{ _sum: { refundAmount?: unknown } }>;
-    groupBy(args: any): Promise<{ customerId: string; _sum: { refundAmount?: unknown } }[]>;
+    aggregate(args: any): Promise<any>;
+    groupBy(args: any): Promise<any[]>;
   };
 }
 
@@ -191,10 +193,12 @@ export interface AccrualWindow {
  */
 export async function fetchAccrualNetSales(
   db: AccrualSalesDb,
-  // Reserved for a future per-tenant call shape (e.g. logging/audit); the
-  // where-clauses below rely on the caller already passing a tenant-scoped
-  // client (`prisma.forTenant()`), which injects `where.tenantId` itself.
-  _tenantId: string,
+  // B440 fix-round finding 2: fails CLOSED, not ambient. `forTenant()` under
+  // a null tenant context returns the UNSCOPED client, so relying on it
+  // alone to inject `where.tenantId` would sum across every tenant; every
+  // caller must resolve a non-null tenantId (throw if null) and this
+  // function puts it in every where-clause explicitly.
+  tenantId: string,
   window: AccrualWindow,
   opts?: { customerId?: string },
 ): Promise<AccrualNetSales> {
@@ -202,16 +206,20 @@ export async function fetchAccrualNetSales(
 
   const [invoiceAgg, creditNoteAgg, returnAgg] = await Promise.all([
     db.invoice.aggregate({
-      where: { status: ACCRUAL_REVENUE_STATUSES, issueDate: window, ...customerFilter },
+      where: { tenantId, status: ACCRUAL_REVENUE_STATUSES, issueDate: window, ...customerFilter },
       _sum: { total: true, taxAmount: true },
     }),
     // TODO B459 (returns-in-orders lane): once CreditNote.taxAmount ships,
     // subtract (amount - taxAmount) here instead of amount — a freeform/
     // lump-sum credit (no line selected) has no cap tying it to an invoice
     // figure and may include tax in practice; a line-based credit is
-    // provably pre-tax (UI caps each line at InvoiceItem.subtotal).
+    // provably pre-tax (UI caps each line at InvoiceItem.subtotal). A CN
+    // issued against an invoice that is LATER voided/written-off is still
+    // counted here as-is — netting a credit note's own lifecycle against a
+    // separate invoice status change is out of this helper's scope.
     db.creditNote.aggregate({
       where: {
+        tenantId,
         createdAt: window,
         status: { not: CreditNoteStatus.VOID },
         ...customerFilter,
@@ -222,7 +230,7 @@ export async function fetchAccrualNetSales(
     // exclusion term needed here. `refundMethod` is load-bearing: a
     // CN-method return is already netted via the CreditNote read above.
     db.return.aggregate({
-      where: { refundMethod: "EXTERNAL_REFUND", refundedAt: window, ...customerFilter },
+      where: { tenantId, refundMethod: "EXTERNAL_REFUND", refundedAt: window, ...customerFilter },
       _sum: { refundAmount: true },
     }),
   ]);
@@ -241,23 +249,23 @@ export async function fetchAccrualNetSales(
  *  appearing in any of the three underlying reads. */
 export async function fetchAccrualNetSalesByCustomer(
   db: AccrualSalesDb,
-  _tenantId: string,
+  tenantId: string,
   window: AccrualWindow,
 ): Promise<Map<string, AccrualNetSales>> {
   const [invoiceRows, creditNoteRows, returnRows] = await Promise.all([
     db.invoice.groupBy({
       by: ["customerId"],
-      where: { status: ACCRUAL_REVENUE_STATUSES, issueDate: window },
+      where: { tenantId, status: ACCRUAL_REVENUE_STATUSES, issueDate: window },
       _sum: { total: true, taxAmount: true },
     }),
     db.creditNote.groupBy({
       by: ["customerId"],
-      where: { createdAt: window, status: { not: CreditNoteStatus.VOID } },
+      where: { tenantId, createdAt: window, status: { not: CreditNoteStatus.VOID } },
       _sum: { amount: true },
     }),
     db.return.groupBy({
       by: ["customerId"],
-      where: { refundMethod: "EXTERNAL_REFUND", refundedAt: window },
+      where: { tenantId, refundMethod: "EXTERNAL_REFUND", refundedAt: window },
       _sum: { refundAmount: true },
     }),
   ]);
@@ -295,28 +303,42 @@ export async function fetchAccrualNetSalesByCustomer(
 }
 
 /**
- * Bad-debt expense (B456): the unpaid balance — `total - paid` — of every
- * invoice WRITTEN_OFF inside `window`, keyed on `writtenOffAt`, NEVER
- * `issueDate` (a write-off can land in a period long after the sale). `paid`
- * sums the invoice's `payments` relation, which already includes
- * credit-note-applied amounts (`applyCreditInTx` writes a
- * `method:CREDIT_NOTE` payment row) — the same relation `getBadDebtsReport`
- * already reads, extracted here so both share one expression.
+ * Bad-debt expense (B456): the pre-tax share of the unpaid balance — `(total
+ * - paid) × (total - taxAmount) / total` — of every invoice WRITTEN_OFF
+ * inside `window`, keyed on `writtenOffAt`, NEVER `issueDate` (a write-off
+ * can land in a period long after the sale). Uncollected sales tax is a
+ * liability reversal, not an expense (owner ruling 2026-09-15, tax
+ * exclusion) — only the pre-tax portion of an unpaid invoice is a genuine
+ * cost to the business, consistent with `fetchAccrualNetSales`'s own
+ * pre-tax `gross`. `paid` sums only CONFIRMED (PAID) payments — a VOIDed
+ * (bounced) or DRAFT (unconfirmed) payment row is not recovered money, same
+ * predicate as `getBadDebtsReport`'s own read; a credit-note application is
+ * still counted (`applyCreditInTx` writes a CONFIRMED `method:CREDIT_NOTE`
+ * payment row) — the same relation `getBadDebtsReport` already reads,
+ * extracted here so both share one expression.
  */
 export async function fetchBadDebtExpense(
   db: AccrualSalesDb,
-  _tenantId: string,
+  tenantId: string,
   window: AccrualWindow,
 ): Promise<number> {
   const invoices = await db.invoice.findMany({
-    where: { status: InvoiceStatus.WRITTEN_OFF, writtenOffAt: window },
-    select: { total: true, payments: { select: { amount: true } } },
+    where: { tenantId, status: InvoiceStatus.WRITTEN_OFF, writtenOffAt: window },
+    select: {
+      total: true,
+      taxAmount: true,
+      payments: { where: CONFIRMED_PAYMENT, select: { amount: true } },
+    },
   });
 
   let total = 0;
   for (const inv of invoices) {
     const paid = (inv.payments ?? []).reduce((s: number, p: any) => s + Number(p.amount ?? 0), 0);
-    total += Number(inv.total ?? 0) - paid;
+    const invTotal = Number(inv.total ?? 0);
+    const unpaid = invTotal - paid;
+    const taxAmount = Number(inv.taxAmount ?? 0);
+    const preTaxShare = invTotal > 0 ? (invTotal - taxAmount) / invTotal : 0;
+    total += unpaid * preTaxShare;
   }
   return roundMoney(total);
 }
