@@ -393,6 +393,13 @@ export default function CustomersPage() {
     setSelected(new Set());
   };
 
+  // F3: the trash view never offers bulk actions — a selection carried in from the live
+  // view (or made before toggling into trash) must not survive the switch.
+  React.useEffect(() => {
+    if (removedFilter) exitSelectMode();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [removedFilter]);
+
   const handleBulkDelete = async () => {
     if (isDeleting || selected.size === 0) return;
     setIsDeleting(true);
@@ -759,22 +766,25 @@ export default function CustomersPage() {
             >
               Export
             </Button>
-            <Button
-              variant="secondary"
-              leftIcon={
-                selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />
-              }
-              onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
-            >
-              {selectMode ? "Cancel" : "Select"}
-            </Button>
+            {!removedFilter && (
+              <Button
+                variant="secondary"
+                leftIcon={
+                  selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />
+                }
+                onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
+              >
+                {selectMode ? "Cancel" : "Select"}
+              </Button>
+            )}
             <Button onClick={() => setIsAddOpen(true)}>New Customer</Button>
           </div>
         }
       />
 
-      {/* Selection action bar */}
-      {selectMode && selected.size > 0 && (
+      {/* Selection action bar — never shown in the trash view (F3): the operator can only
+          View + inline Restore a removed row, never bulk-act on it. */}
+      {!removedFilter && selectMode && selected.size > 0 && (
         <div className="flex items-center justify-between rounded-lg border border-danger/30 bg-danger-bg px-4 py-3">
           <span className="text-sm font-medium text-navy">
             {selected.size} customer{selected.size !== 1 ? "s" : ""} selected
