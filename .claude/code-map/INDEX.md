@@ -70,10 +70,10 @@ Every row here is a pointer, not a description — open the linked file for the 
 | E2E Playwright                                                 | `apps/web/e2e/` — 6 spec files; `06-critical-paths.spec.ts` = money-math guard                               |
 | Autonomous regression (CI/CD)                                  | `.github/workflows/{ci,nightly,post-deploy}.yml`; `/regression` skill                                        |
 | Routes / driver runs / POD                                     | api `src/routes/` → web `routes/`+`deliveries/` → mobile `(driver)/route/`                                   |
-| Ad-hoc order trips / Deliveries                                | [`api`](api/feature-modules-3.md) → `src/trips/` → web `deliveries/` → mobile `(operator)/trips/`            |
-| Returns / RMA (incl. Returns Inside Order Creation)            | STANDARD flow: [`api`](api/feature-modules-3.md) `returns/`. INLINE (PR-1a+): [`api`](api/returns-inline.md) |
+| Ad-hoc order trips / Deliveries                                | [`api`](api/feature-modules-3/trips.md) → `src/trips/` → web `deliveries/` → mobile `(operator)/trips/`      |
+| Returns / RMA (incl. Returns Inside Order Creation)            | STANDARD flow: [`api`](api/feature-modules-3/returns.md) `returns/`. INLINE (PR-1a+): [`api`](api/returns-inline.md) |
 | Developer mode (in-dev surfaces only)                          | [`web`](web.md)/[`mobile`](mobile.md) → `useDeveloperMode()`; addon-only since 2026-08-28                    |
-| Recurring routes / order delivery split (2026-08-25)           | `RECURRING_ROUTES_ADDON`/`ORDER_DELIVERY_ADDON` — [`api`](api/feature-modules-3.md)                          |
+| Recurring routes / order delivery split (2026-08-25)           | `RECURRING_ROUTES_ADDON`/`ORDER_DELIVERY_ADDON` — [`api`](api/feature-modules-3/routes.md)                   |
 | Shared DTOs / enums                                            | [`packages`](packages.md) → `packages/types/index.ts`                                                        |
 | Shared UI components / tokens                                  | [`packages`](packages.md) → `packages/ui/src/{web,mobile}/`                                                  |
 | Security headers / CSP                                         | [`web`](web.md) → `next.config.mjs`                                                                          |
