@@ -26,14 +26,23 @@ describe("CheckEmailPage — emailSent=false and resend-failed branches (PR #778
   it("shows the default 'we sent a verification link' copy when emailSent is absent", () => {
     renderWithProviders(<CheckEmailPage />);
 
+    expect(screen.getByRole("heading", { name: "Check your inbox" })).toBeInTheDocument();
     expect(screen.getByText(/we sent a verification link/i)).toBeInTheDocument();
     expect(screen.queryByText(/couldn.t send the verification email/i)).not.toBeInTheDocument();
   });
 
-  it("shows the account-created-but-email-failed danger banner when emailSent=false", () => {
+  // Fix-round visual review (PR #778): the heading must read as a problem —
+  // not "Check your inbox" — when the account was created but the
+  // verification email itself never went out, so the frame never contradicts
+  // the danger-toned card/message underneath it.
+  it("shows the failure heading + danger-toned banner when emailSent=false", () => {
     mockSearchParams = new URLSearchParams({ email: "owner@acme.com", emailSent: "false" });
     renderWithProviders(<CheckEmailPage />);
 
+    expect(
+      screen.getByRole("heading", { name: "We couldn't send your email" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Check your inbox" })).not.toBeInTheDocument();
     expect(
       screen.getByText(/your account was created, but we couldn.t send the verification email/i),
     ).toBeInTheDocument();

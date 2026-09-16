@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useSearchParams } from "next/navigation";
-import { Mail, RefreshCw } from "lucide-react";
+import { Mail, RefreshCw, XCircle } from "lucide-react";
 import { AuthShell } from "@/components/auth";
 
 // ─── Inner page ───────────────────────────────────────────────────────────────
@@ -21,6 +21,12 @@ function CheckEmailInner() {
   const [resending, setResending] = React.useState(false);
   const [resendMsg, setResendMsg] = React.useState<string | null>(null);
   const [resendFailed, setResendFailed] = React.useState(false);
+
+  // The frame must read as a problem, not a success, when the account was
+  // created but the verification email itself never went out — a mint
+  // "Check your inbox" heading over a failure message told the user to check
+  // an inbox that has nothing in it (fix-round visual review, PR #778).
+  const title = initialSendFailed ? "We couldn't send your email" : "Check your inbox";
 
   const handleResend = async () => {
     if (!email || resending) return;
@@ -57,7 +63,7 @@ function CheckEmailInner() {
     <AuthShell
       audience="distributor"
       kicker="Distributor workspace"
-      title="Check your inbox"
+      title={title}
       footer={
         <>
           <a
@@ -75,14 +81,28 @@ function CheckEmailInner() {
         </>
       }
     >
-      <div className="rf-auth-success text-center">
-        {/* Icon */}
-        <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-brand-50">
-          <Mail className="h-8 w-8 text-brand-600" />
-        </div>
+      <div
+        className={
+          initialSendFailed
+            ? "rf-auth-success rf-auth-success--danger text-center"
+            : "rf-auth-success text-center"
+        }
+      >
+        {/* Icon — danger tone (same XCircle/bg-danger pattern as the
+            verify-email error state) when the send itself failed, so the icon
+            never contradicts the heading above it. */}
+        {initialSendFailed ? (
+          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-danger/10">
+            <XCircle className="h-8 w-8 text-danger" />
+          </div>
+        ) : (
+          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-brand-50">
+            <Mail className="h-8 w-8 text-brand-600" />
+          </div>
+        )}
 
         {initialSendFailed ? (
-          <p className="rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">
+          <p className="text-sm text-danger leading-relaxed">
             Your account was created, but we couldn&apos;t send the verification email to{" "}
             {email ? <strong>{email}</strong> : "your address"} just now — our mail service may be
             temporarily unavailable. Use the button below to try again in a minute, or contact

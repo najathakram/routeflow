@@ -364,7 +364,7 @@ function SignupInner() {
             <input
               id="signup-password"
               type={showPassword ? "text" : "password"}
-              placeholder="At least 8 chars, upper + lower case, 1 number or symbol"
+              placeholder="At least 8 characters"
               autoComplete="new-password"
               className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/70 transition-colors focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
               {...register("adminPassword")}
@@ -379,8 +379,12 @@ function SignupInner() {
               {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
           </div>
-          {errors.adminPassword && (
+          {errors.adminPassword ? (
             <p className="text-xs text-danger">{errors.adminPassword.message}</p>
+          ) : (
+            <p className="text-xs text-navy/70">
+              Uppercase, lowercase, and a number or symbol required.
+            </p>
           )}
         </div>
 
