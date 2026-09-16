@@ -245,13 +245,147 @@ describe("InlineReturnsQuoteService — Opus fix-round BLOCKER: the matching/all
 
     // Bare `qty` on a boxed product means SELLING UNITS (boxes) per returnRequestPieces/the
     // DTO's own documented semantics — 15 PIECES must be requested via the explicit
-    // boxes/pieces split, matching how a box-split return line is actually submitted.
+    // boxes/pieces split, matching how a box-split return line is actually submitted. `qty`
+    // itself must still satisfy the DTO's @Min(1) as a real request would (boxes/pieces are
+    // the override, not a substitute for a valid qty).
     const result = await service.quote(
-      { customerId: "cust-1", items: [{ productId: "prod-1", qty: 0, boxes: 0, pieces: 15 }] },
+      { customerId: "cust-1", items: [{ productId: "prod-1", qty: 1, boxes: 0, pieces: 15 }] },
       OPERATOR,
     );
 
     expect(result.total).toBe(30.0);
     expect(result.total).not.toBe(316.0);
+  });
+
+  it("re-review fix: an over-cap boxed UNREFERENCED return prices at $24, not $288 (product.unitsPerBox now threaded into the unreferenced-chunk context)", async () => {
+    (db.customer.findFirst as jest.Mock).mockResolvedValue({
+      id: "cust-1",
+      pricingTier: 1,
+      isTaxExempt: false,
+    });
+    (db.customerPrice.findMany as jest.Mock).mockResolvedValue([]);
+    (db.product.findMany as jest.Mock).mockResolvedValue([
+      {
+        id: "prod-1",
+        pricePerUnit: 24,
+        priceTier2: 24,
+        priceTier3: 24,
+        priceTier4: 24,
+        priceTier5: 24,
+        unitsPerBox: 12,
+      },
+    ]);
+    // No invoiced sales at all for this product — every returned piece is unreferenced.
+    (db.invoice.findMany as jest.Mock).mockResolvedValue([]);
+    (db.return.findMany as jest.Mock).mockResolvedValue([]);
+    (db.returnItem.findMany as jest.Mock).mockResolvedValue([]);
+
+    // Over-cap: 12 pieces (one full box) returned with zero remaining supply anywhere —
+    // the whole 12 pieces prices as ONE unreferenced chunk. Pre-fix, priceUnreferencedChunk
+    // never received unitsPerBox and fell back to unitPrice * pieces = 24 * 12 = $288.
+    const result = await service.quote(
+      { customerId: "cust-1", items: [{ productId: "prod-1", qty: 0, boxes: 0, pieces: 12 }] },
+      OPERATOR,
+    );
+
+    expect(result.total).toBe(24.0);
+    expect(result.total).not.toBe(288.0);
+  });
+
+  it("re-review fix: a fully unreferenced return of qty 1 box reads bare qty as ONE BOX via product.unitsPerBox (no matching line at all to fall back on)", async () => {
+    (db.customer.findFirst as jest.Mock).mockResolvedValue({
+      id: "cust-1",
+      pricingTier: 1,
+      isTaxExempt: false,
+    });
+    (db.customerPrice.findMany as jest.Mock).mockResolvedValue([]);
+    (db.product.findMany as jest.Mock).mockResolvedValue([
+      {
+        id: "prod-1",
+        pricePerUnit: 24,
+        priceTier2: 24,
+        priceTier3: 24,
+        priceTier4: 24,
+        priceTier5: 24,
+        unitsPerBox: 12,
+      },
+    ]);
+    (db.invoice.findMany as jest.Mock).mockResolvedValue([]);
+    (db.return.findMany as jest.Mock).mockResolvedValue([]);
+    (db.returnItem.findMany as jest.Mock).mockResolvedValue([]);
+
+    // Bare qty: 1, no boxes/pieces override, no matching line — returnRequestPieces must
+    // fall back to product.unitsPerBox (12) to read this as ONE BOX (12 pieces, $24), not
+    // one loose piece ($2).
+    const result = await service.quote(
+      { customerId: "cust-1", items: [{ productId: "prod-1", qty: 1 }] },
+      OPERATOR,
+    );
+
+    expect(result.total).toBe(24.0);
+  });
+
+  it("re-review fix: a null-unitsPerBox DRAFT invoice-line snapshot still caps/prices correctly via product.unitsPerBox fallback ($8.00 for 2 of 2 boxes returned)", async () => {
+    (db.customer.findFirst as jest.Mock).mockResolvedValue({
+      id: "cust-1",
+      pricingTier: 1,
+      isTaxExempt: false,
+    });
+    (db.customerPrice.findMany as jest.Mock).mockResolvedValue([]);
+    (db.product.findMany as jest.Mock).mockResolvedValue([
+      {
+        id: "prod-1",
+        pricePerUnit: 24,
+        priceTier2: 24,
+        priceTier3: 24,
+        priceTier4: 24,
+        priceTier5: 24,
+        unitsPerBox: 6,
+      },
+    ]);
+    (db.invoice.findMany as jest.Mock).mockResolvedValue([
+      {
+        orderId: "order-1",
+        subtotal: 48,
+        discount: 0,
+        taxAmount: 0,
+        items: [
+          {
+            id: "invitem-1",
+            orderItemId: "oi-1",
+            productId: "prod-1",
+            // A selling-unit line (boxes/pieces both null) ALWAYS snapshots unitsPerBox:
+            // null on a DRAFT invoice's `update()` (invoices.service.ts:3500 only stores it
+            // for a box-split line) — 2 selling units (boxes) at $24/box = $48, box size 6
+            // known only on the product (12 total pieces, $4/piece).
+            qty: 2,
+            unitPrice: 24,
+            subtotal: 48,
+            boxes: null,
+            pieces: null,
+            unitsPerBox: null,
+            promoFreeUnits: null,
+            taxRate: 0,
+            categoryTaxAmount: 0,
+          },
+        ],
+      },
+    ]);
+    (db.return.findMany as jest.Mock).mockResolvedValue([]);
+    (db.returnItem.findMany as jest.Mock).mockResolvedValue([]);
+
+    // Return 2 pieces of this line. Pre-fix: piecesQty trusted the null snapshot (upb
+    // treated as 0), so the cap read as 2 pieces of supply instead of the true 12, and with
+    // no unitsPerBox priceMatchedChunk's chunkInLineAxis fell through to chunkPieces itself
+    // (2) — the SAME axis as line.qty (2 boxes) — prorating the full line: $48. Fixed: upb
+    // resolves to the product's 6, so chunkInLineAxis = 2/6 boxes, prorating 2 of the line's
+    // true 12 pieces at $4.00/piece -> $8.00.
+    const result = await service.quote(
+      { customerId: "cust-1", items: [{ productId: "prod-1", qty: 0, boxes: 0, pieces: 2 }] },
+      OPERATOR,
+    );
+
+    expect(result.total).toBe(8.0);
+    expect(result.total).not.toBe(48.0);
   });
 });

@@ -109,7 +109,12 @@ export class InlineReturnsQuoteService {
 
     const productIds = [...new Set(dto.items.map((i) => i.productId))];
 
-    const [customerPrices, products, matchingSet] = await Promise.all([
+    // products must resolve BEFORE the matching set: fetchMatchingSet needs each
+    // product's own unitsPerBox to fall back on when an invoice line's own unitsPerBox
+    // snapshot is null (DRAFT invoices store boxed lines with unitsPerBox: null —
+    // invoices.service.ts's `update()`), matching the orders fallback convention at
+    // invoices.service.ts:427-428.
+    const [customerPrices, products] = await Promise.all([
       db.customerPrice.findMany({
         where: { customerId: dto.customerId, productId: { in: productIds } },
         select: { productId: true, pricingTier: true },
@@ -123,12 +128,15 @@ export class InlineReturnsQuoteService {
           priceTier3: true,
           priceTier4: true,
           priceTier5: true,
+          unitsPerBox: true,
         },
       }),
-      this.fetchMatchingSet(db, dto.customerId, productIds),
     ]);
 
     const productMap = new Map(products.map((p) => [p.id, p]));
+    const productUpbMap = new Map(products.map((p) => [p.id, p.unitsPerBox]));
+    const matchingSet = await this.fetchMatchingSet(db, dto.customerId, productIds, productUpbMap);
+
     const tierByProduct = new Map(
       customerPrices
         .filter((cp) => cp.pricingTier != null)
@@ -171,13 +179,21 @@ export class InlineReturnsQuoteService {
     const allChunks: PricedChunk[] = [];
 
     for (const item of dto.items) {
+      const product = productMap.get(item.productId);
+
       const requestedPieces = returnRequestPieces({
         qty: item.qty,
         boxes: item.boxes ?? null,
         pieces: item.pieces ?? null,
         // Only meaningful for a bare-qty (no boxes/pieces split) DTO — the caller's
-        // own product-level box size, taken from whichever candidate line has it.
-        unitsPerBox: matchingSet.find((l) => l.productId === item.productId)?.unitsPerBox ?? null,
+        // own product-level box size. Prefer a matching-set line's own snapshot, but a
+        // fully unreferenced item (no matching line at all) still needs the product's
+        // own unitsPerBox so a bare `qty: 1` on a boxed product is read as one box, not
+        // one loose piece.
+        unitsPerBox:
+          matchingSet.find((l) => l.productId === item.productId)?.unitsPerBox ??
+          product?.unitsPerBox ??
+          null,
       });
 
       const allocated = allocateReturnedPieces(
@@ -187,7 +203,6 @@ export class InlineReturnsQuoteService {
         requestedPieces,
       );
 
-      const product = productMap.get(item.productId);
       const tierForProduct = tierByProduct.get(item.productId) ?? customer.pricingTier;
       const unreferencedPrice = product ? Number(getTierPrice(product, tierForProduct)) : 0;
       const unreferencedSource = tierByProduct.has(item.productId)
@@ -206,7 +221,11 @@ export class InlineReturnsQuoteService {
           : priceUnreferencedChunk(
               item.productId,
               chunk.pieces,
-              { unitPrice: unreferencedPrice, source: unreferencedSource },
+              {
+                unitPrice: unreferencedPrice,
+                source: unreferencedSource,
+                unitsPerBox: product?.unitsPerBox ?? null,
+              },
               fallbackTaxRate,
               customer.isTaxExempt,
             ),
@@ -225,6 +244,7 @@ export class InlineReturnsQuoteService {
     db: ReturnType<PrismaService["forTenant"]>,
     customerId: string,
     productIds: string[],
+    productUpbMap: Map<string, number | null>,
     soldWindowDays = DEFAULT_SOLD_WINDOW_DAYS,
   ): Promise<CandidateInvoiceLine[]> {
     const since = new Date();
@@ -278,8 +298,14 @@ export class InlineReturnsQuoteService {
         // §3.1/Opus fix-round: piecesQty is the TRUE piece count, computed once here — a
         // box-split line's qty is already pieces; a selling-unit line's qty is boxes, so it
         // must be multiplied by unitsPerBox. Pooling/capping uses ONLY piecesQty; qty stays
-        // the line's own axis for proration inside priceMatchedChunk.
-        const piecesQty = item.boxes != null ? qty : qty * (Number(item.unitsPerBox) || 1);
+        // the line's own axis for proration inside priceMatchedChunk. A DRAFT invoice's
+        // `update()` (invoices.service.ts:3500) can store a boxed line with unitsPerBox:
+        // null, so fall back to the product's own unitsPerBox — same convention as the
+        // orders' category-tax fallback at invoices.service.ts:427-428. Resolved ONCE here
+        // and stored on the line itself so priceMatchedChunk sees the same value.
+        const upb = item.unitsPerBox ?? productUpbMap.get(item.productId) ?? null;
+        const upbNum = Number(upb) || 0;
+        const piecesQty = item.boxes != null ? qty : upbNum > 1 ? qty * upbNum : qty;
         lines.push({
           sourceOrderId: inv.orderId,
           sourceInvoiceItemId: item.id,
@@ -291,7 +317,7 @@ export class InlineReturnsQuoteService {
           subtotal: Number(item.subtotal),
           boxes: item.boxes,
           pieces: item.pieces,
-          unitsPerBox: item.unitsPerBox,
+          unitsPerBox: upb,
           promoFreeUnits: item.promoFreeUnits,
           taxRate: Number(item.taxRate),
           // §4/§5: the QUOTE's category-tax figure is a pro-rated preview of this
