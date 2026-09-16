@@ -257,11 +257,12 @@ export class CustomersService {
     for (const inv of invoices) {
       // Exclude VOID payments (a bounced check flips InvoicePayment.status to VOID
       // in P5-12) so a reversed payment no longer counts against the receivable.
-      // PR-2 (check-payments B1 hardening): sumConfirmed (PAID only) — an unconfirmed
-      // DRAFT payment (or a post-dated check on file, once PENDING exists) does not
-      // yet reduce what the customer owes. Must agree with orders.service.ts's
-      // assertWithinCreditLimit exposure formula.
-      const paid = sumConfirmed(inv.payments);
+      // scan-ok: draft-payment-not-void — PR-2 review (routeflow-Lead, 2026-09-16):
+      // reverted the earlier sumConfirmed conversion — out of PR-2's scope, flagged
+      // to the owner as a follow-up (see orders.service.ts's exposure formula).
+      const paid = inv.payments
+        .filter((p) => p.status !== "VOID")
+        .reduce((s, p) => s + Number(p.amount), 0);
       const outstanding = Number(inv.total) - paid;
       receivablesMap[inv.customerId] = (receivablesMap[inv.customerId] ?? 0) + outstanding;
     }
@@ -1477,9 +1478,6 @@ export class CustomersService {
       // DRAFT+PAID(+PENDING) basis as the old not-void filter, zero behavior change
       // today (N4: capacity must keep counting DRAFT).
       const invoiceBalance = remainingCapacity(Number(inv.total), inv.payments);
-      // Same figure the old not-void filter produced (total - remainingCapacity ==
-      // sumNotVoid(payments)) — kept for the inline status recompute below, unchanged.
-      const alreadyPaid = Number(inv.total) - invoiceBalance;
       const applyAmount = Math.min(Number(ap.balance), invoiceBalance, dto.amount ?? Infinity);
 
       if (applyAmount <= 0) throw new BadRequestException("Invoice has no outstanding balance");
@@ -1499,7 +1497,13 @@ export class CustomersService {
         data: { balance: { decrement: applyAmount } },
       });
 
-      const newPaid = alreadyPaid + applyAmount;
+      // PR-2 review (routeflow-Lead, 2026-09-16): the status recompute must stay
+      // CONFIRMED-basis (sumConfirmed), never `total - invoiceBalance` — that
+      // capacity figure is DRAFT-inclusive (remainingCapacity), so a $40 advance
+      // applied on top of a $60 DRAFT sibling was flipping a $100 invoice straight
+      // to PAID off unconfirmed money. Matches credit-notes.service.ts's
+      // applyCreditInTx and restoreCreditFromPaymentInTx's own basis.
+      const newPaid = sumConfirmed(inv.payments) + applyAmount;
       const total = Number(inv.total);
       let newStatus: any = "SENT";
       if (newPaid >= total - 0.001) newStatus = "PAID";
@@ -1804,9 +1808,12 @@ export class CustomersService {
       const receivables = c.invoices.reduce((sum, inv) => {
         // Exclude VOID payments (a bounced check flips InvoicePayment.status to VOID
         // in P5-12) so a reversed payment no longer counts against the receivable.
-        // PR-2 (check-payments B1 hardening): sumConfirmed — see the list-view
-        // receivablesMap above for the same conversion and its rationale.
-        const paid = sumConfirmed(inv.payments);
+        // scan-ok: draft-payment-not-void — PR-2 review (routeflow-Lead, 2026-09-16):
+        // reverted the earlier sumConfirmed conversion — see the list-view
+        // receivablesMap above for the same revert and its rationale.
+        const paid = inv.payments
+          .filter((p) => p.status !== "VOID")
+          .reduce((s, p) => s + Number(p.amount), 0);
         return sum + (Number(inv.total) - paid);
       }, 0);
       const credits = c.advancePayments.reduce((s, a) => s + Number(a.balance), 0);

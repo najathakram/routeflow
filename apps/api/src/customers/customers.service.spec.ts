@@ -1565,6 +1565,32 @@ describe("CustomersService", () => {
       );
     });
 
+    // PR-2 review (routeflow-Lead, 2026-09-16) REG: the status recompute must stay
+    // CONFIRMED-basis, never the DRAFT-inclusive capacity figure — applying a $40
+    // advance on top of a $60 DRAFT sibling must NOT flip a $100 invoice to PAID.
+    it("applyAdvancePaymentToInvoice: a DRAFT sibling does not fund the recomputed status (PR-2 REG)", async () => {
+      prisma.advancePayment.findUnique.mockResolvedValue({ id: "ap-1", balance: 1000 });
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-status-draft",
+        total: 100,
+        status: "SENT",
+        dueDate: null,
+        payments: [{ amount: 60, status: "DRAFT" }],
+      });
+
+      await service.applyAdvancePaymentToInvoice("ap-1", { invoiceId: "inv-status-draft" });
+
+      // capacity = 100 - 60(DRAFT) = 40, so applyAmount = 40. Buggy basis:
+      // newPaid = alreadyPaid(60, DRAFT-inclusive) + 40 = 100 -> PAID. Fixed basis:
+      // newPaid = sumConfirmed(0) + 40 = 40 -> PARTIAL.
+      expect(prisma.invoicePayment.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ amount: 40 }) }),
+      );
+      expect(prisma.invoice.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: "PARTIAL" }) }),
+      );
+    });
+
     it("REG-B310 two concurrent applies of the SAME advance never drive its balance negative", async () => {
       // The mocked `withAdvisoryLock` is a module-level jest.fn shared across every test in this
       // file (a prior test above also calls applyAdvancePaymentToInvoice) — clear its call
