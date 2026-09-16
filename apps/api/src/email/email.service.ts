@@ -186,10 +186,27 @@ function redactAddresses(msg: string): string {
     .replace(/(?:[0-9a-f]{0,4}:){2,8}[0-9a-f]{0,4}/gi, "[address]"); // IPv6 incl. ::-compressed
 }
 
+/** Platform-level Google Workspace SMTP config (B452, owner ruling 2026-09-16). */
+interface PlatformSmtpConfig {
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  pass: string;
+}
+
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
   private readonly resend: Resend | null;
+  /**
+   * Platform-level SMTP (Google Workspace mailbox), set from SMTP_HOST/PORT/SECURE/
+   * USER/PASS. This is the platform transport per the owner's 2026-09-16 ruling
+   * ("RouteFlow's mail is on Google, not Resend") — selected instead of Resend
+   * whenever SMTP_HOST is set; Resend remains an alternative for when it isn't.
+   * The two are never both active for the same send (see constructor).
+   */
+  private readonly platformSmtp: PlatformSmtpConfig | null;
   private readonly platformFrom: string;
 
   constructor(
@@ -198,21 +215,68 @@ export class EmailService {
     private readonly encryption: EncryptionService,
   ) {
     const apiKey = this.config.get<string>("RESEND_API_KEY");
-    // Platform verified sending address (must be on a domain verified in Resend).
-    // Per-tenant sends swap the display name for the tenant's business name and set
-    // Reply-To to the tenant's own email (see getResendFrom/getReplyTo).
+    // Platform verified sending address. With platform SMTP this MUST be the
+    // authenticated Google Workspace mailbox (noreply@routeflow.info); with Resend
+    // it must be on a domain verified in Resend. Per-tenant sends swap the display
+    // name for the tenant's business name and set Reply-To to the tenant's own
+    // email (see getResendFrom/getReplyTo/getTenantFromAddress).
     this.platformFrom =
       this.config.get<string>("EMAIL_FROM") ?? "RouteFlow <invoices@send.routeflow.info>";
 
-    if (apiKey) {
+    const smtpHost = this.config.get<string>("SMTP_HOST");
+    if (smtpHost) {
+      // Platform SMTP wins when configured — never run both transports for the
+      // same platform send.
+      this.platformSmtp = {
+        host: smtpHost,
+        port: Number(this.config.get<string>("SMTP_PORT") ?? 587),
+        secure: this.config.get<string>("SMTP_SECURE") === "true",
+        user: this.config.get<string>("SMTP_USER") ?? "",
+        pass: this.config.get<string>("SMTP_PASS") ?? "",
+      };
+      this.resend = null;
+      this.logger.log("Email service initialised (platform SMTP)");
+    } else if (apiKey) {
+      this.platformSmtp = null;
       this.resend = new Resend(apiKey);
       this.logger.log("Email service initialised (Resend)");
     } else {
+      this.platformSmtp = null;
       this.resend = null;
       this.logger.warn(
-        "RESEND_API_KEY not set — emails will be logged only. Set the key to enable real delivery.",
+        "Neither SMTP_HOST nor RESEND_API_KEY is set — emails will be logged only. " +
+          "Set one to enable real platform delivery.",
       );
     }
+  }
+
+  /**
+   * Build a nodemailer transport with the shared fail-fast timeouts + fail-secure
+   * STARTTLS behaviour used by every SMTP send path (tenant SMTP, platform SMTP).
+   * `mapSmtpError`'s provider-aware guidance (Gmail app-passwords, M365 Authenticated
+   * SMTP, …) is applied by each caller's catch block, not here.
+   */
+  private createSendTransport(
+    host: string,
+    port: number,
+    secure: boolean,
+    user: string,
+    pass: string,
+  ) {
+    return nodemailer.createTransport({
+      host,
+      port,
+      secure,
+      // A 587 server that won't offer STARTTLS would otherwise hand the password
+      // over in cleartext — refuse instead of silently degrading.
+      requireTLS: port === 587 && !secure,
+      auth: { user, pass },
+      // Fail fast — invoice send/download UX awaits this round-trip.
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 15_000,
+      dnsTimeout: 10_000,
+    });
   }
 
   // ─── Per-tenant SMTP helpers ───────────────────────────────────────────────
@@ -297,12 +361,13 @@ export class EmailService {
   }
 
   /**
-   * Is real email delivery available for the current tenant? True when platform
-   * Resend is configured OR the tenant has SMTP set. The invoice send + settings
-   * surfaces use this to warn/guide BEFORE claiming an email went out.
+   * Is real email delivery available for the current tenant? True when a platform
+   * transport (SMTP or Resend) is configured OR the tenant has SMTP set. The
+   * invoice send + settings surfaces use this to warn/guide BEFORE claiming an
+   * email went out.
    */
   async isEmailConfigured(): Promise<boolean> {
-    if (this.resend) return true;
+    if (this.resend || this.platformSmtp) return true;
     return (await this.getTenantEmailConfig()) != null;
   }
 
@@ -314,8 +379,13 @@ export class EmailService {
     if (cfg?.smtpFromEmail) {
       return cfg.smtpFromName ? `${cfg.smtpFromName} <${cfg.smtpFromEmail}>` : cfg.smtpFromEmail;
     }
-    // Fall back to businessName as sender name
-    if (cfg?.businessName) return `${cfg.businessName} <noreply@routeflow.app>`;
+    // Fall back to businessName as sender name, riding the platform's OWN verified
+    // address (EMAIL_FROM) — B452: this used to hard-code "noreply@routeflow.app",
+    // a domain RouteFlow doesn't even own (routeflow.info is the real domain), so
+    // a tenant with no From-email configured sent SMTP mail from a bogus address.
+    if (cfg?.businessName) {
+      return `${cfg.businessName} via RouteFlow <${this.addressOf(this.platformFrom)}>`;
+    }
     return this.platformFrom;
   }
 
@@ -792,24 +862,13 @@ export class EmailService {
             ? `${emailCfg.fromName} <${emailCfg.fromEmail}>`
             : emailCfg.fromEmail
           : await this.getTenantFromAddress();
-        const transport = nodemailer.createTransport({
-          host: emailCfg.host,
-          port: emailCfg.port,
-          secure: emailCfg.secure,
-          // A 587 server that won't offer STARTTLS would otherwise hand the tenant's
-          // password over in cleartext — refuse instead of silently degrading (mirrors
-          // the pre-save verify transport above).
-          requireTLS: emailCfg.port === 587 && !emailCfg.secure,
-          auth: { user: emailCfg.user, pass: emailCfg.pass },
-          // Fail fast — invoice send/download UX awaits this round-trip. Without
-          // these, nodemailer's 2-minute default connect timeout makes an
-          // unreachable tenant SMTP (e.g. an IPv6 AAAA pick on a no-IPv6-egress
-          // host) hang the request before the Resend fallback kicks in.
-          connectionTimeout: 10_000,
-          greetingTimeout: 10_000,
-          socketTimeout: 15_000,
-          dnsTimeout: 10_000,
-        });
+        const transport = this.createSendTransport(
+          emailCfg.host,
+          emailCfg.port,
+          emailCfg.secure,
+          emailCfg.user,
+          emailCfg.pass,
+        );
         const info = await transport.sendMail({
           from,
           to: params.to,
@@ -833,7 +892,60 @@ export class EmailService {
       }
     }
 
-    // 2. Try platform Resend. The SDK returns `{data, error}` (it does NOT throw on an
+    // 2. Try platform SMTP (Google Workspace mailbox) — the platform transport per the
+    // owner's 2026-09-16 ruling. Mutually exclusive with Resend (constructor picks one),
+    // so there is no cascading fallback between the two platform transports here. No
+    // SSRF guard here (unlike tenant SMTP): host/port come from owner-set env vars, not
+    // tenant-controlled input, and the local dev target (mailpit on port 1025) isn't in
+    // the tenant-facing ALLOWED_SMTP_PORTS allow-list.
+    if (this.platformSmtp) {
+      try {
+        const transport = this.createSendTransport(
+          this.platformSmtp.host,
+          this.platformSmtp.port,
+          this.platformSmtp.secure,
+          this.platformSmtp.user,
+          this.platformSmtp.pass,
+        );
+        const info = await transport.sendMail({
+          from: this.platformFrom,
+          to: params.to,
+          subject: params.subject,
+          html: params.html,
+          replyTo,
+        });
+        this.logger.log(
+          `Email sent via platform SMTP to ${params.to} — messageId: ${info.messageId}`,
+        );
+        return {
+          delivered: true,
+          transport: "smtp",
+          id: info.messageId,
+          smtpFallbackReason,
+          fromAddress: smtpFallbackReason ? this.addressOf(this.platformFrom) : undefined,
+        };
+      } catch (err: any) {
+        const rawMessage: string = err?.message ?? "Platform SMTP send failed";
+        const mapped = mapSmtpError(
+          err,
+          this.platformSmtp.host,
+          this.platformSmtp.port,
+          this.platformSmtp.user,
+        );
+        this.logger.error(
+          `Platform SMTP send failed [code=${err?.code ?? "unknown"}]: ` +
+            `${redactAddresses(rawMessage)}. Mapped reason: ${mapped}`,
+        );
+        return {
+          delivered: false,
+          transport: "smtp",
+          error: smtpError ?? rawMessage,
+          smtpFallbackReason: smtpFallbackReason ?? mapped,
+        };
+      }
+    }
+
+    // 3. Try platform Resend. The SDK returns `{data, error}` (it does NOT throw on an
     // API-level rejection like an unverified domain / bad key), so inspect `error`.
     if (this.resend) {
       try {
@@ -873,7 +985,7 @@ export class EmailService {
       }
     }
 
-    // 3. No transport configured — NOT delivered (was a silent mock "success").
+    // 4. No transport configured — NOT delivered (was a silent mock "success").
     this.logger.warn(
       `[EMAIL NOT SENT] To: ${params.to} | Subject: ${params.subject} — no SMTP or platform email is configured.`,
     );
