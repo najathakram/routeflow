@@ -1879,3 +1879,152 @@ multiple code-map CHANGELOG entries — not a candidate despite similar age.
   column) beats a new table every time.**
 - **Guard:** the bug-pipeline S2 refutation step now asks "does the primitive already exist?"
   explicitly.
+
+## Archived 2026-09-16 — lessons-compaction (L-168-L-171 headroom)
+
+Eight active entries archived to clear headroom for L-168-L-171 and bring the register
+comfortably under its 65,536-byte cap (was 63.9/64.0 KB, ~0 headroom). Selection rule (per
+the lead, chore/lessons-compaction): among fully-guarded entries (real test/CI guard), rank
+by outside citations ascending, restricted to entries dated on or before 2026-09-09 to avoid
+archiving recently-minted entries whose low citation count reflects age rather than value;
+only L-063/L-068/L-074/L-100 (plus L-072/L-081, excluded — 200 and 113 outside citations
+respectively, clearly still load-bearing) qualified from that window, so the remaining four
+slots were filled from the lowest-cited 2026-09-15 entries instead: L-152/L-153/L-157/L-158.
+Citations counted via repo-wide grep (`.claude`/`apps`/`packages`/`scripts`/`docs`, excluding
+`.claude/lessons/**`) plus `git log --grep` plus internal `[[L-NNN]]` sibling references.
+
+### L-063 · 2026-09-04 · testing · imp-04
+
+- **Symptom:** after apps/api's suite was split into two `npx jest` invocations,
+  `scripts/campaign-check.mjs` reported 17 undischarged bug-registry claims that the first run
+  had already proven.
+- **Root cause:** apps/api's jest config wires a campaign reporter that OVERWRITES
+  `.campaign/runs/api.json` on every invocation (no merge), and non-anchored substring filters
+  (`auth` without a trailing slash) also ran `src/authorizations/**` in both partitions (239
+  suites/3686 tests vs the true 233/3632).
+- **Lesson:** **never split a jest invocation whose config wires a campaign/artifact reporter —
+  run apps/api's full suite in one `npx jest --maxWorkers=2` (~270 s) before `campaign-check`; if
+  partitioning is ever required, merge the reporter outputs and anchor patterns with a trailing
+  slash.**
+- **Guard:** `apps/api/package.json` `jest.reporters` (campaign reporter) +
+  `scripts/campaign-check.mjs`; the pre-push hook runs the suite unsplit.
+
+### L-068 · 2026-09-04 · tooling · #597
+
+- **Symptom:** a proven ledger row silently back to `queued`; a live lock stolen, admitting three
+  writers; a refused `move` destroying the authoritative row — every gate green.
+- **Root cause:** an unlocked read-modify-write (stale data enters at the READ, and a
+  read-back-assert re-reads the row that survived); staleness measured as AGE, so a waiter stole a
+  LIVE lock and release deleted the lock PATH unconditionally; and the durable record of intent was
+  written BEFORE the step that could still fail.
+- **Lesson:** **Hold an exclusive lock across the READ as well as the write wherever two processes
+  may touch one file — a read-back-assert can never see the write yours erased. Break a lock on
+  LIVENESS (owner pid/token, ESRCH), never on age; release only the lock you own; fix break and
+  release together; when two constants work in only one order, test the order. Order writes so any
+  failure leaves the safest reachable state: additive write first, verify it landed, irreversible
+  step last.**
+- **Guard:** `withShardLock`/`withCatalogueLock` (atomic `mkdir` lockdir, `owner.json` {pid, token},
+  released from an `exit` handler); `BUGS_TEST_STALL_MS` widens the race; planted failures
+  (cross-shard duplicate, real `EISDIR`, corrupted record mid-loop) assert the PRE-failure state
+  survives.
+
+### L-074 · 2026-09-05 · tooling
+
+- **Symptom:** a prod-capable seed run through `railway run --service postgres` wrote to the LOCAL
+  dev database.
+- **Root cause:** the script defaulted `DATABASE_URL` to a localhost URL and the postgres service
+  exposes only discrete POSTGRES_*/TCP-proxy vars.
+- **Lesson:** **a script that can target production never has a silent local default: resolve the
+  target from the variables the runner actually injects, print the resolved host before
+  connecting, and treat "nothing set" as a loud fallback.**
+- **Guard:** `resolveDatabaseUrl` + its spec; the seed logs its target host.
+
+### L-100 · 2026-09-08 · domain · #678
+
+- **Symptom:** three numbering series minted cross-tenant on a null request tenant and raced to a
+  raw 500; a rolled-back settlement re-minted the same payment number.
+- **Root cause:** `forTenant()` returns the UNSCOPED client on a null tenant, so a "tenant-scoped"
+  scan is only scoped when a request tenant exists; counters inside a rolled-back tx re-issue
+  numbers; TEXT max+1 scans have no wall past 9999.
+- **Lesson:** **Mint every document number through `NumberingService.reserveNext(type, { year,
+tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()`), reserved
+  STANDALONE before any transaction that can roll back, with P2002 → 409 and a bounded retry on
+  serialization failure that reuses the reserved number; a green pin must never carry a `REG-`
+  token (the red gate reads titles).**
+- **Guard:** `apps/api/src/**/{credit-note,payment,import}-numbering.db.spec.ts` (REG-B267/B268/B269),
+  `numbering.service.spec.ts`.
+
+### L-152 · 2026-09-15 · process · #743 fix round T5 "one MRR engine" claim
+
+- **Symptom:** T5 replaced two retired catalog-fallback estimators
+  (`_catalogPriceByPlanKey`/`_monthlyPriceUsd`) with one shared `priceSubscription()`/
+  `priceTenant()` path and described the change as making `MrrService` "the one MRR engine" —
+  a claim about EVERY caller of money-pricing logic, verified only against the one call site
+  (`getTenant()`) the task brief named.
+- **Root cause:** "the one caller that was migrated" and "every caller of the retired helper" are
+  different claims; a brief that names one caller can leave a sibling call site (another service,
+  a script, a test fixture computing the same figure independently) still on the old path with
+  nothing failing to say so — the retired helper being deleted only proves the ONE known caller
+  broke, not that no other caller existed.
+- **Lesson:** **Before declaring a function "the one X" or "the single source of truth" for
+  anything, grep the whole tree for the OLD mechanism's name/signature, not just the call site the
+  task brief already named — a deletion only proves what it broke, never what it missed.**
+- **Guard:** `mrr.service.spec.ts`'s `REG-743-N1` test proves `priceTenant()` and
+  `computeOverview()` sum to the same total for the same fixture (structural proof, not just "the
+  old helper is gone"). Sibling [[L-119]] — same theme, an earlier money-figure seam.
+
+### L-153 · 2026-09-15 · tooling · #743 fix round T3 child-process env leak into a prod-capable CLI
+
+- **Symptom:** two DB-lane specs spawn a prod-capable backfill CLI via `execSync` with
+  `env: {...process.env, DATABASE_URL: dbUrl}`. The CLI's own `resolveDatabaseUrl()` prioritizes
+  Railway TCP-proxy vars OVER `DATABASE_URL` when set — so a parent process with a leftover
+  Railway proxy export (e.g. an earlier `railway run` in the same shell) leaks into the child,
+  pointing a "local-only" test's CLI at the production database.
+- **Root cause:** `{...process.env, DATABASE_URL: dbUrl}` ADDS a key, it does not REMOVE any —
+  scrubbing is the caller's job and neither spec did it. Overriding one variable doesn't guarantee
+  which variable wins inside the child's OWN resolution precedence.
+- **Lesson:** **A child process inherits variables, not a guard — when a spawned CLI has its own
+  "A beats B" precedence, setting B in the child's env isn't enough. Delete every variable in the
+  higher-precedence set before spawning, and test by FAKING those vars on the parent to prove the
+  child still resolves correctly.**
+- **Guard:** `childEnv(dbUrl)` helper in both DB specs deletes every `RAILWAY_*`/`POSTGRES_*` key
+  before setting `DATABASE_URL`; each file's `REG-743-N2` test fakes Railway vars on the spec's
+  own `process.env` and asserts the child still resolves to the local host.
+
+### L-157 · 2026-09-15 · domain · #743 review round #3 (F1/F2)
+
+- **Symptom:** an admin MRR card fell back to a client-side per-plan price estimate when the
+  server rollup failed -- a free pilot showed at full list price. A reconciliation script's
+  `--apply` wrote real prices to live PRODUCTION tenants with nothing between "ran the dry run"
+  and "wrote to prod" -- a stale terminal was indistinguishable from a reviewed decision.
+- **Root cause:** both were "best-effort" conveniences added without asking what happens when
+  the safety net itself is wrong: a fallback estimate is a second, unaudited pricing engine; an
+  unconfirmed bulk write on money data has no seam between intent and action.
+- **Lesson:** **A money surface gets ONE engine, never a fallback estimate -- on failure, say so
+  ("unavailable"), never invent a number. A bulk write on live money data needs an explicit
+  confirmation naming what's about to apply (`--confirm-count <n>` matching the dry run),
+  refused otherwise.**
+- **Guard:** `admin/billing/page.tsx` deleted `PLAN_PRICES`, shows "MRR unavailable" on error.
+  `backfill-subscription-reconciliation.mjs` requires `--confirm-count` matching the scan when
+  `--apply` runs unscoped. Sibling fix same round: the write's `updateMany` re-asserts tenant
+  state, closing a scan-to-write race.
+
+### L-158 · 2026-09-15 · domain · PR-2 fix round 3 (idempotency guard: ordering + fail-closed)
+
+- **Symptom:** two findings on one newly-built idempotency guard (returns.service.ts create()).
+  (a) the replay check ran AFTER order/DELIVERED/ownership validation, so a retry whose order
+  state changed for unrelated reasons since an already-successful attempt wrongly 404/400'd
+  instead of returning the saved result. (b) the lock acquisition was built fail-open like the
+  guard's other methods, but a failed lock has no other backstop against the race it prevents —
+  fail-open there silently defeats the whole guard.
+- **Root cause:** (a) validation predating the guard stayed in its original position instead of
+  being re-examined against the new replay path. (b) fail-open was applied uniformly, without
+  asking whether each method has an independent backstop if it fails.
+- **Lesson:** **Adding a replay guard around an existing operation: (1) the replay check runs
+  BEFORE any validation reading MUTABLE state the original attempt already passed; (2) fail-open
+  is a per-method decision — a step with NO other backstop against the harm it prevents (a lock
+  closing a race) must fail CLOSED, even when siblings safely fail open because a domain-level
+  guard backstops them.**
+- **Guard:** `returns-idempotency.spec.ts`'s retry-after-state-changed case;
+  `idempotency.service.spec.ts` REG-IDEM-SVC-9; `returns-idempotency.db.spec.ts` (real Postgres).
+
