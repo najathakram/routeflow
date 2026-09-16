@@ -34,13 +34,17 @@
   pools PR-2b, 2026-09-04)** — exports
   `withAdvisoryLock<T>({family,key,mode:"wait"|"try",waitMs?}, fn): Promise<LockResult<T>>` where
   `LockResult<T> = {acquired:true,value:T}|{acquired:false}`, plus `LOCK_FAMILIES`
-  (`["order-merge","cron","billing","tenant-mirror"] as const`) / `LockFamily`, `LockTimeoutError`/
+  (`["order-merge","cron","billing","tenant-mirror","demo-booking"] as const`) / `LockFamily`,
+  `LockTimeoutError`/
   `LockUnavailableError` and a test-only `_resetLockPoolForTests()` (ends+clears ALL pools).
   Cross-process critical
   section on a Postgres advisory lock (`pg_advisory_lock(hashtext(family), hashtext(key))`), held
   on DEDICATED `pg.Pool`s it owns itself — **one pool per family, sized per family** (`cron`
   `max: 12`, `order-merge` `max: 8`, `billing` `max: 4` (B342, 2026-09-13), `tenant-mirror`
-  `max: 4` (F3, review round, 2026-09-15 — TenantMirrorService#upsert, see feature-modules-1.md)):
+  `max: 4` (F3, review round, 2026-09-15 — TenantMirrorService#upsert, see feature-modules-1.md),
+  `demo-booking` `max: 4` (2026-09-16 — public unauthenticated endpoint, so `billing`'s sizing
+  rationale applies, not `order-merge`'s: each checkout is one availability re-check + one insert,
+  see feature-modules-7.md `demo-booking/`)):
   a cron winner pins a slot for
   its whole tick (≤ 7
   concurrently at the monthly peak, plus a straggling hourly sweep), which out of one shared
