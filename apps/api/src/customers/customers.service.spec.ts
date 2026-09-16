@@ -1198,6 +1198,41 @@ describe("CustomersService", () => {
         data: { customerId: PRIMARY.id },
       });
     });
+
+    // ─── F2 — merge refuses a removed customer on either side ────────────────
+    it("F2: 409s when the primary is soft-deleted, and never opens the merge transaction", async () => {
+      prisma.customer.findUnique.mockImplementation(({ where }: any) =>
+        Promise.resolve(
+          where.id === PRIMARY.id
+            ? { ...PRIMARY, deletedAt: new Date() }
+            : where.id === SECONDARY.id
+              ? SECONDARY
+              : null,
+        ),
+      );
+
+      await expect(service.mergeCustomers(PRIMARY.id, SECONDARY.id)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+    });
+
+    it("F2: 409s when the secondary is soft-deleted, and never opens the merge transaction", async () => {
+      prisma.customer.findUnique.mockImplementation(({ where }: any) =>
+        Promise.resolve(
+          where.id === PRIMARY.id
+            ? PRIMARY
+            : where.id === SECONDARY.id
+              ? { ...SECONDARY, deletedAt: new Date() }
+              : null,
+        ),
+      );
+
+      await expect(service.mergeCustomers(PRIMARY.id, SECONDARY.id)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+    });
   });
 
   // ─── P5-13 — statement wallet balance (no double-count) ────────────────────
@@ -2724,6 +2759,46 @@ describe("CustomersService", () => {
           googleId: null,
         },
       });
+    });
+
+    // ─── F1 — deleteCustomer is idempotent ──────────────────────────────────
+    it("F1: a customer already soft-deleted short-circuits — no transaction, no user.update", async () => {
+      prisma.customer.findUnique.mockResolvedValueOnce({
+        ...CUSTOMER,
+        deletedAt: new Date(),
+        user: { status: "INACTIVE", username: `acme~removed~${CUSTOMER.id.slice(0, 8)}` },
+      });
+
+      await expect(service.deleteCustomer(CUSTOMER.id, true)).resolves.toEqual({
+        success: true,
+        softDeleted: true,
+      });
+
+      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it("F1: deleting a live customer twice tombstones the username exactly once (no double suffix)", async () => {
+      await service.deleteCustomer(CUSTOMER.id, true);
+      expect(prisma.user.update).toHaveBeenCalledTimes(1);
+      const tombstonedUsername = prisma.user.update.mock.calls[0][0].data.username;
+      expect(tombstonedUsername).toBe(`acme~removed~${CUSTOMER.id.slice(0, 8)}`);
+
+      // Second delete sees the now-tombstoned row — the idempotency guard must
+      // short-circuit before the soft-delete branch re-appends a SECOND
+      // "~removed~<id8>" suffix (restoreCustomer only ever strips one).
+      prisma.customer.findUnique.mockResolvedValueOnce({
+        ...CUSTOMER,
+        deletedAt: new Date(),
+        user: { status: "INACTIVE", username: tombstonedUsername },
+      });
+
+      await service.deleteCustomer(CUSTOMER.id, true);
+
+      expect(prisma.user.update).toHaveBeenCalledTimes(1);
+      expect(tombstonedUsername).not.toContain(
+        `~removed~${CUSTOMER.id.slice(0, 8)}~removed~${CUSTOMER.id.slice(0, 8)}`,
+      );
     });
 
     it("REG-B130b: soft-deletes a RECORD-FREE customer when force=true (the detail page's Undo contract)", async () => {

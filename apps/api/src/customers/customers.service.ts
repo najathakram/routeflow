@@ -1861,6 +1861,12 @@ export class CustomersService {
 
     const primary = await this.findCustomerOrThrow(primaryId);
     const secondary = await this.findCustomerOrThrow(secondaryId);
+    // F2: a removed customer on either side must be restored before it can be merged —
+    // merging financial records onto (or off of) a tombstoned row leaves them attached to
+    // an identity that is mid-removal.
+    if (primary.deletedAt || secondary.deletedAt) {
+      throw new ConflictException("Restore the customer first");
+    }
 
     try {
       return await this.prisma.tenantTransaction(
@@ -2160,6 +2166,11 @@ export class CustomersService {
       include: { user: { select: { status: true, username: true } } },
     });
     if (!customer) throw new NotFoundException("Customer not found");
+    // F1: a second delete on an already-tombstoned customer must be a no-op. Without this,
+    // the soft-delete branch below re-appends "~removed~<id8>" onto a username that already
+    // carries the suffix (restoreCustomer only ever strips ONE), permanently mangling the
+    // login identity on a repeat delete.
+    if (customer.deletedAt) return { success: true, softDeleted: true };
 
     // Count financial records that would be orphaned by a hard delete. Deliberately
     // kind-agnostic (PR-1a review): a hard/soft customer delete counts and removes
