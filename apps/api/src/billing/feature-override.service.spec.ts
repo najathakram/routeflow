@@ -235,6 +235,39 @@ describe("FeatureOverrideService.create", () => {
     expect(err.getResponse()).toMatchObject({ code: "FEATURE_KEY_UNKNOWN" });
   });
 
+  // Opus review of 8130b204, item 7a: an already-past expiresAt creates a row that is never
+  // active for even one read — reject it outright rather than silently accepting a no-op row.
+  it("rejects an expiresAt already in the past with EXPIRES_AT_MUST_BE_FUTURE", async () => {
+    const { svc } = build();
+    const err = await svc
+      .create({
+        tenantId: "t1",
+        featureKey: "tobacco_dealer",
+        effect: "GRANT",
+        reason: "pilot",
+        expiresAt: new Date("2000-01-01T00:00:00Z"),
+        createdById: "admin1",
+      })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toMatchObject({ code: "EXPIRES_AT_MUST_BE_FUTURE" });
+  });
+
+  it("accepts a null expiresAt (standing override) and a future one", async () => {
+    const { svc, prisma } = build();
+    prisma.tenantFeatureOverride.create.mockResolvedValue(row());
+    await expect(
+      svc.create({
+        tenantId: "t1",
+        featureKey: "tobacco_dealer",
+        effect: "GRANT",
+        reason: "pilot",
+        expiresAt: new Date(Date.now() + 86_400_000),
+        createdById: "admin1",
+      }),
+    ).resolves.toBeDefined();
+  });
+
   it("translates a unique-constraint violation (an active row already exists) into 409", async () => {
     const { svc, prisma } = build();
     const conflict = Object.assign(new Error("unique"), { code: "P2002" });

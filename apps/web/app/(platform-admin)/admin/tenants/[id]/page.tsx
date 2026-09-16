@@ -1346,8 +1346,16 @@ function FeatureOverridesSection({ tenant }: { tenant: TenantDetail }) {
       setShowForm(false);
       fetchOverrides();
     } catch (e: unknown) {
-      const err = e as { response?: { data?: { message?: string } } };
-      setFormError(err?.response?.data?.message ?? "Could not create that override. Try again.");
+      // Opus review of 8130b204, item 7c: a class-validator 400 (e.g. EXPIRES_AT_MUST_BE_FUTURE,
+      // or a DTO field failing multiple rules) sends `message` as string[], not string — join it
+      // into one readable line rather than rendering an array where text is expected.
+      const err = e as { response?: { data?: { message?: string | string[] } } };
+      const message = err?.response?.data?.message;
+      setFormError(
+        Array.isArray(message)
+          ? message.join("; ")
+          : (message ?? "Could not create that override. Try again."),
+      );
     } finally {
       setSubmitting(false);
     }
@@ -1497,7 +1505,7 @@ function FeatureOverridesSection({ tenant }: { tenant: TenantDetail }) {
               </option>
               {registry.map((r) => (
                 <option key={r.key} value={r.key}>
-                  {r.label} ({r.key})
+                  {r.label} ({r.key}){r.internal ? " — internal" : ""}
                 </option>
               ))}
             </select>

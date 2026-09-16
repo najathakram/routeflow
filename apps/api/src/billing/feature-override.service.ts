@@ -161,6 +161,15 @@ export class FeatureOverrideService {
         message: `"${params.featureKey}" is not a registered feature key.`,
       });
     }
+    // Opus review of 8130b204, item 7a: an already-past expiresAt would create a row that is
+    // never active for even one read — a nonsensical state to allow, not just a redundant one.
+    if (params.expiresAt && params.expiresAt.getTime() <= Date.now()) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: "EXPIRES_AT_MUST_BE_FUTURE",
+        message: "expiresAt must be in the future.",
+      });
+    }
     try {
       // The partial unique index is `WHERE revokedAt IS NULL` -- an expired-but-never-revoked
       // row still counts toward it, blocking a re-grant/re-deny of the same key until someone
