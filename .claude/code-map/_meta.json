@@ -10,5 +10,5 @@
     "packages": 0
   },
   "fileCount": 1027,
-  "notes": "**2026-09-16 — mappedSha repointed to 8f329ec4 (#786's own squash commit).** mappedSha must be a MASTER sha — squash merges orphan branch shas; #786 stamped its branch HEAD (61a70b0e), which is not an ancestor of master, so validate-code-map failed every local pre-push with MAPPED SHA NOT ANCESTOR (CI only warned: its clone lacks the orphaned commit). Map content is unchanged — 8f329ec4 carries exactly #786's refresh. Replace this field each session per CHANGELOG.md's header convention."
+  "notes": "**2026-09-16 — map #789 (B452 platform email sender) — docs-only bookkeeping follow-up** — `api/feature-modules-7.md` `email/`: new bullet for the platform Google Workspace SMTP transport (all-or-nothing `SMTP_*` selection over Resend), the `platformFrom` derivation, `getTenantFromAddress()`'s `<Business> via RouteFlow` fallback replacing the unowned `noreply@routeflow.app`, `sanitizeDisplayName()`'s scope, `getReplyTo()`'s fallback chain, and the read-only `apps/api/scripts/check-email-sender.mjs` diagnostic. Also corrected the module bullet's stale \"global `EmailService`\" — `EmailModule` is a plain `@Module`, so consumers import it (`CustomersModule` has since #778). `mappedSha` unchanged. See CHANGELOG.md."
 }
