@@ -13,6 +13,34 @@
 
 ## tooling
 
+### L-172 · 2026-09-16 · tooling · #779 (nested timeout mismatch)
+
+- **Symptom:** raising a Jest test's own timeout to fix one flake introduced a new, harder-to-
+  diagnose flake in the same test.
+- **Root cause:** the test's Jest-level timeout was raised without raising the timeout on the
+  `spawnSync` call running *inside* it, so the inner call now times out and throws before Jest's
+  own outer timeout would ever fire — moving the failure mode to a confusing error shape instead
+  of fixing it.
+- **Lesson:** **When a test wraps a call with its own timeout (spawnSync, an HTTP client, a DB
+  pool), raising the test's outer timeout without raising the inner one moves the failure mode,
+  it doesn't fix it — always raise both together, inner first.**
+- **Guard:** none named in the PR body — propose a lint/review checklist item pairing any Jest
+  `testTimeout`/`jest.setTimeout` edit with a check for an inner call's own timeout in the same
+  test.
+
+### L-174 · 2026-09-16 · tooling · demo-booking lane (raw NUL byte from an escape literal)
+
+- **Symptom:** a source file kept "working" after an agent tool chain wrote a `\uXXXX`-shaped
+  escape literal into it — until `file`/git/prettier treated it as binary, because what actually
+  landed was the raw byte the escape describes (a NUL in a `.ts` file), not the 6-char sequence.
+- **Root cause:** a tool-chain step decoded the escape before the write, turning a literal meant
+  to stay text into its raw byte — nothing downstream checked the file was still actually text.
+- **Lesson:** **After writing any escape-sequence literal through an agent tool chain, verify it
+  landed as literal text, not the decoded byte — a file can silently stop being text the moment
+  one write step decodes what should have stayed escaped.**
+- **Guard:** `file <path>` (must say "text") or `grep -cP '\x00' <path>` (must be 0) before
+  trusting the write; a pre-commit NUL-byte check on text sources is the durable fix.
+
 ### L-168 · 2026-09-16 · tooling · B421 CASH_METHOD_FILTER as-const gap
 
 - **Symptom:** `CASH_METHOD_FILTER`, a Prisma `notIn` filter constant, shipped with no real call
@@ -160,6 +188,33 @@
 
 ## testing
 
+### L-165 · 2026-09-16 · testing · #779 (B225/B244/B411)
+
+- **Symptom:** two unrelated integration tests intermittently failed under load —
+  `bugs-self-test-script.spec.ts` and `ci-freshness-guard-script.spec.ts`.
+- **Root cause:** both asserted a proxy for correctness instead of the run's own declared
+  outcome — elapsed wall-clock time in one, an ambient tmpdir file count shared across parallel
+  test workers in the other. Neither proxy is stable under load; the process's own exit
+  signal/result was available and ignored.
+- **Lesson:** **Assert a process's own reported result/exit signal, never wall-clock timing or a
+  shared/global count, as a stand-in for it.** A shared ambient count in particular races every
+  other parallel worker touching the same path.
+- **Guard:** code review should flag any `Date.now()`-delta or directory-listing-count assertion
+  in a spec touching a spawned process or shared tmp path — no automated lint yet.
+
+### L-166 · 2026-09-16 · testing · #779 (B352)
+
+- **Symptom:** `next-version.spec.ts` stopped enforcing a minimum patched Next.js version after
+  an unrelated fix round touched the same file — a security-advisory floor silently dropped.
+- **Root cause:** the fix round's own diff review didn't check which assertions the file already
+  carried before editing it; a generically-named test ("pins the version") gave no signal that
+  editing it deleted a security floor specifically.
+- **Lesson:** **A spec file that pins a security floor (a CVE-patched minimum version, an
+  advisory allowlist) needs its own named assertion — the next unrelated edit to that file can't
+  silently delete it without a visible red diff.**
+- **Guard:** name the assertion after the floor it enforces (e.g. `it("enforces the CVE-2026-xxxx
+  floor", ...)`), not after the generic thing being tested — restored in `next-version.spec.ts`.
+
 ### L-050 · 2026-09-02 · testing · #598
 
 - **Symptom:** two new e2e specs went red post-deploy AND dragged an unrelated, previously-green
@@ -190,6 +245,36 @@
 - **Guard:** none — judgment. Grep `isWeb`/`Platform.OS` in any file a fix touches.
 
 ## domain
+
+### L-167 · 2026-09-16 · domain · #781 (B156/B158/B170)
+
+- **Symptom:** three separately-reported bugs (B156/B158/B170) all traced to the same root cause
+  — a customer-list filter predicate living in more than one place.
+- **Root cause:** `findAll`'s `where` clause and `exportCustomers`'s hand-rolled one had drifted
+  apart, and neither was consulted by `update`/`changeStatus`'s removed-customer guard.
+- **Lesson:** **When an entity has more than one read/export/guard path (list, CSV export,
+  edit-guard), its filter predicate belongs in exactly ONE shared builder consumed by all of
+  them — three call-site-specific copies will silently drift, and each drift surfaces as its own
+  "unrelated" bug report.**
+- **Guard:** shared `buildListWhere()` backs `findAll`, `exportCustomers`, and the
+  `update`/`changeStatus` guards; a test should assert every consumer calls the *same* function
+  reference, not just that each produces a matching result today (not yet added — flag for the
+  #781 landing coordinator).
+
+### L-173 · 2026-09-16 · domain · B449 (Lite lane, plan-gate boundary)
+
+- **Symptom:** a plan-gated page kept firing its own effects/queries while a locked/blurred
+  overlay showed over it — its 403 toasts and query errors leaked to a user who should never
+  have triggered that page's behavior at all.
+- **Root cause:** the gate ghosted the real page behind blur/opacity by rendering it as
+  `children` inside the locked view's own slot — that hides the DOM, it doesn't unmount it, so
+  "ghosted" was mistaken for "never mounts."
+- **Lesson:** **A route guard choosing between locked and unlocked must render exactly ONE of
+  two subtrees, never wrap the real page inside the locked view's ghost slot — a component
+  hidden behind blur/opacity is still mounted, and its effects/queries still fire.**
+- **Guard:** a route boundary needs a real third "still resolving" state (a spinner) distinct
+  from both outcomes; `layout.plan-gate-boundary.test.tsx` pins children absent from the tree
+  while resolving/locked, not just visually hidden.
 
 ### L-169 · 2026-09-16 · domain · B421 / PR-1a shared-helper precondition no-op (two call sites)
 
@@ -242,7 +327,6 @@
 - **Guard:** the pricing branch now pools qty/subtotal per product the same way the cap does,
   with a `min(returned, sold)` backstop; `returns-refund.spec.ts`'s new F1 cases prove the pooled
   pricing for a two-line split.
-
 
 ### L-072 · 2026-09-03 · domain · wave E `imp-10b`
 
@@ -624,23 +708,6 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   scalar — a scalar assumes at most one row is ever in flight.**
 - **Guard:** `invoices/page.tsx` tracks `printingIds: Set<string>`; row `disabled={printingIds.has(inv.id)}`.
 
-### L-150 · 2026-09-15 · domain · B264/B265/B266 mobile scan FABs
-
-- **Symptom:** a `BarcodeFab` mounted inside a `FormSheet`-wrapped screen rendered but scrolled away
-  with the form content instead of floating fixed — the defect the floating-FAB pattern exists to
-  prevent, moved one layer down.
-- **Root cause:** `FormSheet`'s `children` render inside `FormSheet`'s OWN internal `ScrollView`
-  (`components/FormSheet.tsx`), not under the screen's stable outer container. `position:
-"absolute"` there is relative to the scrolling content box, not the viewport, so it moves with
-  the scroll. Every other `BarcodeFab` consumer uses a plain `SafeAreaView` + sibling `ScrollView`,
-  where this trap doesn't exist.
-- **Lesson:** **A wrapper whose `children` land inside its OWN scrolling container is not a safe
-  parent for an absolutely-positioned floating element — check the wrapper's own source for where
-  `children` actually renders before assuming position is unaffected. Mount the floating element
-  as a SIBLING of the wrapper instead (a Fragment), never inside its `children`.**
-- **Guard:** `apps/mobile/__tests__/scan-affordance-siblings.test.ts` pins the FAB's mount position
-  on all three screens (`fabAt > formSheetCloseAt`).
-
 ### L-154 · 2026-09-15 · domain · PR-3 independent review F1/F4 (moved logic, new entry point)
 
 - **Symptom:** two findings, same root shape. F1: a handler copied from `ProductPickerSheet.onScanned`
@@ -778,19 +845,6 @@ apps/web/app --include=*.tsx -A1 | grep -B1 onSuccess` — narrow to `.map()`-re
 - **Guard:** `page.test.tsx`'s REG-743-F1 cases — an extra non-`PLAN_KEYS` catalog row is excluded
   from rendered options; a catalog with zero `PLAN_KEYS`-eligible rows falls back to exactly
   `PLAN_KEYS`.
-
-### L-161 · 2026-09-15 · tooling · T12-T15 review round F1/F2 (house-tenant script + mirror re-validation)
-
-- **Symptom:** `bootstrap-house-tenant.mjs` called `new PrismaClient()` with no driver adapter —
-  Prisma 7 throws. `TenantMirrorService#upsert` trusted a once-resolved `platform.houseTenantId`
-  forever, so a config key later pointing at a deleted/reclassified tenant would write admin data
-  into it.
-- **Root cause:** a resolved or pattern-copied dependency was trusted without re-checking it
-  against its current siblings or current row.
-- **Lesson:** **A prod-targeting script must match its siblings' PrismaPg/pg.Pool client setup,
-  never a bare `new PrismaClient()`. A writer resolving a special row by id must re-validate its
-  identity/class on every write, not just once.**
-- **Guard:** `bootstrap-house-tenant.db.spec.ts`, `tenant-mirror.service.spec.ts`.
 
 ### L-162 · 2026-09-15 · tooling · post-dated check payments PR-1 (schema-only, additive)
 

@@ -2028,3 +2028,47 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
 - **Guard:** `returns-idempotency.spec.ts`'s retry-after-state-changed case;
   `idempotency.service.spec.ts` REG-IDEM-SVC-9; `returns-idempotency.db.spec.ts` (real Postgres).
 
+
+## Archived 2026-09-16 — headroom for L-165-L-167/L-172-L-174 (post-#779/#781 merge)
+
+Two more active entries archived to clear both caps after landing six new entries
+(L-165/L-166/L-167 from PR #779/#781, L-172/L-173/L-174 dictated by the lead) pushed the
+register to 53/52 entries, 65.8 KB. Per the lead: author-trimmed the six new entries to
+<=1.1 KB each first (recovered headroom), then archived by the same rule as the morning
+pass (fully-guarded, lowest outside citations, excluding L-072/L-081) — but the
+date-restricted (<=2026-09-09) pool was already exhausted by the morning archive, so this
+pass drew from the full active set instead: L-150 and L-161 (both cites=2, real test
+guards, dated 2026-09-15). L-164 (also cites=2, guarded) was kept over L-150/L-161 — its
+fail-open/undefined-vs-empty principle reads as more broadly applicable than either
+archived entry's narrower mechanism.
+
+### L-150 · 2026-09-15 · domain · B264/B265/B266 mobile scan FABs
+
+- **Symptom:** a `BarcodeFab` mounted inside a `FormSheet`-wrapped screen rendered but scrolled away
+  with the form content instead of floating fixed — the defect the floating-FAB pattern exists to
+  prevent, moved one layer down.
+- **Root cause:** `FormSheet`'s `children` render inside `FormSheet`'s OWN internal `ScrollView`
+  (`components/FormSheet.tsx`), not under the screen's stable outer container. `position:
+"absolute"` there is relative to the scrolling content box, not the viewport, so it moves with
+  the scroll. Every other `BarcodeFab` consumer uses a plain `SafeAreaView` + sibling `ScrollView`,
+  where this trap doesn't exist.
+- **Lesson:** **A wrapper whose `children` land inside its OWN scrolling container is not a safe
+  parent for an absolutely-positioned floating element — check the wrapper's own source for where
+  `children` actually renders before assuming position is unaffected. Mount the floating element
+  as a SIBLING of the wrapper instead (a Fragment), never inside its `children`.**
+- **Guard:** `apps/mobile/__tests__/scan-affordance-siblings.test.ts` pins the FAB's mount position
+  on all three screens (`fabAt > formSheetCloseAt`).
+
+### L-161 · 2026-09-15 · tooling · T12-T15 review round F1/F2 (house-tenant script + mirror re-validation)
+
+- **Symptom:** `bootstrap-house-tenant.mjs` called `new PrismaClient()` with no driver adapter —
+  Prisma 7 throws. `TenantMirrorService#upsert` trusted a once-resolved `platform.houseTenantId`
+  forever, so a config key later pointing at a deleted/reclassified tenant would write admin data
+  into it.
+- **Root cause:** a resolved or pattern-copied dependency was trusted without re-checking it
+  against its current siblings or current row.
+- **Lesson:** **A prod-targeting script must match its siblings' PrismaPg/pg.Pool client setup,
+  never a bare `new PrismaClient()`. A writer resolving a special row by id must re-validate its
+  identity/class on every write, not just once.**
+- **Guard:** `bootstrap-house-tenant.db.spec.ts`, `tenant-mirror.service.spec.ts`.
+
