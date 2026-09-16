@@ -1,3 +1,5 @@
+Status: IMPLEMENTED
+
 # Test plan — Plane BUGS mirror (S4)
 
 Status: IMPLEMENTED (fix-round 1 2026-09-11 added T20/T17b to TP1 and T12c/T12d plus the
