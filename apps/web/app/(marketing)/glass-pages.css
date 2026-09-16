@@ -1,0 +1,424 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   RouteFlow marketing — page layouts built on the glass design system.
+
+   glass.css holds the tokens and the reusable surface/control vocabulary; this
+   file holds the layouts specific to the demo-booking and authentication pages.
+   Both are scoped under `.rf-marketing` and loaded from app/layout.tsx.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* ── Demo booking ────────────────────────────────────────────────────────── */
+
+.rf-marketing .booking-layout {
+  display: grid;
+  grid-template-columns: 1fr 1.04fr;
+  gap: 22px;
+  align-items: start;
+  padding-top: 26px;
+  padding-bottom: 60px;
+}
+
+.rf-marketing .booking-copy,
+.rf-marketing .booking-panel {
+  padding: 34px;
+}
+
+.rf-marketing .agenda-list {
+  list-style: none;
+  margin: 26px 0;
+  padding: 0;
+  display: grid;
+  gap: 18px;
+}
+
+.rf-marketing .agenda-list li {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.rf-marketing .agenda-list > li > svg {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  color: #326696;
+  margin-top: 2px;
+}
+
+.rf-marketing .agenda-list strong {
+  display: block;
+  font-size: 13px;
+  color: var(--g-ink);
+  margin-bottom: 3px;
+}
+
+.rf-marketing .agenda-list p {
+  font-size: 12px;
+  line-height: 1.65;
+  margin: 0;
+}
+
+.rf-marketing .calendar-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 6px 0 14px;
+}
+
+.rf-marketing .calendar-heading h3 {
+  margin: 0;
+  font-size: 19px;
+}
+
+.rf-marketing .calendar-nav {
+  display: flex;
+  gap: 6px;
+}
+
+.rf-marketing .calendar-nav button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  border: 1px solid var(--g-field-border);
+  background: var(--g-field);
+  color: var(--g-link);
+}
+
+.rf-marketing .calendar-nav button:hover:not(:disabled) {
+  background: #fff;
+}
+
+.rf-marketing .calendar-nav button:disabled {
+  color: #a9b9c8;
+  cursor: not-allowed;
+}
+
+.rf-marketing .calendar-week,
+.rf-marketing .calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 5px;
+}
+
+.rf-marketing .calendar-week span {
+  text-align: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--g-soft);
+  padding-bottom: 6px;
+}
+
+.rf-marketing .calendar-grid button {
+  aspect-ratio: 1.2;
+  min-height: 36px;
+  border: 1px solid transparent;
+  border-radius: var(--g-r-xs);
+  background: transparent;
+  color: #8298ab;
+  font-size: 12px;
+}
+
+.rf-marketing .calendar-grid button.available {
+  background: linear-gradient(135deg, #ffffffd9, #ffffff61);
+  border-color: #fff;
+  color: #2b587d;
+  box-shadow: 0 3px 8px #264b7510;
+}
+
+.rf-marketing .calendar-grid button.available:hover {
+  background: #fff;
+}
+
+.rf-marketing .calendar-grid button.selected {
+  background: linear-gradient(140deg, #325d83, #193751);
+  color: #fff;
+  border-color: #8da9be66;
+}
+
+.rf-marketing .calendar-grid button:disabled {
+  cursor: not-allowed;
+}
+
+.rf-marketing .time-slots {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.rf-marketing .time-slots button {
+  font-size: 12px;
+  padding: 13px 4px;
+  color: #456a8b;
+  background: linear-gradient(140deg, #ffffffc9, #ffffff70);
+  border: 1px solid #fff;
+  border-radius: 11px;
+}
+
+.rf-marketing .time-slots button:hover {
+  background: #fff;
+}
+
+.rf-marketing .time-slots button.selected {
+  background: #c0dcefa1;
+  border-color: #4c84b3;
+  box-shadow: inset 0 0 0 1px #4c84b3;
+  color: var(--g-ink);
+  font-weight: 600;
+}
+
+/* Empty and loading states carry the same weight as a full grid so the panel
+   does not visibly collapse while availability is being fetched. */
+.rf-marketing .slots-empty {
+  display: grid;
+  place-items: center;
+  min-height: 92px;
+  padding: 18px;
+  border-radius: var(--g-r-xs);
+  background: #eef3f8a0;
+  border: 1px dashed #c3d3e1;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--g-muted);
+  text-align: center;
+}
+
+.rf-marketing .booking-summary {
+  padding: 16px 18px;
+  border-radius: var(--g-r-xs);
+  background: #ffffff8f;
+  border: 1px solid var(--g-field-border);
+  margin-bottom: 20px;
+}
+
+.rf-marketing .booking-summary dt {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #688099;
+  margin-bottom: 3px;
+}
+
+.rf-marketing .booking-summary dd {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--g-ink);
+}
+
+.rf-marketing .booking-summary dd:last-child {
+  margin-bottom: 0;
+}
+
+.rf-marketing .booking-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 22px;
+  font-size: 11px;
+  color: var(--g-soft);
+}
+
+.rf-marketing .booking-steps span[aria-current="step"] {
+  color: var(--g-ink);
+  font-weight: 600;
+}
+
+.rf-marketing .booking-done {
+  text-align: center;
+  padding: 14px 0 6px;
+}
+
+.rf-marketing .booking-done .g-tile {
+  margin-inline: auto;
+  color: var(--g-teal);
+}
+
+/* ── Auth: chooser and credential pages ──────────────────────────────────── */
+
+.rf-marketing .page-intro {
+  text-align: center;
+  padding: 58px 40px;
+  margin-top: 26px;
+}
+
+.rf-marketing .page-intro p {
+  max-width: 620px;
+  margin-inline: auto;
+}
+
+.rf-marketing .signin-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 22px;
+}
+
+.rf-marketing .login-choice {
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+}
+
+.rf-marketing .login-choice p {
+  flex: 1;
+}
+
+.rf-marketing .login-choice .g-btn {
+  margin-top: 8px;
+  margin-bottom: 14px;
+}
+
+.rf-marketing .auth-layout {
+  display: grid;
+  grid-template-columns: 1fr 460px;
+  gap: 40px;
+  align-items: center;
+  padding: 40px 0 70px;
+}
+
+.rf-marketing .auth-aside {
+  padding: 38px;
+}
+
+.rf-marketing .auth-card {
+  padding: 34px;
+}
+
+.rf-marketing .auth-card h1 {
+  font-size: clamp(28px, 3vw, 36px);
+}
+
+.rf-marketing .auth-switch {
+  display: flex;
+  gap: 8px;
+  padding: 5px;
+  border-radius: 999px;
+  background: #ffffff70;
+  border: 1px solid var(--g-field-border);
+  margin-bottom: 24px;
+}
+
+.rf-marketing .auth-switch a {
+  flex: 1;
+  text-align: center;
+  padding: 9px 12px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--g-muted);
+}
+
+.rf-marketing .auth-switch a[aria-current="page"] {
+  background: #fff;
+  color: var(--g-ink);
+  box-shadow: 0 2px 6px #284a7212;
+}
+
+.rf-marketing .auth-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+  font-size: 11px;
+  color: var(--g-soft);
+}
+
+.rf-marketing .auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 22px 0;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--g-soft);
+}
+
+.rf-marketing .auth-divider::before,
+.rf-marketing .auth-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--g-hairline);
+}
+
+.rf-marketing .auth-foot {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--g-hairline);
+  font-size: 12px;
+  color: var(--g-body);
+}
+
+.rf-marketing .auth-foot a {
+  color: var(--g-link);
+  font-weight: 600;
+}
+
+.rf-marketing .auth-story {
+  list-style: none;
+  margin: 24px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 14px;
+}
+
+.rf-marketing .auth-story li {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--g-body);
+}
+
+.rf-marketing .auth-story svg {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  color: var(--g-teal);
+  margin-top: 2px;
+}
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+
+@media (max-width: 950px) {
+  .rf-marketing .booking-layout,
+  .rf-marketing .auth-layout {
+    grid-template-columns: 1fr;
+  }
+  /* The scheduler is the reason the page exists, so on a narrow screen it comes
+     before the supporting copy — the mobile order the design study specifies. */
+  .rf-marketing .booking-panel {
+    order: -1;
+  }
+  .rf-marketing .auth-aside {
+    order: 2;
+  }
+}
+
+@media (max-width: 760px) {
+  .rf-marketing .signin-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .rf-marketing .booking-copy,
+  .rf-marketing .booking-panel,
+  .rf-marketing .auth-card,
+  .rf-marketing .auth-aside,
+  .rf-marketing .login-choice {
+    padding: 24px;
+  }
+  .rf-marketing .page-intro {
+    padding: 38px 24px;
+  }
+  .rf-marketing .time-slots {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

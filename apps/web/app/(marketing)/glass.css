@@ -1,0 +1,447 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   RouteFlow marketing — "liquid glass" design system.
+
+   Ports the 2026-09-16 Codex design study (business.css) into the production
+   marketing site. Loaded from app/layout.tsx AFTER marketing.css, so where the
+   two overlap this file wins; marketing.css still supplies the pages that have
+   not been ported yet.
+
+   Scoped ENTIRELY under `.rf-marketing`, exactly like marketing.css, so the
+   palette never leaks into the operator dashboard, buyer portal, or
+   platform-admin shell.
+
+   The source study hard-coded every colour, radius and shadow as an inline
+   literal and declared no custom properties at all. Those literals are
+   preserved verbatim below, but hoisted into tokens — a second surface (the
+   auth pages) has to match this one exactly, and matching 40 scattered hex
+   literals by hand is how a design drifts.
+   ────────────────────────────────────────────────────────────────────────── */
+
+.rf-marketing {
+  /* Ink */
+  --g-ink: #152d51;
+  --g-body: #4c607a;
+  --g-muted: #637992;
+  --g-soft: #738aa0;
+  --g-eyebrow: #466e94;
+
+  /* Accent */
+  --g-link: #234f7e;
+  --g-link-hover: #127888;
+  --g-brand-dot: #3475b8;
+  --g-current: #2564a8;
+  --g-teal: #296b67;
+
+  /* Surfaces */
+  --g-canvas: #e9eef6;
+  --g-glass: linear-gradient(130deg, #ffffffc2, #ffffff61 48%, #f5faff85);
+  --g-glass-border: #ffffffdb;
+  --g-hairline: #647f9b22;
+  --g-field: #ffffff73;
+  --g-field-border: #ffffffed;
+
+  /* Primary action */
+  --g-primary: linear-gradient(140deg, #234a74f5, #10264ded);
+  --g-primary-hover: #245582;
+  --g-primary-border: #6c8dab44;
+
+  /* Radii — the study's scale */
+  --g-r-pill: 40px;
+  --g-r-lg: 32px;
+  --g-r-md: 26px;
+  --g-r-sm: 19px;
+  --g-r-xs: 13px;
+  --g-r-field: 10px;
+
+  /* Elevation */
+  --g-shadow-glass: inset 0 1px 1px #fff, inset 0 -1px 1px #54718e17, 0 14px 45px #284a7210;
+  --g-shadow-primary: inset 0 1px 0 #ffffff33, 0 7px 15px #10264d18;
+  --g-shadow-tile: inset 0 1px 1px #fff, 0 4px 12px #35577309;
+
+  --g-blur: blur(22px) saturate(135%);
+  --g-blur-header: blur(28px) saturate(170%);
+
+  --g-focus: #2c70b8;
+}
+
+/* ── Page ground ─────────────────────────────────────────────────────────── */
+
+/* Only pages that opt in get the glass ground, so an unported page keeps the
+   white marketing background rather than sitting oddly on a blue gradient. */
+.rf-marketing .glass-page {
+  min-height: 100%;
+  color: var(--g-ink);
+  background:
+    radial-gradient(ellipse 70% 55% at 12% 6%, #80b5eb65, transparent 62%),
+    radial-gradient(ellipse 62% 48% at 88% 18%, #8fd8cb65, transparent 60%),
+    radial-gradient(ellipse 72% 60% at 50% 96%, #b7abda66, transparent 66%),
+    linear-gradient(135deg, #eef3fb, #e9eff6 50%, #f1ece8);
+  background-attachment: fixed;
+}
+
+.rf-marketing .glass-page h1,
+.rf-marketing .glass-page h2,
+.rf-marketing .glass-page h3 {
+  color: var(--g-ink);
+  letter-spacing: -0.04em;
+  line-height: 1.12;
+}
+
+.rf-marketing .glass-page h1 {
+  font-size: clamp(36px, 4.4vw, 58px);
+  font-weight: 620;
+  margin: 0 0 18px;
+}
+
+.rf-marketing .glass-page h2 {
+  font-size: clamp(26px, 2.8vw, 40px);
+  font-weight: 620;
+  margin: 0 0 14px;
+}
+
+.rf-marketing .glass-page h3 {
+  font-size: 21px;
+  font-weight: 620;
+  margin: 0 0 10px;
+}
+
+.rf-marketing .glass-page p {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--g-body);
+  margin: 0 0 14px;
+}
+
+.rf-marketing .g-wrap {
+  width: min(1280px, calc(100% - 80px));
+  margin-inline: auto;
+}
+
+.rf-marketing .g-section {
+  padding-top: 82px;
+}
+
+/* ── Glass surface ───────────────────────────────────────────────────────── */
+
+.rf-marketing .glass {
+  background: var(--g-glass);
+  border: 1px solid var(--g-glass-border);
+  border-radius: var(--g-r-md);
+  box-shadow: var(--g-shadow-glass);
+  backdrop-filter: var(--g-blur);
+  -webkit-backdrop-filter: var(--g-blur);
+}
+
+/* Blur is decoration, never legibility — without it the surface goes opaque
+   rather than letting the gradient show through the text. */
+@supports not (backdrop-filter: blur(1px)) {
+  .rf-marketing .glass {
+    background: #f1f6fcf5;
+  }
+}
+
+/* ── Type helpers ────────────────────────────────────────────────────────── */
+
+.rf-marketing .g-eyebrow {
+  display: block;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--g-eyebrow);
+  margin-bottom: 14px;
+}
+
+.rf-marketing .g-note {
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--g-soft);
+}
+
+.rf-marketing .g-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--g-link);
+}
+
+.rf-marketing .g-link:hover {
+  color: var(--g-link-hover);
+}
+
+.rf-marketing .g-link svg {
+  width: 17px;
+  height: 17px;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+
+.rf-marketing .g-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-height: 48px;
+  padding: 13px 21px;
+  border-radius: var(--g-r-md);
+  border: 1px solid transparent;
+  font-size: 12px;
+  font-weight: 600;
+  transition:
+    background 0.18s,
+    transform 0.18s;
+}
+
+.rf-marketing .g-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.rf-marketing .g-btn svg {
+  width: 17px;
+  height: 17px;
+}
+
+.rf-marketing .g-btn-primary {
+  color: #fff;
+  background: var(--g-primary);
+  border-color: var(--g-primary-border);
+  box-shadow: var(--g-shadow-primary);
+}
+
+.rf-marketing .g-btn-primary:hover:not(:disabled) {
+  background: var(--g-primary-hover);
+}
+
+.rf-marketing .g-btn-secondary {
+  background: linear-gradient(130deg, #ffffffad, #ffffff4d);
+  border-color: var(--g-field-border);
+  color: var(--g-ink);
+  box-shadow:
+    inset 0 1px 0 #fff,
+    0 5px 14px #21436408;
+}
+
+.rf-marketing .g-btn-secondary:hover:not(:disabled) {
+  background: #fff;
+}
+
+.rf-marketing .g-btn:disabled {
+  background: #bacddf66;
+  color: #627f99;
+  border-color: #fff6;
+  box-shadow: none;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.rf-marketing .g-btn-block {
+  display: flex;
+  width: 100%;
+}
+
+.rf-marketing .g-btn-compact {
+  min-height: 40px;
+  padding: 10px 17px;
+  font-size: 11px;
+}
+
+/* ── Form controls ───────────────────────────────────────────────────────── */
+/* Net-new: the design study collects no data anywhere, so its only form control
+   is one timezone <select>. These follow that select's treatment — 10px label
+   above, translucent field, 10px radius — extended to the states a real form
+   needs (invalid, disabled, describedby help text). */
+
+.rf-marketing .g-field {
+  display: block;
+  margin-bottom: 16px;
+}
+
+.rf-marketing .g-field > label,
+.rf-marketing .g-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #688099;
+  margin-bottom: 7px;
+}
+
+.rf-marketing .g-input,
+.rf-marketing .g-select,
+.rf-marketing .g-textarea {
+  width: 100%;
+  padding: 12px 13px;
+  border: 1px solid var(--g-field-border);
+  border-radius: var(--g-r-field);
+  background: var(--g-field);
+  color: #355c7e;
+  font-size: 13px;
+  line-height: 1.5;
+  transition:
+    border-color 0.16s,
+    background 0.16s;
+}
+
+.rf-marketing .g-textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.rf-marketing .g-input::placeholder,
+.rf-marketing .g-textarea::placeholder {
+  color: #8fa3b6;
+}
+
+.rf-marketing .g-input:hover,
+.rf-marketing .g-select:hover,
+.rf-marketing .g-textarea:hover {
+  background: #ffffff9c;
+}
+
+.rf-marketing .g-input:focus,
+.rf-marketing .g-select:focus,
+.rf-marketing .g-textarea:focus {
+  background: #ffffffd6;
+  border-color: #a8c4dd;
+}
+
+.rf-marketing .g-input[aria-invalid="true"],
+.rf-marketing .g-textarea[aria-invalid="true"] {
+  border-color: #c2604f;
+  background: #fff4f1c7;
+}
+
+.rf-marketing .g-input:disabled,
+.rf-marketing .g-select:disabled,
+.rf-marketing .g-textarea:disabled {
+  background: #eef2f7a8;
+  color: #8296aa;
+  cursor: not-allowed;
+}
+
+.rf-marketing .g-help {
+  display: block;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--g-soft);
+  margin-top: 6px;
+}
+
+.rf-marketing .g-error {
+  display: block;
+  font-size: 11px;
+  line-height: 1.6;
+  color: #a8442f;
+  margin-top: 6px;
+}
+
+/* Form-level failure: an assertive live region, distinct from a field error. */
+.rf-marketing .g-alert {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 13px 15px;
+  border-radius: var(--g-r-xs);
+  border: 1px solid #e3b6ab;
+  background: #fdf1ee;
+  color: #8f3a27;
+  font-size: 12px;
+  line-height: 1.6;
+  margin-bottom: 18px;
+}
+
+.rf-marketing .g-alert svg {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  margin-top: 1px;
+}
+
+.rf-marketing .g-notice {
+  padding: 13px 15px;
+  border-radius: var(--g-r-xs);
+  border: 1px solid #fff;
+  background: #e4eef399;
+  font-size: 11px;
+  line-height: 1.65;
+  color: var(--g-muted);
+}
+
+.rf-marketing .g-notice strong {
+  display: block;
+  color: var(--g-ink);
+  margin-bottom: 3px;
+}
+
+/* ── Icon tile ───────────────────────────────────────────────────────────── */
+
+.rf-marketing .g-tile {
+  display: grid;
+  place-items: center;
+  width: 43px;
+  height: 43px;
+  border-radius: 14px;
+  background: var(--g-glass);
+  border: 1px solid var(--g-glass-border);
+  box-shadow: var(--g-shadow-tile);
+  color: #326696;
+  margin-bottom: 20px;
+}
+
+.rf-marketing .g-tile svg {
+  width: 22px;
+  height: 22px;
+}
+
+/* ── Focus ───────────────────────────────────────────────────────────────── */
+
+.rf-marketing .glass-page :focus-visible {
+  outline: 3px solid var(--g-focus);
+  outline-offset: 4px;
+}
+
+/* ── Divider ─────────────────────────────────────────────────────────────── */
+
+.rf-marketing .g-rule {
+  height: 1px;
+  border: 0;
+  background: var(--g-hairline);
+  margin: 26px 0;
+}
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+
+@media (max-width: 1100px) {
+  .rf-marketing .g-wrap {
+    width: calc(100% - 48px);
+  }
+}
+
+@media (max-width: 600px) {
+  .rf-marketing .g-wrap {
+    width: calc(100% - 28px);
+  }
+  .rf-marketing .g-section {
+    padding-top: 55px;
+  }
+  .rf-marketing .glass {
+    border-radius: 22px;
+  }
+  .rf-marketing .g-tile {
+    width: 36px;
+    height: 36px;
+    margin-bottom: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rf-marketing .g-btn {
+    transition: none;
+  }
+  .rf-marketing .g-btn:hover:not(:disabled) {
+    transform: none;
+  }
+}

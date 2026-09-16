@@ -1,14 +1,20 @@
-/* Shared shell for the reskinned auth surface. Scoped to .rf-auth only —
-   ported from the redesign source's workspace.css:13-291 (`.rf-workspace`
-   dropped) plus the additions the build plan calls out.
-   .claude/pipeline/2026-09-07-auth-redesign/build-plan.md — P1 auth-shell */
+/* Shared shell for the reskinned auth surface. Scoped to .rf-auth only.
+   Glass design system (2026-09-16 Codex study) applied to the shell's own
+   chrome — story panel, card, heading, buttons, back link, footer. The form
+   BODIES rendered inside `.rf-auth-card` (each page's own fields) keep the
+   app's semantic status colors (danger/success/warning) untouched: those are
+   accessibility conventions shared with the rest of the product, not part of
+   the marketing brand palette, so they are deliberately not reskinned here.
+   .claude/pipeline/2026-09-07-auth-redesign/build-plan.md — P1 auth-shell
+   (structure); this revision replaces the P1 navy/white split with the glass
+   palette while keeping every class name and accessibility note P1 recorded. */
 
 .rf-auth {
   --rf-navy: #10264d;
-  --rf-charcoal: #292c33;
-  --rf-teal: #087c78;
+  --rf-charcoal: #152d51;
+  --rf-teal: #296b67;
   --rf-plum: #623691;
-  --rf-muted: #616b7c;
+  --rf-muted: #637992;
   color: var(--rf-charcoal);
   font-size: 1rem;
   line-height: 1.5;
@@ -21,10 +27,17 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   min-height: 100svh;
-  background: #fff;
+  /* No `background-attachment: fixed` — a known mobile-Safari/Chrome
+     rendering hazard (repaint glitches, sometimes silently ignored), and the
+     auth page is a single short scroll where it adds nothing anyway. */
+  background:
+    radial-gradient(ellipse 70% 40% at 15% 0%, #80b5eb65, transparent 60%),
+    radial-gradient(ellipse 60% 35% at 85% 15%, #8fd8cb65, transparent 58%),
+    radial-gradient(ellipse 65% 40% at 50% 100%, #b7abda66, transparent 62%),
+    linear-gradient(135deg, #eef3fb, #e9eff6 50%, #f1ece8);
 }
 .rf-auth-story {
-  background: #10264d;
+  background: linear-gradient(155deg, #10264d, #16375f 60%, #0c1f3d);
   color: #fff;
   min-height: 100svh;
   padding: 38px 50px;
@@ -39,7 +52,7 @@
 }
 .rf-auth .rf-kicker {
   font-size: 0.75rem;
-  font-weight: 650;
+  font-weight: 700;
   letter-spacing: 0.13em;
   text-transform: uppercase;
 }
@@ -66,11 +79,11 @@
 }
 .rf-auth-orbit > div:first-child {
   padding: 30px;
-  background: linear-gradient(125deg, #ffffff1f, #ffffff0a);
+  background: linear-gradient(130deg, #ffffff26, #ffffff0c);
   border: 1px solid #ffffff30;
-  border-radius: 25px;
-  box-shadow: 0 30px 65px #0003;
-  backdrop-filter: blur(14px);
+  border-radius: 26px;
+  box-shadow: 0 30px 65px #0004;
+  backdrop-filter: blur(18px) saturate(140%);
 }
 .rf-auth-orbit span {
   font-size: 0.875rem;
@@ -90,19 +103,20 @@
   height: 5px;
   border-radius: 10px;
   flex: 1;
-  background: #76d2bb;
+  background: #7ddcd8;
 }
 .rf-auth-track i:last-child {
   background: #c2d0e54d;
 }
 .rf-auth-ai {
-  background: #eee2fa;
+  background: linear-gradient(130deg, #eee2fac2, #eee2fa8a);
   color: #623691;
   display: flex;
   align-items: center;
   gap: 14px;
   padding: 19px 22px;
   border-radius: 20px;
+  border: 1px solid #ffffff70;
   position: relative;
   margin: -6px 0 0 30px;
   transform: rotate(3deg);
@@ -125,12 +139,26 @@
   align-items: center;
   gap: 8px;
   font-size: 0.875rem;
-  color: #616b7c;
+  color: #637992;
 }
 .rf-auth-card {
   max-width: 420px;
   width: 100%;
   margin: 50px auto;
+  padding: 34px;
+  border-radius: 26px;
+  background: linear-gradient(130deg, #ffffffc2, #ffffff61 48%, #f5faff85);
+  border: 1px solid #ffffffdb;
+  box-shadow:
+    inset 0 1px 1px #fff,
+    inset 0 -1px 1px #54718e17,
+    0 14px 45px #284a7210;
+  backdrop-filter: blur(22px) saturate(135%);
+}
+@supports not (backdrop-filter: blur(1px)) {
+  .rf-auth-card {
+    background: #f1f6fcf5;
+  }
 }
 .rf-auth h1 {
   font-size: 2.4rem;
@@ -139,7 +167,7 @@
   margin: 14px 0;
 }
 .rf-auth-card > p {
-  color: #616b7c;
+  color: #4c607a;
   margin: 14px 0 24px;
 }
 .rf-auth form {
@@ -155,12 +183,12 @@
 .rf-auth small,
 .rf-auth .rf-legal-note {
   font-size: 0.75rem;
-  color: #616b7c;
+  color: #637992;
   font-weight: 400;
 }
-/* Contrast floor (R12): #616b7c on the navy story panel is ~2.8:1. Anything
-   small there stays on the panel's own #c2d0e5 — except the lavender AI chip,
-   which keeps its plum ink. */
+/* Contrast floor (R12): #637992 on the navy story panel falls below 4.5:1.
+   Anything small there stays on the panel's own #c2d0e5 — except the lavender
+   AI chip, which keeps its plum ink. */
 .rf-auth-story small {
   color: #c2d0e5;
 }
@@ -172,11 +200,14 @@
   align-items: center;
   justify-content: center;
   gap: 10px;
-  border: 0;
-  border-radius: 12px;
-  min-height: 44px;
+  border: 1px solid transparent;
+  border-radius: 26px;
+  min-height: 46px;
   padding: 12px 20px;
-  background: #10264d;
+  background: linear-gradient(140deg, #234a74f5, #10264ded);
+  box-shadow:
+    inset 0 1px 0 #ffffff33,
+    0 7px 15px #10264d18;
   color: #fff;
   font: inherit;
   font-size: 0.875rem;
@@ -187,18 +218,25 @@
     transform 0.18s;
 }
 .rf-auth .rf-btn:hover {
-  background: #203d68;
+  background: #245582;
   transform: translateY(-1px);
 }
 .rf-auth .rf-btn.secondary {
-  background: #fff;
+  background: linear-gradient(130deg, #ffffffad, #ffffff4d);
   color: #10264d;
-  border: 1px solid #d7dfe9;
+  border: 1px solid #ffffffed;
+  box-shadow:
+    inset 0 1px 0 #fff,
+    0 5px 14px #21436408;
+}
+.rf-auth .rf-btn.secondary:hover {
+  background: #fff;
 }
 .rf-auth .rf-btn:disabled {
-  opacity: 0.5;
+  opacity: 0.55;
   cursor: not-allowed;
   transform: none;
+  box-shadow: none;
 }
 .rf-auth-cross {
   font-size: 0.875rem;
@@ -206,9 +244,13 @@
 }
 .rf-auth-cross a,
 .rf-auth .rf-legal-note a {
-  color: #10264d;
+  color: #234f7e;
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+.rf-auth-cross a:hover,
+.rf-auth .rf-legal-note a:hover {
+  color: #127888;
 }
 .rf-auth-footer {
   display: flex;
@@ -217,7 +259,7 @@
   flex-wrap: wrap;
   gap: 8px 20px;
   font-size: 0.8125rem;
-  color: #616b7c;
+  color: #637992;
 }
 .rf-auth-footer-links {
   display: flex;
@@ -232,7 +274,8 @@
 .rf-auth-success {
   padding: 24px;
   border-radius: 20px;
-  background: #def5ee;
+  background: #def5eec7;
+  border: 1px solid #bfe8db;
 }
 .rf-auth-success h2 {
   font-size: 1.5rem;
@@ -261,6 +304,8 @@
   }
   .rf-auth-card {
     margin: 36px auto;
+    padding: 24px;
+    border-radius: 22px;
   }
   .rf-auth h1 {
     font-size: 2rem;
@@ -283,16 +328,16 @@
 
 /* Additions beyond the port (build-plan P1) */
 .rf-auth {
-  font-family: var(--font-geist-sans), Arial, sans-serif;
+  font-family: var(--font-geist-sans), var(--font-spline), Arial, sans-serif;
   color: var(--rf-charcoal);
 }
 .rf-auth :focus-visible {
-  outline: 2px solid var(--rf-navy);
-  outline-offset: 2px;
+  outline: 3px solid #2c70b8;
+  outline-offset: 3px;
 }
-/* The navy story panel would swallow a navy outline (WCAG 2.4.7). */
+/* The navy story panel would swallow a navy-toned outline (WCAG 2.4.7). */
 .rf-auth-story :focus-visible {
-  outline-color: #fff;
+  outline-color: #7ddcd8;
 }
 /* Without this the wordmark link — a flex child of the column with no
    align-items override — stretches to the column's full width, so its
@@ -309,15 +354,23 @@
   font-size: 1rem;
   border-width: 1px;
   border-style: solid;
-  border-color: #d7dce4;
+  border-color: #ffffffed;
   border-radius: 12px;
-  background: #fafbfd;
+  background: #ffffff73;
   padding-block: 12px;
   padding-inline-start: 12px;
+}
+.rf-auth input:not([type="checkbox"]):not([type="radio"]):hover {
+  background: #ffffffa6;
+}
+.rf-auth input:not([type="checkbox"]):not([type="radio"]):focus {
+  background: #ffffffd6;
+  border-color: #a8c4dd;
 }
 .rf-auth input[aria-invalid="true"]:not([type="checkbox"]):not([type="radio"]),
 .rf-auth input.border-danger:not([type="checkbox"]):not([type="radio"]) {
   border-color: #dc2626;
+  background: #fff4f1c7;
 }
 .rf-auth-tenant-logo {
   height: 40px;

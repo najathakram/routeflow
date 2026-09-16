@@ -32,7 +32,8 @@ export function SiteFooter() {
           <div>
             <h2>Company</h2>
             <Link href="/company">About RouteFlow</Link>
-            <Link href="/contact">Book a demo</Link>
+            <Link href="/book-a-demo">Book a demo</Link>
+            <Link href="/contact">Contact us</Link>
             <Link href="/privacy">Privacy</Link>
             <Link href="/terms">Terms</Link>
           </div>
