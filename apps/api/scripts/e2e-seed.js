@@ -396,10 +396,17 @@ async function seedQaLiteTenant() {
     orderBy: { version: "desc" },
   });
   if (!version) {
-    throw new Error(
-      "qa-lite seed: no PUBLISHED plan catalog version exists — run " +
-        "`npm run db:publish:catalog:v12` (or whichever is current) before seeding qa-lite.",
+    // Fix-round finding 3: no published catalog is a real, non-fatal state on a
+    // fresh/partially-seeded DB (e.g. a compose stack before local:seed's genesis
+    // catalog-publish step has run) — e2e-routeflow above already seeded fine
+    // without needing one. Skip ONLY this tenant, log why, and let the run
+    // otherwise succeed; 48-lite-locked-route-ux.spec.ts fails loudly on its own
+    // if qa-lite genuinely doesn't exist when it runs.
+    console.log(
+      "⚠ qa-lite seed skipped — no PUBLISHED plan catalog version exists yet. Run " +
+        "`npm run db:publish:catalog:v12` (or whichever is current) and re-seed to provision it.\n",
     );
+    return;
   }
 
   const existing = await prisma.tenant.findUnique({ where: { slug: LITE_TENANT_SLUG } });

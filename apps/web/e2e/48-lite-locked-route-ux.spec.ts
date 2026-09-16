@@ -10,9 +10,18 @@
  * `seedQaLiteTenant`, run by every `global.setup.ts` pass). Unlike
  * 47-lite-plan-gate.spec.ts (which needs a hand-provisioned tenant via
  * PLAYWRIGHT_LITE_TENANT_SLUG and self-skips without one), this fixture is now
- * standing infrastructure — these tests do NOT self-skip; a missing/misseeded
- * fixture is a real, loud failure, same as any other allow-listed local spec.
- * Allow-listed for `npm run local:e2e` (see LOCAL-LANE.md). READ-ONLY throughout.
+ * standing infrastructure — these tests do NOT self-skip LOCALLY; a
+ * missing/misseeded fixture there is a real, loud failure, same as any other
+ * allow-listed local spec. Allow-listed for `npm run local:e2e` (see
+ * LOCAL-LANE.md). READ-ONLY throughout.
+ *
+ * Fix-round finding 3: `global.setup.ts` skips seeding entirely when CI=true
+ * and no DB URL is configured (the deploy-triggered post-deploy job — this
+ * repo's e2e specs never run under any OTHER CI trigger, so `CI === "true"`
+ * unambiguously means that job here) — `qa-lite` is not provisioned there.
+ * Self-skip ONLY in that environment, with a visible annotation naming why;
+ * `local:e2e` always sets `CI` unset (see local-env.mjs), so the local gate is
+ * never affected.
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -47,7 +56,21 @@ function shot(dir: string, name: string) {
   return path.join(dir, `${name}.png`);
 }
 
+/** Fix-round finding 3: the deploy-triggered post-deploy job runs with CI=true and
+ *  no DB URL configured, so global.setup.ts skips seeding qa-lite entirely there —
+ *  this repo's e2e specs never run under any OTHER CI trigger, so CI=true
+ *  unambiguously means that job. An explicit PLAYWRIGHT_LITE_TENANT_SLUG override
+ *  (a fixture deliberately provisioned there) still runs normally. */
+const SKIP_IN_UNPROVISIONED_CI =
+  process.env.CI === "true" && !process.env.PLAYWRIGHT_LITE_TENANT_SLUG;
+const CI_SKIP_REASON =
+  "qa-lite fixture not provisioned in this environment (CI with no seed DB URL) — B449 proof is the local lane (npm run local:e2e)";
+
 test.describe("Lite locked-route UX (B449)", () => {
+  test.beforeEach(() => {
+    test.skip(SKIP_IN_UNPROVISIONED_CI, CI_SKIP_REASON);
+  });
+
   for (const vp of VIEWPORTS) {
     test.describe(`@ ${vp.width}px`, () => {
       test(`locked route never flashes the gated page and shows exactly one notice naming this plan`, async ({

@@ -74,11 +74,15 @@ describe("usePendingPortalApprovals — B449 fix-round finding 2", () => {
     );
   });
 
-  it("an explicit options.enabled: false still holds the query off once the flag resolves true", async () => {
+  it("fires ZERO requests for a role the caller disables (e.g. CUSTOMER/DRIVER) — fix-round finding 2-new", async () => {
+    // GET /billing/subscription is @Roles(OPERATOR)-gated same as the approvals
+    // endpoint — a caller passing enabled: false (a CUSTOMER/DRIVER header) must
+    // never fire the flag-resolution query either, or that alone 403s.
     mockSubscription(["addon.buyer_portal"]);
     renderHook(() => usePendingPortalApprovals({ enabled: false }), { wrapper: Wrapper });
 
-    await waitFor(() => expect(mockedGet).toHaveBeenCalledWith("/billing/subscription"));
-    expect(mockedGet).not.toHaveBeenCalledWith("/customers/pending-portal-approvals");
+    // Give react-query a tick to settle so a wrongly-fired request would show up.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(mockedGet).not.toHaveBeenCalled();
   });
 });

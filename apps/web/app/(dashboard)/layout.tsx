@@ -585,10 +585,15 @@ function Header({
   const router = useRouter();
   const { notifications, unreadCount, markAllRead, clear } = useNotifications();
   const { data: expiring = [] } = useExpiringAuthorizations();
+  // Fix-round finding 2-new: usePendingPortalApprovals() now reads a plan flag
+  // internally (GET /billing/subscription, @Roles(OPERATOR)) before its own
+  // GET /customers/pending-portal-approvals (also OPERATOR-only) — a
+  // CUSTOMER/DRIVER on their own /dashboard must fire neither.
+  const isStaffRole = user?.role !== "CUSTOMER" && user?.role !== "DRIVER";
   // Buyer-connect requests whose sign-in email didn't match the customer
   // record — pinned in the bell until the seller approves or declines
   // (server-derived, so it's immune to mark-all-read/clear/localStorage loss).
-  const { data: pendingApprovals = [] } = usePendingPortalApprovals();
+  const { data: pendingApprovals = [] } = usePendingPortalApprovals({ enabled: isStaffRole });
   const bellCount = unreadCount + expiring.length + pendingApprovals.length;
   const { driveMode, setDriveMode } = useDriveMode();
   // Drive mode is a recurring-routes affordance ("My Routes"), so it's gated

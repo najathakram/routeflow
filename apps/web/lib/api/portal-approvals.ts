@@ -53,7 +53,13 @@ export function usePendingPortalApprovals(options?: { enabled?: boolean }) {
   // every page load and every 60s poll, regardless of route. Same three-valued rule
   // as everywhere else: resolved -> go by the flag; unresolved -> don't fire yet;
   // fetch failed -> fire (fail open).
-  const gate = usePlanFlag("addon.buyer_portal");
+  //
+  // Fix-round finding 2-new: `options.enabled` must ALSO hold off `usePlanFlag`'s own
+  // `useSubscription` call, not just the final approvals fetch — `GET
+  // /billing/subscription` is `@Roles(OPERATOR)`-gated, so a caller passing `enabled:
+  // false` for a CUSTOMER/DRIVER (who has no billing surface at all) must fire ZERO
+  // requests here, not one 403 instead of two.
+  const gate = usePlanFlag("addon.buyer_portal", { enabled: options?.enabled });
   const gateVisible = gate.resolved ? gate.enabled : gate.failed;
   return useQuery<PendingPortalApproval[]>({
     queryKey: pendingApprovalsKey,
