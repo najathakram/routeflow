@@ -21,7 +21,7 @@ export interface PlanFlagState {
 export function usePlanFlag(key: FlagKey, opts?: { enabled?: boolean }): PlanFlagState {
   const q = useSubscription({ staleTime: 60_000, ...opts });
   return {
-    enabled: q.data?.flags?.includes(key) ?? false,
+    enabled: q.data?.flags === undefined ? true : q.data.flags.includes(key),
     resolved: q.isSuccess,
     failed: q.isError,
   };

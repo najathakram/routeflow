@@ -146,14 +146,18 @@ FlagKey>` maps operator route-group segments (`estimates`, `recurring-invoices`,
   segments. `planLockedSection(segments, {flags,resolved,failed})` — the first path component
   after `"(operator)"` that isn't itself a route group; unknown/unresolved/failed all fail OPEN
   (only a positively resolved-and-denied flag locks). `planFlagVisible(s)` — same three-valued
-  rule as web (resolved ⇒ by the flag; unresolved ⇒ hidden; failed ⇒ shown).
+  rule as web (resolved ⇒ by the flag; unresolved ⇒ hidden; failed ⇒ shown). **Fix-round finding
+  5 (2026-09-15):** `flags` param is `readonly string[] | undefined` — `undefined` (the response
+  resolved but the `flags` key was absent) also fails OPEN, same as unresolved/failed; only an
+  actual array (including `[]`) is checked with `.includes()`.
 - **`lib/api/billing.ts` (new, WP11)** — `useSubscription()`: tenant-scoped query key
   (`["tenant", tenantSlug, "subscription"]` — mirrors `lib/api/addons.ts`'s `useDeveloperMode`
   pattern so switching tenants on one device never hands the next session a stale answer),
   `enabled: isAuthenticated`, `retry: 2` (load-bearing for section-locking, not `retry:false`).
   `usePlanFlag(key: FlagKey)` → `{enabled, resolved, failed}` — `resolved` says the flag was
   actually READ; `planLockedSection` and any other stranding caller must key off it, never a
-  bare `!enabled`.
+  bare `!enabled`. **Fix-round finding 5 (2026-09-15):** `enabled` is `true` when
+  `q.data?.flags` is `undefined` (fail open), `.includes(key)` once `flags` is an actual array.
 - **`components/PlanLockedScreen.tsx` (new, WP11)** — rendered in place of a gated operator
   route-group's `<Stack>`; structural clone of `app/(auth)/operator-blocked.tsx` (SafeAreaView →
   centered column, 64px Ionicons lock icon, title, message, one `MobileButton`, same color

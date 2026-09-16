@@ -244,13 +244,13 @@ function getNavForRole(
  */
 function filterPlanGatedNav(
   entries: NavEntry[],
-  planState: { flags: readonly string[]; resolved: boolean; failed: boolean },
+  planState: { flags: readonly string[] | undefined; resolved: boolean; failed: boolean },
 ): NavEntry[] {
   const isVisible = (href: string): boolean => {
     const key = matchPlanGatedRoute(href);
     if (!key) return true;
     return planFlagVisible({
-      enabled: planState.flags.includes(key),
+      enabled: planState.flags === undefined || planState.flags.includes(key),
       resolved: planState.resolved,
       failed: planState.failed,
     });
@@ -400,8 +400,9 @@ function RouteGuard({ children }: { children: React.ReactNode }) {
   // or on a fetch failure, render the page as today (a server-side PLAN_GATE 403, if
   // any, is still caught by the existing PlanGateNotice toast).
   const planGateKey = isStaffRole ? matchPlanGatedRoute(pathname) : null;
+  const flags = subscription?.flags;
   const planLocked =
-    !!planGateKey && subscriptionResolved && !(subscription?.flags ?? []).includes(planGateKey);
+    !!planGateKey && subscriptionResolved && flags !== undefined && !flags.includes(planGateKey);
 
   if (planLocked) {
     return (
@@ -1252,7 +1253,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     // is computed, so Regulated Items/Sales Agents still land in the right spot even
     // when Analytics itself is hidden (analytics is also in PLAN_GATED_NAV).
     base = filterPlanGatedNav(base, {
-      flags: subscriptionStatus?.flags ?? [],
+      flags: subscriptionStatus?.flags,
       resolved: subscriptionResolved,
       failed: subscriptionFailed,
     });

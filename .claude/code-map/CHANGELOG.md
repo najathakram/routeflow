@@ -27,6 +27,12 @@ never accumulate history in `"notes"`.
   `lib/plan-gated-nav.ts`, `lib/api/plan-flags.ts`, mobile `lib/plan-flags.ts`/
   `PlanLockedScreen.tsx`, and `packages/types/api/billing.ts` (`FLAG_KEYS`/`SubscriptionView`) —
   all within their caps. `pricing-plans.md` §Feature-flag keys gained the 5 new keys.
+  **Fix-round follow-up (same day):** findings 1-7 from an Opus refute-first review landed
+  (billing-cron re-pin/fail-loud, platform-admin shared catalog guard, frozen v11
+  ENTERPRISE_FLAGS, checkout override preservation, checkout kill-switch check, web/mobile
+  `flags` fail-open, 6 spec files' TS2352 casts) — `api/lite-plan.md`, `packages.md`,
+  `web/app-shell-lib.md`, `web/api-hooks.md`, `mobile/app-shell-lib.md` each got a short
+  amendment; no new area file.
 - **2026-09-14 — B408 terminal Stripe status (`fix/B408-terminal-stripe-status`, master
   `9ab91f7a`)** — `subscription-mutation.service.ts`: the READ_ONLY cancel branch tested
   `status === "canceled"` alone, so every OTHER terminal Stripe status fell to the generic branch

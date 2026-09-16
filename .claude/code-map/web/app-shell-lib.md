@@ -486,7 +486,12 @@ enabled:isStaff})` call the RO-1 banner already reads (`isSuccess`/`isError` cap
   link/bookmark into a plan-gated route the plan doesn't grant — never a redirect (unlike the
   addon-gated prefixes above), so the URL stays intact. Fails OPEN while unresolved/on a fetch
   error (existing page renders; a server-side PLAN_GATE 403, if any, is still caught by
-  `PlanGateNotice`).
+  `PlanGateNotice`). **Fix-round finding 5 (2026-09-15):** `subscription?.flags`/
+  `subscriptionStatus?.flags` can be `undefined` at runtime even though `SubscriptionView.flags`
+  is now `flags?: string[]` (an old API build can omit the key entirely) — `RouteGuard`'s
+  `planLocked` and `filterPlanGatedNav`'s `planState.flags` both now treat `undefined` as
+  "unresolved, fail OPEN" (never gate/hide), distinct from `flags: []` ("resolved, no grants" —
+  gate for real). Do not reintroduce `subscription?.flags ?? []` here.
 - **`_components/gates/PlanGates.tsx` `LockedPage` gains an optional `secondary?: string`
   prop (Lite-L2 WP8)** — a plain line rendered under the CTA (e.g. RouteGuard's "Want it?
   Contact us to upgrade."); no link target invented, "See plans" stays the only action.

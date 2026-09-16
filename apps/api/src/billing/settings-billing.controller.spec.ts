@@ -1,3 +1,11 @@
+// Hoisted, file-wide: safe for every OTHER test here (they all use a non-invite-only planKey —
+// STARTER/BUSINESS — which inviteOnlyCheckoutAllowed permits regardless of this lever). Only the
+// REG-6 test below relies on the lever being off.
+jest.mock("./plan-catalog.constants", () => ({
+  ...jest.requireActual("./plan-catalog.constants"),
+  INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT: false,
+}));
+
 import { SettingsBillingController } from "./settings-billing.controller";
 import { QuoteDto } from "./dto/quote.dto";
 
@@ -8,7 +16,14 @@ interface AuthUser {
 
 /** Instantiate the controller with mocked proration + mutations (+ billing) only (no
  *  Nest module needed). */
-function make(opts: { change?: any; checkoutResult?: any } = {}) {
+function make(opts: { change?: any; checkoutResult?: any; planKey?: string } = {}) {
+  const subscription = {
+    getSubscription: jest
+      .fn()
+      .mockResolvedValue(
+        opts.planKey !== undefined ? { planKey: opts.planKey } : { planKey: "STARTER" },
+      ),
+  } as any;
   const proration = {
     quote: jest.fn().mockResolvedValue({ subtotalMonthly: 173, lines: [] }),
   } as any;
@@ -24,8 +39,8 @@ function make(opts: { change?: any; checkoutResult?: any } = {}) {
         opts.checkoutResult ?? { checkoutUrl: "https://checkout.stripe.com/x", sessionId: "cs_1" },
       ),
   } as any;
-  const controller = new SettingsBillingController(undefined as any, proration, mutations, billing);
-  return { controller, proration, mutations, billing };
+  const controller = new SettingsBillingController(subscription, proration, mutations, billing);
+  return { controller, subscription, proration, mutations, billing };
 }
 
 describe("SettingsBillingController.quote (REG-B58 T3)", () => {
@@ -102,5 +117,13 @@ describe("SettingsBillingController.createCheckout (WP3c, R2.9)", () => {
   // the runtime check here is that the handler's arity is exactly 1 (@CurrentUser only).
   it("R2.9 takes no request-body param — the tenant's own plan is structural, not client-supplied", () => {
     expect(SettingsBillingController.prototype.createCheckout.length).toBe(1);
+  });
+
+  it("REG-6 refuses checkout when the self-serve-checkout kill switch is off, even called directly", async () => {
+    const { controller, billing } = make({ planKey: "LITE" });
+    const user: AuthUser = { tenantId: "t1", sub: "u1" };
+
+    await expect(controller.createCheckout(user as any)).rejects.toThrow(/disabled/i);
+    expect(billing.createCheckoutSession).not.toHaveBeenCalled();
   });
 });

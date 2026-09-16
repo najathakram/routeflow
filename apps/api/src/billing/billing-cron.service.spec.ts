@@ -66,6 +66,11 @@ function make(
         { planKey: "BUSINESS", monthlyPrice: 349, seatsIncluded: 15 },
       ],
     }),
+    // Finding 1 fallback path: a target plan missing from the tenant's PINNED version falls
+    // back to the published catalog. Existing tests' targets (STARTER/BUSINESS) are always
+    // found in the default getVersionForTenant definitions above, so this default is a no-op
+    // for them — only the finding-1 tests below override it.
+    getPublishedVersion: jest.fn().mockResolvedValue(null),
   } as any;
   // Defaults to "unlimited" so grace windows expire exactly as they did before the
   // CUSTOMERS soft-cap; the tests below narrow it where the cap matters.
@@ -79,7 +84,7 @@ function make(
     }),
   } as any;
   const svc = new BillingCronService(prisma, events, entitlements, tenantStatus, catalog, meters);
-  return { svc, prisma, tx, events, entitlements, tenantStatus, meters };
+  return { svc, prisma, tx, events, entitlements, tenantStatus, catalog, meters };
 }
 
 const emitted = (events: any) => events.emit.mock.calls.map((c: any[]) => c[1]);
@@ -309,6 +314,101 @@ describe("BillingCronService", () => {
     // Must never be reported through the "Skipping ... " bad-plan-key path — that would
     // disguise a real infrastructure failure as a data problem.
     expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining("Skipping"));
+
+    errorSpy.mockRestore();
+  });
+
+  // Finding 1 (Lite-L2 review, money): an admin's downgrade to LITE is scheduled while the
+  // tenant is still pinned to a pre-LITE catalog version. When the cron later applies it, the
+  // OLD pinned version has no LITE row — pre-fix, findPlanDefinition() silently returned
+  // undefined, planMonthly() fell back to 0, and the ledger booked a wildly wrong delta while
+  // never re-pinning planVersionId, breaking later entitlement lookups too.
+  it("REG-1 an ACTIVE tenant's downgrade to LITE re-pins planVersionId to the version that actually defines LITE and books the real delta", async () => {
+    const { svc, tx, catalog, events } = make({
+      downgrades: [
+        {
+          tenantId: "t1",
+          planKey: "GROWTH",
+          planVersionId: "v11",
+          downgradeToPlanKey: "LITE",
+          retainedUserIds: [],
+        },
+      ],
+    });
+    catalog.getVersionForTenant.mockResolvedValue({
+      id: "v11",
+      definitions: [{ planKey: "GROWTH", monthlyPrice: 249, seatsIncluded: 10 }],
+    });
+    catalog.getPublishedVersion.mockResolvedValue({
+      id: "v12",
+      definitions: [
+        { planKey: "GROWTH", monthlyPrice: 249, seatsIncluded: 10 },
+        { planKey: "LITE", monthlyPrice: 99, seatsIncluded: 3 },
+      ],
+    });
+
+    await svc.applyScheduledDowngrades();
+
+    expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
+      planKey: "LITE",
+      planVersionId: "v12",
+      basePriceSnapshot: 99,
+    });
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(-150); // 99 − 249
+  });
+
+  it("REG-1 a target plan missing from every resolvable catalog version is skipped-and-logged, not silently applied", async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+    const { svc, tx, catalog, entitlements } = make({
+      downgrades: [
+        {
+          tenantId: "bad-1",
+          planKey: "GROWTH",
+          planVersionId: "v11",
+          downgradeToPlanKey: "GHOST",
+          retainedUserIds: [],
+        },
+        {
+          tenantId: "good-1",
+          planKey: "BUSINESS",
+          planVersionId: "v7",
+          downgradeToPlanKey: "STARTER",
+          retainedUserIds: [],
+        },
+      ],
+      activeTeam: 1,
+    });
+    catalog.getVersionForTenant.mockImplementation((versionId: string) =>
+      Promise.resolve(
+        versionId === "v11"
+          ? {
+              id: "v11",
+              definitions: [{ planKey: "GROWTH", monthlyPrice: 249, seatsIncluded: 10 }],
+            }
+          : {
+              id: "v7",
+              definitions: [
+                { planKey: "STARTER", monthlyPrice: 59, seatsIncluded: 1 },
+                { planKey: "BUSINESS", monthlyPrice: 349, seatsIncluded: 15 },
+              ],
+            },
+      ),
+    );
+    catalog.getPublishedVersion.mockResolvedValue({
+      id: "v12",
+      definitions: [{ planKey: "GROWTH", monthlyPrice: 249, seatsIncluded: 10 }],
+    });
+
+    await svc.applyScheduledDowngrades();
+
+    expect(tx.tenantSubscription.update).toHaveBeenCalledTimes(1);
+    expect(tx.tenantSubscription.update.mock.calls[0][0]).toMatchObject({
+      where: { tenantId: "good-1" },
+      data: { planKey: "STARTER" },
+    });
+    expect(entitlements.invalidate).not.toHaveBeenCalledWith("bad-1");
+    expect(entitlements.invalidate).toHaveBeenCalledWith("good-1");
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("tenant=bad-1"));
 
     errorSpy.mockRestore();
   });

@@ -27,7 +27,9 @@ describe("SuppliersController — plan gate (WP5b)", () => {
   it.each(["findAll", "findOne", "create", "update", "deactivate", "remove"])(
     "handler %s still carries @Roles(OPERATOR)",
     (handlerName) => {
-      const handler = (SuppliersController.prototype as Record<string, unknown>)[handlerName];
+      const handler = (SuppliersController.prototype as unknown as Record<string, unknown>)[
+        handlerName
+      ];
       expect(typeof handler).toBe("function");
       expect(Reflect.getMetadata(ROLES_KEY, handler as object)).toEqual([UserRole.OPERATOR]);
     },

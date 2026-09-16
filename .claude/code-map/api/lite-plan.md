@@ -31,3 +31,30 @@ covers only what the Lite lane added on top.
   null-overwrites an existing value). **No new idempotency mechanism** — the existing
   `transitionAndEmit` CAS is still the only gate. No backfill. Spec: `billing.service.spec.ts`'s
   `onCheckoutCompleted — B445` describe.
+- **Fix-round findings 1-7 (2026-09-15, owner-approved scope)** — `apps/api/prisma/`
+  `plan-catalog-v11.definitions.ts`'s `ENTERPRISE_FLAGS` (finding 3) is now a FROZEN 13-key
+  literal, not derived from the live `FLAG_KEYS` array (that derivation silently grew v11's
+  ENTERPRISE from 13→18 flags whenever WP1 added a new flag key — pinned by a new test in
+  `plan-catalog-v12.spec.ts`). `billing-cron.service.ts`'s `applyScheduledDowngrades` (finding 1)
+  re-pins `planVersionId` to whichever catalog version actually defines the downgrade target
+  (falls back from the tenant's pinned version to the published one) and throws a new
+  `PlanNotInCatalogError` (`plan-catalog.constants.ts`, alongside `UnknownPlanKeyError`) — caught
+  by the same per-tenant skip-and-log as an unresolvable plan key — instead of silently pricing
+  an unresolvable target as $0. `platform-admin.service.ts` gained a shared private
+  `resolvePublishedPlan(planKey)` guard (finding 2) used by `createTenant`, `updatePlan`, and
+  `activateManualSubscription` alike — the last of these previously wrote no catalog validation
+  and no `planKey`/`planVersionId` at all. `billing.service.ts`'s `onCheckoutCompleted` (finding 4) now preserves an existing `priceOverrideMonthly`/`priceOverrideAnnual` negotiated override —
+  it no longer overwrites `basePriceSnapshot` from `resolveCatalogPricing()` when one is set.
+  `settings-billing.controller.ts`'s `createCheckout` (finding 6) now checks
+  `inviteOnlyCheckoutAllowed(planKey, INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT)` and refuses when the
+  kill switch is off, instead of only hiding the web button (test mocks the module: `jest.mock`
+  overriding `INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT`, since the controller must read the constant
+  as an imported binding — not the function's own default param — for the lever to be mockable).
+  Finding 5 (web+mobile, fail-open on absent `flags`) is documented in `packages.md` under
+  `api/billing.ts`'s `SubscriptionView`. Finding 7: the 6 new `*.plan-gate.spec.ts` files (listed
+  above) failed `tsc` under real project options (TS2352 on `as Record<string, unknown>` prototype
+  casts, invisible to `check-types` because its config excludes `*.spec.ts`) — fixed to
+  `as unknown as Record<string, unknown>`; proven by a new scoped config,
+  `apps/api/tsconfig.plan-gate-specs.json` (extends `tsconfig.json`, `include`s only these 6
+  files), run via `npx tsc --noEmit -p tsconfig.plan-gate-specs.json`. Findings 8-10 are tracked
+  follow-ups, deliberately not fixed here.

@@ -38,7 +38,7 @@ export function usePlanFlag(key: FlagKey): {
 } {
   const q = useSubscription();
   return {
-    enabled: q.data?.flags?.includes(key) ?? false,
+    enabled: q.data?.flags === undefined ? true : q.data.flags.includes(key),
     resolved: q.isSuccess,
     failed: q.isError,
   };

@@ -127,6 +127,28 @@ describe("plan-catalog-v12.definitions", () => {
     });
   });
 
+  describe("V11_DEFINITIONS — frozen ENTERPRISE flags (finding 3)", () => {
+    it("pins v11 ENTERPRISE to its historical 13-flag list, independent of the live FLAG_KEYS array", () => {
+      const enterprise = V11_DEFINITIONS.find((d) => d.planKey === "ENTERPRISE");
+      expect(enterprise?.featureFlags).toHaveLength(13);
+      expect(enterprise?.featureFlags).toEqual([
+        "flag.returns",
+        "flag.ap_bills",
+        "flag.reports",
+        "flag.credit_limits",
+        "flag.settlement",
+        "flag.pricing_tiers",
+        "flag.analytics",
+        "flag.forecasting",
+        "flag.import_integrations",
+        "flag.api_sso",
+        "addon.buyer_portal",
+        "addon.regulated_items",
+        "addon.ocr",
+      ]);
+    });
+  });
+
   describe("V12_ADDON_SEEDS", () => {
     it("is identical to V11_ADDON_SEEDS — v12 adds no new SKU and retires none", () => {
       expect(V12_ADDON_SEEDS).toEqual(V11_ADDON_SEEDS);

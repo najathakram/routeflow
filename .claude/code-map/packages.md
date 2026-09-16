@@ -141,8 +141,14 @@ string` (B20 — free-form intake note, e.g. "DAMAGED_BOX") and its `restock?` d
   `plan-catalog.constants.ts`'s `FLAG_KEYS` — the API can't value-import this package at
   runtime, see the trip-grouping note above, so it hand-mirrors the list; pinned set-equal by
   `enum-parity.spec.ts`'s WP1 T2) + `type FlagKey`, and `SubscriptionView<TDate = string>` — the
-  shared shape for `GET /billing/subscription`'s response (14 fields incl. `flags: string[]` and
-  `paymentRequired: boolean`, both WP1 additions), generic over `TDate` so a caller that parses
+  shared shape for `GET /billing/subscription`'s response (14 fields incl. `flags?: string[]` —
+  OPTIONAL as of Lite-L2 fix-round finding 5, 2026-09-15: an old API build can omit `flags`
+  entirely during a deploy skew/rollback, and every reader must treat `undefined` as "unresolved,
+  fail OPEN" (never gate/hide), distinct from `flags: []` ("resolved, no grants" — gate for
+  real). Fixed in web (`app/(dashboard)/layout.tsx`'s RouteGuard + `filterPlanGatedNav`,
+  `lib/api/plan-flags.ts`'s `usePlanFlag`) and mobile (`(operator)/_layout.tsx`,
+  `lib/plan-flags.ts`'s `planLockedSection`, `lib/api/billing.ts`'s `usePlanFlag`) — and
+  `paymentRequired: boolean`, both WP1 additions, generic over `TDate` so a caller that parses
   dates client-side can write `SubscriptionView<Date>` instead of redeclaring the interface.
   Consumed by `apps/web/lib/api/billing.ts` (`export type { SubscriptionView }`, no longer
   declared there) and `apps/mobile/lib/api/billing.ts`. Re-exported from `index.ts`

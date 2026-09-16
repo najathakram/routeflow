@@ -821,6 +821,12 @@ describe("PlatformAdminService — audit provenance", () => {
       status: "ACTIVE",
       plan: "PROFESSIONAL",
     } as any);
+    // "PROFESSIONAL" normalizes to "SCALE" via planKeyFromEnum — finding 2's fix now validates
+    // the target against the published catalog before activating, so it needs a SCALE row here.
+    planCatalogService.getPublishedVersion.mockResolvedValue({
+      id: "v-1",
+      definitions: [{ planKey: "SCALE", monthlyPrice: 349, isCustom: false }],
+    } as any);
 
     await service.activateManualSubscription(
       TENANT_ID,
@@ -1488,6 +1494,49 @@ describe("PlatformAdminService — audit provenance", () => {
       const emailCall = (emailServiceMock.send as jest.Mock).mock.calls[0][0];
       expect(emailCall.html).toContain("Complete payment to activate your account.");
       expect(emailCall.html).not.toMatch(/trial expires in/i);
+    });
+  });
+
+  describe("activateManualSubscription — published catalog validation (finding 2)", () => {
+    const activateDto = {
+      plan: "LITE",
+      billingPeriodDays: 30,
+      paymentMethod: "BANK_TRANSFER",
+    } as any;
+
+    it("REG-2 refuses to activate LITE when LITE is not in the published catalog", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-1",
+        definitions: [{ planKey: "STARTER" }],
+      } as any);
+
+      await expect(
+        service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID),
+      ).rejects.toThrow(/published plan catalog/i);
+
+      expect(prisma.tenant.update).not.toHaveBeenCalled();
+      expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+    });
+
+    it("REG-2 activating LITE on a catalog that has it writes planKey + planVersionId into the upsert", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+        plan: "LITE",
+      } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-12",
+        definitions: [{ planKey: "LITE", monthlyPrice: 99, isCustom: false }],
+      } as any);
+
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      const upsertArg = (prisma as any).tenantSubscription.upsert.mock.calls[0][0];
+      expect(upsertArg.create).toMatchObject({ planKey: "LITE", planVersionId: "v-12" });
+      expect(upsertArg.update).toMatchObject({ planKey: "LITE", planVersionId: "v-12" });
     });
   });
 

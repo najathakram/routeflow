@@ -33,7 +33,9 @@ describe("CreditNotesController — plan gate (WP5b)", () => {
   it.each(["create", "apply", "voidNote", "unapply", "update"])(
     "handler %s keeps its own RolesGuard + @Roles(OPERATOR)",
     (handlerName) => {
-      const handler = (CreditNotesController.prototype as Record<string, unknown>)[handlerName];
+      const handler = (CreditNotesController.prototype as unknown as Record<string, unknown>)[
+        handlerName
+      ];
       expect(typeof handler).toBe("function");
       const handlerGuards = (Reflect.getMetadata("__guards__", handler as object) ?? []) as Array<{
         name: string;
@@ -46,7 +48,9 @@ describe("CreditNotesController — plan gate (WP5b)", () => {
   // findAll/findOne remain readable by any authenticated (customer-portal-aware)
   // role — no per-handler RolesGuard was ever added to them.
   it.each(["findAll", "findOne"])("handler %s carries no per-handler RolesGuard", (handlerName) => {
-    const handler = (CreditNotesController.prototype as Record<string, unknown>)[handlerName];
+    const handler = (CreditNotesController.prototype as unknown as Record<string, unknown>)[
+      handlerName
+    ];
     const handlerGuards = (Reflect.getMetadata("__guards__", handler as object) ?? []) as Array<{
       name: string;
     }>;

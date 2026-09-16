@@ -335,6 +335,18 @@ export class UnknownPlanKeyError extends Error {
   }
 }
 
+export class PlanNotInCatalogError extends Error {
+  constructor(
+    public readonly planKey: string | null | undefined,
+    public readonly triedVersionIds: readonly string[],
+  ) {
+    super(
+      `Plan "${planKey}" is not defined in any resolvable catalog version (tried ${triedVersionIds.join(", ")})`,
+    );
+    this.name = "PlanNotInCatalogError";
+  }
+}
+
 export function planKeyToEnum(planKey: string | null | undefined): TenantPlanEnumValue {
   const normalized = normalizePlanKey(planKey);
   switch (normalized) {

@@ -68,6 +68,12 @@ function make(
         .mockResolvedValue([
           { ...sub, stripeSubId: "sub_1", tenant: { id: sub.tenantId, slug: "acme" } },
         ]),
+      // Finding 4 (Lite-L2 review): onCheckoutCompleted reads this to check for a negotiated
+      // price override before overwriting basePriceSnapshot. `sub` has no
+      // priceOverrideMonthly/priceOverrideAnnual fields by default, so they read as `undefined`
+      // (`undefined != null` is false) — every existing test's hasNegotiatedOverride defaults to
+      // false, preserving current behavior exactly.
+      findUnique: jest.fn().mockResolvedValue(sub),
       update: jest.fn().mockResolvedValue({}),
       upsert: jest.fn().mockResolvedValue(sub),
     },
@@ -451,6 +457,29 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
     expect(call.update).not.toHaveProperty("basePriceSnapshot");
     // Handler still completes and activates/emits off the upserted row's own planKey.
     expect(emitted(events)).toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
+  });
+
+  it("(6) a tenant with a negotiated override completing checkout KEEPS the override — basePriceSnapshot is not touched", async () => {
+    const { svc, prisma, events } = make({
+      transitionCount: 1,
+      sub: {
+        tenantId: "t1",
+        planKey: "GROWTH",
+        basePriceSnapshot: 199, // the negotiated figure already on the row
+        discount: 0,
+        stripeSubId: null,
+        priceOverrideMonthly: 199,
+      },
+    });
+    await (svc as any).onCheckoutCompleted(session("GROWTH"));
+
+    const call = prisma.tenantSubscription.upsert.mock.calls[0][0];
+    expect(call.update).not.toHaveProperty("basePriceSnapshot");
+    // mrr (the override actually billed) must equal ledgerMrr (what this event says changed) —
+    // no divergence: the resumed event's delta reflects the override figure, not the discarded
+    // catalog price. (The mock's upsert returns the static `sub` regardless of `data`, so
+    // emitPayingDelta reads the delta straight off sub.basePriceSnapshot === 199.)
+    expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_RESUMED)).toBe(199);
   });
 });
 

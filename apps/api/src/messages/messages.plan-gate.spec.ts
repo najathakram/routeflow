@@ -23,8 +23,8 @@ describe("MessagesController — plan gate (WP5c)", () => {
   });
 
   it.each(["create", "findAll"])("handler %s still exists on the controller", (handlerName) => {
-    expect(typeof (MessagesController.prototype as Record<string, unknown>)[handlerName]).toBe(
-      "function",
-    );
+    expect(
+      typeof (MessagesController.prototype as unknown as Record<string, unknown>)[handlerName],
+    ).toBe("function");
   });
 });

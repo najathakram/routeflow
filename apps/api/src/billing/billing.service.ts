@@ -579,6 +579,19 @@ export class BillingService {
       );
     }
 
+    // Finding 4 (Lite-L2 review, money): resolveCatalogPricing is DELIBERATELY catalog-only,
+    // ignoring any per-tenant negotiated override (see its own doc comment) — correct for its
+    // other callers, but wrong to blindly write into basePriceSnapshot here. A tenant with a
+    // negotiated custom fee (priceOverrideMonthly/priceOverrideAnnual) must keep it; this
+    // webhook has no business reason to overwrite it with the catalog figure.
+    const existingOverride = await this.prisma.tenantSubscription.findUnique({
+      where: { tenantId },
+      select: { priceOverrideMonthly: true, priceOverrideAnnual: true },
+    });
+    const hasNegotiatedOverride =
+      existingOverride?.priceOverrideMonthly != null ||
+      existingOverride?.priceOverrideAnnual != null;
+
     const upserted = await this.prisma.tenantSubscription.upsert({
       where: { tenantId },
       create: {
@@ -601,7 +614,7 @@ export class BillingService {
         periodEnd: new Date(stripeSub.current_period_end * 1000),
         ...(billingInterval ? { billingInterval } : {}),
         ...(resolvedPlanKey ? { planKey: resolvedPlanKey } : {}),
-        ...(resolvedPlanKey && resolvedBasePrice != null
+        ...(resolvedPlanKey && resolvedBasePrice != null && !hasNegotiatedOverride
           ? { basePriceSnapshot: resolvedBasePrice }
           : {}),
       },

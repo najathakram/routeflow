@@ -28,13 +28,13 @@ export const PLAN_GATED_SECTIONS: Readonly<Record<string, FlagKey>> = {
  */
 export function planLockedSection(
   segments: readonly string[],
-  s: { flags: readonly string[]; resolved: boolean; failed: boolean },
+  s: { flags: readonly string[] | undefined; resolved: boolean; failed: boolean },
 ): FlagKey | null {
   const section = segments
     .slice(segments.indexOf("(operator)") + 1)
     .find((x) => !x.startsWith("("));
   const key = section ? PLAN_GATED_SECTIONS[section] : undefined;
-  if (!key || !s.resolved || s.failed) return null; // unknown => fail OPEN
+  if (!key || !s.resolved || s.failed || s.flags === undefined) return null; // unknown => fail OPEN
   return s.flags.includes(key) ? null : key;
 }
 

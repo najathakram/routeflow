@@ -37,7 +37,9 @@ describe("CustomersController — buyer-portal plan gate (WP5c)", () => {
   it.each(PORTAL_HANDLERS)(
     "portal handler %s carries PlanFlagGuard + @RequirePlanFlag('addon.buyer_portal')",
     (handlerName) => {
-      const handler = (CustomersController.prototype as Record<string, unknown>)[handlerName];
+      const handler = (CustomersController.prototype as unknown as Record<string, unknown>)[
+        handlerName
+      ];
       expect(typeof handler).toBe("function");
       const handlerGuards = (Reflect.getMetadata("__guards__", handler as object) ?? []) as Array<{
         name: string;
@@ -56,7 +58,9 @@ describe("CustomersController — buyer-portal plan gate (WP5c)", () => {
   it.each(NON_PORTAL_HANDLERS)(
     "non-portal handler %s carries no addon.buyer_portal gate",
     (handlerName) => {
-      const handler = (CustomersController.prototype as Record<string, unknown>)[handlerName];
+      const handler = (CustomersController.prototype as unknown as Record<string, unknown>)[
+        handlerName
+      ];
       expect(typeof handler).toBe("function");
       expect(Reflect.getMetadata(REQUIRE_PLAN_FLAG_KEY, handler as object)).toBeUndefined();
     },

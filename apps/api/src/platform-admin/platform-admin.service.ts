@@ -218,6 +218,28 @@ export class PlatformAdminService {
     };
   }
 
+  /**
+   * WP1 (R1.8) shared guard: resolve `planKey` against the currently PUBLISHED plan catalog,
+   * throwing loudly instead of letting a caller fall through to compute()'s silent STARTER
+   * fallback. Every write that sets a tenant onto a specific plan must call this and persist
+   * BOTH the returned definition's planKey and version.id together.
+   */
+  private async resolvePublishedPlan(planKey: string) {
+    const version = await this.planCatalogService.getPublishedVersion();
+    if (!version) {
+      throw new BadRequestException(
+        "No published plan catalog exists. Seed the billing catalog first.",
+      );
+    }
+    const definition = findPlanDefinition(version.definitions, planKey);
+    if (!definition) {
+      throw new BadRequestException(
+        `Plan "${planKey}" is not in the published plan catalog — publish it before assigning tenants to it.`,
+      );
+    }
+    return { version, definition };
+  }
+
   // ─── Create / Delete Tenant ───────────────────────────────────────────────────
 
   async createTenant(dto: CreateTenantDto, adminId: string | null = null) {
@@ -231,12 +253,7 @@ export class PlatformAdminService {
     if (slugTaken) throw new ConflictException(`Slug "${slug}" is already taken`);
 
     const planKey = plan ?? "STARTER";
-    const version = await this.planCatalogService.getPublishedVersion();
-    if (!version || !findPlanDefinition(version.definitions, planKey)) {
-      throw new BadRequestException(
-        `Plan "${planKey}" is not in the published plan catalog — publish it before creating tenants on it.`,
-      );
-    } // R1.8: never the silent STARTER fallback in compute()
+    await this.resolvePublishedPlan(planKey); // R1.8: never the silent STARTER fallback in compute()
     const trialDays =
       dto.trialLengthDays ??
       (isInviteOnlyPlanKey(planKey) ? INVITE_ONLY_PLAN_TRIAL_DAYS : TRIAL_LENGTH_DAYS);
@@ -495,16 +512,7 @@ ${
     // (subscription-mutation.service.ts:132-163) — planKey/planVersionId must always point
     // at a real catalog row, never just the legacy TenantPlan enum shadow.
     const targetPlanKey = planKeyFromEnum(dto.plan);
-    const version = await this.planCatalogService.getPublishedVersion();
-    if (!version) {
-      throw new NotFoundException(
-        "No published plan catalog exists. Seed the billing catalog first.",
-      );
-    }
-    const definition = findPlanDefinition(version.definitions, targetPlanKey);
-    if (!definition) {
-      throw new NotFoundException(`Plan ${targetPlanKey} not found in the current catalog version`);
-    }
+    const { version, definition } = await this.resolvePublishedPlan(targetPlanKey);
 
     // Prior run-rate baseline — the MRR ledger books the signed CHANGE from this state.
     // cycle/periodStart/periodEnd are read too: ADMIN-UPDATEPLAN-1 needs them to branch and
@@ -750,6 +758,13 @@ ${
   ) {
     await this._findOrThrow(id);
 
+    // FINDING-2 (Lite-L2 review): resolve + validate against the published catalog, and persist
+    // both planKey and planVersionId — this write previously set tenant.plan/currentPlan with no
+    // catalog check at all, and never re-pinned the subscription's planKey/planVersionId, so a
+    // later compute() couldn't find the tenant's plan either.
+    const planKey = planKeyFromEnum(dto.plan);
+    const { version, definition } = await this.resolvePublishedPlan(planKey);
+
     const now = new Date();
     const periodEnd = new Date(now.getTime() + dto.billingPeriodDays * 24 * 60 * 60 * 1000);
 
@@ -764,6 +779,8 @@ ${
         create: {
           tenantId: id,
           currentPlan: dto.plan,
+          planKey: definition.planKey,
+          planVersionId: version.id,
           periodStart: now,
           periodEnd,
           externalPayment: true,
@@ -773,6 +790,8 @@ ${
         },
         update: {
           currentPlan: dto.plan,
+          planKey: definition.planKey,
+          planVersionId: version.id,
           periodStart: now,
           periodEnd,
           // Rolling the period forward disarms every pending transition. A downgrade left armed

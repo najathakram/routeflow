@@ -63,6 +63,6 @@ export interface SubscriptionView<TDate = string> {
    *  another server-defined string). `null`/absent renders the generic read-only copy. */
   readOnlyReason?: string | null;
   addons: Array<{ sku: string | null; name: string; quantity: number; monthly: number | null }>;
-  flags: string[];
+  flags?: string[];
   paymentRequired: boolean;
 }

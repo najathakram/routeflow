@@ -12,7 +12,6 @@
  * retirement story (BUYER_PORTAL/SEAT_EXTRA/OCR_PACK_250/ROUTE_EXTRA/MSG_BUNDLE_500 dropped,
  * grandfathering rules, etc.).
  */
-import { FLAG_KEYS } from "../src/billing/plan-catalog.constants";
 import type { AddonSkuCode, PlanKey } from "../src/billing/plan-catalog.constants";
 
 export type Unit = "FLAT" | "PER_USER" | "PER_ROUTE";
@@ -69,9 +68,24 @@ const SCALE_FLAGS = [
   "addon.regulated_items",
   "addon.ocr",
 ];
-const ENTERPRISE_FLAGS = FLAG_KEYS.filter(
-  (f) => f !== "flag.dispatch_live" && f !== "flag.msrp" && f !== "flag.sales_agents",
-);
+// FROZEN as of v11's actual publish. Do NOT re-derive from the live FLAG_KEYS array — that
+// silently changed this from 13 to 18 flags when WP1 added 5 new Lite-plan flags to FLAG_KEYS
+// (finding 3, Lite-L2 review). These are the exact 13 keys prod's v11 ENTERPRISE row carries.
+const ENTERPRISE_FLAGS = [
+  "flag.returns",
+  "flag.ap_bills",
+  "flag.reports",
+  "flag.credit_limits",
+  "flag.settlement",
+  "flag.pricing_tiers",
+  "flag.analytics",
+  "flag.forecasting",
+  "flag.import_integrations",
+  "flag.api_sso",
+  "addon.buyer_portal",
+  "addon.regulated_items",
+  "addon.ocr",
+];
 
 export const V11_DEFINITIONS: DefinitionSeed[] = [
   {

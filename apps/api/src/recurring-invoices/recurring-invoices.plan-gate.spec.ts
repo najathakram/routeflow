@@ -37,7 +37,9 @@ describe("RecurringInvoicesController — plan gate (WP5a)", () => {
     "handler %s still exists on the controller",
     (handlerName) => {
       expect(
-        typeof (RecurringInvoicesController.prototype as Record<string, unknown>)[handlerName],
+        typeof (RecurringInvoicesController.prototype as unknown as Record<string, unknown>)[
+          handlerName
+        ],
       ).toBe("function");
     },
   );

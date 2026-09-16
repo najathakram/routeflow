@@ -78,6 +78,27 @@ describe("planLockedSection", () => {
       expect(key).toBe(flag);
     }
   });
+
+  it("fails OPEN when flags is undefined (absent key on the response), even though resolved", () => {
+    // Finding 5: an old API build can resolve successfully with the `flags` key entirely
+    // absent. That must read as "unresolved gate" (fail open), never as "resolved, zero
+    // grants" the way `flags ?? []` used to collapse it.
+    const key = planLockedSection(segments("(tabs)", "estimates"), {
+      flags: undefined,
+      resolved: true,
+      failed: false,
+    });
+    expect(key).toBeNull();
+  });
+
+  it("still locks on a real empty grant list (flags: [])", () => {
+    const key = planLockedSection(segments("(tabs)", "estimates"), {
+      flags: [],
+      resolved: true,
+      failed: false,
+    });
+    expect(key).toBe("flag.estimates");
+  });
 });
 
 describe("planFlagVisible", () => {

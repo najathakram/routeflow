@@ -43,8 +43,8 @@ describe("EstimatesController — plan gate (WP5a)", () => {
     "convert",
     "void",
   ])("handler %s still exists on the controller", (handlerName) => {
-    expect(typeof (EstimatesController.prototype as Record<string, unknown>)[handlerName]).toBe(
-      "function",
-    );
+    expect(
+      typeof (EstimatesController.prototype as unknown as Record<string, unknown>)[handlerName],
+    ).toBe("function");
   });
 });

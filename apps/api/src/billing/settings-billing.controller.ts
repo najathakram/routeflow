@@ -22,6 +22,10 @@ import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BillingService } from "./billing.service";
 import { QuoteDto } from "./dto/quote.dto";
 import { SubscribeDto, UpgradeDto, DowngradeDto, EnableAddonDto } from "./dto/mutation.dto";
+import {
+  inviteOnlyCheckoutAllowed,
+  INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT,
+} from "./plan-catalog.constants";
 
 interface AuthUser {
   tenantId: string | null;
@@ -160,9 +164,16 @@ export class SettingsBillingController {
   @HttpCode(HttpStatus.OK)
   @Roles(UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: "Start a Stripe Checkout session for the tenant's own pinned plan" })
-  createCheckout(@CurrentUser() user: AuthUser) {
+  async createCheckout(@CurrentUser() user: AuthUser) {
+    const tenantId = this.tenantIdOf(user);
+    const { planKey } = await this.subscription.getSubscription(tenantId);
+    if (!inviteOnlyCheckoutAllowed(planKey, INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT)) {
+      throw new ForbiddenException(
+        "Self-serve checkout is currently disabled for this plan — contact us to complete your subscription.",
+      );
+    }
     const base = process.env.FRONTEND_URL ?? "http://localhost:3001";
-    return this.billing.createCheckoutSession(this.tenantIdOf(user), {
+    return this.billing.createCheckoutSession(tenantId, {
       successUrl: `${base}/settings/billing?checkout=success`,
       cancelUrl: `${base}/settings/billing?checkout=cancelled`,
     });

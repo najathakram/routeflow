@@ -838,3 +838,35 @@ apps/web/app --include=*.tsx -A1 | grep -B1 onSuccess` — narrow to `.map()`-re
   `backfill-subscription-reconciliation.mjs` requires `--confirm-count` matching the scan when
   `--apply` runs unscoped. Sibling fix same round: the write's `updateMany` re-asserts tenant
   state, closing a scan-to-write race.
+
+### L-159 · 2026-09-15 · domain · Lite-L2 fix round: plan re-pin + frozen-catalog literal
+
+- **Symptom:** an admin plan change to LITE, applied later by the nightly cron, booked a -$249
+  ledger delta instead of the real -$150 and left the tenant on STARTER entitlements. Separately,
+  a "frozen" v11 catalog snapshot silently gained 5 flags it never actually had.
+- **Root cause:** two shapes of the same mistake. (1) A mutation validated a target plan against
+  the published catalog but never persisted WHICH version proved it valid (`planVersionId`) — a
+  later async step re-resolved against the tenant's stale pinned version, found nothing, and
+  silently priced the target as $0. (2) A supposedly-frozen historical definition derived itself
+  via `.filter()` over a live, growing shared constant, so every unrelated addition rewrote it.
+- **Lesson:** **Validating a value against a source of truth is not enough — persist the resolved
+  reference itself (the version id), so a LATER step reads the same evidence, not a stale one.
+  Anything meant to be a frozen/historical snapshot must be a literal, never a derivation from a
+  live source that can grow.**
+- **Guard:** `billing-cron.service.spec.ts` REG-1 (re-pin + real delta); `plan-catalog-v12.spec.ts`
+  pins v11 ENTERPRISE to its exact historical 13-flag literal.
+
+### L-160 · 2026-09-15 · domain · Lite-L2 fix round: SubscriptionView.flags fail-open
+
+- **Symptom:** a deploy skew (old API, new web/mobile build) or rollback serving a response with
+  no `flags` key locked every plan-gated route and hid every plan-gated nav item, for every
+  tenant on every plan — not just the one plan the field was added for.
+- **Root cause:** `subscription?.flags ?? []` (and the equivalent `?.includes(key) ?? false`
+  hooks, on both web and mobile) treated "the field is absent" identically to "present and
+  empty" — but the request had already resolved, so a reader downstream saw "resolved, zero
+  grants" and gated for real.
+- **Lesson:** **A shared response field a rollback/version-skew can omit must be typed optional,
+  and every reader must distinguish `undefined` ("unresolved, fail open") from `[]` ("resolved,
+  no grants — gate for real"). Never let `?? []` erase that distinction.**
+- **Guard:** `plan-flags.test.tsx` (web) and `plan-flags.test.ts` (mobile) both pin the
+  undefined-vs-`[]` pair.

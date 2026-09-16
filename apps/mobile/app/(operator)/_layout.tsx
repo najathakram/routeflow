@@ -97,7 +97,7 @@ export default function OperatorLayout() {
   // RouteGuard, apps/web/app/(dashboard)/layout.tsx). planLockedSection already fails
   // OPEN while unresolved/failed, so this never strands a tenant on an unknown answer.
   const lockedKey = planLockedSection(segments, {
-    flags: sub.data?.flags ?? [],
+    flags: sub.data?.flags,
     resolved: sub.isSuccess,
     failed: sub.isError,
   });
