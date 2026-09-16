@@ -13,7 +13,7 @@
 // InvoicePayment row where method = CHECK, status = PAID, checkStatus NOT IN (CLEARED,
 // BOUNCED), checkDate IS NULL (idempotent reruns report 0 changes), and settledAt is strictly
 // after `--since <ISO>` (default: this feature's own migration instant,
-// 2026-09-15T00:00:00.000Z — L-074/never "now": a rerun months from now must not silently widen
+// 2026-09-16T01:00:00.000Z — L-074/never "now": a rerun months from now must not silently widen
 // scope by drifting the cutoff to whenever it happens to run).
 //
 // Cross-tenant by design (every tenant, not one) — no unconditional `assertTestTenant` call
@@ -53,10 +53,10 @@ import { planCheckDateBackfill } from "./lib/check-date-backfill.mjs";
 import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
 
 // The migration that introduced `checkDate`
-// (apps/api/prisma/migrations/20260915000000_check_instrument_fields) — the default cutoff, so
+// (apps/api/prisma/migrations/20260916010000_check_instrument_fields) — the default cutoff, so
 // a rerun without `--since` never silently drifts to "now" (L-074-adjacent: an implicit default
 // must stay loud and stable, not resolve to whatever moment the script happens to run).
-const MIGRATION_INSTANT = "2026-09-15T00:00:00.000Z";
+const MIGRATION_INSTANT = "2026-09-16T01:00:00.000Z";
 
 // Hoisted so the top-level `.catch` below can scrub a connection string out of an error message
 // even when the failure happens before or after `main()`'s own try/finally.

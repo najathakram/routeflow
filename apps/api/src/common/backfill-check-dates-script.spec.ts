@@ -227,7 +227,7 @@ describe("backfill-check-dates.mjs CLI contract", () => {
 
   it("REG-PR1-CHK16: defaults --since to the migration's own instant, never bare 'now'", () => {
     const code = require("fs").readFileSync(CLI, "utf8");
-    expect(code).toContain("2026-09-15T00:00:00.000Z");
+    expect(code).toContain("2026-09-16T01:00:00.000Z");
     expect(code).not.toMatch(/new Date\(\)\s*;?\s*$/m);
   });
 
