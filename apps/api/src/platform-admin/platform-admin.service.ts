@@ -20,6 +20,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { MeterService } from "../billing/meter.service";
 import { BillingEventService } from "../billing/billing-event.service";
 import { MrrService } from "../billing/mrr.service";
+import { TenantMirrorService } from "./tenant-mirror.service";
 import {
   normalizePlanKey,
   planKeyFromEnum,
@@ -73,6 +74,7 @@ export class PlatformAdminService {
     private readonly tenantStatusGuard: TenantStatusGuard,
     private readonly auditService: AuditService,
     private readonly mrrService: MrrService,
+    private readonly tenantMirror: TenantMirrorService,
   ) {}
 
   /**
@@ -377,6 +379,12 @@ ${
       });
     } catch {
       /* best-effort — don't fail tenant creation over email */
+    }
+
+    try {
+      await this.tenantMirror.upsert(result.tenant.id);
+    } catch (err) {
+      this.logger.debug(`Mirror sync not created for ${slug}: ${(err as Error).message}`);
     }
 
     await this.recordAdminAction(result.tenant.id, adminId, AdminAuditAction.TENANT_CREATED, {
@@ -999,8 +1007,6 @@ ${
       // run-rate; `ledgerMrr` reconciles it against the append-only BillingEvent ledger.
       mrr: mrrOverview.mrr,
       ledgerMrr: mrrOverview.ledgerMrr,
-      // alias until Phase 0 T12 updates the dashboard
-      estMrrUsd: mrrOverview.mrr,
       planBreakdown: planCounts,
       recentTenants,
       trialsExpiringSoon: trialsExpiringSoon.map((t) => ({
@@ -1520,6 +1526,12 @@ ${
     await this.recordAdminAction(tenantId, adminId, AdminAuditAction.TENANT_CONFIG_UPDATED, {
       fields: Object.keys(dto),
     });
+
+    try {
+      await this.tenantMirror.upsert(tenantId);
+    } catch (err) {
+      this.logger.debug(`Mirror sync not updated for ${tenantId}: ${(err as Error).message}`);
+    }
 
     return this.getTenant(tenantId);
   }

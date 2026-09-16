@@ -102,6 +102,10 @@ describe("ReturnsService.create — Idempotency-Key replay guard (REG-RET-IDEM)"
     prisma.tenantTransaction.mockImplementation((fn: any) =>
       fn({
         return: txReturn,
+        // PR-1a: the shared prior-returned reader (returnedPiecesByProduct) also queries
+        // returnItem for INLINE-kind rows sourced from this order — always empty here, no
+        // INLINE return exists in this suite.
+        returnItem: { findMany: jest.fn().mockResolvedValue([]) },
         order: prisma.order,
         customer: prisma.customer,
         $executeRaw: jest.fn().mockResolvedValue(0),
@@ -136,6 +140,18 @@ describe("ReturnsService.create — Idempotency-Key replay guard (REG-RET-IDEM)"
         });
         mockLockQueue.set(hash, mine);
         await prior; // wait for whoever held this hash before us, if anyone
+        // PR-1a §5: create() also takes a customer-scoped lock (`returns.customer`) that is
+        // held for the REST of the transaction in production (a real pg_advisory_xact_lock,
+        // auto-released at commit) — this suite's mutex-holding release points (check()/save(),
+        // below) exist only to test the KEY-scoped lock's exclusion (REG-RET-IDEM-7/9), so the
+        // customer lock releases itself immediately here rather than being held across an
+        // entire create() call with no matching release hook — every test in this file reuses
+        // the SAME customerId, and holding it forever would deadlock every second call.
+        if (hash.includes(":returns.customer:")) {
+          releaseFn();
+          mockLockQueue.delete(hash);
+          return;
+        }
         mockLockRelease.set(hash, releaseFn);
       }),
       check: jest.fn(async (key: string, tenantId: string | null, scopeSuffix: string) => {
@@ -238,12 +254,19 @@ describe("ReturnsService.create — Idempotency-Key replay guard (REG-RET-IDEM)"
     expect(prisma.order.findUnique).not.toHaveBeenCalled();
   });
 
-  it("REG-RET-IDEM-3 a request with NO Idempotency-Key behaves exactly as before — the guard (and the F5 lock) is never consulted", async () => {
+  it("REG-RET-IDEM-3 a request with NO Idempotency-Key behaves exactly as before on the KEY guard — check/save are never consulted (the PR-1a customer lock, §5, is unconditional and still fires)", async () => {
     await service.create(dto(), "user-1", "DRIVER");
 
     expect(idempotency.check).not.toHaveBeenCalled();
     expect(idempotency.save).not.toHaveBeenCalled();
-    expect(idempotency.acquireLock).not.toHaveBeenCalled();
+    // PR-1a §5: the customer-keyed lock in create() is unconditional (not gated on an
+    // Idempotency-Key header) — it always fires once per create(), unlike the key-scoped
+    // lock/check/save trio above.
+    expect(idempotency.acquireLock).toHaveBeenCalledTimes(1);
+    expect(idempotency.acquireLock).toHaveBeenCalledWith(
+      storeKey("cust-1", "test-tenant", "returns.customer"),
+      expect.anything(),
+    );
     expect(txReturn.create).toHaveBeenCalledTimes(1);
     expect(gateway.emitReturnCreated).toHaveBeenCalledTimes(1);
 
@@ -251,6 +274,7 @@ describe("ReturnsService.create — Idempotency-Key replay guard (REG-RET-IDEM)"
     // separate partial returns on one order is a real workflow.
     await service.create(dto(), "user-1", "DRIVER");
     expect(txReturn.create).toHaveBeenCalledTimes(2);
+    expect(idempotency.acquireLock).toHaveBeenCalledTimes(2);
   });
 
   it("REG-RET-IDEM-4 the same key under a DIFFERENT order is a different scope and is not collapsed", async () => {
@@ -350,7 +374,7 @@ describe("ReturnsService.create — Idempotency-Key replay guard (REG-RET-IDEM)"
     );
   });
 
-  it("REG-RET-IDEM-9 N1: 8 PARALLEL submissions for one order, each with a DISTINCT key, all succeed — different keys never serialize against each other", async () => {
+  it("REG-RET-IDEM-9 N1: 8 PARALLEL submissions for one order, each with a DISTINCT key, all succeed — different KEYS never serialize against each other (PR-1a: they now also share one CUSTOMER lock — see returns-customer-lock.spec.ts for that mutex's own proof)", async () => {
     // Proves the flip side of REG-RET-IDEM-7: the lock is keyed on the hash, so unrelated keys
     // must never queue behind one another the way two identical-key attempts correctly do. Round
     // 1's dedicated 6-connection pool could in principle starve under enough concurrent DIFFERENT
@@ -361,13 +385,17 @@ describe("ReturnsService.create — Idempotency-Key replay guard (REG-RET-IDEM)"
 
     // All 8 landed — none silently collapsed onto another, and none blocked behind a DIFFERENT
     // key's holder. `acquireLock` was called once per key (never re-queued behind an unrelated
-    // hash), and every attempt reached its own `save()`.
+    // hash), and every attempt reached its own `save()`. PR-1a §5 adds a SECOND acquireLock per
+    // create() — the customer-keyed lock — which is the SAME hash for all 8 (one order, one
+    // customer): 8 distinct key-hash locks + 1 shared customer-hash lock = 16 calls, 9 unique
+    // hashes. The 8 key-scoped locks still never queue behind each other or the shared one in a
+    // way that blocks completion — this suite has no assertion on ORDER, only on outcome.
     expect(txReturn.create).toHaveBeenCalledTimes(8);
     expect(gateway.emitReturnCreated).toHaveBeenCalledTimes(8);
-    expect(idempotency.acquireLock).toHaveBeenCalledTimes(8);
+    expect(idempotency.acquireLock).toHaveBeenCalledTimes(16);
     expect(idempotency.save).toHaveBeenCalledTimes(8);
     const lockedHashes = idempotency.acquireLock.mock.calls.map((c: unknown[]) => c[0]);
-    expect(new Set(lockedHashes).size).toBe(8);
+    expect(new Set(lockedHashes).size).toBe(9);
   });
 
   it("REG-RET-IDEM-10 N5: the SAME payload submitted under two DIFFERENT keys creates TWO returns — content alone is never the identity, the key is", async () => {

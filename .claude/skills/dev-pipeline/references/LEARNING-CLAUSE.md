@@ -39,4 +39,4 @@ defect.
 ## Where the clause lives
 
 Canonical text: this file. Each skill carries a 3-line summary that links here; the global
-`~/.claude/CLAUDE.md` (lead machine) Pipeline law is the always-on reminder. Do not paste the full text elsewhere.
+`~/.claude/CLAUDE.md` Pipeline law is the always-on reminder. Do not paste the full text elsewhere.

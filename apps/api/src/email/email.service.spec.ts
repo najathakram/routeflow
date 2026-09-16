@@ -456,6 +456,127 @@ describe("EmailService.sendInvoice — payment truth (T-B102, R8, REG-B102)", ()
 });
 
 /**
+ * B421 — a CREDIT_NOTE/ADVANCE application must never render as "Amount
+ * Paid" in an email sent to the customer. This is the client's exact
+ * original complaint ("Paid $638.00" although they never paid anything),
+ * reaching an email their own customer reads.
+ */
+describe("EmailService.sendInvoice — credit/advance never render as Amount Paid (REG-B421)", () => {
+  const baseParams = {
+    to: "buyer@example.com",
+    customerName: "Acme Buyer",
+    invoiceNumber: "INV-3001",
+    invoiceId: "inv-3001",
+    issueDate: "Jan 1, 2026",
+    dueDate: "Jan 31, 2026",
+    total: 870,
+    items: [{ description: "Widget", qty: 1, unitPrice: 870, subtotal: 870 }],
+  };
+
+  function tfootOf(html: string): string {
+    return (html.match(/<tfoot>[\s\S]*?<\/tfoot>/) ?? [""])[0];
+  }
+
+  it("REG-B421: a credit-only invoice's tfoot never contains a non-zero Amount Paid row, but does show Credit issued", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendInvoice({
+      ...baseParams,
+      totalPaid: 0,
+      creditApplied: 638,
+      advanceApplied: 0,
+      creditNoteNumbers: ["CN-1042"],
+      balanceDue: 232,
+      isReminder: false,
+    } as any);
+
+    const html = sendSpy.mock.calls[0][0].html;
+    const tfoot = tfootOf(html);
+    // The exact pre-fix bug: "Amount Paid" next to the credit's own figure.
+    // $638.00 legitimately appears in the tfoot — under "Credit issued", not
+    // "Amount Paid" — so the real assertion is that no "Amount Paid" ROW
+    // exists at all, never that the figure itself is absent.
+    expect(tfoot).not.toContain("Amount Paid");
+    expect(tfoot).toContain("Credit issued");
+    expect(tfoot).toContain("CN-1042");
+    expect(tfoot).toContain("$638.00");
+    expect(tfoot).toContain("Balance Due");
+    expect(tfoot).toContain("$232.00");
+  });
+
+  it("REG-B421: a cash + credit invoice shows BOTH an Amount Paid row and a separate Credit issued row", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendInvoice({
+      ...baseParams,
+      totalPaid: 232,
+      creditApplied: 638,
+      advanceApplied: 0,
+      creditNoteNumbers: ["CN-1042"],
+      balanceDue: 0,
+      isReminder: false,
+    } as any);
+
+    const html = sendSpy.mock.calls[0][0].html;
+    const tfoot = tfootOf(html);
+    expect(tfoot).toContain("Amount Paid");
+    expect(tfoot).toContain("$232.00");
+    expect(tfoot).toContain("Credit issued");
+    expect(tfoot).toContain("$638.00");
+  });
+
+  it("REG-B421: same as the credit-only case, for a reminder send", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendInvoice({
+      ...baseParams,
+      totalPaid: 0,
+      creditApplied: 638,
+      advanceApplied: 0,
+      creditNoteNumbers: ["CN-1042"],
+      balanceDue: 232,
+      isReminder: true,
+    } as any);
+
+    const html = sendSpy.mock.calls[0][0].html;
+    const tfoot = tfootOf(html);
+    expect(tfoot).not.toContain("Amount Paid");
+    expect(tfoot).toContain("Credit issued");
+  });
+
+  it("REG-B421: an advance-only invoice shows Advance applied, never Amount Paid", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendInvoice({
+      ...baseParams,
+      totalPaid: 0,
+      creditApplied: 0,
+      advanceApplied: 100,
+      balanceDue: 770,
+      isReminder: false,
+    } as any);
+
+    const html = sendSpy.mock.calls[0][0].html;
+    const tfoot = tfootOf(html);
+    expect(tfoot).not.toContain("Amount Paid");
+    expect(tfoot).toContain("Advance applied");
+    expect(tfoot).toContain("$100.00");
+  });
+});
+
+/**
  * T-B103 / R9 / REG-B103 — PDF + email item payloads gain `originalPrice`,
  * `priceType`, `promoFreeUnits`; the email item row must show the struck-through
  * original price and an "N free" note on a BOGO line, mirroring the web invoice

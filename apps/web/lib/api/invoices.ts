@@ -170,8 +170,15 @@ export interface Invoice {
   payments?: InvoicePayment[];
   /** Server-computed balance due — 0 for PAID/VOID/WRITTEN_OFF regardless of payment records */
   balanceDue?: number;
-  /** Server-computed total amount paid across all InvoicePayment records */
+  /** Server-computed CASH-ONLY amount paid (B421) — excludes CREDIT_NOTE/ADVANCE
+   *  applications, which are surfaced separately below. */
   paidAmount?: number;
+  /** Confirmed credit-note applications on this invoice (B421) — reduces
+   *  balanceDue but is never cash the customer paid. 0/absent renders nothing. */
+  creditApplied?: number;
+  /** Confirmed advance-payment applications on this invoice (B421) — same
+   *  balance-reducing, non-cash treatment as creditApplied. */
+  advanceApplied?: number;
   /** Carrier shipment tracking (when goods ship via a carrier, not our own route). */
   shippingCarrier?: string | null;
   shippingTrackingNumber?: string | null;

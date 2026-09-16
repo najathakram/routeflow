@@ -246,9 +246,7 @@ describe("edit-items.tsx picker-strip below-floor parity (REG-B263-G)", () => {
       : pickerSrc.slice(stripStart, pickerSrc.indexOf("canEditPrice && pickerPriceEditItem"));
 
   it("REG-B263-G / B280: the strip flags a below-floor price through the SAME marginClass the label reads, not a separate helper", () => {
-    expect(strip).toMatch(
-      /\(marginClass === "belowCost" \|\| marginClass === "belowFloor"\) \?/,
-    );
+    expect(strip).toMatch(/\(marginClass === "belowCost" \|\| marginClass === "belowFloor"\) \?/);
     expect(strip).not.toMatch(/needsMarginAck\(/);
   });
 

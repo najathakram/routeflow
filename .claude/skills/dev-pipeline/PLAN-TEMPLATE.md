@@ -1,5 +1,10 @@
 # Moved → [templates/BUILD-PLAN.md](templates/BUILD-PLAN.md)
 
+> Superseded 2026-09-12 — the `pipeline.js` args block referenced below (`testPackages`/`packages`/
+> `redGate`) is pre-task-loop-rebuild. The current engine contract is `args.tasks[]`; see
+> `templates/BUILD-PLAN.md`'s "Pipeline args" section and `references/ENGINE-NOTES.md`'s
+> `## 2026-09-12 — task-loop rebuild`.
+
 This file was the v1 plan template. It is superseded by the S5 build plan, which adds
 `satisfies:` / `provenBy:` per work package, a separate test-packages section, and a
 ready-to-copy `pipeline.js` args block.

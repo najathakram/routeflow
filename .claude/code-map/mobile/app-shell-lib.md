@@ -137,6 +137,15 @@ nonce}` so a re-scan re-flashes; **2026-09-14:** optional `freeUnitsFor(id,line)
   `__tests__/expo-print-pin.test.ts`, `__tests__/invoice-print-tile.pins.test.ts` (source-text pin,
   same convention as `session-teardown.pins.test.ts` — the RN component isn't rendered under the
   mobile Jest env).
+- **`shareCsv` download-status guard (2026-09-15, sibling of PR #756 review finding F2):**
+  `lib/share-pdf.ts` `shareCsv()`'s native branch now destructures `status` from
+  `FileSystem.downloadAsync(url, target)` and throws before `Sharing.shareAsync` when
+  `!isDownloadOk(status)` (`lib/print-logic.ts`) — `downloadAsync` resolves, never rejects, on a
+  non-2xx response, so an unguarded call saves/shares an error page as the real file.
+  `sharePdfNative` (same file) already had this guard from #756's F2 follow-up; `shareCsv` was the
+  missed sibling. Both callers (`RegulatedFilingsList.tsx`, `(operator)/compliance/[id].tsx`)
+  already try/catch `shareCsv()`. Test: `__tests__/pdf-download-status-guard.pins.test.ts` gained a
+  third pin for `shareCsv`'s native branch (source-text pin, same convention as the print guard).
 - **Buyer per-line notes render (2026-09-15, WP2, R5.6/R5.7):** `lib/api/buyer.ts` — `BuyerOrder.lineItems[]` and `BuyerInvoiceItem` each gained `notes?: string | null` (buyer-visible operator note, e.g. flavor). Rendered in `(customer)/invoices/[id].tsx` `LineItemRow` and `(customer)/orders/[id].tsx` order-detail list, both guarded `item.notes?.trim()`, new `styles.itemNote` (12px, `label2`) under the existing `itemMeta` line. Tests: `__tests__/buyer-line-note.pins.test.ts` (source-text pin, same convention as the WP3 print tests).
 - **`lib/plan-flags.ts` (new, Lite-L2 WP11, 2026-09-15)** — `PLAN_GATED_SECTIONS: Record<string,
 FlagKey>` maps operator route-group segments (`estimates`, `recurring-invoices`,

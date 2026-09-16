@@ -11,23 +11,54 @@
 // Commands:
 //   append <result.json> --run <name> [--started <iso>] [--ended <iso>]
 //          [--project <dir>] [--branch <name>] [--pr <n>] [--note <text>]
-//          [--usage-override-reason <text>]
+//          [--approach dev-pipeline|superpowers|raw] [--task-ref <id>]
+//          [--profile <name>] [--usage-override-reason <text>]
+//   append-manual --run <slug> --approach superpowers|raw --session <sid>
+//          [--project <dir>] [--task-ref <id>] [--first-pass-green true|false]
+//          [--findings <critical>,<important>,<minor>] [--human-minutes <n>]
+//          [--files-touched <n>] [--lines-changed <n>]
+//          [--started <iso>] [--ended <iso>]
+//   attribute --run <slug> --bug <id> [--project <dir>]
+//   compare [--min-n 10] [--json] [--project <dir>]
 //   summary [--project <dir>] [--last N] [--json]
 //   selftest
 //
 // This script only ever reads/writes:
 //   - the result.json path given on the command line (append)
-//   - <project>/.claude/pipeline/cost-ledger.jsonl (append/summary; project
-//     defaults to the current working directory)
+//   - <project>/.claude/pipeline/cost-ledger.jsonl (append/append-manual/
+//     attribute/summary/compare; project defaults to the current working
+//     directory)
 //   - a temp directory under os.tmpdir() (selftest only)
+//
+// append-manual shells out to session-usage.mjs (next to this script) via
+// execFileSync to get true cost/active time for the whole session -- there
+// is no phaseReport for a superpowers/raw run to estimate from. The
+// PIPELINE_LEDGER_USAGE_SCRIPT env var overrides which script path is
+// invoked, and is honoured ONLY when set -- selftest points it at a tiny
+// fake script so the real transcript-scanning script is never exercised by
+// a unit test; normal use never sets it.
 
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
 
 const __filename = fileURLToPath(import.meta.url);
 const SCRIPT_DIR = path.dirname(__filename);
+
+// Part C 2026-09-12: the three first-class evaluation arms an `approach`
+// field (row-level, or the `append`/`append-manual` --approach flag) is
+// constrained to. A value outside this set is refused at the CLI boundary
+// (buildRow itself stays permissive -- it just passes through whatever a
+// trusted result.json/meta value already is).
+const APPROACH_VALUES = ["dev-pipeline", "superpowers", "raw"];
+
+// Override for the session-usage.mjs path append-manual shells out to.
+// Used ONLY when set (selftest points this at a tiny fake script so the
+// real transcript-scanning script is never exercised by a unit test); real
+// use always resolves session-usage.mjs next to this script.
+const USAGE_SCRIPT_ENV = "PIPELINE_LEDGER_USAGE_SCRIPT";
 
 // Canonical phase order, per the dev-pipeline engine.
 const PHASE_ORDER = [
@@ -126,6 +157,18 @@ class LedgerError extends Error {
 // small helpers
 // ---------------------------------------------------------------------------
 
+// Strips a leading UTF-8 BOM (U+FEFF) from file content before JSON.parse.
+// A BOM is a normal, common artifact of how some tools/editors write UTF-8
+// on Windows (e.g. PowerShell's default `>`/Out-File encoding) -- it is not
+// malformed input, but JSON.parse rejects it outright ("Unexpected token
+// '﻿'") even though the rest of the content is perfectly valid JSON.
+// This script never WRITES a BOM itself (fs.writeFileSync/appendFileSync
+// with "utf8" never emit one) -- this only guards content this script reads
+// back in that may have been produced by another tool/process.
+function stripBom(text) {
+  return typeof text === "string" && text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+}
+
 function numOrNull(v) {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
@@ -144,6 +187,13 @@ function sum(values) {
   return values
     .filter((v) => typeof v === "number" && Number.isFinite(v))
     .reduce((a, b) => a + b, 0);
+}
+
+function median(values) {
+  const nums = values.filter((v) => typeof v === "number" && Number.isFinite(v)).sort((a, b) => a - b);
+  if (nums.length === 0) return null;
+  const mid = Math.floor(nums.length / 2);
+  return nums.length % 2 === 0 ? (nums[mid - 1] + nums[mid]) / 2 : nums[mid];
 }
 
 function fmtMoney(v) {
@@ -221,6 +271,8 @@ Usage:
       [--branch <name>] [--pr <n>] [--note <text>]
       [--usage <session-usage.json>] [--run-id <id>]
       [--telemetry legacy|true] [--usage-override-reason <text>]
+      [--approach dev-pipeline|superpowers|raw] [--task-ref <id>]
+      [--profile <name>]
 
       Appends one JSON line for this run to
       <project>/.claude/pipeline/cost-ledger.jsonl (project defaults to
@@ -257,6 +309,54 @@ Usage:
                         usageOverrideReason (null when not given) -- lets a
                         legacy row that explicitly declared why it has no
                         true telemetry be told apart from one that didn't.
+      --approach <x>   Part C 2026-09-12: dev-pipeline|superpowers|raw. Which
+                        evaluation arm this run belongs to. result.approach
+                        wins when result.json already carries one (e.g.
+                        closeout.mjs stamps it); this is the pass-through for
+                        callers that don't.
+      --task-ref <id>  Plane/registry id (or a one-line head) this run did.
+                        result.taskRef wins over this flag when both are given.
+      --profile <name> dev-pipeline profile (e.g. "lean"/"standard"). Feeds
+                        the routing scorecard's profile split and the
+                        approach-comparison arms below. result.profile wins
+                        over this flag when both are given.
+
+  node pipeline-ledger.mjs append-manual --run <slug>
+      --approach superpowers|raw --session <sid> [--project <dir>]
+      [--task-ref <id>] [--first-pass-green true|false]
+      [--findings <critical>,<important>,<minor>] [--human-minutes <n>]
+      [--files-touched <n>] [--lines-changed <n>]
+      [--started <iso>] [--ended <iso>]
+
+      Part C 2026-09-12: records one whole-session non-engine (superpowers or
+      raw) run. There is no phaseReport to estimate from, so true cost and
+      active time are read straight from session-usage.mjs (or the
+      PIPELINE_LEDGER_USAGE_SCRIPT override -- see the module header) via
+      "<script> <sid> --all --project <dir> --json". Refuses (exit 2) without
+      --run/--approach/--session, or with --approach outside
+      superpowers|raw. Never overwrites an existing --run slug: prints the
+      existing row and refuses (exit 3).
+
+  node pipeline-ledger.mjs attribute --run <slug> --bug <id> [--project <dir>]
+
+      Part C 2026-09-12: attaches one escaped bug found after the fact to an
+      already-appended row -- bumps that row's quality.escapedDefects and
+      appends to quality.escapedBugs. Rewrites the whole ledger file (JSONL
+      has no in-place row update). Refuses (exit 3) if --run isn't found.
+
+  node pipeline-ledger.mjs compare [--min-n 10] [--json] [--project <dir>]
+
+      Part C 2026-09-12: compares the three evaluation arms (dev-pipeline,
+      sub-grouped by profile; superpowers; raw) over telemetry:'true' rows
+      with a non-null trueCostUsd -- n, mean/median true cost, median active
+      minutes, first-pass-green rate, mean review findings by severity, and
+      mean escaped defects. An arm with n below --min-n (default 10) prints
+      "insufficient (n=<k>)" and is excluded from ranking. The final line
+      names the cheapest arm among sufficient, AUDITED arms (at least one row
+      ever touched by \`attribute\`) whose escaped-defect rate is not worse
+      than the best -- an arm nobody has ever audited (meanEscapedDefects
+      null, shown as "n/a") can never win or tie for cheapest against a
+      confirmed-clean one, even when it is cheaper.
 
   node pipeline-ledger.mjs summary [--project <dir>] [--last N] [--json]
 
@@ -266,7 +366,8 @@ Usage:
       evaluations (Red gate counted via redGate.audits[].blockers, not
       phases[].confirmed, so a working red gate with real findings is never
       mistaken for a zero-finding candidate), verify economics, red gate
-      stats, final pass stats, and overlap counts. Also reports
+      stats, final pass stats, overlap counts, and the routing scorecard
+      (grouped by level/phase/model/profile/approach). Also reports
       meanTrueCostUsd, meanActiveMs and costEstimateError (mean of
       trueCostUsd/estimatedCostUsd) over rows carrying true telemetry.
       --last N restricts to the newest N rows. --json prints the same data
@@ -278,12 +379,17 @@ Usage:
       twice under different run names (one plain, one with a synthetic
       --usage file), runs summary, and asserts the ledger and summary --
       including the tokensSource split and true-cost fields -- look right.
+      Also exercises append-manual/attribute/compare against scratch ledgers.
       Exits 0 on success, 1 on a failed assertion.
 
   node pipeline-ledger.mjs --help
 
 Ledger path: <project>/.claude/pipeline/cost-ledger.jsonl (JSON Lines,
-append-only, one row per run).`);
+append-only, one row per run).
+
+PIPELINE_LEDGER_USAGE_SCRIPT (env var): overrides the session-usage.mjs path
+append-manual shells out to. Honoured ONLY when set -- selftest points it at
+a tiny fake script; normal use never sets it.`);
 }
 
 // ---------------------------------------------------------------------------
@@ -371,11 +477,73 @@ function computeRedGateBlockers(redGate) {
   return sawBlockersField ? { countable: true, blockersCount: total } : { countable: false, blockersCount: null };
 }
 
+// Part C 2026-09-12: result.<field> wins over the matching CLI pass-through
+// (meta.<field>) when both are given -- a trusted engine-authored value on
+// the result object outranks an operator-typed flag on the append command.
+function pickField(resultVal, metaVal) {
+  if (typeof resultVal === "string" && resultVal.length > 0) return resultVal;
+  if (typeof metaVal === "string" && metaVal.length > 0) return metaVal;
+  return null;
+}
+
+// Derives quality.reviewFindings from result.confirmedFindings[].severity
+// (blocker -> critical, major -> important, minor -> minor). Missing data
+// (confirmedFindings not an array at all) stays null -- "unknown" is not
+// the same claim as "zero findings", same principle as computeRedGateBlockers.
+function computeReviewFindings(result) {
+  if (!Array.isArray(result?.confirmedFindings)) return null;
+  const out = { critical: 0, important: 0, minor: 0 };
+  for (const f of result.confirmedFindings) {
+    const sev = f?.severity;
+    if (sev === "blocker") out.critical++;
+    else if (sev === "major") out.important++;
+    else if (sev === "minor") out.minor++;
+  }
+  return out;
+}
+
+// Part C 2026-09-12: the cross-approach quality rubric every ledger row
+// carries (engine rows derive what they can from result.json; append-manual
+// rows build this object directly from CLI flags instead of calling this).
+// All null-safe -- missing source data reads as null, never a guessed 0/false.
+function computeQuality(result) {
+  const gatePassVal = result?.gate?.pass;
+  const fixRoundsVal = numOrNull(result?.fixRounds);
+  const firstPassGreen =
+    typeof gatePassVal === "boolean" && fixRoundsVal != null ? gatePassVal === true && fixRoundsVal === 0 : null;
+
+  const manifestFiles = result?.manifest?.files;
+  const hasManifest = Array.isArray(manifestFiles);
+  const touchedFiles = hasManifest
+    ? manifestFiles.filter((f) => f && (f.status === "modified" || f.status === "planned"))
+    : [];
+
+  return {
+    firstPassGreen,
+    reviewFindings: computeReviewFindings(result),
+    humanMinutes: numOrNull(result?.quality?.humanMinutes),
+    escapedDefects: numOrNull(result?.quality?.escapedDefects),
+    filesTouched: hasManifest ? touchedFiles.length : null,
+    linesChanged: hasManifest ? sum(touchedFiles.map((f) => f?.changedLines)) : null,
+  };
+}
+
 // Build the ledger row from a pipeline result object + run metadata.
 // Every field on `result` is treated as optional/nullable. `usage` is the
 // parsed output of session-usage.mjs (or null when --usage was not given).
 function buildRow(result, meta, usage = null) {
   const { workflow: matchedWorkflow, reason: matchReason } = selectMatchedWorkflow(usage, meta.runId);
+  // NOTE: an unmatched --run-id deliberately does NOT throw here -- F5
+  // (2026-09-12) already gives this its own tracked shape: telemetry stays
+  // "true" (real data was available), usageMatchNote records why nothing
+  // matched, trueCostUsd/usageScope fall back to the session aggregate below,
+  // and the summary's costEstimateError excludes these rows rather than
+  // blending a session-blob cost into the matched-workflow mean. Other
+  // callers (scorecards, manual comparisons) rely on that leniency and are
+  // covered by this file's own selftest. The E6 fix (2026-09-15) -- refusing
+  // to let an AUTOMATED close-out silently write a session-scoped row -- is
+  // enforced upstream in closeout.mjs, which checks usage.workflows itself
+  // and aborts (no append attempted at all) before ever calling this script.
 
   const phases = arrOrEmpty(result.phaseReport).map((p) => {
     const byPhaseEntry = matchedWorkflow?.byPhase?.[p?.phase] ?? null;
@@ -509,6 +677,19 @@ function buildRow(result, meta, usage = null) {
     // The recorded reason a caller declared for skipping real telemetry
     // (closeout.mjs --no-usage --reason) -- null when none was given.
     usageOverrideReason: meta.usageOverrideReason ?? null,
+    // --- Part C 2026-09-12: approach/profile/taskRef + quality rubric -----
+    profile: pickField(result.profile, meta.profile),
+    approach: pickField(result.approach, meta.approach),
+    taskRef: pickField(result.taskRef, meta.taskRef),
+    // E6 (2026-09-15): the staged-engine sha this run built against, when
+    // known (closeout.mjs reads it from local-assets/tooling/STAGED-ENGINE.md).
+    engineSha: pickField(result.engineSha, meta.engineSha),
+    // "workflow" when trueCostUsd/cacheHitRatio came from this run's own
+    // matched usage.workflows entry; "session" when usage exists but no
+    // --run-id matched one (legacy/light-loop fallback); null with no usage
+    // at all. Lets a reader tell a run-scoped row from a session-blob row.
+    usageScope: usage ? (matchedWorkflow ? "workflow" : "session") : null,
+    quality: computeQuality(result),
     // --- true telemetry (session-usage.mjs), C2 -------------------------
     telemetry: meta.telemetry ?? (usage ? "true" : "legacy"),
     sessionUsage: usage?.session ?? null,
@@ -565,7 +746,7 @@ function runAppend(argv) {
 
   let result;
   try {
-    result = JSON.parse(raw);
+    result = JSON.parse(stripBom(raw));
   } catch (err) {
     throw new LedgerError(`append: '${resolvedResultPath}' is not valid JSON: ${err.message}`);
   }
@@ -610,7 +791,7 @@ function runAppend(argv) {
       throw new LedgerError(`append: cannot read --usage file '${resolvedUsagePath}': ${err.message}`);
     }
     try {
-      usage = JSON.parse(usageRaw);
+      usage = JSON.parse(stripBom(usageRaw));
     } catch (err) {
       throw new LedgerError(`append: --usage file '${resolvedUsagePath}' is not valid JSON: ${err.message}`);
     }
@@ -622,6 +803,10 @@ function runAppend(argv) {
       throw new LedgerError(`append: --telemetry must be 'legacy' or 'true', got '${flags.telemetry}'.`);
     }
     telemetry = flags.telemetry;
+  }
+
+  if (typeof flags.approach === "string" && !APPROACH_VALUES.includes(flags.approach)) {
+    throw new LedgerError(`append: --approach must be one of ${APPROACH_VALUES.join(", ")}, got '${flags.approach}'.`);
   }
 
   const row = buildRow(
@@ -638,6 +823,10 @@ function runAppend(argv) {
       telemetry,
       usageOverrideReason:
         typeof flags["usage-override-reason"] === "string" ? flags["usage-override-reason"] : null,
+      approach: typeof flags.approach === "string" ? flags.approach : null,
+      taskRef: typeof flags["task-ref"] === "string" ? flags["task-ref"] : null,
+      profile: typeof flags.profile === "string" ? flags.profile : null,
+      engineSha: typeof flags["engine-sha"] === "string" ? flags["engine-sha"] : null,
     },
     usage
   );
@@ -656,7 +845,7 @@ function runAppend(argv) {
 
 function readLedgerRows(ledgerPath) {
   if (!fs.existsSync(ledgerPath)) return [];
-  const raw = fs.readFileSync(ledgerPath, "utf8");
+  const raw = stripBom(fs.readFileSync(ledgerPath, "utf8"));
   const lines = raw.split(/\r?\n/).filter((l) => l.trim().length > 0);
   const rows = [];
   lines.forEach((line, idx) => {
@@ -785,10 +974,23 @@ function computeRoutingScorecard(rows) {
   const groups = new Map();
 
   function addSample(level, phase, model, row, phaseEntry) {
-    const key = `${level} ${phase} ${model || "unknown"}`;
+    const profile = row.profile || "legacy";
+    const approach = row.approach || "legacy";
+    const key = `${level} ${phase} ${model || "unknown"} ${profile} ${approach}`;
     let g = groups.get(key);
     if (!g) {
-      g = { level, phase, model: model || "unknown", runs: 0, costs: [], minutes: [], qualityLabel: null, qualityValues: [] };
+      g = {
+        level,
+        phase,
+        model: model || "unknown",
+        profile,
+        approach,
+        runs: 0,
+        costs: [],
+        minutes: [],
+        qualityLabel: null,
+        qualityValues: [],
+      };
       groups.set(key, g);
     }
     g.runs += 1;
@@ -823,6 +1025,8 @@ function computeRoutingScorecard(rows) {
       level: g.level,
       phase: g.phase,
       model: g.model,
+      profile: g.profile,
+      approach: g.approach,
       runs: g.runs,
       meanCostUsd: mean(g.costs),
       meanMinutes: mean(g.minutes),
@@ -831,7 +1035,11 @@ function computeRoutingScorecard(rows) {
     }))
     .sort(
       (a, b) =>
-        a.level.localeCompare(b.level) || a.phase.localeCompare(b.phase) || (a.meanCostUsd ?? 0) - (b.meanCostUsd ?? 0)
+        a.level.localeCompare(b.level) ||
+        a.phase.localeCompare(b.phase) ||
+        a.profile.localeCompare(b.profile) ||
+        a.approach.localeCompare(b.approach) ||
+        (a.meanCostUsd ?? 0) - (b.meanCostUsd ?? 0)
     );
 
   return { table, trueTelemetryRowsUsed: trueRows.length, excludedRowsCount: rows.length - trueRows.length };
@@ -1189,11 +1397,13 @@ function printSummaryText(summary) {
     console.log("true-telemetry rows exist but no phase could be classified into a level yet");
   } else {
     printTable(
-      ["level", "phase", "model", "runs", "mean cost", "mean minutes", "quality signal"],
+      ["level", "phase", "model", "profile", "approach", "runs", "mean cost", "mean minutes", "quality signal"],
       routingScorecard.table.map((r) => [
         r.level,
         r.phase,
         r.model,
+        r.profile,
+        r.approach,
         String(r.runs),
         fmtMoney(r.meanCostUsd),
         fmtNum(r.meanMinutes),
@@ -1248,6 +1458,299 @@ function runSummary(argv) {
     printSummaryText(summary);
   }
   return summary;
+}
+
+// ---------------------------------------------------------------------------
+// append-manual / attribute / compare (Part C 2026-09-12)
+// ---------------------------------------------------------------------------
+
+// Fix round 1 (2026-09-12 review, Minor): a numeric append-manual flag that
+// silently coerced bad input to null (Number("abc") -> NaN -> numOrNull ->
+// null) hid a typo as "no data given" instead of refusing it -- the same
+// standard --approach/--first-pass-green/--findings already hold themselves
+// to. Returns null when the flag is absent; throws when it is present but
+// not a finite number.
+function parseNumericFlag(flags, name) {
+  if (typeof flags[name] !== "string") return null;
+  const n = Number(flags[name]);
+  if (!Number.isFinite(n)) {
+    throw new LedgerError(`append-manual: --${name} must be a number, got '${flags[name]}'.`);
+  }
+  return n;
+}
+
+// Parses "<critical>,<important>,<minor>" into {critical, important, minor}
+// (numbers). Returns null on anything else (missing flag, wrong shape).
+function parseFindingsFlag(str) {
+  if (typeof str !== "string") return null;
+  const parts = str.split(",").map((s) => s.trim());
+  if (parts.length !== 3) return null;
+  const nums = parts.map(Number);
+  if (nums.some((n) => !Number.isFinite(n))) return null;
+  return { critical: nums[0], important: nums[1], minor: nums[2] };
+}
+
+// argv is everything after "append-manual". Records one whole-session
+// non-engine (superpowers/raw) run: true cost + active time come from
+// session-usage.mjs, never from an estimate -- there is no phaseReport to
+// estimate from. See PIPELINE_LEDGER_USAGE_SCRIPT (module header) for the
+// selftest-only stub-script override.
+function runAppendManual(argv) {
+  const { flags } = parseFlags(argv);
+
+  if (typeof flags.run !== "string" || flags.run.length === 0) {
+    throw new LedgerError("append-manual: --run <slug> is required.");
+  }
+  if (typeof flags.approach !== "string" || !["superpowers", "raw"].includes(flags.approach)) {
+    throw new LedgerError("append-manual: --approach must be 'superpowers' or 'raw'.");
+  }
+  if (typeof flags.session !== "string" || flags.session.length === 0) {
+    throw new LedgerError("append-manual: --session <sid> is required.");
+  }
+
+  const projectDir = path.resolve(typeof flags.project === "string" ? flags.project : process.cwd());
+  const ledgerPath = getLedgerPath(projectDir);
+  const existing = readLedgerRows(ledgerPath).find((r) => r.run === flags.run);
+  if (existing) {
+    console.log(JSON.stringify(existing, null, 2));
+    throw new LedgerError(`append-manual: run '${flags.run}' already exists in the ledger -- refusing to overwrite.`, 3);
+  }
+
+  let firstPassGreen = null;
+  if (typeof flags["first-pass-green"] === "string") {
+    if (flags["first-pass-green"] === "true") firstPassGreen = true;
+    else if (flags["first-pass-green"] === "false") firstPassGreen = false;
+    else throw new LedgerError("append-manual: --first-pass-green must be 'true' or 'false'.");
+  }
+
+  let reviewFindings = null;
+  if (typeof flags.findings === "string") {
+    reviewFindings = parseFindingsFlag(flags.findings);
+    if (!reviewFindings) {
+      throw new LedgerError("append-manual: --findings must be '<critical>,<important>,<minor>' (three numbers).");
+    }
+  }
+
+  const humanMinutes = parseNumericFlag(flags, "human-minutes");
+  const filesTouched = parseNumericFlag(flags, "files-touched");
+  const linesChanged = parseNumericFlag(flags, "lines-changed");
+
+  const usageScriptPath = process.env[USAGE_SCRIPT_ENV] || path.join(SCRIPT_DIR, "session-usage.mjs");
+  let usage;
+  try {
+    const usageRaw = execFileSync(
+      process.execPath,
+      [usageScriptPath, flags.session, "--all", "--project", projectDir, "--json"],
+      { encoding: "utf8" }
+    );
+    usage = JSON.parse(stripBom(usageRaw));
+  } catch (err) {
+    throw new LedgerError(`append-manual: session-usage.mjs failed for session '${flags.session}': ${err.message}`, 3);
+  }
+
+  const startedAt = typeof flags.started === "string" ? flags.started : usage?.session?.firstAt ?? null;
+  const endedAt = typeof flags.ended === "string" ? flags.ended : usage?.session?.lastAt ?? new Date().toISOString();
+  const startedMs = startedAt ? Date.parse(startedAt) : NaN;
+  const endedMs = endedAt ? Date.parse(endedAt) : NaN;
+  const durationMs = Number.isFinite(startedMs) && Number.isFinite(endedMs) ? endedMs - startedMs : null;
+
+  const row = {
+    v: 1,
+    run: flags.run,
+    approach: flags.approach,
+    profile: null,
+    taskRef: typeof flags["task-ref"] === "string" ? flags["task-ref"] : null,
+    telemetry: "true",
+    trueCostUsd: numOrNull(usage?.session?.total?.costUsd),
+    estimatedCostUsd: null,
+    phaseReport: [],
+    clean: null,
+    fixRounds: null,
+    remaining: null,
+    quality: {
+      firstPassGreen,
+      reviewFindings,
+      humanMinutes,
+      escapedDefects: 0,
+      filesTouched,
+      linesChanged,
+    },
+    startedAt,
+    endedAt,
+    durationMs,
+    activeMs: numOrNull(usage?.session?.activeMs),
+    mode: "manual",
+    scale: null,
+    sessionId: flags.session,
+  };
+
+  fs.mkdirSync(path.dirname(ledgerPath), { recursive: true });
+  fs.appendFileSync(ledgerPath, JSON.stringify(row) + "\n", "utf8");
+  console.log(`Appended manual run '${row.run}' (${row.approach}) -> ${ledgerPath}`);
+  console.log(`  true cost: ${fmtMoney(row.trueCostUsd)}   active: ${fmtDuration(row.activeMs)}`);
+  return row;
+}
+
+// argv is everything after "attribute". Attaches one escaped bug to a
+// ledger row after the fact -- the audit's quality signal that can only be
+// known once a defect from a past run surfaces later. Rewrites the whole
+// ledger file (JSONL has no in-place row update).
+function runAttribute(argv) {
+  const { flags } = parseFlags(argv);
+  if (typeof flags.run !== "string" || flags.run.length === 0) {
+    throw new LedgerError("attribute: --run <slug> is required.");
+  }
+  if (typeof flags.bug !== "string" || flags.bug.length === 0) {
+    throw new LedgerError("attribute: --bug <id> is required.");
+  }
+
+  const projectDir = path.resolve(typeof flags.project === "string" ? flags.project : process.cwd());
+  const ledgerPath = getLedgerPath(projectDir);
+  const rows = readLedgerRows(ledgerPath);
+  const idx = rows.findIndex((r) => r.run === flags.run);
+  if (idx === -1) {
+    throw new LedgerError(`attribute: run '${flags.run}' not found in the ledger.`, 3);
+  }
+
+  const priorQuality = rows[idx].quality && typeof rows[idx].quality === "object" ? rows[idx].quality : {};
+  const priorCount = typeof priorQuality.escapedDefects === "number" ? priorQuality.escapedDefects : 0;
+  const priorBugs = Array.isArray(priorQuality.escapedBugs) ? priorQuality.escapedBugs : [];
+  const quality = { ...priorQuality, escapedDefects: priorCount + 1, escapedBugs: [...priorBugs, flags.bug] };
+  rows[idx] = { ...rows[idx], quality };
+
+  fs.writeFileSync(ledgerPath, rows.map((r) => JSON.stringify(r)).join("\n") + "\n", "utf8");
+  console.log(`attribute: run '${flags.run}' escapedDefects now ${quality.escapedDefects} (added ${flags.bug})`);
+  return rows[idx];
+}
+
+// Groups telemetry:'true' + trueCostUsd!=null rows by approach||'legacy'
+// (dev-pipeline rows sub-grouped by profile||'legacy'), and ranks arms with
+// n >= minN by true cost -- never on an estimate, never below the n floor.
+function computeCompare(rows, minN) {
+  const trueRows = rows.filter(isTrueTelemetryRow);
+  const arms = new Map();
+
+  for (const r of trueRows) {
+    const approach = r.approach || "legacy";
+    const isDevPipeline = approach === "dev-pipeline";
+    const profile = isDevPipeline ? r.profile || "legacy" : null;
+    const key = isDevPipeline ? `${approach}:${profile}` : approach;
+    let arm = arms.get(key);
+    if (!arm) {
+      arm = { approach, profile, rows: [] };
+      arms.set(key, arm);
+    }
+    arm.rows.push(r);
+  }
+
+  const results = [...arms.values()].map((arm) => {
+    const n = arm.rows.length;
+    const costs = arm.rows.map((r) => r.trueCostUsd);
+    const activeMinutes = arm.rows
+      .map((r) => (typeof r.activeMs === "number" ? r.activeMs / 60000 : null))
+      .filter((v) => v != null);
+    const fpgFlags = arm.rows.map((r) => r.quality?.firstPassGreen).filter((v) => typeof v === "boolean");
+    const critical = arm.rows.map((r) => r.quality?.reviewFindings?.critical).filter((v) => typeof v === "number");
+    const important = arm.rows.map((r) => r.quality?.reviewFindings?.important).filter((v) => typeof v === "number");
+    const minor = arm.rows.map((r) => r.quality?.reviewFindings?.minor).filter((v) => typeof v === "number");
+    const escaped = arm.rows.map((r) => r.quality?.escapedDefects).filter((v) => typeof v === "number");
+
+    return {
+      approach: arm.approach,
+      profile: arm.profile,
+      n,
+      meanTrueCostUsd: mean(costs),
+      medianTrueCostUsd: median(costs),
+      medianActiveMinutes: median(activeMinutes),
+      firstPassGreenRate: fpgFlags.length ? fpgFlags.filter(Boolean).length / fpgFlags.length : null,
+      meanReviewFindings: { critical: mean(critical), important: mean(important), minor: mean(minor) },
+      meanEscapedDefects: mean(escaped),
+      sufficient: n >= minN,
+    };
+  });
+
+  results.sort((a, b) => a.approach.localeCompare(b.approach) || (a.profile || "").localeCompare(b.profile || ""));
+
+  const sufficientArms = results.filter((a) => a.sufficient && a.meanTrueCostUsd != null);
+  // Fix round 1 (2026-09-12 review): meanEscapedDefects null means "never
+  // audited via `attribute`", not "confirmed zero" -- coercing it to 0 with
+  // `?? 0` let an unaudited arm win or tie against a confirmed-clean arm,
+  // rewarding under-monitoring. Policy: only an arm with at least one
+  // attribute-derived data point (meanEscapedDefects != null) is eligible to
+  // set the best escaped-defect rate or to be ranked against it; an
+  // unaudited arm still prints in the table (as "n/a") but can never be
+  // named, or tied for, cheapest.
+  const auditedArms = sufficientArms.filter((a) => a.meanEscapedDefects != null);
+  let cheapest = null;
+  if (auditedArms.length > 0) {
+    const bestEscapedRate = Math.min(...auditedArms.map((a) => a.meanEscapedDefects));
+    const eligible = auditedArms.filter((a) => a.meanEscapedDefects <= bestEscapedRate);
+    cheapest = eligible.reduce(
+      (best, a) => (best == null || (a.meanTrueCostUsd ?? Infinity) < (best.meanTrueCostUsd ?? Infinity) ? a : best),
+      null
+    );
+  }
+
+  return { arms: results, minN, cheapest };
+}
+
+function printCompareText(result) {
+  console.log(`=== Compare (min n = ${result.minN}) ===`);
+  const rows = [];
+  for (const a of result.arms) {
+    const label = a.profile ? `${a.approach}:${a.profile}` : a.approach;
+    if (!a.sufficient) {
+      console.log(`${label}: insufficient (n=${a.n})`);
+      continue;
+    }
+    rows.push([
+      label,
+      String(a.n),
+      fmtMoney(a.meanTrueCostUsd),
+      fmtMoney(a.medianTrueCostUsd),
+      fmtNum(a.medianActiveMinutes),
+      fmtPct(a.firstPassGreenRate),
+      `${fmtNum(a.meanReviewFindings.critical, 2)}/${fmtNum(a.meanReviewFindings.important, 2)}/${fmtNum(a.meanReviewFindings.minor, 2)}`,
+      fmtNum(a.meanEscapedDefects, 2),
+    ]);
+  }
+  if (rows.length > 0) {
+    printTable(
+      ["arm", "n", "mean $", "median $", "median active min", "first-pass-green", "findings c/i/m", "escaped defects"],
+      rows
+    );
+  }
+  if (result.cheapest) {
+    const label = result.cheapest.profile ? `${result.cheapest.approach}:${result.cheapest.profile}` : result.cheapest.approach;
+    console.log(
+      `Cheapest sufficient arm with no worse escaped-defect rate: ${label} (${fmtMoney(result.cheapest.meanTrueCostUsd)}/run, n=${result.cheapest.n})`
+    );
+  } else {
+    const sufficientArms = result.arms.filter((a) => a.sufficient);
+    if (sufficientArms.length === 0) {
+      console.log(`no arm has n >= ${result.minN}`);
+    } else {
+      console.log("no arm has escaped-defect data yet (run `attribute` at least once per arm to establish a baseline)");
+    }
+  }
+}
+
+// argv is everything after "compare".
+function runCompare(argv) {
+  const { flags } = parseFlags(argv);
+  const projectDir = path.resolve(typeof flags.project === "string" ? flags.project : process.cwd());
+  const ledgerPath = getLedgerPath(projectDir);
+  const rows = readLedgerRows(ledgerPath);
+  const minNFlag = typeof flags["min-n"] === "string" ? Number(flags["min-n"]) : NaN;
+  const minN = Number.isFinite(minNFlag) ? minNFlag : 10;
+
+  const result = computeCompare(rows, minN);
+  if (flags.json) {
+    console.log(JSON.stringify(result, null, 2));
+  } else {
+    printCompareText(result);
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -1374,10 +1877,50 @@ function runSelftest() {
       `expected an unmatched phase to stay tokensSource 'budget', got '${baseline.tokensSource}'`
     );
 
+    // --- BOM fixture handling (real-world bug, 2026-09-13): a genuine
+    // result.json written by a Windows-side process (a Haiku agent) carried
+    // a leading UTF-8 BOM (U+FEFF) -- a normal encoding artifact, not
+    // malformed input -- and `append` failed with "not valid JSON:
+    // Unexpected token '﻿'" even though the JSON itself was perfectly
+    // valid. A BOM-prefixed copy of the same fixture must append
+    // successfully and produce the exact same row (aside from `run`) as the
+    // BOM-free original. Uses its own isolated --project dir so its two
+    // extra appends don't perturb the shared tmpBase ledger's line-count
+    // assertions below.
+    const bomProjectDir = path.join(tmpBase, "bom-project");
+    const bomFixturePath = path.join(tmpBase, "bom-result.json");
+    fs.writeFileSync(bomFixturePath, "﻿" + fs.readFileSync(fixtureDest, "utf8"), "utf8");
+
+    const bomRow = runAppend([
+      bomFixturePath,
+      "--run",
+      "selftest-bom-result",
+      "--project",
+      bomProjectDir,
+      "--started",
+      "2026-09-13T00:00:00.000Z",
+      "--ended",
+      "2026-09-13T01:00:00.000Z",
+    ]);
+    const noBomRow = runAppend([
+      fixtureDest,
+      "--run",
+      "selftest-bom-result-control",
+      "--project",
+      bomProjectDir,
+      "--started",
+      "2026-09-13T00:00:00.000Z",
+      "--ended",
+      "2026-09-13T01:00:00.000Z",
+    ]);
+    assert(
+      JSON.stringify({ ...bomRow, run: null }) === JSON.stringify({ ...noBomRow, run: null }),
+      "expected a BOM-prefixed result.json to append the exact same row as its BOM-free original (aside from `run`)"
+    );
+
     // A plain append (no --usage) still defaults to telemetry 'legacy' and
     // every phase stays tokensSource 'budget' -- confirmed on run 1/2 above.
-    const legacyLedgerLines = fs
-      .readFileSync(getLedgerPath(tmpBase), "utf8")
+    const legacyLedgerLines = stripBom(fs.readFileSync(getLedgerPath(tmpBase), "utf8"))
       .split(/\r?\n/)
       .filter((l) => l.trim().length > 0)
       .map((l) => JSON.parse(l));
@@ -1759,7 +2302,7 @@ function runSelftest() {
 
     // --- P2(c) 2026-09-11: new ledger row fields --------------------------
     const fieldsResult = {
-      ...JSON.parse(fs.readFileSync(fixtureDest, "utf8")),
+      ...JSON.parse(stripBom(fs.readFileSync(fixtureDest, "utf8"))),
       mode: "bugfix",
       fallback: true,
       siblingSweep: { ran: true, supplied: 3, patterns: ["**/*.spec.ts"], skipped: false },
@@ -1870,6 +2413,603 @@ function runSelftest() {
       `expected trueTelemetryRowsCount to EXCLUDE the null-cost row (stayed at ${strayCountBefore}), got ${summaryAfterStray.runs.trueTelemetryRowsCount}`
     );
 
+    // --- B18 + C1 (2026-09-12): profile/approach/taskRef/quality on buildRow ---
+    const profileResult = {
+      ...JSON.parse(stripBom(fs.readFileSync(fixtureDest, "utf8"))),
+      profile: "lean",
+      approach: "dev-pipeline",
+      taskRef: "B18",
+      fixRounds: 0,
+      gate: { pass: true, skipped: false, results: [] },
+      manifest: {
+        files: [
+          { path: "a.ts", status: "modified", risk: "LOW", changedLines: 10 },
+          { path: "b.ts", status: "planned", risk: "LOW", changedLines: 5 },
+          { path: "c.ts", status: "untracked", risk: "LOW", changedLines: 3 },
+        ],
+        validCommands: [],
+        artifacts: [],
+      },
+      confirmedFindings: [
+        { severity: "blocker", lens: "correctness" },
+        { severity: "major", lens: "correctness" },
+        { severity: "minor", lens: "test-quality" },
+        { severity: "minor", lens: "test-quality" },
+      ],
+    };
+    const profileResultPath = path.join(tmpBase, "profile-result.json");
+    fs.writeFileSync(profileResultPath, JSON.stringify(profileResult), "utf8");
+
+    const profileRow = runAppend([
+      profileResultPath,
+      "--run",
+      "selftest-profile-lean",
+      "--project",
+      tmpBase,
+      "--started",
+      "2026-09-12T00:00:00.000Z",
+      "--ended",
+      "2026-09-12T00:10:00.000Z",
+      "--profile",
+      "lean",
+    ]);
+    assert(profileRow.profile === "lean", `expected row.profile 'lean' (from result.profile), got '${profileRow.profile}'`);
+    assert(profileRow.approach === "dev-pipeline", `expected row.approach 'dev-pipeline' (from result.approach), got '${profileRow.approach}'`);
+    assert(profileRow.taskRef === "B18", `expected row.taskRef 'B18' (from result.taskRef), got '${profileRow.taskRef}'`);
+    assert(profileRow.quality.firstPassGreen === true, `expected quality.firstPassGreen true (gate.pass && fixRounds===0), got ${profileRow.quality.firstPassGreen}`);
+    assert(
+      profileRow.quality.reviewFindings &&
+        profileRow.quality.reviewFindings.critical === 1 &&
+        profileRow.quality.reviewFindings.important === 1 &&
+        profileRow.quality.reviewFindings.minor === 2,
+      `expected reviewFindings {critical:1,important:1,minor:2} from confirmedFindings severities, got ${JSON.stringify(profileRow.quality.reviewFindings)}`
+    );
+    assert(profileRow.quality.filesTouched === 2, `expected quality.filesTouched 2 (modified+planned), got ${profileRow.quality.filesTouched}`);
+    assert(profileRow.quality.linesChanged === 15, `expected quality.linesChanged 15 (10+5), got ${profileRow.quality.linesChanged}`);
+    assert(profileRow.quality.humanMinutes === null, `expected quality.humanMinutes null (not on this result), got ${profileRow.quality.humanMinutes}`);
+    assert(profileRow.quality.escapedDefects === null, `expected quality.escapedDefects null (unknown at append time), got ${profileRow.quality.escapedDefects}`);
+
+    // --approach/--task-ref/--profile flag pass-through when result carries none.
+    const legacyProfileResult = JSON.parse(stripBom(fs.readFileSync(fixtureDest, "utf8")));
+    const legacyProfileResultPath = path.join(tmpBase, "legacy-profile-result.json");
+    fs.writeFileSync(legacyProfileResultPath, JSON.stringify(legacyProfileResult), "utf8");
+    const flagRow = runAppend([
+      legacyProfileResultPath,
+      "--run",
+      "selftest-profile-legacy-flags",
+      "--project",
+      tmpBase,
+      "--started",
+      "2026-09-12T01:00:00.000Z",
+      "--ended",
+      "2026-09-12T01:10:00.000Z",
+      "--profile",
+      "standard",
+      "--approach",
+      "superpowers",
+      "--task-ref",
+      "C1",
+    ]);
+    assert(flagRow.profile === "standard", `expected row.profile from --profile flag when result has none, got '${flagRow.profile}'`);
+    assert(flagRow.approach === "superpowers", `expected row.approach from --approach flag when result has none, got '${flagRow.approach}'`);
+    assert(flagRow.taskRef === "C1", `expected row.taskRef from --task-ref flag when result has none, got '${flagRow.taskRef}'`);
+
+    // result field wins over the flag when both are given.
+    const overrideRow = runAppend([
+      profileResultPath,
+      "--run",
+      "selftest-profile-result-wins",
+      "--project",
+      tmpBase,
+      "--started",
+      "2026-09-12T02:00:00.000Z",
+      "--ended",
+      "2026-09-12T02:10:00.000Z",
+      "--profile",
+      "standard",
+      "--approach",
+      "raw",
+      "--task-ref",
+      "ZZZ",
+    ]);
+    assert(overrideRow.profile === "lean", `expected result.profile to win over --profile flag, got '${overrideRow.profile}'`);
+    assert(overrideRow.approach === "dev-pipeline", `expected result.approach to win over --approach flag, got '${overrideRow.approach}'`);
+    assert(overrideRow.taskRef === "B18", `expected result.taskRef to win over --task-ref flag, got '${overrideRow.taskRef}'`);
+
+    // an invalid --approach value is refused.
+    let threwOnBadApproach = false;
+    try {
+      runAppend([legacyProfileResultPath, "--run", "selftest-bad-approach", "--project", tmpBase, "--approach", "bogus"]);
+    } catch (err) {
+      threwOnBadApproach = err instanceof LedgerError;
+    }
+    assert(threwOnBadApproach, "expected append --approach bogus to be refused with a LedgerError");
+
+    // old rows without the new fields still parse (usageRow predates this change).
+    assert(usageRow.profile === null, `expected legacy row.profile null, got ${usageRow.profile}`);
+    assert(usageRow.approach === null, `expected legacy row.approach null, got ${usageRow.approach}`);
+    assert(usageRow.taskRef === null, `expected legacy row.taskRef null, got ${usageRow.taskRef}`);
+    assert(usageRow.quality.firstPassGreen === false, `expected legacy row quality.firstPassGreen false (gate.pass=true, fixRounds=2), got ${usageRow.quality.firstPassGreen}`);
+    assert(usageRow.quality.reviewFindings === null, `expected legacy row quality.reviewFindings null (no confirmedFindings), got ${JSON.stringify(usageRow.quality.reviewFindings)}`);
+    assert(usageRow.quality.filesTouched === null, `expected legacy row quality.filesTouched null (no manifest), got ${usageRow.quality.filesTouched}`);
+    assert(usageRow.quality.linesChanged === null, `expected legacy row quality.linesChanged null (no manifest), got ${usageRow.quality.linesChanged}`);
+    assert(usageRow.quality.humanMinutes === null, `expected legacy row quality.humanMinutes null, got ${usageRow.quality.humanMinutes}`);
+    assert(usageRow.quality.escapedDefects === null, `expected legacy row quality.escapedDefects null, got ${usageRow.quality.escapedDefects}`);
+
+    // --- B18: profile split in the routing scorecard ---------------------
+    const leanResult = { ...scorecardResult, profile: "lean", fixRounds: 1 };
+    const leanResultPath = path.join(tmpBase, "lean-result.json");
+    fs.writeFileSync(leanResultPath, JSON.stringify(leanResult), "utf8");
+    const leanUsagePath = path.join(tmpBase, "lean-usage.json");
+    fs.writeFileSync(leanUsagePath, JSON.stringify(scorecardUsage("run-lean-1", "claude-opus-5")), "utf8");
+    runAppend([
+      leanResultPath,
+      "--run",
+      "scorecard-run-lean",
+      "--project",
+      tmpBase,
+      "--started",
+      "2026-09-12T03:00:00.000Z",
+      "--ended",
+      "2026-09-12T03:30:00.000Z",
+      "--usage",
+      leanUsagePath,
+      "--run-id",
+      "run-lean-1",
+    ]);
+
+    const summary4 = runSummary(["--project", tmpBase]);
+    const sc2 = summary4.routingScorecard;
+    const baselineLean = sc2.table.find(
+      (r) => r.level === "mechanical" && r.phase === "Baseline" && r.model === "claude-haiku-4-5" && r.profile === "lean"
+    );
+    const baselineLegacy = sc2.table.find(
+      (r) => r.level === "mechanical" && r.phase === "Baseline" && r.model === "claude-haiku-4-5" && r.profile === "legacy"
+    );
+    assert(baselineLean, "expected a profile='lean' mechanical/Baseline/claude-haiku-4-5 scorecard row");
+    assert(baselineLean.runs === 1, `expected the lean Baseline row to have runs=1, got ${baselineLean.runs}`);
+    assert(baselineLegacy, "expected a profile='legacy' mechanical/Baseline/claude-haiku-4-5 scorecard row (rows with no profile)");
+    // 5 from summary3 (3 f14-usage rows + 2 scorecard rows) + fieldsRow
+    // (appended earlier in this same selftest with --usage, also f14-shaped,
+    // profile/approach both unset) = 6 -- the lean-profiled row above must
+    // stay a SEPARATE group rather than inflating this one.
+    assert(baselineLegacy.runs === 6, `expected the legacy Baseline row to keep its prior 6 runs, got ${baselineLegacy.runs}`);
+
+    // --- C1: approach split in the routing scorecard ----------------------
+    const approachResult = { ...scorecardResult, approach: "raw", fixRounds: 3 };
+    const approachResultPath = path.join(tmpBase, "approach-result.json");
+    fs.writeFileSync(approachResultPath, JSON.stringify(approachResult), "utf8");
+    const approachUsagePath = path.join(tmpBase, "approach-usage.json");
+    fs.writeFileSync(approachUsagePath, JSON.stringify(scorecardUsage("run-approach-1", "claude-opus-5")), "utf8");
+    runAppend([
+      approachResultPath,
+      "--run",
+      "scorecard-run-approach",
+      "--project",
+      tmpBase,
+      "--started",
+      "2026-09-12T04:00:00.000Z",
+      "--ended",
+      "2026-09-12T04:30:00.000Z",
+      "--usage",
+      approachUsagePath,
+      "--run-id",
+      "run-approach-1",
+    ]);
+
+    const summary5 = runSummary(["--project", tmpBase]);
+    const sc3 = summary5.routingScorecard;
+    const baselineRaw = sc3.table.find(
+      (r) => r.level === "mechanical" && r.phase === "Baseline" && r.model === "claude-haiku-4-5" && r.approach === "raw"
+    );
+    assert(baselineRaw, "expected an approach='raw' mechanical/Baseline/claude-haiku-4-5 scorecard row");
+    assert(baselineRaw.profile === "legacy", `expected the raw-approach row to default profile 'legacy', got '${baselineRaw.profile}'`);
+
+    // --- C1: append-manual against a scratch ledger, stubbed session-usage ---
+    const fakeUsagePath = path.join(tmpBase, "fake-session-usage.mjs");
+    fs.writeFileSync(
+      fakeUsagePath,
+      [
+        "#!/usr/bin/env node",
+        "const args = process.argv.slice(2);",
+        "const costUsd = Number(process.env.FAKE_USAGE_COST || 4.5);",
+        "const activeMs = Number(process.env.FAKE_USAGE_ACTIVE_MS || 1200000);",
+        "console.log(JSON.stringify({",
+        "  v: 1, sessionId: args[0], project: 'fake-project', pricesAsOf: '2026-06-24',",
+        "  session: { byModel: {}, total: { input:0,cacheWrite5m:0,cacheWrite1h:0,cacheRead:0,output:0,tokens:0,costUsd }, messages:1, firstAt:'2026-09-12T00:00:00.000Z', lastAt:'2026-09-12T00:20:00.000Z', activeMs, cacheHitRatio:0.5 },",
+        "  workflows: {}, warnings: [],",
+        "}));",
+        "",
+      ].join("\n"),
+      "utf8"
+    );
+
+    function withFakeUsage(costUsd, activeMs, fn) {
+      const priorScript = process.env.PIPELINE_LEDGER_USAGE_SCRIPT;
+      const priorCost = process.env.FAKE_USAGE_COST;
+      const priorActive = process.env.FAKE_USAGE_ACTIVE_MS;
+      process.env.PIPELINE_LEDGER_USAGE_SCRIPT = fakeUsagePath;
+      process.env.FAKE_USAGE_COST = String(costUsd);
+      process.env.FAKE_USAGE_ACTIVE_MS = String(activeMs);
+      try {
+        return fn();
+      } finally {
+        if (priorScript === undefined) delete process.env.PIPELINE_LEDGER_USAGE_SCRIPT;
+        else process.env.PIPELINE_LEDGER_USAGE_SCRIPT = priorScript;
+        if (priorCost === undefined) delete process.env.FAKE_USAGE_COST;
+        else process.env.FAKE_USAGE_COST = priorCost;
+        if (priorActive === undefined) delete process.env.FAKE_USAGE_ACTIVE_MS;
+        else process.env.FAKE_USAGE_ACTIVE_MS = priorActive;
+      }
+    }
+
+    const manualLedgerDir = path.join(tmpBase, "manual-project");
+    const manualRow = withFakeUsage(4.5, 1200000, () =>
+      runAppendManual([
+        "--run",
+        "manual-superpowers-1",
+        "--approach",
+        "superpowers",
+        "--session",
+        "sess-fake-1",
+        "--project",
+        manualLedgerDir,
+        "--task-ref",
+        "C1",
+        "--first-pass-green",
+        "true",
+        "--findings",
+        "0,1,2",
+        "--human-minutes",
+        "12",
+        "--files-touched",
+        "3",
+        "--lines-changed",
+        "40",
+      ])
+    );
+    assert(manualRow.approach === "superpowers", `expected manual row approach 'superpowers', got '${manualRow.approach}'`);
+    assert(manualRow.telemetry === "true", `expected manual row telemetry 'true', got '${manualRow.telemetry}'`);
+    assert(Math.abs(manualRow.trueCostUsd - 4.5) < 1e-9, `expected manual row trueCostUsd 4.5 from the stubbed session-usage, got ${manualRow.trueCostUsd}`);
+    assert(manualRow.activeMs === 1200000, `expected manual row activeMs 1200000, got ${manualRow.activeMs}`);
+    assert(manualRow.quality.firstPassGreen === true, `expected manual row quality.firstPassGreen true, got ${manualRow.quality.firstPassGreen}`);
+    assert(
+      manualRow.quality.reviewFindings.critical === 0 &&
+        manualRow.quality.reviewFindings.important === 1 &&
+        manualRow.quality.reviewFindings.minor === 2,
+      `expected manual row reviewFindings {0,1,2}, got ${JSON.stringify(manualRow.quality.reviewFindings)}`
+    );
+    assert(manualRow.quality.humanMinutes === 12, `expected manual row humanMinutes 12, got ${manualRow.quality.humanMinutes}`);
+    assert(manualRow.quality.filesTouched === 3, `expected manual row filesTouched 3, got ${manualRow.quality.filesTouched}`);
+    assert(manualRow.quality.linesChanged === 40, `expected manual row linesChanged 40, got ${manualRow.quality.linesChanged}`);
+    assert(Array.isArray(manualRow.phaseReport) && manualRow.phaseReport.length === 0, "expected manual row phaseReport []");
+    assert(manualRow.mode === "manual", `expected manual row mode 'manual', got '${manualRow.mode}'`);
+    assert(manualRow.taskRef === "C1", `expected manual row taskRef 'C1', got '${manualRow.taskRef}'`);
+    assert(manualRow.profile === null, `expected manual row profile null, got ${manualRow.profile}`);
+
+    let threwNoApproach = false;
+    try {
+      runAppendManual(["--run", "x", "--session", "sess-x", "--project", manualLedgerDir]);
+    } catch (err) {
+      threwNoApproach = err instanceof LedgerError && err.code === 2;
+    }
+    assert(threwNoApproach, "expected append-manual without --approach to refuse with exit 2");
+
+    let threwNoSession = false;
+    try {
+      runAppendManual(["--run", "y", "--approach", "raw", "--project", manualLedgerDir]);
+    } catch (err) {
+      threwNoSession = err instanceof LedgerError && err.code === 2;
+    }
+    assert(threwNoSession, "expected append-manual without --session to refuse with exit 2");
+
+    // Fix round 1 (2026-09-12 review, Minor): a non-numeric --human-minutes/
+    // --files-touched/--lines-changed must be refused, not silently coerced
+    // to null (Number("abc") -> NaN -> numOrNull -> null hides a typo).
+    let threwOnBadHumanMinutes = false;
+    withFakeUsage(1, 1000, () => {
+      try {
+        runAppendManual([
+          "--run",
+          "manual-bad-numeric-flag",
+          "--approach",
+          "raw",
+          "--session",
+          "sess-bad-numeric",
+          "--project",
+          manualLedgerDir,
+          "--human-minutes",
+          "not-a-number",
+        ]);
+      } catch (err) {
+        threwOnBadHumanMinutes = err instanceof LedgerError;
+      }
+    });
+    assert(threwOnBadHumanMinutes, "expected append-manual --human-minutes not-a-number to be refused with a LedgerError");
+
+    let threwOnDup = false;
+    withFakeUsage(9, 1000, () => {
+      try {
+        runAppendManual([
+          "--run",
+          "manual-superpowers-1",
+          "--approach",
+          "raw",
+          "--session",
+          "sess-fake-2",
+          "--project",
+          manualLedgerDir,
+          "--first-pass-green",
+          "false",
+          "--findings",
+          "0,0,0",
+          "--human-minutes",
+          "5",
+        ]);
+      } catch (err) {
+        threwOnDup = err instanceof LedgerError && err.code === 3;
+      }
+    });
+    assert(threwOnDup, "expected append-manual to refuse overwriting an existing run slug with exit 3");
+
+    // --- C1: attribute -----------------------------------------------------
+    const beforeAttr = readLedgerRows(getLedgerPath(manualLedgerDir)).find((r) => r.run === "manual-superpowers-1");
+    assert(beforeAttr && beforeAttr.quality.escapedDefects === 0, `expected pre-attribute escapedDefects 0, got ${beforeAttr && beforeAttr.quality.escapedDefects}`);
+
+    const attrRow = runAttribute(["--run", "manual-superpowers-1", "--bug", "B999", "--project", manualLedgerDir]);
+    assert(attrRow.quality.escapedDefects === 1, `expected escapedDefects 1 after attribute, got ${attrRow.quality.escapedDefects}`);
+    assert(
+      Array.isArray(attrRow.quality.escapedBugs) && attrRow.quality.escapedBugs.includes("B999"),
+      `expected escapedBugs to include 'B999', got ${JSON.stringify(attrRow.quality.escapedBugs)}`
+    );
+
+    const attrRow2 = runAttribute(["--run", "manual-superpowers-1", "--bug", "B1000", "--project", manualLedgerDir]);
+    assert(attrRow2.quality.escapedDefects === 2, `expected escapedDefects 2 after a second attribute, got ${attrRow2.quality.escapedDefects}`);
+    assert(attrRow2.quality.escapedBugs.length === 2, `expected escapedBugs length 2, got ${attrRow2.quality.escapedBugs.length}`);
+
+    let threwOnMissingRun = false;
+    try {
+      runAttribute(["--run", "does-not-exist", "--bug", "B1", "--project", manualLedgerDir]);
+    } catch (err) {
+      threwOnMissingRun = err instanceof LedgerError && err.code === 3;
+    }
+    assert(threwOnMissingRun, "expected attribute on a missing run to refuse with exit 3");
+
+    // --- C1: compare ---------------------------------------------------------
+    const compareDir = path.join(tmpBase, "compare-project");
+    fs.mkdirSync(compareDir, { recursive: true });
+    function minimalResult(extra) {
+      return {
+        scale: "small",
+        clean: true,
+        startedAt: "2026-09-12T00:00:00.000Z",
+        estimatedCostUsd: 1,
+        phaseReport: [],
+        confirmedByPhase: {},
+        redGate: null,
+        verify: null,
+        uiVerify: null,
+        mutationProbe: null,
+        finalPass: null,
+        overlap: {},
+        cascadeAudit: null,
+        escalation: null,
+        remainingFindings: [],
+        gate: { pass: true, skipped: false, results: [] },
+        fixRounds: 0,
+        ...extra,
+      };
+    }
+    function appendCompareRow(approach, profile, run, costUsd, activeMs, fpg, findings) {
+      const resultPath = path.join(compareDir, `${run}-result.json`);
+      fs.writeFileSync(
+        resultPath,
+        JSON.stringify(
+          minimalResult({
+            confirmedFindings: [
+              ...Array(findings.critical).fill({ severity: "blocker" }),
+              ...Array(findings.important).fill({ severity: "major" }),
+              ...Array(findings.minor).fill({ severity: "minor" }),
+            ],
+            fixRounds: fpg ? 0 : 1,
+          })
+        ),
+        "utf8"
+      );
+      const usagePath = path.join(compareDir, `${run}-usage.json`);
+      fs.writeFileSync(
+        usagePath,
+        JSON.stringify({
+          v: 1,
+          sessionId: `sess-${run}`,
+          project: compareDir,
+          pricesAsOf: "2026-06-24",
+          session: {
+            byModel: {},
+            total: { input: 0, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0, output: 0, tokens: 0, costUsd },
+            messages: 1,
+            firstAt: null,
+            lastAt: null,
+            activeMs,
+            cacheHitRatio: null,
+          },
+          workflows: {},
+          warnings: [],
+        }),
+        "utf8"
+      );
+      const args = [resultPath, "--run", run, "--project", compareDir, "--usage", usagePath];
+      if (approach) args.push("--approach", approach);
+      if (profile) args.push("--profile", profile);
+      return runAppend(args);
+    }
+    function appendManualCompareRow(approach, run, costUsd, activeMs, fpg, findings, escaped) {
+      const row = withFakeUsage(costUsd, activeMs, () =>
+        runAppendManual([
+          "--run",
+          run,
+          "--approach",
+          approach,
+          "--session",
+          `sess-${run}`,
+          "--project",
+          compareDir,
+          "--first-pass-green",
+          String(fpg),
+          "--findings",
+          `${findings.critical},${findings.important},${findings.minor}`,
+          "--human-minutes",
+          "10",
+        ])
+      );
+      for (let i = 0; i < escaped; i++) runAttribute(["--run", run, "--bug", `B-${run}-${i}`, "--project", compareDir]);
+      return row;
+    }
+
+    appendCompareRow("dev-pipeline", "lean", "cmp-dp-1", 2.0, 600000, true, { critical: 0, important: 0, minor: 1 });
+    appendCompareRow("dev-pipeline", "lean", "cmp-dp-2", 3.0, 900000, false, { critical: 0, important: 1, minor: 0 });
+    appendCompareRow(null, null, "cmp-legacy-1", 5.0, 1200000, false, { critical: 1, important: 0, minor: 0 });
+    appendCompareRow(null, null, "cmp-legacy-2", 6.0, 1500000, false, { critical: 0, important: 0, minor: 0 });
+    appendManualCompareRow("superpowers", "cmp-sp-1", 1.0, 300000, true, { critical: 0, important: 0, minor: 0 }, 0);
+    appendManualCompareRow("superpowers", "cmp-sp-2", 1.5, 400000, true, { critical: 0, important: 0, minor: 1 }, 0);
+    appendManualCompareRow("raw", "cmp-raw-1", 0.5, 200000, false, { critical: 0, important: 1, minor: 0 }, 1);
+    appendManualCompareRow("raw", "cmp-raw-2", 0.7, 250000, true, { critical: 0, important: 0, minor: 0 }, 0);
+
+    const cmp10 = runCompare(["--project", compareDir, "--min-n", "10"]);
+    assert(cmp10.arms.length === 4, `expected 4 arms (dev-pipeline, legacy, superpowers, raw), got ${cmp10.arms.length}`);
+    for (const arm of cmp10.arms) {
+      assert(
+        arm.sufficient === false,
+        `expected arm ${arm.approach}${arm.profile ? ":" + arm.profile : ""} to be insufficient at min-n 10 (n=${arm.n})`
+      );
+    }
+    assert(cmp10.cheapest === null, "expected no cheapest arm at min-n 10 (every arm insufficient)");
+
+    const cmp1 = runCompare(["--project", compareDir, "--min-n", "1"]);
+    assert(cmp1.arms.every((a) => a.sufficient === true), "expected every arm sufficient at min-n 1");
+    assert(cmp1.cheapest, "expected a cheapest arm at min-n 1");
+    assert(cmp1.cheapest.approach === "superpowers", `expected cheapest arm 'superpowers' at min-n 1, got '${cmp1.cheapest.approach}'`);
+    assert(
+      Math.abs(cmp1.cheapest.meanTrueCostUsd - 1.25) < 1e-9,
+      `expected cheapest arm mean cost 1.25, got ${cmp1.cheapest.meanTrueCostUsd}`
+    );
+
+    // old rows without the new fields still parse through compare too.
+    const cmpMain = runCompare(["--project", tmpBase, "--min-n", "1"]);
+    assert(Array.isArray(cmpMain.arms), "expected compare on the main ledger (old + new rows) to run without throwing");
+    const legacyArmMain = cmpMain.arms.find((a) => a.approach === "legacy" && a.profile === null);
+    assert(legacyArmMain, "expected the main ledger's old true-telemetry rows (no approach field) to form a 'legacy' arm");
+
+    // --- Fix round 1 (2026-09-12 review): an unaudited arm (meanEscapedDefects
+    // null, no `attribute` ever run against any of its rows) must never win or
+    // tie against a confirmed-clean arm (meanEscapedDefects 0) for "cheapest",
+    // even when the unaudited arm is cheaper -- coercing null to 0 with `?? 0`
+    // rewards under-monitoring instead of a clean track record.
+    const nullVsZeroDir = path.join(tmpBase, "null-vs-zero-project");
+    fs.mkdirSync(nullVsZeroDir, { recursive: true });
+
+    function writeMinimalCompareResult(dir, run, findings) {
+      const resultPath = path.join(dir, `${run}-result.json`);
+      fs.writeFileSync(
+        resultPath,
+        JSON.stringify(
+          minimalResult({
+            confirmedFindings: [
+              ...Array(findings.critical).fill({ severity: "blocker" }),
+              ...Array(findings.important).fill({ severity: "major" }),
+              ...Array(findings.minor).fill({ severity: "minor" }),
+            ],
+          })
+        ),
+        "utf8"
+      );
+      return resultPath;
+    }
+    function writeMinimalCompareUsage(dir, run, costUsd, activeMs) {
+      const usagePath = path.join(dir, `${run}-usage.json`);
+      fs.writeFileSync(
+        usagePath,
+        JSON.stringify({
+          v: 1,
+          sessionId: `sess-${run}`,
+          project: dir,
+          pricesAsOf: "2026-06-24",
+          session: {
+            byModel: {},
+            total: { input: 0, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0, output: 0, tokens: 0, costUsd },
+            messages: 1,
+            firstAt: null,
+            lastAt: null,
+            activeMs,
+            cacheHitRatio: null,
+          },
+          workflows: {},
+          warnings: [],
+        }),
+        "utf8"
+      );
+      return usagePath;
+    }
+
+    // two never-attributed dev-pipeline rows -- cheap, but meanEscapedDefects
+    // stays null (computeQuality's escapedDefects is null until `attribute`
+    // ever runs against a row; the engine never sets it itself).
+    for (const [run, costUsd] of [
+      ["nvz-dp-1", 0.4],
+      ["nvz-dp-2", 0.6],
+    ]) {
+      const resultPath = writeMinimalCompareResult(nullVsZeroDir, run, { critical: 0, important: 0, minor: 0 });
+      const usagePath = writeMinimalCompareUsage(nullVsZeroDir, run, costUsd, 60000);
+      runAppend([resultPath, "--run", run, "--project", nullVsZeroDir, "--usage", usagePath, "--approach", "dev-pipeline"]);
+    }
+
+    // one manual raw row -- pricier, but confirmed-clean: append-manual
+    // hardcodes escapedDefects:0 at creation, and it is never attributed
+    // against here, so it stays a real 0, not null.
+    withFakeUsage(5.0, 100000, () =>
+      runAppendManual([
+        "--run",
+        "nvz-raw-1",
+        "--approach",
+        "raw",
+        "--session",
+        "sess-nvz-raw-1",
+        "--project",
+        nullVsZeroDir,
+        "--first-pass-green",
+        "true",
+        "--findings",
+        "0,0,0",
+        "--human-minutes",
+        "5",
+      ])
+    );
+
+    const cmpNvz = runCompare(["--project", nullVsZeroDir, "--min-n", "1"]);
+    const dpArmNvz = cmpNvz.arms.find((a) => a.approach === "dev-pipeline");
+    const rawArmNvz = cmpNvz.arms.find((a) => a.approach === "raw");
+    assert(
+      dpArmNvz && dpArmNvz.meanEscapedDefects === null,
+      `expected the never-attributed dev-pipeline arm to have meanEscapedDefects null, got ${dpArmNvz && dpArmNvz.meanEscapedDefects}`
+    );
+    assert(
+      rawArmNvz && rawArmNvz.meanEscapedDefects === 0,
+      `expected the manual raw arm to have meanEscapedDefects 0 (confirmed clean), got ${rawArmNvz && rawArmNvz.meanEscapedDefects}`
+    );
+    assert(
+      dpArmNvz.meanTrueCostUsd < rawArmNvz.meanTrueCostUsd,
+      "test setup: the never-audited arm must be cheaper for this to be a meaningful regression check"
+    );
+    assert(cmpNvz.cheapest, "expected a cheapest arm once at least one audited arm exists");
+    assert(
+      cmpNvz.cheapest.approach !== "dev-pipeline",
+      `expected the never-audited dev-pipeline arm (cheaper, meanEscapedDefects=null) to NEVER be named or tied for cheapest, got '${cmpNvz.cheapest.approach}'`
+    );
+    assert(
+      cmpNvz.cheapest.approach === "raw",
+      `expected the only audited arm (raw, confirmed-zero) to win cheapest despite higher cost, got '${cmpNvz.cheapest.approach}'`
+    );
+
     console.log("\nSELFTEST PASSED");
   } catch (err) {
     ok = false;
@@ -1900,6 +3040,15 @@ function main() {
     switch (cmd) {
       case "append":
         runAppend(rest);
+        break;
+      case "append-manual":
+        runAppendManual(rest);
+        break;
+      case "attribute":
+        runAttribute(rest);
+        break;
+      case "compare":
+        runCompare(rest);
         break;
       case "summary":
         runSummary(rest);

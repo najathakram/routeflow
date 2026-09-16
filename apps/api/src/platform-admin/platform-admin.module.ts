@@ -4,6 +4,7 @@ import { ConfigModule, ConfigService } from "@nestjs/config";
 import { PlatformAdminController } from "./platform-admin.controller";
 import { PlatformAdminService } from "./platform-admin.service";
 import { PlatformConfigService } from "./platform-config.service";
+import { TenantMirrorService } from "./tenant-mirror.service";
 import { PlatformAdminBuyersController } from "./platform-admin-buyers.controller";
 import { PlatformAdminBuyersService } from "./platform-admin-buyers.service";
 import { AppConfig } from "../config/configuration";
@@ -27,7 +28,12 @@ import { BillingModule } from "../billing/billing.module";
     BillingModule,
   ],
   controllers: [PlatformAdminController, PlatformAdminBuyersController],
-  providers: [PlatformAdminService, PlatformConfigService, PlatformAdminBuyersService],
+  providers: [
+    PlatformAdminService,
+    PlatformConfigService,
+    TenantMirrorService,
+    PlatformAdminBuyersService,
+  ],
   exports: [PlatformConfigService],
 })
 export class PlatformAdminModule {}

@@ -252,4 +252,14 @@ export class PlatformConfigService {
       return { ok: false, model, error: err?.message ?? "Request failed" };
     }
   }
+
+  // ─── Platform identity ──────────────────────────────────────────────────────
+
+  async getHouseTenantId(): Promise<string | null> {
+    return this.getValue("platform.houseTenantId");
+  }
+
+  async setHouseTenantId(tenantId: string): Promise<void> {
+    await this.setValue("platform.houseTenantId", tenantId);
+  }
 }

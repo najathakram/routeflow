@@ -67,7 +67,8 @@ import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
 import { fmt, fmtCalendarDate, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
-import { formatQtySplit } from "@routeflow/pricing";
+import { formatQtySplit, resolveConfirmedAmounts } from "@routeflow/pricing";
+import { InvoiceTotalsSummary } from "./InvoiceTotalsSummary";
 import {
   SELECTABLE_PAYMENT_METHODS,
   PAYMENT_METHOD_LABELS,
@@ -1547,10 +1548,21 @@ export default function InvoiceDetailPage() {
   // local sum is only a fallback for a payload that carries neither. The
   // `payments` array itself stays unfiltered — Payment History must keep
   // showing DRAFT rows so DraftPaymentBadge can mark them.
-  const amountPaid =
-    invoice.paidAmount != null
-      ? Number(invoice.paidAmount)
-      : payments.filter((p) => p.status === "PAID").reduce((s, p) => s + Number(p.amount), 0);
+  // B421: confirmed but non-cash — a credit note or advance applied to this
+  // invoice reduces balanceDue but must never render as "Paid"/cash received.
+  // The shared helper's field is `totalPaid`; this DTO's is `paidAmount`.
+  const {
+    cash: amountPaid,
+    creditApplied,
+    advanceApplied,
+  } = resolveConfirmedAmounts(
+    {
+      totalPaid: invoice.paidAmount,
+      creditApplied: invoice.creditApplied,
+      advanceApplied: invoice.advanceApplied,
+    },
+    payments,
+  );
   const status = invoice.status;
 
   // Draft/Final invoice-PDF stage. Default: DRAFT while it's still the
@@ -1564,7 +1576,7 @@ export default function InvoiceDetailPage() {
       ? Number(invoice.balanceDue)
       : status === "VOID" || status === "WRITTEN_OFF"
         ? 0
-        : Math.max(0, total - amountPaid);
+        : Math.max(0, total - amountPaid - creditApplied - advanceApplied);
   const discount = Number(invoice.discount ?? 0);
   const shippingFee = Number(invoice.shippingFee ?? 0);
 
@@ -2541,45 +2553,16 @@ export default function InvoiceDetailPage() {
 
             {/* Totals footer */}
             <div className="mt-4 flex justify-end">
-              <div className="w-72 space-y-1.5 text-sm">
-                <div className="flex justify-between py-0.5">
-                  <span className="text-navy/70">Subtotal</span>
-                  <span className="money text-navy">{fmt(Number(invoice.subtotal))}</span>
-                </div>
-                {discount > 0 && (
-                  <div className="flex justify-between py-0.5 text-success">
-                    <span>Discount</span>
-                    <span className="money">-{fmt(discount)}</span>
-                  </div>
-                )}
-                {Number(invoice.taxAmount ?? 0) > 0 && (
-                  <div className="flex justify-between py-0.5">
-                    <span className="text-navy/70">Tax</span>
-                    <span className="money text-navy">{fmt(Number(invoice.taxAmount))}</span>
-                  </div>
-                )}
-                {shippingFee > 0 && (
-                  <div className="flex justify-between py-0.5">
-                    <span className="text-navy/70">Shipping</span>
-                    <span className="money text-navy">{fmt(shippingFee)}</span>
-                  </div>
-                )}
-                {amountPaid > 0 && (
-                  <div className="flex justify-between py-0.5 text-success">
-                    <span>Paid to date</span>
-                    <span className="money">-{fmt(amountPaid)}</span>
-                  </div>
-                )}
-                <div
-                  className={cn(
-                    "mt-1.5 flex items-center justify-between border-t border-navy pt-2.5 text-base font-semibold",
-                    balanceDue > 0 ? "text-danger" : "text-success",
-                  )}
-                >
-                  <span>Balance due</span>
-                  <span className="money">{fmt(balanceDue)}</span>
-                </div>
-              </div>
+              <InvoiceTotalsSummary
+                subtotal={Number(invoice.subtotal)}
+                discount={discount}
+                taxAmount={Number(invoice.taxAmount ?? 0)}
+                shippingFee={shippingFee}
+                amountPaid={amountPaid}
+                creditApplied={creditApplied}
+                advanceApplied={advanceApplied}
+                balanceDue={balanceDue}
+              />
             </div>
 
             {/* Notes */}
@@ -2842,9 +2825,23 @@ export default function InvoiceDetailPage() {
                 <dd className="money font-medium text-navy">{fmt(total)}</dd>
               </div>
               <div className="flex items-center justify-between">
-                <dt className="text-navy/70">Paid</dt>
+                <dt className="text-navy/70">Payments received</dt>
                 <dd className="money font-medium text-success">{fmt(amountPaid)}</dd>
               </div>
+              {/* B421: neutral styling — never text-success — a credit note or
+                  advance reduces the balance but isn't cash received. */}
+              {creditApplied > 0 && (
+                <div className="flex items-center justify-between">
+                  <dt className="text-navy/70">Credits applied</dt>
+                  <dd className="money font-medium text-navy">{fmt(creditApplied)}</dd>
+                </div>
+              )}
+              {advanceApplied > 0 && (
+                <div className="flex items-center justify-between">
+                  <dt className="text-navy/70">Advance applied</dt>
+                  <dd className="money font-medium text-navy">{fmt(advanceApplied)}</dd>
+                </div>
+              )}
               <div
                 className={cn(
                   "flex items-center justify-between border-t border-surface-border pt-2 font-semibold",

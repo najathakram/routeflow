@@ -461,7 +461,10 @@ export async function shareCsv({ url, filename, dialogTitle }: ShareCsvOptions):
   }
 
   const target = (FileSystem.cacheDirectory ?? "") + sanitizeCsvFilename(filename);
-  const { uri } = await FileSystem.downloadAsync(url, target);
+  const { uri, status } = await FileSystem.downloadAsync(url, target);
+  if (!isDownloadOk(status)) {
+    throw new Error("Couldn't share the CSV.");
+  }
   if (!(await Sharing.isAvailableAsync())) {
     throw new Error("Sharing isn't available on this device.");
   }

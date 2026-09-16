@@ -187,7 +187,10 @@ export class RegulatedLedgerService {
    * ORDER (not an invoice) and carries only productId + qty, so we bridge: SALE
    * rows (by orderId) → InvoiceItem (by invoiceItemId) → productId. Partial returns
    * are PRO-RATED off each SALE row's snapshot (never re-read the live Product
-   * category, which may have drifted). Idempotent per `returnId`; everything already
+   * category, which may have drifted). Idempotent per `(returnId, orderId)` (PR-1a —
+   * widened from `returnId` alone so an INLINE return spanning multiple source orders
+   * reverses each independently; a STANDARD return has exactly one source order, so
+   * this is unchanged for it). Everything already
    * reversed on the ORDER LINE (earlier returns, invoice voids, credit notes AND
    * reconcile re-syncs) is subtracted so cumulative reversed qty/net can never exceed
    * the sold amount — and the cap is keyed on `orderItemId` (not the invoice item), so
@@ -212,9 +215,14 @@ export class RegulatedLedgerService {
     const { returnId, orderId, returnedByProduct, db } = params;
     if (!returnedByProduct || returnedByProduct.size === 0) return;
 
-    // Idempotency: this return already reversed → no-op.
+    // Idempotency key is (returnId, orderId), not returnId alone (PR-1a/§5): an INLINE
+    // return's goods can be sold across MULTIPLE source orders, and this method is called
+    // once PER source order (`orderId` here is the SOURCE order, `ret.orderId` for a
+    // STANDARD caller — see receive()). Keying on returnId alone would treat the second
+    // source order's call as an already-reversed no-op. A STANDARD return has exactly one
+    // source order, so this is a no-op change for it.
     const prior = await db.regulatedSalesLedger.findMany({
-      where: { returnId, entryType: "REVERSAL" },
+      where: { returnId, orderId, entryType: "REVERSAL" },
       select: { id: true },
     });
     if (prior.length > 0) return;

@@ -9,7 +9,7 @@ const DRIVER_PAYMENTS_ADDON = "driver_payments";
 
 /**
  * At-door money collection is a per-tenant OPT-IN (owner decision 2026-08-24:
- * affa collects at the door, bb-distro bills on account and the office
+ * acme-retail collects at the door, acme-distro bills on account and the office
  * collects). This guard sits on POST /route-runs/:id/stops/:stopId/
  * complete-with-payment and inspects the BODY rather than blanket-gating the
  * route: every mobile completion — including the $0 "on account" close — uses

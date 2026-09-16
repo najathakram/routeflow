@@ -134,4 +134,22 @@ describe("PlatformConfigService — AI usage + test connection", () => {
       expect(fetchSpy).not.toHaveBeenCalled();
     });
   });
+
+  describe("house tenant id", () => {
+    it("T12-1: reads platform.houseTenantId, returning null when unset", async () => {
+      prisma.$queryRaw.mockResolvedValueOnce([{ value: "hq-1" }]).mockResolvedValueOnce([]);
+
+      expect(await service.getHouseTenantId()).toBe("hq-1");
+      expect(await service.getHouseTenantId()).toBeNull();
+      // getValue binds the key as the single template parameter.
+      expect(prisma.$queryRaw.mock.calls[0].slice(1)).toEqual(["platform.houseTenantId"]);
+    });
+
+    it("T12-2: writes platform.houseTenantId through a single upsert", async () => {
+      await service.setHouseTenantId("hq-1");
+
+      expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+      expect(prisma.$executeRaw.mock.calls[0].slice(1)).toEqual(["platform.houseTenantId", "hq-1"]);
+    });
+  });
 });

@@ -10,6 +10,8 @@ const STATUS_COLORS: Record<string, string> = {
 const PLAN_COLORS: Record<string, string> = {
   STARTER: "bg-slate-700 text-slate-300 ring-slate-600/30",
   PROFESSIONAL: "bg-blue-900/40 text-blue-400 ring-blue-600/30",
+  GROWTH: "bg-teal-900/40 text-teal-400 ring-teal-600/30",
+  SCALE: "bg-indigo-900/40 text-indigo-400 ring-indigo-600/30",
   ENTERPRISE: "bg-purple-900/40 text-purple-400 ring-purple-600/30",
 };
 
@@ -18,6 +20,8 @@ const PLAN_COLORS: Record<string, string> = {
 const PLAN_LABELS: Record<string, string> = {
   STARTER: "Starter",
   PROFESSIONAL: "Business",
+  GROWTH: "Growth",
+  SCALE: "Scale",
   ENTERPRISE: "Enterprise",
 };
 
