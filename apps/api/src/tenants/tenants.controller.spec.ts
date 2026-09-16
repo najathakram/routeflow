@@ -63,4 +63,12 @@ describe("TenantsController.getMyAddons — override merge", () => {
     const result = await controller.getMyAddons({ tenantId: "t1" } as unknown as JwtPayload);
     expect(result.addons).toEqual(["recurring_routes"]);
   });
+
+  // Opus review of 8130b204, item 6: only a RequireAddon-gated key belongs in this array — a
+  // flag-namespace override has no addon-consumer to reach here.
+  it("a GRANT override on a non-RequireAddon key (a flag) is never merged in (gateVia filter)", async () => {
+    const { controller } = build([], new Map([["flag.msrp", "GRANT"]]));
+    const result = await controller.getMyAddons({ tenantId: "t1" } as unknown as JwtPayload);
+    expect(result.addons).toEqual([]);
+  });
 });

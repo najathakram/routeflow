@@ -20,6 +20,7 @@ import { TenantsService } from "./tenants.service";
 import { EmailService } from "../email/email.service";
 import { AddonService } from "../billing/addon.service";
 import { FeatureOverrideService } from "../billing/feature-override.service";
+import { gateVia } from "../billing/feature-registry";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
@@ -58,6 +59,9 @@ export class TenantsController {
     const overrides = await this.featureOverrides.allActive(user.tenantId);
     const addons = new Set(active);
     for (const [key, effect] of overrides) {
+      // Opus review of 8130b204, item 6: only a RequireAddon-gated key belongs in this array —
+      // an override on a flag/guard/none-gated key has no addon-consumer to reach here.
+      if (gateVia(key) !== "RequireAddon") continue;
       if (effect === "GRANT") addons.add(key);
       else addons.delete(key);
     }
