@@ -520,9 +520,17 @@ test.describe("Operator — Tenant Dashboard", () => {
       .locator('input[type="file"]')
       .setInputFiles({ name: "invoice.png", mimeType: "image/png", buffer: Buffer.from("fake") });
 
-    await expect(page.getByText('This feature requires the "ocr" add-on.')).toBeVisible({
-      timeout: 15_000,
-    });
+    // The scan-error toast viewport is Radix's role="region" labelled
+    // "Notifications (F8)"; each visible toast is a listitem — scoping
+    // through the region excludes the separate aria-live announcer mirror
+    // (role="status", portaled to <body>) that otherwise duplicates the same
+    // text and trips strict mode (see 21-destructive-guards.spec.ts).
+    const scanErrorToast = page
+      .getByRole("region", { name: /notifications/i })
+      .getByRole("listitem")
+      .filter({ hasText: /ocr/i });
+    await expect(scanErrorToast).toBeVisible({ timeout: 15_000 });
+    await expect(scanErrorToast).toContainText('This feature requires the "ocr" add-on.');
     await expect(page.getByText("Please check the file and try again.")).toHaveCount(0);
   });
 
