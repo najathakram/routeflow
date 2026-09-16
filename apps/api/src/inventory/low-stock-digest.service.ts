@@ -192,6 +192,19 @@ export class LowStockDigestService {
       select: { userId: true },
     });
     const optedOut = new Set(optOuts.map((o) => o.userId));
-    return withEmail.filter((a) => !optedOut.has(a.id)).map((a) => ({ email: a.email }));
+    const active = withEmail.filter((a) => !optedOut.has(a.id));
+
+    // Two admin ROWS can carry the same mailbox in different casing (a duplicate account,
+    // or an email edited to differ only in case) — dedupe on the lowercased address so that
+    // mailbox gets exactly one digest, not one per row.
+    const seen = new Set<string>();
+    const deduped: { email: string }[] = [];
+    for (const a of active) {
+      const key = a.email.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push({ email: a.email });
+    }
+    return deduped;
   }
 }

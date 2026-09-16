@@ -770,4 +770,29 @@ describe("EmailService.sendLowStockDigest (N4)", () => {
     // success and never an attempt to read tenant-scoped config.
     expect(res).toMatchObject({ delivered: false, transport: "none" });
   });
+
+  it("REG-N4: a large item list is capped at 100 rendered rows with an '…and N more' row, but the subject stays truthful about the real total", async () => {
+    const svc = makePlatformService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "resend" } as any);
+    const many = Array.from({ length: 137 }, (_, i) => ({
+      name: `SKU ${i}`,
+      sku: `S-${i}`,
+      currentStock: 1,
+      reorderPoint: 10,
+    }));
+
+    await svc.sendLowStockDigest({
+      to: "admin@acme.example",
+      businessName: "Acme Wholesale",
+      items: many,
+    });
+
+    const call = sendSpy.mock.calls[0][0];
+    expect(call.subject).toBe("Low stock alert — 137 items below threshold");
+    expect(call.html).toContain("SKU 99");
+    expect(call.html).not.toContain("SKU 100");
+    expect(call.html).toContain("…and 37 more items");
+  });
 });

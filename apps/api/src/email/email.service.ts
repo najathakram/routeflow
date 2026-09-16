@@ -1261,6 +1261,12 @@ export class EmailService {
     });
   }
 
+  /** A tenant with a large catalogue and a low blanket reorderPoint could have thousands
+   * of below-threshold SKUs — 2,000 rows would be ~850 KB of HTML. Cap the rendered table;
+   * the subject line (built from the UN-truncated `items.length` in `sendLowStockDigest`)
+   * stays truthful about the real total either way. */
+  private static readonly MAX_DIGEST_ROWS = 100;
+
   /**
    * Same 600px shell/header/body/footer markup as `buildInvoiceEmail`
    * ("no new look" — N4 ground rule) with the invoice's item TABLE shape
@@ -1272,17 +1278,26 @@ export class EmailService {
     businessName: string;
     items: { name: string; sku: string | null; currentStock: number; reorderPoint: number }[];
   }): string {
-    const rows = params.items
-      .map(
-        (it) => `
+    const shown = params.items.slice(0, EmailService.MAX_DIGEST_ROWS);
+    const overflow = params.items.length - shown.length;
+    const rows =
+      shown
+        .map(
+          (it) => `
         <tr>
           <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1a2033;">${escapeHtml(it.name)}</td>
           <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#6b7280;">${it.sku ? escapeHtml(it.sku) : "—"}</td>
           <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#dc2626;font-weight:600;text-align:right;">${it.currentStock}</td>
           <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#6b7280;text-align:right;">${it.reorderPoint}</td>
         </tr>`,
-      )
-      .join("");
+        )
+        .join("") +
+      (overflow > 0
+        ? `
+        <tr>
+          <td colspan="4" style="padding:8px 12px;font-size:13px;color:#9ca3af;font-style:italic;">…and ${overflow} more item${overflow === 1 ? "" : "s"}</td>
+        </tr>`
+        : "");
 
     return `<!DOCTYPE html>
 <html lang="en">

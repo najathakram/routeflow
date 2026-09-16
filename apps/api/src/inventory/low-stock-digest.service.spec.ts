@@ -160,6 +160,51 @@ describe("LowStockDigestService (N4)", () => {
     });
   });
 
+  describe("timezone edge cases (through the public tick)", () => {
+    it("REG-N4: America/Chicago on 2026-11-01 (US DST 'fall back' day) still fires exactly once at local 07:00", async () => {
+      // 2026-11-01 02:00 CDT is when the US clock falls back to 01:00 CST — well before
+      // the 07:00 window this digest fires in, but still the one calendar day per year
+      // whose local-time arithmetic is most likely to trip up on an off-by-one. After the
+      // fallback Chicago is UTC-6 (CST), so 07:30 CST = 13:30 UTC.
+      const { svc, email } = make({
+        tenants: [tenant({ timezone: "America/Chicago" })],
+        products: [product({ currentStock: 1, reorderPoint: 10 })],
+        admins: [makeAdmin("u1", "admin@acme.example")],
+      });
+
+      await svc.sendLowStockDigest(new Date("2026-11-01T13:30:00.000Z"));
+
+      expect(email.sendLowStockDigest).toHaveBeenCalledTimes(1);
+    });
+
+    it("REG-N4: Asia/Kathmandu (UTC+5:45, a quarter-hour offset) still resolves the local 07:00 hour correctly", async () => {
+      // 07:30 Kathmandu = 01:45 UTC. Proves the hour-band check ( readLocalDateAndHour's
+      // `hour === 7` ) is correct for a non-whole-hour UTC offset, not just America/New_York.
+      const { svc, email } = make({
+        tenants: [tenant({ timezone: "Asia/Kathmandu" })],
+        products: [product({ currentStock: 1, reorderPoint: 10 })],
+        admins: [makeAdmin("u1", "admin@acme.example")],
+      });
+
+      await svc.sendLowStockDigest(new Date("2026-09-16T01:45:00.000Z"));
+
+      expect(email.sendLowStockDigest).toHaveBeenCalledTimes(1);
+    });
+
+    it("REG-N4: Asia/Kathmandu just OUTSIDE the local 07:00 hour (07:59:59 → 08:00:00) does not fire", async () => {
+      const { svc, email } = make({
+        tenants: [tenant({ timezone: "Asia/Kathmandu" })],
+        products: [product({ currentStock: 1, reorderPoint: 10 })],
+        admins: [makeAdmin("u1", "admin@acme.example")],
+      });
+
+      // 08:00 Kathmandu = 02:15 UTC.
+      await svc.sendLowStockDigest(new Date("2026-09-16T02:15:00.000Z"));
+
+      expect(email.sendLowStockDigest).not.toHaveBeenCalled();
+    });
+  });
+
   describe("empty → no mail", () => {
     it("REG-N4: zero items below threshold sends no email, but still marks the day processed", async () => {
       const { svc, prisma, email } = make({
@@ -288,6 +333,18 @@ describe("LowStockDigestService (N4)", () => {
 
       expect(email.sendLowStockDigest).not.toHaveBeenCalled();
       expect(prisma.tenantConfig.updateMany).toHaveBeenCalledTimes(1);
+    });
+
+    it("REG-N4: two admin rows sharing a mailbox in different casing get exactly one digest, not two", async () => {
+      const { svc, email } = make({
+        tenants: [tenant()],
+        products: [product({ currentStock: 1, reorderPoint: 10 })],
+        admins: [makeAdmin("u1", "Admin@Acme.example"), makeAdmin("u2", "admin@acme.example")],
+      });
+
+      await svc.sendLowStockDigest(AT_SEVEN_LOCAL);
+
+      expect(email.sendLowStockDigest).toHaveBeenCalledTimes(1);
     });
   });
 
