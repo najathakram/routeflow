@@ -16,14 +16,20 @@ const dupMatch = {
 };
 
 /**
- * B451 Phase A — Strix coverage gap 4 (business-logic financial-total
- * manipulation) on POST /vendor-bills. VendorBillItemDto (dto/create-vendor-
- * bill.dto.ts) declares `qty`/`unitCost`/`unitPrice`/`lineTotal` as bare
- * `@IsOptional() @IsNumber()` — no `@Min(0)` — unlike every sibling line-item
- * DTO in the codebase (CreateInvoiceItemDto.qty/unitPrice, OrderItemDto.qty/
- * unitPrice all carry `@Min`). vendor-bills.service.ts:195-197 then computes
- * `totalOwed = Σ (qty || 1) * (unitCost ?? unitPrice ?? 0)` with no floor
- * check anywhere before persisting.
+ * B451 — Strix coverage gap 4 (business-logic financial-total manipulation)
+ * on POST /vendor-bills. Phase A CONFIRMED this: VendorBillItemDto declared
+ * `qty`/`unitCost`/`unitPrice`/`lineTotal` as bare `@IsOptional() @IsNumber()`
+ * — no `@Min(0)` — unlike every sibling line-item DTO in the codebase
+ * (CreateInvoiceItemDto.qty/unitPrice, OrderItemDto.qty/unitPrice all carry
+ * `@Min`). vendor-bills.service.ts's `totalOwed = Σ (qty || 1) *
+ * (unitCost ?? unitPrice ?? 0)` had no floor check anywhere before
+ * persisting.
+ *
+ * Phase B FIX: `@Min(0)` added to all four VendorBillItemDto fields (closes
+ * the HTTP path for both create and update, which share this DTO), plus
+ * `assertMoneyInvariantsOrThrow` in the service as defense-in-depth for the
+ * documented internal caller that bypasses the DTO. This spec now pins the
+ * FIXED behavior.
  */
 describe("VendorBillsService.create — unbounded line qty/unitCost (B451 gap 4)", () => {
   let service: VendorBillsService;
@@ -55,31 +61,36 @@ describe("VendorBillsService.create — unbounded line qty/unitCost (B451 gap 4)
     service = module.get<VendorBillsService>(VendorBillsService);
   });
 
-  it("CONFIRMED: a negative unitCost line persists a negative totalOwed", async () => {
+  it("FIXED: a negative unitCost line is now rejected, no bill persisted", async () => {
     prisma.vendorBill.create.mockImplementation((args: any) =>
       Promise.resolve({ id: "vb-1", supplierId: null, ...args.data }),
     );
 
-    await service.create({
-      requireSupplier: false,
-      items: [{ description: "Refund abuse line", qty: 1, unitCost: -500 }],
-    });
+    // The HTTP path also now 400s at the DTO layer (VendorBillItemDto.unitCost
+    // carries @Min(0)) — this proves the service-level defense-in-depth guard
+    // independently, for the documented internal caller that bypasses the DTO.
+    await expect(
+      service.create({
+        requireSupplier: false,
+        items: [{ description: "Refund abuse line", qty: 1, unitCost: -500 }],
+      }),
+    ).rejects.toMatchObject({ status: 400, response: { code: "MONEY_INVARIANT" } });
 
-    const createCall = prisma.vendorBill.create.mock.calls[0][0];
-    expect(createCall.data.totalOwed).toBe(-500);
+    expect(prisma.vendorBill.create).not.toHaveBeenCalled();
   });
 
-  it("CONFIRMED: a negative qty on an otherwise-legitimate unitCost also drives totalOwed negative", async () => {
+  it("FIXED: a negative qty on an otherwise-legitimate unitCost is also now rejected", async () => {
     prisma.vendorBill.create.mockImplementation((args: any) =>
       Promise.resolve({ id: "vb-1", supplierId: null, ...args.data }),
     );
 
-    await service.create({
-      requireSupplier: false,
-      items: [{ description: "Negative qty line", qty: -10, unitCost: 50 }],
-    });
+    await expect(
+      service.create({
+        requireSupplier: false,
+        items: [{ description: "Negative qty line", qty: -10, unitCost: 50 }],
+      }),
+    ).rejects.toMatchObject({ status: 400, response: { code: "MONEY_INVARIANT" } });
 
-    const createCall = prisma.vendorBill.create.mock.calls[0][0];
-    expect(createCall.data.totalOwed).toBe(-500);
+    expect(prisma.vendorBill.create).not.toHaveBeenCalled();
   });
 });

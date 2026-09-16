@@ -21,14 +21,19 @@ export class VendorBillItemDto {
   @IsOptional() @IsString() productId?: string;
   @IsOptional() @IsString() description?: string;
   @IsOptional() @IsString() name?: string;
-  @IsOptional() @IsNumber() qty?: number;
-  @IsOptional() @IsNumber() unitCost?: number;
-  @IsOptional() @IsNumber() unitPrice?: number;
+  // B451 gap 4: these four carried no @Min(0) — a negative qty or unitCost
+  // reached vendor-bills.service.ts's totalOwed = Σ qty*unitCost unbounded,
+  // driving the bill's totalOwed negative. Every sibling line-item DTO in
+  // the codebase (CreateInvoiceItemDto.qty/unitPrice, OrderItemDto.qty/
+  // unitPrice) already bounds these; this brings VendorBillItemDto in line.
+  @IsOptional() @IsNumber() @Min(0) qty?: number;
+  @IsOptional() @IsNumber() @Min(0) unitCost?: number;
+  @IsOptional() @IsNumber() @Min(0) unitPrice?: number;
   /** The supplier's own item code, as printed — the strongest signal for matching this line next scan. */
   @IsOptional() @IsString() sku?: string;
   /** Units per box/case, only when the line explicitly printed one. */
   @IsOptional() @IsNumber() @Min(0) packSize?: number;
-  @IsOptional() @IsNumber() lineTotal?: number;
+  @IsOptional() @IsNumber() @Min(0) lineTotal?: number;
 }
 
 /**

@@ -28,6 +28,7 @@ import {
   type PromotionRule,
 } from "@routeflow/pricing";
 import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-locks";
+import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import {
   LOCK_UNAVAILABLE,
   LOCK_UNAVAILABLE_MESSAGE,
@@ -2476,6 +2477,17 @@ export class OrdersService implements OnApplicationBootstrap {
     );
     const total = roundMoney(subtotal + tax + categoryTax - orderDiscount + orderShippingFee);
 
+    // B451 gap 4: reject a bounded-but-oversized discountAmount before it can
+    // drive the persisted total negative. Fails fast, before any stock lock
+    // or transaction opens.
+    assertMoneyInvariantsOrThrow({
+      subtotal,
+      discount: orderDiscount,
+      tax: tax + categoryTax,
+      shipping: orderShippingFee,
+      total,
+    });
+
     // W6: license guard — a real (non-draft) sale of a license-required category to
     // a customer without a VERIFIED authorization (or active §8 override) throws a
     // structured 409 BEFORE the stock transaction, so nothing is half-committed.
@@ -4634,6 +4646,17 @@ export class OrdersService implements OnApplicationBootstrap {
           ? roundMoney(Math.max(0, dto.shippingFee!))
           : roundMoney(Number((order as any).shippingFee ?? 0));
         const total = roundMoney(subtotal + tax + categoryTax + shippingFee);
+
+        // B451 gap 4: defense-in-depth — UpdateOrderItemsDto carries no
+        // discountAmount today (only create() does), so this path has no
+        // live negative-total vector yet, but the shared guard keeps it
+        // covered against a future field addition without a second review.
+        assertMoneyInvariantsOrThrow({
+          subtotal,
+          tax: tax + categoryTax,
+          shipping: shippingFee,
+          total,
+        });
 
         // P5-08b + WP1 inline guards (completes P5-08 "credit / regulated /
         // stock-violating edit blocked inline"). DRAFT edits are exempt,

@@ -53,16 +53,21 @@ const operatorPayload = {
 };
 
 /**
- * B451 Phase A — Strix coverage gap 4 (business-logic financial-total
- * manipulation) on POST /orders. Unlike CreateInvoiceDto's create() path
- * (apps/api/src/invoices/invoices.service.ts:469-502, which explicitly
- * rejects a negative line subtotal, a discount exceeding subtotal, and a
- * negative total), orders.service.ts create() computes
+ * B451 — Strix coverage gap 4 (business-logic financial-total manipulation)
+ * on POST /orders. Phase A CONFIRMED this: unlike CreateInvoiceDto's
+ * create() path (invoices.service.ts:469-502, which already rejects a
+ * negative line subtotal, a discount exceeding subtotal, and a negative
+ * total), orders.service.ts create() computed
  * `total = subtotal + tax + categoryTax - orderDiscount + orderShippingFee`
- * (line ~2477) with NO equivalent guard. discountAmount is DTO-bounded to
- * [0, 1_000_000] (create-order.dto.ts) but never compared against the
- * order's own subtotal, so a bounded-but-oversized discount still drives
- * the persisted total negative.
+ * with NO equivalent guard — discountAmount is DTO-bounded to
+ * [0, 1_000_000] (create-order.dto.ts) but was never compared against the
+ * order's own subtotal, so a bounded-but-oversized discount drove the
+ * persisted total negative.
+ *
+ * Phase B FIX: `assertMoneyInvariantsOrThrow` (the shared
+ * `@routeflow/pricing` guard) now runs right after `total` is computed and
+ * before any stock lock or transaction opens — this spec now pins the FIXED
+ * behavior (400 MONEY_INVARIANT, nothing persisted).
  */
 describe("OrdersService.create — discount-overflow negative total (B451 gap 4)", () => {
   let service: OrdersService;
@@ -169,7 +174,7 @@ describe("OrdersService.create — discount-overflow negative total (B451 gap 4)
     service = module.get<OrdersService>(OrdersService);
   });
 
-  it("CONFIRMED: a DTO-legal discountAmount exceeding the order subtotal persists a NEGATIVE total", async () => {
+  it("FIXED: a DTO-legal discountAmount exceeding the order subtotal now 400s and persists nothing", async () => {
     prisma.customer.findUnique.mockResolvedValue({ pricingTier: 1, user: { status: "ACTIVE" } });
     prisma.customerPrice.findMany.mockResolvedValue([]);
     prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
@@ -187,21 +192,22 @@ describe("OrdersService.create — discount-overflow negative total (B451 gap 4)
 
     // Line subtotal = 1 × 4.99 = 4.99. discountAmount = 500 is well inside the
     // DTO's own @Min(0) @Max(1_000_000) bound on CreateOrderDto — nothing at
-    // the DTO layer rejects it.
-    await service.create(
-      {
-        customerId: "cust-1",
-        items: [{ productId: "prod-1", qty: 1 }],
-        discountAmount: 500,
-      } as any,
-      operatorPayload,
-    );
+    // the DTO layer rejects it, so this is now caught by
+    // assertMoneyInvariantsOrThrow instead.
+    await expect(
+      service.create(
+        {
+          customerId: "cust-1",
+          items: [{ productId: "prod-1", qty: 1 }],
+          discountAmount: 500,
+        } as any,
+        operatorPayload,
+      ),
+    ).rejects.toMatchObject({
+      status: 400,
+      response: { code: "MONEY_INVARIANT" },
+    });
 
-    const createCall = prisma.order.create.mock.calls[0][0];
-    expect(createCall.data.discountAmount).toBe(500);
-    // The bug: no clamp/guard rejects discountAmount > subtotal, so the
-    // persisted total goes negative — a client can zero out or profit an
-    // order's receivable at will.
-    expect(createCall.data.total).toBeLessThan(0);
+    expect(prisma.order.create).not.toHaveBeenCalled();
   });
 });
