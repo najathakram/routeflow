@@ -1103,9 +1103,12 @@ export class EmailService {
    * upgrade()/downgrade()), so a billing-lifecycle notification sent through `send()` would
    * leave from the ACTING TENANT's own mailbox with their own From name. `sendPlatform()`
    * always uses `this.platformFrom` and skips tenant SMTP entirely, regardless of request
-   * context. Resend-only for now — platform SMTP (`this.platformSmtp`) is not wired into
-   * EITHER send path yet; B452's own branch is adding that transport, so this intentionally
-   * does not invent a second, divergent SMTP call site ahead of it.
+   * context. Still Resend-only as reviewed (post-merge note, 2026-09-16: B452/#789 landed
+   * `this.platformSmtp` and wired it into `send()` above — `sendPlatform()` does NOT yet use
+   * it, so a deploy with platformSmtp configured but no Resend key would leave every N3
+   * notification undelivered, same as before this merge. Not fixed here — this is a merge
+   * (test/push), not a second review round; flagged to the lead as a follow-up, not silently
+   * expanded).
    */
   async sendPlatform(params: {
     to: string;
