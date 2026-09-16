@@ -4,20 +4,21 @@ Shared workspace packages (types, UI, configs) consumed by apps via npm workspac
 
 ## Where to find (this area)
 
-| Need                                                                                                                         | File → symbol                                                              |
-| ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Money math (line totals, tax, promos, tiers)                                                                                 | `packages/pricing/src/` → `pricing.ts`, `tier-pricing.ts`                  |
-| Payment-confirmation predicate (B421 cash/credit/advance split)                                                              | `packages/pricing/src/payment-confirmation.ts`                             |
-| Held/capacity money (PR-1: PENDING, HELD_STATUSES, remainingCapacity)                                                        | `packages/pricing/src/payment-confirmation.ts`                             |
-| Check-lifecycle transition table (`CHECK_TRANSITIONS`, used by `apps/api/src/invoices/invoices.service.ts` `setCheckStatus`) | `packages/types/api/checks.ts`                                             |
-| Enums (UserRole, OrderStatus, ...)                                                                                           | `packages/types/index.ts` → `export enum X`                                |
-| Type interfaces (User, Order, PaginatedResponse)                                                                             | `packages/types/index.ts` → `export interface X`                           |
-| Web components (Button, Table, Modal, ...)                                                                                   | `packages/ui/src/web/` → `index.ts` barrel                                 |
-| Mobile RN components                                                                                                         | `packages/ui/src/mobile/index.ts`                                          |
-| iOS-specific components                                                                                                      | `packages/ui/src/mobile/ios/index.ts`                                      |
-| Design tokens (colors, spacing, fonts)                                                                                       | `packages/ui/src/tokens.ts`                                                |
-| ESLint flat presets                                                                                                          | `packages/eslint-config/` → base.js, next.js, react-internal.js            |
-| TypeScript presets                                                                                                           | `packages/typescript-config/` → base.json, nextjs.json, react-library.json |
+| Need                                                                                                       | File → symbol                                                              |
+| ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Money math (line totals, tax, promos, tiers)                                                               | `packages/pricing/src/` → `pricing.ts`, `tier-pricing.ts`                  |
+| Payment-confirmation predicate (B421 cash/credit/advance split)                                            | `packages/pricing/src/payment-confirmation.ts`                             |
+| Held/capacity money (PR-1: PENDING, HELD_STATUSES, remainingCapacity)                                      | `packages/pricing/src/payment-confirmation.ts`                             |
+| Check-lifecycle transition table (`CHECK_TRANSITIONS`, canonical; web/mobile import it directly)           | `packages/types/api/checks.ts`                                             |
+| Check-lifecycle transition table, API-local copy (`setCheckStatus` imports THIS, never `@routeflow/types`) | `apps/api/src/common/check-transitions.ts`                                 |
+| Enums (UserRole, OrderStatus, ...)                                                                         | `packages/types/index.ts` → `export enum X`                                |
+| Type interfaces (User, Order, PaginatedResponse)                                                           | `packages/types/index.ts` → `export interface X`                           |
+| Web components (Button, Table, Modal, ...)                                                                 | `packages/ui/src/web/` → `index.ts` barrel                                 |
+| Mobile RN components                                                                                       | `packages/ui/src/mobile/index.ts`                                          |
+| iOS-specific components                                                                                    | `packages/ui/src/mobile/ios/index.ts`                                      |
+| Design tokens (colors, spacing, fonts)                                                                     | `packages/ui/src/tokens.ts`                                                |
+| ESLint flat presets                                                                                        | `packages/eslint-config/` → base.js, next.js, react-internal.js            |
+| TypeScript presets                                                                                         | `packages/typescript-config/` → base.json, nextjs.json, react-library.json |
 
 ## Packages
 
@@ -88,14 +89,25 @@ string` (B20 — free-form intake note, e.g. "DAMAGED_BOX") and its `restock?` d
   replacing three byte-identical hand-written mirrors (api `invoices.service.ts`, web
   `invoices/[id]/page.tsx`, mobile `payments-logic.ts` — the last also dropped its own local
   `CheckStatus` type). V1 ONLY by design (independent Opus review, binding) — do not add
-  `CHECK_TRANSITIONS_V2` here; that's a later PR's `CheckTransitionService`. Guarded by
-  `apps/api/src/common/check-transitions-parity.spec.ts`. Mobile's Jest `@routeflow/types` stub
-  (`apps/mobile/__tests__/__mocks__/@routeflow/types.js`) hand-copies `CHECK_TRANSITIONS` too
-  (a real runtime value, not just a type) — keep both in sync.
+  `CHECK_TRANSITIONS_V2` here; that's a later PR's `CheckTransitionService`. Web and mobile
+  value-import this file directly (both transpile workspace TS at build time). The API CANNOT —
+  `no-runtime-workspace-imports.spec.ts` fails a value import of `@routeflow/types` from any
+  compiled api source file (raw-TS package, no build step, crashes `node dist/main.js` at boot;
+  this bit for real in the PR-1 fix round — see `apps/api/src/common/check-transitions.ts`'s own
+  entry in `api.md`'s bootstrap/cross-cutting area). `invoices.service.ts` imports
+  `CHECK_TRANSITIONS` from that API-local mirror instead, and
+  `apps/api/src/common/check-transitions-parity.spec.ts` pins the mirror value-equal to THIS
+  file's export (deep-equal, not an import-path check) so the two can't silently drift. Mobile's
+  Jest `@routeflow/types` stub (`apps/mobile/__tests__/__mocks__/@routeflow/types.js`)
+  hand-copies `CHECK_TRANSITIONS` too (a real runtime value, not just a type) — pinned deep-equal
+  against this file's export by `apps/api/src/common/enum-parity.spec.ts`'s mobile-stub-parity
+  block (X2).
 - **`api/enums.ts` — post-dated check payments PR-1 (2026-09-15):** `PAYMENT_STATUS_VALUES`
   gains `"PENDING"`; new `CHECK_RETURN_REASON_VALUES`/`CheckReturnReason` (pinned by
   `enum-parity.spec.ts`'s `ENUM_TABLE`, which bumped `PINNED_PRISMA_ENUM_COUNT` 84→85 for the
-  new `CheckReturnReason` Prisma enum). `NotificationEvent` gains `CHECK_RETURNED` (no shared
+  new `CheckReturnReason` Prisma enum — `apps/api/src/common/schema-folder.spec.ts`'s sibling
+  `EXPECTED_ENUM_COUNT` tripwire bumped 84→85 too in the PR-1 fix round, initially missed).
+  `NotificationEvent` gains `CHECK_RETURNED` (no shared
   mirror — server-only, consumed via `@prisma/client` directly in
   `apps/api/src/messaging/messaging-config.service.ts`'s `EVENT_CHANNELS`/`DEFAULT_TEMPLATES`
   (exhaustiveness entries only, `[INTERNAL]`) and `NO_TRIGGER_EVENTS` — no firing site yet, so it

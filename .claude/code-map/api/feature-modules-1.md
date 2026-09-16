@@ -181,7 +181,25 @@ validate()` and `buyer/strategies/buyer-jwt.strategy.ts validate()` both now cop
   `apps/api/scripts/backfill-check-dates.mjs` (+ pure lib `scripts/lib/check-date-backfill.mjs`)
   sets `checkDate` from `settledAt` for PAID CHECK rows whose `settledAt` is still in the future
   relative to the migration instant; dry-run by default, `--apply` to write, `--tenant-id` to
-  scope (L-129 — never let a spec run an unscoped write). Never touches `status`.
+  scope (L-129 — never let a spec run an unscoped write). Never touches `status`. **Live-tenant
+  guard (PR-1 fix round, m12/review-opus-v2.md — initially missing):** `--apply` scoped to an
+  approved test tenant (`scripts/lib/test-tenants.cjs`) proceeds as before (what
+  `backfill-check-dates.db.spec.ts` uses); scoped to a LIVE tenant it additionally requires
+  `--live-tenant-override` + `--confirm-tenant-id=<id>` (type-back), same mechanism as
+  `repair-receiving-units.mjs`/`backfill-tobacco-category.mjs`; unscoped `--apply` (every tenant)
+  always requires `--live-tenant-override`, since there is no single id to type back.
+  **BLOCKER 1 fix (PR-1 fix round, same session):** `invoices.service.ts`
+  had value-imported `CHECK_TRANSITIONS` straight from `@routeflow/types` — that package ships
+  raw TS with no build step, so `nest build` emitted a literal `require("@routeflow/types")` into
+  `dist/` and `node dist/main.js` died at boot parsing the enum syntax (exactly the class
+  `no-runtime-workspace-imports.spec.ts` exists to catch — it correctly failed red). Fixed by
+  adding `apps/api/src/common/check-transitions.ts` (API-local mirror of
+  `packages/types/api/checks.ts`'s `CHECK_TRANSITIONS`/`CheckStatus`, same convention as
+  `trip-grouping.ts`/`shipping.ts`); `invoices.service.ts` now imports from that mirror.
+  `check-transitions-parity.spec.ts` was rewritten to pin the mirror value-equal (deep-equal) to
+  the canonical export instead of asserting an import path — the real drift guard. Web/mobile are
+  unaffected (both transpile workspace TS at build time, so they keep value-importing
+  `@routeflow/types` directly).
 
 ### `drivers/`
 
