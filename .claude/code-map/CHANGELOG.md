@@ -8,6 +8,27 @@ newest first**. This file replaces the old habit of prepending each session's no
 below, and set `_meta.json` `"notes"` to that same note plus the pointer to this file —
 never accumulate history in `"notes"`.
 
+- **2026-09-16 — merge origin/master + map #778/#779 (worktree `rf-B420`, branch
+  `docs/code-map-refresh-2026-09-16`)** — merged origin/master (bringing in #781's
+  customer-lifecycle rescue, #778's auth rescue, and #779's tooling fixes) into this
+  branch's earlier commit (the surgical refresh + feature-modules-4 split, entry
+  below); two content conflicts (`_meta.json`'s rolling notes field,
+  `feature-modules-3/{credit-notes,invoices}.md`'s empty-vs-populated bullets) plus
+  one already-identical `api.md` TOC row, all auto-resolved via git rerere from an
+  earlier rebase attempt of the same delta, verified marker-free. Added surgical
+  entries for #778 (`auth.service.ts`/`buyer-auth.service.ts` status-after-bcrypt
+  timing fix, `verifyEmailAndLogin` status refusal, `tenants.service.ts
+resendVerification` logging + B448 cross-ref, `platform-admin.controller.ts` B216
+  `CreateTenantAdminDto`, `customers.service.ts sendPortalInvite` actually sending
+  email + SMS hard-reject, web `signup`/`check-email` `emailSent:false`/
+  `resendFailed` danger states, `auth-shell.css`'s `.rf-auth-success--danger`) and
+  #779 (`stop.gate5.spec.mjs`'s B411 fix — F4's per-dir `existsSync` check replacing
+  an ambient tmpdir-count comparison that false-tripped on a concurrent sibling run
+  — and the `bugs-self-test-script.spec.ts` repo-truth jest-lane wiring;
+  `next-version.ts`/`bugs-self-test-script.spec.ts` themselves were already
+  documented by #779's own map update, not duplicated) — both PRs had landed on
+  master without their own code-map updates. Validator green throughout.
+
 - **2026-09-16 — surgical refresh across ~175 stale files + `feature-modules-4.md` area-cap
   split (docs-only, worktree `rf-B420`, branch `docs/code-map-refresh-2026-09-16`)** —
   `_meta.json.mappedSha` (`bc24582d`) was left untouched by #784's split, ~175 files stale by

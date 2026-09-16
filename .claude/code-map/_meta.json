@@ -1,6 +1,6 @@
 {
-  "mappedSha": "04b73dda456dc7c9e08fd9f2dc4f74a323820e68",
-  "generatedAt": "2026-09-16T13:00:00.000Z",
+  "mappedSha": "61a70b0e4fa5c67d809efcf700f98ceda35a859a",
+  "generatedAt": "2026-09-16T14:30:00.000Z",
   "layout": "split-2026-09-13",
   "areas": ["api", "web", "mobile", "packages"],
   "partCounts": {
@@ -10,5 +10,5 @@
     "packages": 0
   },
   "fileCount": 1027,
-  "notes": "**2026-09-16 — surgical refresh + `feature-modules-4.md` area-cap split (docs-only, worktree rf-B420, branch docs/code-map-refresh-2026-09-16)** — `mappedSha` was ~175 files stale (bc24582d..04b73dda, since the 2026-09-13 split-2026-09-13 baseline plus #784's feature-modules-3 split). Refreshed entries across bootstrap-cross-cutting (prisma-schema-and-seeds, schema-integrity-and-backfills, bootstrap-and-money-pricing, calendar-and-advisory-locks), feature-modules-1/3(credit-notes/invoices/returns/routes)/5/6, and web/mobile/packages part files for a LITE invite-only plan + `@RequirePlanFlag` entitlement-gate rollout (WP1/WP5a-c), B421 credit/advance payment-confirmation fixes, PR-1a returns `kind` STANDARD|INLINE, and post-dated check-payment instruments. `feature-modules-4.md` had grown to 99,637 B against the 100,000 B cap — split verbatim into four parts under `api/feature-modules-4/` (inventory.md, billing.md, estimates.md, vendor-bills.md), same pattern as #784's feature-modules-3 split; `feature-modules-4.md` is now a ~1.9 KB TOC, api.md's module-index row updated to match. Rebased over Rescue PR B (#781, five stranded customer-lifecycle fixes + its own feature-modules-3/routes.md amendment, no conflict beyond formatting) after landing. See CHANGELOG.md for the full note; do not accumulate further history here — replace this field each session per that file's header convention."
+  "notes": "**2026-09-16 — merge origin/master + map #778/#779 (docs-only, worktree rf-B420, branch docs/code-map-refresh-2026-09-16)** — merged in #781 (customer-lifecycle rescue), #778 (auth rescue), and #779 (tooling fixes) on top of this branch's earlier surgical refresh + `feature-modules-4.md` split (99,637 B, over the 100,000 B cap, split into `api/feature-modules-4/*.md` same pattern as #784); a few conflicts auto-resolved via git rerere, verified marker-free. Added surgical code-map entries for #778 and #779 — both had landed on master without their own map updates (auth.service.ts/buyer-auth.service.ts timing fix, tenants.service.ts resendVerification, platform-admin B216 DTO, customers.service.ts sendPortalInvite + SMS reject, web signup danger states, auth-shell.css; stop.gate5.spec.mjs's B411 fix, repo-truth jest-lane wiring). See CHANGELOG.md for the full note; do not accumulate further history here — replace this field each session per that file's header convention."
 }
