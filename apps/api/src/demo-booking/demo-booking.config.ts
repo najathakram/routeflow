@@ -71,7 +71,7 @@ function normalisePrivateKey(raw: string | undefined): string {
   if ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'"))) {
     key = key.slice(1, -1);
   }
-  return key.replace(/\n/g, "\n").trim();
+  return key.replace(/\\n/g, "\n").trim();
 }
 
 export function loadDemoBookingConfig(env: NodeJS.ProcessEnv = process.env): DemoBookingConfig {
