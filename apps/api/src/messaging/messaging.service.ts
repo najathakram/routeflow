@@ -23,17 +23,20 @@ export type SkipReason =
 
 /**
  * N1: order-status events gated by the buyer's own `Customer.orderStatusEmails`
- * preference (opt-OUT, default true) — EMAIL only, and ONLY these four events.
- * Every other EMAIL-capable event (INVOICE_SENT, PAYMENT_REMINDER,
- * LICENSE_EXPIRING) and every non-order-status security mail sent directly via
- * EmailService (verification/password/invite — outside this engine entirely)
- * is NEVER opt-out.
+ * preference (opt-OUT, default true) — EMAIL only, and ONLY these five events.
+ * ORDER_CHANGED_AT_DOOR joined the set per owner ruling 2026-09-16: a buyer who
+ * opted out of order-status email gets no at-door change mail either. Every
+ * other EMAIL-capable event (INVOICE_SENT, PAYMENT_REMINDER, LICENSE_EXPIRING)
+ * and every non-order-status security mail sent directly via EmailService
+ * (verification/password/invite — outside this engine entirely) is NEVER
+ * opt-out.
  */
 const ORDER_STATUS_EMAIL_EVENTS = new Set<NotificationEvent>([
   NotificationEvent.ORDER_CONFIRMED,
   NotificationEvent.OUT_FOR_DELIVERY,
   NotificationEvent.DELIVERED,
   NotificationEvent.CANCELLED,
+  NotificationEvent.ORDER_CHANGED_AT_DOOR,
 ]);
 
 export interface SendOutcome {

@@ -188,13 +188,14 @@ describe("MessagingService (P6-2 engine)", () => {
       NotificationEvent.OUT_FOR_DELIVERY,
       NotificationEvent.DELIVERED,
       NotificationEvent.CANCELLED,
+      NotificationEvent.ORDER_CHANGED_AT_DOOR,
     ])("skips %s over EMAIL when the buyer opted out", async (eventKey) => {
       prisma.customer.findFirst.mockResolvedValue(optedOutCustomer);
       const res = await send({ channel: MessageChannel.EMAIL, eventKey });
       expect(res).toMatchObject({ outcome: "skipped", reason: "OPTED_OUT" });
     });
 
-    it("does NOT gate INVOICE_SENT over EMAIL — only the four order-status events are opt-out", async () => {
+    it("does NOT gate INVOICE_SENT over EMAIL — only the five order-status events are opt-out", async () => {
       prisma.customer.findFirst.mockResolvedValue(optedOutCustomer);
       const res = await send({
         channel: MessageChannel.EMAIL,
