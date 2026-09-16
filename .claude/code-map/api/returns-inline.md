@@ -2,7 +2,7 @@
 
 New capability, landing across PR-1a–5 (design: `local-assets/handoff/2026-09-15/order-returns/`;
 not committed — a local planning artifact, read at build time only). STANDARD (existing
-post-delivery RMA) stays documented in [`feature-modules-3.md`](feature-modules-3.md) `returns/` —
+post-delivery RMA) stays documented in [`feature-modules-3/returns.md`](feature-modules-3/returns.md) —
 this file covers only the new `kind: INLINE` path, added incrementally per PR.
 
 ## PR-1a (2026-09-15) — schema + shared readers

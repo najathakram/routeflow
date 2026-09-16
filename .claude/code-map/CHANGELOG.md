@@ -8,6 +8,18 @@ newest first**. This file replaces the old habit of prepending each session's no
 below, and set `_meta.json` `"notes"` to that same note plus the pointer to this file —
 never accumulate history in `"notes"`.
 
+- **2026-09-16 — `feature-modules-3.md` area-cap split (docs-only, no code change, worktree
+  `rf-codemap-split`)** — it had grown to 99,998 B against the 100,000 B cap (PR #781 hit it
+  adding a single line). Split verbatim (byte-diffed identical to the pre-split body, bullet-
+  for-bullet reconstruction proof empty-diff) into seven parts under `api/feature-modules-3/`:
+  `routes.md` (routes/route-optimization), `trips.md`, `invoices.md`, `credit-notes.md`,
+  `returns.md`, `order-templates.md`, `drafts.md` — see that file's own TOC table for what each
+  covers. `feature-modules-3.md` is now a 2.9 KB TOC. Repointed the three live INDEX.md
+  cross-refs (ad-hoc trips, returns STANDARD flow, recurring routes) at the correct new part,
+  `api.md`'s row description, `feature-modules-1.md`'s stale split-threshold note, and
+  `returns-inline.md`'s STANDARD-flow pointer. `mappedSha` left as-is (same convention as the
+  2026-09-15 `bootstrap-cross-cutting.md` split below).
+
 - **2026-09-15 — Lite-L2 invite-only LITE plan + B445 checkout planKey fix (worktree
   `rf-lite-L2`, WP1-WP14, uncommitted)** — WP14 fixed a pre-existing prod defect:
   `billing.service.ts onCheckoutCompleted`'s upsert never wrote the `planKey` string column
