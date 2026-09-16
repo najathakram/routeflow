@@ -2120,21 +2120,40 @@ export class CustomersService {
     try {
       await this.prisma.tenantTransaction(async (tx) => {
         await tx.customer.update({ where: { id }, data: { deletedAt: null } });
+
+        // F6: a live user may have since claimed this customer's real email (a fresh
+        // signup, or another restore) while this one was removed. tx is already
+        // tenant-scoped (prisma.service.ts _wrapTxWithTenant injects tenantId into every
+        // findFirst), so this check never crosses tenants. Falling back to a placeholder
+        // here — rather than letting the write hit the @@unique([tenantId, email])
+        // constraint — keeps restore from failing outright over an email collision that
+        // has nothing to do with the username the caller may be retrying with.
+        let emailToRestore = restoredEmail;
+        if (customer.email) {
+          const emailHolder = await tx.user.findFirst({
+            where: { email: customer.email, id: { not: customer.userId } },
+          });
+          if (emailHolder) {
+            emailToRestore = `no-email+${crypto.randomUUID()}@placeholder.local`;
+          }
+        }
+
         await tx.user.update({
           where: { id: customer.userId },
           data: {
             status,
             deletedAt: null,
             username: restoredUsername,
-            email: restoredEmail,
+            email: emailToRestore,
           },
         });
       });
     } catch (err: any) {
-      // A newer customer claimed this username/email while the original was removed.
+      // A newer customer claimed this username or (in the unlikely race the pre-check
+      // above missed) email while the original was removed.
       if (err?.code !== "P2002") throw err;
       throw new ConflictException(
-        "That username is now used by another customer — restore with a different username",
+        "Another customer now uses this username or email — restore with a different username",
       );
     }
     return { success: true, restored: true };

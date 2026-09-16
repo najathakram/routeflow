@@ -1154,6 +1154,32 @@ describe("CustomersService", () => {
         data: { status: "ACTIVE", deletedAt: null, username: "acme", email: "acme@shop.com" },
       });
     });
+
+    // ─── F6 — restore email conflict ──────────────────────────────────────────
+    it("F6: falls back to a placeholder email when another live user now holds the real one", async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        userId: "user-1",
+        deletedAt: new Date(),
+        email: "acme@shop.com",
+        user: { status: "ACTIVE", username: "acme" },
+      });
+      // A different user in the tenant has since claimed "acme@shop.com".
+      prisma.user.findFirst.mockResolvedValue({ id: "user-someone-else" });
+
+      const result = await service.restoreCustomer("cust-1");
+
+      expect(result).toEqual({ success: true, restored: true });
+      expect(prisma.user.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ email: "acme@shop.com", id: { not: "user-1" } }),
+        }),
+      );
+      const data = prisma.user.update.mock.calls[0][0].data;
+      expect(data.deletedAt).toBeNull();
+      expect(data.email).not.toBe("acme@shop.com");
+      expect(data.email).toMatch(/^no-email\+.+@placeholder\.local$/);
+    });
   });
 
   // ─── mergeCustomers: regulated authorization re-pointing ────────────────────
