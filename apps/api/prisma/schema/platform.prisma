@@ -783,3 +783,56 @@ model CrmHandoff {
   @@unique([tenantId, provider, opportunityId])
   @@index([tenantId, status, createdAt])
 }
+
+// ─── Marketing demo bookings (NOT tenant-scoped — prospects, not customers) ───
+// A visitor on the public marketing site books a product walkthrough against the
+// admin@routeflow.info Google Calendar. These rows are the RouteFlow-side record
+// of that booking: Google owns the event, we own the lead. No `tenantId` — the
+// person booking does not have a workspace yet, which is the whole point.
+
+enum DemoBookingStatus {
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+model DemoBooking {
+  id       String  @id @default(uuid())
+  name     String
+  email    String
+  company  String
+  phone    String?
+  notes    String?
+
+  /// Slot boundaries, always stored in UTC. `timeZone` is the IANA zone the
+  /// visitor booked in — kept so confirmation emails and the manage page can
+  /// echo the time back in the zone they actually chose.
+  startsAt DateTime
+  endsAt   DateTime
+  timeZone String
+
+  status       DemoBookingStatus @default(CONFIRMED)
+  cancelledAt  DateTime?
+  cancelReason String?
+
+  /// The Google Calendar event this row mirrors, and its generated Meet link.
+  /// Null when the calendar write failed — the lead is still captured.
+  googleEventId String?
+  meetUrl       String?
+
+  /// SHA-256 of the signed manage token handed out in the confirmation email.
+  /// The raw token is never stored, so a database read cannot cancel a booking.
+  manageTokenHash String @unique
+
+  /// Set when this booking replaced an earlier slot, for support context.
+  rescheduledFrom DateTime?
+  rescheduleCount Int       @default(0)
+
+  sourcePage String?
+  createdIp  String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([startsAt, status])
+  @@index([email, createdAt])
+}

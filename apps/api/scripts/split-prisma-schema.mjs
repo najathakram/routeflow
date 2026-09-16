@@ -238,6 +238,7 @@ const MODEL_DOMAIN = {
   ImportQueueItem: "platform",
   AiUsageEvent: "platform",
   IdempotencyKey: "platform",
+  DemoBooking: "platform",
   CrmConnection: "platform",
   CrmHandoff: "platform",
 
