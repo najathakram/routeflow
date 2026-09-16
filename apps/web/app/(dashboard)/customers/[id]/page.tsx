@@ -32,6 +32,7 @@ import {
   Download,
   ShieldCheck,
   Wallet,
+  UserCheck,
 } from "lucide-react";
 import {
   Avatar,
@@ -2032,6 +2033,11 @@ function CustomerDetailPageInner({ id }: { id: string }) {
   const orderCount = ordersResult?.meta?.total ?? 0;
   const addresses = customer?.addresses ?? [];
   const currentStatus: CustomerStatus = (customer?.user?.status as CustomerStatus) ?? "ACTIVE";
+  // REG-B170: the detail page previously looked fully live for a removed (soft-deleted)
+  // customer — no banner, edit/status/remove controls all still rendered. Reads keep working
+  // (restore symmetry); only the banner + Restore surface and hiding those controls are new —
+  // the actual safety net is the server refusing update/changeStatus for a removed customer.
+  const isRemoved = !!customer?.deletedAt;
 
   React.useEffect(() => {
     setTitle(customer?.businessName ?? "Customer");
@@ -2282,13 +2288,36 @@ function CustomerDetailPageInner({ id }: { id: string }) {
         </Link>
       </div>
 
+      {/* REG-B170: removed customers previously looked fully live here — no indication, and
+          restore was reachable only within the 8-second Undo toast right after removal. */}
+      {isRemoved && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-danger/30 bg-danger-bg px-4 py-3">
+          <p className="text-sm font-medium text-danger">
+            This customer has been removed. Restore it to edit or change its status.
+          </p>
+          <Button
+            variant="secondary"
+            size="sm"
+            leftIcon={<UserCheck className="h-3.5 w-3.5" />}
+            onClick={() => restoreCustomer.mutate({ id })}
+            loading={restoreCustomer.isPending}
+          >
+            Restore
+          </Button>
+        </div>
+      )}
+
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-center gap-3.5">
           <Avatar name={customer.businessName} size="lg" className="h-[42px] w-[42px] text-sm" />
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2.5">
               <h1 className="text-2xl font-bold text-navy">{customer.businessName}</h1>
-              <Badge status={currentStatus} />
+              {isRemoved ? (
+                <Badge variant="danger" label="Removed" />
+              ) : (
+                <Badge status={currentStatus} />
+              )}
               <Badge
                 variant="info"
                 label={`${tierLabel(tierLabels, customer.pricingTier ?? 1)} pricing`}
@@ -2324,14 +2353,16 @@ function CustomerDetailPageInner({ id }: { id: string }) {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2.5">
-          <Button
-            variant="secondary"
-            size="sm"
-            leftIcon={<Pencil className="h-3.5 w-3.5" />}
-            onClick={() => setIsEditOpen(true)}
-          >
-            Edit
-          </Button>
+          {!isRemoved && (
+            <Button
+              variant="secondary"
+              size="sm"
+              leftIcon={<Pencil className="h-3.5 w-3.5" />}
+              onClick={() => setIsEditOpen(true)}
+            >
+              Edit
+            </Button>
+          )}
           <Button
             variant="secondary"
             size="sm"
@@ -2982,50 +3013,69 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                 )}
 
                 <Card title="Account Status">
-                  <div className="flex flex-col gap-4">
-                    <div className="flex items-center justify-between">
-                      <p className="text-sm text-navy/70">Current status</p>
-                      <Badge status={currentStatus} />
-                    </div>
-                    <div className="space-y-2">
-                      {STATUS_CYCLE.map((s) => (
-                        <button
-                          key={s}
-                          onClick={() => handleStatusChange(s)}
-                          disabled={updateStatus.isPending}
-                          className={cn(
-                            "flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
-                            currentStatus === s
-                              ? "border-brand-500 bg-brand-50 text-brand-700"
-                              : "border-surface-border text-navy/70 hover:border-navy/30 hover:text-navy",
-                          )}
-                        >
-                          <span
-                            className={cn(
-                              "h-2 w-2 rounded-full",
-                              s === "ACTIVE"
-                                ? "bg-success"
-                                : s === "INACTIVE"
-                                  ? "bg-navy/30"
-                                  : "bg-danger",
-                            )}
-                          />
-                          {s.charAt(0) + s.slice(1).toLowerCase()}
-                        </button>
-                      ))}
-                    </div>
-                    {currentStatus === "SUSPENDED" && (
-                      <div className="border-t border-surface-border pt-4">
-                        <button
-                          onClick={() => setIsDeleteOpen(true)}
-                          className="flex w-full items-center gap-2 rounded-lg border border-danger/30 px-3 py-2 text-sm font-medium text-danger transition-colors hover:bg-danger/5"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                          Remove customer
-                        </button>
+                  {isRemoved ? (
+                    // REG-B170: status can't be cycled and Remove doesn't apply to an
+                    // already-removed customer — Restore is the only action here.
+                    <div className="flex flex-col gap-4">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm text-navy/70">Current status</p>
+                        <Badge variant="danger" label="Removed" />
                       </div>
-                    )}
-                  </div>
+                      <Button
+                        variant="secondary"
+                        leftIcon={<UserCheck className="h-4 w-4" />}
+                        onClick={() => restoreCustomer.mutate({ id })}
+                        loading={restoreCustomer.isPending}
+                      >
+                        Restore customer
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-4">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm text-navy/70">Current status</p>
+                        <Badge status={currentStatus} />
+                      </div>
+                      <div className="space-y-2">
+                        {STATUS_CYCLE.map((s) => (
+                          <button
+                            key={s}
+                            onClick={() => handleStatusChange(s)}
+                            disabled={updateStatus.isPending}
+                            className={cn(
+                              "flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
+                              currentStatus === s
+                                ? "border-brand-500 bg-brand-50 text-brand-700"
+                                : "border-surface-border text-navy/70 hover:border-navy/30 hover:text-navy",
+                            )}
+                          >
+                            <span
+                              className={cn(
+                                "h-2 w-2 rounded-full",
+                                s === "ACTIVE"
+                                  ? "bg-success"
+                                  : s === "INACTIVE"
+                                    ? "bg-navy/30"
+                                    : "bg-danger",
+                              )}
+                            />
+                            {s.charAt(0) + s.slice(1).toLowerCase()}
+                          </button>
+                        ))}
+                      </div>
+                      {currentStatus === "SUSPENDED" && (
+                        <div className="border-t border-surface-border pt-4">
+                          <button
+                            onClick={() => setIsDeleteOpen(true)}
+                            className="flex w-full items-center gap-2 rounded-lg border border-danger/30 px-3 py-2 text-sm font-medium text-danger transition-colors hover:bg-danger/5"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            Remove customer
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </Card>
 
                 {/* ── Buyer Portal card ──────────────────────────── */}

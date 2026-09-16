@@ -8,6 +8,68 @@ newest first**. This file replaces the old habit of prepending each session's no
 below, and set `_meta.json` `"notes"` to that same note plus the pointer to this file —
 never accumulate history in `"notes"`.
 
+- **2026-09-16 — merge origin/master + map #778/#779 (worktree `rf-B420`, branch
+  `docs/code-map-refresh-2026-09-16`)** — merged origin/master (bringing in #781's
+  customer-lifecycle rescue, #778's auth rescue, and #779's tooling fixes) into this
+  branch's earlier commit (the surgical refresh + feature-modules-4 split, entry
+  below); two content conflicts (`_meta.json`'s rolling notes field,
+  `feature-modules-3/{credit-notes,invoices}.md`'s empty-vs-populated bullets) plus
+  one already-identical `api.md` TOC row, all auto-resolved via git rerere from an
+  earlier rebase attempt of the same delta, verified marker-free. Added surgical
+  entries for #778 (`auth.service.ts`/`buyer-auth.service.ts` status-after-bcrypt
+  timing fix, `verifyEmailAndLogin` status refusal, `tenants.service.ts
+resendVerification` logging + B448 cross-ref, `platform-admin.controller.ts` B216
+  `CreateTenantAdminDto`, `customers.service.ts sendPortalInvite` actually sending
+  email + SMS hard-reject, web `signup`/`check-email` `emailSent:false`/
+  `resendFailed` danger states, `auth-shell.css`'s `.rf-auth-success--danger`) and
+  #779 (`stop.gate5.spec.mjs`'s B411 fix — F4's per-dir `existsSync` check replacing
+  an ambient tmpdir-count comparison that false-tripped on a concurrent sibling run
+  — and the `bugs-self-test-script.spec.ts` repo-truth jest-lane wiring;
+  `next-version.ts`/`bugs-self-test-script.spec.ts` themselves were already
+  documented by #779's own map update, not duplicated) — both PRs had landed on
+  master without their own code-map updates. Validator green throughout.
+
+- **2026-09-16 — surgical refresh across ~175 stale files + `feature-modules-4.md` area-cap
+  split (docs-only, worktree `rf-B420`, branch `docs/code-map-refresh-2026-09-16`)** —
+  `_meta.json.mappedSha` (`bc24582d`) was left untouched by #784's split, ~175 files stale by
+  `04b73dda` (this session's HEAD). Refreshed via 4 parallel subagents on disjoint target files:
+  bootstrap-cross-cutting parts (`prisma-schema-and-seeds.md`, `schema-integrity-and-backfills.md`,
+  `bootstrap-and-money-pricing.md`, `calendar-and-advisory-locks.md` — new plan-catalog-v12
+  publisher, `bootstrap-house-tenant.mjs`, post-dated-check backfill, `check-transitions.ts`,
+  enum-parity/schema-folder pinned counts); `feature-modules-1.md`,
+  `feature-modules-3/{credit-notes,invoices,returns,routes}.md`, `feature-modules-5.md`,
+  `feature-modules-6.md` (LITE invite-only plan `@RequirePlanFlag` gates WP5a-c across
+  credit-notes/customers/messages/recurring-invoices/suppliers, B421 credit/advance
+  payment-confirmation split in invoices, PR-1a returns `kind` STANDARD|INLINE, platform-admin
+  `tenant-mirror.service.ts`); `web/{api-hooks,app-shell-lib,e2e-tests,routes-3}.md` and
+  `mobile/{app-shell-lib,tests-2}.md` (plan-flags/PlanGates/AdminBadge MRR card, B421 field
+  fixes, post-dated-check badge). `feature-modules-4.md` had grown to 99,637 B against the
+  100,000 B cap — split verbatim (same pattern as #784) into `api/feature-modules-4/`:
+  `inventory.md`, `billing.md` (58,842 B, gained the LITE-plan/plan-flag-policy refresh),
+  `estimates.md`, `vendor-bills.md`; `feature-modules-4.md` is now a ~1.9 KB TOC, `api.md`'s
+  module-index row updated to match. `mappedSha` bumped to `04b73dda` this time (all target
+  files were actually touched, unlike the two prior "left as-is" splits above).
+
+- **2026-09-15 — Rescue PR B: five stranded customer-lifecycle fixes (worktree
+  `rf-rescue-lifecycle`, branch `feat/rescue-customer-lifecycle`)** — cherry-picked
+  `b3ecec42`/`c255f042`/`f137fcae`/`168b172a` from the never-merged `fix/f09-f15-customer-lifecycle`
+  branch after `local-assets/handoff/2026-09-16/stranded-fix-verification.md` confirmed all five
+  bug ids (B13/B156/B157/B158/B159/B170) were still genuinely missing from master. All four
+  cherry-picked cleanly onto `origin/master` (one trivial import-order conflict in
+  `customers.service.ts`, resolved by keeping both imports) — B156/B158/B170 share one
+  `buildListWhere()` behind `findAll`+`exportCustomers` plus `unassigned`/`removed`
+  `ListCustomersDto` filters and a removed-customer edit/reactivate 409 guard; B157 factors
+  `LIVE_CUSTOMER_STOP_WHERE`/`SCHEDULED_ROUTE_KIND_WHERE` into new
+  `apps/api/src/routes/route-stop-filters.util.ts`, shared by `findOneRoute`/`getPackingList`/
+  `getCustomerRouteAssignments`/`addStop`/`createRun`; B159 tombstones the linked `User`'s
+  username/email/googleId on soft-delete and reverses it on restore (P2002 retry path); B13 wires
+  the previously-uncalled `useApplyAdvanceToInvoice` hook into a new `ApplyAdvanceModal` on
+  `invoices/[id]/page.tsx`. RED/GREEN-verified: all 17 new REG- test cases fail against the
+  pre-fix service files and pass against the fix. `api/feature-modules-1.md` (customers),
+  `api/feature-modules-3.md` (routes), `web/routes-1.md`/`web/routes-2.md` (customers/invoices
+  UI), `web/api-hooks.md`, `mobile/tests-1.md` each got a short amendment for the newly-wired
+  behaviour; no new area file. B13's Playwright proof (`apps/web/e2e/38-apply-advance.spec.ts`)
+  is written but not run — deferred to a host grant per standing UI-proof policy.
 - **2026-09-16 — `feature-modules-3.md` area-cap split (docs-only, no code change, worktree
   `rf-codemap-split`)** — it had grown to 99,998 B against the 100,000 B cap (PR #781 hit it
   adding a single line). Split verbatim (byte-diffed identical to the pre-split body, bullet-

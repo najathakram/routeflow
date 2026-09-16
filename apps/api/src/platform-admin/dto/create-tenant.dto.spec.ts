@@ -48,3 +48,46 @@ describe("CreateTenantDto — plan + trialLengthDays validation", () => {
     expect(errors.filter((e) => e.property === "trialLengthDays")).toHaveLength(0);
   });
 });
+
+/**
+ * B03-class regression coverage: `CreateTenantDto.adminPassword` (the
+ * platform-admin "create tenant" form's optional admin password) used to
+ * enforce only @MinLength(8) — the identical gap the B03 fix closed on the
+ * self-service register-tenant.dto.ts — and had zero test coverage. A
+ * SUPER_ADMIN supplying a weak password here creates a permanent
+ * TENANT_ADMIN credential (forcePasswordChange is only set when the
+ * password is auto-generated), so the same platform-wide policy applies.
+ */
+const validDto = {
+  slug: "acme-distribution",
+  businessName: "Acme Distribution",
+  adminEmail: "owner@acme.example",
+  adminUsername: "acme_admin",
+};
+
+describe("CreateTenantDto.adminPassword complexity (B03-class)", () => {
+  it("is optional — omitting it entirely still validates (auto-generated password path)", async () => {
+    const dto = plainToInstance(CreateTenantDto, validDto);
+    const errors = await validate(dto);
+    expect(errors).toHaveLength(0);
+  });
+
+  it.each([
+    ["too short", "Ab1!"],
+    ["no uppercase — passed before this fix", "lowercase1!"],
+    ["no lowercase — passed before this fix", "UPPERCASE1!"],
+    ["letters only, no digit/special — passed before this fix", "PasswordOnly"],
+  ])("rejects %s when a password IS supplied", async (_label, adminPassword) => {
+    const dto = plainToInstance(CreateTenantDto, { ...validDto, adminPassword });
+    const errors = await validate(dto);
+    expect(errors.map((e) => e.property)).toContain("adminPassword");
+  });
+
+  it.each([
+    ["digit", "SecurePass1"],
+    ["special char", "SecurePass!"],
+  ])("accepts upper+lower with a %s", async (_label, adminPassword) => {
+    const dto = plainToInstance(CreateTenantDto, { ...validDto, adminPassword });
+    expect(await validate(dto)).toHaveLength(0);
+  });
+});

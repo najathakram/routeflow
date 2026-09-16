@@ -10,6 +10,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { EmailService } from "../email/email.service";
 
 // B127 — apps/api/src/customers/customers.service.ts deleteAllCustomers()
 //
@@ -55,6 +56,10 @@ describe("CustomersService.deleteAllCustomers — PAID/SENT pre-flight (B127)", 
         {
           provide: RegulatedLedgerService,
           useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+        },
+        {
+          provide: EmailService,
+          useValue: { send: jest.fn().mockResolvedValue({ delivered: true, transport: "resend" }) },
         },
         { provide: PrismaService, useValue: prisma },
         { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(null) } },
