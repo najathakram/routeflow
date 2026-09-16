@@ -1046,3 +1046,106 @@ describe("EmailService.sendInvoice — BOGO/promo item display (T-B103, R9, REG-
     expect(row).toContain("$50.00");
   });
 });
+
+// ─── N2: account + invite email templates ──────────────────────────────────────
+
+describe("EmailService — N2 account/invite templates", () => {
+  it("sendSetPasswordEmail: subject, link, and expiry hours all land in the html", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendSetPasswordEmail({
+      to: "acme_owner@example.com",
+      username: "acme_owner",
+      setPasswordUrl: "https://app.routeflow.info/reset-password?token=abc123",
+      expiryHours: 72,
+    });
+
+    expect(sendSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "acme_owner@example.com",
+        subject: "Set your RouteFlow password",
+      }),
+    );
+    const html = sendSpy.mock.calls[0][0].html;
+    expect(html).toContain('href="https://app.routeflow.info/reset-password?token=abc123"');
+    expect(html).toContain("expires in 72 hours");
+  });
+
+  it("sendSetPasswordEmail: escapes a username containing HTML-special characters", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendSetPasswordEmail({
+      to: "a@b.com",
+      username: '<script>alert("x")</script>',
+      setPasswordUrl: "https://app.routeflow.info/reset-password?token=t",
+      expiryHours: 72,
+    });
+
+    const html = sendSpy.mock.calls[0][0].html;
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;script&gt;");
+  });
+
+  it("sendEmailChangedNotice: names the new email to the OLD address", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendEmailChangedNotice({
+      to: "old@example.com",
+      username: "acme_owner",
+      newEmail: "new@example.com",
+    });
+
+    expect(sendSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "old@example.com",
+        subject: "Your RouteFlow login email was changed",
+      }),
+    );
+    expect(sendSpy.mock.calls[0][0].html).toContain("new@example.com");
+  });
+
+  it("sendEmailChangeConfirmation: goes to the NEW address", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendEmailChangeConfirmation({ to: "new@example.com", username: "acme_owner" });
+
+    expect(sendSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "new@example.com",
+        subject: "This is now your RouteFlow login email",
+      }),
+    );
+  });
+
+  it("sendRoleChangedNotice: names old role, new role, and who changed it", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendRoleChangedNotice({
+      to: "acme_owner@example.com",
+      username: "acme_owner",
+      oldRole: "DRIVER",
+      newRole: "OPERATOR",
+      changedBy: "tenant_admin",
+    });
+
+    const html = sendSpy.mock.calls[0][0].html;
+    expect(html).toContain("DRIVER");
+    expect(html).toContain("OPERATOR");
+    expect(html).toContain("tenant_admin");
+  });
+});

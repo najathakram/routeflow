@@ -195,6 +195,45 @@ interface PlatformSmtpConfig {
   pass: string;
 }
 
+/** Escapes a value for safe interpolation into an HTML email body (N2 ground rule —
+ *  every interpolated value must be escaped; a username/email is user-supplied). */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/** Shared card/header/footer shell for the N2 account-notification templates — same
+ *  visual grammar as sendMergeVerificationEmail/sendMergeCompleteEmail (page background,
+ *  rounded white card, colored header bar, light-gray footer), factored out once here
+ *  since N2 adds four templates rather than one. Not a rewrite of buildInvoiceEmail's own
+ *  shell — that one stays as-is for invoices. */
+function renderEmailShell(params: {
+  headerColor: string;
+  headerTitle: string;
+  bodyHtml: string;
+}): string {
+  return `<!DOCTYPE html>
+<html><body style="margin:0;padding:0;background:#f9fafb;font-family:Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:32px 16px;">
+<table width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:8px;border:1px solid #e5e7eb;">
+  <tr><td style="background:${params.headerColor};padding:24px 32px;border-radius:8px 8px 0 0;">
+    <p style="margin:0;font-size:20px;font-weight:700;color:#ffffff;">${params.headerTitle}</p>
+  </td></tr>
+  <tr><td style="padding:32px;">
+    ${params.bodyHtml}
+  </td></tr>
+  <tr><td style="background:#f9fafb;padding:16px 32px;border-top:1px solid #f0f0f0;border-radius:0 0 8px 8px;">
+    <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;">RouteFlow Platform — this is an automated account email.</p>
+  </td></tr>
+</table>
+</td></tr></table>
+</body></html>`;
+}
+
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
@@ -1416,5 +1455,87 @@ export class EmailService {
           `Please use <strong>${params.primaryEmail}</strong> to sign in going forward. This account (${params.secondaryEmail}) is now deactivated.`,
         ),
     });
+  }
+
+  // ─── N2: account + invite emails (staff invite, admin reset, email/role change) ────
+
+  /** Staff invite (createOperator) and admin-triggered password reset share this one
+   *  template — both hand the recipient the same single-use set-password link. */
+  async sendSetPasswordEmail(params: {
+    to: string;
+    username: string;
+    setPasswordUrl: string;
+    expiryHours: number;
+  }) {
+    const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${escapeHtml(params.username)},</p>
+    <p style="margin:0 0 16px;font-size:15px;color:#374151;">
+      Your RouteFlow account is ready. Click below to set your password and finish signing in.
+    </p>
+    <table cellpadding="0" cellspacing="0"><tr><td style="background:#4f46e5;border-radius:6px;">
+      <a href="${params.setPasswordUrl}" style="display:inline-block;padding:12px 28px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;">
+        Set your password
+      </a>
+    </td></tr></table>
+    <p style="margin:24px 0 0;font-size:13px;color:#9ca3af;">
+      This link expires in ${params.expiryHours} hours. If you weren't expecting this, contact your administrator.
+    </p>`;
+    const html = renderEmailShell({
+      headerColor: "#4f46e5",
+      headerTitle: "RouteFlow — Set your password",
+      bodyHtml: body,
+    });
+    return this.send({ to: params.to, subject: "Set your RouteFlow password", html });
+  }
+
+  /** Notice to a user's OLD address after their login email is changed — never opt-out. */
+  async sendEmailChangedNotice(params: { to: string; username: string; newEmail: string }) {
+    const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${escapeHtml(params.username)},</p>
+    <p style="margin:0 0 16px;font-size:15px;color:#374151;">
+      Your RouteFlow login email was changed to <strong>${escapeHtml(params.newEmail)}</strong>.
+    </p>
+    <p style="margin:0;font-size:13px;color:#9ca3af;">
+      If you didn't make this change, contact your administrator immediately.
+    </p>`;
+    const html = renderEmailShell({
+      headerColor: "#4f46e5",
+      headerTitle: "RouteFlow — Login email changed",
+      bodyHtml: body,
+    });
+    return this.send({ to: params.to, subject: "Your RouteFlow login email was changed", html });
+  }
+
+  /** Confirmation to a user's NEW address once it becomes their login email. */
+  async sendEmailChangeConfirmation(params: { to: string; username: string }) {
+    const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${escapeHtml(params.username)},</p>
+    <p style="margin:0;font-size:15px;color:#374151;">
+      This address is now your RouteFlow login email.
+    </p>`;
+    const html = renderEmailShell({
+      headerColor: "#4f46e5",
+      headerTitle: "RouteFlow — This is now your login email",
+      bodyHtml: body,
+    });
+    return this.send({ to: params.to, subject: "This is now your RouteFlow login email", html });
+  }
+
+  /** Notice to a user when an operator/admin changes their role — never opt-out. */
+  async sendRoleChangedNotice(params: {
+    to: string;
+    username: string;
+    oldRole: string;
+    newRole: string;
+    changedBy: string;
+  }) {
+    const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${escapeHtml(params.username)},</p>
+    <p style="margin:0;font-size:15px;color:#374151;">
+      Your RouteFlow role was changed from <strong>${escapeHtml(params.oldRole)}</strong> to
+      <strong>${escapeHtml(params.newRole)}</strong> by ${escapeHtml(params.changedBy)}.
+    </p>`;
+    const html = renderEmailShell({
+      headerColor: "#4f46e5",
+      headerTitle: "RouteFlow — Your role was changed",
+      bodyHtml: body,
+    });
+    return this.send({ to: params.to, subject: "Your RouteFlow role was changed", html });
   }
 }
