@@ -3183,6 +3183,10 @@ export class OrdersService implements OnApplicationBootstrap {
       [OrderStatus.CONFIRMED]: NotificationEvent.ORDER_CONFIRMED,
       [OrderStatus.OUT_FOR_DELIVERY]: NotificationEvent.OUT_FOR_DELIVERY,
       [OrderStatus.DELIVERED]: NotificationEvent.DELIVERED,
+      // N1 (2026-09-16): CANCELLED gains a real messaging-engine event — the
+      // older push-notification `notifMap` above already covered it; this adds
+      // the (now real, via EmailChannelProvider) EMAIL/PORTAL/WA/SMS channels.
+      [OrderStatus.CANCELLED]: NotificationEvent.CANCELLED,
     };
     const messagingEvent = messagingEventMap[dto.status];
     if (messagingEvent) {

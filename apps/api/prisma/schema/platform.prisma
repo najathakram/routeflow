@@ -289,6 +289,11 @@ enum NotificationEvent {
   ORDER_CONFIRMED
   OUT_FOR_DELIVERY
   DELIVERED
+  // N1 (2026-09-16): buyer-facing order-status email/messaging events, added
+  // alongside the real EMAIL channel provider — CONFIRMED/OUT_FOR_DELIVERY/
+  // DELIVERED already existed; CANCELLED did not (only the older, separate
+  // push-notification path in orders.service.ts's `notifMap` covered it).
+  CANCELLED
   ORDER_CHANGED_AT_DOOR
   INVOICE_SENT // email/portal only; WA/SMS cells render disabled
   PAYMENT_REMINDER

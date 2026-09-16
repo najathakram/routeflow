@@ -61,7 +61,14 @@ import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
-import { OrderStatus, UserRole, Prisma, RouteRunStatus, RouteRunStopStatus } from "@prisma/client";
+import {
+  OrderStatus,
+  UserRole,
+  Prisma,
+  RouteRunStatus,
+  RouteRunStopStatus,
+  NotificationEvent,
+} from "@prisma/client";
 
 const MOCK_PRODUCT = {
   id: "prod-1",
@@ -3010,14 +3017,21 @@ describe("OrdersService", () => {
       );
     });
 
-    it("CANCELLED fires no messaging trigger", async () => {
+    it("CANCELLED fires the CANCELLED messaging event (N1 — real EMAIL channel)", async () => {
+      // Pre-N1 this asserted NO messaging trigger at all — CANCELLED had no
+      // NotificationEvent and no firing site. N1 adds one alongside the real
+      // EmailChannelProvider transport so cancelled-order buyers actually hear
+      // about it over EMAIL/PORTAL/WA/SMS like every other order-status event.
       prisma.order.findUnique.mockResolvedValue(MOCK_ORDER);
       prisma.order.findFirst.mockResolvedValue(MOCK_ORDER); // cancelImpact's own read
       prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, status: "CANCELLED" });
 
       await service.changeStatus("ord-1", { status: "CANCELLED" as any }, operatorPayload);
 
-      expect(messagingService.notifyEvent).not.toHaveBeenCalled();
+      expect(messagingService.notifyEvent).toHaveBeenCalledWith(
+        NotificationEvent.CANCELLED,
+        expect.objectContaining({ customerId: MOCK_ORDER.customerId }),
+      );
     });
   });
 

@@ -41,6 +41,11 @@ export class UpdateCustomerDto {
   @IsOptional() @IsString() lastName?: string;
   @IsOptional() @IsString() taxId?: string;
   @IsOptional() @IsBoolean() isTaxExempt?: boolean;
+  // N1 (2026-09-16): buyer preference for order-status EMAIL notifications
+  // (CONFIRMED/OUT_FOR_DELIVERY/DELIVERED/CANCELLED) — default ON, opt-out.
+  // Never consulted for security mail. Also exposed on UpdateBuyerProfileDto
+  // so the buyer themself can toggle it via PATCH /buyer/me.
+  @IsOptional() @IsBoolean() orderStatusEmails?: boolean;
   @IsOptional() creditLimit?: number;
   @IsOptional() @IsString() currency?: string;
   @IsOptional() @IsInt() @Min(1) @Max(5) pricingTier?: number;

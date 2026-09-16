@@ -3,7 +3,7 @@ import { MessageChannel, MeterKey, NotificationEvent, UserRole, UserStatus } fro
 import { PrismaService } from "../prisma/prisma.service";
 import { MeterService } from "../billing/meter.service";
 import { MESSAGE_PROVIDER, type MessageProvider } from "./providers/message-provider.interface";
-import { seedDefaultsFor } from "./messaging-config.service";
+import { DEFAULT_TEMPLATES, seedDefaultsFor } from "./messaging-config.service";
 import {
   isInvoicePolicyViolation,
   isMetered,
@@ -20,6 +20,21 @@ export type SkipReason =
   | "NO_CUSTOMER"
   | "SEND_FAILED"
   | "NO_TRANSPORT";
+
+/**
+ * N1: order-status events gated by the buyer's own `Customer.orderStatusEmails`
+ * preference (opt-OUT, default true) — EMAIL only, and ONLY these four events.
+ * Every other EMAIL-capable event (INVOICE_SENT, PAYMENT_REMINDER,
+ * LICENSE_EXPIRING) and every non-order-status security mail sent directly via
+ * EmailService (verification/password/invite — outside this engine entirely)
+ * is NEVER opt-out.
+ */
+const ORDER_STATUS_EMAIL_EVENTS = new Set<NotificationEvent>([
+  NotificationEvent.ORDER_CONFIRMED,
+  NotificationEvent.OUT_FOR_DELIVERY,
+  NotificationEvent.DELIVERED,
+  NotificationEvent.CANCELLED,
+]);
 
 export interface SendOutcome {
   channel: MessageChannel;
@@ -39,6 +54,8 @@ export interface SendMessageInput {
   senderRole?: string;
   eventKey?: NotificationEvent;
   templateName?: string;
+  /** N1: email subject — see SendInput.subject. Ignored by non-EMAIL channels. */
+  subject?: string;
 }
 
 /**
@@ -100,6 +117,7 @@ export class MessagingService {
         email: true,
         smsConsent: true,
         waConsent: true,
+        orderStatusEmails: true,
       },
     });
     if (!customer) return skip("NO_CUSTOMER");
@@ -115,6 +133,19 @@ export class MessagingService {
     if (requiresConsent(channel)) {
       const optOut = await db.messageOptOut.findFirst({ where: { customerId, channel } });
       if (optOut) return skip("OPTED_OUT");
+    }
+
+    // 3b. N1 — buyer's own order-status EMAIL preference (opt-OUT, default true).
+    // EMAIL + one of the four order-status events ONLY: never gates INVOICE_SENT/
+    // PAYMENT_REMINDER/LICENSE_EXPIRING, and never gates security mail (that goes
+    // through EmailService directly, outside this engine).
+    if (
+      channel === MessageChannel.EMAIL &&
+      eventKey &&
+      ORDER_STATUS_EMAIL_EVENTS.has(eventKey) &&
+      !customer.orderStatusEmails
+    ) {
+      return skip("OPTED_OUT");
     }
 
     // Destination must exist for provider channels.
@@ -154,6 +185,7 @@ export class MessagingService {
         to,
         body,
         templateName: input.templateName,
+        subject: input.subject,
       });
       if (res.status === "failed") {
         return { channel, outcome: "failed", reason: "SEND_FAILED", wouldBeQuiet };
@@ -229,6 +261,10 @@ export class MessagingService {
           senderRole: "SYSTEM",
           eventKey,
           templateName: template.waTemplateName ?? undefined,
+          // N1: email subject — the same human label the settings matrix
+          // already shows for this event (DEFAULT_TEMPLATES[eventKey].label).
+          // Ignored by every non-EMAIL channel.
+          subject: DEFAULT_TEMPLATES[eventKey].label,
         }),
       );
     }

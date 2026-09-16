@@ -44,6 +44,8 @@ describe("MessagingService (P6-2 engine)", () => {
       email: "buyer@example.com",
       smsConsent: true,
       waConsent: true,
+      // N1: matches the schema default (Customer.orderStatusEmails @default(true)).
+      orderStatusEmails: true,
     });
     prisma.messageThread.findFirst.mockResolvedValue({ id: "thread-1" });
     prisma.messageThread.create.mockResolvedValue({ id: "thread-1" });
@@ -160,6 +162,66 @@ describe("MessagingService (P6-2 engine)", () => {
     expect(res).toMatchObject({ outcome: "skipped", reason: "NO_CONTACT" });
   });
 
+  describe("N1 — Customer.orderStatusEmails gates order-status EMAIL only (opt-out, default true)", () => {
+    const optedOutCustomer = {
+      id: "cust-1",
+      phone: "+15550001111",
+      mobile: null,
+      email: "buyer@example.com",
+      smsConsent: true,
+      waConsent: true,
+      orderStatusEmails: false,
+    };
+
+    it("skips ORDER_CONFIRMED over EMAIL when the buyer opted out", async () => {
+      prisma.customer.findFirst.mockResolvedValue(optedOutCustomer);
+      const res = await send({
+        channel: MessageChannel.EMAIL,
+        eventKey: NotificationEvent.ORDER_CONFIRMED,
+      });
+      expect(res).toMatchObject({ outcome: "skipped", reason: "OPTED_OUT" });
+      expect(provider.send).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      NotificationEvent.OUT_FOR_DELIVERY,
+      NotificationEvent.DELIVERED,
+      NotificationEvent.CANCELLED,
+    ])("skips %s over EMAIL when the buyer opted out", async (eventKey) => {
+      prisma.customer.findFirst.mockResolvedValue(optedOutCustomer);
+      const res = await send({ channel: MessageChannel.EMAIL, eventKey });
+      expect(res).toMatchObject({ outcome: "skipped", reason: "OPTED_OUT" });
+    });
+
+    it("does NOT gate INVOICE_SENT over EMAIL — only the four order-status events are opt-out", async () => {
+      prisma.customer.findFirst.mockResolvedValue(optedOutCustomer);
+      const res = await send({
+        channel: MessageChannel.EMAIL,
+        eventKey: NotificationEvent.INVOICE_SENT,
+      });
+      expect(res.outcome).toBe("sent");
+      expect(provider.send).toHaveBeenCalledTimes(1);
+    });
+
+    it("does NOT gate a non-EMAIL channel for an order-status event — opt-out is EMAIL-only", async () => {
+      prisma.customer.findFirst.mockResolvedValue(optedOutCustomer);
+      const res = await send({
+        channel: MessageChannel.WHATSAPP,
+        eventKey: NotificationEvent.ORDER_CONFIRMED,
+      });
+      expect(res.outcome).toBe("sent");
+    });
+
+    it("sends normally when orderStatusEmails is true (default)", async () => {
+      const res = await send({
+        channel: MessageChannel.EMAIL,
+        eventKey: NotificationEvent.ORDER_CONFIRMED,
+      });
+      expect(res.outcome).toBe("sent");
+      expect(provider.send).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe("notify()", () => {
     it("dispatches only ENABLED rules and renders their template", async () => {
       prisma.notificationRule.findMany.mockResolvedValue([{ channel: MessageChannel.WHATSAPP }]);
@@ -191,28 +253,28 @@ describe("MessagingService (P6-2 engine)", () => {
 
     it("REG-B182 T7: seeds the default matrix for a never-visited tenant (empty rule table), then dispatches from it", async () => {
       // Today notificationRule.findMany([]) → notify() just sees zero enabled rules and gives up;
-      // there is no seed call and no outcome, even though INVOICE_SENT:EMAIL is documented as
-      // enabled by default. Once notify() seeds an empty tenant before reading rules, the SAME
-      // call sequence must both seed once and go on to dispatch.
+      // there is no seed call and no outcome, even though ORDER_CONFIRMED:EMAIL is documented as
+      // enabled by default (N1). Once notify() seeds an empty tenant before reading rules, the
+      // SAME call sequence must both seed once and go on to dispatch.
       prisma.notificationRule.findMany
         .mockResolvedValueOnce([]) // never-visited tenant: nothing seeded yet
         .mockResolvedValue([{ channel: MessageChannel.EMAIL }]); // re-read after the seed
       prisma.notificationRule.createMany.mockResolvedValue({ count: 1 });
       prisma.messageTemplate.createMany.mockResolvedValue({ count: 1 });
       prisma.messageTemplate.findFirst.mockResolvedValue({
-        body: "Hi {{customerName}}, invoice {{invoiceNumber}} for {{invoiceTotal}} is ready. Due {{dueDate}}.",
+        body: "Hi {{customerName}}, your order {{orderNumber}} is confirmed for delivery on {{deliveryDate}}. Total: {{orderTotal}}.",
         isActive: true,
         waTemplateName: null,
       });
 
-      const outcomes = await service.notify(NotificationEvent.INVOICE_SENT, {
+      const outcomes = await service.notify(NotificationEvent.ORDER_CONFIRMED, {
         customerId: "cust-1",
         senderId: "op-1",
         vars: {
           customerName: "Acme",
-          invoiceNumber: "INV-1",
-          invoiceTotal: "$10.00",
-          dueDate: "2026-10-01",
+          orderNumber: "ORD-1",
+          deliveryDate: "2026-10-01",
+          orderTotal: "$10.00",
         },
       });
 
@@ -223,7 +285,7 @@ describe("MessagingService (P6-2 engine)", () => {
       const seeded = prisma.notificationRule.createMany.mock.calls[0][0].data;
       expect(seeded).toContainEqual(
         expect.objectContaining({
-          eventKey: NotificationEvent.INVOICE_SENT,
+          eventKey: NotificationEvent.ORDER_CONFIRMED,
           channel: MessageChannel.EMAIL,
           enabled: true,
         }),

@@ -774,6 +774,9 @@ export class CustomersService {
         ...(dto.defaultDepositPercent !== undefined && {
           defaultDepositPercent: dto.defaultDepositPercent,
         }),
+        ...(dto.orderStatusEmails !== undefined && {
+          orderStatusEmails: dto.orderStatusEmails,
+        }),
       },
     });
   }
