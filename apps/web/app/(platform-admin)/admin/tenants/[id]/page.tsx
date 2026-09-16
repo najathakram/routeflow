@@ -1496,6 +1496,7 @@ function FeatureOverridesSection({ tenant }: { tenant: TenantDetail }) {
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-400">Feature Key</label>
             <select
+              aria-label="Feature Key"
               value={form.featureKey}
               onChange={(e) => setForm((f) => ({ ...f, featureKey: e.target.value }))}
               className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
@@ -1527,6 +1528,7 @@ function FeatureOverridesSection({ tenant }: { tenant: TenantDetail }) {
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-400">Effect</label>
             <select
+              aria-label="Effect"
               value={form.effect}
               onChange={(e) =>
                 setForm((f) => ({ ...f, effect: e.target.value as "GRANT" | "DENY" }))
@@ -1541,6 +1543,7 @@ function FeatureOverridesSection({ tenant }: { tenant: TenantDetail }) {
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-400">Reason</label>
             <textarea
+              aria-label="Reason"
               value={form.reason}
               onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))}
               rows={3}
@@ -1552,6 +1555,7 @@ function FeatureOverridesSection({ tenant }: { tenant: TenantDetail }) {
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-400">Expires</label>
             <select
+              aria-label="Expires"
               value={form.expiryPreset}
               onChange={(e) =>
                 setForm((f) => ({ ...f, expiryPreset: e.target.value as "none" | "30" | "90" }))

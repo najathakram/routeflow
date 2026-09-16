@@ -670,16 +670,16 @@ export default defineConfig({
       },
     },
 
-    // Feature grants PR-1 (2026-09-16) — every endpoint the spec touches is mocked (same
-    // pattern as "super-admin"'s auth shape), so it needs only the storageState token, never a
-    // live API. Viewport is set per test.describe (1440/768/390) inside the spec itself.
+    // Feature grants PR-1 (2026-09-16) — every endpoint the spec touches is mocked, AND auth
+    // is faked client-side (SuperAdminGuard only decodes+checks the JWT payload locally, never
+    // a server round-trip — see the spec's fakeSuperAdminToken()), so this project needs no
+    // "setup" dependency and no storageState: it runs against a bare `npm run dev -w apps/web`
+    // with no live API/DB at all. Viewport is set per test.describe (1440/768/390) in the spec.
     {
       name: "feature-overrides",
       testMatch: /48-feature-overrides\.spec\.ts/,
-      dependencies: ["setup"],
       use: {
         ...devices["Desktop Chrome"],
-        storageState: path.join(AUTH_DIR, "super-admin.json"),
       },
     },
   ],
