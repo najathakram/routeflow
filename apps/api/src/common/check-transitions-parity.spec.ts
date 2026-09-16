@@ -9,14 +9,19 @@ import * as path from "path";
  * DEPOSITED -> [CLEARED, BOUNCED], CLEARED -> [BOUNCED], BOUNCED -> []`) was hand-written THREE
  * times: apps/api/src/invoices/invoices.service.ts, apps/web/app/(dashboard)/invoices/[id]/
  * page.tsx, and apps/mobile/lib/payments-logic.ts (which also hand-declared its own local
- * `CheckStatus` type). `packages/types/api/checks.ts` is now the ONE canonical export; all three
- * call sites import from it instead.
+ * `CheckStatus` type). `packages/types/api/checks.ts` is now the ONE canonical export.
+ *
+ * Web and mobile import the canonical export directly — both transpile workspace TS at build
+ * time, so a value import is safe there, and this spec still asserts that for those two. The API
+ * CANNOT import `@routeflow/types` at runtime (see `no-runtime-workspace-imports.spec.ts` — that
+ * package ships raw TS with no build step, so a value import crashes `node dist/main.js` at
+ * boot), so it keeps an API-local mirror instead (`apps/api/src/common/check-transitions.ts`).
+ * For the API this spec instead pins that mirror value-equal to the canonical export by deep
+ * equality — the actual guard against the two ever drifting apart, which is N5's real intent.
  *
  * This spec reads each call site's actual CURRENT source text (never a re-typed "expected"
  * value) and asserts it no longer hand-declares a local `CHECK_TRANSITIONS` object literal,
- * proving the mirror is gone rather than merely that a shared export exists somewhere. It is RED
- * on the pre-dedup code (each file still declares `const/export const CHECK_TRANSITIONS: ... =
- * { RECORDED: [...` locally) and GREEN once all three import from `@routeflow/types` instead.
+ * proving the mirror is gone rather than merely that a shared export exists somewhere.
  *
  * N5 (binding — independent Opus review of the design): PR-1 exports ONLY the current V1 table
  * — no `CHECK_TRANSITIONS_V2`. The last describe block below guards that directly: it fails the
@@ -27,7 +32,6 @@ import * as path from "path";
 const REPO_ROOT = path.resolve(__dirname, "../../../..");
 
 const CALL_SITES: Array<[string, string]> = [
-  ["api", "apps/api/src/invoices/invoices.service.ts"],
   ["web", "apps/web/app/(dashboard)/invoices/[id]/page.tsx"],
   ["mobile", "apps/mobile/lib/payments-logic.ts"],
 ];
@@ -44,18 +48,55 @@ function importsSharedTable(text: string): boolean {
   );
 }
 
-describe("regression: CHECK_TRANSITIONS is no longer hand-mirrored at any of the three call sites", () => {
+describe("regression: CHECK_TRANSITIONS is no longer hand-mirrored at web/mobile", () => {
   it.each(CALL_SITES)(
     "%s (%s) imports the shared table instead of declaring its own",
     (_app, relPath) => {
       const text = fs.readFileSync(path.join(REPO_ROOT, relPath), "utf8");
 
-      // Fails TODAY (pre-dedup) on all three: each still hand-declares its own local object
+      // Fails TODAY (pre-dedup) on both: each still hand-declares its own local object
       // literal, so this must be false and the import must be true post-fix.
       expect(LOCAL_DECLARATION_RE.test(text)).toBe(false);
       expect(importsSharedTable(text)).toBe(true);
     },
   );
+});
+
+describe("regression: the API never hand-mirrors CHECK_TRANSITIONS as a local object literal either", () => {
+  it("invoices.service.ts declares no local CHECK_TRANSITIONS object literal", () => {
+    const text = fs.readFileSync(
+      path.join(REPO_ROOT, "apps/api/src/invoices/invoices.service.ts"),
+      "utf8",
+    );
+    expect(LOCAL_DECLARATION_RE.test(text)).toBe(false);
+  });
+});
+
+describe("API mirror: apps/api/src/common/check-transitions.ts stays value-equal to the canonical export", () => {
+  it("invoices.service.ts imports CHECK_TRANSITIONS from the API-local mirror, not @routeflow/types", () => {
+    const text = fs.readFileSync(
+      path.join(REPO_ROOT, "apps/api/src/invoices/invoices.service.ts"),
+      "utf8",
+    );
+    expect(importsSharedTable(text)).toBe(false);
+    expect(
+      /import\s*\{[^}]*\bCHECK_TRANSITIONS\b[^}]*\}\s*from\s*["']\.\.\/common\/check-transitions["']/.test(
+        text,
+      ),
+    ).toBe(true);
+  });
+
+  it("the API-local mirror's CHECK_TRANSITIONS is deep-equal to packages/types/api/checks.ts's export", () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const apiMirror = require("./check-transitions") as {
+      CHECK_TRANSITIONS: Record<string, readonly string[]>;
+    };
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const canonical = require("../../../../packages/types/api/checks") as {
+      CHECK_TRANSITIONS: Record<string, readonly string[]>;
+    };
+    expect(apiMirror.CHECK_TRANSITIONS).toEqual(canonical.CHECK_TRANSITIONS);
+  });
 });
 
 describe("mobile: the local CheckStatus union is also gone, not just CHECK_TRANSITIONS", () => {

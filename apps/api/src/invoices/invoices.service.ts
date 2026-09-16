@@ -39,7 +39,8 @@ import {
   Prisma,
   UserRole,
 } from "@prisma/client";
-import { CHECK_TRANSITIONS, type InvoiceKpiSummary } from "@routeflow/types";
+import type { InvoiceKpiSummary } from "@routeflow/types";
+import { CHECK_TRANSITIONS } from "../common/check-transitions";
 import {
   CreateInvoiceDto,
   RecordInvoicePaymentDto,
@@ -107,10 +108,13 @@ function calendarDayOf(raw: string, field: string): string {
 }
 
 // P5-12 / post-dated check payments PR-1: `CHECK_TRANSITIONS` (legal FORWARD transitions for
-// the check lifecycle) now comes from `@routeflow/types` (`packages/types/api/checks.ts`) — the
-// ONE canonical copy shared with web (`invoices/[id]/page.tsx`) and mobile
-// (`payments-logic.ts`), which used to each hand-maintain an identical local const. See that
-// file's own doc for the V1-only rule (no `CHECK_TRANSITIONS_V2` here — a later PR owns that).
+// the check lifecycle) now comes from `../common/check-transitions` — an API-local mirror of the
+// ONE canonical copy at `packages/types/api/checks.ts` (`@routeflow/types`), also shared with web
+// (`invoices/[id]/page.tsx`) and mobile (`payments-logic.ts`), which used to each hand-maintain
+// an identical local const. The API can't import `@routeflow/types` directly (see
+// `no-runtime-workspace-imports.spec.ts`), so it keeps a local copy instead — pinned value-equal
+// to the canonical export by `check-transitions-parity.spec.ts`. See that file's own doc for the
+// V1-only rule (no `CHECK_TRANSITIONS_V2` here — a later PR owns that).
 
 @Injectable()
 export class InvoicesService {
