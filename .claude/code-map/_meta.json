@@ -1,6 +1,6 @@
 {
-  "mappedSha": "cbba512efa1b9b4facee65e1717b1b4d0bf50530",
-  "generatedAt": "2026-09-15T23:55:00.000Z",
+  "mappedSha": "bc24582d22fd2662122ecfe4fa5776ab5b337732",
+  "generatedAt": "2026-09-16T12:00:00.000Z",
   "layout": "split-2026-09-13",
   "areas": ["api", "web", "mobile", "packages"],
   "partCounts": {
@@ -10,5 +10,5 @@
     "packages": 0
   },
   "fileCount": 1027,
-  "notes": "**2026-09-15 (Rescue PR B, worktree rf-rescue-lifecycle) — five stranded customer-lifecycle fixes rescued from `fix/f09-f15-customer-lifecycle` and landed**: B156/B158/B170 (one shared `buildListWhere()` behind `findAll`+`exportCustomers`, `unassigned`/`removed` ListCustomersDto filters, removed-customer edit/reactivate guards); B157 (new `route-stop-filters.util.ts` — `LIVE_CUSTOMER_STOP_WHERE`/`SCHEDULED_ROUTE_KIND_WHERE` shared by findOneRoute/getPackingList/getCustomerRouteAssignments/addStop/createRun/customers.service's unassigned filter); B159 (soft-delete tombstones the linked User's username/email/googleId, restoreCustomer reverses it with a P2002 retry path); B13 (ApplyAdvanceModal wires the previously-uncalled `useApplyAdvanceToInvoice` hook into `invoices/[id]/page.tsx`). All four cherry-picked cleanly (one trivial import-order conflict). api/feature-modules-1.md (customers), api/feature-modules-3.md (routes), web/routes-1.md + web/routes-2.md (customers/invoices UI), web/api-hooks.md, mobile/tests-1.md each got a short amendment; no new area file. See CHANGELOG.md for the full note; do not accumulate further history here — replace this field each session per that file's header convention."
+  "notes": "**2026-09-16 — Rescue PR B (#781) merged forward over the feature-modules-3.md split (#784).** Five stranded customer-lifecycle fixes (B156/B157/B158/B159/B170, plus B13 ApplyAdvanceModal) plus the pre-merge review fix round: idempotent deleteCustomer, mergeCustomers refuses removed rows, no bulk actions in the trash view, soft-delete preserves User.status and googleId, restore falls back to a placeholder on an email collision, and the apply-advance toast reports the server appliedAmount (client money math removed). Its one feature-modules-3.md amendment (the B157 route-stop-filters bullet) was relocated into api/feature-modules-3/routes.md, directly after the service bullet where it originally sat. See CHANGELOG.md for detail; replace this field each session per that file's header convention."
 }
