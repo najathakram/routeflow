@@ -944,7 +944,7 @@ describe("BookkeepingService", () => {
         { customerId: "c1", _sum: { amount: 200 } },
         { customerId: "c2", _sum: { amount: 200 } },
       ]);
-      prisma.return.groupBy.mockResolvedValue([{ customerId: "c1", _sum: { refundAmount: 50 } } ]);
+      prisma.return.groupBy.mockResolvedValue([{ customerId: "c1", _sum: { refundAmount: 50 } }]);
       // Defensive: some FIX3 shapes may still read per-invoice rows for
       // invoiceCount/businessName rather than a separate customer lookup.
       prisma.invoice.findMany.mockResolvedValue([

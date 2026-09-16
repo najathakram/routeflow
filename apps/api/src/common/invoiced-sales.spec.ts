@@ -136,7 +136,13 @@ describe("accrual net sales (B440/B455/B456)", () => {
     const result = await fetchAccrualNetSales(db, "tenant-1", window);
 
     const invoiceArgs = db.invoice.aggregate.mock.calls[0][0];
-    expect(invoiceArgs.where).toEqual({ status: ACCRUAL_REVENUE_STATUSES, issueDate: window });
+    // Pinned against the LITERAL shape (not the `ACCRUAL_REVENUE_STATUSES`
+    // import) so a corrupted constant is caught here independently of
+    // REG-B440-predicate — P1's revert-probe requires both to go red.
+    expect(invoiceArgs.where).toEqual({
+      status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID] },
+      issueDate: window,
+    });
     expect(invoiceArgs.where.paidAt).toBeUndefined();
 
     const cnArgs = db.creditNote.aggregate.mock.calls[0][0];
