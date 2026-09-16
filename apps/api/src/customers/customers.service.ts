@@ -2084,15 +2084,24 @@ export class CustomersService {
         deletedAt: true,
         tenantId: true,
         email: true,
-        user: { select: { username: true } },
+        user: { select: { username: true, status: true } },
       },
     });
     if (!customer) throw new NotFoundException("Customer not found");
     if (!customer.deletedAt) return { success: true, restored: false };
 
-    // Only ACTIVE/SUSPENDED are valid restore targets (INACTIVE = the removed
-    // state); default to ACTIVE when the caller does not specify.
-    const status = restoreStatus === "SUSPENDED" ? "SUSPENDED" : "ACTIVE";
+    // F4: an explicit restoreStatus (the 8-second Undo passes the user's pre-delete
+    // status) always wins. Otherwise fall back to whatever status is already on the
+    // User row — post-fix, the tombstone write no longer overwrites it to INACTIVE, so
+    // that row already carries the right status. The INACTIVE fallback exists only for
+    // a LEGACY pre-fix tombstone (which does carry INACTIVE): those must still restore
+    // to ACTIVE, exactly as master did, rather than coming back permanently INACTIVE.
+    const status =
+      restoreStatus === "SUSPENDED" || restoreStatus === "ACTIVE"
+        ? restoreStatus
+        : customer.user.status === "INACTIVE"
+          ? "ACTIVE"
+          : customer.user.status;
 
     // REG-B159: reverse the soft-delete tombstone. A pre-fix removed row carries no
     // "~removed~<id8>" suffix — nothing to strip, its username was never touched. The real
@@ -2210,11 +2219,15 @@ export class CustomersService {
         await tx.user.update({
           where: { id: customer.userId },
           data: {
-            status: "INACTIVE",
+            // F4: status is deliberately left untouched — login is already refused on
+            // User.deletedAt (auth.service.ts:63, :272, :440), so overwriting status to
+            // INACTIVE only threw away the pre-delete status restoreCustomer needs to
+            // bring back exactly (a SUSPENDED customer must come back SUSPENDED).
             deletedAt: new Date(),
             username: `${customer.user.username}~removed~${id.slice(0, 8)}`,
             email: `removed+${id}@placeholder.local`,
-            googleId: null,
+            // F5: googleId is deliberately left untouched — restoreCustomer never restores
+            // it, so nulling it here made restore lossy for no gain.
           },
         });
       });

@@ -999,7 +999,9 @@ describe("CustomersService", () => {
         userId: "user-1",
         deletedAt: new Date(),
         email: "acme@shop.com",
-        user: { username: "acme" },
+        // F4: post-fix tombstone — the delete write no longer overwrites status to
+        // INACTIVE, so the row already carries the live status it had before removal.
+        user: { status: "ACTIVE", username: "acme" },
       });
 
       const result = await service.restoreCustomer("cust-1");
@@ -1025,6 +1027,29 @@ describe("CustomersService", () => {
       });
 
       await service.restoreCustomer("cust-1", "SUSPENDED");
+
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "user-1" },
+          data: expect.objectContaining({ status: "SUSPENDED" }),
+        }),
+      );
+    });
+
+    it("F4: a SUSPENDED customer removed then restored with no restoreStatus keeps SUSPENDED (post-fix tombstone)", async () => {
+      // The tombstone write (F4) no longer overwrites User.status to INACTIVE, so a
+      // SUSPENDED customer's row still carries SUSPENDED going into restore — the
+      // caller (e.g. a plain POST /restore with no explicit restoreStatus) must get
+      // that status back rather than defaulting to ACTIVE.
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        userId: "user-1",
+        deletedAt: new Date(),
+        email: "acme@shop.com",
+        user: { status: "SUSPENDED", username: "acme" },
+      });
+
+      await service.restoreCustomer("cust-1");
 
       expect(prisma.user.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1062,7 +1087,7 @@ describe("CustomersService", () => {
         userId: "user-1",
         deletedAt: new Date(),
         email: "acme@shop.com",
-        user: { username: `acme~removed~${"cust-1".slice(0, 8)}` },
+        user: { status: "ACTIVE", username: `acme~removed~${"cust-1".slice(0, 8)}` },
       });
 
       await service.restoreCustomer("cust-1");
@@ -1109,14 +1134,17 @@ describe("CustomersService", () => {
       );
     });
 
-    it("REG-B159 T4 (pin): a pre-fix removed row (no tombstone suffix) restores unchanged", async () => {
+    it("REG-B159 T4 (pin): a pre-fix removed row (no tombstone suffix, INACTIVE) restores to ACTIVE (F4)", async () => {
       prisma.customer.findUnique.mockResolvedValue({
         id: "cust-1",
         userId: "user-1",
         deletedAt: new Date(),
         email: "acme@shop.com",
-        // No "~removed~" suffix — this row predates the B159 fix.
-        user: { username: "acme" },
+        // No "~removed~" suffix AND status still INACTIVE — this row predates BOTH the
+        // B159 fix (username release) and the F4 fix (status left untouched by delete).
+        // It must still come back ACTIVE, exactly as master did, rather than the
+        // INACTIVE fallback leaving it permanently unusable.
+        user: { status: "INACTIVE", username: "acme" },
       });
 
       await service.restoreCustomer("cust-1");
@@ -2746,19 +2774,24 @@ describe("CustomersService", () => {
       prisma.return.count.mockResolvedValue(0);
     });
 
-    it("REG-B159 T1: releases the User row's username/email/googleId on soft delete", async () => {
+    it("REG-B159 T1: releases the User row's username/email on soft delete, leaving status and googleId untouched (F4/F5)", async () => {
       await service.deleteCustomer(CUSTOMER.id, true);
 
       expect(prisma.user.update).toHaveBeenCalledWith({
         where: { id: CUSTOMER.userId },
         data: {
-          status: "INACTIVE",
           deletedAt: expect.any(Date),
           username: `acme~removed~${CUSTOMER.id.slice(0, 8)}`,
           email: `removed+${CUSTOMER.id}@placeholder.local`,
-          googleId: null,
         },
       });
+      // F4: status is deliberately NOT overwritten to INACTIVE — login is already refused
+      // on User.deletedAt, and overwriting it here is what made restoreCustomer's undo
+      // lossy for a SUSPENDED customer. F5: googleId is deliberately left alone too —
+      // restore never brings it back, so nulling it here was lossy for no gain.
+      const data = prisma.user.update.mock.calls[0][0].data;
+      expect(data).not.toHaveProperty("status");
+      expect(data).not.toHaveProperty("googleId");
     });
 
     // ─── F1 — deleteCustomer is idempotent ──────────────────────────────────
