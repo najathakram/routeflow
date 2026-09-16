@@ -186,6 +186,23 @@ function redactAddresses(msg: string): string {
     .replace(/(?:[0-9a-f]{0,4}:){2,8}[0-9a-f]{0,4}/gi, "[address]"); // IPv6 incl. ::-compressed
 }
 
+/**
+ * N4 ground rule: every interpolated value in a NEW email template must be
+ * HTML-escaped — none of the existing templates in this file do (their
+ * inputs are operator/tenant-typed strings from an already-authenticated
+ * session, an accepted pre-existing gap, not this PR's to fix), but a
+ * low-stock digest interpolates PRODUCT NAMES, which a tenant's own staff
+ * can set to arbitrary text via the catalogue import/edit flow.
+ */
+export function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
@@ -1215,5 +1232,102 @@ export class EmailService {
           `Please use <strong>${params.primaryEmail}</strong> to sign in going forward. This account (${params.secondaryEmail}) is now deactivated.`,
         ),
     });
+  }
+
+  // ─── N4: low-stock daily digest (platform-sent, tenant-admin-facing) ───────
+
+  /**
+   * N4. Always sent via the platform sender (EMAIL_FROM) — this is an
+   * operational alert to the tenant's OWN admins, not tenant-branded
+   * customer mail, so it deliberately does NOT resolve tenant SMTP the way
+   * `sendInvoice` does. Callers therefore invoke this with no tenant ALS
+   * context active (`this.prisma.getTenantId()` returns null inside
+   * `send()`), which is what makes it skip straight to platform Resend.
+   * Fails closed: `send()` never throws, and this method does not add a
+   * throwing await on top of it — a caller iterating many tenants/admins
+   * must be able to keep going past one bad address.
+   */
+  async sendLowStockDigest(params: {
+    to: string;
+    businessName: string;
+    items: { name: string; sku: string | null; currentStock: number; reorderPoint: number }[];
+  }): Promise<{ delivered: boolean; transport: "smtp" | "resend" | "none"; error?: string }> {
+    const html = this.buildLowStockDigestEmail(params);
+    const count = params.items.length;
+    return this.send({
+      to: params.to,
+      subject: `Low stock alert — ${count} item${count === 1 ? "" : "s"} below threshold`,
+      html,
+    });
+  }
+
+  /**
+   * Same 600px shell/header/body/footer markup as `buildInvoiceEmail`
+   * ("no new look" — N4 ground rule) with the invoice's item TABLE shape
+   * carried over for the product list. Every interpolated value is
+   * `escapeHtml`'d — product names are tenant-catalogue-typed strings, not
+   * server-controlled.
+   */
+  private buildLowStockDigestEmail(params: {
+    businessName: string;
+    items: { name: string; sku: string | null; currentStock: number; reorderPoint: number }[];
+  }): string {
+    const rows = params.items
+      .map(
+        (it) => `
+        <tr>
+          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1a2033;">${escapeHtml(it.name)}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#6b7280;">${it.sku ? escapeHtml(it.sku) : "—"}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#dc2626;font-weight:600;text-align:right;">${it.currentStock}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#6b7280;text-align:right;">${it.reorderPoint}</td>
+        </tr>`,
+      )
+      .join("");
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;padding:40px 0;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+
+        <!-- Header -->
+        <tr><td style="background:#1a2033;padding:28px 32px;">
+          <p style="margin:0;font-size:22px;font-weight:700;color:#ffffff;letter-spacing:-0.5px;">${escapeHtml(params.businessName)}</p>
+          <p style="margin:4px 0 0;font-size:13px;color:rgba(255,255,255,0.6);">Low Stock Alert</p>
+        </td></tr>
+
+        <!-- Body -->
+        <tr><td style="padding:32px;">
+          <p style="margin:0 0 24px;font-size:15px;color:#374151;">
+            ${params.items.length} item${params.items.length === 1 ? " is" : "s are"} below its reorder point:
+          </p>
+
+          <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:8px;">
+            <tr>
+              <td style="padding:0 12px 8px;font-size:12px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.5px;">Product</td>
+              <td style="padding:0 12px 8px;font-size:12px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.5px;">SKU</td>
+              <td style="padding:0 12px 8px;font-size:12px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.5px;text-align:right;">In Stock</td>
+              <td style="padding:0 12px 8px;font-size:12px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.5px;text-align:right;">Reorder At</td>
+            </tr>
+            ${rows}
+          </table>
+
+          <p style="margin:24px 0 0;font-size:13px;color:#9ca3af;">
+            This is a daily summary — you will not receive another alert for these items until tomorrow.
+            You can turn this digest off in your account preferences.
+          </p>
+        </td></tr>
+
+        <!-- Footer -->
+        <tr><td style="background:#f9fafb;padding:16px 32px;border-top:1px solid #f0f0f0;">
+          <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;">RouteFlow Platform — automated notification.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
   }
 }
