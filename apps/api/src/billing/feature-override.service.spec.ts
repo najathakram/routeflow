@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException } from "@nestjs/common";
+import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { FeatureOverrideService } from "./feature-override.service";
 
@@ -231,12 +231,29 @@ describe("FeatureOverrideService.revoke", () => {
 
     expect(prisma.tenantFeatureOverride.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "ov1" },
+        where: { id: "ov1", tenantId: "t1" },
         data: expect.objectContaining({ revokedAt: expect.any(Date) }),
       }),
     );
     prisma.tenantFeatureOverride.findMany.mockResolvedValue([]);
     await svc.get("t1", "tobacco_dealer");
     expect(prisma.tenantFeatureOverride.findMany).toHaveBeenCalledTimes(2);
+  });
+
+  // Opus review of 8130b204, item 3: `where: { id }` alone let tenant B revoke tenant A's row
+  // via tenant A's row id under tenant B's URL — mis-audited and mis-invalidated. Prisma's
+  // combined { id, tenantId } where throws P2025 (RecordNotFound) when they don't both match.
+  it("scopes the update to the owning tenant — a foreign id 404s instead of revoking", async () => {
+    const { svc, prisma } = build();
+    const notFound = Object.assign(new Error("no record"), { code: "P2025" });
+    Object.setPrototypeOf(notFound, Prisma.PrismaClientKnownRequestError.prototype);
+    prisma.tenantFeatureOverride.update.mockRejectedValue(notFound);
+
+    const err = await svc.revoke("tenant-b", "ov-belongs-to-tenant-a").catch((e) => e);
+
+    expect(err).toBeInstanceOf(NotFoundException);
+    expect(prisma.tenantFeatureOverride.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "ov-belongs-to-tenant-a", tenantId: "tenant-b" } }),
+    );
   });
 });

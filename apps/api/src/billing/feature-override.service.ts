@@ -1,4 +1,10 @@
-import { BadRequestException, ConflictException, Injectable, Logger } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { isRegisteredFeatureKey } from "./feature-registry";
@@ -179,12 +185,23 @@ export class FeatureOverrideService {
   }
 
   async revoke(tenantId: string, id: string) {
-    const row = await this.prisma.tenantFeatureOverride.update({
-      where: { id },
-      data: { revokedAt: new Date() },
-    });
-    this.invalidate(tenantId);
-    return row;
+    try {
+      // `where: { id, tenantId }` -- not just `{ id }` (Opus review of 8130b204, item 3): id
+      // alone would let tenant B revoke tenant A's row by id under tenant B's URL, mis-audited
+      // and mis-invalidated (tenant A's own cache never cleared). Prisma enforces both
+      // conditions together and throws P2025 when the row doesn't belong to this tenant.
+      const row = await this.prisma.tenantFeatureOverride.update({
+        where: { id, tenantId },
+        data: { revokedAt: new Date() },
+      });
+      this.invalidate(tenantId);
+      return row;
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2025") {
+        throw new NotFoundException(`No feature override "${id}" found for this tenant.`);
+      }
+      throw e;
+    }
   }
 
   invalidate(tenantId: string): void {
