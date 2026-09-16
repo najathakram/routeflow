@@ -1,0 +1,9 @@
+# `estimates/`
+
+> Split from [`../feature-modules-4.md`](../feature-modules-4.md) (verbatim, lines 120-124 of the pre-split file) on 2026-09-16. Originally itself split from `.claude/code-map/api.md` (verbatim, lines 1593-1793) on 2026-09-13. See [`../../INDEX.md`](../../INDEX.md).
+
+### `estimates/`
+
+- **controller** `estimates` — create, list, get, send, accept, decline, convert-to-invoice, void. **Plan-flag gated (2026-09-15/16, WP5a, Lite-L2):** class-level `@UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard)` + `@RequirePlanFlag("flag.estimates")` — courtesy-allow dark until the `PLAN_FLAG_ENFORCEMENT` switch flips (see `billing.md`'s LITE/plan-flag-policy entry for the full gate mechanics; `flag.estimates` lives in `DARK_PLAN_FLAGS`, `plan-flag-policy.ts`). Spec: `estimates.plan-gate.spec.ts` (same per-module pattern as sibling `.plan-gate.spec.ts` files elsewhere).
+- **service** — `create` (**F27/B79, aa47ee9e:** persists `dto.issueDate` → `Estimate.issueDate` (nullable; the column pre-existed with no write path)), `findAll`, `findOne`, `send` (DRAFT→SENT status flip only — **no email is sent**, B17; the web copy now says "Mark as sent"), `accept`, `decline`, `convertToInvoice` (ACCEPTED only; returns the created Invoice keyed `id` — the web navigates on `id`, B15-NAV), `void`. side effects: Estimate(+Item) writes; Invoice on convert. **B70 (laundering CONVERTED→ACCEPTED via bare `send`/`decline` updates) is fixed via a `claimTransition(id, to, refusal, exclude)` helper — `TERMINAL_ESTIMATE_STATUSES = ["CONVERTED", "DECLINED"]`; `accept()` deliberately excludes only `["CONVERTED"]` (not the full terminal set) to preserve the pre-existing `DECLINED→ACCEPTED` invariant — see `.claude/lessons/LESSONS.md` L-132.**
+
