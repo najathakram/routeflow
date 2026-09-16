@@ -13,6 +13,22 @@
 
 ## tooling
 
+### L-168 · 2026-09-16 · tooling · B421 CASH_METHOD_FILTER as-const gap
+
+- **Symptom:** `CASH_METHOD_FILTER`, a Prisma `notIn` filter constant, shipped with no real call
+  site yet. Its sibling `RECEIVED_METHOD_FILTER` was wired into a live `where` clause first and
+  immediately failed `tsc` — its array had widened to `string[]` for want of `as const`, which
+  Prisma's generated enum filter rejects. Checking the still-unused sibling found the same gap.
+- **Root cause:** a constant with no consumer can't fail a type check that only runs where it's
+  used — "compiles clean" meant nothing until a real call site exercised the type, so two
+  identically-built constants drifted: one was caught by chance, the other was not.
+- **Lesson:** **A typed constant with no call site yet is unproven, not correct — the moment one
+  sibling constant (same file, same shape, same commit) fails a type check for something subtle
+  like a missing `as const`, grep for every other constant built the same way.**
+- **Guard:** both constants now carry `as const` with an inline comment
+  (`packages/pricing/src/payment-confirmation.ts`); `payment-confirmation.spec.ts` pins both
+  filters' exact shape.
+
 ### L-105 · 2026-09-11 · tooling · train-4 engine gate
 
 - **Symptom:** two engine runs lost their whole Jest gate to one flag position — a spec path
@@ -174,6 +190,59 @@
 - **Guard:** none — judgment. Grep `isWeb`/`Platform.OS` in any file a fix touches.
 
 ## domain
+
+### L-169 · 2026-09-16 · domain · B421 / PR-1a shared-helper precondition no-op (two call sites)
+
+- **Symptom:** two surfaces hit the same shape. `statement.service.ts` moved a payment sum into
+  the shared `splitConfirmed` helper, which re-checks `.status` generically — its `select` never
+  needed `status` before, so every row read `undefined`, risking a silent zero.
+  `returns.service.ts`'s CANCELLED-line exclusion referenced `li.status`, but none of its four
+  real `lineItems` selects fetched it — dead code from the moment it was written. Both tests
+  passed anyway because their mocks supplied the field directly, never proving the real `select`
+  produced it.
+- **Root cause:** a shared helper that re-derives a precondition has no knowledge of a caller's
+  query shape — it assumes the field is present. A caller whose `select` never needed that field
+  before silently hands the helper `undefined`, which the check absorbs as a real value.
+- **Lesson:** **Before wiring a caller into a shared helper that re-derives a precondition
+  generically, check the caller's `select` actually fetches the field — a mock supplying it
+  directly proves nothing. A type-check alone won't catch a field silently resolving to
+  `undefined`.**
+- **Guard:** both selects now fetch `status`; `returns-lineitems-select.spec.ts` pins the real
+  shape at every call site.
+
+### L-170 · 2026-09-16 · domain · #743 fix round F3 (roundMoney before comparison)
+
+- **Symptom:** a fully-settled invoice rendered a red "Balance Due $0.00" badge instead of the
+  green paid state — the displayed number was right but its color-coding read non-zero.
+- **Root cause:** the balance summed three independently-derived floats (cash + credit +
+  advance) before subtracting from total; `Math.max(0, ...)`/color-coding ran on that raw sum,
+  where a sub-cent remnant (e.g. `-2.8e-14`) survives `Math.max` and still reads non-zero.
+  `roundMoney` was applied only at display-formatting time, never before the comparison.
+- **Lesson:** **`roundMoney` must wrap a sum of independently-derived floats BEFORE the value
+  drives any comparison or branch — color-coding, `>0` checks, conditional rendering — never only
+  where it's formatted for display. A value that looks like zero once rounded but drives a
+  boolean check unrounded will diverge from what the user sees.**
+- **Guard:** `invoices.service.ts`'s two `balanceDue` sites and `invoice-pdf-template.tsx`'s
+  balance now wrap in `roundMoney()` before `Math.max`/the comparison; existing invoice-balance
+  suites cover it.
+
+### L-171 · 2026-09-16 · domain · PR-1a F1 (pooled cap vs single-line price basis mismatch)
+
+- **Symptom:** `returns.service.ts`'s over-return cap was widened from "sold qty on one matched
+  line" to "sold qty summed across every live line for that product" — correct on its own — but
+  the sibling never-invoiced pricing branch, reading the SAME (order, product) key, still priced
+  off one matched line's rate against the newly-pooled quantity. A product split across two
+  differently-priced lines got over-credited.
+- **Root cause:** the cap and the price are two different readers of one key. Widening one
+  reader's basis fixed that reader alone — nothing re-examined the sibling reading the same key,
+  so the two computations silently disagreed on how many rows back the number.
+- **Lesson:** **When a guard/cap computation for a key is widened to pool across rows, grep every
+  OTHER reader of that key before calling the fix done — a cap and a price computed from
+  different bases silently mismatch, and the mismatch is a MONEY bug, not a correctness one.**
+- **Guard:** the pricing branch now pools qty/subtotal per product the same way the cap does,
+  with a `min(returned, sold)` backstop; `returns-refund.spec.ts`'s new F1 cases prove the pooled
+  pricing for a two-line split.
+
 
 ### L-072 · 2026-09-03 · domain · wave E `imp-10b`
 
