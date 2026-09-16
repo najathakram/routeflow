@@ -149,9 +149,12 @@ describe("AuthService", () => {
         expect(result).toBeNull();
       });
 
-      it("still returns null (not found) when an INACTIVE user is reached only via the cross-tenant fallback — the fallback filters status:ACTIVE", async () => {
+      it("a non-ACTIVE user found via the cross-tenant fallback is rejected even with the CORRECT password", async () => {
         usersService.findByUsername.mockResolvedValue(null); // wrong tenant slug typed
-        usersService.findByUsernameCrossTenant.mockResolvedValue(null);
+        usersService.findByUsernameCrossTenant.mockResolvedValue({
+          ...MOCK_USER,
+          status: "INACTIVE",
+        });
         (bcrypt.compare as jest.Mock).mockResolvedValue(true);
 
         const result = await service.validateUser(
