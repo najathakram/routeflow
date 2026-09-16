@@ -1,7 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
-import { UnauthorizedException, BadRequestException } from "@nestjs/common";
+import { UnauthorizedException, BadRequestException, ForbiddenException } from "@nestjs/common";
 import * as bcrypt from "bcrypt";
 import { AuthService } from "./auth.service";
 import { EmailService } from "../email/email.service";
@@ -119,10 +119,42 @@ describe("AuthService", () => {
       expect(result).toBeNull();
     });
 
-    it("should return null for inactive users", async () => {
+    it("should return null for suspended users even with the correct password", async () => {
       usersService.findByUsername.mockResolvedValue({ ...MOCK_USER, status: "SUSPENDED" });
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
       const result = await service.validateUser("admin", "correct-password");
       expect(result).toBeNull();
+    });
+
+    // Repro-first regression test for the "signup doesn't work" report: a
+    // self-service tenant signup (TenantsService.register) creates the admin
+    // user with status INACTIVE until the emailed verification link is
+    // clicked. Before this fix, validateUser checked status BEFORE the
+    // password, so a real self-signup user typing their own correct password
+    // got back the exact same "Invalid credentials" as a wrong password or a
+    // nonexistent account — indistinguishable, and impossible to self-diagnose.
+    describe("INACTIVE user (pending email verification)", () => {
+      it("throws a distinguishable EMAIL_NOT_VERIFIED error when the password IS correct", async () => {
+        usersService.findByUsername.mockResolvedValue({ ...MOCK_USER, status: "INACTIVE" });
+        (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+
+        let caught: ForbiddenException | undefined;
+        try {
+          await service.validateUser("admin", "correct-password");
+        } catch (err) {
+          caught = err as ForbiddenException;
+        }
+        expect(caught).toBeInstanceOf(ForbiddenException);
+        expect(caught!.getResponse()).toMatchObject({ code: "EMAIL_NOT_VERIFIED" });
+      });
+
+      it("returns null (no leak) when the password is WRONG — never reveals the account is pending verification to a guesser", async () => {
+        usersService.findByUsername.mockResolvedValue({ ...MOCK_USER, status: "INACTIVE" });
+        (bcrypt.compare as jest.Mock).mockResolvedValue(false);
+
+        const result = await service.validateUser("admin", "wrong-password");
+        expect(result).toBeNull();
+      });
     });
   });
 

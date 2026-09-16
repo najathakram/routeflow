@@ -58,7 +58,6 @@ export class AuthService {
     }
 
     if (!user || user.deletedAt !== null) return null;
-    if (user.status !== "ACTIVE") return null;
     // Account lockout: a locked account fails WITHOUT running bcrypt (no
     // timing oracle, no counter churn) and with the same null as any bad
     // credential — enumeration-safe. Time-based auto-unlock; TENANT_ADMIN can
@@ -71,6 +70,27 @@ export class AuthService {
       await this.recordFailedLogin(user.id, user.failedLoginAttempts, user.lockedUntil);
       return null;
     }
+    // Status is checked AFTER the password is verified, not before (it used to
+    // run first). Two reasons: (1) it closes a timing oracle — checking status
+    // first meant every INACTIVE username short-circuited before bcrypt, so
+    // response latency alone told an attacker which usernames exist and are
+    // pending verification; running bcrypt unconditionally makes the two cases
+    // take the same time. (2) it lets a self-service signup user who typed
+    // their real password be told the true reason they can't sign in — a
+    // self-registered tenant admin is INACTIVE until they click the emailed
+    // verification link (see TenantsService.register), and the previous
+    // generic "Invalid credentials" was indistinguishable from a wrong
+    // password, which is exactly the "signup doesn't work" confusion new
+    // users reported. Only reachable with the CORRECT password, so this
+    // never tells a stranger an account exists.
+    if (user.status === "INACTIVE") {
+      throw new ForbiddenException({
+        code: "EMAIL_NOT_VERIFIED",
+        message:
+          "Please verify your email before signing in. Check your inbox for the verification link (and your spam folder), or request a new one.",
+      });
+    }
+    if (user.status !== "ACTIVE") return null;
     if (user.failedLoginAttempts > 0 || user.lockedUntil) {
       await this.prisma.user.update({
         where: { id: user.id },
