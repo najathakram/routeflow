@@ -1015,6 +1015,68 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
     expect(result.data[0].order).not.toHaveProperty("lineItems");
   });
 
+  it("PR-1a fix-round F1 (red-first): the never-invoiced legacy basis pools a product's qty/subtotal across ALL its live lines — pricing a return against one line's rate while the qty is pooled over-credits", async () => {
+    // Never-invoiced order: product p1 sold on TWO differently-priced lines —
+    // 4 units @ $10 (line A, $40) and 6 units @ $5 (line B, $30) — 10 units total for
+    // $70. A return of all 10 units must price at the BLENDED $7/unit ($70), never at
+    // line A's $10/unit against the full pooled qty ($100 — the pre-fix defect: the
+    // legacy `.find()` matched only line A, so `amount = 10 * (40/4) = $100`).
+    prisma.return.findMany.mockResolvedValue([
+      {
+        id: "ret-f1",
+        returnNumber: "RET-2026-F1",
+        status: "RECEIVED",
+        customerId: "cust-1",
+        items: [{ productId: "p1", qty: 10 }],
+        order: {
+          id: "ord-f1",
+          orderNumber: "ORD-F1",
+          invoices: [],
+          lineItems: [
+            { productId: "p1", qty: 4, unitPrice: 10, subtotal: 40, status: "PENDING" },
+            { productId: "p1", qty: 6, unitPrice: 5, subtotal: 30, status: "PENDING" },
+          ],
+        },
+        customer: { id: "cust-1", businessName: "Acme Co" },
+      },
+    ]);
+    prisma.return.count.mockResolvedValue(1);
+
+    const result = await service.findAll();
+
+    expect(result.data[0].refundEstimate).toBe(70);
+    expect(result.data[0].refundEstimateReason).toBeNull();
+  });
+
+  it("PR-1a fix-round F1 (red-first): a CANCELLED line is excluded from the pooled never-invoiced basis", async () => {
+    prisma.return.findMany.mockResolvedValue([
+      {
+        id: "ret-f1b",
+        returnNumber: "RET-2026-F1B",
+        status: "RECEIVED",
+        customerId: "cust-1",
+        items: [{ productId: "p1", qty: 4 }],
+        order: {
+          id: "ord-f1b",
+          orderNumber: "ORD-F1B",
+          invoices: [],
+          lineItems: [
+            { productId: "p1", qty: 4, unitPrice: 10, subtotal: 40, status: "PENDING" },
+            // A cancelled line at a wildly different price must not drag the blended
+            // rate off the live line's own $10/unit.
+            { productId: "p1", qty: 100, unitPrice: 1, subtotal: 100, status: "CANCELLED" },
+          ],
+        },
+        customer: { id: "cust-1", businessName: "Acme Co" },
+      },
+    ]);
+    prisma.return.count.mockResolvedValue(1);
+
+    const result = await service.findAll();
+
+    expect(result.data[0].refundEstimate).toBe(40);
+  });
+
   it("REG-B75 findOne prices refundEstimate from the BILLED basis, and states a VOID-only 0", async () => {
     prisma.return.findUnique.mockResolvedValue({
       id: "ret-75d",

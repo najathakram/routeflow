@@ -49,6 +49,7 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["INVOICE_STATUS_VALUES", "InvoiceStatus"],
   ["RETURN_STATUS_VALUES", "ReturnStatus"],
   ["RETURN_REASON_VALUES", "ReturnReason"],
+  ["RETURN_KIND_VALUES", "ReturnKind"],
   ["CREDIT_NOTE_STATUS_VALUES", "CreditNoteStatus"],
   ["REGULATED_FILING_STATUS_VALUES", "RegulatedFilingStatus"],
   ["INVOICE_TREATMENT_VALUES", "InvoiceTreatment"],
@@ -130,7 +131,13 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // added with its `CHECK_RETURN_REASON_VALUES` mirror + `ENUM_TABLE` row in the SAME PR (unlike
 // PaymentStatus gaining `PENDING` or NotificationEvent gaining `CHECK_RETURNED`, which add a
 // VALUE to an enum this file already tracks/doesn't track — those never move this count).
-const PINNED_PRISMA_ENUM_COUNT = 85;
+// Triage for ReturnKind (Returns Inside Order Creation, PR-1a, 2026-09-15): new Prisma enum,
+// mirrored immediately as `RETURN_KIND_VALUES` + an `ENUM_TABLE` row above — the value
+// (STANDARD/INLINE) is read by every `kind`-branching returns.service.ts method landing in
+// this PR. `RETURN_HOLD_REASON_VALUES`/`RETURN_PRICE_SOURCE_VALUES` (same file) are NOT
+// generated Prisma enums (plain-string columns, see Return.holdReason's schema comment), so
+// they add no row here and do not move this count.
+const PINNED_PRISMA_ENUM_COUNT = 86;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {

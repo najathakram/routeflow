@@ -37,8 +37,9 @@ const EXPECTED_FILES = [
 // per the brief; a real model/enum addition updates both the schema and this
 // pin in the same PR. (2026-09-13, Phase 0 T1: +1 enum — TenantClass.)
 // (2026-09-15, post-dated check payments PR-1: +1 enum — CheckReturnReason.)
+// (2026-09-15, Returns Inside Order Creation PR-1a: +1 enum — ReturnKind.)
 const EXPECTED_MODEL_COUNT = 128;
-const EXPECTED_ENUM_COUNT = 85;
+const EXPECTED_ENUM_COUNT = 86;
 
 function listSchemaFiles(): string[] {
   if (!fs.existsSync(SCHEMA_DIR)) return [];

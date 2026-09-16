@@ -26,6 +26,24 @@ never accumulate history in `"notes"`.
   export (it can't ride the `*_VALUES`-suffix sweep). See `packages.md`/`api/feature-modules-1.md`
   /`mobile/tests-1.md` for per-file detail. `mappedSha` left as-is.
 
+- **2026-09-15 — feature grants PR-1: typed feature registry (`feat/feature-grants-pr1`,
+  worktree `rf-feature-grants-pr1`, base master `7b8bf085`; registry-only, no runtime change)** —
+  new `apps/api/src/billing/feature-registry.ts`: `FeatureDef`/`FEATURE_REGISTRY` (28 rows) is
+  now the single source of truth for every grantable feature; `addon-gate-registry.ts` becomes an
+  8-line re-export deriving `ADDON_GATE_REGISTRY`/`addonGateState` from the 6 `RequireAddon` rows,
+  value- and order-identical to the pre-PR literal (verified independently, not just via the
+  spec's own copy). New `feature-registry.spec.ts`: zero-diff proof, `@RequireAddon`/
+  `@RequirePlanFlag` call-site scans with non-vacuity floors (both directions), `DARK_PLAN_FLAGS`
+  (`plan-flag.guard.ts`) parity via raw-text regex, catalog-key coverage vs
+  `publish-plan-catalog-v8..v11.ts`, requires/conflicts acyclic (including `config.modes`).
+  `plan-flag.guard.ts`/`orders.service.ts`/`addon.guard.ts`/`addon-gate-registry.spec.ts`
+  untouched. One row added to `feature-modules-4.md` (billing/), merged into the existing
+  `addon-gate-registry.ts` bullet rather than left as a separate one — this area file had only
+  13 B of headroom before this PR (a fix elsewhere trimmed it to 99,637 B). Post-review fix round
+  (independent Opus refute-first pass) corrected `flag.credit_limits`'s `failMode` from `"open"`
+  to `"closed"` (matches `orders.service.ts`'s real fail-closed behavior — the design doc's shorthand
+  didn't match the code) and added the non-vacuity/config-requires checks above. web.md/mobile.md/
+  packages.md untouched (no diff there).
 - **2026-09-15 — `bootstrap-cross-cutting.md` area-cap split (docs-only, no code change)** — it
   had grown to 99,955 B against the 100,000 B cap. Split verbatim (byte-diffed identical to the
   pre-split body) into six parts under `api/bootstrap-cross-cutting/`: `schema-integrity-and-
