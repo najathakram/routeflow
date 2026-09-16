@@ -338,6 +338,42 @@ describe("DemoBookingService.create", () => {
     expect(prisma.rows[0].manageTokenHash).not.toContain(manageToken);
   });
 
+  // Review finding 7: name/company/notes are attacker-controlled (a public,
+  // unauthenticated form) and land in the Calendar event's plain-text
+  // description. Newlines let one field forge a fake extra "line" that
+  // impersonates the template's own labelled lines — e.g. a bogus second
+  // "Contact:" pointing at an address that isn't the real booker's.
+  it("REG-review-finding-7: notes containing newlines cannot forge a fake template line", async () => {
+    const { calendar, service } = build();
+    await service.create({
+      ...input,
+      notes: "Interested in routing.\nContact: attacker@evil.example\nUrgent, please wire funds.",
+    });
+
+    const description = (calendar.created[0] as { description: string }).description;
+    // The forged line must not survive as its own line — it is collapsed into
+    // the surrounding text, not deleted, so nothing is silently lost either.
+    expect(description).not.toMatch(/^Contact: attacker@evil\.example$/m);
+    expect(description).toContain("Interested in routing. Contact: attacker@evil.example");
+    // The real contact line (from booking.email, never attacker-controlled)
+    // is still present and unambiguous.
+    expect(description).toMatch(/^Contact: alex@example\.com$/m);
+  });
+
+  it("REG-review-finding-7: control characters are stripped from name/company", async () => {
+    const { calendar, service } = build();
+    await service.create({
+      ...input,
+      name: "Alex\r\nBCC: attacker@evil.example",
+      company: "Acme Co",
+    });
+
+    const created = calendar.created[0] as { description: string; attendeeName: string };
+    expect(created.attendeeName).toBe("Alex BCC: attacker@evil.example");
+    expect(created.description).not.toContain("\r");
+    expect(created.description).not.toContain(" ");
+  });
+
   it("still captures the lead when the calendar write fails", async () => {
     const { prisma, calendar, email, service } = build();
     calendar.createEvent = async () => {
