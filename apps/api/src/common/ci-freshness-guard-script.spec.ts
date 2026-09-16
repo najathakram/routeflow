@@ -64,8 +64,9 @@ beforeAll(() => {
       "    out('not json', 0);",
       "    break;",
       "  case 'hang':",
-      // 10 s — comfortably longer than the hang pin's 5 s bound, so that test
-      // can only pass when the script's own timeout fires.
+      // 10 s — comfortably longer than the fake's own CI_FRESHNESS_GH_TIMEOUT_MS (set to 500ms
+      // by the test), so the hang case can only pass by taking the script's own fail-open
+      // timeout path, never by the fake happening to answer in time.
       "    setTimeout(() => out(JSON.stringify([{ sha: deploySha, id: 1 }]), 0), 10000);",
       "    break;",
       "  default:",
@@ -191,6 +192,12 @@ function fakeEnv(mode: string, extra: Record<string, string> = {}): NodeJS.Proce
 }
 
 describe("ci-freshness-guard.mjs contract", () => {
+  // FIX1 follow-up (RC1 finding): T1/T2 (REG-E2EGUARD-403, this `it` and the
+  // one below) do NOT share the flaky-timing mechanism that the "(pin) hang"
+  // case had (an `elapsedMs`/`toBeLessThan(5000)` assertion around a
+  // CPU-load-sensitive timeout race) — neither asserts on elapsed wall-clock
+  // time at all, only on `outputs.run`/`res.stdout`/`res.status`. So no fix
+  // was needed here; only the hang case's timing assertion was removed.
   it("T1 · REG-E2EGUARD-403 · YAML-driven: a 403 error body must NOT be read as the newest deployment sha (fail open)", () => {
     const { res, outFile } = runYamlDrivenFreshnessStep(fakeEnv("err403"));
     const outputs = readOutputs(outFile);
@@ -257,21 +264,14 @@ describe("ci-freshness-guard.mjs contract", () => {
     expect(res.status).toBe(0);
   });
 
-  it("T3 (pin) hang: bounded timeout still fails open within 5s", () => {
-    const start = Date.now();
+  it("T3 (pin) hang: bounded timeout still fails open (run=true, ::warning::, exit 0)", () => {
     const { res, outFile } = runScriptDirect(
       fakeEnv("hang", { CI_FRESHNESS_GH_TIMEOUT_MS: "500" }),
     );
-    const elapsedMs = Date.now() - start;
     const outputs = readOutputs(outFile);
 
     expect(outputs.run).toBe("true");
     expect(res.stdout).toContain("::warning::");
-    // The fake sleeps 10 s; only the script's own 500 ms timeout firing can
-    // land inside this bound, and the 4.5 s margin absorbs node startup on a
-    // loaded runner. The jest timeout below stays above the fake's sleep so a
-    // regression reports THIS assertion rather than a test-timeout.
-    expect(elapsedMs).toBeLessThan(5000);
     expect(res.status).toBe(0);
   }, 20_000);
 

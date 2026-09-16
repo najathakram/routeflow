@@ -23,6 +23,7 @@ import { FeatureOverrideService } from "../billing/feature-override.service";
 import { UpdateTenantStatusDto } from "./dto/update-tenant-status.dto";
 import { UpdateTenantPlanDto } from "./dto/update-tenant-plan.dto";
 import { CreateTenantDto } from "./dto/create-tenant.dto";
+import { CreateTenantAdminDto } from "./dto/create-tenant-admin.dto";
 import { ExtendTrialDto } from "./dto/extend-trial.dto";
 import { ActivateSubscriptionDto } from "./dto/activate-subscription.dto";
 import { UpdateTenantConfigDto } from "./dto/update-tenant-config.dto";
@@ -208,7 +209,7 @@ export class PlatformAdminController {
   @ApiOperation({ summary: "Create a TENANT_ADMIN account for a tenant that has none" })
   createTenantAdmin(
     @Param("id") id: string,
-    @Body() dto: { username: string; email: string; password?: string },
+    @Body() dto: CreateTenantAdminDto,
     @CurrentUser() admin: JwtPayload,
   ) {
     return this.svc.createTenantAdmin(id, dto, admin.sub);

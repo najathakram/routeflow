@@ -1,3 +1,5 @@
+Status: IMPLEMENTED
+
 # Context pack — Phase 0 W2 Tasks T12–T15
 
 Worktree: `.claude/worktrees/rf-phase0d`, branch `feat/phase0-t12-t15`, HEAD `96595470`
