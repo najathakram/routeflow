@@ -8,6 +8,27 @@ newest first**. This file replaces the old habit of prepending each session's no
 below, and set `_meta.json` `"notes"` to that same note plus the pointer to this file —
 never accumulate history in `"notes"`.
 
+- **2026-09-15 — Rescue PR B: five stranded customer-lifecycle fixes (worktree
+  `rf-rescue-lifecycle`, branch `feat/rescue-customer-lifecycle`)** — cherry-picked
+  `b3ecec42`/`c255f042`/`f137fcae`/`168b172a` from the never-merged `fix/f09-f15-customer-lifecycle`
+  branch after `local-assets/handoff/2026-09-16/stranded-fix-verification.md` confirmed all five
+  bug ids (B13/B156/B157/B158/B159/B170) were still genuinely missing from master. All four
+  cherry-picked cleanly onto `origin/master` (one trivial import-order conflict in
+  `customers.service.ts`, resolved by keeping both imports) — B156/B158/B170 share one
+  `buildListWhere()` behind `findAll`+`exportCustomers` plus `unassigned`/`removed`
+  `ListCustomersDto` filters and a removed-customer edit/reactivate 409 guard; B157 factors
+  `LIVE_CUSTOMER_STOP_WHERE`/`SCHEDULED_ROUTE_KIND_WHERE` into new
+  `apps/api/src/routes/route-stop-filters.util.ts`, shared by `findOneRoute`/`getPackingList`/
+  `getCustomerRouteAssignments`/`addStop`/`createRun`; B159 tombstones the linked `User`'s
+  username/email/googleId on soft-delete and reverses it on restore (P2002 retry path); B13 wires
+  the previously-uncalled `useApplyAdvanceToInvoice` hook into a new `ApplyAdvanceModal` on
+  `invoices/[id]/page.tsx`. RED/GREEN-verified: all 17 new REG- test cases fail against the
+  pre-fix service files and pass against the fix. `api/feature-modules-1.md` (customers),
+  `api/feature-modules-3.md` (routes), `web/routes-1.md`/`web/routes-2.md` (customers/invoices
+  UI), `web/api-hooks.md`, `mobile/tests-1.md` each got a short amendment for the newly-wired
+  behaviour; no new area file. B13's Playwright proof (`apps/web/e2e/38-apply-advance.spec.ts`)
+  is written but not run — deferred to a host grant per standing UI-proof policy.
+
 - **2026-09-15 — Lite-L2 invite-only LITE plan + B445 checkout planKey fix (worktree
   `rf-lite-L2`, WP1-WP14, uncommitted)** — WP14 fixed a pre-existing prod defect:
   `billing.service.ts onCheckoutCompleted`'s upsert never wrote the `planKey` string column
