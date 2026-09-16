@@ -235,6 +235,8 @@ describe("UsersService", () => {
         id: "u1",
         username: "acme_op",
         email: "op@acme.example",
+        status: "ACTIVE",
+        deletedAt: null,
       } as any);
 
       await service.resetPassword("u1");
@@ -244,11 +246,42 @@ describe("UsersService", () => {
       );
     });
 
+    it("N2 review fix: never emails a set-password link for a deactivated/deleted account", async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: "u1",
+        username: "suspended_op",
+        email: "suspended@acme.example",
+        status: "SUSPENDED",
+        deletedAt: null,
+      } as any);
+
+      const result = await service.resetPassword("u1");
+
+      expect(email.sendSetPasswordEmail).not.toHaveBeenCalled();
+      expect(result.tempPassword).toBeDefined(); // the reset itself still happens
+    });
+
+    it("N2 review fix: never emails a set-password link for a soft-deleted account", async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: "u1",
+        username: "deleted_op",
+        email: "deleted@acme.example",
+        status: "ACTIVE",
+        deletedAt: new Date("2026-01-01"),
+      } as any);
+
+      await service.resetPassword("u1");
+
+      expect(email.sendSetPasswordEmail).not.toHaveBeenCalled();
+    });
+
     it("skips the email (not the password reset) when the user has no email on file", async () => {
       prisma.user.findUnique.mockResolvedValue({
         id: "u1",
         username: "no_email_user",
         email: "",
+        status: "ACTIVE",
+        deletedAt: null,
       } as any);
 
       const result = await service.resetPassword("u1");

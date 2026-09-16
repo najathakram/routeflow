@@ -565,6 +565,20 @@ describe("AuthService", () => {
         UnauthorizedException,
       );
     });
+
+    it("N2 review fix: invalidates any outstanding PasswordResetToken so a 72h staff-invite/admin-reset link can't outlive a self-service password change", async () => {
+      prisma.user.findUnique.mockResolvedValue(MOCK_USER);
+      (bcrypt.compare as jest.Mock).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+      (bcrypt.hash as jest.Mock).mockResolvedValue("new-hash");
+      prisma.user.update.mockResolvedValue({} as any);
+
+      await service.changePassword("user-1", "old", "new");
+
+      expect(prisma.passwordResetToken.updateMany).toHaveBeenCalledWith({
+        where: { userId: "user-1", usedAt: null },
+        data: { usedAt: expect.any(Date) },
+      });
+    });
   });
 
   // ─── refresh — in-place rotation (B155) / T19 / R13 ────────────────────────

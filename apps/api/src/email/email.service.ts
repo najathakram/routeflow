@@ -1125,6 +1125,96 @@ export class EmailService {
     };
   }
 
+  /**
+   * Platform-only send — NEVER reads or uses a tenant's own SMTP config or branding
+   * (unlike `send()`, which tries the tenant's own mailbox first). For security/account
+   * mail (verification, password reset, invites, account/role-change notices — ground
+   * rule 1: these are platform mail, not tenant-branded mail), the sender must always
+   * be the bare platform identity, never "<Business> via RouteFlow". Same params/return
+   * shape as `send()` so callers can switch between the two without other changes.
+   * NOTE: N3 (billing lifecycle emails) adds this same method independently on
+   * feat/notify-n3-billing-emails — at merge time keep exactly one copy.
+   */
+  async sendPlatform(params: {
+    to: string;
+    subject: string;
+    html: string;
+    replyTo?: string;
+  }): Promise<{
+    delivered: boolean;
+    transport: "smtp" | "resend" | "none";
+    id?: string;
+    error?: string;
+  }> {
+    const replyTo = params.replyTo;
+
+    // 1. Platform SMTP (Google Workspace mailbox) — same transport as send()'s own
+    // platform-SMTP step, but the From identity is always the bare platform address.
+    if (this.platformSmtp) {
+      try {
+        const transport = this.createSendTransport(
+          this.platformSmtp.host,
+          this.platformSmtp.port,
+          this.platformSmtp.secure,
+          this.platformSmtp.user,
+          this.platformSmtp.pass,
+        );
+        const info = await transport.sendMail({
+          from: this.platformFrom,
+          to: params.to,
+          subject: params.subject,
+          html: params.html,
+          replyTo,
+        });
+        this.logger.log(
+          `Platform email sent via platform SMTP to ${params.to} — messageId: ${info.messageId}`,
+        );
+        return { delivered: true, transport: "smtp", id: info.messageId };
+      } catch (err: any) {
+        const rawMessage: string = err?.message ?? "Platform SMTP send failed";
+        this.logger.error(
+          `Platform SMTP send failed [code=${err?.code ?? "unknown"}]: ${redactAddresses(rawMessage)}.`,
+        );
+        return { delivered: false, transport: "smtp", error: redactAddresses(rawMessage) };
+      }
+    }
+
+    // 2. Platform Resend, bare platform From — never the tenant's own verified domain.
+    if (this.resend) {
+      try {
+        const result = await this.resend.emails.send({
+          from: this.platformFrom,
+          to: params.to,
+          subject: params.subject,
+          html: params.html,
+          replyTo,
+        });
+        if ((result as any)?.error) {
+          const msg = (result as any).error?.message ?? "Resend rejected the message";
+          this.logger.error(`Resend rejected platform email to ${params.to}: ${msg}`);
+          return { delivered: false, transport: "resend", error: msg };
+        }
+        this.logger.log(
+          `Platform email sent via Resend to ${params.to} — id: ${(result.data as any)?.id}`,
+        );
+        return { delivered: true, transport: "resend", id: (result.data as any)?.id };
+      } catch (err: any) {
+        this.logger.error(`Failed to send platform email to ${params.to}: ${err?.message}`);
+        return {
+          delivered: false,
+          transport: "resend",
+          error: err?.message ?? "Resend send failed",
+        };
+      }
+    }
+
+    // 3. No platform transport configured.
+    this.logger.warn(
+      `[PLATFORM EMAIL NOT SENT] To: ${params.to} | Subject: ${params.subject} — no platform SMTP or Resend configured.`,
+    );
+    return { delivered: false, transport: "none" };
+  }
+
   // ─── Email template ────────────────────────────────────────────────────────
 
   private buildInvoiceEmail(
@@ -1484,7 +1574,7 @@ export class EmailService {
       headerTitle: "RouteFlow — Set your password",
       bodyHtml: body,
     });
-    return this.send({ to: params.to, subject: "Set your RouteFlow password", html });
+    return this.sendPlatform({ to: params.to, subject: "Set your RouteFlow password", html });
   }
 
   /** Notice to a user's OLD address after their login email is changed — never opt-out. */
@@ -1501,7 +1591,11 @@ export class EmailService {
       headerTitle: "RouteFlow — Login email changed",
       bodyHtml: body,
     });
-    return this.send({ to: params.to, subject: "Your RouteFlow login email was changed", html });
+    return this.sendPlatform({
+      to: params.to,
+      subject: "Your RouteFlow login email was changed",
+      html,
+    });
   }
 
   /** Confirmation to a user's NEW address once it becomes their login email. */
@@ -1515,7 +1609,11 @@ export class EmailService {
       headerTitle: "RouteFlow — This is now your login email",
       bodyHtml: body,
     });
-    return this.send({ to: params.to, subject: "This is now your RouteFlow login email", html });
+    return this.sendPlatform({
+      to: params.to,
+      subject: "This is now your RouteFlow login email",
+      html,
+    });
   }
 
   /** Notice to a user when an operator/admin changes their role — never opt-out. */
@@ -1536,6 +1634,6 @@ export class EmailService {
       headerTitle: "RouteFlow — Your role was changed",
       bodyHtml: body,
     });
-    return this.send({ to: params.to, subject: "Your RouteFlow role was changed", html });
+    return this.sendPlatform({ to: params.to, subject: "Your RouteFlow role was changed", html });
   }
 }

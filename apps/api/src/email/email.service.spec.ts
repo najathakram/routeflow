@@ -1053,7 +1053,7 @@ describe("EmailService — N2 account/invite templates", () => {
   it("sendSetPasswordEmail: subject, link, and expiry hours all land in the html", async () => {
     const svc = makeService();
     const sendSpy = jest
-      .spyOn(svc, "send")
+      .spyOn(svc, "sendPlatform")
       .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
 
     await svc.sendSetPasswordEmail({
@@ -1077,7 +1077,7 @@ describe("EmailService — N2 account/invite templates", () => {
   it("sendSetPasswordEmail: escapes a username containing HTML-special characters", async () => {
     const svc = makeService();
     const sendSpy = jest
-      .spyOn(svc, "send")
+      .spyOn(svc, "sendPlatform")
       .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
 
     await svc.sendSetPasswordEmail({
@@ -1095,7 +1095,7 @@ describe("EmailService — N2 account/invite templates", () => {
   it("sendEmailChangedNotice: names the new email to the OLD address", async () => {
     const svc = makeService();
     const sendSpy = jest
-      .spyOn(svc, "send")
+      .spyOn(svc, "sendPlatform")
       .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
 
     await svc.sendEmailChangedNotice({
@@ -1116,7 +1116,7 @@ describe("EmailService — N2 account/invite templates", () => {
   it("sendEmailChangeConfirmation: goes to the NEW address", async () => {
     const svc = makeService();
     const sendSpy = jest
-      .spyOn(svc, "send")
+      .spyOn(svc, "sendPlatform")
       .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
 
     await svc.sendEmailChangeConfirmation({ to: "new@example.com", username: "acme_owner" });
@@ -1132,7 +1132,7 @@ describe("EmailService — N2 account/invite templates", () => {
   it("sendRoleChangedNotice: names old role, new role, and who changed it", async () => {
     const svc = makeService();
     const sendSpy = jest
-      .spyOn(svc, "send")
+      .spyOn(svc, "sendPlatform")
       .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
 
     await svc.sendRoleChangedNotice({

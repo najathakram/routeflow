@@ -64,7 +64,7 @@ export class UsersService {
       });
       if (!result.delivered) {
         this.logger.error(
-          `Set-password email NOT delivered for user ${userId} (${to}): transport=${result.transport} error=${result.error ?? result.smtpFallbackReason ?? "unknown"}.`,
+          `Set-password email NOT delivered for user ${userId} (${to}): transport=${result.transport} error=${result.error ?? "unknown"}.`,
         );
       }
     } catch (err) {
@@ -224,14 +224,21 @@ export class UsersService {
       throw new BadRequestException("Users can only be assigned OPERATOR or DRIVER roles.");
     }
 
+    // N2 review fix: normalize BEFORE compare and write — a case-only edit
+    // ("Acme@Example.com" -> "acme@example.com") must not read as a change (it
+    // fires both notices for nothing) and must not persist inconsistently with
+    // every other email lookup in this codebase, which is case-sensitive as
+    // stored.
+    const normalizedEmail = dto.email ? dto.email.trim().toLowerCase() : dto.email;
+
     const previousEmail = user.email;
     const previousRole = user.role;
-    const emailChanged = !!dto.email && dto.email !== previousEmail;
+    const emailChanged = !!normalizedEmail && normalizedEmail !== previousEmail;
     const roleChanged = !!dto.role && dto.role !== previousRole;
 
     const updated = await this.prisma.forTenant().user.update({
       where: { id: userId },
-      data: dto,
+      data: { ...dto, email: normalizedEmail },
       select: {
         id: true,
         username: true,
@@ -349,7 +356,10 @@ export class UsersService {
       data: { password: hashedPassword, forcePasswordChange: true },
     });
 
-    if (user.email) {
+    // N2 review fix: never email a set-password link for a deactivated/deleted
+    // account — an admin resetting a SUSPENDED/INACTIVE user's password (e.g. to
+    // lock them out) must not hand them a working way back in.
+    if (user.email && user.status === "ACTIVE" && !user.deletedAt) {
       await this.sendSetPasswordInvite(userId, user.email, user.username);
     }
 
