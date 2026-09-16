@@ -564,12 +564,48 @@ export class GoogleOAuthService {
     });
 
     if (staffUser) {
-      if (staffUser.status !== "ACTIVE") throw new ForbiddenException("unauthorized");
+      if (staffUser.status === "SUSPENDED") throw new ForbiddenException("unauthorized");
 
-      // Request came from the buyer portal login page — block to prevent confusion
+      // Request came from the buyer portal login page — block to prevent
+      // confusion, before any activation/linking side effect below.
       if (profile.context === "portal") throw new ForbiddenException("google_email_is_staff");
 
-      if (!staffUser.googleId) {
+      if (staffUser.status === "INACTIVE") {
+        // B212/B213 follow-up: a self-service tenant signup (TenantsService.register)
+        // creates the admin INACTIVE until the emailed verification link is clicked.
+        // This used to be a dead end for "Sign in with Google" too — a bare
+        // "unauthorized" (web: "contact your administrator", even though THIS
+        // person IS the administrator) — despite Google having just verified the
+        // exact mailbox the lost/failed verification email was trying to prove.
+        // Only activate on an EMAIL match (never merely a pre-existing googleId
+        // with a different email) — mirrors handleBuyerPortalAuth's
+        // `googleAttestsMailbox` distinction below.
+        const googleAttestsMailbox = staffUser.email.toLowerCase() === profile.email;
+        if (!googleAttestsMailbox) throw new ForbiddenException("unauthorized");
+
+        // Whoever submitted the self-signup form chose this password. If that
+        // wasn't the real mailbox owner (someone signed up impersonating this
+        // email), the real owner's Google sign-in must not inherit a password
+        // an impostor controls. Clear it to null — the same "Google-only
+        // account" state AuthService.setPassword already expects (its guard is
+        // `if (user.password) throw` — only a null password lets the true
+        // owner set a fresh one) — rather than merely forcing a change on next
+        // login, which would still let the impostor's original password
+        // authenticate at least once.
+        staffUser = await this.prisma.user.update({
+          where: { id: staffUser.id },
+          data: {
+            status: "ACTIVE",
+            googleId: profile.googleId,
+            password: null,
+            forcePasswordChange: false,
+          },
+        });
+        this.logger.log(
+          `Self-signup tenant admin ${staffUser.id} activated via Google sign-in ` +
+            `(mailbox verified by Google; any password set at signup was cleared)`,
+        );
+      } else if (!staffUser.googleId) {
         staffUser = await this.prisma.user.update({
           where: { id: staffUser.id },
           // Clear forcePasswordChange — Google users cannot use the password

@@ -43,6 +43,7 @@ import { MeterService, MeterReading } from "../billing/meter.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { buildPlanGateBody, PlanGateUpgrade } from "../billing/plan-gate";
+import { EmailService } from "../email/email.service";
 // Same grace window BillingCronService.expireGrace() clears hourly — the create()
 // gate applies it synchronously rather than waiting for the cron to run.
 import { GRACE_DAYS } from "../billing/plan-catalog.constants";
@@ -68,6 +69,7 @@ export class CustomersService {
     // ledger rows first — the ledger is append-only with no FK to Invoice, so
     // once the invoice row is gone the entries can never be matched back.
     private readonly ledger: RegulatedLedgerService,
+    private readonly email: EmailService,
   ) {}
 
   /**
@@ -2715,6 +2717,13 @@ export class CustomersService {
     dto: { method: "EMAIL" | "SMS"; overrideEmail?: string },
     tenantId: string,
   ) {
+    // SMS has no real transport anywhere in this codebase (the messaging
+    // stack is a stub provider) — reject before any DB write rather than
+    // creating an INVITED CustomerLink for a channel nothing will ever use.
+    if (dto.method === "SMS") {
+      throw new BadRequestException("SMS portal invites are not available yet. Use email instead.");
+    }
+
     const customer = await this.prisma.customer.findFirst({
       where: { id: customerId, tenantId },
       include: { user: { select: { email: true } } },
@@ -2733,8 +2742,12 @@ export class CustomersService {
       );
     }
 
-    const cryptoModule = await import("crypto");
-    const token = cryptoModule.randomBytes(32).toString("hex");
+    // `crypto` is already imported statically at the top of this file — the
+    // dynamic `await import("crypto")` this replaced was pure dead weight
+    // (redundant with that import) and, incidentally, threw under Jest's CJS
+    // transform (`--experimental-vm-modules` required for dynamic import of a
+    // built-in), which is exactly why zero tests ever exercised this method.
+    const token = crypto.randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
     await this.prisma.customerLink.upsert({
@@ -2772,12 +2785,43 @@ export class CustomersService {
       `Portal invite for customer ${customerId} → ${toEmail} | token ${token.slice(0, 8)}...`,
     );
 
-    // Email sending is best-effort — if no email transport, it logs only
-    // Import EmailService lazily to avoid circular module issue
+    // B212-class fix (2026-09-12): this used to claim "Email sending is
+    // best-effort — if no email transport, it logs only" and then never sent
+    // anything at all — no EmailService call existed anywhere in this method.
+    // The CustomerLink row still flipped to INVITED and the web customer page
+    // renders that as "Invite Sent", so an operator believed a real email went
+    // out while the customer received nothing, with no way for either of them
+    // to discover the gap.
+    const sendResult = await this.email.send({
+      to: toEmail,
+      subject: `${sellerName} invited you to their RouteFlow buyer portal`,
+      html: `<p>Hi,</p>
+<p><strong>${sellerName}</strong> has invited you to connect on the RouteFlow buyer portal — track orders, invoices, and statements in one place.</p>
+<p style="margin:24px 0;">
+  <a href="${inviteUrl}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;">Accept Invite</a>
+</p>
+<p>Or paste this link into your browser:<br/><a href="${inviteUrl}">${inviteUrl}</a></p>
+<p><em>This link expires in 7 days.</em></p>`,
+    });
+
+    if (!sendResult.delivered) {
+      this.logger.error(
+        `Portal invite email NOT delivered for customer ${customerId} (tenant ${tenantId}) ` +
+          `to ${toEmail} — transport=${sendResult.transport} ` +
+          `error=${sendResult.error ?? sendResult.smtpFallbackReason ?? "unknown"}. ` +
+          `The CustomerLink row is still INVITED with a valid token — share the link manually ` +
+          `or fix the underlying mail config and use Resend Invite.`,
+      );
+    }
+
     return {
-      message: `Invite prepared for ${toEmail}. ${sellerName} can share: ${inviteUrl}`,
+      message: sendResult.delivered
+        ? `Invite emailed to ${toEmail}.`
+        : `Invite created for ${toEmail}, but the email could not be sent right now. ` +
+          `Share this link manually, or fix your email settings and try Resend Invite: ${inviteUrl}`,
       inviteUrl,
       expiresAt,
+      emailSent: sendResult.delivered,
     };
   }
 

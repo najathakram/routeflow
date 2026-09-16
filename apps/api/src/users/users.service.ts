@@ -33,10 +33,19 @@ export class UsersService {
    * Cross-tenant email lookup — used as fallback when no tenant cookie is present.
    * Finds a user by email across ALL tenants. Returns null if zero or multiple matches
    * (ambiguous), so login is only allowed when the email is globally unique.
+   *
+   * B213 follow-up: this used to filter `status: "ACTIVE"` in the query itself, so a
+   * self-signup user still INACTIVE (pending email verification) whose typed/cached
+   * workspace slug didn't match their own tenant was returned `null` HERE — before
+   * `validateUser` ever ran bcrypt or its EMAIL_NOT_VERIFIED branch (auth.service.ts).
+   * Login is common on the platform host (no subdomain to imply a workspace) right
+   * after signing up, when the user has no reason to know their exact slug yet — a
+   * live path to this fallback, not a contrived edge case. Status filtering now
+   * happens where it belongs, in `validateUser`, AFTER the password is verified.
    */
   async findByEmailCrossTenant(email: string): Promise<User | null> {
     const matches = await this.prisma.user.findMany({
-      where: { email, deletedAt: null, status: "ACTIVE" },
+      where: { email, deletedAt: null },
       take: 2, // we only need to know if there's 0, 1, or 2+
     });
     return matches.length === 1 ? matches[0] : null;
@@ -46,10 +55,11 @@ export class UsersService {
    * Cross-tenant username lookup — fallback for username-based logins with a stale cookie.
    * Returns null if zero or multiple matches (common usernames like "admin" exist in
    * multiple tenants and won't trigger the fallback — user must use email instead).
+   * See `findByEmailCrossTenant`'s doc for why `status` is no longer filtered here.
    */
   async findByUsernameCrossTenant(username: string): Promise<User | null> {
     const matches = await this.prisma.user.findMany({
-      where: { username, deletedAt: null, status: "ACTIVE" },
+      where: { username, deletedAt: null },
       take: 2,
     });
     return matches.length === 1 ? matches[0] : null;

@@ -110,4 +110,47 @@ describe("UsersService", () => {
       expect(findManyCall.where?.role).toEqual({ not: "CUSTOMER" });
     });
   });
+
+  // ─── Cross-tenant fallback lookups (B213 follow-up) ────────────────────────
+  //
+  // These used to filter `status: "ACTIVE"` in the query itself, so an INACTIVE
+  // self-signup user (pending email verification) whose typed/cached workspace
+  // slug didn't match their own tenant was invisible to auth.service.ts's
+  // validateUser() BEFORE it ever got a chance to check the password or return
+  // its distinguishable EMAIL_NOT_VERIFIED error — status filtering belongs
+  // there now, after the credential is verified, not in this lookup.
+  describe("findByEmailCrossTenant", () => {
+    it("returns an INACTIVE user (not filtered out) when the email is globally unique", async () => {
+      const inactiveUser = { id: "u1", email: "new@acme.example", status: "INACTIVE" };
+      prisma.user.findMany.mockResolvedValue([inactiveUser] as any);
+
+      const result = await service.findByEmailCrossTenant("new@acme.example");
+
+      expect(result).toEqual(inactiveUser);
+      const call = prisma.user.findMany.mock.calls[0][0] as any;
+      expect(call.where).not.toHaveProperty("status");
+      expect(call.where.deletedAt).toBeNull();
+    });
+
+    it("still returns null when 0 or 2+ matches (ambiguous), regardless of status", async () => {
+      prisma.user.findMany.mockResolvedValue([]);
+      expect(await service.findByEmailCrossTenant("nobody@nowhere.example")).toBeNull();
+
+      prisma.user.findMany.mockResolvedValue([{ id: "a" }, { id: "b" }] as any);
+      expect(await service.findByEmailCrossTenant("shared@example.com")).toBeNull();
+    });
+  });
+
+  describe("findByUsernameCrossTenant", () => {
+    it("returns an INACTIVE user (not filtered out) when the username is globally unique", async () => {
+      const inactiveUser = { id: "u2", username: "acme_admin", status: "INACTIVE" };
+      prisma.user.findMany.mockResolvedValue([inactiveUser] as any);
+
+      const result = await service.findByUsernameCrossTenant("acme_admin");
+
+      expect(result).toEqual(inactiveUser);
+      const call = prisma.user.findMany.mock.calls[0][0] as any;
+      expect(call.where).not.toHaveProperty("status");
+    });
+  });
 });

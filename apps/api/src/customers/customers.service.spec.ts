@@ -16,6 +16,7 @@ import { StorageService } from "../storage/storage.service";
 import { MeterService } from "../billing/meter.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { EmailService } from "../email/email.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { CreateCustomerDto } from "./dto/create-customer.dto";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
@@ -94,6 +95,7 @@ describe("CustomersService", () => {
   let entitlements: { hasFlag: jest.Mock };
   let configGet: jest.Mock;
   let ledger: { reverseInvoiceEntries: jest.Mock };
+  let email: { send: jest.Mock };
   const originalFetch = global.fetch;
 
   beforeEach(async () => {
@@ -130,6 +132,7 @@ describe("CustomersService", () => {
     // has no upgradeTargetForFlag, so a flag-OFF msrp path would crash there and
     // mask the behaviour the test is actually about.
     entitlements = { hasFlag: jest.fn().mockResolvedValue(false) };
+    email = { send: jest.fn().mockResolvedValue({ delivered: true, transport: "resend" }) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -156,6 +159,7 @@ describe("CustomersService", () => {
         { provide: PlanCatalogService, useValue: catalog },
         { provide: EntitlementsService, useValue: entitlements },
         { provide: RegulatedLedgerService, useValue: ledger },
+        { provide: EmailService, useValue: email },
       ],
     }).compile();
 
@@ -2559,6 +2563,84 @@ describe("CustomersService", () => {
 
       // Z: no records — hard-deleted.
       expect(prisma.customer.delete).toHaveBeenCalledWith({ where: { id: CUSTOMER_Z.id } });
+    });
+  });
+
+  // ─── Portal invite (B212-class fix) ────────────────────────────────────────
+  //
+  // sendPortalInvite used to claim "Email sending is best-effort... it logs
+  // only" and then never called EmailService at all — the CustomerLink still
+  // flipped to INVITED and the web page rendered "Invite Sent" while the
+  // customer received nothing, with no way for either side to detect the gap.
+  describe("sendPortalInvite", () => {
+    const CUSTOMER_WITH_EMAIL = {
+      id: "cust-invite",
+      tenantId: "tenant-1",
+      email: "buyer@example.com",
+      user: { email: "login@example.com" },
+    };
+
+    beforeEach(() => {
+      prisma.customer.findFirst.mockResolvedValue(CUSTOMER_WITH_EMAIL as any);
+      prisma.customerLink.upsert.mockResolvedValue({} as any);
+      prisma.tenantConfig.findFirst.mockResolvedValue({ businessName: "Acme Distribution" } as any);
+    });
+
+    it("actually sends the invite email (not just a logged 'best-effort' claim)", async () => {
+      const result = await service.sendPortalInvite("cust-invite", { method: "EMAIL" }, "tenant-1");
+
+      expect(email.send).toHaveBeenCalledWith(expect.objectContaining({ to: "buyer@example.com" }));
+      expect(result.emailSent).toBe(true);
+      expect(result.message).toMatch(/emailed to buyer@example\.com/i);
+    });
+
+    it("reports emailSent:false and an honest message when delivery fails — THE BUG: this used to be silently unsent with a false 'prepared' message", async () => {
+      email.send.mockResolvedValue({
+        delivered: false,
+        transport: "none",
+        error: "RESEND_API_KEY not configured",
+      });
+      const loggerErrorSpy = jest.spyOn((service as any).logger, "error");
+
+      const result = await service.sendPortalInvite("cust-invite", { method: "EMAIL" }, "tenant-1");
+
+      expect(result.emailSent).toBe(false);
+      expect(result.message).toMatch(/could not be sent/i);
+      expect(result.message).toContain(result.inviteUrl);
+      expect(loggerErrorSpy).toHaveBeenCalledWith(expect.stringContaining("NOT delivered"));
+    });
+
+    it("still creates the CustomerLink invite row even when email delivery fails (share-manually recovery stays available)", async () => {
+      email.send.mockResolvedValue({ delivered: false, transport: "none" });
+
+      await service.sendPortalInvite("cust-invite", { method: "EMAIL" }, "tenant-1");
+
+      expect(prisma.customerLink.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({ status: "INVITED" }),
+        }),
+      );
+    });
+
+    it("rejects SMS explicitly instead of silently pretending to send it (no real SMS transport exists)", async () => {
+      await expect(
+        service.sendPortalInvite("cust-invite", { method: "SMS" }, "tenant-1"),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(email.send).not.toHaveBeenCalled();
+    });
+
+    it("throws when the customer has no usable email address", async () => {
+      prisma.customer.findFirst.mockResolvedValue({
+        id: "cust-invite",
+        tenantId: "tenant-1",
+        email: null,
+        user: { email: "someone@placeholder.local" },
+      } as any);
+
+      await expect(
+        service.sendPortalInvite("cust-invite", { method: "EMAIL" }, "tenant-1"),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(email.send).not.toHaveBeenCalled();
     });
   });
 });

@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
@@ -24,6 +25,8 @@ export interface DeviceInfo {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly usersService: UsersService,
@@ -434,7 +437,18 @@ export class AuthService {
       throw new BadRequestException("Account not found.");
     }
 
-    // Already verified — still issue tokens so clicking the link twice works smoothly
+    // Already verified — still issue tokens so clicking the link twice works smoothly.
+    // X2 fix: only INACTIVE (the legitimate self-signup-pending-verification
+    // state) may transition to ACTIVE here. This token is a 24h-lived JWT
+    // signed at signup time — if an admin SUSPENDS the account within that
+    // window (e.g. for abuse, before the owner ever verified), the still-valid
+    // link must not silently un-suspend it. Any other non-ACTIVE status is a
+    // deliberate administrative decision this token was never meant to override.
+    if (user.status !== "ACTIVE" && user.status !== "INACTIVE") {
+      throw new BadRequestException(
+        "This account is not available. Contact support if you believe this is an error.",
+      );
+    }
     const activeUser =
       user.status === "ACTIVE"
         ? user
@@ -485,7 +499,14 @@ export class AuthService {
     const base = surface === "web" ? urls.web : urls.mobileWeb;
     const resetUrl = `${base}/reset-password?token=${rawToken}`;
 
-    this.emailService
+    // B212-class fix: this used to be fire-and-forget with the result
+    // discarded (`.catch(() => {})`, never awaited) — the response text stays
+    // the SAME fixed, enumeration-safe message either way (a real delivery
+    // failure must never be distinguishable to the caller), but the attempt
+    // is no longer silent server-side: a real user locked out by a broken
+    // mail transport used to have zero trace anywhere but "user says they
+    // never got the email".
+    const sendResult = await this.emailService
       .send({
         to: email,
         subject: "Reset your RouteFlow password",
@@ -494,7 +515,20 @@ export class AuthService {
 <p><a href="${resetUrl}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">Reset password</a></p>
 <p>This link expires in <strong>15 minutes</strong>. If you didn't request this, you can safely ignore this email — your password will not change.</p>`,
       })
-      .catch(() => {});
+      .catch((err: Error) => ({
+        delivered: false,
+        transport: "none" as const,
+        error: err.message,
+        smtpFallbackReason: undefined as string | undefined,
+      }));
+
+    if (!sendResult.delivered) {
+      this.logger.error(
+        `Password reset email NOT delivered for user ${user.id} (${email}) — ` +
+          `transport=${sendResult.transport} ` +
+          `error=${sendResult.error ?? sendResult.smtpFallbackReason ?? "unknown"}.`,
+      );
+    }
 
     return MSG;
   }

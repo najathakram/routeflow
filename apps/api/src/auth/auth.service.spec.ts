@@ -148,6 +148,30 @@ describe("AuthService", () => {
         expect(caught!.getResponse()).toMatchObject({ code: "EMAIL_NOT_VERIFIED" });
       });
 
+      // B213 follow-up: findByEmailCrossTenant/findByUsernameCrossTenant used to
+      // filter status:"ACTIVE" in their own Prisma query, so an INACTIVE user
+      // reached via the cross-tenant fallback (wrong/stale workspace cookie —
+      // common right after self-signup, before the user has learned their own
+      // slug) came back as `user: null` and hit the generic null-return at the
+      // top of validateUser, never even reaching the password check below.
+      it("still throws EMAIL_NOT_VERIFIED when the INACTIVE user is found via the cross-tenant fallback (wrong workspace typed)", async () => {
+        usersService.findByUsername.mockResolvedValue(null); // wrong tenant slug typed
+        usersService.findByUsernameCrossTenant.mockResolvedValue({
+          ...MOCK_USER,
+          status: "INACTIVE",
+        });
+        (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+
+        let caught: ForbiddenException | undefined;
+        try {
+          await service.validateUser("admin", "correct-password", "some-other-tenant-id");
+        } catch (err) {
+          caught = err as ForbiddenException;
+        }
+        expect(caught).toBeInstanceOf(ForbiddenException);
+        expect(caught!.getResponse()).toMatchObject({ code: "EMAIL_NOT_VERIFIED" });
+      });
+
       it("returns null (no leak) when the password is WRONG — never reveals the account is pending verification to a guesser", async () => {
         usersService.findByUsername.mockResolvedValue({ ...MOCK_USER, status: "INACTIVE" });
         (bcrypt.compare as jest.Mock).mockResolvedValue(false);
@@ -242,6 +266,94 @@ describe("AuthService", () => {
         where: { id: "user-1" },
         data: { failedLoginAttempts: 1, lockedUntil: null },
       });
+    });
+  });
+
+  // ─── verifyEmailAndLogin ────────────────────────────────────────────────────
+  //
+  // X2: this consumes a 24h-lived `email_verify` JWT signed at self-signup time
+  // (TenantsService.register). It used to flip ANY non-ACTIVE status straight
+  // to ACTIVE — including SUSPENDED — so an admin who suspended a still-
+  // unverified account (e.g. for abuse) within that 24h window could be
+  // silently un-suspended by whoever still held the stale link.
+  describe("verifyEmailAndLogin", () => {
+    const INACTIVE_USER = {
+      id: "user-1",
+      username: "acme_admin",
+      role: "TENANT_ADMIN" as const,
+      status: "INACTIVE" as const,
+      forcePasswordChange: false,
+      tenantId: "tenant-1",
+      deletedAt: null,
+      password: "hashed",
+    };
+
+    beforeEach(() => {
+      jwtService.verify.mockReturnValue({
+        sub: "user-1",
+        type: "email_verify",
+        tenantId: "tenant-1",
+      });
+      prisma.tenant.findUnique.mockResolvedValue({ slug: "acme-distribution" } as any);
+      prisma.refreshToken.upsert.mockResolvedValue({} as any);
+    });
+
+    it("activates an INACTIVE user and logs them in", async () => {
+      prisma.user.findUnique.mockResolvedValue(INACTIVE_USER as any);
+      prisma.user.update.mockResolvedValue({ ...INACTIVE_USER, status: "ACTIVE" } as any);
+
+      const result = await service.verifyEmailAndLogin("valid.jwt.token");
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: "user-1" },
+        data: { status: "ACTIVE" },
+      });
+      expect(result).toHaveProperty("accessToken");
+      expect(result.user.id).toBe("user-1");
+    });
+
+    it("clicking the link twice is smooth — an already-ACTIVE user just logs in, no update call", async () => {
+      prisma.user.findUnique.mockResolvedValue({ ...INACTIVE_USER, status: "ACTIVE" } as any);
+
+      const result = await service.verifyEmailAndLogin("valid.jwt.token");
+
+      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(result).toHaveProperty("accessToken");
+    });
+
+    it("REFUSES to reactivate a SUSPENDED user, even with a still-valid unexpired token", async () => {
+      prisma.user.findUnique.mockResolvedValue({ ...INACTIVE_USER, status: "SUSPENDED" } as any);
+
+      await expect(service.verifyEmailAndLogin("valid.jwt.token")).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it("rejects an invalid/expired token", async () => {
+      jwtService.verify.mockImplementation(() => {
+        throw new Error("jwt expired");
+      });
+
+      await expect(service.verifyEmailAndLogin("bad.token")).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+
+    it("rejects a token whose type is not email_verify", async () => {
+      jwtService.verify.mockReturnValue({ sub: "user-1", type: "password_reset" });
+
+      await expect(service.verifyEmailAndLogin("wrong-type.token")).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+
+    it("rejects when the user no longer exists", async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      await expect(service.verifyEmailAndLogin("valid.jwt.token")).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
     });
   });
 

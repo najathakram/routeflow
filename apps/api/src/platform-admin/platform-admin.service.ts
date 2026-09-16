@@ -37,6 +37,7 @@ import { UpdateTenantStatusDto } from "./dto/update-tenant-status.dto";
 import { UpdateTenantPlanDto } from "./dto/update-tenant-plan.dto";
 import { CreateTenantDto } from "./dto/create-tenant.dto";
 import { classifyTenantSlug } from "../tenant/tenant-class";
+import { CreateTenantAdminDto } from "./dto/create-tenant-admin.dto";
 import { IRS_SYSTEM_CATEGORIES } from "../bookkeeping/irs-categories.constant";
 import { ActivateSubscriptionDto } from "./dto/activate-subscription.dto";
 import { UpdateTenantConfigDto } from "./dto/update-tenant-config.dto";
@@ -1513,7 +1514,7 @@ ${paymentSection}
 
   async createTenantAdmin(
     tenantId: string,
-    dto: { username: string; email: string; password?: string },
+    dto: CreateTenantAdminDto,
     adminId: string | null = null,
   ) {
     await this._findOrThrow(tenantId);
