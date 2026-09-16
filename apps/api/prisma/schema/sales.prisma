@@ -112,6 +112,15 @@ enum ReturnStatus {
   CANCELLED
 }
 
+// Returns Inside Order Creation (2026-09-15), PR-1a: STANDARD is the existing
+// post-delivery RMA flow (returns.service.ts); INLINE is a return captured while
+// creating/editing an order — its own endpoints/state machine land in PR-1c/1d.
+// RETURN_KIND_VALUES (packages/types/api/enums.ts) + enum-parity row (L-072).
+enum ReturnKind {
+  STANDARD
+  INLINE
+}
+
 enum PriceType {
   STANDARD
   SPECIAL
@@ -1000,16 +1009,50 @@ model Return {
   updatedAt    DateTime     @updatedAt
   tenantId     String?
 
+  // Returns Inside Order Creation (PR-1a schema, 2026-09-15): STANDARD (the rest of this
+  // model, unchanged) vs. INLINE (orderId = the CARRYING order; the sale is per line via
+  // ReturnItem.sourceOrderId). INLINE's own capture/issue/approve endpoints and state
+  // machine land in PR-1c/1d — this migration adds only the columns, defaulted so every
+  // existing row reads as STANDARD with every new field null/zero.
+  kind ReturnKind @default(STANDARD)
+  // Client nonce per capture tray — replay/dedup key for the (future) inline-returns POST.
+  returnKey String?
+  // Raw inline-capture input, written in the order/fold tx; cleared once captured (PR-1c/1d).
+  capturePayload Json?
+  // Scope snapshot at insert time (N-4) — the sweep re-checks against this, not live state.
+  capturedById   String?
+  capturedRole   String?
+  routeRunStopId String?
+  // RETURN_HOLD_REASON_VALUES (packages/types/api/enums.ts): CAPTURE_PENDING | CAPTURE_FAILED
+  // | OVER_RETURN | DRIVER_CAP | UNREFERENCED. String, not an enum (same CREATE-TYPE-avoidance
+  // reason as refundMethod above); validated at the DTO/service edge.
+  holdReason      String?
+  captureAttempts Int     @default(0)
+  captureError    String?
+  // Whole credit held above the driver cap, awaiting operator approval (N-5).
+  heldAmount   Decimal?  @db.Decimal(10, 2)
+  approvedById String?
+  approvedAt   DateTime?
+  // {perProduct:[{productId, soldPieces, priorPieces, returnedPieces, overBy}], regulatedUnmatched:[...]}
+  mismatch  Json?
+  alertedAt DateTime?
+  // Priced total, split (§3.3): amount = creditSubtotal + creditTax + creditCategoryTax.
+  creditSubtotal    Decimal? @db.Decimal(10, 2)
+  creditTax         Decimal? @db.Decimal(10, 2)
+  creditCategoryTax Decimal? @db.Decimal(10, 2)
+
   order    Order        @relation(fields: [orderId], references: [id])
   tenant   Tenant?      @relation(fields: [tenantId], references: [id])
   customer Customer     @relation(fields: [customerId], references: [id])
   items    ReturnItem[]
 
   @@unique([tenantId, returnNumber])
+  @@unique([tenantId, returnKey])
   @@index([orderId])
   @@index([customerId])
   @@index([status])
   @@index([tenantId])
+  @@index([kind])
 }
 
 model ReturnItem {
@@ -1025,6 +1068,29 @@ model ReturnItem {
   notes     String?
   tenantId  String?
 
+  // Returns Inside Order Creation (PR-1a schema, 2026-09-15) — INLINE-only fields, null on
+  // every STANDARD row. sourceOrderId is the accounting key (B4): the order the goods were
+  // SOLD on, paired with productId, for the shared prior-returned reader — distinct from the
+  // parent Return.orderId, which for INLINE is the CARRYING order the credit lands on.
+  sourceOrderId       String?
+  // Pricing provenance only (§3.1/§3.2) — may dangle (the source invoice/order-item line can
+  // be voided/edited later); never joined for money math after capture.
+  sourceInvoiceItemId String?
+  sourceOrderItemId   String?
+  unitPrice     Decimal? @db.Decimal(10, 2)
+  subtotal      Decimal? @db.Decimal(10, 2)
+  taxAmount     Decimal? @db.Decimal(10, 2)
+  categoryTax   Decimal? @db.Decimal(10, 2)
+  boxes         Int?
+  pieces        Int?
+  unitsPerBox   Int?
+  // RETURN_PRICE_SOURCE_VALUES: SOURCE_INVOICE | CUSTOMER_PRICE | TIER | BASE | MANUAL.
+  // String, not an enum — same reasoning as Return.holdReason above.
+  priceSource    String?
+  originalPrice  Decimal? @db.Decimal(10, 2)
+  overrideReason String?
+  overriddenBy   String?
+
   return  Return  @relation(fields: [returnId], references: [id], onDelete: Cascade)
   tenant  Tenant? @relation(fields: [tenantId], references: [id])
   product Product @relation(fields: [productId], references: [id])
@@ -1032,6 +1098,7 @@ model ReturnItem {
   @@index([returnId])
   @@index([productId])
   @@index([tenantId])
+  @@index([sourceOrderId, productId])
 }
 
 // ─── Customer Special Prices ──────────────────────────────────────────────────

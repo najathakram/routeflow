@@ -59,6 +59,10 @@ describe("ReturnsService.create → cumulative over-return / double-refund race 
     prisma.tenantTransaction.mockImplementation((fn: any) =>
       fn({
         return: txReturn,
+        // PR-1a: the shared prior-returned reader (returnedPiecesByProduct) also queries
+        // returnItem for INLINE-kind rows sourced from this order — always empty here, no
+        // INLINE return exists in this suite.
+        returnItem: { findMany: jest.fn().mockResolvedValue([]) },
         order: prisma.order,
         customer: prisma.customer,
         $executeRaw: txExecuteRaw,
@@ -124,8 +128,14 @@ describe("ReturnsService.create → cumulative over-return / double-refund race 
       "user-1",
     );
 
+    // PR-1a: the STANDARD half of the shared reader now also filters `kind: "STANDARD"`
+    // (the INLINE half queries returnItem separately — see the txHandle setup above).
     expect(txReturn.findMany).toHaveBeenCalledWith({
-      where: { orderId: "ord-1", status: { notIn: ["REJECTED", "CANCELLED"] } },
+      where: {
+        orderId: "ord-1",
+        kind: "STANDARD",
+        status: { notIn: ["REJECTED", "CANCELLED"] },
+      },
       include: { items: { select: { productId: true, qty: true } } },
     });
     expect(txReturn.create).toHaveBeenCalled();
@@ -374,6 +384,103 @@ describe("ReturnsService.create → cumulative over-return / double-refund race 
       "user-1",
     );
     expect(txReturn.create.mock.calls[0][0].data.items.create[0].restock).toBe(false);
+  });
+
+  // ─── PR-1a (B4/m-6): orderedQty sums every non-CANCELLED line for the product ───
+
+  it("REG-PR1A-B4 a product split across TWO live order lines: orderedQty is the SUM of both, not just the first `.find()` match", async () => {
+    prisma.order.findUnique.mockResolvedValue({
+      ...order,
+      lineItems: [
+        { productId: "p1", qty: 4, unitPrice: 5, status: "PENDING", position: 0 },
+        { productId: "p1", qty: 6, unitPrice: 5, status: "PENDING", position: 1 },
+      ],
+    } as any);
+    txReturn.findMany.mockResolvedValue([]);
+    txReturn.create.mockResolvedValue({ id: "ret-split", items: [] });
+
+    // 10 total across the two lines — a return of 10 must be accepted. Before the
+    // fix, `.find()` only ever saw the FIRST line (qty 4) and this would 400.
+    await service.create(
+      { orderId: "ord-1", reason: "DAMAGED", items: [{ productId: "p1", qty: 10 }] },
+      "user-1",
+    );
+
+    expect(txReturn.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("REG-PR1A-B4 revert probe: a return of 5 against a CANCELLED 20-unit line plus a live 4-unit line is capped at the live 4, not 24", async () => {
+    prisma.order.findUnique.mockResolvedValue({
+      ...order,
+      lineItems: [
+        { productId: "p1", qty: 20, unitPrice: 5, status: "CANCELLED", position: 0 },
+        { productId: "p1", qty: 4, unitPrice: 5, status: "PENDING", position: 1 },
+      ],
+    } as any);
+    txReturn.findMany.mockResolvedValue([]);
+
+    await expect(
+      service.create(
+        { orderId: "ord-1", reason: "DAMAGED", items: [{ productId: "p1", qty: 5 }] },
+        "user-1",
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(txReturn.create).not.toHaveBeenCalled();
+  });
+
+  it("§3.5 box-split STANDARD DTO literal: a 2bx+6pcs line (30 pieces sold) accepts a return of 12 with the pre-fix message format", async () => {
+    prisma.order.findUnique.mockResolvedValue({
+      ...order,
+      lineItems: [
+        {
+          productId: "p1",
+          qty: 30,
+          boxes: 2,
+          pieces: 6,
+          unitsPerBox: 12,
+          unitPrice: 24,
+          status: "PENDING",
+          position: 0,
+        },
+      ],
+    } as any);
+    txReturn.findMany.mockResolvedValue([]);
+    txReturn.create.mockResolvedValue({ id: "ret-box", items: [] });
+
+    await service.create(
+      { orderId: "ord-1", reason: "DAMAGED", items: [{ productId: "p1", qty: 12 }] },
+      "user-1",
+    );
+
+    expect(txReturn.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("§3.5 box-split STANDARD DTO literal, revert probe: a return of 31 against the same 30-piece line is refused with the unchanged message shape", async () => {
+    prisma.order.findUnique.mockResolvedValue({
+      ...order,
+      lineItems: [
+        {
+          productId: "p1",
+          qty: 30,
+          boxes: 2,
+          pieces: 6,
+          unitsPerBox: 12,
+          unitPrice: 24,
+          status: "PENDING",
+          position: 0,
+        },
+      ],
+    } as any);
+    txReturn.findMany.mockResolvedValue([]);
+
+    await expect(
+      service.create(
+        { orderId: "ord-1", reason: "DAMAGED", items: [{ productId: "p1", qty: 31 }] },
+        "user-1",
+      ),
+    ).rejects.toThrow(
+      "Return qty (31) exceeds remaining returnable qty (30) for product p1. Already returned: 0 of 30.",
+    );
   });
 
   it("REG-B166 findAll searches by return number, order number and customer business name", async () => {

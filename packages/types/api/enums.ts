@@ -57,6 +57,31 @@ export const RETURN_REASON_VALUES = [
 ] as const;
 export type ReturnReason = (typeof RETURN_REASON_VALUES)[number];
 
+// Returns Inside Order Creation (PR-1a, 2026-09-15). ReturnKind is a real Prisma enum
+// (pinned below in ENUM_TABLE); RETURN_HOLD_REASON_VALUES/RETURN_PRICE_SOURCE_VALUES are
+// plain-string columns (same CREATE-TYPE-avoidance reasoning as Return.refundMethod), so
+// they are NOT in ENUM_TABLE — there is no generated Prisma enum to pin them against.
+export const RETURN_KIND_VALUES = ["STANDARD", "INLINE"] as const;
+export type ReturnKind = (typeof RETURN_KIND_VALUES)[number];
+
+export const RETURN_HOLD_REASON_VALUES = [
+  "CAPTURE_PENDING",
+  "CAPTURE_FAILED",
+  "OVER_RETURN",
+  "DRIVER_CAP",
+  "UNREFERENCED",
+] as const;
+export type ReturnHoldReason = (typeof RETURN_HOLD_REASON_VALUES)[number];
+
+export const RETURN_PRICE_SOURCE_VALUES = [
+  "SOURCE_INVOICE",
+  "CUSTOMER_PRICE",
+  "TIER",
+  "BASE",
+  "MANUAL",
+] as const;
+export type ReturnPriceSource = (typeof RETURN_PRICE_SOURCE_VALUES)[number];
+
 export const CREDIT_NOTE_STATUS_VALUES = ["ISSUED", "APPLIED", "VOID"] as const;
 export type CreditNoteStatus = (typeof CREDIT_NOTE_STATUS_VALUES)[number];
 

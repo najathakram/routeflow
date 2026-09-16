@@ -388,6 +388,87 @@ describe("RegulatedLedgerService", () => {
       });
     });
 
+    // ─── PR-1a (§5): idempotency key widened from returnId alone to (returnId, orderId) ───
+
+    it("PR-1a: the prior-reversal check is keyed on (returnId, orderId), not returnId alone", async () => {
+      arrange({ sales: [saleRow()], items: [{ id: "ii-1", productId: "p1" }] });
+      await service.reverseReturnEntries({
+        returnId: "ret-1",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 3]]),
+        db: prisma,
+      });
+      // Revert probe: dropping `orderId` from this where clause (back to `{ returnId,
+      // entryType: "REVERSAL" }`) fails this exact-match assertion.
+      expect(prisma.regulatedSalesLedger.findMany).toHaveBeenNthCalledWith(1, {
+        where: { returnId: "ret-1", orderId: "ord-1", entryType: "REVERSAL" },
+        select: { id: true },
+      });
+    });
+
+    it("PR-1a fix-round (a REAL prior-reversal store, not a blind mockResolvedValueOnce queue): order B is not blocked by order A's REVERSAL, and a SECOND call for order A IS blocked", async () => {
+      // The `arrange()` helper's `findMany` stub is a call-order queue that never
+      // inspects `where` — it would pass this exact scenario even against the
+      // UN-WIDENED key (`{returnId, entryType}` alone), so it cannot prove the fix.
+      // This mock actually tracks which (returnId, orderId) pairs have a REVERSAL,
+      // keyed off the real `where` clause each call site sends.
+      const reversedPairs = new Set<string>();
+      const writtenRows: any[] = [];
+
+      prisma.regulatedSalesLedger.findMany.mockImplementation(async (args: any) => {
+        const where = args.where ?? {};
+        if (where.entryType === "REVERSAL" && "returnId" in where && "orderId" in where) {
+          // The prior-reversal idempotency check this fix-round targets.
+          return reversedPairs.has(`${where.returnId}:${where.orderId}`) ? [{ id: "prior-1" }] : [];
+        }
+        if (where.entryType === "SALE") {
+          return [saleRow({ orderId: where.orderId, invoiceItemId: `ii-${where.orderId}` })];
+        }
+        // priorReversals (keyed by invoiceItemId) — none to fold in for this scenario.
+        return [];
+      });
+      prisma.invoiceItem.findMany.mockImplementation(async (args: any) =>
+        (args.where.id.in as string[]).map((id) => ({ id, productId: "p1" })),
+      );
+      prisma.regulatedSalesLedger.createMany.mockImplementation(async (args: any) => {
+        writtenRows.push(...args.data);
+        for (const row of args.data) reversedPairs.add(`${row.returnId}:${row.orderId}`);
+        return { count: args.data.length };
+      });
+
+      // Order A: nothing reversed yet — reverses.
+      await service.reverseReturnEntries({
+        returnId: "ret-1",
+        orderId: "ord-a",
+        returnedByProduct: new Map([["p1", 3]]),
+        db: prisma,
+      });
+      expect(reversedPairs.has("ret-1:ord-a")).toBe(true);
+
+      // Order B, SAME returnId: (ret-1, ord-a) already has a REVERSAL, but (ret-1,
+      // ord-b) does not — the widened key must not treat this as already-reversed.
+      await service.reverseReturnEntries({
+        returnId: "ret-1",
+        orderId: "ord-b",
+        returnedByProduct: new Map([["p1", 3]]),
+        db: prisma,
+      });
+      expect(reversedPairs.has("ret-1:ord-b")).toBe(true);
+      expect(writtenRows.filter((r) => r.orderId === "ord-a")).toHaveLength(1);
+      expect(writtenRows.filter((r) => r.orderId === "ord-b")).toHaveLength(1);
+
+      // A THIRD call repeating order A must now be a no-op — proves the guard is a
+      // real per-pair check, not "always allow" dressed up in a wider where clause.
+      writtenRows.length = 0;
+      await service.reverseReturnEntries({
+        returnId: "ret-1",
+        orderId: "ord-a",
+        returnedByProduct: new Map([["p1", 3]]),
+        db: prisma,
+      });
+      expect(writtenRows).toHaveLength(0);
+    });
+
     it("RF-3: carries the SALE's trackedSubcategoryId onto the return REVERSAL row", async () => {
       arrange({
         sales: [saleRow({ trackedSubcategoryId: "sub-cig" })],
