@@ -837,3 +837,27 @@ apps/web/app --include=*.tsx -A1 | grep -B1 onSuccess` — narrow to `.map()`-re
   never a bare `new PrismaClient()`. A writer resolving a special row by id must re-validate its
   identity/class on every write, not just once.**
 - **Guard:** `bootstrap-house-tenant.db.spec.ts`, `tenant-mirror.service.spec.ts`.
+
+### L-162 · 2026-09-15 · tooling · post-dated check payments PR-1 (schema-only, additive)
+
+- **Symptom:** adding `CHECK_RETURNED` to the Prisma `NotificationEvent` enum — a schema-only,
+  "no behavior change" migration with no new call site — broke `apps/api` `check-types`: two
+  pre-existing `Record<NotificationEvent, ...>` maps in `messaging-config.service.ts`
+  (`EVENT_CHANNELS`, `DEFAULT_TEMPLATES`) stopped compiling because they no longer covered every
+  member of the enum.
+- **Root cause:** an "additive-only" schema PR was scoped by grepping the Prisma schema and the
+  shared-type mirrors (`@routeflow/types`), never by grepping for `Record<TheEnum,` across the
+  consumers of that enum — an exhaustive map is a compile-time contract on the enum's FULL
+  member set, so a new value is a breaking change to every such map even though nothing in the
+  new PR reads or writes the new value.
+- **Lesson:** **Before adding a value to an existing Prisma enum, grep the whole tree for
+  `Record<TheEnumName,` (and any hand-written `switch`/object-literal that enumerates every
+  member) — an "additive, no behavior change" schema PR still breaks compilation wherever an
+  exhaustive map exists, and needs a minimal exhaustiveness-only entry there (never a real
+  trigger/behavior change) to stay green.**
+- **Guard:** `messaging-config.service.ts`'s `EVENT_CHANNELS`/`DEFAULT_TEMPLATES` gained a
+  `CHECK_RETURNED` entry (`[INTERNAL]` / a template string) and `NO_TRIGGER_EVENTS` gained the
+  key too, in the SAME commit as the schema change; `apps/api/src/common/enum-parity.spec.ts`'s
+  `PINNED_PRISMA_ENUM_COUNT` tripwire (L-072) catches a genuinely new enum, but not a new VALUE
+  on an existing one — only `tsc --noEmit` catches that, which is why this must be run, not
+  assumed, on any enum-value addition.

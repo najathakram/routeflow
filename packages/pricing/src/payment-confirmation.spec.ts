@@ -8,6 +8,12 @@ import {
   resolveConfirmedAmounts,
   splitConfirmed,
   sumConfirmed,
+  HELD_STATUSES,
+  HELD_PAYMENT,
+  isHeldPayment,
+  sumHeld,
+  collectedDateOf,
+  remainingCapacity,
 } from "./payment-confirmation";
 
 describe("splitConfirmed", () => {
@@ -147,5 +153,94 @@ describe("CONFIRMED_STATUS / CONFIRMED_PAYMENT (unchanged by B421)", () => {
   it("still matches only PAID", () => {
     expect(CONFIRMED_STATUS).toBe("PAID");
     expect(CONFIRMED_PAYMENT).toEqual({ status: "PAID" });
+  });
+});
+
+// ─── Post-dated check payments PR-1 (additive-only) — HELD money vs. capacity ──────────────────
+
+describe("HELD_STATUSES / HELD_PAYMENT / isHeldPayment", () => {
+  it("HELD_STATUSES is exactly PAID and PENDING", () => {
+    expect(HELD_STATUSES).toEqual(["PAID", "PENDING"]);
+  });
+
+  it("HELD_PAYMENT is the matching Prisma `in` filter", () => {
+    expect(HELD_PAYMENT).toEqual({ status: { in: ["PAID", "PENDING"] } });
+  });
+
+  it.each(["PAID", "PENDING"])("isHeldPayment(%s) is true", (status) => {
+    expect(isHeldPayment({ status })).toBe(true);
+  });
+
+  it.each(["DRAFT", "VOID", undefined])("isHeldPayment(%s) is false", (status) => {
+    expect(isHeldPayment({ status })).toBe(false);
+  });
+});
+
+describe("collectedDateOf", () => {
+  it("prefers settledAt over paidAt", () => {
+    expect(collectedDateOf({ settledAt: "2026-10-01", paidAt: "2026-09-01" })).toBe("2026-10-01");
+  });
+
+  it("falls back to paidAt when settledAt is null/undefined", () => {
+    expect(collectedDateOf({ settledAt: null, paidAt: "2026-09-01" })).toBe("2026-09-01");
+    expect(collectedDateOf({ paidAt: "2026-09-01" })).toBe("2026-09-01");
+  });
+});
+
+/**
+ * REG-PR1-N4: a single mixed fixture (DRAFT + PAID + PENDING + VOID) proving `sumConfirmed`,
+ * `sumHeld`, and the capacity sum `remainingCapacity` subtracts are three genuinely different
+ * computations — not three names for the same filter. See payment-confirmation.ts's
+ * `remainingCapacity` doc for the binding N4 citation this fixture exercises.
+ */
+describe("sumConfirmed vs sumHeld vs capacity — REG-PR1-N4 mixed fixture", () => {
+  const MIXED = [
+    { amount: 100, status: "DRAFT" },
+    { amount: 200, status: "PAID" },
+    { amount: 50, status: "PENDING" },
+    { amount: 9999, status: "VOID" },
+  ];
+
+  it("sumConfirmed counts PAID only (200)", () => {
+    expect(sumConfirmed(MIXED)).toBe(200);
+  });
+
+  it("sumHeld counts PAID + PENDING (250)", () => {
+    expect(sumHeld(MIXED)).toBe(250);
+  });
+
+  it("remainingCapacity subtracts DRAFT + PAID + PENDING (350), never VOID", () => {
+    // total 1000, minus (100 DRAFT + 200 PAID + 50 PENDING) = 650 — VOID's 9999 must never
+    // reduce capacity.
+    expect(remainingCapacity(1000, MIXED)).toBe(650);
+  });
+
+  it("all three figures differ from each other on this fixture", () => {
+    const confirmed = sumConfirmed(MIXED);
+    const held = sumHeld(MIXED);
+    const capacityConsumed = 1000 - remainingCapacity(1000, MIXED);
+    expect(confirmed).not.toBe(held);
+    expect(held).not.toBe(capacityConsumed);
+    expect(confirmed).not.toBe(capacityConsumed);
+  });
+});
+
+describe("remainingCapacity", () => {
+  it("returns the full total when there are no payments", () => {
+    expect(remainingCapacity(500, [])).toBe(500);
+    expect(remainingCapacity(500, null)).toBe(500);
+    expect(remainingCapacity(500, undefined)).toBe(500);
+  });
+
+  it("a VOID-only payments array consumes no capacity", () => {
+    expect(remainingCapacity(500, [{ amount: 500, status: "VOID" }])).toBe(500);
+  });
+
+  it("can go negative when payments exceed total (an overbooked allocation)", () => {
+    expect(remainingCapacity(100, [{ amount: 150, status: "PAID" }])).toBe(-50);
+  });
+
+  it("rounds like every other money-returning export in this package", () => {
+    expect(remainingCapacity(10.005, [{ amount: 0.001, status: "PAID" }])).toBe(10);
   });
 });

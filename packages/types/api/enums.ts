@@ -143,7 +143,9 @@ export const PURCHASE_ORDER_STATUS_VALUES = [
 ] as const;
 export type PurchaseOrderStatus = (typeof PURCHASE_ORDER_STATUS_VALUES)[number];
 
-export const PAYMENT_STATUS_VALUES = ["DRAFT", "PAID", "VOID"] as const;
+// PENDING added (post-dated check payments PR-1, additive-only): a CHECK payment recorded and
+// held but not yet clearable/bankable. See finance.prisma's PaymentStatus doc comment.
+export const PAYMENT_STATUS_VALUES = ["DRAFT", "PAID", "VOID", "PENDING"] as const;
 export type PaymentStatus = (typeof PAYMENT_STATUS_VALUES)[number];
 
 export const PRICE_TYPE_VALUES = ["STANDARD", "SPECIAL", "DISCOUNTED", "MANUAL", "PROMO"] as const;
@@ -319,4 +321,16 @@ export type PlanKey = (typeof PLAN_KEYS)[number];
 // `enum-parity.spec.ts`'s `ENUM_TABLE` row) — consumed by `create-tenant.dto.ts`'s `@IsIn` and
 // the admin "New Tenant" form.
 export const TENANT_CLASS_VALUES = ["DEMO", "INTERNAL", "PRODUCTION", "TEST"] as const;
+
+// Post-dated check payments PR-1 (additive-only): why a CHECK bounced. Pinned set-equal to the
+// generated Prisma `CheckReturnReason` enum (see `enum-parity.spec.ts`'s `ENUM_TABLE` row). No
+// read/write path sets or reads this yet — a later PR wires the check-lifecycle transition that
+// does.
+export const CHECK_RETURN_REASON_VALUES = [
+  "NSF",
+  "ACCOUNT_CLOSED",
+  "STOP_PAYMENT",
+  "OTHER",
+] as const;
+export type CheckReturnReason = (typeof CHECK_RETURN_REASON_VALUES)[number];
 export type TenantClass = (typeof TENANT_CLASS_VALUES)[number];

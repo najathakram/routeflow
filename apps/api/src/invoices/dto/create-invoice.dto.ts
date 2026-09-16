@@ -1,4 +1,5 @@
 import {
+  ArrayMaxSize,
   ArrayMinSize,
   IsArray,
   IsBoolean,
@@ -117,6 +118,11 @@ export class StandalonePaymentDto {
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsEnum(["DRAFT", "PAID"]) status?: string;
   @IsArray()
+  // Post-dated check payments PR-1 (additive-only, no behavior change for any real request —
+  // every existing caller allocates to a handful of invoices): caps a standalone payment's
+  // waterfall allocation so a malformed/adversarial request can't force an unbounded per-row
+  // fan-out.
+  @ArrayMaxSize(50)
   @ValidateNested({ each: true })
   @Type(() => AllocationDto)
   allocations: AllocationDto[];

@@ -237,6 +237,12 @@ model TenantConfig {
   ownerName     String?
   invoiceNotes  String?
   invoiceTerms  String?
+  // Post-dated check payments PR-1 (additive-only): the day (date-only, tenant
+  // local calendar day) a later PR's daily "checks due to clear" digest job
+  // last sent for this tenant — an idempotency mark so a retried/duplicate
+  // cron tick doesn't re-send the same day's digest. No job writes or reads
+  // this field yet.
+  checksDigestSentForDay DateTime? @db.Date
   updatedAt     DateTime @updatedAt
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)

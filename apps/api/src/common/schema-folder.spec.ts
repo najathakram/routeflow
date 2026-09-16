@@ -32,13 +32,14 @@ const EXPECTED_FILES = [
 
 // The folder's CURRENT counts — measured via
 // `node apps/api/scripts/split-prisma-schema.mjs --check`, which reports
-// (214 blocks: 128 models, 84 enums, 2 datasource/generator). These are not
+// (215 blocks: 128 models, 85 enums, 2 datasource/generator). These are not
 // the split-time counts: the folder legitimately grows. Pinned as literals
 // per the brief; a real model/enum addition updates both the schema and this
 // pin in the same PR. (2026-09-13, Phase 0 T1: +1 enum — TenantClass.)
+// (2026-09-15, post-dated check payments PR-1: +1 enum — CheckReturnReason.)
 // (2026-09-15, Returns Inside Order Creation PR-1a: +1 enum — ReturnKind.)
 const EXPECTED_MODEL_COUNT = 128;
-const EXPECTED_ENUM_COUNT = 85;
+const EXPECTED_ENUM_COUNT = 86;
 
 function listSchemaFiles(): string[] {
   if (!fs.existsSync(SCHEMA_DIR)) return [];
