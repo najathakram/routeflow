@@ -31,6 +31,16 @@ const DRIVER: JwtPayload = {
   status: "ACTIVE",
 } as JwtPayload;
 
+const CUSTOMER: JwtPayload = {
+  sub: "user-cust-1",
+  role: "CUSTOMER",
+  forcePasswordChange: false,
+  tenantId: "t1",
+  tenantSlug: "acme",
+  username: "harbor_cafe",
+  status: "ACTIVE",
+} as JwtPayload;
+
 describe("InlineReturnsQuoteService — M8 driver scoping", () => {
   let service: InlineReturnsQuoteService;
   let prisma: ReturnType<typeof createMockPrisma>;
@@ -47,8 +57,37 @@ describe("InlineReturnsQuoteService — M8 driver scoping", () => {
 
   const dto = { customerId: "cust-1", items: [{ productId: "prod-1", qty: 1 }] };
 
+  it("Opus fix-round MAJOR: refuses a CUSTOMER caller explicitly, before any DB read (Q5)", async () => {
+    await expect(service.quote(dto, CUSTOMER)).rejects.toThrow(ForbiddenException);
+    expect(db.customer.findFirst).not.toHaveBeenCalled();
+  });
+
   it("refuses a DRIVER quote with no routeRunStopId", async () => {
     await expect(service.quote(dto, DRIVER)).rejects.toThrow(ForbiddenException);
+  });
+
+  it("Opus fix-round MAJOR/B309 parity: refuses a COMPLETED stop", async () => {
+    (db.routeRunStop.findFirst as jest.Mock).mockResolvedValue({
+      id: "stop-1",
+      routeRunId: "run-1",
+      customerId: "cust-1",
+      status: "COMPLETED",
+    });
+    await expect(service.quote({ ...dto, routeRunStopId: "stop-1" }, DRIVER)).rejects.toThrow(
+      ForbiddenException,
+    );
+  });
+
+  it("Opus fix-round MAJOR/B309 parity: refuses a SKIPPED stop", async () => {
+    (db.routeRunStop.findFirst as jest.Mock).mockResolvedValue({
+      id: "stop-1",
+      routeRunId: "run-1",
+      customerId: "cust-1",
+      status: "SKIPPED",
+    });
+    await expect(service.quote({ ...dto, routeRunStopId: "stop-1" }, DRIVER)).rejects.toThrow(
+      ForbiddenException,
+    );
   });
 
   it("refuses when the stop belongs to a different customer", async () => {
@@ -108,7 +147,7 @@ describe("InlineReturnsQuoteService — M8 driver scoping", () => {
       driverId: "driver-1",
       status: "IN_PROGRESS",
     });
-    (db.customer.findUnique as jest.Mock).mockResolvedValue({
+    (db.customer.findFirst as jest.Mock).mockResolvedValue({
       id: "cust-1",
       pricingTier: 1,
       isTaxExempt: false,
@@ -118,7 +157,7 @@ describe("InlineReturnsQuoteService — M8 driver scoping", () => {
   });
 
   it("never scopes an OPERATOR caller (no routeRunStopId required)", async () => {
-    (db.customer.findUnique as jest.Mock).mockResolvedValue({
+    (db.customer.findFirst as jest.Mock).mockResolvedValue({
       id: "cust-1",
       pricingTier: 1,
       isTaxExempt: false,
@@ -128,7 +167,91 @@ describe("InlineReturnsQuoteService — M8 driver scoping", () => {
   });
 
   it("404s when the customer does not exist", async () => {
-    (db.customer.findUnique as jest.Mock).mockResolvedValue(null);
+    (db.customer.findFirst as jest.Mock).mockResolvedValue(null);
     await expect(service.quote(dto, OPERATOR)).rejects.toThrow(NotFoundException);
+  });
+
+  it("Opus fix-round MAJOR: looks up the customer via findFirst (tenant-scoped) with deletedAt: null, never findUnique", async () => {
+    (db.customer.findFirst as jest.Mock).mockResolvedValue({
+      id: "cust-1",
+      pricingTier: 1,
+      isTaxExempt: false,
+    });
+    await service.quote(dto, OPERATOR);
+    expect(db.customer.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "cust-1", deletedAt: null } }),
+    );
+    expect(db.customer.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe("InlineReturnsQuoteService — Opus fix-round BLOCKER: the matching/allocation/pricing seam", () => {
+  let service: InlineReturnsQuoteService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+  let db: ReturnType<PrismaService["forTenant"]>;
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [InlineReturnsQuoteService, { provide: PrismaService, useValue: prisma }],
+    }).compile();
+    service = module.get(InlineReturnsQuoteService);
+    db = prisma.forTenant();
+  });
+
+  it("SERVICE-level oracle: a selling-unit candidate line (qty 2 boxes, upb 12, $48) returning 15 pieces prices at $30.00 end to end (revert $316.00 — the pre-fix seam bug)", async () => {
+    (db.customer.findFirst as jest.Mock).mockResolvedValue({
+      id: "cust-1",
+      pricingTier: 1,
+      isTaxExempt: false,
+    });
+    (db.customerPrice.findMany as jest.Mock).mockResolvedValue([]);
+    (db.product.findMany as jest.Mock).mockResolvedValue([
+      {
+        id: "prod-1",
+        pricePerUnit: 24,
+        priceTier2: 24,
+        priceTier3: 24,
+        priceTier4: 24,
+        priceTier5: 24,
+      },
+    ]);
+    (db.invoice.findMany as jest.Mock).mockResolvedValue([
+      {
+        orderId: "order-1",
+        subtotal: 48,
+        discount: 0,
+        taxAmount: 0,
+        items: [
+          {
+            id: "invitem-1",
+            orderItemId: "oi-1",
+            productId: "prod-1",
+            qty: 2, // selling units (boxes) — boxes/pieces both null on this line
+            unitPrice: 24,
+            subtotal: 48,
+            boxes: null,
+            pieces: null,
+            unitsPerBox: 12,
+            promoFreeUnits: null,
+            taxRate: 0,
+            categoryTaxAmount: 0,
+          },
+        ],
+      },
+    ]);
+    (db.return.findMany as jest.Mock).mockResolvedValue([]);
+    (db.returnItem.findMany as jest.Mock).mockResolvedValue([]);
+
+    // Bare `qty` on a boxed product means SELLING UNITS (boxes) per returnRequestPieces/the
+    // DTO's own documented semantics — 15 PIECES must be requested via the explicit
+    // boxes/pieces split, matching how a box-split return line is actually submitted.
+    const result = await service.quote(
+      { customerId: "cust-1", items: [{ productId: "prod-1", qty: 0, boxes: 0, pieces: 15 }] },
+      OPERATOR,
+    );
+
+    expect(result.total).toBe(30.0);
+    expect(result.total).not.toBe(316.0);
   });
 });

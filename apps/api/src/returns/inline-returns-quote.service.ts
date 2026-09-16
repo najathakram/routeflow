@@ -8,7 +8,13 @@
  * nothing here writes a Return/ReturnItem row (that's PR-1c/1d's capture path).
  */
 import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { InvoiceStatus, OrderStatus, RouteRunStatus, UserRole } from "@prisma/client";
+import {
+  InvoiceStatus,
+  OrderStatus,
+  RouteRunStatus,
+  RouteRunStopStatus,
+  UserRole,
+} from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { REAL_INVOICE_STATUSES } from "../common/invoiced-sales";
@@ -41,6 +47,14 @@ export class InlineReturnsQuoteService {
     dto: QuoteInlineReturnDto,
     user: JwtPayload,
   ): Promise<QuoteBreakdown & { productBreakdown: Record<string, QuoteBreakdown> }> {
+    // Q5/§7: buyers keep the post-delivery request flow — never captured at order-entry
+    // time. `@Roles` on the controller already excludes CUSTOMER, but this is the money-
+    // writing-adjacent quote path, so it's refused explicitly here too (defense in depth —
+    // matches the house convention of never trusting a decorator alone for a money surface).
+    if (user.role === UserRole.CUSTOMER) {
+      throw new ForbiddenException("Buyers cannot capture returns at order entry");
+    }
+
     const db = this.prisma.forTenant();
 
     // M8 scoping (§7): a DRIVER may only quote for the customer of a stop on their
@@ -55,11 +69,20 @@ export class InlineReturnsQuoteService {
       const driver = await db.driver.findFirst({ where: { userId: user.sub } });
       const stop = await db.routeRunStop.findFirst({
         where: { id: dto.routeRunStopId },
-        select: { id: true, routeRunId: true, customerId: true },
+        select: { id: true, routeRunId: true, customerId: true, status: true },
       });
       if (!stop) throw new ForbiddenException("Stop not found");
       if (stop.customerId !== dto.customerId) {
         throw new ForbiddenException("Stop does not belong to this customer");
+      }
+      // B309 parity (orders.service.ts:2035-2036): a completed/skipped stop is no longer an
+      // active part of the run — a return can't be captured "at" a stop the driver has
+      // already left.
+      if (
+        stop.status === RouteRunStopStatus.COMPLETED ||
+        stop.status === RouteRunStopStatus.SKIPPED
+      ) {
+        throw new ForbiddenException("Stop is already completed or skipped");
       }
       const run = await db.routeRun.findFirst({
         where: { id: stop.routeRunId },
@@ -73,8 +96,13 @@ export class InlineReturnsQuoteService {
       }
     }
 
-    const customer = await db.customer.findUnique({
-      where: { id: dto.customerId },
+    // findFirst (not findUnique) — the tenant-scoping extension injects `where.tenantId` into
+    // findFirst/findMany, but a findUnique keyed purely on `id` bypasses that post-filter
+    // entirely, so a foreign-tenant customerId would otherwise resolve. deletedAt: null also
+    // refuses a soft-deleted (removed) customer, matching the B131 removed-customer convention
+    // used elsewhere (orders.service.ts).
+    const customer = await db.customer.findFirst({
+      where: { id: dto.customerId, deletedAt: null },
       select: { id: true, pricingTier: true, isTaxExempt: true },
     });
     if (!customer) throw new NotFoundException("Customer not found");
@@ -107,12 +135,14 @@ export class InlineReturnsQuoteService {
         .map((cp) => [cp.productId, cp.pricingTier as number]),
     );
 
-    // Sold pieces per (sourceOrderId, productId) — from the SAME matching-set lines
-    // the allocation itself draws from, never a live re-price.
+    // Sold PIECES per (sourceOrderId, productId) — from the SAME matching-set lines the
+    // allocation itself draws from, never a live re-price. Pools on `piecesQty`, never `qty`
+    // (a selling-unit line's `qty` is boxes, not pieces — pooling on it undercounts supply by
+    // a factor of unitsPerBox and silently caps a boxed return short).
     const soldByOrderProduct = new Map<string, number>();
     for (const line of matchingSet) {
       const key = `${line.sourceOrderId}::${line.productId}`;
-      soldByOrderProduct.set(key, (soldByOrderProduct.get(key) ?? 0) + line.qty);
+      soldByOrderProduct.set(key, (soldByOrderProduct.get(key) ?? 0) + line.piecesQty);
     }
 
     // PR-1a's shared prior-returned reader is keyed per source order — call it once
@@ -244,12 +274,19 @@ export class InlineReturnsQuoteService {
       if (!inv.orderId) continue;
       for (const item of inv.items) {
         if (!item.productId) continue;
+        const qty = Number(item.qty);
+        // §3.1/Opus fix-round: piecesQty is the TRUE piece count, computed once here — a
+        // box-split line's qty is already pieces; a selling-unit line's qty is boxes, so it
+        // must be multiplied by unitsPerBox. Pooling/capping uses ONLY piecesQty; qty stays
+        // the line's own axis for proration inside priceMatchedChunk.
+        const piecesQty = item.boxes != null ? qty : qty * (Number(item.unitsPerBox) || 1);
         lines.push({
           sourceOrderId: inv.orderId,
           sourceInvoiceItemId: item.id,
           sourceOrderItemId: item.orderItemId ?? null,
           productId: item.productId,
-          qty: Number(item.qty),
+          qty,
+          piecesQty,
           unitPrice: Number(item.unitPrice),
           subtotal: Number(item.subtotal),
           boxes: item.boxes,

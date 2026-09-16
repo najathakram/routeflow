@@ -12,9 +12,11 @@ import {
   type CandidateInvoiceLine,
 } from "./inline-returns-pricing";
 
-/** A fully-specified candidate line with sane defaults, overridden per test. */
+/** A fully-specified candidate line with sane defaults, overridden per test. `piecesQty`
+ * auto-derives from qty/boxes/unitsPerBox (the same rule the real caller uses) unless the
+ * override supplies it explicitly. */
 function line(overrides: Partial<CandidateInvoiceLine>): CandidateInvoiceLine {
-  return {
+  const base = {
     sourceOrderId: "order-1",
     sourceInvoiceItemId: "item-1",
     sourceOrderItemId: "oi-1",
@@ -22,9 +24,9 @@ function line(overrides: Partial<CandidateInvoiceLine>): CandidateInvoiceLine {
     qty: 0,
     unitPrice: 0,
     subtotal: 0,
-    boxes: null,
-    pieces: null,
-    unitsPerBox: null,
+    boxes: null as number | null,
+    pieces: null as number | null,
+    unitsPerBox: null as number | null,
     promoFreeUnits: null,
     taxRate: 0,
     categoryTax: null,
@@ -33,6 +35,9 @@ function line(overrides: Partial<CandidateInvoiceLine>): CandidateInvoiceLine {
     invoiceTaxAmount: 0,
     ...overrides,
   };
+  const piecesQty =
+    overrides.piecesQty ?? (base.boxes != null ? base.qty : base.qty * (base.unitsPerBox || 1));
+  return { ...base, piecesQty };
 }
 
 describe("§3.5 literal oracles — priceMatchedChunk", () => {
@@ -189,6 +194,27 @@ describe("allocateReturnedPieces", () => {
     );
     expect(chunks).toEqual([{ line: only, pieces: 10 }]);
   });
+
+  it("Opus fix-round BLOCKER: caps on piecesQty, never a selling-unit line's own qty (revert: caps at 2 instead of 24)", () => {
+    // qty 2 (boxes, selling-unit line, boxes:null), upb 12 -> piecesQty 24.
+    const sellingUnit = line({
+      sourceOrderId: "order-1",
+      qty: 2,
+      unitsPerBox: 12,
+      unitPrice: 24,
+      subtotal: 48,
+    });
+    expect(sellingUnit.piecesQty).toBe(24);
+    const chunks = allocateReturnedPieces(
+      [sellingUnit],
+      [{ sourceOrderId: "order-1", productId: "prod-1", remainingPieces: 24 }],
+      "prod-1",
+      15,
+    );
+    // Revert probe: capping on line.qty (2) instead of piecesQty (24) would only allocate 2
+    // pieces to this line and dump the other 13 into the unreferenced over-return chunk.
+    expect(chunks).toEqual([{ line: sellingUnit, pieces: 15 }]);
+  });
 });
 
 describe("priceUnreferencedChunk / priceManualChunk", () => {
@@ -218,6 +244,33 @@ describe("priceUnreferencedChunk / priceManualChunk", () => {
     expect(priced.priceSource).toBe("MANUAL");
     expect(priced.overrideReason).toBe("damaged, priced below list");
     expect(priced.overriddenBy).toBe("user-1");
+  });
+
+  it("Opus fix-round BLOCKER: a boxed unreferenced return prices via the SELLING-UNIT (box) rate, never unitPrice x pieces (revert $288.00)", () => {
+    // upb 12, $24/box, returning exactly 1 box (12 pieces).
+    const priced = priceUnreferencedChunk(
+      "prod-1",
+      12,
+      { unitPrice: 24, source: "TIER", unitsPerBox: 12 },
+      0,
+      false,
+    );
+    expect(priced.subtotal).toBe(24.0);
+    // Revert probe: `roundMoney(unitPrice * chunkPieces)` treats the box price as a per-piece
+    // rate, crediting 24 * 12 = $288.00 for what should be exactly one box.
+    expect(priced.subtotal).not.toBe(288.0);
+  });
+
+  it("Opus fix-round BLOCKER: a boxed manual override prices via the SELLING-UNIT (box) rate too", () => {
+    const priced = priceManualChunk(
+      "prod-1",
+      12,
+      { unitPrice: 24, reason: "damaged", overriddenBy: "user-1", unitsPerBox: 12 },
+      0,
+      false,
+    );
+    expect(priced.subtotal).toBe(24.0);
+    expect(priced.subtotal).not.toBe(288.0);
   });
 });
 

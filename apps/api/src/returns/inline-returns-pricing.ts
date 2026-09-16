@@ -13,7 +13,12 @@
  * {@link prorateLineSubtotal} — never re-derived here — so this stays consistent with
  * every other partial-quantity money computation in the codebase.
  */
-import { prorateLineSubtotal, roundMoney } from "@routeflow/pricing";
+import {
+  computeLineSubtotal,
+  normalizeBoxesPieces,
+  prorateLineSubtotal,
+  roundMoney,
+} from "@routeflow/pricing";
 
 export type ReturnPriceSource = "SOURCE_INVOICE" | "CUSTOMER_PRICE" | "TIER" | "BASE" | "MANUAL";
 
@@ -25,8 +30,14 @@ export interface CandidateInvoiceLine {
   sourceInvoiceItemId: string;
   sourceOrderItemId: string | null;
   productId: string;
-  /** InvoiceItem.qty — the line's own axis (pieces for a box-split line, selling units otherwise). */
+  /** InvoiceItem.qty — the line's own axis (pieces for a box-split line, selling units
+   * otherwise). Used ONLY as the proration axis inside `priceMatchedChunk` — never for
+   * pooling/capping (a selling-unit line's `qty` is boxes, not pieces). */
   qty: number;
+  /** This line's true piece count — `boxes != null ? qty : qty * (unitsPerBox || 1)`, computed
+   * once by the caller. The ONLY field allocation/pooling caps against; mixing it up with `qty`
+   * (a selling-unit line's own axis) under-caps a boxed return by a factor of unitsPerBox. */
+  piecesQty: number;
   unitPrice: number;
   subtotal: number;
   /** Non-null on a box-split line; null on a "selling-unit" line (§3.2's axis rule). */
@@ -54,15 +65,41 @@ export interface RemainingSupply {
 }
 
 export interface UnreferencedPriceContext {
-  /** getTierPrice(product, tier) or a CustomerPrice override, resolved by the caller. */
+  /** getTierPrice(product, tier) or a CustomerPrice override, resolved by the caller — the
+   * canonical SELLING-UNIT price (one BOX when unitsPerBox > 1, matching @routeflow/pricing's
+   * own convention), never a per-piece price. */
   unitPrice: number;
   source: Extract<ReturnPriceSource, "CUSTOMER_PRICE" | "TIER" | "BASE">;
+  /** The product's box size, so a boxed product's SELLING-UNIT price is priced against whole
+   * boxes (+ prorated loose pieces), never `unitPrice * chunkPieces` directly — that would
+   * over-credit a boxed product by a factor of unitsPerBox (CLAUDE.md money discipline). */
+  unitsPerBox?: number | null;
 }
 
 export interface ManualOverride {
+  /** A typed box/piece price — same SELLING-UNIT convention as `UnreferencedPriceContext`. */
   unitPrice: number;
   reason: string;
   overriddenBy: string;
+  unitsPerBox?: number | null;
+}
+
+/** Prices `chunkPieces` at a SELLING-UNIT rate (one box when `unitsPerBox > 1`, else one piece)
+ * via the canonical `computeLineSubtotal` — never `unitPrice * chunkPieces` directly, which
+ * would over-credit a boxed product by a factor of unitsPerBox. */
+function priceSellingUnitChunk(
+  unitPrice: number,
+  chunkPieces: number,
+  unitsPerBox?: number | null,
+): number {
+  const normalized = normalizeBoxesPieces({ qty: chunkPieces, unitsPerBox });
+  return computeLineSubtotal({
+    unitPrice,
+    qty: normalized.qty,
+    boxes: normalized.boxes,
+    pieces: normalized.pieces,
+    unitsPerBox,
+  });
 }
 
 export interface PricedChunk {
@@ -144,7 +181,7 @@ export function allocateReturnedPieces(
     if (line.productId !== productId) continue;
     const cap = remaining.get(line.sourceOrderId) ?? 0;
     if (cap <= 0) continue;
-    const take = Math.min(left, cap, line.qty);
+    const take = Math.min(left, cap, line.piecesQty);
     if (take <= 0) continue;
     chunks.push({ line, pieces: take });
     remaining.set(line.sourceOrderId, cap - take);
@@ -224,7 +261,7 @@ export function priceUnreferencedChunk(
   taxRate: number,
   customerIsTaxExempt: boolean,
 ): PricedChunk {
-  const subtotal = roundMoney(ctx.unitPrice * chunkPieces);
+  const subtotal = priceSellingUnitChunk(ctx.unitPrice, chunkPieces, ctx.unitsPerBox);
   const taxAmount = customerIsTaxExempt ? 0 : roundMoney(subtotal * taxRate);
   return {
     sourceOrderId: null,
@@ -248,7 +285,7 @@ export function priceManualChunk(
   taxRate: number,
   customerIsTaxExempt: boolean,
 ): PricedChunk {
-  const subtotal = roundMoney(override.unitPrice * chunkPieces);
+  const subtotal = priceSellingUnitChunk(override.unitPrice, chunkPieces, override.unitsPerBox);
   const taxAmount = customerIsTaxExempt ? 0 : roundMoney(subtotal * taxRate);
   return {
     sourceOrderId: null,

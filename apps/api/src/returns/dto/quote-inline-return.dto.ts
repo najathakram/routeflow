@@ -15,8 +15,14 @@ export class QuoteInlineReturnItemDto {
   @IsNotEmpty()
   productId!: string;
 
-  /** Raw qty (pieces, or selling units when `boxes`/`pieces` are both omitted and the
-   * product is boxed — see `returnRequestPieces`). */
+  /**
+   * A BARE `qty` (both `boxes`/`pieces` omitted) is interpreted per `returnRequestPieces`:
+   * for a boxed product it means SELLING UNITS (boxes), not raw pieces — `qty: 1` on a
+   * 12-pack product returns one whole BOX (12 pieces), never one loose piece. To return
+   * loose pieces of a boxed product, supply `boxes`/`pieces` explicitly (e.g.
+   * `{ boxes: 0, pieces: 3 }`). This mirrors the same box-vs-piece axis convention already
+   * used for line storage (`OrderItem`/`InvoiceItem`) — see design.md §3.1.
+   */
   @IsInt()
   @Min(1)
   qty!: number;
