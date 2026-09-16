@@ -14,6 +14,7 @@ import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { EmailService } from "../email/email.service";
 import { ConfigService } from "@nestjs/config";
 import { createMockPrisma } from "../testing/prisma-mock";
 
@@ -75,6 +76,7 @@ describe("CustomersService.findAll — SQLi payload reaches Prisma as a bound `c
         { provide: MeterService, useValue: { read: jest.fn() } },
         { provide: PlanCatalogService, useValue: { getPublishedVersion: jest.fn() } },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
+        { provide: EmailService, useValue: { send: jest.fn() } },
       ],
     }).compile();
     service = mod.get(CustomersService);
