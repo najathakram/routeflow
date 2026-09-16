@@ -8,6 +8,8 @@ newest first**. This file replaces the old habit of prepending each session's no
 below, and set `_meta.json` `"notes"` to that same note plus the pointer to this file —
 never accumulate history in `"notes"`.
 
+- **2026-09-16 — map #789 (B452 platform email sender) — docs-only bookkeeping follow-up** — `api/feature-modules-7.md` `email/`: new bullet for the platform Google Workspace SMTP transport (all-or-nothing `SMTP_*` selection over Resend), the `platformFrom` derivation, `getTenantFromAddress()`'s `<Business> via RouteFlow` fallback replacing the unowned `noreply@routeflow.app`, `sanitizeDisplayName()`'s scope, `getReplyTo()`'s fallback chain, and the read-only `apps/api/scripts/check-email-sender.mjs` diagnostic. Also corrected the module bullet's stale "global `EmailService`" — `EmailModule` is a plain `@Module`, so consumers import it (`CustomersModule` has since #778). `mappedSha` unchanged.
+
 - **2026-09-16 — merge origin/master + map #778/#779 (worktree `rf-B420`, branch
   `docs/code-map-refresh-2026-09-16`)** — merged origin/master (bringing in #781's
   customer-lifecycle rescue, #778's auth rescue, and #779's tooling fixes) into this
