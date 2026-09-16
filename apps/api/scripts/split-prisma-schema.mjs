@@ -215,6 +215,7 @@ const MODEL_DOMAIN = {
   // ─── platform ──────────────────────────────────────────────────────────────
   TenantSubscription: "platform",
   TenantAddon: "platform",
+  TenantFeatureOverride: "platform",
   PlanVersion: "platform",
   PlanDefinition: "platform",
   AddonSku: "platform",

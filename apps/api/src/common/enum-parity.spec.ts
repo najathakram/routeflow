@@ -95,6 +95,9 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   // Post-dated check payments PR-1 (2026-09-15): CheckReturnReason is a brand-new Prisma enum
   // (not a value added to an existing one) — see the triage tripwire below.
   ["CHECK_RETURN_REASON_VALUES", "CheckReturnReason"],
+  // Feature grants PR-1 (2026-09-16): FeatureOverrideEffect is a brand-new Prisma enum — see
+  // the triage tripwire below.
+  ["FEATURE_OVERRIDE_EFFECT_VALUES", "FeatureOverrideEffect"],
 ];
 
 describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
@@ -140,7 +143,13 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // this PR. `RETURN_HOLD_REASON_VALUES`/`RETURN_PRICE_SOURCE_VALUES` (same file) are NOT
 // generated Prisma enums (plain-string columns, see Return.holdReason's schema comment), so
 // they add no row here and do not move this count.
-const PINNED_PRISMA_ENUM_COUNT = 86;
+// Triage for FeatureOverrideEffect (Feature grants PR-1, 2026-09-16): new Prisma enum, mirrored
+// immediately as `FEATURE_OVERRIDE_EFFECT_VALUES` + an `ENUM_TABLE` row above — read by
+// `FeatureOverrideService` to decide GRANT/DENY. NOTE: the sibling feat/demo-booking-api lane
+// also adds a new Prisma enum landing around the same time; whichever of these two PRs merges
+// SECOND must bump this constant again by 1 (87 → 88) in its own follow-up, since neither lane
+// can see the other's count at write time.
+const PINNED_PRISMA_ENUM_COUNT = 87;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {

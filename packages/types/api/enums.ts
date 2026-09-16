@@ -338,3 +338,8 @@ export const CHECK_RETURN_REASON_VALUES = [
 ] as const;
 export type CheckReturnReason = (typeof CHECK_RETURN_REASON_VALUES)[number];
 export type TenantClass = (typeof TENANT_CLASS_VALUES)[number];
+
+// Feature grants PR-1: per-tenant entitlement override effect. Pinned set-equal to the
+// generated Prisma `FeatureOverrideEffect` enum (see `enum-parity.spec.ts`'s `ENUM_TABLE` row).
+export const FEATURE_OVERRIDE_EFFECT_VALUES = ["GRANT", "DENY"] as const;
+export type FeatureOverrideEffect = (typeof FEATURE_OVERRIDE_EFFECT_VALUES)[number];
