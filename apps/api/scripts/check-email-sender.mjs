@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * check-email-sender.mjs — read-only platform email diagnostic (B449).
+ * check-email-sender.mjs — read-only platform email diagnostic (B452).
  *
  * Prints which platform email transport is resolved from the current environment
  * (mirrors EmailService's own constructor precedence: platform SMTP wins over
