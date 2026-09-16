@@ -1,5 +1,6 @@
 import {
   isCalendarConfigured,
+  isSlotGridValid,
   isTokenSigningConfigured,
   loadDemoBookingConfig,
 } from "./demo-booking.config";
@@ -66,5 +67,35 @@ describe("loadDemoBookingConfig — other config parsing", () => {
       DEMO_BOOKING_DURATION_MINUTES: "not-a-number",
     } as unknown as NodeJS.ProcessEnv);
     expect(config.durationMinutes).toBe(30);
+  });
+});
+
+// Review round-2 finding C: neither the advisory lock (keyed on exact start)
+// nor the partial unique index (on startsAt alone) catches two DIFFERENT
+// starts whose [start, start+duration) ranges overlap — that can only happen
+// when the step is shorter than the duration, so the grid must never be
+// allowed to offer that combination.
+describe("isSlotGridValid", () => {
+  it("is valid when the interval equals the duration (the shipped default: 30/30)", () => {
+    const config = loadDemoBookingConfig({} as NodeJS.ProcessEnv);
+    expect(config.slotIntervalMinutes).toBe(30);
+    expect(config.durationMinutes).toBe(30);
+    expect(isSlotGridValid(config)).toBe(true);
+  });
+
+  it("is valid when the interval is longer than the duration", () => {
+    const config = loadDemoBookingConfig({
+      DEMO_BOOKING_DURATION_MINUTES: "20",
+      DEMO_BOOKING_SLOT_INTERVAL_MINUTES: "30",
+    } as unknown as NodeJS.ProcessEnv);
+    expect(isSlotGridValid(config)).toBe(true);
+  });
+
+  it("is invalid when the interval is shorter than the duration", () => {
+    const config = loadDemoBookingConfig({
+      DEMO_BOOKING_DURATION_MINUTES: "30",
+      DEMO_BOOKING_SLOT_INTERVAL_MINUTES: "15",
+    } as unknown as NodeJS.ProcessEnv);
+    expect(isSlotGridValid(config)).toBe(false);
   });
 });

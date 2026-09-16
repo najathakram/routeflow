@@ -14,6 +14,7 @@ import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../com
 import {
   DemoBookingConfig,
   isCalendarConfigured,
+  isSlotGridValid,
   isTokenSigningConfigured,
   loadDemoBookingConfig,
 } from "./demo-booking.config";
@@ -107,6 +108,18 @@ export class DemoBookingService {
 
     if (!isCalendarConfigured(config)) {
       this.logger.warn("demo-booking: calendar not configured — reporting no availability");
+      return { timeZone: visitorZone, durationMinutes: config.durationMinutes, days: [] };
+    }
+    if (!isSlotGridValid(config)) {
+      // Fails closed the same way as "not configured" — an interval shorter
+      // than the duration would let the grid generate overlapping slots
+      // neither the advisory lock nor the DB index catches (review round-2
+      // finding C). This never fires with the shipped defaults (30/30).
+      this.logger.error(
+        `demo-booking: DEMO_BOOKING_SLOT_INTERVAL_MINUTES (${config.slotIntervalMinutes}) is shorter ` +
+          `than DEMO_BOOKING_DURATION_MINUTES (${config.durationMinutes}) — reporting no availability ` +
+          `rather than offering overlap-capable slots.`,
+      );
       return { timeZone: visitorZone, durationMinutes: config.durationMinutes, days: [] };
     }
 
@@ -425,7 +438,11 @@ export class DemoBookingService {
   }
 
   private assertBookable(config: DemoBookingConfig): void {
-    if (!isCalendarConfigured(config) || !isTokenSigningConfigured(config)) {
+    if (
+      !isCalendarConfigured(config) ||
+      !isTokenSigningConfigured(config) ||
+      !isSlotGridValid(config)
+    ) {
       throw new ServiceUnavailableException(
         "Demo booking is not available right now. Please email us and we will arrange a time.",
       );
@@ -682,7 +699,11 @@ export function buildBookingEmail(
   baseUrl: string,
 ): { subject: string; html: string } {
   const when = formatSlot(booking);
-  const manageUrl = `${baseUrl}/book-a-demo/manage?token=${encodeURIComponent(manageToken)}`;
+  // A fragment, not a query string: a fragment is never sent to the server —
+  // it never reaches an access log or a Referer header the way a `?token=`
+  // query param would (review round-2 minor finding). The manage page reads
+  // it from `window.location.hash`.
+  const manageUrl = `${baseUrl}/book-a-demo/manage#token=${encodeURIComponent(manageToken)}`;
   const heading =
     kind === "cancelled"
       ? "Your RouteFlow demo is cancelled"

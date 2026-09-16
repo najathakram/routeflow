@@ -287,6 +287,15 @@ describe("DemoBookingService.getAvailability", () => {
     expect(result.days).toEqual([]);
   });
 
+  // Review round-2 finding C: an interval shorter than the duration lets the
+  // grid offer two different, overlapping slots — go dark the same way as
+  // "not configured" rather than publish an unsafe grid.
+  it("REG-review-round2-C: offers nothing when the slot interval is shorter than the duration", async () => {
+    const { service } = build({ slotIntervalMinutes: 15, durationMinutes: 30 });
+    const result = await service.getAvailability(WINDOW.from, WINDOW.to, "America/Chicago");
+    expect(result.days).toEqual([]);
+  });
+
   it("honours the minimum-notice window", async () => {
     // NOW is 08:00 Chicago Thursday; 12h notice rules out the rest of Thursday.
     const { service } = build({ minNoticeHours: 12 });
@@ -365,13 +374,13 @@ describe("DemoBookingService.create", () => {
     await service.create({
       ...input,
       name: "Alex\r\nBCC: attacker@evil.example",
-      company: "Acme Co",
+      company: "Acme\u0000Co",
     });
 
     const created = calendar.created[0] as { description: string; attendeeName: string };
     expect(created.attendeeName).toBe("Alex BCC: attacker@evil.example");
     expect(created.description).not.toContain("\r");
-    expect(created.description).not.toContain(" ");
+    expect(created.description).not.toContain("\u0000");
   });
 
   it("still captures the lead when the calendar write fails", async () => {
@@ -477,6 +486,11 @@ describe("DemoBookingService.create", () => {
 
   it("refuses booking when the feature is unconfigured", async () => {
     const { service } = build({ tokenSecret: "" });
+    await expect(service.create(input)).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+
+  it("REG-review-round2-C: refuses booking when the slot interval is shorter than the duration", async () => {
+    const { service } = build({ slotIntervalMinutes: 15, durationMinutes: 30 });
     await expect(service.create(input)).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 });

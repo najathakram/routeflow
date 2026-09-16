@@ -36,8 +36,14 @@ export interface CalendarEventInput {
   description: string;
   startsAt: Date;
   endsAt: Date;
-  /** IANA zone shown on the event, so the invite reads in the guest's zone. */
+  /** IANA zone the event's start/end are expressed in. */
   timeZone: string;
+  /**
+   * NOT added as a Calendar attendee (review round-2 finding D) — an
+   * unverified public-form address becoming an attendee is how Google mails
+   * a stranger's address an invite from admin@routeflow.info. Kept on the
+   * type for when attendee invitation returns behind email verification.
+   */
   attendeeEmail: string;
   attendeeName: string;
   /** Ask Google to mint a Meet link. Only honoured on create. */
@@ -89,6 +95,15 @@ function extractReason(body: string): string {
 
 /** How long a `freeBusy` result is reused for an identical window (review finding 9). */
 const FREE_BUSY_CACHE_TTL_MS = 45_000;
+/**
+ * Hard cap on cache entries (review round-2 finding A). `getAvailability`'s
+ * window includes `now()` at request time, so on the public availability
+ * endpoint almost every request mints a distinct cache key — an unbounded Map
+ * is unbounded heap growth driven entirely by anonymous traffic. Comfortably
+ * above any real working set (45s TTL × 20/min throttle per IP is ~15 entries
+ * per busy IP) while still being a real ceiling, not a formality.
+ */
+const FREE_BUSY_CACHE_MAX_ENTRIES = 500;
 
 @Injectable()
 export class GoogleCalendarService {
@@ -143,8 +158,24 @@ export class GoogleCalendarService {
     // Cache a failure too, briefly — during a real Google outage this stops
     // every request in the TTL window from re-hitting a service that just
     // said no, not only the happy path.
-    this.freeBusyCache.set(cacheKey, { at: this.cacheNow(), value: result });
+    this.setCached(cacheKey, result);
     return result;
+  }
+
+  /** Prunes expired entries, then hard-caps size by evicting the oldest. */
+  private setCached(cacheKey: string, value: BusyBlock[] | null): void {
+    const now = this.cacheNow();
+    for (const [key, entry] of this.freeBusyCache) {
+      if (now - entry.at >= FREE_BUSY_CACHE_TTL_MS) this.freeBusyCache.delete(key);
+    }
+    this.freeBusyCache.set(cacheKey, { at: now, value });
+    // Map iterates in insertion order, and entries are never re-inserted on a
+    // hit, so the first key is genuinely the oldest.
+    while (this.freeBusyCache.size > FREE_BUSY_CACHE_MAX_ENTRIES) {
+      const oldest = this.freeBusyCache.keys().next().value;
+      if (oldest === undefined) break;
+      this.freeBusyCache.delete(oldest);
+    }
   }
 
   private async fetchBusy(
@@ -203,7 +234,7 @@ export class GoogleCalendarService {
     const body = await this.request<GoogleEvent>(
       config,
       "POST",
-      `/calendars/${encodeURIComponent(config.calendarId)}/events?conferenceDataVersion=1&sendUpdates=all`,
+      `/calendars/${encodeURIComponent(config.calendarId)}/events?conferenceDataVersion=1`,
       { ...this.eventBody(input), ...conference },
     );
     return this.toResult(body);
@@ -214,7 +245,7 @@ export class GoogleCalendarService {
     const body = await this.request<GoogleEvent>(
       config,
       "PATCH",
-      `/calendars/${encodeURIComponent(config.calendarId)}/events/${encodeURIComponent(eventId)}?conferenceDataVersion=1&sendUpdates=all`,
+      `/calendars/${encodeURIComponent(config.calendarId)}/events/${encodeURIComponent(eventId)}?conferenceDataVersion=1`,
       this.eventBody(input),
     );
     return this.toResult(body);
@@ -227,7 +258,7 @@ export class GoogleCalendarService {
       await this.request(
         config,
         "DELETE",
-        `/calendars/${encodeURIComponent(config.calendarId)}/events/${encodeURIComponent(eventId)}?sendUpdates=all`,
+        `/calendars/${encodeURIComponent(config.calendarId)}/events/${encodeURIComponent(eventId)}`,
       );
     } catch (error) {
       if (error instanceof GoogleCalendarError && (error.status === 404 || error.status === 410)) {
@@ -238,19 +269,23 @@ export class GoogleCalendarService {
   }
 
   private eventBody(input: CalendarEventInput) {
+    // No `attendees` and no `sendUpdates` on the request URL (both call sites
+    // above): `attendeeEmail` is an unverified address from a public,
+    // unauthenticated form — anyone can type anyone's address there. Adding it
+    // as an attendee makes Google mail *that* address an invite from
+    // admin@routeflow.info, bounded only by the create throttle (5/hour/IP) —
+    // an open invitation-spam relay regardless of guestsCanInviteOthers.
+    // RouteFlow's own confirmation email (demo-booking.service.ts) carries the
+    // Meet link instead. `input.attendeeEmail`/`attendeeName` are unused here
+    // on purpose — kept on the type for when attendee invitation returns,
+    // once booking gains its own email-verification step (review round-2
+    // finding D).
     return {
       summary: input.summary,
       description: input.description,
       start: { dateTime: input.startsAt.toISOString(), timeZone: input.timeZone },
       end: { dateTime: input.endsAt.toISOString(), timeZone: input.timeZone },
-      attendees: [{ email: input.attendeeEmail, displayName: input.attendeeName }],
       guestsCanModify: false,
-      // `attendeeEmail` is an unverified address from a public, unauthenticated
-      // form — anyone can put anyone's address there. Letting that address
-      // invite further guests turns admin@routeflow.info into an open invite
-      // relay: an attacker-chosen "prospect" can pull third parties into an
-      // event they never asked to be part of. false is the correct posture
-      // until booking gains its own email-verification step.
       guestsCanInviteOthers: false,
       reminders: {
         useDefault: false,

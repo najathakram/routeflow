@@ -172,6 +172,37 @@ describe("GoogleCalendarService.getBusy — review finding 9 (freeBusy caching)"
     expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 
+  // Review round-2 finding A: `getAvailability`'s window includes `now()` at
+  // request time, so on the public endpoint nearly every request mints a
+  // distinct key — without a cap the Map grows without bound.
+  it("REG-review-round2-A: caps cache size — the oldest entry is evicted once the cap is exceeded", async () => {
+    const subject = new Subject(CONFIGURED);
+    subject.fakeNow = 0; // fixed "now" — nothing expires by TTL during this test
+
+    const windowAt = (dayOffset: number) => ({
+      from: new Date(2026, 0, 1 + dayOffset),
+      to: new Date(2026, 0, 2 + dayOffset),
+    });
+
+    // One more than the 500-entry cap — the very first window must be the one
+    // evicted (insertion order = eviction order, since nothing here is a hit).
+    for (let i = 0; i < 501; i += 1) {
+      const { from: f, to: t } = windowAt(i);
+      await subject.getBusy(f, t);
+    }
+    expect(global.fetch).toHaveBeenCalledTimes(501);
+
+    // Window 0 was evicted — re-requesting it is a fresh network call.
+    const evicted = windowAt(0);
+    await subject.getBusy(evicted.from, evicted.to);
+    expect(global.fetch).toHaveBeenCalledTimes(502);
+
+    // Window 500 (the most recent) is still cached — no new call.
+    const recent = windowAt(500);
+    await subject.getBusy(recent.from, recent.to);
+    expect(global.fetch).toHaveBeenCalledTimes(502);
+  });
+
   it("also caches a failure briefly, so a Google outage does not get hit on every request", async () => {
     global.fetch = jest
       .fn()
@@ -191,10 +222,16 @@ describe("GoogleCalendarService.getBusy — review finding 9 (freeBusy caching)"
 describe("GoogleCalendarService.createEvent — review finding 6 (no open invite relay)", () => {
   beforeEach(() => {
     mockAccessToken();
+    // mockImplementation (not mockResolvedValue) — some tests below call
+    // create/update/delete in the same test, and a Response body can only be
+    // read once, so every call needs its own instance.
     global.fetch = jest
       .fn()
-      .mockResolvedValue(
-        new Response(JSON.stringify({ id: "evt-1" }), { status: 200 }),
+      .mockImplementation(
+        () =>
+          Promise.resolve(
+            new Response(JSON.stringify({ id: "evt-1" }), { status: 200 }),
+          ) as unknown as Promise<Response>,
       ) as unknown as typeof fetch;
   });
   afterEach(() => jest.restoreAllMocks());
@@ -213,5 +250,50 @@ describe("GoogleCalendarService.createEvent — review finding 6 (no open invite
     const call = (global.fetch as jest.Mock).mock.calls[0];
     const body = JSON.parse(call[1].body);
     expect(body.guestsCanInviteOthers).toBe(false);
+  });
+
+  // Review round-2 finding D: guestsCanInviteOthers:false alone still leaves
+  // Google mailing the unverified address an invite as an attendee — the
+  // deeper fix is not adding it as an attendee at all.
+  it("REG-review-round2-D: does not add the unverified address as an attendee, on create or update", async () => {
+    const subject = new Subject(CONFIGURED);
+    const input = {
+      summary: "RouteFlow demo",
+      description: "",
+      startsAt: new Date(),
+      endsAt: new Date(),
+      timeZone: "America/Chicago",
+      attendeeEmail: "prospect@example.com",
+      attendeeName: "Prospect",
+    };
+
+    await subject.createEvent(input);
+    await subject.updateEvent("evt-1", input);
+
+    for (const call of (global.fetch as jest.Mock).mock.calls) {
+      const body = JSON.parse(call[1].body);
+      expect(body).not.toHaveProperty("attendees");
+    }
+  });
+
+  it("REG-review-round2-D: does not request sendUpdates on create, update, or delete", async () => {
+    const subject = new Subject(CONFIGURED);
+    const input = {
+      summary: "RouteFlow demo",
+      description: "",
+      startsAt: new Date(),
+      endsAt: new Date(),
+      timeZone: "America/Chicago",
+      attendeeEmail: "prospect@example.com",
+      attendeeName: "Prospect",
+    };
+
+    await subject.createEvent(input);
+    await subject.updateEvent("evt-1", input);
+    await subject.deleteEvent("evt-1");
+
+    for (const call of (global.fetch as jest.Mock).mock.calls) {
+      expect(String(call[0])).not.toContain("sendUpdates");
+    }
   });
 });
