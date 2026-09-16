@@ -19,6 +19,7 @@ import { PlatformAdminService } from "./platform-admin.service";
 import { PlatformConfigService } from "./platform-config.service";
 import { BillingService } from "../billing/billing.service";
 import { AddonService } from "../billing/addon.service";
+import { FeatureOverrideService } from "../billing/feature-override.service";
 import { UpdateTenantStatusDto } from "./dto/update-tenant-status.dto";
 import { UpdateTenantPlanDto } from "./dto/update-tenant-plan.dto";
 import { CreateTenantDto } from "./dto/create-tenant.dto";
@@ -29,6 +30,8 @@ import { UpdateTenantPriceDto } from "./dto/update-tenant-price.dto";
 import { UpdatePlanPricesDto } from "./dto/update-plan-prices.dto";
 import { UpdateTenantClassDto } from "./dto/update-tenant-class.dto";
 import { EnableAddonDto, DisableAddonDto } from "../billing/dto/manage-addon.dto";
+import { CreateFeatureOverrideDto } from "./dto/manage-feature-override.dto";
+import { FEATURE_REGISTRY } from "../billing/feature-registry";
 import { AdminAuditAction } from "./audit-actions.constant";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 
@@ -42,6 +45,7 @@ export class PlatformAdminController {
     private readonly platformConfig: PlatformConfigService,
     private readonly billingService: BillingService,
     private readonly addonService: AddonService,
+    private readonly featureOverrides: FeatureOverrideService,
   ) {}
 
   @Get("stats")
@@ -355,6 +359,68 @@ export class PlatformAdminController {
     const result = await this.addonService.disableAddon(id, dto.addonKey);
     await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.ADDON_DISABLED, {
       addonKey: dto.addonKey,
+    });
+    return result;
+  }
+
+  // ─── Feature overrides ────────────────────────────────────────────────────
+
+  @Get("features/registry")
+  @ApiOperation({ summary: "Every feature registry key — for the override key select" })
+  listFeatureRegistry() {
+    return FEATURE_REGISTRY.map((f) => ({
+      key: f.key,
+      label: f.label,
+      area: f.area,
+      kind: f.kind,
+      internal: f.internal ?? false,
+    }));
+  }
+
+  @Get("tenants/:id/feature-overrides")
+  @ApiOperation({ summary: "List all feature overrides for a tenant (including revoked/expired)" })
+  listFeatureOverrides(@Param("id") id: string) {
+    return this.featureOverrides.list(id);
+  }
+
+  @Post("tenants/:id/feature-overrides")
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: "Grant or deny a tenant a specific feature key, overriding its plan/addon state",
+  })
+  async createFeatureOverride(
+    @Param("id") id: string,
+    @Body() dto: CreateFeatureOverrideDto,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    const result = await this.featureOverrides.create({
+      tenantId: id,
+      featureKey: dto.featureKey,
+      effect: dto.effect,
+      reason: dto.reason,
+      expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
+      createdById: admin.sub,
+    });
+    await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.FEATURE_OVERRIDE_SET, {
+      featureKey: dto.featureKey,
+      effect: dto.effect,
+      reason: dto.reason,
+      expiresAt: dto.expiresAt ?? null,
+    });
+    return result;
+  }
+
+  @Post("tenants/:id/feature-overrides/:overrideId/revoke")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Revoke a tenant feature override (immediate — history is kept)" })
+  async revokeFeatureOverride(
+    @Param("id") id: string,
+    @Param("overrideId") overrideId: string,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    const result = await this.featureOverrides.revoke(id, overrideId);
+    await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.FEATURE_OVERRIDE_REVOKED, {
+      overrideId,
     });
     return result;
   }
