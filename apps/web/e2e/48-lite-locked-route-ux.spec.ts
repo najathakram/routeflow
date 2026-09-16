@@ -1,34 +1,24 @@
 /**
  * B449: proof that a LITE tenant's locked route never mounts the gated page,
- * shows exactly one plan-gate notice per navigation (naming the correct tier),
- * and that the LITE dashboard itself shows no stray notice. Screenshots at
- * 1440/768/390 go to `local-assets/lite-gate-fix-2026-09-16/<width>/`.
+ * shows exactly one plan-gate notice per navigation naming this tenant's own
+ * plan (never a stray/contradictory tier from another widget), and that the
+ * LITE dashboard itself shows no stray notice. Screenshots at 1440/768/390 go
+ * to `local-assets/lite-gate-fix-2026-09-16/<width>/`.
  *
- * Fixture: same as 47-lite-plan-gate.spec.ts — a dedicated LITE-plan tenant via
- * `PLAYWRIGHT_LITE_TENANT_SLUG`. Every test self-skips (test.skip, not a
- * discharge — L-041) when it is unset, since it can't run against the shared
- * `e2e-routeflow` fixture (not on LITE). READ-ONLY throughout.
- *
- * AUTHOR-ONLY (bug-pipeline B449, 2026-09-16): written per the brief's proof
- * requirement but not run — this session has no host grant for the shared
- * local Docker stack (a landing window was in progress) and no seeded LITE
- * tenant to point PLAYWRIGHT_LITE_TENANT_SLUG at. Typecheck only; run via
- * `npm run local:e2e` (or targeted against `npm run dev`) once a host/tenant
- * grant is available.
+ * Fixture: `qa-lite` (LITE_TENANT_SLUG, `helpers/constants.ts`) — a standing,
+ * always-seeded LITE-plan tenant (apps/api/scripts/e2e-seed.js's
+ * `seedQaLiteTenant`, run by every `global.setup.ts` pass). Unlike
+ * 47-lite-plan-gate.spec.ts (which needs a hand-provisioned tenant via
+ * PLAYWRIGHT_LITE_TENANT_SLUG and self-skips without one), this fixture is now
+ * standing infrastructure — these tests do NOT self-skip; a missing/misseeded
+ * fixture is a real, loud failure, same as any other allow-listed local spec.
+ * Allow-listed for `npm run local:e2e` (see LOCAL-LANE.md). READ-ONLY throughout.
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test, expect } from "@playwright/test";
 import { setTenantCookie, loginAsOperator } from "./helpers/auth";
-
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
-
-const RAW_LITE_SLUG = process.env.PLAYWRIGHT_LITE_TENANT_SLUG ?? "";
-const LITE_TENANT_SLUG = RAW_LITE_SLUG
-  ? assertTestTenant(RAW_LITE_SLUG, "playwright e2e (lite-locked-route-ux)")
-  : "";
-const SKIP_REASON = "PLAYWRIGHT_LITE_TENANT_SLUG not set — needs a dedicated LITE-plan tenant";
+import { LITE_TENANT_SLUG } from "./helpers/constants";
 
 const SCREENSHOT_DIR = path.join(__dirname, "../../../local-assets/lite-gate-fix-2026-09-16");
 
@@ -37,6 +27,11 @@ const VIEWPORTS = [
   { name: "768", width: 768, height: 1024 },
   { name: "390", width: 390, height: 844 },
 ] as const;
+
+/** This tenant's own gate message (PlanGateBoundary.tsx) — deterministic per plan, never
+ *  per-flag, so asserting it proves the notice is THIS route's own gate, not a stray 403
+ *  from an unrelated widget naming a different tier. */
+const LITE_GATE_MESSAGE = "This feature isn't included in the Lite plan.";
 
 async function loginAsLiteOperator(
   page: import("@playwright/test").Page,
@@ -55,12 +50,11 @@ function shot(dir: string, name: string) {
 test.describe("Lite locked-route UX (B449)", () => {
   for (const vp of VIEWPORTS) {
     test.describe(`@ ${vp.width}px`, () => {
-      test(`locked route never flashes the gated page and shows exactly one notice`, async ({
+      test(`locked route never flashes the gated page and shows exactly one notice naming this plan`, async ({
         page,
         context,
         baseURL,
       }) => {
-        test.skip(!LITE_TENANT_SLUG, SKIP_REASON);
         await page.setViewportSize({ width: vp.width, height: vp.height });
         await loginAsLiteOperator(page, context, baseURL);
 
@@ -79,8 +73,12 @@ test.describe("Lite locked-route UX (B449)", () => {
         const dir = path.join(SCREENSHOT_DIR, vp.name);
         await page.screenshot({ path: shot(dir, "estimates-locked"), fullPage: true });
 
-        // At most one plan-gate toast for this whole navigation, naming ONE tier.
-        await expect(notifications.getByRole("listitem")).toHaveCount(1);
+        // At most one plan-gate toast for this whole navigation, and its text is
+        // THIS tenant's own gate message — never a different, contradictory tier
+        // from a stray gated fetch elsewhere on the page.
+        const items = notifications.getByRole("listitem");
+        await expect(items).toHaveCount(1);
+        await expect(items).toContainText(LITE_GATE_MESSAGE);
       });
 
       test(`an ungated neighbour route renders normally, no notice`, async ({
@@ -88,7 +86,6 @@ test.describe("Lite locked-route UX (B449)", () => {
         context,
         baseURL,
       }) => {
-        test.skip(!LITE_TENANT_SLUG, SKIP_REASON);
         await page.setViewportSize({ width: vp.width, height: vp.height });
         await loginAsLiteOperator(page, context, baseURL);
 
@@ -110,17 +107,16 @@ test.describe("Lite locked-route UX (B449)", () => {
         context,
         baseURL,
       }) => {
-        test.skip(!LITE_TENANT_SLUG, SKIP_REASON);
         await page.setViewportSize({ width: vp.width, height: vp.height });
         await loginAsLiteOperator(page, context, baseURL);
 
         await page.goto("/dashboard");
-        await expect(page.getByRole("heading", { name: /good (morning|afternoon|evening)/i }))
-          .toBeVisible({ timeout: 10_000 })
-          .catch(() => {
-            /* greeting is operator-only; a non-operator role still must show no stray notice */
-          });
-        // Give any late/racing gated request from a prior navigation time to settle.
+        await expect(page.getByText(/good (morning|afternoon|evening)/i)).toBeVisible({
+          timeout: 10_000,
+        });
+        // Give any late/racing gated request from a prior navigation time to settle
+        // (B449 fix-round finding 2: the header bell's pending-portal-approvals fetch
+        // must never fire for a LITE tenant at all — this is the regression guard).
         await page.waitForTimeout(2_000);
 
         const dir = path.join(SCREENSHOT_DIR, vp.name);
