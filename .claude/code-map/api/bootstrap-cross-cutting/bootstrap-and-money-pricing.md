@@ -102,7 +102,7 @@
   `packages/types/api/checks.ts` export.
 - **`src/common/check-transitions.ts`** (post-dated check payments PR-1, 2026-09-15) — API-local
   mirror of the check-lifecycle forward-transition table (`CHECK_TRANSITIONS: Record<CheckStatus,
-  readonly CheckStatus[]>` — RECORDED→[DEPOSITED,BOUNCED], DEPOSITED→[CLEARED,BOUNCED],
+readonly CheckStatus[]>` — RECORDED→[DEPOSITED,BOUNCED], DEPOSITED→[CLEARED,BOUNCED],
   CLEARED→[BOUNCED], BOUNCED→[]). Canonical copy is `packages/types/api/checks.ts`
   (`@routeflow/types`, value-imported directly by web/mobile — both transpile workspace TS at
   build time); the API can't value-import that raw-TS package at runtime (see
@@ -118,7 +118,7 @@
   `MessagesModule`/`CustomersModule`) must list `EntitlementsModule` in its own `imports` —
   `PlanFlagGuard` is only provided/exported there, so a missing import is a DI-resolution boot
   crash that this catches at unit-test time instead of `nest build`/boot. **`tsconfig.plan-gate-
-  specs.json`** (`apps/api/`, sibling build config) — extends `tsconfig.json`, `include`-only the
+specs.json`** (`apps/api/`, sibling build config) — extends `tsconfig.json`, `include`-only the
   six `*.plan-gate.spec.ts` files across billing/customers/credit-notes/messages/
   recurring-invoices/suppliers/estimates (no `exclude`) — a dedicated tsc project for that one
   spec-file family; see each module's own spec for its individual plan-gate behavior.
@@ -166,6 +166,16 @@
     `utils/pricing.ts` are deleted, api imports the bare specifier).
     `msrp.ts` is **server-only, no mirror**, since the only resolution moment is the invoice-line
     write. Spec: `common/msrp.spec.ts`.
+    **B451 (Strix gap 4) — `assertMoneyInvariants`** (`packages/pricing/src/money-invariants.ts`,
+    see `packages.md`) throws `MoneyInvariantError` (`code: "MONEY_INVARIANT"`) on a negative/
+    non-finite subtotal/discount/tax/shipping/total or `discount > subtotal`. HTTP call sites wrap
+    it via `apps/api/src/common/money-invariants.util.ts`'s `assertMoneyInvariantsOrThrow`, which
+    maps the error to a `BadRequestException({code: "MONEY_INVARIANT"})` — never a 500. Wired into
+    `orders.service.ts` `create()` and the `PATCH :id/items` recompute (defense-in-depth only
+    there — `UpdateOrderItemsDto` carries no `discountAmount`), `estimates.service.ts` `create()`,
+    and `vendor-bills.service.ts` `create()`/`update()` (see `feature-modules-4/estimates.md` and
+    `feature-modules-4/vendor-bills.md`). `invoices.service.ts`'s own inline checks (lines
+    ~469-502) are equivalent but not yet migrated to the shared guard.
     **`@routeflow/pricing`** — `computeLineSubtotal` (boxed BOX-price proration; optional
     **`freeUnits`** subtracts whole SELLING units before pricing — default 0, so every pre-existing
     call site is byte-for-byte unaffected), `normalizeBoxesPieces` (integer boxes/pieces + rollover),
