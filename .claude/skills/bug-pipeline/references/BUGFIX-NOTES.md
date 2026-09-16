@@ -9,15 +9,15 @@ the F06/F10/F11/F14 campaign journals, and the RouteFlow lessons register.
 Per-lens attribution of F13's Gate & Review findings (derived by matching agent prompts to the engine's lens
 templates; refuter votes linked by the finding JSON embedded in each refuter prompt, 44/44 matched):
 
-| Lens | Reported | Survived | Overturned | In-radius / out |
-|---|---|---|---|---|
-| correctness | 7 | 6 | 1 | 6/0 |
-| spec-compliance | 6 | 6 | 0 | 6/0 |
-| edge-cases-and-security | 6 | 6 | 0 | 6/0 |
-| operability | 8 | 6 | 2 | 6/0 |
-| scope-coverage | 4 | 4 | 0 | 4/0 |
-| test-quality | 3 | 3 | 0 | 3/0 |
-| design-system | 3 | 0 | 3 | 0/0 |
+| Lens                    | Reported | Survived | Overturned | In-radius / out |
+| ----------------------- | -------- | -------- | ---------- | --------------- |
+| correctness             | 7        | 6        | 1          | 6/0             |
+| spec-compliance         | 6        | 6        | 0          | 6/0             |
+| edge-cases-and-security | 6        | 6        | 0          | 6/0             |
+| operability             | 8        | 6        | 2          | 6/0             |
+| scope-coverage          | 4        | 4        | 0          | 4/0             |
+| test-quality            | 3        | 3        | 0          | 3/0             |
+| design-system           | 3        | 0        | 3          | 0/0             |
 
 **31/31 survivors inside the bug's blast radius, 0 outside.** Bug review needs depth on the radius, not
 whole-diff breadth — hence the Sonnet-built radius pack as every lens's primary evidence. Contrast imp-03a

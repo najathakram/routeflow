@@ -2,6 +2,7 @@ import { ExecutionContext, ForbiddenException, Logger } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { AddonGuard } from "./addon.guard";
 import { AddonService } from "./addon.service";
+import { EntitlementsService } from "./entitlements.service";
 
 function contextFor(user: { tenantId: string | null } | undefined): ExecutionContext {
   return {
@@ -29,13 +30,20 @@ describe("AddonGuard", () => {
   let guard: AddonGuard;
   let reflector: { getAllAndOverride: jest.Mock };
   let addonService: { getActiveAddons: jest.Mock };
+  let entitlements: { isAlwaysEnforcedTenant: jest.Mock };
 
   beforeEach(() => {
     reflector = { getAllAndOverride: jest.fn() };
     addonService = { getActiveAddons: jest.fn() };
+    // Every pre-existing test in this file exercises a non-Lite (non-always-enforced)
+    // tenant, so this collaborator-contract addition (WP2) defaults to "not
+    // always-enforced" — the same allow-through-dark behavior those tests already
+    // assert on. The Lite-specific describe block below overrides this per-test.
+    entitlements = { isAlwaysEnforcedTenant: jest.fn().mockResolvedValue(false) };
     guard = new AddonGuard(
       reflector as unknown as Reflector,
       addonService as unknown as AddonService,
+      entitlements as unknown as EntitlementsService,
     );
   });
 
@@ -234,6 +242,62 @@ describe("AddonGuard", () => {
 
       expect(warnSpy).toHaveBeenCalledTimes(2);
       expect(warnSpy.mock.calls[1][0]).toEqual(expect.stringContaining("tenant=tenant-2"));
+    });
+  });
+
+  describe("WP2 R3a.3/R8.5: always-enforced tenant (Lite) never gets the dark courtesy allow", () => {
+    let warnSpy: jest.SpyInstance;
+
+    afterEach(() => {
+      warnSpy?.mockRestore();
+    });
+
+    it("a dark key set still denies an always-enforced tenant, with the usual ADDON_GATE deny path", async () => {
+      entitlements.isAlwaysEnforcedTenant.mockResolvedValue(true);
+      reflector.getAllAndOverride.mockReturnValue(["ocr"]);
+      addonService.getActiveAddons.mockResolvedValue([]);
+
+      const err = await guard.canActivate(darkKeyContext()).catch((e) => e);
+
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect(err.getResponse()).toMatchObject({
+        code: "ADDON_GATE",
+        addonKeys: ["ocr"],
+      });
+      expect(entitlements.isAlwaysEnforcedTenant).toHaveBeenCalledWith("tenant-1");
+    });
+
+    it("an always-enforced tenant's deny still logs the enforced deny-warn, not the would-deny (dark) one", async () => {
+      warnSpy = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+      entitlements.isAlwaysEnforcedTenant.mockResolvedValue(true);
+      reflector.getAllAndOverride.mockReturnValue(["ocr"]);
+      addonService.getActiveAddons.mockResolvedValue([]);
+
+      await guard.canActivate(darkKeyContext()).catch((e) => e);
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy.mock.calls[0][0]).toEqual(expect.stringContaining("addon gate denied"));
+      expect(warnSpy.mock.calls.map((c) => c[0])).not.toContainEqual(
+        expect.stringContaining("would deny (dark)"),
+      );
+    });
+
+    it("an always-enforced tenant that DOES hold the addon is still allowed (the addon check runs first)", async () => {
+      entitlements.isAlwaysEnforcedTenant.mockResolvedValue(true);
+      reflector.getAllAndOverride.mockReturnValue(["ocr"]);
+      addonService.getActiveAddons.mockResolvedValue(["ocr"]);
+
+      await expect(guard.canActivate(darkKeyContext())).resolves.toBe(true);
+      // Held-addon short-circuit precedes the dark-vs-enforced branch entirely.
+      expect(entitlements.isAlwaysEnforcedTenant).not.toHaveBeenCalled();
+    });
+
+    it("a non-always-enforced tenant is unaffected by isAlwaysEnforcedTenant returning false (regression)", async () => {
+      entitlements.isAlwaysEnforcedTenant.mockResolvedValue(false);
+      reflector.getAllAndOverride.mockReturnValue(["ocr"]);
+      addonService.getActiveAddons.mockResolvedValue([]);
+
+      await expect(guard.canActivate(darkKeyContext())).resolves.toBe(true);
     });
   });
 });

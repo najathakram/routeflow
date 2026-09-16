@@ -1,5 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { SubscriptionView } from "@routeflow/types";
 import { apiClient } from "../api-client";
+
+export type { SubscriptionView };
 
 // ─── Types (mirror apps/api/src/billing return shapes) ──────────────────────────
 
@@ -47,26 +50,6 @@ export interface MeterReading {
   included: number | null;
   remaining: number | null;
   resetsAt: string | null;
-}
-
-export interface SubscriptionView {
-  planKey: string;
-  planName: string;
-  status: string;
-  cycle: Cycle;
-  monthlyPrice: number | null;
-  annualPrice: number | null;
-  isCustom: boolean;
-  renewalAt: string | null;
-  cancelAtPeriodEnd: boolean;
-  downgradeToPlanKey: string | null;
-  downgradeEffectiveAt: string | null;
-  trialEndsAt: string | null;
-  /** Populated only when `status === "READ_ONLY"` — the enforcement reason the tenant-status
-   *  guard recorded (`"trial_expired"` | `"subscription_cancelled"` | `"trial_cancelled"`, or
-   *  another server-defined string). `null`/absent renders the generic read-only copy. */
-  readOnlyReason?: string | null;
-  addons: Array<{ sku: string | null; name: string; quantity: number; monthly: number | null }>;
 }
 
 export interface QuoteLine {
@@ -242,6 +225,20 @@ export function useResumeSubscription() {
   return useBillingMutation<void>(() =>
     apiClient.post("/billing/subscription/resume").then((r) => r.data),
   );
+}
+
+/** R2.5/R2.8 (lite-L2): a Stripe Checkout session for the tenant's OWN pinned plan/price —
+ *  e.g. an invited LITE tenant completing its first payment (SubscriptionView.paymentRequired).
+ *  Takes no body (server pins the plan); on success, navigates the browser straight to the
+ *  returned Stripe-hosted URL rather than invalidating the billing query — there is nothing to
+ *  refetch until the tenant returns from Stripe. */
+export function useCreateCheckout() {
+  return useMutation<{ checkoutUrl: string }, Error, void>({
+    mutationFn: () => apiClient.post("/billing/subscription/checkout").then((r) => r.data),
+    onSuccess: (r) => {
+      window.location.assign(r.checkoutUrl);
+    },
+  });
 }
 
 export function useEnableAddon() {

@@ -14,7 +14,7 @@ description: >
 A **code map** is a durable, signature-level index of a repository kept at
 `.claude/code-map/`. It exists so you can orient and plan **without reading the whole
 codebase**: read the map, decide which few files actually matter, open only those. The map
-indexes *structure, signatures, and relationships* — never copies of code.
+indexes _structure, signatures, and relationships_ — never copies of code.
 
 **This is progressive disclosure applied to a codebase.** `INDEX.md` carries only names,
 one-line purposes and pointers; the next level of detail — exports, deps, 1-hop
@@ -50,7 +50,7 @@ Three workflows: **Consult** (read it to act), **Update** (keep it true after ev
   first, so `_meta.json` never has to carry history. **Hard cap: ≤ 40,000 bytes / ≤ 30
   entries** — trim older entries to `git log -- .claude/code-map` when hit.
 - **`_meta.json`** — bookkeeping: `{ mappedSha, generatedAt, areas[], fileCount,
-  schemaVersion }`. `mappedSha` is the git commit the map was last reconciled against — it is
+schemaVersion }`. `mappedSha` is the git commit the map was last reconciled against — it is
   what makes surgical updates and drift detection possible.
 
 **Why the caps:** one project let `INDEX.md` grow to 572 KB of inlined prose, which cost every
@@ -159,7 +159,7 @@ candidate for the register, not a shrug. Canonical text:
 `~/.claude/skills/dev-pipeline/references/LEARNING-CLAUSE.md`.
 
 **TRIAL, not enabled:** AWM-style **procedure entries** — a map entry that captures a reusable
-multi-step *procedure* ("how we add a new route here"), not just structure — for a task shape
+multi-step _procedure_ ("how we add a new route here"), not just structure — for a task shape
 that has recurred 3+ times in this repo. Not adopted; a candidate procedure worth trying stays a
 proposal until the owner says yes, same bar as any other trial in this house.
 

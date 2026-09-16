@@ -4,7 +4,10 @@ import { ios } from "@routeflow/ui/tokens";
 import { useSocket } from "../../hooks/useSocket";
 import { OfflineBanner } from "../../components/OfflineBanner";
 import { OperatorTabBar } from "../../components/OperatorTabBar";
+import { PlanLockedScreen } from "../../components/PlanLockedScreen";
 import { useDeliveryAccess, useRoutesAccess } from "../../lib/api/addons";
+import { useSubscription } from "../../lib/api/billing";
+import { planLockedSection } from "../../lib/plan-flags";
 
 // Owner split 2026-08-25: recurring routes and ad-hoc order delivery are two
 // independent per-tenant addons (owner decision 2026-08-28: developer_mode no
@@ -52,6 +55,7 @@ export default function OperatorLayout() {
   useSocket();
   const routesAccess = useRoutesAccess();
   const deliveryAccess = useDeliveryAccess();
+  const sub = useSubscription();
   const segments = useSegments() as string[];
 
   // Single deep-link chokepoint for every dispatch/route/driver/fleet/trips
@@ -85,6 +89,20 @@ export default function OperatorLayout() {
 
   if (need !== null && resolved && !enabled) {
     return <Redirect href="/(operator)/home" />;
+  }
+
+  // Lite-L2 (WP12/R4.4/R4.6): a deep link into a plan-gated section the tenant's plan
+  // doesn't grant renders the locked screen in place of the section's own stack — a
+  // render, not a redirect, so the URL/back-stack stays intact (mirrors web's
+  // RouteGuard, apps/web/app/(dashboard)/layout.tsx). planLockedSection already fails
+  // OPEN while unresolved/failed, so this never strands a tenant on an unknown answer.
+  const lockedKey = planLockedSection(segments, {
+    flags: sub.data?.flags,
+    resolved: sub.isSuccess,
+    failed: sub.isError,
+  });
+  if (lockedKey) {
+    return <PlanLockedScreen planName={sub.data?.planName ?? "current"} />;
   }
 
   return (

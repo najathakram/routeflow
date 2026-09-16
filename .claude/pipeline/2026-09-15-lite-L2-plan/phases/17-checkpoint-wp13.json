@@ -1,0 +1,48 @@
+{
+  "task": {
+    "id": "WP13",
+    "title": "docs + code map (same PR)",
+    "type": "docs",
+    "files": [
+      "docs/design-package/project/specs/pricing-plans.md",
+      ".claude/code-map/api/feature-modules-4.md",
+      ".claude/code-map/web/api-hooks.md",
+      ".claude/code-map/web/app-shell-lib.md",
+      ".claude/code-map/mobile/app-shell-lib.md",
+      ".claude/code-map/packages.md",
+      ".claude/code-map/_meta.json",
+      ".claude/code-map/CHANGELOG.md"
+    ],
+    "tests": [],
+    "brief": "Satisfies R3b.1 (docs half), R8.4; provenBy review only.\nAppend the five keys (flag.estimates, flag.recurring_invoices, flag.credit_notes, flag.suppliers,\nflag.messaging) to pricing-plans.md:64-67 (correction C9 — this is the actual docs target, not\ndocs/product/billing-plans.md). Map entries for every new/changed file in WP1-WP12/WP14 (purpose,\nexports/signatures, cross-refs); bump _meta.json; PR body carries the spec.md § deploy order\n((1) prod migration, (2) merge/deploy, (3) publish v12 before the first LITE tenant, (4) HQ creates LITE tenants).",
+    "dependsOn": [
+      "WP1",
+      "WP2",
+      "WP3a",
+      "WP3b",
+      "WP3c",
+      "WP4",
+      "WP5a",
+      "WP5b",
+      "WP5c",
+      "WP7",
+      "WP8",
+      "WP9",
+      "WP10",
+      "WP11",
+      "WP12",
+      "WP14"
+    ],
+    "blocked": true,
+    "blockerFindings": [
+      {
+        "file": "(brief)",
+        "severity": "blocker",
+        "phase": "Author tests",
+        "summary": "Task WP13's task-brief.mjs run did not produce a brief.md -- downstream stages must never be handed a path that was never actually written.",
+        "detail": "exitCode=3 out=\"C:/ClaudeCode/routeflow/.claude/worktrees/rf-lite-L2/.claude/pipeline/2026-09-15-lite-L2-plan/tasks/WP13/brief.md\""
+      }
+    ]
+  },
+  "progressLine": "Task WP13: blocked (1 blocker(s))"
+}

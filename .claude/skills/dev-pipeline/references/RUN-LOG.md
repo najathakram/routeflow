@@ -223,11 +223,11 @@ Knobs change on ledger evidence (ten-run rules), never on one entry.
   pre-fold 409 short-circuited D3's real-Postgres in-tx P2002 proof), both closed in round 2.
 - Knob candidate: (1) a new/changed Prisma model must add `schema-folder.spec.ts` to the change's
   radius — this run's own build plan omitted it and round 1 had to firefight EXPECTED_MODEL_COUNT
-  + the retired e39bf9db block-identity pin as unplanned blockers. (2) the plan's scoped verify
-  command list must always include the full `apps/api` Jest lane, not just the touched
-  directories — this run's plan verify was `src/orders/ src/buyer/buyer.merge-lock` only; the
-  full lane (264 suites / 4436 tests) was run manually post-hoc by the closer and passed, but the
-  plan itself never proved it.
+  - the retired e39bf9db block-identity pin as unplanned blockers. (2) the plan's scoped verify
+    command list must always include the full `apps/api` Jest lane, not just the touched
+    directories — this run's plan verify was `src/orders/ src/buyer/buyer.merge-lock` only; the
+    full lane (264 suites / 4436 tests) was run manually post-hoc by the closer and passed, but the
+    plan itself never proved it.
 - Deviation: closeout.mjs's session-usage lookup failed from the worktree path (transcript
   resolved under the main-repo project key, not the worktree's), matching the plane-sync run's
   already-flagged knob candidate; session-usage.mjs re-run manually with --project pointed at the
@@ -319,6 +319,7 @@ Knobs change on ledger evidence (ten-run rules), never on one entry.
 - Deviation: closed via a light loop (Fable ruling over R1+R3 into D1-D10,
   Sonnet/Opus executors, one re-verify round) instead of an engine close-out;
   squashed the checkpoint commit onto `42a4893e` before landing.
+
 ## 2026-09-04-F25-location-bugfix (Run B) · bugfix · small · ≈$1.28 · ~22m live after a 10h pause · 2026-09-05
 
 - Caught: red-gate audit caught the stub seam (non-behavioral red → remediated); review found 3
@@ -363,7 +364,7 @@ Knobs change on ledger evidence (ten-run rules), never on one entry.
 - Deviation: p2's ci.yml diff (39 ins/36 del) blew past the plan's ≤25-line criterion — the
   ruling's literal `node scripts/ci-freshness-guard.mjs` run text is unresolvable pre-checkout in
   the real e2e job and in T1's harness, so round 1 added a sparse-checkout step + `git rev-parse
-  --show-toplevel` path fix and round 2 updated the plan doc to match rather than reverting it.
+--show-toplevel` path fix and round 2 updated the plan doc to match rather than reverting it.
 
 ## imp-wave-e-structure · feature · light-loop · cost: not ledgered · 2026-09-03/04
 
@@ -438,20 +439,22 @@ Knobs change on ledger evidence (ten-run rules), never on one entry.
 - Candidate knobs (since shipped as `mode: 'bugfix'`): radius-packed lenses, corroboration skip, gated
   design-system lens, behavioral red bar, revert probes, harness-integrity check.
 - Deviations: run on a mid-upgrade engine copy; machine slept 7h38m inside the red gate (elapsed ≠ active).
+
 ## 2026-09-03-du-view · dev · major · cost: not ledgered (engine abandoned before result.json; ~1.4M subagent tokens by transcript sizes) · active wall-clock ~2 h in-engine + ~1 h by hand
+
 - Caught (real): red audit (Opus) — 3 anchor tests ERRORED inside the real engine on NaN stubs, 1 stub-satisfiable assertion, 1 disjunctive oracle; baseline grounding/manifest clean. All fixed and carried into test-plan rev 2 as house rules.
 - Wasted: red-gate runner (Haiku) runs gate commands with the Bash default 120 s timeout — a 5-min MATLAB suite died at exit 143 twice, the Opus auditor re-ran 4 files separately (14 min), remediation re-ran everything; authoring pass #2 took ~40 min (4 Sonnet authors × 3–5 cold `matlab -batch` starts each, all contending); a hung uifigure probe + zombie MCP workers inflated every timing 5–20× (13 s measured vs 123–266 s observed).
 - Knob candidate: a per-run `shellTimeoutMs` (or per-command timeout) passed to every gate/red/probe runner so Bash timeout >= measured suite time; evidence: every MATLAB gate death was at exactly 120 s. Second: authors should not verify RED themselves when the runtime has cold-start cost — one shared red run suffices.
 - Deviation forced: engine stopped at authoring #2; remaining phases done by hand in one live MATLAB session (tests transcribed by Fable, implementation transcribed from the build plan, one Sonnet agent for the 10-edit UI file, one Opus review lens, headless uifigure smoke instead of Playwright). Test-first kept (per-file RED verified by authors), mutation probe skipped.
 
-
 ## 2026-09-05 · portal-switcher · feature · major · ui:true · engine→light-loop
+
 - Cost: ≥ ~$18 output-priced (readers 590k Sonnet, builder 297k, Opus review/fix/re-check 570k, Sonnet fixes/drive 387k; engine phases unpriced). Wall-clock: planning 1h30 (3 reader rounds + 5 artifacts, npm ci 38 min in parallel); engine 2h00 (23:28→01:52Z) with ZERO production code; light loop 2h20 → SHIP.
 - Caught real defects: the Sonnet BUILDER (a stray `;` inside JSX from Fable's own exact-code block — tsc/lint blind to it); Opus refute-first REVIEW (F2: `useSearchParams`+page-level Suspense blanks the prerendered `/login` shell — a real UX regression; F3 `request.url` vs `url.clone()`; F1 copy drift); the RE-CHECK (stale code-map row). Engine phases caught nothing about the product: grounding = line-number nits; red audit + 66-min remediation = test-shape nits on brand-new-module tests whose red was tautological.
 - Wasted: Baseline 17 min running `jest --ci` and `next build`, both broken on master (pre-existing flaky suite; react 18/19 drift) → excluded anyway; red audit misread WP7's post-deploy e2e specs as "never authored" and remediation pre-wrote them; 3 reader rounds because SendMessage is disabled (relaunch per follow-up); 13-worker Jest × parallel agents on an I/O-bound host (Defender + another session's 60-min `npm ci` + Docker).
 - Knob candidate (evidence above): a **slow-host profile** — `--maxWorkers=4`, scoped-only baseline (never the full suite/build), sequential waves, and NO Opus audit/remediation when every red-gated test targets a not-yet-existing module (a mechanical "0 of N pass" check suffices; behavioral proof = the HIGH-risk mutation probes). Second candidate: light loop by default for ≤10-file bounded features whose production code Fable writes verbatim — here 2h20 to SHIP vs 2h00 of engine with no code.
 - Deviation: owner stopped the engine at 01:52Z (host I/O); run finished on the light loop; ledger row hand-assembled from journal + agent usage (engine tokens null).
-- Ship addendum (05:10Z): PR #614 squash-merged as master `7aa20e71` at 04:57Z; Railway web deploy SUCCESS within ~2 min (layer cache); deployment_status E2E run 33945980194: **124 passed / 0 failed / 26 skipped incl. all 8 new tests (CC-16..21, OP-23, BY-15)**; `post-deploy-check` all green. Traps hit, worth lessons: (1) `gh pr merge --auto` merges IMMEDIATELY when the repo has no required checks — and switches the local worktree to master + deletes the branch; a docs commit pushed in that second was orphaned (recovered by cherry-pick → docs PR). (2) In a fresh worktree turbo's cache replay never runs the jest campaign reporter, so `.campaign/runs/mobile.json` was missing and `campaign-check` rejected the push with 8 phantom "undischarged" claims — run the suite once directly. (3) Jest 5 s default per-test timeout fails RTL suites as *timeouts* under pre-push load on a slow host (two different tests in two runs) → `testTimeout: 30_000` + RTL `asyncUtilTimeout: 10_000` in apps/web. (4) Master moved twice during the ship window (other sessions merging) → two rebases; bookkeeping files (code-map CHANGELOG/_meta, cost-ledger) conflict every time — candidate: append-only ledgers should use `merge=union`.
+- Ship addendum (05:10Z): PR #614 squash-merged as master `7aa20e71` at 04:57Z; Railway web deploy SUCCESS within ~2 min (layer cache); deployment_status E2E run 33945980194: **124 passed / 0 failed / 26 skipped incl. all 8 new tests (CC-16..21, OP-23, BY-15)**; `post-deploy-check` all green. Traps hit, worth lessons: (1) `gh pr merge --auto` merges IMMEDIATELY when the repo has no required checks — and switches the local worktree to master + deletes the branch; a docs commit pushed in that second was orphaned (recovered by cherry-pick → docs PR). (2) In a fresh worktree turbo's cache replay never runs the jest campaign reporter, so `.campaign/runs/mobile.json` was missing and `campaign-check` rejected the push with 8 phantom "undischarged" claims — run the suite once directly. (3) Jest 5 s default per-test timeout fails RTL suites as _timeouts_ under pre-push load on a slow host (two different tests in two runs) → `testTimeout: 30_000` + RTL `asyncUtilTimeout: 10_000` in apps/web. (4) Master moved twice during the ship window (other sessions merging) → two rebases; bookkeeping files (code-map CHANGELOG/_meta, cost-ledger) conflict every time — candidate: append-only ledgers should use `merge=union`.
 
 ## 2026-09-04 · F25-calendar (B59/B90/B91/B118) · bugfix · major · $58.95 · ~9h52m · 81 agents / 10.2M subagent tokens
 
@@ -461,6 +464,7 @@ Knobs change on ledger evidence (ten-run rules), never on one entry.
 - Deviations: launched without the two invalid `dependsOn` entries (WP-WEB→TP-WEB, WP-MOB→TP-MOB — a test package is not a work-package dependency); `campaign-check` was excluded at Baseline as a bad command because a stale PARTIAL `.campaign/runs/web-e2e.json` sat in the worktree (the documented Playwright clobber trap) — moved aside and re-run clean at close-out.
 
 ### ocr-gate-observe-first — ship addendum (routeflow-3a, 2026-09-05)
+
 - Landed: PR #616 squash-merged as 7281e4d7 at 14:57Z, ~56 h after the client report; code was done in ~6 h, the rest was coordination.
 - Caught (real): none new in ship — the fix's specs (27/27, then 24/24 after the master merge) and CI verify stayed green throughout.
 - Wasted: two verify-hook pushes failed on 5 s Jest timeouts while other sessions ran verify/Docker on the same host; a local api-image build stalled inside `RUN npm ci` beside a verify (env-blocked lane); four PRs merged inside the held window → PR conflicted on 4 ledger files only (LESSONS.md, lessons `_meta.json`, code-map `_meta.json`, cost-ledger.jsonl); `gh pr merge` classifier-blocked for agents → owner/peer merge; a wrong "machine slept" hypothesis steered effort for an hour (audit: uptime unbroken).
@@ -468,6 +472,7 @@ Knobs change on ledger evidence (ten-run rules), never on one entry.
 - Deviation: bugfix engine died at 53/54 agents (session death); close-out salvaged by hand (routeflow-44); ledger row hand-written (stub result.json has no phaseReport); local:validate not run (Docker stalled) — gates were CI + post-deploy-check + live probe.
 
 ### bugflow docs plan — light loop (Fable session, 2026-09-04→05)
+
 - Shape: 4 Sonnet writers from one shared brief (23 files, 3,920 lines) → Opus refute-first review → Sonnet fix round → Sonnet #597-rebase pass; ~3.3M subagent tokens; docs-only PR #620.
 - Caught (real): Opus review 70 findings / 41 blockers — legacy claim grammar surviving in one doc, `prove`/`verify` writing status against the one-writer rule, Takeable missing `needs:human` (infinite re-claim loop), a worker-template gate line that let an API change ship without `local:validate`; a citation audit after #597's renumbering found two stale lesson ids (L-061→L-066, L-036 archived).
 - Wasted: most blockers were VERIFY hedges on decisions ruled AFTER the writers launched; two Claude Code process exits killed the first Opus review outright and interrupted the second (its report survived only because it was told to write to disk before returning); a recursive `grep -r | head` orphaned for 2 h on Windows (no SIGPIPE).
@@ -475,6 +480,7 @@ Knobs change on ledger evidence (ten-run rules), never on one entry.
 - Deviations: no pipeline engine (owner-approved light loop for docs); no cost-ledger row (docs-only; shared ledger kept out of the PR per the #616 addendum); commit/push only after the owner's in-session go; the leader session holds the merge order.
 
 ### imp-wave-e-structure — ship addendum (2026-09-05)
+
 - Landed: light loop (Sonnet build → Opus refute-first review → Fable fix round) as PR #621 (`60d10e66`) after four rebases (16a486c2 → 8f136b9a → 7281e4d7).
 - Caught (real): the branch's own guard spec (`no-single-schema-path`) false-positived on a `//` comment in a file from #597 — root cause an apostrophe inside a regex literal desyncing the comment stripper (20 other files carried the same construct); fix = "unterminated quote on a line is regex text" + 2 cases, verified over 860 files.
 - Wasted: lesson ids collided at every rebase (L-067 → L-071/072 → L-072/073) — ~45 min of renumbering.
@@ -482,12 +488,14 @@ Knobs change on ledger evidence (ten-run rules), never on one entry.
 - Deviation: the deploy-triggered E2E ran only inside a long public window (owner-chosen, watchdog 120 min).
 
 ### imp-02b — ship (2026-09-05)
+
 - Landed: PR #623 (`1ebd4f54`) after three rebases; DB lane proved exactly-once cron ticks.
 - Push refused 4×: (1) a 5 s Jest timeout misread as host contention; (2) same test on a quiet host — real defect: #612's newer cron-site spec lacked the db-locks pass-through mock the @LeaderCron wrapper needs (fix + sweep of all 13 sites); (3) verify green but `campaign-check` failed on 9 phantom claims — turbo replayed the mobile test task from cache so `.campaign/runs/mobile.json` was never written; (4) green after regenerating reports directly.
 - Lessons: isolate a timing failure by running the spec alone on a quiet host before re-pushing; regenerate campaign reports with direct `npm test -w` runs before any push from a worktree.
 - Knob candidate (evidence: 1 wasted 20-min verify): make the pre-push check refuse when a report file is missing rather than reporting phantom undischarged claims.
 
 ### imp-closeout (2026-09-05/06)
+
 - One Opus xhigh review of the merged program diff (no blocker; 3 majors, 6 minors, 1 tenancy "major" REFUTED by a read-only prod trace — 7 NULL-tenant rows exist but #613 changed no read path) → Fable fix round → Sonnet/Opus executors → Opus refute-first re-check (1 blocker: unbounded `spawnSync gh`; 5 majors) → second fix round with a DB-lane spec for the backfill tool's `--live` path.
 - Landed: PR #626 (`17e81c2c`) after a local master merge (the PR went CONFLICTING when two other PRs merged while it was open in the window).
 - Caught (real): the refute-first re-check (unbounded retry loop, `docker-compose.yml` unhashed by turbo, a retries test that passed without retrying) and the prod dry-run (the tool refused all 7 rows — the parent runs were NULL too → one more cascade level).
@@ -568,12 +576,14 @@ Knobs change on ledger evidence (ten-run rules), never on one entry.
 - Deviation: round 3/4 by the light loop; deferred residuals recorded (unchecked unassigned on clockless underway runs; midnight reset effect).
 
 ## 2026-09-07 · marketing-port (routeflow, feat/marketing-port) · mode feature · scale major · est $69.06 · wall 6 h 31 m (05:20→11:51Z, engine) · 94 agents · 11.87 M subagent tokens
+
 - Caught the real defects: the FINAL PASS (Opus read → Fable decide) found the four that matter — middleware carve-out enrolls page paths only (brand assets/manifests/OG proxied to mobile on phones), three auth CTAs outside the carve-out, first-ever `next/image` with no `images` config under `output: standalone`, a dark-only PNG mark on a dark login panel; UI verify caught the unstyled 404 (fixed in-run) and a 2.72:1 contrast miss.
 - Wasted: the perRound eslint command was a bad command from Baseline (pattern named a dir that did not exist pre-port) → zero lint coverage all run; the api final gate went red on the known `ci-freshness-guard-script.spec.ts` load flake (two engines + a docs agent on one host); marketing.css shipped as a 9,776-line concatenation (ux-spec asked ≤ 3,500) and two lenses spent findings restating it.
 - Candidate knob (evidence above): Baseline should RE-RUN a bad perRound command after the first implement wave when the failure was "no files matching" — a path that the plan itself creates is not a broken command.
 - Deviation: Fable designs round 3 as a light loop (middleware prefixes + mobile-seen cookie; `<img>` + tone prop; contrast; font dedupe); owner visual review before merge (public site).
 
 ## 2026-09-07 · F16-list-caps (routeflow, fix/F16-list-caps-numbering) · mode bugfix · scale major · est $49.62 · wall 3 h 51 m (09:31→13:22Z) · 75 agents · 9.42 M subagent tokens
+
 - Caught the real defects: S2 refutation (Opus) corrected 5 of 8 registry fixes BEFORE any code (B89 half-wrong, B100 needs a year key + numeric backfill → split to its own run); the FINAL PASS found the three that matter after two engine fix rounds — a statement header mixing uncapped and capped bases, a vacuous e2e fixture (DRAFT invoice → $0.00 == $0.00), the buyer wallet tile vs a capped ledger; all 5 revert-fix probes caught.
 - Wasted: `cd apps/api && npx jest --silent` was a bad command from Baseline (ci-freshness-guard T3 timing test 7.9 s > 5 s bound under host load + worker kills) → the engine ran the whole batch without a trustworthy full-suite gate until the final gate; the sibling sweep did not run (ran:false with 3 patterns given) — check the engine's bugfix-mode gate for siblingPatterns.
 - Candidate knob (evidence above): pin `--maxWorkers=2` into every full-suite verify command by default; a load-sensitive spec must never be the reason a gate is "broken".
@@ -592,6 +602,7 @@ Knobs change on ledger evidence (ten-run rules), never on one entry.
 - Deviation: none in the engine; the lead killed only its own idle orphan MATLAB processes mid-run to free 2 GB; the full 51-RC study, README results, merge and OneDrive mirror are done by the lead after the run.
 
 ## 2026-09-08 · static-gain (fs-offset-model, main) · mode feature · scale major · est $~30 · wall ~14 h (00:30→14:30Z, light loop; host shared with the ul-rmc session for most of it) · 23 agents · ≈5.5 M subagent tokens
+
 - Caught (real): the Opus review (refute-first) found the two defects that mattered — F1 the "perfect CSI = H=1" receiver (the planner's own design; its equivalence harness had been run at the one scale where the assumption is vacuous) and F2 presets merged onto an already-validated cfg leaving the derived allowance stale (the "tie" a builder relaxed T49' around WAS the defect); the timed full gate, not the unit suite, exposed F1 (blerA = 1). The contract correction (exponent ≤ 7, not a 9-bit word) came from the owner, not the pipeline — the spec had restated a contract as a bit budget (L-009).
 - Wasted: ~2 h of Sonnet lanes + gates on the v1 plan (13-bit allowance) before the owner correction; ~0.5 M tokens of profiler-led vectorisation bought ~20 % (the floor was Toolbox channel estimation — L-010); every timing after 05:00Z was contaminated by 16–20 MATLAB processes (zombies + the concurrent session), so R52 is measured quiet only pre-memo (928 s) and the memo's value is unquantified; two Haiku gate runners ended their turns mid-run despite an explicit polling protocol.
 - Candidate knob (evidence: gate breakdown 880/912 s in 13 integration tests, ~30–40 s fixed cost per run_scenario = pool builds; host CPU snapshots): a Haiku host check before any timed gate (agrees with the ul-rmc entry) and a session-owned background `until` watcher instead of a Haiku runner for gates; measure the pool memo on a quiet host before touching smoke budgets.
@@ -601,6 +612,7 @@ Knobs change on ledger evidence (ten-run rules), never on one entry.
 - Amendment (16:30Z): the "quiet" re-measure after the pool memo was not quiet either — 1640 s, 85/85 green, no MATLAB CPU contention but 49–75 % host load from non-MATLAB processes (OneDrive sync of the fresh mirror suspected); R52 stays unproven. Owner then retired the git repo (OneDrive is the single copy; no git) — a project without a repo has no code map/lessons routine; the records live in `model\notes\`.
 
 ## 2026-09-08 · 2026-09-07-ingestion-affa · bugfix · major · est $14.94 · ~2h20m active + a 5h resumed tail (79 agents, 4.93M subagent tokens)
+
 - Caught the real defects: Gate & Review lenses (13 confirmed: XLSX branch could throw out of parseStatement; only-one-sheet ingest; no header-locator unit test; error-surfacing half of R4 untested; format-hint copy in two more places) and the 5 fix-revert probes (5/5 caught, all restored). Verify: 42 votes → 2 drops, 12 disputes all dropped — i.e. the fixers' refute-first was right every time.
 - Wasted: the RESUME re-run re-executed every probe and a whole fix round live (probe prompts embed file checksums that changed after fixes → cache miss) — ~$7 of the $14.94 and 5 wall-clock hours for zero new confirmed findings; 12 stale review findings re-refuted against a tree the fixers had already changed. `mutationProbe.restoredVerified=false` is that same checksum drift, not a restore failure.
 - Final pass (Fable over Opus reads) earned its keep: 8 remaining findings, 6 major — the in-engine fix planner's "merge every same-layout tab" widened the fix and created a cross-account merge trap; reparseImport gaps (LOCKED guard, notes, extractionPath); second-section-header rows. None of the six lenses saw them.
@@ -609,12 +621,14 @@ Knobs change on ledger evidence (ten-run rules), never on one entry.
 - (Lead correction to 2026-09-08-signin-menu-hotfix) WASTED, as seen from the Lead's session: two verified pushes rejected by the `bugs.mjs` self-test timing checks ("index vs file", "lock order") before the audited skip, and a background bash chain that hung spawning PowerShell for the watchdog (never spawn PowerShell from a background bash; use the PowerShell tool).
 
 ## 2026-09-08 · fft-gain-control (DL Executable v2.4, MATLAB, no git) · mode feature · scale major · light loop (2 workflows + 1 verification workflow + 1 map bootstrap) · ≈1.8 M subagent tokens · ~2 h 10 m active wall (planning 60 m incl. two multi-minute MATLAB baseline runs; part 1 42 m; part 2 27 m)
+
 - Caught (real): the requirement-verification workflow before any code (TD round-before-rotation is the observable, not the gain; "±1 LSB" was wrong, up to ±3 with double rounding; six of eight cfgs cannot run; goldens overwritten in place); the planning reproducibility check (checked-in vectors stale by the Dec-19 Xilinx factor, 0.99536×, so fresh baselines were generated BEFORE any edit); the Opus red audit (T14/T15 empty-difference vacuity → verifyNotEmpty); the Opus review (guard's own mat2str masking the error id; uncovered LTE-1024 / TD-4096 branches). Mutation probe 6/6 caught, all restores byte-verified; final gate 20/20 real execution, re-run independently by the reviewer and the re-checker.
 - Wasted: the Sonnet docs executor did the artifact half of its brief and silently skipped the code-map half (re-check FIX-FIRST on docs only; Fable closed it by hand); three test-plan rows it wrote described tests that were not the ones built (T16b/T18/T19). Shell writes inside the OneDrive folder are sandboxed (even with the bypass) — every agent had to be told to use Write/Edit and the matlab MCP; the full engine was not usable (no git).
 - Candidate knob (evidence above): a docs executor brief with two halves needs a structured return with one field per half (or two agents); a free-text "notes" let a half-done job read as done. Second: add a "reproduce the goldens first" step to S1 for any vector-based repo — it killed the R1 oracle here in 94 s.
 - Deviation: light loop instead of the engine (no git); Fable did its own artifact/lessons/RESUME writing and the final doc corrections; the LTE cfg→runner wire is covered only by the Full-tagged T15 (recorded, not fixed).
 
 ## 2026-09-08 · 2026-09-08-r1-ingest (affa-cashbook, standalone S-Corp cash-book builder) · mode feature · scale major · est $23.76 · ~3 h active over 3 launches (19:03Z start; process exit during test authoring; first resume lost 49/59 agents to the session usage limit after 17 min; second resume 2 h 36 m) · 87 agents · 9.63 M subagent tokens
+
 - Caught (real): the six Opus lenses (44 raw → 41 confirmed; Verify 43 votes, 1 refuted = 2.4 %, 1 dropped) — Posting-Date blocker, blank-balance guard, verifyHashes with no `missing` list, telemetry dropped before JSON.parse, readCsv swallowing quote errors, the CORROBORATING gate, run.ts exiting 1 on a stage subset; the mutation probe 9/9 caught with byte-verified restores; and the FINAL PASS (Opus read ×2, Fable decision) found every design-level defect the lenses missed: calendar-month sums compared to business-day statement cycles returning a silent 'ok' for unchecked months (84 of 96 on the real manifest), `--stage workbook` overwriting the deliverables from an empty build at exit 0, an AI cache key with no source identity, quarantine flagged but still feeding every downstream total, and two contradictory opening-balance sources in one workbook.
 - Wasted: the whole first resume (~$0.67, 17 min, 49 dead agents — usage limit, not a defect); a Haiku grounding pass that reported PRICES/PRICES_AS_OF "not exported" from a stub the plan said would be written (two disputes for the planner); the baseline typecheck failure was a Sonnet test author's noUncheckedIndexedAccess slip, fixed by Fable by hand; two in-engine fix rounds ($8, 48 fixes) spent on lens findings while the five majors waited for the final pass.
 - Candidate knob (evidence: this run + F16b — twice now every unfixed finding is a final-pass finding): on HIGH-risk major runs run the final pass BEFORE fix round 1 so its design-level findings shape the round; and treat a "session limit" agent failure as a pause-and-resume, not 49 failures.

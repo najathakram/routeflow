@@ -341,3 +341,46 @@ describe("EntitlementsService.resolve", () => {
     expect(await svc.claimsFor("t1")).toBeNull();
   });
 });
+
+// WP2 (R3a.3/R3a.7): isAlwaysEnforcedTenant is the collaborator PlanFlagGuard/AddonGuard
+// use to decide whether a tenant gets the PLAN_FLAG_ENFORCEMENT/dark-addon-gate courtesy
+// allow. Only an always-enforced plan (today: LITE) says no.
+describe("EntitlementsService.isAlwaysEnforcedTenant", () => {
+  it("resolves true for a LITE tenant", async () => {
+    const { svc, catalog } = makeService(tenantFixture({ plan: "LITE" }));
+    catalog.getVersionForTenant.mockResolvedValueOnce({
+      ...catalogVersion(),
+      definitions: [
+        ...catalogVersion().definitions,
+        {
+          planKey: "LITE",
+          name: "Lite",
+          seatsIncluded: 1,
+          routesConcurrent: 1,
+          scansIncluded: 10,
+          msgsIncluded: 50,
+          customersIncluded: 25,
+          featureFlags: [],
+        },
+      ],
+    });
+    expect(await svc.isAlwaysEnforcedTenant("t1")).toBe(true);
+  });
+
+  it("resolves false for a non-Lite tenant (STARTER) — the non-Lite regression case", async () => {
+    const { svc } = makeService(tenantFixture({ plan: "STARTER" }));
+    expect(await svc.isAlwaysEnforcedTenant("t1")).toBe(false);
+  });
+
+  it("resolves false for GROWTH/SCALE/ENTERPRISE tenants too", async () => {
+    const { svc: growth } = makeService(tenantFixture({ plan: "STARTER", planKey: "TEAM" }));
+    expect(await growth.isAlwaysEnforcedTenant("t1")).toBe(false);
+    const { svc: enterprise } = makeService(tenantFixture({ plan: "ENTERPRISE" }));
+    expect(await enterprise.isAlwaysEnforcedTenant("t1")).toBe(false);
+  });
+
+  it("never throws — resolves false when entitlement resolution itself fails", async () => {
+    const { svc } = makeService(null);
+    expect(await svc.isAlwaysEnforcedTenant("missing-tenant")).toBe(false);
+  });
+});

@@ -147,4 +147,37 @@ nonce}` so a re-scan re-flashes; **2026-09-14:** optional `freeUnitsFor(id,line)
   already try/catch `shareCsv()`. Test: `__tests__/pdf-download-status-guard.pins.test.ts` gained a
   third pin for `shareCsv`'s native branch (source-text pin, same convention as the print guard).
 - **Buyer per-line notes render (2026-09-15, WP2, R5.6/R5.7):** `lib/api/buyer.ts` — `BuyerOrder.lineItems[]` and `BuyerInvoiceItem` each gained `notes?: string | null` (buyer-visible operator note, e.g. flavor). Rendered in `(customer)/invoices/[id].tsx` `LineItemRow` and `(customer)/orders/[id].tsx` order-detail list, both guarded `item.notes?.trim()`, new `styles.itemNote` (12px, `label2`) under the existing `itemMeta` line. Tests: `__tests__/buyer-line-note.pins.test.ts` (source-text pin, same convention as the WP3 print tests).
+- **`lib/plan-flags.ts` (new, Lite-L2 WP11, 2026-09-15)** — `PLAN_GATED_SECTIONS: Record<string,
+FlagKey>` maps operator route-group segments (`estimates`, `recurring-invoices`,
+  `credit-notes`, `returns`, `suppliers`, `vendor-bills`, `analytics`, `reports`, `messages`) to
+  the `FlagKey` (`@routeflow/types`) each needs; `expenses`/`finance`/`purchase-orders`/
+  `statements` are NOT gated. Mirrors web's `lib/plan-gated-nav.ts` adapted to expo-router
+  segments. `planLockedSection(segments, {flags,resolved,failed})` — the first path component
+  after `"(operator)"` that isn't itself a route group; unknown/unresolved/failed all fail OPEN
+  (only a positively resolved-and-denied flag locks). `planFlagVisible(s)` — same three-valued
+  rule as web (resolved ⇒ by the flag; unresolved ⇒ hidden; failed ⇒ shown). **Fix-round finding
+  5 (2026-09-15):** `flags` param is `readonly string[] | undefined` — `undefined` (the response
+  resolved but the `flags` key was absent) also fails OPEN, same as unresolved/failed; only an
+  actual array (including `[]`) is checked with `.includes()`.
+- **`lib/api/billing.ts` (new, WP11)** — `useSubscription()`: tenant-scoped query key
+  (`["tenant", tenantSlug, "subscription"]` — mirrors `lib/api/addons.ts`'s `useDeveloperMode`
+  pattern so switching tenants on one device never hands the next session a stale answer),
+  `enabled: isAuthenticated`, `retry: 2` (load-bearing for section-locking, not `retry:false`).
+  `usePlanFlag(key: FlagKey)` → `{enabled, resolved, failed}` — `resolved` says the flag was
+  actually READ; `planLockedSection` and any other stranding caller must key off it, never a
+  bare `!enabled`. **Fix-round finding 5 (2026-09-15):** `enabled` is `true` when
+  `q.data?.flags` is `undefined` (fail open), `.includes(key)` once `flags` is an actual array.
+- **`components/PlanLockedScreen.tsx` (new, WP11)** — rendered in place of a gated operator
+  route-group's `<Stack>`; structural clone of `app/(auth)/operator-blocked.tsx` (SafeAreaView →
+  centered column, 64px Ionicons lock icon, title, message, one `MobileButton`, same color
+  literals — no new tokens). `onBack` defaults to `router.back()` (billing is web-only, so there
+  is no "See plans" equivalent here).
+- **`app/(operator)/_layout.tsx` — plan-gated section lock (WP12/R4.4/R4.6):** a `useSubscription()`
+  call feeds `planLockedSection(segments, {...})`; when it denies, renders `<PlanLockedScreen
+planName={sub.data?.planName ?? "current"} />` in place of the section's own stack — a
+  render, not a redirect (URL/back-stack stays intact), mirroring web's `RouteGuard`.
+- **`app/(operator)/(tabs)/more.tsx` — plan-flag-gated row visibility (WP12/R4.4):** Recurring
+  Invoices/Estimates/Credit Notes/Returns/Analytics/Reports/Messages rows each wrapped in
+  `planFlagVisible(usePlanFlag("flag.<key>"))` (seven `usePlanFlag` calls) instead of always
+  rendering; unchanged rows (Payments, Shipments, Purchase Orders, etc.) are not gated.
 - **mobile↔web parity waves (2026-07-11, #225):** ~14 waves of mobile-only fixes bringing mobile to web parity across scan UX, money flows, compliance, invoicing, returns, and the buyer portal — see the dedicated "Where to find" rows above (Returns, Continuous barcode scan, Always-visible scanned cart rows, Incremental order-item edit, Regulated-license guard, Buyer favorites/finances/licenses, Buyer cart promotions, Scan-driven stock count, Product cost-basis tools + photos, Post-delivery invoice send, Invoice write-off/payment edit, Save order as draft/reopen/recurring create, Live margin hint). Also: `store/cartStore.ts` `CartItem` gained `category` (so CATEGORY-scoped buyer promos can match a cart line); `package.json` added `expo-image-manipulator ~55.0.16` (JPEG transcode for product-photo upload — needs a native rebuild on deploy); `lib/api/admin.ts` `AdminOrder.customer` widened with `mobile`/`email` (feeds the send-invoice sheet) + new `useAdminProductsInfinite` (pages the whole catalog, was a single `limit:100` call that silently dropped rows past 100 — same fix on the buyer side via `useBuyerProductsInfinite` in `lib/api/buyer.ts`). Two waves described in the PR's commit messages (ProductForm "Variant of" create-link UI, product-detail "Variant(s)" card) did **not** land in the final reconciled merge — verified absent from `ProductForm.tsx`/`products/[id].tsx`; only the photo-upload half of that wave (12) is present.

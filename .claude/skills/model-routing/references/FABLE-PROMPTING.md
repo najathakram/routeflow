@@ -5,7 +5,7 @@ The snippets are quoted from Anthropic's Fable 5.1 migration guidance (the `clau
 
 ## De-prescribe first
 
-Prompts and skills written for prior models are often too prescriptive for Fable 5.1 and *reduce* output
+Prompts and skills written for prior models are often too prescriptive for Fable 5.1 and _reduce_ output
 quality. Before adding anything:
 
 - State outcomes, constraints, and how success is verified; keep numbered steps only where order truly
@@ -23,12 +23,14 @@ quality. Before adding anything:
 ## Snippets by purpose
 
 **Act, don't over-plan (ambiguous tasks):**
+
 > When you have enough information to act, act. Do not re-derive facts already established in the
 > conversation, re-litigate a decision the user has already made, or narrate options you will not pursue
 > in user-facing messages. If you are weighing a choice, give a recommendation, not an exhaustive survey.
 > This does not apply to thinking blocks.
 
 **No unrequested tidying (higher effort):**
+
 > Don't add features, refactor, or introduce abstractions beyond what the task requires. A bug fix doesn't
 > need surrounding cleanup and a one-shot operation usually doesn't need a helper. Don't design for
 > hypothetical future requirements — do the simplest thing that works well. Avoid premature abstraction.
@@ -38,6 +40,7 @@ quality. Before adding anything:
 > you can just change the code.
 
 **Lead with the outcome (any reporter):**
+
 > Lead with the outcome. Your first sentence after finishing should answer "what happened" or "what did
 > you find" — the thing the user would ask for if they said "just give me the TLDR." Supporting detail and
 > reasoning come after. Being readable and being concise are different things, and readability matters
@@ -46,12 +49,14 @@ quality. Before adding anything:
 > chains, or jargon.
 
 **Ground progress claims (every agent that reports; nearly eliminates fabricated status):**
+
 > Before reporting progress, audit each claim against a tool result from this session. Only report work
 > you can point to evidence for; if something is not yet verified, say so explicitly. Report outcomes
 > faithfully: if tests fail, say so with the output; if a step was skipped, say that; when something is
 > done and verified, state it plainly without hedging.
 
 **State boundaries (assessment vs. change):**
+
 > When the user is describing a problem, asking a question, or thinking out loud rather than requesting a
 > change, the deliverable is your assessment. Report your findings and stop. Don't apply a fix until they
 > ask for one. Before running a command that changes system state — restarts, deletes, config edits —
@@ -59,15 +64,18 @@ quality. Before adding anything:
 > known failure may have a different cause.
 
 **Delegate asynchronously (orchestrators):**
+
 > Delegate independent subtasks to sub-agents and keep working while they run. Intervene if a sub-agent
 > goes off track or is missing relevant context.
 
 **Memory surface (long-running agents):**
+
 > Store one lesson per file with a one-line summary at the top. Record corrections and confirmed
 > approaches alike, including why they mattered. Don't save what the repo or chat history already records;
 > update an existing note rather than creating a duplicate; delete notes that turn out to be wrong.
 
 **Autonomy (unattended runs; the first sentence is load-bearing):**
+
 > You are operating autonomously. The user is not watching in real time and cannot answer questions
 > mid-task, so asking 'Want me to...?' or 'Shall I...?' will block the work. For reversible actions that
 > follow from the original request, proceed without asking. Stop only for destructive actions or genuine
@@ -81,6 +89,7 @@ quality. Before adding anything:
 > blocked on input only the user can provide.
 
 **Scope and test coverage (coding agents; cuts unrequested extras and committed scratch tests):**
+
 > If, while working or testing, you find a pre-existing bug, a performance concern, or behavior the task
 > doesn't mention, don't fix, optimize or extend it in this change unless the requested behavior cannot
 > work without it; report it as a follow-up in your summary. Where the task is ambiguous, implement the
@@ -92,10 +101,12 @@ quality. Before adding anything:
 > files. This is about extras only: implement every behavior the task asks for, completely.
 
 **Targeted edits (every editing agent):**
+
 > The number of tokens used to edit files is best minimized, all else being equal. Therefore, when it
 > will not affect the end result, try to surgically edit a file rather than rewrite the entire thing.
 
 **Long deliverable at `xhigh`/`max` only (append to the user message; replace the bracket):**
+
 > Everything Claude produces in one reply, including any reasoning or drafting it does before the reply,
 > counts toward a single limit of about [max_tokens] tokens. If that limit is reached before the reply is
 > finished, the person receives a cut-off response and has to start over. Composing an entire output or
@@ -106,22 +117,27 @@ quality. Before adding anything:
 > the reasoning space to reason and the output space to write an output.
 
 **Batch independent tool calls (agent loops that issue one call per turn; keep "privately"):**
+
 > First privately list what you need next; then request every item that doesn't depend on another's
 > result in this one response.
 
 **Progress line (pair programming, human in the loop):**
+
 > Before you start, say in a line what you're about to do; brief updates while you work help the user
 > follow along. Close with a short recap that stands on its own — what you found, what you did, and what's
 > next — so a reader who only sees the last message has the full picture.
 
 **Hidden tool output (when the harness collapses it):**
+
 > Only you see that command's output — the user's terminal shows at most a few lines of it. If the user
 > needs to read any of it, put it in your reply.
 
 **Plain prose (prose-heavy work):**
+
 > Please remove all mannered prose.
 
 **Compaction preserve list (client-side compaction of long conversations — server-side compaction already does this; use only when you compact yourself):**
+
 > Summarize the transcript inside <summary></summary> tags. Include relevant information in the summary
 > such that this conversation will be continued by a new context window without needing to redo work or
 > be reprovided with relevant constraints or context. Be sure to preserve: (1) any difficulties or
@@ -137,6 +153,7 @@ quality. Before adding anything:
 > six items above is dropped.
 
 **Quoting retrieved sources (summarizing/comparing documents an agent fetched — add one full example to the system prompt; swap the tool-call lines for your own tool's name):**
+
 > <example>
 > <user>look up how the Riverton Ledger and the Coast Dispatch each covered the Harbor Bridge closure and
 > compare their reporting</user>
@@ -156,6 +173,7 @@ quality. Before adding anything:
 > </example>
 
 **Search triggering at low effort (low `effort`; a recognized name may still be stale — add to the system prompt):**
+
 > When a query centers on a name you do not confidently recognize, or recognize from a fast-moving area
 > like AI models and developer tools where the landscape shifts within months, the name itself is the
 > thing to verify: search before answering, and include the name as the user wrote it in at least one
@@ -188,7 +206,7 @@ their prompts start identically. Order every subagent prompt as:
 [4] CONTRACT — what to report (schema), what counts as done, what to do when blocked
 ```
 
-Pass artifact *paths*, never their content. Give one effort per fan-out. Launch the fan-out together.
+Pass artifact _paths_, never their content. Give one effort per fan-out. Launch the fan-out together.
 
 ## Reviewer template (read-only)
 

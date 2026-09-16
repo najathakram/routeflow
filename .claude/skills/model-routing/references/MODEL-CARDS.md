@@ -6,20 +6,20 @@ here and in `dev-pipeline/pipeline.js → CFG.prices`, and bump both dates. Capa
 Anthropic's model-migration guidance and published cost-optimization runs; "measured" means a number
 from this owner's own runs.
 
-| Model | Id | Context / max out | $ in / out per MTok | Cache read |
-|---|---|---|---|---|
-| Claude Fable 5.1 | `claude-fable-5-1` | 1M / 128K | 10 / 50 | 0.25 |
-| Claude Opus 5 | `claude-opus-5` | 1M / 128K | 5 / 25 | ~10% of input |
-| Claude Sonnet 5 | `claude-sonnet-5` | 1M / 128K | 2 / 10 | ~10% of input |
-| Claude Sonnet 4.6 | `claude-sonnet-4-6` | 1M | 3 / 15 | ~10% of input |
-| Claude Haiku 4.5 | `claude-haiku-4-5` | 200K | 1 / 5 | ~10% of input |
+| Model             | Id                  | Context / max out | $ in / out per MTok | Cache read    |
+| ----------------- | ------------------- | ----------------- | ------------------- | ------------- |
+| Claude Fable 5.1  | `claude-fable-5-1`  | 1M / 128K         | 10 / 50             | 0.25          |
+| Claude Opus 5     | `claude-opus-5`     | 1M / 128K         | 5 / 25              | ~10% of input |
+| Claude Sonnet 5   | `claude-sonnet-5`   | 1M / 128K         | 2 / 10              | ~10% of input |
+| Claude Sonnet 4.6 | `claude-sonnet-4-6` | 1M                | 3 / 15              | ~10% of input |
+| Claude Haiku 4.5  | `claude-haiku-4-5`  | 200K              | 1 / 5               | ~10% of input |
 
 Ratios that matter: Fable = 2× Opus = 5× Sonnet 5 = 10× Haiku per token. Output (thinking included)
 dominates agent cost, so effort — which sets thinking depth — moves the bill more than input hygiene.
 
 ## Claude Fable 5.1
 
-**Pros.** Anthropic's most capable widely released model. Largest gains on work *above* what prior
+**Pros.** Anthropic's most capable widely released model. Largest gains on work _above_ what prior
 models handled: long-horizon autonomous coding (multi-file features, large refactors, debugging and code
 review across sessions), navigating ambiguity, cross-file invariants, parallel sub-agent delegation and
 long-running peer agents, dense or degraded vision with crop tools, deep long-context retrieval. Thinking

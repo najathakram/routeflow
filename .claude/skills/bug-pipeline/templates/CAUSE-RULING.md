@@ -15,8 +15,8 @@
 
 ## 3. Regression tests
 
-| T# | REG token | Fails TODAY on (exact wrong value) | Passes after fix on | Notes |
-|---|---|---|---|---|
+| T#  | REG token | Fails TODAY on (exact wrong value) | Passes after fix on | Notes |
+| --- | --------- | ---------------------------------- | ------------------- | ----- |
 
 Pins (no REG token, outside the red gate): <behavior frozen, file>
 
@@ -41,4 +41,4 @@ Pins (no REG token, outside the red gate): <behavior frozen, file>
   fix's wave (never in parallel) and checksum-verified on restore by one shared `checksum:after` agent.
 
 | File | Needs a `revert-probe` task? | REG test that must go red (`t.test`) |
-|---|---|---|
+| ---- | ---------------------------- | ------------------------------------ |

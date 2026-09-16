@@ -22,6 +22,9 @@ jest.mock("@/lib/api-client", () => ({
 // own `status`/`readOnlyReason`/`trialEndsAt` without a fresh jest.mock factory per test.
 let mockSubscriptionView: SubscriptionView;
 const mockCancelMutate = jest.fn();
+// WP9: mutable per-test fixture for useCreateCheckout, same pattern as mockCancelMutate.
+const mockCheckoutMutate = jest.fn();
+let mockCheckoutPending = false;
 
 jest.mock("@/lib/api/billing", () => ({
   useSubscription: () => ({ data: mockSubscriptionView, isLoading: false, isError: false }),
@@ -31,6 +34,7 @@ jest.mock("@/lib/api/billing", () => ({
   useResumeSubscription: () => ({ mutate: jest.fn(), isPending: false }),
   useEnableAddon: () => ({ mutate: jest.fn(), isPending: false, variables: undefined }),
   useDisableAddon: () => ({ mutate: jest.fn(), isPending: false, variables: undefined }),
+  useCreateCheckout: () => ({ mutate: mockCheckoutMutate, isPending: mockCheckoutPending }),
 }));
 
 // Mutable per-test fixture, same pattern as `mockSubscriptionView` above: the real
@@ -68,6 +72,8 @@ function subscriptionView(overrides: Partial<SubscriptionView>): SubscriptionVie
     downgradeEffectiveAt: null,
     trialEndsAt: null,
     addons: [],
+    flags: [],
+    paymentRequired: false,
     ...overrides,
   };
 }
@@ -176,5 +182,78 @@ describe("BillingSettingsPage — READ_ONLY / TRIAL visibility (RO-1)", () => {
     expect(await screen.findByRole("button", { name: /change plan/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /end trial/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/workspace is read-only/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("BillingSettingsPage — Complete payment (WP9, R2.5/R2.8)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockAuthUser = { role: "TENANT_ADMIN" };
+    mockCheckoutPending = false;
+  });
+
+  it("paymentRequired renders the price line and a Complete payment button", async () => {
+    mockSubscriptionView = subscriptionView({
+      planKey: "LITE",
+      planName: "Lite",
+      status: "READ_ONLY",
+      monthlyPrice: 99,
+      paymentRequired: true,
+    });
+
+    renderWithProviders(<BillingSettingsPage />);
+
+    expect(await screen.findByText("Lite · $99/mo")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Complete payment" })).toBeInTheDocument();
+  });
+
+  it("clicking Complete payment calls the checkout mutation exactly once", async () => {
+    mockSubscriptionView = subscriptionView({
+      planKey: "LITE",
+      planName: "Lite",
+      status: "READ_ONLY",
+      monthlyPrice: 99,
+      paymentRequired: true,
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<BillingSettingsPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Complete payment" }));
+
+    expect(mockCheckoutMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("Complete payment shows a loading state while the mutation is in flight", async () => {
+    mockSubscriptionView = subscriptionView({
+      planKey: "LITE",
+      planName: "Lite",
+      status: "READ_ONLY",
+      monthlyPrice: 99,
+      paymentRequired: true,
+    });
+    mockCheckoutPending = true;
+
+    renderWithProviders(<BillingSettingsPage />);
+
+    expect(await screen.findByRole("button", { name: "Complete payment" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+  });
+
+  it("an ACTIVE tenant (paymentRequired false) never sees Complete payment or the price line", async () => {
+    mockSubscriptionView = subscriptionView({
+      planKey: "STARTER",
+      planName: "Starter",
+      status: "ACTIVE",
+      monthlyPrice: 59,
+      paymentRequired: false,
+    });
+
+    renderWithProviders(<BillingSettingsPage />);
+
+    await screen.findByRole("button", { name: /change plan/i });
+    expect(screen.queryByRole("button", { name: "Complete payment" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Starter · $59/mo")).not.toBeInTheDocument();
   });
 });

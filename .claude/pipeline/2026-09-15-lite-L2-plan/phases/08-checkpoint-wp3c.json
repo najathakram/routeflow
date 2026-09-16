@@ -1,0 +1,41 @@
+{
+  "task": {
+    "id": "WP3c",
+    "title": "subscription view (flags, paymentRequired) + tenant checkout endpoint",
+    "type": "feature",
+    "files": [
+      "apps/api/src/billing/subscription.service.ts",
+      "apps/api/src/billing/settings-billing.controller.ts"
+    ],
+    "tests": [
+      "apps/api/src/billing/subscription.service.spec.ts",
+      "apps/api/src/billing/settings-billing.controller.spec.ts",
+      "apps/api/src/billing/platform-pricing.service.spec.ts"
+    ],
+    "brief": "Satisfies R1.7, R2.5, R2.8, R2.9, R4.1, R4.2, R7.6; provenBy T11, T12, T13.\nsubscription.service.ts, beside \"planKey: ent.planKey\" — exact code:\n  flags: Array.from(new Set([...FLAG_KEYS.filter((k) => allowsFlag(ent, k)), ...ent.flags])),\n  paymentRequired: isInviteOnlyPlanKey(ent.planKey) && ent.status !== \"ACTIVE\" && INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT,\nSettingsBillingController constructor gains \"private readonly billing: BillingService\" as the 4th\nparameter. New endpoint — exact code, DELIBERATELY no request-body param (R2.9, lead condition 2):\nthis is what makes the invite-only guarantee structural rather than a runtime check — do not add\na planKey/target-plan body param to this method, ever.\n  @Post(\"subscription/checkout\") @HttpCode(HttpStatus.OK) @Roles(UserRole.TENANT_ADMIN)\n  createCheckout(@CurrentUser() user: AuthUser) {\n    const base = process.env.FRONTEND_URL ?? \"http://localhost:3001\";\n    return this.billing.createCheckoutSession(this.tenantIdOf(user), {\n      successUrl: `${base}/settings/billing?checkout=success`,\n      cancelUrl: `${base}/settings/billing?checkout=cancelled`,\n    });\n  }\nplatform-pricing.service.ts: checkoutPriceData must resolve the LITE catalog row by planKey (name\n\"RouteFlow Lite — monthly\"/\"— annual\", unit_amount 9900/99000) — not fall through to the STARTER\nrow, which is also $99 (R1.7's discriminating case).",
+    "dependsOn": ["WP2"],
+    "risk": "HIGH",
+    "blocked": true,
+    "blockerFindings": [
+      {
+        "file": "(scope)",
+        "severity": "blocker",
+        "phase": "Author tests",
+        "summary": "test author touched non-test files: .claude/pipeline/2026-09-13-F27-build, .claude/pipeline/2026-09-14-743-fix-round, .claude/pipeline/2026-09-15-lite-L2-plan/, .claude/pipeline/agent-log.jsonl",
+        "detail": "Task WP3c's declared tests are [\"apps/api/src/billing/subscription.service.spec.ts\",\"apps/api/src/billing/settings-billing.controller.spec.ts\",\"apps/api/src/billing/platform-pricing.service.spec.ts\"]; per-path rule matched: .claude/pipeline/2026-09-13-F27-build (untracked and not in any task's files/tests -- unplanned); .claude/pipeline/2026-09-14-743-fix-round (untracked and not in any task's files/tests -- unplanned); .claude/pipeline/2026-09-15-lite-L2-plan/ (untracked and not in any task's files/tests -- unplanned); .claude/pipeline/agent-log.jsonl (untracked and not in any task's files/tests -- unplanned). Revert attempt did NOT confirm success (exitCode=null) -- treat the tree as suspect."
+      }
+    ],
+    "redRun": {
+      "cwd": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-lite-L2",
+      "ran": false,
+      "results": [
+        {
+          "command": "cat .claude/pipeline/2026-09-15-lite-L2-plan/tasks/WP3c/brief.md",
+          "exitCode": 1,
+          "output": "cat: .claude/pipeline/2026-09-15-lite-L2-plan/tasks/WP3c/brief.md: No such file or directory\n\nBLOCKED: task brief for WP3c does not exist. The plan directory .claude/pipeline/2026-09-15-lite-L2-plan has no tasks/ subdirectory at all (only phases/07-checkpoint-wp5a.json and progress.md exist under it, covering tasks WP5a/WP3b/WP14/WP3a/WP2 -- none is WP3c). I searched the entire worktree (grep -r \"WP3c\") and found zero references to a task id WP3c anywhere, in this plan or any other .claude/pipeline/* directory. Without the brief I cannot know what NEW behavior WP3c wants tested.\n\nAdditionally, the three files named in the task's tests list are NOT new/empty scaffolding -- they already exist with substantial content: apps/api/src/billing/subscription.service.spec.ts (198 lines), apps/api/src/billing/settings-billing.controller.spec.ts (57 lines), apps/api/src/billing/platform-pricing.service.spec.ts (388 lines). Writing tests against unknown target behavior, or blindly appending to these existing suites, would risk duplicating/contradicting existing coverage and does not satisfy 'the behavior under test does not exist yet' without knowing what that behavior is.\n\nNo test code was written and no test files were modified, per the scope restriction (edit ONLY the files in the task's tests list, and only for what the brief specifies). No runner command was executed since there is nothing correct to run.\n\nblockedOn: WP3c/brief.md is missing from the plan -- the orchestrator/planning phase needs to author it (or point to the correct plan/task id) before this TEST AUTHOR step can proceed."
+        }
+      ]
+    }
+  },
+  "progressLine": "Task WP3c: blocked (1 blocker(s))"
+}

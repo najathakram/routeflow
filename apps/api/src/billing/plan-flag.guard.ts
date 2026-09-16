@@ -6,27 +6,19 @@ import {
   Logger,
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
-import { EntitlementsService } from "./entitlements.service";
+import { EntitlementsService, Entitlements } from "./entitlements.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { REQUIRE_PLAN_FLAG_KEY } from "./require-plan-flag.decorator";
 import { buildPlanGateBody } from "./plan-gate";
+import { allowsFlag, isDarkFlag } from "./plan-flag-policy";
 
 /**
- * Flags whose server-side enforcement the 2026-08-23 rollout introduces — these,
- * and ONLY these, are muted by the PLAN_FLAG_ENFORCEMENT kill switch. Any gate
- * not listed here was already live before the switch existed (flag.msrp, shipped
- * in #411) and must keep enforcing regardless of the env. REMOVE this set along
- * with the switch by 2026-10-01.
+ * Re-exported for existing consumers/docs (CLAUDE.md's Entitlement gates section) that
+ * still point at this module — the set itself now lives in plan-flag-policy.ts
+ * alongside the rest of the dark-flag policy (isDarkFlag/allowsFlag), which also needs
+ * it and must not import it back from here.
  */
-const DARK_PLAN_FLAGS = new Set([
-  "flag.analytics",
-  "flag.ap_bills",
-  "flag.import_integrations",
-  "flag.forecasting",
-  "flag.pricing_tiers",
-  "flag.reports",
-  "flag.returns",
-]);
+export { DARK_PLAN_FLAGS } from "./plan-flag-policy";
 
 /**
  * Enforces @RequirePlanFlag(flagKey). Mirrors AddonGuard's contract:
@@ -55,34 +47,29 @@ export class PlanFlagGuard implements CanActivate {
     ]);
     if (!flagKey) return true;
 
-    // Release toggle (REMOVE by 2026-10-01): the gates added by the 2026-08-23
-    // rollout ship dark. "on" = enforce; anything else = allow. Scoped to
-    // DARK_PLAN_FLAGS so gates that were already live (flag.msrp) keep enforcing.
-    // The owner flips this on only after the prod entitlement audit
-    // (scripts/audit-tenant-entitlements.mjs) proves no live tenant loses a
-    // surface it uses today.
-    if (DARK_PLAN_FLAGS.has(flagKey) && (process.env.PLAN_FLAG_ENFORCEMENT ?? "off") !== "on") {
-      return true;
-    }
-
     const request = context.switchToHttp().getRequest<{ user?: { tenantId?: string | null } }>();
     const tenantId = request.user?.tenantId ?? null;
-    // SUPER_ADMIN operates without a tenant — never plan-gated.
+    // SUPER_ADMIN operates without a tenant — never plan-gated. Checked BEFORE the
+    // dark-flag policy (R3a.5): there is no tenant to resolve a plan for.
     if (tenantId == null) return true;
 
-    let allowed: boolean;
+    let ent: Entitlements;
     try {
-      allowed = await this.entitlements.hasFlag(tenantId, flagKey);
+      ent = await this.entitlements.resolve(tenantId);
     } catch (err) {
-      // Entitlement resolution failed (DB down / unseeded catalog). FAIL CLOSED —
-      // deny with a stable, distinguishable error rather than leaking a raw 500/404.
+      // Entitlement resolution failed (DB down / unseeded catalog). A dark flag still
+      // gets its courtesy allow (R3a.4) — the kill switch means "don't enforce this
+      // yet", and that intent shouldn't flip to a hard deny just because resolution
+      // hiccupped. Anything else FAILS CLOSED with a stable, distinguishable error
+      // rather than leaking a raw 500/404.
+      if (isDarkFlag(flagKey)) return true;
       this.logger.error(`Entitlement resolution failed for tenant ${tenantId}`, err as Error);
       throw new ForbiddenException({
         code: "PLAN_GATE_UNAVAILABLE",
         message: "Entitlements are temporarily unavailable. Please retry.",
       });
     }
-    if (allowed) return true;
+    if (allowsFlag(ent, flagKey)) return true;
 
     const upgrade = await this.catalog.upgradeTargetForFlag(flagKey).catch(() => ({
       planKey: null,

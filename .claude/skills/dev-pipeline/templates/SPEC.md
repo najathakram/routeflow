@@ -1,19 +1,19 @@
 # Spec — what <feature / fix name> must do
 
-**Status:** `DRAFT`  (DRAFT | APPROVED | IMPLEMENTED | CLOSED)
+**Status:** `DRAFT` (DRAFT | APPROVED | IMPLEMENTED | CLOSED)
 **Stage:** S2 — Spec (what) · **Author:** Fable 5 · **Date:** <YYYY-MM-DD>
 **Lives at:** `.claude/pipeline/<YYYY-MM-DD>-<slug>/spec.md`
 **Prev:** [discovery.md](./discovery.md) · **Next:** [ux-spec.md](./ux-spec.md) (UI work) then
 [test-plan.md](./test-plan.md)
 
-> **This file is the only context downstream agents receive about *what* to build.** The test
+> **This file is the only context downstream agents receive about _what_ to build.** The test
 > plan, the build plan, the implementers and the review lenses read these requirement IDs and
 > nothing else. An unwritten requirement will not be built, will not be tested, and will not be
 > reviewed.
 
-*Citations below use the `G<gate>·Q<n>` form from `references/ARCHITECT-QUESTIONS.md` in the
+_Citations below use the `G<gate>·Q<n>` form from `references/ARCHITECT-QUESTIONS.md` in the
 dev-pipeline skill folder — this spec answers gates G2 (what), G4 (risk and architecture) and
-G5 (how we test it).*
+G5 (how we test it)._
 
 ---
 
@@ -24,15 +24,15 @@ G5 (how we test it).*
 
 ## 2. Core use cases, in priority order (G2·Q2)
 
-| # | Use case (actor → action → outcome) | Priority | Justifies shipping |
-|---|---|---|---|
-| U1 | As a <role>, I <do X> so that <outcome> | must | ★ |
-| U2 | <...> | must / should / could | |
-| U3 | <...> | <...> | |
+| #   | Use case (actor → action → outcome)     | Priority              | Justifies shipping |
+| --- | --------------------------------------- | --------------------- | ------------------ |
+| U1  | As a <role>, I <do X> so that <outcome> | must                  | ★                  |
+| U2  | <...>                                   | must / should / could |                    |
+| U3  | <...>                                   | <...>                 |                    |
 
-*Exactly one row carries ★: the single use case that, working alone, would make this worth
+_Exactly one row carries ★: the single use case that, working alone, would make this worth
 shipping. If you cannot pick one, the scope is wrong — return to
-[discovery.md](./discovery.md).*
+[discovery.md](./discovery.md)._
 
 ## 3. Completeness sweep (G2·Q3)
 
@@ -40,21 +40,21 @@ Walk **every** row. A decision is `keep` (this release), `defer` (named follow-u
 (with a reason). "Didn't think about it" is not a decision, and a blank cell fails the
 spec-compliance lens.
 
-| Lifecycle step | What it means for this feature | Decision | Req IDs | Note / why deferred |
-|---|---|---|---|---|
-| Create | <how the thing comes into existence> | keep / defer / n/a | R# | <...> |
-| Read (detail) | <viewing one> | <...> | R# | <...> |
-| List / filter / search | <finding it among many> | <...> | R# | <...> |
-| Edit / update | <changing it, and what may not change> | <...> | R# | <...> |
-| Delete / archive | <soft or hard, and who may> | <...> | R# | <...> |
-| Undo / reverse | <the reverse of every action above — uncancel, unassign, restore, refund> | <...> | R# | <...> |
-| Permissions | <which role may do each row above; owner vs admin vs read-only> | <...> | R# | <...> |
-| Audit trail | <who did what, when — and where it is visible> | <...> | R# | <...> |
-| Notification | <who is told, through which channel, and can they opt out> | <...> | R# | <...> |
-| Export / print / share | <getting the data back out> | <...> | R# | <...> |
+| Lifecycle step         | What it means for this feature                                            | Decision           | Req IDs | Note / why deferred |
+| ---------------------- | ------------------------------------------------------------------------- | ------------------ | ------- | ------------------- |
+| Create                 | <how the thing comes into existence>                                      | keep / defer / n/a | R#      | <...>               |
+| Read (detail)          | <viewing one>                                                             | <...>              | R#      | <...>               |
+| List / filter / search | <finding it among many>                                                   | <...>              | R#      | <...>               |
+| Edit / update          | <changing it, and what may not change>                                    | <...>              | R#      | <...>               |
+| Delete / archive       | <soft or hard, and who may>                                               | <...>              | R#      | <...>               |
+| Undo / reverse         | <the reverse of every action above — uncancel, unassign, restore, refund> | <...>              | R#      | <...>               |
+| Permissions            | <which role may do each row above; owner vs admin vs read-only>           | <...>              | R#      | <...>               |
+| Audit trail            | <who did what, when — and where it is visible>                            | <...>              | R#      | <...>               |
+| Notification           | <who is told, through which channel, and can they opt out>                | <...>              | R#      | <...>               |
+| Export / print / share | <getting the data back out>                                               | <...>              | R#      | <...>               |
 
-*Add rows for anything else this feature implies (import, bulk edit, scheduling, attachments).
-Every action you keep must have its reverse considered on the Undo row.*
+_Add rows for anything else this feature implies (import, bulk edit, scheduling, attachments).
+Every action you keep must have its reverse considered on the Undo row._
 
 ## 4. States, per surface (G2·Q4)
 
@@ -63,17 +63,17 @@ export, and API response. `n/a` needs a reason.
 
 ### Surface: <e.g. "Routes list — web">
 
-| State | Required behavior (what the user sees and can do) | Req ID |
-|---|---|---|
-| Empty | <first-run copy plus the primary action; not a blank box> | R# |
-| Loading | <skeleton or spinner placement; no layout jump> | R# |
-| Partial | <some data loaded, some failed — what shows, what warns> | R# |
-| Error | <message the user can act on; retry path; what is logged> | R# |
-| Offline / request failed | <queued, read-only, or blocked — say which> | R# |
-| Unauthorized | <wrong role or wrong tenant/owner: hidden vs visible-but-denied> | R# |
-| Too much data | <page size, cap, truncation notice, server-side filter> | R# |
-| Stale | <data changed since load — refresh cue or auto-refresh> | R# |
-| Concurrent edit | <two users at once: last-write-wins, version check, or lock> | R# |
+| State                    | Required behavior (what the user sees and can do)                | Req ID |
+| ------------------------ | ---------------------------------------------------------------- | ------ |
+| Empty                    | <first-run copy plus the primary action; not a blank box>        | R#     |
+| Loading                  | <skeleton or spinner placement; no layout jump>                  | R#     |
+| Partial                  | <some data loaded, some failed — what shows, what warns>         | R#     |
+| Error                    | <message the user can act on; retry path; what is logged>        | R#     |
+| Offline / request failed | <queued, read-only, or blocked — say which>                      | R#     |
+| Unauthorized             | <wrong role or wrong tenant/owner: hidden vs visible-but-denied> | R#     |
+| Too much data            | <page size, cap, truncation notice, server-side filter>          | R#     |
+| Stale                    | <data changed since load — refresh cue or auto-refresh>          | R#     |
+| Concurrent edit          | <two users at once: last-write-wins, version check, or lock>     | R#     |
 
 ### Surface: <next surface>
 
@@ -81,23 +81,23 @@ export, and API response. `n/a` needs a reason.
 
 ## 5. Non-functional requirements
 
-| Area | Requirement | Budget / rule | Req ID |
-|---|---|---|---|
-| Performance (G4·Q6) | <no new N+1; list queries bounded; no synchronous call in a hot path> | <p95 target, max rows, max payload> | R# |
-| Security and authorization (G4·Q12) | <every new endpoint states who may call it; no secrets in code or logs> | <role matrix> | R# |
-| Tenancy / ownership scoping (G4·Q5, G4·Q12) | <every new query filtered by tenant or owner; no unscoped bulk write or bulk delete> | <the scoping key> | R# |
-| Observability (G4·Q8) | <at 2am when this fails, what in the logs or metrics says so> | <log line / metric / alert> | R# |
-| Accessibility | <keyboard reachable, focus visible, labelled controls, contrast, target size> | <the repo's baseline> | R# |
-| Idempotency (G4·Q3) | <what happens if it runs twice, or two people act at once> | <key / guard> | R# |
-| Data retention / PII | <what is stored, for how long, who can read it> | <...> | R# |
+| Area                                        | Requirement                                                                          | Budget / rule                       | Req ID |
+| ------------------------------------------- | ------------------------------------------------------------------------------------ | ----------------------------------- | ------ |
+| Performance (G4·Q6)                         | <no new N+1; list queries bounded; no synchronous call in a hot path>                | <p95 target, max rows, max payload> | R#     |
+| Security and authorization (G4·Q12)         | <every new endpoint states who may call it; no secrets in code or logs>              | <role matrix>                       | R#     |
+| Tenancy / ownership scoping (G4·Q5, G4·Q12) | <every new query filtered by tenant or owner; no unscoped bulk write or bulk delete> | <the scoping key>                   | R#     |
+| Observability (G4·Q8)                       | <at 2am when this fails, what in the logs or metrics says so>                        | <log line / metric / alert>         | R#     |
+| Accessibility                               | <keyboard reachable, focus visible, labelled controls, contrast, target size>        | <the repo's baseline>               | R#     |
+| Idempotency (G4·Q3)                         | <what happens if it runs twice, or two people act at once>                           | <key / guard>                       | R#     |
+| Data retention / PII                        | <what is stored, for how long, who can read it>                                      | <...>                               | R#     |
 
-*Delete a row only when it is genuinely inapplicable, and say why. Accessibility is a
-requirement here, not a review nit.*
+_Delete a row only when it is genuinely inapplicable, and say why. Accessibility is a
+requirement here, not a review nit._
 
 ## 6. Overlap and scope fence (G2·Q6)
 
 - **Existing feature this overlaps:** <name + path> → **decision:** extend it / add new, because
-  <...>. *(A second way to do the same thing needs a written justification.)*
+  <...>. _(A second way to do the same thing needs a written justification.)_
 - **In scope:** <the bounded list>
 - **Out of scope:** <non-goals from [discovery.md](./discovery.md) plus anything ruled out here>
 - **Do-not-introduce check (G4·Q10):** <does this add a dependency, a second HTTP client, a second
@@ -115,9 +115,9 @@ requirement here, not a review nit.*
 
 **If this feature is gated by a flag, plan, or entitlement, fill this table. Every column.**
 
-| Gate | Exact key the gate **reads** | What grants it (UI screen / script / plan activation) | Exact key that path **writes** | Keys match? | Existing users get it how? |
-|---|---|---|---|---|---|
-| <gate name> | `<key>` | <admin toggle at <path> / script <path> / SKU activation> | `<key>` | yes / **no** | <backfill / default-on / manual> |
+| Gate        | Exact key the gate **reads** | What grants it (UI screen / script / plan activation)     | Exact key that path **writes** | Keys match?  | Existing users get it how?       |
+| ----------- | ---------------------------- | --------------------------------------------------------- | ------------------------------ | ------------ | -------------------------------- |
+| <gate name> | `<key>`                      | <admin toggle at <path> / script <path> / SKU activation> | `<key>`                        | yes / **no** | <backfill / default-on / manual> |
 
 > A gate with no way to grant it is a self-inflicted outage: every user is denied on day one and
 > nothing in the product can fix it. If the granting path writes a different key than the gate
@@ -137,11 +137,11 @@ requirement here, not a review nit.*
 The spine of the pipeline. Every downstream artifact references these IDs: the test plan maps
 each R# to tests, the build plan declares `satisfies:` R#s, the review lenses walk this table.
 
-| ID | Requirement (observable behavior, not implementation) | Priority | Verification method | Test IDs |
-|---|---|---|---|---|
-| R1 | <the system does X when Y, and Z is then true> | must | unit / property / contract / integration / e2e (Playwright) / manual + reason | <filled at S4> |
-| R2 | <...> | should | <...> | |
-| R3 | <...> | could | <...> | |
+| ID  | Requirement (observable behavior, not implementation) | Priority | Verification method                                                           | Test IDs       |
+| --- | ----------------------------------------------------- | -------- | ----------------------------------------------------------------------------- | -------------- |
+| R1  | <the system does X when Y, and Z is then true>        | must     | unit / property / contract / integration / e2e (Playwright) / manual + reason | <filled at S4> |
+| R2  | <...>                                                 | should   | <...>                                                                         |                |
+| R3  | <...>                                                 | could    | <...>                                                                         |                |
 
 Rules:
 
@@ -166,10 +166,10 @@ declares `satisfies:` against it, implementers build it, the review lenses judge
 reader can tell which rows rest on something nobody checked — so mark them here. **Fill this before
 the file leaves `DRAFT`.**
 
-| # | Claim, as this file states it (and its §) | Basis | What would confirm it | R#s that fall with it | What breaks if it is wrong | Status |
-|---|---|---|---|---|---|---|
-| A1 | <"§4: a tenant's list never exceeds 500 rows"> | read off a log / inferred from code / requester said it / industry norm / my guess | <one query, reading one file, one call against a sandbox> | R7, R9 | <pagination unspecified; the §5 perf budget is fiction> | unverified / confirmed <YYYY-MM-DD> / refuted <YYYY-MM-DD> |
-| A2 | <...> | <...> | <...> | <...> | <...> | <...> |
+| #   | Claim, as this file states it (and its §)      | Basis                                                                              | What would confirm it                                     | R#s that fall with it | What breaks if it is wrong                              | Status                                                     |
+| --- | ---------------------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------- | --------------------- | ------------------------------------------------------- | ---------------------------------------------------------- |
+| A1  | <"§4: a tenant's list never exceeds 500 rows"> | read off a log / inferred from code / requester said it / industry norm / my guess | <one query, reading one file, one call against a sandbox> | R7, R9                | <pagination unspecified; the §5 perf budget is fiction> | unverified / confirmed <YYYY-MM-DD> / refuted <YYYY-MM-DD> |
+| A2  | <...>                                          | <...>                                                                              | <...>                                                     | <...>                 | <...>                                                   | <...>                                                      |
 
 Rules:
 
@@ -218,13 +218,13 @@ Record the answer, not the intention. No phase of the pipeline engine evaluates 
 — its Baseline phase grounds this file's mechanical claims against the repo, and nothing reads a
 STOP condition. A blank block means the gate did not happen.
 
-| Stop condition | Evaluated? | What it answered | Evidence | Verdict |
-|---|---|---|---|---|
-| Completeness sweep has a decision on every row | yes / no | <the answer, in a few words> | §3 | pass / **STOP** |
-| Every surface covers all nine states, or `n/a` with a reason | yes / no | <...> | §4 | pass / **STOP** |
-| The key the gate reads is the key the granting path writes | yes / no / n/a — ungated | <...> | §7 | pass / **STOP** |
-| Rollback, blast radius and detection written | yes / no | <...> | §8 | pass / **STOP** |
-| Every R# has a priority and a verification method; at least one negative R# | yes / no | <...> | §9 | pass / **STOP** |
+| Stop condition                                                              | Evaluated?               | What it answered             | Evidence | Verdict         |
+| --------------------------------------------------------------------------- | ------------------------ | ---------------------------- | -------- | --------------- |
+| Completeness sweep has a decision on every row                              | yes / no                 | <the answer, in a few words> | §3       | pass / **STOP** |
+| Every surface covers all nine states, or `n/a` with a reason                | yes / no                 | <...>                        | §4       | pass / **STOP** |
+| The key the gate reads is the key the granting path writes                  | yes / no / n/a — ungated | <...>                        | §7       | pass / **STOP** |
+| Rollback, blast radius and detection written                                | yes / no                 | <...>                        | §8       | pass / **STOP** |
+| Every R# has a priority and a verification method; at least one negative R# | yes / no                 | <...>                        | §9       | pass / **STOP** |
 
 - **Gate outcome:** PASS — S3/S4 may start · **STOP** — returned to <whom> on <YYYY-MM-DD> · OVERRIDDEN
 - **Overridden by:** <name> — <why>. An override is a named decision, not a formality.

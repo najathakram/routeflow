@@ -57,8 +57,17 @@ import { Pool } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { annualPrice } from "../src/billing/billing-math";
-import { ADDON_SKUS, FLAG_KEYS } from "../src/billing/plan-catalog.constants";
-import type { AddonSkuCode, PlanKey } from "../src/billing/plan-catalog.constants";
+import { ADDON_SKUS } from "../src/billing/plan-catalog.constants";
+import type { AddonSkuCode } from "../src/billing/plan-catalog.constants";
+// WP4 (lite-L2, R7.2): DefinitionSeed/AddonSeed types, the six *_FLAGS arrays, DEFINITIONS,
+// and ADDON_SEEDS moved to plan-catalog-v11.definitions.ts (a pure, DB-import-free extraction
+// consumed by both this file and plan-catalog-v12.definitions.ts) — non-behavioral, see that
+// file's header. Aliased back to their original local names so every reference below is
+// unchanged.
+import {
+  V11_ADDON_SEEDS as ADDON_SEEDS,
+  V11_DEFINITIONS as DEFINITIONS,
+} from "./plan-catalog-v11.definitions";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool);
@@ -92,185 +101,9 @@ const RETIRED_SKUS: readonly AddonSkuCode[] = [
 ] as const;
 
 // ─── Target catalog (same ladder as v10, minus the five retired AddonSku rows) ────
-
-type Unit = "FLAT" | "PER_USER" | "PER_ROUTE";
-type Meter = "SEATS" | "ROUTES" | "SCANS" | "MSGS" | "CUSTOMERS";
-
-interface DefinitionSeed {
-  planKey: PlanKey;
-  name: string;
-  monthlyPrice: number | null;
-  isCustom: boolean;
-  customersIncluded: number | null;
-  seatsIncluded: number | null;
-  routesConcurrent: number | null;
-  scansIncluded: number | null;
-  msgsIncluded: number;
-  featureFlags: string[];
-  sortOrder: number;
-}
-
-interface AddonSeed {
-  sku: AddonSkuCode;
-  name: string;
-  monthlyPrice: number;
-  unit: Unit;
-  includedAtPlan: PlanKey | null;
-  meteredKey: Meter | null;
-  capacityPerUnit: number | null;
-  stackable: boolean;
-  grantsFlags: string[];
-  sortOrder: number;
-}
-
-// Unchanged from v10 — plan definitions are not touched by this retirement. Note
-// GROWTH_FLAGS still lists `addon.buyer_portal`: that flag is granted BY THE PLAN
-// DEFINITION, independent of the BUYER_PORTAL AddonSku row this version drops (see
-// the grandfathering note in the header). `flag.sales_agents` stays excluded from
-// every plan's featureFlags, same treatment as `flag.msrp` and `flag.dispatch_live`.
-const STARTER_FLAGS = ["flag.returns"];
-const GROWTH_FLAGS = [
-  ...STARTER_FLAGS,
-  "flag.reports",
-  "flag.ap_bills",
-  "flag.credit_limits",
-  "flag.pricing_tiers",
-  "flag.analytics",
-  "addon.buyer_portal",
-];
-const SCALE_FLAGS = [
-  ...GROWTH_FLAGS,
-  "flag.settlement",
-  "flag.forecasting",
-  "flag.import_integrations",
-  "addon.regulated_items",
-  "addon.ocr",
-];
-const ENTERPRISE_FLAGS = FLAG_KEYS.filter(
-  (f) => f !== "flag.dispatch_live" && f !== "flag.msrp" && f !== "flag.sales_agents",
-);
-
-const DEFINITIONS: DefinitionSeed[] = [
-  {
-    planKey: "STARTER",
-    name: "Starter",
-    monthlyPrice: 99,
-    isCustom: false,
-    customersIncluded: 100,
-    seatsIncluded: 3,
-    routesConcurrent: 1,
-    scansIncluded: 20,
-    msgsIncluded: 200,
-    featureFlags: STARTER_FLAGS,
-    sortOrder: 0,
-  },
-  {
-    planKey: "GROWTH",
-    name: "Growth",
-    monthlyPrice: 249,
-    isCustom: false,
-    customersIncluded: 250,
-    seatsIncluded: 10,
-    routesConcurrent: 3,
-    scansIncluded: 100,
-    msgsIncluded: 200,
-    featureFlags: GROWTH_FLAGS,
-    sortOrder: 1,
-  },
-  {
-    planKey: "SCALE",
-    name: "Scale",
-    monthlyPrice: 499,
-    isCustom: false,
-    customersIncluded: 500,
-    seatsIncluded: 25,
-    routesConcurrent: 10,
-    scansIncluded: 300,
-    msgsIncluded: 200,
-    featureFlags: SCALE_FLAGS,
-    sortOrder: 2,
-  },
-  {
-    planKey: "ENTERPRISE",
-    name: "Enterprise",
-    monthlyPrice: null,
-    isCustom: true,
-    customersIncluded: null,
-    seatsIncluded: null,
-    routesConcurrent: null,
-    scansIncluded: null,
-    msgsIncluded: 200,
-    featureFlags: ENTERPRISE_FLAGS,
-    sortOrder: 3,
-  },
-];
-
-// The 5 surviving SKUs carry forward from v10 unchanged (same name/price/unit/
-// grantsFlags), renumbered to a contiguous sortOrder 0-4 in their existing relative
-// order. BUYER_PORTAL, SEAT_EXTRA, OCR_PACK_250, ROUTE_EXTRA, and MSG_BUNDLE_500 are
-// deliberately absent — see RETIRED_SKUS and the header.
-const ADDON_SEEDS: AddonSeed[] = [
-  {
-    sku: "REGULATED_ITEMS",
-    name: "Regulated items",
-    monthlyPrice: 39,
-    unit: "FLAT",
-    includedAtPlan: "SCALE",
-    meteredKey: null,
-    capacityPerUnit: null,
-    stackable: false,
-    grantsFlags: ["addon.regulated_items"],
-    sortOrder: 0,
-  },
-  {
-    sku: "FORECASTING",
-    name: "Forecasting",
-    monthlyPrice: 19,
-    unit: "FLAT",
-    includedAtPlan: "SCALE",
-    meteredKey: null,
-    capacityPerUnit: null,
-    stackable: false,
-    grantsFlags: ["flag.forecasting", "flag.analytics"],
-    sortOrder: 1,
-  },
-  {
-    sku: "CUSTOMER_PACK_100",
-    name: "Customer pack (+100)",
-    monthlyPrice: 50,
-    unit: "FLAT",
-    includedAtPlan: null,
-    meteredKey: "CUSTOMERS",
-    capacityPerUnit: 100,
-    stackable: true,
-    grantsFlags: [],
-    sortOrder: 2,
-  },
-  {
-    sku: "MSRP",
-    name: "MSRP on invoices",
-    monthlyPrice: 0,
-    unit: "FLAT",
-    includedAtPlan: null,
-    meteredKey: null,
-    capacityPerUnit: null,
-    stackable: false,
-    grantsFlags: ["flag.msrp"],
-    sortOrder: 3,
-  },
-  {
-    sku: "SALES_AGENTS",
-    name: "Sales agents & commissions",
-    monthlyPrice: 0,
-    unit: "FLAT",
-    includedAtPlan: null,
-    meteredKey: null,
-    capacityPerUnit: null,
-    stackable: false,
-    grantsFlags: ["flag.sales_agents"],
-    sortOrder: 4,
-  },
-];
+// DefinitionSeed/AddonSeed types, the *_FLAGS arrays, DEFINITIONS, and ADDON_SEEDS now live
+// in plan-catalog-v11.definitions.ts (imported above, aliased to these names) — see this
+// file's header and that file's header for the WP4 extraction note.
 
 // Sanity-check our own seed data against the vocabulary this script imports —
 // catches a typo'd SKU code (or a forgotten retirement) before it ever reaches the
