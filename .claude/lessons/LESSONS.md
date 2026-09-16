@@ -273,18 +273,6 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
 - **Guard:** `apps/api/src/**/{credit-note,payment,import}-numbering.db.spec.ts` (REG-B267/B268/B269),
   `numbering.service.spec.ts`.
 
-### L-096 · 2026-09-08 · domain · #671
-
-- **Symptom:** F16's design of record specified a new `InvoiceCounter` table; S2 found the
-  per-tenant, per-year `NumberingSequence` + `NumberingService` already shipped (a code comment
-  naming B100), so building the table would have created a second numbering store.
-- **Root cause:** the design was written from the bug report, not from the schema.
-- **Lesson:** **Before designing any new store/counter/registry, grep the schema folder and the
-  modules for the dimension you need — an existing primitive with a gap (here, an unused `year`
-  column) beats a new table every time.**
-- **Guard:** the bug-pipeline S2 refutation step now asks "does the primitive already exist?"
-  explicitly.
-
 ### L-072 · 2026-09-03 · domain · wave E `imp-10b`
 
 - **Symptom:** 4 hand-typed client mirrors of Prisma enums drifted from the schema (invented,
@@ -772,6 +760,38 @@ apps/web/app --include=*.tsx -A1 | grep -B1 onSuccess` — narrow to `.map()`-re
   `--apply` runs unscoped. Sibling fix same round: the write's `updateMany` re-asserts tenant
   state, closing a scan-to-write race.
 
+### L-163 · 2026-09-15 · domain · Lite-L2 fix round: plan re-pin + frozen-catalog literal
+
+- **Symptom:** an admin plan change to LITE, applied later by the nightly cron, booked a -$249
+  ledger delta instead of the real -$150 and left the tenant on STARTER entitlements. Separately,
+  a "frozen" v11 catalog snapshot silently gained 5 flags it never actually had.
+- **Root cause:** two shapes of the same mistake. (1) A mutation validated a target plan against
+  the published catalog but never persisted WHICH version proved it valid (`planVersionId`) — a
+  later async step re-resolved against the tenant's stale pinned version, found nothing, and
+  silently priced the target as $0. (2) A supposedly-frozen historical definition derived itself
+  via `.filter()` over a live, growing shared constant, so every unrelated addition rewrote it.
+- **Lesson:** **Validating a value against a source of truth is not enough — persist the resolved
+  reference itself (the version id), so a LATER step reads the same evidence, not a stale one.
+  Anything meant to be a frozen/historical snapshot must be a literal, never a derivation from a
+  live source that can grow.**
+- **Guard:** `billing-cron.service.spec.ts` REG-1 (re-pin + real delta); `plan-catalog-v12.spec.ts`
+  pins v11 ENTERPRISE to its exact historical 13-flag literal.
+
+### L-164 · 2026-09-15 · domain · Lite-L2 fix round: SubscriptionView.flags fail-open
+
+- **Symptom:** a deploy skew (old API, new web/mobile build) or rollback serving a response with
+  no `flags` key locked every plan-gated route and hid every plan-gated nav item, for every
+  tenant on every plan — not just the one plan the field was added for.
+- **Root cause:** `subscription?.flags ?? []` (and the equivalent `?.includes(key) ?? false`
+  hooks, on both web and mobile) treated "the field is absent" identically to "present and
+  empty" — but the request had already resolved, so a reader downstream saw "resolved, zero
+  grants" and gated for real.
+- **Lesson:** **A shared response field a rollback/version-skew can omit must be typed optional,
+  and every reader must distinguish `undefined` ("unresolved, fail open") from `[]` ("resolved,
+  no grants — gate for real"). Never let `?? []` erase that distinction.**
+- **Guard:** `plan-flags.test.tsx` (web) and `plan-flags.test.ts` (mobile) both pin the
+  undefined-vs-`[]` pair.
+
 ### L-143 · 2026-09-15 · domain · B421 (credit-applied vs paid, full fix)
 
 - **Symptom:** a CREDIT_NOTE-method `InvoicePayment` row (`status: PAID`) rendered/counted as
@@ -838,37 +858,26 @@ apps/web/app --include=*.tsx -A1 | grep -B1 onSuccess` — narrow to `.map()`-re
   identity/class on every write, not just once.**
 - **Guard:** `bootstrap-house-tenant.db.spec.ts`, `tenant-mirror.service.spec.ts`.
 
-### L-163 · 2026-09-15 · tooling · flaky-gate assertions on wall-clock timing / ambient counts (B225, B244, B411)
+### L-162 · 2026-09-15 · tooling · post-dated check payments PR-1 (schema-only, additive)
 
-- **Symptom:** `ci-freshness-guard-script.spec.ts`'s "(pin) hang" case asserted
-  `elapsedMs < 5000` around a real `spawnSync` — a margin meant to absorb node/subprocess startup
-  overhead, which itself goes flaky under host load even when behavior is correct (B225, B244).
-  `stop.gate5.spec.mjs`'s F4 compared a global `stop-gate5-spec-*` tmpdir COUNT before/after in
-  the same process — a concurrent sibling run creating its own dirs mid-window trips the count
-  with no bearing on whether THIS run's own dirs were actually cleaned up (B411).
-- **Root cause:** both asserted an AMBIENT, load-sensitive quantity (wall-clock time; a
-  shared/global count) as a proxy for "did this run behave/clean up correctly", instead of the
-  run's own artifacts (its exit code and output markers; its own registered paths).
-- **Lesson:** **A test must assert its own run's outcome, never wall-clock timing or an
-  ambient/shared count as a stand-in for it — a real subprocess's timing and a global directory
-  count both vary with host load and concurrent siblings independent of correctness.**
-- **Guard:** `ci-freshness-guard-script.spec.ts` (c0d45b0f — behavioral assertions only, no
-  `elapsedMs` check); `stop.gate5.spec.mjs` F4 (5c57af58 — iterates `ALL_REPO_DIRS`, asserts each
-  no longer exists, drops the ambient count comparison).
-
-### L-164 · 2026-09-15 · testing · B352 fix round (dropped security-advisory floor)
-
-- **Symptom:** loosening `next-version.spec.ts`'s exact-literal Next-version pin to a
-  major-line-only tolerance (the correct fix for B352's flakiness) silently accepted a downgrade
-  to `15.0.0` — but the two CRITICAL npm-audit advisories this guard exists to keep cleared are
-  only fixed in `15.5.24+`, so the loosened check dropped that protection. Caught by an
-  independent Opus review, not by the fix itself.
-- **Root cause:** an over-strict exact-match assertion was silently protecting TWO invariants at
-  once (the major line, and a minimum patch) — generalizing it to fix the one that was flaky
-  (the exact patch) dropped the other one nobody had named.
-- **Lesson:** **Before loosening an exact-match guard to a tolerant pattern, enumerate every
-  invariant the exact value was ALSO enforcing (read the guard's own header/rationale, not just
-  the flaky symptom) and keep each one explicit in the replacement — even if that means two
-  checks instead of one.**
-- **Guard:** `next-version.ts`'s `meetsMinimumOnMajorLine` (major exact + minor/patch >= a named
-  floor) sits beside `pinnedToMajorLine`, not instead of it (0e5246c4).
+- **Symptom:** adding `CHECK_RETURNED` to the Prisma `NotificationEvent` enum — a schema-only,
+  "no behavior change" migration with no new call site — broke `apps/api` `check-types`: two
+  pre-existing `Record<NotificationEvent, ...>` maps in `messaging-config.service.ts`
+  (`EVENT_CHANNELS`, `DEFAULT_TEMPLATES`) stopped compiling because they no longer covered every
+  member of the enum.
+- **Root cause:** an "additive-only" schema PR was scoped by grepping the Prisma schema and the
+  shared-type mirrors (`@routeflow/types`), never by grepping for `Record<TheEnum,` across the
+  consumers of that enum — an exhaustive map is a compile-time contract on the enum's FULL
+  member set, so a new value is a breaking change to every such map even though nothing in the
+  new PR reads or writes the new value.
+- **Lesson:** **Before adding a value to an existing Prisma enum, grep the whole tree for
+  `Record<TheEnumName,` (and any hand-written `switch`/object-literal that enumerates every
+  member) — an "additive, no behavior change" schema PR still breaks compilation wherever an
+  exhaustive map exists, and needs a minimal exhaustiveness-only entry there (never a real
+  trigger/behavior change) to stay green.**
+- **Guard:** `messaging-config.service.ts`'s `EVENT_CHANNELS`/`DEFAULT_TEMPLATES` gained a
+  `CHECK_RETURNED` entry (`[INTERNAL]` / a template string) and `NO_TRIGGER_EVENTS` gained the
+  key too, in the SAME commit as the schema change; `apps/api/src/common/enum-parity.spec.ts`'s
+  `PINNED_PRISMA_ENUM_COUNT` tripwire (L-072) catches a genuinely new enum, but not a new VALUE
+  on an existing one — only `tsc --noEmit` catches that, which is why this must be run, not
+  assumed, on any enum-value addition.

@@ -237,80 +237,104 @@ copy them, do not re-derive them._
 
 ## Pipeline args
 
-_Ready to copy into the Workflow call. `planPath` and a non-empty `packages` are the only
+_Ready to copy into the Workflow call. `buildPlanPath` and a non-empty `tasks[]` are the only
 required keys — delete any other that does not apply. Each optional key's phase is skipped
-silently when absent and reports `ran: false` in `phaseReport`, so a missing key never fails
-the run; it just removes that evidence._
+silently when absent, so a missing key never fails the run; it just removes that evidence.
+**Transcription note:** each Test package (TP#) above merges into the matching Work package's
+(WP#) task below as that task's `tests[]` — the engine has ONE task graph, not a separate
+test/implementation id space; a task authors its own tests and its own implementation._
 
 ```js
 {
   // ---- artifacts: pass PATHS, never paste content ----
-  planPath: '.claude/pipeline/<YYYY-MM-DD>-<slug>/build-plan.md',   // REQUIRED
-  // Omit the next two when the small-scale Preamble replaced them.
-  discoveryPath: '.claude/pipeline/<YYYY-MM-DD>-<slug>/discovery.md',
-  specPath: '.claude/pipeline/<YYYY-MM-DD>-<slug>/spec.md',
-  uxSpecPath: '.claude/pipeline/<YYYY-MM-DD>-<slug>/ux-spec.md',
-  testPlanPath: '.claude/pipeline/<YYYY-MM-DD>-<slug>/test-plan.md',
-  designSystemPath: '.claude/pipeline/design-system.md',
-  // Every path passed here is read by the Baseline grounding check; uxSpecPath OR
-  // designSystemPath also appends the `design-system` review lens, at either scale.
-  // The project's lessons register — every reviewer, refuter, fixer and the final pass
-  // apply its entries. Omit only when the project has none.
+  buildPlanPath: '.claude/pipeline/<YYYY-MM-DD>-<slug>/build-plan.md',   // REQUIRED — task-brief.mjs/review-pack.mjs read it
+  testPlanPath: '.claude/pipeline/<YYYY-MM-DD>-<slug>/test-plan.md',     // optional — cited in review-pack.mjs's Test-plan excerpt
+  // The project's lessons register — every implementer, reviewer and fixer apply its entries.
+  // Omit only when the project has none.
   lessonsPath: '.claude/lessons/LESSONS.md',
   // ISO timestamp taken when the run is launched; echoed into the result so the
   // ledger can compute wall-clock (scripts cannot read the clock).
   startedAt: '<YYYY-MM-DDTHH:MM:SSZ>',
+  // Per-task artifacts (brief.md, tests-report.md, report.md, pack.md, fix-r<N>.md) and
+  // checkpoints land under here.
+  runDir: '.claude/pipeline/<YYYY-MM-DD>-<slug>',
 
-  // small = the base lenses merged into ONE reviewer, no refutation, no mutation probe.
-  // major = 6 lenses (7 with a UX spec or design system), 2 refuters per finding, probes.
+  // small = the tighter Baseline plan-size cap; default profile 'lean' when no task/manifest
+  // file is HIGH risk. major = the larger cap; default profile 'standard'.
   scale: '<small|major>',
+  mode: '<feature|bugfix>',   // default 'feature'; 'bugfix' turns on Baseline's harness-integrity read + the post-loop sibling sweep
+  profile: '<lean|standard>', // optional override of the scale/risk-derived default (dev-pipeline/SKILL.md S0)
   workdir: '<optional worktree path>',   // every agent cd's here first
   // A FRESH worktree (or a rebase across a schema change) carries a stale generated client (ORM
   // or other codegen) — regenerate it (e.g. `npx prisma generate`) BEFORE launching. Otherwise
   // typecheck/test fail at Baseline, are excluded as broken commands rather than read as
   // defects, and this run ends up with no real gate.
   context: '<one line of task context>',
-
-  // ---- test-first: authored BEFORE implementation ----
-  // Optional per package, same as the work packages below: satisfies, provenBy,
-  // dependsOn, effort, model. Effort: omit (= the engine's `medium` transcription
-  // default); 'high' ONLY for the money / tenancy / auth package; 'low' for purely
-  // mechanical packages. `model` upgrades the one risky package, never the fleet.
-  // dependsOn here may name only other TP ids — TP and WP ids resolve in SEPARATE namespaces,
-  // and a WP naming a TP (or vice versa) is a (build-plan) blocker. Phase order already runs
-  // every test package before the first implementation wave, so a cross-set edge is never needed.
-  testPackages: [
-    { id: 'TP1', title: '<title>', files: ['<test file path>'], brief: '<what to assert and the oracle>' }
+  baselineSha: '<optional — review-pack.mjs diff base; default "worktree" diffs against HEAD>',
+  // mode:'bugfix' only — an ENGINE step run once after every fix task's loop closes, never a
+  // task type of its own.
+  siblingPatterns: [
+    { pattern: '<git grep -n -E pattern that matches the same bug class>', note: '<why this pattern matches it>' }
   ],
-  // Skipped entirely unless `commands` is a non-empty array; `expect` defaults to 'fail'.
-  redGate: { commands: ['<test command scoped to the new tests>'], expect: 'fail' },
 
-  // ---- implementation (REQUIRED, non-empty) ----
-  packages: [
+  // ---- the task graph (REQUIRED, non-empty) — ONE array; no separate test/implementation id space ----
+  // dependsOn is the ONLY ordering mechanism; disjoint-file tasks in the same wave run in
+  // parallel. The brief lives UNDER this task's `### <id> — <title>` heading in this build plan,
+  // NOT in a `brief:` string. task-brief.mjs slices that heading into tasks/<id>/brief.md, and
+  // that file is the only brief any agent reads. The engine never reads an inline `brief` except
+  // to scan it for the INTRODUCES-OBSERVABLE token (prefer `introducesObservable: true`), and
+  // CFG.caps.briefBytes is not enforced. Name the R#s satisfied and the T#s that prove it in that
+  // heading's text; there are no separate `satisfies`/`provenBy` keys.
+  tasks: [
     {
       id: 'WP1', title: '<title>',
-      files: ['<path/a>', '<path/b>'],
-      brief: '<what to do>',
-      satisfies: ['R1', 'R2'],
-      provenBy: ['T1', 'T3']
+      type: 'feature',                    // feature (default) | root-cause | repro-test | fix | revert-probe | docs | ui-verify
+      files: ['<path/a>', '<path/b>'],     // exact repo-relative paths this task owns
+      tests: ['<test file path>'],         // from the merged TP section; name the T# each one proves in brief
+      dependsOn: [],                       // brief: under `### WP1 — <title>` above, never inline
+      // radius: [5, 10],                  // optional [before, after] context lines for review-pack.mjs --radius; never paths
     },
     {
       id: 'WP2', title: '<title>',
       files: ['<path/c>'],
-      brief: '<what to do>',
-      dependsOn: ['WP1'],   // the ONLY ordering mechanism; disjoint packages share a wave
-      satisfies: ['R3'],
-      provenBy: ['T2'],
-      effort: 'high',       // this package touches money/tenancy/auth; omit elsewhere (= medium)
-      model: '<optional per-package upgrade for the one risky package>'
+      tests: ['<test file path>'],
+      brief: '<what to do — satisfies R3; provenBy T2>',
+      dependsOn: ['WP1'],                  // the ONLY ordering mechanism; disjoint tasks share a wave
+      risk: 'HIGH',                        // this task touches money/tenancy/auth; omit elsewhere (Baseline classifies it, unknown = HIGH)
+      model: '<optional per-task upgrade — normally omitted; a HIGH-risk task already routes to Fable>'
+    },
+    // A `ui-verify` task carries its own driver config on the task record — no separate top-level switch.
+    {
+      id: 'UI1', title: '<verify the flow>',
+      type: 'ui-verify', files: [], tests: [], dependsOn: ['WP2'],
+      url: '<url>', startCommand: '<command or empty>',   // whatever an agent starts, it must stop
+      flows: ['<plain-language flow + its assertion>'],   // copy from test-plan.md §8, don't re-derive
+      viewports: ['desktop'],
+      checks: ['console-errors', 'network-failures', 'a11y', 'design-system'],
+      brief: '<what this flow must do>'
     }
   ],
 
+  // A bugfix chain (bug-pipeline plans emit this shape; a dev-pipeline plan uses it too when one
+  // of its tasks IS a bugfix): every `fix` must depend, directly or transitively, on a
+  // `root-cause` AND a `repro-test`; every `revert-probe` must depend on its `fix`. An unmet
+  // ancestor is a `(build-plan)` blocker before any agent runs (mechanically checked).
+  //   tasks: [
+  //     { id: 'RC1', title: '<confirm the cause>', type: 'root-cause', files: [], tests: [], dependsOn: [],
+  //       brief: '<reproduce the bug on the current tree and confirm the named cause with the smallest probe>' },
+  //     { id: 'RT1', title: '<repro test>', type: 'repro-test', files: [], tests: ['<repro spec path>'], dependsOn: ['RC1'],
+  //       brief: "<must fail on the bug's own wrong value — name the exact wrongValue the RED check greps for>" },
+  //     { id: 'FIX1', title: '<the fix>', type: 'fix', files: ['<path>'], tests: [], dependsOn: ['RC1', 'RT1'],
+  //       brief: '<the minimal correct change; a fix task has no tests of its own>' },
+  //     // revert-probe: SINGULAR `file` + `test` strings (the engine reads only t.file / t.test)
+  //     { id: 'RP1', title: '<revert probe>', type: 'revert-probe', file: '<path>', test: '<the one test command that must go RED reverted>', dependsOn: ['FIX1'] },
+  //   ]
+
   // ---- gates: every command must already exist in this repo ----
   // TIERED is the default shape: perRound = typecheck/lint scoped to the touched workspaces,
-  // run after the implementation and each fix round; final = the full suite, run ONCE and
-  // deciding the result (beside the final pass). A plain array re-runs the same commands
-  // every round — slower for no more evidence. Size packages so no wave has one long pole.
+  // run after each task's implement/fix round; final = the full suite, run ONCE at Final,
+  // deciding the result. A plain array re-runs the same commands every round — slower for no
+  // more evidence. Size tasks so no wave has one long pole.
   verifyCommands: { perRound: ['<scoped typecheck/lint>'], final: ['<full suite>'] },
   // Each command string is its OWN shell invocation and cwd RESETS between entries — so a `cd` must
   // share the entry with the command it scopes: 'cd apps/api && npx jest …' in ONE string. Splitting
@@ -321,28 +345,5 @@ the run; it just removes that evidence._
   // The exact formatter command for THIS repo, run by every agent that edits files.
   // Omit it and each agent looks up the repo's own formatter (and skips when there is none).
   formatCommand: '<e.g. npm run format>',
-
-  // ---- UI verification / UI fixing ----
-  // Its presence is the whole switch — every key below has a default (url is derived from
-  // the repo's dev-server config). No uiVerify, no browser evidence at all.
-  uiVerify: {
-    url: '<url>',
-    startCommand: '<command or empty>',   // whatever an agent starts, it must stop
-    flows: ['<plain-language flow + its assertion>'],
-    viewports: ['desktop'],
-    checks: ['console-errors', 'network-failures', 'a11y', 'design-system']
-  },
-
-  // ---- test-quality oracle (major scale only) ----
-  // `behavior` is what must stay TRUE in that file — the thing the named test claims to
-  // prove. The probe agent chooses and injects the defect itself; never write a defect here.
-  // A target is probed only when Baseline classed its file HIGH risk, or the red gate never
-  // ran; a LOW-risk target is skipped as redundant with the red gate. Every skip is logged
-  // and recorded — a skipped probe is NOT a passed one.
-  mutationProbe: {
-    targets: [
-      { file: '<path>', behavior: '<the behavior this file must keep — what the named test proves>', test: '<test that must go red>' }
-    ]
-  }
 }
 ```

@@ -2,7 +2,19 @@ import {
   PLAN_KEYS,
   LEGACY_PLAN_KEY_ALIASES,
   planKeyToEnum,
+  planKeyFromEnum,
+  normalizePlanKey,
+  planRank,
+  SELECTABLE_TENANT_PLANS,
   UnknownPlanKeyError,
+  INVITE_ONLY_PLAN_KEYS,
+  isInviteOnlyPlanKey,
+  ALWAYS_ENFORCED_PLAN_KEYS,
+  isAlwaysEnforcedPlan,
+  INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT,
+  inviteOnlyCheckoutAllowed,
+  INVITE_ONLY_PLAN_TRIAL_DAYS,
+  LITE_PLAN_DISPLAY_NAME,
 } from "./plan-catalog.constants";
 
 /**
@@ -67,5 +79,70 @@ describe("planKeyToEnum", () => {
     expect(caught).toBeInstanceOf(UnknownPlanKeyError);
     expect((caught as UnknownPlanKeyError).planKey).toBe("PRO");
     expect((caught as UnknownPlanKeyError).message).toMatch(/unrecognized plan key "PRO"/);
+  });
+});
+
+/**
+ * T1 (WP1, lite-L2 plan): LITE plan-vocabulary coverage. `PLAN_KEYS` would have 4 members and
+ * `planKeyToEnum("LITE")` would throw `UnknownPlanKeyError` until LITE lands — this suite is
+ * RED against today's `plan-catalog.constants.ts`.
+ */
+describe("LITE plan vocabulary (WP1 T1)", () => {
+  it("PLAN_KEYS deep-equals the 5-member vocabulary with LITE first (order pin, not indices)", () => {
+    expect(PLAN_KEYS).toEqual(["LITE", "STARTER", "GROWTH", "SCALE", "ENTERPRISE"]);
+  });
+
+  it("planRank ranks LITE below every existing plan and preserves their relative order", () => {
+    expect(planRank("LITE")).toBe(0);
+    expect(planRank("STARTER")).toBeLessThan(planRank("GROWTH"));
+    expect(planRank("GROWTH")).toBeLessThan(planRank("SCALE"));
+    expect(planRank("SCALE")).toBeLessThan(planRank("ENTERPRISE"));
+  });
+
+  it("planKeyFromEnum/planKeyToEnum/normalizePlanKey round-trip LITE identity", () => {
+    expect(planKeyFromEnum("LITE")).toBe("LITE");
+    expect(planKeyToEnum("LITE")).toBe("LITE");
+    expect(normalizePlanKey("LITE")).toBe("LITE");
+  });
+
+  it("SELECTABLE_TENANT_PLANS includes LITE", () => {
+    expect(SELECTABLE_TENANT_PLANS).toContain("LITE");
+  });
+
+  it("the existing B218 table stays byte-identical (GROWTH→TEAM, SCALE→BUSINESS)", () => {
+    expect(planKeyToEnum("GROWTH")).toBe("TEAM");
+    expect(planKeyToEnum("SCALE")).toBe("BUSINESS");
+  });
+
+  it("INVITE_ONLY_PLAN_KEYS deep-equals [LITE] and isInviteOnlyPlanKey gates on membership", () => {
+    expect(INVITE_ONLY_PLAN_KEYS).toEqual(["LITE"]);
+    expect(isInviteOnlyPlanKey("LITE")).toBe(true);
+    expect(isInviteOnlyPlanKey("STARTER")).toBe(false);
+    expect(isInviteOnlyPlanKey(null)).toBe(false);
+    expect(isInviteOnlyPlanKey(undefined)).toBe(false);
+  });
+
+  it("ALWAYS_ENFORCED_PLAN_KEYS is a subset of INVITE_ONLY_PLAN_KEYS (R3a.7)", () => {
+    for (const key of ALWAYS_ENFORCED_PLAN_KEYS) {
+      expect(INVITE_ONLY_PLAN_KEYS as readonly string[]).toContain(key);
+    }
+    expect(isAlwaysEnforcedPlan("LITE")).toBe(true);
+    expect(isAlwaysEnforcedPlan("STARTER")).toBe(false);
+  });
+
+  it("LITE_PLAN_DISPLAY_NAME is 'Lite' and INVITE_ONLY_PLAN_TRIAL_DAYS is 0", () => {
+    expect(LITE_PLAN_DISPLAY_NAME).toBe("Lite");
+    expect(INVITE_ONLY_PLAN_TRIAL_DAYS).toBe(0);
+  });
+
+  it("inviteOnlyCheckoutAllowed gates self-serve checkout on the lever, only for invite-only plans", () => {
+    expect(inviteOnlyCheckoutAllowed("LITE", false)).toBe(false);
+    expect(inviteOnlyCheckoutAllowed("LITE", true)).toBe(true);
+    expect(inviteOnlyCheckoutAllowed("STARTER", false)).toBe(true);
+    expect(inviteOnlyCheckoutAllowed("STARTER", true)).toBe(true);
+  });
+
+  it("INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT default lever is true (Q1)", () => {
+    expect(INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT).toBe(true);
   });
 });

@@ -57,6 +57,31 @@ export const RETURN_REASON_VALUES = [
 ] as const;
 export type ReturnReason = (typeof RETURN_REASON_VALUES)[number];
 
+// Returns Inside Order Creation (PR-1a, 2026-09-15). ReturnKind is a real Prisma enum
+// (pinned below in ENUM_TABLE); RETURN_HOLD_REASON_VALUES/RETURN_PRICE_SOURCE_VALUES are
+// plain-string columns (same CREATE-TYPE-avoidance reasoning as Return.refundMethod), so
+// they are NOT in ENUM_TABLE — there is no generated Prisma enum to pin them against.
+export const RETURN_KIND_VALUES = ["STANDARD", "INLINE"] as const;
+export type ReturnKind = (typeof RETURN_KIND_VALUES)[number];
+
+export const RETURN_HOLD_REASON_VALUES = [
+  "CAPTURE_PENDING",
+  "CAPTURE_FAILED",
+  "OVER_RETURN",
+  "DRIVER_CAP",
+  "UNREFERENCED",
+] as const;
+export type ReturnHoldReason = (typeof RETURN_HOLD_REASON_VALUES)[number];
+
+export const RETURN_PRICE_SOURCE_VALUES = [
+  "SOURCE_INVOICE",
+  "CUSTOMER_PRICE",
+  "TIER",
+  "BASE",
+  "MANUAL",
+] as const;
+export type ReturnPriceSource = (typeof RETURN_PRICE_SOURCE_VALUES)[number];
+
 export const CREDIT_NOTE_STATUS_VALUES = ["ISSUED", "APPLIED", "VOID"] as const;
 export type CreditNoteStatus = (typeof CREDIT_NOTE_STATUS_VALUES)[number];
 
@@ -118,7 +143,9 @@ export const PURCHASE_ORDER_STATUS_VALUES = [
 ] as const;
 export type PurchaseOrderStatus = (typeof PURCHASE_ORDER_STATUS_VALUES)[number];
 
-export const PAYMENT_STATUS_VALUES = ["DRAFT", "PAID", "VOID"] as const;
+// PENDING added (post-dated check payments PR-1, additive-only): a CHECK payment recorded and
+// held but not yet clearable/bankable. See finance.prisma's PaymentStatus doc comment.
+export const PAYMENT_STATUS_VALUES = ["DRAFT", "PAID", "VOID", "PENDING"] as const;
 export type PaymentStatus = (typeof PAYMENT_STATUS_VALUES)[number];
 
 export const PRICE_TYPE_VALUES = ["STANDARD", "SPECIAL", "DISCOUNTED", "MANUAL", "PROMO"] as const;
@@ -287,11 +314,27 @@ export type CrmHandoffStatus = (typeof CRM_HANDOFF_STATUS_VALUES)[number];
 // `apps/api/src/billing/plan-catalog.constants.ts`'s `PLAN_KEYS` — the admin "New Tenant" form
 // previously hand-typed `["STARTER", "PROFESSIONAL", "ENTERPRISE"]`, a non-existent
 // "PROFESSIONAL" key with GROWTH/SCALE missing.
-export const PLAN_KEYS = ["STARTER", "GROWTH", "SCALE", "ENTERPRISE"] as const;
+//
+// WP1 (lite-L2, REG-743-F4): LITE is an invite-only tier ranked below every existing plan, so it
+// leads the array — order pin, not hardcoded indices; keep set-equal to the API's local mirror
+// (see `apps/api/src/common/enum-parity.spec.ts`'s REG-743-F4 case).
+export const PLAN_KEYS = ["LITE", "STARTER", "GROWTH", "SCALE", "ENTERPRISE"] as const;
 export type PlanKey = (typeof PLAN_KEYS)[number];
 
 // REG-743-N6: pinned set-equal to the generated Prisma `TenantClass` enum (see
 // `enum-parity.spec.ts`'s `ENUM_TABLE` row) — consumed by `create-tenant.dto.ts`'s `@IsIn` and
 // the admin "New Tenant" form.
 export const TENANT_CLASS_VALUES = ["DEMO", "INTERNAL", "PRODUCTION", "TEST"] as const;
+
+// Post-dated check payments PR-1 (additive-only): why a CHECK bounced. Pinned set-equal to the
+// generated Prisma `CheckReturnReason` enum (see `enum-parity.spec.ts`'s `ENUM_TABLE` row). No
+// read/write path sets or reads this yet — a later PR wires the check-lifecycle transition that
+// does.
+export const CHECK_RETURN_REASON_VALUES = [
+  "NSF",
+  "ACCOUNT_CLOSED",
+  "STOP_PAYMENT",
+  "OTHER",
+] as const;
+export type CheckReturnReason = (typeof CHECK_RETURN_REASON_VALUES)[number];
 export type TenantClass = (typeof TENANT_CLASS_VALUES)[number];

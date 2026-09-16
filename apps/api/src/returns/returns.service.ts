@@ -29,6 +29,15 @@ import type { ProcessRefundDto } from "./dto/process-refund.dto";
 import { CREDIT_SOURCE_EXCLUDED } from "../invoices/invoice-status-sets";
 import { IdempotencyService } from "../common/idempotency.service";
 import { NumberingService } from "../import/numbering.service";
+import {
+  returnedPiecesByProduct,
+  soldPiecesForProduct,
+  standardReturnPieces,
+} from "./returns-pieces.util";
+
+/** M6/§2.3: every standard-path method refuses an INLINE-kind return — it has its own
+ * endpoints and state machine (PR-1c/1d). Thrown the moment a `kind` is known to be INLINE. */
+const INLINE_RETURN_USE_INLINE_ENDPOINTS = "INLINE_RETURN_USE_INLINE_ENDPOINTS";
 
 /** The shape `create` returns — reused to type a replayed (idempotent) result. */
 type CreatedReturn = Prisma.ReturnGetPayload<{ include: { items: true } }>;
@@ -148,7 +157,21 @@ export class ReturnsService {
         where: { id: dto.orderId },
         include: {
           customer: { select: { id: true, businessName: true } },
-          lineItems: { select: { productId: true, qty: true, unitPrice: true } },
+          // status/position feed returns-pieces.util.ts's CANCELLED exclusion and
+          // position-ordered axis pick (fix-round: these were missing, so both were
+          // silently no-ops against a real query — see returns-overreturn.spec.ts's
+          // CANCELLED-line probe, which only caught this because it mocked fields the
+          // real query never selected).
+          lineItems: {
+            select: {
+              productId: true,
+              qty: true,
+              unitPrice: true,
+              subtotal: true,
+              status: true,
+              position: true,
+            },
+          },
           invoices: { select: { id: true } },
         },
       });
@@ -164,6 +187,20 @@ export class ReturnsService {
         }
       }
 
+      // §5: serialize every return against this CUSTOMER (not just this order) —
+      // the (PR-1c/1d) INLINE capture flow shares the same prior-returned accounting
+      // (returnedPiecesByProduct) across a customer's orders, so two concurrent
+      // returns — one STANDARD, one INLINE, on different orders for the same
+      // customer's same product — must not both read the same stale "remaining"
+      // snapshot. Placed after the idempotency lock/check and the unlocked order
+      // read (source of customerId) above, before the order-row FOR UPDATE below.
+      if (this.idempotency) {
+        await this.idempotency.acquireLock(
+          this.idempotency.hashFor(order.customerId, tenantId, "returns.customer"),
+          tx,
+        );
+      }
+
       // The transaction ALONE does not close the race: tenantTransaction runs at
       // Postgres' default READ COMMITTED, so two concurrent creates would each
       // take a snapshot without the other's uncommitted insert, both pass the
@@ -172,19 +209,10 @@ export class ReturnsService {
       // recordPayment() and routes.service.ts dispatch.
       await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${dto.orderId} FOR UPDATE`;
 
-      // Query existing returns for this order to prevent cumulative over-return
-      const existingReturns = await tx.return.findMany({
-        where: { orderId: dto.orderId, status: { notIn: ["REJECTED", "CANCELLED"] } },
-        include: { items: { select: { productId: true, qty: true } } },
-      });
-
-      // Build a map of already-returned quantities per product
-      const alreadyReturned: Record<string, number> = {};
-      for (const r of existingReturns) {
-        for (const ri of r.items) {
-          alreadyReturned[ri.productId] = (alreadyReturned[ri.productId] ?? 0) + Number(ri.qty);
-        }
-      }
+      // B4/m-6: prior-returned pieces per product, shared with the (PR-1c/1d) INLINE
+      // capture flow — sums STANDARD Return rows AND (once they exist) INLINE
+      // ReturnItem rows sourced from this order. See returns-pieces.util.ts.
+      const alreadyReturned = await returnedPiecesByProduct(tx, dto.orderId);
 
       // Validate return qty does not exceed ordered qty per item (cumulative)
       for (const item of dto.items) {
@@ -199,23 +227,29 @@ export class ReturnsService {
           throw new BadRequestException(
             `Invalid reason for product ${item.productId}. Must be one of: ${VALID_RETURN_REASONS.join(", ")}`,
           );
-        const orderLine = (order as any).lineItems?.find(
-          (li: any) => li.productId === item.productId,
-        );
-        if (!orderLine)
+        // B4/m-6: sold pieces = the SUM of the product's non-CANCELLED lines on this
+        // order (not just the first one `.find()` happened to match) — see
+        // returns-pieces.util.ts. A product absent from every live line still 400s,
+        // matching the pre-fix "not in the original order" behaviour.
+        const orderedQty = soldPiecesForProduct(order as any, item.productId);
+        if (orderedQty <= 0)
           throw new BadRequestException(`Product ${item.productId} was not in the original order`);
-        const orderedQty = Number(orderLine.qty);
+        const { pieces: returnPieces, toLineUnit } = standardReturnPieces(
+          order as any,
+          item.productId,
+          Number(item.qty),
+        );
         const previouslyReturned = alreadyReturned[item.productId] ?? 0;
         const remaining = orderedQty - previouslyReturned;
-        if (item.qty > remaining)
+        if (returnPieces > remaining)
           throw new BadRequestException(
-            `Return qty (${item.qty}) exceeds remaining returnable qty (${remaining}) for product ${item.productId}. Already returned: ${previouslyReturned} of ${orderedQty}.`,
+            `Return qty (${toLineUnit(returnPieces)}) exceeds remaining returnable qty (${toLineUnit(remaining)}) for product ${item.productId}. Already returned: ${toLineUnit(previouslyReturned)} of ${toLineUnit(orderedQty)}.`,
           );
         // Count this line against the running total too: a single payload that
         // lists the same productId twice previously validated every line against
         // the same pre-request snapshot, so 2 × qty 10 against 10 ordered both
         // passed and over-returned with no concurrency involved at all.
-        alreadyReturned[item.productId] = previouslyReturned + Number(item.qty);
+        alreadyReturned[item.productId] = previouslyReturned + returnPieces;
       }
 
       const returnNumber = await this.generateReturnNumber(tx);
@@ -228,6 +262,7 @@ export class ReturnsService {
           notes: dto.notes,
           photoUrls: dto.photoUrls ?? [],
           status: "PENDING",
+          kind: "STANDARD",
           items: {
             create: dto.items.map((i: any) => ({
               productId: i.productId,
@@ -317,7 +352,11 @@ export class ReturnsService {
   async findAll(options: FindAllReturnsOptions = {}) {
     const { orderId, customerId, driverId, status, reason, search, page = 1, limit = 20 } = options;
     const skip = (page - 1) * limit;
-    const where: any = {};
+    // M6/§2.3: this list is the STANDARD (post-delivery RMA) surface only — an INLINE
+    // return has its own list/queue (PR-1c/1d §7 "Needs attention"), not this one, and
+    // its money fields (ReturnItem.unitPrice/subtotal/taxAmount, priced at capture) are
+    // not shaped for the priceReturn()/billedBasisFor() logic below.
+    const where: any = { kind: "STANDARD" };
     if (orderId) where.orderId = orderId;
     if (customerId) where.customerId = customerId;
     // A relation filter, not a scalar FK — Return carries no driverId of its
@@ -352,7 +391,13 @@ export class ReturnsService {
                 },
               },
               lineItems: {
-                select: { productId: true, qty: true, unitPrice: true, subtotal: true },
+                select: {
+                  productId: true,
+                  qty: true,
+                  unitPrice: true,
+                  subtotal: true,
+                  status: true,
+                },
               },
             },
           },
@@ -387,6 +432,7 @@ export class ReturnsService {
   async approve(id: string) {
     const ret = await this.prisma.forTenant().return.findUnique({ where: { id } });
     if (!ret) throw new NotFoundException("Return not found");
+    if (ret.kind === "INLINE") throw new BadRequestException(INLINE_RETURN_USE_INLINE_ENDPOINTS);
     if (ret.status !== "PENDING")
       throw new BadRequestException("Only PENDING returns can be approved");
     return this.prisma.forTenant().return.update({ where: { id }, data: { status: "APPROVED" } });
@@ -395,6 +441,7 @@ export class ReturnsService {
   async reject(id: string) {
     const ret = await this.prisma.forTenant().return.findUnique({ where: { id } });
     if (!ret) throw new NotFoundException("Return not found");
+    if (ret.kind === "INLINE") throw new BadRequestException(INLINE_RETURN_USE_INLINE_ENDPOINTS);
     if (ret.status !== "PENDING")
       throw new BadRequestException("Only PENDING returns can be rejected");
     return this.prisma.forTenant().return.update({ where: { id }, data: { status: "REJECTED" } });
@@ -403,6 +450,7 @@ export class ReturnsService {
   async markInTransit(id: string) {
     const ret = await this.prisma.forTenant().return.findUnique({ where: { id } });
     if (!ret) throw new NotFoundException("Return not found");
+    if (ret.kind === "INLINE") throw new BadRequestException(INLINE_RETURN_USE_INLINE_ENDPOINTS);
     if (ret.status !== "APPROVED")
       throw new BadRequestException("Only APPROVED returns can be marked in transit");
     return this.prisma.forTenant().return.update({ where: { id }, data: { status: "IN_TRANSIT" } });
@@ -413,6 +461,7 @@ export class ReturnsService {
       .forTenant()
       .return.findUnique({ where: { id }, include: { items: true } });
     if (!ret) throw new NotFoundException("Return not found");
+    if (ret.kind === "INLINE") throw new BadRequestException(INLINE_RETURN_USE_INLINE_ENDPOINTS);
     if (!["APPROVED", "IN_TRANSIT"].includes(ret.status))
       throw new BadRequestException("Only APPROVED or IN_TRANSIT returns can be received");
 
@@ -593,13 +642,34 @@ export class ReturnsService {
 
     if (allInvoices.length === 0) {
       // Never invoiced (or its invoice rows are gone) — legacy order-line basis.
+      // PR-1a fix-round (Opus review F1): create()'s over-return cap now sums a
+      // product's qty across every non-CANCELLED line (soldPiecesForProduct), but this
+      // basis used to price off a SINGLE `.find()`-matched line's per-unit rate against
+      // the full (now-pooled) returned qty — a product split across two lines priced
+      // the whole return at one line's rate, over-crediting whenever the lines differ
+      // in price. Pool qty/subtotal per product the same way the invoiced branch below
+      // already does, so the cap and the price always agree.
+      const soldQtyByProduct = new Map<string, number>();
+      const soldSubtotalByProduct = new Map<string, number>();
+      for (const li of order?.lineItems ?? []) {
+        if (!li.productId || li.status === "CANCELLED") continue;
+        soldQtyByProduct.set(
+          li.productId,
+          (soldQtyByProduct.get(li.productId) ?? 0) + Number(li.qty),
+        );
+        soldSubtotalByProduct.set(
+          li.productId,
+          (soldSubtotalByProduct.get(li.productId) ?? 0) + Number(li.subtotal),
+        );
+      }
       let amount = 0;
       for (const item of items) {
-        const line = order?.lineItems?.find((li) => li.productId === item.productId);
-        if (!line) continue;
-        const lineQty = Number(line.qty);
-        const perUnit = lineQty > 0 ? Number(line.subtotal) / lineQty : Number(line.unitPrice);
-        amount += Number(item.qty) * perUnit;
+        const soldQty = soldQtyByProduct.get(item.productId) ?? 0;
+        if (soldQty <= 0) continue;
+        const soldSubtotal = soldSubtotalByProduct.get(item.productId) ?? 0;
+        const perUnit = soldSubtotal / soldQty;
+        const refundQty = Math.min(Number(item.qty), soldQty);
+        amount += refundQty * perUnit;
       }
       return { amount: roundMoney(amount), invoiceId: undefined, creditable: [] };
     }
@@ -684,12 +754,21 @@ export class ReturnsService {
                 items: { select: { productId: true, qty: true, subtotal: true } },
               },
             },
-            lineItems: { select: { productId: true, qty: true, unitPrice: true, subtotal: true } },
+            lineItems: {
+              select: {
+                productId: true,
+                qty: true,
+                unitPrice: true,
+                subtotal: true,
+                status: true,
+              },
+            },
           },
         },
       },
     });
     if (!ret) throw new NotFoundException("Return not found");
+    if (ret.kind === "INLINE") throw new BadRequestException(INLINE_RETURN_USE_INLINE_ENDPOINTS);
     if (ret.status !== "RECEIVED")
       throw new BadRequestException("Only RECEIVED returns can be refunded");
 
@@ -777,6 +856,9 @@ export class ReturnsService {
       include: { items: true },
     });
     if (!ret) throw new NotFoundException("Return not found");
+    // M6/§2.3: refused for every caller, CUSTOMER included — an INLINE return cancels
+    // through its own endpoint (PR-1c/1d), never this one.
+    if (ret.kind === "INLINE") throw new BadRequestException(INLINE_RETURN_USE_INLINE_ENDPOINTS);
     // SECURITY (F2-001): a CUSTOMER may only cancel their OWN return. Without this
     // check any customer could cancel a tenant-mate's return and reverse stock.
     if (user.role === "CUSTOMER") {
@@ -873,7 +955,15 @@ export class ReturnsService {
                 items: { select: { productId: true, qty: true, subtotal: true } },
               },
             },
-            lineItems: { select: { productId: true, qty: true, unitPrice: true, subtotal: true } },
+            lineItems: {
+              select: {
+                productId: true,
+                qty: true,
+                unitPrice: true,
+                subtotal: true,
+                status: true,
+              },
+            },
           },
         },
         customer: { select: { id: true, businessName: true } },
@@ -881,13 +971,22 @@ export class ReturnsService {
       },
     });
     if (!ret) throw new NotFoundException("Return not found");
+    // M6/§2.3: same STANDARD-only boundary as findAll — an INLINE return's detail
+    // view is its own (PR-1c/1d) surface, and its pricing is already resolved at
+    // capture, not re-derived here.
+    if (ret.kind === "INLINE") throw new BadRequestException(INLINE_RETURN_USE_INLINE_ENDPOINTS);
 
-    // Enrich each return item with orderedQty from the original order
+    // Enrich each return item with orderedQty from the original order. `orderedQty`
+    // uses the same pooled-across-lines basis as create()'s cap (soldPiecesForProduct,
+    // fix-round: the pre-fix single-line `.find()` here could show an operator a cap
+    // lower than what create() actually enforces); `unitPrice` stays a single line's
+    // rate — display-only — since a pooled per-unit rate has no one line to attribute
+    // it to.
     const enrichedItems = ret.items.map((item) => {
       const orderLine = ret.order?.lineItems?.find((li) => li.productId === item.productId);
       return {
         ...item,
-        orderedQty: orderLine ? Number(orderLine.qty) : null,
+        orderedQty: ret.order ? soldPiecesForProduct(ret.order as any, item.productId) : null,
         unitPrice: orderLine ? Number(orderLine.unitPrice) : null,
       };
     });

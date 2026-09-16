@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "exclude": [],
+  "include": [
+    "src/credit-notes/credit-notes.plan-gate.spec.ts",
+    "src/customers/customers.portal-plan-gate.spec.ts",
+    "src/estimates/estimates.plan-gate.spec.ts",
+    "src/messages/messages.plan-gate.spec.ts",
+    "src/recurring-invoices/recurring-invoices.plan-gate.spec.ts",
+    "src/suppliers/suppliers.plan-gate.spec.ts"
+  ]
+}

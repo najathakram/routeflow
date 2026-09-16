@@ -199,8 +199,8 @@ export class RouteRunsController {
   // RF-005: Atomic complete + payment
   //
   // At-door MONEY COLLECTION is a per-tenant OPT-IN (owner decision
-  // 2026-08-24): some tenants (affa) let drivers collect at the door, others
-  // (bb-distro) bill on account only and the office collects. Enforced by
+  // 2026-08-24): some tenants (acme-retail) let drivers collect at the door, others
+  // (acme-distro) bill on account only and the office collects. Enforced by
   // DriverPaymentsGuard on the BODY, not a blanket addon gate on the route —
   // every mobile completion (including $0 "on account") flows through this
   // endpoint for its delivered-basis invoice reconcile, so completions with

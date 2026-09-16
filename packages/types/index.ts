@@ -142,6 +142,7 @@ export * from "./trip-grouping";
 // `@prisma/client` by `apps/api/src/common/enum-parity.spec.ts`.
 
 export * from "./api/enums";
+export * from "./api/billing";
 export * from "./api/orders";
 export * from "./api/customers";
 export * from "./api/products";
@@ -153,6 +154,7 @@ export * from "./api/buyer";
 export * from "./api/misc";
 export * from "./api/invoices";
 export * from "./api/crm";
+export * from "./api/checks";
 
 // ─── Developer mode (hidden dispatch/driver/route addon) ──────────────────────
 

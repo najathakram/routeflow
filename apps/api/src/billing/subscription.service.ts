@@ -4,7 +4,13 @@ import { PrismaService } from "../prisma/prisma.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { EntitlementsService } from "./entitlements.service";
 import { MeterService } from "./meter.service";
-import { addonSkuCode } from "./plan-catalog.constants";
+import {
+  addonSkuCode,
+  FLAG_KEYS,
+  isInviteOnlyPlanKey,
+  INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT,
+} from "./plan-catalog.constants";
+import { allowsFlag } from "./plan-flag-policy";
 
 /**
  * Tenant self-service READ surface for settings-billing + choose-plan: the current
@@ -47,8 +53,29 @@ export class SubscriptionService {
           ? Number(def.monthlyPrice)
           : null;
 
+    // Defensive `?? []`: EntitlementsService.resolve() always sets `flags`, but some
+    // unit-test callers (SubscriptionService.spec) construct a bare entitlements mock
+    // without it — never let a missing array crash the settings-billing view.
+    const entFlags = ent.flags ?? [];
+
     return {
       planKey: ent.planKey,
+      // R1.7/R2.5: the flags this tenant can actually use right now — the union of its
+      // own stored entitlement flags and any FLAG_KEYS still under the dark-flag
+      // courtesy allow (see allowsFlag/isDarkFlag). Deduped via Set.
+      flags: Array.from(
+        new Set([
+          ...FLAG_KEYS.filter((k) => allowsFlag({ planKey: ent.planKey, flags: entFlags }, k)),
+          ...entFlags,
+        ]),
+      ),
+      // R2.8/R2.9/R7.6: an invited-but-not-yet-paying LITE tenant needs to complete
+      // Stripe checkout before it's truly ACTIVE — structural, never derived from a
+      // client-supplied planKey (see SettingsBillingController.createCheckout).
+      paymentRequired:
+        isInviteOnlyPlanKey(ent.planKey) &&
+        ent.status !== "ACTIVE" &&
+        INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT,
       planName: ent.planName,
       status: ent.status,
       // RO-1: why the tenant is READ_ONLY (trial_expired | subscription_cancelled |

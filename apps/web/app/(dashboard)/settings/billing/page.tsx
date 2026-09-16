@@ -14,6 +14,7 @@ import {
   useResumeSubscription,
   useEnableAddon,
   useDisableAddon,
+  useCreateCheckout,
   type MeterReading,
   type SubscriptionView,
   type AddonSkuDef,
@@ -93,6 +94,7 @@ export default function BillingSettingsPage() {
   const resume = useResumeSubscription();
   const enable = useEnableAddon();
   const disable = useDisableAddon();
+  const checkout = useCreateCheckout();
   const [endTrialOpen, setEndTrialOpen] = React.useState(false);
 
   const activeSkus = new Set(
@@ -223,6 +225,16 @@ export default function BillingSettingsPage() {
               </p>
             </div>
           </div>
+          {s.paymentRequired && (
+            <div className="flex items-center gap-3">
+              <span className="text-sm font-medium text-slate-700">
+                {s.planName} · {money(s.monthlyPrice)}/mo
+              </span>
+              <Button loading={checkout.isPending} onClick={() => checkout.mutate()}>
+                Complete payment
+              </Button>
+            </div>
+          )}
           <div className="flex gap-2">
             <a href="/choose-plan">
               <Button size="sm">Change plan</Button>

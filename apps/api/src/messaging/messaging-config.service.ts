@@ -27,6 +27,10 @@ export const EVENT_CHANNELS: Record<NotificationEvent, MessageChannel[]> = {
   [NotificationEvent.LOW_STOCK]: [INTERNAL],
   [NotificationEvent.FAILED_DELIVERY]: [INTERNAL],
   [NotificationEvent.PAYMENT_FAILED_NSF]: [INTERNAL],
+  // Post-dated check payments PR-1: no firing site yet (see NO_TRIGGER_EVENTS
+  // below) — entry exists only so this Record stays exhaustive over
+  // NotificationEvent.
+  [NotificationEvent.CHECK_RETURNED]: [INTERNAL],
 };
 
 /** Friendly label + starter body per event; `variables` derived from the body
@@ -77,6 +81,10 @@ export const DEFAULT_TEMPLATES: Record<NotificationEvent, { label: string; body:
     label: "Payment failed (NSF)",
     body: "Check payment from {{customerName}} for {{amount}} was returned NSF on invoice {{invoiceNumber}}.",
   },
+  [NotificationEvent.CHECK_RETURNED]: {
+    label: "Check returned",
+    body: "A check payment from {{customerName}} for {{amount}} was returned ({{reason}}) on invoice {{invoiceNumber}}.",
+  },
 };
 
 /** Cells seeded enabled=true — PORTAL/EMAIL (free, un-metered, consent-less).
@@ -99,6 +107,10 @@ const NO_TRIGGER_EVENTS = new Set<NotificationEvent>([
   NotificationEvent.LOW_STOCK,
   NotificationEvent.FAILED_DELIVERY,
   NotificationEvent.PAYMENT_FAILED_NSF,
+  // Post-dated check payments PR-1: added with the enum value itself; a later
+  // PR adds the firing site (check-lifecycle transition to BOUNCED) and moves
+  // this to DEFAULT_ON in the same PR, per this set's own header comment.
+  NotificationEvent.CHECK_RETURNED,
 ]);
 
 export interface TemplateView {

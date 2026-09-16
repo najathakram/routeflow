@@ -297,6 +297,14 @@ enum NotificationEvent {
   LOW_STOCK // internal alert
   FAILED_DELIVERY // internal alert
   PAYMENT_FAILED_NSF // internal alert
+  // Post-dated check payments PR-1 (additive-only): a later PR's check-lifecycle
+  // transition wiring fires this on a CHECK bounce (bounceReason set). Distinct
+  // from PAYMENT_FAILED_NSF (which stays as-is, unused by this PR either). No
+  // firing site exists yet — messaging-config.service.ts's EVENT_CHANNELS/
+  // DEFAULT_TEMPLATES gain an entry for exhaustiveness only (Record<NotificationEvent, ...>
+  // requires one), and it is NOT added to DEFAULT_ON (default-on-is-wired.spec.ts
+  // would fail otherwise).
+  CHECK_RETURNED // internal alert
 }
 
 // One conversation with a customer across all channels (the inbox row).

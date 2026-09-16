@@ -101,7 +101,9 @@ explanations, each with its own action:
 tests — never the whole suite, since a full-suite red says nothing about _which_ test is
 wired. It requires: every new test fails, each on an assertion, none pass. One
 test-remediation round may fix vacuous or broken tests. Implementation does not start until
-the gate is honest.
+the gate is honest. (2026-09-12 task-loop rebuild: this check now runs per task, scoped to that
+task's own `tests[]` in `args.tasks[]` — there is no separate top-level `args.redGate.commands`
+field; the method — behavioral RED, one remediation round — is unchanged.)
 
 ```bash
 # scope the run to the new specs and read the failure text, not just the exit code
@@ -287,7 +289,10 @@ code is a bug in the test suite.
 
 **The pipeline's lightweight substitute — the mutation probe.** Full mutation runs are too
 slow for a change-sized loop, so `args.mutationProbe.targets` runs one deliberate defect per
-target, **sequentially**:
+target, **sequentially**: (2026-09-12 task-loop rebuild: this is now a `revert-probe` task type
+`{file, test}` inside `args.tasks[]`, run strictly sequentially across probes with one separate
+checksum agent verifying every restore — not a standalone `args.mutationProbe.targets` array;
+the probe procedure below is unchanged.)
 
 1. **Back up OUTSIDE the repo, by file copy.** Copy the file into the **OS temp directory**
    (Git Bash: `"$TMPDIR"` when set, else `/tmp`; a Windows shell: `%TEMP%`) under a unique

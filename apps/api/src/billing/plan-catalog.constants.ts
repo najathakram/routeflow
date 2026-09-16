@@ -13,8 +13,52 @@
 // @routeflow/pricing ships a compiled `main` and may be value-imported here. The previous
 // hand-typed copy this replaced was `["STARTER", "PROFESSIONAL", "ENTERPRISE"]`, missing
 // GROWTH/SCALE and carrying a non-existent "PROFESSIONAL" key.
-export const PLAN_KEYS = ["STARTER", "GROWTH", "SCALE", "ENTERPRISE"] as const;
+//
+// WP1 (lite-L2, R1.1-R1.4): LITE is an invite-only tier ranked BELOW every existing plan, so it
+// leads the array. `planRank()` below derives a plan's ordinal from `PLAN_KEYS.indexOf(...)`, so
+// this is an ORDER PIN, not a set of hardcoded indices — LITE=0, STARTER=1, GROWTH=2, SCALE=3,
+// ENTERPRISE=4, and any future re-tiering only needs to reorder this array.
+export const PLAN_KEYS = ["LITE", "STARTER", "GROWTH", "SCALE", "ENTERPRISE"] as const;
 export type PlanKey = (typeof PLAN_KEYS)[number];
+
+/**
+ * Invite-only plan keys (WP1, R3a.1): a tenant can only land on one of these via an explicit
+ * platform-admin action, never public self-signup. Today that's just LITE.
+ */
+export const INVITE_ONLY_PLAN_KEYS: readonly PlanKey[] = ["LITE"] as const;
+
+/** True when `planKey` is one of `INVITE_ONLY_PLAN_KEYS`. */
+export const isInviteOnlyPlanKey = (planKey: string | null | undefined): boolean =>
+  planKey != null && (INVITE_ONLY_PLAN_KEYS as readonly string[]).includes(planKey);
+
+/**
+ * Invite-only plans whose entitlement gates are ALWAYS enforced, regardless of any dark/enforced
+ * rollout switch elsewhere in the billing system (R3a.7). Must stay a subset of
+ * `INVITE_ONLY_PLAN_KEYS` — see the `enum-parity`/`plan-catalog.constants` specs' subset check.
+ */
+export const ALWAYS_ENFORCED_PLAN_KEYS: ReadonlySet<PlanKey> = new Set<PlanKey>(["LITE"]);
+
+/** True when `planKey` is in `ALWAYS_ENFORCED_PLAN_KEYS`. */
+export const isAlwaysEnforcedPlan = (planKey: string | null | undefined): boolean =>
+  planKey != null && (ALWAYS_ENFORCED_PLAN_KEYS as ReadonlySet<string>).has(planKey);
+
+/**
+ * Q1 lever: whether an invite-only plan may be self-serve checked out once a tenant has been
+ * invited onto it, vs. requiring a platform-admin-driven activation. Defaults to allowed.
+ */
+export const INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT = true;
+
+/** Gates self-serve checkout: always allowed for a non-invite-only plan; lever-gated otherwise. */
+export const inviteOnlyCheckoutAllowed = (
+  planKey: string | null | undefined,
+  lever: boolean = INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT,
+): boolean => !isInviteOnlyPlanKey(planKey) || lever;
+
+/** Q3 lever: trial length (days) for an invite-only plan. LITE ships with no trial. */
+export const INVITE_ONLY_PLAN_TRIAL_DAYS = 0;
+
+/** Q4: the display name for LITE — no UI hardcodes the word "Lite" anywhere else. */
+export const LITE_PLAN_DISPLAY_NAME = "Lite";
 
 /**
  * Default trial length in days. Consumed by `tenants.service.ts` (public self-signup) AND
@@ -71,7 +115,7 @@ export const TRIAL_LENGTH_DAYS = 14;
  * kill switch (see DARK_PLAN_FLAGS in plan-flag.guard.ts) — it keeps enforcing
  * whatever PLAN_FLAG_ENFORCEMENT is set to.
  */
-/** The 16 feature-flag / addon keys enforced server-side (pricing-plans.md §Feature-flag keys). */
+/** The 21 feature-flag / addon keys enforced server-side (pricing-plans.md §Feature-flag keys). */
 export const FLAG_KEYS = [
   "flag.dispatch_live",
   "flag.returns",
@@ -89,6 +133,11 @@ export const FLAG_KEYS = [
   "addon.ocr",
   "flag.msrp",
   "flag.sales_agents",
+  "flag.estimates",
+  "flag.recurring_invoices",
+  "flag.credit_notes",
+  "flag.suppliers",
+  "flag.messaging",
 ] as const;
 export type FlagKey = (typeof FLAG_KEYS)[number];
 
@@ -113,7 +162,7 @@ export function normalizePlanKey(planKey: string | null | undefined): PlanKey | 
   return Object.hasOwn(LEGACY_PLAN_KEY_ALIASES, planKey) ? LEGACY_PLAN_KEY_ALIASES[planKey] : null;
 }
 
-/** Ordinal rank of a plan key (STARTER=0 … ENTERPRISE=3); -1 if unknown. Upgrade/downgrade direction. */
+/** Ordinal rank of a plan key (LITE=0 … ENTERPRISE=4); -1 if unknown. Upgrade/downgrade direction. */
 export function planRank(planKey: string): number {
   const normalized = normalizePlanKey(planKey);
   return normalized ? PLAN_KEYS.indexOf(normalized) : -1;
@@ -215,6 +264,10 @@ export function planKeyFromEnum(plan: string | null | undefined): PlanKey {
       return "SCALE";
     case "ENTERPRISE":
       return "ENTERPRISE";
+    // WP1 (lite-L2): LITE is now a direct TenantPlan enum value too — identity map it rather
+    // than falling through to the STARTER default.
+    case "LITE":
+      return "LITE";
     case "STARTER":
     default:
       return "STARTER";
@@ -228,12 +281,14 @@ export function planKeyFromEnum(plan: string | null | undefined): PlanKey {
  * these are currently acceptable on a write DTO.
  */
 export type TenantPlanEnumValue =
-  "STARTER" | "TEAM" | "BUSINESS" | "PROFESSIONAL" | "ENTERPRISE" | "GROWTH" | "SCALE";
+  "STARTER" | "TEAM" | "BUSINESS" | "PROFESSIONAL" | "ENTERPRISE" | "GROWTH" | "SCALE" | "LITE";
 
 /**
  * `TenantPlan` values currently selectable on an admin-facing DTO (`UpdateTenantPlanDto`,
  * `ActivateSubscriptionDto`). Phase 0 Task 10 closed the GROWTH/SCALE gap: `planKeyFromEnum()`
- * now identity-maps both, so they're safe to accept here too.
+ * now identity-maps both, so they're safe to accept here too. WP1 (lite-L2) adds LITE — it's
+ * invite-only (see `INVITE_ONLY_PLAN_KEYS`), not publicly self-serve, but still a value an
+ * admin-facing DTO must accept when activating an invited tenant.
  */
 export const SELECTABLE_TENANT_PLANS: TenantPlanEnumValue[] = [
   "STARTER",
@@ -243,6 +298,7 @@ export const SELECTABLE_TENANT_PLANS: TenantPlanEnumValue[] = [
   "ENTERPRISE",
   "GROWTH",
   "SCALE",
+  "LITE",
 ];
 
 /**
@@ -279,6 +335,18 @@ export class UnknownPlanKeyError extends Error {
   }
 }
 
+export class PlanNotInCatalogError extends Error {
+  constructor(
+    public readonly planKey: string | null | undefined,
+    public readonly triedVersionIds: readonly string[],
+  ) {
+    super(
+      `Plan "${planKey}" is not defined in any resolvable catalog version (tried ${triedVersionIds.join(", ")})`,
+    );
+    this.name = "PlanNotInCatalogError";
+  }
+}
+
 export function planKeyToEnum(planKey: string | null | undefined): TenantPlanEnumValue {
   const normalized = normalizePlanKey(planKey);
   switch (normalized) {
@@ -290,6 +358,10 @@ export function planKeyToEnum(planKey: string | null | undefined): TenantPlanEnu
       return "ENTERPRISE";
     case "STARTER":
       return "STARTER";
+    // WP1 (lite-L2): LITE is a direct TenantPlan enum value (added by the
+    // 20260915000000_tenant_plan_lite migration) — identity map it like GROWTH/SCALE above.
+    case "LITE":
+      return "LITE";
     default:
       throw new UnknownPlanKeyError(planKey);
   }

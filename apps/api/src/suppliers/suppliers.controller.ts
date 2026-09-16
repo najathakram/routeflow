@@ -13,13 +13,19 @@ import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
+import { PlanFlagGuard } from "../billing/plan-flag.guard";
+import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { SuppliersService } from "./suppliers.service";
 import { CreateSupplierDto } from "./dto/create-supplier.dto";
 import { UpdateSupplierDto } from "./dto/update-supplier.dto";
 import { ListSuppliersDto } from "./dto/list-suppliers.dto";
 
+// WP5b (R3b.3, R3b.5): flag.suppliers ships dark (DARK_PLAN_FLAGS in
+// plan-flag-policy.ts) — this class-level guard is a courtesy allow until the
+// PLAN_FLAG_ENFORCEMENT switch flips on.
 @Controller("suppliers")
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard)
+@RequirePlanFlag("flag.suppliers")
 export class SuppliersController {
   constructor(private readonly suppliersService: SuppliersService) {}
 

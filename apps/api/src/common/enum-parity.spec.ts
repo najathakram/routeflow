@@ -1,7 +1,10 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as PrismaEnums from "@prisma/client";
-import { PLAN_KEYS as API_PLAN_KEYS } from "../billing/plan-catalog.constants";
+import {
+  PLAN_KEYS as API_PLAN_KEYS,
+  FLAG_KEYS as API_FLAG_KEYS,
+} from "../billing/plan-catalog.constants";
 
 /**
  * Guards the class of bug found by the Wave E DTO sweep (imp-10b): web and
@@ -49,6 +52,7 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["INVOICE_STATUS_VALUES", "InvoiceStatus"],
   ["RETURN_STATUS_VALUES", "ReturnStatus"],
   ["RETURN_REASON_VALUES", "ReturnReason"],
+  ["RETURN_KIND_VALUES", "ReturnKind"],
   ["CREDIT_NOTE_STATUS_VALUES", "CreditNoteStatus"],
   ["REGULATED_FILING_STATUS_VALUES", "RegulatedFilingStatus"],
   ["INVOICE_TREATMENT_VALUES", "InvoiceTreatment"],
@@ -88,6 +92,9 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["CRM_TRIGGER_MODE_VALUES", "CrmTriggerMode"],
   ["CRM_HANDOFF_STATUS_VALUES", "CrmHandoffStatus"],
   ["TENANT_CLASS_VALUES", "TenantClass"],
+  // Post-dated check payments PR-1 (2026-09-15): CheckReturnReason is a brand-new Prisma enum
+  // (not a value added to an existing one) — see the triage tripwire below.
+  ["CHECK_RETURN_REASON_VALUES", "CheckReturnReason"],
 ];
 
 describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
@@ -122,7 +129,18 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // `TENANT_CLASS_VALUES` mirror (`packages/types/api/enums.ts`) + an `ENUM_TABLE` row above,
 // consumed by `create-tenant.dto.ts`'s `@IsIn` and the admin "New Tenant" form — see
 // REG-743-N6 below.
-const PINNED_PRISMA_ENUM_COUNT = 84;
+//
+// Triage for CheckReturnReason (post-dated check payments PR-1, 2026-09-15): a brand-new enum,
+// added with its `CHECK_RETURN_REASON_VALUES` mirror + `ENUM_TABLE` row in the SAME PR (unlike
+// PaymentStatus gaining `PENDING` or NotificationEvent gaining `CHECK_RETURNED`, which add a
+// VALUE to an enum this file already tracks/doesn't track — those never move this count).
+// Triage for ReturnKind (Returns Inside Order Creation, PR-1a, 2026-09-15): new Prisma enum,
+// mirrored immediately as `RETURN_KIND_VALUES` + an `ENUM_TABLE` row above — the value
+// (STANDARD/INLINE) is read by every `kind`-branching returns.service.ts method landing in
+// this PR. `RETURN_HOLD_REASON_VALUES`/`RETURN_PRICE_SOURCE_VALUES` (same file) are NOT
+// generated Prisma enums (plain-string columns, see Return.holdReason's schema comment), so
+// they add no row here and do not move this count.
+const PINNED_PRISMA_ENUM_COUNT = 86;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {
@@ -329,6 +347,66 @@ function stubKeyToPrismaEnumName(key: string): string {
     .join("");
 }
 
+// ─── WP1 T2: LITE plan-key + FLAG_KEYS parity across enums.ts / plan-catalog.constants.ts ─────
+
+/**
+ * T2 (WP1, lite-L2 plan): fails TODAY because the shared `FLAG_KEYS` export in
+ * `packages/types/api/billing.ts` doesn't exist yet (`[]` vs the expected 21 keys) and the
+ * generated Prisma `TenantPlan` enum doesn't contain `"LITE"` yet.
+ */
+describe("WP1 T2: LITE PLAN_KEYS (5 members) + FLAG_KEYS (21 keys) parity, Prisma TenantPlan has LITE", () => {
+  it("API PLAN_KEYS (5 members) is set-equal to the shared package's PLAN_KEYS (REG-743-F4, now with LITE)", () => {
+    const shared = Array.isArray((SHARED as Record<string, unknown>)["PLAN_KEYS"])
+      ? ((SHARED as Record<string, unknown>)["PLAN_KEYS"] as unknown[])
+      : [];
+    expect(new Set(API_PLAN_KEYS)).toEqual(new Set(shared));
+    expect(shared.length).toBe(5);
+  });
+
+  it("API FLAG_KEYS (21 keys) is set-equal to the shared package's FLAG_KEYS", () => {
+    const shared = Array.isArray((SHARED as Record<string, unknown>)["FLAG_KEYS"])
+      ? ((SHARED as Record<string, unknown>)["FLAG_KEYS"] as unknown[])
+      : [];
+    expect(new Set(API_FLAG_KEYS)).toEqual(new Set(shared));
+    expect(shared.length).toBe(21);
+  });
+
+  it("generated Prisma TenantPlan enum contains LITE", () => {
+    const values = Object.values(PrismaEnums.TenantPlan as unknown as Record<string, string>);
+    expect(values).toContain("LITE");
+  });
+});
+
+// ─── WP1 T3: additive-only LITE migration exists, exactly one dir, no destructive statements ──
+
+/**
+ * T3 (WP1, lite-L2 plan): fails TODAY because no `*_tenant_plan_lite` migration directory
+ * exists yet under `apps/api/prisma/migrations/`.
+ */
+describe("WP1 T3: tenant-plan-lite migration is additive-only", () => {
+  const MIGRATIONS_DIR = path.join(REPO_ROOT, "apps/api/prisma/migrations");
+
+  it("exactly one migration dir matches *_tenant_plan_lite and its SQL is the exact additive statement", () => {
+    const entries = fs.existsSync(MIGRATIONS_DIR) ? fs.readdirSync(MIGRATIONS_DIR) : [];
+    const matches = entries.filter((name) => /_tenant_plan_lite$/.test(name));
+    expect(matches.length).toBe(1);
+
+    const migrationFile = path.join(MIGRATIONS_DIR, matches[0], "migration.sql");
+    const raw = fs.readFileSync(migrationFile, "utf8");
+    // Strip `--` line comments and blank lines, then compare the remaining SQL exactly.
+    const stripped = raw
+      .split("\n")
+      .map((line) => line.replace(/--.*$/, "").trim())
+      .filter((line) => line.length > 0)
+      .join("\n");
+    expect(stripped).toBe(`ALTER TYPE "TenantPlan" ADD VALUE 'LITE';`);
+
+    expect(raw).not.toMatch(/\bDROP\b/i);
+    expect(raw).not.toMatch(/\bRENAME\b/i);
+    expect(raw).not.toMatch(/ALTER\s+COLUMN/i);
+  });
+});
+
 describe("regression: apps/mobile's @routeflow/types stub stays pinned to Prisma (X2)", () => {
   it("the stub declares at least one *_VALUES export (guards against a silently-vacuous suite)", () => {
     expect(MOBILE_STUB_VALUE_KEYS.length).toBeGreaterThan(0);
@@ -346,4 +424,16 @@ describe("regression: apps/mobile's @routeflow/types stub stays pinned to Prisma
       expect(expected.length).toBeGreaterThan(0);
     },
   );
+
+  // Post-dated check payments PR-1 (2026-09-15, MINOR 4 fix round): the stub's own header notes
+  // `CHECK_TRANSITIONS` is deliberately named WITHOUT the `_VALUES` suffix (it isn't a Prisma
+  // enum-values array, so the sweep above never reaches it) and is otherwise unguarded — a future
+  // V2 change to the real table could drift from this hand copy with nothing to catch it. Pin it
+  // directly against `packages/types/api/checks.ts`'s canonical export (via `SHARED`, the same
+  // `@routeflow/types` require the rest of this file already uses).
+  it("stub export CHECK_TRANSITIONS (unswept by the *_VALUES check above) stays deep-equal to the canonical @routeflow/types export", () => {
+    const canonical = (SHARED as Record<string, unknown>)["CHECK_TRANSITIONS"];
+    expect(canonical).toBeDefined();
+    expect(MOBILE_STUB["CHECK_TRANSITIONS"]).toEqual(canonical);
+  });
 });

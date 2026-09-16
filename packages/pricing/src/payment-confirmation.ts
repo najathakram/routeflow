@@ -1,3 +1,5 @@
+import { roundMoney } from "./pricing";
+
 /**
  * F03 — the CONFIRMED payment predicate, and B421's cash/credit/advance split.
  *
@@ -178,4 +180,96 @@ export function resolveConfirmedAmounts(
     };
   }
   return splitConfirmed(payments);
+}
+
+// ─── Post-dated check payments PR-1 (additive-only) — HELD money vs. capacity ──────────────────
+//
+// `PaymentStatus` gains a `PENDING` value (a post-dated check recorded and on file, but not yet
+// clearable/bankable) alongside the existing `DRAFT`/`PAID`/`VOID`. The helpers below are
+// consumed by NOTHING in this PR (every existing call site is untouched — see the design's
+// §3.4 table, which is out of scope here) — they exist so a later PR has one shared place to
+// read "is this money held" from, instead of a fifth hand-rolled predicate.
+
+/** The two statuses that represent money the tenant can treat as spoken for: fully confirmed
+ *  (PAID) or a post-dated check on file that has not yet cleared (PENDING). Deliberately
+ *  excludes DRAFT — see `isNotVoid`/`remainingCapacity` below for why a capacity guard must
+ *  NOT be built on this set. */
+export const HELD_STATUSES = ["PAID", "PENDING"] as const;
+
+/** Prisma `where: { status: { in: [...] } }` filter for `HELD_STATUSES`. */
+export const HELD_PAYMENT = { status: { in: [...HELD_STATUSES] } } as const;
+
+/** True iff `p.status` is PAID or PENDING — the same test `HELD_PAYMENT`/`HELD_STATUSES`
+ *  express as a Prisma filter, for a caller holding an already-fetched row instead of building
+ *  a query. */
+export function isHeldPayment(p: { status?: string }): boolean {
+  return p.status === "PAID" || p.status === "PENDING";
+}
+
+/**
+ * Sum the `amount` of every HELD (PAID or PENDING) row in a payments array — money currently
+ * held: either fully confirmed, or a post-dated check on file that hasn't cleared yet. Used
+ * later where a reader needs "this money is spoken for" without yet being bankable. Distinct
+ * from `sumConfirmed` (PAID only) — see the mixed-fixture spec proving the two differ.
+ */
+export function sumHeld(
+  payments: ReadonlyArray<Pick<ConfirmablePaymentRow, "amount" | "status">> | null | undefined,
+): number {
+  return roundMoney(
+    (payments ?? []).filter((p) => isHeldPayment(p)).reduce((sum, p) => sum + Number(p.amount), 0),
+  );
+}
+
+/** The date money on a payment is treated as actually collected: `settledAt` when set, else
+ *  `paidAt`. Deliberately generic (no Date import) like the rest of this file — a caller
+ *  `Number()`s/formats it as needed. */
+export function collectedDateOf(p: { settledAt?: unknown; paidAt?: unknown }): unknown {
+  return p.settledAt ?? p.paidAt;
+}
+
+/**
+ * Sum of every payment whose `status` is NOT VOID — i.e. DRAFT + PAID + PENDING. This is the
+ * capacity-consuming set, and it is DELIBERATELY NOT `sumHeld`/`sumConfirmed`: those answer "is
+ * this money held/confirmed", a different question from "does this row already consume
+ * capacity against the invoice/allocation it was recorded on".
+ *
+ * Internal to this module — `remainingCapacity` below is the public entry point. Not exported
+ * because "not void" is a capacity concept, not a payment-confirmation concept, and giving it
+ * its own top-level export would invite a second, competing "which payments count" predicate in
+ * this file.
+ */
+function sumNotVoid(
+  payments: ReadonlyArray<Pick<ConfirmablePaymentRow, "amount" | "status">> | null | undefined,
+): number {
+  return (payments ?? [])
+    .filter((p) => p.status !== "VOID")
+    .reduce((sum, p) => sum + Number(p.amount), 0);
+}
+
+/**
+ * How much more can be applied/recorded against an invoice/allocation before it is overbooked —
+ * a GUARD used at record/apply time, never a display figure.
+ *
+ * N4 (binding — independent Opus review of the design, quoted verbatim so a future reader has
+ * the citation):
+ *
+ * > N4: HELD = PAID ∪ PENDING omits DRAFT, so capacity guards built on it would NOT be
+ * > behaviour-neutral. Today's capacity/guard sites (recordPayment, updatePayment, credit-note
+ * > apply/auto-apply, advance apply, mobile edit cap) all check `status !== VOID` — meaning an
+ * > unconfirmed DRAFT payment (e.g. an unconfirmed bulk bank-import row) already consumes
+ * > capacity today, correctly preventing a double-book before that DRAFT is even confirmed.
+ * > Resolution: CAPACITY = status ≠ VOID is the conservative choice — capacity must keep
+ * > counting DRAFT.
+ *
+ * Therefore this function subtracts `sumNotVoid` (DRAFT + PAID + PENDING), never `sumHeld`
+ * (PAID + PENDING only) and never `sumConfirmed` (PAID only) — reusing either of those here
+ * would silently stop counting DRAFT the moment this helper is wired into a real call site,
+ * which is exactly the regression N4 exists to prevent. Rounded with `roundMoney` like every
+ * other money-returning export in this package.
+ */
+export function remainingCapacity(
+  total: number,
+  payments: ReadonlyArray<Pick<ConfirmablePaymentRow, "amount" | "status">> | null | undefined,
+): number {
+  return roundMoney(Number(total) - sumNotVoid(payments));
 }

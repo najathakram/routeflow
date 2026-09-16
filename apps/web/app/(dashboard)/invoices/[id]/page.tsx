@@ -68,6 +68,7 @@ import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
 import { fmt, fmtCalendarDate, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
 import { formatQtySplit, resolveConfirmedAmounts } from "@routeflow/pricing";
+import { CHECK_TRANSITIONS } from "@routeflow/types";
 import { InvoiceTotalsSummary } from "./InvoiceTotalsSummary";
 import {
   SELECTABLE_PAYMENT_METHODS,
@@ -109,17 +110,11 @@ function methodBadgeClass(method: string) {
 
 // ─── Check lifecycle (Recorded → Deposited → Cleared → Bounced) ───────────────
 
-/**
- * Legal FORWARD transitions for a CHECK payment — mirrors the server's
- * CHECK_TRANSITIONS map (invoices.service.ts) so the dropdown greys out
- * illegal jumps before the request round-trips.
- */
-const CHECK_TRANSITIONS: Record<CheckStatus, readonly CheckStatus[]> = {
-  RECORDED: ["DEPOSITED", "BOUNCED"],
-  DEPOSITED: ["CLEARED", "BOUNCED"],
-  CLEARED: ["BOUNCED"],
-  BOUNCED: [],
-};
+// P5-12 / post-dated check payments PR-1: `CHECK_TRANSITIONS` (legal FORWARD transitions for a
+// CHECK payment, so the dropdown greys out illegal jumps before the request round-trips) now
+// comes from `@routeflow/types` — the ONE canonical copy shared with the API
+// (`invoices.service.ts`) and mobile (`payments-logic.ts`), which used to each hand-maintain an
+// identical local const. See `packages/types/api/checks.ts` for the V1-only rule.
 
 const CHECK_STATUS_META: Record<CheckStatus, { label: string; className: string }> = {
   RECORDED: { label: "Check recorded", className: "bg-gray-100 text-gray-600" },

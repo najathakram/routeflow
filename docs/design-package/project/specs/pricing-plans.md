@@ -64,7 +64,9 @@
 `plan.users_included` · `plan.routes_concurrent` · `flag.dispatch_live` · `flag.returns` ·
 `flag.ap_bills` · `flag.reports` · `flag.credit_limits` · `flag.settlement` ·
 `flag.pricing_tiers` · `flag.analytics` · `flag.forecasting` · `addon.buyer_portal` ·
-`addon.regulated_items` · `addon.ocr` · `flag.import_integrations` · `flag.api_sso`
+`addon.regulated_items` · `addon.ocr` · `flag.import_integrations` · `flag.api_sso` ·
+`flag.estimates` · `flag.recurring_invoices` · `flag.credit_notes` · `flag.suppliers` ·
+`flag.messaging`
 
 Server-side enforced; client hides or upsells gated surfaces (upsell state = the same page with
 a feature summary + enable CTA, per the Regulated Items pattern).

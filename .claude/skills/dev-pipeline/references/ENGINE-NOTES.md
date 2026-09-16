@@ -6,6 +6,10 @@
 
 ## Why Fable helps the Opus review at exactly two points (from MODEL POLICY)
 
+> Superseded 2026-09-12 — the task-loop rebuild removes Opus from the review/fix path entirely: Fable
+> reviews and implements HIGH-risk tasks, Sonnet reviews and implements routine ones, Opus is kept only
+> as `CFG.fallbackModel` for a Fable refusal. See `## 2026-09-12 — task-loop rebuild` below.
+
 Downstream the engine fixes the rest: **Sonnet** authors tests, implementation and mechanical fixes; **Opus 5**
 (`claude-opus-5`) runs the review lenses, refuters, red-gate audit, UI verification, mutation probes, judgment fixes
 and the re-check; **Haiku** at `effort: 'low'` runs the baseline gate, manifest, grounding, gates, red-run and
@@ -38,6 +42,11 @@ commands rather than read as defects, and the run proceeds with no real gate at 
 ⚠️ **A worktree without its own `node_modules` cannot see NESTED dependencies — give it its own install before trusting any check on the package that nests them.** Resolution from `<worktree>/apps/<pkg>` walks the _worktree's_ ancestors up to the main checkout's **root** `node_modules`; it never traverses the main checkout's `apps/<pkg>/node_modules`. So whatever the package manager nested there is **structurally invisible** to every worktree: its typecheck and suites fail with "cannot find module" — and a build cache can hide that for days, replaying a green nobody ever ran (a green check-types in a fresh worktree is evidence of a cache hit, not of correctness). **Run the package manager's clean install INSIDE the worktree** (it creates the worktree's own `node_modules` and does not touch the shared checkout) before launching a run that touches that package; a workdir with its own install also makes codegen (e.g. `prisma generate`) local rather than shared. Treat such suites as authoritative only from an installed tree or CI, and **check `<main>/apps/<pkg>/node_modules` before concluding a package is missing** — a bare "absent" is meaningless without the path it was read from. (Nesting is sometimes a version-conflict symptom that realigning the shared tree happens to dissolve, but never rely on that: the per-worktree install fixes it.
 
 ## The ten phases, and what each proves (long form)
+
+> Superseded 2026-09-12 — the ten fixed phases below are replaced by a per-task chain (waved by
+> `dependsOn`): Baseline → {brief → test-author → RED check → implement → pack → review → fix loop} per
+> task → Final. See `## 2026-09-12 — task-loop rebuild` below for the new shape and `dev-pipeline/SKILL.md`'s
+> task-loop table for the current phase-by-phase detail.
 
 ### The ten phases, and what each proves
 
@@ -100,6 +109,12 @@ commands rather than read as defects, and the run proceeds with no real gate at 
 
 ## Cost mechanics and the measured trades (long form, with the F06 measurement)
 
+> Superseded 2026-09-12 — the lens fan-out, complexity-routed fixer tags and lens-scoped refutation
+> described below belong to the pre-rebuild ten-phase engine. The task-loop engine keeps the risk-sets-
+> depth principle and the risk-gated mutation probe (now a `revert-probe` task type) but replaces the
+> lens machinery with one reviewer per task (Sonnet routine / Fable HIGH-risk) and a four-round fix table
+> (S3). See `## 2026-09-12 — task-loop rebuild` below.
+
 ### Cost mechanics (on by default, no quality trade)
 
 - **Risk sets DEPTH, never COVERAGE.** HIGH = the path or content touches money/pricing/tax, auth/permissions,
@@ -154,6 +169,10 @@ never success. **Coverage is the floor, not model strength:** `cascadeReview` is
 lenses' LOW-risk partition onto `CFG.cascadeModel` — the trade `cascadeAudit.missedFindings` exists to measure.
 
 ## Reading the result, resuming, and session-limit resilience (long form)
+
+> Superseded 2026-09-12 — most `result.json` fields below carry over unchanged, but the `clean` formula's
+> lens-era terms (`lensDied`, etc.) are gone and the result gains `tasks[]` and `rulings[]`. See
+> `## 2026-09-12 — task-loop rebuild` below and the S5 field list it points to.
 
 ### Reading the result
 
@@ -314,6 +333,11 @@ and lists the build-tool set — all green.
 
 ## 2026-09-11 — package P5: final pass reordered before the LAST budgeted fix round (major scale)
 
+> Superseded 2026-09-12 — `CFG.finalPassBeforeLastRound` and the single global fix-round `while` loop it
+> reordered are gone from the rebuild (`grep -n "finalPassBeforeLastRound" pipeline.js` returns nothing);
+> the fix loop is now per-task (inside `runTask`) and Final is one run-level step after every task
+> completes. See `## 2026-09-12 — task-loop rebuild` below.
+
 In 9/9 ledger rows where the terminal Final pass found a `major`, `fixRounds` was already at the cap
 (`CFG.maxFixRounds`), so the finding could only ever land in `remainingFindings` — it never reached a paid fix round.
 Fix: a new `CFG.finalPassBeforeLastRound` flag (default `true`). Inside the fix-round `while` loop, when
@@ -363,3 +387,75 @@ clean — proof the check would have caught this crash before it shipped, not a 
 assertions for `capFableBrief`/`utf8ByteLength`/`utf8Truncate` (multi-byte and surrogate-pair boundaries). Passes
 as of this fix; run it by hand after touching either function, it is not referenced by `dry-run.mjs`,
 `light-loop-dry-run.mjs`, or any package script.
+
+## 2026-09-12 — task-loop rebuild
+
+Owner ruling: `pipeline.js` (382 KB / 5,551 lines) was too expensive and too slow for what it proved —
+one comparable finished run cost $31.12 / 1h34m; another in-flight run (a 4-file config change) spent
+329K tokens / 23 min on planning alone, then 15 agents / 98K tokens through Implement, and produced two
+false findings (a "files this run will create" blocker on files that already existed; a wrong SDK
+version claim) plus one malformed checkpoint card. Full plan:
+`~/.claude/skills/dev-pipeline/docs/superpowers/plans/2026-09-12-task-loop-rebuild.md` (S1-S6 +
+Refinements own the design; task lists A1-A17/A10b and B1-B21 implement it). Old engine preserved at
+`pipeline.js.bak-2026-09-12`.
+
+Rulings (D1-D6):
+
+- **D1 success test** — a ledger head-to-head over the next 10 small runs: true $/run, wall-clock,
+  confirmed-finding rate vs the previous 10 (the engine's own ten-run rule).
+- **D2 target shape** — rebuild `pipeline.js` on the superpowers shape (not trim-in-place, not
+  light-loop-as-default).
+- **D3 bugfix mode** — the same per-task loop plus superpowers' debugging shape: a `root-cause` task
+  must finish before any `fix` task, and a `repro-test` must fail on the bug's own wrong value. The four
+  bugfix-only features become plan TASK TYPES, not engine phases — one engine, never forked.
+- **D4 approach** — task-loop engine, parallel waves, a pipelined per-task chain, Haiku baseline,
+  fire-and-forget checkpoints, ledger tags unchanged.
+- **D5** — a SEPARATE test-author agent per task; the implementer never writes the test it must pass
+  (the `standard` profile; `lean` drops this — see profiles below).
+- **D6 UI verify** — kept as a TASK TYPE `ui-verify {url, startCommand, flows[], viewports[], checks[]}`:
+  a Sonnet `medium` driver writes and runs the Playwright spec and returns evidence (screenshots,
+  console, network, a11y per flow x viewport); the task's own reviewer judges the evidence (Sonnet
+  `high`; Fable on HIGH-risk); a blocked/undriven flow is a blocker; the task re-runs after any fix round
+  that touches its `files`.
+
+**Shape** (replaces "the ten phases" above): **Baseline** (Haiku — artifact grounding, planned-file
+existence check, plan-size caps, bugfix harness-integrity read) -> **task loop** (tasks from
+`args.tasks[]` in `dependsOn` order, disjoint-file tasks in parallel waves, per-task chain pipelined:
+brief -> test-author -> RED check -> implement -> pack -> review -> fix loop -> fire-and-forget
+checkpoint) -> **Final** (full verify suite plus HIGH-risk-only mutation/revert probes and a Fable final
+read) -> `result.json`.
+
+**Task contract**: `args.tasks[]` replaces `testPackages`/`packages`/`redGate`:
+`{ id, title, files[], tests[] (paths + T# ids), dependsOn[], risk?: 'HIGH'|'LOW', radius?: [before, after],
+introducesObservable?: true, type?: 'feature'|'root-cause'|'repro-test'|'fix'|'revert-probe'|'docs'|'ui-verify' }`;
+a `revert-probe` task takes singular `file` and `test` strings instead of `files[]`/`tests[]`. `radius` is a
+numeric context-line pair passed as `review-pack.mjs --radius <before>,<after>`; a path is a usage error.
+**The brief is the `### <id>` heading section of build-plan.md**, sliced by task-brief.mjs into
+`tasks/<id>/brief.md`, which is the only brief any agent reads. An inline `tasks[].brief` string is never
+read by an agent: the engine only scans it for the INTRODUCES-OBSERVABLE token. `CFG.caps.briefBytes` is
+declared but unenforced.
+`verifyCommands.{perRound,final}`, `lessonsPath`, `runDir`, `startedAt`, `scale`, `mode`, `workdir`,
+`context` stay. Three Node scripts (`dev-pipeline/scripts/{task-brief,review-pack,fix-brief}.mjs`), run
+by Haiku agents, slice the plan/test-plan/findings into per-task artifacts under
+`<runDir>/tasks/<id>/{brief.md,tests-report.md,report.md,pack.md,review.json,fix-r<N>.md}`.
+
+**Model table (Opus removed as a reviewer/implementer):** Fable 5.1 = session planning, HIGH-risk
+reviewer, HIGH-risk implementer (first pass) and executor, fix designer from round 3, final read on
+HIGH-risk files; Sonnet 5 = test author, routine implementer, routine reviewer, fix-round 1-2 executor,
+re-reviewer on routine files; Haiku 4.5 = baseline gates, the three scripts, the RED check, checkpoints,
+the result writer. **Opus 5 is kept only as `CFG.fallbackModel`** for a Fable refusal — it no longer
+runs a review lens, the red-gate audit, or a fix by default (task loop: Fable, Opus fallback).
+
+**Profiles** (`CFG.profiles`, `args.profile` overrides): `lean` = superpowers parity — the implementer
+writes its own tests and pastes observed RED then GREEN in `report.md`, Baseline is grounding + planned-
+file existence + `perRound` commands once (no probes), the reviewer is always Sonnet `high`, and Fable
+appears only as the round-3+ fix designer. `standard` = the full shape above (separate test author, full
+Baseline, Haiku RED check, HIGH-risk extras, sibling sweep/harness check under `mode:'bugfix'`). Default:
+`lean` when `scale:'small'` and no HIGH-risk file (by the tightened risk classifier or an explicit
+`tasks[].risk`); else `standard`. Ledger rows gain a `profile` field (null-safe for older rows).
+
+**Bugfix task types** (`mode:'bugfix'`): `root-cause`, `repro-test`, `fix`, `revert-probe`, `docs` (plus
+the always-available `ui-verify`); a `fix` depends on both a `root-cause` (must report
+`reproduced && causeConfirmed`) and a `repro-test` (RED check is BEHAVIORAL — the failure output must
+contain the bug's `wrongValue`). Sibling sweep and the harness-integrity read stay ENGINE steps under
+`mode:'bugfix'`, not task types, so bug-pipeline's `siblingPatterns` arg is unchanged.

@@ -13,10 +13,12 @@
 //
 // Usage:
 //   node route-task.mjs "<task text>" [--files a.ts,b.ts,...] [--project <dir>]
-//       [--json] [--explain]
-//   echo '{"prompt":"<task text>","files":["a.ts"]}' | node route-task.mjs
+//       [--session-id <sid>] [--json] [--explain]
+//   echo '{"prompt":"<task text>","files":["a.ts"],"session_id":"<sid>"}' | \
+//       node route-task.mjs
 //       (UserPromptSubmit hook shape -- stdin JSON, `prompt` field is the task
-//        text; used automatically when no positional task text is given and
+//        text, `session_id` feeds the Part C 2026-09-12 approach pin/rotation
+//        below; used automatically when no positional task text is given and
 //        stdin is not a TTY)
 //   node route-task.mjs selftest
 //   node route-task.mjs --help
@@ -50,12 +52,18 @@
 //   - <project>/.claude/lessons/LESSONS-DIGEST.md (novelty: known lessons)
 //   - <project>/.claude/pipeline/**/fix-cards/* (novelty: filenames only)
 //   - <project>/package.json, jest.config.* (verifiability)
+//   - <project>/.claude/approach.json (Part C 2026-09-12: the approach pin
+//     written by approach.mjs next -- see decideApproach below)
+//   - <project>/.claude/pipeline/approach-rotation.json (rotation state)
 //   - best-effort: shells out to pipeline-ledger.mjs summary --json --project
 //     <dir> (sibling script) to look for a `routingScorecard`; any failure
 //     (missing script, bad JSON, timeout) is swallowed and just means "no
 //     override available" -- this never throws and never blocks routing.
 //   - a temp directory under os.tmpdir() (selftest only)
-// and writes nothing, ever.
+// and writes only <project>/.claude/pipeline/approach-rotation.json, and only
+// when a fresh (unpinned, not-yet-logged) session's task lands on the
+// rotation branch of decideApproach -- see the Part C 2026-09-12 addition
+// below. Nothing else is ever written.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -159,6 +167,16 @@ const RISK_PATH_PATTERNS = [
 const BOUNDED_WORDS = [
   "fix", "rename", "typo", "one file", "single file", "small tweak", "tiny",
   "quick fix", "one-line", "oneliner", "one liner", "hotfix", "small fix",
+];
+
+// Part C 2026-09-12: UI signal for decideApproach's "HIGH-risk or major or
+// ui -> dev-pipeline standard" rule (owner ruling: a UI change earns the
+// heavier local:e2e-gated arm even when otherwise small/bounded, rather than
+// landing randomly on a raw/superpowers rotation slot).
+const UI_WORDS = [
+  "ui", "ux", "frontend", "front-end", "component", "css", "stylesheet",
+  "responsive", "accessibility", "a11y", "modal", "dialog", "layout",
+  "screen", "page layout", "design system", "storybook", "tailwind",
 ];
 
 const BUG_ID_RE = /\b(b|bug-)\d{2,5}\b/i;
@@ -501,6 +519,8 @@ function computeScores(taskText, files, projectDir) {
   const verifiability = checkVerifiability(projectDir);
 
   const wideOrchestration = /\bworkflow\b|\borchestrat\w*|\bmulti-agent\b/i.test(taskText);
+  const uiHits = countMatches(lower, UI_WORDS);
+  const isUi = uiHits.count > 0;
 
   return {
     wordCount,
@@ -514,6 +534,7 @@ function computeScores(taskText, files, projectDir) {
     novelty,
     verifiability,
     wideOrchestration,
+    isUi: { value: isUi, hits: uiHits.hits },
   };
 }
 
@@ -553,6 +574,190 @@ function decideRoute(taskText, files, scores) {
     ? "no matching lesson/fix-card"
     : `known pattern (${scores.novelty.matched})`;
   return { route: "dev-pipeline", reason: `non-trivial dev work, ${noveltyNote}` };
+}
+
+// ---------------------------------------------------------------------------
+// approach routing (Part C 2026-09-12 -- task-loop-rebuild plan, "Part C
+// design" §Router): which of the three first-class evaluation arms
+// (dev-pipeline / superpowers / raw) a task should run under. Independent of
+// decideRoute's engine choice above -- decideRoute picks WHICH ENGINE
+// (light-loop/bug-pipeline/dev-pipeline/workflow); decideApproach picks WHICH
+// METHODOLOGY (a whole-session switch: the dev-pipeline engine itself, the
+// superpowers plugin, or no framework at all). A known-defect task still
+// answers "bug-pipeline" here too, since that is dev-pipeline's own bugfix
+// mode -- it is not one of the three rotation arms and never rotates.
+// ---------------------------------------------------------------------------
+
+const ROTATION_ARMS = ["dev-pipeline", "superpowers", "raw"];
+const APPROACH_PIN_REL = [".claude", "approach.json"];
+const ROTATION_STATE_REL = [".claude", "pipeline", "approach-rotation.json"];
+
+function readApproachPin(projectDir) {
+  return safeReadJson(path.join(projectDir, ...APPROACH_PIN_REL));
+}
+
+function readRotationState(projectDir) {
+  const parsed = safeReadJson(path.join(projectDir, ...ROTATION_STATE_REL));
+  if (parsed && Number.isInteger(parsed.next) && Array.isArray(parsed.log)) return parsed;
+  return { next: 0, log: [] };
+}
+
+function writeRotationState(projectDir, state) {
+  const full = path.join(projectDir, ...ROTATION_STATE_REL);
+  fs.mkdirSync(path.dirname(full), { recursive: true });
+  fs.writeFileSync(full, JSON.stringify(state, null, 2) + "\n", "utf8");
+}
+
+// Pure function -- no fs, no clock dependency beyond the timestamp it stamps
+// onto a NEW log entry. Given the current scores, an approach pin (or null),
+// and { sessionId, rotation } state, returns:
+//   { approach, profile, why, rotation, deferNote }
+// `rotation` is either null (nothing to persist -- pin/bug/HIGH-risk/major/
+// ui/trivial paths never touch the rotation file, and a rotation pick made
+// with no sessionId is advisory-only and also not persisted) or the new
+// { next, log } object the caller should write back to
+// .claude/pipeline/approach-rotation.json.
+//
+// Precedence (deliberately NOT the plan prose's listing order -- matches
+// decideRoute's own precedence instead, so a one-line bug fix still reaches
+// bug-pipeline rather than misrouting to "trivial -> raw"):
+//   1. pin for this session wins (pin.sessionId === state.sessionId, or a
+//      not-yet-claimed pin whose sessionId is still null -- orient.mjs's
+//      SessionStart hook is what stamps it).
+//   2. known-defect signal -> bug-pipeline (never rotates; bug-pipeline is
+//      dev-pipeline's own bugfix mode, not a rotation arm).
+//   3. HIGH-risk, or major (HIGH breadth / explicit orchestration), or UI
+//      work -> dev-pipeline standard (never rotates).
+//   4. trivial (bounded, LOW breadth, LOW risk, no orchestration) -> raw.
+//   5. everything else ("small LOW") -> the rotation, advanced once per
+//      session. NOTE (plan "Part C design" §Router): a superpowers
+//      assignment is only actionable at the NEXT launch -- isolation is a
+//      per-session plugin-enable switch that cannot flip mid-session (see
+//      Rulings 2026-09-12) -- so when the rotation's own turn lands on
+//      "superpowers" for an ordinary (non-approach.mjs-driven) live session,
+//      this session's own delivered `approach` is bumped to the FOLLOWING
+//      arm instead, `deferNote` carries the advisory to print, and the log
+//      entry records both `slot` (whose turn it was: "superpowers") and
+//      `approach` (what this session actually got) so the rotation history
+//      stays honest. `approach.mjs next` (task 39) is the intended way to
+//      actually claim a superpowers turn -- it pins BEFORE any hook call has
+//      a chance to defer that slot away.
+function decideApproach(scores, pin, state) {
+  const st = state || {};
+  const sessionId = typeof st.sessionId === "string" && st.sessionId ? st.sessionId : null;
+  const rotationIn =
+    st.rotation && Number.isInteger(st.rotation.next) && Array.isArray(st.rotation.log)
+      ? st.rotation
+      : { next: 0, log: [] };
+
+  // 1. Pin wins.
+  if (pin && typeof pin === "object" && typeof pin.approach === "string") {
+    const pinMatches = pin.sessionId == null || pin.sessionId === sessionId;
+    if (pinMatches) {
+      return {
+        approach: pin.approach,
+        profile: typeof pin.profile === "string" ? pin.profile : null,
+        why: "pinned via approach.mjs",
+        rotation: null,
+        deferNote: null,
+      };
+    }
+  }
+
+  // 2. Known-defect signal -> bug-pipeline, never rotates.
+  if (scores.isBug && scores.isBug.value) {
+    return {
+      approach: "bug-pipeline",
+      profile: null,
+      why: "known-defect signal -- bug-pipeline (dev-pipeline bugfix mode)",
+      rotation: null,
+      deferNote: null,
+    };
+  }
+
+  // 3. HIGH-risk, or major (HIGH breadth / explicit orchestration), or UI
+  //    work -> dev-pipeline standard, never rotates.
+  const isMajor = scores.breadth.level === "HIGH" || scores.wideOrchestration;
+  const isUi = !!(scores.isUi && scores.isUi.value);
+  if (scores.risk.level === "HIGH" || isMajor || isUi) {
+    const why = scores.risk.level === "HIGH" ? "HIGH-risk" : isMajor ? "major/wide breadth" : "UI work";
+    return {
+      approach: "dev-pipeline",
+      profile: "standard",
+      why: `${why} -- dev-pipeline standard`,
+      rotation: null,
+      deferNote: null,
+    };
+  }
+
+  // 4. Trivial (bounded, LOW/LOW, no orchestration) -> raw.
+  const isTrivial = scores.bounded && scores.bounded.value && scores.breadth.level === "LOW" && !scores.wideOrchestration;
+  if (isTrivial) {
+    return {
+      approach: "raw",
+      profile: null,
+      why: "trivial bounded change -- raw (no framework)",
+      rotation: null,
+      deferNote: null,
+    };
+  }
+
+  // 5. Small LOW -> rotation, advanced once per session.
+  if (sessionId) {
+    const already = rotationIn.log.find((e) => e && e.sessionId === sessionId);
+    if (already) {
+      return {
+        approach: already.approach,
+        profile: already.approach === "dev-pipeline" ? "lean" : null,
+        why: `rotation (already assigned this session: ${already.approach})`,
+        rotation: null,
+        deferNote: already.slot === "superpowers" ? already.deferNote || null : null,
+      };
+    }
+  }
+
+  const slotIdx = ((rotationIn.next % ROTATION_ARMS.length) + ROTATION_ARMS.length) % ROTATION_ARMS.length;
+  const slot = ROTATION_ARMS[slotIdx];
+  let deliveredIdx = slotIdx;
+  let deferNote = null;
+  // allowSuperpowers (Part C task 39, approach.mjs `next`): the ordinary live
+  // hook call (state.allowSuperpowers falsy) always defers a superpowers slot
+  // forward, since it cannot flip the plugin mid-session -- but
+  // `approach.mjs next` IS the mechanism that flips the plugin BEFORE a new
+  // session starts, so it opts in via --allow-superpowers to actually claim
+  // the slot instead of deferring past it.
+  if (slot === "superpowers" && !st.allowSuperpowers) {
+    deferNote = "superpowers arm: run `approach.mjs next` and start a new session";
+    deliveredIdx = (slotIdx + 1) % ROTATION_ARMS.length;
+  }
+  const delivered = ROTATION_ARMS[deliveredIdx];
+
+  if (!sessionId) {
+    // Advisory-only (e.g. --explain probing, or no hook session id
+    // available) -- report the current slot without consuming it.
+    return {
+      approach: delivered,
+      profile: delivered === "dev-pipeline" ? "lean" : null,
+      why: `rotation (no session id, not advanced): ${delivered}`,
+      rotation: null,
+      deferNote,
+    };
+  }
+
+  const newRotation = {
+    next: (deliveredIdx + 1) % ROTATION_ARMS.length,
+    log: [
+      ...rotationIn.log,
+      { sessionId, slot, approach: delivered, deferNote, at: new Date().toISOString() },
+    ].slice(-200),
+  };
+  return {
+    approach: delivered,
+    profile: delivered === "dev-pipeline" ? "lean" : null,
+    why: deferNote ? `rotation (deferred past superpowers): ${delivered}` : `rotation arm ${slotIdx + 1}/${ROTATION_ARMS.length}: ${delivered}`,
+    rotation: newRotation,
+    deferNote,
+  };
 }
 
 // G2: ultracode (Fable ultrathink framing) is a BREADTH decision, not a risk
@@ -675,22 +880,39 @@ function formatRoles(roles) {
   return roles.map((r) => `${r.role}=${r.model}@${r.effort}${r.overridden ? "*" : ""}`).join(", ");
 }
 
+function formatApproachSuffix(approach, reason) {
+  if (!approach) return "";
+  const label = approach.profile ? `${approach.approach}:${approach.profile}` : approach.approach;
+  return ` · Approach: ${label} (${reason})`;
+}
+
 function formatAdvise(result) {
   if (!result.route) return "";
   const ultraFlag = result.ultracode.on ? "ON" : "OFF";
   let reason = result.ultracode.on ? result.ultracode.reason : result.route.reason;
-  let line = `Route: ${result.route.route} · Ultracode: ${ultraFlag} — ${reason} · Roles: ${formatRoles(result.roles)}`;
+  let approachReason = result.approach ? result.approach.why : null;
+  let roles = result.roles.slice();
+
+  const build = () =>
+    `Route: ${result.route.route} · Ultracode: ${ultraFlag} — ${reason} · Roles: ${formatRoles(roles)}` +
+    formatApproachSuffix(result.approach, approachReason);
+
+  let line = build();
 
   if (byteLen(line) > ADVISE_BYTE_CAP) {
-    // Shrink the reason first, then drop trailing roles, until it fits.
-    let roles = result.roles.slice();
+    // Shrink the reason first, then the approach reason, then drop trailing
+    // roles, until it fits.
     while (byteLen(line) > ADVISE_BYTE_CAP && reason.length > 20) {
-      reason = reason.slice(0, reason.length - 10).trimEnd();
-      line = `Route: ${result.route.route} · Ultracode: ${ultraFlag} — ${reason}… · Roles: ${formatRoles(roles)}`;
+      reason = reason.slice(0, reason.length - 10).trimEnd() + "…";
+      line = build();
+    }
+    while (byteLen(line) > ADVISE_BYTE_CAP && approachReason && approachReason.length > 20) {
+      approachReason = approachReason.slice(0, approachReason.length - 10).trimEnd() + "…";
+      line = build();
     }
     while (byteLen(line) > ADVISE_BYTE_CAP && roles.length > 1) {
       roles = roles.slice(0, -1);
-      line = `Route: ${result.route.route} · Ultracode: ${ultraFlag} — ${reason}… · Roles: ${formatRoles(roles)}`;
+      line = build();
     }
   }
   return line;
@@ -716,7 +938,7 @@ function formatExplain(result) {
 // orchestration
 // ---------------------------------------------------------------------------
 
-function routeTask(taskText, files, projectDir) {
+function routeTask(taskText, files, projectDir, sessionId, allowSuperpowers) {
   const scores = computeScores(taskText, files, projectDir);
   const routeDecision = decideRoute(taskText, files, scores);
   const ultracode = decideUltracode(scores);
@@ -728,6 +950,23 @@ function routeTask(taskText, files, projectDir) {
     roles = applyScorecardOverrides(roles, scorecardRows);
   }
 
+  // Part C 2026-09-12: approach decision only applies to a real (non-null)
+  // route -- a conversational ack or a bare question never touches the pin
+  // file, the rotation state, or the rotation's once-per-session bookkeeping.
+  let approach = null;
+  if (routeDecision.route) {
+    const pin = readApproachPin(projectDir);
+    const rotation = readRotationState(projectDir);
+    const decision = decideApproach(scores, pin, { sessionId, rotation, allowSuperpowers: !!allowSuperpowers });
+    if (decision.rotation) writeRotationState(projectDir, decision.rotation);
+    approach = {
+      approach: decision.approach,
+      profile: decision.profile,
+      why: decision.why,
+      deferNote: decision.deferNote,
+    };
+  }
+
   return {
     task: taskText,
     project: projectDir,
@@ -736,6 +975,7 @@ function routeTask(taskText, files, projectDir) {
     ultracode,
     roles,
     scores,
+    approach,
   };
 }
 
@@ -744,7 +984,7 @@ function routeTask(taskText, files, projectDir) {
 // ---------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const flags = { files: null, project: null, json: false, explain: false };
+  const flags = { files: null, project: null, json: false, explain: false, sessionId: null, allowSuperpowers: false };
   const rest = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -752,6 +992,9 @@ function parseArgs(argv) {
     else if (a.startsWith("--files=")) flags.files = a.slice("--files=".length);
     else if (a === "--project") flags.project = argv[++i];
     else if (a.startsWith("--project=")) flags.project = a.slice("--project=".length);
+    else if (a === "--session-id") flags.sessionId = argv[++i];
+    else if (a.startsWith("--session-id=")) flags.sessionId = a.slice("--session-id=".length);
+    else if (a === "--allow-superpowers") flags.allowSuperpowers = true;
     else if (a === "--json") flags.json = true;
     else if (a === "--explain") flags.explain = true;
     else if (a === "--advise") flags.advise = true; // accepted, it's the default anyway
@@ -778,9 +1021,14 @@ function printHelp() {
   console.log(`route-task.mjs -- score a task and recommend an engine + model/effort roles
 
 Usage:
-  node route-task.mjs "<task text>" [--files a.ts,b.ts] [--project <dir>] [--json] [--explain]
-  echo '{"prompt":"..."}' | node route-task.mjs
-  node route-task.mjs selftest`);
+  node route-task.mjs "<task text>" [--files a.ts,b.ts] [--project <dir>]
+      [--session-id <sid>] [--allow-superpowers] [--json] [--explain]
+  echo '{"prompt":"...","session_id":"..."}' | node route-task.mjs
+  node route-task.mjs selftest
+
+  --allow-superpowers claims a rotation-superpowers slot directly instead of
+  deferring it forward -- used only by approach.mjs next, which is the
+  mechanism that actually flips the plugin before a new session starts.`);
 }
 
 function main() {
@@ -796,6 +1044,7 @@ function main() {
   const { flags, rest } = parseArgs(argv);
   let taskText = rest.join(" ").trim();
   let stdinFiles = null;
+  let stdinSessionId = null;
 
   if (!taskText) {
     const raw = readStdinIfAvailable();
@@ -806,6 +1055,7 @@ function main() {
         if (typeof obj.prompt === "string") taskText = obj.prompt;
         else if (typeof obj.text === "string") taskText = obj.text;
         if (Array.isArray(obj.files)) stdinFiles = obj.files;
+        if (typeof obj.session_id === "string") stdinSessionId = obj.session_id;
       } catch {
         taskText = trimmed;
       }
@@ -814,13 +1064,14 @@ function main() {
 
   const projectDir = path.resolve(flags.project || process.cwd());
   const files = parseFilesFlag(flags.files) || stdinFiles || [];
+  const sessionId = flags.sessionId || stdinSessionId || null;
 
   if (!taskText) {
     if (flags.json) console.log(JSON.stringify({ route: null, reason: "empty task text" }));
     process.exit(0);
   }
 
-  const result = routeTask(taskText, files, projectDir);
+  const result = routeTask(taskText, files, projectDir, sessionId, flags.allowSuperpowers);
 
   if (result.route === null && !flags.json && !flags.explain) {
     process.exit(0); // conversational: stay silent
@@ -831,6 +1082,9 @@ function main() {
   } else {
     const line = formatAdvise(result);
     if (line) console.log(line);
+    if (result.approach && result.approach.deferNote) {
+      console.log(`Note: ${result.approach.deferNote}`);
+    }
   }
   if (flags.explain) {
     console.log(formatExplain(result));
@@ -1342,6 +1596,206 @@ function runSelftest() {
   // selftest run itself is the proof -- no separate assertion needed here;
   // this line documents the requirement per the brief's Acceptance section).
 
+  // -------------------------------------------------------------------------
+  // 39-48. Part C 2026-09-12 (task-loop-rebuild, C2): decideApproach.
+  // -------------------------------------------------------------------------
+
+  function smallLowScores(text) {
+    return computeScores(text, [], bareProject);
+  }
+
+  // 39. Pinned approach wins outright, regardless of the underlying scores.
+  {
+    const d = decideApproach(
+      smallLowScores("fix the crash on checkout"), // would otherwise be a bug signal
+      { approach: "superpowers", profile: null, sessionId: "sess-pin-1" },
+      { sessionId: "sess-pin-1", rotation: { next: 0, log: [] } }
+    );
+    assert(d.approach === "superpowers", "39: a matching pin wins over a bug signal", failures);
+    assert(d.rotation === null, "39: a pin decision never touches rotation state", failures);
+  }
+
+  // 40. A pin with sessionId:null (not yet claimed by orient.mjs) matches
+  // ANY current session -- it is the freshly-written, not-yet-stamped pin.
+  {
+    const d = decideApproach(
+      smallLowScores("implement a new export feature"),
+      { approach: "dev-pipeline", profile: "standard", sessionId: null },
+      { sessionId: "sess-any", rotation: { next: 0, log: [] } }
+    );
+    assert(d.approach === "dev-pipeline" && d.profile === "standard", "40: an unclaimed pin (sessionId:null) matches any session", failures);
+  }
+
+  // 41. A pin stamped for a DIFFERENT session does not win -- falls through
+  // to the underlying decision (here, a bug signal -> bug-pipeline).
+  {
+    const d = decideApproach(
+      smallLowScores("fix the crash on checkout"),
+      { approach: "superpowers", profile: null, sessionId: "sess-other" },
+      { sessionId: "sess-mine", rotation: { next: 0, log: [] } }
+    );
+    assert(d.approach === "bug-pipeline", "41: a pin stamped for a different session is ignored", failures);
+  }
+
+  // 42. Bug signal -> bug-pipeline, never rotates (rotation stays null even
+  // when the rotation pointer is mid-cycle).
+  {
+    const d = decideApproach(smallLowScores("fix the regression in rounding"), null, {
+      sessionId: "sess-bug-1",
+      rotation: { next: 1, log: [] },
+    });
+    assert(d.approach === "bug-pipeline", "42: bug signal routes to bug-pipeline", failures);
+    assert(d.rotation === null, "42: bug-pipeline decision never touches rotation state", failures);
+  }
+
+  // 43. HIGH-risk never rotates -- two different sessions both land on
+  // dev-pipeline:standard, and neither call proposes a rotation update.
+  {
+    const scores = smallLowScores("Add a new field to the billing schema for payment reconciliation");
+    const d1 = decideApproach(scores, null, { sessionId: "sess-risk-1", rotation: { next: 0, log: [] } });
+    const d2 = decideApproach(scores, null, { sessionId: "sess-risk-2", rotation: { next: 2, log: [] } });
+    assert(d1.approach === "dev-pipeline" && d1.profile === "standard", "43a: HIGH-risk -> dev-pipeline standard", failures);
+    assert(d1.rotation === null, "43b: HIGH-risk decision never touches rotation state (session 1)", failures);
+    assert(d2.approach === "dev-pipeline" && d2.profile === "standard", "43c: HIGH-risk -> dev-pipeline standard (session 2)", failures);
+    assert(d2.rotation === null, "43d: HIGH-risk decision never touches rotation state (session 2)", failures);
+  }
+
+  // 44. Major (HIGH breadth / explicit orchestration) never rotates either.
+  {
+    const scores = smallLowScores("Design and orchestrate a full multi-agent workflow migration across the codebase");
+    const d = decideApproach(scores, null, { sessionId: "sess-major-1", rotation: { next: 1, log: [] } });
+    assert(d.approach === "dev-pipeline" && d.profile === "standard", "44: major/wide breadth -> dev-pipeline standard", failures);
+    assert(d.rotation === null, "44: major decision never touches rotation state", failures);
+  }
+
+  // 45. UI work never rotates.
+  {
+    const scores = smallLowScores("Improve the accessibility of the modal dialog component's CSS");
+    const d = decideApproach(scores, null, { sessionId: "sess-ui-1", rotation: { next: 1, log: [] } });
+    assert(d.approach === "dev-pipeline" && d.profile === "standard", "45: UI work -> dev-pipeline standard", failures);
+    assert(d.rotation === null, "45: UI decision never touches rotation state", failures);
+  }
+
+  // 46. Trivial (bounded, LOW/LOW, no orchestration) -> raw, never rotates.
+  // ("Rename" is a BOUNDED_WORDS hit -> bounded true; no risk/breadth words.)
+  {
+    const d = decideApproach(smallLowScores("Rename the submit button label to Continue"), null, {
+      sessionId: "sess-trivial-1",
+      rotation: { next: 0, log: [] },
+    });
+    assert(d.approach === "raw", "46: trivial bounded change -> raw", failures);
+    assert(d.rotation === null, "46: trivial decision never touches rotation state", failures);
+  }
+
+  // 47. Rotation: each of the three starting slots produces a sensible,
+  // actionable decision -- dev-pipeline and raw are delivered directly; the
+  // superpowers slot defers to the following arm (raw) for THIS session
+  // (plan "Part C design" §Router NOTE) and carries a deferNote, while the
+  // log entry's own `slot` field still names "superpowers" -- so the
+  // rotation's bookkeeping visits all three arms even though the live
+  // session only ever acts on dev-pipeline/raw.
+  {
+    const smallLow = smallLowScores("Add a CSV export to orders");
+    const d0 = decideApproach(smallLow, null, { sessionId: "sess-rot-0", rotation: { next: 0, log: [] } });
+    assert(d0.approach === "dev-pipeline" && d0.profile === "lean", "47a: rotation slot 0 delivers dev-pipeline:lean", failures);
+    assert(d0.rotation && d0.rotation.next === 1, "47b: rotation slot 0 advances next to 1", failures);
+    assert(d0.deferNote === null, "47c: rotation slot 0 carries no deferNote", failures);
+
+    const d1 = decideApproach(smallLow, null, { sessionId: "sess-rot-1", rotation: { next: 1, log: [] } });
+    assert(d1.approach === "raw", "47d: rotation slot 1 (superpowers) defers to raw for this session", failures);
+    assert(typeof d1.deferNote === "string" && /approach\.mjs next/.test(d1.deferNote), "47e: deferred slot carries the approach.mjs next advisory", failures);
+    assert(d1.rotation && d1.rotation.log.some((e) => e.slot === "superpowers"), "47f: the log's slot field still names superpowers for that turn", failures);
+    assert(d1.rotation.next === 0, "47g: deferring past superpowers advances next to the arm after the deferred delivery", failures);
+
+    const d2 = decideApproach(smallLow, null, { sessionId: "sess-rot-2", rotation: { next: 2, log: [] } });
+    assert(d2.approach === "raw" && d2.profile === null, "47h: rotation slot 2 delivers raw directly", failures);
+    assert(d2.rotation && d2.rotation.next === 0, "47i: rotation slot 2 wraps next back to 0", failures);
+  }
+
+  // 47j-47l. allowSuperpowers (Part C task 39: approach.mjs `next` is the
+  // mechanism that flips the plugin BEFORE a new session starts, so it opts
+  // in to actually claim a superpowers slot instead of deferring it).
+  {
+    const smallLow = smallLowScores("Add a CSV export to orders");
+    const d = decideApproach(smallLow, null, {
+      sessionId: "sess-rot-claim",
+      rotation: { next: 1, log: [] },
+      allowSuperpowers: true,
+    });
+    assert(d.approach === "superpowers", "47j: allowSuperpowers claims the superpowers slot directly", failures);
+    assert(d.deferNote === null, "47k: a claimed superpowers slot carries no deferNote", failures);
+    assert(d.rotation && d.rotation.next === 2, "47l: claiming superpowers advances next by exactly one slot", failures);
+  }
+
+  // 48. Rotation advances ONCE per session -- a second call with the SAME
+  // sessionId (chaining the rotation state the first call proposed) returns
+  // the SAME approach again and proposes no further rotation change.
+  {
+    const smallLow = smallLowScores("Add a CSV export to orders");
+    const first = decideApproach(smallLow, null, { sessionId: "sess-once", rotation: { next: 0, log: [] } });
+    assert(first.rotation !== null, "48a: first call for a fresh session proposes a rotation update", failures);
+    const second = decideApproach(smallLow, null, { sessionId: "sess-once", rotation: first.rotation });
+    assert(second.approach === first.approach, "48b: a second call in the same session repeats the same approach", failures);
+    assert(second.rotation === null, "48c: a second call in the same session proposes no further rotation change", failures);
+  }
+
+  // 49. No session id at all (e.g. --explain probing outside a hook) reports
+  // the current slot advisory-only and never proposes a rotation write.
+  {
+    const smallLow = smallLowScores("Add a CSV export to orders");
+    const d = decideApproach(smallLow, null, { sessionId: null, rotation: { next: 0, log: [] } });
+    assert(d.rotation === null, "49: no session id -> rotation is never persisted", failures);
+    assert(/no session id/.test(d.why), "49: no session id -> reason says so", failures);
+  }
+
+  // -------------------------------------------------------------------------
+  // 50-52. routeTask()-level integration: pin file + rotation file on disk,
+  // and the advise line's Approach segment.
+  // -------------------------------------------------------------------------
+
+  const approachProject = path.join(tmpBase, "approach-project");
+  fs.mkdirSync(approachProject, { recursive: true });
+
+  // 50. routeTask reads a real .claude/approach.json pin off disk and it wins.
+  {
+    fs.mkdirSync(path.join(approachProject, ".claude"), { recursive: true });
+    fs.writeFileSync(
+      path.join(approachProject, ".claude", "approach.json"),
+      JSON.stringify({ approach: "raw", profile: null, sessionId: null })
+    );
+    const r = routeTask("Add a CSV export to orders", [], approachProject, "sess-pin-disk");
+    assert(r.approach && r.approach.approach === "raw", "50: routeTask honors an on-disk approach.json pin", failures);
+    fs.rmSync(path.join(approachProject, ".claude", "approach.json"));
+  }
+
+  // 51. routeTask persists a rotation advance to disk for a fresh session,
+  // and a second routeTask call for the SAME session reads it back and does
+  // not advance further.
+  {
+    const r1 = routeTask("Add a CSV export to orders", [], approachProject, "sess-disk-1");
+    const rotationPath = path.join(approachProject, ".claude", "pipeline", "approach-rotation.json");
+    assert(fs.existsSync(rotationPath), "51a: routeTask writes approach-rotation.json for a fresh session", failures);
+    const onDisk1 = JSON.parse(fs.readFileSync(rotationPath, "utf8"));
+    assert(onDisk1.log.some((e) => e.sessionId === "sess-disk-1"), "51b: the persisted rotation log records this session", failures);
+
+    const r2 = routeTask("Add a CSV export to orders", [], approachProject, "sess-disk-1");
+    assert(r2.approach.approach === r1.approach.approach, "51c: a repeat call in the same session repeats the same approach", failures);
+    const onDisk2 = JSON.parse(fs.readFileSync(rotationPath, "utf8"));
+    assert(onDisk2.log.length === onDisk1.log.length, "51d: a repeat call in the same session does not append a second log entry", failures);
+  }
+
+  // 52. The advise line carries an "Approach: ..." segment, and a
+  // conversational (route === null) prompt carries no approach at all.
+  {
+    const r = routeTask("Implement a new export feature for the reporting dashboard", [], bareProject, "sess-advise-1");
+    const line = formatAdvise(r);
+    assert(/ · Approach: /.test(line), "52a: the advise line includes an Approach segment", failures);
+    assert(byteLen(line) <= ADVISE_BYTE_CAP, `52b: advise line with Approach segment stays <= ${ADVISE_BYTE_CAP} bytes (was ${byteLen(line)})`, failures);
+
+    const q = routeTask("is this done?", [], bareProject, "sess-advise-2");
+    assert(q.approach === null, "52c: a conversational prompt has no approach decision at all", failures);
+  }
+
   fs.rmSync(tmpBase, { recursive: true, force: true });
 
   if (failures.length) {
@@ -1349,7 +1803,7 @@ function runSelftest() {
     for (const f of failures) console.error(`  - ${f}`);
     return 1;
   }
-  console.log("route-task.mjs selftest: all checks passed (39 scenarios, including G2 ultracode-breadth, G3 ack-silence, P3 question-routing, P5 breadth-dominates-question, and lead-ruling 2026-09-12 first-person-plural request coverage).");
+  console.log("route-task.mjs selftest: all checks passed (52 scenarios, including G2 ultracode-breadth, G3 ack-silence, P3 question-routing, P5 breadth-dominates-question, lead-ruling 2026-09-12 first-person-plural request coverage, and Part C 2026-09-12 decideApproach: pin precedence, bug/HIGH-risk/major/UI/trivial never rotating, once-per-session rotation across all three arms with the superpowers defer note, and routeTask's on-disk pin + rotation-file integration).");
   return 0;
 }
 

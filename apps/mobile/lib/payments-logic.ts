@@ -2,6 +2,13 @@ import type { Ionicons } from "@expo/vector-icons";
 import type { PaymentMethod } from "./api/invoices";
 import type { PaymentStatus } from "./api/payments";
 import { roundMoney } from "@routeflow/pricing";
+import { CHECK_TRANSITIONS, type CheckStatus } from "@routeflow/types";
+
+// Re-exported for backward compatibility — nothing in this repo currently imports either symbol
+// from this file (checked by grep), but both were public exports of this module before the
+// post-dated check payments PR-1 de-duplication.
+export { CHECK_TRANSITIONS };
+export type { CheckStatus };
 
 /**
  * Pure payments helpers — method/status → pill + icon, and void gating. Kept out
@@ -72,17 +79,12 @@ export function paymentActionFlags(
 }
 
 // ─── Check lifecycle (P5-12; Wave 3 operator controls) ───────────────────────
-
-export type CheckStatus = "RECORDED" | "DEPOSITED" | "CLEARED" | "BOUNCED";
-
-/** Mirror of the server's transition table (invoices.service.ts CHECK_TRANSITIONS)
- *  so no offered action can 400. BOUNCED is terminal. */
-export const CHECK_TRANSITIONS: Record<CheckStatus, readonly CheckStatus[]> = {
-  RECORDED: ["DEPOSITED", "BOUNCED"],
-  DEPOSITED: ["CLEARED", "BOUNCED"],
-  CLEARED: ["BOUNCED"],
-  BOUNCED: [],
-};
+//
+// `CheckStatus`/`CHECK_TRANSITIONS` now come from `@routeflow/types`
+// (post-dated check payments PR-1) — the ONE canonical copy shared with the API
+// (`invoices.service.ts`) and web (`invoices/[id]/page.tsx`), which used to each hand-maintain
+// an identical local copy. See `packages/types/api/checks.ts` for the V1-only rule (no
+// `CHECK_TRANSITIONS_V2` here — a later PR owns that).
 
 /**
  * Legal next check states for a payment row: only CHECK payments that aren't

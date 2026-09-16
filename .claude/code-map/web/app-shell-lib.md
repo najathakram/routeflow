@@ -464,3 +464,43 @@
   an in-module listener set so same-tab toggles also re-sync). No deps, no API call. Consumed by
   `(dashboard)/layout.tsx` Header (topbar chip + one-tap Exit, avatar-menu toggle) and
   `routes/my-runs/page.tsx` (field-layout switch).
+- **`lib/plan-gated-nav.ts` (new, Lite-L2 WP7, 2026-09-15)** — `PLAN_GATED_NAV: Record<string,
+FlagKey>` maps a subset of OPERATOR_NAV hrefs (`/returns`, `/suppliers`, `/vendor-bills`,
+  `/estimates`, `/credit-notes`, `/finance/reports`, `/analytics`) to the `FlagKey`
+  (`@routeflow/types`) that must be granted to see them — `/sales-agents`, dispatch/routes/
+  deliveries/drivers stay on their existing addon hooks (`useHasAddon`/`useRoutesAccess`/
+  `useDeliveryAccess`), NOT added here. `planFlagVisible(s)` — same three-valued rule as
+  `addons.ts`: resolved ⇒ go by the flag; unresolved ⇒ hidden (no flash); fetch failed ⇒ shown
+  (client fails OPEN, server guard fails CLOSED). `matchPlanGatedRoute(pathname)` — exact-or-
+  prefix match against `PLAN_GATED_NAV`, `null` if none. Test: `plan-gated-nav.test.ts`.
+- **`(dashboard)/layout.tsx` — plan-gated nav filtering + route lock (Lite-L2 WP8, 2026-09-15):**
+  `filterPlanGatedNav(entries, planState)` drops every nav leaf `matchPlanGatedRoute` denies
+  (a group left with zero children after filtering is dropped entirely, same precedent as the
+  Dispatch-group filter); called in `DashboardShell`'s nav-building `useMemo` BEFORE the
+  Analytics-relative inject index is computed, off the SAME `useSubscription({staleTime:60_000,
+enabled:isStaff})` call the RO-1 banner already reads (`isSuccess`/`isError` captured
+  alongside `data` — no second query). `RouteGuard` gained a SEPARATE `useSubscription` call
+  (`enabled: isStaffRole` — CUSTOMER/DRIVER are untouched by plan-flag gating, their own
+  GATED_PREFIXES/CUSTOMER_ALLOWED/DRIVER_ALLOWED checks already cover access) and, once
+  `subscriptionResolved`, renders `<LockedPage>` (below) IN PLACE OF the page for a deep-
+  link/bookmark into a plan-gated route the plan doesn't grant — never a redirect (unlike the
+  addon-gated prefixes above), so the URL stays intact. Fails OPEN while unresolved/on a fetch
+  error (existing page renders; a server-side PLAN_GATE 403, if any, is still caught by
+  `PlanGateNotice`). **Fix-round finding 5 (2026-09-15):** `subscription?.flags`/
+  `subscriptionStatus?.flags` can be `undefined` at runtime even though `SubscriptionView.flags`
+  is now `flags?: string[]` (an old API build can omit the key entirely) — `RouteGuard`'s
+  `planLocked` and `filterPlanGatedNav`'s `planState.flags` both now treat `undefined` as
+  "unresolved, fail OPEN" (never gate/hide), distinct from `flags: []` ("resolved, no grants" —
+  gate for real). Do not reintroduce `subscription?.flags ?? []` here.
+- **`_components/gates/PlanGates.tsx` `LockedPage` gains an optional `secondary?: string`
+  prop (Lite-L2 WP8)** — a plain line rendered under the CTA (e.g. RouteGuard's "Want it?
+  Contact us to upgrade."); no link target invented, "See plans" stays the only action.
+- **`lib/api/plan-flags.ts` / `lib/api/billing.ts`** — see [`api-hooks`](api-hooks.md).
+- **`e2e/47-lite-plan-gate.spec.ts` + `playwright.config.ts` `lite-plan-gate` project (Lite-L2,
+  2026-09-15)** — R2.2/R2.5/R2.6/R2.8/R3b.8/R4.3/R4.5/R7.7 coverage (sidebar/route gate, Settings
+  → Billing "Complete payment", choose-plan/marketing never rendering a "Lite" card).
+  Self-skips (`test.skip`) when `PLAYWRIGHT_LITE_TENANT_SLUG` is unset — needs a dedicated
+  LITE-plan tenant the shared `operator.json` fixture isn't on. Post-deploy only, NOT in the
+  local Playwright allow-list (`apps/web/e2e/LOCAL-LANE.md`) — same convention as the
+  sales-agents-gate/compliance-pack-gate/trip-builder-gate projects. **Without the project
+  entry the spec never runs** (cf. the #08 note above).

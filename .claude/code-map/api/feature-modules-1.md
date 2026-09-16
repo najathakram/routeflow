@@ -71,6 +71,10 @@ validate()` and `buyer/strategies/buyer-jwt.strategy.ts validate()` both now cop
 - **controller** `tenants` — `me/config/{email,google-oauth,branding}` GET/PUT, email test, branding logo upload, `me/addons` (active addon keys = the tenant-facing feature-flag read). Public: `public/tenants`, `public/places` (geocode).
   - ⚠️ **`getMyAddons` is `@Roles(OPERATOR, DRIVER)`** — DRIVER was added 2026-08-20 and is load-bearing: pure DRIVER-role users used to 403 here, and a dev-mode tenant's drivers must be able to read the `developer_mode` flag that mobile's `useDeveloperMode` gates their whole app on. `tenants.controller.spec.ts` asserts both roles off the `ROLES_KEY` metadata.
 - side effects: TenantConfig/TenantGoogleOAuth writes; email send; logo upload to storage.
+- **Post-dated check payments PR-1 (2026-09-15), additive-only:** `TenantConfig` gains
+  `checksDigestSentForDay` (nullable, date-only) — an idempotency mark for a later PR's daily
+  "checks due to clear" digest cron (so a retried tick doesn't re-send the same day). No job
+  reads or writes it yet.
 
 ### `platform-admin/`
 
@@ -157,6 +161,45 @@ validate()` and `buyer/strategies/buyer-jwt.strategy.ts validate()` both now cop
 - **F09 lens A6 (2026-09-06):** `applyAdvancePaymentToInvoice`'s terminal-status guard (`:1177`) was a byte-identical hand-typed `["PAID","VOID","WRITTEN_OFF"]` literal — the fifth independently drifted copy of what is now `invoices/invoice-status-sets.ts`'s `CREDIT_NOT_APPLICABLE`. Re-pointed at the shared constant; behaviour-neutral.
 - **F16 statement figures (2026-09-07, #656) — B110, money-critical:** `getStatementForOperator` and `getMyStatement` used to derive `outstandingAmount`/`overdueAmount` etc. from a `take:100` invoice read / `take:50` credit-note / `take:50` advance-payment read — a customer with more open invoices than the cap silently under-stated its own statement. Now the four money figures (`outstanding`, `overdue`, `availableCredit`, `advanceBalance`; buyer side also `pendingOrdersAmount`) come from UNCAPPED reads over the WHOLE open sets (payments restricted to the CONFIRMED basis — excludes DRAFT and VOID, aligning the live tile with the emailed statement), each `roundMoney`d. New `lifetimeInvoiced`/`lifetimeReceived` are DB-side `aggregate({_sum})` over `LIFETIME_INVOICED_EXCLUDED`-filtered invoices / CONFIRMED payments — never a reduce over the `transactions` ledger. **B421 fix (2026-09-15):** `lifetimeReceived`'s aggregate had no `method` filter — a CREDIT_NOTE application inflated a customer's lifetime-received figure as if it were cash. Both aggregates now add `method: RECEIVED_METHOD_FILTER` (`@routeflow/pricing` via `payment-predicates.ts` — excludes ONLY CREDIT_NOTE, keeps ADVANCE: an advance application is the only place that already-real cash is ever recorded, so dropping it too would make it disappear rather than reflect its true collection date). The `withPaid`/`sumConfirmed` mapper feeding `runningBalance`/`outstandingAmount` (below) is DELIBERATELY UNTOUCHED — that figure is never returned to the client, only used for `total - amountPaid`, which correctly wants the FULL confirmed total (same basis as `invoices.service.ts`'s `balanceDue`), not a cash-only one. `getIncomeChart`'s monthly-income query (own section below) gets the identical `RECEIVED_METHOD_FILTER` fix — its own comment already promised "same predicate as getCashFlow," which didn't hold for `method` until now. The `take:100/50/50` reads STAY for the `transactions` ledger DISPLAY only, and the response gains `transactionsTruncated: boolean` (true when a capped read came back shorter than its own count) so the UI can label a partial view — `LedgerTruncationNote` (web, new `customers/[id]/ledger-truncation-note.tsx`) and the mobile statement/payments screens render it. ⚠️ The individual `transactions[]` row fields (`amount`, `runningBalance`) are still raw `Number(...)` — NOT `roundMoney`d, unlike the four summary figures above (filed, not fixed — see registry). **B169**: `findAll`'s default sort gains an id tiebreaker (`[{createdAt:"desc"},{id:"desc"}]`). Specs: `customers.service.spec.ts` REG-B110 (operator + buyer twin) / REG-B169 describe blocks.
 - **B310 fix (2026-09-13, F39, money-critical — wallet double-spend):** `applyAdvancePaymentToInvoice` read `AdvancePayment.balance` and decremented it as two separate statements with no lock between — two concurrent applies of the SAME advance could both pass the "has remaining balance" check and both apply, driving `balance` negative. The transactional body moved unchanged into a new private `applyAdvancePaymentToInvoiceLocked`; the public method now does a pre-lock read of only `customerId` (immutable, not part of the race) then wraps the locked method in `withAdvisoryLock({ family: "order-merge", key: customerId, mode: "wait", waitMs: 10_000 })` from `common/db-locks.ts` — the same customer-keyed lock family `orders.service.ts create()` already uses for money serialization. `LockTimeoutError` -> 409 `WALLET_LOCK_BUSY`, `LockUnavailableError` -> 503. **Opus review added:** `applyAdvancePaymentToInvoiceLocked` ALSO takes `FOR UPDATE` on the target Invoice row before reading it — the advisory lock only serializes concurrent applies of the SAME advance against each other, it does nothing against a totally different writer of the same invoice (e.g. `invoices.service.ts recordPayment`, which takes this exact lock), so without it that path could still overpay the invoice from the other side (the B311 race, reachable through this door too). Spec: `customers.service.spec.ts` `B310: two concurrent applies of the SAME advance never drive its balance negative` (a promise-chain `withAdvisoryLock` mock proves genuine serialization — verified red-then-green by hand — plus a direct assertion pinning the lock `key` to `customerId`, guarding the exact wrong-key mistake the first draft of this fix made and the review caught). **Known residual, filed as a follow-up, not fixed here:** the method never checks `inv.customerId === ap.customerId` — a cross-customer apply is not refused.
+- **Post-dated check payments PR-1 (2026-09-15), additive-only, migration
+  `20260916010000_check_instrument_fields` (schema documented HERE rather than in
+  `feature-modules-3.md`, which is at its 100,000 B split threshold):** `Customer` gains
+  `creditHoldAt`/`creditHoldReason`/`creditHoldById` (all nullable; `creditHoldAt` null = "not on
+  hold" is the only field any future reader should branch on). `AdvancePayment` gains
+  `sourcePaymentId` (+ index) — the id of the InvoicePayment this advance was created from (e.g.
+  a bounced-check replacement flow). `PaymentStatus` gains `PENDING` (see `HELD_STATUSES` in
+  `packages.md`'s pricing entry); new `CheckReturnReason` enum
+  (`NSF|ACCOUNT_CLOSED|STOP_PAYMENT|OTHER`). `InvoicePayment` gains `checkNumber`/`bankName`/
+  `checkDate` (`@db.Date` — the date PRINTED on the check, distinct from `paidAt`/`settledAt`)/
+  `appliedAt` (null = "applied on receipt", every existing row's implicit behavior)/
+  `bounceReason`/`replacesPaymentId`/`nsfFeeInvoiceId` (the last two: plain id strings, no FK) +
+  indexes `[tenantId,checkDate]`/`[tenantId,checkStatus]`. `Invoice` gains `feeForPaymentId`
+  (plain id string). `StandalonePaymentDto.allocations` (invoices `dto/create-invoice.dto.ts`)
+  gains `@ArrayMaxSize(50)` (was unbounded). No read/write path in this repo sets or checks any
+  of these yet — every one of the 13 real call sites in the design's §3.4 table is untouched;
+  that wiring is later PRs. One-time catch-up for legacy post-dated rows:
+  `apps/api/scripts/backfill-check-dates.mjs` (+ pure lib `scripts/lib/check-date-backfill.mjs`)
+  sets `checkDate` from `settledAt` for PAID CHECK rows whose `settledAt` is still in the future
+  relative to the migration instant; dry-run by default, `--apply` to write, `--tenant-id` to
+  scope (L-129 — never let a spec run an unscoped write). Never touches `status`. **Live-tenant
+  guard (PR-1 fix round, m12/review-opus-v2.md — initially missing):** `--apply` scoped to an
+  approved test tenant (`scripts/lib/test-tenants.cjs`) proceeds as before (what
+  `backfill-check-dates.db.spec.ts` uses); scoped to a LIVE tenant it additionally requires
+  `--live-tenant-override` + `--confirm-tenant-id=<id>` (type-back), same mechanism as
+  `repair-receiving-units.mjs`/`backfill-tobacco-category.mjs`; unscoped `--apply` (every tenant)
+  always requires `--live-tenant-override`, since there is no single id to type back.
+  **BLOCKER 1 fix (PR-1 fix round, same session):** `invoices.service.ts`
+  had value-imported `CHECK_TRANSITIONS` straight from `@routeflow/types` — that package ships
+  raw TS with no build step, so `nest build` emitted a literal `require("@routeflow/types")` into
+  `dist/` and `node dist/main.js` died at boot parsing the enum syntax (exactly the class
+  `no-runtime-workspace-imports.spec.ts` exists to catch — it correctly failed red). Fixed by
+  adding `apps/api/src/common/check-transitions.ts` (API-local mirror of
+  `packages/types/api/checks.ts`'s `CHECK_TRANSITIONS`/`CheckStatus`, same convention as
+  `trip-grouping.ts`/`shipping.ts`); `invoices.service.ts` now imports from that mirror.
+  `check-transitions-parity.spec.ts` was rewritten to pin the mirror value-equal (deep-equal) to
+  the canonical export instead of asserting an import path — the real drift guard. Web/mobile are
+  unaffected (both transpile workspace TS at build time, so they keep value-importing
+  `@routeflow/types` directly).
 
 ### `drivers/`
 

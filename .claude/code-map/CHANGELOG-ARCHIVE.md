@@ -636,3 +636,138 @@ e39bf9db` reports `block-identical (207 blocks)`, self-skipping with a stated re
 - **undated (pre-2026-07-08)** — Bills & Purchasing hub reskin SHIPPED (uncommitted, web-only, presentation-only): apps/web/app/(dashboard)/finance/expenses/page.tsx retitled 'Bills & Purchasing', KpiChip→StatTile 4-tile KPI grid (Open Bills/Due This Week/Unlinked-Items-filter-toggle/Spend-30d, all client-derived from the loaded useVendorBills list — no new endpoint), added a 3rd read-only 'Purchase Orders' tab (PurchaseOrdersTab via existing usePurchaseOrders() + poBadge() status map + chip status filters), Vendor-Bills tab kept its dropdown filter, 'Other Expenses' label preserved (NOT renamed). No 'New PO' button / PO row links (no web PO create/detail route). tsc clean; every existing hook/handler/mutation/money value preserved.
 - **undated (pre-2026-07-08)** — Phase 2 operator core CODE-COMPLETE on branch feat/last-cost-costing / PR #121 (full-branch `npm run verify` 18/18 green). ALL 10 operator Ledger reskins now COMMITTED (returns, dashboard, customers, customer-detail, inventory, orders-list, order-detail, products, product-detail, dispatch) — presentation-only, every hook/handler/route/modal preserved, each functionally reviewed preservedOk=true via a reskin+review Workflow, but NOT yet visually verified (do post-deploy on the `test` tenant). §3 at-door now wired on BOTH the dispatch packing-list AND the live-run driver view routes/[id]/page.tsx (StopItem onAtDoorActions prop → shared ArrivedStopSheet). §4 drive mode + §1 LAST_COST/tenant-default costing all committed on this branch. DEPLOY BLOCKED on prod migration 20260706040000_add_costing_last_cost (auto-mode classifier blocks the prod-write; user runs it). The 'uncommitted'/'not yet merged' claims in the older notes below are now all committed on feat/last-cost-costing.
 - **undated (pre-2026-07-08)** — Returns list reskin SHIPPED (uncommitted, web-only, presentation-only): apps/web/app/(dashboard)/returns/page.tsx matched to docs/design-package/project/unified/returns.html — PageHeader+subtitle, warning-ring 'Awaiting Review' + 2 other KPI cards, status-chip filter row (full ReturnStatus enum, superset of design's 5) + reason select + search, table gained a computed read-only 'Value' column, row action button Review/View by status; useReturns/useCreateReturn/all filters/pagination/routing unchanged. [id]/page.tsx (approve/reject/receive/refund) NOT yet reskinned. Phase 2 §4 Drive mode SHIPPED (uncommitted, web-only): new lib/drive-mode.tsx (useDriveMode(), localStorage rf-drive-mode, SSR-safe); (dashboard)/layout.tsx avatar 'Drive mode' item now TOGGLES (was nav-only) + shows a check when active + topbar chip/one-tap Exit next to the page title when on; routes/my-runs/page.tsx reskinned to the field layout (docs/design-package/project/unified/my-runs.html) when driveMode is true — today's/next run promoted to a hero card (StatCards Progress/Next Stop/Delivered Today, big stop rows, prominent 'Scan to add order' -> /orders?action=new&scan=1) — off-state unchanged (prior compact Today/Upcoming lists); no API/hook/routing-guard changes, no new deps. Unified 'Ledger' design — Phase 1 deployed (PR #116). Phase 2 shipped PRs #117/#118 (§1 negotiation-floor core + drafts backend). NEW on branch feat/unified-drafts-ui (§2 drafts UI, not yet merged): components/DraftDock.tsx = bottom-left dock in the (dashboard) layout right-column (non-CUSTOMER roles) — lists parked drafts (2 shown + collapse badge when >2), Resume->/orders?resumeDraft=<id>, Discard confirm, plus a GLOBAL scan-to-draft wedge-listener gated to when a draft exists AND bails inside any open [role=dialog]. lib/drafts.ts = OrderDraftPayload + draftDeviceLabel/parkedAgo/draftSummary. lib/api/drafts.ts adds useDraft(id). CreateOrderModal gained a Minimize footer button + resumeDraftId/initialScanCode props: park/hydrate/debounced-autosave (bound ONLY after Minimize or Resume — never auto-creates from a fresh builder, QUESTIONS.md #8) + auto-add scanned barcode on open + delete draft on successful submit. orders/page.tsx reads ?resumeDraft/?scan/?action=new reactively. Invoice-builder Minimize deferred to Phase 3 (QUESTIONS.md #9). **PROD: apply migration 20260705120000_add_sale_drafts via `railway run npx prisma migrate deploy` BEFORE this deploys** (dock queries /drafts on every operator screen). Prior on PR #117: (a) Settings>Costing tab (CostingTab, /settings/margin admin config); (b) avatar Drive-mode entry (canActAsDriver->/routes/my-runs); (c) §2 drafts BACKEND — SaleDraft model + migration + src/drafts module (DraftsService/Controller/DTO, /drafts CRUD, ownership+tenant scoped, spec) + web lib/api/drafts.ts hooks. NOTE: local Docker DB routeflow_dev is partial/missing Tenant table, so authed runtime verification is not viable locally. Earlier notes: Unified 'Ledger' design (branch feat/unified-foundation — see docs/design-package/IMPLEMENTATION-PLAN.md; Phase-2 detail in PHASE-2-PLAN.md). Phase 2 (operator core) IN PROGRESS: §1 live cost/margin 'negotiation floor' CORE done — pricing.ts (all 3 mirrors + spec) gained costPerSellingUnit/computeMarginFraction(box-piece aware)/priceForMarginFloor/classifyMargin; margin config in SystemConfig (no migration) via SystemConfigService.get/setMarginConfig + GET/PATCH /settings/margin (PATCH admin-only); web lib/api/margin.ts useMarginConfig()+floorForCategory(); CreateOrderModal <MarginHint> shows cost·margin under each line, red below cost/floor, Set-to-floor + Sell-anyway, threads averageCost+category. Follow-ons tracked in PHASE-2-PLAN (edit-path hint+audit, LAST_COST, cost-history popover, price-memory margin col, admin settings tab, §2 drafts, §3 at-door, §4 drive-mode, reskin). Phase 1 of 10 COMPLETE. Phase 1d behavioral UX standards: web useUndo() (lib/undo.ts) + Toast dismiss(id)/action slot (8s Undo); proven on customer delete via new POST /customers/:id/restore (restoreCustomer, no migration — Customer.deletedAt exists) + useSoftDeleteCustomer/useRestoreCustomer; order/invoice soft-delete deferred to their phases (50+ callsite change). Session re-auth sheet: lib/session-expiry.ts + components/ReAuthProvider.tsx; api-client 401 handler pauses the failed request and offers in-place unlock before the /login redirect. i18n en/es (home-grown, no dep): lib/i18n/{messages,index}.tsx, useI18n()/t(), locale via UserPreference (PATCH /users/me/preferences) + localStorage, avatar Language toggle. CommandPalette Jump-to/Actions/Results + ? shortcuts + localized. Providers order: ToastProvider>I18nProvider>ReAuthProvider>QueryProviders. Phase 1a-1c: design tokens from docs/design-package/project/unified/rf.css mapped into packages/config/tailwind.config.ts (brand→teal #14A39F, navy/ink→#0F1B2D, surface.raised→canvas #F7F9FC, var-backed ink/accent/line/paper/sunken, fonts sans=Spline Sans/mono=Spline Sans Mono/display=Instrument Serif, radii ctl6/card10, hairline shadows) + apps/web/app/globals.css (full :root var set + .surface-buyer emerald/.surface-admin indigo overrides + .money/.mono/.skeleton utils). apps/web/app/layout.tsx loads Spline Sans/Mono via next/font. UI primitives (packages/ui/src/web) reskinned to Ledger + new Skeleton/SkeletonRows + Toast action slot; all consume tokens so re-pointing reskins them. Operator shell (dashboard layout) Ledger rail/topbar + Bills & Purchasing nav (/vendor-bills). Remaining Phase 1: undo service (soft-delete), session re-auth sheet, en/es i18n, command-palette sections. QUESTIONS.md at repo root. Prior: Tobacco compliance (workstream B, feat/tobacco-compliance, stacked on A): tobacco_dealer TenantAddon + AddonGuard/@RequireAddon (guards run before TenantInterceptor — read req.user.tenantId, NOT ALS) + GET /tenants/me/addons; Product.isTobacco (addon-gated set, clearing always allowed) + Supplier/Customer tobacco license fields + TobaccoReport model (migration 20260704100000_tobacco_compliance); analytics exclusion toggle (SystemConfig tobacco.excludeFromMainAnalytics — presentation only, never bookkeeping); tobacco module w/ monthly report cron (CSV+PDF at deterministic keys, generationCount audit); web /tobacco page + conditional nav + product flag UI; mobile tobacco screen + More row + product action. Earlier same day — Inventory cost accounting (workstream A, feat/inventory-cost-accounting, PR #111): StockMovement gains avgCostAfter/stockAfter snapshots + MovementType.COST_BASIS (migration 20260704000000_inventory_cost_accounting — apply to prod via railway run npx prisma migrate deploy BEFORE deploying the image). New pure inventory/costing.ts (costDecimal 4dp, nextAverageCost, reverseAverageCost null=keep-avg, planLotConsumption). recordSale completed as the single sale-costing path (per-method unitCost + lots + snapshots); orders.completeStop delegates to it; routes.reopenStop writes compensating positive SALE w/ original cost; returns.receive stamps cost. Vendor-bill receive: UNLINKED_ITEMS 409 warn-and-confirm, StockLot parity, revert/void keep avg on empty + lot reversal; findAll needsMapping filter + meta.needsMappingCount. Analytics/bookkeeping/forecasting COGS+units flipped to SIGNED -quantity sums. New endpoints: GET /inventory/valuation, PATCH /inventory/products/:id/cost-basis, POST /inventory/cost-basis/bulk, POST /inventory/recompute-costs (dryRun replay + snapshot backfill, reports noHistory/stockDrift). Web: inventory valuation card + missing-cost chip/filter + Set/Bulk cost modals + Recompute dry-run modal; purchases needs-mapping KPI chip + row badge; bill detail unmapped banner + UnlinkedItemsModal; products No-cost-set states + CostHistoryCard (recharts). Mobile mirrors: inventory/vendor-bills api hooks, warehouse valuation KPI, product set-cost.tsx screen, bill needs-items pill + native confirm, movements COST_BASIS rows. Post-deploy repair runbook: recompute dry-run → apply → bulk set costs for noHistory → map imported bills. Specs: costing.spec, inventory.service.spec, vendor-bills.service.spec, analytics.service.spec. Prisma-mock gained stockLot/supplier/purchaseOrder(+Item)/deliveryBatch. Earlier: per-line price/discount editing on PENDING/CONFIRMED (#109); Places proxy JWT (#110).
+
+- **2026-09-10** — (branch `chore/next-15` #5b3b3c4e = master, Option-B follow-up) —
+  `apps/web` upgraded Next 14.2.35 → 15.5.25 (React 18 → 19.2.0, eslint 8 → 9); clears the two
+  CRITICAL npm-audit advisories the owner had allowlisted through 2026-09-30
+  (`security/audit-allowlist.json` now `entries: []`). Sixteen `[id]`-style dynamic Client
+  Component pages converted `{ params }` to `useParams()`; `customers/[id]/page.tsx`'s Suspense
+  wrapper reads it once and passes `id` down to `CustomerDetailPageInner` as a plain prop;
+  `finance/expenses/page.tsx` (a Server Component redirect stub) now `await`s its `searchParams`
+  Promise. Removed: the React-18-pin Dockerfile hack (`npm install --force --no-save
+react@18.3.1…`) and its `jest.config.js` `moduleNameMapper` twin — one repo-wide React 19 now.
+  `apps/web/.eslintrc.json` deleted (Next 15's `next lint` discovers the pre-existing flat
+  `eslint.config.mjs` first; that file drops `next/typescript` from its `compat.extends()` — it
+  was never actually linted with that ruleset under Next 14, and adding it now surfaces ~360
+  new errors, a separate piece of work). `apps/web/tsconfig.json` `target` pinned to `ES2017`.
+  `@next/eslint-plugin-next`'s `no-html-link-for-pages` became App-Router-aware in v15 (v14 only
+  matched `pages/` routes); three pre-existing, deliberate plain `<a>` cross-context navigations
+  (login → buyer portal, inventory's restock modal → vendor-bills, buyer-invite → buyer portal)
+  are newly flagged and silenced with an inline `eslint-disable-next-line` plus a comment — not
+  converted to `<Link>`, since two of the three deliberately force a full-page reload to
+  re-bootstrap the buyer auth context.
+  Four new `apps/api/src/common` repo-truth specs (`next-version`, `no-react-skew-hacks`,
+  `client-page-params`, `audit-allowlist-retired`) joined the repo-truth lane
+  (`jest.repo-truth.config.js` testRegex, `apps/api/package.json`'s main-lane
+  `testPathIgnorePatterns`, `turbo.json` `test:repo-truth` inputs, `turbo-inputs.spec.ts`'s
+  `REPO_TRUTH_SPECS` array) — new API script `smoke:pdf` (manual, real-render PDF smoke against
+  compiled templates) is NOT part of that lane (no map-tracked automated wiring; run by hand).
+  `docs/testing/lockfile-edges.md`'s "Unsatisfied peer ranges" count: 2 → 0. `web.md`, `api.md`
+  updated (see their bullets above); `mobile.md`/`packages.md` untouched (confirmed no
+  apps/mobile/packages diff). Lessons: L-103 appended (tooling, compose `-p`/container-name
+  trap); L-083 and L-062 amended in place (turbo-cache-replay pre-push trap; repo-truth
+  main-lane-exclusion simultaneity) rather than adding two more new entries — see
+  `.claude/lessons/`'s own follow-up. L-102 archived for headroom (the only entry in the active
+  40 cited nowhere outside `.claude/lessons/**`/`.claude/code-map/CHANGELOG.md` — every other
+  active entry is cited from a code-map area file, `HANDOFF.md`, `tools/bugflow/docs/**`, or
+  real source, disqualifying it under the standing rule; see `archive.md`'s grep evidence).
+
+- **2026-09-09** — (branch `docs/686-campaign-web-report-bookkeeping`, Option-B follow-up for
+  #686/`ff581ce4` + #685/`0c1bc2d6` = master) — `scripts/campaign-check.mjs` now reads
+  `apps/web`'s Jest campaign report (`.campaign/runs/web.json`, wired via
+  `apps/web/jest.config.js`'s `reporters` block, `{ artifact: "web" }`), closing the gap where
+  REG-B### pins living in apps/web were invisible to the gate ("no test titled with REG-B##
+  found", #683). Guard: `apps/api/src/common/campaign-check-web-report.spec.ts`. `INDEX.md`'s
+  "Bug-register burn-down campaign" row, `api.md` (new spec bullet), and `web.md`'s Jest section
+  updated. #685 is a Dependabot minor-and-patch group bump (17 bumps) with no map impact.
+  Lessons: L-102 appended (tooling); L-092 archived for headroom (oldest untouched no-guard
+  entry, grep-confirmed no citations outside the register/pipeline/code-map bookkeeping files).
+- **2026-09-09** — (branch `docs/wave-2026-09-09-bookkeeping`, Option-B FINISHING for the merged
+  wave: train 1 `fix/train1-driver-teardown` #681/`8de65863`, train 2
+  `fix/train2-operator-gaps` #682/`7d8141e0`, `test/reconcile-pins` #683/`f9f36075` = master —
+  mapped at `f9f36075`). Replaces the prior PREP session's placeholder design note (below) now
+  that the code exists on master; `mobile.md`/`api.md` gained real dated sections in place of
+  that note. **Train 1 (mobile driver session teardown + POD persistence, B111/B136/B137/B140/
+  B150, batch F19), landed in `mobile.md`:** `lib/session-teardown.ts` `teardownUserSession
+(options?: {reason?, userId?})` — called by `useAuthStore.logout()` BEFORE `apiLogout()` and by
+  the session-expired path; resolves the outgoing user id first, stops background location for
+  both realms unconditionally (B150), cancels + clears the shared `lib/query-client.ts`
+  `queryClient` (B140), resets all 7 user-scoped stores, then deletes the two persisted blobs
+  (`POD_STORE_NAME`/`RUN_SETTLEMENT_STORE_NAME`) via new `lib/user-scoped-storage.ts`
+  `clearUserScopedStorage` (a late `persist` write can otherwise resurrect the cleared capture in
+  the anon bucket); the offline queue and tenant store are deliberately untouched. New
+  `lib/session-hydrate.ts` `rehydrateUserScopedStores()` is the sign-in counterpart (both stores
+  now `skipHydration: true`, keyed by user id). New `lib/pod-reconcile.ts`
+  `pendingPodArtifacts`/`artifactIdsFromPodPhotoUrls` (pure) fix the duplicate-append (B111/B136).
+  New `lib/queue-identity.ts` stamps every `offlineQueue` entry with `{userId, tenantId}`; drain
+  skips an entry stamped for a different user, filing it under `failedActions` with reason
+  `different-user` (B137). **Train 2 (B04 push toggle, B142 archived SKUs, batch F20), landed in
+  `mobile.md`/`api.md`:** new `lib/notification-prefs.ts` `getPushEnabled`/`setPushEnabled` via
+  `/users/me/preferences`'s `pushEnabled` key (same shape as `locale`); the operator settings push
+  switch binds to it; `ProductPickerSheet.tsx` gains an opt-in `activeOnly` prop (`isActive: true`
+  only when set) used by the order-item add path, unfiltered elsewhere. `api.md`:
+  `notifications.service.ts`'s new `isPushEnabled(userId)` gate skips `registerToken`'s upsert and
+  `sendToUser`'s delivery for a disabled user (server-authoritative, REG-B04-C/D);
+  `orders.service.ts`'s `create()` and `updateOrderItems()` both reject a NEW archived-product
+  line (`create()` exempts the driver change-request draft path via `options.allowArchived`);
+  `recurring-invoices.service.ts`'s `buildArchivedItemsNote` deliberately never blocks generation
+  — appends a note instead (billing must never pause on a catalog flag). **Registry:** F19
+  (B111/B136/B137/B140/B150) proved + discharged on #681 (siblings B01/B02 and already-done B143
+  untouched); F20 (B04/B142, plus B151 already proven via #555) proved + discharged on #682
+  (siblings B32/B23/B94/B95/B172 untouched); F33 (B35/B123/B124/B125/B203) proved + discharged on
+  #683 — batch now 6/6 done incl. already-done B204; F02 (B126/B127, `already-fixed`) proved +
+  discharged on #683 — batch now 9/9 done. B282 (filed by the PREP session, unbatched — interactive
+  invoice/estimate create still accepts a new archived line, money-touching carve-out) is
+  unaffected by this wave, still awaiting `@tech-lead` batching. `bugs.mjs sync --check` and
+  `node scripts/validate-lessons.mjs` both green after the above.
+
+- **2026-09-09** — (branch `docs/wave-2026-09-09-bookkeeping`, Option-B PREP for three code PRs
+  not yet opened: train 1 `fix/train1-driver-teardown` [`681`/`8de65863`], train 2
+  `fix/train2-operator-gaps` [`682`/`7d8141e0`], `test/reconcile-pins` [`683`/`f9f36075`] —
+  mapped at `1dca1242`, unchanged; none of the files below exist on this sha yet). **Train 1
+  (mobile driver session teardown + POD persistence, B111/B136/B137/B140/B150, batch F19) design,
+  entered into `mobile.md` ahead of the PR so the map is ready the moment it merges:** new
+  `lib/session-teardown.ts` `teardownUserSession({reason})` — called by `useAuthStore.logout()`
+  BEFORE `apiLogout()` and by the session-expired path; stops background location (both realms,
+  idempotent), marks the offline queue's owner (no flush), `queryClient.clear()` via a new
+  `lib/query-client.ts` exported accessor (`_layout.tsx` imports it instead of holding the
+  module-scope client), and resets `podStore`/`runSettlementStore`/`mileageStore`/`routeStore`/
+  `delivery-plan-store`/`listUiStore`/`productPickerStore` (each gains `reset()`); tenant store
+  untouched by design (shared-tablet branded login survives sign-out). New `lib/session-hydrate.ts`
+  is the sign-IN-side counterpart (reconciles `podStore`/`runSettlementStore` against a stop's
+  existing `podPhotoUrls`/artifact ids on relaunch — B111/B136 fix). New `lib/pod-reconcile.ts`
+  holds that reconciliation as a pure function (no duplicate artifact append for an id already on
+  the stop). `store/offlineQueue.ts` gains per-entry `{userId, tenantId}` stamping; drain skips
+  entries stamped for a different user, moving them to `failedActions` with reason
+  `different-user` (B137). Operator home's sign-out routes through the same
+  `teardownUserSession()` (B150 asymmetry fix). **Train 2 (B04 push toggle, B142 archived SKUs,
+  batch F20) design, entered into `mobile.md`/`api.md`:** new `lib/notification-prefs.ts`
+  (get/set `pushEnabled` via `/users/me/preferences`, same shape as `locale`); the operator
+  settings push switch (`(operator)/settings/index.tsx`) binds to it instead of local state;
+  `lib/auth.ts` login registration gated by the preference; toggle-off deregisters the device
+  token. `ProductPickerSheet.tsx` gains `isActive: true` on its query (web parity, B142) while
+  stock-count/PO-receive/variant-parent callers keep the unfiltered query. `api.md`:
+  `notifications.service.ts` send path gains an `isPushEnabled`-style filter (skip tokens whose
+  user has `pushEnabled === false`), `registerPushToken` no-ops when disabled;
+  `orders.service.ts` `updateOrderItems`'s `addProductIds` hook (already NEW-lines-only) gains an
+  archived-product guard (`BadRequestException`), mirrored at staff/buyer order create and
+  interactive invoice/estimate create — batch paths (recurring generation, estimate→invoice
+  convert, templates apply) deliberately ALLOW and append a warning note instead (billing must
+  never pause on a catalog flag) — recurring's own cron note in `api.md` gets a cross-reference.
+  Registry: B111/B136/B137/B140/B150 (F19) and B04/B142 (F20) got their analysis sections
+  written this prep step (no batch discharge yet — PRs are placeholders); B151 (F20) proved on
+  `#555`/`REG-B151`; B35/B123/B124/B125/B203 (F33) and B126/B127 (F02) got pin-title notes for
+  `test/reconcile-pins`; B282 filed unbatched (interactive invoice/estimate create still accepts
+  a new line for an archived product — train 2 review finding, money-touching carve-out). Lessons:
+  L-101 added (domain, sign-out teardown contract); L-094 archived (only clean entry by the
+  standing repo-wide-grep rule — see `.claude/lessons/_meta.json`). Finishing commands (real
+  PR numbers, `prove`/`discharge`, and the mobile.md/api.md signature-level entries once these
+  files actually exist) are in `.claude/pipeline/2026-09-09-wave-followup/FINISH.md`. **The
+  bullets above describe the PLANNED shape of files that do not exist on `1dca1242` — treat them
+  as a design note, not a signature index, until the next session confirms the merged code and
+  replaces this bullet's mobile.md/api.md references with real entries at the real sha (DONE —
+  see the bullet above).**
+
+- **2026-09-09** — (branch `docs/numbering-group-a-bookkeeping`, Option-B bookkeeping follow-up for PR 678, mapped at `1dca1242`) — **Numbering siblings Group A mapped: B267/B268/B269 fixed, B277 pinned.** `api.md` gains a new bullet right after the B100/F16b primitive entry documenting: `numbering.service.ts`'s `YearScopedDocType` widened with a literal `CREDIT_NOTE` branch (no data-driven map, per `fix-round-2b.md` finding (2)); `credit-notes.service.ts create()` reserves `reserveNext("CREDIT_NOTE", {year, tenantId})` STANDALONE ahead of its SERIALIZABLE tx (an in-tx reservation there aborts under concurrency, P2034, rather than waiting); `invoices.service.ts` gains a shared `nextPaymentNumber(tenantId)` helper closing the `PAY-####`-vs-`PAY-<tenantShort>-####` cross-tenant collision at the batch-allocation/settlement site (`payment-requests.service.ts writeSettlement`) that could permanently stall a Stripe redelivery; `import.service.ts` fallback (source-numberless) rows now reserve through the same service instead of a from-1 local counter, and the "existing invoice → update it" branch is scoped to source-numbered rows only (B268 was worse than filed: it silently overwrote a live invoice's status/dueDate/paidAt, not a swallowed P2002); `estimates.service.ts create()` gains the P2002→409 pin matching its siblings (B277, refuted as a live repro, zero-risk consistency fix). Group B (B270 vendor bills/B271 purchase orders/B272 commission statements) stays deferred — needs a `DocumentNumberType` enum migration + owner ack. New DB-lane specs: `credit-note-numbering.db.spec.ts`, `payment-numbering.db.spec.ts`(+`-pins`), `import-numbering.db.spec.ts`(+`-pins`). **Registry:** B267/B268/B269/B277 moved into new batch **F31** (T1×3 + T2 B277), all six analysis sections filled from `cause-ruling.md`/`cause-refutation.md`/`bug-test-plan.md`; this same follow-up ran `prove B267/B268/B269 --pr 678` and `discharge F31` (3 rows → done). B277 was held out of the batch discharge on purpose: it is a refuted-as-repro pin that must never carry a `REG-` token (L-100), and `bugs.mjs prove` hard-requires the literal `REG-<id>` substring in `--proof`, so it cannot express a token-less claim — closed by hand instead as `state: refuted` with a non-empty `evidence` field, matching campaign-check's `EVIDENCE_ONLY_STATES` contract (`already-fixed`/`refuted`/`regressed`), which needs no test search. **B281** filed unbatched (low, money-sensitive, auto-classified) for the sibling finding from the same final pass: a later upload whose own source `Invoice Number` collides with a fallback-minted `INV-<year>-####` still overwrites that unrelated invoice. Lessons: **L-100** appended (domain — mint every document number through `NumberingService.reserveNext` with `tenantId` explicit, reserved standalone before any rollback-capable transaction, P2002→409 + bounded serialization retry that reuses the reserved number); **L-092** (2026-09-08, testing, `#657`, oldest untouched `no in-repo guard`-class entry after L-038's prior archival) archived for headroom, grep-confirmed clean of citations outside `.claude/lessons/**`/`code-map/CHANGELOG.md`. Register back to 40/40, 39.6/40.0 KB, archived 56, nextId 101. `node scripts/validate-lessons.mjs` exit 0. **Separately, an 11-row registry reconciliation** (evidence: an independent sweep of previously-filed Highs/Crits against master) folded into the same follow-up: **B126/B127** were already `already-fixed`/`closed: yes` in F02 (PR #506, `cc8c7d46`) — confirmed, no action needed. **B138** (F14, T2) was stale at `proven-pending-deploy` — its server-side fix shipped live in `#598` (`24421170`) and its companion jest (`REG-B138` in `auth.controller.cookie.spec.ts`) already passes; re-proved with `--pr 598`, then hand-patched to `done`/`closed: yes` (mirroring `discharge`'s own write shape — `state`, `dischargeEvidence`, `evidence`, record front matter, History line) rather than running `bugs.mjs discharge F14`, which would have forced sibling **B155** (still legitimately `proven-pending-deploy`, out of this reconciliation's scope, its own e2e leg also quarantined) past the T2 per-row evidence rule. **B35/B123/B124/B125/B203/B204** were unbatched (`uncampaigned`) — moved into a new batch **F33** (T1, `--why "reconciled: fixed on master before the registry existed"`). Only **B204** had a live `REG-B204` pin (`apps/mobile/__tests__/secure-key.test.ts`, PR #565/`4046e669`) — proved and discharged to `done`. The other five had no REG-tokened test the sweep could cite (`prove` refuses a proof without the literal token, and fabricating one was ruled out): each got a `note "pin proposed: …"` describing the concrete assertion the sweep found missing, and stayed `queued` in F33, listed as proven-less in the follow-up PR body. **B40**: `note`d `PARTIAL: #481 929a3740 scoped DSO/routes/drivers/dead-stock; margin-alerts deliberately unscoped (documented)` and left open (unbatched, no move). **B143** (F19, T1, queued): `git log --oneline -S "queue-drain" -- apps/mobile` found the file's introducing commit `5219e620` (`#555`, "F30" scan-loss hardening); `apps/mobile/__tests__/offline-queue-failed.test.ts` already carries `REG-B143` titles — proved with `--pr 555` and discharged in F19 (only B143 moved; siblings B01/B02/B111/B136/B137/B140/B150 stayed `queued`, untouched, since none of them were `proven`). `bugs.mjs sync --check` (281 records mirror the ledger) and `node scripts/validate-lessons.mjs` both green after all of the above.
+
+**Older entries (archived 218, 2026-09-13 split):** [`CHANGELOG-ARCHIVE.md`](CHANGELOG-ARCHIVE.md) — full verbatim history back to the changelog's creation. `git log -- .claude/code-map` for anything older still.

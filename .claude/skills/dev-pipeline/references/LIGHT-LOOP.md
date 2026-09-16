@@ -1,7 +1,7 @@
 # Light loop — `light-loop.js`, a bounded-work Workflow script
 
 Owner ruling 2026-09-10 (skills-build wave 2): the light loop is now a real Workflow script,
-`.claude/skills/dev-pipeline/scripts/light-loop.js`, not a manual S1–S5 checklist. It shares
+`~/.claude/skills/dev-pipeline/scripts/light-loop.js`, not a manual S1–S5 checklist. It shares
 pipeline.js's PROMPT CONVENTIONS — a byte-identical RUN PREFIX, a `PHASE: <alias> · LABEL:
 <slug>` tag on every agent call, per-phase Haiku checkpoints — so `session-usage.mjs` and the
 ledger need no new parsing. It is **not** a `mode:'light-loop'` fork of the pipeline.js engine
@@ -10,6 +10,11 @@ both still link this file.
 
 Design: `routeflow/.claude/pipeline/skills-design-2026-09-10.md` §3. Ruling:
 `skills-upgrade-ruling-2026-09-10.md` C1. Brief: `skills-build-brief-2026-09-10.md` §3.
+
+> Note (2026-09-12 task-loop rebuild): `pipeline.js` was rebuilt on the superpowers task-loop shape
+> (`references/ENGINE-NOTES.md`'s `## 2026-09-12 — task-loop rebuild`); `light-loop.js` is untouched and
+> stays the brief-driven BOUNDED variant — one brief, no `tasks[]` plan, a `maxFixRounds` cap — for small
+> bounded work, while `pipeline.js` is the full plan-driven engine.
 
 ## Invoking it
 
@@ -121,7 +126,7 @@ real calls land warm instead.
 
 ## Close-out
 
-`node .claude/skills/dev-pipeline/scripts/closeout.mjs <runDir>` — **no `--light` flag
+`node ~/.claude/skills/dev-pipeline/scripts/closeout.mjs <runDir>` — **no `--light` flag
 needed**, because `light-loop.js` writes a real `result.json` before it returns (Result, phase
 9 above). `--light` remains available for a light loop that lost its agents mid-run and never
 reached Result — `closeout.mjs` auto-triggers the same synthesis whenever `<runDir>` has no
@@ -154,7 +159,7 @@ cannot have them. Canonical text: [LEARNING-CLAUSE](LEARNING-CLAUSE.md).
 
 ## Its check
 
-`node .claude/skills/dev-pipeline/scripts/light-loop-dry-run.mjs` — zero API calls, stubs
+`node ~/.claude/skills/dev-pipeline/scripts/light-loop-dry-run.mjs` — zero API calls, stubs
 `agent()`/`parallel()`/`pipeline()` exactly as `dry-run.mjs` does for pipeline.js. Run it after
 ANY edit to `light-loop.js`; `node --check light-loop.js` proves syntax, the dry-run proves the
 branches: PHASE/LABEL tagging, PHASE_ORDER-only aliases, checkpoint count, isolation

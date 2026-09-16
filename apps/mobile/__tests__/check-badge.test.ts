@@ -50,4 +50,19 @@ describe("checkBadgeFor", () => {
     expect(checkBadgeFor({ method: "CHECK", status: "VOID" })).toBeNull();
     expect(checkBadgeFor({ method: "CHECK", status: "VOID", checkStatus: null })).toBeNull();
   });
+
+  // Post-dated check payments PR-1
+  it("REG-PR1-BADGE: maps a PENDING payment to 'Post-dated · pending' / orange, ahead of the checkStatus switch", () => {
+    expect(checkBadgeFor({ method: "CHECK", status: "PENDING", checkStatus: "RECORDED" })).toEqual({
+      label: "Post-dated · pending",
+      variant: "orange",
+    });
+  });
+
+  it("REG-PR1-BADGE: the PENDING check wins even with no checkStatus at all", () => {
+    expect(checkBadgeFor({ method: "CHECK", status: "PENDING" })).toEqual({
+      label: "Post-dated · pending",
+      variant: "orange",
+    });
+  });
 });
