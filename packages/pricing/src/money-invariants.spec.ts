@@ -27,6 +27,28 @@ describe("assertMoneyInvariants", () => {
     }
   });
 
+  it.each([
+    ["subtotal", { subtotal: NaN, total: 0 }],
+    ["total", { subtotal: 10, total: NaN }],
+    ["subtotal (Infinity)", { subtotal: Infinity, total: 0 }],
+    ["total (Infinity)", { subtotal: 10, total: Infinity }],
+  ])(
+    "throws MoneyInvariantError when %s is NaN/Infinity (Opus review of 942d5d69: NaN < 0 is false, a negative-only check misses this)",
+    (_name, input) => {
+      expect(() => assertMoneyInvariants(input as any)).toThrow(MoneyInvariantError);
+    },
+  );
+
+  it("REG (Opus review of 942d5d69): a freeform estimate line with no unitPrice — Number(undefined) is NaN — is caught, not silently let through", () => {
+    // Mirrors estimates.service.ts's freeform-item branch: `unitPrice = Number(i.unitPrice)`
+    // when i.unitPrice is undefined produces NaN, which would otherwise flow
+    // straight through `subtotal - discount + tax` as NaN — a corrupt write,
+    // not a caught 400.
+    const unitPrice = Number(undefined);
+    const subtotal = 1 * unitPrice;
+    expect(() => assertMoneyInvariants({ subtotal, total: subtotal })).toThrow(MoneyInvariantError);
+  });
+
   it("throws MoneyInvariantError when discount exceeds subtotal, even with a total the caller computed as non-negative", () => {
     // Mirrors the B451 gap-4 repro: subtotal 4.99, discount 500 — a caller that
     // (wrongly) floors `total` at 0 before calling this would otherwise sneak

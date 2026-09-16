@@ -26,7 +26,9 @@ export interface MoneyInvariantInput {
 
 /**
  * Throws `MoneyInvariantError` when:
- *  - any component (subtotal, discount, tax, shipping, total) is negative
+ *  - any component (subtotal, discount, tax, shipping, total) is negative,
+ *    NaN, or infinite (e.g. `Number(undefined)` from a freeform line with
+ *    no unitPrice — `NaN < 0` is false, so the negative check alone misses it)
  *  - discount exceeds subtotal
  *
  * `total < 0` is covered by the negative-component check above — a caller
@@ -42,6 +44,9 @@ export function assertMoneyInvariants(input: MoneyInvariantInput): void {
     ["total", total],
   ];
   for (const [name, value] of components) {
+    if (!Number.isFinite(value)) {
+      throw new MoneyInvariantError(`${name} must be a finite number (got ${value}).`);
+    }
     if (value < 0) {
       throw new MoneyInvariantError(`${name} cannot be negative (${value}).`);
     }

@@ -2465,7 +2465,11 @@ export class OrdersService implements OnApplicationBootstrap {
     });
 
     subtotal = roundMoney(subtotal);
-    const orderDiscount = dto.discountAmount ?? 0;
+    // Opus review of 942d5d69: rounded here (not left raw) so the
+    // discount-vs-subtotal comparison inside assertMoneyInvariantsOrThrow
+    // below compares two cents-rounded values, never a raw client float
+    // against an already-rounded subtotal.
+    const orderDiscount = roundMoney(dto.discountAmount ?? 0);
     // Optional shipping fee — never taxed; added after tax like Invoice.shippingFee.
     const orderShippingFee = roundMoney(Math.max(0, dto.shippingFee ?? 0));
     const tax = roundMoney(subtotal * (await this.getTaxRate()));

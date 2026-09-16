@@ -56,6 +56,15 @@ describe("CreateEstimateDto — the web client's real create payload", () => {
     expect(errors).toHaveLength(0);
   });
 
+  it("REG (Opus review of 942d5d69): a bare {productId, qty} catalog line — no description, no unitPrice — passes (scripts/feature-smoke.mjs S6, qa-run.js #57/144/145/148/149 all send exactly this shape)", async () => {
+    const instance = plainToInstance(CreateEstimateDto, {
+      customerId: "cust-1",
+      items: [{ productId: "prod-1", qty: 1 }],
+    });
+    const errors = await validate(instance, { whitelist: true, forbidNonWhitelisted: true });
+    expect(errors).toHaveLength(0);
+  });
+
   it.each(["discount", "taxAmount"])(
     "B451 gap 4: a client sending %s now 400s via forbidNonWhitelisted instead of reaching the service unvalidated",
     async (field) => {
