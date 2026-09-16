@@ -756,7 +756,15 @@ export class EmailService {
    * whose `result.error` was never inspected), which is why the UI said "sent" when
    * nothing went out.
    */
-  async send(params: { to: string; subject: string; html: string; replyTo?: string }): Promise<{
+  async send(params: {
+    to: string;
+    subject: string;
+    html: string;
+    /** N3: plain-text alternative. Optional so every EXISTING caller is unaffected —
+     *  a transport that doesn't get one just sends HTML-only, same as before this field. */
+    text?: string;
+    replyTo?: string;
+  }): Promise<{
     delivered: boolean;
     transport: "smtp" | "resend" | "none";
     id?: string;
@@ -815,6 +823,7 @@ export class EmailService {
           to: params.to,
           subject: params.subject,
           html: params.html,
+          text: params.text,
           replyTo,
         });
         this.logger.log(
@@ -843,6 +852,7 @@ export class EmailService {
           to: params.to,
           subject: params.subject,
           html: params.html,
+          text: params.text,
           replyTo,
         });
         if ((result as any)?.error) {
