@@ -505,10 +505,15 @@ export class BuyerAuthService {
     const urls = this.configService.get<AppConfig["urls"]>("urls")!;
     const resetUrl = `${urls.web}/buyer/reset-password?token=${rawToken}`;
 
-    // B212-class fix: fire-and-forget with the result discarded — the fixed,
-    // enumeration-safe response never changes, but a real delivery failure
-    // for a real buyer used to leave zero trace anywhere.
-    const sendResult = await this.emailService
+    // B212-class fix: a real delivery failure for a real buyer used to leave
+    // zero trace anywhere. Still fire-and-forget (NOT awaited): the response
+    // text is the SAME fixed, enumeration-safe message regardless of delivery
+    // outcome, and awaiting the send here would make a registered address
+    // cost an extra SMTP/Resend round-trip that an unknown address never pays
+    // for — a timing oracle on the one endpoint whose whole contract is
+    // enumeration safety (review finding on PR #778). The attempt is logged,
+    // just never blocks the response.
+    this.emailService
       .send({
         to: account.email,
         subject: "Reset your RouteFlow password",
@@ -517,20 +522,20 @@ export class BuyerAuthService {
 <p><a href="${resetUrl}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">Reset password</a></p>
 <p>This link expires in <strong>15 minutes</strong>. If you didn't request this, you can safely ignore this email — your password will not change.</p>`,
       })
-      .catch((err: Error) => ({
-        delivered: false,
-        transport: "none" as const,
-        error: err.message,
-        smtpFallbackReason: undefined as string | undefined,
-      }));
-
-    if (!sendResult.delivered) {
-      this.logger.error(
-        `Password reset email NOT delivered for buyer ${account.id} (${account.email}) — ` +
-          `transport=${sendResult.transport} ` +
-          `error=${sendResult.error ?? sendResult.smtpFallbackReason ?? "unknown"}.`,
-      );
-    }
+      .then((sendResult) => {
+        if (!sendResult.delivered) {
+          this.logger.error(
+            `Password reset email NOT delivered for buyer ${account.id} (${account.email}) — ` +
+              `transport=${sendResult.transport} ` +
+              `error=${sendResult.error ?? sendResult.smtpFallbackReason ?? "unknown"}.`,
+          );
+        }
+      })
+      .catch((err: Error) => {
+        this.logger.error(
+          `Failed to send password reset email for buyer ${account.id} (${account.email}): ${err.message}`,
+        );
+      });
 
     return MSG;
   }

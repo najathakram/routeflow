@@ -111,28 +111,29 @@ describe("UsersService", () => {
     });
   });
 
-  // ─── Cross-tenant fallback lookups (B213 follow-up) ────────────────────────
+  // ─── Cross-tenant fallback lookups ──────────────────────────────────────────
   //
-  // These used to filter `status: "ACTIVE"` in the query itself, so an INACTIVE
-  // self-signup user (pending email verification) whose typed/cached workspace
-  // slug didn't match their own tenant was invisible to auth.service.ts's
-  // validateUser() BEFORE it ever got a chance to check the password or return
-  // its distinguishable EMAIL_NOT_VERIFIED error — status filtering belongs
-  // there now, after the credential is verified, not in this lookup.
+  // Regression coverage (review of PR #778): an earlier version of this fix
+  // dropped `status: "ACTIVE"` from these queries so an INACTIVE self-signup
+  // user could reach a distinguishable EMAIL_NOT_VERIFIED error in
+  // auth.service.ts's validateUser(). That signal was reverted (UserStatus
+  // has no column distinguishing "never verified" from "an admin deactivated
+  // this account," so it can't be surfaced safely — see auth.service.spec.ts),
+  // so there is no longer any reason to widen this lookup past ACTIVE. Kept
+  // filtered: an ACTIVE user whose email also exists on a deactivated account
+  // in another tenant must resolve to exactly one match, not two.
   describe("findByEmailCrossTenant", () => {
-    it("returns an INACTIVE user (not filtered out) when the email is globally unique", async () => {
-      const inactiveUser = { id: "u1", email: "new@acme.example", status: "INACTIVE" };
-      prisma.user.findMany.mockResolvedValue([inactiveUser] as any);
+    it("filters to status:ACTIVE — a deactivated account with the same email in another tenant must not create a false ambiguity", async () => {
+      prisma.user.findMany.mockResolvedValue([{ id: "u1", email: "owner@acme.example" }] as any);
 
-      const result = await service.findByEmailCrossTenant("new@acme.example");
+      const result = await service.findByEmailCrossTenant("owner@acme.example");
 
-      expect(result).toEqual(inactiveUser);
+      expect(result).toEqual({ id: "u1", email: "owner@acme.example" });
       const call = prisma.user.findMany.mock.calls[0][0] as any;
-      expect(call.where).not.toHaveProperty("status");
-      expect(call.where.deletedAt).toBeNull();
+      expect(call.where).toMatchObject({ status: "ACTIVE", deletedAt: null });
     });
 
-    it("still returns null when 0 or 2+ matches (ambiguous), regardless of status", async () => {
+    it("returns null when 0 or 2+ ACTIVE matches (ambiguous)", async () => {
       prisma.user.findMany.mockResolvedValue([]);
       expect(await service.findByEmailCrossTenant("nobody@nowhere.example")).toBeNull();
 
@@ -142,15 +143,14 @@ describe("UsersService", () => {
   });
 
   describe("findByUsernameCrossTenant", () => {
-    it("returns an INACTIVE user (not filtered out) when the username is globally unique", async () => {
-      const inactiveUser = { id: "u2", username: "acme_admin", status: "INACTIVE" };
-      prisma.user.findMany.mockResolvedValue([inactiveUser] as any);
+    it("filters to status:ACTIVE", async () => {
+      prisma.user.findMany.mockResolvedValue([{ id: "u2", username: "acme_admin" }] as any);
 
       const result = await service.findByUsernameCrossTenant("acme_admin");
 
-      expect(result).toEqual(inactiveUser);
+      expect(result).toEqual({ id: "u2", username: "acme_admin" });
       const call = prisma.user.findMany.mock.calls[0][0] as any;
-      expect(call.where).not.toHaveProperty("status");
+      expect(call.where).toMatchObject({ status: "ACTIVE" });
     });
   });
 });

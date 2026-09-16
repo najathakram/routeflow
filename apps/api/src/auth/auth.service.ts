@@ -74,25 +74,29 @@ export class AuthService {
       return null;
     }
     // Status is checked AFTER the password is verified, not before (it used to
-    // run first). Two reasons: (1) it closes a timing oracle — checking status
-    // first meant every INACTIVE username short-circuited before bcrypt, so
-    // response latency alone told an attacker which usernames exist and are
-    // pending verification; running bcrypt unconditionally makes the two cases
-    // take the same time. (2) it lets a self-service signup user who typed
-    // their real password be told the true reason they can't sign in — a
-    // self-registered tenant admin is INACTIVE until they click the emailed
-    // verification link (see TenantsService.register), and the previous
-    // generic "Invalid credentials" was indistinguishable from a wrong
-    // password, which is exactly the "signup doesn't work" confusion new
-    // users reported. Only reachable with the CORRECT password, so this
-    // never tells a stranger an account exists.
-    if (user.status === "INACTIVE") {
-      throw new ForbiddenException({
-        code: "EMAIL_NOT_VERIFIED",
-        message:
-          "Please verify your email before signing in. Check your inbox for the verification link (and your spam folder), or request a new one.",
-      });
-    }
+    // run first) — this closes a timing oracle: checking status first meant
+    // every non-ACTIVE username short-circuited before bcrypt ran, so response
+    // latency alone told an attacker which usernames exist. Running bcrypt
+    // unconditionally makes every non-ACTIVE case take the same time as a
+    // wrong password (B213). Only reachable with the CORRECT password, so
+    // nothing here tells a stranger an account exists.
+    //
+    // Deliberately generic for EVERY non-ACTIVE status, including INACTIVE:
+    // an earlier version of this fix threw a distinguishable EMAIL_NOT_VERIFIED
+    // for INACTIVE specifically, on the theory that INACTIVE means "self-signup
+    // admin pending email verification" (TenantsService.register). That's not
+    // true in general — INACTIVE is the SAME status an admin sets via
+    // UsersService.changeStatus (apps/web settings page) to deactivate ANY
+    // staff member, and the same status BillingCronService's seat-cap
+    // enforcement writes on a plan downgrade. Surfacing EMAIL_NOT_VERIFIED (and
+    // a "Resend verification email" affordance) to a deactivated staff member
+    // handed them a path back to ACTIVE via TenantsService.resendVerification +
+    // verifyEmailAndLogin below — a self-reactivation hole caught in review.
+    // UserStatus (prisma/schema/tenancy.prisma) has no column distinguishing
+    // "never verified" from "deliberately deactivated," so this cannot be
+    // gated safely without a schema discriminator (e.g. a nullable
+    // `emailVerifiedAt` column or a distinct `PENDING_VERIFICATION` status) —
+    // proposed as a follow-up, not built here.
     if (user.status !== "ACTIVE") return null;
     if (user.failedLoginAttempts > 0 || user.lockedUntil) {
       await this.prisma.user.update({
@@ -500,13 +504,15 @@ export class AuthService {
     const resetUrl = `${base}/reset-password?token=${rawToken}`;
 
     // B212-class fix: this used to be fire-and-forget with the result
-    // discarded (`.catch(() => {})`, never awaited) — the response text stays
-    // the SAME fixed, enumeration-safe message either way (a real delivery
-    // failure must never be distinguishable to the caller), but the attempt
-    // is no longer silent server-side: a real user locked out by a broken
-    // mail transport used to have zero trace anywhere but "user says they
-    // never got the email".
-    const sendResult = await this.emailService
+    // discarded (`.catch(() => {})`) — a real delivery failure had zero trace
+    // anywhere but "user says they never got the email". Still fire-and-forget
+    // (NOT awaited): the response text is the SAME fixed, enumeration-safe
+    // message regardless of delivery outcome, and awaiting the send here would
+    // make a registered address cost an extra SMTP/Resend round-trip that an
+    // unknown address never pays for — a timing oracle on the one endpoint
+    // whose whole contract is enumeration safety (review finding on PR #778).
+    // The attempt is logged, just never blocks the response.
+    this.emailService
       .send({
         to: email,
         subject: "Reset your RouteFlow password",
@@ -515,20 +521,20 @@ export class AuthService {
 <p><a href="${resetUrl}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">Reset password</a></p>
 <p>This link expires in <strong>15 minutes</strong>. If you didn't request this, you can safely ignore this email — your password will not change.</p>`,
       })
-      .catch((err: Error) => ({
-        delivered: false,
-        transport: "none" as const,
-        error: err.message,
-        smtpFallbackReason: undefined as string | undefined,
-      }));
-
-    if (!sendResult.delivered) {
-      this.logger.error(
-        `Password reset email NOT delivered for user ${user.id} (${email}) — ` +
-          `transport=${sendResult.transport} ` +
-          `error=${sendResult.error ?? sendResult.smtpFallbackReason ?? "unknown"}.`,
-      );
-    }
+      .then((sendResult) => {
+        if (!sendResult.delivered) {
+          this.logger.error(
+            `Password reset email NOT delivered for user ${user.id} (${email}) — ` +
+              `transport=${sendResult.transport} ` +
+              `error=${sendResult.error ?? sendResult.smtpFallbackReason ?? "unknown"}.`,
+          );
+        }
+      })
+      .catch((err: Error) => {
+        this.logger.error(
+          `Failed to send password reset email for user ${user.id} (${email}): ${err.message}`,
+        );
+      });
 
     return MSG;
   }

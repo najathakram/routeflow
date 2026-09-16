@@ -221,6 +221,21 @@ export class TenantsService {
    * server-side instead of only ever manifesting as "user says they never got
    * the email". Returns whether a send was attempted and delivered, for callers
    * that want to log/test — never expose this boolean to the client.
+   *
+   * KNOWN PRE-EXISTING LIMITATION (flagged in review of PR #778, not introduced
+   * or fixed by this PR): the `status: "INACTIVE"` filter below targets ANY
+   * INACTIVE user, not only a self-signup admin genuinely pending
+   * verification — the same status is written by UsersService.changeStatus
+   * (admin deactivation) and BillingCronService's seat-cap enforcement.
+   * Combined with verifyEmailAndLogin (auth.service.ts), this endpoint can
+   * mint a fresh 24h verify link — and thus a path back to ACTIVE — for a
+   * deliberately deactivated staff member, since the account's own inbox is
+   * always reachable by its own former holder. `UserStatus`
+   * (prisma/schema/tenancy.prisma) has no column distinguishing "never
+   * verified" from "deliberately deactivated," so this cannot be closed
+   * safely without a schema discriminator (e.g. a nullable `emailVerifiedAt`
+   * column or a distinct `PENDING_VERIFICATION` status) — proposed as a
+   * follow-up bug, not attempted here.
    */
   async resendVerification(email: string): Promise<boolean> {
     const user = await this.prisma.user.findFirst({

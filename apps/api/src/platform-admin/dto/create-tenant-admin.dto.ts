@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
-import { IsEmail, IsOptional, IsString, Matches, MinLength } from "class-validator";
+import { IsEmail, IsOptional, IsString, Matches, MaxLength, MinLength } from "class-validator";
 
 /**
  * F1-class fix (2026-09-12): `PlatformAdminController.createTenantAdmin` used
@@ -15,11 +15,16 @@ import { IsEmail, IsOptional, IsString, Matches, MinLength } from "class-validat
  * lets the same platform-wide password policy apply here too.
  */
 export class CreateTenantAdminDto {
+  // Matches the sibling CreateTenantDto.adminUsername exactly (MinLength(3) /
+  // MaxLength(50), no charset restriction) — review of PR #778 caught that a
+  // stricter `^[a-zA-Z0-9_]{3,30}$` here would 400 a username that
+  // CreateTenantDto's own admin-creation path (during tenant creation) had
+  // already accepted, for no security reason (this is a username, not a
+  // credential).
   @ApiProperty({ example: "acme_admin" })
   @IsString()
-  @Matches(/^[a-zA-Z0-9_]{3,30}$/, {
-    message: "username must be 3-30 alphanumeric characters or underscores",
-  })
+  @MinLength(3)
+  @MaxLength(50)
   username: string;
 
   @ApiProperty({ example: "owner@acme.example" })

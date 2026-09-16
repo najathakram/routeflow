@@ -126,53 +126,43 @@ describe("AuthService", () => {
       expect(result).toBeNull();
     });
 
-    // Repro-first regression test for the "signup doesn't work" report: a
-    // self-service tenant signup (TenantsService.register) creates the admin
-    // user with status INACTIVE until the emailed verification link is
-    // clicked. Before this fix, validateUser checked status BEFORE the
-    // password, so a real self-signup user typing their own correct password
-    // got back the exact same "Invalid credentials" as a wrong password or a
-    // nonexistent account — indistinguishable, and impossible to self-diagnose.
-    describe("INACTIVE user (pending email verification)", () => {
-      it("throws a distinguishable EMAIL_NOT_VERIFIED error when the password IS correct", async () => {
+    // Regression coverage for a self-reactivation vulnerability caught in
+    // review of PR #778: an earlier version of this fix threw a
+    // distinguishable EMAIL_NOT_VERIFIED for INACTIVE specifically, on the
+    // theory that INACTIVE means "self-signup admin pending email
+    // verification" (TenantsService.register). That's not true in general —
+    // INACTIVE is the SAME status UsersService.changeStatus writes to
+    // deactivate ANY staff member (apps/web settings page) and the same
+    // status BillingCronService's seat-cap enforcement writes on a plan
+    // downgrade. Surfacing EMAIL_NOT_VERIFIED handed a deactivated staff
+    // member a path back to ACTIVE via the resend-verification + email-verify
+    // flow. UserStatus has no column distinguishing "never verified" from
+    // "deliberately deactivated," so validateUser stays deliberately generic
+    // for every non-ACTIVE status — the timing-oracle fix (password checked
+    // before status) is kept, the distinguishing signal is not.
+    describe("INACTIVE user (e.g. self-signup pending verification, OR a deactivated staff member — indistinguishable without a schema discriminator)", () => {
+      it("returns null (generic, same as any other non-ACTIVE status) even when the password IS correct — no EMAIL_NOT_VERIFIED leak", async () => {
         usersService.findByUsername.mockResolvedValue({ ...MOCK_USER, status: "INACTIVE" });
         (bcrypt.compare as jest.Mock).mockResolvedValue(true);
 
-        let caught: ForbiddenException | undefined;
-        try {
-          await service.validateUser("admin", "correct-password");
-        } catch (err) {
-          caught = err as ForbiddenException;
-        }
-        expect(caught).toBeInstanceOf(ForbiddenException);
-        expect(caught!.getResponse()).toMatchObject({ code: "EMAIL_NOT_VERIFIED" });
+        const result = await service.validateUser("admin", "correct-password");
+        expect(result).toBeNull();
       });
 
-      // B213 follow-up: findByEmailCrossTenant/findByUsernameCrossTenant used to
-      // filter status:"ACTIVE" in their own Prisma query, so an INACTIVE user
-      // reached via the cross-tenant fallback (wrong/stale workspace cookie —
-      // common right after self-signup, before the user has learned their own
-      // slug) came back as `user: null` and hit the generic null-return at the
-      // top of validateUser, never even reaching the password check below.
-      it("still throws EMAIL_NOT_VERIFIED when the INACTIVE user is found via the cross-tenant fallback (wrong workspace typed)", async () => {
+      it("still returns null (not found) when an INACTIVE user is reached only via the cross-tenant fallback — the fallback filters status:ACTIVE", async () => {
         usersService.findByUsername.mockResolvedValue(null); // wrong tenant slug typed
-        usersService.findByUsernameCrossTenant.mockResolvedValue({
-          ...MOCK_USER,
-          status: "INACTIVE",
-        });
+        usersService.findByUsernameCrossTenant.mockResolvedValue(null);
         (bcrypt.compare as jest.Mock).mockResolvedValue(true);
 
-        let caught: ForbiddenException | undefined;
-        try {
-          await service.validateUser("admin", "correct-password", "some-other-tenant-id");
-        } catch (err) {
-          caught = err as ForbiddenException;
-        }
-        expect(caught).toBeInstanceOf(ForbiddenException);
-        expect(caught!.getResponse()).toMatchObject({ code: "EMAIL_NOT_VERIFIED" });
+        const result = await service.validateUser(
+          "admin",
+          "correct-password",
+          "some-other-tenant-id",
+        );
+        expect(result).toBeNull();
       });
 
-      it("returns null (no leak) when the password is WRONG — never reveals the account is pending verification to a guesser", async () => {
+      it("returns null when the password is WRONG too — identical response either way", async () => {
         usersService.findByUsername.mockResolvedValue({ ...MOCK_USER, status: "INACTIVE" });
         (bcrypt.compare as jest.Mock).mockResolvedValue(false);
 

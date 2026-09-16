@@ -63,12 +63,6 @@ export default function LoginPage() {
   const [googleLoading, setGoogleLoading] = React.useState(false);
   const [googleError, setGoogleError] = React.useState<string | null>(null);
   const [throttleSeconds, setThrottleSeconds] = React.useState<number | null>(null);
-  // Set when the API rejects login with code EMAIL_NOT_VERIFIED (a self-service
-  // signup whose account is still INACTIVE pending the verification email) —
-  // previously this looked identical to a wrong password, which is exactly the
-  // "signup doesn't work" confusion new users reported.
-  const [needsVerification, setNeedsVerification] = React.useState(false);
-  const [resendState, setResendState] = React.useState<"idle" | "sending" | "sent">("idle");
 
   const subdomainWorkspace = React.useMemo(getSubdomainWorkspace, []);
   const showWorkspaceField = !subdomainWorkspace;
@@ -104,8 +98,6 @@ export default function LoginPage() {
     setIsLoading(true);
     setApiError(null);
     setThrottleSeconds(null);
-    setNeedsVerification(false);
-    setResendState("idle");
     setTenantCookie(data.workspace);
     try {
       const user = await authLogin(data.username, data.password);
@@ -135,38 +127,9 @@ export default function LoginPage() {
           }
         }
       }
-      const data = errObj?.response?.data as { message?: string; code?: string } | undefined;
-      if (data?.code === "EMAIL_NOT_VERIFIED") {
-        setNeedsVerification(true);
-      }
-      const msg = data?.message ?? "Invalid username or password.";
+      const msg = errObj?.response?.data?.message ?? "Invalid username or password.";
       setApiError(typeof msg === "string" ? msg : "Login failed.");
       setIsLoading(false);
-    }
-  };
-
-  // Only usable when the person typed their email into the username field (the
-  // field accepts either) — the resend endpoint takes an email address, and the
-  // login form never collects one separately. Still enumeration-safe: the API
-  // always returns the same response regardless of whether the address matches
-  // a real pending account.
-  const usernameValue = watch("username");
-  const canResend = /\S+@\S+\.\S+/.test(usernameValue ?? "");
-
-  const handleResendVerification = async () => {
-    if (!canResend || resendState === "sending") return;
-    setResendState("sending");
-    try {
-      await fetch(`${apiUrl}/public/tenants/resend-verification`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: usernameValue }),
-      });
-    } catch {
-      // Best-effort — the enumeration-safe endpoint gives no signal either way,
-      // so there is nothing more useful to show on a network failure here.
-    } finally {
-      setResendState("sent");
     }
   };
 
@@ -261,25 +224,6 @@ export default function LoginPage() {
             Too many login attempts. Try again in {throttleSeconds}{" "}
             {throttleSeconds === 1 ? "second" : "seconds"}.
           </p>
-        ) : apiError && needsVerification ? (
-          <div className="rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">
-            <p>{apiError}</p>
-            {canResend &&
-              (resendState === "sent" ? (
-                <p className="mt-1.5 text-navy/70">
-                  If that address has a pending account, a new link is on its way.
-                </p>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleResendVerification}
-                  disabled={resendState === "sending"}
-                  className="mt-1.5 font-medium underline hover:no-underline"
-                >
-                  {resendState === "sending" ? "Sending…" : "Resend verification email"}
-                </button>
-              ))}
-          </div>
         ) : apiError ? (
           <p className="rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">{apiError}</p>
         ) : null}
