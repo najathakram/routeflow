@@ -210,7 +210,7 @@ parent missing` when the Route row or its tenant is absent) and treats the DISTI
   `settledAt` strictly after `--since` (default the introducing migration's own instant,
   `2026-09-16T01:00:00Z` — never "now", so a later rerun can't silently widen scope).
   NEVER touches `status`; `appliedAt` stays null. Pure decision layer split into `lib/check-date-
-  backfill.mjs` (`shouldBackfillCheckDate`/`deriveCheckDate` (UTC calendar-day truncation of
+backfill.mjs` (`shouldBackfillCheckDate`/`deriveCheckDate` (UTC calendar-day truncation of
   `settledAt`)/`planCheckDateBackfill` — DB-free, locked by `backfill-check-dates-script.spec.ts`
   via the same `node --input-type=module` shim pattern as `backfill-legacy-tenant-ids-script.spec.ts`).
   Cross-tenant scan by default (platform-wide, like `backfill-subscription-reconciliation.mjs`);

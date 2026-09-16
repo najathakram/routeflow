@@ -102,7 +102,7 @@
   `packages/types/api/checks.ts` export.
 - **`src/common/check-transitions.ts`** (post-dated check payments PR-1, 2026-09-15) — API-local
   mirror of the check-lifecycle forward-transition table (`CHECK_TRANSITIONS: Record<CheckStatus,
-  readonly CheckStatus[]>` — RECORDED→[DEPOSITED,BOUNCED], DEPOSITED→[CLEARED,BOUNCED],
+readonly CheckStatus[]>` — RECORDED→[DEPOSITED,BOUNCED], DEPOSITED→[CLEARED,BOUNCED],
   CLEARED→[BOUNCED], BOUNCED→[]). Canonical copy is `packages/types/api/checks.ts`
   (`@routeflow/types`, value-imported directly by web/mobile — both transpile workspace TS at
   build time); the API can't value-import that raw-TS package at runtime (see
@@ -118,7 +118,7 @@
   `MessagesModule`/`CustomersModule`) must list `EntitlementsModule` in its own `imports` —
   `PlanFlagGuard` is only provided/exported there, so a missing import is a DI-resolution boot
   crash that this catches at unit-test time instead of `nest build`/boot. **`tsconfig.plan-gate-
-  specs.json`** (`apps/api/`, sibling build config) — extends `tsconfig.json`, `include`-only the
+specs.json`** (`apps/api/`, sibling build config) — extends `tsconfig.json`, `include`-only the
   six `*.plan-gate.spec.ts` files across billing/customers/credit-notes/messages/
   recurring-invoices/suppliers/estimates (no `exclude`) — a dedicated tsc project for that one
   spec-file family; see each module's own spec for its individual plan-gate behavior.
