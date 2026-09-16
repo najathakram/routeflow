@@ -91,6 +91,22 @@ services:
     profiles:
       - tools
 
+  # ─── Mailpit (local SMTP catch-all) ──────────────────────────────────────────
+  # Local stand-in for the Google Workspace SMTP mailbox — the `api` service's
+  # platform SMTP env below points at it, so a real transactional send (verify
+  # email, password reset, invoice) can be proven end-to-end without touching a
+  # real mailbox. UI at :8025 shows every message received on :1025.
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: routeflow_mailpit
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8025:8025" # web UI — bind to localhost only
+      - "127.0.0.1:1025:1025" # SMTP — bind to localhost only; the api container reaches
+      #   mailpit:1025 over the internal Compose network regardless of this host binding
+    profiles:
+      - app
+
   # ─── DB migrations (one-shot) ────────────────────────────────────────────────
   # Applies committed Prisma migrations before the API starts, mirroring prod
   # (`railway run npx prisma migrate deploy`). Reuses the built API image, which
@@ -134,6 +150,15 @@ services:
       # default (10 / 5min) exhausts fast. Prod defaults (10 / 300000) unchanged.
       AUTH_LOGIN_THROTTLE_LIMIT: "1000"
       AUTH_LOGIN_THROTTLE_TTL_MS: "60000"
+      # Platform SMTP → mailpit (local catch-all, no real mailbox involved). Mirrors
+      # the Google Workspace platform transport shape (SMTP_HOST/PORT/SECURE/USER/PASS)
+      # so the code path under test locally is the same one prod uses.
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_SECURE: "false"
+      SMTP_USER: "local@routeflow.info"
+      SMTP_PASS: "local-mailpit-no-auth"
+      EMAIL_FROM: "RouteFlow <noreply@routeflow.info>"
     ports:
       - "3000:3000"
     depends_on:
@@ -141,6 +166,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      mailpit:
+        condition: service_started
       migrate:
         condition: service_completed_successfully
     healthcheck:
