@@ -1512,6 +1512,26 @@ describe("CustomersService", () => {
       );
     });
 
+    it("F7: reports the server's own appliedAmount on the response (wallet 1000, invoice 1000, 400 already paid → 600)", async () => {
+      prisma.advancePayment.findUnique.mockResolvedValue({ id: "ap-1", balance: 1000 });
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-1",
+        total: 1000,
+        status: "SENT",
+        dueDate: null,
+        payments: [{ amount: 400, status: "PAID" }],
+      });
+
+      const result: any = await service.applyAdvancePaymentToInvoice("ap-1", {
+        invoiceId: "inv-1",
+      });
+
+      expect(result.appliedAmount).toBe(600);
+      expect(prisma.invoicePayment.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ amount: 600 }) }),
+      );
+    });
+
     it("REG-B310 two concurrent applies of the SAME advance never drive its balance negative", async () => {
       // The mocked `withAdvisoryLock` is a module-level jest.fn shared across every test in this
       // file (a prior test above also calls applyAdvancePaymentToInvoice) — clear its call

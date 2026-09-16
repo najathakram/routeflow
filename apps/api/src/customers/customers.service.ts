@@ -1513,7 +1513,11 @@ export class CustomersService {
       // the accrual's payable must move with it in the same tx.
       await this.commissionEngine.syncInvoiceCommissionSafe(dto.invoiceId, tx);
 
-      return updatedInvoice;
+      // F7 (money discipline): report the SERVER's own applied amount instead of making
+      // the caller re-derive it client-side (e.g. web's `Math.min(remaining, balanceDue)`,
+      // which can drift from what actually got applied). Additive field — existing
+      // consumers (mobile) that ignore it are unaffected.
+      return { ...updatedInvoice, appliedAmount: roundMoney(applyAmount) };
     });
   }
 

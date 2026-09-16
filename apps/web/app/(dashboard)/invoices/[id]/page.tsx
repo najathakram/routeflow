@@ -533,25 +533,26 @@ function ApplyAdvanceModal({
   customerId,
   invoiceId,
   invoiceNumber,
-  balanceDue,
 }: {
   isOpen: boolean;
   onClose: () => void;
   customerId: string;
   invoiceId: string;
   invoiceNumber: string;
-  balanceDue: number;
 }) {
   const { toast } = useToast();
   const { data, isLoading } = useCustomerAdvancePayments(customerId);
   const applyAdvance = useApplyAdvanceToInvoice();
   const open = (data ?? []).filter((ap) => Number(ap.balance) > 0.001);
 
-  const handleApply = (advancePaymentId: string, remaining: number) => {
-    const applied = Math.min(remaining, balanceDue);
+  // F7 (money discipline): the client does no money math — the server caps the
+  // applied amount at min(wallet balance, invoice balance) and is the only source of
+  // truth for what actually landed (the mutation resolves the server's own
+  // `appliedAmount`, reported in the success toast below).
+  const handleApply = (advancePaymentId: string) => {
     if (
       !window.confirm(
-        `${fmt(applied)} of the customer's advance will be applied to ${invoiceNumber}.`,
+        `Apply advance AP-${advancePaymentId.slice(0, 8)}? Up to the invoice's outstanding balance will be applied.`,
       )
     ) {
       return;
@@ -559,10 +560,10 @@ function ApplyAdvanceModal({
     applyAdvance.mutate(
       { customerId, advancePaymentId, invoiceId },
       {
-        onSuccess: () => {
+        onSuccess: (updated) => {
           toast({
             title: "Advance applied",
-            description: `${fmt(applied)} applied.`,
+            description: `${fmt(updated.appliedAmount)} applied to ${invoiceNumber}.`,
             variant: "success",
           });
           onClose();
@@ -595,7 +596,7 @@ function ApplyAdvanceModal({
                 key={ap.id}
                 type="button"
                 disabled={applyAdvance.isPending}
-                onClick={() => handleApply(ap.id, remaining)}
+                onClick={() => handleApply(ap.id)}
                 className="flex w-full items-center justify-between rounded-lg border border-surface-border bg-white px-3 py-2.5 text-left text-sm transition-colors hover:bg-surface-raised disabled:opacity-50"
               >
                 <span className="flex items-center gap-2 text-navy/80">
@@ -2975,7 +2976,6 @@ export default function InvoiceDetailPage() {
           customerId={invoice.customerId}
           invoiceId={invoice.id}
           invoiceNumber={invoice.invoiceNumber}
-          balanceDue={balanceDue}
         />
       )}
 
