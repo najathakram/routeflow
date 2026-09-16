@@ -206,6 +206,7 @@ class TestEmail {
 
 /** Exposes the protected seams so tests control the clock and the env. */
 class Subject extends DemoBookingService {
+  nowOverride: Date | null = null;
   constructor(
     prisma: TestPrisma,
     calendar: TestCalendar,
@@ -218,7 +219,7 @@ class Subject extends DemoBookingService {
     return { ...BASE_CONFIG, ...this.overrides };
   }
   protected now(): Date {
-    return NOW;
+    return this.nowOverride ?? NOW;
   }
 }
 
@@ -467,6 +468,32 @@ describe("DemoBookingService manage-token lifecycle", () => {
       NotFoundException,
     );
     expect(findUnique).not.toHaveBeenCalled();
+  });
+
+  // Review finding 8: a manage token has no other expiry, so without this it
+  // would grant cancel/reschedule access to a slot forever.
+  it("REG-review-finding-8: a manage token still works 6 days after the slot ended", async () => {
+    const { service } = build();
+    const { manageToken } = await service.create(input);
+    (service as Subject).nowOverride = new Date(new Date(FRIDAY_9AM).getTime() + 6 * 86_400_000);
+    await expect(service.getByToken(manageToken)).resolves.toMatchObject({ status: "CONFIRMED" });
+  });
+
+  it("REG-review-finding-8: a manage token stops working 8 days after the slot ended", async () => {
+    const { service } = build();
+    const { manageToken } = await service.create(input);
+    (service as Subject).nowOverride = new Date(new Date(FRIDAY_9AM).getTime() + 8 * 86_400_000);
+    await expect(service.getByToken(manageToken)).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it("REG-review-finding-8: an expired token cannot cancel or reschedule either", async () => {
+    const { service } = build();
+    const { manageToken } = await service.create(input);
+    (service as Subject).nowOverride = new Date(new Date(FRIDAY_9AM).getTime() + 8 * 86_400_000);
+    await expect(service.cancel(manageToken)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(
+      service.reschedule(manageToken, "2026-10-16T15:00:00.000Z"),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it("cancels the booking and removes the calendar event", async () => {

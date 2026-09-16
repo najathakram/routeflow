@@ -1,4 +1,8 @@
-import { isCalendarConfigured, isTokenSigningConfigured, loadDemoBookingConfig } from "./demo-booking.config";
+import {
+  isCalendarConfigured,
+  isTokenSigningConfigured,
+  loadDemoBookingConfig,
+} from "./demo-booking.config";
 
 /**
  * The Railway-pasted service-account key arrives as a single line with LITERAL

@@ -113,24 +113,28 @@ export async function createBooking(
   return parse<Booking>(response);
 }
 
+// The manage token travels in an `X-Booking-Token` header (GET) or the
+// request body (POST) — never in the URL path. A URL-path token lands in
+// access logs and in Sentry's error-tag on any 5xx (review finding 8).
+
 export async function fetchBooking(token: string): Promise<Booking> {
-  return parse<Booking>(await fetch(`${ROOT}/${encodeURIComponent(token)}`));
+  return parse<Booking>(await fetch(`${ROOT}/me`, { headers: { "X-Booking-Token": token } }));
 }
 
 export async function rescheduleBooking(token: string, startsAt: string): Promise<Booking> {
-  const response = await fetch(`${ROOT}/${encodeURIComponent(token)}/reschedule`, {
+  const response = await fetch(`${ROOT}/reschedule`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ startsAt }),
+    body: JSON.stringify({ token, startsAt }),
   });
   return parse<Booking>(response);
 }
 
 export async function cancelBooking(token: string, reason?: string): Promise<Booking> {
-  const response = await fetch(`${ROOT}/${encodeURIComponent(token)}/cancel`, {
+  const response = await fetch(`${ROOT}/cancel`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ reason }),
+    body: JSON.stringify({ token, reason }),
   });
   return parse<Booking>(response);
 }

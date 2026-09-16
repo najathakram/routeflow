@@ -63,12 +63,24 @@ export class CreateDemoBookingDto {
 }
 
 export class RescheduleDemoBookingDto {
+  @ApiProperty({ description: "The booking's manage token, from the confirmation email." })
+  @IsString()
+  @MinLength(16)
+  @MaxLength(200)
+  token!: string;
+
   @ApiProperty({ description: "New slot start, UTC ISO-8601." })
   @IsISO8601()
   startsAt!: string;
 }
 
 export class CancelDemoBookingDto {
+  @ApiProperty({ description: "The booking's manage token, from the confirmation email." })
+  @IsString()
+  @MinLength(16)
+  @MaxLength(200)
+  token!: string;
+
   @ApiPropertyOptional({ description: "Optional reason, shown to the RouteFlow team only." })
   @IsOptional()
   @IsString()

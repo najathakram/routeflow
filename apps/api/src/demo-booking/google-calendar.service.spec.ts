@@ -15,11 +15,15 @@ const CONFIGURED: DemoBookingConfig = {
 };
 
 class Subject extends GoogleCalendarService {
+  fakeNow = 0;
   constructor(private readonly cfg: DemoBookingConfig) {
     super();
   }
   protected config(): DemoBookingConfig {
     return this.cfg;
+  }
+  protected cacheNow(): number {
+    return this.fakeNow;
   }
 }
 
@@ -109,6 +113,78 @@ describe("GoogleCalendarService.getBusy — review finding 3 (fail closed, never
 
     await expect(new Subject(unconfigured).getBusy(new Date(), new Date())).resolves.toBeNull();
     expect(global.fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("GoogleCalendarService.getBusy — review finding 9 (freeBusy caching)", () => {
+  beforeEach(() => {
+    mockAccessToken();
+    // mockImplementation (not mockResolvedValue) — several of these tests
+    // expect fetch to actually be called more than once, and a `Response`
+    // body can only be read once, so every call needs its OWN instance.
+    global.fetch = jest.fn().mockImplementation(
+      () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              calendars: {
+                primary: { busy: [{ start: "2026-10-16T14:00:00Z", end: "2026-10-16T14:30:00Z" }] },
+              },
+            }),
+            { status: 200 },
+          ),
+        ) as unknown as Promise<Response>,
+    ) as unknown as typeof fetch;
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  const from = new Date("2026-10-16T00:00:00Z");
+  const to = new Date("2026-10-17T00:00:00Z");
+
+  it("reuses a cached result for the identical window within the TTL — one network call for two requests", async () => {
+    const subject = new Subject(CONFIGURED);
+    subject.fakeNow = 0;
+
+    const first = await subject.getBusy(from, to);
+    const second = await subject.getBusy(from, to);
+
+    expect(first).toEqual(second);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-fetches once the TTL has elapsed", async () => {
+    const subject = new Subject(CONFIGURED);
+    subject.fakeNow = 0;
+    await subject.getBusy(from, to);
+
+    subject.fakeNow = 46_000; // just past the 45s TTL
+    await subject.getBusy(from, to);
+
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not share a cache entry across a different window", async () => {
+    const subject = new Subject(CONFIGURED);
+    subject.fakeNow = 0;
+    await subject.getBusy(from, to);
+    await subject.getBusy(new Date("2026-11-01T00:00:00Z"), new Date("2026-11-02T00:00:00Z"));
+
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("also caches a failure briefly, so a Google outage does not get hit on every request", async () => {
+    global.fetch = jest
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ error: { status: "UNAVAILABLE" } }), { status: 503 }),
+      ) as unknown as typeof fetch;
+    const subject = new Subject(CONFIGURED);
+    subject.fakeNow = 0;
+
+    await subject.getBusy(from, to);
+    await subject.getBusy(from, to);
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -65,6 +65,8 @@ export interface PublicBooking {
 }
 
 const MAX_WINDOW_DAYS = 62;
+/** How long a manage token keeps working after its slot's end (review finding 8). */
+const MANAGE_TOKEN_TTL_AFTER_END_MS = 7 * 86_400_000;
 
 @Injectable()
 export class DemoBookingService {
@@ -511,6 +513,13 @@ export class DemoBookingService {
       where: { manageTokenHash: hashToken(token) },
     });
     if (!booking) throw new NotFoundException("Booking not found.");
+    // Manage rights expire 7 days after the slot ends (review finding 8) — a
+    // token has no other TTL, so without this it would grant cancel/reschedule
+    // access forever. Same "not found" response as every other failure branch
+    // here, so a caller cannot distinguish "expired" from "never existed".
+    if (this.now().getTime() > booking.endsAt.getTime() + MANAGE_TOKEN_TTL_AFTER_END_MS) {
+      throw new NotFoundException("Booking not found.");
+    }
     return booking;
   }
 

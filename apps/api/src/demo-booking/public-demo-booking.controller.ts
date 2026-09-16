@@ -2,9 +2,9 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
-  Param,
   Post,
   Query,
   Req,
@@ -27,8 +27,13 @@ import {
  * absence of a guard here is the whole mechanism. Modelled on
  * `tenants/public-tenants.controller.ts`, the existing public controller.
  *
- * The manage token in the `:token` routes is the only credential: it is minted
- * per booking, emailed to the person who booked, and stored only as a hash.
+ * The manage token is the only credential: minted per booking, emailed to the
+ * person who booked, and stored only as a hash. It travels in an `X-Booking-
+ * Token` header (GET) or the request body (POST) — never in the URL path
+ * (review finding 8): a URL-path token lands in access logs and in Sentry's
+ * `originalUrl` tag on any 5xx (`sentry-exception.filter.ts`), and never
+ * expires by construction. `DemoBookingService` separately expires manage
+ * rights 7 days after the slot's end.
  */
 @ApiTags("public/demo-bookings")
 @Controller("public/demo-bookings")
@@ -37,7 +42,7 @@ export class PublicDemoBookingController {
 
   @Get("availability")
   @ApiOperation({ summary: "Bookable demo slots in a date range, in the visitor's time zone" })
-  @Throttle({ default: { ttl: 60_000, limit: 60 } })
+  @Throttle({ default: { ttl: 60_000, limit: 20 } })
   async availability(
     @Query("from") from: string,
     @Query("to") to: string,
@@ -52,31 +57,32 @@ export class PublicDemoBookingController {
   @Throttle({ default: { ttl: 3_600_000, limit: 5 } })
   async create(@Body() dto: CreateDemoBookingDto, @Req() req: Request) {
     const { booking } = await this.bookings.create({ ...dto, ip: req.ip });
-    // The manage token is deliberately NOT returned: it reaches the visitor
-    // through the confirmation email, which proves they own the address.
+    // The manage token is deliberately NOT returned here either: it reaches
+    // the visitor through the confirmation email, which proves they own the
+    // address it was sent to.
     return booking;
   }
 
-  @Get(":token")
-  @ApiOperation({ summary: "Read a booking by its manage token" })
+  @Get("me")
+  @ApiOperation({ summary: "Read a booking by its manage token (X-Booking-Token header)" })
   @Throttle({ default: { ttl: 60_000, limit: 30 } })
-  async get(@Param("token") token: string) {
-    return this.bookings.getByToken(token);
+  async get(@Headers("x-booking-token") token: string) {
+    return this.bookings.getByToken(token ?? "");
   }
 
-  @Post(":token/reschedule")
+  @Post("reschedule")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Move a booking to a different slot" })
   @Throttle({ default: { ttl: 3_600_000, limit: 10 } })
-  async reschedule(@Param("token") token: string, @Body() dto: RescheduleDemoBookingDto) {
-    return this.bookings.reschedule(token, dto.startsAt);
+  async reschedule(@Body() dto: RescheduleDemoBookingDto) {
+    return this.bookings.reschedule(dto.token, dto.startsAt);
   }
 
-  @Post(":token/cancel")
+  @Post("cancel")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Cancel a booking and remove the calendar event" })
   @Throttle({ default: { ttl: 3_600_000, limit: 10 } })
-  async cancel(@Param("token") token: string, @Body() dto: CancelDemoBookingDto) {
-    return this.bookings.cancel(token, dto.reason);
+  async cancel(@Body() dto: CancelDemoBookingDto) {
+    return this.bookings.cancel(dto.token, dto.reason);
   }
 }

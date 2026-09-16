@@ -87,15 +87,31 @@ function extractReason(body: string): string {
   }
 }
 
+/** How long a `freeBusy` result is reused for an identical window (review finding 9). */
+const FREE_BUSY_CACHE_TTL_MS = 45_000;
+
 @Injectable()
 export class GoogleCalendarService {
   private readonly logger = new Logger(GoogleCalendarService.name);
   private client: JWT | null = null;
   private clientKey = "";
+  // Keyed on the exact (calendarId, from, to) triple. This protects the
+  // common case — the same visitor's page re-rendering, a retry, or the
+  // reschedule flow re-fetching availability moments after create — but does
+  // NOT deduplicate two different visitors requesting overlapping-but-not-
+  // identical windows (each computes its own "now"-anchored `from`). A
+  // per-day bucketed cache would cover that case too; left for if the volume
+  // ever justifies the extra complexity.
+  private readonly freeBusyCache = new Map<string, { at: number; value: BusyBlock[] | null }>();
 
   /** Overridable in tests; production reads `process.env` on every call. */
   protected config(): DemoBookingConfig {
     return loadDemoBookingConfig();
+  }
+
+  /** Test-only: bypasses the cache TTL without waiting on a real clock. */
+  protected cacheNow(): number {
+    return Date.now();
   }
 
   isConfigured(): boolean {
@@ -117,6 +133,25 @@ export class GoogleCalendarService {
     const config = this.config();
     if (!isCalendarConfigured(config)) return null;
 
+    const cacheKey = `${config.calendarId}|${from.toISOString()}|${to.toISOString()}`;
+    const cached = this.freeBusyCache.get(cacheKey);
+    if (cached && this.cacheNow() - cached.at < FREE_BUSY_CACHE_TTL_MS) {
+      return cached.value;
+    }
+
+    const result = await this.fetchBusy(config, from, to);
+    // Cache a failure too, briefly — during a real Google outage this stops
+    // every request in the TTL window from re-hitting a service that just
+    // said no, not only the happy path.
+    this.freeBusyCache.set(cacheKey, { at: this.cacheNow(), value: result });
+    return result;
+  }
+
+  private async fetchBusy(
+    config: DemoBookingConfig,
+    from: Date,
+    to: Date,
+  ): Promise<BusyBlock[] | null> {
     let body: {
       calendars?: Record<
         string,
