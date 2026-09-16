@@ -49,7 +49,7 @@ describe("BuyerAuthService — password reset", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
-    emailService = { send: jest.fn().mockResolvedValue(undefined) };
+    emailService = { send: jest.fn().mockResolvedValue({ delivered: true, transport: "resend" }) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [

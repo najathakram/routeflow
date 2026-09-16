@@ -81,14 +81,29 @@ describe("BuyerAuthService — F3-005 enumeration-safe login", () => {
     }
   }
 
-  it("SUSPENDED account returns the CONSTANT 'Invalid credentials' (no suspended oracle)", async () => {
+  it("SUSPENDED account returns the CONSTANT 'Invalid credentials' (no suspended oracle) even with the WRONG password", async () => {
     prisma.buyerAccount.findUnique.mockResolvedValue({ ...MOCK_ACCOUNT, status: "SUSPENDED" });
+    (bcrypt.compare as jest.Mock).mockResolvedValue(false);
 
     const message = await messageOf(login());
     expect(message).toBe("Invalid credentials");
     expect(message).not.toMatch(/suspend/i);
-    // Enumeration-safe: a suspended account must not run bcrypt either.
-    expect(bcrypt.compare).not.toHaveBeenCalled();
+  });
+
+  // B213-class fix: status is now checked AFTER the password, not before —
+  // checking it first made a SUSPENDED account's rejection consistently FAST
+  // (no bcrypt) while an ACTIVE account's wrong-password rejection was
+  // consistently SLOW (bcrypt runs), a timing oracle for "is this email a
+  // suspended buyer account" even though the two paths already shared one
+  // message. bcrypt now runs for a SUSPENDED account exactly like an ACTIVE
+  // one; the message stays identical ("Invalid credentials") either way.
+  it("SUSPENDED account with the CORRECT password still runs bcrypt and still rejects (status closes it, not the password check)", async () => {
+    prisma.buyerAccount.findUnique.mockResolvedValue({ ...MOCK_ACCOUNT, status: "SUSPENDED" });
+    (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+
+    const message = await messageOf(login("correct-horse"));
+    expect(message).toBe("Invalid credentials");
+    expect(bcrypt.compare).toHaveBeenCalled();
   });
 
   it("unknown email and wrong password give the SAME message", async () => {
