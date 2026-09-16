@@ -394,6 +394,44 @@ describe("CreditNotesService — P5-13 apply-math + auto-apply", () => {
     );
   });
 
+  // PR-2 review (routeflow-Lead, 2026-09-16) REG: the status recompute must stay
+  // CONFIRMED-basis, never the DRAFT-inclusive capacity figure — applying a $40
+  // credit on top of a $60 DRAFT sibling must NOT flip a $100 invoice to PAID.
+  it("applyToInvoice: a DRAFT sibling does not fund the recomputed status (PR-2 REG)", async () => {
+    prisma.creditNote.findUnique.mockResolvedValue({
+      id: "cn-status-draft",
+      creditNoteNumber: "CN-2026-0013",
+      amount: 100,
+      amountUsed: 0,
+      status: "ISSUED",
+      customerId: "c1",
+      expiresAt: null,
+      appliedAt: null,
+      appliedToInvoiceId: null,
+      autoApplied: false,
+    });
+    prisma.invoice.findUnique.mockResolvedValue({
+      id: "inv-status-draft",
+      customerId: "c1",
+      total: 100,
+      dueDate: null,
+      status: "SENT",
+      payments: [{ amount: 60, status: "DRAFT" }],
+    });
+
+    await service.applyToInvoice("cn-status-draft", "inv-status-draft");
+
+    // capacity = 100 - 60(DRAFT) = 40, so applyAmount = 40. Buggy basis:
+    // newPaid = alreadyPaid(60, DRAFT-inclusive) + 40 = 100 -> PAID. Fixed basis:
+    // newPaid = sumConfirmed(0) + 40 = 40 -> PARTIAL.
+    expect(prisma.invoicePayment.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ amount: 40 }) }),
+    );
+    expect(prisma.invoice.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "PARTIAL" }) }),
+    );
+  });
+
   it("applyToInvoice: full exhaustion flips APPLIED + appliedToInvoiceId, invoice PAID", async () => {
     prisma.creditNote.findUnique.mockResolvedValue({
       id: "cn-p2",
@@ -1162,6 +1200,71 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
       expect(prisma.invoicePayment.delete).not.toHaveBeenCalled();
       const cnUpdate = prisma.creditNote.update.mock.calls[0][0];
       expect(cnUpdate.data.amountUsed).toBe(20);
+    });
+
+    // PR-2 review (routeflow-Lead, 2026-09-16) REG-B1-shrink: a DRAFT sibling payment
+    // (e.g. an unconfirmed bank-reconciliation import) must still be counted in the
+    // shrink pass's "excess paid" figure. With the earlier (reverted) sumConfirmed
+    // basis, $40 PAID credit + $60 DRAFT on an invoice shrunk to $70 reported excess =
+    // 40 - 70 (negative) and refunded nothing, silently leaving the real $30
+    // over-collection (100 not-void dollars against a $70 total) stuck on the invoice.
+    it("REG-B1-shrink: a DRAFT sibling still counts toward excess — 40 PAID credit + 60 DRAFT on a $70 invoice refunds the real $30 excess", async () => {
+      prisma.orderCreditNote.findMany.mockResolvedValueOnce([]);
+      prisma.invoice.findMany.mockResolvedValueOnce([
+        {
+          id: "inv-shrink-draft",
+          invoiceNumber: "INV-SHRINK-DRAFT",
+          total: 70, // shrunk from 100
+          dueDate: null,
+          status: "PARTIAL",
+          payments: [
+            {
+              id: "pay-draft-cash",
+              amount: 60,
+              status: "DRAFT",
+              method: "CASH",
+              creditNoteId: null,
+              createdAt: new Date("2026-01-01"),
+            },
+            {
+              id: "pay-credit-shrink",
+              amount: 40,
+              status: "PAID",
+              method: "CREDIT_NOTE",
+              creditNoteId: "cn-shrink",
+              createdAt: new Date("2026-01-02"),
+            },
+          ],
+        },
+      ]);
+      prisma.creditNote.findUnique.mockResolvedValueOnce({
+        id: "cn-shrink",
+        amount: 100,
+        amountUsed: 40,
+        status: "ISSUED",
+        appliedToInvoiceId: null,
+      });
+      prisma.invoice.findUnique.mockResolvedValueOnce({
+        id: "inv-shrink-draft",
+        total: 70,
+        dueDate: null,
+        status: "PARTIAL",
+        payments: [
+          { amount: 60, status: "DRAFT" },
+          { amount: 10, status: "PAID" },
+        ],
+      });
+
+      const result = await service.settleOrderCreditsInTx(prisma as any, "order-shrink-draft");
+
+      // excess = (60 DRAFT + 40 PAID) - 70 = 30 — NOT 40 - 70 (negative).
+      expect(result.unapplied).toBe(30);
+      expect(prisma.invoicePayment.update).toHaveBeenCalledWith({
+        where: { id: "pay-credit-shrink" },
+        data: { amount: 10 },
+      });
+      const cnUpdate = prisma.creditNote.update.mock.calls[0][0];
+      expect(cnUpdate.data.amountUsed).toBe(10);
     });
 
     // B315: the shrink pass only ever looked at CREDIT_NOTE payments — an applied ADVANCE

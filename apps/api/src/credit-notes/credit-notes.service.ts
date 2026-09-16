@@ -574,7 +574,6 @@ export class CreditNotesService {
     // it exists) basis, zero behavior change today (N4: capacity must keep
     // counting DRAFT, never narrow to isHeldPayment/HELD_STATUSES here).
     const invoiceBalance = remainingCapacity(Number(inv.total), inv.payments);
-    const alreadyPaid = roundMoney(Number(inv.total) - invoiceBalance);
     const applyAmount = roundMoney(
       Math.min(remaining, invoiceBalance, requestedAmount ?? Infinity),
     );
@@ -601,7 +600,12 @@ export class CreditNotesService {
       },
     });
 
-    const newPaid = roundMoney(alreadyPaid + applyAmount);
+    // PR-2 review (routeflow-Lead, 2026-09-16): the status recompute must stay
+    // CONFIRMED-basis (sumConfirmed), never `total - invoiceBalance` — that capacity
+    // figure is DRAFT-inclusive (remainingCapacity), so a 40-dollar credit applied
+    // on top of a 60-dollar DRAFT sibling was flipping a $100 invoice straight to
+    // PAID off unconfirmed money. Matches restoreCreditFromPaymentInTx's own basis.
+    const newPaid = roundMoney(sumConfirmed(inv.payments) + applyAmount);
     const newStatus = this.recomputeStatus(newPaid, Number(inv.total), inv.dueDate, inv.status);
     await tx.invoice.update({
       where: { id: inv.id },
@@ -1171,16 +1175,16 @@ export class CreditNotesService {
 
     // (a) shrink
     for (const inv of invoices) {
-      // PR-2 (check-payments B1 hardening): "excess paid" must be CONFIRMED-basis
-      // (sumConfirmed) — a DRAFT (or, once PENDING exists, an un-cleared check) never
-      // creates excess to claw back via credit/advance restoration. design.md §3.4:
-      // "shrink releases nothing" when the only cover is a pending check. The
-      // candidate-selection filter below stays method-scoped (CREDIT_NOTE/ADVANCE),
-      // which already excludes every CHECK-method (hence every PENDING) row on its own.
+      // PR-2 review (routeflow-Lead, 2026-09-16): reverted the earlier sumConfirmed
+      // conversion here — with sumConfirmed, a DRAFT payment stacked on top of a PAID
+      // one (e.g. 40 PAID + 60 DRAFT on a total shrunk to 70) reports excess = 40-70
+      // (negative), so the shrink never refunds the real $30 over-collection sitting in
+      // the not-void total, leaving it stuck. Master's not-void basis restored; see the
+      // REG-B1-shrink test below for exactly this scenario.
       // scan-ok: draft-payment-not-void — a candidate-selection list, never summed into a
       // paid/status figure directly; the method-scoped filters below already exclude CHECK.
       const nonVoid = (inv.payments ?? []).filter((p: any) => p.status !== "VOID");
-      const paid = sumConfirmed(inv.payments);
+      const paid = roundMoney(nonVoid.reduce((s: number, p: any) => s + Number(p.amount), 0));
       let excess = roundMoney(paid - Number(inv.total));
       if (!(excess > 0.001)) continue;
       const creditPays = nonVoid
