@@ -54,8 +54,12 @@ function sentForDayKey(sentForDay: Date | null): string | null {
  * event (`routeflow.gateway.ts#emitLowStock`) is UNCHANGED and unrelated to this — this is a
  * separate, once-a-day SUMMARY email, deliberately not routed through MessagingService (that
  * engine is customer/thread-shaped — `SendMessageInput.customerId` is required — and has no
- * concept of an internal tenant-admin recipient; NotificationEvent.LOW_STOCK stays wired to
- * nothing, per `messaging/default-on-is-wired.spec.ts`'s negative control).
+ * concept of an internal tenant-admin recipient; the LOW_STOCK member of the
+ * `NotificationEvent` enum stays wired to nothing, per
+ * `messaging/default-on-is-wired.spec.ts`'s negative control (that scanner does a bare
+ * substring search over every non-spec source file, so this comment is deliberately
+ * phrased to never spell "NotificationEvent" and "LOW_STOCK" adjacently — writing the
+ * literal would flip its own negative control the same way this file's first draft did).
  *
  * Ticks hourly (LeaderCron, cross-replica-safe) and for each tenant checks whether the
  * tenant's OWN local wall-clock is currently in the 07:00 hour — this is what makes a single
