@@ -49,6 +49,13 @@
   each step re-fetching `getAvailability` on a 409/503 rather than dead-ending. See api.md
   `demo-booking/` for the endpoints, fail-closed contract (no Google config ⇒ no slots, never
   invented), and the 9+4 review-finding fixes.
+  **Availability-load errors show a fixed generic message only, never `error.message`**
+  (found + fixed during Playwright visual verification, 2026-09-16): the service never throws
+  with a curated message on this path, so a raw framework body (a route-mismatch 404's literal
+  `Cannot GET /api/v1/...`, a bare 500) would otherwise leak straight into an unauthenticated
+  public page. The booking-submit path (create/reschedule/cancel) is unaffected — its real
+  message sources (class-validator field errors, the service's own 409/503 text) are safe to
+  show. Spec: `demo-scheduler.test.tsx`.
 - **`sign-in/page.tsx`** (2026-09-16) — the wholesaler/retailer account chooser (glass design),
   links straight to the unchanged `/login` and `/buyer/login` — collects nothing itself.
 - **Glass design system (2026-09-16, Codex study port)** — `glass.css` (tokens: `--g-*` custom
