@@ -1,17 +1,17 @@
 # Discovery — why <feature / fix name>
 
-**Status:** `DRAFT`  (DRAFT | APPROVED | IMPLEMENTED | CLOSED)
+**Status:** `DRAFT` (DRAFT | APPROVED | IMPLEMENTED | CLOSED)
 **Stage:** S1 — Discovery (why) · **Author:** Fable 5 · **Date:** <YYYY-MM-DD>
 **Lives at:** `.claude/pipeline/<YYYY-MM-DD>-<slug>/discovery.md`
 **Next:** [spec.md](./spec.md) — do not start it until the STOP GATE at the bottom passes.
 
-> **This file is the only context downstream agents receive about *why* this work exists.**
+> **This file is the only context downstream agents receive about _why_ this work exists.**
 > No chat history, no ticket, no link is read for them. If a fact matters, write it here in
 > full. `TBD` is a blocker, not a placeholder — chase it or record the assumption you made
 > in §12 instead.
 
-*Citations below are in the `G#·Q#` form used by gates G1, G2 and G3 of
-`references/ARCHITECT-QUESTIONS.md` in the dev-pipeline skill folder.*
+_Citations below are in the `G#·Q#` form used by gates G1, G2 and G3 of
+`references/ARCHITECT-QUESTIONS.md` in the dev-pipeline skill folder._
 
 ---
 
@@ -27,11 +27,11 @@ that's what I meant"? If not, you have misread the ask — go back. (G3·Q5)>
 
 ## 2. Who has this problem (G1·Q1)
 
-| Role | How often they hit it | What it costs them today (time / money / errors / risk) | How we know (evidence, not guess) |
-|---|---|---|---|
-| <e.g. dispatcher> | <e.g. 6–10× per day> | <e.g. ~15 min each, re-keyed by hand> | <ticket #, call note, log query, observed> |
+| Role              | How often they hit it | What it costs them today (time / money / errors / risk) | How we know (evidence, not guess)          |
+| ----------------- | --------------------- | ------------------------------------------------------- | ------------------------------------------ |
+| <e.g. dispatcher> | <e.g. 6–10× per day>  | <e.g. ~15 min each, re-keyed by hand>                   | <ticket #, call note, log query, observed> |
 
-*If this row set is one person once a month, say so — that is a real finding, not a failure.*
+_If this row set is one person once a month, say so — that is a real finding, not a failure._
 
 ## 3. What they do instead today (G1·Q2)
 
@@ -39,7 +39,7 @@ that's what I meant"? If not, you have misread the ask — go back. (G3·Q5)>
 - **Why it fails:** <what breaks, how often, who notices>
 - **Cost of the workaround:** <time, rework, errors, risk it creates>
 
-*No workaround at all is itself an answer — write "none; the task simply doesn't get done".*
+_No workaround at all is itself an answer — write "none; the task simply doesn't get done"._
 
 ## 4. Why now (G1·Q3)
 
@@ -57,25 +57,25 @@ a client onboarding, a deadline. "It came up" is not a trigger — find the real
 
 ## 6. Success signal — one, observable (G1·Q5)
 
-| Signal | Today's baseline | Target | Where it is measured | When we check |
-|---|---|---|---|---|
+| Signal                                                         | Today's baseline                 | Target               | Where it is measured                            | When we check             |
+| -------------------------------------------------------------- | -------------------------------- | -------------------- | ----------------------------------------------- | ------------------------- |
 | <the one number or observable event that moves if this worked> | <today's value + how you got it> | <value or direction> | <log, metric, report, query, user confirmation> | <e.g. 2 weeks after ship> |
 
-*One signal. Not three. If it cannot be observed after shipping, it is not a success signal —
+_One signal. Not three. If it cannot be observed after shipping, it is not a success signal —
 pick a different one. "Users are happier" is not observable; "dispatcher no longer edits the
-CSV" is.*
+CSV" is._
 
 ## 7. Everyone else affected that nobody asked (G1·Q6)
 
-| Party | How this touches them | What they need from us | Consulted? |
-|---|---|---|---|
-| Support | <new questions they will field, docs they need> | <...> | <yes / no / n/a> |
-| Ops / field user | <...> | <...> | <...> |
-| Finance / billing | <...> | <...> | <...> |
-| Admin / owner | <who configures or grants this> | <...> | <...> |
-| Downstream systems / integrations | <...> | <...> | <...> |
+| Party                             | How this touches them                           | What they need from us | Consulted?       |
+| --------------------------------- | ----------------------------------------------- | ---------------------- | ---------------- |
+| Support                           | <new questions they will field, docs they need> | <...>                  | <yes / no / n/a> |
+| Ops / field user                  | <...>                                           | <...>                  | <...>            |
+| Finance / billing                 | <...>                                           | <...>                  | <...>            |
+| Admin / owner                     | <who configures or grants this>                 | <...>                  | <...>            |
+| Downstream systems / integrations | <...>                                           | <...>                  | <...>            |
 
-*Delete rows that genuinely do not apply. An untouched row set usually means nobody looked.*
+_Delete rows that genuinely do not apply. An untouched row set usually means nobody looked._
 
 ## 8. Root-cause check — is this a symptom? (G1·Q7, G1·Q8)
 
@@ -90,30 +90,30 @@ CSV" is.*
 
 ## 9. Riskiest assumption and the cheapest way to kill it (G3·Q1, G3·Q6)
 
-| # | Assumption | If it is wrong, what breaks | Cheapest thing that would kill it | Cost | Result |
-|---|---|---|---|---|---|
-| A1 | <the one that wastes the most work if false> | <scope collapses / rework / wrong user> | <one query, a 20-line spike, one question to the requester, reading one file> | <minutes> | <pending / held / killed> |
-| A2 | <...> | <...> | <...> | <...> | <...> |
+| #   | Assumption                                   | If it is wrong, what breaks             | Cheapest thing that would kill it                                             | Cost      | Result                    |
+| --- | -------------------------------------------- | --------------------------------------- | ----------------------------------------------------------------------------- | --------- | ------------------------- |
+| A1  | <the one that wastes the most work if false> | <scope collapses / rework / wrong user> | <one query, a 20-line spike, one question to the requester, reading one file> | <minutes> | <pending / held / killed> |
+| A2  | <...>                                        | <...>                                   | <...>                                                                         | <...>     | <...>                     |
 
-*Kill A1 **before** writing the spec whenever the check costs less than an hour. Whatever
-survives unkilled is repeated in §12.*
+_Kill A1 **before** writing the spec whenever the check costs less than an hour. Whatever
+survives unkilled is repeated in §12._
 
 ## 10. Non-goals — the scope fence (G2·Q5)
 
 - <thing we are explicitly NOT doing> — <why: out of scope, later phase, different problem>
 - <...>
 
-*Anything not listed as in-scope in [spec.md](./spec.md) is out of scope by default. These
-lines exist to stop the scope argument later, so name the tempting adjacent things.*
+_Anything not listed as in-scope in [spec.md](./spec.md) is out of scope by default. These
+lines exist to stop the scope argument later, so name the tempting adjacent things._
 
 ## 11. Open questions for the requester
 
-| # | Question | What decision it unblocks | Blocking S2? | Answer / assumption made |
-|---|---|---|---|---|
-| Q1 | <...> | <...> | yes / no | <answer, or "assumed X — confirm"> |
+| #   | Question | What decision it unblocks | Blocking S2? | Answer / assumption made           |
+| --- | -------- | ------------------------- | ------------ | ---------------------------------- |
+| Q1  | <...>    | <...>                     | yes / no     | <answer, or "assumed X — confirm"> |
 
-*Ask every blocking question before starting the spec. For non-blocking ones, write down the
-assumption you proceeded on so a reviewer can challenge it.*
+_Ask every blocking question before starting the spec. For non-blocking ones, write down the
+assumption you proceeded on so a reviewer can challenge it._
 
 ## 12. Assumptions (unverified) — MANDATORY
 
@@ -122,15 +122,15 @@ ticket, no call. This block is where you mark the lines nobody actually checked.
 this file leaves `DRAFT`.** An empty table is itself a claim — that every statement in §1–§11 came
 from a named source. Make that true, or write rows.
 
-| # | Claim, as this file states it (and its §) | Basis | What would confirm it | What breaks if it is wrong | Status |
-|---|---|---|---|---|---|
-| A1 | <"§2: dispatchers hit this 6–10× per day"> | requester said it / read off a log / inferred from code / industry norm / my guess | <the cheapest thing that settles it: one query, one question to the requester, reading one file, a 20-line spike> | <what collapses — the user, the scope, the success signal, the whole ask> | unverified / confirmed <YYYY-MM-DD> / refuted <YYYY-MM-DD> |
-| A2 | <...> | <...> | <...> | <...> | <...> |
+| #   | Claim, as this file states it (and its §)  | Basis                                                                              | What would confirm it                                                                                             | What breaks if it is wrong                                                | Status                                                     |
+| --- | ------------------------------------------ | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| A1  | <"§2: dispatchers hit this 6–10× per day"> | requester said it / read off a log / inferred from code / industry norm / my guess | <the cheapest thing that settles it: one query, one question to the requester, reading one file, a 20-line spike> | <what collapses — the user, the scope, the success signal, the whole ask> | unverified / confirmed <YYYY-MM-DD> / refuted <YYYY-MM-DD> |
+| A2  | <...>                                      | <...>                                                                              | <...>                                                                                                             | <...>                                                                     | <...>                                                      |
 
 Rules:
 
 - IDs share one namespace with §9: an assumption carried down from there keeps its number, new
-  ones continue from the highest used. §9 names the one worth killing *before* the spec; this
+  ones continue from the highest used. §9 names the one worth killing _before_ the spec; this
   table is the full ledger of what is still unchecked when the file ships.
 - **Every number above that was not read off a system belongs here** — the frequencies and costs
   in §2, the baseline in §6.
@@ -165,7 +165,7 @@ Rules:
 - [ ] Assumptions block filled — every unchecked claim, what would confirm it, what it breaks (§12)
 
 **If problem, user, workaround, or success signal is blank or `TBD`, do not write the spec.**
-Go back to the requester. A spec built on a blank *why* produces code nobody uses, and every
+Go back to the requester. A spec built on a blank _why_ produces code nobody uses, and every
 downstream stage inherits the error.
 
 ## Stage log — did the gate fire?
@@ -174,12 +174,12 @@ Record the answer, not the intention. Nothing in the pipeline engine evaluates t
 its Baseline phase only grounds this file's mechanical claims against the repo, and no later phase
 reads a STOP condition at all. A blank block means the gate did not happen.
 
-| Stop condition | Evaluated? | What it answered | Evidence | Verdict |
-|---|---|---|---|---|
-| Shipping nothing is materially bad | yes / no | <the answer, in a few words> | §5 | pass / **STOP** |
-| The ask is a cause, not a symptom | yes / no | <...> | §8 | pass / **STOP** |
-| User, workaround and success signal all stated | yes / no | <...> | §2, §3, §6 | pass / **STOP** |
-| Every blocking open question answered | yes / no | <...> | §11 | pass / **STOP** |
+| Stop condition                                 | Evaluated? | What it answered             | Evidence   | Verdict         |
+| ---------------------------------------------- | ---------- | ---------------------------- | ---------- | --------------- |
+| Shipping nothing is materially bad             | yes / no   | <the answer, in a few words> | §5         | pass / **STOP** |
+| The ask is a cause, not a symptom              | yes / no   | <...>                        | §8         | pass / **STOP** |
+| User, workaround and success signal all stated | yes / no   | <...>                        | §2, §3, §6 | pass / **STOP** |
+| Every blocking open question answered          | yes / no   | <...>                        | §11        | pass / **STOP** |
 
 - **Gate outcome:** PASS — S2 may start · **STOP** — returned to <whom> on <YYYY-MM-DD> · OVERRIDDEN
 - **Overridden by:** <name> — <why>. An override is a named decision, not a formality.

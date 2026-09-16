@@ -3,18 +3,18 @@
 // Runs dry-run.mjs, light-loop-dry-run.mjs, then --selftest on task-brief/review-pack/fix-brief.
 // One "PASS <name>" / "FAIL <name>" line each; process.exitCode = 1 on any failure.
 
-import { execFileSync } from 'node:child_process';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { execFileSync } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const scriptsDir = path.dirname(fileURLToPath(import.meta.url));
 
 const RUNS = [
-  { name: 'dry-run.mjs', args: ['dry-run.mjs'] },
-  { name: 'light-loop-dry-run.mjs', args: ['light-loop-dry-run.mjs'] },
-  { name: 'task-brief.mjs', args: ['task-brief.mjs', '--selftest'] },
-  { name: 'review-pack.mjs', args: ['review-pack.mjs', '--selftest'] },
-  { name: 'fix-brief.mjs', args: ['fix-brief.mjs', '--selftest'] }
+  { name: "dry-run.mjs", args: ["dry-run.mjs"] },
+  { name: "light-loop-dry-run.mjs", args: ["light-loop-dry-run.mjs"] },
+  { name: "task-brief.mjs", args: ["task-brief.mjs", "--selftest"] },
+  { name: "review-pack.mjs", args: ["review-pack.mjs", "--selftest"] },
+  { name: "fix-brief.mjs", args: ["fix-brief.mjs", "--selftest"] },
 ];
 
 export function runAll() {
@@ -23,11 +23,11 @@ export function runAll() {
   for (const r of RUNS) {
     let ok = true;
     try {
-      execFileSync('node', r.args, { cwd: scriptsDir, stdio: 'pipe' });
+      execFileSync("node", r.args, { cwd: scriptsDir, stdio: "pipe" });
     } catch (e) {
       ok = false;
     }
-    lines.push((ok ? 'PASS ' : 'FAIL ') + r.name);
+    lines.push((ok ? "PASS " : "FAIL ") + r.name);
     if (!ok) anyFailed = true;
   }
   return { lines, failed: anyFailed };

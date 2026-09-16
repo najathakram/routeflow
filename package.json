@@ -30,7 +30,7 @@
     "local:build": "docker compose --profile app build",
     "local:up": "docker compose --profile app up -d --build",
     "local:migrate": "docker compose --profile app run --rm migrate",
-    "local:seed": "node scripts/local-env.mjs --db -- \"npm --prefix apps/api run db:seed && npm --prefix apps/api run db:publish:catalog:v11\"",
+    "local:seed": "node scripts/local-env.mjs --db -- \"npm --prefix apps/api run db:seed && npm --prefix apps/api run db:publish:catalog:v11 && npm --prefix apps/api run db:publish:catalog:v12\"",
     "local:drift": "node scripts/local-env.mjs --db -- \"npm run db:drift -w apps/api -- --local\"",
     "local:test:db": "node scripts/local-env.mjs --db --db-specs -- \"npm run test:db -w apps/api\"",
     "local:validate": "node scripts/local-env.mjs --smoke --db -- \"npm run smoke && npm run post-deploy-check && npm run local:drift\"",

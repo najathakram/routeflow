@@ -1,0 +1,42 @@
+{
+  "task": {
+    "id": "WP5b",
+    "title": "gate wiring: credit-notes + suppliers",
+    "type": "feature",
+    "files": [
+      "apps/api/src/credit-notes/credit-notes.controller.ts",
+      "apps/api/src/credit-notes/credit-notes.module.ts",
+      "apps/api/src/suppliers/suppliers.controller.ts",
+      "apps/api/src/suppliers/suppliers.module.ts"
+    ],
+    "tests": [
+      "apps/api/src/credit-notes/credit-notes.plan-gate.spec.ts",
+      "apps/api/src/suppliers/suppliers.plan-gate.spec.ts"
+    ],
+    "brief": "Satisfies R3b.3, R3b.5; provenBy T17.\ncredit-notes.controller.ts: class-level @UseGuards(JwtAuthGuard, PlanFlagGuard) + @RequirePlanFlag(\"flag.credit_notes\")\n— its per-handler RolesGuard stays (not moved to class level).\nsuppliers.controller.ts: class-level @UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard) + @RequirePlanFlag(\"flag.suppliers\").\nBoth modules add EntitlementsModule (\"../billing/entitlements.module\") to imports.",
+    "dependsOn": ["WP2"],
+    "risk": "HIGH",
+    "blocked": true,
+    "blockerFindings": [
+      {
+        "file": "(scope)",
+        "severity": "blocker",
+        "phase": "Author tests",
+        "summary": "test author touched non-test files: .claude/pipeline/2026-09-13-F27-build, .claude/pipeline/2026-09-14-743-fix-round, .claude/pipeline/2026-09-15-lite-L2-plan/, .claude/pipeline/agent-log.jsonl",
+        "detail": "Task WP5b's declared tests are [\"apps/api/src/credit-notes/credit-notes.plan-gate.spec.ts\",\"apps/api/src/suppliers/suppliers.plan-gate.spec.ts\"]; per-path rule matched: .claude/pipeline/2026-09-13-F27-build (untracked and not in any task's files/tests -- unplanned); .claude/pipeline/2026-09-14-743-fix-round (untracked and not in any task's files/tests -- unplanned); .claude/pipeline/2026-09-15-lite-L2-plan/ (untracked and not in any task's files/tests -- unplanned); .claude/pipeline/agent-log.jsonl (untracked and not in any task's files/tests -- unplanned). Revert attempt did NOT confirm success (exitCode=null) -- treat the tree as suspect."
+      }
+    ],
+    "redRun": {
+      "cwd": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-lite-L2",
+      "ran": false,
+      "results": [
+        {
+          "command": "N/A — could not run any test command",
+          "exitCode": -1,
+          "output": "BLOCKED: the task brief at .claude/pipeline/2026-09-15-lite-L2-plan/tasks/WP5b/brief.md does not exist. Verified: `find .../2026-09-15-lite-L2-plan -maxdepth 4` shows only `phases/07-checkpoint-wp5a.json` and `progress.md` — there is no `tasks/` subdirectory at all, anywhere under that plan dir (confirmed with `find . -path '*/2026-09-15-lite-L2-plan/tasks*'` returning nothing). `git status --porcelain -- .claude/pipeline/2026-09-15-lite-L2-plan` shows the whole directory as a single untracked (??) entry with no commit history (`git log` on that path is empty), and the sibling checkpoint file `phases/07-checkpoint-wp5a.json` (WP5a's blocked run) records that this exact directory was flagged as an unplanned untracked path touched by a prior test-author run and was 'Reverted to HEAD / deleted before the red gate ran' — i.e. it (or its tasks/ contents) was almost certainly wiped by that earlier revert before I ever got to it. I did not create, edit, or delete any file in this session (read-only exploration only): Bash `find`/`cat`/`git status`/`git log` calls against the worktree, nothing else. Per scope rules, I could write the two named spec files against the symbol names alone (guessing flag names / guard wiring from the WP5a sibling checkpoint), but the task explicitly requires reading the brief for exact test content and forbids implementing behavior myself without it, so I am stopping and reporting blockedOn instead of guessing at gate semantics (flag key names, controller wiring, expected guard order) for credit-notes and suppliers. No files apps/api/src/credit-notes/credit-notes.plan-gate.spec.ts or apps/api/src/suppliers/suppliers.plan-gate.spec.ts were created. blockedOn: WP5b/brief.md is missing — needs to be restored/regenerated (likely lost to the same revert-untracked-files step recorded against WP5a in phases/07-checkpoint-wp5a.json) before tests can be authored."
+        }
+      ]
+    }
+  },
+  "progressLine": "Task WP5b: blocked (1 blocker(s))"
+}

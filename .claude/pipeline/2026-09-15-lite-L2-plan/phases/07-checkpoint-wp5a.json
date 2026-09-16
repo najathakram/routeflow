@@ -1,0 +1,36 @@
+{
+  "task": {
+    "id": "WP5a",
+    "title": "gate wiring: estimates + recurring-invoices",
+    "type": "feature",
+    "files": [
+      "apps/api/src/estimates/estimates.controller.ts",
+      "apps/api/src/recurring-invoices/recurring-invoices.controller.ts",
+      "apps/api/src/recurring-invoices/recurring-invoices.module.ts"
+    ],
+    "tests": [
+      "apps/api/src/common/plan-flag-guard-module-import.spec.ts",
+      "apps/api/src/estimates/estimates.plan-gate.spec.ts",
+      "apps/api/src/recurring-invoices/recurring-invoices.plan-gate.spec.ts"
+    ],
+    "brief": "Satisfies R3b.3, R3b.5, R3b.9; provenBy T16, T17.\nClass-level @UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard) + @RequirePlanFlag(\"flag.estimates\")\non estimates.controller.ts; @RequirePlanFlag(\"flag.recurring_invoices\") on recurring-invoices.controller.ts.\nrecurring-invoices.module.ts adds EntitlementsModule (\"../billing/entitlements.module\") to imports\n(estimates.module.ts already has it, correction C2 — BillingModule re-exports EntitlementsModule).",
+    "dependsOn": ["WP2"],
+    "risk": "HIGH",
+    "blocked": true,
+    "blockerFindings": [
+      {
+        "file": "(scope)",
+        "severity": "blocker",
+        "phase": "Author tests",
+        "summary": "test author touched non-test files: .claude/pipeline/2026-09-13-F27-build, .claude/pipeline/2026-09-14-743-fix-round, .claude/pipeline/2026-09-15-lite-L2-plan, .claude/pipeline/agent-log.jsonl",
+        "detail": "Task WP5a's declared tests are [\"apps/api/src/common/plan-flag-guard-module-import.spec.ts\",\"apps/api/src/estimates/estimates.plan-gate.spec.ts\",\"apps/api/src/recurring-invoices/recurring-invoices.plan-gate.spec.ts\"]; per-path rule matched: .claude/pipeline/2026-09-13-F27-build (untracked and not in any task's files/tests -- unplanned); .claude/pipeline/2026-09-14-743-fix-round (untracked and not in any task's files/tests -- unplanned); .claude/pipeline/2026-09-15-lite-L2-plan (untracked and not in any task's files/tests -- unplanned); .claude/pipeline/agent-log.jsonl (untracked and not in any task's files/tests -- unplanned). Reverted to HEAD / deleted before the red gate ran: [\".claude/pipeline/2026-09-13-F27-build\",\".claude/pipeline/2026-09-14-743-fix-round\",\".claude/pipeline/2026-09-15-lite-L2-plan\",\".claude/pipeline/agent-log.jsonl\"]."
+      }
+    ],
+    "redRun": {
+      "cwd": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-lite-L2",
+      "ran": false,
+      "results": []
+    }
+  },
+  "progressLine": "Task WP5a: blocked (1 blocker(s))"
+}

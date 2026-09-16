@@ -314,7 +314,11 @@ export type CrmHandoffStatus = (typeof CRM_HANDOFF_STATUS_VALUES)[number];
 // `apps/api/src/billing/plan-catalog.constants.ts`'s `PLAN_KEYS` — the admin "New Tenant" form
 // previously hand-typed `["STARTER", "PROFESSIONAL", "ENTERPRISE"]`, a non-existent
 // "PROFESSIONAL" key with GROWTH/SCALE missing.
-export const PLAN_KEYS = ["STARTER", "GROWTH", "SCALE", "ENTERPRISE"] as const;
+//
+// WP1 (lite-L2, REG-743-F4): LITE is an invite-only tier ranked below every existing plan, so it
+// leads the array — order pin, not hardcoded indices; keep set-equal to the API's local mirror
+// (see `apps/api/src/common/enum-parity.spec.ts`'s REG-743-F4 case).
+export const PLAN_KEYS = ["LITE", "STARTER", "GROWTH", "SCALE", "ENTERPRISE"] as const;
 export type PlanKey = (typeof PLAN_KEYS)[number];
 
 // REG-743-N6: pinned set-equal to the generated Prisma `TenantClass` enum (see

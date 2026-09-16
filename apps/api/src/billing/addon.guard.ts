@@ -7,6 +7,7 @@ import {
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { AddonService } from "./addon.service";
+import { EntitlementsService } from "./entitlements.service";
 import { REQUIRE_ADDON_KEY } from "./require-addon.decorator";
 import { addonGateState } from "./addon-gate-registry";
 
@@ -40,6 +41,7 @@ export class AddonGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
     private readonly addonService: AddonService,
+    private readonly entitlements: EntitlementsService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -67,9 +69,13 @@ export class AddonGuard implements CanActivate {
 
     // Observe-first, registry-driven: a key set whose EVERY key is registered `dark` is not enforced yet —
     // allow, and log the would-deny so the blast radius is readable before the flip. Any enforced (or
-    // unregistered) key in the set keeps today's deny.
+    // unregistered) key in the set keeps today's deny. EXCEPT an always-enforced tenant (R3a.3/R8.5 —
+    // today just LITE): it never gets the dark courtesy allow and falls through to the deny below.
     const route = `${request.method ?? "?"} ${request.originalUrl ?? request.url ?? "?"}`;
-    if (keys.every((k) => addonGateState(k) === "dark")) {
+    if (
+      keys.every((k) => addonGateState(k) === "dark") &&
+      !(await this.entitlements.isAlwaysEnforcedTenant(tenantId))
+    ) {
       this.logger.warn(
         `addon gate would deny (dark): keys=${keys.join(",")} tenant=${tenantId} route=${route}`,
       );

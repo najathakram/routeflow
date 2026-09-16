@@ -5,16 +5,16 @@
 
 ## Red set (REG-tagged; in the red gate)
 
-| T# | Title (starts with REG-<bug id>) | Setup | Asserts | Fails TODAY with | File |
-|---|---|---|---|---|---|
+| T#  | Title (starts with REG-<bug id>) | Setup | Asserts | Fails TODAY with | File |
+| --- | -------------------------------- | ----- | ------- | ---------------- | ---- |
 
 "Fails TODAY with" is the exact expected-vs-received the red gate will verify (e.g. `expected 7 received 6`) —
 never merely "throws" or "undefined".
 
 ## Pins (no REG token; outside the red gate)
 
-| T# | Frozen behavior | File |
-|---|---|---|
+| T#  | Frozen behavior | File |
+| --- | --------------- | ---- |
 
 ## Harness notes (verified by the engine's harness-integrity check)
 

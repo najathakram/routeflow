@@ -5,11 +5,18 @@ import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { PlanFlagGuard } from "../billing/plan-flag.guard";
+import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { CreditNotesService } from "./credit-notes.service";
 import { CreateCreditNoteDto } from "./dto/create-credit-note.dto";
 
+// WP5b (R3b.3, R3b.5): flag.credit_notes ships dark (DARK_PLAN_FLAGS in
+// plan-flag-policy.ts) — this class-level guard is a courtesy allow until the
+// PLAN_FLAG_ENFORCEMENT switch flips on. Per-handler RolesGuard/@Roles stays as-is —
+// not moved to the class level.
 @Controller("credit-notes")
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, PlanFlagGuard)
+@RequirePlanFlag("flag.credit_notes")
 export class CreditNotesController {
   constructor(private readonly creditNotesService: CreditNotesService) {}
 

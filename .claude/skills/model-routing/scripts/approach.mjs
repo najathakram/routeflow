@@ -166,14 +166,16 @@ function classify(taskText, files, projectDir) {
   if (!parsed.approach) {
     throw new ApproachError(
       "next: route-task.mjs classified this as conversational/a question -- no approach to pin. Give a real task.",
-      2
+      2,
     );
   }
   return parsed.approach; // { approach, profile, why, deferNote }
 }
 
 function runLedger(args, projectDir) {
-  return execFileSync(process.execPath, [LEDGER_SCRIPT, ...args, "--project", projectDir], { encoding: "utf8" });
+  return execFileSync(process.execPath, [LEDGER_SCRIPT, ...args, "--project", projectDir], {
+    encoding: "utf8",
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -197,7 +199,7 @@ function cmdNext(flags, projectDir) {
   if (stale && stale.sessionId == null) {
     if (!force) {
       throw new ApproachError(
-        `next: an unclaimed pin already exists (taskHead: "${stale.taskHead}", pinnedAt: ${stale.pinnedAt}) -- start the session that will claim it, or run "approach.mjs close"/delete .claude/approach.json, before pinning a new task. Pass --force to overwrite anyway.`
+        `next: an unclaimed pin already exists (taskHead: "${stale.taskHead}", pinnedAt: ${stale.pinnedAt}) -- start the session that will claim it, or run "approach.mjs close"/delete .claude/approach.json, before pinning a new task. Pass --force to overwrite anyway.`,
       );
     }
     // --force ("legitimate re-pinning"): clear the stale pin BEFORE
@@ -213,7 +215,10 @@ function cmdNext(flags, projectDir) {
 
   const files =
     typeof flags.files === "string"
-      ? flags.files.split(",").map((s) => s.trim()).filter(Boolean)
+      ? flags.files
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
       : [];
 
   const decision = classify(flags.task, files, projectDir);
@@ -248,7 +253,7 @@ function cmdStatus(flags, projectDir) {
   console.log(`  task: ${pin.taskHead}`);
   console.log(`  pinnedAt: ${pin.pinnedAt}`);
   console.log(
-    `  sessionId: ${pin.sessionId || "(not yet claimed -- orient.mjs stamps it at SessionStart)"}`
+    `  sessionId: ${pin.sessionId || "(not yet claimed -- orient.mjs stamps it at SessionStart)"}`,
   );
   return { pin };
 }
@@ -272,22 +277,38 @@ function cmdClose(flags, projectDir) {
   // pin stuck forever (the throw happens before the plugin-disable/pin-clear
   // cleanup at the bottom of this function ever runs).
   if (pin.approach === "dev-pipeline" || pin.approach === "bug-pipeline") {
-    console.log(`close: ${pin.approach} runs are closed via closeout.mjs (it stamps approach/profile itself).`);
-    console.log(`  node ~/.claude/skills/dev-pipeline/scripts/closeout.mjs <runDir> --project "${projectDir}"`);
+    console.log(
+      `close: ${pin.approach} runs are closed via closeout.mjs (it stamps approach/profile itself).`,
+    );
+    console.log(
+      `  node ~/.claude/skills/dev-pipeline/scripts/closeout.mjs <runDir> --project "${projectDir}"`,
+    );
     result = { reminder: "closeout.mjs" };
   } else {
     if (!pin.sessionId) {
       throw new ApproachError(
-        "close: this pin has no sessionId yet -- orient.mjs stamps it at SessionStart; run at least one prompt in the pinned session first."
+        "close: this pin has no sessionId yet -- orient.mjs stamps it at SessionStart; run at least one prompt in the pinned session first.",
       );
     }
-    const ledgerArgs = ["append-manual", "--run", flags.run, "--approach", pin.approach, "--session", pin.sessionId];
+    const ledgerArgs = [
+      "append-manual",
+      "--run",
+      flags.run,
+      "--approach",
+      pin.approach,
+      "--session",
+      pin.sessionId,
+    ];
     if (typeof flags["task-ref"] === "string") ledgerArgs.push("--task-ref", flags["task-ref"]);
-    if (typeof flags["first-pass-green"] === "string") ledgerArgs.push("--first-pass-green", flags["first-pass-green"]);
+    if (typeof flags["first-pass-green"] === "string")
+      ledgerArgs.push("--first-pass-green", flags["first-pass-green"]);
     if (typeof flags.findings === "string") ledgerArgs.push("--findings", flags.findings);
-    if (typeof flags["human-minutes"] === "string") ledgerArgs.push("--human-minutes", flags["human-minutes"]);
-    if (typeof flags["files-touched"] === "string") ledgerArgs.push("--files-touched", flags["files-touched"]);
-    if (typeof flags["lines-changed"] === "string") ledgerArgs.push("--lines-changed", flags["lines-changed"]);
+    if (typeof flags["human-minutes"] === "string")
+      ledgerArgs.push("--human-minutes", flags["human-minutes"]);
+    if (typeof flags["files-touched"] === "string")
+      ledgerArgs.push("--files-touched", flags["files-touched"]);
+    if (typeof flags["lines-changed"] === "string")
+      ledgerArgs.push("--lines-changed", flags["lines-changed"]);
     let out;
     try {
       out = runLedger(ledgerArgs, projectDir);
@@ -370,7 +391,9 @@ function main() {
   const cmd = argv[0];
   const rest = argv.slice(1);
   const { flags } = parseFlags(rest);
-  const projectDir = path.resolve(typeof flags.project === "string" ? flags.project : process.cwd());
+  const projectDir = path.resolve(
+    typeof flags.project === "string" ? flags.project : process.cwd(),
+  );
 
   try {
     switch (cmd) {
@@ -425,7 +448,7 @@ function writeFakeUsageScript(dir, costUsd, activeMs) {
       "}));",
       "",
     ].join("\n"),
-    "utf8"
+    "utf8",
   );
   return p;
 }
@@ -443,13 +466,21 @@ function runSelftest() {
     fs.mkdirSync(projA, { recursive: true });
     cmdNext({ task: "Add a new field to the billing schema for payment reconciliation" }, projA);
     const pinA = readPin(projA);
-    assert(pinA && pinA.approach === "dev-pipeline" && pinA.profile === "standard", "1: next pins dev-pipeline:standard for a HIGH-risk task", failures);
-    assert(pinA && pinA.sessionId === null, "2: a freshly written pin has sessionId:null (unclaimed)", failures);
+    assert(
+      pinA && pinA.approach === "dev-pipeline" && pinA.profile === "standard",
+      "1: next pins dev-pipeline:standard for a HIGH-risk task",
+      failures,
+    );
+    assert(
+      pinA && pinA.sessionId === null,
+      "2: a freshly written pin has sessionId:null (unclaimed)",
+      failures,
+    );
     const settingsA = safeReadJson(settingsPath(projA));
     assert(
       settingsA && settingsA.enabledPlugins[CONFIG.SUPERPOWERS_PLUGIN_KEY] === false,
       "3: next disables the superpowers plugin for a non-superpowers pin",
-      failures
+      failures,
     );
 
     // -----------------------------------------------------------------------
@@ -462,16 +493,20 @@ function runSelftest() {
     fs.mkdirSync(path.join(projB, ".claude", "pipeline"), { recursive: true });
     fs.writeFileSync(
       path.join(projB, ".claude", "pipeline", "approach-rotation.json"),
-      JSON.stringify({ next: 1, log: [] })
+      JSON.stringify({ next: 1, log: [] }),
     );
     cmdNext({ task: "Add a CSV export to orders" }, projB);
     const pinB = readPin(projB);
-    assert(pinB && pinB.approach === "superpowers", "4: next forced to the rotation's superpowers slot pins superpowers", failures);
+    assert(
+      pinB && pinB.approach === "superpowers",
+      "4: next forced to the rotation's superpowers slot pins superpowers",
+      failures,
+    );
     const settingsB = safeReadJson(settingsPath(projB));
     assert(
       settingsB && settingsB.enabledPlugins[CONFIG.SUPERPOWERS_PLUGIN_KEY] === true,
       "5: next flips the superpowers plugin to true when it pins superpowers",
-      failures
+      failures,
     );
 
     // -----------------------------------------------------------------------
@@ -486,14 +521,22 @@ function runSelftest() {
     } catch (err) {
       threw = err;
     }
-    assert(threw instanceof ApproachError, "6: next on a conversational prompt refuses (throws ApproachError)", failures);
+    assert(
+      threw instanceof ApproachError,
+      "6: next on a conversational prompt refuses (throws ApproachError)",
+      failures,
+    );
     assert(readPin(projC) === null, "7: a refused next writes no pin", failures);
 
     // -----------------------------------------------------------------------
     // 8: `status` reports the current pin's fields.
     // -----------------------------------------------------------------------
     const statusA = cmdStatus({}, projA);
-    assert(statusA.pin && statusA.pin.approach === "dev-pipeline", "8: status reports the current pin", failures);
+    assert(
+      statusA.pin && statusA.pin.approach === "dev-pipeline",
+      "8: status reports the current pin",
+      failures,
+    );
     const statusC = cmdStatus({}, projC);
     assert(statusC.pin === null, "9: status reports no pin for a project with none", failures);
 
@@ -525,7 +568,7 @@ function runSelftest() {
           findings: "0,1,2",
           "human-minutes": "18",
         },
-        projD
+        projD,
       );
     } finally {
       if (priorUsageScript === undefined) delete process.env.PIPELINE_LEDGER_USAGE_SCRIPT;
@@ -540,11 +583,23 @@ function runSelftest() {
       .filter(Boolean)
       .map((l) => JSON.parse(l));
     const rowD = rowsD.find((r) => r.run === "selftest-raw-run-1");
-    assert(rowD && rowD.approach === "raw" && rowD.telemetry === "true", "11: the appended row carries approach:raw and telemetry:true", failures);
-    assert(rowD && rowD.trueCostUsd === 3.25, "12: the appended row's trueCostUsd comes from the stubbed session-usage.mjs", failures);
+    assert(
+      rowD && rowD.approach === "raw" && rowD.telemetry === "true",
+      "11: the appended row carries approach:raw and telemetry:true",
+      failures,
+    );
+    assert(
+      rowD && rowD.trueCostUsd === 3.25,
+      "12: the appended row's trueCostUsd comes from the stubbed session-usage.mjs",
+      failures,
+    );
     assert(readPin(projD) === null, "13: close clears the pin", failures);
     const settingsD = safeReadJson(settingsPath(projD));
-    assert(settingsD.enabledPlugins[CONFIG.SUPERPOWERS_PLUGIN_KEY] === false, "14: close disables the superpowers plugin", failures);
+    assert(
+      settingsD.enabledPlugins[CONFIG.SUPERPOWERS_PLUGIN_KEY] === false,
+      "14: close disables the superpowers plugin",
+      failures,
+    );
 
     // -----------------------------------------------------------------------
     // 15-16: `close` for a dev-pipeline pin -- reminder only (no ledger
@@ -563,9 +618,13 @@ function runSelftest() {
     assert(
       !fs.existsSync(path.join(projE, ".claude", "pipeline", "cost-ledger.jsonl")),
       "15: close on a dev-pipeline pin never appends a ledger row itself",
-      failures
+      failures,
     );
-    assert(readPin(projE) === null, "16: close on a dev-pipeline pin still clears the pin", failures);
+    assert(
+      readPin(projE) === null,
+      "16: close on a dev-pipeline pin still clears the pin",
+      failures,
+    );
 
     // -----------------------------------------------------------------------
     // 17: `close` with no pin at all refuses.
@@ -586,15 +645,29 @@ function runSelftest() {
     // -----------------------------------------------------------------------
     const projG = path.join(tmpBase, "proj-g");
     fs.mkdirSync(projG, { recursive: true });
-    writePin(projG, { approach: "raw", profile: null, taskHead: "x", pinnedAt: "now", sessionId: null });
+    writePin(projG, {
+      approach: "raw",
+      profile: null,
+      taskHead: "x",
+      pinnedAt: "now",
+      sessionId: null,
+    });
     let closeUnclaimedThrew = null;
     try {
       cmdClose({ run: "x" }, projG);
     } catch (err) {
       closeUnclaimedThrew = err;
     }
-    assert(closeUnclaimedThrew instanceof ApproachError, "18: close on an unclaimed (sessionId:null) raw/superpowers pin refuses", failures);
-    assert(readPin(projG) !== null, "19: a refused close (unclaimed pin) leaves the pin in place", failures);
+    assert(
+      closeUnclaimedThrew instanceof ApproachError,
+      "18: close on an unclaimed (sessionId:null) raw/superpowers pin refuses",
+      failures,
+    );
+    assert(
+      readPin(projG) !== null,
+      "19: a refused close (unclaimed pin) leaves the pin in place",
+      failures,
+    );
 
     // -----------------------------------------------------------------------
     // 20-21: `attribute` forwards to pipeline-ledger.mjs attribute and bumps
@@ -607,8 +680,18 @@ function runSelftest() {
       .filter(Boolean)
       .map((l) => JSON.parse(l));
     const rowD2 = rowsD2.find((r) => r.run === "selftest-raw-run-1");
-    assert(rowD2 && rowD2.quality && rowD2.quality.escapedDefects === 1, "20: attribute bumps escapedDefects on the target row", failures);
-    assert(rowD2 && Array.isArray(rowD2.quality.escapedBugs) && rowD2.quality.escapedBugs.includes("B123"), "21: attribute records the bug id", failures);
+    assert(
+      rowD2 && rowD2.quality && rowD2.quality.escapedDefects === 1,
+      "20: attribute bumps escapedDefects on the target row",
+      failures,
+    );
+    assert(
+      rowD2 &&
+        Array.isArray(rowD2.quality.escapedBugs) &&
+        rowD2.quality.escapedBugs.includes("B123"),
+      "21: attribute records the bug id",
+      failures,
+    );
 
     // -----------------------------------------------------------------------
     // 22: settings.local.json's OTHER keys survive a plugin toggle untouched
@@ -618,13 +701,25 @@ function runSelftest() {
     fs.mkdirSync(path.join(projH, ".claude"), { recursive: true });
     fs.writeFileSync(
       path.join(projH, ".claude", "settings.local.json"),
-      JSON.stringify({ someOtherSetting: "keep-me", enabledPlugins: { "other-plugin@mkt": true } })
+      JSON.stringify({ someOtherSetting: "keep-me", enabledPlugins: { "other-plugin@mkt": true } }),
     );
     setPluginEnabled(projH, CONFIG.SUPERPOWERS_PLUGIN_KEY, true);
     const settingsH = safeReadJson(settingsPath(projH));
-    assert(settingsH.someOtherSetting === "keep-me", "22a: an unrelated settings.local.json key survives the toggle", failures);
-    assert(settingsH.enabledPlugins["other-plugin@mkt"] === true, "22b: an unrelated enabledPlugins entry survives the toggle", failures);
-    assert(settingsH.enabledPlugins[CONFIG.SUPERPOWERS_PLUGIN_KEY] === true, "22c: the superpowers key itself is set as requested", failures);
+    assert(
+      settingsH.someOtherSetting === "keep-me",
+      "22a: an unrelated settings.local.json key survives the toggle",
+      failures,
+    );
+    assert(
+      settingsH.enabledPlugins["other-plugin@mkt"] === true,
+      "22b: an unrelated enabledPlugins entry survives the toggle",
+      failures,
+    );
+    assert(
+      settingsH.enabledPlugins[CONFIG.SUPERPOWERS_PLUGIN_KEY] === true,
+      "22c: the superpowers key itself is set as requested",
+      failures,
+    );
 
     // -----------------------------------------------------------------------
     // 23-24: CLI subprocess contract -- `--selftest` and unknown-command exit
@@ -649,23 +744,39 @@ function runSelftest() {
     fs.mkdirSync(projI, { recursive: true });
     cmdNext({ task: "Add a CSV export to orders" }, projI);
     const pinI1 = readPin(projI);
-    assert(pinI1 && pinI1.sessionId === null, "25: setup -- first next on proj-i leaves an unclaimed pin", failures);
+    assert(
+      pinI1 && pinI1.sessionId === null,
+      "25: setup -- first next on proj-i leaves an unclaimed pin",
+      failures,
+    );
     let staleThrew = null;
     try {
       cmdNext({ task: "Add an unrelated second export feature" }, projI);
     } catch (err) {
       staleThrew = err;
     }
-    assert(staleThrew instanceof ApproachError, "26: next refuses to reclassify over a stale unclaimed pin", failures);
+    assert(
+      staleThrew instanceof ApproachError,
+      "26: next refuses to reclassify over a stale unclaimed pin",
+      failures,
+    );
     const pinI2 = readPin(projI);
-    assert(pinI2 && pinI2.taskHead === pinI1.taskHead, "27: a refused next leaves the original stale pin untouched", failures);
+    assert(
+      pinI2 && pinI2.taskHead === pinI1.taskHead,
+      "27: a refused next leaves the original stale pin untouched",
+      failures,
+    );
     cmdNext({ task: "Add an unrelated second export feature", force: true }, projI);
     const pinI3 = readPin(projI);
-    assert(pinI3 && pinI3.taskHead === "Add an unrelated second export feature", "28: --force overwrites a stale unclaimed pin", failures);
+    assert(
+      pinI3 && pinI3.taskHead === "Add an unrelated second export feature",
+      "28: --force overwrites a stale unclaimed pin",
+      failures,
+    );
     assert(
       pinI3 && pinI3.approach === "superpowers",
       "28b: --force triggers a genuinely fresh classification (rotation advances to the next arm), not a relabeled copy of the stale pin's approach",
-      failures
+      failures,
     );
 
     // -----------------------------------------------------------------------
@@ -687,7 +798,7 @@ function runSelftest() {
     assert(
       !fs.existsSync(path.join(projJ, ".claude", "pipeline", "cost-ledger.jsonl")),
       "29: close on a bug-pipeline pin never appends a ledger row itself (reminder-only, like dev-pipeline)",
-      failures
+      failures,
     );
     assert(readPin(projJ) === null, "30: close on a bug-pipeline pin clears the pin", failures);
   } finally {
@@ -700,7 +811,7 @@ function runSelftest() {
     return 1;
   }
   console.log(
-    "approach.mjs selftest: all checks passed (31 scenarios: next's dev-pipeline/superpowers/refused-conversational pin paths, status, close for superpowers/raw via a stubbed session-usage.mjs against a scratch ledger, close for dev-pipeline as a reminder-only path, close's no-pin and unclaimed-pin refusals, attribute's escapedDefects pass-through, settings.local.json merge-not-overwrite, the CLI subprocess dispatch, Fix 1 (2026-09-12 review) next's stale-unclaimed-pin refusal + --force override, and Fix 2 (2026-09-12 review) close's bug-pipeline reminder-only path)."
+    "approach.mjs selftest: all checks passed (31 scenarios: next's dev-pipeline/superpowers/refused-conversational pin paths, status, close for superpowers/raw via a stubbed session-usage.mjs against a scratch ledger, close for dev-pipeline as a reminder-only path, close's no-pin and unclaimed-pin refusals, attribute's escapedDefects pass-through, settings.local.json merge-not-overwrite, the CLI subprocess dispatch, Fix 1 (2026-09-12 review) next's stale-unclaimed-pin refusal + --force override, and Fix 2 (2026-09-12 review) close's bug-pipeline reminder-only path).",
   );
   return 0;
 }

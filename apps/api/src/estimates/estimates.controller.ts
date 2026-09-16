@@ -3,11 +3,17 @@ import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
+import { PlanFlagGuard } from "../billing/plan-flag.guard";
+import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { EstimatesService } from "./estimates.service";
 
+// WP5a (R3b.3, R3b.5): flag.estimates ships dark (DARK_PLAN_FLAGS in
+// plan-flag-policy.ts) — this class-level guard is a courtesy allow until the
+// PLAN_FLAG_ENFORCEMENT switch flips on.
 @Controller("estimates")
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard)
 @Roles(UserRole.OPERATOR)
+@RequirePlanFlag("flag.estimates")
 export class EstimatesController {
   constructor(private readonly estimatesService: EstimatesService) {}
 

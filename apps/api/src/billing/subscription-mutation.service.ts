@@ -27,6 +27,7 @@ import {
   normalizePlanKey,
   addonSkuCode,
   SELF_SERVICE_ADDON_SKUS,
+  isInviteOnlyPlanKey,
 } from "./plan-catalog.constants";
 import { addCycle, Cycle } from "./billing-math";
 
@@ -177,6 +178,14 @@ export class SubscriptionMutationService {
     const def = version.definitions.find((d) => d.planKey === input.planKey);
     if (!def) throw new BadRequestException(`Unknown plan "${input.planKey}"`);
     if (def.isCustom) throw new BadRequestException("Enterprise is a custom plan — contact sales.");
+    // S5/WP3a: LITE (and any future invite-only plan) can only be landed on via an explicit
+    // platform-admin action — never this self-service surface. Enforced here, not just in the
+    // UI, so this is the structural gate the whole invite-only lane depends on.
+    if (isInviteOnlyPlanKey(input.planKey)) {
+      throw new BadRequestException(
+        `Plan "${input.planKey}" is available by invitation only — contact us.`,
+      );
+    }
     // B218: `def` only proves `input.planKey` matches a PUBLISHED catalog definition
     // verbatim — nothing stops a published PlanDefinition's key from being outside
     // PLAN_KEYS (a catalog-publishing bug), and this IS the client-reachable path (the
@@ -626,6 +635,13 @@ export class SubscriptionMutationService {
     const def = version.definitions.find((d) => d.planKey === planKey);
     if (!def) throw new BadRequestException(`Unknown plan "${planKey}"`);
     if (def.isCustom) throw new BadRequestException("Enterprise is a custom plan — contact sales.");
+    // S5/WP3a: same invite-only gate as subscribe() — blocks moving TO an invite-only plan
+    // (LITE) only; moving AWAY from one (the upsell path, R2.6) is never touched by this check.
+    if (isInviteOnlyPlanKey(planKey)) {
+      throw new BadRequestException(
+        `Plan "${planKey}" is available by invitation only — contact us.`,
+      );
+    }
 
     const [sub, tenant] = await Promise.all([
       this.prisma.tenantSubscription.findUnique({ where: { tenantId } }),
@@ -720,6 +736,13 @@ export class SubscriptionMutationService {
     // tenant). Refuse it here rather than letting -1 read as "the lowest plan".
     if (planRank(targetPlanKey) < 0) {
       throw new BadRequestException(`Unknown plan "${targetPlanKey}"`);
+    }
+    // S5/WP3a: same invite-only gate as subscribe()/upgrade() — a downgrade landing ON LITE is
+    // still a self-service pick of an invite-only plan and must be refused the same way.
+    if (isInviteOnlyPlanKey(targetPlanKey)) {
+      throw new BadRequestException(
+        `Plan "${targetPlanKey}" is available by invitation only — contact us.`,
+      );
     }
     const [sub, tenant] = await Promise.all([
       this.prisma.tenantSubscription.findUnique({ where: { tenantId } }),

@@ -45,14 +45,14 @@ is `true` in `.claude/settings.local.json`, and there is no session-scoped disab
 `computeQuality`, ~line 497) fills the same `quality` object on every row regardless of arm — all
 fields are null-safe (missing source data reads as `null`, never a guessed `0`/`false`):
 
-| Field | Meaning | Source |
-|---|---|---|
-| `firstPassGreen` | `true` only when the gate passed AND zero fix rounds were needed | engine: `result.gate.pass === true && result.fixRounds === 0`; manual: the `--first-pass-green` flag you assert yourself |
-| `reviewFindings` | `{ critical, important, minor }` counts | engine: tallied from `result.confirmedFindings[].severity` (`blocker`→critical, `major`→important, `minor`→minor); manual: the `--findings <c,i,m>` flag |
-| `humanMinutes` | minutes of owner attention the run actually consumed | `result.quality.humanMinutes` (engine) or `--human-minutes` (manual) — not auto-derived; nothing measures this for you |
-| `escapedDefects` | count of bugs later found in this run's output | starts `null` (never audited); incremented only by `pipeline-ledger.mjs attribute` / `approach.mjs attribute` |
-| `filesTouched` | count of modified/planned files | `result.manifest.files` (engine only — manual rows have no manifest, so this stays `null`) |
-| `linesChanged` | sum of `changedLines` across those files | same source as `filesTouched`; `null` for manual rows |
+| Field            | Meaning                                                          | Source                                                                                                                                                   |
+| ---------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `firstPassGreen` | `true` only when the gate passed AND zero fix rounds were needed | engine: `result.gate.pass === true && result.fixRounds === 0`; manual: the `--first-pass-green` flag you assert yourself                                 |
+| `reviewFindings` | `{ critical, important, minor }` counts                          | engine: tallied from `result.confirmedFindings[].severity` (`blocker`→critical, `major`→important, `minor`→minor); manual: the `--findings <c,i,m>` flag |
+| `humanMinutes`   | minutes of owner attention the run actually consumed             | `result.quality.humanMinutes` (engine) or `--human-minutes` (manual) — not auto-derived; nothing measures this for you                                   |
+| `escapedDefects` | count of bugs later found in this run's output                   | starts `null` (never audited); incremented only by `pipeline-ledger.mjs attribute` / `approach.mjs attribute`                                            |
+| `filesTouched`   | count of modified/planned files                                  | `result.manifest.files` (engine only — manual rows have no manifest, so this stays `null`)                                                               |
+| `linesChanged`   | sum of `changedLines` across those files                         | same source as `filesTouched`; `null` for manual rows                                                                                                    |
 
 An unaudited row's `escapedDefects` is `null`, not `0` — `compare`'s ranking treats "never audited" and
 "confirmed zero defects" as different claims (see Reading `compare`'s output below).
@@ -61,12 +61,12 @@ An unaudited row's `escapedDefects` is `null`, not `0` — `compare`'s ranking t
 
 - **`dev-pipeline` / `bug-pipeline` runs**: closed out via `dev-pipeline/scripts/closeout.mjs <runDir>`,
   which stamps `result.approach`/`result.profile` and calls `pipeline-ledger.mjs append --usage
-  <session-usage.json>` for you. `approach.mjs close` on one of these pins prints this reminder rather
+<session-usage.json>` for you. `approach.mjs close` on one of these pins prints this reminder rather
   than appending anything itself.
 - **`superpowers` / `raw` runs**: no `result.json`, no phase report — there is nothing to estimate
   from. `pipeline-ledger.mjs append-manual --run <slug> --approach superpowers|raw --session <sid>
-  [--task-ref <id>] [--first-pass-green true|false] [--findings <c,i,m>] [--human-minutes <n>]
-  [--files-touched <n>] [--lines-changed <n>]` shells out to `session-usage.mjs <sid> --all --project
+[--task-ref <id>] [--first-pass-green true|false] [--findings <c,i,m>] [--human-minutes <n>]
+[--files-touched <n>] [--lines-changed <n>]` shells out to `session-usage.mjs <sid> --all --project
   <dir> --json` to read the **whole session's** true cost and active time (there is no per-run
   breakdown below the session level, which is exactly why the protocol is one task per session), and
   writes a row with `telemetry: 'true'`. `approach.mjs close` is the normal way to trigger this — it
@@ -92,7 +92,7 @@ Read directly from the current script (`approach.mjs`, header comment + `cmdNext
 - **`status [--project <dir>]`** — reports the current pin's approach/profile/task/pinnedAt/sessionId
   (or "no approach pinned").
 - **`close --run <slug> [--task-ref <id>] [--first-pass-green true|false] [--findings <c,i,m>]
-  [--human-minutes <n>] [--files-touched <n>] [--lines-changed <n>] [--project <dir>]`** — for a
+[--human-minutes <n>] [--files-touched <n>] [--lines-changed <n>] [--project <dir>]`** — for a
   `dev-pipeline` or `bug-pipeline` pin, prints the `closeout.mjs` reminder (no ledger write here); for a
   `superpowers`/`raw` pin, requires the pin to already carry a real `sessionId` (refuses if still
   `null` — run at least one prompt in the pinned session first, so `orient.mjs` can stamp it) and calls
@@ -105,7 +105,7 @@ Read directly from the current script (`approach.mjs`, header comment + `cmdNext
   `approach.mjs next --force` (clears the stale pin and re-classifies fresh) or `approach.mjs status`
   / a manual delete of `.claude/approach.json`.
 - **`attribute --run <slug> --bug <id> [--project <dir>]`** — forwards to `pipeline-ledger.mjs
-  attribute`, which bumps that row's `quality.escapedDefects` and appends the bug id to
+attribute`, which bumps that row's `quality.escapedDefects` and appends the bug id to
   `quality.escapedBugs`. This is how a defect found later gets charged back to the arm/run that shipped
   it — the audit signal `compare`'s ranking depends on.
 - **`--selftest`** — exercises the full pin lifecycle plus the `settings.local.json` merge-not-overwrite

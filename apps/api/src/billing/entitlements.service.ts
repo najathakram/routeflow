@@ -5,6 +5,7 @@ import { PlanCatalogService } from "./plan-catalog.service";
 import {
   addonSkuCode,
   findPlanDefinition,
+  isAlwaysEnforcedPlan,
   planKeyFromEnum,
   PlanKey,
 } from "./plan-catalog.constants";
@@ -97,6 +98,21 @@ export class EntitlementsService {
   async hasFlag(tenantId: string, flagKey: string): Promise<boolean> {
     const ent = await this.resolve(tenantId);
     return ent.flags.includes(flagKey);
+  }
+
+  /**
+   * True when `tenantId`'s plan is an always-enforced plan (R3a.3/R3a.7 — today just
+   * LITE): such a tenant never gets the PLAN_FLAG_ENFORCEMENT kill switch's dark-flag
+   * courtesy allow, on PlanFlagGuard or AddonGuard. Never throws — an unresolvable
+   * tenant is treated as not always-enforced, the same fail-open the dark-flag path
+   * already takes on a resolution error.
+   */
+  async isAlwaysEnforcedTenant(tenantId: string): Promise<boolean> {
+    try {
+      return isAlwaysEnforcedPlan((await this.resolve(tenantId)).planKey);
+    } catch {
+      return false;
+    }
   }
 
   /** The compact claims embedded in the JWT / refreshed token. */

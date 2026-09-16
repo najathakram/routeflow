@@ -384,5 +384,37 @@ describe("PlatformPricingService", () => {
         BadRequestException,
       );
     });
+
+    // WP3c: LITE and STARTER are both $99/month in the catalog — a definition lookup
+    // that matched by PRICE (or picked the first definition) rather than by planKey
+    // would silently checkout a LITE tenant into "RouteFlow Starter". Both rows are
+    // present in the catalog version so a key-mismatch bug has something to fall
+    // through TO.
+    it("resolves LITE by planKey — never falls through to STARTER even though both are $99", async () => {
+      prisma.tenant.findUnique.mockResolvedValue(
+        makeTenant({
+          plan: "LITE",
+          subscription: {
+            planKey: "LITE",
+            priceOverrideMonthly: null,
+            priceOverrideAnnual: null,
+          },
+        }),
+      );
+      catalog.getVersionForTenant.mockResolvedValue(
+        makeVersion([
+          makeDefinition({ planKey: "STARTER", name: "Starter", monthlyPrice: 99 }),
+          makeDefinition({ planKey: "LITE", name: "Lite", monthlyPrice: 99 }),
+        ]),
+      );
+
+      const monthly = await service.checkoutPriceData("tenant-1", "month");
+      expect(monthly.unit_amount).toBe(9900);
+      expect(monthly.product_data.name).toBe("RouteFlow Lite — monthly");
+
+      const annual = await service.checkoutPriceData("tenant-1", "year");
+      expect(annual.unit_amount).toBe(99000); // 99 * 10 * 100 — the 10x-monthly fallback
+      expect(annual.product_data.name).toBe("RouteFlow Lite — annual");
+    });
   });
 });

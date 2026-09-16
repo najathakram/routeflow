@@ -286,11 +286,20 @@ describe("FEATURE_REGISTRY (feature grants PR-1)", () => {
     expect(unresolved).toEqual([]);
   });
 
-  it("DARK_PLAN_FLAGS (plan-flag.guard.ts) parity: exactly the dark RequirePlanFlag keys", () => {
-    const guardText = fs.readFileSync(path.join(SRC_ROOT, "billing", "plan-flag.guard.ts"), "utf8");
-    const setMatch = guardText.match(/DARK_PLAN_FLAGS\s*=\s*new Set\(\[([\s\S]*?)\]\)/);
+  it("DARK_PLAN_FLAGS (plan-flag-policy.ts) parity: exactly the dark RequirePlanFlag keys", () => {
+    // DARK_PLAN_FLAGS is DEFINED in plan-flag-policy.ts (split out of plan-flag.guard.ts for the
+    // 2026-08-23/Lite-L2 rollout, REMOVE by 2026-10-01) and RE-EXPORTED from plan-flag.guard.ts —
+    // scan the file that actually declares the literal, not the re-export. Do not point this back
+    // at plan-flag.guard.ts; it no longer contains the `new Set([...])` text.
+    const policyText = fs.readFileSync(
+      path.join(SRC_ROOT, "billing", "plan-flag-policy.ts"),
+      "utf8",
+    );
+    // Tolerate an optional `: ReadonlySet<string>` type annotation between the identifier and `=`.
+    const setMatch = policyText.match(/DARK_PLAN_FLAGS(?::[^=]+)?\s*=\s*new Set\(\[([\s\S]*?)\]\)/);
     expect(setMatch).not.toBeNull();
     const guardKeys = [...(setMatch?.[1].matchAll(/"([^"]+)"/g) ?? [])].map((m) => m[1]).sort();
+    expect(guardKeys.length).toBeGreaterThan(0); // guard against a bad regex silently vacuous-passing
 
     const registryDarkPlanFlagKeys = FEATURE_REGISTRY.filter(
       (f) => f.gate.via === "RequirePlanFlag" && f.gate.state === "dark",

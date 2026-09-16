@@ -145,6 +145,33 @@ describe("PlanCatalogService", () => {
       "CUSTOMER_PACK_100",
     ]);
   });
+
+  it("getPublicCatalog excludes invite-only plans (LITE) — WP3a R2.3", async () => {
+    const prisma = {
+      planVersion: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: "v9",
+          version: 9,
+          status: "PUBLISHED",
+          effectiveAt: new Date("2026-09-15T00:00:00.000Z"),
+          definitions: [
+            { planKey: "LITE", name: "Lite", monthlyPrice: 29, sortOrder: 0 },
+            { planKey: "STARTER", name: "Starter", monthlyPrice: 59, sortOrder: 1 },
+            { planKey: "TEAM", name: "Team", monthlyPrice: 149, sortOrder: 2 },
+          ],
+          addonSkus: [],
+        }),
+      },
+    } as any;
+    const pub = (await new PlanCatalogService(prisma).getPublicCatalog()) as Record<
+      string,
+      unknown
+    >;
+    expect((pub.plans as Record<string, unknown>[]).map((p) => p.planKey)).toEqual([
+      "STARTER",
+      "TEAM",
+    ]);
+  });
 });
 
 describe("PlanCatalogService.upgradeTargetForFlag", () => {

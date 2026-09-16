@@ -1,7 +1,10 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as PrismaEnums from "@prisma/client";
-import { PLAN_KEYS as API_PLAN_KEYS } from "../billing/plan-catalog.constants";
+import {
+  PLAN_KEYS as API_PLAN_KEYS,
+  FLAG_KEYS as API_FLAG_KEYS,
+} from "../billing/plan-catalog.constants";
 
 /**
  * Guards the class of bug found by the Wave E DTO sweep (imp-10b): web and
@@ -343,6 +346,66 @@ function stubKeyToPrismaEnumName(key: string): string {
     .map((part) => part.charAt(0) + part.slice(1).toLowerCase())
     .join("");
 }
+
+// ─── WP1 T2: LITE plan-key + FLAG_KEYS parity across enums.ts / plan-catalog.constants.ts ─────
+
+/**
+ * T2 (WP1, lite-L2 plan): fails TODAY because the shared `FLAG_KEYS` export in
+ * `packages/types/api/billing.ts` doesn't exist yet (`[]` vs the expected 21 keys) and the
+ * generated Prisma `TenantPlan` enum doesn't contain `"LITE"` yet.
+ */
+describe("WP1 T2: LITE PLAN_KEYS (5 members) + FLAG_KEYS (21 keys) parity, Prisma TenantPlan has LITE", () => {
+  it("API PLAN_KEYS (5 members) is set-equal to the shared package's PLAN_KEYS (REG-743-F4, now with LITE)", () => {
+    const shared = Array.isArray((SHARED as Record<string, unknown>)["PLAN_KEYS"])
+      ? ((SHARED as Record<string, unknown>)["PLAN_KEYS"] as unknown[])
+      : [];
+    expect(new Set(API_PLAN_KEYS)).toEqual(new Set(shared));
+    expect(shared.length).toBe(5);
+  });
+
+  it("API FLAG_KEYS (21 keys) is set-equal to the shared package's FLAG_KEYS", () => {
+    const shared = Array.isArray((SHARED as Record<string, unknown>)["FLAG_KEYS"])
+      ? ((SHARED as Record<string, unknown>)["FLAG_KEYS"] as unknown[])
+      : [];
+    expect(new Set(API_FLAG_KEYS)).toEqual(new Set(shared));
+    expect(shared.length).toBe(21);
+  });
+
+  it("generated Prisma TenantPlan enum contains LITE", () => {
+    const values = Object.values(PrismaEnums.TenantPlan as unknown as Record<string, string>);
+    expect(values).toContain("LITE");
+  });
+});
+
+// ─── WP1 T3: additive-only LITE migration exists, exactly one dir, no destructive statements ──
+
+/**
+ * T3 (WP1, lite-L2 plan): fails TODAY because no `*_tenant_plan_lite` migration directory
+ * exists yet under `apps/api/prisma/migrations/`.
+ */
+describe("WP1 T3: tenant-plan-lite migration is additive-only", () => {
+  const MIGRATIONS_DIR = path.join(REPO_ROOT, "apps/api/prisma/migrations");
+
+  it("exactly one migration dir matches *_tenant_plan_lite and its SQL is the exact additive statement", () => {
+    const entries = fs.existsSync(MIGRATIONS_DIR) ? fs.readdirSync(MIGRATIONS_DIR) : [];
+    const matches = entries.filter((name) => /_tenant_plan_lite$/.test(name));
+    expect(matches.length).toBe(1);
+
+    const migrationFile = path.join(MIGRATIONS_DIR, matches[0], "migration.sql");
+    const raw = fs.readFileSync(migrationFile, "utf8");
+    // Strip `--` line comments and blank lines, then compare the remaining SQL exactly.
+    const stripped = raw
+      .split("\n")
+      .map((line) => line.replace(/--.*$/, "").trim())
+      .filter((line) => line.length > 0)
+      .join("\n");
+    expect(stripped).toBe(`ALTER TYPE "TenantPlan" ADD VALUE 'LITE';`);
+
+    expect(raw).not.toMatch(/\bDROP\b/i);
+    expect(raw).not.toMatch(/\bRENAME\b/i);
+    expect(raw).not.toMatch(/ALTER\s+COLUMN/i);
+  });
+});
 
 describe("regression: apps/mobile's @routeflow/types stub stays pinned to Prisma (X2)", () => {
   it("the stub declares at least one *_VALUES export (guards against a silently-vacuous suite)", () => {

@@ -8,6 +8,31 @@ newest first**. This file replaces the old habit of prepending each session's no
 below, and set `_meta.json` `"notes"` to that same note plus the pointer to this file —
 never accumulate history in `"notes"`.
 
+- **2026-09-15 — Lite-L2 invite-only LITE plan + B445 checkout planKey fix (worktree
+  `rf-lite-L2`, WP1-WP14, uncommitted)** — WP14 fixed a pre-existing prod defect:
+  `billing.service.ts onCheckoutCompleted`'s upsert never wrote the `planKey` string column
+  (create branch read the wrong metadata key), starving `emitPayingDelta`/billing-cron's MRR
+  filter forever; fixed via a `resolvedPlanKey`/`resolvedBasePrice` resolve-then-write, present-
+  only on the (common) update branch, no new idempotency mechanism (the existing
+  `transitionAndEmit` CAS already covers it) — `billing.service.spec.ts` gained 5 cases.
+  The Lite-L2 summary (LITE plan constants in `plan-catalog.constants.ts`, new
+  `plan-flag-policy.ts`, invite-only gates on subscribe/upgrade/downgrade,
+  `getSubscription()`'s `flags`/`paymentRequired`, the v12 catalog publisher, and
+  `PlanFlagGuard` on 6 controllers) went into a **new area file, `api/lite-plan.md`**, with
+  one pointer row in INDEX.md — `api/feature-modules-4.md` was already at 99,901B/99.9% of its
+  100,000B cap with zero headroom, so nothing was added there (precedent: `api/returns-inline.md`
+  / Returns PR-1a); the documented `feature-modules-4/<module>.md` split remains a real
+  follow-up, unrelated to this lane. `web/api-hooks.md`, `web/app-shell-lib.md`,
+  `mobile/app-shell-lib.md`, `packages.md` each gained real (uncompressed) Lite-L2 entries —
+  `lib/plan-gated-nav.ts`, `lib/api/plan-flags.ts`, mobile `lib/plan-flags.ts`/
+  `PlanLockedScreen.tsx`, and `packages/types/api/billing.ts` (`FLAG_KEYS`/`SubscriptionView`) —
+  all within their caps. `pricing-plans.md` §Feature-flag keys gained the 5 new keys.
+  **Fix-round follow-up (same day):** findings 1-7 from an Opus refute-first review landed
+  (billing-cron re-pin/fail-loud, platform-admin shared catalog guard, frozen v11
+  ENTERPRISE_FLAGS, checkout override preservation, checkout kill-switch check, web/mobile
+  `flags` fail-open, 6 spec files' TS2352 casts) — `api/lite-plan.md`, `packages.md`,
+  `web/app-shell-lib.md`, `web/api-hooks.md`, `mobile/app-shell-lib.md` each got a short
+  amendment; no new area file.
 - **2026-09-15 — check-payments PR-1 fix round (branch `feat/check-payments-pr1`, 4 findings
   from an independent Opus review)** — **BLOCKER 1** (API wouldn't boot): `invoices.service.ts`
   value-imported `CHECK_TRANSITIONS` from `@routeflow/types` (raw-TS package, no build step) —

@@ -12,6 +12,7 @@ import {
   BILLING_EVENTS,
   findPlanDefinition,
   GRACE_DAYS,
+  PlanNotInCatalogError,
   planKeyToEnum,
   UnknownPlanKeyError,
 } from "./plan-catalog.constants";
@@ -53,7 +54,7 @@ export class BillingCronService {
    * otherwise silently report success while masking one).
    */
   private isUnresolvablePlanKeyError(err: unknown): boolean {
-    return err instanceof UnknownPlanKeyError;
+    return err instanceof UnknownPlanKeyError || err instanceof PlanNotInCatalogError;
   }
 
   /** Trial expiry → READ_ONLY (NOT suspended — exports + sign-in still work). */
@@ -150,20 +151,36 @@ export class BillingCronService {
       const target = s.downgradeToPlanKey as string;
       // Price the MRR delta + caps from the tenant's PINNED version (grandfathering),
       // not the published one. Skip loudly if the catalog can't be resolved.
-      let version: PlanVersionWithCatalog;
+      let fromVersion: PlanVersionWithCatalog;
       try {
-        version = await this.catalog.getVersionForTenant(s.planVersionId);
+        fromVersion = await this.catalog.getVersionForTenant(s.planVersionId);
       } catch {
         this.logger.error(`Skipping downgrade for ${s.tenantId} — catalog unresolvable`);
         continue;
       }
-      const targetDef = findPlanDefinition(version.definitions, target);
-      const amountDelta = roundMoney(
-        this.planMonthly(version, target) - this.planMonthly(version, s.planKey),
-      );
-      const seatCap = targetDef?.seatsIncluded ?? null;
 
       try {
+        let targetVersion = fromVersion;
+        let targetDef = findPlanDefinition(fromVersion.definitions, target);
+        if (!targetDef) {
+          // The tenant's pinned (grandfathered) version predates this plan (e.g. LITE shipped
+          // in v12) — resolve the target against the currently published catalog instead of
+          // silently pricing it as $0 and falling back to STARTER entitlements.
+          const published = await this.catalog.getPublishedVersion();
+          targetDef = published ? findPlanDefinition(published.definitions, target) : undefined;
+          if (!published || !targetDef) {
+            throw new PlanNotInCatalogError(
+              target,
+              [fromVersion.id, published?.id].filter((x): x is string => Boolean(x)),
+            );
+          }
+          targetVersion = published;
+        }
+        const amountDelta = roundMoney(
+          this.planMonthly(targetVersion, target) - this.planMonthly(fromVersion, s.planKey),
+        );
+        const seatCap = targetDef.seatsIncluded ?? null;
+
         await this.prisma.$transaction(async (tx) => {
           await tx.tenantSubscription.update({
             where: { tenantId: s.tenantId },
@@ -175,7 +192,8 @@ export class BillingCronService {
               // now THROWS instead of silently writing STARTER for such a key; caught below so ONE
               // bad row never stops the sweep from applying every other tenant's downgrade.
               currentPlan: planKeyToEnum(target),
-              basePriceSnapshot: targetDef?.monthlyPrice ?? null,
+              planVersionId: targetVersion.id,
+              basePriceSnapshot: targetDef.monthlyPrice ?? null,
               downgradeToPlanKey: null,
               downgradeEffectiveAt: null,
               retainedUserIds: [],

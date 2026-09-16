@@ -195,4 +195,113 @@ describe("SubscriptionService.getSubscription", () => {
     const activeView = await activeSvc.getSubscription("t-1");
     expect(activeView.readOnlyReason).toBeNull();
   });
+
+  // WP3c (R1.7, R2.5): the settings-billing view now also carries the tenant's
+  // effective flag set (its own stored flags union dark-flag courtesy allows) and a
+  // structural paymentRequired signal for an invited-but-unpaid invite-only plan.
+  describe("WP3c flags + paymentRequired", () => {
+    const catalog = {
+      getVersionForTenant: jest.fn().mockResolvedValue({ definitions: DEFS, addonSkus: [] }),
+    } as any;
+    const prisma = {
+      tenantSubscription: { findUnique: jest.fn().mockResolvedValue(null) },
+      tenantAddon: { findMany: jest.fn().mockResolvedValue([]) },
+    } as any;
+    const meters = {} as any;
+
+    it("unions the entitlement's own flags into the returned flags set, deduped", async () => {
+      const entitlements = {
+        resolve: jest.fn().mockResolvedValue({
+          planKey: "STARTER",
+          planName: "Starter",
+          status: "ACTIVE",
+          planVersionId: "v7",
+          trialEndsAt: null,
+          // Already carries a dark flag (redundant with the courtesy allow) plus one
+          // flag that is NOT dark-listed (flag.msrp) — both must survive into `flags`.
+          flags: ["flag.reports", "flag.msrp"],
+        }),
+      } as any;
+      const svc = new SubscriptionService(prisma, catalog, entitlements, meters);
+
+      const s = await svc.getSubscription("t1");
+
+      expect(s.flags).toContain("flag.reports");
+      expect(s.flags).toContain("flag.msrp");
+      // Deduped — flag.reports isn't listed twice even though it's both a dark-flag
+      // courtesy allow AND explicitly stored on the entitlement.
+      expect(s.flags.filter((f: string) => f === "flag.reports")).toHaveLength(1);
+    });
+
+    it("still resolves flags when the entitlements mock omits `flags` entirely (defensive fallback)", async () => {
+      const entitlements = {
+        resolve: jest.fn().mockResolvedValue({
+          planKey: "STARTER",
+          planName: "Starter",
+          status: "ACTIVE",
+          planVersionId: "v7",
+          trialEndsAt: null,
+        }),
+      } as any;
+      const svc = new SubscriptionService(prisma, catalog, entitlements, meters);
+
+      const s = await svc.getSubscription("t1");
+
+      expect(Array.isArray(s.flags)).toBe(true);
+    });
+
+    it("paymentRequired is true for an invited LITE tenant that hasn't completed checkout yet", async () => {
+      const entitlements = {
+        resolve: jest.fn().mockResolvedValue({
+          planKey: "LITE",
+          planName: "Lite",
+          status: "TRIAL",
+          planVersionId: "v7",
+          trialEndsAt: null,
+          flags: [],
+        }),
+      } as any;
+      const svc = new SubscriptionService(prisma, catalog, entitlements, meters);
+
+      const s = await svc.getSubscription("t1");
+
+      expect(s.paymentRequired).toBe(true);
+    });
+
+    it("paymentRequired is false once the LITE tenant is ACTIVE (checkout completed)", async () => {
+      const entitlements = {
+        resolve: jest.fn().mockResolvedValue({
+          planKey: "LITE",
+          planName: "Lite",
+          status: "ACTIVE",
+          planVersionId: "v7",
+          trialEndsAt: null,
+          flags: [],
+        }),
+      } as any;
+      const svc = new SubscriptionService(prisma, catalog, entitlements, meters);
+
+      const s = await svc.getSubscription("t1");
+
+      expect(s.paymentRequired).toBe(false);
+    });
+
+    it("paymentRequired is false for a non-invite-only plan regardless of status", async () => {
+      const entitlements = {
+        resolve: jest.fn().mockResolvedValue({
+          planKey: "STARTER",
+          planName: "Starter",
+          status: "READ_ONLY",
+          planVersionId: "v7",
+          trialEndsAt: null,
+          flags: [],
+        }),
+      } as any;
+      const svc = new SubscriptionService(prisma, catalog, entitlements, meters);
+
+      const s = await svc.getSubscription("t1");
+
+      expect(s.paymentRequired).toBe(false);
+    });
+  });
 });

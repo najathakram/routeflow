@@ -28,13 +28,18 @@ describe("PlanFlagGuard", () => {
 
   let guard: PlanFlagGuard;
   let reflector: { getAllAndOverride: jest.Mock };
-  let entitlements: { hasFlag: jest.Mock };
+  // WP2 collaborator-contract change: the guard now calls entitlements.resolve(tenantId)
+  // (it needs the full entitlement snapshot — planKey included — to run the dark-flag
+  // policy in plan-flag-policy.ts's allowsFlag()), not entitlements.hasFlag(tenantId, key).
+  // This is a fixture-shape change only; every pre-existing behavioral assertion below is
+  // preserved by feeding `resolve` an equivalent { planKey, flags } snapshot.
+  let entitlements: { resolve: jest.Mock };
   let catalog: { upgradeTargetForFlag: jest.Mock };
 
   beforeEach(() => {
     process.env = { ...ORIGINAL_ENV, PLAN_FLAG_ENFORCEMENT: "on" };
     reflector = { getAllAndOverride: jest.fn() };
-    entitlements = { hasFlag: jest.fn() };
+    entitlements = { resolve: jest.fn() };
     catalog = { upgradeTargetForFlag: jest.fn().mockResolvedValue(NO_UPGRADE) };
     guard = new PlanFlagGuard(
       reflector as unknown as Reflector,
@@ -50,25 +55,25 @@ describe("PlanFlagGuard", () => {
   it("allows requests with no @RequirePlanFlag metadata", async () => {
     reflector.getAllAndOverride.mockReturnValue(undefined);
     await expect(guard.canActivate(contextFor({ tenantId: "t1" }))).resolves.toBe(true);
-    expect(entitlements.hasFlag).not.toHaveBeenCalled();
+    expect(entitlements.resolve).not.toHaveBeenCalled();
   });
 
   it("allows SUPER_ADMIN (null tenantId) through any plan gate", async () => {
     reflector.getAllAndOverride.mockReturnValue("flag.reports");
     await expect(guard.canActivate(contextFor({ tenantId: null }))).resolves.toBe(true);
-    expect(entitlements.hasFlag).not.toHaveBeenCalled();
+    expect(entitlements.resolve).not.toHaveBeenCalled();
   });
 
   it("allows tenants whose plan grants the flag", async () => {
     reflector.getAllAndOverride.mockReturnValue("flag.reports");
-    entitlements.hasFlag.mockResolvedValue(true);
+    entitlements.resolve.mockResolvedValue({ planKey: "SCALE", flags: ["flag.reports"] });
     await expect(guard.canActivate(contextFor({ tenantId: "t1" }))).resolves.toBe(true);
-    expect(entitlements.hasFlag).toHaveBeenCalledWith("t1", "flag.reports");
+    expect(entitlements.resolve).toHaveBeenCalledWith("t1");
   });
 
   it("throws a LOCKED_PAGE PLAN_GATE when only a plan upgrade grants the flag", async () => {
     reflector.getAllAndOverride.mockReturnValue("flag.reports");
-    entitlements.hasFlag.mockResolvedValue(false);
+    entitlements.resolve.mockResolvedValue({ planKey: "STARTER", flags: [] });
     catalog.upgradeTargetForFlag.mockResolvedValue({
       planKey: "TEAM",
       planMonthlyPrice: "149.00",
@@ -86,7 +91,7 @@ describe("PlanFlagGuard", () => {
 
   it("throws an INLINE_RESOLVE PLAN_GATE when an add-on grants the flag", async () => {
     reflector.getAllAndOverride.mockReturnValue("addon.buyer_portal");
-    entitlements.hasFlag.mockResolvedValue(false);
+    entitlements.resolve.mockResolvedValue({ planKey: "STARTER", flags: [] });
     catalog.upgradeTargetForFlag.mockResolvedValue({
       planKey: "BUSINESS",
       planMonthlyPrice: "349.00",
@@ -106,7 +111,7 @@ describe("PlanFlagGuard", () => {
 
   it("fails CLOSED with a distinguishable error when entitlement resolution throws", async () => {
     reflector.getAllAndOverride.mockReturnValue("flag.reports");
-    entitlements.hasFlag.mockRejectedValue(new Error("db down"));
+    entitlements.resolve.mockRejectedValue(new Error("db down"));
     const err = await guard.canActivate(contextFor({ tenantId: "t1" })).catch((e) => e);
     expect(err).toBeInstanceOf(ForbiddenException);
     expect((err.getResponse() as { code: string }).code).toBe("PLAN_GATE_UNAVAILABLE");
@@ -118,13 +123,13 @@ describe("PLAN_FLAG_ENFORCEMENT kill switch", () => {
 
   let guard: PlanFlagGuard;
   let reflector: { getAllAndOverride: jest.Mock };
-  let entitlements: { hasFlag: jest.Mock };
+  let entitlements: { resolve: jest.Mock };
   let catalog: { upgradeTargetForFlag: jest.Mock };
 
   beforeEach(() => {
     process.env = { ...ORIGINAL_ENV };
     reflector = { getAllAndOverride: jest.fn() };
-    entitlements = { hasFlag: jest.fn() };
+    entitlements = { resolve: jest.fn() };
     catalog = { upgradeTargetForFlag: jest.fn().mockResolvedValue(NO_UPGRADE) };
     guard = new PlanFlagGuard(
       reflector as unknown as Reflector,
@@ -140,15 +145,15 @@ describe("PLAN_FLAG_ENFORCEMENT kill switch", () => {
   it("enforces the gate when PLAN_FLAG_ENFORCEMENT=on and the tenant has the flag", async () => {
     process.env.PLAN_FLAG_ENFORCEMENT = "on";
     reflector.getAllAndOverride.mockReturnValue("flag.reports");
-    entitlements.hasFlag.mockResolvedValue(true);
+    entitlements.resolve.mockResolvedValue({ planKey: "SCALE", flags: ["flag.reports"] });
     await expect(guard.canActivate(contextFor({ tenantId: "t1" }))).resolves.toBe(true);
-    expect(entitlements.hasFlag).toHaveBeenCalledWith("t1", "flag.reports");
+    expect(entitlements.resolve).toHaveBeenCalledWith("t1");
   });
 
   it("throws a PLAN_GATE 403 when PLAN_FLAG_ENFORCEMENT=on and the flag is absent", async () => {
     process.env.PLAN_FLAG_ENFORCEMENT = "on";
     reflector.getAllAndOverride.mockReturnValue("flag.reports");
-    entitlements.hasFlag.mockResolvedValue(false);
+    entitlements.resolve.mockResolvedValue({ planKey: "STARTER", flags: [] });
     catalog.upgradeTargetForFlag.mockResolvedValue({
       planKey: "SCALE",
       planMonthlyPrice: "499.00",
@@ -168,15 +173,24 @@ describe("PLAN_FLAG_ENFORCEMENT kill switch", () => {
     ["off", "off"],
     ["any other value", "banana"],
   ])(
-    "allows the newly added gates without consulting entitlements when PLAN_FLAG_ENFORCEMENT is %s",
+    // WP2/R3a.7 note (brief/test conflict, flagged in the WP2 report): before WP2, this test's
+    // title read "...without consulting entitlements..." and asserted entitlements.hasFlag was
+    // NEVER called. The WP2 brief's canActivate now ALWAYS resolves the tenant's entitlements
+    // (except for a null tenantId) so it can tell an always-enforced plan (LITE) apart from a
+    // courtesy-dark one — see allowsFlag() in plan-flag-policy.ts. That "no consultation at all"
+    // assertion is no longer true by design and could not be preserved verbatim; what the test
+    // still proves — and what its non-Lite tenants actually rely on — is that the flag itself is
+    // never the reason for a deny while the switch is off. See the WP2 R3a.7 describe block below
+    // for the new LITE-tenant coverage this collaborator-contract change exists to enable.
+    "allows the newly added gates for a non-always-enforced tenant when PLAN_FLAG_ENFORCEMENT is %s",
     async (_label, value) => {
       if (value === undefined) delete process.env.PLAN_FLAG_ENFORCEMENT;
       else process.env.PLAN_FLAG_ENFORCEMENT = value;
       reflector.getAllAndOverride.mockReturnValue("flag.reports");
-      // Even a mock configured to deny must never be consulted — the switch short-circuits first.
-      entitlements.hasFlag.mockResolvedValue(false);
+      // Even a mock configured to withhold the flag itself must still pass — the courtesy
+      // allow does not depend on the tenant actually carrying "flag.reports".
+      entitlements.resolve.mockResolvedValue({ planKey: "STARTER", flags: [] });
       await expect(guard.canActivate(contextFor({ tenantId: "t1" }))).resolves.toBe(true);
-      expect(entitlements.hasFlag).not.toHaveBeenCalled();
     },
   );
 
@@ -192,11 +206,11 @@ describe("PLAN_FLAG_ENFORCEMENT kill switch", () => {
       if (value === undefined) delete process.env.PLAN_FLAG_ENFORCEMENT;
       else process.env.PLAN_FLAG_ENFORCEMENT = value;
       reflector.getAllAndOverride.mockReturnValue("flag.msrp");
-      entitlements.hasFlag.mockResolvedValue(false);
+      entitlements.resolve.mockResolvedValue({ planKey: "STARTER", flags: [] });
       const err = await guard.canActivate(contextFor({ tenantId: "t1" })).catch((e) => e);
       expect(err).toBeInstanceOf(ForbiddenException);
       expect((err.getResponse() as PlanGateErrorBody).flag).toBe("flag.msrp");
-      expect(entitlements.hasFlag).toHaveBeenCalledWith("t1", "flag.msrp");
+      expect(entitlements.resolve).toHaveBeenCalledWith("t1");
     },
   );
 
@@ -217,10 +231,85 @@ describe("PLAN_FLAG_ENFORCEMENT kill switch", () => {
     async (flagKey) => {
       process.env.PLAN_FLAG_ENFORCEMENT = "on";
       reflector.getAllAndOverride.mockReturnValue(flagKey);
-      entitlements.hasFlag.mockImplementation(async (_tenantId: string, key: string) =>
-        SCALE_PLAN_FLAGS.includes(key),
-      );
+      entitlements.resolve.mockResolvedValue({ planKey: "SCALE", flags: SCALE_PLAN_FLAGS });
       await expect(guard.canActivate(contextFor({ tenantId: "t1" }))).resolves.toBe(true);
     },
   );
+});
+
+// WP2 (R3a.1-R3a.7): the invite-only LITE plan is "always enforced" — it must never get the
+// PLAN_FLAG_ENFORCEMENT kill switch's dark-flag courtesy allow, whether the switch is off or
+// entitlement resolution itself fails.
+describe("WP2 always-enforced plan (LITE) — no dark-flag courtesy allow", () => {
+  const ORIGINAL_ENV = process.env;
+
+  let guard: PlanFlagGuard;
+  let reflector: { getAllAndOverride: jest.Mock };
+  let entitlements: { resolve: jest.Mock };
+  let catalog: { upgradeTargetForFlag: jest.Mock };
+
+  beforeEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+    delete process.env.PLAN_FLAG_ENFORCEMENT; // dark flags stay dark for everyone else
+    reflector = { getAllAndOverride: jest.fn() };
+    entitlements = { resolve: jest.fn() };
+    catalog = { upgradeTargetForFlag: jest.fn().mockResolvedValue(NO_UPGRADE) };
+    guard = new PlanFlagGuard(
+      reflector as unknown as Reflector,
+      entitlements as unknown as EntitlementsService,
+      catalog as unknown as PlanCatalogService,
+    );
+  });
+
+  afterEach(() => {
+    process.env = ORIGINAL_ENV;
+  });
+
+  it("R3a.7: denies a LITE tenant a dark flag it lacks, even though the kill switch is off", async () => {
+    reflector.getAllAndOverride.mockReturnValue("flag.reports"); // a DARK_PLAN_FLAGS member
+    entitlements.resolve.mockResolvedValue({ planKey: "LITE", flags: [] });
+    catalog.upgradeTargetForFlag.mockResolvedValue({
+      planKey: "STARTER",
+      planMonthlyPrice: "49.00",
+      addonSku: null,
+      addonMonthlyPrice: null,
+    });
+    const err = await guard.canActivate(contextFor({ tenantId: "lite-1" })).catch((e) => e);
+    expect(err).toBeInstanceOf(ForbiddenException);
+    const body = err.getResponse() as PlanGateErrorBody;
+    expect(body.code).toBe("PLAN_GATE");
+    expect(body.flag).toBe("flag.reports");
+  });
+
+  it("allows a LITE tenant that DOES carry the dark flag", async () => {
+    reflector.getAllAndOverride.mockReturnValue("flag.reports");
+    entitlements.resolve.mockResolvedValue({ planKey: "LITE", flags: ["flag.reports"] });
+    await expect(guard.canActivate(contextFor({ tenantId: "lite-1" }))).resolves.toBe(true);
+  });
+
+  it("a non-LITE tenant keeps the courtesy allow under the identical dark/off conditions (contrast case)", async () => {
+    reflector.getAllAndOverride.mockReturnValue("flag.reports");
+    entitlements.resolve.mockResolvedValue({ planKey: "STARTER", flags: [] });
+    await expect(guard.canActivate(contextFor({ tenantId: "starter-1" }))).resolves.toBe(true);
+  });
+
+  it("R3a.4: a dark flag still passes when entitlement resolution fails (courtesy allow survives a DB hiccup)", async () => {
+    reflector.getAllAndOverride.mockReturnValue("flag.reports");
+    entitlements.resolve.mockRejectedValue(new Error("db down"));
+    await expect(guard.canActivate(contextFor({ tenantId: "t1" }))).resolves.toBe(true);
+  });
+
+  it("a non-dark flag still fails CLOSED when entitlement resolution fails, even though R3a.4 covers dark flags", async () => {
+    reflector.getAllAndOverride.mockReturnValue("flag.msrp"); // not in DARK_PLAN_FLAGS
+    entitlements.resolve.mockRejectedValue(new Error("db down"));
+    const err = await guard.canActivate(contextFor({ tenantId: "t1" })).catch((e) => e);
+    expect(err).toBeInstanceOf(ForbiddenException);
+    expect((err.getResponse() as { code: string }).code).toBe("PLAN_GATE_UNAVAILABLE");
+  });
+
+  it("R3a.5: SUPER_ADMIN (null tenantId) bypasses before any entitlement resolution, even for a dark flag", async () => {
+    reflector.getAllAndOverride.mockReturnValue("flag.reports");
+    await expect(guard.canActivate(contextFor({ tenantId: null }))).resolves.toBe(true);
+    expect(entitlements.resolve).not.toHaveBeenCalled();
+  });
 });

@@ -107,6 +107,8 @@ export class CustomersController {
 
   @Get("pending-portal-approvals")
   @Roles(UserRole.OPERATOR)
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("addon.buyer_portal")
   listPendingPortalApprovals(@CurrentUser() user: JwtPayload) {
     return this.customersService.listPendingPortalApprovals(user.tenantId!);
   }
@@ -355,6 +357,8 @@ export class CustomersController {
 
   @Post(":id/portal-invite")
   @Roles(UserRole.OPERATOR)
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("addon.buyer_portal")
   sendPortalInvite(
     @Param("id") id: string,
     @Body() dto: PortalInviteDto,
@@ -365,30 +369,40 @@ export class CustomersController {
 
   @Post(":id/portal-resend")
   @Roles(UserRole.OPERATOR)
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("addon.buyer_portal")
   resendPortalInvite(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.customersService.resendPortalInvite(id, user.tenantId!);
   }
 
   @Post(":id/portal-disconnect")
   @Roles(UserRole.OPERATOR)
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("addon.buyer_portal")
   disconnectPortal(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.customersService.disconnectPortal(id, user.tenantId!);
   }
 
   @Get(":id/portal-status")
   @Roles(UserRole.OPERATOR)
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("addon.buyer_portal")
   getPortalStatus(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.customersService.getPortalStatus(id, user.tenantId!);
   }
 
   @Post(":id/portal-approve")
   @Roles(UserRole.OPERATOR)
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("addon.buyer_portal")
   approveBuyerRequest(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.customersService.approveBuyerRequest(id, user.tenantId!);
   }
 
   @Post(":id/portal-decline")
   @Roles(UserRole.OPERATOR)
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("addon.buyer_portal")
   declineBuyerRequest(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.customersService.declineBuyerRequest(id, user.tenantId!);
   }

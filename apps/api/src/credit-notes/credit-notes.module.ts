@@ -6,6 +6,7 @@ import { GatewaysModule } from "../gateways/gateways.module";
 import { RegulatedModule } from "../regulated/regulated.module";
 import { CommissionsModule } from "../sales-agents/commissions.module";
 import { NumberingModule } from "../import/numbering.module";
+import { EntitlementsModule } from "../billing/entitlements.module";
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { NumberingModule } from "../import/numbering.module";
     // REG-B267/cause-ruling.md §2 D2: reserveNext("CREDIT_NOTE", …) mints credit
     // note numbers through the shared NumberingService.
     NumberingModule,
+    EntitlementsModule,
   ],
   controllers: [CreditNotesController],
   providers: [CreditNotesService],

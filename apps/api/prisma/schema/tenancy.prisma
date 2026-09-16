@@ -27,6 +27,7 @@ enum TenantPlan {
   ENTERPRISE
   GROWTH
   SCALE
+  LITE
 }
 
 // Phase 0 truth: classifies a Tenant row for KPI/MRR scoping (production revenue vs.
