@@ -284,7 +284,7 @@ describe("InlineReturnsQuoteService — Opus fix-round BLOCKER: the matching/all
     // the whole 12 pieces prices as ONE unreferenced chunk. Pre-fix, priceUnreferencedChunk
     // never received unitsPerBox and fell back to unitPrice * pieces = 24 * 12 = $288.
     const result = await service.quote(
-      { customerId: "cust-1", items: [{ productId: "prod-1", qty: 0, boxes: 0, pieces: 12 }] },
+      { customerId: "cust-1", items: [{ productId: "prod-1", qty: 1, boxes: 0, pieces: 12 }] },
       OPERATOR,
     );
 
@@ -325,7 +325,7 @@ describe("InlineReturnsQuoteService — Opus fix-round BLOCKER: the matching/all
     expect(result.total).toBe(24.0);
   });
 
-  it("re-review fix: a null-unitsPerBox DRAFT invoice-line snapshot still caps/prices correctly via product.unitsPerBox fallback ($8.00 for 2 of 2 boxes returned)", async () => {
+  it("re-review fix: a null-unitsPerBox DRAFT invoice-line snapshot still caps/prices correctly via product.unitsPerBox fallback (2 of 12 pieces -> $8.00)", async () => {
     (db.customer.findFirst as jest.Mock).mockResolvedValue({
       id: "cust-1",
       pricingTier: 1,
@@ -381,7 +381,7 @@ describe("InlineReturnsQuoteService — Opus fix-round BLOCKER: the matching/all
     // resolves to the product's 6, so chunkInLineAxis = 2/6 boxes, prorating 2 of the line's
     // true 12 pieces at $4.00/piece -> $8.00.
     const result = await service.quote(
-      { customerId: "cust-1", items: [{ productId: "prod-1", qty: 0, boxes: 0, pieces: 2 }] },
+      { customerId: "cust-1", items: [{ productId: "prod-1", qty: 1, boxes: 0, pieces: 2 }] },
       OPERATOR,
     );
 

@@ -185,8 +185,9 @@ export class InlineReturnsQuoteService {
         qty: item.qty,
         boxes: item.boxes ?? null,
         pieces: item.pieces ?? null,
-        // Only meaningful for a bare-qty (no boxes/pieces split) DTO — the caller's
-        // own product-level box size. Prefer a matching-set line's own snapshot, but a
+        // The caller's own product-level box size — returnRequestPieces uses it both to
+        // scale a bare `qty` (no boxes/pieces split) into pieces AND to scale an explicit
+        // `boxes` count into pieces. Prefer a matching-set line's own snapshot, but a
         // fully unreferenced item (no matching line at all) still needs the product's
         // own unitsPerBox so a bare `qty: 1` on a boxed product is read as one box, not
         // one loose piece.
