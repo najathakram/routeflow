@@ -10,6 +10,7 @@ import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { EmailService } from "../email/email.service";
 
 // Buyer-connect approval flow, WP2: decline endpoint + richer pending payloads.
 // Covers `declineBuyerRequest`, the 409-on-non-pending tightening of
@@ -64,6 +65,10 @@ describe("Portal approvals — decline endpoint + richer pending payloads", () =
         {
           provide: RegulatedLedgerService,
           useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+        },
+        {
+          provide: EmailService,
+          useValue: { send: jest.fn().mockResolvedValue({ delivered: true, transport: "resend" }) },
         },
         { provide: PrismaService, useValue: prisma },
         { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(null) } },
