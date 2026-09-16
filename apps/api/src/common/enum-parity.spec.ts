@@ -354,4 +354,16 @@ describe("regression: apps/mobile's @routeflow/types stub stays pinned to Prisma
       expect(expected.length).toBeGreaterThan(0);
     },
   );
+
+  // Post-dated check payments PR-1 (2026-09-15, MINOR 4 fix round): the stub's own header notes
+  // `CHECK_TRANSITIONS` is deliberately named WITHOUT the `_VALUES` suffix (it isn't a Prisma
+  // enum-values array, so the sweep above never reaches it) and is otherwise unguarded — a future
+  // V2 change to the real table could drift from this hand copy with nothing to catch it. Pin it
+  // directly against `packages/types/api/checks.ts`'s canonical export (via `SHARED`, the same
+  // `@routeflow/types` require the rest of this file already uses).
+  it("stub export CHECK_TRANSITIONS (unswept by the *_VALUES check above) stays deep-equal to the canonical @routeflow/types export", () => {
+    const canonical = (SHARED as Record<string, unknown>)["CHECK_TRANSITIONS"];
+    expect(canonical).toBeDefined();
+    expect(MOBILE_STUB["CHECK_TRANSITIONS"]).toEqual(canonical);
+  });
 });
