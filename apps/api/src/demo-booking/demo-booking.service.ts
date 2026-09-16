@@ -7,9 +7,10 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { DemoBooking, DemoBookingStatus } from "@prisma/client";
+import { DemoBooking, DemoBookingStatus, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../common/db-locks";
 import {
   DemoBookingConfig,
   isCalendarConfigured,
@@ -244,23 +245,39 @@ export class DemoBookingService {
     const endsAt = new Date(startsAt.getTime() + config.durationMinutes * 60_000);
     const visitorZone = isValidTimeZone(input.timeZone) ? input.timeZone : config.businessTimeZone;
 
-    await this.assertSlotStillFree(startsAt, endsAt, config);
-
     const manageToken = this.mintToken();
-    const created = await this.prisma.demoBooking.create({
-      data: {
-        name: input.name.trim(),
-        email: input.email.trim().toLowerCase(),
-        company: input.company.trim(),
-        phone: input.phone?.trim() || null,
-        notes: input.notes?.trim() || null,
-        startsAt,
-        endsAt,
-        timeZone: visitorZone,
-        manageTokenHash: hashToken(manageToken),
-        sourcePage: input.sourcePage?.slice(0, 200) ?? null,
-        createdIp: input.ip?.slice(0, 64) ?? null,
-      },
+    // Check-then-create over a public, unauthenticated POST is a real race: two
+    // visitors can both pass assertSlotStillFree for the same slot before
+    // either has written a row. Serialize the whole check+write on a
+    // `demo-booking` advisory lock keyed on the slot's start instant, so the
+    // second caller's assertSlotStillFree runs only after the first caller's
+    // row already exists and would see it as taken. The DB-level partial
+    // unique index (`DemoBooking_startsAt_confirmed_key`, migration
+    // 20260916031500) is the second line of defence via the P2002 catch below.
+    const created = await this.withSlotLock(startsAt, async () => {
+      await this.assertSlotStillFree(startsAt, endsAt, config);
+      try {
+        return await this.prisma.demoBooking.create({
+          data: {
+            name: input.name.trim(),
+            email: input.email.trim().toLowerCase(),
+            company: input.company.trim(),
+            phone: input.phone?.trim() || null,
+            notes: input.notes?.trim() || null,
+            startsAt,
+            endsAt,
+            timeZone: visitorZone,
+            manageTokenHash: hashToken(manageToken),
+            sourcePage: input.sourcePage?.slice(0, 200) ?? null,
+            createdIp: input.ip?.slice(0, 64) ?? null,
+          },
+        });
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+          throw new ConflictException("That time was just taken. Please pick another.");
+        }
+        throw error;
+      }
     });
 
     // The lead is captured before Google is touched: a calendar outage must
@@ -330,16 +347,28 @@ export class DemoBookingService {
     if (startsAt.getTime() === booking.startsAt.getTime()) {
       return this.toPublic(booking, config);
     }
-    await this.assertSlotStillFree(startsAt, endsAt, config, booking.id);
 
-    const moved = await this.prisma.demoBooking.update({
-      where: { id: booking.id },
-      data: {
-        startsAt,
-        endsAt,
-        rescheduledFrom: booking.startsAt,
-        rescheduleCount: { increment: 1 },
-      },
+    // Same lock family, keyed on the TARGET slot — a reschedule landing on a
+    // slot a concurrent create() is claiming serializes against it correctly,
+    // since both take the lock keyed on that slot's start instant.
+    const moved = await this.withSlotLock(startsAt, async () => {
+      await this.assertSlotStillFree(startsAt, endsAt, config, booking.id);
+      try {
+        return await this.prisma.demoBooking.update({
+          where: { id: booking.id },
+          data: {
+            startsAt,
+            endsAt,
+            rescheduledFrom: booking.startsAt,
+            rescheduleCount: { increment: 1 },
+          },
+        });
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+          throw new ConflictException("That time was just taken. Please pick another.");
+        }
+        throw error;
+      }
     });
 
     if (moved.googleEventId) {
@@ -361,6 +390,37 @@ export class DemoBookingService {
   }
 
   // ─────────────────────────────────────────────────────────────── internals
+
+  /**
+   * Runs `fn` (a slot re-check followed by the create/update that claims it)
+   * under a `demo-booking` advisory lock keyed on the slot's UTC start
+   * instant, so two callers targeting the same slot never both pass their
+   * check before either has written. `mode: "wait"` always resolves acquired
+   * under normal operation; `LockTimeoutError`/`LockUnavailableError` map to a
+   * 503 asking the visitor to retry rather than a raw 500.
+   */
+  private async withSlotLock<T>(startsAt: Date, fn: () => Promise<T>): Promise<T> {
+    try {
+      const result = await withAdvisoryLock(
+        { family: "demo-booking", key: String(startsAt.getTime()), mode: "wait", waitMs: 10_000 },
+        fn,
+      );
+      if (!result.acquired) {
+        // Unreachable under mode: "wait" (see addon.service.ts's identical
+        // comment) — kept so this exhaustively narrows LockResult.
+        throw new ServiceUnavailableException("Could not confirm that slot — lock unavailable.");
+      }
+      return result.value;
+    } catch (error) {
+      if (error instanceof LockTimeoutError || error instanceof LockUnavailableError) {
+        this.logger.error(`demo-booking: slot lock unavailable — ${error.message}`);
+        throw new ServiceUnavailableException(
+          "We could not confirm that time. Please try again shortly.",
+        );
+      }
+      throw error;
+    }
+  }
 
   private assertBookable(config: DemoBookingConfig): void {
     if (!isCalendarConfigured(config) || !isTokenSigningConfigured(config)) {
@@ -480,22 +540,33 @@ export class DemoBookingService {
   }
 
   private eventShape(booking: DemoBooking) {
+    // Every field here comes from a public, unauthenticated form — nothing
+    // stops a submission where "name" contains a newline followed by text
+    // crafted to look like the template's own "Contact:" line. The Calendar
+    // description is plain text (not HTML — escapeHtml below is for the email
+    // body, a different context), so the defence is stripping the control
+    // characters that would let attacker text impersonate a template line,
+    // not escaping markup that was never going to render as markup here.
+    const name = plainTextField(booking.name);
+    const company = plainTextField(booking.company);
+    const notes = booking.notes ? plainTextField(booking.notes) : "";
+
     const lines = [
-      `RouteFlow product walkthrough with ${booking.name} (${booking.company}).`,
+      `RouteFlow product walkthrough with ${name} (${company}).`,
       "",
       `Contact: ${booking.email}`,
-      ...(booking.phone ? [`Phone: ${booking.phone}`] : []),
+      ...(booking.phone ? [`Phone: ${plainTextField(booking.phone)}`] : []),
       "",
-      ...(booking.notes ? ["What they want to cover:", booking.notes] : []),
+      ...(notes ? ["What they want to cover:", notes] : []),
     ];
     return {
-      summary: `RouteFlow demo — ${booking.company}`,
+      summary: `RouteFlow demo — ${company}`,
       description: lines.join("\n").trim(),
       startsAt: booking.startsAt,
       endsAt: booking.endsAt,
       timeZone: booking.timeZone,
       attendeeEmail: booking.email,
-      attendeeName: booking.name,
+      attendeeName: name,
     };
   }
 
@@ -563,6 +634,24 @@ function formatSlot(booking: DemoBooking): string {
   } catch {
     return booking.startsAt.toUTCString();
   }
+}
+
+/**
+ * Collapses newlines and strips other control characters from a value bound
+ * for a plain-text template line (a Calendar event description). Not HTML
+ * escaping — that's `escapeHtml` below, for the email body, a different
+ * rendering context — this exists so attacker-supplied text cannot inject a
+ * fake extra "line" that impersonates one of the template's own labelled
+ * lines (e.g. a forged "Contact: attacker@evil.example").
+ */
+function plainTextField(value: string): string {
+  return (
+    value
+      .replace(/[\r\n]+/g, " ")
+      // eslint-disable-next-line no-control-regex -- deliberately stripping raw control bytes
+      .replace(/[\x00-\x09\x0b\x0c\x0e-\x1f\x7f]/g, "")
+      .trim()
+  );
 }
 
 function escapeHtml(value: string): string {

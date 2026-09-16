@@ -796,6 +796,15 @@ enum DemoBookingStatus {
   COMPLETED
 }
 
+/// RACE GUARD: migration `20260916031500_demo_booking_race_guard` adds a
+/// PARTIAL unique index — `CREATE UNIQUE INDEX ... ON "DemoBooking"("startsAt")
+/// WHERE status = 'CONFIRMED'` — that Prisma's schema language cannot express
+/// (no `WHERE` on `@@index`/`@@unique`), so it exists ONLY in that migration
+/// file; `prisma migrate dev` will not see it as drift because nothing here
+/// declares a conflicting full unique constraint on `startsAt`. Application
+/// code also serializes create/reschedule through a `demo-booking` advisory
+/// lock (`common/db-locks.ts`) keyed on the slot's start instant — the index
+/// is the second, database-level line of defence for the same invariant.
 model DemoBooking {
   id       String  @id @default(uuid())
   name     String

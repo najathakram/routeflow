@@ -105,24 +105,36 @@ export class GoogleCalendarService {
   /**
    * Busy blocks on the booking calendar between two instants.
    *
-   * An unconfigured or unreachable calendar returns `null` — NOT an empty
-   * array — so a caller can tell "nothing is booked" apart from "we have no
-   * idea", and never publishes availability it cannot stand behind.
+   * An unconfigured, unreachable, or erroring calendar returns `null` — NOT an
+   * empty array — so a caller can tell "nothing is booked" apart from "we have
+   * no idea", and never publishes availability it cannot stand behind. That
+   * includes a transport-level failure: a bad key, a revoked delegation, or a
+   * transient Google 5xx must not throw through this method (both call sites
+   * are on the public, unauthenticated path — an uncaught throw here becomes
+   * an anonymous visitor's unhandled 500).
    */
   async getBusy(from: Date, to: Date): Promise<BusyBlock[] | null> {
     const config = this.config();
     if (!isCalendarConfigured(config)) return null;
 
-    const body = await this.request<{
+    let body: {
       calendars?: Record<
         string,
         { busy?: Array<{ start: string; end: string }>; errors?: unknown }
       >;
-    }>(config, "POST", "/freeBusy", {
-      timeMin: from.toISOString(),
-      timeMax: to.toISOString(),
-      items: [{ id: config.calendarId }],
-    });
+    };
+    try {
+      body = await this.request(config, "POST", "/freeBusy", {
+        timeMin: from.toISOString(),
+        timeMax: to.toISOString(),
+        items: [{ id: config.calendarId }],
+      });
+    } catch (error) {
+      // `request()` already logged the status/reason; this is the caller-facing
+      // half of that same failure.
+      this.logger.error(`demo-booking: freeBusy request failed — ${String(error)}`);
+      return null;
+    }
 
     const calendar = body.calendars?.[config.calendarId];
     if (calendar?.errors) {
@@ -198,7 +210,13 @@ export class GoogleCalendarService {
       end: { dateTime: input.endsAt.toISOString(), timeZone: input.timeZone },
       attendees: [{ email: input.attendeeEmail, displayName: input.attendeeName }],
       guestsCanModify: false,
-      guestsCanInviteOthers: true,
+      // `attendeeEmail` is an unverified address from a public, unauthenticated
+      // form — anyone can put anyone's address there. Letting that address
+      // invite further guests turns admin@routeflow.info into an open invite
+      // relay: an attacker-chosen "prospect" can pull third parties into an
+      // event they never asked to be part of. false is the correct posture
+      // until booking gains its own email-verification step.
+      guestsCanInviteOthers: false,
       reminders: {
         useDefault: false,
         overrides: [

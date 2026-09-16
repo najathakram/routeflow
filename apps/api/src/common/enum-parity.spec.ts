@@ -95,6 +95,9 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   // Post-dated check payments PR-1 (2026-09-15): CheckReturnReason is a brand-new Prisma enum
   // (not a value added to an existing one) — see the triage tripwire below.
   ["CHECK_RETURN_REASON_VALUES", "CheckReturnReason"],
+  // Public demo booking (2026-09-16): another brand-new Prisma enum, mirrored so the marketing
+  // site's demo-booking client derives its status type instead of hand-typing a union.
+  ["DEMO_BOOKING_STATUS_VALUES", "DemoBookingStatus"],
 ];
 
 describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
@@ -140,7 +143,7 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // this PR. `RETURN_HOLD_REASON_VALUES`/`RETURN_PRICE_SOURCE_VALUES` (same file) are NOT
 // generated Prisma enums (plain-string columns, see Return.holdReason's schema comment), so
 // they add no row here and do not move this count.
-const PINNED_PRISMA_ENUM_COUNT = 86;
+const PINNED_PRISMA_ENUM_COUNT = 87;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {

@@ -1,0 +1,14 @@
+-- Race guard for the public demo-booking endpoint (review finding 4): two
+-- concurrent anonymous submissions for the same slot are a check-then-create
+-- over a public POST, serialized in the application by a `demo-booking`
+-- advisory lock keyed on the slot's start instant. This index is the second,
+-- database-level line of defence for the same invariant — belt AND braces,
+-- not either/or, since the lock only protects callers that actually take it.
+--
+-- Prisma's schema DSL has no `WHERE` clause for `@@unique`/`@@index`, so this
+-- partial index is declared only here, not in schema/platform.prisma. Same
+-- pattern already in this repo: `BuyerPaymentRequest_open_request_key` in
+-- 20260826000000_stripe_connect_event_ledger. Not "confirmed" against
+-- schema-drift's read of schema.prisma — the DB legitimately has more
+-- structure than the DSL can express, and that's the accepted shape here.
+CREATE UNIQUE INDEX "DemoBooking_startsAt_confirmed_key" ON "DemoBooking"("startsAt") WHERE "status" = 'CONFIRMED';

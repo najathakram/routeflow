@@ -1,5 +1,61 @@
+/**
+ * `create`/`reschedule` now serialise their check-then-write window through
+ * `withAdvisoryLock` (`common/db-locks.ts`, review finding 4) — the same
+ * primitive `addon.service.ts`'s B342 fix uses. This mock is the identical
+ * per-key FIFO mutex `addon.service.spec.ts` uses: a second call for the SAME
+ * lock key does not start its callback until the first call's callback has
+ * fully settled, the same observable effect the real Postgres advisory lock
+ * gives across replicas. For every non-concurrent test this is a transparent
+ * pass-through; only the dedicated race test below relies on the actual
+ * serialisation. The real cross-connection behaviour is proved separately in
+ * demo-booking.db.spec.ts against a live Postgres.
+ */
+const lockQueues = new Map<string, Promise<unknown>>();
+const mockWithAdvisoryLock = jest.fn(async (opts: { key: string }, fn: () => Promise<unknown>) => {
+  const prior = lockQueues.get(opts.key) ?? Promise.resolve();
+  let release!: () => void;
+  const done = new Promise<void>((res) => {
+    release = res;
+  });
+  lockQueues.set(
+    opts.key,
+    prior.then(() => done),
+  );
+  await prior;
+  try {
+    const value = await fn();
+    return { acquired: true as const, value };
+  } finally {
+    release();
+  }
+});
+
+class MockLockTimeoutError extends Error {
+  constructor(
+    public readonly family: string,
+    public readonly key: string,
+    public readonly waitMs: number,
+  ) {
+    super(`lock timeout: ${family}/${key} after ${waitMs}ms`);
+    this.name = "LockTimeoutError";
+  }
+}
+
+class MockLockUnavailableError extends Error {
+  constructor(public readonly cause?: unknown) {
+    super("lock unavailable");
+    this.name = "LockUnavailableError";
+  }
+}
+
+jest.mock("../common/db-locks", () => ({
+  withAdvisoryLock: mockWithAdvisoryLock,
+  LockTimeoutError: MockLockTimeoutError,
+  LockUnavailableError: MockLockUnavailableError,
+}));
+
 import { ConflictException, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
-import { DemoBookingStatus } from "@prisma/client";
+import { Prisma, DemoBookingStatus } from "@prisma/client";
 import { DemoBookingService } from "./demo-booking.service";
 import { DemoBookingConfig, loadDemoBookingConfig } from "./demo-booking.config";
 import { BusyBlock } from "./google-calendar.service";
@@ -79,6 +135,19 @@ class TestPrisma {
     findUnique: async ({ where }: any) =>
       this.rows.find((row) => row.manageTokenHash === where.manageTokenHash) ?? null,
     create: async ({ data }: any) => {
+      // Mirrors the partial unique index (migration 20260916031500): a
+      // CONFIRMED row already at this startsAt makes the DB itself refuse the
+      // insert, regardless of what the in-process lock or the prior
+      // assertSlotStillFree check believed.
+      if (
+        this.rows.some(
+          (row) =>
+            row.status === DemoBookingStatus.CONFIRMED &&
+            row.startsAt.getTime() === (data.startsAt as Date).getTime(),
+        )
+      ) {
+        throw fakeP2002();
+      }
       // Mirror the column defaults in platform.prisma — without them this fake
       // would hide exactly the fields the service reads back after a create.
       const row: Row = {
@@ -96,6 +165,17 @@ class TestPrisma {
       return row;
     },
     update: async ({ where, data }: any) => {
+      if (
+        "startsAt" in data &&
+        this.rows.some(
+          (row) =>
+            row.id !== where.id &&
+            row.status === DemoBookingStatus.CONFIRMED &&
+            row.startsAt.getTime() === (data.startsAt as Date).getTime(),
+        )
+      ) {
+        throw fakeP2002();
+      }
       const row = this.rows.find((candidate) => candidate.id === where.id)!;
       for (const [key, value] of Object.entries(data)) {
         row[key] =
@@ -106,6 +186,14 @@ class TestPrisma {
       return row;
     },
   };
+}
+
+/** A minimal stand-in for the shape `demo-booking.service.ts`'s P2002 catch checks. */
+function fakeP2002(): Prisma.PrismaClientKnownRequestError {
+  return new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+    code: "P2002",
+    clientVersion: "test",
+  });
 }
 
 class TestEmail {
@@ -273,6 +361,55 @@ describe("DemoBookingService.create", () => {
       manageTokenHash: "hash",
     });
     await expect(service.create(input)).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  // Review finding 4: check-then-create over a public POST is a real race — two
+  // visitors can both pass assertSlotStillFree for the SAME slot before either
+  // has written a row. `create` now serialises the check+write through a
+  // `demo-booking` advisory lock keyed on the slot's start instant (mocked
+  // above as a real per-key FIFO mutex, not a stub — the second call's
+  // callback genuinely does not start until the first's has settled).
+  it("REG-review-finding-4: two concurrent bookings for the same slot — exactly one succeeds", async () => {
+    const { service } = build();
+
+    const results = await Promise.allSettled([service.create(input), service.create(input)]);
+
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter((r) => r.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(ConflictException);
+  });
+
+  it("REG-review-finding-4: the DB-level partial-index guard (P2002) is caught and mapped to a clean 409", async () => {
+    // Bypasses the in-process check entirely — this proves the SECOND, DB-level
+    // line of defence on its own, independent of the lock/assertSlotStillFree.
+    const { prisma, service } = build();
+    const originalFindFirst = prisma.demoBooking.findFirst;
+    prisma.demoBooking.findFirst = async () => null; // in-process check sees it as free
+    prisma.rows.push({
+      id: "existing",
+      startsAt: new Date(FRIDAY_9AM),
+      endsAt: new Date("2026-10-16T14:30:00.000Z"),
+      status: DemoBookingStatus.CONFIRMED,
+      manageTokenHash: "hash",
+    });
+
+    await expect(service.create(input)).rejects.toBeInstanceOf(ConflictException);
+    prisma.demoBooking.findFirst = originalFindFirst;
+  });
+
+  it("REG-review-finding-4: locks reschedule on the TARGET slot, so it serialises against a concurrent create for that slot", async () => {
+    const { service } = build();
+    const existing = await service.create({ ...input, startsAt: "2026-10-16T15:00:00.000Z" });
+
+    const results = await Promise.allSettled([
+      service.create(input), // targets FRIDAY_9AM
+      service.reschedule(existing.manageToken, FRIDAY_9AM), // also targets FRIDAY_9AM
+    ]);
+
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    expect(fulfilled).toHaveLength(1);
   });
 
   it("refuses a slot that went busy on the calendar since availability was read", async () => {
