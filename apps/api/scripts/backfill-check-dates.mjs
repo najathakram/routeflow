@@ -16,16 +16,33 @@
 // 2026-09-15T00:00:00.000Z — L-074/never "now": a rerun months from now must not silently widen
 // scope by drifting the cutoff to whenever it happens to run).
 //
-// Cross-tenant by design (every tenant, not one) — no `assertTestTenant` call here, matching
-// `backfill-subscription-reconciliation.mjs`'s own unscoped tenant scan; this is a platform-wide
-// data-repair script, not a single-tenant admin action.
+// Cross-tenant by design (every tenant, not one) — no unconditional `assertTestTenant` call
+// here, matching `backfill-subscription-reconciliation.mjs`'s own unscoped tenant scan; this is a
+// platform-wide data-repair script, not a single-tenant admin action. It still carries the
+// CLAUDE.md live-tenant policy guard on the WRITE path (see SAFETY below) — dry-run scans are
+// always unrestricted, only `--apply` is gated.
+//
+// SAFETY (per CLAUDE.md live-tenant policy — m12, review-opus-v2.md):
+//   - DRY-RUN by default: prints the scanned/planned count, writes nothing.
+//   - `--apply` scoped to an approved test tenant (`--tenant-id <id>`,
+//     `scripts/lib/test-tenants.cjs`) proceeds as today — this is what the db-spec rehearsal uses.
+//   - `--apply` scoped to a LIVE (non-test) tenant additionally requires `--live-tenant-override`
+//     plus `--confirm-tenant-id=<id>` (the id typed back exactly) — same mechanism as
+//     `apps/api/scripts/repair-receiving-units.mjs` / `backfill-tobacco-category.mjs`'s
+//     `--live-tenant-override` + type-back, run only at the tenant's / the owner's explicit
+//     request, after a fresh validated backup.
+//   - `--apply` with NO `--tenant-id` touches EVERY tenant, live ones included, so it always
+//     requires `--live-tenant-override` — there is no single tenant id to type back in that case.
 //
 // Usage:
 //   node apps/api/scripts/backfill-check-dates.mjs                  # dry run (default)
-//   node apps/api/scripts/backfill-check-dates.mjs --apply          # writes checkDate
+//   node apps/api/scripts/backfill-check-dates.mjs --apply          # writes checkDate — every
+//   tenant; requires --live-tenant-override (see SAFETY above)
 //   ... --since <ISO-8601>   # override the cutoff instant (default: the migration's own timestamp)
 //   ... --tenant-id <id>     # scope the scan/apply to one tenant — for a db spec or a one-tenant
 //   rehearsal (L-129: never let a spec run an unscoped --apply against a shared database).
+//   ... --apply --tenant-id <id> [--live-tenant-override --confirm-tenant-id=<id>]  # scoped apply
+//   — the override + type-back are required only when that tenant is not an approved test tenant.
 
 import { pathToFileURL } from "node:url";
 import { PrismaClient } from "@prisma/client";
@@ -33,6 +50,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { resolveDatabaseUrl, redactUrl, scrubSecrets } from "./lib/railway-db-url.mjs";
 import { planCheckDateBackfill } from "./lib/check-date-backfill.mjs";
+import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
 
 // The migration that introduced `checkDate`
 // (apps/api/prisma/migrations/20260915000000_check_instrument_fields) — the default cutoff, so
@@ -78,13 +96,24 @@ export function parseTenantId(argv) {
   return value;
 }
 
+/** Parses the optional `--confirm-tenant-id=<id>` flag (type-back confirmation, required by
+ *  `--apply --tenant-id <id>` against a live tenant — see SAFETY in the file header). Accepts
+ *  only the `=` form so it can never be confused with a bare `--tenant-id <id>` pair. */
+export function parseConfirmTenantId(argv) {
+  const hit = argv.find((a) => a.startsWith("--confirm-tenant-id="));
+  return hit ? hit.slice("--confirm-tenant-id=".length) : undefined;
+}
+
 async function main() {
   const apply = process.argv.includes("--apply");
+  const liveOverride = process.argv.includes("--live-tenant-override");
   let since;
   let tenantId;
+  let confirmTenantId;
   try {
     since = parseSince(process.argv);
     tenantId = parseTenantId(process.argv);
+    confirmTenantId = parseConfirmTenantId(process.argv);
   } catch (err) {
     console.error(err.message);
     process.exit(1);
@@ -102,6 +131,42 @@ async function main() {
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
 
   try {
+    // Live-tenant policy guard — ONLY on the write path (`--apply`); the dry-run scan above is
+    // always unrestricted. See SAFETY in the file header.
+    if (apply) {
+      if (tenantId) {
+        const tenant = await prisma.tenant.findUnique({
+          where: { id: tenantId },
+          select: { slug: true },
+        });
+        if (!tenant) {
+          console.error(`Tenant "${tenantId}" not found. Nothing was written.`);
+          process.exit(1);
+        }
+        // Approved test tenants (scripts/lib/test-tenants.cjs) proceed as today — this is what
+        // the db-spec rehearsal uses. A LIVE tenant additionally requires the override plus the
+        // type-back confirmation.
+        if (!isTestTenant(tenant.slug)) {
+          if (!liveOverride || confirmTenantId !== tenantId) {
+            console.error(
+              `\nTenant "${tenant.slug}" is a LIVE tenant. Applying against it requires ` +
+                `--live-tenant-override AND --confirm-tenant-id=${tenantId} (the id typed back ` +
+                `exactly), the tenant's / owner's explicit request, and a FRESH VALIDATED ` +
+                `BACKUP taken first. Nothing was written.\n`,
+            );
+            process.exit(1);
+          }
+        }
+      } else if (!liveOverride) {
+        console.error(
+          `\n--apply with no --tenant-id scans/writes EVERY tenant, live ones included. This ` +
+            `requires --live-tenant-override, the owner's explicit request, and a FRESH ` +
+            `VALIDATED BACKUP taken first. Nothing was written. Scope to one approved test ` +
+            `tenant with --tenant-id <id> to skip this.\n`,
+        );
+        process.exit(1);
+      }
+    }
     // Pre-filter as much as Prisma can express (method/status/checkStatus/checkDate); the
     // settledAt-vs-since comparison happens again in `planCheckDateBackfill` so the SAME pure
     // decision logic `backfill-check-dates-script.spec.ts` locks is what decides what actually
