@@ -1,3 +1,5 @@
+Status: IMPLEMENTED
+
 # Spec — 2026-09-11-plane-harness (Fable 5.1)
 
 **Status:** IMPLEMENTED (commit a05cea78 on feat/plane-harness, 2026-09-12; light loop — engine launch classifier-blocked). Base branch `feat/plane-bugs-mirror` @ 59121377 (worktree rf-plane2, branch `feat/plane-harness`). Scale: major. `ui: false`.

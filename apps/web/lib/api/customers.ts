@@ -84,6 +84,10 @@ export function useCustomers(params?: {
   sortDir?: string;
   /** "1" = only customers holding a license for a regulated category. */
   regulated?: string;
+  /** "1" = only customers with no stop on a currently SCHEDULED route. */
+  unassigned?: string;
+  /** "1" = only soft-deleted (removed) customers — an explicit trash view. */
+  removed?: string;
 }) {
   return useQuery({
     queryKey: ["customers", params],
@@ -631,7 +635,7 @@ export function useCustomerIncomeChart(customerId: string) {
 
 export function useExportCustomers() {
   return useMutation({
-    mutationFn: async (params?: Record<string, string>) => {
+    mutationFn: async (params?: Record<string, string | undefined>) => {
       const res = await apiClient.get("/customers/export", { params, responseType: "blob" });
       const url = URL.createObjectURL(res.data);
       const a = document.createElement("a");

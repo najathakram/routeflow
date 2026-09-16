@@ -1,3 +1,5 @@
+Status: IMPLEMENTED
+
 # Bug test plan — B215 staff-merge same-key retry re-folds (train 4 Run B)
 
 > **Status: IMPLEMENTED (light-loop round 2).** The fix shipped; every REG/pin below is GREEN in the tree. This file
