@@ -1,6 +1,6 @@
 {
-  "mappedSha": "bc24582d22fd2662122ecfe4fa5776ab5b337732",
-  "generatedAt": "2026-09-16T12:00:00.000Z",
+  "mappedSha": "04b73dda456dc7c9e08fd9f2dc4f74a323820e68",
+  "generatedAt": "2026-09-16T13:00:00.000Z",
   "layout": "split-2026-09-13",
   "areas": ["api", "web", "mobile", "packages"],
   "partCounts": {
@@ -10,5 +10,5 @@
     "packages": 0
   },
   "fileCount": 1027,
-  "notes": "**2026-09-16 — `feature-modules-3.md` area-cap split (docs-only, no code change, worktree rf-codemap-split)** — it had grown to 99,998 B against the 100,000 B cap (PR #781 hit it adding a single line). Split verbatim into seven parts under `api/feature-modules-3/`: routes.md, trips.md, invoices.md, credit-notes.md, returns.md, order-templates.md, drafts.md. `feature-modules-3.md` is now a 2.9 KB TOC. Repointed INDEX.md's three live cross-refs, api.md's row description, feature-modules-1.md's stale split-threshold note, and returns-inline.md's pointer. `mappedSha` left as-is (same convention as the 2026-09-15 bootstrap-cross-cutting.md split). See CHANGELOG.md for the full note; do not accumulate further history here — replace this field each session per that file's header convention."
+  "notes": "**2026-09-16 — surgical refresh + `feature-modules-4.md` area-cap split (docs-only, worktree rf-B420, branch docs/code-map-refresh-2026-09-16)** — `mappedSha` was ~175 files stale (bc24582d..04b73dda, since the 2026-09-13 split-2026-09-13 baseline plus #784's feature-modules-3 split). Refreshed entries across bootstrap-cross-cutting (prisma-schema-and-seeds, schema-integrity-and-backfills, bootstrap-and-money-pricing, calendar-and-advisory-locks), feature-modules-1/3(credit-notes/invoices/returns/routes)/5/6, and web/mobile/packages part files for a LITE invite-only plan + `@RequirePlanFlag` entitlement-gate rollout (WP1/WP5a-c), B421 credit/advance payment-confirmation fixes, PR-1a returns `kind` STANDARD|INLINE, and post-dated check-payment instruments. `feature-modules-4.md` had grown to 99,637 B against the 100,000 B cap — split verbatim into four parts under `api/feature-modules-4/` (inventory.md, billing.md, estimates.md, vendor-bills.md), same pattern as #784's feature-modules-3 split; `feature-modules-4.md` is now a ~1.9 KB TOC, api.md's module-index row updated to match. `fileCount`/`partCounts` left as-is (not recomputed this pass). See CHANGELOG.md for the full note; do not accumulate further history here — replace this field each session per that file's header convention."
 }
