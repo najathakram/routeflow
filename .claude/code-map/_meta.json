@@ -1,6 +1,6 @@
 {
-  "mappedSha": "bc24582d22fd2662122ecfe4fa5776ab5b337732",
-  "generatedAt": "2026-09-16T12:00:00.000Z",
+  "mappedSha": "61a70b0e4fa5c67d809efcf700f98ceda35a859a",
+  "generatedAt": "2026-09-16T14:30:00.000Z",
   "layout": "split-2026-09-13",
   "areas": ["api", "web", "mobile", "packages"],
   "partCounts": {
@@ -10,5 +10,5 @@
     "packages": 0
   },
   "fileCount": 1027,
-  "notes": "**2026-09-16 — Rescue PR B (#781) merged forward over the feature-modules-3.md split (#784).** Five stranded customer-lifecycle fixes (B156/B157/B158/B159/B170, plus B13 ApplyAdvanceModal) plus the pre-merge review fix round: idempotent deleteCustomer, mergeCustomers refuses removed rows, no bulk actions in the trash view, soft-delete preserves User.status and googleId, restore falls back to a placeholder on an email collision, and the apply-advance toast reports the server appliedAmount (client money math removed). Its one feature-modules-3.md amendment (the B157 route-stop-filters bullet) was relocated into api/feature-modules-3/routes.md, directly after the service bullet where it originally sat. See CHANGELOG.md for detail; replace this field each session per that file's header convention."
+  "notes": "**2026-09-16 — merge origin/master + map #778/#779 (docs-only, worktree rf-B420, branch docs/code-map-refresh-2026-09-16)** — merged in #781 (customer-lifecycle rescue), #778 (auth rescue), and #779 (tooling fixes) on top of this branch's earlier surgical refresh + `feature-modules-4.md` split (99,637 B, over the 100,000 B cap, split into `api/feature-modules-4/*.md` same pattern as #784); a few conflicts auto-resolved via git rerere, verified marker-free. Added surgical code-map entries for #778 and #779 — both had landed on master without their own map updates (auth.service.ts/buyer-auth.service.ts timing fix, tenants.service.ts resendVerification, platform-admin B216 DTO, customers.service.ts sendPortalInvite + SMS reject, web signup danger states, auth-shell.css; stop.gate5.spec.mjs's B411 fix, repo-truth jest-lane wiring). See CHANGELOG.md for the full note; do not accumulate further history here — replace this field each session per that file's header convention."
 }
