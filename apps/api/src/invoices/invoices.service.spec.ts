@@ -3498,6 +3498,46 @@ describe("InvoicesService", () => {
       expect(prisma.invoice.update).not.toHaveBeenCalled();
     });
 
+    // PR-2 re-review (routeflow-Lead, 2026-09-16): setCheckStatus took no Invoice
+    // lock at all, while recordPayment/updatePayment/deletePayment/voidPayment all
+    // DO — a BOUNCED transition racing a concurrent void or edit on the same
+    // invoice could deadlock against them. Mirrors the delete/void lock REG tests.
+    it("locks the Invoice row (FOR UPDATE) BEFORE reading the payment (PR-2 REG)", async () => {
+      prisma.invoicePayment.findFirst.mockResolvedValue({
+        ...basePayment,
+        checkStatus: CheckStatus.DEPOSITED,
+      });
+      prisma.invoicePayment.updateMany.mockResolvedValue({ count: 1 });
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-1",
+        invoiceNumber: "INV-0001",
+        customerId: "cust-1",
+        status: InvoiceStatus.PAID,
+        subtotal: 100,
+        total: 100,
+        dueDate: null,
+        paidAt: new Date("2026-01-05"),
+        payments: [],
+      });
+      const tx = {
+        invoice: prisma.invoice,
+        invoicePayment: prisma.invoicePayment,
+        invoiceItem: prisma.invoiceItem,
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      prisma.tenantTransaction.mockImplementationOnce((fn: any) => fn(tx));
+
+      await service.setCheckStatus("inv-1", "pay-1", { status: CheckStatus.BOUNCED });
+
+      expect(tx.$executeRaw).toHaveBeenCalled();
+      const sql = (tx.$executeRaw.mock.calls[0][0] as any).join("?");
+      expect(sql).toContain('"Invoice"');
+      expect(sql).toContain("FOR UPDATE");
+      expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.invoicePayment.findFirst.mock.invocationCallOrder[0],
+      );
+    });
+
     it("rejects illegal transition CLEARED -> DEPOSITED", async () => {
       prisma.invoicePayment.findFirst.mockResolvedValue({
         ...basePayment,

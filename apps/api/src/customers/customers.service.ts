@@ -257,9 +257,10 @@ export class CustomersService {
     for (const inv of invoices) {
       // Exclude VOID payments (a bounced check flips InvoicePayment.status to VOID
       // in P5-12) so a reversed payment no longer counts against the receivable.
-      // scan-ok: draft-payment-not-void — PR-2 review (routeflow-Lead, 2026-09-16):
-      // reverted the earlier sumConfirmed conversion — out of PR-2's scope, flagged
-      // to the owner as a follow-up (see orders.service.ts's exposure formula).
+      // scan-ok: draft-payment-not-void — TRACKED FOLLOW-UP: receivables/exposure
+      // DRAFT basis — owner ruling pending. PR-2 review (routeflow-Lead,
+      // 2026-09-16) reverted the earlier sumConfirmed conversion here — out of
+      // PR-2's scope (see orders.service.ts's exposure formula, same follow-up).
       const paid = inv.payments
         .filter((p) => p.status !== "VOID")
         .reduce((s, p) => s + Number(p.amount), 0);
@@ -1808,9 +1809,9 @@ export class CustomersService {
       const receivables = c.invoices.reduce((sum, inv) => {
         // Exclude VOID payments (a bounced check flips InvoicePayment.status to VOID
         // in P5-12) so a reversed payment no longer counts against the receivable.
-        // scan-ok: draft-payment-not-void — PR-2 review (routeflow-Lead, 2026-09-16):
-        // reverted the earlier sumConfirmed conversion — see the list-view
-        // receivablesMap above for the same revert and its rationale.
+        // scan-ok: draft-payment-not-void — TRACKED FOLLOW-UP: receivables/exposure
+        // DRAFT basis — owner ruling pending. See the list-view receivablesMap
+        // above for the same revert and its rationale.
         const paid = inv.payments
           .filter((p) => p.status !== "VOID")
           .reduce((s, p) => s + Number(p.amount), 0);

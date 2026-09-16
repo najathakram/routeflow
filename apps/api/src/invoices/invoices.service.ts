@@ -5921,6 +5921,12 @@ export class InvoicesService {
    */
   async setCheckStatus(invoiceId: string, paymentId: string, dto: SetCheckStatusDto) {
     return this.prisma.tenantTransaction(async (tx) => {
+      // PR-2 review (routeflow-Lead, 2026-09-16): same Invoice FOR UPDATE lock as
+      // recordPayment/updatePayment/deletePayment/voidPayment, taken BEFORE
+      // touching the payment row, and in the same order — setCheckStatus
+      // previously took no lock at all, so a BOUNCED transition racing a
+      // concurrent void or edit on the same invoice could deadlock against it.
+      await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${invoiceId} FOR UPDATE`;
       const payment = await tx.invoicePayment.findFirst({
         where: { id: paymentId, invoiceId },
       });
