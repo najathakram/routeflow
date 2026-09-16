@@ -4,6 +4,7 @@ import * as React from "react";
 import { usePathname } from "next/navigation";
 import { useToast } from "@routeflow/ui/web";
 import { registerPlanGateListener } from "@/lib/api-client";
+import { isRouteLocked } from "@/lib/plan-gate-lock";
 import type { PlanGateBody } from "@/lib/plan-gate";
 
 /** Repeat gates for one navigation are swallowed for this long — a little
@@ -35,8 +36,21 @@ export function PlanGateNotice(): null {
   // query happened to fail first.
   const lastNotified = React.useRef<{ pathname: string; at: number } | null>(null);
 
+  // Explicit reset on navigation — a stale dedup entry from the PREVIOUS path must
+  // never suppress (or be mistaken for) a notice on this one; keying by pathname
+  // already implies this, but make it an actual invariant rather than an emergent one.
+  React.useEffect(() => {
+    lastNotified.current = null;
+  }, [pathname]);
+
   React.useEffect(() => {
     return registerPlanGateListener((gate) => {
+      // B449 fix-round finding 2: while `PlanGateBoundary` has this exact path locked,
+      // it already fired the ONE deterministic notice for this navigation, naming the
+      // route's own gate tier. A 403 from some other widget (e.g. a header/dashboard
+      // fetch that isn't fully suppressed) must never add a second, possibly
+      // contradictory one.
+      if (isRouteLocked(pathname)) return;
       const now = Date.now();
       const prev = lastNotified.current;
       if (prev && prev.pathname === pathname && now - prev.at < DEDUP_WINDOW_MS) return;

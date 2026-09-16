@@ -48,14 +48,14 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { cn, Avatar, Card, ToastProvider } from "@routeflow/ui/web";
+import { cn, Avatar, ToastProvider } from "@routeflow/ui/web";
 import { TenantLogo } from "@/components/TenantLogo";
 import { BRAND_MARK_SRC } from "@/components/brand";
 import { PortalSwitchLink } from "@/components/PortalSwitchLink";
 import { setLastPortalCookie } from "@/lib/presence-cookies";
 import { CommandPalette, useCommandPalette } from "@/components/CommandPalette";
 import { ReadOnlyBanner } from "@/components/ReadOnlyBanner";
-import { useSubscription, type SubscriptionView } from "@/lib/api/billing";
+import { useSubscription } from "@/lib/api/billing";
 import { useAuth } from "@/lib/auth-context";
 import {
   getImpersonation,
@@ -76,8 +76,7 @@ import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useI18n, LOCALES, LOCALE_LABELS } from "@/lib/i18n";
 import { useDriveMode } from "@/lib/drive-mode";
 import { matchPlanGatedRoute, planFlagVisible } from "@/lib/plan-gated-nav";
-import type { FlagKey } from "@routeflow/types";
-import { LockedPage } from "./_components/gates/PlanGates";
+import { RouteGuard } from "./_components/gates/RouteGuard";
 
 // ─── Nav types & structure ────────────────────────────────────────────────────
 
@@ -271,215 +270,11 @@ function filterPlanGatedNav(
   }, []);
 }
 
-// ─── Role-based route guard ───────────────────────────────────────────────────
-
-/** Paths that CUSTOMER users may access (prefix-matched) */
-const CUSTOMER_ALLOWED: string[] = ["/dashboard", "/orders", "/returns", "/invoices", "/settings"];
-/** Paths that DRIVER users may access (prefix-matched) */
-const DRIVER_ALLOWED: string[] = ["/dashboard", "/routes", "/settings"];
-/**
- * In-development surfaces gated per-feature addon (owner decision 2026-08-25:
- * recurring routes and ad-hoc order delivery are separate addons; owner
- * decision 2026-08-28: `devMode` no longer unlocks either one client-side).
- * `/drivers` is shared by both features ("either").
- */
-const GATED_PREFIXES: { prefix: string; need: "routes" | "delivery" | "either" }[] = [
-  { prefix: "/dispatch", need: "either" },
-  { prefix: "/routes", need: "routes" },
-  { prefix: "/deliveries", need: "delivery" },
-  { prefix: "/drivers", need: "either" },
-];
-
-function isPathAllowed(pathname: string, allowed: string[]): boolean {
-  return allowed.some((p) => pathname === p || pathname.startsWith(p + "/"));
-}
-
-/**
- * The `/routes` paths that are recurring-routes surfaces in their own right.
- * Everything else under `/routes` is a single run/template/my-runs detail page
- * shared by BOTH features: an ad-hoc delivery has no detail page of its own —
- * a dispatched one opens its run at `/routes/:id` (where the builder also lands
- * after a successful dispatch) and a draft opens the template it was built as
- * at `/routes/templates/:id`. Gating those on "routes" would bounce a
- * delivery-only tenant to /dashboard from every delivery it opens.
- */
-const RECURRING_ROUTES_PATHS = new Set(["/routes", "/routes/create"]);
-
-/**
- * Find the GATED_PREFIXES entry matching `pathname`, if any. The legacy
- * `/routes/trips*` pages are redirect stubs to `/deliveries`/`/deliveries/new`
- * — they must NOT be bounced by the `/routes` gate, or a delivery-only tenant
- * deep-linking there would land on /dashboard before the stub ever gets to
- * redirect it to the (correctly gated) /deliveries surface.
- *
- * `role` matters for `/routes` itself: a DRIVER's whole nav is "My Routes" →
- * `/routes`, shown whenever EITHER feature is unlocked (drivers run ad-hoc
- * deliveries too), so for that role the landing page must be "either" as well
- * or the only link a delivery-only tenant's driver has bounces to /dashboard.
- */
-function matchGatedPrefix(
-  pathname: string,
-  role?: string,
-): { prefix: string; need: "routes" | "delivery" | "either" } | null {
-  for (const gated of GATED_PREFIXES) {
-    if (pathname !== gated.prefix && !pathname.startsWith(gated.prefix + "/")) continue;
-    if (gated.prefix === "/routes") {
-      if (pathname === "/routes/trips" || pathname.startsWith("/routes/trips/")) continue;
-      if (role === "DRIVER" || !RECURRING_ROUTES_PATHS.has(pathname))
-        return { ...gated, need: "either" };
-    }
-    return gated;
-  }
-  return null;
-}
-
-function RouteGuard({ children }: { children: React.ReactNode }) {
-  const { user } = useAuth();
-  const pathname = usePathname();
-  const router = useRouter();
-  const { enabled: routesAccess, resolved: routesResolved } = useRoutesAccess();
-  const { enabled: deliveryAccess, resolved: deliveryResolved } = useDeliveryAccess();
-  // Lite-L2 (WP8): CUSTOMER/DRIVER branches are untouched by plan-flag gating — the
-  // GATED_PREFIXES/CUSTOMER_ALLOWED/DRIVER_ALLOWED checks below already cover their
-  // access. `enabled: isStaffRole` mirrors the endpoint's own @Roles(OPERATOR) gate.
-  const isStaffRole = user?.role !== "CUSTOMER" && user?.role !== "DRIVER";
-  // `isError` is read too (B449): while a plan-gated route's flags are still
-  // resolving we must show neither the real page nor the lock — only once we
-  // know which applies. An errored fetch counts as "done deciding" the same
-  // way success does (fail OPEN, render the page), so it must not be stuck on
-  // the resolving branch forever.
-  const {
-    data: subscription,
-    isSuccess: subscriptionResolved,
-    isError: subscriptionErrored,
-  } = useSubscription({
-    staleTime: 60_000,
-    enabled: isStaffRole,
-  });
-
-  React.useEffect(() => {
-    const role = user?.role;
-    if (!role) return;
-    let allowed: string[] | null = null;
-    if (role === "CUSTOMER") allowed = CUSTOMER_ALLOWED;
-    if (role === "DRIVER") allowed = DRIVER_ALLOWED;
-    if (allowed && !isPathAllowed(pathname, allowed)) {
-      router.replace("/dashboard");
-      return;
-    }
-    // Tenants without the relevant addon can't deep-link into
-    // dispatch/routes/deliveries/drivers either — gated per-feature.
-    const gate = matchGatedPrefix(pathname, role);
-    if (!gate) return;
-    // Gating on `resolved` (not just "not loading") is mandatory: it fails OPEN
-    // while the addons query is in flight AND when it errored, so a tenant that
-    // actually has access is never bounced on an unknown answer.
-    const resolved =
-      gate.need === "routes"
-        ? routesResolved
-        : gate.need === "delivery"
-          ? deliveryResolved
-          : routesResolved || deliveryResolved;
-    if (!resolved) return;
-    const allowedByGate =
-      gate.need === "routes"
-        ? routesAccess
-        : gate.need === "delivery"
-          ? deliveryAccess
-          : routesAccess || deliveryAccess;
-    if (!allowedByGate) {
-      router.replace("/dashboard");
-    }
-  }, [
-    user?.role,
-    pathname,
-    router,
-    routesAccess,
-    routesResolved,
-    deliveryAccess,
-    deliveryResolved,
-  ]);
-
-  // Lite-L2 (WP8/R4.5): a deep link/bookmark into a plan-gated route the tenant's
-  // current plan doesn't grant renders the locked panel in place of the page — never
-  // a redirect (unlike the addon-gated prefixes above), so the URL stays intact and
-  // "See plans" is one click away.
-  const planGateKey = isStaffRole ? matchPlanGatedRoute(pathname) : null;
-
-  return (
-    <PlanGateBoundary
-      planGateKey={planGateKey}
-      subscription={subscription}
-      subscriptionResolved={subscriptionResolved}
-      subscriptionErrored={subscriptionErrored}
-    >
-      {children}
-    </PlanGateBoundary>
-  );
-}
-
-/**
- * The plan-flag gate decision for one route, isolated from RouteGuard's
- * addon-redirect effect so it's unit-testable on its own (PlanGateBoundary.test.tsx).
- *
- * B449: while `planGateKey` is set and the answer is still resolving, this must
- * render NEITHER the real page NOR the lock — mounting the page here would fire
- * its data queries and let a LITE tenant see a flash of gated content (plus
- * whatever inline error those 403s produce) before the lock appears a moment
- * later. Once resolved (success OR error — a fetch failure fails OPEN, same as
- * before), render exactly one of: the lock (children never mount, so the
- * gated page's own queries never fire) or the real page.
- */
-export function PlanGateBoundary({
-  planGateKey,
-  subscription,
-  subscriptionResolved,
-  subscriptionErrored,
-  children,
-}: {
-  planGateKey: FlagKey | null;
-  subscription: SubscriptionView | undefined;
-  subscriptionResolved: boolean;
-  subscriptionErrored: boolean;
-  children: React.ReactNode;
-}) {
-  const flags = subscription?.flags;
-  const planLocked =
-    !!planGateKey && subscriptionResolved && flags !== undefined && !flags.includes(planGateKey);
-
-  if (planGateKey && !subscriptionResolved && !subscriptionErrored) {
-    return (
-      <div className="flex min-h-[60vh] w-full items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-      </div>
-    );
-  }
-
-  if (planLocked) {
-    return (
-      <LockedPage
-        gate={{
-          code: "PLAN_GATE",
-          flag: planGateKey as string,
-          message: `This feature isn't included in the ${subscription?.planName ?? "current"} plan.`,
-          upgrade: {
-            planKey: null,
-            planMonthlyPrice: null,
-            addonSku: null,
-            addonMonthlyPrice: null,
-          },
-        }}
-        secondary="Want it? Contact us to upgrade."
-      >
-        <Card className="h-64" />
-      </LockedPage>
-    );
-  }
-
-  return <>{children}</>;
-}
-
 // ─── Auth guard ───────────────────────────────────────────────────────────────
+// Role-based route/plan gating lives in ./_components/gates/RouteGuard.tsx (and
+// PlanGateBoundary.tsx) — moved out of this file so both are unit-testable on
+// their own (a named export from an App Router layout.tsx fails `next build`'s
+// layout-file export check; B449 fix-round finding 1).
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading, user } = useAuth();

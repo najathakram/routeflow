@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import { usePlanFlag } from "./plan-flags";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -43,11 +44,22 @@ export const pendingApprovalsKey = ["customers", "pending-portal-approvals"] as 
  * until addressed" durable — it's server state, not a localStorage read-flag,
  * so it survives mark-all-read, clear, and localStorage loss.
  */
-export function usePendingPortalApprovals() {
+export function usePendingPortalApprovals(options?: { enabled?: boolean }) {
+  // B449 fix-round finding 2: `GET /customers/pending-portal-approvals` is
+  // `@RequirePlanFlag("addon.buyer_portal")`, a dark flag every plan except LITE
+  // gets a courtesy allow on (plan-flag-policy.ts's DARK_PLAN_FLAGS/ALWAYS_ENFORCED_
+  // PLAN_KEYS) — this hook fired unconditionally from BOTH call sites (the header
+  // bell on every page, the customers list), so a LITE tenant got a real 403 here on
+  // every page load and every 60s poll, regardless of route. Same three-valued rule
+  // as everywhere else: resolved -> go by the flag; unresolved -> don't fire yet;
+  // fetch failed -> fire (fail open).
+  const gate = usePlanFlag("addon.buyer_portal");
+  const gateVisible = gate.resolved ? gate.enabled : gate.failed;
   return useQuery<PendingPortalApproval[]>({
     queryKey: pendingApprovalsKey,
     queryFn: () => apiClient.get("/customers/pending-portal-approvals").then((r) => r.data),
     refetchInterval: 60_000,
+    enabled: gateVisible && (options?.enabled ?? true),
   });
 }
 
