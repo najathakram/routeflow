@@ -57,6 +57,10 @@ describe("ReturnsService.create — return numbering via NumberingService (B353)
     // this file's own `prisma.order.findUnique.mockResolvedValue(order)` above still applies.
     txHandle = {
       return: txReturn,
+      // PR-1a: the shared prior-returned reader (returnedPiecesByProduct) also queries
+      // returnItem for INLINE-kind rows sourced from this order — always empty here,
+      // no INLINE return exists in this suite.
+      returnItem: { findMany: jest.fn().mockResolvedValue([]) },
       order: prisma.order,
       customer: prisma.customer,
       $executeRaw: jest.fn().mockResolvedValue(0),

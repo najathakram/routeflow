@@ -2116,7 +2116,11 @@ export class CustomersService {
     });
     if (!customer) throw new NotFoundException("Customer not found");
 
-    // Count financial records that would be orphaned by a hard delete.
+    // Count financial records that would be orphaned by a hard delete. Deliberately
+    // kind-agnostic (PR-1a review): a hard/soft customer delete counts and removes
+    // every Return regardless of kind — there is no INLINE-specific record here to
+    // miss (its CreditNote/OrderCreditNote rows are already covered by the credit
+    // note cleanup below, same as a STANDARD return's).
     const [orderCount, invoiceCount, returnCount] = await Promise.all([
       this.prisma.forTenant().order.count({ where: { customerId: id } }),
       this.prisma.forTenant().invoice.count({ where: { customerId: id } }),
@@ -2183,7 +2187,8 @@ export class CustomersService {
       }
       await tx.creditNote.deleteMany({ where: { customerId: id } });
 
-      // Returns must be deleted BEFORE orders (Return has orderId FK on Order)
+      // Returns must be deleted BEFORE orders (Return has orderId FK on Order). Kind-agnostic
+      // by design (PR-1a review) — removes every Return regardless of kind.
       const returns = await tx.return.findMany({ where: { customerId: id }, select: { id: true } });
       if (returns.length) {
         await tx.returnItem.deleteMany({ where: { returnId: { in: returns.map((r) => r.id) } } });
@@ -2420,7 +2425,8 @@ export class CustomersService {
         }
         await tx.creditNote.deleteMany({ where: { customerId: { in: customerIds } } });
 
-        // Returns must be deleted BEFORE orders (Return has orderId FK on Order)
+        // Returns must be deleted BEFORE orders (Return has orderId FK on Order). Kind-agnostic
+        // by design (PR-1a review) — removes every Return regardless of kind.
         const returns = await tx.return.findMany({
           where: { customerId: { in: customerIds } },
           select: { id: true },
@@ -2590,7 +2596,8 @@ export class CustomersService {
         }
         await tx.creditNote.deleteMany({ where: { customerId: { in: ids } } });
 
-        // Returns (must precede orders due to FK)
+        // Returns (must precede orders due to FK). Kind-agnostic by design (PR-1a
+        // review) — removes every Return regardless of kind.
         const returns = await tx.return.findMany({
           where: { customerId: { in: ids } },
           select: { id: true },
