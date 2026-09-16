@@ -70,7 +70,7 @@ import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
 import { useCustomerAdvancePayments } from "@/lib/api/customers";
 import { fmt, fmtCalendarDate, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
-import { formatQtySplit, resolveConfirmedAmounts } from "@routeflow/pricing";
+import { formatQtySplit, remainingCapacity, resolveConfirmedAmounts } from "@routeflow/pricing";
 import { CHECK_TRANSITIONS } from "@routeflow/types";
 import { InvoiceTotalsSummary } from "./InvoiceTotalsSummary";
 import {
@@ -2132,15 +2132,16 @@ export default function InvoiceDetailPage() {
     );
   };
 
-  // For edit payment: max amount = total - (all other CONFIRMED payments).
-  // F03/R1: mirrors the server guard, whose `othersTotal` is sumConfirmed over the
-  // sibling rows (invoices.service updatePayment) — a DRAFT sibling counts for
-  // neither side, so the modal no longer refuses an amount the API would accept.
+  // PR-2 (check-payments B1 hardening): mirrors the server guard's capacity
+  // check (invoices.service updatePayment), which moved from summing only
+  // CONFIRMED siblings to remainingCapacity() over every non-VOID sibling — a
+  // DRAFT sibling now reserves capacity on both sides, so the modal still
+  // refuses exactly what the API would refuse.
   const editPaymentMax = editingPayment
-    ? total -
-      payments
-        .filter((p) => p.id !== editingPayment.id && p.status === "PAID")
-        .reduce((s, p) => s + Number(p.amount), 0)
+    ? remainingCapacity(
+        total,
+        payments.filter((p) => p.id !== editingPayment.id),
+      )
     : 0;
 
   return (
