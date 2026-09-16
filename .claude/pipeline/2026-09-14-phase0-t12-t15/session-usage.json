@@ -6,31 +6,31 @@
   "session": {
     "byModel": {
       "claude-sonnet-5": {
-        "input": 296,
+        "input": 3700,
         "cacheWrite5m": 0,
-        "cacheWrite1h": 1160129,
-        "cacheRead": 67764522,
-        "output": 274498,
-        "messages": 152,
-        "tokens": 69199445,
-        "costUsd": 20.9389924
+        "cacheWrite1h": 4990127,
+        "cacheRead": 1043490827,
+        "output": 1580340,
+        "messages": 1893,
+        "tokens": 1050064994,
+        "costUsd": 244.4694734
       }
     },
     "total": {
-      "input": 296,
+      "input": 3700,
       "cacheWrite5m": 0,
-      "cacheWrite1h": 1160129,
-      "cacheRead": 67764522,
-      "output": 274498,
-      "messages": 152,
-      "tokens": 69199445,
-      "costUsd": 20.9389924
+      "cacheWrite1h": 4990127,
+      "cacheRead": 1043490827,
+      "output": 1580340,
+      "messages": 1893,
+      "tokens": 1050064994,
+      "costUsd": 244.4694734
     },
-    "messages": 152,
+    "messages": 1893,
     "firstAt": "2026-09-14T15:40:47.369Z",
-    "lastAt": "2026-09-14T21:06:51.118Z",
-    "activeMs": 4467091,
-    "cacheHitRatio": 0.9831639333723391
+    "lastAt": "2026-09-15T22:23:10.468Z",
+    "activeMs": 46940381,
+    "cacheHitRatio": 0.9952371005327084
   },
   "workflows": {
     "4752fe6b-157": {
@@ -2620,57 +2620,6 @@
       "durationMs": 14241396
     }
   },
-  "agents": {
-    "byType": {
-      "claude": {
-        "total": {
-          "input": 66,
-          "cacheWrite5m": 113509,
-          "cacheWrite1h": 0,
-          "cacheRead": 184616,
-          "output": 372,
-          "messages": 0,
-          "tokens": 298563,
-          "costUsd": 1.4842765
-        },
-        "byModel": {
-          "claude-fable-5-1": {
-            "input": 66,
-            "cacheWrite5m": 113509,
-            "cacheWrite1h": 0,
-            "cacheRead": 184616,
-            "output": 372,
-            "messages": 0,
-            "tokens": 298563,
-            "costUsd": 1.4842765
-          }
-        },
-        "agents": 1,
-        "durationMs": 500158
-      }
-    },
-    "list": [
-      {
-        "id": "a35934f133961d2d5",
-        "agentType": "claude",
-        "description": "Fable planning pass for Phase 0 T12-T15",
-        "tokens": 298563,
-        "costUsd": 1.4842765,
-        "cacheHitRatio": 0.6191199600256212,
-        "durationMs": 500158
-      }
-    ],
-    "total": {
-      "input": 66,
-      "cacheWrite5m": 113509,
-      "cacheWrite1h": 0,
-      "cacheRead": 184616,
-      "output": 372,
-      "messages": 3,
-      "tokens": 298563,
-      "costUsd": 1.4842765
-    },
-    "cacheHitRatio": 0.6191199600256212
-  },
+  "agents": null,
   "warnings": ["project: resolved via --project -> C:\\ClaudeCode\\routeflow"]
 }

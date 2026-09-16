@@ -1,3 +1,5 @@
+Status: IMPLEMENTED
+
 # Build plan — Plane harness: sync/intake/triage/apply + shared client (dev-pipeline, major)
 
 Status: DRAFT. Author: Fable 5.1 (ruling), transcribed by Sonnet 5, 2026-09-11.

@@ -26,7 +26,12 @@ standalone`, an `h2` kicker/heading/paragraph from `AUTH_STORY[audience]`, an ar
   `auth-shell.css` (336 lines) — every top-level selector is prefixed `.rf-auth` (D4; a dead
   `.rf-auth-forgot` rule was removed) so `.rf-auth .rf-btn` (0,2,0) beats Tailwind's
   `bg-accent-strong` (0,1,0) by specificity, never bundle order; `app/globals.css` and the Tailwind
-  config are untouched. `index.ts` re-exports `AuthShell`, `AuthShellProps`, and all of
+  config are untouched. **#778 (2026-09-16):** gained `.rf-auth-success--danger` (`background:
+#fee2e2`, the existing `bg-danger-bg` token) — a same-shape danger variant of `.rf-auth-success`
+  so `signup/check-email/page.tsx`'s send-failure state never renders inside the mint success
+  card (see web/routes-1.md's `(auth)/` entry). Source order after `.rf-auth-success` matters:
+  both are equal-specificity plain class selectors, so applying both classes lets the later rule
+  win. `index.ts` re-exports `AuthShell`, `AuthShellProps`, and all of
   `auth-copy.ts`. State-derived `h1` titles (no state string rendered twice) on
   `buyer/invite/[token]`, `verify-email` (top-level + buyer), `buyer/verify-merge`, and both
   `reset-password` pages. Buyer auth pages moved off a separate emerald link palette onto the SAME
