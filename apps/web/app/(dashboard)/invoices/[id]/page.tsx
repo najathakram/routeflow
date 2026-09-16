@@ -2138,9 +2138,12 @@ export default function InvoiceDetailPage() {
   // DRAFT sibling now reserves capacity on both sides, so the modal still
   // refuses exactly what the API would refuse.
   const editPaymentMax = editingPayment
-    ? remainingCapacity(
-        total,
-        payments.filter((p) => p.id !== editingPayment.id),
+    ? Math.max(
+        0,
+        remainingCapacity(
+          total,
+          payments.filter((p) => p.id !== editingPayment.id),
+        ),
       )
     : 0;
 
