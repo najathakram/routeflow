@@ -6549,10 +6549,7 @@ describe("OrdersService", () => {
     it("over the limit blocks ALL roles and persists nothing (409 CREDIT_LIMIT_EXCEEDED)", async () => {
       prisma.customer.findFirst.mockResolvedValue({ creditLimit: 100 });
       prisma.invoice.findMany.mockResolvedValue([
-        // PR-2 (check-payments B1 hardening): exposure now reads sumConfirmed, not the
-        // old not-void filter — this $80 must be explicitly PAID to still reduce the
-        // balance, matching customers.service.ts's receivables formula.
-        { total: 200, orderId: null, payments: [{ amount: 80, status: "PAID" }] }, // balance 120
+        { total: 200, orderId: null, payments: [{ amount: 80 }] }, // balance 120
       ]);
       prisma.order.findMany.mockResolvedValue([]);
 
@@ -6573,10 +6570,7 @@ describe("OrdersService", () => {
       prisma.order.findUnique.mockResolvedValue({ ...editableOrder(), shippingFee: 5 });
       prisma.customer.findFirst.mockResolvedValue({ creditLimit: 100 });
       prisma.invoice.findMany.mockResolvedValue([
-        // PR-2 (check-payments B1 hardening): exposure now reads sumConfirmed, not the
-        // old not-void filter — this $80 must be explicitly PAID to still reduce the
-        // balance, matching customers.service.ts's receivables formula.
-        { total: 200, orderId: null, payments: [{ amount: 80, status: "PAID" }] }, // balance 120
+        { total: 200, orderId: null, payments: [{ amount: 80 }] }, // balance 120
       ]);
       prisma.order.findMany.mockResolvedValue([]);
 
@@ -6750,10 +6744,7 @@ describe("OrdersService", () => {
       prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
       prisma.customer.findFirst.mockResolvedValue({ creditLimit: 100 });
       prisma.invoice.findMany.mockResolvedValue([
-        // PR-2 (check-payments B1 hardening): exposure now reads sumConfirmed, not the
-        // old not-void filter — this $80 must be explicitly PAID to still reduce the
-        // balance, matching customers.service.ts's receivables formula.
-        { total: 200, orderId: null, payments: [{ amount: 80, status: "PAID" }] }, // balance 120
+        { total: 200, orderId: null, payments: [{ amount: 80 }] }, // balance 120
       ]);
       prisma.order.findMany.mockResolvedValue([]);
     });

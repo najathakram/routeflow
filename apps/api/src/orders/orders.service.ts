@@ -23,7 +23,6 @@ import {
   normalizeBoxesPieces,
   promotionMatchesProduct,
   roundMoney,
-  sumConfirmed,
   isBlockingPayment,
   type CategoryTaxType,
   type PromoContext,
@@ -5417,12 +5416,20 @@ export class OrdersService implements OnApplicationBootstrap {
     // Exclude VOID payments: a bounced check (P5-12) flips its InvoicePayment to VOID
     // and reverts the invoice to OPEN/PARTIAL, so a reversed payment must NOT reduce the
     // customer's credit exposure — otherwise a bounce lets them slip under the limit.
-    // PR-2 (check-payments B1 hardening): sumConfirmed (PAID only), NOT the old
-    // not-void filter — an unconfirmed DRAFT payment (or, once PENDING exists, a
-    // post-dated check on file) does not yet reduce what the customer owes, matching
-    // customers.service.ts's receivables formula this must agree with (see below).
+    // PR-2 review (routeflow-Lead, 2026-09-16): reverted the earlier sumConfirmed
+    // conversion here — it silently changed credit-limit behavior (a DRAFT
+    // bank-import row would start producing a 409 CREDIT_LIMIT_EXCEEDED) with no
+    // sign-off. That behavior change is a real, separate decision out of PR-2's
+    // scope; flagged to the owner as a follow-up rather than made silently.
+    // Master's not-void basis kept as-is.
     const invoiceExposure = openInvoices.reduce(
-      (sum: number, inv: any) => sum + (Number(inv.total) - sumConfirmed(inv.payments)),
+      (sum: number, inv: any) =>
+        sum +
+        (Number(inv.total) -
+          // scan-ok: draft-payment-not-void — see comment above.
+          inv.payments
+            .filter((p: any) => p.status !== "VOID")
+            .reduce((s: number, p: any) => s + Number(p.amount), 0)),
       0,
     );
 
