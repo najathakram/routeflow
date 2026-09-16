@@ -495,6 +495,7 @@ enabled:isStaff})` call the RO-1 banner already reads (`isSuccess`/`isError` cap
 - **`_components/gates/PlanGates.tsx` `LockedPage` gains an optional `secondary?: string`
   prop (Lite-L2 WP8)** — a plain line rendered under the CTA (e.g. RouteGuard's "Want it?
   Contact us to upgrade."); no link target invented, "See plans" stays the only action.
+  Test: `PlanGates.test.tsx` (new — renders with/without `secondary`, CTA target unchanged).
 - **`lib/api/plan-flags.ts` / `lib/api/billing.ts`** — see [`api-hooks`](api-hooks.md).
 - **`e2e/47-lite-plan-gate.spec.ts` + `playwright.config.ts` `lite-plan-gate` project (Lite-L2,
   2026-09-15)** — R2.2/R2.5/R2.6/R2.8/R3b.8/R4.3/R4.5/R7.7 coverage (sidebar/route gate, Settings

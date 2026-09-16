@@ -1,6 +1,6 @@
 {
-  "mappedSha": "bc24582d22fd2662122ecfe4fa5776ab5b337732",
-  "generatedAt": "2026-09-16T12:00:00.000Z",
+  "mappedSha": "8f329ec4deaa712161aa95563205554f7b565962",
+  "generatedAt": "2026-09-16T14:30:00.000Z",
   "layout": "split-2026-09-13",
   "areas": ["api", "web", "mobile", "packages"],
   "partCounts": {
@@ -10,5 +10,5 @@
     "packages": 0
   },
   "fileCount": 1027,
-  "notes": "**2026-09-16 — Rescue PR B (#781) merged forward over the feature-modules-3.md split (#784).** Five stranded customer-lifecycle fixes (B156/B157/B158/B159/B170, plus B13 ApplyAdvanceModal) plus the pre-merge review fix round: idempotent deleteCustomer, mergeCustomers refuses removed rows, no bulk actions in the trash view, soft-delete preserves User.status and googleId, restore falls back to a placeholder on an email collision, and the apply-advance toast reports the server appliedAmount (client money math removed). Its one feature-modules-3.md amendment (the B157 route-stop-filters bullet) was relocated into api/feature-modules-3/routes.md, directly after the service bullet where it originally sat. See CHANGELOG.md for detail; replace this field each session per that file's header convention."
+  "notes": "**2026-09-16 — mappedSha repointed to 8f329ec4 (#786's own squash commit).** mappedSha must be a MASTER sha — squash merges orphan branch shas; #786 stamped its branch HEAD (61a70b0e), which is not an ancestor of master, so validate-code-map failed every local pre-push with MAPPED SHA NOT ANCESTOR (CI only warned: its clone lacks the orphaned commit). Map content is unchanged — 8f329ec4 carries exactly #786's refresh. Replace this field each session per CHANGELOG.md's header convention."
 }

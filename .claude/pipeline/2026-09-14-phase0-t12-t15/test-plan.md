@@ -1,3 +1,5 @@
+Status: IMPLEMENTED
+
 # Test plan: Phase 0 W2 Tasks T12–T15
 
 > **Stage S4.** Authored by Fable 5.1 (planning subagent) on 2026-09-14. Status: `APPROVED`.

@@ -46,6 +46,37 @@
   hardcoded twice. Migration `20260823000000_plan_catalog_customers_axis` (additive: `MeterKey`
   gains `CUSTOMERS` outside a transaction, `PlanDefinition.customersIncluded` nullable) must be
   applied first.
+- **`prisma/publish-plan-catalog-v11.ts`** (retires 5 unenforced add-on SKUs — BUYER_PORTAL,
+  SEAT_EXTRA, OCR_PACK_250, ROUTE_EXTRA, MSG_BUNDLE_500 — from the AddonSku set; the 5 remaining
+  carry forward unchanged) — same DRAFT→PUBLISH/grandfathering mechanics as v8 above.
+  **2026-09-15 (lite-L2 WP4):** its `DEFINITIONS`/`ADDON_SEEDS` were extracted, byte-for-byte, into
+  `prisma/plan-catalog-v11.definitions.ts` (`V11_DEFINITIONS`/`V11_ADDON_SEEDS`, pure data, no
+  DB import) so `publish-plan-catalog-v12.ts` can import v11's shapes instead of retyping them;
+  this script's own DB rows/idempotency logic are unchanged. `npm run db:publish:catalog:v11`.
+- **`prisma/plan-catalog-v12.definitions.ts` + `prisma/publish-plan-catalog-v12.ts`**
+  (2026-09-15, lite-L2 WP4 — R1.5/R1.6/R1.9/R3b.6/R7.2/R7.4) — adds `LITE` (invite-only, $99/mo,
+  ranked below STARTER; `customersIncluded`/`seatsIncluded` = STARTER's v11 values,
+  `routesConcurrent`/`scansIncluded`/`msgsIncluded` all 0, `LITE_FEATURE_FLAGS = []` — the Q2
+  flip that decides LITE's flags is deferred to a future v13) and folds five new plan-flag keys
+  (`flag.estimates`/`flag.recurring_invoices`/`flag.credit_notes`/`flag.suppliers`/
+  `flag.messaging`) into every v11 definition's `featureFlags`; v11's AddonSku set is untouched.
+  The definitions file is pure data (`LITE_DEFINITION`, `V12_DEFINITIONS`, `V12_ADDON_SEEDS`,
+  `buildV12Rows`) — no DB import, unit-testable via `plan-catalog-v12.spec.ts`. The publisher
+  exports connection-agnostic `publishV12(prisma)` (never opens a connection on import — only
+  `main()`, guarded by `require.main === module`, does) and otherwise mirrors v11's DRAFT→PUBLISH
+  mechanics 1:1; idempotent on an already-LITE PUBLISHED version. `npm run db:publish:catalog:v12`
+  (`apps/api/package.json`).
+- **`scripts/bootstrap-house-tenant.mjs`** (2026-09-16, Phase 0) — one-time, idempotent creation
+  of the `routeflow-hq` house tenant (class INTERNAL, plan ENTERPRISE) that Phase 0's
+  `TenantMirrorService` and later HQ-based invoicing/messaging write into. Dry-run default,
+  `--apply` to write; prints the resolved DB host first (same `lib/railway-db-url.mjs` pattern as
+  the other bootstrap/backfill scripts). Three-way idempotency guard around the
+  `PlatformConfig` key `platform.houseTenantId`: tenant exists + key matches → no-op; tenant
+  exists + key unset → sets it to the existing tenant's id; tenant exists + key names a
+  DIFFERENT tenant → throws (refuses to silently redirect every mirror write); key set but no
+  `routeflow-hq` tenant → throws (refuses to create a second house tenant); neither exists →
+  creates the Tenant + TenantConfig in one `$transaction` then sets the key. DB spec:
+  `src/common/bootstrap-house-tenant.db.spec.ts`.
 - **`scripts/e2e-seed.js`** — idempotent seed for the `e2e-routeflow` tenant. Seeds **four fixed
   users** (both the fresh-tenant and existing-tenant branches): operator `admin`/`Admin@123`,
   customer `harbor_cafe`/`Customer1!`, tenant admin `e2e_admin`/`TenantAdmin1!` (B138 —
@@ -189,3 +220,26 @@ homeAddress` (the driver-home origin), and orders inherit `fulfillPath` from the
 - **`prisma/rls.sql`** — superseded pointer stub (comments only). The policy DDL lived here
   until it moved into the migration above; a second copy of the table list is how a table
   gets armed without the pre-flight ever checking it. Do not re-add DDL here.
+- **`prisma/migrations/20260915000000_tenant_plan_lite/`** — one line, additive-only:
+  `ALTER TYPE "TenantPlan" ADD VALUE 'LITE'` (outside a transaction — Postgres requirement for
+  `ADD VALUE`). No backfill, no column changes.
+- **`prisma/migrations/20260915180000_returns_inline_schema/`** (Returns Inside Order Creation
+  PR-1a) — adds `ReturnKind` enum (`STANDARD`/`INLINE`) + `Return.kind` (default `STANDARD`),
+  the whole INLINE capture-tray column set on `Return` (`returnKey`, `capturePayload`,
+  `capturedById`/`capturedRole`/`routeRunStopId`, `holdReason`/`captureAttempts`/`captureError`,
+  `heldAmount`/`approvedById`/`approvedAt`, `mismatch`/`alertedAt`,
+  `creditSubtotal`/`creditTax`/`creditCategoryTax`) and `ReturnItem`'s pricing-provenance columns
+  (`sourceOrderId`/`sourceInvoiceItemId`/`sourceOrderItemId`, price/qty snapshot fields,
+  `priceSource`/`originalPrice`/override fields) — every new column nullable/defaulted, every
+  existing row reads as STANDARD. INLINE's own capture/issue/approve endpoints land in PR-1c/1d;
+  see `sales.prisma`'s `Return`/`ReturnItem` comments for the full field-by-field rationale.
+- **`prisma/migrations/20260916010000_check_instrument_fields/`** (post-dated check payments
+  PR-1, schema-only) — `CheckReturnReason` enum (new), `PaymentStatus.PENDING` +
+  `NotificationEvent.CHECK_RETURNED` (added values, both unused by any read/write path in this
+  PR), `Invoice.feeForPaymentId`, `InvoicePayment`'s check-instrument columns
+  (`checkNumber`/`bankName`/`checkDate`/`appliedAt`/`bounceReason`/`replacesPaymentId`/
+  `nsfFeeInvoiceId`) + 2 indexes, `AdvancePayment.sourcePaymentId` + index,
+  `Customer.creditHoldAt`/`creditHoldReason`/`creditHoldById`,
+  `TenantConfig.checksDigestSentForDay`. Additive-only; every later PR's transition wiring reads
+  these, nothing does yet. See `finance.prisma`/`tenancy.prisma`/`sales.prisma`'s comments for
+  the per-field rationale.
