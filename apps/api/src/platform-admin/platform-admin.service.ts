@@ -18,6 +18,8 @@ import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { ProrationService } from "../billing/proration.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { MeterService } from "../billing/meter.service";
+import { FeatureOverrideService } from "../billing/feature-override.service";
+import { gateVia } from "../billing/feature-registry";
 import { BillingEventService } from "../billing/billing-event.service";
 import { MrrService } from "../billing/mrr.service";
 import { TenantMirrorService } from "./tenant-mirror.service";
@@ -75,6 +77,7 @@ export class PlatformAdminService {
     private readonly auditService: AuditService,
     private readonly mrrService: MrrService,
     private readonly tenantMirror: TenantMirrorService,
+    private readonly featureOverrides: FeatureOverrideService,
   ) {}
 
   /**
@@ -1461,13 +1464,28 @@ ${
    */
   async getTenantEntitlements(tenantId: string) {
     await this._findOrThrow(tenantId);
-    const [entitlements, usage] = await Promise.all([
+    const [entitlements, usage, overrides] = await Promise.all([
       this.entitlementsService.resolve(tenantId),
       this.meterService.readAll(tenantId),
+      this.featureOverrides.allActive(tenantId),
     ]);
+
+    // Opus review of 8130b204, item 4: this admin-facing entitlements view must agree with the
+    // tenant's own Overrides table -- same RequirePlanFlag-filtered merge as
+    // SubscriptionService.getSubscription. `entitlements.addons` is SKU codes ("REGULATED_ITEMS"),
+    // a different namespace from a feature-registry addon KEY ("tobacco_dealer") -- unlike
+    // tenants.controller.ts's getMyAddons, whose `addons` array IS addonKey-shaped, there is no
+    // unambiguous key->SKU mapping to merge a GRANT/DENY into here, so it stays untouched.
+    const flags = new Set(entitlements.flags);
+    for (const [key, effect] of overrides) {
+      if (gateVia(key) !== "RequirePlanFlag") continue;
+      if (effect === "GRANT") flags.add(key);
+      else flags.delete(key);
+    }
+
     return {
       planKey: entitlements.planKey,
-      flags: entitlements.flags,
+      flags: Array.from(flags),
       addons: entitlements.addons,
       caps: entitlements.caps,
       usage,
