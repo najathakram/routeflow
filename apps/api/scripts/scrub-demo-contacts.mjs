@@ -97,7 +97,7 @@ function isOffendingPhone(phone) {
   return digits.length > 0 && !digits.includes(FICTIONAL_PHONE_MARKER);
 }
 
-/** "<contact first name or business slug>@<business slug>.example.com", e.g. dana@abcwholesale.example.com. */
+/** "<contact first name or business slug>@<business slug>.example.com", e.g. dana@acmewholesale.example.com. */
 function replacementEmail(customer) {
   const domain = slugify(customer.businessName).slice(0, 30) || "customer";
   const firstName = String(customer.contactName ?? "")
