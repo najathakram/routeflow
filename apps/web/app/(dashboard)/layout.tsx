@@ -75,6 +75,8 @@ import { useRoutesAccess, useDeliveryAccess, SALES_AGENTS_ADDON } from "@/lib/ap
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useI18n, LOCALES, LOCALE_LABELS } from "@/lib/i18n";
 import { useDriveMode } from "@/lib/drive-mode";
+import { matchPlanGatedRoute, planFlagVisible } from "@/lib/plan-gated-nav";
+import { LockedPage } from "./_components/gates/PlanGates";
 
 // ─── Nav types & structure ────────────────────────────────────────────────────
 
@@ -233,6 +235,41 @@ function getNavForRole(
   return baseNav; // OPERATOR, SUPER_ADMIN, TENANT_ADMIN, unknown
 }
 
+/**
+ * Lite-L2 (WP8): drop every nav leaf whose href is a plan-gated route
+ * (`PLAN_GATED_NAV`) the current plan doesn't grant — `planFlagVisible` gives the
+ * three-valued rule (hidden while loading, shown on a fetch failure). A leaf not in
+ * PLAN_GATED_NAV is always kept. A group left with zero children after filtering is
+ * dropped entirely (same precedent as the Dispatch-group filter above).
+ */
+function filterPlanGatedNav(
+  entries: NavEntry[],
+  planState: { flags: readonly string[]; resolved: boolean; failed: boolean },
+): NavEntry[] {
+  const isVisible = (href: string): boolean => {
+    const key = matchPlanGatedRoute(href);
+    if (!key) return true;
+    return planFlagVisible({
+      enabled: planState.flags.includes(key),
+      resolved: planState.resolved,
+      failed: planState.failed,
+    });
+  };
+  return entries.reduce<NavEntry[]>((acc, entry) => {
+    if (entry.kind === "leaf") {
+      if (isVisible(entry.href)) acc.push(entry);
+      return acc;
+    }
+    if (entry.kind === "group") {
+      const children = entry.children.filter((c) => isVisible(c.href));
+      if (children.length > 0) acc.push({ ...entry, children });
+      return acc;
+    }
+    acc.push(entry); // skeleton
+    return acc;
+  }, []);
+}
+
 // ─── Role-based route guard ───────────────────────────────────────────────────
 
 /** Paths that CUSTOMER users may access (prefix-matched) */
@@ -301,6 +338,17 @@ function RouteGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { enabled: routesAccess, resolved: routesResolved } = useRoutesAccess();
   const { enabled: deliveryAccess, resolved: deliveryResolved } = useDeliveryAccess();
+  // Lite-L2 (WP8): CUSTOMER/DRIVER branches are untouched by plan-flag gating — the
+  // GATED_PREFIXES/CUSTOMER_ALLOWED/DRIVER_ALLOWED checks below already cover their
+  // access. `enabled: isStaffRole` mirrors the endpoint's own @Roles(OPERATOR) gate.
+  const isStaffRole = user?.role !== "CUSTOMER" && user?.role !== "DRIVER";
+  // Only `resolved` is needed here: the lock condition below requires resolved===true,
+  // and react-query's isSuccess/isError are mutually exclusive, so an errored fetch
+  // already falls out of the "resolved" branch below without reading isError.
+  const { data: subscription, isSuccess: subscriptionResolved } = useSubscription({
+    staleTime: 60_000,
+    enabled: isStaffRole,
+  });
 
   React.useEffect(() => {
     const role = user?.role;
@@ -344,6 +392,37 @@ function RouteGuard({ children }: { children: React.ReactNode }) {
     deliveryAccess,
     deliveryResolved,
   ]);
+
+  // Lite-L2 (WP8/R4.5): a deep link/bookmark into a plan-gated route the tenant's
+  // current plan doesn't grant renders the locked panel in place of the page — never
+  // a redirect (unlike the addon-gated prefixes above), so the URL stays intact and
+  // "See plans" is one click away. Only once `subscriptionResolved` — while unresolved
+  // or on a fetch failure, render the page as today (a server-side PLAN_GATE 403, if
+  // any, is still caught by the existing PlanGateNotice toast).
+  const planGateKey = isStaffRole ? matchPlanGatedRoute(pathname) : null;
+  const planLocked =
+    !!planGateKey && subscriptionResolved && !(subscription?.flags ?? []).includes(planGateKey);
+
+  if (planLocked) {
+    return (
+      <LockedPage
+        gate={{
+          code: "PLAN_GATE",
+          flag: planGateKey as string,
+          message: `This feature isn't included in the ${subscription?.planName ?? "current"} plan.`,
+          upgrade: {
+            planKey: null,
+            planMonthlyPrice: null,
+            addonSku: null,
+            addonMonthlyPrice: null,
+          },
+        }}
+        secondary="Want it? Contact us to upgrade."
+      >
+        {children}
+      </LockedPage>
+    );
+  }
 
   return <>{children}</>;
 }
@@ -1075,7 +1154,13 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   // RO-1: dashboard-wide read-only banner, fed by the same query as the billing page.
   // `enabled: isStaff` mirrors the endpoint's own @Roles(OPERATOR) gate (it 403s for
   // CUSTOMER/DRIVER); a 60s staleTime keeps it from refetching on every navigation.
-  const { data: subscriptionStatus } = useSubscription({ staleTime: 60_000, enabled: isStaff });
+  // Lite-L2 (WP8): the same result also drives the nav's plan-gated filtering below —
+  // isSuccess/isError captured alongside `data` (do not add a second useSubscription call).
+  const {
+    data: subscriptionStatus,
+    isSuccess: subscriptionResolved,
+    isError: subscriptionFailed,
+  } = useSubscription({ staleTime: 60_000, enabled: isStaff });
   const { data: regulatedSections, isLoading: regulatedLoading } = useTrackedCategories(
     { active: true },
     { enabled: isStaff },
@@ -1163,6 +1248,15 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       });
     }
 
+    // Lite-L2 (WP8/R4.3): hide gated leaves before the Analytics-relative inject index
+    // is computed, so Regulated Items/Sales Agents still land in the right spot even
+    // when Analytics itself is hidden (analytics is also in PLAN_GATED_NAV).
+    base = filterPlanGatedNav(base, {
+      flags: subscriptionStatus?.flags ?? [],
+      resolved: subscriptionResolved,
+      failed: subscriptionFailed,
+    });
+
     if (inject.length === 0) return base;
 
     const idx = base.findIndex((e) => e.kind === "leaf" && e.href === "/analytics");
@@ -1178,6 +1272,9 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     routesAccess,
     deliveryAccess,
     addonsLoading,
+    subscriptionStatus,
+    subscriptionResolved,
+    subscriptionFailed,
   ]);
   const [collapsed, setCollapsed] = React.useState(() => {
     if (typeof window !== "undefined") {

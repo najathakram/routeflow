@@ -9,7 +9,7 @@ import { roundMoney } from "@routeflow/pricing";
 import { StripeService } from "./stripe.service";
 import { BillingEventService } from "./billing-event.service";
 import { PlatformPricingService } from "./platform-pricing.service";
-import { BILLING_EVENTS, BillingEventType } from "./plan-catalog.constants";
+import { BILLING_EVENTS, BillingEventType, planKeyToEnum } from "./plan-catalog.constants";
 
 /** Grace period (in days) after a payment failure before suspending the tenant. */
 const PAYMENT_GRACE_DAYS = 3;
@@ -559,13 +559,37 @@ export class BillingService {
         ? session.metadata.interval
         : undefined;
 
+    // B445: checkout stamps `metadata.planKey` (createCheckoutSession, :291); `metadata.plan`
+    // is the legacy fallback. present-only — never overwrite an existing non-null planKey with
+    // null on an idempotent replay, and never regress a row some OTHER path already correctly
+    // populated (guarded below via the `update` branch's conditional spread).
+    const resolvedPlanKey: string | null =
+      session.metadata?.planKey ?? session.metadata?.plan ?? null;
+
+    // resolveCatalogPricing already falls back tenant.subscription?.planKey ?? tenant.plan, so it
+    // resolves correctly even before planKey is written below. It can throw BadRequestException
+    // (isCustom plan, no price) — a webhook handler must never throw uncaught (Stripe retries
+    // forever), so this is best-effort: planKey still gets recorded, basePriceSnapshot left unset.
+    let resolvedBasePrice: number | null = null;
+    try {
+      resolvedBasePrice = (await this.pricing.resolveCatalogPricing(tenantId)).monthly;
+    } catch (err) {
+      this.logger.warn(
+        `checkout.session.completed: could not resolve catalog price for tenant ${tenantId} (${(err as Error).message}) — planKey recorded, basePriceSnapshot left unset`,
+      );
+    }
+
     const upserted = await this.prisma.tenantSubscription.upsert({
       where: { tenantId },
       create: {
         tenantId,
         stripeCustomerId: session.customer as string,
         stripeSubId: subscriptionId,
-        currentPlan: (session.metadata?.plan as TenantPlan) ?? "STARTER",
+        currentPlan: resolvedPlanKey
+          ? planKeyToEnum(resolvedPlanKey)
+          : ((session.metadata?.plan as TenantPlan) ?? "STARTER"),
+        planKey: resolvedPlanKey,
+        basePriceSnapshot: resolvedBasePrice,
         periodStart: new Date(stripeSub.current_period_start * 1000),
         periodEnd: new Date(stripeSub.current_period_end * 1000),
         billingInterval,
@@ -576,6 +600,10 @@ export class BillingService {
         periodStart: new Date(stripeSub.current_period_start * 1000),
         periodEnd: new Date(stripeSub.current_period_end * 1000),
         ...(billingInterval ? { billingInterval } : {}),
+        ...(resolvedPlanKey ? { planKey: resolvedPlanKey } : {}),
+        ...(resolvedPlanKey && resolvedBasePrice != null
+          ? { basePriceSnapshot: resolvedBasePrice }
+          : {}),
       },
     });
 

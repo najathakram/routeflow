@@ -132,6 +132,21 @@ string` (B20 — free-form intake note, e.g. "DAMAGED_BOX") and its `restock?` d
   `apps/mobile/lib/trip-grouping.ts` (RN apps don't consume this package's TS source at the same
   build boundary), with its own Jest test on the mobile side. Only web imports it directly, via
   `transpilePackages`. Change all three copies together.
+- **Lite-L2 (WP1/WP4, 2026-09-15) — `PLAN_KEYS` gains `"LITE"`, leading the array** (`api/enums.ts`)
+  — `PLAN_KEYS = ["LITE", "STARTER", "GROWTH", "SCALE", "ENTERPRISE"]`; an order pin, not
+  hardcoded indices, since `apps/api/src/billing/plan-catalog.constants.ts`'s `planRank()` derives
+  rank from `indexOf`. Kept set-equal to the API's own `PLAN_KEYS` (same file) by
+  `apps/api/src/common/enum-parity.spec.ts` (REG-743-F4).
+- **`api/billing.ts` (new file, WP1)** — `FLAG_KEYS` (21 flag/addon-key strings, mirrors
+  `plan-catalog.constants.ts`'s `FLAG_KEYS` — the API can't value-import this package at
+  runtime, see the trip-grouping note above, so it hand-mirrors the list; pinned set-equal by
+  `enum-parity.spec.ts`'s WP1 T2) + `type FlagKey`, and `SubscriptionView<TDate = string>` — the
+  shared shape for `GET /billing/subscription`'s response (14 fields incl. `flags: string[]` and
+  `paymentRequired: boolean`, both WP1 additions), generic over `TDate` so a caller that parses
+  dates client-side can write `SubscriptionView<Date>` instead of redeclaring the interface.
+  Consumed by `apps/web/lib/api/billing.ts` (`export type { SubscriptionView }`, no longer
+  declared there) and `apps/mobile/lib/api/billing.ts`. Re-exported from `index.ts`
+  (`export * from "./api/billing"`).
 
 ### `@routeflow/pricing` (`packages/pricing`)
 

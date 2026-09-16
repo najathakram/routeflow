@@ -38,6 +38,8 @@ function make(
     stripeStatus?: string;
     /** count returned by the CAS updateMany — 1 = this call won the transition, 0 = lost/no-op. */
     transitionCount?: number;
+    /** WP14 (B445): PlatformPricingService stand-in — defaults to a resolvable catalog price. */
+    pricing?: any;
   } = {},
 ) {
   const sub = overrides.sub ?? {
@@ -82,8 +84,18 @@ function make(
   const email = { send: jest.fn().mockResolvedValue({}) } as any;
   const tenantStatus = { invalidate: jest.fn() } as any;
   const events = { emit: jest.fn().mockResolvedValue({}) } as any;
-  const svc = new BillingService(prisma, stripe, email, tenantStatus, events);
-  return { svc, prisma, tx, stripe, events, tenantStatus };
+  const pricing = overrides.pricing ?? {
+    resolveCatalogPricing: jest.fn().mockResolvedValue({
+      planKey: "BUSINESS",
+      planName: "Business",
+      monthly: 349,
+      annual: 3490,
+      source: "catalog",
+      currency: "usd",
+    }),
+  };
+  const svc = new BillingService(prisma, stripe, email, tenantStatus, events, pricing);
+  return { svc, prisma, tx, stripe, events, tenantStatus, pricing };
 }
 
 const deltaOf = (events: any, type: string) => {
@@ -357,6 +369,88 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
       });
       expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
     });
+  });
+});
+
+// WP14 / B445: `onCheckoutCompleted`'s upsert wrote NEITHER branch's `planKey` string column
+// (the "new source of truth" per schema comment) and the create branch read the wrong metadata
+// key (`session.metadata?.plan`, always undefined — checkout stamps `metadata.planKey`), so
+// `currentPlan` silently defaulted to STARTER and `planKey` stayed permanently null after every
+// real Stripe checkout. That starves `emitPayingDelta` (gated on `planKey != null`) and
+// billing-cron's `planKey: { not: null }` MRR filter forever. No new idempotency mechanism is
+// added — `transitionAndEmit`'s existing conditional updateMany (the CAS on `count === 1`) is
+// still the only thing gating a double emit; these tests prove it already covers the new writes.
+describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () => {
+  const session = (planKey: string | null | undefined = "GROWTH") => ({
+    metadata: { tenantId: "t1", ...(planKey ? { planKey } : {}) },
+    subscription: "sub_1",
+    customer: "cus_1",
+  });
+
+  it("(1) create branch: writes planKey + basePriceSnapshot (and maps currentPlan via planKeyToEnum) and emits exactly one MRR delta", async () => {
+    const { svc, prisma, events } = make({ transitionCount: 1 });
+    await (svc as any).onCheckoutCompleted(session("GROWTH"));
+
+    const call = prisma.tenantSubscription.upsert.mock.calls[0][0];
+    expect(call.create).toMatchObject({
+      planKey: "GROWTH",
+      basePriceSnapshot: 349,
+      currentPlan: "TEAM", // planKeyToEnum("GROWTH")
+    });
+    expect(
+      emitted(events).filter((t: string) => t === BILLING_EVENTS.SUBSCRIPTION_RESUMED),
+    ).toHaveLength(1);
+  });
+
+  it("(2) update branch (the common path — ensureStripeCustomer already pre-created the row): also writes planKey + basePriceSnapshot", async () => {
+    const { svc, prisma, events } = make({ transitionCount: 1 });
+    await (svc as any).onCheckoutCompleted(session("GROWTH"));
+
+    const call = prisma.tenantSubscription.upsert.mock.calls[0][0];
+    expect(call.update).toMatchObject({ planKey: "GROWTH", basePriceSnapshot: 349 });
+    expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_RESUMED)).toBe(349);
+  });
+
+  it("(3) idempotent replay of the same webhook emits the MRR delta only once — the existing CAS covers it, no new mechanism added", async () => {
+    const { svc, tx, events } = make({ transitionCount: 1 });
+    tx.tenant.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
+
+    await (svc as any).onCheckoutCompleted(session("GROWTH"));
+    await (svc as any).onCheckoutCompleted(session("GROWTH")); // replay — CAS loses, count 0
+
+    expect(
+      emitted(events).filter((t: string) => t === BILLING_EVENTS.SUBSCRIPTION_RESUMED),
+    ).toHaveLength(1);
+  });
+
+  it("(4) negative: metadata carries neither planKey nor the legacy plan key — left completely unchanged on the update branch, no emit", async () => {
+    const { svc, prisma, events } = make({
+      transitionCount: 1,
+      sub: { tenantId: "t1", planKey: null, basePriceSnapshot: null, discount: 0 },
+    });
+    await (svc as any).onCheckoutCompleted(session(null));
+
+    const call = prisma.tenantSubscription.upsert.mock.calls[0][0];
+    expect(call.create.planKey).toBeNull();
+    expect(call.update).not.toHaveProperty("planKey");
+    expect(call.update).not.toHaveProperty("basePriceSnapshot");
+    expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
+  });
+
+  it("(5) resolveCatalogPricing throwing does not crash the handler — planKey still gets written, basePriceSnapshot left unset", async () => {
+    const pricing = {
+      resolveCatalogPricing: jest.fn().mockRejectedValue(new Error("isCustom plan, no price")),
+    };
+    const { svc, prisma, events } = make({ transitionCount: 1, pricing });
+
+    await expect((svc as any).onCheckoutCompleted(session("GROWTH"))).resolves.toBeUndefined();
+
+    const call = prisma.tenantSubscription.upsert.mock.calls[0][0];
+    expect(call.create).toMatchObject({ planKey: "GROWTH", basePriceSnapshot: null });
+    expect(call.update).toMatchObject({ planKey: "GROWTH" });
+    expect(call.update).not.toHaveProperty("basePriceSnapshot");
+    // Handler still completes and activates/emits off the upserted row's own planKey.
+    expect(emitted(events)).toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
   });
 });
 

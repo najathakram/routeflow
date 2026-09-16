@@ -28,6 +28,7 @@
     "db:publish:catalog:v9": "ts-node -r tsconfig-paths/register prisma/publish-plan-catalog-v9.ts",
     "db:publish:catalog:v10": "ts-node -r tsconfig-paths/register prisma/publish-plan-catalog-v10.ts",
     "db:publish:catalog:v11": "ts-node -r tsconfig-paths/register prisma/publish-plan-catalog-v11.ts",
+    "db:publish:catalog:v12": "ts-node -r tsconfig-paths/register prisma/publish-plan-catalog-v12.ts",
     "db:drift": "node scripts/schema-drift.mjs",
     "smoke:pdf": "node scripts/pdf-render-smoke.mjs",
     "postinstall": "prisma generate"

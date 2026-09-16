@@ -19,6 +19,7 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { SubscriptionService } from "./subscription.service";
 import { ProrationService } from "./proration.service";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
+import { BillingService } from "./billing.service";
 import { QuoteDto } from "./dto/quote.dto";
 import { SubscribeDto, UpgradeDto, DowngradeDto, EnableAddonDto } from "./dto/mutation.dto";
 
@@ -42,6 +43,7 @@ export class SettingsBillingController {
     private readonly subscription: SubscriptionService,
     private readonly proration: ProrationService,
     private readonly mutations: SubscriptionMutationService,
+    private readonly billing: BillingService,
   ) {}
 
   /**
@@ -145,6 +147,25 @@ export class SettingsBillingController {
   @ApiOperation({ summary: "Undo a scheduled cancellation" })
   resume(@CurrentUser() user: AuthUser) {
     return this.mutations.resume(this.tenantIdOf(user), user.sub);
+  }
+
+  /**
+   * R2.9: a Stripe Checkout session for the tenant's OWN pinned plan/price — e.g. an
+   * invited LITE tenant completing its first payment (see SubscriptionService.getSubscription's
+   * `paymentRequired`). DELIBERATELY takes no request body: accepting a planKey here would let
+   * a caller check out into an arbitrary plan, defeating the invite-only structural guarantee.
+   * Switching plans still goes through subscribe/upgrade/downgrade above.
+   */
+  @Post("subscription/checkout")
+  @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.TENANT_ADMIN)
+  @ApiOperation({ summary: "Start a Stripe Checkout session for the tenant's own pinned plan" })
+  createCheckout(@CurrentUser() user: AuthUser) {
+    const base = process.env.FRONTEND_URL ?? "http://localhost:3001";
+    return this.billing.createCheckoutSession(this.tenantIdOf(user), {
+      successUrl: `${base}/settings/billing?checkout=success`,
+      cancelUrl: `${base}/settings/billing?checkout=cancelled`,
+    });
   }
 
   @Post("addons/:sku/enable")

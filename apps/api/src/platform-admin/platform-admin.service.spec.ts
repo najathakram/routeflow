@@ -36,6 +36,14 @@ describe("PlatformAdminService — audit provenance", () => {
   let meterService: { readAll: jest.Mock };
   let platformPricingService: { resolveTenantPricing: jest.Mock };
   let mrrService: { computeOverview: jest.Mock; priceTenant: jest.Mock };
+  // WP3b: named so the createTenant — LITE plan describe block can assert on the checkout
+  // options passed through and on the welcome email body, instead of re-deriving them via
+  // module.get() (every other collaborator mock here is already reachable this way).
+  let billingServiceMock: {
+    createCheckoutSession: jest.Mock;
+    syncStripeSubscriptionPrice: jest.Mock;
+  };
+  let emailServiceMock: { send: jest.Mock };
 
   const ADMIN_ID = "super-1";
   const TENANT_ID = "tenant-1";
@@ -92,6 +100,11 @@ describe("PlatformAdminService — audit provenance", () => {
       }),
       priceTenant: jest.fn().mockResolvedValue(0),
     };
+    emailServiceMock = { send: jest.fn().mockResolvedValue(undefined) };
+    billingServiceMock = {
+      createCheckoutSession: jest.fn().mockRejectedValue(new Error("no stripe")),
+      syncStripeSubscriptionPrice: jest.fn().mockResolvedValue({ synced: false }),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -102,14 +115,8 @@ describe("PlatformAdminService — audit provenance", () => {
           provide: ConfigService,
           useValue: { get: jest.fn().mockReturnValue({ secret: "s", expiresIn: "15m" }) },
         },
-        { provide: EmailService, useValue: { send: jest.fn().mockResolvedValue(undefined) } },
-        {
-          provide: BillingService,
-          useValue: {
-            createCheckoutSession: jest.fn().mockRejectedValue(new Error("no stripe")),
-            syncStripeSubscriptionPrice: jest.fn().mockResolvedValue({ synced: false }),
-          },
-        },
+        { provide: EmailService, useValue: emailServiceMock },
+        { provide: BillingService, useValue: billingServiceMock },
         { provide: PlanCatalogService, useValue: planCatalogService },
         { provide: ProrationService, useValue: prorationService },
         { provide: PlatformPricingService, useValue: platformPricingService },
@@ -954,6 +961,51 @@ describe("PlatformAdminService — audit provenance", () => {
     );
   });
 
+  // WP3b (lite-L2, R8.2): moving a tenant OFF LITE must invalidate its cached entitlements —
+  // otherwise a stale LITE-scoped resolve() would keep gating (or under-gating) the tenant after
+  // the plan write commits. LITE (rank 0) → STARTER (rank 1) is a ranked UPGRADE, so it takes
+  // updatePlan()'s existing instant-apply branch — same branch already covered by the
+  // ADMIN-UPDATEPLAN-1 suite above, which already calls entitlementsService.invalidate(id)
+  // unconditionally on every instant apply; this confirms that holds starting from LITE too.
+  describe("updatePlan — R8.2 leaving LITE invalidates entitlements", () => {
+    const periodStart = new Date("2026-09-01T00:00:00Z");
+    const periodEnd = new Date("2026-10-01T00:00:00Z");
+
+    it("REG-R8.2 updatePlan(liteTenant, {plan: STARTER}) calls entitlementsService.invalidate(id)", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme-lite",
+        plan: "LITE",
+        status: "ACTIVE",
+      } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme-lite",
+        plan: "STARTER",
+      } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-9",
+        definitions: [
+          { planKey: "LITE", monthlyPrice: 0 },
+          { planKey: "STARTER", monthlyPrice: 99 },
+        ],
+      });
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        planKey: "LITE",
+        basePriceSnapshot: 0,
+        priceOverrideMonthly: null,
+        discount: null,
+        cycle: "MONTHLY",
+        periodStart,
+        periodEnd,
+      });
+
+      await service.updatePlan(TENANT_ID, { plan: "STARTER" } as any, ADMIN_ID);
+
+      expect(entitlementsService.invalidate).toHaveBeenCalledWith(TENANT_ID);
+    });
+  });
+
   describe("getStats enrichment", () => {
     // Phase 0 T9: getStats() no longer re-derives MRR from the catalog price — it reads
     // MrrService.computeOverview() as the one MRR engine (already class-scoped to
@@ -1277,6 +1329,13 @@ describe("PlatformAdminService — audit provenance", () => {
         Promise.resolve({ id: TENANT_ID, ...args.data }),
       );
       prisma.user.create.mockResolvedValue({ id: "admin-1" } as any);
+      // WP3b/R1.8: createTenant() now refuses to create a tenant on a plan absent from the
+      // published catalog — these pre-existing cases create on the (implicit) STARTER plan, so
+      // the published version must carry a STARTER definition for them to keep passing.
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-1",
+        definitions: [{ planKey: "STARTER" }],
+      } as any);
     });
 
     it("defaults trial length to TRIAL_LENGTH_DAYS when no override is given", async () => {
@@ -1316,6 +1375,12 @@ describe("PlatformAdminService — audit provenance", () => {
         Promise.resolve({ id: TENANT_ID, ...args.data }),
       );
       prisma.user.create.mockResolvedValue({ id: "admin-1" } as any);
+      // WP3b/R1.8: see the "createTenant — trial length" describe block above — these cases
+      // create on the (implicit) STARTER plan and now require a published catalog row for it.
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-1",
+        definitions: [{ planKey: "STARTER" }],
+      } as any);
     });
 
     it("REG-743-F7 createTenant writes class TEST for a qa-* slug", async () => {
@@ -1340,6 +1405,89 @@ describe("PlatformAdminService — audit provenance", () => {
       ).rejects.toThrow(/production/i);
 
       expect(prisma.tenant.create).not.toHaveBeenCalled();
+    });
+  });
+
+  // WP3b (lite-L2, R1.8/R2.4/R2.5/R2.7): platform-admin createTenant() gains an invite-only
+  // LITE path — refuse creating a tenant on a plan absent from the published catalog (never the
+  // silent STARTER fallback other call sites use), give a LITE tenant its 0-day
+  // INVITE_ONLY_PLAN_TRIAL_DAYS trial (vs. the ordinary TRIAL_LENGTH_DAYS default), swap the
+  // welcome email's trial copy for a "complete payment to activate" variant when that trial is
+  // 0 days, and still offer a self-serve checkout link (INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT
+  // defaults true) with settings/billing success/cancel URLs.
+  describe("createTenant — LITE plan (WP3b)", () => {
+    const baseDto = {
+      slug: "acme-lite",
+      businessName: "Acme Lite Co",
+      adminEmail: "owner@acme-lite.example.com",
+      adminUsername: "acme_lite_owner",
+    } as any;
+
+    beforeEach(() => {
+      prisma.tenant.findUnique.mockResolvedValue(null); // slug not taken
+      prisma.user.findFirst.mockResolvedValue(null); // no existing admin collision
+      prisma.tenant.create.mockImplementation((args: any) =>
+        Promise.resolve({ id: TENANT_ID, ...args.data }),
+      );
+      prisma.user.create.mockResolvedValue({ id: "admin-1" } as any);
+    });
+
+    it("REG-R1.8 refuses to create a LITE tenant when LITE is not in the published catalog", async () => {
+      // Published catalog exists but carries no LITE row — e.g. only pre-Lite plans.
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-1",
+        definitions: [{ planKey: "STARTER" }],
+      } as any);
+
+      await expect(service.createTenant({ ...baseDto, plan: "LITE" } as any)).rejects.toThrow(
+        /published plan catalog/i,
+      );
+
+      expect(prisma.tenant.create).not.toHaveBeenCalled();
+    });
+
+    it("REG-R1.8 refuses to create a LITE tenant when no catalog is published at all", async () => {
+      planCatalogService.getPublishedVersion.mockResolvedValue(null);
+
+      await expect(service.createTenant({ ...baseDto, plan: "LITE" } as any)).rejects.toThrow(
+        /published plan catalog/i,
+      );
+
+      expect(prisma.tenant.create).not.toHaveBeenCalled();
+    });
+
+    it("REG-R2.4/R2.5/R2.7 a published LITE tenant gets the 0-day trial, the 'complete payment to activate' email variant, and a checkout link", async () => {
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-1",
+        definitions: [{ planKey: "LITE" }, { planKey: "STARTER" }],
+      } as any);
+      (billingServiceMock.createCheckoutSession as jest.Mock).mockResolvedValue({
+        checkoutUrl: "https://checkout.stripe.com/session-lite",
+        sessionId: "sess-lite",
+      });
+
+      const result = await service.createTenant({ ...baseDto, plan: "LITE" } as any);
+
+      // R2.4: 0-day trial (INVITE_ONLY_PLAN_TRIAL_DAYS), not the ordinary 14-day default.
+      const actualMs = (result.trialEndsAt as Date).getTime() - Date.now();
+      expect(Math.abs(actualMs)).toBeLessThan(5000);
+
+      // R2.7: self-serve checkout is offered (lever defaults true) with the settings/billing
+      // success/cancel URLs, not the bare tenant-id-only call other plans use.
+      expect(billingServiceMock.createCheckoutSession).toHaveBeenCalledWith(
+        TENANT_ID,
+        expect.objectContaining({
+          successUrl: expect.stringMatching(/\/settings\/billing\?checkout=success$/),
+          cancelUrl: expect.stringMatching(/\/settings\/billing\?checkout=cancelled$/),
+        }),
+      );
+      expect(result.checkoutUrl).toBe("https://checkout.stripe.com/session-lite");
+
+      // R2.5: the email's trial copy switches to the "complete payment to activate" variant
+      // (0 days is meaningless as a countdown) instead of "trial expires in 0 days".
+      const emailCall = (emailServiceMock.send as jest.Mock).mock.calls[0][0];
+      expect(emailCall.html).toContain("Complete payment to activate your account.");
+      expect(emailCall.html).not.toMatch(/trial expires in/i);
     });
   });
 

@@ -1,0 +1,30 @@
+{
+  "task": {
+    "id": "WP12",
+    "title": "mobile: section lock in the operator layout + More rows",
+    "type": "feature",
+    "files": [
+      "apps/mobile/app/(operator)/_layout.tsx",
+      "apps/mobile/app/(operator)/(tabs)/more.tsx"
+    ],
+    "tests": [],
+    "brief": "Satisfies R4.4, R4.6; provenBy T22 + manual Expo check (see test-plan.md §11 note — no\ndedicated T# for the manual half, raised not decided).\n(operator)/_layout.tsx: after the existing addon \"need\" block,\n  const lockedKey = planLockedSection(segments, planState);\n  if (lockedKey) return <PlanLockedScreen planName={sub.data?.planName ?? \"current\"} />;\n(render, not redirect). more.tsx: wrap each row whose target section is in PLAN_GATED_SECTIONS in\nplanFlagVisible(usePlanFlag(key)). Tabs untouched (visibleOperatorTabs unchanged — no tab is plan-gated).",
+    "dependsOn": ["WP11"],
+    "blocked": true,
+    "blockerFindings": [
+      {
+        "file": "(workdir)",
+        "severity": "blocker",
+        "phase": "Workdir guard",
+        "summary": "Task WP12's agent (tests:WP12) changed the MAIN checkout at \"C:/ClaudeCode/routeflow\" while its workdir is the separate worktree \"C:/ClaudeCode/routeflow/.claude/worktrees/rf-lite-L2\" -- HEAD moved 901f43a0a6a0f457361c9cd0d4a4259bfbe54766 -> 901f43a0a6a0f457361c9cd0d4a4259bfbe54766.",
+        "detail": "before: {\"sha\":\"901f43a0a6a0f457361c9cd0d4a4259bfbe54766\",\"status\":\"?? apps/api/.claude/\\n\"}; after: {\"sha\":\"901f43a0a6a0f457361c9cd0d4a4259bfbe54766\",\"status\":\"?? apps/api/.claude/\"}"
+      }
+    ],
+    "redRun": {
+      "cwd": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-lite-L2",
+      "ran": false,
+      "results": []
+    }
+  },
+  "progressLine": "Task WP12: blocked (1 blocker(s))"
+}

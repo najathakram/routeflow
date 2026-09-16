@@ -636,5 +636,24 @@ export default defineConfig({
       dependencies: [],
       use: { ...devices["Desktop Chrome"] },
     },
+
+    // ── Lite-plan nav/route gating (lite-L2, spec 47) ──────────────────────────
+    // R2.2/R2.5/R2.6/R2.8/R3b.8/R4.3/R4.5/R7.7: the sidebar/route gate for a LITE-plan
+    // tenant, Settings → Billing's "Complete payment", and choose-plan/marketing never
+    // rendering a "Lite" card. Self-skips (test.skip, not a discharge — L-041) when
+    // PLAYWRIGHT_LITE_TENANT_SLUG is unset — it needs a dedicated LITE-plan tenant the
+    // shared operator.json fixture is not on. NOT in the local Playwright allow-list
+    // (apps/web/e2e/LOCAL-LANE.md) — post-deploy only, same convention as
+    // sales-agents-gate/compliance-pack-gate/trip-builder-gate above.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's precedent.
+    {
+      name: "lite-plan-gate",
+      testMatch: /47-lite-plan-gate\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
   ],
 });

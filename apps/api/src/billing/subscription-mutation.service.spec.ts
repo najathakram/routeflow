@@ -184,6 +184,22 @@ function catalogWithSeats(
   } as ReturnType<typeof catalog>;
 }
 
+/**
+ * WP3a: the v7 catalog + LITE (rank 0, invite-only — see `isInviteOnlyPlanKey` /
+ * `INVITE_ONLY_PLAN_KEYS` in plan-catalog.constants.ts). Kept separate from `catalog()` so
+ * every pre-existing test's fixture is byte-identical and unaffected.
+ */
+function catalogWithLite(): ReturnType<typeof catalog> {
+  const v = catalog();
+  return {
+    ...v,
+    definitions: [
+      { planKey: "LITE", name: "Lite", monthlyPrice: 29, isCustom: false, seatsIncluded: 1 },
+      ...v.definitions,
+    ],
+  } as ReturnType<typeof catalog>;
+}
+
 interface Opts {
   catalog?: ReturnType<typeof catalog>;
   tenantStatus?: string;
@@ -585,6 +601,56 @@ describe("SubscriptionMutationService downgrade / add-ons", () => {
       where: { id: "a1" },
       data: { active: false },
     });
+  });
+});
+
+// WP3a (S5): the server-side invite-only gate the whole lite-L2 lane depends on structurally —
+// subscribe()/upgrade()/downgrade() must all refuse a self-service pick that lands a tenant ON
+// an invite-only plan (LITE, rank 0), and the refusal must be a BadRequestException, never a
+// silent no-op. R2.6 pins the inverse: moving AWAY from LITE (the upsell path) is a normal
+// upgrade and must never be caught by this check.
+describe("SubscriptionMutationService — invite-only plans are never self-service (WP3a, S5/R2.2/R2.6)", () => {
+  it("subscribe() refuses a LITE target", async () => {
+    const { svc, tx, events } = make({ catalog: catalogWithLite() });
+    const attempt = svc.subscribe("t1", { planKey: "LITE", cycle: "MONTHLY" });
+    await expect(attempt).rejects.toBeInstanceOf(BadRequestException);
+    await expect(attempt).rejects.toThrow(/invitation only/);
+    expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it("upgrade() refuses a LITE target", async () => {
+    const { svc, tx } = make({ catalog: catalogWithLite() });
+    const attempt = svc.upgrade("t1", "LITE", "admin");
+    await expect(attempt).rejects.toBeInstanceOf(BadRequestException);
+    await expect(attempt).rejects.toThrow(/invitation only/);
+    expect(tx.tenantSubscription.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("downgrade() refuses a LITE target", async () => {
+    const { svc, tx } = make({ catalog: catalogWithLite() });
+    const attempt = svc.downgrade("t1", "LITE", [], "admin");
+    await expect(attempt).rejects.toBeInstanceOf(BadRequestException);
+    await expect(attempt).rejects.toThrow(/invitation only/);
+    expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+  });
+
+  it("R2.6: upgrade() OFF LITE (rank 0) to STARTER is the upsell path — the invite-only check never blocks moving away from an invite-only plan", async () => {
+    const { svc, tx, events } = make({
+      catalog: catalogWithLite(),
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "LITE", cycle: "MONTHLY", periodStart: null, periodEnd: null },
+    });
+    await svc.upgrade("t1", "STARTER", "admin");
+    // Reached the write: the rank check passed (STARTER rank 1 > LITE rank 0) and the
+    // invite-only gate — which only inspects the TARGET — let it straight through.
+    expect(tx.tenantSubscription.updateMany.mock.calls[0][0].where).toMatchObject({
+      planKey: "LITE",
+    });
+    expect(tx.tenantSubscription.updateMany.mock.calls[0][0].data).toMatchObject({
+      planKey: "STARTER",
+    });
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(30); // 59 − 29
   });
 });
 
