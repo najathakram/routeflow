@@ -3476,6 +3476,31 @@ describe("OrdersService", () => {
       expect(prisma.order.delete).not.toHaveBeenCalled();
     });
 
+    // PR-2 (check-payments B1 hardening) REG — N4 (Opus review-v2): cancelImpact's
+    // external-payment guard must use isBlockingPayment (status !== VOID), never
+    // isHeldPayment (PAID ∪ PENDING) — a DRAFT external payment is money in flight
+    // and master deliberately keeps it blocking a cancel/delete. Swapping to
+    // isHeldPayment would silently let an unconfirmed DRAFT payment through and
+    // reverse that block; this pins the DRAFT case failing exactly like the PAID
+    // case above.
+    it("409s when a linked invoice has only a DRAFT (unconfirmed) external payment", async () => {
+      prisma.order.findUnique.mockResolvedValue(deliveredOrder);
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          id: "d1",
+          invoiceNumber: "INV-1",
+          status: "SENT",
+          total: 50,
+          payments: [{ method: "CASH", amount: 50, status: "DRAFT" }],
+        },
+      ]);
+
+      await expect(service.deleteOrder("ord-1", operatorPayload)).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      expect(prisma.order.delete).not.toHaveBeenCalled();
+    });
+
     // #341's wallet behaviour must survive the liberalization: credit-note money
     // is handed back and the delete proceeds — only real cash blocks it.
     it("a wallet-only PAID invoice still deletes and returns the credit", async () => {
@@ -6524,7 +6549,10 @@ describe("OrdersService", () => {
     it("over the limit blocks ALL roles and persists nothing (409 CREDIT_LIMIT_EXCEEDED)", async () => {
       prisma.customer.findFirst.mockResolvedValue({ creditLimit: 100 });
       prisma.invoice.findMany.mockResolvedValue([
-        { total: 200, orderId: null, payments: [{ amount: 80 }] }, // balance 120
+        // PR-2 (check-payments B1 hardening): exposure now reads sumConfirmed, not the
+        // old not-void filter — this $80 must be explicitly PAID to still reduce the
+        // balance, matching customers.service.ts's receivables formula.
+        { total: 200, orderId: null, payments: [{ amount: 80, status: "PAID" }] }, // balance 120
       ]);
       prisma.order.findMany.mockResolvedValue([]);
 
@@ -6545,7 +6573,10 @@ describe("OrdersService", () => {
       prisma.order.findUnique.mockResolvedValue({ ...editableOrder(), shippingFee: 5 });
       prisma.customer.findFirst.mockResolvedValue({ creditLimit: 100 });
       prisma.invoice.findMany.mockResolvedValue([
-        { total: 200, orderId: null, payments: [{ amount: 80 }] }, // balance 120
+        // PR-2 (check-payments B1 hardening): exposure now reads sumConfirmed, not the
+        // old not-void filter — this $80 must be explicitly PAID to still reduce the
+        // balance, matching customers.service.ts's receivables formula.
+        { total: 200, orderId: null, payments: [{ amount: 80, status: "PAID" }] }, // balance 120
       ]);
       prisma.order.findMany.mockResolvedValue([]);
 
@@ -6719,7 +6750,10 @@ describe("OrdersService", () => {
       prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
       prisma.customer.findFirst.mockResolvedValue({ creditLimit: 100 });
       prisma.invoice.findMany.mockResolvedValue([
-        { total: 200, orderId: null, payments: [{ amount: 80 }] }, // balance 120
+        // PR-2 (check-payments B1 hardening): exposure now reads sumConfirmed, not the
+        // old not-void filter — this $80 must be explicitly PAID to still reduce the
+        // balance, matching customers.service.ts's receivables formula.
+        { total: 200, orderId: null, payments: [{ amount: 80, status: "PAID" }] }, // balance 120
       ]);
       prisma.order.findMany.mockResolvedValue([]);
     });

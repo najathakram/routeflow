@@ -1536,6 +1536,35 @@ describe("CustomersService", () => {
       );
     });
 
+    // PR-2 (check-payments B1 hardening, N4): invoiceBalance/applyAmount moved from
+    // (total - sumConfirmed) to remainingCapacity() (total - sumNotVoid) — a DRAFT
+    // sibling now also reserves capacity, so an advance can no longer be applied on
+    // top of it past what the invoice can actually hold once that DRAFT confirms.
+    it("applyAdvancePaymentToInvoice: a DRAFT sibling payment reserves capacity too (PR-2 REG)", async () => {
+      prisma.advancePayment.findUnique.mockResolvedValue({ id: "ap-1", balance: 1000 });
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-1",
+        total: 1000,
+        status: "SENT",
+        dueDate: null,
+        payments: [
+          { amount: 400, status: "PAID" },
+          // Before PR-2: this DRAFT row reserved nothing, so the balance was 600.
+          // After PR-2: it reserves its $100 too, leaving only 500.
+          { amount: 100, status: "DRAFT" },
+        ],
+      });
+
+      const result: any = await service.applyAdvancePaymentToInvoice("ap-1", {
+        invoiceId: "inv-1",
+      });
+
+      expect(result.appliedAmount).toBe(500);
+      expect(prisma.invoicePayment.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ amount: 500 }) }),
+      );
+    });
+
     it("REG-B310 two concurrent applies of the SAME advance never drive its balance negative", async () => {
       // The mocked `withAdvisoryLock` is a module-level jest.fn shared across every test in this
       // file (a prior test above also calls applyAdvancePaymentToInvoice) — clear its call

@@ -15,7 +15,7 @@ import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
-import { roundMoney } from "@routeflow/pricing";
+import { roundMoney, remainingCapacity } from "@routeflow/pricing";
 import {
   CONFIRMED_PAYMENT,
   RECEIVED_METHOD_FILTER,
@@ -257,9 +257,11 @@ export class CustomersService {
     for (const inv of invoices) {
       // Exclude VOID payments (a bounced check flips InvoicePayment.status to VOID
       // in P5-12) so a reversed payment no longer counts against the receivable.
-      const paid = inv.payments
-        .filter((p) => p.status !== "VOID")
-        .reduce((s, p) => s + Number(p.amount), 0);
+      // PR-2 (check-payments B1 hardening): sumConfirmed (PAID only) — an unconfirmed
+      // DRAFT payment (or a post-dated check on file, once PENDING exists) does not
+      // yet reduce what the customer owes. Must agree with orders.service.ts's
+      // assertWithinCreditLimit exposure formula.
+      const paid = sumConfirmed(inv.payments);
       const outstanding = Number(inv.total) - paid;
       receivablesMap[inv.customerId] = (receivablesMap[inv.customerId] ?? 0) + outstanding;
     }
@@ -1471,10 +1473,13 @@ export class CustomersService {
 
       // Ignore VOID payments (a bounced check reverses to VOID in P5-12); otherwise a
       // reversed payment would understate the balance and under-apply the advance.
-      const alreadyPaid = inv.payments
-        .filter((p) => p.status !== "VOID")
-        .reduce((s, p) => s + Number(p.amount), 0);
-      const invoiceBalance = Number(inv.total) - alreadyPaid;
+      // PR-2 (check-payments B1 hardening, N4): shared remainingCapacity() — same
+      // DRAFT+PAID(+PENDING) basis as the old not-void filter, zero behavior change
+      // today (N4: capacity must keep counting DRAFT).
+      const invoiceBalance = remainingCapacity(Number(inv.total), inv.payments);
+      // Same figure the old not-void filter produced (total - remainingCapacity ==
+      // sumNotVoid(payments)) — kept for the inline status recompute below, unchanged.
+      const alreadyPaid = Number(inv.total) - invoiceBalance;
       const applyAmount = Math.min(Number(ap.balance), invoiceBalance, dto.amount ?? Infinity);
 
       if (applyAmount <= 0) throw new BadRequestException("Invoice has no outstanding balance");
@@ -1799,9 +1804,9 @@ export class CustomersService {
       const receivables = c.invoices.reduce((sum, inv) => {
         // Exclude VOID payments (a bounced check flips InvoicePayment.status to VOID
         // in P5-12) so a reversed payment no longer counts against the receivable.
-        const paid = inv.payments
-          .filter((p) => p.status !== "VOID")
-          .reduce((s, p) => s + Number(p.amount), 0);
+        // PR-2 (check-payments B1 hardening): sumConfirmed — see the list-view
+        // receivablesMap above for the same conversion and its rationale.
+        const paid = sumConfirmed(inv.payments);
         return sum + (Number(inv.total) - paid);
       }, 0);
       const credits = c.advancePayments.reduce((s, a) => s + Number(a.balance), 0);

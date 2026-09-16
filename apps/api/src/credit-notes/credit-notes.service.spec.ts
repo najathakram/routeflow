@@ -353,6 +353,47 @@ describe("CreditNotesService — P5-13 apply-math + auto-apply", () => {
     expect(cnUpdate.data.autoApplied).toBe(false); // manual apply, no opts.autoApplied
   });
 
+  // PR-2 (check-payments B1 hardening, N4): invoiceBalance/applyAmount moved from
+  // (total - sumConfirmed) to remainingCapacity() (total - sumNotVoid) — a DRAFT
+  // sibling (e.g. an unconfirmed bank-reconciliation import row) now also reserves
+  // capacity, so a credit note can no longer be applied on top of it past what the
+  // invoice can actually hold once that DRAFT confirms.
+  it("applyToInvoice: a DRAFT sibling payment reserves capacity too (PR-2 REG)", async () => {
+    prisma.creditNote.findUnique.mockResolvedValue({
+      id: "cn-draft-cap",
+      creditNoteNumber: "CN-2026-0012",
+      amount: 100,
+      amountUsed: 0,
+      status: "ISSUED",
+      customerId: "c1",
+      expiresAt: null,
+      appliedAt: null,
+      appliedToInvoiceId: null,
+      autoApplied: false,
+    });
+    prisma.invoice.findUnique.mockResolvedValue({
+      id: "inv-draft-cap",
+      customerId: "c1",
+      total: 1,
+      dueDate: null,
+      status: "SENT",
+      payments: [
+        { amount: 0.1, status: "PAID" },
+        // Before PR-2: this DRAFT row reserved nothing, so invoiceBalance was 0.9.
+        // After PR-2: it reserves its $0.2 too, leaving only 0.7.
+        { amount: 0.2, status: "DRAFT" },
+      ],
+    });
+
+    await service.applyToInvoice("cn-draft-cap", "inv-draft-cap");
+
+    expect(prisma.invoicePayment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ amount: 0.7, method: "CREDIT_NOTE" }),
+      }),
+    );
+  });
+
   it("applyToInvoice: full exhaustion flips APPLIED + appliedToInvoiceId, invoice PAID", async () => {
     prisma.creditNote.findUnique.mockResolvedValue({
       id: "cn-p2",

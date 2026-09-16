@@ -3134,6 +3134,26 @@ describe("InvoicesService", () => {
   // invoicedQty. R6's fix is `updateMany({ where: { id, status: { not: VOID } } })`,
   // abort on count===0 — the same claim shape returns.service.ts's void path uses.
   // See .claude/pipeline/2026-08-31-f03-payment-truth/{spec,test-plan}.md R6/T-B84.
+  // PR-2 (check-payments B1 hardening) REG — N4 (Opus review-v2): externalPaidOn's
+  // guard must use isBlockingPayment (status !== VOID), never isHeldPayment (PAID ∪
+  // PENDING) — a DRAFT external payment is money in flight and master deliberately
+  // keeps it blocking a void. Swapping to isHeldPayment would silently let an
+  // unconfirmed DRAFT payment through and reverse that block.
+  describe("voidInvoice — externalPaidOn guard blocks a DRAFT (unconfirmed) payment (PR-2 N4 REG)", () => {
+    it("refuses to void an invoice with only a DRAFT cash payment recorded", async () => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-draft-void",
+        status: InvoiceStatus.SENT,
+        orderId: null,
+        payments: [{ method: "CASH", amount: 25, status: "DRAFT" }],
+      });
+
+      await expect(service.voidInvoice("inv-draft-void")).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+  });
+
   describe("voidInvoiceInTx — atomic claim under concurrent void (T-B84 / R6 / REG-B84)", () => {
     it("two concurrent voidInvoice calls on one SENT invoice: exactly one succeeds, invoicedQty releases exactly once", async () => {
       prisma.invoice.findUnique.mockResolvedValue({
@@ -5747,6 +5767,59 @@ describe("InvoicesService", () => {
         expect(result.id).toBe("inv-1");
       });
     });
+
+    // PR-2 (check-payments B1 hardening, review-opus-v2 condition #6): the
+    // remaining-balance guard moved from summing only CONFIRMED (PAID) siblings to
+    // remainingCapacity() (DRAFT+PAID+PENDING) — closing a double-book gap where an
+    // unconfirmed DRAFT payment (e.g. an unrecorded bank-reconciliation import row)
+    // didn't reserve any capacity, letting a second payment stack on top of it past
+    // the invoice total.
+    describe("recordPayment — capacity now reserves DRAFT siblings (PR-2 REG)", () => {
+      it("rejects a payment that would push the invoice over its total once a DRAFT sibling is counted", async () => {
+        prisma.invoice.findUnique.mockResolvedValue({
+          id: "inv-cap",
+          status: InvoiceStatus.SENT,
+          total: 100,
+          dueDate: null,
+          payments: [{ id: "pay-draft", status: "DRAFT", amount: 30, method: "CHECK" }],
+        });
+
+        // Before PR-2: alreadyPaid (CONFIRMED-only) was 0, so remaining was 100 and
+        // this $80 payment sailed through. After PR-2: remainingCapacity reserves
+        // the $30 DRAFT too, so only $70 remains and this must be refused.
+        await expect(
+          service.recordPayment("inv-cap", { amount: 80, method: "CASH" } as any),
+        ).rejects.toThrow(BadRequestException);
+        expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
+      });
+
+      it("still allows a payment that fits within capacity once the DRAFT sibling is reserved", async () => {
+        prisma.invoice.findUnique.mockResolvedValue({
+          id: "inv-cap-2",
+          status: InvoiceStatus.SENT,
+          total: 100,
+          dueDate: null,
+          payments: [{ id: "pay-draft", status: "DRAFT", amount: 30, method: "CHECK" }],
+        });
+        prisma.paymentCounter.upsert.mockResolvedValue({ id: "test-tenant", next: 1 });
+        prisma.invoicePayment.create.mockResolvedValue({ id: "pay-new-2" });
+        prisma.invoice.update.mockResolvedValue({
+          id: "inv-cap-2",
+          invoiceNumber: "INV-0002",
+          customerId: "cust-1",
+          total: 100,
+          payments: [],
+        });
+
+        await expect(
+          service.recordPayment("inv-cap-2", { amount: 70, method: "CASH" } as any),
+        ).resolves.toBeDefined();
+        // F03/R1 status discipline is unchanged: the recomputed status still funds
+        // off CONFIRMED (PAID) only, so the DRAFT sibling contributes nothing to it.
+        const invoiceData = (prisma.invoice.update.mock.calls[0][0] as any).data;
+        expect(invoiceData.status).not.toBe(InvoiceStatus.PAID);
+      });
+    });
   });
 
   // ─── Backdated orders drive invoice dating ────────────────────────────────
@@ -6139,6 +6212,58 @@ describe("InvoicesService", () => {
 
           expect(invoiceData().status).toBe(InvoiceStatus.SENT);
           expect(invoiceData().paidAt).toBeNull();
+        });
+      });
+
+      // PR-2 (check-payments B1 hardening, review-opus-v2 finding m3): the
+      // remaining-balance guard moved from summing only CONFIRMED (PAID) siblings to
+      // remainingCapacity() (DRAFT+PAID+PENDING) — mirroring recordPayment's own
+      // conversion — so a DRAFT sibling now reserves capacity here too.
+      describe("capacity now reserves DRAFT siblings (PR-2 REG)", () => {
+        it("rejects an edit that would push the invoice over its total once a DRAFT sibling is counted", async () => {
+          prisma.invoice.findUnique.mockResolvedValue({
+            id: "inv-cap-u",
+            status: InvoiceStatus.SENT,
+            total: 100,
+            dueDate: null,
+            payments: [
+              { id: "pay-draft-sib", status: "DRAFT", amount: 30, method: "CHECK" },
+              { id: "pay-edit", status: "PAID", amount: 10, method: "CASH" },
+            ],
+          });
+
+          // Before PR-2: othersTotal (CONFIRMED-only) was 0, so this $80 edit was
+          // allowed. After PR-2: the DRAFT sibling reserves $30, leaving only $70.
+          await expect(
+            service.updatePayment("inv-cap-u", "pay-edit", { amount: 80, method: "CASH" } as any),
+          ).rejects.toThrow(BadRequestException);
+          expect(prisma.invoicePayment.update).not.toHaveBeenCalled();
+        });
+      });
+
+      // PR-2 (check-payments B1 hardening, review-opus-v2 finding m3): recordPayment
+      // already row-locks the invoice before reading its payments; updatePayment had
+      // no equivalent, so two concurrent edits could both read a stale remaining
+      // balance and jointly overshoot the invoice total.
+      describe("row lock (PR-2 REG, mirrors recordPayment)", () => {
+        it("locks the Invoice row (FOR UPDATE) BEFORE reading its payments", async () => {
+          seedExistingPayment();
+          const tx = {
+            invoice: prisma.invoice,
+            invoicePayment: prisma.invoicePayment,
+            $executeRaw: jest.fn().mockResolvedValue(0),
+          };
+          prisma.tenantTransaction.mockImplementationOnce((fn: any) => fn(tx));
+
+          await service.updatePayment("inv-1", "pay-1", { amount: 100, method: "CHECK" } as any);
+
+          expect(tx.$executeRaw).toHaveBeenCalled();
+          const sql = (tx.$executeRaw.mock.calls[0][0] as any).join("?");
+          expect(sql).toContain('"Invoice"');
+          expect(sql).toContain("FOR UPDATE");
+          expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+            prisma.invoice.findUnique.mock.invocationCallOrder[0],
+          );
         });
       });
     });

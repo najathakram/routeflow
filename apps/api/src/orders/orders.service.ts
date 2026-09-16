@@ -23,6 +23,8 @@ import {
   normalizeBoxesPieces,
   promotionMatchesProduct,
   roundMoney,
+  sumConfirmed,
+  isBlockingPayment,
   type CategoryTaxType,
   type PromoContext,
   type PromotionRule,
@@ -3266,12 +3268,17 @@ export class OrdersService implements OnApplicationBootstrap {
 
     // External money can't be un-taken by software; it blocks the cancel until a
     // human refunds it. Wallet money (credit notes, advances) is simply returned.
+    // PR-2 (check-payments B1 hardening, N4 owner ruling): isBlockingPayment (NOT
+    // isHeldPayment) — a DRAFT external payment is money in flight and must keep
+    // blocking the cancel exactly as it does today; HELD (PAID ∪ PENDING) is for
+    // money TOTALS only, never an existence/blocking check.
     const blockers: Array<{ invoiceNumber: string; amount: number }> = [];
     for (const inv of invoices) {
       const external = roundMoney(
         (inv.payments ?? [])
           .filter(
-            (p: any) => p.status !== "VOID" && p.method !== "CREDIT_NOTE" && p.method !== "ADVANCE",
+            (p: any) =>
+              isBlockingPayment(p) && p.method !== "CREDIT_NOTE" && p.method !== "ADVANCE",
           )
           .reduce((s: number, p: any) => s + Number(p.amount), 0),
       );
@@ -3280,6 +3287,8 @@ export class OrdersService implements OnApplicationBootstrap {
     }
 
     const credits = await this.creditNotes.previewOrderCreditRelease(id);
+    // scan-ok: draft-payment-not-void — method-scoped to ADVANCE; a CHECK/PENDING row
+    // can never match, so PR-2's PENDING concern doesn't apply here.
     const advances = roundMoney(
       invoices
         .flatMap((i) => i.payments ?? [])
@@ -5408,13 +5417,12 @@ export class OrdersService implements OnApplicationBootstrap {
     // Exclude VOID payments: a bounced check (P5-12) flips its InvoicePayment to VOID
     // and reverts the invoice to OPEN/PARTIAL, so a reversed payment must NOT reduce the
     // customer's credit exposure — otherwise a bounce lets them slip under the limit.
+    // PR-2 (check-payments B1 hardening): sumConfirmed (PAID only), NOT the old
+    // not-void filter — an unconfirmed DRAFT payment (or, once PENDING exists, a
+    // post-dated check on file) does not yet reduce what the customer owes, matching
+    // customers.service.ts's receivables formula this must agree with (see below).
     const invoiceExposure = openInvoices.reduce(
-      (sum: number, inv: any) =>
-        sum +
-        (Number(inv.total) -
-          inv.payments
-            .filter((p: any) => p.status !== "VOID")
-            .reduce((s: number, p: any) => s + Number(p.amount), 0)),
+      (sum: number, inv: any) => sum + (Number(inv.total) - sumConfirmed(inv.payments)),
       0,
     );
 
