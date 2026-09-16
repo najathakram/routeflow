@@ -7,9 +7,13 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { PlanFlagGuard } from "../billing/plan-flag.guard";
 import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
+import { AddonGuard } from "../billing/addon.guard";
+import { RequireAddon } from "../billing/require-addon.decorator";
 import { ReturnsService } from "./returns.service";
+import { InlineReturnsQuoteService } from "./inline-returns-quote.service";
 import { ReceiveReturnDto } from "./dto/receive-return.dto";
 import { ProcessRefundDto } from "./dto/process-refund.dto";
+import { QuoteInlineReturnDto } from "./dto/quote-inline-return.dto";
 
 // This controller also serves CUSTOMER and DRIVER roles (not just OPERATOR), so
 // gating it must stay behind the kill switch until the v7-STARTER audit question
@@ -19,7 +23,10 @@ import { ProcessRefundDto } from "./dto/process-refund.dto";
 @Roles(UserRole.OPERATOR)
 @RequirePlanFlag("flag.returns")
 export class ReturnsController {
-  constructor(private readonly returnsService: ReturnsService) {}
+  constructor(
+    private readonly returnsService: ReturnsService,
+    private readonly inlineQuote: InlineReturnsQuoteService,
+  ) {}
 
   /** An optional `Idempotency-Key` header collapses a retried submission into the
    * first one (mirrors routes.controller.ts). Omitting it is unchanged behaviour. */
@@ -31,6 +38,21 @@ export class ReturnsController {
     @Headers("idempotency-key") idempotencyKey?: string,
   ) {
     return this.returnsService.create(dto, user.sub, user.role, idempotencyKey);
+  }
+
+  /**
+   * Returns Inside Order Creation — PR-1b. Read-only quote: matches the requested
+   * qty against the customer's invoiced sales and prices it (§3). Never writes a
+   * Return row (capture is PR-1c/1d). CUSTOMER is refused (Q5: buyers keep the
+   * post-delivery request flow); DRIVER is scoped to their own in-progress stop
+   * (M8, enforced inside InlineReturnsQuoteService before any other read).
+   */
+  @Post("inline/quote")
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN, UserRole.DRIVER)
+  @UseGuards(AddonGuard)
+  @RequireAddon("orders_inline_returns")
+  quoteInline(@Body() dto: QuoteInlineReturnDto, @CurrentUser() user: JwtPayload) {
+    return this.inlineQuote.quote(dto, user);
   }
 
   @Get()
