@@ -162,6 +162,19 @@ export class FeatureOverrideService {
       });
     }
     try {
+      // The partial unique index is `WHERE revokedAt IS NULL` -- an expired-but-never-revoked
+      // row still counts toward it, blocking a re-grant/re-deny of the same key until someone
+      // manually revokes the stale row (Opus review of 8130b204, item 5). Auto-close it first;
+      // updateMany no-ops (0 rows) in the common case where nothing has expired.
+      await this.prisma.tenantFeatureOverride.updateMany({
+        where: {
+          tenantId: params.tenantId,
+          featureKey: params.featureKey,
+          revokedAt: null,
+          expiresAt: { lte: new Date() },
+        },
+        data: { revokedAt: new Date() },
+      });
       const row = await this.prisma.tenantFeatureOverride.create({
         data: {
           tenantId: params.tenantId,

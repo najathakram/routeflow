@@ -23,6 +23,9 @@ function build() {
       findMany: jest.fn().mockResolvedValue([]),
       create: jest.fn(),
       update: jest.fn(),
+      // Default: nothing to auto-close (the common case) — every pre-existing test in this
+      // file exercises that path unchanged.
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
   } as any;
   return { svc: new FeatureOverrideService(prisma), prisma };
@@ -181,6 +184,39 @@ describe("FeatureOverrideService.create", () => {
     prisma.tenantFeatureOverride.findMany.mockResolvedValue([row({ effect: "GRANT" })]);
     await svc.get("t1", "tobacco_dealer");
     expect(prisma.tenantFeatureOverride.findMany).toHaveBeenCalledTimes(2); // cache was invalidated
+  });
+
+  // Opus review of 8130b204, item 5: the partial unique index is `WHERE revokedAt IS NULL` --
+  // an expired-but-never-revoked row still counts toward it and would otherwise block a
+  // re-grant/re-deny of the same key until someone manually revokes the stale row first.
+  it("auto-closes an expired-but-unrevoked row for the same key before inserting", async () => {
+    const { svc, prisma } = build();
+    prisma.tenantFeatureOverride.create.mockResolvedValue(row());
+
+    await svc.create({
+      tenantId: "t1",
+      featureKey: "tobacco_dealer",
+      effect: "GRANT",
+      reason: "renewed pilot",
+      expiresAt: null,
+      createdById: "admin1",
+    });
+
+    expect(prisma.tenantFeatureOverride.updateMany).toHaveBeenCalledWith({
+      where: {
+        tenantId: "t1",
+        featureKey: "tobacco_dealer",
+        revokedAt: null,
+        expiresAt: { lte: expect.any(Date) },
+      },
+      data: { revokedAt: expect.any(Date) },
+    });
+    // The auto-close runs BEFORE the insert, so a still-active partial-unique row from a
+    // genuinely current (non-expired) override is never touched by it — only the query's own
+    // `expiresAt: { lte: now }` filter enforces that, proven by the where clause above.
+    const closeOrder = prisma.tenantFeatureOverride.updateMany.mock.invocationCallOrder[0];
+    const createOrder = prisma.tenantFeatureOverride.create.mock.invocationCallOrder[0];
+    expect(closeOrder).toBeLessThan(createOrder);
   });
 
   it("rejects a featureKey that does not exist in FEATURE_REGISTRY with FEATURE_KEY_UNKNOWN", async () => {
