@@ -149,7 +149,8 @@
       "client-page-params\\.spec\\.ts$",
       "no-react-skew-hacks\\.spec\\.ts$",
       "next-version\\.spec\\.ts$",
-      "audit-allowlist-retired\\.spec\\.ts$"
+      "audit-allowlist-retired\\.spec\\.ts$",
+      "bugs-self-test-script\\.spec\\.ts$"
     ],
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"

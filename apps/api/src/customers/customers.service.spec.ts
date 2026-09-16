@@ -16,6 +16,7 @@ import { StorageService } from "../storage/storage.service";
 import { MeterService } from "../billing/meter.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { EmailService } from "../email/email.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { CreateCustomerDto } from "./dto/create-customer.dto";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
@@ -94,6 +95,7 @@ describe("CustomersService", () => {
   let entitlements: { hasFlag: jest.Mock };
   let configGet: jest.Mock;
   let ledger: { reverseInvoiceEntries: jest.Mock };
+  let email: { send: jest.Mock };
   const originalFetch = global.fetch;
 
   beforeEach(async () => {
@@ -130,6 +132,7 @@ describe("CustomersService", () => {
     // has no upgradeTargetForFlag, so a flag-OFF msrp path would crash there and
     // mask the behaviour the test is actually about.
     entitlements = { hasFlag: jest.fn().mockResolvedValue(false) };
+    email = { send: jest.fn().mockResolvedValue({ delivered: true, transport: "resend" }) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -156,6 +159,7 @@ describe("CustomersService", () => {
         { provide: PlanCatalogService, useValue: catalog },
         { provide: EntitlementsService, useValue: entitlements },
         { provide: RegulatedLedgerService, useValue: ledger },
+        { provide: EmailService, useValue: email },
       ],
     }).compile();
 
@@ -246,6 +250,150 @@ describe("CustomersService", () => {
       const result = await service.findAll({ page: 1, limit: 20 });
 
       expect((result.data[0] as any).regulatedCount).toBe(2);
+    });
+
+    // ─── REG-B156: unassigned=1 ─────────────────────────────────────────────
+
+    it('REG-B156: filters to customers with no stop on a SCHEDULED route when unassigned="1"', async () => {
+      prisma.customer.findMany.mockResolvedValue([]);
+      prisma.customer.count.mockResolvedValue(0);
+
+      await service.findAll({ unassigned: "1", page: 1, limit: 20 } as any);
+
+      expect(prisma.customer.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            routeStops: { none: { route: { kind: "SCHEDULED" } } },
+          }),
+        }),
+      );
+    });
+
+    it('REG-B156: omits the unassigned filter when "unassigned" is not exactly "1"', async () => {
+      prisma.customer.findMany.mockResolvedValue([]);
+      prisma.customer.count.mockResolvedValue(0);
+
+      await service.findAll({ unassigned: "0", page: 1, limit: 20 } as any);
+
+      expect(prisma.customer.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.not.objectContaining({ routeStops: expect.anything() }),
+        }),
+      );
+    });
+
+    // ─── REG-B170: removed=1 ────────────────────────────────────────────────
+
+    it('REG-B170: shows ONLY soft-deleted customers when removed="1"', async () => {
+      prisma.customer.findMany.mockResolvedValue([]);
+      prisma.customer.count.mockResolvedValue(0);
+
+      await service.findAll({ removed: "1", page: 1, limit: 20 } as any);
+
+      expect(prisma.customer.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ deletedAt: { not: null } }),
+        }),
+      );
+    });
+
+    it("REG-B170: excludes removed customers by default (unchanged behaviour)", async () => {
+      prisma.customer.findMany.mockResolvedValue([]);
+      prisma.customer.count.mockResolvedValue(0);
+
+      await service.findAll({ page: 1, limit: 20 });
+
+      expect(prisma.customer.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ deletedAt: null }),
+        }),
+      );
+    });
+  });
+
+  // ─── changeStatus ─────────────────────────────────────────────────────────
+
+  describe("changeStatus", () => {
+    it("updates the user's status", async () => {
+      prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
+      prisma.user.update.mockResolvedValue({ id: "user-1", status: "SUSPENDED" });
+
+      await service.changeStatus("cust-1", { status: "SUSPENDED" } as any);
+
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "user-1" },
+          data: { status: "SUSPENDED" },
+        }),
+      );
+    });
+
+    it("REG-B170: refuses to change status for a removed customer (zombie write)", async () => {
+      prisma.customer.findUnique.mockResolvedValue({ ...MOCK_CUSTOMER, deletedAt: new Date() });
+
+      await expect(service.changeStatus("cust-1", { status: "ACTIVE" } as any)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it("should throw NotFoundException for non-existent customer", async () => {
+      prisma.customer.findUnique.mockResolvedValue(null);
+      await expect(
+        service.changeStatus("nonexistent", { status: "ACTIVE" } as any),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ─── exportCustomers ──────────────────────────────────────────────────────
+
+  describe("exportCustomers", () => {
+    beforeEach(() => {
+      prisma.customer.findMany.mockResolvedValue([]);
+    });
+
+    it("REG-B158: excludes supplier-only and soft-deleted customers, same as findAll", async () => {
+      await service.exportCustomers({} as any);
+
+      expect(prisma.customer.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ supplierOnly: false, deletedAt: null }),
+        }),
+      );
+    });
+
+    it("REG-B158: applies the regulated filter, same as findAll (was missing entirely)", async () => {
+      await service.exportCustomers({ regulated: "1" } as any);
+
+      expect(prisma.customer.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            authorizations: { some: { trackedCategory: { requiresLicense: true } } },
+          }),
+        }),
+      );
+    });
+
+    it("REG-B158: applies the search filter, same as findAll (was missing entirely)", async () => {
+      await service.exportCustomers({ search: "acme" } as any);
+
+      expect(prisma.customer.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            OR: expect.arrayContaining([{ businessName: expect.any(Object) }]),
+          }),
+        }),
+      );
+    });
+
+    it("REG-B170: exports removed customers when removed=1 (export what the screen shows)", async () => {
+      await service.exportCustomers({ removed: "1" } as any);
+
+      expect(prisma.customer.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ deletedAt: { not: null } }),
+        }),
+      );
     });
   });
 
@@ -567,6 +715,15 @@ describe("CustomersService", () => {
       await expect(service.update("nonexistent", {} as any)).rejects.toThrow(NotFoundException);
     });
 
+    it("REG-B170: refuses to edit a removed customer", async () => {
+      prisma.customer.findUnique.mockResolvedValue({ ...MOCK_CUSTOMER, deletedAt: new Date() });
+
+      await expect(service.update("cust-1", { businessName: "New Name" } as any)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(prisma.customer.update).not.toHaveBeenCalled();
+    });
+
     // ─── update: defaultDepositPercent (WP1) ────────────────────────────────
 
     it("forwards a numeric defaultDepositPercent to the update data", async () => {
@@ -845,6 +1002,10 @@ describe("CustomersService", () => {
         id: "cust-1",
         userId: "user-1",
         deletedAt: new Date(),
+        email: "acme@shop.com",
+        // F4: post-fix tombstone — the delete write no longer overwrites status to
+        // INACTIVE, so the row already carries the live status it had before removal.
+        user: { status: "ACTIVE", username: "acme" },
       });
 
       const result = await service.restoreCustomer("cust-1");
@@ -855,7 +1016,7 @@ describe("CustomersService", () => {
       });
       expect(prisma.user.update).toHaveBeenCalledWith({
         where: { id: "user-1" },
-        data: { status: "ACTIVE" },
+        data: { status: "ACTIVE", deletedAt: null, username: "acme", email: "acme@shop.com" },
       });
       expect(result).toEqual({ success: true, restored: true });
     });
@@ -865,14 +1026,41 @@ describe("CustomersService", () => {
         id: "cust-1",
         userId: "user-1",
         deletedAt: new Date(),
+        email: "acme@shop.com",
+        user: { username: "acme" },
       });
 
       await service.restoreCustomer("cust-1", "SUSPENDED");
 
-      expect(prisma.user.update).toHaveBeenCalledWith({
-        where: { id: "user-1" },
-        data: { status: "SUSPENDED" },
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "user-1" },
+          data: expect.objectContaining({ status: "SUSPENDED" }),
+        }),
+      );
+    });
+
+    it("F4: a SUSPENDED customer removed then restored with no restoreStatus keeps SUSPENDED (post-fix tombstone)", async () => {
+      // The tombstone write (F4) no longer overwrites User.status to INACTIVE, so a
+      // SUSPENDED customer's row still carries SUSPENDED going into restore — the
+      // caller (e.g. a plain POST /restore with no explicit restoreStatus) must get
+      // that status back rather than defaulting to ACTIVE.
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        userId: "user-1",
+        deletedAt: new Date(),
+        email: "acme@shop.com",
+        user: { status: "SUSPENDED", username: "acme" },
       });
+
+      await service.restoreCustomer("cust-1");
+
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "user-1" },
+          data: expect.objectContaining({ status: "SUSPENDED" }),
+        }),
+      );
     });
 
     it("is a no-op for a customer that is not soft-deleted", async () => {
@@ -880,6 +1068,8 @@ describe("CustomersService", () => {
         id: "cust-1",
         userId: "user-1",
         deletedAt: null,
+        email: "acme@shop.com",
+        user: { username: "acme" },
       });
 
       const result = await service.restoreCustomer("cust-1");
@@ -891,6 +1081,108 @@ describe("CustomersService", () => {
     it("throws NotFoundException when the customer does not exist", async () => {
       prisma.customer.findUnique.mockResolvedValue(null);
       await expect(service.restoreCustomer("missing")).rejects.toThrow(NotFoundException);
+    });
+
+    // ─── REG-B159 ────────────────────────────────────────────────────────────
+
+    it("REG-B159 T2: strips the tombstone suffix and restores Customer.email onto the User row", async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        userId: "user-1",
+        deletedAt: new Date(),
+        email: "acme@shop.com",
+        user: { status: "ACTIVE", username: `acme~removed~${"cust-1".slice(0, 8)}` },
+      });
+
+      await service.restoreCustomer("cust-1");
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: "user-1" },
+        data: { status: "ACTIVE", deletedAt: null, username: "acme", email: "acme@shop.com" },
+      });
+    });
+
+    it("REG-B159 T2: mints a fresh placeholder email when the customer never had a real one", async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        userId: "user-1",
+        deletedAt: new Date(),
+        email: null,
+        user: { username: `acme~removed~${"cust-1".slice(0, 8)}` },
+      });
+
+      await service.restoreCustomer("cust-1");
+
+      const data = prisma.user.update.mock.calls[0][0].data;
+      expect(data.username).toBe("acme");
+      expect(data.email).toMatch(/^no-email\+.+@placeholder\.local$/);
+    });
+
+    it("REG-B159 T3: 409s when the restored identity was reused by a newer customer, and accepts an override username", async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        userId: "user-1",
+        deletedAt: new Date(),
+        email: "acme@shop.com",
+        user: { username: `acme~removed~${"cust-1".slice(0, 8)}` },
+      });
+      prisma.user.update.mockRejectedValueOnce({ code: "P2002" });
+
+      await expect(service.restoreCustomer("cust-1")).rejects.toThrow(ConflictException);
+
+      prisma.user.update.mockResolvedValueOnce({ id: "user-1" });
+      await service.restoreCustomer("cust-1", undefined, "acme-2");
+
+      expect(prisma.user.update).toHaveBeenLastCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ username: "acme-2" }) }),
+      );
+    });
+
+    it("REG-B159 T4 (pin): a pre-fix removed row (no tombstone suffix, INACTIVE) restores to ACTIVE (F4)", async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        userId: "user-1",
+        deletedAt: new Date(),
+        email: "acme@shop.com",
+        // No "~removed~" suffix AND status still INACTIVE — this row predates BOTH the
+        // B159 fix (username release) and the F4 fix (status left untouched by delete).
+        // It must still come back ACTIVE, exactly as master did, rather than the
+        // INACTIVE fallback leaving it permanently unusable.
+        user: { status: "INACTIVE", username: "acme" },
+      });
+
+      await service.restoreCustomer("cust-1");
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: "user-1" },
+        data: { status: "ACTIVE", deletedAt: null, username: "acme", email: "acme@shop.com" },
+      });
+    });
+
+    // ─── F6 — restore email conflict ──────────────────────────────────────────
+    it("F6: falls back to a placeholder email when another live user now holds the real one", async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        userId: "user-1",
+        deletedAt: new Date(),
+        email: "acme@shop.com",
+        user: { status: "ACTIVE", username: "acme" },
+      });
+      // A different user in the tenant has since claimed "acme@shop.com".
+      prisma.user.findFirst.mockResolvedValue({ id: "user-someone-else" });
+
+      const result = await service.restoreCustomer("cust-1");
+
+      expect(result).toEqual({ success: true, restored: true });
+      expect(prisma.user.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ email: "acme@shop.com", id: { not: "user-1" } }),
+        }),
+      );
+      const data = prisma.user.update.mock.calls[0][0].data;
+      expect(data.deletedAt).toBeNull();
+      expect(data.email).not.toBe("acme@shop.com");
+      expect(data.email).toMatch(/^no-email\+.+@placeholder\.local$/);
     });
   });
 
@@ -963,6 +1255,41 @@ describe("CustomersService", () => {
         where: { customerId: SECONDARY.id },
         data: { customerId: PRIMARY.id },
       });
+    });
+
+    // ─── F2 — merge refuses a removed customer on either side ────────────────
+    it("F2: 409s when the primary is soft-deleted, and never opens the merge transaction", async () => {
+      prisma.customer.findUnique.mockImplementation(({ where }: any) =>
+        Promise.resolve(
+          where.id === PRIMARY.id
+            ? { ...PRIMARY, deletedAt: new Date() }
+            : where.id === SECONDARY.id
+              ? SECONDARY
+              : null,
+        ),
+      );
+
+      await expect(service.mergeCustomers(PRIMARY.id, SECONDARY.id)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+    });
+
+    it("F2: 409s when the secondary is soft-deleted, and never opens the merge transaction", async () => {
+      prisma.customer.findUnique.mockImplementation(({ where }: any) =>
+        Promise.resolve(
+          where.id === PRIMARY.id
+            ? PRIMARY
+            : where.id === SECONDARY.id
+              ? { ...SECONDARY, deletedAt: new Date() }
+              : null,
+        ),
+      );
+
+      await expect(service.mergeCustomers(PRIMARY.id, SECONDARY.id)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
     });
   });
 
@@ -1186,6 +1513,26 @@ describe("CustomersService", () => {
       );
       expect(prisma.advancePayment.update).toHaveBeenCalledWith(
         expect.objectContaining({ data: { balance: { decrement: 100 } } }),
+      );
+    });
+
+    it("F7: reports the server's own appliedAmount on the response (wallet 1000, invoice 1000, 400 already paid → 600)", async () => {
+      prisma.advancePayment.findUnique.mockResolvedValue({ id: "ap-1", balance: 1000 });
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-1",
+        total: 1000,
+        status: "SENT",
+        dueDate: null,
+        payments: [{ amount: 400, status: "PAID" }],
+      });
+
+      const result: any = await service.applyAdvancePaymentToInvoice("ap-1", {
+        invoiceId: "inv-1",
+      });
+
+      expect(result.appliedAmount).toBe(600);
+      expect(prisma.invoicePayment.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ amount: 600 }) }),
       );
     });
 
@@ -2467,12 +2814,74 @@ describe("CustomersService", () => {
 
     beforeEach(() => {
       prisma.customer.findUnique.mockImplementation(async ({ where }: any) =>
-        where.id === CUSTOMER.id ? { ...CUSTOMER, user: { status: "ACTIVE" } } : null,
+        where.id === CUSTOMER.id
+          ? { ...CUSTOMER, user: { status: "ACTIVE", username: "acme" } }
+          : null,
       );
       // Record-free: nothing to orphan, so the 409 never fires either way.
       prisma.order.count.mockResolvedValue(0);
       prisma.invoice.count.mockResolvedValue(0);
       prisma.return.count.mockResolvedValue(0);
+    });
+
+    it("REG-B159 T1: releases the User row's username/email on soft delete, leaving status and googleId untouched (F4/F5)", async () => {
+      await service.deleteCustomer(CUSTOMER.id, true);
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: CUSTOMER.userId },
+        data: {
+          deletedAt: expect.any(Date),
+          username: `acme~removed~${CUSTOMER.id.slice(0, 8)}`,
+          email: `removed+${CUSTOMER.id}@placeholder.local`,
+        },
+      });
+      // F4: status is deliberately NOT overwritten to INACTIVE — login is already refused
+      // on User.deletedAt, and overwriting it here is what made restoreCustomer's undo
+      // lossy for a SUSPENDED customer. F5: googleId is deliberately left alone too —
+      // restore never brings it back, so nulling it here was lossy for no gain.
+      const data = prisma.user.update.mock.calls[0][0].data;
+      expect(data).not.toHaveProperty("status");
+      expect(data).not.toHaveProperty("googleId");
+    });
+
+    // ─── F1 — deleteCustomer is idempotent ──────────────────────────────────
+    it("F1: a customer already soft-deleted short-circuits — no transaction, no user.update", async () => {
+      prisma.customer.findUnique.mockResolvedValueOnce({
+        ...CUSTOMER,
+        deletedAt: new Date(),
+        user: { status: "INACTIVE", username: `acme~removed~${CUSTOMER.id.slice(0, 8)}` },
+      });
+
+      await expect(service.deleteCustomer(CUSTOMER.id, true)).resolves.toEqual({
+        success: true,
+        softDeleted: true,
+      });
+
+      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it("F1: deleting a live customer twice tombstones the username exactly once (no double suffix)", async () => {
+      await service.deleteCustomer(CUSTOMER.id, true);
+      expect(prisma.user.update).toHaveBeenCalledTimes(1);
+      const tombstonedUsername = prisma.user.update.mock.calls[0][0].data.username;
+      expect(tombstonedUsername).toBe(`acme~removed~${CUSTOMER.id.slice(0, 8)}`);
+
+      // Second delete sees the now-tombstoned row — the idempotency guard must
+      // short-circuit before the soft-delete branch re-appends a SECOND
+      // "~removed~<id8>" suffix (restoreCustomer only ever strips one).
+      prisma.customer.findUnique.mockResolvedValueOnce({
+        ...CUSTOMER,
+        deletedAt: new Date(),
+        user: { status: "INACTIVE", username: tombstonedUsername },
+      });
+
+      await service.deleteCustomer(CUSTOMER.id, true);
+
+      expect(prisma.user.update).toHaveBeenCalledTimes(1);
+      expect(tombstonedUsername).not.toContain(
+        `~removed~${CUSTOMER.id.slice(0, 8)}~removed~${CUSTOMER.id.slice(0, 8)}`,
+      );
     });
 
     it("REG-B130b: soft-deletes a RECORD-FREE customer when force=true (the detail page's Undo contract)", async () => {
@@ -2559,6 +2968,84 @@ describe("CustomersService", () => {
 
       // Z: no records — hard-deleted.
       expect(prisma.customer.delete).toHaveBeenCalledWith({ where: { id: CUSTOMER_Z.id } });
+    });
+  });
+
+  // ─── Portal invite (B212-class fix) ────────────────────────────────────────
+  //
+  // sendPortalInvite used to claim "Email sending is best-effort... it logs
+  // only" and then never called EmailService at all — the CustomerLink still
+  // flipped to INVITED and the web page rendered "Invite Sent" while the
+  // customer received nothing, with no way for either side to detect the gap.
+  describe("sendPortalInvite", () => {
+    const CUSTOMER_WITH_EMAIL = {
+      id: "cust-invite",
+      tenantId: "tenant-1",
+      email: "buyer@example.com",
+      user: { email: "login@example.com" },
+    };
+
+    beforeEach(() => {
+      prisma.customer.findFirst.mockResolvedValue(CUSTOMER_WITH_EMAIL as any);
+      prisma.customerLink.upsert.mockResolvedValue({} as any);
+      prisma.tenantConfig.findFirst.mockResolvedValue({ businessName: "Acme Distribution" } as any);
+    });
+
+    it("actually sends the invite email (not just a logged 'best-effort' claim)", async () => {
+      const result = await service.sendPortalInvite("cust-invite", { method: "EMAIL" }, "tenant-1");
+
+      expect(email.send).toHaveBeenCalledWith(expect.objectContaining({ to: "buyer@example.com" }));
+      expect(result.emailSent).toBe(true);
+      expect(result.message).toMatch(/emailed to buyer@example\.com/i);
+    });
+
+    it("reports emailSent:false and an honest message when delivery fails — THE BUG: this used to be silently unsent with a false 'prepared' message", async () => {
+      email.send.mockResolvedValue({
+        delivered: false,
+        transport: "none",
+        error: "RESEND_API_KEY not configured",
+      });
+      const loggerErrorSpy = jest.spyOn((service as any).logger, "error");
+
+      const result = await service.sendPortalInvite("cust-invite", { method: "EMAIL" }, "tenant-1");
+
+      expect(result.emailSent).toBe(false);
+      expect(result.message).toMatch(/could not be sent/i);
+      expect(result.message).toContain(result.inviteUrl);
+      expect(loggerErrorSpy).toHaveBeenCalledWith(expect.stringContaining("NOT delivered"));
+    });
+
+    it("still creates the CustomerLink invite row even when email delivery fails (share-manually recovery stays available)", async () => {
+      email.send.mockResolvedValue({ delivered: false, transport: "none" });
+
+      await service.sendPortalInvite("cust-invite", { method: "EMAIL" }, "tenant-1");
+
+      expect(prisma.customerLink.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({ status: "INVITED" }),
+        }),
+      );
+    });
+
+    it("rejects SMS explicitly instead of silently pretending to send it (no real SMS transport exists)", async () => {
+      await expect(
+        service.sendPortalInvite("cust-invite", { method: "SMS" }, "tenant-1"),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(email.send).not.toHaveBeenCalled();
+    });
+
+    it("throws when the customer has no usable email address", async () => {
+      prisma.customer.findFirst.mockResolvedValue({
+        id: "cust-invite",
+        tenantId: "tenant-1",
+        email: null,
+        user: { email: "someone@placeholder.local" },
+      } as any);
+
+      await expect(
+        service.sendPortalInvite("cust-invite", { method: "EMAIL" }, "tenant-1"),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(email.send).not.toHaveBeenCalled();
     });
   });
 });
