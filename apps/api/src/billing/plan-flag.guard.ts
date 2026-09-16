@@ -8,9 +8,18 @@ import {
 import { Reflector } from "@nestjs/core";
 import { EntitlementsService, Entitlements } from "./entitlements.service";
 import { PlanCatalogService } from "./plan-catalog.service";
+import { FeatureOverrideService } from "./feature-override.service";
 import { REQUIRE_PLAN_FLAG_KEY } from "./require-plan-flag.decorator";
 import { buildPlanGateBody } from "./plan-gate";
 import { allowsFlag, isDarkFlag } from "./plan-flag-policy";
+
+/** No self-service fix exists for an admin override — an upgrade CTA would be misleading. */
+const NO_UPGRADE = {
+  planKey: null,
+  planMonthlyPrice: null,
+  addonSku: null,
+  addonMonthlyPrice: null,
+};
 
 /**
  * Re-exported for existing consumers/docs (CLAUDE.md's Entitlement gates section) that
@@ -38,6 +47,7 @@ export class PlanFlagGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly entitlements: EntitlementsService,
     private readonly catalog: PlanCatalogService,
+    private readonly featureOverrides: FeatureOverrideService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -52,6 +62,21 @@ export class PlanFlagGuard implements CanActivate {
     // SUPER_ADMIN operates without a tenant — never plan-gated. Checked BEFORE the
     // dark-flag policy (R3a.5): there is no tenant to resolve a plan for.
     if (tenantId == null) return true;
+
+    // An active override is absolute — decided before plan resolution, regardless of
+    // dark/enforced gate mode (owner ruling, feature-grants PR-1). Only its absence falls
+    // through to today's plan+dark behaviour. FeatureOverrideService itself fails open to
+    // null on a DB error, so this never throws.
+    const override = await this.featureOverrides.get(tenantId, flagKey);
+    if (override === "GRANT") return true;
+    if (override === "DENY") {
+      if (isDarkFlag(flagKey)) {
+        this.logger.warn(
+          `plan flag gate override-denied on a dark flag: flag=${flagKey} tenant=${tenantId}`,
+        );
+      }
+      throw new ForbiddenException(buildPlanGateBody(flagKey, NO_UPGRADE));
+    }
 
     let ent: Entitlements;
     try {

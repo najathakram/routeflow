@@ -958,3 +958,11 @@ export const ADDON_GATE_REGISTRY: Readonly<Record<string, AddonGateEntry>> = Obj
 export function addonGateState(key: string): AddonGateState {
   return ADDON_GATE_REGISTRY[key]?.state ?? "enforced";
 }
+
+const REGISTERED_FEATURE_KEYS = new Set(FEATURE_REGISTRY.map((f) => f.key));
+
+/** True when `key` names a row in FEATURE_REGISTRY (any gate kind) — feature-grant overrides
+ * may target any registered key, not only RequireAddon/RequirePlanFlag ones. */
+export function isRegisteredFeatureKey(key: string): boolean {
+  return REGISTERED_FEATURE_KEYS.has(key);
+}

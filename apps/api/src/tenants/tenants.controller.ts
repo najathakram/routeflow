@@ -19,6 +19,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiConsumes, ApiBody } from "@nes
 import { TenantsService } from "./tenants.service";
 import { EmailService } from "../email/email.service";
 import { AddonService } from "../billing/addon.service";
+import { FeatureOverrideService } from "../billing/feature-override.service";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
@@ -37,6 +38,7 @@ export class TenantsController {
     private readonly tenantsService: TenantsService,
     private readonly emailService: EmailService,
     private readonly addonService: AddonService,
+    private readonly featureOverrides: FeatureOverrideService,
   ) {}
 
   // ─── Me: Addons ──────────────────────────────────────────────────────────────
@@ -49,8 +51,17 @@ export class TenantsController {
   @ApiBearerAuth()
   @ApiOperation({ summary: "Active add-on keys for the current tenant (feature flags)" })
   async getMyAddons(@CurrentUser() user: JwtPayload) {
-    const addons = user.tenantId ? await this.addonService.getActiveAddons(user.tenantId) : [];
-    return { addons };
+    if (!user.tenantId) return { addons: [] };
+    const active = await this.addonService.getActiveAddons(user.tenantId);
+    // An active override is absolute (owner ruling, feature-grants PR-1): GRANT surfaces a key
+    // the tenant holds no addon row for at all; DENY hides a key it does hold one for.
+    const overrides = await this.featureOverrides.allActive(user.tenantId);
+    const addons = new Set(active);
+    for (const [key, effect] of overrides) {
+      if (effect === "GRANT") addons.add(key);
+      else addons.delete(key);
+    }
+    return { addons: Array.from(addons) };
   }
 
   // ─── Me/Config: Email ──────────────────────────────────────────────────────

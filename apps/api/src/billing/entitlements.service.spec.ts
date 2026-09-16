@@ -99,7 +99,16 @@ function tenantFixture(opts: TenantOpts = {}) {
 function makeService(tenant: ReturnType<typeof tenantFixture> | null) {
   const prisma = { tenant: { findUnique: jest.fn().mockResolvedValue(tenant) } } as any;
   const catalog = { getVersionForTenant: jest.fn().mockResolvedValue(catalogVersion()) } as any;
-  return { svc: new EntitlementsService(prisma, catalog), prisma, catalog };
+  // Every pre-existing test in this file exercises a tenant with no override rows, so this
+  // collaborator-contract addition (feature-grants PR-1) defaults to "no override" — the same
+  // plan-only behavior those tests already assert on.
+  const featureOverrides = { get: jest.fn().mockResolvedValue(null) } as any;
+  return {
+    svc: new EntitlementsService(prisma, catalog, featureOverrides),
+    prisma,
+    catalog,
+    featureOverrides,
+  };
 }
 
 describe("EntitlementsService.resolve", () => {
@@ -242,6 +251,18 @@ describe("EntitlementsService.resolve", () => {
     const { svc } = makeService(tenantFixture({ plan: "STARTER" }));
     expect(await svc.hasFlag("t1", "addon.ocr")).toBe(true);
     expect(await svc.hasFlag("t1", "flag.analytics")).toBe(false);
+  });
+
+  it("hasFlag: a GRANT override wins even though the plan lacks the flag", async () => {
+    const { svc, featureOverrides } = makeService(tenantFixture({ plan: "STARTER" }));
+    featureOverrides.get.mockResolvedValue("GRANT");
+    expect(await svc.hasFlag("t1", "flag.analytics")).toBe(true);
+  });
+
+  it("hasFlag: a DENY override wins even though the plan grants the flag", async () => {
+    const { svc, featureOverrides } = makeService(tenantFixture({ plan: "STARTER" }));
+    featureOverrides.get.mockResolvedValue("DENY");
+    expect(await svc.hasFlag("t1", "addon.ocr")).toBe(false);
   });
 
   it("caches within TTL and re-resolves after invalidate", async () => {

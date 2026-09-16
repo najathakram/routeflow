@@ -2,6 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { TenantStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { PlanCatalogService } from "./plan-catalog.service";
+import { FeatureOverrideService } from "./feature-override.service";
 import {
   addonSkuCode,
   findPlanDefinition,
@@ -80,6 +81,7 @@ export class EntitlementsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly catalog: PlanCatalogService,
+    private readonly featureOverrides: FeatureOverrideService,
   ) {}
 
   /** Resolve (and cache) the full entitlement snapshot for a tenant. */
@@ -94,8 +96,17 @@ export class EntitlementsService {
     return value;
   }
 
-  /** Server-authoritative flag check (consumed by the PlanFlagGuard added in the plan-gating phase). */
+  /**
+   * Server-authoritative flag check (consumed by cron/service call sites that need a raw
+   * true/false, bypassing PlanFlagGuard's HTTP-shaped 403). An active override is absolute —
+   * checked before the plan/addon resolution, GRANT/DENY deciding outright (owner ruling,
+   * feature-grants PR-1); only its absence falls through to today's plan-flag behaviour.
+   */
   async hasFlag(tenantId: string, flagKey: string): Promise<boolean> {
+    const override = await this.featureOverrides.get(tenantId, flagKey);
+    if (override === "GRANT") return true;
+    if (override === "DENY") return false;
+
     const ent = await this.resolve(tenantId);
     return ent.flags.includes(flagKey);
   }

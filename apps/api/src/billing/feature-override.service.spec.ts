@@ -1,0 +1,242 @@
+import { BadRequestException, ConflictException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
+import { FeatureOverrideService } from "./feature-override.service";
+
+function row(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: "ov1",
+    tenantId: "t1",
+    featureKey: "tobacco_dealer",
+    effect: "GRANT",
+    reason: "pilot",
+    expiresAt: null,
+    createdById: "admin1",
+    createdAt: new Date("2026-09-16T00:00:00Z"),
+    revokedAt: null,
+    ...overrides,
+  };
+}
+
+function build() {
+  const prisma = {
+    tenantFeatureOverride: {
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn(),
+      update: jest.fn(),
+    },
+  } as any;
+  return { svc: new FeatureOverrideService(prisma), prisma };
+}
+
+describe("FeatureOverrideService.get / getMany — read + cache", () => {
+  it("returns null when the tenant has no override rows", async () => {
+    const { svc } = build();
+    await expect(svc.get("t1", "tobacco_dealer")).resolves.toBeNull();
+  });
+
+  it("returns the effect of an active row", async () => {
+    const { svc, prisma } = build();
+    prisma.tenantFeatureOverride.findMany.mockResolvedValue([row({ effect: "GRANT" })]);
+    await expect(svc.get("t1", "tobacco_dealer")).resolves.toBe("GRANT");
+  });
+
+  it("returns DENY for an active DENY row", async () => {
+    const { svc, prisma } = build();
+    prisma.tenantFeatureOverride.findMany.mockResolvedValue([row({ effect: "DENY" })]);
+    await expect(svc.get("t1", "tobacco_dealer")).resolves.toBe("DENY");
+  });
+
+  it("the DB query scopes to the tenant and excludes revoked rows", async () => {
+    const { svc, prisma } = build();
+    await svc.get("t1", "tobacco_dealer");
+    const args = prisma.tenantFeatureOverride.findMany.mock.calls[0][0];
+    expect(args.where.tenantId).toBe("t1");
+    expect(args.where.revokedAt).toBeNull();
+  });
+
+  it("ignores a row whose expiresAt is in the past, rechecked at READ time (not just at fetch)", async () => {
+    // expiresAt drifts stale purely by wall-clock time within an otherwise-valid 30s cache
+    // window, unlike revokedAt (a write-driven state fully covered by invalidate()) — so this
+    // must be a live recheck, not merely a query-time filter that a still-cached entry outlives.
+    const { svc, prisma } = build();
+    prisma.tenantFeatureOverride.findMany.mockResolvedValue([
+      row({ effect: "GRANT", expiresAt: new Date("2000-01-01T00:00:00Z") }),
+    ]);
+    await expect(svc.get("t1", "tobacco_dealer")).resolves.toBeNull();
+  });
+
+  it("a standing override (expiresAt null) is honoured", async () => {
+    const { svc, prisma } = build();
+    prisma.tenantFeatureOverride.findMany.mockResolvedValue([
+      row({ effect: "DENY", expiresAt: null }),
+    ]);
+    await expect(svc.get("t1", "tobacco_dealer")).resolves.toBe("DENY");
+  });
+
+  it("caches for 30s: a second get() within the TTL does not re-query", async () => {
+    const { svc, prisma } = build();
+    prisma.tenantFeatureOverride.findMany.mockResolvedValue([row({ effect: "GRANT" })]);
+    await svc.get("t1", "tobacco_dealer");
+    await svc.get("t1", "tobacco_dealer");
+    expect(prisma.tenantFeatureOverride.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("a second tenant is cached independently", async () => {
+    const { svc, prisma } = build();
+    prisma.tenantFeatureOverride.findMany.mockResolvedValue([]);
+    await svc.get("t1", "tobacco_dealer");
+    await svc.get("t2", "tobacco_dealer");
+    expect(prisma.tenantFeatureOverride.findMany).toHaveBeenCalledTimes(2);
+  });
+
+  it("invalidate(tenantId) forces the next get() to re-query", async () => {
+    const { svc, prisma } = build();
+    prisma.tenantFeatureOverride.findMany.mockResolvedValue([]);
+    await svc.get("t1", "tobacco_dealer");
+    svc.invalidate("t1");
+    await svc.get("t1", "tobacco_dealer");
+    expect(prisma.tenantFeatureOverride.findMany).toHaveBeenCalledTimes(2);
+  });
+
+  it("invalidate() only clears the named tenant, not others", async () => {
+    const { svc, prisma } = build();
+    prisma.tenantFeatureOverride.findMany.mockResolvedValue([]);
+    await svc.get("t1", "tobacco_dealer");
+    await svc.get("t2", "tobacco_dealer");
+    svc.invalidate("t1");
+    await svc.get("t1", "tobacco_dealer");
+    await svc.get("t2", "tobacco_dealer");
+    expect(prisma.tenantFeatureOverride.findMany).toHaveBeenCalledTimes(3);
+  });
+
+  it("fails open (null) on a DB error — never throws into a guard", async () => {
+    const { svc, prisma } = build();
+    prisma.tenantFeatureOverride.findMany.mockRejectedValue(new Error("db down"));
+    await expect(svc.get("t1", "tobacco_dealer")).resolves.toBeNull();
+  });
+
+  it("getMany() returns only the keys that carry an active override", async () => {
+    const { svc, prisma } = build();
+    prisma.tenantFeatureOverride.findMany.mockResolvedValue([
+      row({ featureKey: "recurring_routes", effect: "GRANT" }),
+    ]);
+    const result = await svc.getMany("t1", ["recurring_routes", "order_delivery"]);
+    expect(result.get("recurring_routes")).toBe("GRANT");
+    expect(result.has("order_delivery")).toBe(false);
+  });
+
+  it("getMany() fails open to an empty Map on a DB error", async () => {
+    const { svc, prisma } = build();
+    prisma.tenantFeatureOverride.findMany.mockRejectedValue(new Error("db down"));
+    const result = await svc.getMany("t1", ["recurring_routes"]);
+    expect(result.size).toBe(0);
+  });
+
+  it("allActive() returns every active override, including a key never asked for by name", async () => {
+    const { svc, prisma } = build();
+    prisma.tenantFeatureOverride.findMany.mockResolvedValue([
+      row({ featureKey: "tobacco_dealer", effect: "GRANT" }),
+      row({ featureKey: "recurring_routes", effect: "DENY" }),
+    ]);
+    const result = await svc.allActive("t1");
+    expect(result.get("tobacco_dealer")).toBe("GRANT");
+    expect(result.get("recurring_routes")).toBe("DENY");
+    expect(result.size).toBe(2);
+  });
+
+  it("allActive() excludes an expired row, rechecked at read time", async () => {
+    const { svc, prisma } = build();
+    prisma.tenantFeatureOverride.findMany.mockResolvedValue([
+      row({ featureKey: "tobacco_dealer", expiresAt: new Date("2000-01-01T00:00:00Z") }),
+    ]);
+    const result = await svc.allActive("t1");
+    expect(result.size).toBe(0);
+  });
+
+  it("allActive() fails open to an empty Map on a DB error", async () => {
+    const { svc, prisma } = build();
+    prisma.tenantFeatureOverride.findMany.mockRejectedValue(new Error("db down"));
+    const result = await svc.allActive("t1");
+    expect(result.size).toBe(0);
+  });
+});
+
+describe("FeatureOverrideService.create", () => {
+  it("creates a row and invalidates the tenant's cache", async () => {
+    const { svc, prisma } = build();
+    prisma.tenantFeatureOverride.create.mockResolvedValue(row());
+    prisma.tenantFeatureOverride.findMany.mockResolvedValue([]);
+    await svc.get("t1", "tobacco_dealer"); // warm the cache
+    expect(prisma.tenantFeatureOverride.findMany).toHaveBeenCalledTimes(1);
+
+    await svc.create({
+      tenantId: "t1",
+      featureKey: "tobacco_dealer",
+      effect: "GRANT",
+      reason: "pilot",
+      expiresAt: null,
+      createdById: "admin1",
+    });
+
+    prisma.tenantFeatureOverride.findMany.mockResolvedValue([row({ effect: "GRANT" })]);
+    await svc.get("t1", "tobacco_dealer");
+    expect(prisma.tenantFeatureOverride.findMany).toHaveBeenCalledTimes(2); // cache was invalidated
+  });
+
+  it("rejects a featureKey that does not exist in FEATURE_REGISTRY with FEATURE_KEY_UNKNOWN", async () => {
+    const { svc } = build();
+    const err = await svc
+      .create({
+        tenantId: "t1",
+        featureKey: "not_a_real_key",
+        effect: "GRANT",
+        reason: "pilot",
+        expiresAt: null,
+        createdById: "admin1",
+      })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toMatchObject({ code: "FEATURE_KEY_UNKNOWN" });
+  });
+
+  it("translates a unique-constraint violation (an active row already exists) into 409", async () => {
+    const { svc, prisma } = build();
+    const conflict = Object.assign(new Error("unique"), { code: "P2002" });
+    Object.setPrototypeOf(conflict, Prisma.PrismaClientKnownRequestError.prototype);
+    prisma.tenantFeatureOverride.create.mockRejectedValue(conflict);
+
+    const err = await svc
+      .create({
+        tenantId: "t1",
+        featureKey: "tobacco_dealer",
+        effect: "GRANT",
+        reason: "pilot",
+        expiresAt: null,
+        createdById: "admin1",
+      })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+  });
+});
+
+describe("FeatureOverrideService.revoke", () => {
+  it("sets revokedAt and invalidates the tenant's cache", async () => {
+    const { svc, prisma } = build();
+    prisma.tenantFeatureOverride.update.mockResolvedValue(row({ revokedAt: new Date() }));
+    prisma.tenantFeatureOverride.findMany.mockResolvedValue([row({ effect: "GRANT" })]);
+    await svc.get("t1", "tobacco_dealer");
+    expect(prisma.tenantFeatureOverride.findMany).toHaveBeenCalledTimes(1);
+
+    await svc.revoke("t1", "ov1");
+
+    expect(prisma.tenantFeatureOverride.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "ov1" },
+        data: expect.objectContaining({ revokedAt: expect.any(Date) }),
+      }),
+    );
+    prisma.tenantFeatureOverride.findMany.mockResolvedValue([]);
+    await svc.get("t1", "tobacco_dealer");
+    expect(prisma.tenantFeatureOverride.findMany).toHaveBeenCalledTimes(2);
+  });
+});
