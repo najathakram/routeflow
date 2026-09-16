@@ -1,3 +1,5 @@
+Status: IMPLEMENTED
+
 # Discovery — Phase 0 W2 Tasks T12–T15 (house tenant bootstrap + MRR display closeout)
 
 **Status:** `APPROVED`

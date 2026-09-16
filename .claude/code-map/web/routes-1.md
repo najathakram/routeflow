@@ -15,6 +15,21 @@ byte-identical to before, only the chrome changed. `admin-login/page.tsx` and
 - `login/page.tsx` — workspace picker, email/password, legacy token migration.
 - `signup/page.tsx`, `signup/check-email/page.tsx` — signup + confirmation (check-email's fenced
   heading stays `Check your inbox`, no trailing period).
+  - **#778 fix-round: honest send-failure states (2026-09-16).** `register`'s response now carries
+    `emailSent: boolean` (server-honest since the #778 API-side email fixes); `signup/page.tsx`
+    passes `emailSent=false` through to `check-email` as a query param when the verification
+    mail didn't actually go out (account still created — nothing was ever blocking on delivery).
+    `check-email/page.tsx` reads it as `initialSendFailed` and swaps BOTH the `AuthShell` title
+    ("We couldn't send your email" vs "Check your inbox") and the icon frame to a coherent danger
+    state using existing tokens — an independent visual review caught the original build
+    rendering that failure INSIDE the success-styled `rf-auth-success` card under "Check your
+    inbox", which read as a lie. The Resend button's own fetch now checks `res.ok` (previously
+    always claimed "Sent!" even on a non-2xx or network failure) and tracks `resendFailed`
+    separately from the initial-load state, with matching danger styling. The signup page's
+    truncated-password placeholder also moved from inline copy to helper text (was misreadable
+    as the literal generated password). Verified via manual Playwright screenshots at
+    1440/768/390 for default/`emailSent=false`/`resendFailed` (not a checked-in e2e spec); 5 new
+    RTL tests in `check-email/page.test.tsx`.
 - `forgot-password/page.tsx`, `reset-password/page.tsx` — reset flow (reset-password's
   invalid-token state keeps its old heading text as a state-derived `AuthShell` title; valid
   state is the fenced `Choose a new password`).
