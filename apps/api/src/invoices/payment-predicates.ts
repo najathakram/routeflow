@@ -16,6 +16,15 @@ export {
   resolveConfirmedAmounts,
   splitConfirmed,
   sumConfirmed,
+  // Post-dated check payments PR-1 (additive-only) — see
+  // @routeflow/pricing/src/payment-confirmation.ts for the full doc, N4's binding citation, and
+  // why `remainingCapacity` deliberately does NOT reuse `sumHeld`/`sumConfirmed`.
+  HELD_STATUSES,
+  HELD_PAYMENT,
+  isHeldPayment,
+  sumHeld,
+  collectedDateOf,
+  remainingCapacity,
 } from "@routeflow/pricing";
 export type {
   ConfirmablePaymentRow,

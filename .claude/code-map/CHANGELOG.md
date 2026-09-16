@@ -33,6 +33,24 @@ never accumulate history in `"notes"`.
   `flags` fail-open, 6 spec files' TS2352 casts) — `api/lite-plan.md`, `packages.md`,
   `web/app-shell-lib.md`, `web/api-hooks.md`, `mobile/app-shell-lib.md` each got a short
   amendment; no new area file.
+- **2026-09-15 — check-payments PR-1 fix round (branch `feat/check-payments-pr1`, 4 findings
+  from an independent Opus review)** — **BLOCKER 1** (API wouldn't boot): `invoices.service.ts`
+  value-imported `CHECK_TRANSITIONS` from `@routeflow/types` (raw-TS package, no build step) —
+  `nest build` emitted a literal `require(...)` into `dist/`, crashing `node dist/main.js` at
+  boot; `no-runtime-workspace-imports.spec.ts` correctly caught it. Fixed with a new API-local
+  mirror `apps/api/src/common/check-transitions.ts` (same convention as `trip-grouping.ts`/
+  `shipping.ts`); `check-transitions-parity.spec.ts` rewritten to pin the mirror value-equal to
+  `packages/types/api/checks.ts` by deep-equal instead of an import-path check. **BLOCKER 2**:
+  `schema-folder.spec.ts`'s `EXPECTED_ENUM_COUNT` (84) wasn't bumped for the new
+  `CheckReturnReason` enum — now 85, matching `enum-parity.spec.ts`'s already-bumped pin.
+  **MAJOR 3**: `backfill-check-dates.mjs` gained the CLAUDE.md live-tenant policy guard —
+  `--apply` against a live (non-test) tenant now requires `--live-tenant-override` +
+  `--confirm-tenant-id=<id>` (same mechanism as `repair-receiving-units.mjs`); unscoped `--apply`
+  always requires the override. **MINOR 4**: `enum-parity.spec.ts`'s mobile-stub-parity block
+  (X2) now also deep-equals the Jest stub's hand-copied `CHECK_TRANSITIONS` against the canonical
+  export (it can't ride the `*_VALUES`-suffix sweep). See `packages.md`/`api/feature-modules-1.md`
+  /`mobile/tests-1.md` for per-file detail. `mappedSha` left as-is.
+
 - **2026-09-15 — feature grants PR-1: typed feature registry (`feat/feature-grants-pr1`,
   worktree `rf-feature-grants-pr1`, base master `7b8bf085`; registry-only, no runtime change)** —
   new `apps/api/src/billing/feature-registry.ts`: `FeatureDef`/`FEATURE_REGISTRY` (28 rows) is

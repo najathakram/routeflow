@@ -372,7 +372,17 @@ status:"ISSUED"})` never runs unscoped; filters via `isCreditOpenForApply`; full
   `EditablePaymentMethod = SelectablePaymentMethod` (the latter also feeds
   `lib/api/supplier-payments.ts`).
 - **`lib/payments-logic.ts`** — + `CHECK_TRANSITIONS` (server mirror; null stored status =
-  RECORDED) + `checkNextStates` (CHECK & not-VOID only); `waterfallAllocations` /
+  RECORDED) + `checkNextStates` (CHECK & not-VOID only); **post-dated check payments PR-1
+  (2026-09-15): `CHECK_TRANSITIONS`/`CheckStatus` now come from `@routeflow/types`** (the ONE
+  canonical copy shared with the API and web — see `packages.md`'s `api/checks.ts` entry), not
+  hand-declared here; still re-exported from this file for compatibility. The Jest
+  `@routeflow/types` mock (`__tests__/__mocks__/@routeflow/types.js`) hand-copies
+  `CHECK_TRANSITIONS` too (a runtime value, not just a type). **PR-1 fix round (minor 4):** this
+  copy is no longer "keep in sync by hand" only — `apps/api/src/common/enum-parity.spec.ts`'s
+  mobile-stub-parity block (X2) now also deep-equals it against `packages/types/api/checks.ts`'s
+  export (it can't ride the sweep's `*_VALUES`-suffix convention since `CHECK_TRANSITIONS` isn't
+  a Prisma enum-values array, so it gets its own explicit assertion).
+  `waterfallAllocations` /
   `allocationTotals` / `oldestInvoicesFirst` — the standalone endpoint applies allocations
   VERBATIM (no rounding, no per-invoice cap, no sum≤total guard, `PAY-####` numbers lack the
   tenant hash), so ALL safety is client-side. Specs extended (32 cases). `paymentMethodPill` is a

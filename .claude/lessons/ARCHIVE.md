@@ -1867,3 +1867,15 @@ multiple code-map CHANGELOG entries — not a candidate despite similar age.
 - **Lesson:** **A bare non-zero task exit with no test report is environmental — re-run that
   workspace directly before debugging; CI on clean runners is the authoritative gate.**
 - **Guard:** none — judgment (triage: direct `npx jest`, then filtered turbo).
+
+### L-096 · 2026-09-08 · domain · #671
+
+- **Symptom:** F16's design of record specified a new `InvoiceCounter` table; S2 found the
+  per-tenant, per-year `NumberingSequence` + `NumberingService` already shipped (a code comment
+  naming B100), so building the table would have created a second numbering store.
+- **Root cause:** the design was written from the bug report, not from the schema.
+- **Lesson:** **Before designing any new store/counter/registry, grep the schema folder and the
+  modules for the dimension you need — an existing primitive with a gap (here, an unused `year`
+  column) beats a new table every time.**
+- **Guard:** the bug-pipeline S2 refutation step now asks "does the primitive already exist?"
+  explicitly.

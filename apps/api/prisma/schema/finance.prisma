@@ -18,10 +18,17 @@ enum PaymentMethod {
   ZELLE
 }
 
+// PENDING (post-dated check payments PR-1, additive-only): a CHECK payment
+// recorded and held but not yet clearable/bankable — neither a draft awaiting
+// operator confirmation (DRAFT) nor confirmed-and-collectable (PAID). No
+// read/write path sets or interprets this value yet (that wiring is a later
+// PR in the design's §3.4 table); this PR only adds the value and the shared
+// HELD_STATUSES/isHeldPayment/sumHeld helpers in @routeflow/pricing.
 enum PaymentStatus {
   DRAFT
   PAID
   VOID
+  PENDING
 }
 
 // P5-12: lifecycle of a CHECK InvoicePayment. Always null on non-check payments.
@@ -30,6 +37,16 @@ enum CheckStatus {
   DEPOSITED
   CLEARED
   BOUNCED
+}
+
+// Post-dated check payments PR-1 (additive-only, schema + shared helpers): why a
+// CHECK bounced. Only ever set via a later PR's transition wiring; unused by any
+// read/write path in this PR.
+enum CheckReturnReason {
+  NSF
+  ACCOUNT_CLOSED
+  STOP_PAYMENT
+  OTHER
 }
 
 // ─── New Enums (Zoho-parity) ──────────────────────────────────────────────────
@@ -198,6 +215,12 @@ model Invoice {
   // Phase 4: links the sibling invoices produced when a mixed order is split by
   // regulated category (INV-1919 / INV-1919-R1 …). Null for un-split invoices.
   invoiceGroupId         String?
+  // Post-dated check payments PR-1 (additive-only): set when this invoice IS an
+  // NSF-fee invoice generated FOR a bounced InvoicePayment (a later PR's
+  // transition wiring creates these). Plain id string, no FK relation — mirrors
+  // InvoicePayment.nsfFeeInvoiceId's own no-FK rationale. Null on every
+  // ordinary invoice.
+  feeForPaymentId        String?
   createdAt              DateTime      @default(now())
   updatedAt              DateTime      @updatedAt
   tenantId               String?
@@ -334,6 +357,23 @@ model InvoicePayment {
   imageOriginalName String?
   imageMimeType     String?
 
+  // Post-dated check payments PR-1 (additive-only; a later PR wires reads/writes
+  // — see design §3.4/§10). checkNumber/bankName/checkDate describe the check
+  // instrument itself; checkDate is the date PRINTED on the check (distinct
+  // from paidAt/settledAt above). appliedAt is set at a later PR's transition
+  // — null means "applied on receipt" (today's implicit behavior for every
+  // existing row). bounceReason is only ever set alongside checkStatus =
+  // BOUNCED. replacesPaymentId/nsfFeeInvoiceId are plain id strings (no FK
+  // relation) so a bounced-check replacement/fee-invoice chain never blocks
+  // on referential integrity before the row it points at exists.
+  checkNumber      String?
+  bankName         String?
+  checkDate        DateTime?          @db.Date
+  appliedAt        DateTime?
+  bounceReason     CheckReturnReason?
+  replacesPaymentId String?
+  nsfFeeInvoiceId  String?
+
   invoice        Invoice         @relation(fields: [invoiceId], references: [id])
   tenant         Tenant?         @relation(fields: [tenantId], references: [id])
   creditNote     CreditNote?     @relation(fields: [creditNoteId], references: [id])
@@ -344,6 +384,8 @@ model InvoicePayment {
   @@index([status])
   @@index([tenantId])
   @@index([tenantId, settledAt])
+  @@index([tenantId, checkDate])
+  @@index([tenantId, checkStatus])
 }
 
 model PaymentCounter {
@@ -846,6 +888,11 @@ model AdvancePayment {
   createdAt  DateTime      @default(now())
   updatedAt  DateTime      @updatedAt
   tenantId   String?
+  // Post-dated check payments PR-1 (additive-only): the InvoicePayment id this
+  // advance was created FROM (e.g. a bounced-check replacement flow in a later
+  // PR). Plain id string, no FK relation, so it never blocks on the source
+  // payment's own lifecycle. Null for every advance created the existing way.
+  sourcePaymentId String?
 
   customer     Customer         @relation(fields: [customerId], references: [id])
   tenant       Tenant?          @relation(fields: [tenantId], references: [id])
@@ -853,6 +900,7 @@ model AdvancePayment {
 
   @@index([customerId])
   @@index([tenantId])
+  @@index([sourcePaymentId])
 }
 
 // ─── Supplier Credits ─────────────────────────────────────────────────────────

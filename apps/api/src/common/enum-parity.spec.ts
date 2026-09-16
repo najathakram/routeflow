@@ -92,6 +92,9 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["CRM_TRIGGER_MODE_VALUES", "CrmTriggerMode"],
   ["CRM_HANDOFF_STATUS_VALUES", "CrmHandoffStatus"],
   ["TENANT_CLASS_VALUES", "TenantClass"],
+  // Post-dated check payments PR-1 (2026-09-15): CheckReturnReason is a brand-new Prisma enum
+  // (not a value added to an existing one) — see the triage tripwire below.
+  ["CHECK_RETURN_REASON_VALUES", "CheckReturnReason"],
 ];
 
 describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
@@ -126,13 +129,18 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // `TENANT_CLASS_VALUES` mirror (`packages/types/api/enums.ts`) + an `ENUM_TABLE` row above,
 // consumed by `create-tenant.dto.ts`'s `@IsIn` and the admin "New Tenant" form — see
 // REG-743-N6 below.
+//
+// Triage for CheckReturnReason (post-dated check payments PR-1, 2026-09-15): a brand-new enum,
+// added with its `CHECK_RETURN_REASON_VALUES` mirror + `ENUM_TABLE` row in the SAME PR (unlike
+// PaymentStatus gaining `PENDING` or NotificationEvent gaining `CHECK_RETURNED`, which add a
+// VALUE to an enum this file already tracks/doesn't track — those never move this count).
 // Triage for ReturnKind (Returns Inside Order Creation, PR-1a, 2026-09-15): new Prisma enum,
 // mirrored immediately as `RETURN_KIND_VALUES` + an `ENUM_TABLE` row above — the value
 // (STANDARD/INLINE) is read by every `kind`-branching returns.service.ts method landing in
 // this PR. `RETURN_HOLD_REASON_VALUES`/`RETURN_PRICE_SOURCE_VALUES` (same file) are NOT
 // generated Prisma enums (plain-string columns, see Return.holdReason's schema comment), so
 // they add no row here and do not move this count.
-const PINNED_PRISMA_ENUM_COUNT = 85;
+const PINNED_PRISMA_ENUM_COUNT = 86;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {
@@ -416,4 +424,16 @@ describe("regression: apps/mobile's @routeflow/types stub stays pinned to Prisma
       expect(expected.length).toBeGreaterThan(0);
     },
   );
+
+  // Post-dated check payments PR-1 (2026-09-15, MINOR 4 fix round): the stub's own header notes
+  // `CHECK_TRANSITIONS` is deliberately named WITHOUT the `_VALUES` suffix (it isn't a Prisma
+  // enum-values array, so the sweep above never reaches it) and is otherwise unguarded — a future
+  // V2 change to the real table could drift from this hand copy with nothing to catch it. Pin it
+  // directly against `packages/types/api/checks.ts`'s canonical export (via `SHARED`, the same
+  // `@routeflow/types` require the rest of this file already uses).
+  it("stub export CHECK_TRANSITIONS (unswept by the *_VALUES check above) stays deep-equal to the canonical @routeflow/types export", () => {
+    const canonical = (SHARED as Record<string, unknown>)["CHECK_TRANSITIONS"];
+    expect(canonical).toBeDefined();
+    expect(MOBILE_STUB["CHECK_TRANSITIONS"]).toEqual(canonical);
+  });
 });
