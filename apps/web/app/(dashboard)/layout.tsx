@@ -76,7 +76,7 @@ import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useI18n, LOCALES, LOCALE_LABELS } from "@/lib/i18n";
 import { useDriveMode } from "@/lib/drive-mode";
 import { matchPlanGatedRoute, planFlagVisible } from "@/lib/plan-gated-nav";
-import { LockedPage } from "./_components/gates/PlanGates";
+import { RouteGuard } from "./_components/gates/RouteGuard";
 
 // ─── Nav types & structure ────────────────────────────────────────────────────
 
@@ -270,165 +270,11 @@ function filterPlanGatedNav(
   }, []);
 }
 
-// ─── Role-based route guard ───────────────────────────────────────────────────
-
-/** Paths that CUSTOMER users may access (prefix-matched) */
-const CUSTOMER_ALLOWED: string[] = ["/dashboard", "/orders", "/returns", "/invoices", "/settings"];
-/** Paths that DRIVER users may access (prefix-matched) */
-const DRIVER_ALLOWED: string[] = ["/dashboard", "/routes", "/settings"];
-/**
- * In-development surfaces gated per-feature addon (owner decision 2026-08-25:
- * recurring routes and ad-hoc order delivery are separate addons; owner
- * decision 2026-08-28: `devMode` no longer unlocks either one client-side).
- * `/drivers` is shared by both features ("either").
- */
-const GATED_PREFIXES: { prefix: string; need: "routes" | "delivery" | "either" }[] = [
-  { prefix: "/dispatch", need: "either" },
-  { prefix: "/routes", need: "routes" },
-  { prefix: "/deliveries", need: "delivery" },
-  { prefix: "/drivers", need: "either" },
-];
-
-function isPathAllowed(pathname: string, allowed: string[]): boolean {
-  return allowed.some((p) => pathname === p || pathname.startsWith(p + "/"));
-}
-
-/**
- * The `/routes` paths that are recurring-routes surfaces in their own right.
- * Everything else under `/routes` is a single run/template/my-runs detail page
- * shared by BOTH features: an ad-hoc delivery has no detail page of its own —
- * a dispatched one opens its run at `/routes/:id` (where the builder also lands
- * after a successful dispatch) and a draft opens the template it was built as
- * at `/routes/templates/:id`. Gating those on "routes" would bounce a
- * delivery-only tenant to /dashboard from every delivery it opens.
- */
-const RECURRING_ROUTES_PATHS = new Set(["/routes", "/routes/create"]);
-
-/**
- * Find the GATED_PREFIXES entry matching `pathname`, if any. The legacy
- * `/routes/trips*` pages are redirect stubs to `/deliveries`/`/deliveries/new`
- * — they must NOT be bounced by the `/routes` gate, or a delivery-only tenant
- * deep-linking there would land on /dashboard before the stub ever gets to
- * redirect it to the (correctly gated) /deliveries surface.
- *
- * `role` matters for `/routes` itself: a DRIVER's whole nav is "My Routes" →
- * `/routes`, shown whenever EITHER feature is unlocked (drivers run ad-hoc
- * deliveries too), so for that role the landing page must be "either" as well
- * or the only link a delivery-only tenant's driver has bounces to /dashboard.
- */
-function matchGatedPrefix(
-  pathname: string,
-  role?: string,
-): { prefix: string; need: "routes" | "delivery" | "either" } | null {
-  for (const gated of GATED_PREFIXES) {
-    if (pathname !== gated.prefix && !pathname.startsWith(gated.prefix + "/")) continue;
-    if (gated.prefix === "/routes") {
-      if (pathname === "/routes/trips" || pathname.startsWith("/routes/trips/")) continue;
-      if (role === "DRIVER" || !RECURRING_ROUTES_PATHS.has(pathname))
-        return { ...gated, need: "either" };
-    }
-    return gated;
-  }
-  return null;
-}
-
-function RouteGuard({ children }: { children: React.ReactNode }) {
-  const { user } = useAuth();
-  const pathname = usePathname();
-  const router = useRouter();
-  const { enabled: routesAccess, resolved: routesResolved } = useRoutesAccess();
-  const { enabled: deliveryAccess, resolved: deliveryResolved } = useDeliveryAccess();
-  // Lite-L2 (WP8): CUSTOMER/DRIVER branches are untouched by plan-flag gating — the
-  // GATED_PREFIXES/CUSTOMER_ALLOWED/DRIVER_ALLOWED checks below already cover their
-  // access. `enabled: isStaffRole` mirrors the endpoint's own @Roles(OPERATOR) gate.
-  const isStaffRole = user?.role !== "CUSTOMER" && user?.role !== "DRIVER";
-  // Only `resolved` is needed here: the lock condition below requires resolved===true,
-  // and react-query's isSuccess/isError are mutually exclusive, so an errored fetch
-  // already falls out of the "resolved" branch below without reading isError.
-  const { data: subscription, isSuccess: subscriptionResolved } = useSubscription({
-    staleTime: 60_000,
-    enabled: isStaffRole,
-  });
-
-  React.useEffect(() => {
-    const role = user?.role;
-    if (!role) return;
-    let allowed: string[] | null = null;
-    if (role === "CUSTOMER") allowed = CUSTOMER_ALLOWED;
-    if (role === "DRIVER") allowed = DRIVER_ALLOWED;
-    if (allowed && !isPathAllowed(pathname, allowed)) {
-      router.replace("/dashboard");
-      return;
-    }
-    // Tenants without the relevant addon can't deep-link into
-    // dispatch/routes/deliveries/drivers either — gated per-feature.
-    const gate = matchGatedPrefix(pathname, role);
-    if (!gate) return;
-    // Gating on `resolved` (not just "not loading") is mandatory: it fails OPEN
-    // while the addons query is in flight AND when it errored, so a tenant that
-    // actually has access is never bounced on an unknown answer.
-    const resolved =
-      gate.need === "routes"
-        ? routesResolved
-        : gate.need === "delivery"
-          ? deliveryResolved
-          : routesResolved || deliveryResolved;
-    if (!resolved) return;
-    const allowedByGate =
-      gate.need === "routes"
-        ? routesAccess
-        : gate.need === "delivery"
-          ? deliveryAccess
-          : routesAccess || deliveryAccess;
-    if (!allowedByGate) {
-      router.replace("/dashboard");
-    }
-  }, [
-    user?.role,
-    pathname,
-    router,
-    routesAccess,
-    routesResolved,
-    deliveryAccess,
-    deliveryResolved,
-  ]);
-
-  // Lite-L2 (WP8/R4.5): a deep link/bookmark into a plan-gated route the tenant's
-  // current plan doesn't grant renders the locked panel in place of the page — never
-  // a redirect (unlike the addon-gated prefixes above), so the URL stays intact and
-  // "See plans" is one click away. Only once `subscriptionResolved` — while unresolved
-  // or on a fetch failure, render the page as today (a server-side PLAN_GATE 403, if
-  // any, is still caught by the existing PlanGateNotice toast).
-  const planGateKey = isStaffRole ? matchPlanGatedRoute(pathname) : null;
-  const flags = subscription?.flags;
-  const planLocked =
-    !!planGateKey && subscriptionResolved && flags !== undefined && !flags.includes(planGateKey);
-
-  if (planLocked) {
-    return (
-      <LockedPage
-        gate={{
-          code: "PLAN_GATE",
-          flag: planGateKey as string,
-          message: `This feature isn't included in the ${subscription?.planName ?? "current"} plan.`,
-          upgrade: {
-            planKey: null,
-            planMonthlyPrice: null,
-            addonSku: null,
-            addonMonthlyPrice: null,
-          },
-        }}
-        secondary="Want it? Contact us to upgrade."
-      >
-        {children}
-      </LockedPage>
-    );
-  }
-
-  return <>{children}</>;
-}
-
 // ─── Auth guard ───────────────────────────────────────────────────────────────
+// Role-based route/plan gating lives in ./_components/gates/RouteGuard.tsx (and
+// PlanGateBoundary.tsx) — moved out of this file so both are unit-testable on
+// their own (a named export from an App Router layout.tsx fails `next build`'s
+// layout-file export check; B449 fix-round finding 1).
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading, user } = useAuth();
@@ -739,10 +585,15 @@ function Header({
   const router = useRouter();
   const { notifications, unreadCount, markAllRead, clear } = useNotifications();
   const { data: expiring = [] } = useExpiringAuthorizations();
+  // Fix-round finding 2-new: usePendingPortalApprovals() now reads a plan flag
+  // internally (GET /billing/subscription, @Roles(OPERATOR)) before its own
+  // GET /customers/pending-portal-approvals (also OPERATOR-only) — a
+  // CUSTOMER/DRIVER on their own /dashboard must fire neither.
+  const isStaffRole = user?.role !== "CUSTOMER" && user?.role !== "DRIVER";
   // Buyer-connect requests whose sign-in email didn't match the customer
   // record — pinned in the bell until the seller approves or declines
   // (server-derived, so it's immune to mark-all-read/clear/localStorage loss).
-  const { data: pendingApprovals = [] } = usePendingPortalApprovals();
+  const { data: pendingApprovals = [] } = usePendingPortalApprovals({ enabled: isStaffRole });
   const bellCount = unreadCount + expiring.length + pendingApprovals.length;
   const { driveMode, setDriveMode } = useDriveMode();
   // Drive mode is a recurring-routes affordance ("My Routes"), so it's gated
