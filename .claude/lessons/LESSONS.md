@@ -47,6 +47,27 @@
 - **Guard:** `ResponsiveSidebar.tsx`'s `getFocusable()` carries no visibility filter, with a
   comment stating why (everything rendered while the drawer is open is meant to be reachable).
 
+### L-193 · 2026-09-17 · tooling · bugs.mjs index carries catalogue-only fields forward BY ID POSITION
+
+- **Symptom:** renumbering 17 filed bug records (renaming their `.md` files +3 to dodge an id
+  collision with another open PR) then running `bugs.mjs index` to regenerate `bugs.jsonl`
+  scrambled every shifted row's `symptom`/`filedAt` onto the WRONG finding — the new id briefly
+  carried one finding's title with a completely different finding's symptom text.
+- **Root cause:** `symptom`/`filedAt` (and other catalogue-only fields) have no home in a
+  record's own front matter, so `index` cannot re-derive them from the `.md` file — it carries
+  forward whatever the PRIOR catalogue row held at that SAME id, which after a rename is a
+  stale, orphaned row, not the record that now actually lives there.
+- **Lesson:** **`bugs.mjs index`/`expand` regenerate a record's DERIVABLE fields from its front
+  matter, but a catalogue-only field is carried forward by id lookup, not by identity — renaming
+  a record's file to change its id does NOT bring these fields with it. To renumber, pull each
+  row's ORIGINAL catalogue entry (from git history, before the rename), remap only its `id`
+  field, and splice it back in directly; never trust `index`'s carry-forward across an id
+  change. Diff for net-zero (equal insertions/deletions, nothing orphaned or duplicated) before
+  committing any bulk-id rewrite.**
+- **Guard:** none yet — propose a `bugs.mjs renumber <old> <new>` command that does the safe
+  remap atomically, or a self-test case that renames a fixture record and asserts `index`
+  refuses/warns instead of silently carrying forward mismatched fields.
+
 ### L-190 · 2026-09-17 · tooling · FG-B (#819) had to be rebuilt, not rebased, after FG-A squash-merged
 
 - **Symptom:** #819 (FG-B, feature-override kind + MRR exclusion) conflicted after #825 (FG-A,
@@ -582,23 +603,6 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
 - **Guard:** `session-teardown.ts` imports and calls `editItemsSnapshotUserPrefix` +
   `clearStorageByPrefix` — grep for it before trusting this reasoning again on the same file.
   `apps/mobile/lib/edit-items-draft.ts` carries the design-rationale comment inline.
-
-### L-154 · 2026-09-15 · domain · PR-3 independent review F1/F4 (moved logic, new entry point)
-
-- **Symptom:** two findings, same root shape. F1: a handler copied from `ProductPickerSheet.onScanned`
-  (single-shot) into a `continuous` `BarcodeFab` returned no `ScanOutcome`, so the scanner showed zero
-  feedback per scan — the sheet's own `setScanOpen(false)` had masked the missing return there. F4: a
-  cost-prefill rule moved verbatim from an `onSelect` only prefilled an EMPTY field, so scanning A then
-  B billed B at A's cost — true of the original tap-search-tap flow too, but the scan FAB makes it routine.
-- **Root cause:** both fixes reused logic that carried an implicit assumption from its ORIGINAL context
-  (single-shot, slow-to-trigger) into a NEW entry point (continuous, one-tap) that invalidates it; neither
-  review checked whether the new surface's usage pattern (fires often, fires fast) still holds it.
-- **Lesson:** **Moving/copying logic into a new entry point is not done once it compiles and matches
-  structurally — audit whether the new surface's usage pattern still holds every assumption the original
-  context relied on implicitly. A rule safe because triggering it was slow/rare stops being safe once a
-  faster trigger sits on the same code.**
-- **Guard:** `scan-affordance-siblings.test.ts` (REG-F1) and `purchase-receive-logic.test.ts` (REG-F4) pin
-  the fix; F4's rule is now an exported, unit-tested `nextUnitCost` instead of living only inline.
 
 ### L-156 · 2026-09-15 · tooling · B420 mistiered proof, no lawful reclassify path
 

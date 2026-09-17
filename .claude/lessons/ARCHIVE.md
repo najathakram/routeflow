@@ -2479,3 +2479,22 @@ citations, closed-out with its own post-init assertion guard).
   explicit prod count) before removing the read/update-side handling, not a grep for writers.**
 - **Guard:** `returns-ledger.spec.ts`'s PROCESSED-cancel case pins the restored behavior; the
   comment on the branch cites the exact prod check (`GROUP BY status`) that would retire it.
+
+## Archived 2026-09-17 — headroom for L-193 (registry-hygiene renumbering lesson)
+
+### L-154 · 2026-09-15 · domain · PR-3 independent review F1/F4 (moved logic, new entry point)
+
+- **Symptom:** two findings, same root shape. F1: a handler copied from `ProductPickerSheet.onScanned`
+  (single-shot) into a `continuous` `BarcodeFab` returned no `ScanOutcome`, so the scanner showed zero
+  feedback per scan — the sheet's own `setScanOpen(false)` had masked the missing return there. F4: a
+  cost-prefill rule moved verbatim from an `onSelect` only prefilled an EMPTY field, so scanning A then
+  B billed B at A's cost — true of the original tap-search-tap flow too, but the scan FAB makes it routine.
+- **Root cause:** both fixes reused logic that carried an implicit assumption from its ORIGINAL context
+  (single-shot, slow-to-trigger) into a NEW entry point (continuous, one-tap) that invalidates it; neither
+  review checked whether the new surface's usage pattern (fires often, fires fast) still holds it.
+- **Lesson:** **Moving/copying logic into a new entry point is not done once it compiles and matches
+  structurally — audit whether the new surface's usage pattern still holds every assumption the original
+  context relied on implicitly. A rule safe because triggering it was slow/rare stops being safe once a
+  faster trigger sits on the same code.**
+- **Guard:** `scan-affordance-siblings.test.ts` (REG-F1) and `purchase-receive-logic.test.ts` (REG-F4) pin
+  the fix; F4's rule is now an exported, unit-tested `nextUnitCost` instead of living only inline.
