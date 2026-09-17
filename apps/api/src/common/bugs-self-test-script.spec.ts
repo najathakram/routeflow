@@ -14,20 +14,28 @@ const SCRIPT = path.resolve(REPO_ROOT, "scripts/campaign/bugs.mjs");
 
 describe("bugs.mjs self-test contract (REG-B231, REG-B415)", () => {
   it("exits 0 and reports all checks passed", () => {
-    // Observed runtime under this session's varying host load: 63s-131s. The spawnSync
-    // timeout must sit comfortably above the worst observed case, and the outer jest
-    // timeout must sit above THAT -- an inner bound tighter than the outer one means
-    // spawnSync kills the child first, returning status:null/signal:'SIGTERM' (not a
-    // real self-test failure) with an assertion failure that reads like one. Same class
+    // B454: #799 (B453) added a handful of new self-test spawns, and this run's
+    // per-spawn cost is dominated by ambient host process-launch overhead (measured:
+    // a bare no-op `node bugs.mjs valueOf` alone took 4-5s on a loaded host) rather
+    // than the harness's own logic — so runtime scales with host load, not just with
+    // this file's size. Observed runtime went from 63s-131s (pre-#799) to 368s-487s
+    // (post-#799, same host, back-to-back runs). The spawnSync timeout must sit
+    // comfortably above the worst OBSERVED case (>= 2x), and the outer jest timeout
+    // must sit above THAT -- an inner bound tighter than the outer one means spawnSync
+    // kills the child first, returning status:null/signal:'SIGTERM' (not a real
+    // self-test failure) with an assertion failure that reads like one. Same class
     // this whole file exists to guard against (B231/B415), just one level up.
+    // B454 follow-up (not this PR): cut total spawn count / run independent tmp-dir
+    // self-test blocks concurrently — the actual lever for bringing this back down,
+    // since per-spawn cost is host-load-bound and out of this file's control.
     const res = spawnSync(process.execPath, [SCRIPT, "self-test"], {
       cwd: REPO_ROOT,
       encoding: "utf8",
-      timeout: 240_000,
+      timeout: 1_000_000,
     });
 
     expect(res.signal).toBeNull();
     expect(res.status).toBe(0);
     expect(res.stdout).toContain("self-test: all checks passed");
-  }, 270_000);
+  }, 1_050_000);
 });
