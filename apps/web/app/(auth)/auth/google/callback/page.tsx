@@ -175,16 +175,22 @@ function GoogleCallbackInner() {
   // ── Loading spinner ────────────────────────────────────────────────────────
   if (status === "loading") {
     return (
-      <div className="flex h-screen flex-col items-center justify-center gap-4 bg-surface-raised">
+      <div
+        className="flex h-screen flex-col items-center justify-center gap-4"
+        style={{ background: "linear-gradient(155deg, #10264d, #16375f 60%, #0c1f3d)" }}
+      >
         <div
-          className="flex h-12 w-12 items-center justify-center rounded-xl text-lg font-bold text-white"
-          style={{ backgroundColor: "#3B82F6" }}
+          className="flex h-12 w-12 items-center justify-center rounded-xl text-lg font-bold text-white backdrop-blur"
+          style={{
+            background: "linear-gradient(140deg, #234a74f5, #10264ded)",
+            boxShadow: "inset 0 1px 0 #ffffff33, 0 7px 15px #10264d18",
+          }}
         >
           RF
         </div>
-        <p className="text-sm text-navy/70">Signing you in…</p>
+        <p className="text-sm text-[#c2d0e5]">Signing you in…</p>
         <div
-          className="h-5 w-5 animate-spin rounded-full border-2 border-brand-500 border-t-transparent"
+          className="h-5 w-5 animate-spin rounded-full border-2 border-white/40 border-t-transparent"
           role="status"
           aria-label="Loading"
         />
@@ -194,18 +200,31 @@ function GoogleCallbackInner() {
 
   // ── Error display ──────────────────────────────────────────────────────────
   return (
-    <div className="flex h-screen flex-col items-center justify-center gap-6 bg-surface-raised p-4">
+    <div
+      className="flex h-screen flex-col items-center justify-center gap-6 p-4"
+      style={{ background: "linear-gradient(155deg, #10264d, #16375f 60%, #0c1f3d)" }}
+    >
       <div
-        className="flex h-12 w-12 items-center justify-center rounded-xl text-lg font-bold text-white"
-        style={{ backgroundColor: "#3B82F6" }}
+        className="flex h-12 w-12 items-center justify-center rounded-xl text-lg font-bold text-white backdrop-blur"
+        style={{
+          background: "linear-gradient(140deg, #234a74f5, #10264ded)",
+          boxShadow: "inset 0 1px 0 #ffffff33, 0 7px 15px #10264d18",
+        }}
       >
         RF
       </div>
 
-      <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-card text-center">
-        <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-danger-bg mx-auto">
+      <div
+        className="w-full max-w-sm rounded-xl p-6 text-center shadow-xl backdrop-blur-xl"
+        style={{
+          background: "linear-gradient(130deg, #ffffffc2, #ffffff61 48%, #f5faff85)",
+          border: "1px solid #ffffffdb",
+          boxShadow: "inset 0 1px 1px #fff, inset 0 -1px 1px #54718e17, 0 14px 45px #284a7210",
+        }}
+      >
+        <div className="mb-3 mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-red-50">
           <svg
-            className="h-5 w-5 text-danger"
+            className="h-5 w-5 text-red-600"
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -219,26 +238,30 @@ function GoogleCallbackInner() {
           </svg>
         </div>
 
-        <h2 className="text-base font-semibold text-navy mb-2">Sign-in failed</h2>
-        <p className="text-sm text-navy/70 mb-4">{errorMsg}</p>
+        <h2 className="text-base font-semibold text-[#152d51] mb-2">Sign-in failed</h2>
+        <p className="text-sm text-[#4c607a] mb-4">{errorMsg}</p>
 
         {/* Contextual actions per error type */}
         {errorCode === "google_email_is_staff" ? (
           <a
             href="/login"
-            className="inline-flex items-center justify-center rounded-lg border border-surface-border bg-white px-4 py-2 text-sm font-medium text-navy shadow-sm hover:bg-surface-raised transition-colors"
+            className="inline-flex items-center justify-center rounded-lg border border-[#ffffffed] bg-[#ffffffad] px-4 py-2 text-sm font-medium text-[#152d51] shadow-sm backdrop-blur transition-colors hover:bg-white"
           >
             Go to staff login
           </a>
         ) : errorCode === "unauthorized" || errorCode === "tenant_suspended" ? (
           <a
             href="/login"
-            className="inline-flex items-center justify-center rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 transition-colors"
+            className="inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors hover:brightness-110"
+            style={{
+              background: "linear-gradient(140deg, #234a74f5, #10264ded)",
+              boxShadow: "inset 0 1px 0 #ffffff33, 0 7px 15px #10264d18",
+            }}
           >
             Back to login
           </a>
         ) : (
-          <p className="text-xs text-navy/70">Redirecting you back in a moment…</p>
+          <p className="text-xs text-[#4c607a]">Redirecting you back in a moment…</p>
         )}
       </div>
     </div>
@@ -251,14 +274,20 @@ export default function GoogleCallbackPage() {
   return (
     <React.Suspense
       fallback={
-        <div className="flex h-screen flex-col items-center justify-center gap-4 bg-surface-raised">
+        <div
+          className="flex h-screen flex-col items-center justify-center gap-4"
+          style={{ background: "linear-gradient(155deg, #10264d, #16375f 60%, #0c1f3d)" }}
+        >
           <div
-            className="flex h-12 w-12 items-center justify-center rounded-xl text-lg font-bold text-white"
-            style={{ backgroundColor: "#3B82F6" }}
+            className="flex h-12 w-12 items-center justify-center rounded-xl text-lg font-bold text-white backdrop-blur"
+            style={{
+              background: "linear-gradient(140deg, #234a74f5, #10264ded)",
+              boxShadow: "inset 0 1px 0 #ffffff33, 0 7px 15px #10264d18",
+            }}
           >
             RF
           </div>
-          <p className="text-sm text-navy/70">Signing you in…</p>
+          <p className="text-sm text-[#c2d0e5]">Signing you in…</p>
         </div>
       }
     >
