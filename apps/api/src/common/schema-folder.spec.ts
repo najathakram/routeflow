@@ -49,8 +49,11 @@ const EXPECTED_FILES = [
 // folder, not re-derived by arithmetic.)
 // (2026-09-17, public demo booking API PR-2 (#808): +1 model, +1 enum — re-verified the
 // same way.)
-const EXPECTED_MODEL_COUNT = 131;
-const EXPECTED_ENUM_COUNT = 88;
+// (2026-09-17, feature grants v2 brief A: +2 models — FeatureResolverDiff,
+// TenantFeatureConfig; +2 enums — FeatureOverrideKind, FeatureSource. Stacked on #795,
+// own migration, later timestamp — re-verified via split-prisma-schema.mjs --check.)
+const EXPECTED_MODEL_COUNT = 133;
+const EXPECTED_ENUM_COUNT = 90;
 
 function listSchemaFiles(): string[] {
   if (!fs.existsSync(SCHEMA_DIR)) return [];

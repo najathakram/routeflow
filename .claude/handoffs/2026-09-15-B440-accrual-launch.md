@@ -8,7 +8,7 @@
   `.claude/pipeline/agent-log.jsonl`/`approach-rotation.json` (benign, regenerated every prompt —
   re-check before actually launching).
 - Artifacts: `.claude/pipeline/2026-09-15-b440-revenue-accrual/{cause-brief,cause-ruling,
-  bug-test-plan,build-plan}.md` — all four written, cross-referenced, and amended in sync for the
+bug-test-plan,build-plan}.md` — all four written, cross-referenced, and amended in sync for the
   tax-exclusion ruling below. `build-plan.md`'s `## Pipeline args` block (bottom of file) IS the
   literal object to pass to the Workflow tool at launch — nothing else needs assembling.
 
@@ -53,7 +53,7 @@ NOT touch B448-B458, separate filed bugs).
 > Σinvoice.total. Category/excise tax is already folded into `taxAmount`, not a separate component
 > of `total` — one subtraction excludes both, no separate category-tax term needed. Shipping and
 > discount stay IN revenue (only tax comes out): `gross = total − taxAmount = subtotal − discount +
-> shippingFee`. CreditNote has no `taxAmount` column today — subtract `amount` as-is in PR1 with a
+shippingFee`. CreditNote has no `taxAmount` column today — subtract `amount` as-is in PR1 with a
 > `// TODO B459` comment at the subtraction site; do not add the column now. `externalRefunds`
 > needs no change (already pre-tax, `priceReturn` uses `subtotal` only). Do NOT add a
 > `feeForPaymentId` clause — that's the check-payments lane's job, later, same helper.
