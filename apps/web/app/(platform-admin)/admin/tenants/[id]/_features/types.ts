@@ -11,6 +11,7 @@ export type {
   FeatureRegistryRow,
   FeatureModeState,
   EffectiveFeature,
+  TenantEffectiveFeaturesResponse,
   TenantFeaturesResponse,
   FeatureDiffRow,
   FeaturePreviewRequest,

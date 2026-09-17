@@ -13,6 +13,7 @@ import type {
   FeaturePreviewRequest,
   FeaturePreviewResponse,
   FeatureRegistryRow,
+  TenantEffectiveFeaturesResponse,
 } from "@/app/(platform-admin)/admin/tenants/[id]/_features/types";
 
 /** `GET /platform-admin/features/registry` — tenant-agnostic; areas/keys/modes come from here. */
@@ -21,10 +22,14 @@ export async function fetchFeatureRegistry(): Promise<FeatureRegistryRow[]> {
   return res.data;
 }
 
-/** `GET /platform-admin/tenants/:id/features/effective` — the full per-key trace for one tenant. */
+/** `GET /platform-admin/tenants/:id/features/effective` — the full per-key trace for one tenant.
+ *  The response is a `{ effective: [...] }` wrapper, not a bare array — unwrap it here so every
+ *  caller keeps working with a plain `EffectiveFeature[]`. */
 export async function fetchTenantFeaturesEffective(tenantId: string): Promise<EffectiveFeature[]> {
-  const res = await superAdminClient.get(`/platform-admin/tenants/${tenantId}/features/effective`);
-  return res.data;
+  const res = await superAdminClient.get<TenantEffectiveFeaturesResponse>(
+    `/platform-admin/tenants/${tenantId}/features/effective`,
+  );
+  return res.data.effective;
 }
 
 /** `GET /platform-admin/features/diffs?tenantId=` — this tenant's unexplained-diff count (item 4). */

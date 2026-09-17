@@ -82,6 +82,14 @@ export function FeatureConsole({
       fetchEntitlementsMode().catch(() => ({ mode: null as EntitlementsMode | null })),
     ])
       .then(([reg, eff, diffs, mode]) => {
+        // Defensive against a future contract-shape drift like the one caught here: an
+        // API response that isn't a plain array must never freeze the console mid-render
+        // (`(effective ?? []).map(...)` below would throw on a non-array with no error
+        // boundary to catch it) — fail into the existing error state instead.
+        if (!Array.isArray(reg) || !Array.isArray(eff) || !Array.isArray(diffs)) {
+          setLoadError("Could not load the feature console. Try again.");
+          return;
+        }
         setRegistry(reg);
         setEffective(eff);
         setDiffCount(diffs.filter((d) => !d.explainedAt).length);

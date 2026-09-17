@@ -112,6 +112,24 @@ describe("FeatureConsole — loading / empty / error states (test 5)", () => {
       await screen.findByText("Could not load the feature console. Try again."),
     ).toBeInTheDocument();
   });
+
+  it("shows the error alert (never freezes on the loading state) when a fetch resolves with the wrong shape", async () => {
+    // Regression for the real wrapper-shape mismatch caught against the live backend
+    // (`{ effective: [...] }`, not a bare array) — even if a client function's own unwrap
+    // regresses, the console must fail into the existing error state, not crash mid-render.
+    mockFetchEffective.mockResolvedValue({ effective: [] } as never);
+    render(
+      <FeatureConsole
+        tenant={{ id: TENANT_ID, plan: "GROWTH" }}
+        onChangePlan={jest.fn()}
+        onCustomise={jest.fn()}
+      />,
+    );
+    expect(
+      await screen.findByText("Could not load the feature console. Try again."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Loading feature console...")).not.toBeInTheDocument();
+  });
 });
 
 describe("FeatureConsole — data-driven badges (test 1)", () => {

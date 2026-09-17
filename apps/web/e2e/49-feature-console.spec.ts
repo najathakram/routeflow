@@ -278,9 +278,11 @@ async function mockTenantShell(page: Page, opts: { registryStatus?: number } = {
       ? fulfillJson(route, { message: "Internal error" }, opts.registryStatus)
       : fulfillJson(route, REGISTRY_FIXTURE),
   );
+  // Real endpoint returns a `{ effective: [...] }` wrapper, not a bare array — caught against
+  // the live local backend; the client (lib/platform-admin/features.ts) unwraps it.
   await page.route(
     new RegExp(`/platform-admin/tenants/${TENANT_ID}/features/effective(\\?.*)?$`),
-    (route) => fulfillJson(route, EFFECTIVE_FIXTURE),
+    (route) => fulfillJson(route, { effective: EFFECTIVE_FIXTURE }),
   );
   await page.route(/\/platform-admin\/features\/diffs(\?.*)?$/, (route) => fulfillJson(route, []));
   await page.route(/\/platform-admin\/entitlements\/mode(\?.*)?$/, (route) =>
