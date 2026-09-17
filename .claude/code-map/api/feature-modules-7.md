@@ -79,11 +79,15 @@
 
 ### `demo-booking/` (public, tenant-less — 2026-09-16, PR-1)
 
-- **module** — `PublicDemoBookingController` (no `@UseGuards`, no JWT, no tenant — this API applies
+- **module** — `demo-booking.module.ts` wires `PublicDemoBookingController`
+  (`public-demo-booking.controller.ts`; no `@UseGuards`, no JWT, no tenant — this API applies
   `JwtAuthGuard` per route rather than globally, so the ABSENCE of a guard here is the whole
-  mechanism, same posture as `tenants/public-tenants.controller.ts`) + `DemoBookingService` +
-  `GoogleCalendarService`. Imports `EmailModule` explicitly (not global — same DI-scope class of
-  bug that took the API down 2026-09-12, [[L-113]]).
+  mechanism, same posture as `tenants/public-tenants.controller.ts`) + `DemoBookingService`
+  (`demo-booking.service.ts`) + `GoogleCalendarService` (`google-calendar.service.ts`). Imports
+  `EmailModule` explicitly (not global — same DI-scope class of bug that took the API down
+  2026-09-12, [[L-113]]). Specs: `demo-booking.service.spec.ts`, `google-calendar.service.spec.ts`,
+  `public-demo-booking.controller.spec.ts`, `demo-booking.config.spec.ts`, `zoned-time.spec.ts`,
+  `demo-booking.db.spec.ts` (below).
 - **model** — `DemoBooking` (`prisma/schema/platform.prisma`, NOT tenant-scoped: a prospect
   booking a walkthrough has no workspace yet) + `DemoBookingStatus` enum
   (`CONFIRMED|CANCELLED|COMPLETED`). Two additive migrations: `20260916030000_demo_booking`
@@ -92,6 +96,8 @@
   can't express the WHERE, so it exists only in the migration file, documented on the model with
   the same `BuyerPaymentRequest_open_request_key` pattern `finance.prisma` already uses).
   `schema-folder.spec.ts`'s pinned block counts bumped +1 model/+1 enum in the same PR.
+- **dto** — `dto/demo-booking.dto.ts`: `CreateDemoBookingDto`, `RescheduleDemoBookingDto`,
+  `CancelDemoBookingDto` (the latter two carry the manage token, never a path segment).
 - **routes** — `GET .../availability` (20/min), `POST .../` create (5/hour/IP), `GET .../me`
   (manage token via `X-Booking-Token` HEADER, never a URL param — a path-segment token lands in
   access logs and Sentry's `originalUrl` tag on any 5xx), `POST .../reschedule` /

@@ -6,8 +6,10 @@
  * expects), not a bare array. Regression guard for NEW-vop-3.
  */
 import { Test, TestingModule } from "@nestjs/testing";
+import { ConfigService } from "@nestjs/config";
 import { UsersService } from "./users.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { EmailService } from "../email/email.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 const MOCK_USERS = [
@@ -38,15 +40,60 @@ const MOCK_USERS = [
 describe("UsersService", () => {
   let service: UsersService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  let email: {
+    sendSetPasswordEmail: jest.Mock;
+    sendEmailChangedNotice: jest.Mock;
+    sendEmailChangeConfirmation: jest.Mock;
+    sendRoleChangedNotice: jest.Mock;
+  };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    email = {
+      sendSetPasswordEmail: jest.fn().mockResolvedValue({ delivered: true, transport: "smtp" }),
+      sendEmailChangedNotice: jest.fn().mockResolvedValue({ delivered: true, transport: "smtp" }),
+      sendEmailChangeConfirmation: jest
+        .fn()
+        .mockResolvedValue({ delivered: true, transport: "smtp" }),
+      sendRoleChangedNotice: jest.fn().mockResolvedValue({ delivered: true, transport: "smtp" }),
+    };
+    const config = {
+      get: () => ({ web: "https://app.example.com", mobileWeb: "https://m.example.com" }),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [UsersService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        UsersService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: EmailService, useValue: email },
+        { provide: ConfigService, useValue: config },
+      ],
     }).compile();
 
     service = module.get<UsersService>(UsersService);
+  });
+
+  describe("findByUsername", () => {
+    it("N2 review fix (#811): matches email case-insensitively — neither web nor mobile lowercases the login identifier before sending", async () => {
+      prisma.user.findFirst.mockResolvedValue({ id: "u1", email: "acme_owner@example.com" } as any);
+
+      await service.findByUsername("Acme_Owner@Example.com", "tenant-1");
+
+      const call = prisma.user.findFirst.mock.calls[0][0] as any;
+      expect(call.where.OR[1]).toEqual({
+        email: { equals: "Acme_Owner@Example.com", mode: "insensitive" },
+        tenantId: "tenant-1",
+      });
+    });
+
+    it("keeps username matching exact (case-sensitive) — usernames are not normalized anywhere in this codebase", async () => {
+      prisma.user.findFirst.mockResolvedValue(null);
+
+      await service.findByUsername("Acme_Owner", "tenant-1");
+
+      const call = prisma.user.findFirst.mock.calls[0][0] as any;
+      expect(call.where.OR[0]).toEqual({ username: "Acme_Owner", tenantId: "tenant-1" });
+    });
   });
 
   describe("findAll", () => {
@@ -151,6 +198,324 @@ describe("UsersService", () => {
       expect(result).toEqual({ id: "u2", username: "acme_admin" });
       const call = prisma.user.findMany.mock.calls[0][0] as any;
       expect(call.where).toMatchObject({ status: "ACTIVE" });
+    });
+  });
+
+  // ─── N2: account + invite emails ────────────────────────────────────────────
+
+  describe("createOperator — staff invite set-password email", () => {
+    it("creates a single-use 72h PasswordResetToken and emails a set-password link", async () => {
+      prisma.user.findFirst.mockResolvedValue(null); // no email/username collision
+      prisma.user.create.mockResolvedValue({
+        id: "u-new",
+        username: "acme_op",
+        email: "op@acme.example",
+        role: "OPERATOR",
+        status: "ACTIVE",
+        forcePasswordChange: true,
+      } as any);
+
+      await service.createOperator({ email: "op@acme.example", username: "acme_op" } as any);
+
+      expect(prisma.passwordResetToken.create).toHaveBeenCalledTimes(1);
+      const tokenData = prisma.passwordResetToken.create.mock.calls[0][0].data;
+      expect(tokenData.userId).toBe("u-new");
+      expect(tokenData.tokenHash).toMatch(/^[0-9a-f]{64}$/); // sha256 hex, never the raw token
+      const ttlMs = tokenData.expiresAt.getTime() - Date.now();
+      expect(ttlMs).toBeGreaterThan(71 * 60 * 60 * 1000);
+      expect(ttlMs).toBeLessThanOrEqual(72 * 60 * 60 * 1000);
+
+      expect(email.sendSetPasswordEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ to: "op@acme.example", username: "acme_op", expiryHours: 72 }),
+      );
+      expect(email.sendSetPasswordEmail.mock.calls[0][0].setPasswordUrl).toContain(
+        "https://app.example.com/reset-password?token=",
+      );
+    });
+
+    it("still returns the created user + tempPassword when the email fails to send", async () => {
+      prisma.user.findFirst.mockResolvedValue(null);
+      prisma.user.create.mockResolvedValue({
+        id: "u-new",
+        username: "acme_op",
+        email: "op@acme.example",
+      } as any);
+      email.sendSetPasswordEmail.mockRejectedValue(new Error("smtp down"));
+
+      const result = await service.createOperator({
+        email: "op@acme.example",
+        username: "acme_op",
+      } as any);
+
+      expect(result.user.id).toBe("u-new");
+      expect(result.tempPassword).toMatch(/^[0-9A-F]{6}-[0-9A-F]{6}$/);
+    });
+  });
+
+  describe("resetPassword — admin-triggered, same set-password link email", () => {
+    it("emails the same set-password link as createOperator", async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: "u1",
+        username: "acme_op",
+        email: "op@acme.example",
+        status: "ACTIVE",
+        deletedAt: null,
+      } as any);
+
+      await service.resetPassword("u1");
+
+      expect(email.sendSetPasswordEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ to: "op@acme.example", username: "acme_op" }),
+      );
+    });
+
+    it("N2 review fix: never emails a set-password link for a deactivated/deleted account", async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: "u1",
+        username: "suspended_op",
+        email: "suspended@acme.example",
+        status: "SUSPENDED",
+        deletedAt: null,
+      } as any);
+
+      const result = await service.resetPassword("u1");
+
+      expect(email.sendSetPasswordEmail).not.toHaveBeenCalled();
+      expect(result.tempPassword).toBeDefined(); // the reset itself still happens
+    });
+
+    it("N2 review fix: never emails a set-password link for a soft-deleted account", async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: "u1",
+        username: "deleted_op",
+        email: "deleted@acme.example",
+        status: "ACTIVE",
+        deletedAt: new Date("2026-01-01"),
+      } as any);
+
+      await service.resetPassword("u1");
+
+      expect(email.sendSetPasswordEmail).not.toHaveBeenCalled();
+    });
+
+    it("skips the email (not the password reset) when the user has no email on file", async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: "u1",
+        username: "no_email_user",
+        email: "",
+        status: "ACTIVE",
+        deletedAt: null,
+      } as any);
+
+      const result = await service.resetPassword("u1");
+
+      expect(email.sendSetPasswordEmail).not.toHaveBeenCalled();
+      expect(result.tempPassword).toBeDefined();
+    });
+  });
+
+  describe("updateUser — email-change dual notice", () => {
+    it("notifies the OLD address and confirms the NEW address when email changes", async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: "u1",
+        username: "acme_op",
+        email: "old@acme.example",
+        role: "OPERATOR",
+      } as any);
+      prisma.user.update.mockResolvedValue({
+        id: "u1",
+        username: "acme_op",
+        email: "new@acme.example",
+        role: "OPERATOR",
+        status: "ACTIVE",
+        isAdmin: false,
+        canActAsDriver: false,
+      } as any);
+
+      await service.updateUser("u1", { email: "new@acme.example" } as any);
+
+      expect(email.sendEmailChangedNotice).toHaveBeenCalledWith(
+        expect.objectContaining({ to: "old@acme.example", newEmail: "new@acme.example" }),
+      );
+      expect(email.sendEmailChangeConfirmation).toHaveBeenCalledWith(
+        expect.objectContaining({ to: "new@acme.example" }),
+      );
+    });
+
+    it("sends NO email-change notice when email is unchanged", async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: "u1",
+        username: "acme_op",
+        email: "same@acme.example",
+        role: "OPERATOR",
+      } as any);
+      prisma.user.update.mockResolvedValue({
+        id: "u1",
+        username: "acme_op",
+        email: "same@acme.example",
+        role: "OPERATOR",
+      } as any);
+
+      await service.updateUser("u1", { email: "same@acme.example", username: "renamed" } as any);
+
+      expect(email.sendEmailChangedNotice).not.toHaveBeenCalled();
+      expect(email.sendEmailChangeConfirmation).not.toHaveBeenCalled();
+    });
+
+    it("the update still succeeds when both notice emails fail to send", async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: "u1",
+        username: "acme_op",
+        email: "old@acme.example",
+        role: "OPERATOR",
+      } as any);
+      prisma.user.update.mockResolvedValue({
+        id: "u1",
+        username: "acme_op",
+        email: "new@acme.example",
+        role: "OPERATOR",
+      } as any);
+      email.sendEmailChangedNotice.mockRejectedValue(new Error("smtp down"));
+
+      const result = await service.updateUser("u1", { email: "new@acme.example" } as any);
+
+      expect(result.email).toBe("new@acme.example");
+    });
+
+    it("N2 review fix (#811): invalidates any outstanding set-password/reset token when the email changes, so a link mailed to a mistyped address stops working", async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: "u1",
+        username: "acme_op",
+        email: "typo@acme.example",
+        role: "OPERATOR",
+      } as any);
+      prisma.user.update.mockResolvedValue({
+        id: "u1",
+        username: "acme_op",
+        email: "corrected@acme.example",
+        role: "OPERATOR",
+        forcePasswordChange: false,
+      } as any);
+
+      await service.updateUser("u1", { email: "corrected@acme.example" } as any);
+
+      expect(prisma.passwordResetToken.updateMany).toHaveBeenCalledWith({
+        where: { userId: "u1", usedAt: null },
+        data: { usedAt: expect.any(Date) },
+      });
+    });
+
+    it("N2 review fix (#811): sends a fresh set-password invite to the corrected address when the user never set their own password", async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: "u1",
+        username: "acme_op",
+        email: "typo@acme.example",
+        role: "OPERATOR",
+      } as any);
+      prisma.user.update.mockResolvedValue({
+        id: "u1",
+        username: "acme_op",
+        email: "corrected@acme.example",
+        role: "OPERATOR",
+        forcePasswordChange: true, // never completed the invite flow
+      } as any);
+
+      await service.updateUser("u1", { email: "corrected@acme.example" } as any);
+
+      expect(email.sendSetPasswordEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ to: "corrected@acme.example", username: "acme_op" }),
+      );
+    });
+
+    it("N2 review fix (#811): does NOT re-invite when the user already has their own password", async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: "u1",
+        username: "acme_op",
+        email: "old@acme.example",
+        role: "OPERATOR",
+      } as any);
+      prisma.user.update.mockResolvedValue({
+        id: "u1",
+        username: "acme_op",
+        email: "new@acme.example",
+        role: "OPERATOR",
+        forcePasswordChange: false, // already set their own password
+      } as any);
+
+      await service.updateUser("u1", { email: "new@acme.example" } as any);
+
+      expect(email.sendSetPasswordEmail).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("updateUser — role-change notice", () => {
+    it("names the old role, new role, and who changed it", async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: "u1",
+        username: "acme_driver",
+        email: "driver@acme.example",
+        role: "DRIVER",
+      } as any);
+      prisma.user.update.mockResolvedValue({
+        id: "u1",
+        username: "acme_driver",
+        email: "driver@acme.example",
+        role: "OPERATOR",
+        status: "ACTIVE",
+        isAdmin: false,
+        canActAsDriver: true,
+      } as any);
+
+      await service.updateUser("u1", { role: "OPERATOR" } as any, "acme_tenant_admin");
+
+      expect(email.sendRoleChangedNotice).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: "driver@acme.example",
+          oldRole: "DRIVER",
+          newRole: "OPERATOR",
+          changedBy: "acme_tenant_admin",
+        }),
+      );
+    });
+
+    it("falls back to 'an administrator' when no caller username is passed", async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: "u1",
+        username: "acme_driver",
+        email: "driver@acme.example",
+        role: "DRIVER",
+      } as any);
+      prisma.user.update.mockResolvedValue({
+        id: "u1",
+        username: "acme_driver",
+        email: "driver@acme.example",
+        role: "OPERATOR",
+      } as any);
+
+      await service.updateUser("u1", { role: "OPERATOR" } as any);
+
+      expect(email.sendRoleChangedNotice).toHaveBeenCalledWith(
+        expect.objectContaining({ changedBy: "an administrator" }),
+      );
+    });
+
+    it("sends NO role-change notice when role is unchanged", async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: "u1",
+        username: "acme_op",
+        email: "op@acme.example",
+        role: "OPERATOR",
+      } as any);
+      prisma.user.update.mockResolvedValue({
+        id: "u1",
+        username: "acme_op",
+        email: "op@acme.example",
+        role: "OPERATOR",
+      } as any);
+
+      await service.updateUser("u1", { role: "OPERATOR", username: "renamed" } as any);
+
+      expect(email.sendRoleChangedNotice).not.toHaveBeenCalled();
     });
   });
 });

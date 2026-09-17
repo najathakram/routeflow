@@ -121,6 +121,24 @@ describe("AuthService.setPassword", () => {
     });
   });
 
+  it("N2 review fix: invalidates any outstanding PasswordResetToken so a 72h staff-invite/admin-reset link can't outlive a first-password setup", async () => {
+    prisma.user.findUnique.mockResolvedValue(GOOGLE_ONLY_USER as any);
+    prisma.user.update.mockResolvedValue({
+      ...GOOGLE_ONLY_USER,
+      password: "$2b$10$newhash",
+      forcePasswordChange: false,
+    } as any);
+    prisma.tenant.findUnique.mockResolvedValue({ slug: "acme" } as any);
+    prisma.refreshToken.upsert.mockResolvedValue({} as any);
+
+    await service.setPassword("user-1", "NewPass1!", { ipAddress: "1.2.3.4" });
+
+    expect(prisma.passwordResetToken.updateMany).toHaveBeenCalledWith({
+      where: { userId: "user-1", usedAt: null },
+      data: { usedAt: expect.any(Date) },
+    });
+  });
+
   it("signs the fresh access token with hasPassword=true", async () => {
     prisma.user.findUnique.mockResolvedValue(GOOGLE_ONLY_USER as any);
     prisma.user.update.mockResolvedValue({

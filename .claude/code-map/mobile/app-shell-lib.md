@@ -117,6 +117,28 @@ nonce}` so a re-scan re-flashes; **2026-09-14:** optional `freeUnitsFor(id,line)
   POSTED-with-a-bill reads "You already scanned this" and offers the bill; anything else reads
   "Picking up where you left off" with nothing to open. `(operator)/vendor-bills/scan.tsx` fires it
   through `chooseAction` on scan success AND keeps a standing `PriorScanBanner` in ReviewStep
+- **B451/#791 negative-line handling (2026-09-17, Opus review round) — `lib/vendor-bill-scan.ts`
+  `buildBillDtoFromScan`.** A NEGATIVE `qty` line is a deposit-return/credit, not a stock receipt
+  (the AI prints e.g. `qty:-1` against a positive per-unit price) — new private
+  `normalizeScanLine(i)` flips it to a money-only adjustment before it reaches the server: `qty`
+  → `Math.abs(qty)` (server DTO is `@Min(0)`), `unitCost` → negated by PLAIN NEGATION not
+  `-Math.abs` (a deposit-return can print with EITHER sign on `unitCost` depending on the invoice
+  layout — `-Math.abs` would silently flip an already-negative cost positive, doubling the line's
+  effect on `totalOwed` instead of preserving it), `lineTotal`'s sign follows `unitCost`'s (`undefined`
+  stays `undefined`, never coerced to 0/`-0`), and `productId` is dropped so `receive()`'s
+  stock/inventory logic (which only touches lines carrying a `productId`) can never move stock for
+  a line that isn't one. A non-negative-`qty` line passes through unchanged. **Fix, same round:**
+  the line-keep filter was `(qty??0)>0 || (unitCost??0)>0`, which silently DROPPED a discount line
+  printed with a null/0 `qty` and a negative `unitCost` (`0>0` and `-5>0` are both false) — now
+  `!== 0` on both clauses, keeping any line with a real qty OR cost in EITHER direction. New
+  `isMoneyInvariantError(error)` — true when the API 400s a vendor-bill create with
+  `code:"MONEY_INVARIANT"` (the whole document's lines net negative, e.g. every line is a
+  return/discount); `(operator)/vendor-bills/scan.tsx` `submitBill` shows a dedicated "this looks
+  like a credit memo" message instead of the generic error toast. Kept in this pure,
+  react-native-free module (not `lib/api/vendor-bills.ts`, which transitively imports
+  react-native via `api-client`) so it stays reachable from the mobile pure-logic Jest suite. See
+  `bootstrap-cross-cutting/bootstrap-and-money-pricing.md`'s B451 entry for the server-side
+  `assertMoneyInvariants` guard this responds to. Spec: `__tests__/vendor-bill-scan.test.ts`.
   (orange wash w/ bill link, green wash when merely restored).
 - **Build/typecheck hermetics (2026-08-28, npm-ci migration):** `tsconfig.json` pins `typeRoots` to `./node_modules/@types` + `../../node_modules/@types` — without it tsc walks EVERY ancestor `node_modules/@types`, and from a git worktree that reaches the MAIN checkout's install (silent drift; broke when a concurrent session touched it). `package.json` declares `expo-modules-core 55.0.25` EXACT — must track `expo`'s own exact pin (bump both together): root expo-* packages (expo-notifications et al) import it without declaring it, and without the explicit dep npm nests the only copy under `node_modules/expo/node_modules/`, unreachable by walk-up → skipLibCheck-silenced import failure → phantom TS2339s on expo types. `jest ^30.2.0` must stay range-compatible with the root override pin (`jest 30.2.0`) or npm 10's override-unaware `npm ci` validator explodes (see code-map CHANGELOG 2026-08-28 night). `react-test-renderer 19.2.0` is EXACT for the same reason and must track this workspace's `react` pin (and `jest-expo`'s own exact pin): it is declared nowhere else and enters only as a floating peer of `@testing-library/react-native` (`>=18.2.0`, non-optional), so before the pin a from-scratch resolution ERESOLVE'd on 19.2.8 wanting `react@^19.2.8`. (The now-removed `@testing-library/jest-native` had the same floating peer at `>=16.0.0`.) Pinned in `apps/mobile` rather than root `overrides` because the lock records NO `overrides` field, which makes an override invisible to `npm ci`'s own validator. ⚠️ Dropping `@testing-library/jest-native` (done) did NOT make the pin redundant — `react-native` declares its OWN non-optional `react-test-renderer >=18.2.0` peer (only `jest` is optional in its `peerDependenciesMeta`); measured, from-scratch ERESOLVEs with jest-native AND the pin both removed. Do not remove the pin.
 - **Operator invoice print (2026-09-15, WP3):** `lib/print-logic.ts` (NEW, node-safe, no RN

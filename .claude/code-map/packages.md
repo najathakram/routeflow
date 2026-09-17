@@ -234,6 +234,40 @@ produces `dist` before anything typechecks. api/web/mobile all import the bare s
   advance apply/mobile edit-cap sites all gate on `status !== VOID`). Nothing in this PR wires
   these into a real call site — that's the design's §3.4 table, later PRs.
   `apps/api/src/invoices/payment-predicates.ts` re-exports all of the above too.
+- **PR-2 (check-payments B1 hardening, 2026-09-17, #805) — wires PR-1's `remainingCapacity` into
+  the real capacity-guard call sites** (PR-1 wired nothing in). Adds
+  `BLOCKING_PAYMENT_STATUSES`/`BLOCKING_PAYMENT`/`isBlockingPayment` to `payment-confirmation.ts` —
+  deliberately a THIRD predicate distinct from `isHeldPayment`/`sumConfirmed` (N4 owner ruling: an
+  EXISTENCE/blocking check, e.g. "does an external payment still block this cancel", must keep
+  counting DRAFT exactly as pre-PR code did; only a money-TOTAL figure may narrow to
+  HELD/CONFIRMED). **The pattern in every wired site**: a capacity ceiling
+  (`remainingCapacity(total, payments)`, DRAFT-inclusive) bounds how much can be newly applied,
+  but the invoice's STATUS recompute afterward stays `sumConfirmed(payments) + applyAmount` (never
+  `total − remainingCapacity`, which would be DRAFT-inclusive and could flip an invoice straight
+  to PAID off unconfirmed money sitting alongside the new confirmed one). Sites:
+  `credit-notes.service.ts` `applyCreditInTx`/`restoreCreditFromPaymentInTx` (both now call
+  `remainingCapacity` for the ceiling, `sumConfirmed` for the status recompute — replaces two
+  hand-rolled `status !== "VOID"` filters), `customers.service.ts`
+  `applyAdvancePaymentToInvoiceLocked` (same pattern; **known gap, not fixed here**: its
+  `newPaid` is NOT wrapped in `roundMoney`, unlike credit-notes' — filed as a follow-up),
+  `orders.service.ts` cancel-blocker check (pure predicate swap: `p.status !== "VOID"` →
+  `isBlockingPayment(p)`, same behavior, clearer name — no transaction threaded into
+  `updateOrderItems`), web `apps/web/app/(dashboard)/invoices/[id]/page.tsx` `editPaymentMax` and
+  mobile `apps/mobile/lib/payments-logic.ts` `editPaymentMaxAmount` (both now import
+  `remainingCapacity` from `@routeflow/pricing` instead of a hand-rolled client-side
+  total-minus-sum-of-PAID). **Explicitly NOT touched (independent review caught a scope-creep
+  attempt and reverted it, 2026-09-16):** `orders.service.ts`'s credit-limit-exposure calc keeps
+  its original `status !== "VOID"` basis — an earlier draft of this PR silently converted it to
+  `sumConfirmed`, which would have started 409-ing a DRAFT bank-import payment as
+  `CREDIT_LIMIT_EXCEEDED` with no owner sign-off; that is a real, separate policy decision (does
+  credit-limit exposure / receivables count DRAFT payments), filed as an open owner ruling, not
+  made silently inside a "hardening" PR. No migration, no registry change. Specs:
+  `credit-notes.service.spec.ts`, `customers.service.spec.ts`, `orders.service.spec.ts`,
+  `invoices.service.spec.ts`, `payment-predicates.spec.ts`, **`payment-status-filter.spec.ts`**
+  (264 lines — the status-recompute-basis regression suite: asserts every wired site's status
+  transition uses `sumConfirmed`, never the DRAFT-inclusive capacity figure, across
+  DRAFT+PAID+PENDING(+VOID) payment combinations), `apps/mobile/__tests__/payments-helpers.test.ts`,
+  `packages/pricing/src/payment-confirmation.spec.ts`.
 - Golden tests live here: `src/pricing.spec.ts`, `src/tier-pricing.spec.ts`, `src/golden.spec.ts`
   (+ `src/golden.fixtures.ts`, the hand-worked money table, moved from api's old
   `pricing-parity.fixtures.ts`), `src/payment-confirmation.spec.ts` (the core REG-B421 cases —

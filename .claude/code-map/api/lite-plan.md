@@ -58,3 +58,36 @@ covers only what the Lite lane added on top.
   `apps/api/tsconfig.plan-gate-specs.json` (extends `tsconfig.json`, `include`s only these 6
   files), run via `npx tsc --noEmit -p tsconfig.plan-gate-specs.json`. Findings 8-10 are tracked
   follow-ups, deliberately not fixed here.
+- **PREPIN_DARK_FLAGS (P0, 2026-09-17, #806)** — prod flipped `PLAN_FLAG_ENFORCEMENT=on` with
+  #777's five v12 flags (`flag.{estimates,recurring_invoices,credit_notes,suppliers,messaging}`)
+  still missing from the pinned v11 catalogs, so every non-LITE tenant without a manual grant was
+  denied these features outright. `plan-flag-policy.ts`'s `isDarkFlag()` now ORs in a new,
+  unconditional `PREPIN_DARK_FLAGS` set (the same five keys) ahead of the `DARK_PLAN_FLAGS &&
+!isPlanFlagEnforcementOn()` check — these five stay dark (courtesy-allowed) regardless of the
+  kill switch until the catalogs are re-pinned with them; `allowsFlag()`'s always-enforced-plan
+  exclusion is untouched, so LITE tenants remain gated normally. `subscription.service.ts`'s
+  client-visible `flags` list already goes through `allowsFlag()`, so the web lock sees the fix
+  too, no separate change needed there. No migration, no registry change — an INTERIM patch per
+  [[project_entitlements_one_rule_2026-09-17]] (PLAN_FLAG_ENFORCEMENT stays off going forward;
+  entitlements consolidate to one preset+grants−denies rule in a later PR-0, which deletes this
+  set). Specs: `plan-flag-policy.spec.ts` (a v11 SCALE tenant sees all five with enforcement ON; a
+  LITE tenant does not), `subscription.service.spec.ts`, `feature-registry.spec.ts`.
+- **B450 (2026-09-17) — diagnostic scripts for a Lite-L2-flag-shaped 403 (`e2e-routeflow`
+  `POST /recurring-invoices` red since #777)**, all going through the REAL platform-admin/billing
+  API over HTTP rather than a raw DB read or a hand-rolled mirror of `EntitlementsService` (unlike
+  `audit-tenant-entitlements.mjs`, which has to reimplement that logic in SQL) — so a read can
+  never drift from what a live admin click / the tenant's own dashboard actually sees. Shared
+  client: **`scripts/lib/platform-admin-http.mjs`** — `resolveApiBase()` (`API_URL`, default
+  `localhost:3000/api/v1`), `loginAsSuperAdmin()` (`SUPER_ADMIN_USERNAME`/`_PASSWORD` env, asserts
+  role), `findTenantBySlug()` (exact case-insensitive match, throws on zero/multiple),
+  `getTenantDetail()`, `getResolvedSubscription()` (impersonates the tenant's `TENANT_ADMIN` —
+  audit-logged by the API as `IMPERSONATION_STARTED`, the one side effect a read makes — then
+  calls `/billing/subscription` as them), `updateTenantPlan()` (`PATCH
+/platform-admin/tenants/:id/plan`), `LITE_L2_FLAGS` (the 5 flags, display labels only).
+  **`scripts/report-tenant-plan.mjs <slug>`** — read-only: prints the legacy `Tenant.plan` enum,
+  the raw `TenantSubscription` row, the RESOLVED planKey/flags, and a granted/missing table for
+  the 5 Lite-L2 flags; NOT restricted to approved test tenants (a read, not a test/seed/cleanup
+  action). **`scripts/set-e2e-tenant-plan.mjs --slug <slug> --plan <PLAN> [--apply]`** — the
+  paired WRITE script, dry-run by default; calls `assertTestTenant()` BEFORE any network call (no
+  override — can only ever target `e2e-routeflow`/`test`/`routeflow-demo`/`qa-*`/`e2e-*`/
+  `ux-audit-*`), prints current-vs-would-be resolved state, and only writes with `--apply`.

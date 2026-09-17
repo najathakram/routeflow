@@ -80,6 +80,23 @@ minPatch)` helper (major must match exactly, minor/patch compared numerically >=
   ALLOWLISTED-suppresses) a fixture audit reporting one of them — the allowlist itself stays
   available for a future, unrelated advisory (see the `security/audit-allowlist.json` bullet
   above and `ci-audit-script.spec.ts`'s "policy guard" describe update).
+- **`src/common/denied-identifiers.spec.ts` (2026-09-16, #797)** — LOCAL, gitignored tripwire for
+  scrubbing real client identifiers (tenant slugs, business names, emails, per CLAUDE.md's "Test
+  tenants & real-client data" policy) out of the repo before a public CI window. Reads one
+  identifier per line from gitignored `local-assets/security/denied-identifiers.txt` (never
+  committed); missing/empty file → a single no-op PASS with a `console.warn` (every other
+  contributor, and CI on a fresh clone, never has this local file, so the guard is inert for
+  them). When populated: word-boundary (`\b…\b`, case-insensitive) `it.each` per identifier across
+  every `.ts/.tsx/.js/.jsx/.mjs/.cjs/.md/.mdx/.json/.yml/.yaml/.html/.txt` file under the repo
+  root (excludes `node_modules/.git/.next/.turbo/dist/build/coverage/out/.vercel/local-assets`),
+  plus a sanity assertion the walk found >500 files (a silent zero-file walk would make every
+  identifier check vacuously green). Companion PR made every then-remaining live-identifier
+  occurrence comment-only/JSDoc-example text (`packages/types/index.ts`, mobile
+  `payment.tsx`/`addons.ts`, `scrub-demo-contacts.mjs`) with no runtime logic change — confirmed
+  zero remaining occurrences on that tree via `git grep`. **Known gap, owner-acknowledged:** this
+  cleans HEAD only; the identifiers remain in git history, exposed during every public merge
+  window — removing them needs a history rewrite, filed as a follow-up. Wired into
+  `jest.repo-truth.config.js`'s `testRegex` (own lane, not the default jest run).
 - **`src/common/campaign-check-freshness.spec.ts` (2026-09-06, campaign-check report freshness,
   L-083)** — contract spec for `scripts/campaign-check.mjs`'s freshness rule and its new
   `--freshness-only` pre-step (see [`INDEX`](INDEX.md)'s "Bug-register burn-down campaign" row).
