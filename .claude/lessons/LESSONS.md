@@ -13,6 +13,24 @@
 
 ## tooling
 
+### L-191 · 2026-09-17 · tooling · MailboxCard.tsx JSX apostrophes only caught by a full web lint
+
+- **Symptom:** `MailboxCard.tsx` (email-connect-google/#824, email-connect-microsoft/#830/#841)
+  shipped with five raw `'` characters in JSX text nodes (`react/no-unescaped-entities`). `tsc`,
+  Jest, and a targeted `eslint` pass on just the changed file were all clean; the errors only
+  surfaced when `npm run lint -w apps/web` (i.e. `next lint`) ran against the whole workspace.
+- **Root cause:** `next lint` fails the ENTIRE web workspace on a single error, and that failure
+  reads as noise — the run's output is dominated by pre-existing warnings elsewhere in the repo,
+  so a real new error in the diff is easy to mistake for one more line of the existing warning
+  backlog instead of the thing that actually failed the run.
+- **Lesson:** **A JSX text change needs web lint run locally before push, not inferred from
+  `tsc`/Jest passing — `next lint` fails the whole workspace on one error, and the failure hides
+  behind pre-existing warnings, so scan the full lint output for NEW errors in the touched
+  file(s) rather than assuming a clean `tsc` means the JSX is clean too.**
+- **Guard:** none yet — propose `npm run lint -w apps/web -- --file <changed-file>`-style
+  scoped invocation, or a pre-push hook step that diffs lint output against a baseline so a new
+  error can't hide in the existing warning noise.
+
 ### L-190 · 2026-09-17 · tooling · FG-B (#819) had to be rebuilt, not rebased, after FG-A squash-merged
 
 - **Symptom:** #819 (FG-B, feature-override kind + MRR exclusion) conflicted after #825 (FG-A,

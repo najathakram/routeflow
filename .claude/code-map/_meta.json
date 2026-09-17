@@ -1,6 +1,6 @@
 {
-  "mappedSha": "18a1bfd019e02c97381d6c28f2e0a3454de45e16",
-  "generatedAt": "2026-09-17T16:00:00.000Z",
+  "mappedSha": "bd1a84570e00435585696f75c910f75edf330538",
+  "generatedAt": "2026-09-17T16:43:44.000Z",
   "layout": "split-2026-09-13",
   "areas": ["api", "web", "mobile", "packages"],
   "partCounts": {
@@ -10,5 +10,5 @@
     "packages": 0
   },
   "fileCount": 1027,
-  "notes": "**2026-09-17 — Feature grants v2 bookkeeping (#825/#837/#838, docs-only, Bookkeeping Option B)** — surgical entries for briefs A/B/C: `api/feature-modules-4/billing.md` gets the main \"Feature grants v2\" entry (shadow resolver, override `kind` + MRR exclusion + review job, config modes + routes dispatch); `api/feature-modules-1.md` gets the platform-admin shadow-resolver admin surface + `tenants/me/features`; `api/feature-modules-3/routes.md` gets `route-dispatch-mode.ts`; `packages.md` gets `api/features.ts` + the new `FeatureOverrideKind`/`FeatureSource` enums; `web/app-shell-lib.md` + `mobile/app-shell-lib.md` get `lib/tenant-features.ts`/`lib/feature-modes.ts` (both unwired-into-a-page-yet); `web/e2e-tests.md` gets `50-routes-dispatch-mode.spec.ts`. See CHANGELOG.md."
+  "notes": "**2026-09-17 — Mailbox connect bookkeeping (#824/#830/#841, N2 #811, docs-only, Bookkeeping Option B)** — `api/feature-modules-7.md`'s `email/` section gains two entries: N2 account/invite mail (`sendSetPasswordEmail`/`sendEmailChangedNotice`/`sendEmailChangeConfirmation`/`sendRoleChangedNotice`, `sendPlatform`) and the `email/mailbox/` subdirectory (`MailboxConnectionService` OAuth for Google + Microsoft, `MailboxSendService.trySend`, `MailboxController`'s two-step confirm binding, web `MailboxCard.tsx`). See CHANGELOG.md."
 }
