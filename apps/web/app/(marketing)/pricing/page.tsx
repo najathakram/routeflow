@@ -1,12 +1,16 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowRight, ArrowUpRight, Package, Route, Store, Warehouse } from "lucide-react";
-import { routes, site } from "../lib/site";
+import { ArrowRight, ArrowUpRight, Store } from "lucide-react";
+import { PLANS, routes, site } from "../lib/site";
 import { CTA, Eyebrow, CheckList } from "../components/marketing";
 import { FAQ } from "../components/faq";
 
 // Copy verbatim from the redesign's app/[page]/page.tsx `Pricing()` (M1 §2d).
 // No numeric prices — deliberately deferred to a sales conversation.
+//
+// PLANS moved to lib/site.ts (owner layout ruling, 2026-09-16, PR-3): the
+// home page's new pricing teaser reuses the same three plans, single
+// source so the two never drift apart.
 
 const route = routes.find((r) => r.slug === "pricing")!;
 
@@ -22,38 +26,6 @@ export const metadata: Metadata = {
     type: "website",
   },
 };
-
-const PLANS = [
-  {
-    name: "Starter",
-    tag: "GET YOUR WORKFLOW ORGANIZED",
-    text: "For a smaller team bringing customer orders into one place.",
-    icon: Package,
-    items: ["Customer and product records", "Order management", "Retailer ordering portal"],
-  },
-  {
-    name: "Growth",
-    tag: "CONNECT YOUR DELIVERY OPERATION",
-    text: "For teams coordinating orders, drivers, and regular delivery runs.",
-    icon: Route,
-    items: [
-      "Order-to-delivery workflow",
-      "Route planning and dispatch",
-      "Delivery status and customer accounts",
-    ],
-  },
-  {
-    name: "Scale",
-    tag: "DISCUSS A BROADER ROLLOUT",
-    text: "For more complex operations with specific rollout and access needs.",
-    icon: Warehouse,
-    items: [
-      "Review multiple locations",
-      "Discuss team and access requirements",
-      "Plan imports and implementation",
-    ],
-  },
-];
 
 export default function PricingPage() {
   return (
