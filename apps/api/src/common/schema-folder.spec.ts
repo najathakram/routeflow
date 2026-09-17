@@ -43,8 +43,18 @@ const EXPECTED_FILES = [
 // untouched by that lane.)
 // (2026-09-17, email-connect-google PR-2/PR-3: +1 model — MailboxConnection; +2 enums —
 // MailboxProvider, MailboxConnectionStatus.)
-const EXPECTED_MODEL_COUNT = 131;
-const EXPECTED_ENUM_COUNT = 89;
+// (2026-09-16, Feature grants PR-1: +1 model — TenantFeatureOverride; +1 enum —
+// FeatureOverrideEffect.)
+// (2026-09-17, combined migration-batch merge tree: N3 + Feature grants PR-1 merged
+// together — counts summed and re-verified directly via
+// `node apps/api/scripts/split-prisma-schema.mjs --check` against the merged schema
+// folder, not re-derived by arithmetic.)
+// (2026-09-17, public demo booking API PR-2 (#808): +1 model, +1 enum — re-verified the
+// same way.)
+// (2026-09-17, email-connect-google merged onto master post-#811: counts below re-verified
+// against the actual merged schema folder via the --check script, not summed by hand.)
+const EXPECTED_MODEL_COUNT = 132;
+const EXPECTED_ENUM_COUNT = 90;
 
 function listSchemaFiles(): string[] {
   if (!fs.existsSync(SCHEMA_DIR)) return [];

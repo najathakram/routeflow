@@ -175,7 +175,20 @@ specs.json`** (`apps/api/`, sibling build config) — extends `tsconfig.json`, `
     there — `UpdateOrderItemsDto` carries no `discountAmount`), `estimates.service.ts` `create()`,
     and `vendor-bills.service.ts` `create()`/`update()` (see `feature-modules-4/estimates.md` and
     `feature-modules-4/vendor-bills.md`). `invoices.service.ts`'s own inline checks (lines
-    ~469-502) are equivalent but not yet migrated to the shared guard.
+    ~469-502) are equivalent but not yet migrated to the shared guard. Spec:
+    `common/money-invariants.util.spec.ts` (the Nest-facing wrapper — every thrown
+    `MoneyInvariantError` shape maps to the same `BadRequestException`; `packages/pricing/src/money-invariants.spec.ts` covers the pure function itself).
+    **Phase A — Strix coverage-gap refutation tests (same PR, no fixes, attack-only)**, run at the
+    controller/DTO/service boundary against the REAL global `ValidationPipe` options
+    (`main.ts:145-149`): `customers/dto/create-customer.mass-assignment.spec.ts`,
+    `orders/dto/create-order.mass-assignment.spec.ts`, `invoices/dto/create-invoice.mass-assignment.spec.ts`
+    (all three CONFIRM `forbidNonWhitelisted` correctly strips/rejects an injected
+    `tenantId`/`role`/`isAdmin`/`totalAmount`/`subtotal`/`taxAmount` — no gap found, the DTOs were
+    already correct) and `common/list-params-sql-injection.security.spec.ts` (CONFIRMS every
+    list/search endpoint's free-text params flow through Prisma's parameterized `contains` — no
+    raw SQL, no gap found). These four are refutations (the gap was NOT there); the one CONFIRMED
+    gap (POST /orders and POST /vendor-bills had no discount/negative-total guard, POST /estimates
+    had no DTO class at all — `@Body() dto: any`) is what `assertMoneyInvariants` above fixes.
     **`@routeflow/pricing`** — `computeLineSubtotal` (boxed BOX-price proration; optional
     **`freeUnits`** subtracts whole SELLING units before pricing — default 0, so every pre-existing
     call site is byte-for-byte unaffected), `normalizeBoxesPieces` (integer boxes/pieces + rollover),

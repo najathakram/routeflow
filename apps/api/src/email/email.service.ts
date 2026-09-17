@@ -213,6 +213,34 @@ interface PlatformSmtpConfig {
   pass: string;
 }
 
+/** Shared card/header/footer shell for the N2 account-notification templates — same
+ *  visual grammar as sendMergeVerificationEmail/sendMergeCompleteEmail (page background,
+ *  rounded white card, colored header bar, light-gray footer), factored out once here
+ *  since N2 adds four templates rather than one. Not a rewrite of buildInvoiceEmail's own
+ *  shell — that one stays as-is for invoices. */
+function renderEmailShell(params: {
+  headerColor: string;
+  headerTitle: string;
+  bodyHtml: string;
+}): string {
+  return `<!DOCTYPE html>
+<html><body style="margin:0;padding:0;background:#f9fafb;font-family:Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:32px 16px;">
+<table width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:8px;border:1px solid #e5e7eb;">
+  <tr><td style="background:${params.headerColor};padding:24px 32px;border-radius:8px 8px 0 0;">
+    <p style="margin:0;font-size:20px;font-weight:700;color:#ffffff;">${params.headerTitle}</p>
+  </td></tr>
+  <tr><td style="padding:32px;">
+    ${params.bodyHtml}
+  </td></tr>
+  <tr><td style="background:#f9fafb;padding:16px 32px;border-top:1px solid #f0f0f0;border-radius:0 0 8px 8px;">
+    <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;">RouteFlow Platform — this is an automated account email.</p>
+  </td></tr>
+</table>
+</td></tr></table>
+</body></html>`;
+}
+
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
@@ -1184,18 +1212,20 @@ export class EmailService {
   }
 
   /**
-   * N3 fix round (Opus review of 1dba2bca, finding 4): a PLATFORM-only send that never
-   * resolves tenant SMTP or tenant branding — `send()` above reads `prisma.getTenantId()`
-   * (set on every in-request call, including a tenant admin's OWN authenticated action like
-   * upgrade()/downgrade()), so a billing-lifecycle notification sent through `send()` would
-   * leave from the ACTING TENANT's own mailbox with their own From name. `sendPlatform()`
-   * always uses `this.platformFrom` and skips tenant SMTP entirely, regardless of request
-   * context. Still Resend-only as reviewed (post-merge note, 2026-09-16: B452/#789 landed
-   * `this.platformSmtp` and wired it into `send()` above — `sendPlatform()` does NOT yet use
-   * it, so a deploy with platformSmtp configured but no Resend key would leave every N3
-   * notification undelivered, same as before this merge. Not fixed here — this is a merge
-   * (test/push), not a second review round; flagged to the lead as a follow-up, not silently
-   * expanded).
+   * Platform-only send — NEVER reads or uses a tenant's own SMTP config or branding
+   * (unlike `send()`, which tries the tenant's own mailbox first). For security/account
+   * mail (verification, password reset, invites, account/role-change notices — N2 ground
+   * rule 1) and billing-lifecycle mail (N3), the sender must always be the bare platform
+   * identity, never "<Business> via RouteFlow" — `send()` reads `prisma.getTenantId()` on
+   * every in-request call, including a tenant admin's own authenticated action, so routing
+   * either kind of notification through `send()` would leave from the ACTING TENANT's own
+   * mailbox. Merge of N2's and N3's independent copies (both added this method on separate
+   * branches, as planned): platform SMTP (Google Workspace) is tried first, same as it is
+   * in `send()` above, THEN Resend — N3's original Resend-only version left platformSmtp
+   * unused here, which its own review flagged as a gap (a deploy with platformSmtp
+   * configured but no Resend key would leave every N3 notification undelivered); folded in
+   * as part of this merge rather than left dangling. `text` (N3's plain-text alternative)
+   * is threaded through both transports.
    */
   async sendPlatform(params: {
     to: string;
@@ -1203,7 +1233,45 @@ export class EmailService {
     html: string;
     text?: string;
     replyTo?: string;
-  }): Promise<{ delivered: boolean; transport: "resend" | "none"; id?: string; error?: string }> {
+  }): Promise<{
+    delivered: boolean;
+    transport: "smtp" | "resend" | "none";
+    id?: string;
+    error?: string;
+  }> {
+    // 1. Platform SMTP (Google Workspace mailbox) — same transport as send()'s own
+    // platform-SMTP step, but the From identity is always the bare platform address.
+    if (this.platformSmtp) {
+      try {
+        const transport = this.createSendTransport(
+          this.platformSmtp.host,
+          this.platformSmtp.port,
+          this.platformSmtp.secure,
+          this.platformSmtp.user,
+          this.platformSmtp.pass,
+        );
+        const info = await transport.sendMail({
+          from: this.platformFrom,
+          to: params.to,
+          subject: params.subject,
+          html: params.html,
+          text: params.text,
+          replyTo: params.replyTo,
+        });
+        this.logger.log(
+          `Platform email sent via platform SMTP to ${params.to} — messageId: ${info.messageId}`,
+        );
+        return { delivered: true, transport: "smtp", id: info.messageId };
+      } catch (err: any) {
+        const rawMessage: string = err?.message ?? "Platform SMTP send failed";
+        this.logger.error(
+          `Platform SMTP send failed [code=${err?.code ?? "unknown"}]: ${redactAddresses(rawMessage)}.`,
+        );
+        return { delivered: false, transport: "smtp", error: redactAddresses(rawMessage) };
+      }
+    }
+
+    // 2. Platform Resend, bare platform From — never the tenant's own verified domain.
     if (this.resend) {
       try {
         const result = await this.resend.emails.send({
@@ -1232,8 +1300,10 @@ export class EmailService {
         };
       }
     }
+
+    // 3. No platform transport configured.
     this.logger.warn(
-      `[EMAIL NOT SENT] To: ${params.to} | Subject: ${params.subject} — no platform email transport is configured.`,
+      `[PLATFORM EMAIL NOT SENT] To: ${params.to} | Subject: ${params.subject} — no platform SMTP or Resend configured.`,
     );
     return { delivered: false, transport: "none" };
   }
@@ -1572,6 +1642,96 @@ export class EmailService {
           `Please use <strong>${params.primaryEmail}</strong> to sign in going forward. This account (${params.secondaryEmail}) is now deactivated.`,
         ),
     });
+  }
+
+  // ─── N2: account + invite emails (staff invite, admin reset, email/role change) ────
+
+  /** Staff invite (createOperator) and admin-triggered password reset share this one
+   *  template — both hand the recipient the same single-use set-password link. */
+  async sendSetPasswordEmail(params: {
+    to: string;
+    username: string;
+    setPasswordUrl: string;
+    expiryHours: number;
+  }) {
+    const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${escapeHtml(params.username)},</p>
+    <p style="margin:0 0 16px;font-size:15px;color:#374151;">
+      Your RouteFlow account is ready. Click below to set your password and finish signing in.
+    </p>
+    <table cellpadding="0" cellspacing="0"><tr><td style="background:#4f46e5;border-radius:6px;">
+      <a href="${params.setPasswordUrl}" style="display:inline-block;padding:12px 28px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;">
+        Set your password
+      </a>
+    </td></tr></table>
+    <p style="margin:24px 0 0;font-size:13px;color:#9ca3af;">
+      This link expires in ${params.expiryHours} hours. If you weren't expecting this, contact your administrator.
+    </p>`;
+    const html = renderEmailShell({
+      headerColor: "#4f46e5",
+      headerTitle: "RouteFlow — Set your password",
+      bodyHtml: body,
+    });
+    return this.sendPlatform({ to: params.to, subject: "Set your RouteFlow password", html });
+  }
+
+  /** Notice to a user's OLD address after their login email is changed — never opt-out. */
+  async sendEmailChangedNotice(params: { to: string; username: string; newEmail: string }) {
+    const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${escapeHtml(params.username)},</p>
+    <p style="margin:0 0 16px;font-size:15px;color:#374151;">
+      Your RouteFlow login email was changed to <strong>${escapeHtml(params.newEmail)}</strong>.
+    </p>
+    <p style="margin:0;font-size:13px;color:#9ca3af;">
+      If you didn't make this change, contact your administrator immediately.
+    </p>`;
+    const html = renderEmailShell({
+      headerColor: "#4f46e5",
+      headerTitle: "RouteFlow — Login email changed",
+      bodyHtml: body,
+    });
+    return this.sendPlatform({
+      to: params.to,
+      subject: "Your RouteFlow login email was changed",
+      html,
+    });
+  }
+
+  /** Confirmation to a user's NEW address once it becomes their login email. */
+  async sendEmailChangeConfirmation(params: { to: string; username: string }) {
+    const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${escapeHtml(params.username)},</p>
+    <p style="margin:0;font-size:15px;color:#374151;">
+      This address is now your RouteFlow login email.
+    </p>`;
+    const html = renderEmailShell({
+      headerColor: "#4f46e5",
+      headerTitle: "RouteFlow — This is now your login email",
+      bodyHtml: body,
+    });
+    return this.sendPlatform({
+      to: params.to,
+      subject: "This is now your RouteFlow login email",
+      html,
+    });
+  }
+
+  /** Notice to a user when an operator/admin changes their role — never opt-out. */
+  async sendRoleChangedNotice(params: {
+    to: string;
+    username: string;
+    oldRole: string;
+    newRole: string;
+    changedBy: string;
+  }) {
+    const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${escapeHtml(params.username)},</p>
+    <p style="margin:0;font-size:15px;color:#374151;">
+      Your RouteFlow role was changed from <strong>${escapeHtml(params.oldRole)}</strong> to
+      <strong>${escapeHtml(params.newRole)}</strong> by ${escapeHtml(params.changedBy)}.
+    </p>`;
+    const html = renderEmailShell({
+      headerColor: "#4f46e5",
+      headerTitle: "RouteFlow — Your role was changed",
+      bodyHtml: body,
+    });
+    return this.sendPlatform({ to: params.to, subject: "Your RouteFlow role was changed", html });
   }
 
   // ─── N4: low-stock daily digest (platform-sent, tenant-admin-facing) ───────

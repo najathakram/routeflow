@@ -175,6 +175,7 @@ import { TenantsController } from "../tenants/tenants.controller";
 import { TenantsService } from "../tenants/tenants.service";
 import { EmailService } from "../email/email.service";
 import { AddonService } from "../billing/addon.service";
+import { FeatureOverrideService } from "../billing/feature-override.service";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 
@@ -201,6 +202,7 @@ describe("a shipped upload route receives its file (silent-skip oracle)", () => 
         },
         { provide: EmailService, useValue: {} },
         { provide: AddonService, useValue: {} },
+        { provide: FeatureOverrideService, useValue: {} },
       ],
     })
       // Auth is not what this proves; the multipart body is.

@@ -1,3 +1,5 @@
+import type { SystemConfigService } from "../system-config/system-config.service";
+
 /**
  * `SystemConfig` key "settings.taxRate" stores a PERCENT (0–100, string) — every
  * client (web, mobile) divides the stored value by 100 before using it as a
@@ -20,6 +22,26 @@ export function taxRateFractionFrom(stored: string | null): number {
   const pct = parseFloat(stored);
   if (!Number.isFinite(pct)) return 0;
   return Math.min(Math.max(pct, 0), 100) / 100;
+}
+
+/**
+ * The tenant's CURRENT tax rate (fraction), read from Settings — the ONE reader every
+ * caller shares, so the percent→fraction parsing above is never re-derived a second time
+ * (the exact L-072/duplicated-rule class this file's own header warns about). Originally
+ * `orders.service.ts`'s private `getTaxRate()`; extracted here (Returns Inside Order
+ * Creation PR-1c, deferred item from PR-1b) so `InlineReturnsQuoteService`'s unreferenced-
+ * chunk pricing (§3.2 case 2/3 — no matched invoice line to snapshot a rate from) can call
+ * the SAME reader instead of falling back to a hand-rolled 0. `orders.service.ts.getTaxRate()`
+ * now just forwards here; behaviour for every existing caller is unchanged.
+ *
+ * Never the SNAPSHOT rate a return chunk was priced at when it WAS matched to an invoice
+ * line — that path reads `line.taxRate` verbatim (m-7 / inline-returns-pricing.ts's
+ * `priceMatchedChunk`), deliberately never the tenant's current rate (design.md §3.5's
+ * "rate change" oracle: a matched chunk taxes at the line's OWN snapshot, not this one).
+ */
+export async function currentTaxRate(systemConfig: SystemConfigService): Promise<number> {
+  const stored = await systemConfig.get("settings.taxRate");
+  return taxRateFractionFrom(stored);
 }
 
 /**

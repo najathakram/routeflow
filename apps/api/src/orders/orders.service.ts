@@ -73,7 +73,7 @@ import {
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
-import { taxRateFractionFrom } from "../common/tax-rate";
+import { currentTaxRate } from "../common/tax-rate";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -87,6 +87,7 @@ import { assertNoUnspentSourcedCredits } from "../credit-notes/sourced-credit-gu
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { sumInlineReturnCredit } from "../returns/inline-return-credit.util";
 
 /**
  * B63 (REG-B63): the statuses past which a BUYER may no longer self-edit an
@@ -255,8 +256,10 @@ export class OrdersService implements OnApplicationBootstrap {
    * Falls back to 0 so that unconfigured tenants don't get a surprise 10% charge.
    */
   private async getTaxRate(): Promise<number> {
-    const stored = await this.systemConfig.get("settings.taxRate");
-    return taxRateFractionFrom(stored);
+    // Extracted to common/tax-rate.ts (Returns Inside Order Creation PR-1c) so
+    // InlineReturnsQuoteService's unreferenced-chunk pricing shares this exact reader
+    // instead of a second hand-rolled percent→fraction parse — same rule, one place.
+    return currentTaxRate(this.systemConfig);
   }
 
   /**
@@ -4673,6 +4676,27 @@ export class OrdersService implements OnApplicationBootstrap {
           shipping: shippingFee,
           total,
         });
+
+        // Returns Inside Order Creation PR-1c (design.md §4/§6.4, M7): a DRIVER edit that
+        // drops this order's gross below the credit already issued/held against its own
+        // inline returns is refused — a driver could otherwise erase (by editing the sale
+        // down) the very goods the driver-cap check measured against. Read AFTER the
+        // `Order FOR UPDATE` above (:3587 in the pre-PR-1c line numbering) so it sees every
+        // inline return committed before this edit's lock was granted. Staff (OPERATOR/
+        // TENANT_ADMIN) edits are NOT capped here — they can also approve/reduce a held
+        // return, so they're trusted with the same edit CUSTOMER/system flows already allow.
+        if (user?.role === UserRole.DRIVER) {
+          const inlineReturnCredit = await sumInlineReturnCredit(tx, orderId);
+          if (inlineReturnCredit > 0.001 && total < inlineReturnCredit - 0.001) {
+            throw new BadRequestException({
+              statusCode: 400,
+              code: "ORDER_BELOW_RETURN_CREDIT",
+              message:
+                `Order total (${total}) cannot drop below the credit already issued/held ` +
+                `against its inline returns (${roundMoney(inlineReturnCredit)}).`,
+            });
+          }
+        }
 
         // P5-08b + WP1 inline guards (completes P5-08 "credit / regulated /
         // stock-violating edit blocked inline"). DRAFT edits are exempt,

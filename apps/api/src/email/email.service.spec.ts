@@ -1124,6 +1124,109 @@ describe("EmailService.sendInvoice — BOGO/promo item display (T-B103, R9, REG-
   });
 });
 
+// ─── N2: account + invite email templates ──────────────────────────────────────
+
+describe("EmailService — N2 account/invite templates", () => {
+  it("sendSetPasswordEmail: subject, link, and expiry hours all land in the html", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "sendPlatform")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendSetPasswordEmail({
+      to: "acme_owner@example.com",
+      username: "acme_owner",
+      setPasswordUrl: "https://app.routeflow.info/reset-password?token=abc123",
+      expiryHours: 72,
+    });
+
+    expect(sendSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "acme_owner@example.com",
+        subject: "Set your RouteFlow password",
+      }),
+    );
+    const html = sendSpy.mock.calls[0][0].html;
+    expect(html).toContain('href="https://app.routeflow.info/reset-password?token=abc123"');
+    expect(html).toContain("expires in 72 hours");
+  });
+
+  it("sendSetPasswordEmail: escapes a username containing HTML-special characters", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "sendPlatform")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendSetPasswordEmail({
+      to: "a@b.com",
+      username: '<script>alert("x")</script>',
+      setPasswordUrl: "https://app.routeflow.info/reset-password?token=t",
+      expiryHours: 72,
+    });
+
+    const html = sendSpy.mock.calls[0][0].html;
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;script&gt;");
+  });
+
+  it("sendEmailChangedNotice: names the new email to the OLD address", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "sendPlatform")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendEmailChangedNotice({
+      to: "old@example.com",
+      username: "acme_owner",
+      newEmail: "new@example.com",
+    });
+
+    expect(sendSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "old@example.com",
+        subject: "Your RouteFlow login email was changed",
+      }),
+    );
+    expect(sendSpy.mock.calls[0][0].html).toContain("new@example.com");
+  });
+
+  it("sendEmailChangeConfirmation: goes to the NEW address", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "sendPlatform")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendEmailChangeConfirmation({ to: "new@example.com", username: "acme_owner" });
+
+    expect(sendSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "new@example.com",
+        subject: "This is now your RouteFlow login email",
+      }),
+    );
+  });
+
+  it("sendRoleChangedNotice: names old role, new role, and who changed it", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "sendPlatform")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendRoleChangedNotice({
+      to: "acme_owner@example.com",
+      username: "acme_owner",
+      oldRole: "DRIVER",
+      newRole: "OPERATOR",
+      changedBy: "tenant_admin",
+    });
+
+    const html = sendSpy.mock.calls[0][0].html;
+    expect(html).toContain("DRIVER");
+    expect(html).toContain("OPERATOR");
+    expect(html).toContain("tenant_admin");
+  });
+});
+
 /**
  * N3 fix round (Opus review of 1dba2bca, finding 4): `sendPlatform()` must NEVER resolve
  * tenant SMTP or tenant branding, even though `makeService()`'s mocked `prisma.getTenantId()`
@@ -1226,6 +1329,24 @@ describe("EmailService.sendPlatform — platform-only send, never tenant SMTP/br
     await svc.sendPlatform({ to: "admin@acme.test", subject: "x", html: "<p>x</p>" });
 
     expect(mailboxSend.trySend).not.toHaveBeenCalled();
+  });
+
+  it("tries platform SMTP before Resend when both are configured (N2's original capability, folded back in during merge)", async () => {
+    const sendMail = jest.fn().mockResolvedValue({ messageId: "plat-smtp-1" });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({
+      resendKey: "re_test",
+      smtpHost: "smtp.google.com",
+      smtpUser: "noreply@routeflow.info",
+      smtpPass: "app-password",
+      smtpPort: "465",
+      smtpSecure: "true",
+    });
+
+    const res = await svc.sendPlatform({ to: "admin@acme.test", subject: "x", html: "<p>x</p>" });
+
+    expect(res).toMatchObject({ delivered: true, transport: "smtp", id: "plat-smtp-1" });
+    expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({ to: "admin@acme.test" }));
   });
 });
 

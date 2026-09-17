@@ -601,6 +601,13 @@ export class AuthService {
       data: { password: newHash, forcePasswordChange: false },
     });
 
+    // N2 review fix: a 72h staff-invite/admin-reset set-password link must not
+    // outlive the user changing their own password through a different path.
+    await this.prisma.passwordResetToken.updateMany({
+      where: { userId, usedAt: null },
+      data: { usedAt: new Date() },
+    });
+
     const tokens = await this.mintSessionForUser(updated);
 
     return {
@@ -629,6 +636,13 @@ export class AuthService {
     const updated = await this.prisma.user.update({
       where: { id: userId },
       data: { password: newHash, forcePasswordChange: false },
+    });
+
+    // N2 review fix: same invalidation as changePassword — a 72h staff-invite/
+    // admin-reset set-password link must not outlive this mutation either.
+    await this.prisma.passwordResetToken.updateMany({
+      where: { userId, usedAt: null },
+      data: { usedAt: new Date() },
     });
 
     const tokens = await this.mintSessionForUser(updated, deviceInfo);

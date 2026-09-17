@@ -3,6 +3,7 @@ import { Reflector } from "@nestjs/core";
 import { AddonGuard } from "./addon.guard";
 import { AddonService } from "./addon.service";
 import { EntitlementsService } from "./entitlements.service";
+import { FeatureOverrideService } from "./feature-override.service";
 
 function contextFor(user: { tenantId: string | null } | undefined): ExecutionContext {
   return {
@@ -31,6 +32,7 @@ describe("AddonGuard", () => {
   let reflector: { getAllAndOverride: jest.Mock };
   let addonService: { getActiveAddons: jest.Mock };
   let entitlements: { isAlwaysEnforcedTenant: jest.Mock };
+  let featureOverrides: { getMany: jest.Mock };
 
   beforeEach(() => {
     reflector = { getAllAndOverride: jest.fn() };
@@ -40,10 +42,16 @@ describe("AddonGuard", () => {
     // always-enforced" — the same allow-through-dark behavior those tests already
     // assert on. The Lite-specific describe block below overrides this per-test.
     entitlements = { isAlwaysEnforcedTenant: jest.fn().mockResolvedValue(false) };
+    // Every pre-existing test in this file exercises a tenant with no override rows, so this
+    // collaborator-contract addition (feature-grants PR-1) defaults to "no override" — the
+    // same held-addon/dark behavior those tests already assert on. The override-specific
+    // describe block below overrides this per-test.
+    featureOverrides = { getMany: jest.fn().mockResolvedValue(new Map()) };
     guard = new AddonGuard(
       reflector as unknown as Reflector,
       addonService as unknown as AddonService,
       entitlements as unknown as EntitlementsService,
+      featureOverrides as unknown as FeatureOverrideService,
     );
   });
 
@@ -298,6 +306,126 @@ describe("AddonGuard", () => {
       addonService.getActiveAddons.mockResolvedValue([]);
 
       await expect(guard.canActivate(darkKeyContext())).resolves.toBe(true);
+    });
+  });
+
+  // Feature-grants PR-1 (owner ruling 2026-09-16): an active override is absolute — it decides
+  // before the held-addon/dark check, regardless of gate mode. Only its absence falls through to
+  // today's held/dark behaviour (proven byte-identical by every test above, none of which
+  // configures featureOverrides.getMany beyond its "no override" default empty Map).
+  describe("feature-grants PR-1: override precedence (absolute, ignores held-addon and dark/enforced)", () => {
+    let warnSpy: jest.SpyInstance;
+
+    afterEach(() => {
+      warnSpy?.mockRestore();
+    });
+
+    it("row 6: GRANT wins even though the tenant doesn't hold the addon and the gate is enforced", async () => {
+      reflector.getAllAndOverride.mockReturnValue(["tobacco_dealer"]);
+      featureOverrides.getMany.mockResolvedValue(new Map([["tobacco_dealer", "GRANT"]]));
+      addonService.getActiveAddons.mockResolvedValue([]);
+
+      await expect(guard.canActivate(contextFor({ tenantId: "t1" }))).resolves.toBe(true);
+      expect(addonService.getActiveAddons).not.toHaveBeenCalled(); // GRANT short-circuits first
+    });
+
+    it("row 5: GRANT wins on a dark key too (uniform — dark/enforced is irrelevant once GRANT applies)", async () => {
+      reflector.getAllAndOverride.mockReturnValue(["ocr"]);
+      featureOverrides.getMany.mockResolvedValue(new Map([["ocr", "GRANT"]]));
+
+      await expect(guard.canActivate(darkKeyContext())).resolves.toBe(true);
+    });
+
+    it("row 4/8: DENY wins over a held addon on an enforced gate", async () => {
+      reflector.getAllAndOverride.mockReturnValue(["tobacco_dealer"]);
+      featureOverrides.getMany.mockResolvedValue(new Map([["tobacco_dealer", "DENY"]]));
+      addonService.getActiveAddons.mockResolvedValue(["tobacco_dealer"]); // genuinely held
+
+      const err = await guard.canActivate(contextFor({ tenantId: "t1" })).catch((e) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect(err.getResponse()).toMatchObject({
+        code: "ADDON_GATE",
+        addonKeys: ["tobacco_dealer"],
+      });
+    });
+
+    it("row 3/7: DENY wins on a dark key too — dark-gate semantics never soften an explicit DENY", async () => {
+      reflector.getAllAndOverride.mockReturnValue(["ocr"]);
+      featureOverrides.getMany.mockResolvedValue(new Map([["ocr", "DENY"]]));
+
+      const err = await guard.canActivate(darkKeyContext()).catch((e) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect(err.getResponse()).toMatchObject({ code: "ADDON_GATE" });
+    });
+
+    it("row 3/7: a DENY firing on a dark key logs a would-deny-style warn line for the blast report", async () => {
+      warnSpy = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+      reflector.getAllAndOverride.mockReturnValue(["ocr"]);
+      featureOverrides.getMany.mockResolvedValue(new Map([["ocr", "DENY"]]));
+
+      await guard.canActivate(darkKeyContext()).catch((e) => e);
+
+      const messages = warnSpy.mock.calls.map((c) => c[0]);
+      expect(messages).toContainEqual(
+        expect.stringContaining("addon gate override-denied on a dark key"),
+      );
+      expect(messages).toContainEqual(expect.stringContaining("keys=ocr"));
+      // Still logs the usual enforced-deny warning too — the override doesn't replace it.
+      expect(messages).toContainEqual(expect.stringContaining("addon gate denied"));
+    });
+
+    it("row 4/8: a DENY on an already-enforced (non-dark) key does NOT log the dark-specific warn", async () => {
+      warnSpy = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+      reflector.getAllAndOverride.mockReturnValue(["tobacco_dealer"]);
+      featureOverrides.getMany.mockResolvedValue(new Map([["tobacco_dealer", "DENY"]]));
+      addonService.getActiveAddons.mockResolvedValue([]);
+
+      await guard.canActivate(contextFor({ tenantId: "t1" })).catch((e) => e);
+
+      const messages = warnSpy.mock.calls.map((c) => c[0]);
+      expect(messages).not.toContainEqual(expect.stringContaining("override-denied on a dark key"));
+    });
+
+    it("no override (empty Map) falls through to today's held/dark behaviour unchanged", async () => {
+      reflector.getAllAndOverride.mockReturnValue(["tobacco_dealer"]);
+      featureOverrides.getMany.mockResolvedValue(new Map());
+      addonService.getActiveAddons.mockResolvedValue(["tobacco_dealer"]);
+
+      await expect(guard.canActivate(contextFor({ tenantId: "t1" }))).resolves.toBe(true);
+    });
+
+    it("any-of: a DENY on one key does not block a sibling key that is genuinely held", async () => {
+      reflector.getAllAndOverride.mockReturnValue(["recurring_routes", "order_delivery"]);
+      featureOverrides.getMany.mockResolvedValue(new Map([["recurring_routes", "DENY"]]));
+      addonService.getActiveAddons.mockResolvedValue(["order_delivery"]);
+
+      await expect(guard.canActivate(contextFor({ tenantId: "t1" }))).resolves.toBe(true);
+    });
+
+    it("any-of: a DENY on one key does not block a sibling key covered by the dark courtesy allow", async () => {
+      reflector.getAllAndOverride.mockReturnValue(["ocr", "recurring_routes"]);
+      featureOverrides.getMany.mockResolvedValue(new Map([["recurring_routes", "DENY"]]));
+      addonService.getActiveAddons.mockResolvedValue([]);
+
+      // ocr is dark and carries no override, so it alone should still earn the courtesy allow.
+      await expect(guard.canActivate(darkKeyContext())).resolves.toBe(true);
+    });
+
+    it("any-of: every key denied still denies, even though one denied key's own gate is dark", async () => {
+      warnSpy = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+      reflector.getAllAndOverride.mockReturnValue(["ocr", "tobacco_dealer"]);
+      featureOverrides.getMany.mockResolvedValue(
+        new Map([
+          ["ocr", "DENY"],
+          ["tobacco_dealer", "DENY"],
+        ]),
+      );
+      addonService.getActiveAddons.mockResolvedValue([]);
+
+      const err = await guard.canActivate(darkKeyContext()).catch((e) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      const messages = warnSpy.mock.calls.map((c) => c[0]);
+      expect(messages).toContainEqual(expect.stringContaining("keys=ocr"));
     });
   });
 });

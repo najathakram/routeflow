@@ -97,6 +97,9 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   // Post-dated check payments PR-1 (2026-09-15): CheckReturnReason is a brand-new Prisma enum
   // (not a value added to an existing one) — see the triage tripwire below.
   ["CHECK_RETURN_REASON_VALUES", "CheckReturnReason"],
+  // Feature grants PR-1 (2026-09-16): FeatureOverrideEffect is a brand-new Prisma enum — see
+  // the triage tripwire below.
+  ["FEATURE_OVERRIDE_EFFECT_VALUES", "FeatureOverrideEffect"],
   // Public demo booking (2026-09-16): another brand-new Prisma enum, mirrored so the marketing
   // site's demo-booking client derives its status type instead of hand-typing a union.
   ["DEMO_BOOKING_STATUS_VALUES", "DemoBookingStatus"],
@@ -148,7 +151,16 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // Triage for MailboxProvider/MailboxConnectionStatus (email-connect-google, PR-2, 2026-09-17):
 // two brand-new Prisma enums, mirrored immediately as `MAILBOX_PROVIDER_VALUES`/
 // `MAILBOX_CONNECTION_STATUS_VALUES` + their `ENUM_TABLE` rows in this same PR.
-const PINNED_PRISMA_ENUM_COUNT = 89;
+// Triage for FeatureOverrideEffect (Feature grants PR-1, 2026-09-16): new Prisma enum, mirrored
+// immediately as `FEATURE_OVERRIDE_EFFECT_VALUES` + an `ENUM_TABLE` row above — read by
+// `FeatureOverrideService` to decide GRANT/DENY.
+// Triage for DemoBookingStatus (public demo booking, 2026-09-16): new Prisma enum, mirrored
+// immediately as `DEMO_BOOKING_STATUS_VALUES` + an `ENUM_TABLE` row above.
+// (2026-09-17, email-connect-google merge onto master post-#811): three independent lanes each
+// bumped this constant off their own base; merged, the true count is verified directly via
+// `Object.keys(PrismaEnums.$Enums).length` against the MERGED Prisma client, never summed by
+// hand — see the value actually asserted below.
+const PINNED_PRISMA_ENUM_COUNT = 90;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {
