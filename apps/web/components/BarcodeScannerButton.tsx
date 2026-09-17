@@ -10,6 +10,29 @@ interface BarcodeScannerButtonProps {
   inputRef?: React.RefObject<HTMLInputElement | null>;
   className?: string;
   title?: string;
+  /**
+   * Called with a plain-language message whenever the webcam path can't start —
+   * permission denied, no camera present, or an insecure origin (getUserMedia is
+   * unavailable outside https/localhost). Optional so existing call sites keep
+   * their prior (silent) behavior; new call sites should surface it (a toast,
+   * an inline message) rather than leaving the operator staring at nothing.
+   */
+  onError?: (message: string) => void;
+}
+
+/** Maps the webcam failure modes callers actually hit to a message an operator can act on. */
+function classifyScannerError(err: unknown): string {
+  const name = (err as { name?: string })?.name;
+  if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+    return "Camera access was denied. Allow camera access in your browser's site settings, then try again.";
+  }
+  if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+    return "No camera was found on this device.";
+  }
+  if (name === "NotReadableError" || name === "TrackStartError") {
+    return "The camera is already in use by another app or tab.";
+  }
+  return "Couldn't start the camera. Check camera permissions and try again.";
 }
 
 /**
@@ -28,6 +51,7 @@ export function BarcodeScannerButton({
   inputRef,
   className,
   title = "Scan barcode",
+  onError,
 }: BarcodeScannerButtonProps) {
   const [scannerOpen, setScannerOpen] = React.useState(false);
   const videoRef = React.useRef<HTMLVideoElement>(null);
@@ -71,6 +95,15 @@ export function BarcodeScannerButton({
 
   // ── Webcam scanner ───────────────────────────────────────────────────────
   const startWebcam = async () => {
+    // getUserMedia requires a secure context (https, or localhost) — check before opening
+    // the overlay at all so the operator gets an immediate, specific message instead of a
+    // black video panel that silently fails a moment later.
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+      onError?.(
+        "Camera scanning needs a secure connection (https). Type the SKU instead, or open this page over https.",
+      );
+      return;
+    }
     setScannerOpen(true);
   };
 
@@ -102,6 +135,7 @@ export function BarcodeScannerButton({
         );
       } catch (err) {
         console.error("Barcode scanner error:", err);
+        if (active) onError?.(classifyScannerError(err));
         setScannerOpen(false);
       }
     }
@@ -114,7 +148,7 @@ export function BarcodeScannerButton({
         readerRef.current?.reset?.();
       } catch {}
     };
-  }, [scannerOpen, onScan]);
+  }, [scannerOpen, onScan, onError]);
 
   const closeScanner = () => {
     try {
