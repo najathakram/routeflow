@@ -487,7 +487,14 @@ export class EmailService {
       : this.platformFrom;
   }
 
-  private async getTenantBusinessName(): Promise<string> {
+  /**
+   * The tenant's display name for outbound email, "RouteFlow" when there's no
+   * tenant context or no businessName configured. Public (N1) — EmailChannelProvider
+   * (the messaging engine's EMAIL transport) calls this to brand order-status/POD
+   * notification emails the same way invoice emails are branded, rather than
+   * hard-coding "RouteFlow" for every tenant.
+   */
+  async getTenantBusinessName(): Promise<string> {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) return "RouteFlow";
     const cfg = await this.prisma.tenantConfig.findFirst({ where: { tenantId } });
@@ -952,10 +959,13 @@ export class EmailService {
     to: string;
     subject: string;
     html: string;
-    /** N3: plain-text alternative. Optional so every EXISTING caller is unaffected —
-     *  a transport that doesn't get one just sends HTML-only, same as before this field. */
-    text?: string;
     replyTo?: string;
+    /** Plain-text alternative (added independently by both N1 and N3 — same field,
+     *  reconciled on merge). Both nodemailer and Resend accept it alongside `html`;
+     *  email clients that can't/won't render HTML fall back to this. Optional so every
+     *  EXISTING caller is unaffected — a transport that doesn't get one just sends
+     *  HTML-only, same as before this field existed. */
+    text?: string;
   }): Promise<{
     delivered: boolean;
     transport: "smtp" | "resend" | "none";
