@@ -20,6 +20,11 @@
  * this file's data) are what make shipping an unregistered `@RequireAddon` key impossible.
  */
 
+// Feature grants v2 brief C: `import type` only — never a value import — @routeflow/types'
+// entry point is raw TS with no build step; a value import would crash `node dist/main.js`
+// (see no-runtime-workspace-imports.spec.ts). FeatureLifecycle is brief A's shared contract type.
+import type { FeatureLifecycle } from "@routeflow/types";
+
 export type FeatureKind = "boolean" | "limit" | "metered";
 export type FeatureArea =
   "routes" | "catalog" | "finance" | "compliance" | "integrations" | "sales" | "platform";
@@ -72,6 +77,12 @@ export type FeatureSettingsDescriptor = readonly FeatureSettingsField[];
 export interface FeatureConfigMode {
   label: string;
   available: boolean;
+  /**
+   * Feature grants v2 brief C: optional so PR-5b's `catalog_varieties` (not built yet) and any
+   * other pre-existing config mode compile unchanged without one. `routes_dispatch`'s four modes
+   * below are the first to carry it, all `"ga"` — no `"beta"`/`"proposed"` value ships here.
+   */
+  lifecycle?: FeatureLifecycle;
   requires?: { allOf?: readonly string[] };
   settings: FeatureSettingsDescriptor;
 }
@@ -954,25 +965,39 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
     },
     billing: { skus: [], selfService: false },
     defaultGranted: true,
+    // Feature grants v2 brief C (2-block diff, block 2 of 2): every mode gets `lifecycle: "ga"`
+    // (all four shipped GA on 2026-09-15, not new/beta) and `mixed`'s label reads "Both" per
+    // design 2026-09-17 §2 — `requires.allOf` is unchanged from PR-1. Only AND-groups (`allOf`)
+    // are used anywhere here; there is deliberately no `anyOf` on a config mode (XOR-select-one
+    // semantics: exactly one mode value is ever active per tenant per feature, enforced by
+    // TenantFeatureConfig's `@@unique([tenantId, featureKey])`, not an OR of requirements).
     config: {
       fallbackMode: "unset",
       modes: {
-        unset: { label: "Not configured (today's behavior)", available: true, settings: [] },
+        unset: {
+          label: "Not configured (today's behavior)",
+          available: true,
+          lifecycle: "ga",
+          settings: [],
+        },
         scheduled: {
           label: "Scheduled",
           available: true,
+          lifecycle: "ga",
           requires: { allOf: ["recurring_routes"] },
           settings: [],
         },
         adhoc: {
           label: "Ad hoc",
           available: true,
+          lifecycle: "ga",
           requires: { allOf: ["order_delivery"] },
           settings: [],
         },
         mixed: {
-          label: "Mixed",
+          label: "Both",
           available: true,
+          lifecycle: "ga",
           requires: { allOf: ["recurring_routes", "order_delivery"] },
           settings: [
             {

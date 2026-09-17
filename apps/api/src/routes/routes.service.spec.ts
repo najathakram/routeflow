@@ -19,6 +19,7 @@ import { InvoicesService } from "../invoices/invoices.service";
 // settlement from every other confirmed-money read in the codebase.
 import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 import { StorageService } from "../storage/storage.service";
+import { FeatureConfigStore } from "../billing/feature-config.store";
 import { geocodeAddress } from "../common/geocode.util";
 import { compressImage } from "../storage/compress.util";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -133,6 +134,14 @@ describe("RoutesService", () => {
         { provide: InvoicesService, useValue: invoicesService },
         { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue("test-key") } },
         { provide: StorageService, useValue: storage },
+        // Feature grants v2 brief C (PR-5): resolves "unset" so every existing test in this
+        // file keeps exercising today's (every-kind-allowed) dispatch behavior unchanged.
+        {
+          provide: FeatureConfigStore,
+          useValue: {
+            getMode: jest.fn().mockResolvedValue({ value: "unset", source: "REGISTRY_DEFAULT" }),
+          },
+        },
       ],
     }).compile();
 
@@ -1126,6 +1135,174 @@ describe("RoutesService", () => {
         ).rejects.toThrow(ConflictException);
 
         expect(prisma.order.updateMany).not.toHaveBeenCalled();
+      });
+    });
+
+    // Feature grants v2 brief C (PR-5), oracle 5/6 — routes_dispatch mode gates createRun's
+    // dispatch by Route.kind. The beforeEach's FeatureConfigStore mock resolves "unset" by
+    // default (matching every real tenant today, since no TenantFeatureConfig row exists yet)
+    // — these tests override it per-case to prove the gate is actually wired through the
+    // service, not just unit-tested in isolation (route-dispatch-mode.spec.ts).
+    describe("routes_dispatch mode gate (feature grants v2 brief C)", () => {
+      const routeStops = [{ id: "rs-1", stopNumber: 1, customerId: "c1", customerAddressId: "a1" }];
+      const createdRun = {
+        ...MOCK_RUN,
+        route: { id: "route-1", name: "Downtown Route" },
+        stops: [{ id: "rrs-1", customerId: "c1" }],
+      };
+
+      function mockMode(value: string) {
+        (service as any).featureConfig.getMode.mockResolvedValue({
+          value,
+          source: value === "unset" ? "REGISTRY_DEFAULT" : "TENANT",
+        });
+      }
+
+      it("HARD INVARIANT — unset (today's default, no TenantFeatureConfig row) dispatches a SCHEDULED route exactly as before", async () => {
+        mockMode("unset");
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.SCHEDULED,
+          stops: routeStops,
+        });
+        prisma.routeRun.create.mockResolvedValue(createdRun);
+        prisma.order.updateMany.mockResolvedValue({ count: 0 });
+
+        await expect(
+          service.createRun({ routeId: "route-1", scheduledDate: "2025-06-01" } as any),
+        ).resolves.toBeDefined();
+      });
+
+      it("HARD INVARIANT — unset dispatches an ADHOC route (with orderIds) exactly as before", async () => {
+        mockMode("unset");
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.ADHOC,
+          stops: routeStops,
+        });
+        prisma.routeRun.create.mockResolvedValue(createdRun);
+        prisma.order.updateMany.mockResolvedValue({ count: 1 });
+
+        await expect(
+          service.createRun({
+            routeId: "route-1",
+            scheduledDate: "2025-06-01",
+            orderIds: ["ord-1"],
+          } as any),
+        ).resolves.toBeDefined();
+      });
+
+      it("mode=scheduled rejects dispatching an ADHOC route with a 409 FEATURE_MODE body, before any write", async () => {
+        mockMode("scheduled");
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.ADHOC,
+          stops: routeStops,
+        });
+
+        await expect(
+          service.createRun({
+            routeId: "route-1",
+            scheduledDate: "2025-06-01",
+            orderIds: ["ord-1"],
+          } as any),
+        ).rejects.toMatchObject({
+          response: {
+            code: "FEATURE_MODE",
+            key: "routes_dispatch",
+            mode: "scheduled",
+            allowed: [RouteKind.SCHEDULED],
+          },
+        });
+        expect(prisma.routeRun.create).not.toHaveBeenCalled();
+        expect(prisma.order.updateMany).not.toHaveBeenCalled();
+      });
+
+      it("mode=scheduled still accepts dispatching a SCHEDULED route", async () => {
+        mockMode("scheduled");
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.SCHEDULED,
+          stops: routeStops,
+        });
+        prisma.routeRun.create.mockResolvedValue(createdRun);
+        prisma.order.updateMany.mockResolvedValue({ count: 0 });
+
+        await expect(
+          service.createRun({ routeId: "route-1", scheduledDate: "2025-06-01" } as any),
+        ).resolves.toBeDefined();
+      });
+
+      it("mode=adhoc rejects dispatching a SCHEDULED route with a 409 FEATURE_MODE body, before any write", async () => {
+        mockMode("adhoc");
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.SCHEDULED,
+          stops: routeStops,
+        });
+
+        await expect(
+          service.createRun({ routeId: "route-1", scheduledDate: "2025-06-01" } as any),
+        ).rejects.toMatchObject({
+          response: {
+            code: "FEATURE_MODE",
+            key: "routes_dispatch",
+            mode: "adhoc",
+            allowed: [RouteKind.ADHOC],
+          },
+        });
+        expect(prisma.routeRun.create).not.toHaveBeenCalled();
+      });
+
+      it("mode=adhoc still accepts dispatching an ADHOC route", async () => {
+        mockMode("adhoc");
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.ADHOC,
+          stops: routeStops,
+        });
+        prisma.routeRun.create.mockResolvedValue(createdRun);
+        prisma.order.updateMany.mockResolvedValue({ count: 1 });
+
+        await expect(
+          service.createRun({
+            routeId: "route-1",
+            scheduledDate: "2025-06-01",
+            orderIds: ["ord-1"],
+          } as any),
+        ).resolves.toBeDefined();
+      });
+
+      it("mode=mixed accepts both SCHEDULED and ADHOC", async () => {
+        mockMode("mixed");
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.SCHEDULED,
+          stops: routeStops,
+        });
+        prisma.routeRun.create.mockResolvedValue(createdRun);
+        prisma.order.updateMany.mockResolvedValue({ count: 0 });
+        await expect(
+          service.createRun({ routeId: "route-1", scheduledDate: "2025-06-01" } as any),
+        ).resolves.toBeDefined();
+      });
+
+      it("reads the mode for the ambient tenant (getTenantId()), scoped per-tenant via FeatureConfigStore", async () => {
+        mockMode("unset");
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.SCHEDULED,
+          stops: routeStops,
+        });
+        prisma.routeRun.create.mockResolvedValue(createdRun);
+        prisma.order.updateMany.mockResolvedValue({ count: 0 });
+
+        await service.createRun({ routeId: "route-1", scheduledDate: "2025-06-01" } as any);
+
+        expect((service as any).featureConfig.getMode).toHaveBeenCalledWith(
+          "test-tenant",
+          "routes_dispatch",
+        );
       });
     });
   });
