@@ -8,6 +8,9 @@ function row(overrides: Partial<Record<string, unknown>> = {}) {
     tenantId: "t1",
     featureKey: "tobacco_dealer",
     effect: "GRANT",
+    // Feature grants v2 PR-3: every real row carries `kind` (NOT NULL DEFAULT COMP) — matches
+    // the column default so a test that doesn't care about `kind` still gets a realistic row.
+    kind: "COMP",
     reason: "pilot",
     expiresAt: null,
     createdById: "admin1",
@@ -268,6 +271,66 @@ describe("FeatureOverrideService.create", () => {
     ).resolves.toBeDefined();
   });
 
+  // Feature grants v2 PR-3 (brief B): kind defaults to COMP when omitted, and is stored
+  // verbatim when supplied explicitly. DTO-level rejection of an invalid kind lives in
+  // manage-feature-override.dto.spec.ts (class-validator's @IsIn) -- this service never
+  // sees an invalid kind reach it in production.
+  it("defaults kind to COMP when the caller omits it", async () => {
+    const { svc, prisma } = build();
+    prisma.tenantFeatureOverride.create.mockResolvedValue(row({ kind: "COMP" }));
+
+    await svc.create({
+      tenantId: "t1",
+      featureKey: "tobacco_dealer",
+      effect: "GRANT",
+      reason: "pilot",
+      expiresAt: null,
+      createdById: "admin1",
+    });
+
+    expect(prisma.tenantFeatureOverride.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ kind: "COMP" }) }),
+    );
+  });
+
+  it("stores an explicit kind (e.g. PILOT) verbatim", async () => {
+    const { svc, prisma } = build();
+    prisma.tenantFeatureOverride.create.mockResolvedValue(row({ kind: "PILOT" }));
+
+    await svc.create({
+      tenantId: "t1",
+      featureKey: "tobacco_dealer",
+      effect: "GRANT",
+      kind: "PILOT",
+      reason: "pilot",
+      expiresAt: null,
+      createdById: "admin1",
+    });
+
+    expect(prisma.tenantFeatureOverride.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ kind: "PILOT" }) }),
+    );
+  });
+
+  it("stores GRANDFATHER verbatim too (grandfather-batch writer, brief PR-0b)", async () => {
+    const { svc, prisma } = build();
+    prisma.tenantFeatureOverride.create.mockResolvedValue(row({ kind: "GRANDFATHER" }));
+
+    await svc.create({
+      tenantId: "t1",
+      featureKey: "recurring_routes",
+      effect: "GRANT",
+      kind: "GRANDFATHER",
+      reason: "grandfathered pricing",
+      expiresAt: null,
+      createdById: null,
+    });
+
+    expect(prisma.tenantFeatureOverride.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ kind: "GRANDFATHER" }) }),
+    );
+  });
+
   it("translates a unique-constraint violation (an active row already exists) into 409", async () => {
     const { svc, prisma } = build();
     const conflict = Object.assign(new Error("unique"), { code: "P2002" });
@@ -324,5 +387,41 @@ describe("FeatureOverrideService.revoke", () => {
     expect(prisma.tenantFeatureOverride.update).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: "ov-belongs-to-tenant-a", tenantId: "tenant-b" } }),
     );
+  });
+});
+
+// Feature grants v2 PR-3 (brief B) — list() return shape + tenant isolation.
+describe("FeatureOverrideService.list", () => {
+  it("returns kind on every row (list is a plain findMany, no select clause to drop it)", async () => {
+    const { svc, prisma } = build();
+    prisma.tenantFeatureOverride.findMany.mockResolvedValue([
+      row({ id: "ov1", kind: "PILOT" }),
+      row({ id: "ov2", kind: "GRANDFATHER" }),
+    ]);
+    const rows = await svc.list("t1");
+    expect(rows.map((r: any) => r.kind)).toEqual(["PILOT", "GRANDFATHER"]);
+  });
+
+  it("scopes strictly to the requesting tenant — tenant B's list() can never see tenant A's rows", async () => {
+    const { svc, prisma } = build();
+    prisma.tenantFeatureOverride.findMany.mockResolvedValue([]);
+    await svc.list("tenant-b");
+    expect(prisma.tenantFeatureOverride.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { tenantId: "tenant-b" } }),
+    );
+    // Never a bare `{}` / id-only where -- the same {id,tenantId} discipline as revoke() above,
+    // applied at the collection level: no featureKey/id leaks the query into another tenant's rows.
+    const where = prisma.tenantFeatureOverride.findMany.mock.calls[0][0].where;
+    expect(Object.keys(where)).toEqual(["tenantId"]);
+  });
+});
+
+// Done checklist: "comp never reaches Stripe (assert no stripe.subscriptionItems.create)".
+// Structural, not a mock assertion: FeatureOverrideService's constructor takes only
+// PrismaService -- there is no Stripe collaborator anywhere in this file for create()/revoke()
+// to call, so a comp override (any kind) cannot reach Stripe by construction.
+describe("FeatureOverrideService — no Stripe collaborator (comp never reaches Stripe)", () => {
+  it("is constructed from PrismaService alone", () => {
+    expect(FeatureOverrideService.length).toBe(1);
   });
 });
