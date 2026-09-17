@@ -178,6 +178,13 @@ model Customer {
   smsConsent            Boolean     @default(false)
   waConsent             Boolean     @default(false)
   consentUpdatedAt      DateTime?
+  // N1 (2026-09-16): buyer preference for order-status EMAIL notifications
+  // (CONFIRMED/OUT_FOR_DELIVERY/DELIVERED/CANCELLED) — default ON per the
+  // owner's ruling, unlike smsConsent/waConsent above (those are opt-IN,
+  // STOP-gated channels; email order-status updates are opt-OUT). Never
+  // consulted for security mail (verification/password/invite), which is
+  // never opt-out.
+  orderStatusEmails     Boolean     @default(true)
   createdAt             DateTime    @default(now())
   updatedAt             DateTime    @updatedAt
   // RF-197: soft-delete timestamp; set instead of physically deleting when

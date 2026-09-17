@@ -1,4 +1,4 @@
-import { IsOptional, IsString } from "class-validator";
+import { IsBoolean, IsOptional, IsString } from "class-validator";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
 
 /**
@@ -23,4 +23,8 @@ export class UpdateBuyerProfileDto {
   @IsOptional() @IsString() deliveryWindowStart?: string;
   @IsOptional() @IsString() deliveryWindowEnd?: string;
   @IsOptional() @StripHtml() @IsString() notes?: string;
+  // N1 (2026-09-16): buyer's own preference for order-status EMAIL notifications
+  // (CONFIRMED/OUT_FOR_DELIVERY/DELIVERED/CANCELLED) — default ON, opt-out.
+  // Never consulted for security mail (verification/password/invite).
+  @IsOptional() @IsBoolean() orderStatusEmails?: boolean;
 }

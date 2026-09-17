@@ -92,7 +92,11 @@ describe("MessagingConfigService (P6-6)", () => {
       expect(tplArgs.data).toHaveLength(ALL_PAIRS.length);
     });
 
-    it("seeds INVOICE_SENT only for EMAIL+PORTAL; matrix surfaces WHATSAPP/SMS as locked (never seeded)", async () => {
+    it("seeds INVOICE_SENT only for PORTAL; matrix surfaces WHATSAPP/SMS as locked (never seeded)", async () => {
+      // N1 (2026-09-16): EMAIL removed from INVOICE_SENT's channels — the
+      // messaging engine's own copy was a second, previously-no-op attempt at
+      // the same email invoices.service.ts already sends for real via
+      // EmailService.sendInvoice(). PORTAL is unaffected.
       prisma.notificationRule.findMany.mockResolvedValue([]);
       prisma.messageTemplate.findMany.mockResolvedValue([]);
 
@@ -105,7 +109,7 @@ describe("MessagingConfigService (P6-6)", () => {
         )
         .map((r: { channel: MessageChannel }) => r.channel)
         .sort();
-      expect(invoiceRuleChannels).toEqual([MessageChannel.EMAIL, MessageChannel.PORTAL].sort());
+      expect(invoiceRuleChannels).toEqual([MessageChannel.PORTAL]);
 
       const tplArgs = prisma.messageTemplate.createMany.mock.calls[0][0];
       const invoiceTplChannels = tplArgs.data
@@ -114,7 +118,7 @@ describe("MessagingConfigService (P6-6)", () => {
         )
         .map((t: { channel: MessageChannel }) => t.channel)
         .sort();
-      expect(invoiceTplChannels).toEqual([MessageChannel.EMAIL, MessageChannel.PORTAL].sort());
+      expect(invoiceTplChannels).toEqual([MessageChannel.PORTAL]);
 
       const invoiceEvent = result.events.find(
         (e) => e.eventKey === NotificationEvent.INVOICE_SENT,
@@ -330,8 +334,14 @@ describe("MessagingConfigService (P6-6)", () => {
 
       const result = await noTransportService.getMatrix();
 
-      const invoiceSent = result.events.find((e) => e.eventKey === NotificationEvent.INVOICE_SENT)!;
-      const emailCell = invoiceSent.channels.find((c) => c.channel === MessageChannel.EMAIL)!;
+      // N1: INVOICE_SENT no longer carries an EMAIL cell at all (PORTAL only) —
+      // ORDER_CONFIRMED is still EMAIL-capable (CUSTOMER_CHANNELS) and proves the
+      // same NO_TRANSPORT behavior when the bound provider declares nothing
+      // transportable (mirrors the pre-N1 StubProvider shape).
+      const orderConfirmed = result.events.find(
+        (e) => e.eventKey === NotificationEvent.ORDER_CONFIRMED,
+      )!;
+      const emailCell = orderConfirmed.channels.find((c) => c.channel === MessageChannel.EMAIL)!;
       expect(emailCell).toMatchObject({ unavailable: "NO_TRANSPORT", enabled: false });
       expect(noTransportProvider.transports).toHaveBeenCalledWith(MessageChannel.EMAIL);
 
@@ -346,7 +356,8 @@ describe("MessagingConfigService (P6-6)", () => {
       expect(internalCells.every((c) => c.unavailable === "NO_TRIGGER")).toBe(true);
 
       const emailRule = rules.find(
-        (r) => r.eventKey === NotificationEvent.INVOICE_SENT && r.channel === MessageChannel.EMAIL,
+        (r) =>
+          r.eventKey === NotificationEvent.ORDER_CONFIRMED && r.channel === MessageChannel.EMAIL,
       )!;
       prisma.notificationRule.findFirst.mockResolvedValue(emailRule);
 

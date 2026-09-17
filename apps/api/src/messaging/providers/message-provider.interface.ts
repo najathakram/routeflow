@@ -8,6 +8,12 @@ export interface SendInput {
   body: string;
   /** Meta-WA approved-template ref (P6-3); ignored by the stub. */
   templateName?: string;
+  /**
+   * N1: email subject line, derived by the caller (`messaging.service.ts`'s
+   * `notify()`) from `DEFAULT_TEMPLATES[eventKey].label` — ignored by every
+   * non-EMAIL provider/channel.
+   */
+  subject?: string;
 }
 
 export interface SendResult {

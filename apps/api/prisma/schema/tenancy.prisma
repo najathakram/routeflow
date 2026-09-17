@@ -213,40 +213,45 @@ model Tenant {
 }
 
 model TenantConfig {
-  id            String   @id @default(uuid())
-  tenantId      String   @unique
-  businessName  String?
-  logoKey       String?
-  primaryColor  String?
-  timezone      String   @default("America/New_York")
-  currency      String   @default("USD")
-  taxRate       Decimal? @db.Decimal(5, 4)
-  addressLine1  String?
-  addressLine2  String?
-  city          String?
-  state         String?
-  zip           String?
-  country       String?
-  phone         String?
-  website       String?
-  smtpHost      String?
-  smtpPort      Int?
-  smtpSecure    Boolean  @default(true)
-  smtpUser      String?
-  smtpPassword  String?
-  smtpFromName  String?
-  smtpFromEmail String?
-  customerEmail String?
-  ownerName     String?
-  invoiceNotes  String?
-  invoiceTerms  String?
+  id                       String    @id @default(uuid())
+  tenantId                 String    @unique
+  businessName             String?
+  logoKey                  String?
+  primaryColor             String?
+  timezone                 String    @default("America/New_York")
+  currency                 String    @default("USD")
+  taxRate                  Decimal?  @db.Decimal(5, 4)
+  addressLine1             String?
+  addressLine2             String?
+  city                     String?
+  state                    String?
+  zip                      String?
+  country                  String?
+  phone                    String?
+  website                  String?
+  smtpHost                 String?
+  smtpPort                 Int?
+  smtpSecure               Boolean   @default(true)
+  smtpUser                 String?
+  smtpPassword             String?
+  smtpFromName             String?
+  smtpFromEmail            String?
+  customerEmail            String?
+  ownerName                String?
+  invoiceNotes             String?
+  invoiceTerms             String?
   // Post-dated check payments PR-1 (additive-only): the day (date-only, tenant
   // local calendar day) a later PR's daily "checks due to clear" digest job
   // last sent for this tenant — an idempotency mark so a retried/duplicate
   // cron tick doesn't re-send the same day's digest. No job writes or reads
   // this field yet.
-  checksDigestSentForDay DateTime? @db.Date
-  updatedAt     DateTime @updatedAt
+  checksDigestSentForDay   DateTime? @db.Date
+  // N4: the day (date-only, tenant-local calendar day) the low-stock digest
+  // cron last sent — same idempotency-mark convention as
+  // checksDigestSentForDay above, read/written by
+  // inventory/low-stock-digest.service.ts's inventory.sendLowStockDigest job.
+  lowStockDigestSentForDay DateTime? @db.Date
+  updatedAt                DateTime  @updatedAt
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }

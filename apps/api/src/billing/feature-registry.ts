@@ -302,6 +302,94 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
     defaultGranted: false,
     requires: { anyOf: ["recurring_routes", "order_delivery"] },
   },
+  {
+    key: "orders_inline_returns",
+    kind: "boolean",
+    area: "sales",
+    label: "Returns at order entry",
+    description:
+      "Staff/drivers can capture a return and credit it in the same flow as recording a new order.",
+    gate: {
+      via: "RequireAddon",
+      // Owner-answers.md Q-A (2026-09-15, second round): "Enforced from day one — an
+      // owner exception to 'new gates ship dark' (zero existing users, so the blast
+      // radius is empty by construction)." The registry's dark-first rule exists to
+      // protect tenants ALREADY using an unguarded surface from a surprise denial;
+      // there is no existing call site or tenant grant for this key, so that risk
+      // does not exist here — the owner's written exception is satisfied by
+      // construction, not waived.
+      state: "enforced",
+      added: "2026-09-16",
+      routes: [
+        "POST /returns/inline/quote",
+        "POST /orders/:id/inline-returns (PR-1d)",
+        "POST /returns/inline/:id/* (PR-1c/1d)",
+      ],
+      grantPath: 'Platform Admin → Tenants → [tenant] → add-ons (addonKey "orders_inline_returns")',
+      backfill: "New feature 2026-09-16; zero existing users; nothing to backfill.",
+    },
+    billing: { skus: [], selfService: false },
+    defaultGranted: false,
+    requires: { allOf: ["flag.returns"] },
+    config: {
+      fallbackMode: "unset",
+      modes: {
+        unset: { label: "Not configured (feature ungranted)", available: true, settings: [] },
+        standard: {
+          label: "Standard",
+          available: true,
+          settings: [
+            {
+              type: "enum",
+              key: "priceSource",
+              label: "Price source when unmatched",
+              options: ["last_invoice_then_offered", "offered_only"],
+              default: "last_invoice_then_offered",
+            },
+            {
+              type: "string",
+              key: "soldWindowDays",
+              label: "Sold window (days)",
+              default: "90",
+            },
+            {
+              type: "enum",
+              key: "overReturnPolicy",
+              label: "Staff over-return policy",
+              options: ["warn", "hold", "block"],
+              default: "warn",
+            },
+            {
+              type: "enum",
+              key: "driverOverReturnPolicy",
+              label: "Driver over-return policy",
+              options: ["warn", "block"],
+              default: "warn",
+            },
+            {
+              type: "string",
+              key: "driverCreditCap",
+              label: "Driver credit cap (0 = order gross)",
+              default: "0",
+            },
+            {
+              type: "boolean",
+              key: "reasonRequired",
+              label: "Require a reason",
+              default: true,
+            },
+            {
+              type: "enum",
+              key: "photoRequired",
+              label: "Photo evidence required",
+              options: ["never", "damaged", "always"],
+              default: "damaged",
+            },
+          ],
+        },
+      },
+    },
+  },
 
   // ── Nine RequirePlanFlag rows — key IS the dotted legacy catalog-flag string.
   {
