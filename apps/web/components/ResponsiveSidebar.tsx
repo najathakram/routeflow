@@ -145,6 +145,17 @@ export interface MobileSidebarDrawerProps {
   children: React.ReactNode;
 }
 
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/** Focusable descendants of `container`, in DOM/tab order. Everything the drawer renders while
+ *  open is meant to be reachable, so this doesn't also filter by visibility — `offsetParent`
+ *  (the usual way to check that) is always `null` under jsdom, which has no real layout engine,
+ *  so a visibility filter here would be untestable and wouldn't earn its keep. */
+function getFocusable(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+}
+
 /**
  * The off-canvas drawer overlay — markup/aria match the dashboard's (`role="dialog"`,
  * `aria-modal`, click-outside-to-close backdrop). Caller supplies the drawer panel itself
@@ -155,8 +166,9 @@ export interface MobileSidebarDrawerProps {
  * `role="dialog" aria-modal="true"` that doesn't manage focus fails the ARIA authoring
  * practice for dialogs) — added here since every shell now shares this component: on open,
  * focus moves into the panel; on close, it returns to whatever triggered the open (typically
- * the hamburger button), so a keyboard/screen-reader user isn't stranded on a dismissed drawer
- * or dropped back at the top of the page.
+ * the hamburger button). While open, Tab/Shift+Tab are trapped inside the panel — Tab escaping
+ * to whatever sits behind a customer-facing overlay is a real accessibility defect, not a
+ * nice-to-have, so this isn't optional the way a keyboard nicety might be.
  */
 export function MobileSidebarDrawer({ open, onClose, children }: MobileSidebarDrawerProps) {
   const panelRef = React.useRef<HTMLDivElement>(null);
@@ -166,7 +178,37 @@ export function MobileSidebarDrawer({ open, onClose, children }: MobileSidebarDr
     if (!open) return;
     previouslyFocused.current = document.activeElement as HTMLElement | null;
     panelRef.current?.focus();
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Tab" || !panelRef.current) return;
+      const focusable = getFocusable(panelRef.current);
+      if (focusable.length === 0) {
+        e.preventDefault();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+
+      // Defensive: if focus somehow ended up outside the panel (not just at an edge),
+      // pull it back in before applying the normal wrap-around rule below.
+      if (!panelRef.current.contains(active)) {
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+        return;
+      }
+      if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener("keydown", onKeyDown);
     return () => {
+      document.removeEventListener("keydown", onKeyDown);
       previouslyFocused.current?.focus();
     };
   }, [open]);

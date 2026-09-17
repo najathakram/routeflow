@@ -164,3 +164,47 @@ describe("MobileSidebarDrawer — focus handling", () => {
     expect(document.activeElement).toBe(trigger);
   });
 });
+
+describe("MobileSidebarDrawer — focus trap (Tab/Shift+Tab stay inside while open)", () => {
+  it("Tab from the last focusable element wraps to the first", () => {
+    render(<Harness storageKey="rf-test-sidebar-collapsed" />);
+    fireEvent.click(screen.getByLabelText("Open navigation menu"));
+
+    const closeButton = screen.getByLabelText("Close navigation menu");
+    const navLink = screen.getByTestId("drawer-nav-link");
+    navLink.focus();
+    expect(document.activeElement).toBe(navLink);
+
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(document.activeElement).toBe(closeButton);
+  });
+
+  it("Shift+Tab from the first focusable element wraps to the last", () => {
+    render(<Harness storageKey="rf-test-sidebar-collapsed" />);
+    fireEvent.click(screen.getByLabelText("Open navigation menu"));
+
+    const closeButton = screen.getByLabelText("Close navigation menu");
+    const navLink = screen.getByTestId("drawer-nav-link");
+    closeButton.focus();
+    expect(document.activeElement).toBe(closeButton);
+
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(navLink);
+  });
+
+  it("does nothing to Tab presses once the drawer is closed (trap only applies while open)", () => {
+    render(<Harness storageKey="rf-test-sidebar-collapsed" />);
+    const trigger = screen.getByLabelText("Open navigation menu");
+    // jsdom's fireEvent.click does not also focus the element the way a real browser click
+    // does — focus it explicitly so "focus returns to the trigger" has something real to
+    // return to (same pattern as the "focus handling" describe block above).
+    trigger.focus();
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByLabelText("Close navigation menu"));
+    expect(document.activeElement).toBe(trigger);
+
+    // No drawer content in the document to trap focus into — Tab is a no-op for this component.
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(document.activeElement).toBe(trigger);
+  });
+});
