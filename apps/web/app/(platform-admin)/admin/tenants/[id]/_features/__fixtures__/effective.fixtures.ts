@@ -111,7 +111,8 @@ export const EFFECTIVE_FIXTURE: EffectiveFeature[] = [
 ];
 
 export const TENANT_FEATURES_RESPONSE_FIXTURE: TenantFeaturesResponse = {
-  effective: EFFECTIVE_FIXTURE.filter((f) => f.serving).map((f) => f.key),
+  served: EFFECTIVE_FIXTURE.filter((f) => f.serving).map((f) => f.key),
+  resolver: Object.fromEntries(EFFECTIVE_FIXTURE.map((f) => [f.key, f.resolver])),
   modes: { route_optimization: "mixed" },
   catalogVersionId: CATALOG_VERSION_ID,
   computedAt: "2026-09-17T00:00:00.000Z",
