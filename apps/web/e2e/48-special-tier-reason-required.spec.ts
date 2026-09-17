@@ -94,36 +94,43 @@ test.describe("Order-edit SPECIAL-tier reason required (B465 fix round 2)", () =
     expect(productRes.ok(), `POST /products returned ${productRes.status()}`).toBe(true);
     const product: { id: string; name: string } = await productRes.json();
 
-    // ── Fixture: a tier-3 (SPECIAL) customer.
-    const customerRes = await request.post(`${api}/api/v1/customers`, {
-      headers: headers!,
-      data: {
-        username: `e2e_b465_${suffix}`,
-        businessName: `E2E B465 Special-Tier Reason ${suffix}`,
-        contactName: "E2E Tester",
-        pricingTier: 3,
-      },
-    });
-    expect(customerRes.ok(), `POST /customers returned ${customerRes.status()}`).toBe(true);
-    const customer: { id: string } = (await customerRes.json()).customer;
-    expect(customer?.id, "POST /customers response carried no customer.id").toBeTruthy();
-
-    // ── Fixture: a DRAFT order carrying the SPECIAL line, priced correctly at
-    // the tier ($8) from creation — the same line the operator will now try
-    // to reprice with no reason.
-    const orderRes = await request.post(`${api}/api/v1/orders`, {
-      headers: headers!,
-      data: {
-        customerId: customer.id,
-        status: "DRAFT",
-        items: [{ productId: product.id, qty: 1 }],
-      },
-    });
-    expect(orderRes.ok(), `POST /orders returned ${orderRes.status()}`).toBe(true);
-    const order: { id: string } = await orderRes.json();
-    expect(order?.id, "POST /orders response carried no id").toBeTruthy();
-
+    // ── Fixture: a fresh tier-3 (SPECIAL) customer + DRAFT order per viewport.
+    // #815 proof-run finding: this loop's flow legitimately PERSISTS a
+    // documented $20 override on its second (with-reason) save each
+    // iteration. Reusing ONE order across all three viewports meant viewport
+    // 2+ reloaded an order ALREADY repriced to $20 by viewport 1's own
+    // successful save — failing the tier-price sanity check below with no
+    // fix-related cause at all. Reusing ONE customer instead (fresh order,
+    // same customer) still 409s: a second open DRAFT for the same customer
+    // hits create()'s own-customer auto-merge/consolidation path. A fresh
+    // customer per viewport sidesteps both — only the product (never
+    // mutated) is safe to share across iterations.
     for (const vp of VIEWPORTS) {
+      const customerRes = await request.post(`${api}/api/v1/customers`, {
+        headers: headers!,
+        data: {
+          username: `e2e_b465_${suffix}_${vp.name}`,
+          businessName: `E2E B465 Special-Tier Reason ${suffix} ${vp.name}`,
+          contactName: "E2E Tester",
+          pricingTier: 3,
+        },
+      });
+      expect(customerRes.ok(), `POST /customers returned ${customerRes.status()}`).toBe(true);
+      const customer: { id: string } = (await customerRes.json()).customer;
+      expect(customer?.id, "POST /customers response carried no customer.id").toBeTruthy();
+
+      const orderRes = await request.post(`${api}/api/v1/orders`, {
+        headers: headers!,
+        data: {
+          customerId: customer.id,
+          status: "DRAFT",
+          items: [{ productId: product.id, qty: 1 }],
+        },
+      });
+      expect(orderRes.ok(), `POST /orders returned ${orderRes.status()}`).toBe(true);
+      const order: { id: string } = await orderRes.json();
+      expect(order?.id, "POST /orders response carried no id").toBeTruthy();
+
       await page.setViewportSize({ width: vp.width, height: vp.height });
       await page.goto(`/orders/${order.id}`);
 
@@ -167,9 +174,16 @@ test.describe("Order-edit SPECIAL-tier reason required (B465 fix round 2)", () =
       // branch); a non-DRAFT order's equivalent is "Save Changes".
       const saveButton = page.getByRole("button", { name: "Save Draft", exact: true });
       await saveButton.click();
-      const requiredReasonToast = page.getByText(
-        new RegExp(`A reason is required to change ${product.name}`, "i"),
-      );
+      // First real run of this spec (#815 proof) surfaced a strict-mode violation: a
+      // bare page-wide getByText matched BOTH the visible toast and its Radix aria-live
+      // announcer mirror (same text, portaled separately to <body>) — the exact
+      // duplication 21-destructive-guards.spec.ts's resultToast locator already scopes
+      // around. Mirroring that established pattern here.
+      const requiredReasonToast = page
+        .getByRole("region", { name: /notifications/i })
+        .getByRole("listitem")
+        .filter({ hasText: new RegExp(`A reason is required to change ${product.name}`, "i") })
+        .first();
       await expect(requiredReasonToast).toBeVisible({ timeout: 10_000 });
 
       // ── Typing a reason clears the required-reason state and a retried
