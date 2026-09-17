@@ -52,3 +52,5 @@
 {"id":"B496","batch":"F49","tier":"T1","state":"already-fixed","pr":748,"proof":null,"evidence":"verified: invoices/[id]/edit.tsx now passes confirmDiscardIfDirty={dirty && !updateMut.isPending} instead of a bare true"}
 {"id":"B497","batch":"F49","tier":"T1","state":"already-fixed","pr":748,"proof":null,"evidence":"verified: purchase-orders/[id]/receive.tsx now passes confirmDiscardIfDirty={hasTouchedReceiveForm(...)}, a real per-field touched check in discard-guard.ts"}
 {"id":"B498","batch":"F49","tier":"T1","state":"already-fixed","pr":748,"proof":null,"evidence":"verified: packages/ui/src/mobile/ios/SearchBar.tsx gained an autoFocus prop and is wrapped in React.forwardRef<TextInput, SearchBarProps>"}
+{"id":"B500","batch":"F49","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B501","batch":"F49","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
