@@ -37,7 +37,7 @@ const PRINCIPLES: Array<[string, string]> = [
 
 export default function CompanyPage() {
   return (
-    <>
+    <div className="glass-page">
       <section className="page-hero company-intro wrap">
         <Eyebrow>ABOUT ROUTEFLOW</Eyebrow>
         <h1>
@@ -121,6 +121,6 @@ export default function CompanyPage() {
         </a>
       </section>
       <CTA />
-    </>
+    </div>
   );
 }
