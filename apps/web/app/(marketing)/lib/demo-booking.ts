@@ -22,7 +22,16 @@ export interface AvailabilityDay {
   slots: AvailabilitySlot[];
 }
 
+/**
+ * `"unavailable"` means the booking system itself cannot serve real
+ * availability right now (unconfigured, misconfigured, or the calendar is
+ * unreachable) — distinct from `"ok"` with an empty `days`, which means
+ * there is genuinely nothing free in the requested range (B499).
+ */
+export type AvailabilityStatus = "ok" | "unavailable";
+
 export interface Availability {
+  status: AvailabilityStatus;
   timeZone: string;
   durationMinutes: number;
   days: AvailabilityDay[];

@@ -22,6 +22,7 @@ import {
   timeZoneLabel,
   visitorTimeZone,
 } from "../lib/demo-booking";
+import { site } from "../lib/site";
 
 /**
  * The live demo scheduler: real availability from the RouteFlow API (which
@@ -334,6 +335,18 @@ export function DemoScheduler() {
             <div className="g-alert" role="alert">
               <AlertCircle aria-hidden="true" />
               <span>{loadError}</span>
+            </div>
+          ) : availability?.status === "unavailable" ? (
+            // Distinct from "no free times below" (B499): the booking system
+            // itself cannot serve real availability right now (unconfigured
+            // or the calendar is unreachable), not a genuinely full calendar.
+            <div className="g-alert" role="alert">
+              <AlertCircle aria-hidden="true" />
+              <span>
+                Online booking is temporarily unavailable. Email{" "}
+                <a href={`mailto:${site.email}`}>{site.email}</a> and we will find a time that
+                works.
+              </span>
             </div>
           ) : !availability || availability.days.length === 0 ? (
             <p className="slots-empty" role="status">

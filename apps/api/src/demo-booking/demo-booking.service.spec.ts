@@ -239,6 +239,7 @@ describe("DemoBookingService.getAvailability", () => {
     const { service } = build();
     const result = await service.getAvailability(WINDOW.from, WINDOW.to, "America/New_York");
 
+    expect(result.status).toBe("ok");
     expect(result.timeZone).toBe("America/New_York");
     expect(result.durationMinutes).toBe(30);
     const friday = result.days.find((day) => day.date === "2026-10-16");
@@ -274,29 +275,36 @@ describe("DemoBookingService.getAvailability", () => {
     expect(starts).not.toContain(FRIDAY_9AM);
   });
 
-  it("offers nothing when the calendar cannot be read — never guesses free", async () => {
+  // B499: "the calendar is unreachable" is an outage, not "fully booked" —
+  // the client must be able to tell them apart.
+  it("offers nothing when the calendar cannot be read — never guesses free, and reports unavailable (B499)", async () => {
     const { calendar, service } = build();
     calendar.busy = null;
     const result = await service.getAvailability(WINDOW.from, WINDOW.to, "America/Chicago");
     expect(result.days).toEqual([]);
+    expect(result.status).toBe("unavailable");
   });
 
-  it("offers nothing when Google credentials are absent", async () => {
+  it("offers nothing when Google credentials are absent, and reports unavailable (B499)", async () => {
     const { service } = build({ saEmail: "", saPrivateKey: "" });
     const result = await service.getAvailability(WINDOW.from, WINDOW.to, "America/Chicago");
     expect(result.days).toEqual([]);
+    expect(result.status).toBe("unavailable");
   });
 
   // Review round-2 finding C: an interval shorter than the duration lets the
   // grid offer two different, overlapping slots — go dark the same way as
   // "not configured" rather than publish an unsafe grid.
-  it("REG-review-round2-C: offers nothing when the slot interval is shorter than the duration", async () => {
+  it("REG-review-round2-C: offers nothing when the slot interval is shorter than the duration, and reports unavailable", async () => {
     const { service } = build({ slotIntervalMinutes: 15, durationMinutes: 30 });
     const result = await service.getAvailability(WINDOW.from, WINDOW.to, "America/Chicago");
     expect(result.days).toEqual([]);
+    expect(result.status).toBe("unavailable");
   });
 
-  it("honours the minimum-notice window", async () => {
+  // These are the "ok" side of B499: the service is working, there is just
+  // nothing bookable in this particular window — never "unavailable".
+  it("honours the minimum-notice window, reporting ok with an empty grid", async () => {
     // NOW is 08:00 Chicago Thursday; 12h notice rules out the rest of Thursday.
     const { service } = build({ minNoticeHours: 12 });
     const result = await service.getAvailability(
@@ -305,9 +313,10 @@ describe("DemoBookingService.getAvailability", () => {
       "America/Chicago",
     );
     expect(result.days).toEqual([]);
+    expect(result.status).toBe("ok");
   });
 
-  it("skips weekends", async () => {
+  it("skips weekends, reporting ok with an empty grid", async () => {
     const { service } = build();
     const result = await service.getAvailability(
       "2026-10-17T00:00:00.000Z",
@@ -315,6 +324,35 @@ describe("DemoBookingService.getAvailability", () => {
       "America/Chicago",
     );
     expect(result.days).toEqual([]);
+    expect(result.status).toBe("ok");
+  });
+
+  it("reports ok with an empty grid when the requested range collapses to nothing", async () => {
+    const { service } = build();
+    // `to` before `from` clamps windowEnd <= windowStart — an empty request,
+    // not a service problem.
+    const result = await service.getAvailability(
+      "2026-10-16T00:00:00.000Z",
+      "2026-10-15T00:00:00.000Z",
+      "America/Chicago",
+    );
+    expect(result.days).toEqual([]);
+    expect(result.status).toBe("ok");
+  });
+
+  it("logs the not-configured state at warn level once per throttle window, not once per request (B499)", async () => {
+    const { service } = build({ saEmail: "", saPrivateKey: "" });
+    const warn = jest.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
+
+    await service.getAvailability(WINDOW.from, WINDOW.to, "America/Chicago");
+    await service.getAvailability(WINDOW.from, WINDOW.to, "America/Chicago");
+    await service.getAvailability(WINDOW.from, WINDOW.to, "America/Chicago");
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    // Past the throttle window, it logs again.
+    service.nowOverride = new Date(NOW.getTime() + 6 * 60_000);
+    await service.getAvailability(WINDOW.from, WINDOW.to, "America/Chicago");
+    expect(warn).toHaveBeenCalledTimes(2);
   });
 
   it("falls back to the business zone for an unusable visitor zone", async () => {
@@ -484,9 +522,16 @@ describe("DemoBookingService.create", () => {
     ).rejects.toBeInstanceOf(ConflictException);
   });
 
-  it("refuses booking when the feature is unconfigured", async () => {
+  // B499: confirms the missing-DEMO_BOOKING_TOKEN_SECRET 503 already carries a
+  // readable, visitor-facing message rather than a raw error — not a
+  // NestJS-internal string, and no config detail (which env var, etc.) leaked.
+  it("refuses booking when the feature is unconfigured, with a readable message (B499)", async () => {
     const { service } = build({ tokenSecret: "" });
-    await expect(service.create(input)).rejects.toBeInstanceOf(ServiceUnavailableException);
+    await expect(service.create(input)).rejects.toThrow(
+      new ServiceUnavailableException(
+        "Demo booking is not available right now. Please email us and we will arrange a time.",
+      ),
+    );
   });
 
   it("REG-review-round2-C: refuses booking when the slot interval is shorter than the duration", async () => {
