@@ -19,19 +19,24 @@ const dupMatch = {
  * B451 — Strix coverage gap 4 (business-logic financial-total manipulation)
  * on POST /vendor-bills. Phase A CONFIRMED this: VendorBillItemDto declared
  * `qty`/`unitCost`/`unitPrice`/`lineTotal` as bare `@IsOptional() @IsNumber()`
- * — no `@Min(0)` — unlike every sibling line-item DTO in the codebase
- * (CreateInvoiceItemDto.qty/unitPrice, OrderItemDto.qty/unitPrice all carry
- * `@Min`). vendor-bills.service.ts's `totalOwed = Σ (qty || 1) *
- * (unitCost ?? unitPrice ?? 0)` had no floor check anywhere before
- * persisting.
+ * — no bound at all — so vendor-bills.service.ts's `totalOwed = Σ (qty || 1)
+ * * (unitCost ?? unitPrice ?? 0)` had no floor check before persisting.
  *
- * Phase B FIX: `@Min(0)` added to all four VendorBillItemDto fields (closes
- * the HTTP path for both create and update, which share this DTO), plus
- * `assertMoneyInvariantsOrThrow` in the service as defense-in-depth for the
- * documented internal caller that bypasses the DTO. This spec now pins the
- * FIXED behavior.
+ * Phase B FIX v1: `@Min(0)` on all four VendorBillItemDto fields.
+ *
+ * Opus review of #791: `@Min(0)` on unitCost/unitPrice/lineTotal broke real
+ * mobile scan-to-bill traffic — a scanned discount or deposit-return line is
+ * a LEGITIMATE negative cost, not an attack (see
+ * apps/mobile/lib/vendor-bill-scan.ts buildBillDtoFromScan). Fix v2: `qty`
+ * keeps `@Min(0)` (every real caller sends non-negative qty); unitCost/
+ * unitPrice/lineTotal are unbounded again at the DTO layer. The actual
+ * guard — `assertMoneyInvariantsOrThrow` on the computed `totalOwed` — stays,
+ * and now does the real work: it catches a bill that NETS negative
+ * regardless of which line carried the negative amount, while a bill with
+ * one negative (discount/deposit) line that still nets positive is
+ * accepted.
  */
-describe("VendorBillsService.create — unbounded line qty/unitCost (B451 gap 4)", () => {
+describe("VendorBillsService.create — negative-line/net-negative handling (B451 gap 4)", () => {
   let service: VendorBillsService;
   let prisma: ReturnType<typeof createMockPrisma>;
 
@@ -61,14 +66,11 @@ describe("VendorBillsService.create — unbounded line qty/unitCost (B451 gap 4)
     service = module.get<VendorBillsService>(VendorBillsService);
   });
 
-  it("FIXED: a negative unitCost line is now rejected, no bill persisted", async () => {
+  it("REJECTED: a single negative-unitCost line with nothing to offset it nets negative — 400 MONEY_INVARIANT", async () => {
     prisma.vendorBill.create.mockImplementation((args: any) =>
       Promise.resolve({ id: "vb-1", supplierId: null, ...args.data }),
     );
 
-    // The HTTP path also now 400s at the DTO layer (VendorBillItemDto.unitCost
-    // carries @Min(0)) — this proves the service-level defense-in-depth guard
-    // independently, for the documented internal caller that bypasses the DTO.
     await expect(
       service.create({
         requireSupplier: false,
@@ -79,7 +81,25 @@ describe("VendorBillsService.create — unbounded line qty/unitCost (B451 gap 4)
     expect(prisma.vendorBill.create).not.toHaveBeenCalled();
   });
 
-  it("FIXED: a negative qty on an otherwise-legitimate unitCost is also now rejected", async () => {
+  it("ACCEPTED: a negative-unitCost discount line alongside a positive line, netting positive, is NOT rejected (Opus review of #791 — real scan traffic)", async () => {
+    prisma.vendorBill.create.mockImplementation((args: any) =>
+      Promise.resolve({ id: "vb-1", supplierId: null, ...args.data }),
+    );
+
+    const bill = await service.create({
+      requireSupplier: false,
+      items: [
+        { description: "Flour 25lb", qty: 1, unitCost: 1000 },
+        { description: "Loyalty discount", qty: 1, unitCost: -500 },
+      ],
+    });
+
+    expect(bill).toBeDefined();
+    const createCall = prisma.vendorBill.create.mock.calls[0][0];
+    expect(createCall.data.totalOwed).toBe(500);
+  });
+
+  it("REJECTED: lines net negative overall even though no single line is individually implausible — 400 MONEY_INVARIANT", async () => {
     prisma.vendorBill.create.mockImplementation((args: any) =>
       Promise.resolve({ id: "vb-1", supplierId: null, ...args.data }),
     );
@@ -87,7 +107,10 @@ describe("VendorBillsService.create — unbounded line qty/unitCost (B451 gap 4)
     await expect(
       service.create({
         requireSupplier: false,
-        items: [{ description: "Negative qty line", qty: -10, unitCost: 50 }],
+        items: [
+          { description: "Small item", qty: 1, unitCost: 10 },
+          { description: "Oversized discount", qty: 1, unitCost: -500 },
+        ],
       }),
     ).rejects.toMatchObject({ status: 400, response: { code: "MONEY_INVARIANT" } });
 

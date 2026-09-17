@@ -2,6 +2,7 @@ import {
   applyLineEdit,
   buildBillDtoFromScan,
   initialPpbDraft,
+  isMoneyInvariantError,
   linkScanItem,
   mappingsFromScan,
   pieceSnapshotFromLine,
@@ -109,6 +110,112 @@ describe("buildBillDtoFromScan — server-resolved supplierId", () => {
       suppliers,
     );
     expect(dto.supplierId).toBeUndefined();
+  });
+});
+
+describe("buildBillDtoFromScan — negative-line handling (B451/#791 Opus review)", () => {
+  it("a discount line (positive qty, negative unitCost) passes through unchanged", () => {
+    const dto = buildBillDtoFromScan(
+      scanResult({
+        items: [
+          {
+            extractedName: "Loyalty discount",
+            qty: 1,
+            unitCost: -5,
+            lineTotal: -5,
+            matchedProductId: null,
+            matchedProductName: null,
+            confidence: "none",
+          },
+        ],
+      }),
+      suppliers,
+    );
+    expect(dto.items).toHaveLength(1);
+    expect(dto.items[0]).toMatchObject({ qty: 1, unitCost: -5, lineTotal: -5 });
+  });
+
+  it("a negative-qty deposit-return line is normalized: qty flips positive, unitCost flips negative, productId dropped", () => {
+    const dto = buildBillDtoFromScan(
+      scanResult({
+        items: [
+          {
+            extractedName: "Bottle deposit return",
+            qty: -2,
+            unitCost: 5,
+            lineTotal: -10,
+            matchedProductId: "prod-deposit",
+            matchedProductName: "Bottle Deposit",
+            confidence: "high",
+          },
+        ],
+      }),
+      suppliers,
+    );
+    expect(dto.items).toHaveLength(1);
+    expect(dto.items[0]).toMatchObject({
+      qty: 2,
+      unitCost: -5,
+      lineTotal: -10,
+    });
+    expect(dto.items[0].productId).toBeUndefined();
+  });
+
+  it("a negative-qty line with no lineTotal printed leaves lineTotal undefined (not coerced to 0/negative-zero)", () => {
+    const dto = buildBillDtoFromScan(
+      scanResult({
+        items: [
+          {
+            extractedName: "Case return",
+            qty: -1,
+            unitCost: 12,
+            matchedProductId: "prod-x",
+            matchedProductName: "Some Product",
+            confidence: "high",
+          },
+        ],
+      }),
+      suppliers,
+    );
+    expect(dto.items[0].lineTotal).toBeUndefined();
+  });
+
+  it("scanBillTotal nets the same amount whether the line arrives pre- or post-normalization (qty*unitCost sign is preserved)", () => {
+    const before = buildBillDtoFromScan(
+      scanResult({
+        items: [
+          {
+            extractedName: "Deposit return",
+            qty: -3,
+            unitCost: 4,
+            matchedProductId: "prod-x",
+            matchedProductName: "Some Product",
+            confidence: "high",
+          },
+        ],
+      }),
+      suppliers,
+    );
+    // -3 * 4 pre-normalization == 3 * -4 post-normalization == -12 either way.
+    expect(before.items[0].qty * before.items[0].unitCost).toBe(-12);
+  });
+});
+
+describe("isMoneyInvariantError — credit-memo detection for the scan submit error handler", () => {
+  it("recognizes the server's MONEY_INVARIANT error shape", () => {
+    const err = {
+      response: { data: { code: "MONEY_INVARIANT", message: "total cannot be negative" } },
+    };
+    expect(isMoneyInvariantError(err)).toBe(true);
+  });
+
+  it("is false for an unrelated error (e.g. a duplicate-bill 409)", () => {
+    const err = { response: { data: { code: "DUPLICATE_VENDOR_BILL" } } };
+    expect(isMoneyInvariantError(err)).toBe(false);
+  });
+
+  it("is false for a network error with no response payload", () => {
+    expect(isMoneyInvariantError(new Error("Network Error"))).toBe(false);
   });
 });
 

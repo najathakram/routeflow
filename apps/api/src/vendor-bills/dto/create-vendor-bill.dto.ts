@@ -21,19 +21,27 @@ export class VendorBillItemDto {
   @IsOptional() @IsString() productId?: string;
   @IsOptional() @IsString() description?: string;
   @IsOptional() @IsString() name?: string;
-  // B451 gap 4: these four carried no @Min(0) — a negative qty or unitCost
+  // B451 gap 4: these carried no bound at all — a negative qty or unitCost
   // reached vendor-bills.service.ts's totalOwed = Σ qty*unitCost unbounded,
-  // driving the bill's totalOwed negative. Every sibling line-item DTO in
-  // the codebase (CreateInvoiceItemDto.qty/unitPrice, OrderItemDto.qty/
-  // unitPrice) already bounds these; this brings VendorBillItemDto in line.
+  // driving the bill's totalOwed negative with nothing to catch it.
+  // Opus review of #791: @Min(0) landed on unitCost/unitPrice/lineTotal too,
+  // but a scanned discount or deposit-return line is a LEGITIMATE negative
+  // cost (mobile scan-to-bill sends these) — @Min(0) there 400s a real
+  // supplier invoice, not an attack. qty stays @Min(0) (every real caller
+  // sends a non-negative qty; a negative one is normalized by the mobile
+  // scan layer before it ever reaches this DTO — see
+  // vendor-bill-scan.ts buildBillDtoFromScan). The actual guard against a
+  // bill netting negative is assertMoneyInvariantsOrThrow on the computed
+  // totalOwed in create()/update(), which catches it regardless of which
+  // individual line carried the negative amount.
   @IsOptional() @IsNumber() @Min(0) qty?: number;
-  @IsOptional() @IsNumber() @Min(0) unitCost?: number;
-  @IsOptional() @IsNumber() @Min(0) unitPrice?: number;
+  @IsOptional() @IsNumber() unitCost?: number;
+  @IsOptional() @IsNumber() unitPrice?: number;
   /** The supplier's own item code, as printed — the strongest signal for matching this line next scan. */
   @IsOptional() @IsString() sku?: string;
   /** Units per box/case, only when the line explicitly printed one. */
   @IsOptional() @IsNumber() @Min(0) packSize?: number;
-  @IsOptional() @IsNumber() @Min(0) lineTotal?: number;
+  @IsOptional() @IsNumber() lineTotal?: number;
 }
 
 /**
