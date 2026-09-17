@@ -35,6 +35,7 @@ describe("MailboxController — real guard chain over HTTP", () => {
   let mailboxConnection: {
     getStatus: jest.Mock;
     startConnect: jest.Mock;
+    startConnectMicrosoft: jest.Mock;
     confirmConnect: jest.Mock;
     disconnect: jest.Mock;
   };
@@ -61,6 +62,9 @@ describe("MailboxController — real guard chain over HTTP", () => {
       startConnect: jest
         .fn()
         .mockResolvedValue("https://accounts.google.com/o/oauth2/v2/auth?mock=1"),
+      startConnectMicrosoft: jest
+        .fn()
+        .mockResolvedValue("https://login.microsoftonline.com/common/oauth2/v2.0/authorize?mock=1"),
       // Simulates the REAL confirmConnect identity rule (unit-tested for real in
       // mailbox-connection.service.spec.ts) — proves the controller passes the CALLER's own
       // JWT identity through, not a hardcoded/omitted one.
@@ -124,6 +128,7 @@ describe("MailboxController — real guard chain over HTTP", () => {
   it("no Authorization header: every guarded route 401s", async () => {
     await request(app.getHttpServer()).get("/settings/email/mailbox").expect(401);
     await request(app.getHttpServer()).get("/settings/email/mailbox/google/start").expect(401);
+    await request(app.getHttpServer()).get("/settings/email/mailbox/microsoft/start").expect(401);
     await request(app.getHttpServer())
       .post("/settings/email/mailbox/confirm")
       .send({ state: "x" })
@@ -142,6 +147,10 @@ describe("MailboxController — real guard chain over HTTP", () => {
       .expect(403);
     await request(app.getHttpServer())
       .get("/settings/email/mailbox/google/start")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(403);
+    await request(app.getHttpServer())
+      .get("/settings/email/mailbox/microsoft/start")
       .set("Authorization", `Bearer ${token}`)
       .expect(403);
     await request(app.getHttpServer())
@@ -168,6 +177,10 @@ describe("MailboxController — real guard chain over HTTP", () => {
       .expect(200);
     await request(app.getHttpServer())
       .get("/settings/email/mailbox/google/start")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    await request(app.getHttpServer())
+      .get("/settings/email/mailbox/microsoft/start")
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
     await request(app.getHttpServer())
