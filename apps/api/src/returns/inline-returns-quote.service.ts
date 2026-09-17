@@ -16,8 +16,10 @@ import {
   UserRole,
 } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import { SystemConfigService } from "../system-config/system-config.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { REAL_INVOICE_STATUSES } from "../common/invoiced-sales";
+import { currentTaxRate } from "../common/tax-rate";
 import { getTierPrice } from "@routeflow/pricing";
 import { returnedPiecesByProduct } from "./returns-pieces.util";
 import {
@@ -41,11 +43,31 @@ const DELIVERED_ORDER_STATUSES = [OrderStatus.DELIVERED, OrderStatus.PARTIALLY_D
 
 @Injectable()
 export class InlineReturnsQuoteService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly systemConfig: SystemConfigService,
+  ) {}
 
   async quote(
     dto: QuoteInlineReturnDto,
     user: JwtPayload,
+  ): Promise<QuoteBreakdown & { productBreakdown: Record<string, QuoteBreakdown> }> {
+    return this.priceInlineReturn(dto, user, this.prisma.forTenant());
+  }
+
+  /**
+   * The pricing engine itself — shared by the read-only `quote()` above (tenant-scoped,
+   * no lock) and `InlineReturnsService.capture()` (PR-1c), which calls this with its OWN
+   * capture transaction's `tx` client so pricing reads the exact same locked snapshot the
+   * write then commits against (design.md §5's lock order: this must run AFTER the
+   * carrying/source `Order FOR UPDATE`s, never before — a pre-lock price could be stale by
+   * the time capture writes it). `db` is deliberately typed loosely (`any`) so a plain `tx`
+   * client (no `forTenant()` extension) is a valid caller too.
+   */
+  async priceInlineReturn(
+    dto: QuoteInlineReturnDto,
+    user: JwtPayload,
+    db: any,
   ): Promise<QuoteBreakdown & { productBreakdown: Record<string, QuoteBreakdown> }> {
     // Q5/§7: buyers keep the post-delivery request flow — never captured at order-entry
     // time. `@Roles` on the controller already excludes CUSTOMER, but this is the money-
@@ -54,8 +76,6 @@ export class InlineReturnsQuoteService {
     if (user.role === UserRole.CUSTOMER) {
       throw new ForbiddenException("Buyers cannot capture returns at order entry");
     }
-
-    const db = this.prisma.forTenant();
 
     // M8 scoping (§7): a DRIVER may only quote for the customer of a stop on their
     // OWN currently-IN_PROGRESS run — mirrors orders.service.ts's B309 driver-
@@ -114,7 +134,7 @@ export class InlineReturnsQuoteService {
     // snapshot is null (DRAFT invoices store boxed lines with unitsPerBox: null —
     // invoices.service.ts's `update()`), matching the orders fallback convention at
     // invoices.service.ts:427-428.
-    const [customerPrices, products] = await Promise.all([
+    const [customerPrices, products] = (await Promise.all([
       db.customerPrice.findMany({
         where: { customerId: dto.customerId, productId: { in: productIds } },
         select: { productId: true, pricingTier: true },
@@ -131,7 +151,12 @@ export class InlineReturnsQuoteService {
           unitsPerBox: true,
         },
       }),
-    ]);
+      // `db` is typed loosely (`any` — see priceInlineReturn's doc comment) so a plain `tx`
+      // client is a valid caller too; that makes both findMany calls resolve to `any` at
+      // this call's type-check, but a Promise.all over TWO `any`s can still infer `unknown`
+      // element types depending on the caller's own inference context — cast explicitly so
+      // `products`/`customerPrices` are never anything narrower than `any[]` below.
+    ])) as [any[], any[]];
 
     const productMap = new Map(products.map((p) => [p.id, p]));
     const productUpbMap = new Map(products.map((p) => [p.id, p.unitsPerBox]));
@@ -178,6 +203,13 @@ export class InlineReturnsQuoteService {
     const productBreakdown: Record<string, QuoteBreakdown> = {};
     const allChunks: PricedChunk[] = [];
 
+    // PR-1b deferred item / m-7 sibling: §3.2 cases 2/3 price an unreferenced chunk's tax at
+    // the tenant's CURRENT rate — the same reader orders.service.ts's getTaxRate() uses, via
+    // common/tax-rate.ts's shared currentTaxRate() (never a hand-rolled 0, and never the
+    // matched-chunk SNAPSHOT rate, which stays m-7's `line.taxRate` verbatim). Read once per
+    // quote — it does not vary per item — never inside the per-item loop below.
+    const tenantTaxRate = await currentTaxRate(this.systemConfig);
+
     for (const item of dto.items) {
       const product = productMap.get(item.productId);
 
@@ -213,8 +245,11 @@ export class InlineReturnsQuoteService {
           : ("BASE" as const);
       // The candidate lines are ALL the same product's own tax rate lineage; for the
       // unreferenced chunk (no matched line at all) fall back to whichever candidate
-      // line names the widest-known rate, else 0 — there is no invoice to snapshot from.
-      const fallbackTaxRate = matchingSet.find((l) => l.productId === item.productId)?.taxRate ?? 0;
+      // line names the widest-known rate, else the tenant's CURRENT rate (deferred PR-1b
+      // item / §3.2 cases 2/3 — never a hand-rolled 0, which silently zero-taxed every
+      // unreferenced chunk on a product with no candidate invoice line at all).
+      const fallbackTaxRate =
+        matchingSet.find((l) => l.productId === item.productId)?.taxRate ?? tenantTaxRate;
 
       const chunks: PricedChunk[] = allocated.map((chunk) =>
         chunk.line

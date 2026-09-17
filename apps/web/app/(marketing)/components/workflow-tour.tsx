@@ -105,7 +105,7 @@ export function WorkflowTour() {
                 </li>
               ))}
             </ul>
-            <Link className="text-link" href="/contact">
+            <Link className="text-link" href="/book-a-demo">
               See it in a demo <ArrowUpRight size={17} />
             </Link>
           </div>

@@ -179,7 +179,7 @@ export function FeatureCatalog({ heading = false }: { heading?: boolean } = {}) 
         Review feature availability, AI configuration, and regulated-item reporting requirements for
         your plan and operation. Reporting tools do not guarantee regulatory compliance.
       </p>
-      <Link className="text-link" href="/contact">
+      <Link className="text-link" href="/book-a-demo">
         Show us the features that matter to your team <ArrowUpRight size={17} />
       </Link>
     </div>

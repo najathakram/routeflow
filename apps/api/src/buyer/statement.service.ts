@@ -4,11 +4,13 @@ import { monthRange, periodBucketOf } from "../regulated/period";
 import { roundMoney } from "@routeflow/pricing";
 import {
   ADVANCE_METHOD,
+  collectedDateOf,
   CONFIRMED_PAYMENT,
   CREDIT_NOTE_METHOD,
   splitConfirmed,
   sumConfirmed,
 } from "../invoices/payment-predicates";
+import { settledDateFilter } from "../invoices/settled-date-filter";
 
 /** Strict "YYYY-MM" — anything else is a 400 before any query runs. */
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
@@ -87,7 +89,9 @@ export class StatementService {
           total: true,
           status: true,
           issueDate: true,
-          payments: { select: { amount: true, paidAt: true, status: true, method: true } },
+          payments: {
+            select: { amount: true, paidAt: true, settledAt: true, status: true, method: true },
+          },
         },
       }),
       // F03/R1: the statement's payment + credit activity is a SUMMING read —
@@ -100,7 +104,10 @@ export class StatementService {
         where: {
           invoice: { customerId },
           ...CONFIRMED_PAYMENT,
-          paidAt: { gte: from, lt: to },
+          // check-payments PR-2b (M2): a payment lands in this month's
+          // statement on its collected date (settledAt ?? paidAt), same
+          // basis as getCashFlow/getSummary — never the raw paidAt alone.
+          ...settledDateFilter({ gte: from, lt: to }),
         },
         orderBy: { paidAt: "asc" },
         select: {
@@ -115,6 +122,7 @@ export class StatementService {
           status: true,
           reference: true,
           paidAt: true,
+          settledAt: true,
           invoice: { select: { invoiceNumber: true } },
         },
       }),
@@ -133,7 +141,11 @@ export class StatementService {
         invoices
           .filter((inv) => inv.status !== "WRITTEN_OFF" && inv.issueDate < boundary)
           .reduce((sum, inv) => {
-            const paid = sumConfirmed(inv.payments.filter((p) => p.paidAt < boundary));
+            // check-payments PR-2b (M2): a payment has reduced the balance as
+            // of its collected date (settledAt ?? paidAt), not its paidAt.
+            const paid = sumConfirmed(
+              inv.payments.filter((p) => (collectedDateOf(p) as Date) < boundary),
+            );
             return sum + roundMoney(Number(inv.total) - paid);
           }, 0),
       );
@@ -180,7 +192,7 @@ export class StatementService {
         amount: roundMoney(Number(inv.total)),
       })),
       ...paymentRows.map((p) => ({
-        date: p.paidAt.toISOString(),
+        date: (collectedDateOf(p) as Date).toISOString(),
         type: "PAYMENT" as const,
         description: `Payment — ${p.method}${p.reference ? ` (${p.reference})` : ""} on #${
           p.invoice.invoiceNumber
@@ -189,7 +201,7 @@ export class StatementService {
         amount: roundMoney(-Number(p.amount)),
       })),
       ...creditRows.map((p) => ({
-        date: p.paidAt.toISOString(),
+        date: (collectedDateOf(p) as Date).toISOString(),
         type: "CREDIT" as const,
         description: `${p.method === "ADVANCE" ? "Advance applied" : "Credit applied"} to #${
           p.invoice.invoiceNumber
