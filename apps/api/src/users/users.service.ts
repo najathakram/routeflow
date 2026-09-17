@@ -75,12 +75,19 @@ export class UsersService {
   }
 
   async findByUsername(username: string, tenantId?: string | null): Promise<User | null> {
-    // Accept either username or email in the login field
+    // Accept either username or email in the login field. Email match is
+    // case-insensitive (N2 review fix, #811) — updateUser now lowercases a
+    // stored email going forward, but neither web nor mobile lowercases the
+    // identifier before sending a login request, so an existing user whose
+    // email carries any uppercase (pre-dating that normalization, or an
+    // admin who typed "Name@Acme.com" into the login field) must still be
+    // found. Username stays exact-match — usernames are not email addresses
+    // and are not normalized anywhere else in this codebase.
     return this.prisma.forTenant().user.findFirst({
       where: {
         OR: [
           { username, tenantId: tenantId ?? null },
-          { email: username, tenantId: tenantId ?? null },
+          { email: { equals: username, mode: "insensitive" }, tenantId: tenantId ?? null },
         ],
       },
     });
@@ -247,13 +254,27 @@ export class UsersService {
         status: true,
         isAdmin: true,
         canActAsDriver: true,
+        forcePasswordChange: true,
       },
     });
 
     // Best-effort account notices (NOTIFY-SPEC N2) — never let a delivery failure
     // undo or block an update that has already committed.
     if (emailChanged) {
+      // N2 review fix (#811 merge-session finding): a set-password invite link sent to
+      // a mistyped address must not keep working after the admin corrects the email —
+      // otherwise the wrong recipient can still set a password and log in. Invalidate
+      // any outstanding token unconditionally on an email change, then — only if the
+      // user has never set their own password — mint and send a fresh one to the
+      // corrected address so they aren't left with no way in at all.
+      await this.prisma.passwordResetToken.updateMany({
+        where: { userId, usedAt: null },
+        data: { usedAt: new Date() },
+      });
       await this.notifyEmailChanged(userId, previousEmail, updated.email, updated.username);
+      if (updated.forcePasswordChange && updated.email) {
+        await this.sendSetPasswordInvite(userId, updated.email, updated.username);
+      }
     }
     if (roleChanged) {
       await this.notifyRoleChanged(

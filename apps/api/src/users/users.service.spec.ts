@@ -73,6 +73,29 @@ describe("UsersService", () => {
     service = module.get<UsersService>(UsersService);
   });
 
+  describe("findByUsername", () => {
+    it("N2 review fix (#811): matches email case-insensitively — neither web nor mobile lowercases the login identifier before sending", async () => {
+      prisma.user.findFirst.mockResolvedValue({ id: "u1", email: "acme_owner@example.com" } as any);
+
+      await service.findByUsername("Acme_Owner@Example.com", "tenant-1");
+
+      const call = prisma.user.findFirst.mock.calls[0][0] as any;
+      expect(call.where.OR[1]).toEqual({
+        email: { equals: "Acme_Owner@Example.com", mode: "insensitive" },
+        tenantId: "tenant-1",
+      });
+    });
+
+    it("keeps username matching exact (case-sensitive) — usernames are not normalized anywhere in this codebase", async () => {
+      prisma.user.findFirst.mockResolvedValue(null);
+
+      await service.findByUsername("Acme_Owner", "tenant-1");
+
+      const call = prisma.user.findFirst.mock.calls[0][0] as any;
+      expect(call.where.OR[0]).toEqual({ username: "Acme_Owner", tenantId: "tenant-1" });
+    });
+  });
+
   describe("findAll", () => {
     it("returns { data, meta } — not a bare array", async () => {
       prisma.forTenant().user.findMany.mockResolvedValue(MOCK_USERS as any);
@@ -357,6 +380,71 @@ describe("UsersService", () => {
       const result = await service.updateUser("u1", { email: "new@acme.example" } as any);
 
       expect(result.email).toBe("new@acme.example");
+    });
+
+    it("N2 review fix (#811): invalidates any outstanding set-password/reset token when the email changes, so a link mailed to a mistyped address stops working", async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: "u1",
+        username: "acme_op",
+        email: "typo@acme.example",
+        role: "OPERATOR",
+      } as any);
+      prisma.user.update.mockResolvedValue({
+        id: "u1",
+        username: "acme_op",
+        email: "corrected@acme.example",
+        role: "OPERATOR",
+        forcePasswordChange: false,
+      } as any);
+
+      await service.updateUser("u1", { email: "corrected@acme.example" } as any);
+
+      expect(prisma.passwordResetToken.updateMany).toHaveBeenCalledWith({
+        where: { userId: "u1", usedAt: null },
+        data: { usedAt: expect.any(Date) },
+      });
+    });
+
+    it("N2 review fix (#811): sends a fresh set-password invite to the corrected address when the user never set their own password", async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: "u1",
+        username: "acme_op",
+        email: "typo@acme.example",
+        role: "OPERATOR",
+      } as any);
+      prisma.user.update.mockResolvedValue({
+        id: "u1",
+        username: "acme_op",
+        email: "corrected@acme.example",
+        role: "OPERATOR",
+        forcePasswordChange: true, // never completed the invite flow
+      } as any);
+
+      await service.updateUser("u1", { email: "corrected@acme.example" } as any);
+
+      expect(email.sendSetPasswordEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ to: "corrected@acme.example", username: "acme_op" }),
+      );
+    });
+
+    it("N2 review fix (#811): does NOT re-invite when the user already has their own password", async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: "u1",
+        username: "acme_op",
+        email: "old@acme.example",
+        role: "OPERATOR",
+      } as any);
+      prisma.user.update.mockResolvedValue({
+        id: "u1",
+        username: "acme_op",
+        email: "new@acme.example",
+        role: "OPERATOR",
+        forcePasswordChange: false, // already set their own password
+      } as any);
+
+      await service.updateUser("u1", { email: "new@acme.example" } as any);
+
+      expect(email.sendSetPasswordEmail).not.toHaveBeenCalled();
     });
   });
 
