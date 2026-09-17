@@ -56,6 +56,7 @@ import { RegulatedModule } from "./regulated/regulated.module";
 import { AuthorizationsModule } from "./authorizations/authorizations.module";
 import { CommissionsModule } from "./sales-agents/commissions.module";
 import { CrmModule } from "./crm/crm.module";
+import { DemoBookingModule } from "./demo-booking/demo-booking.module";
 
 import { TenantStatusGuard } from "./tenant/tenant-status.guard";
 import { ImpersonationGuard } from "./auth/guards/impersonation.guard";
@@ -171,6 +172,7 @@ import { AppService } from "./app.service";
     // ─── Sales agents & commissions (flag.sales_agents) ───────────────────────
     CommissionsModule,
     CrmModule,
+    DemoBookingModule,
   ],
   controllers: [AppController],
   providers: [

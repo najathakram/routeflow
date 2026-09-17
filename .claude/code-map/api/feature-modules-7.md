@@ -76,3 +76,66 @@
 
 - **module** — global. `broadcast{RouteUpdate,LocationUpdate,OrderUpdate}`, `notifyUser`. Redis adapter pub/sub to connected clients.
 - **buyer-connect emitters (2026-08-20)** — `emitBuyerConnectRequest(tenantId, {customerId, customerName, buyerName, buyerEmail, requestedAt})` → `buyer.connect.requested` and `emitBuyerAutoLinked(tenantId, {customerId, customerName, buyerName, buyerEmail})` → `buyer.connect.autolinked`, both to `tenantRoom(tenantId,"operators")` only (same shape as `emitUrgentOrder`). Called fire-and-forget from `buyer.service.requestSeller`; consumed by web `lib/hooks/useNotifications.ts` (requested also invalidates the pending-approvals query).
+
+### `demo-booking/` (public, tenant-less — 2026-09-16, PR-1)
+
+- **module** — `PublicDemoBookingController` (no `@UseGuards`, no JWT, no tenant — this API applies
+  `JwtAuthGuard` per route rather than globally, so the ABSENCE of a guard here is the whole
+  mechanism, same posture as `tenants/public-tenants.controller.ts`) + `DemoBookingService` +
+  `GoogleCalendarService`. Imports `EmailModule` explicitly (not global — same DI-scope class of
+  bug that took the API down 2026-09-12, [[L-113]]).
+- **model** — `DemoBooking` (`prisma/schema/platform.prisma`, NOT tenant-scoped: a prospect
+  booking a walkthrough has no workspace yet) + `DemoBookingStatus` enum
+  (`CONFIRMED|CANCELLED|COMPLETED`). Two additive migrations: `20260916030000_demo_booking`
+  (table) + `20260916031500_demo_booking_race_guard` (a PARTIAL unique index,
+  `DemoBooking_startsAt_confirmed_key` on `startsAt` WHERE `status='CONFIRMED'` — Prisma's DSL
+  can't express the WHERE, so it exists only in the migration file, documented on the model with
+  the same `BuyerPaymentRequest_open_request_key` pattern `finance.prisma` already uses).
+  `schema-folder.spec.ts`'s pinned block counts bumped +1 model/+1 enum in the same PR.
+- **routes** — `GET .../availability` (20/min), `POST .../` create (5/hour/IP), `GET .../me`
+  (manage token via `X-Booking-Token` HEADER, never a URL param — a path-segment token lands in
+  access logs and Sentry's `originalUrl` tag on any 5xx), `POST .../reschedule` /
+  `POST .../cancel` (token in the request body). `requireByToken` expires manage rights 7 days
+  after the slot's `endsAt`.
+- **availability** — `getAvailability` generates business-hours slots (`zoned-time.ts`'s
+  `zonedWallClockToUtc`/`zonedDateParts`, house-pattern `Intl.formatToParts` zone math, NOT a date
+  library — mirrors `common/calendar-date.ts`'s conventions), minus Google `freeBusy`, minus rows
+  already held here, minus the minimum-notice window. **Fails closed**: `GoogleCalendarService
+.getBusy` returns `null` (not `[]`) on unconfigured/unreachable/erroring — every caller reads
+  `null` as "offer nothing", never "everything is free". `isSlotGridValid` (`demo-booking.config.ts`)
+  additionally refuses when `slotIntervalMinutes < durationMinutes` (would let the grid offer
+  overlapping starts neither race guard below catches) — same fail-closed shape, never fires with
+  the shipped 30/30 defaults.
+- **booking race guards (two independent layers)** — a `demo-booking` advisory-lock family
+  (`common/db-locks.ts#LOCK_FAMILIES`, `max: 4`) keyed on the slot's UTC start instant serializes
+  `create`/`reschedule`'s check-then-write window (same primitive `addon.service.ts`'s B342 fix
+  uses); the partial unique index above is the DB-level second line, a P2002 mapped to a clean 409.
+  Proven against real Postgres in `demo-booking.db.spec.ts` (`.db.spec.ts` lane, `RUN_DB_SPECS`
+  gated) — two connections racing the same lock key, and a real INSERT race against the index.
+- **Google Calendar** — `GoogleCalendarService`: service-account JWT with DOMAIN-WIDE DELEGATION
+  (`google-auth-library`, now a real dependency — was phantom, resolved only via `firebase-admin`),
+  impersonating `GOOGLE_CALENDAR_IMPERSONATE` (admin@routeflow.info). Plain `fetch` against the
+  Calendar v3 REST API, not `googleapis` (same pattern as Maps/Routes elsewhere in this repo).
+  `freeBusy` responses cached 45s, keyed on `(calendarId, from, to)`, capped at 500 entries with
+  oldest-eviction on write (an unbounded cache on a public 20/min endpoint is a heap-growth DoS —
+  round-2 review finding). Events created with NO `attendees` and NO `sendUpdates` — the booker's
+  address is unverified (a public form), so adding it as an attendee makes Google mail a stranger's
+  address an invite from admin@routeflow.info; RouteFlow's own confirmation email carries the Meet
+  link instead (real attendee invitation is deferred behind a future email-verification step).
+- **manage token** — `<random>.<hmac>`, only the SHA-256 of the whole token is persisted
+  (`manageTokenHash`) — a database read alone can never cancel a booking. Confirmation email's
+  manage link uses a URL FRAGMENT (`#token=`, not `?token=`) so it never reaches an access log or
+  Referer header.
+- **operator undo** — `apps/api/scripts/demo-bookings.mjs` (`--list` / `--cancel <id>`, dry-run by
+  default, `--apply` to write for real; best-effort calendar-event delete on cancel). NOT
+  tenant-scoped (no `assertTestTenant` gate — same posture as
+  `report-addon-gate-blast-radius.mjs` for another global table), deliberately does NOT import the
+  compiled Nest service (no script in this repo imports src/dist app code) — a small standalone
+  Calendar-delete call instead, same auth shape as the verification script below.
+- **owner setup** — `docs/runbooks/google-calendar-demo-booking-setup.md` (service account,
+  domain-wide delegation, Railway env vars) + `apps/api/scripts/check-calendar-access.mjs`
+  (read-only verification — mints a token, queries `freeBusy`, creates nothing).
+- **web consumer** — `apps/web/app/(marketing)/lib/demo-booking.ts` (plain `fetch`, deliberately
+  NOT `lib/api-client.ts` — this is public/tenant-less, must not attach the operator JWT or
+  `X-Tenant-Slug`) + `components/demo-scheduler.tsx` + `book-a-demo/page.tsx` (web.md routes-3.md
+  has the full page-level entry).
