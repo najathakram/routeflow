@@ -64,6 +64,12 @@ import {
   loadAgeIdCategorySets,
   type RegulatedDeliveryDb,
 } from "../common/regulated-delivery";
+// Feature grants v2 brief C (PR-5): FeatureConfigService is @Global() (feature-config.module.ts)
+// so no RoutesModule import is needed to inject it here. Fix round 1 (Opus review, item 1): use
+// the SERVICE (getEffectiveMode), not the raw Store — the service resolves fallback if the
+// stored mode's requires.allOf is no longer met.
+import { FeatureConfigService } from "../billing/feature-config.service";
+import { ROUTES_DISPATCH_KEY, assertRouteKindDispatchAllowed } from "./route-dispatch-mode";
 
 // F11 (B129 / B211): the `resolutionReason` stamped on a ChangeRequest that a
 // run-terminal release declined. Exported so a UI/report can recognise a
@@ -186,6 +192,7 @@ export class RoutesService {
     private readonly invoicesService: InvoicesService,
     private readonly configService: ConfigService,
     private readonly storage: StorageService,
+    private readonly featureConfig: FeatureConfigService,
   ) {}
 
   // ── Route Templates ────────────────────────────────────────────────────
@@ -888,6 +895,19 @@ export class RoutesService {
       },
     });
     if (!route) throw new NotFoundException("Route not found");
+
+    // Feature grants v2 brief C (PR-5): gate on the tenant's EFFECTIVE routes_dispatch mode
+    // before anything else — no tenant has a TenantFeatureConfig row yet, so this always
+    // resolves "unset" today, which allows every kind (HARD INVARIANT: byte-for-byte unchanged
+    // dispatch behavior until a tenant is explicitly configured).
+    const tenantId = this.prisma.getTenantId();
+    if (tenantId) {
+      const dispatchMode = await this.featureConfig.getEffectiveMode(tenantId, ROUTES_DISPATCH_KEY);
+      // route.kind carries the schema's own `@default(SCHEDULED)` on every real row; only a
+      // trimmed test fixture omits it, so treat a missing value the same as that DB default
+      // rather than as a third, unrecognized kind.
+      assertRouteKindDispatchAllowed(dispatchMode, route.kind ?? RouteKind.SCHEDULED);
+    }
 
     // A stop the filter above dropped leaves no trace in the dispatch response (stopCount simply
     // reads lower), so count the suppressed set once per dispatch — otherwise a route whose stops
