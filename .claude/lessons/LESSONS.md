@@ -18,7 +18,7 @@
 - **Symptom:** raising a Jest test's own timeout to fix one flake introduced a new, harder-to-
   diagnose flake in the same test.
 - **Root cause:** the test's Jest-level timeout was raised without raising the timeout on the
-  `spawnSync` call running *inside* it, so the inner call now times out and throws before Jest's
+  `spawnSync` call running _inside_ it, so the inner call now times out and throws before Jest's
   own outer timeout would ever fire — moving the failure mode to a confusing error shape instead
   of fixing it.
 - **Lesson:** **When a test wraps a call with its own timeout (spawnSync, an HTTP client, a DB
@@ -213,7 +213,7 @@
   advisory allowlist) needs its own named assertion — the next unrelated edit to that file can't
   silently delete it without a visible red diff.**
 - **Guard:** name the assertion after the floor it enforces (e.g. `it("enforces the CVE-2026-xxxx
-  floor", ...)`), not after the generic thing being tested — restored in `next-version.spec.ts`.
+floor", ...)`), not after the generic thing being tested — restored in `next-version.spec.ts`.
 
 ### L-050 · 2026-09-02 · testing · #598
 
@@ -257,7 +257,7 @@
   them — three call-site-specific copies will silently drift, and each drift surfaces as its own
   "unrelated" bug report.**
 - **Guard:** shared `buildListWhere()` backs `findAll`, `exportCustomers`, and the
-  `update`/`changeStatus` guards; a test should assert every consumer calls the *same* function
+  `update`/`changeStatus` guards; a test should assert every consumer calls the _same_ function
   reference, not just that each produces a matching result today (not yet added — flag for the
   #781 landing coordinator).
 
