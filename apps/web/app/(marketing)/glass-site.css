@@ -773,6 +773,640 @@
   color: var(--g-link);
 }
 
+/* ── ProblemSection / DifferenceSection / BuyingConfidence
+   (components/conversion-sections.tsx) ─────────────────────────────────── */
+
+.glass-page .problem-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+}
+
+.glass-page .problem-grid article {
+  padding: 24px;
+  background: var(--g-glass);
+  border: 1px solid var(--g-glass-border);
+  border-radius: var(--g-r-md);
+  box-shadow: var(--g-shadow-glass);
+}
+
+.glass-page .problem-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--g-link);
+  margin-bottom: 14px;
+}
+
+.glass-page .problem-card-top span {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--g-soft);
+}
+
+.glass-page .problem-grid p {
+  color: var(--g-body);
+}
+
+.glass-page .problem-cost {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  font-size: 11px;
+  color: var(--g-eyebrow);
+}
+
+.glass-page .problem-cost span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #c2604f;
+}
+
+.glass-page .problem-conclusion {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-top: 30px;
+  padding-top: 24px;
+  border-top: 1px solid var(--g-hairline);
+  flex-wrap: wrap;
+}
+
+.glass-page .problem-conclusion span {
+  color: var(--g-body);
+}
+
+.glass-page .difference-section {
+  background: transparent;
+}
+
+.glass-page .difference-table {
+  background: var(--g-glass);
+  border: 1px solid var(--g-glass-border);
+  border-radius: var(--g-r-md);
+  box-shadow: var(--g-shadow-glass);
+  overflow: hidden;
+}
+
+.glass-page .difference-table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.glass-page .difference-row {
+  border-bottom: 1px solid var(--g-hairline);
+}
+
+.glass-page .difference-row:last-child {
+  border-bottom: 0;
+}
+
+.glass-page .difference-head {
+  background: #ffffff70;
+}
+
+.glass-page .difference-head th {
+  color: var(--g-ink);
+  font-weight: 700;
+  text-align: left;
+}
+
+.glass-page .comparison-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 20px;
+  color: var(--g-body);
+  font-size: 13px;
+}
+
+.glass-page .comparison-cell svg {
+  color: var(--g-teal);
+  flex: none;
+}
+
+.glass-page .before-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #b7c3d2;
+  flex: none;
+}
+
+.glass-page .mini-route-mark {
+  color: var(--g-ink);
+  display: inline-flex;
+}
+
+.glass-page .difference-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-top: 26px;
+  flex-wrap: wrap;
+}
+
+.glass-page .difference-footer p {
+  color: var(--g-body);
+  max-width: 480px;
+}
+
+.glass-page .confidence-points {
+  display: grid;
+  gap: 16px;
+}
+
+.glass-page .confidence-points article {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  padding: 18px;
+  background: var(--g-glass);
+  border: 1px solid var(--g-glass-border);
+  border-radius: var(--g-r-xs);
+}
+
+.glass-page .confidence-points svg {
+  color: var(--g-link);
+  flex: none;
+  margin-top: 2px;
+}
+
+.glass-page .confidence-points p {
+  color: var(--g-body);
+}
+
+.glass-page .confidence-note {
+  display: block;
+  margin-top: 14px;
+  color: var(--g-soft);
+  font-size: 11px;
+}
+
+/* ── AISpotlight (components/ai-spotlight.tsx) ───────────────────────────── */
+
+.glass-page .ai-label {
+  color: var(--g-eyebrow);
+}
+
+.glass-page .ai-label svg {
+  color: var(--g-link);
+}
+
+.glass-page .ai-review {
+  padding: 26px;
+  background: var(--g-glass);
+  border: 1px solid var(--g-glass-border);
+  border-radius: var(--g-r-md);
+  box-shadow: var(--g-shadow-glass);
+}
+
+.glass-page .ai-review-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--g-eyebrow);
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--g-hairline);
+}
+
+.glass-page .ai-review-steps {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 16px;
+}
+
+.glass-page .ai-review-steps li {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.glass-page .ai-step-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 43px;
+  height: 43px;
+  border-radius: 14px;
+  background: var(--g-field);
+  border: 1px solid var(--g-field-border);
+  color: var(--g-link);
+}
+
+.glass-page .ai-review-steps small {
+  display: block;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--g-eyebrow);
+  margin-bottom: 4px;
+}
+
+.glass-page .ai-review-steps p {
+  color: var(--g-body);
+  margin: 4px 0 0;
+}
+
+.glass-page .ai-assisted-step .ai-step-icon {
+  background: linear-gradient(140deg, #eaf3ffd9, #eaf3ff85);
+  border-color: #a4c4e5;
+  color: #2b587d;
+}
+
+.glass-page .ai-illustration-note {
+  color: var(--g-soft);
+  font-size: 10px;
+  margin-top: 16px;
+}
+
+/* ── WorkflowTour (components/workflow-tour.tsx) — the reference study's
+   flow-tabs/order-diagram pattern, closest 1:1 match in the whole port. ── */
+
+.glass-page .tour-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  margin-bottom: 22px;
+  background: var(--g-field);
+  border: 1px solid var(--g-field-border);
+  border-radius: 999px;
+  overflow-x: auto;
+}
+
+.glass-page .tour-tabs button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--g-body);
+  white-space: nowrap;
+}
+
+.glass-page .tour-tabs button[data-state="active"] {
+  background: var(--g-primary);
+  color: #fff;
+  box-shadow: var(--g-shadow-primary);
+}
+
+.glass-page .tab-number {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #ffffff40;
+  font-size: 9px;
+}
+
+.glass-page .tour-tabs button:not([data-state="active"]) .tab-number {
+  background: var(--g-field-border);
+  color: var(--g-soft);
+}
+
+.glass-page .tour-panel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 30px;
+  align-items: center;
+}
+
+.glass-page .feature-icon {
+  color: var(--g-link);
+  margin-bottom: 14px;
+}
+
+.glass-page .tour-copy p {
+  color: var(--g-body);
+}
+
+.glass-page .tour-preview {
+  padding: 22px;
+  background: var(--g-glass);
+  border: 1px solid var(--g-glass-border);
+  border-radius: var(--g-r-md);
+  box-shadow: var(--g-shadow-glass);
+}
+
+.glass-page .tour-example-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--g-eyebrow);
+  margin-bottom: 12px;
+}
+
+/* .record-card is reused verbatim by RetailerDetail below — the design
+   study's "EXAMPLE ORDER · PARKSIDE MARKET" panel. */
+.glass-page .record-card {
+  padding: 18px;
+  background: #ffffffa0;
+  border: 1px solid #fff;
+  border-radius: var(--g-r-xs);
+}
+
+.glass-page .record-caption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--g-eyebrow);
+  margin-bottom: 8px;
+}
+
+.glass-page .record-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--g-teal);
+  margin: 6px 0 14px;
+}
+
+.glass-page .record-status > span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--g-teal);
+}
+
+.glass-page .record-rows {
+  display: grid;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--g-hairline);
+}
+
+.glass-page .record-rows > div {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+}
+
+.glass-page .record-rows span {
+  color: var(--g-soft);
+}
+
+.glass-page .record-rows strong {
+  color: var(--g-ink);
+}
+
+.glass-page .record-note {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--g-hairline);
+  font-size: 11px;
+}
+
+.glass-page .record-note span {
+  display: block;
+  color: var(--g-eyebrow);
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+.glass-page .record-note p {
+  color: var(--g-soft);
+  margin: 0;
+}
+
+/* ── DeliveryDemo / OperationStory (components/operation-story.tsx) — a
+   deliberately elaborate interactive "product passport" simulation (phone
+   mockup, live scene chrome, auto-play timer, reduced-motion aware). Its
+   INTERNAL chrome (passport-*/scene-*/story-light-* etc., 50+ classes) is
+   left as its own product-accurate styling rather than reskinned — it is
+   meant to read as a real product screenshot inside a window, not another
+   marketing card, matching how the current production homepage's dashboard
+   mockup already sits visually apart from its white surroundings. Only the
+   OUTER frame gets the glass treatment, matching how the design study's own
+   `.order-diagram` sat inside a `.glass` card. */
+.glass-page .operation-story {
+  padding: 30px;
+  background: var(--g-glass);
+  border: 1px solid var(--g-glass-border);
+  border-radius: var(--g-r-lg);
+  box-shadow: var(--g-shadow-glass);
+}
+
+.glass-page .story-top {
+  color: var(--g-eyebrow);
+}
+
+.glass-page .story-chapter-count {
+  color: var(--g-soft);
+}
+
+.glass-page .story-intro h3 {
+  color: var(--g-ink);
+}
+
+.glass-page .story-disclaimer {
+  color: var(--g-soft);
+  font-size: 10px;
+}
+
+/* ── RetailerArt / RetailerDetail (components/technology-art.tsx) ───────── */
+
+.glass-page .retailer-art {
+  position: relative;
+  border-radius: var(--g-r-sm);
+  overflow: hidden;
+}
+
+.glass-page .retailer-art img {
+  border-radius: var(--g-r-sm);
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.glass-page .retailer-art figcaption {
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  padding: 4px 9px;
+  background: #00000070;
+  color: #fff;
+  font-size: 9px;
+  border-radius: 6px;
+}
+
+.glass-page .art-chip {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 15px;
+  background: #ffffffe6;
+  border-radius: 100px;
+  box-shadow: 0 10px 25px #284a7018;
+  font-size: 11px;
+  color: var(--g-ink);
+}
+
+.glass-page .browser-chip {
+  top: 18px;
+  left: 18px;
+  border-radius: var(--g-r-xs);
+}
+
+.glass-page .browser-chip svg {
+  color: var(--g-link);
+}
+
+.glass-page .order-chip {
+  right: 18px;
+  bottom: 18px;
+  border-radius: var(--g-r-xs);
+  max-width: 220px;
+}
+
+.glass-page .order-chip-check {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--g-teal);
+  color: #fff;
+}
+
+.glass-page .order-chip small {
+  display: block;
+  color: var(--g-soft);
+}
+
+.glass-page .retailer-detail-section {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 40px;
+  align-items: center;
+  padding-block: 60px;
+}
+
+.glass-page .retailer-detail-section > div:first-child p {
+  color: var(--g-body);
+}
+
+.glass-page .retailer-detail-card {
+  padding: 22px;
+  background: var(--g-glass);
+  border: 1px solid var(--g-glass-border);
+  border-radius: var(--g-r-md);
+  box-shadow: var(--g-shadow-glass);
+}
+
+.glass-page .cart-total {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--g-hairline);
+  font-weight: 700;
+  color: var(--g-ink);
+}
+
+.glass-page .sample-note {
+  color: var(--g-soft);
+  font-size: 10px;
+  margin-top: 10px;
+}
+
+/* ── DemoForm field-level styling (components/demo-form.tsx) — the design
+   study never collected data anywhere, so this is net-new, modelled on its
+   only form control (the booking timezone select) exactly like PR-2's
+   .g-input did for the booking/auth forms. ─────────────────────────────── */
+
+.glass-page .demo-form-card .field {
+  margin-bottom: 16px;
+}
+
+.glass-page .demo-form-card label {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #688099;
+  margin-bottom: 7px;
+}
+
+.glass-page .demo-form-card input,
+.glass-page .demo-form-card textarea {
+  width: 100%;
+  padding: 12px 13px;
+  border: 1px solid var(--g-field-border);
+  border-radius: var(--g-r-field);
+  background: var(--g-field);
+  color: #355c7e;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.glass-page .demo-form-card textarea {
+  resize: vertical;
+}
+
+.glass-page .demo-form-card input:focus,
+.glass-page .demo-form-card textarea:focus {
+  background: #ffffffd6;
+  border-color: #a8c4dd;
+}
+
+.glass-page .form-kicker {
+  display: block;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--g-eyebrow);
+  margin-bottom: 12px;
+}
+
+.glass-page .form-disclosure {
+  color: var(--g-soft);
+  font-size: 10px;
+  margin-top: 14px;
+}
+
+.glass-page .draft-state {
+  text-align: center;
+}
+
+.glass-page .draft-icon {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: linear-gradient(140deg, #eafbf6, #d5f3ea);
+  color: var(--g-teal);
+  margin: 0 auto 16px;
+}
+
+.glass-page .draft-state p {
+  color: var(--g-body);
+}
+
+.glass-page .draft-fallback {
+  font-size: 11px;
+  color: var(--g-soft);
+  margin-top: 16px;
+}
+
 /* ── Responsive ──────────────────────────────────────────────────────────── */
 
 @media (max-width: 1100px) {
@@ -780,8 +1414,13 @@
     width: calc(100% - 48px);
   }
   .glass-page .pricing-grid,
-  .glass-page .benefit-grid {
+  .glass-page .benefit-grid,
+  .glass-page .problem-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+  .glass-page .tour-panel,
+  .glass-page .retailer-detail-section {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -815,11 +1454,18 @@
   .glass-page .pricing-card,
   .glass-page .audience-card,
   .glass-page .capability-card,
-  .glass-page .demo-form-card {
-    padding: 22px;
+  .glass-page .demo-form-card,
+  .glass-page .operation-story,
+  .glass-page .ai-review,
+  .glass-page .tour-preview {
+    padding: 20px;
   }
   .glass-page .pricing-grid,
-  .glass-page .benefit-grid {
+  .glass-page .benefit-grid,
+  .glass-page .problem-grid {
     grid-template-columns: 1fr;
+  }
+  .glass-page .tour-tabs {
+    overflow-x: auto;
   }
 }
