@@ -82,3 +82,51 @@ describe("DemoScheduler — availability load errors", () => {
     expect(screen.getByText(/choose a demo time/i)).toBeInTheDocument();
   });
 });
+
+// B502 — the availability response's `status` field distinguishes "the
+// booking system is broken" from "this window is genuinely fully booked".
+// Both render an empty grid, so only the message below it tells them apart.
+describe("DemoScheduler — availability status (B502)", () => {
+  let fetchSpy: jest.Mock;
+
+  beforeEach(() => {
+    fetchSpy = jest.fn();
+    global.fetch = fetchSpy as unknown as typeof fetch;
+  });
+
+  it('shows an honest "temporarily unavailable" message with a contact email when status is "unavailable"', async () => {
+    fetchSpy.mockResolvedValue(
+      jsonResponse({
+        status: "unavailable",
+        timeZone: "America/Chicago",
+        durationMinutes: 30,
+        days: [],
+      }),
+    );
+
+    render(<DemoScheduler />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/temporarily unavailable/i)).toBeInTheDocument();
+    });
+    expect(screen.getByRole("link", { name: /hello@routeflow\.info/i })).toHaveAttribute(
+      "href",
+      "mailto:hello@routeflow.info",
+    );
+    // Never claims the calendar is full when the system itself is down.
+    expect(screen.queryByText(/no times are available/i)).not.toBeInTheDocument();
+  });
+
+  it('shows the "no free times" message, not "unavailable", when status is "ok" with an empty grid', async () => {
+    fetchSpy.mockResolvedValue(
+      jsonResponse({ status: "ok", timeZone: "America/Chicago", durationMinutes: 30, days: [] }),
+    );
+
+    render(<DemoScheduler />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/no times are available this month/i)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/temporarily unavailable/i)).not.toBeInTheDocument();
+  });
+});
