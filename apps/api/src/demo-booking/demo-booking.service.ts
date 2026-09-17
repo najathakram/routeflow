@@ -33,7 +33,17 @@ export interface AvailabilityDay {
   slots: AvailabilitySlot[];
 }
 
+/**
+ * `"unavailable"` means the booking system itself cannot serve real
+ * availability right now (unconfigured, misconfigured, or the calendar is
+ * unreachable) — distinct from `"ok"` with an empty `days`, which means the
+ * system is working and there is genuinely nothing free in the requested
+ * range. The client must not say "fully booked" for the former (B502).
+ */
+export type AvailabilityStatus = "ok" | "unavailable";
+
 export interface AvailabilityResult {
+  status: AvailabilityStatus;
   timeZone: string;
   durationMinutes: number;
   days: AvailabilityDay[];
@@ -68,10 +78,18 @@ export interface PublicBooking {
 const MAX_WINDOW_DAYS = 62;
 /** How long a manage token keeps working after its slot's end (review finding 8). */
 const MANAGE_TOKEN_TTL_AFTER_END_MS = 7 * 86_400_000;
+/**
+ * How long the "calendar not configured" warning is suppressed after firing
+ * once. Unthrottled, this line would repeat on every single call to a public,
+ * unauthenticated, 20/min-throttled endpoint for as long as the feature stays
+ * unconfigured — burying the one signal that matters (B502).
+ */
+const UNAVAILABLE_WARN_THROTTLE_MS = 5 * 60_000;
 
 @Injectable()
 export class DemoBookingService {
   private readonly logger = new Logger(DemoBookingService.name);
+  private lastUnavailableWarnAt = 0;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -107,8 +125,8 @@ export class DemoBookingService {
     const visitorZone = isValidTimeZone(timeZone) ? timeZone : config.businessTimeZone;
 
     if (!isCalendarConfigured(config)) {
-      this.logger.warn("demo-booking: calendar not configured — reporting no availability");
-      return { timeZone: visitorZone, durationMinutes: config.durationMinutes, days: [] };
+      this.warnUnavailableOnce("demo-booking: calendar not configured — reporting unavailable");
+      return this.unavailableResult(visitorZone, config);
     }
     if (!isSlotGridValid(config)) {
       // Fails closed the same way as "not configured" — an interval shorter
@@ -117,23 +135,33 @@ export class DemoBookingService {
       // finding C). This never fires with the shipped defaults (30/30).
       this.logger.error(
         `demo-booking: DEMO_BOOKING_SLOT_INTERVAL_MINUTES (${config.slotIntervalMinutes}) is shorter ` +
-          `than DEMO_BOOKING_DURATION_MINUTES (${config.durationMinutes}) — reporting no availability ` +
+          `than DEMO_BOOKING_DURATION_MINUTES (${config.durationMinutes}) — reporting unavailable ` +
           `rather than offering overlap-capable slots.`,
       );
-      return { timeZone: visitorZone, durationMinutes: config.durationMinutes, days: [] };
+      return this.unavailableResult(visitorZone, config);
     }
 
     const now = this.now();
     const { windowStart, windowEnd } = this.resolveWindow(fromISO, toISO, now, config);
     if (windowEnd <= windowStart) {
-      return { timeZone: visitorZone, durationMinutes: config.durationMinutes, days: [] };
+      // The requested/clamped range is empty — a legitimate "nothing to show
+      // here" (e.g. a window entirely in the past), not a service problem.
+      return {
+        status: "ok",
+        timeZone: visitorZone,
+        durationMinutes: config.durationMinutes,
+        days: [],
+      };
     }
 
     const busy = await this.calendar.getBusy(windowStart, windowEnd);
     if (busy === null) {
       // Unreachable calendar. Offering slots here is how a prospect books a
-      // time the team is not actually free for, so offer none.
-      return { timeZone: visitorZone, durationMinutes: config.durationMinutes, days: [] };
+      // time the team is not actually free for, so offer none — and, same as
+      // "not configured", tell the client this is an outage, not a full
+      // calendar (B502). `GoogleCalendarService` already logs the underlying
+      // failure at error level per attempt; no duplicate log here.
+      return this.unavailableResult(visitorZone, config);
     }
 
     const held = await this.prisma.demoBooking.findMany({
@@ -166,12 +194,30 @@ export class DemoBookingService {
     }
 
     return {
+      status: "ok",
       timeZone: visitorZone,
       durationMinutes: config.durationMinutes,
       days: [...byDate.entries()]
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([date, slots]) => ({ date, slots })),
     };
+  }
+
+  private unavailableResult(visitorZone: string, config: DemoBookingConfig): AvailabilityResult {
+    return {
+      status: "unavailable",
+      timeZone: visitorZone,
+      durationMinutes: config.durationMinutes,
+      days: [],
+    };
+  }
+
+  /** Logs `message` at warn level at most once per `UNAVAILABLE_WARN_THROTTLE_MS`. */
+  private warnUnavailableOnce(message: string): void {
+    const nowMs = this.now().getTime();
+    if (nowMs - this.lastUnavailableWarnAt < UNAVAILABLE_WARN_THROTTLE_MS) return;
+    this.lastUnavailableWarnAt = nowMs;
+    this.logger.warn(message);
   }
 
   /** Clamps the requested range to now…maxAdvanceDays and a hard span cap. */
