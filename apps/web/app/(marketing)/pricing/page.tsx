@@ -87,7 +87,7 @@ export default function PricingPage() {
                 Let’s find your fit
                 <span>Confirm pricing and limits in a conversation.</span>
               </div>
-              <Link className={"button " + (i !== 1 ? "button-outline" : "")} href="/contact">
+              <Link className={"button " + (i !== 1 ? "button-outline" : "")} href="/book-a-demo">
                 Discuss {p.name} <ArrowUpRight size={17} />
               </Link>
               <h3>Topics for your walkthrough</h3>

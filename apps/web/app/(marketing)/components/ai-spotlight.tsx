@@ -23,7 +23,7 @@ export function AISpotlight() {
           RouteFlow uses AI to scan purchase invoices, reducing the work of entering supplier
           purchases by hand.
         </p>
-        <Link className="text-link" href="/contact">
+        <Link className="text-link" href="/book-a-demo">
           See AI invoice scanning in a demo <ArrowRight size={18} />
         </Link>
       </div>

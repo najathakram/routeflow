@@ -17,6 +17,10 @@ import "./globals.css";
 // importing marketing.css from `app/(marketing)/layout.tsx` + `app/not-found.tsx`
 // keeps the 404 styled — if it does, move the import back out of the root.
 import "./(marketing)/marketing.css";
+// The glass design system (2026-09-16 study) layers on top of marketing.css:
+// same `.rf-marketing` scope, loaded after so it wins where the two overlap.
+import "./(marketing)/glass.css";
+import "./(marketing)/glass-pages.css";
 import { Providers } from "./providers";
 import { TenantProvider } from "@/components/tenant-provider";
 import { ServiceWorkerRegistry } from "@/components/ServiceWorkerRegistry";
