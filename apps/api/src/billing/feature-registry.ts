@@ -20,6 +20,11 @@
  * this file's data) are what make shipping an unregistered `@RequireAddon` key impossible.
  */
 
+// Feature grants v2 brief C: `import type` only — never a value import — @routeflow/types'
+// entry point is raw TS with no build step; a value import would crash `node dist/main.js`
+// (see no-runtime-workspace-imports.spec.ts). FeatureLifecycle is brief A's shared contract type.
+import type { FeatureLifecycle } from "@routeflow/types";
+
 export type FeatureKind = "boolean" | "limit" | "metered";
 export type FeatureArea =
   "routes" | "catalog" | "finance" | "compliance" | "integrations" | "sales" | "platform";
@@ -72,6 +77,12 @@ export type FeatureSettingsDescriptor = readonly FeatureSettingsField[];
 export interface FeatureConfigMode {
   label: string;
   available: boolean;
+  /**
+   * Feature grants v2 brief C: optional so PR-5b's `catalog_varieties` (not built yet) and any
+   * other pre-existing config mode compile unchanged without one. `routes_dispatch`'s four modes
+   * below are the first to carry it, all `"ga"` — no `"beta"`/`"proposed"` value ships here.
+   */
+  lifecycle?: FeatureLifecycle;
   requires?: { allOf?: readonly string[] };
   settings: FeatureSettingsDescriptor;
 }
@@ -254,6 +265,35 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
     defaultGranted: false,
   },
   {
+    key: "email.connected_mailbox",
+    kind: "boolean",
+    area: "integrations",
+    label: "Connected email mailbox",
+    description:
+      "Send tenant-branded mail through a connected Google or Microsoft mailbox (Gmail API / Graph).",
+    gate: {
+      via: "RequireAddon",
+      state: "dark",
+      added: "2026-09-17",
+      routes: [
+        "GET /settings/email/mailbox",
+        "GET /settings/email/mailbox/google/start",
+        "GET /settings/email/mailbox/microsoft/start",
+        "POST /settings/email/mailbox/confirm",
+        "DELETE /settings/email/mailbox",
+      ],
+      grantPath:
+        'Platform Admin → Tenants → [tenant] → add-ons (AddonService.enableAddon writes addonKey "email.connected_mailbox")',
+      backfill:
+        "New feature 2026-09-17: no tenant has a connection; gate stays dark through the pilot " +
+        "(owner review window for Google gmail.send verification — see local-assets/handoff/" +
+        "2026-09-17/email-connect/design.md §5).",
+      reviewBy: "2027-03-17",
+    },
+    billing: { skus: [], selfService: false },
+    defaultGranted: false,
+  },
+  {
     key: "developer_mode",
     kind: "boolean",
     area: "platform",
@@ -301,6 +341,94 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
     billing: { skus: [], selfService: false },
     defaultGranted: false,
     requires: { anyOf: ["recurring_routes", "order_delivery"] },
+  },
+  {
+    key: "orders_inline_returns",
+    kind: "boolean",
+    area: "sales",
+    label: "Returns at order entry",
+    description:
+      "Staff/drivers can capture a return and credit it in the same flow as recording a new order.",
+    gate: {
+      via: "RequireAddon",
+      // Owner-answers.md Q-A (2026-09-15, second round): "Enforced from day one — an
+      // owner exception to 'new gates ship dark' (zero existing users, so the blast
+      // radius is empty by construction)." The registry's dark-first rule exists to
+      // protect tenants ALREADY using an unguarded surface from a surprise denial;
+      // there is no existing call site or tenant grant for this key, so that risk
+      // does not exist here — the owner's written exception is satisfied by
+      // construction, not waived.
+      state: "enforced",
+      added: "2026-09-16",
+      routes: [
+        "POST /returns/inline/quote",
+        "POST /orders/:id/inline-returns (PR-1d)",
+        "POST /returns/inline/:id/* (PR-1c/1d)",
+      ],
+      grantPath: 'Platform Admin → Tenants → [tenant] → add-ons (addonKey "orders_inline_returns")',
+      backfill: "New feature 2026-09-16; zero existing users; nothing to backfill.",
+    },
+    billing: { skus: [], selfService: false },
+    defaultGranted: false,
+    requires: { allOf: ["flag.returns"] },
+    config: {
+      fallbackMode: "unset",
+      modes: {
+        unset: { label: "Not configured (feature ungranted)", available: true, settings: [] },
+        standard: {
+          label: "Standard",
+          available: true,
+          settings: [
+            {
+              type: "enum",
+              key: "priceSource",
+              label: "Price source when unmatched",
+              options: ["last_invoice_then_offered", "offered_only"],
+              default: "last_invoice_then_offered",
+            },
+            {
+              type: "string",
+              key: "soldWindowDays",
+              label: "Sold window (days)",
+              default: "90",
+            },
+            {
+              type: "enum",
+              key: "overReturnPolicy",
+              label: "Staff over-return policy",
+              options: ["warn", "hold", "block"],
+              default: "warn",
+            },
+            {
+              type: "enum",
+              key: "driverOverReturnPolicy",
+              label: "Driver over-return policy",
+              options: ["warn", "block"],
+              default: "warn",
+            },
+            {
+              type: "string",
+              key: "driverCreditCap",
+              label: "Driver credit cap (0 = order gross)",
+              default: "0",
+            },
+            {
+              type: "boolean",
+              key: "reasonRequired",
+              label: "Require a reason",
+              default: true,
+            },
+            {
+              type: "enum",
+              key: "photoRequired",
+              label: "Photo evidence required",
+              options: ["never", "damaged", "always"],
+              default: "damaged",
+            },
+          ],
+        },
+      },
+    },
   },
 
   // ── Nine RequirePlanFlag rows — key IS the dotted legacy catalog-flag string.
@@ -866,25 +994,39 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
     },
     billing: { skus: [], selfService: false },
     defaultGranted: true,
+    // Feature grants v2 brief C (2-block diff, block 2 of 2): every mode gets `lifecycle: "ga"`
+    // (all four shipped GA on 2026-09-15, not new/beta) and `mixed`'s label reads "Both" per
+    // design 2026-09-17 §2 — `requires.allOf` is unchanged from PR-1. Only AND-groups (`allOf`)
+    // are used anywhere here; there is deliberately no `anyOf` on a config mode (XOR-select-one
+    // semantics: exactly one mode value is ever active per tenant per feature, enforced by
+    // TenantFeatureConfig's `@@unique([tenantId, featureKey])`, not an OR of requirements).
     config: {
       fallbackMode: "unset",
       modes: {
-        unset: { label: "Not configured (today's behavior)", available: true, settings: [] },
+        unset: {
+          label: "Not configured (today's behavior)",
+          available: true,
+          lifecycle: "ga",
+          settings: [],
+        },
         scheduled: {
           label: "Scheduled",
           available: true,
+          lifecycle: "ga",
           requires: { allOf: ["recurring_routes"] },
           settings: [],
         },
         adhoc: {
           label: "Ad hoc",
           available: true,
+          lifecycle: "ga",
           requires: { allOf: ["order_delivery"] },
           settings: [],
         },
         mixed: {
-          label: "Mixed",
+          label: "Both",
           available: true,
+          lifecycle: "ga",
           requires: { allOf: ["recurring_routes", "order_delivery"] },
           settings: [
             {
@@ -957,4 +1099,23 @@ export const ADDON_GATE_REGISTRY: Readonly<Record<string, AddonGateEntry>> = Obj
 /** Runtime state for a key; unregistered keys enforce (the spec keeps them from ever shipping). */
 export function addonGateState(key: string): AddonGateState {
   return ADDON_GATE_REGISTRY[key]?.state ?? "enforced";
+}
+
+const REGISTERED_FEATURE_KEYS = new Set(FEATURE_REGISTRY.map((f) => f.key));
+const GATE_VIA_BY_KEY = new Map(FEATURE_REGISTRY.map((f) => [f.key, f.gate.via]));
+
+/** True when `key` names a row in FEATURE_REGISTRY (any gate kind) — feature-grant overrides
+ * may target any registered key, not only RequireAddon/RequirePlanFlag ones. */
+export function isRegisteredFeatureKey(key: string): boolean {
+  return REGISTERED_FEATURE_KEYS.has(key);
+}
+
+/**
+ * `key`'s gate.via, or undefined when unregistered. Feature-grants PR-1: a key's override
+ * only belongs in a given "list of held X" response when its gate.via matches that list's
+ * kind — an addon-keyed override belongs in an addons array, a plan-flag-keyed override in a
+ * flags array; mixing them in would surface a key a consumer never checks.
+ */
+export function gateVia(key: string): FeatureGateVia | undefined {
+  return GATE_VIA_BY_KEY.get(key);
 }

@@ -19,8 +19,18 @@ export const EVENT_CHANNELS: Record<NotificationEvent, MessageChannel[]> = {
   [NotificationEvent.ORDER_CONFIRMED]: CUSTOMER_CHANNELS,
   [NotificationEvent.OUT_FOR_DELIVERY]: CUSTOMER_CHANNELS,
   [NotificationEvent.DELIVERED]: CUSTOMER_CHANNELS,
+  // N1 (2026-09-16): real order-cancelled event, alongside the real EMAIL
+  // channel — CONFIRMED/OUT_FOR_DELIVERY/DELIVERED already fired through this
+  // engine; CANCELLED only had the separate push-notification path in
+  // orders.service.ts's `notifMap` until now.
+  [NotificationEvent.CANCELLED]: CUSTOMER_CHANNELS,
   [NotificationEvent.ORDER_CHANGED_AT_DOOR]: CUSTOMER_CHANNELS,
-  [NotificationEvent.INVOICE_SENT]: [EMAIL, PORTAL],
+  // N1: EMAIL removed — the messaging engine's own INVOICE_SENT:EMAIL template
+  // was a second, previously-no-op attempt at the same email invoices.service.ts
+  // already sends for real via EmailService.sendInvoice() (with the PDF,
+  // itemized totals, etc.). One authoritative path, not two. PORTAL is
+  // unaffected.
+  [NotificationEvent.INVOICE_SENT]: [PORTAL],
   [NotificationEvent.PAYMENT_REMINDER]: CUSTOMER_CHANNELS,
   [NotificationEvent.LICENSE_EXPIRING]: CUSTOMER_CHANNELS,
   [NotificationEvent.URGENT_ORDER_PLACED]: [INTERNAL],
@@ -47,7 +57,17 @@ export const DEFAULT_TEMPLATES: Record<NotificationEvent, { label: string; body:
   },
   [NotificationEvent.DELIVERED]: {
     label: "Delivered",
-    body: "Hi {{customerName}}, order {{orderNumber}} was delivered. Total: {{orderTotal}}. Thank you!",
+    // N1 (Opus review): {{deliveredAt}} added — always available at every firing
+    // site (orders.service.ts's changeStatus, routes.service.ts's completeStop/
+    // completeWithPayment), unlike a driver name (not trivially available at the
+    // driver-completion call sites without a new query) or a POD photo link
+    // (would render as a dangling label on stops with no photo across every
+    // channel this shared body serves) — both deliberately deferred, not missed.
+    body: "Hi {{customerName}}, order {{orderNumber}} was delivered on {{deliveredAt}}. Total: {{orderTotal}}. Thank you!",
+  },
+  [NotificationEvent.CANCELLED]: {
+    label: "Order cancelled",
+    body: "Hi {{customerName}}, your order {{orderNumber}} has been cancelled.",
   },
   [NotificationEvent.ORDER_CHANGED_AT_DOOR]: {
     label: "Order changed at door",
@@ -90,11 +110,22 @@ export const DEFAULT_TEMPLATES: Record<NotificationEvent, { label: string; body:
 /** Cells seeded enabled=true — PORTAL/EMAIL (free, un-metered, consent-less).
  *  Every metered/consented channel (WA/SMS) seeds OFF, and so does every
  *  INTERNAL ops alert below (NO_TRIGGER_EVENTS) — seeding a key ON that can
- *  never fire is B180 (cause-ruling.md §2/Check). */
+ *  never fire is B180 (cause-ruling.md §2/Check).
+ *
+ *  N1 (2026-09-16): the four order-status events default their EMAIL cell ON
+ *  now that EmailChannelProvider makes it a real transport — this is the
+ *  actual owner-facing point of the change (buyers get real order-status
+ *  emails by default, gated per-buyer by Customer.orderStatusEmails, not
+ *  silently NO_TRANSPORT'd). INVOICE_SENT:EMAIL is REMOVED — the messaging
+ *  engine's copy was a second, previously-no-op attempt at the same email
+ *  invoices.service.ts already sends for real via EmailService.sendInvoice(). */
 export const DEFAULT_ON = new Set<string>([
+  `${NotificationEvent.ORDER_CONFIRMED}:${EMAIL}`,
+  `${NotificationEvent.OUT_FOR_DELIVERY}:${EMAIL}`,
   `${NotificationEvent.OUT_FOR_DELIVERY}:${PORTAL}`,
+  `${NotificationEvent.DELIVERED}:${EMAIL}`,
   `${NotificationEvent.DELIVERED}:${PORTAL}`,
-  `${NotificationEvent.INVOICE_SENT}:${EMAIL}`,
+  `${NotificationEvent.CANCELLED}:${EMAIL}`,
 ]);
 
 /** Events with no firing site anywhere in `apps/api/src` outside `messaging/` today (S3 check on

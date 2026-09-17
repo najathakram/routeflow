@@ -15,12 +15,14 @@ import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
-import { roundMoney } from "@routeflow/pricing";
+import { roundMoney, remainingCapacity } from "@routeflow/pricing";
 import {
+  collectedDateOf,
   CONFIRMED_PAYMENT,
   RECEIVED_METHOD_FILTER,
   sumConfirmed,
 } from "../invoices/payment-predicates";
+import { settledDateFilter } from "../invoices/settled-date-filter";
 import {
   CREDIT_NOT_APPLICABLE,
   KPI_SUMMARY_EXCLUDED,
@@ -28,6 +30,7 @@ import {
 } from "../invoices/invoice-status-sets";
 import { geocodeAddress, GeocodableAddress, GeocodeCoords } from "../common/geocode.util";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
+import { SCHEDULED_ROUTE_KIND_WHERE } from "../routes/route-stop-filters.util";
 import { StorageService } from "../storage/storage.service";
 import { compressDocument } from "../storage/compress.util";
 import { CreateCustomerDto } from "./dto/create-customer.dto";
@@ -43,6 +46,7 @@ import { MeterService, MeterReading } from "../billing/meter.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { buildPlanGateBody, PlanGateUpgrade } from "../billing/plan-gate";
+import { EmailService } from "../email/email.service";
 // Same grace window BillingCronService.expireGrace() clears hourly — the create()
 // gate applies it synchronously rather than waiting for the cron to run.
 import { GRACE_DAYS } from "../billing/plan-catalog.constants";
@@ -68,6 +72,7 @@ export class CustomersService {
     // ledger rows first — the ledger is append-only with no FK to Invoice, so
     // once the invoice row is gone the entries can never be matched back.
     private readonly ledger: RegulatedLedgerService,
+    private readonly email: EmailService,
   ) {}
 
   /**
@@ -120,16 +125,20 @@ export class CustomersService {
     return { total: addresses.length, geocoded, failed };
   }
 
-  async findAll(query: ListCustomersDto) {
-    const page = Number(query.page ?? 1);
-    const limit = Number(query.limit ?? 20);
-    const skip = (page - 1) * limit;
-
+  /**
+   * REG-B158: the ONE where-builder for both the paginated list and the CSV
+   * export — they drifted (export had no supplierOnly/deletedAt/regulated
+   * clause at all) because each hand-rolled its own `where`. Also the landing
+   * site for REG-B156 (unassigned) and REG-B170 (removed): list/export drift
+   * on a new filter becomes unwritable, not merely tested.
+   */
+  private buildListWhere(query: ListCustomersDto): any {
     const where: any = {
       // Exclude supplier-only contacts (vendors imported from expense CSVs that have no orders)
       supplierOnly: false,
-      // Exclude soft-deleted customers (RF-197)
-      deletedAt: null,
+      // REG-B170: default excludes soft-deleted customers (RF-197); removed=1 is an explicit
+      // trash view — it shows ONLY removed customers, never mixed with live ones.
+      deletedAt: query.removed === "1" ? { not: null } : null,
     };
     if (query.search) {
       const q = query.search;
@@ -157,6 +166,21 @@ export class CustomersService {
     if (query.regulated === "1") {
       where.authorizations = { some: { trackedCategory: { requiresLicense: true } } };
     }
+    // REG-B156: no stop on a currently SCHEDULED route. Shares SCHEDULED_ROUTE_KIND_WHERE with
+    // routes.service.ts's getCustomerRouteAssignments so the "Currently in" hint on the same
+    // screen can never disagree with this filter about what counts as assigned.
+    if (query.unassigned === "1") {
+      where.routeStops = { none: { route: SCHEDULED_ROUTE_KIND_WHERE } };
+    }
+    return where;
+  }
+
+  async findAll(query: ListCustomersDto) {
+    const page = Number(query.page ?? 1);
+    const limit = Number(query.limit ?? 20);
+    const skip = (page - 1) * limit;
+
+    const where = this.buildListWhere(query);
 
     // Build orderBy. F4-002: sortBy reaches Prisma's orderBy, so it MUST be an
     // allowlisted scalar column — a free-form field name lets a caller inject an
@@ -235,6 +259,10 @@ export class CustomersService {
     for (const inv of invoices) {
       // Exclude VOID payments (a bounced check flips InvoicePayment.status to VOID
       // in P5-12) so a reversed payment no longer counts against the receivable.
+      // scan-ok: draft-payment-not-void — TRACKED FOLLOW-UP: receivables/exposure
+      // DRAFT basis — owner ruling pending. PR-2 review (routeflow-Lead,
+      // 2026-09-16) reverted the earlier sumConfirmed conversion here — out of
+      // PR-2's scope (see orders.service.ts's exposure formula, same follow-up).
       const paid = inv.payments
         .filter((p) => p.status !== "VOID")
         .reduce((s, p) => s + Number(p.amount), 0);
@@ -739,7 +767,12 @@ export class CustomersService {
   }
 
   async update(id: string, dto: UpdateCustomerDto) {
-    await this.findCustomerOrThrow(id);
+    const existing = await this.findCustomerOrThrow(id);
+    // REG-B170: a removed customer's page still rendered its edit controls; refuse the write
+    // rather than silently editing a customer nobody can see in the list.
+    if (existing.deletedAt) {
+      throw new ConflictException("Restore the customer first");
+    }
     return this.prisma.forTenant().customer.update({
       where: { id },
       data: {
@@ -774,12 +807,21 @@ export class CustomersService {
         ...(dto.defaultDepositPercent !== undefined && {
           defaultDepositPercent: dto.defaultDepositPercent,
         }),
+        ...(dto.orderStatusEmails !== undefined && {
+          orderStatusEmails: dto.orderStatusEmails,
+        }),
       },
     });
   }
 
   async changeStatus(id: string, dto: ChangeCustomerStatusDto) {
     const customer = await this.findCustomerOrThrow(id);
+    // REG-B170: changeStatus had no removed gate at all — clicking "Active" on a removed
+    // customer's still-visible status buttons wrote a zombie (deletedAt set + User.status
+    // ACTIVE) hidden from every list yet able to log in. Refuse instead; restore first.
+    if (customer.deletedAt) {
+      throw new ConflictException("Restore the customer first");
+    }
     return this.prisma.forTenant().user.update({
       where: { id: customer.userId },
       data: { status: dto.status },
@@ -1438,10 +1480,10 @@ export class CustomersService {
 
       // Ignore VOID payments (a bounced check reverses to VOID in P5-12); otherwise a
       // reversed payment would understate the balance and under-apply the advance.
-      const alreadyPaid = inv.payments
-        .filter((p) => p.status !== "VOID")
-        .reduce((s, p) => s + Number(p.amount), 0);
-      const invoiceBalance = Number(inv.total) - alreadyPaid;
+      // PR-2 (check-payments B1 hardening, N4): shared remainingCapacity() — same
+      // DRAFT+PAID(+PENDING) basis as the old not-void filter, zero behavior change
+      // today (N4: capacity must keep counting DRAFT).
+      const invoiceBalance = remainingCapacity(Number(inv.total), inv.payments);
       const applyAmount = Math.min(Number(ap.balance), invoiceBalance, dto.amount ?? Infinity);
 
       if (applyAmount <= 0) throw new BadRequestException("Invoice has no outstanding balance");
@@ -1461,7 +1503,15 @@ export class CustomersService {
         data: { balance: { decrement: applyAmount } },
       });
 
-      const newPaid = alreadyPaid + applyAmount;
+      // PR-2 review (routeflow-Lead, 2026-09-16): the status recompute must stay
+      // CONFIRMED-basis (sumConfirmed), never `total - invoiceBalance` — that
+      // capacity figure is DRAFT-inclusive (remainingCapacity), so a $40 advance
+      // applied on top of a $60 DRAFT sibling was flipping a $100 invoice straight
+      // to PAID off unconfirmed money. Matches credit-notes.service.ts's
+      // applyCreditInTx and restoreCreditFromPaymentInTx's own basis — including
+      // the roundMoney wrap (PR-2 re-review nit): without it, a float remainder
+      // (e.g. 0.1 + 0.2) can leave a fully-covered invoice reading PARTIAL.
+      const newPaid = roundMoney(sumConfirmed(inv.payments) + applyAmount);
       const total = Number(inv.total);
       let newStatus: any = "SENT";
       if (newPaid >= total - 0.001) newStatus = "PAID";
@@ -1482,7 +1532,11 @@ export class CustomersService {
       // the accrual's payable must move with it in the same tx.
       await this.commissionEngine.syncInvoiceCommissionSafe(dto.invoiceId, tx);
 
-      return updatedInvoice;
+      // F7 (money discipline): report the SERVER's own applied amount instead of making
+      // the caller re-derive it client-side (e.g. web's `Math.min(remaining, balanceDue)`,
+      // which can drift from what actually got applied). Additive field — existing
+      // consumers (mobile) that ignore it are unaffected.
+      return { ...updatedInvoice, appliedAmount: roundMoney(applyAmount) };
     });
   }
 
@@ -1695,9 +1749,12 @@ export class CustomersService {
         // only CREDIT_NOTE, keeps ADVANCE.
         ...CONFIRMED_PAYMENT,
         method: RECEIVED_METHOD_FILTER,
-        paidAt: { gte: sixMonthsAgo },
+        // check-payments PR-2b (M2): collected basis is settledAt ?? paidAt,
+        // same as getCashFlow/the bookkeeping dashboards — this chart is the
+        // 8th collected reader and must not diverge from them either.
+        ...settledDateFilter({ gte: sixMonthsAgo }),
       },
-      select: { amount: true, paidAt: true },
+      select: { amount: true, paidAt: true, settledAt: true },
     });
 
     // Get all expenses for this customer in the last 6 months
@@ -1712,7 +1769,10 @@ export class CustomersService {
 
     return months.map(({ month, start, end }) => {
       const income = payments
-        .filter((p) => p.paidAt >= start && p.paidAt <= end)
+        .filter((p) => {
+          const collected = collectedDateOf(p) as Date;
+          return collected >= start && collected <= end;
+        })
         .reduce((sum, p) => sum + Number(p.amount), 0);
 
       const expense = expenses
@@ -1730,28 +1790,7 @@ export class CustomersService {
   // ─── Export CSV ────────────────────────────────────────────────────────────
 
   async exportCustomers(query: ListCustomersDto): Promise<string> {
-    const where: any = {};
-    if (query.search) {
-      const q = query.search;
-      where.OR = [
-        { businessName: { contains: q, mode: "insensitive" } },
-        { contactName: { contains: q, mode: "insensitive" } },
-        { phone: { contains: q, mode: "insensitive" } },
-        { email: { contains: q, mode: "insensitive" } },
-        { displayName: { contains: q, mode: "insensitive" } },
-      ];
-    }
-    if (query.status) {
-      where.user = { status: query.status };
-    }
-    if (query.customerType) {
-      where.customerType = query.customerType;
-    }
-    if (query.tag) {
-      where.tagAssignments = {
-        some: { tagId: query.tag },
-      };
-    }
+    const where = this.buildListWhere(query);
 
     const customers = await this.prisma.forTenant().customer.findMany({
       where,
@@ -1783,6 +1822,9 @@ export class CustomersService {
       const receivables = c.invoices.reduce((sum, inv) => {
         // Exclude VOID payments (a bounced check flips InvoicePayment.status to VOID
         // in P5-12) so a reversed payment no longer counts against the receivable.
+        // scan-ok: draft-payment-not-void — TRACKED FOLLOW-UP: receivables/exposure
+        // DRAFT basis — owner ruling pending. See the list-view receivablesMap
+        // above for the same revert and its rationale.
         const paid = inv.payments
           .filter((p) => p.status !== "VOID")
           .reduce((s, p) => s + Number(p.amount), 0);
@@ -1851,6 +1893,12 @@ export class CustomersService {
 
     const primary = await this.findCustomerOrThrow(primaryId);
     const secondary = await this.findCustomerOrThrow(secondaryId);
+    // F2: a removed customer on either side must be restored before it can be merged —
+    // merging financial records onto (or off of) a tombstoned row leaves them attached to
+    // an identity that is mid-removal.
+    if (primary.deletedAt || secondary.deletedAt) {
+      throw new ConflictException("Restore the customer first");
+    }
 
     try {
       return await this.prisma.tenantTransaction(
@@ -2059,24 +2107,87 @@ export class CustomersService {
    * cross-tenant ids (returns null → NotFound), preventing a tenant-isolation
    * oracle.
    */
-  async restoreCustomer(id: string, restoreStatus?: string) {
+  async restoreCustomer(id: string, restoreStatus?: string, overrideUsername?: string) {
     const customer = await this.prisma.forTenant().customer.findUnique({
       where: { id },
-      select: { id: true, userId: true, deletedAt: true, tenantId: true },
+      select: {
+        id: true,
+        userId: true,
+        deletedAt: true,
+        tenantId: true,
+        email: true,
+        user: { select: { username: true, status: true } },
+      },
     });
     if (!customer) throw new NotFoundException("Customer not found");
     if (!customer.deletedAt) return { success: true, restored: false };
 
-    // Only ACTIVE/SUSPENDED are valid restore targets (INACTIVE = the removed
-    // state); default to ACTIVE when the caller does not specify.
-    const status = restoreStatus === "SUSPENDED" ? "SUSPENDED" : "ACTIVE";
+    // F4: an explicit restoreStatus (the 8-second Undo passes the user's pre-delete
+    // status) always wins. Otherwise fall back to whatever status is already on the
+    // User row — post-fix, the tombstone write no longer overwrites it to INACTIVE, so
+    // that row already carries the right status. The INACTIVE fallback exists only for
+    // a LEGACY pre-fix tombstone (which does carry INACTIVE): those must still restore
+    // to ACTIVE, exactly as master did, rather than coming back permanently INACTIVE.
+    const status =
+      restoreStatus === "SUSPENDED" || restoreStatus === "ACTIVE"
+        ? restoreStatus
+        : customer.user.status === "INACTIVE"
+          ? "ACTIVE"
+          : customer.user.status;
 
-    await this.prisma.tenantTransaction(async (tx) => {
-      await tx.customer.update({ where: { id }, data: { deletedAt: null } });
-      if (customer.userId) {
-        await tx.user.update({ where: { id: customer.userId }, data: { status } });
-      }
-    });
+    // REG-B159: reverse the soft-delete tombstone. A pre-fix removed row carries no
+    // "~removed~<id8>" suffix — nothing to strip, its username was never touched. The real
+    // email always lived on Customer.email (untouched by the delete), so restoring it here
+    // is correct whether or not this row was ever tombstoned; a customer created with no
+    // email gets a fresh placeholder, same as create() mints for one today.
+    const tombstoneSuffix = `~removed~${id.slice(0, 8)}`;
+    const currentUsername = customer.user.username;
+    const restoredUsername =
+      overrideUsername ||
+      (currentUsername.endsWith(tombstoneSuffix)
+        ? currentUsername.slice(0, -tombstoneSuffix.length)
+        : currentUsername);
+    const restoredEmail = customer.email ?? `no-email+${crypto.randomUUID()}@placeholder.local`;
+
+    try {
+      await this.prisma.tenantTransaction(async (tx) => {
+        await tx.customer.update({ where: { id }, data: { deletedAt: null } });
+
+        // F6: a live user may have since claimed this customer's real email (a fresh
+        // signup, or another restore) while this one was removed. tx is already
+        // tenant-scoped (prisma.service.ts _wrapTxWithTenant injects tenantId into every
+        // findFirst), so this check never crosses tenants. Falling back to a placeholder
+        // here — rather than letting the write hit the @@unique([tenantId, email])
+        // constraint — keeps restore from failing outright over an email collision that
+        // has nothing to do with the username the caller may be retrying with.
+        let emailToRestore = restoredEmail;
+        if (customer.email) {
+          const emailHolder = await tx.user.findFirst({
+            where: { email: customer.email, id: { not: customer.userId } },
+          });
+          if (emailHolder) {
+            emailToRestore = `no-email+${crypto.randomUUID()}@placeholder.local`;
+          }
+        }
+
+        await tx.user.update({
+          where: { id: customer.userId },
+          data: {
+            status,
+            deletedAt: null,
+            username: restoredUsername,
+            email: emailToRestore,
+          },
+        });
+      });
+    } catch (err: any) {
+      // A newer customer claimed this username or (in the unlikely race the pre-check
+      // above missed) email while the original was removed.
+      if (err?.code !== "P2002") throw err;
+      throw new ConflictException(
+        "Another customer now uses this username or email — restore with a different username",
+      );
+    }
     return { success: true, restored: true };
   }
 
@@ -2112,9 +2223,14 @@ export class CustomersService {
   ) {
     const customer = await this.prisma.forTenant().customer.findUnique({
       where: { id },
-      include: { user: { select: { status: true } } },
+      include: { user: { select: { status: true, username: true } } },
     });
     if (!customer) throw new NotFoundException("Customer not found");
+    // F1: a second delete on an already-tombstoned customer must be a no-op. Without this,
+    // the soft-delete branch below re-appends "~removed~<id8>" onto a username that already
+    // carries the suffix (restoreCustomer only ever strips ONE), permanently mangling the
+    // login identity on a repeat delete.
+    if (customer.deletedAt) return { success: true, softDeleted: true };
 
     // Count financial records that would be orphaned by a hard delete. Deliberately
     // kind-agnostic (PR-1a review): a hard/soft customer delete counts and removes
@@ -2142,9 +2258,29 @@ export class CustomersService {
       // All financial records are preserved with their customerId FK intact.
       // A forced delete stays reversible unless the caller explicitly opted into
       // hardDeleteWhenRecordFree (batchDelete) — the web's Undo depends on it.
+      //
+      // REG-B159: also release the User row's identity. tenantId-scoped @@unique
+      // constraints on email/username/googleId (tenancy.prisma) stayed occupied by a
+      // merely-deactivated row, so re-adding the same shop (or a CSV re-import) always
+      // collided — the real email lives on Customer.email untouched, so nothing is lost;
+      // the real username is deterministically recoverable as the prefix before
+      // "~removed~". isInternalEmail already treats @placeholder.local as non-routable.
       await this.prisma.tenantTransaction(async (tx) => {
         await tx.customer.update({ where: { id }, data: { deletedAt: new Date() } });
-        await tx.user.update({ where: { id: customer.userId }, data: { status: "INACTIVE" } });
+        await tx.user.update({
+          where: { id: customer.userId },
+          data: {
+            // F4: status is deliberately left untouched — login is already refused on
+            // User.deletedAt (auth.service.ts:63, :272, :440), so overwriting status to
+            // INACTIVE only threw away the pre-delete status restoreCustomer needs to
+            // bring back exactly (a SUSPENDED customer must come back SUSPENDED).
+            deletedAt: new Date(),
+            username: `${customer.user.username}~removed~${id.slice(0, 8)}`,
+            email: `removed+${id}@placeholder.local`,
+            // F5: googleId is deliberately left untouched — restoreCustomer never restores
+            // it, so nulling it here made restore lossy for no gain.
+          },
+        });
       });
       return { success: true, softDeleted: true };
     }
@@ -2715,6 +2851,13 @@ export class CustomersService {
     dto: { method: "EMAIL" | "SMS"; overrideEmail?: string },
     tenantId: string,
   ) {
+    // SMS has no real transport anywhere in this codebase (the messaging
+    // stack is a stub provider) — reject before any DB write rather than
+    // creating an INVITED CustomerLink for a channel nothing will ever use.
+    if (dto.method === "SMS") {
+      throw new BadRequestException("SMS portal invites are not available yet. Use email instead.");
+    }
+
     const customer = await this.prisma.customer.findFirst({
       where: { id: customerId, tenantId },
       include: { user: { select: { email: true } } },
@@ -2733,8 +2876,12 @@ export class CustomersService {
       );
     }
 
-    const cryptoModule = await import("crypto");
-    const token = cryptoModule.randomBytes(32).toString("hex");
+    // `crypto` is already imported statically at the top of this file — the
+    // dynamic `await import("crypto")` this replaced was pure dead weight
+    // (redundant with that import) and, incidentally, threw under Jest's CJS
+    // transform (`--experimental-vm-modules` required for dynamic import of a
+    // built-in), which is exactly why zero tests ever exercised this method.
+    const token = crypto.randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
     await this.prisma.customerLink.upsert({
@@ -2772,12 +2919,46 @@ export class CustomersService {
       `Portal invite for customer ${customerId} → ${toEmail} | token ${token.slice(0, 8)}...`,
     );
 
-    // Email sending is best-effort — if no email transport, it logs only
-    // Import EmailService lazily to avoid circular module issue
+    // B212-class fix (2026-09-12): this used to claim "Email sending is
+    // best-effort — if no email transport, it logs only" and then never sent
+    // anything at all — no EmailService call existed anywhere in this method.
+    // The CustomerLink row still flipped to INVITED and the web customer page
+    // renders that as "Invite Sent", so an operator believed a real email went
+    // out while the customer received nothing, with no way for either of them
+    // to discover the gap.
+    const sendResult = await this.email.send({
+      to: toEmail,
+      subject: `${sellerName} invited you to their RouteFlow buyer portal`,
+      html: `<p>Hi,</p>
+<p><strong>${sellerName}</strong> has invited you to connect on the RouteFlow buyer portal — track orders, invoices, and statements in one place.</p>
+<p style="margin:24px 0;">
+  <a href="${inviteUrl}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;">Accept Invite</a>
+</p>
+<p>Or paste this link into your browser:<br/><a href="${inviteUrl}">${inviteUrl}</a></p>
+<p><em>This link expires in 7 days.</em></p>`,
+      // Security review Phase 2: a buyer-portal invite carries an account-linking action
+      // link — platform sender only, never a tenant's connected mailbox/SMTP.
+      senderClass: "platform",
+    });
+
+    if (!sendResult.delivered) {
+      this.logger.error(
+        `Portal invite email NOT delivered for customer ${customerId} (tenant ${tenantId}) ` +
+          `to ${toEmail} — transport=${sendResult.transport} ` +
+          `error=${sendResult.error ?? sendResult.smtpFallbackReason ?? "unknown"}. ` +
+          `The CustomerLink row is still INVITED with a valid token — share the link manually ` +
+          `or fix the underlying mail config and use Resend Invite.`,
+      );
+    }
+
     return {
-      message: `Invite prepared for ${toEmail}. ${sellerName} can share: ${inviteUrl}`,
+      message: sendResult.delivered
+        ? `Invite emailed to ${toEmail}.`
+        : `Invite created for ${toEmail}, but the email could not be sent right now. ` +
+          `Share this link manually, or fix your email settings and try Resend Invite: ${inviteUrl}`,
       inviteUrl,
       expiresAt,
+      emailSent: sendResult.delivered,
     };
   }
 

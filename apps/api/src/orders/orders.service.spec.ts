@@ -61,7 +61,14 @@ import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
-import { OrderStatus, UserRole, Prisma, RouteRunStatus, RouteRunStopStatus } from "@prisma/client";
+import {
+  OrderStatus,
+  UserRole,
+  Prisma,
+  RouteRunStatus,
+  RouteRunStopStatus,
+  NotificationEvent,
+} from "@prisma/client";
 
 const MOCK_PRODUCT = {
   id: "prod-1",
@@ -3010,14 +3017,21 @@ describe("OrdersService", () => {
       );
     });
 
-    it("CANCELLED fires no messaging trigger", async () => {
+    it("CANCELLED fires the CANCELLED messaging event (N1 — real EMAIL channel)", async () => {
+      // Pre-N1 this asserted NO messaging trigger at all — CANCELLED had no
+      // NotificationEvent and no firing site. N1 adds one alongside the real
+      // EmailChannelProvider transport so cancelled-order buyers actually hear
+      // about it over EMAIL/PORTAL/WA/SMS like every other order-status event.
       prisma.order.findUnique.mockResolvedValue(MOCK_ORDER);
       prisma.order.findFirst.mockResolvedValue(MOCK_ORDER); // cancelImpact's own read
       prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, status: "CANCELLED" });
 
       await service.changeStatus("ord-1", { status: "CANCELLED" as any }, operatorPayload);
 
-      expect(messagingService.notifyEvent).not.toHaveBeenCalled();
+      expect(messagingService.notifyEvent).toHaveBeenCalledWith(
+        NotificationEvent.CANCELLED,
+        expect.objectContaining({ customerId: MOCK_ORDER.customerId }),
+      );
     });
   });
 
@@ -3467,6 +3481,31 @@ describe("OrdersService", () => {
           status: "PAID",
           total: 50,
           payments: [{ method: "CASH", amount: 50, status: "PAID" }],
+        },
+      ]);
+
+      await expect(service.deleteOrder("ord-1", operatorPayload)).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      expect(prisma.order.delete).not.toHaveBeenCalled();
+    });
+
+    // PR-2 (check-payments B1 hardening) REG — N4 (Opus review-v2): cancelImpact's
+    // external-payment guard must use isBlockingPayment (status !== VOID), never
+    // isHeldPayment (PAID ∪ PENDING) — a DRAFT external payment is money in flight
+    // and master deliberately keeps it blocking a cancel/delete. Swapping to
+    // isHeldPayment would silently let an unconfirmed DRAFT payment through and
+    // reverse that block; this pins the DRAFT case failing exactly like the PAID
+    // case above.
+    it("409s when a linked invoice has only a DRAFT (unconfirmed) external payment", async () => {
+      prisma.order.findUnique.mockResolvedValue(deliveredOrder);
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          id: "d1",
+          invoiceNumber: "INV-1",
+          status: "SENT",
+          total: 50,
+          payments: [{ method: "CASH", amount: 50, status: "DRAFT" }],
         },
       ]);
 
@@ -4737,6 +4776,254 @@ describe("OrdersService", () => {
       );
     });
 
+    // ─── B466: SPECIAL-tier lock on substitution ───────────────────────────
+    // The substitute branch above never checked tier at all — a bare unitPrice
+    // was compared only against the substitute's LIST price, so typing this
+    // customer's correct SPECIAL price on a substitution was silently stored
+    // as DISCOUNTED (B466). Same guard shape as B465's ADD/UPDATE branches,
+    // reusing isSpecialTier() — but the baseline is the substitute's own tier
+    // price, not list.
+
+    it("(b466-1) revert-probe: a substitute price equal to the SPECIAL tier price needs no reason and stores SPECIAL, not DISCOUNTED", async () => {
+      // Pre-fix, this branch compared only to list (10): unitPrice 8 !== 10 was
+      // treated as a genuine override, storing priceType DISCOUNTED/originalPrice
+      // 10 for a price that is in fact this customer's own correct contract
+      // price. Fails red on the pre-fix tree (priceType comes back "DISCOUNTED").
+      prisma.order.findUnique.mockResolvedValue(orderWithItems);
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 }); // operatorTierCtx read
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findUniqueOrThrow.mockResolvedValue({
+        id: "prod-tob",
+        name: "Tiered Sub",
+        pricePerUnit: 10,
+        priceTier3: 8,
+        unitsPerBox: null,
+        trackedCategoryId: null,
+        trackedSubcategoryId: null,
+      });
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 16, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [{ id: "li-A", substituteProductId: "prod-tob", qty: 2, unitPrice: 8 }],
+          replaceAll: false,
+        },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            productId: "prod-tob",
+            unitPrice: 8,
+            subtotal: 16,
+            priceType: "SPECIAL",
+            originalPrice: 10,
+            overrideReason: null,
+            overriddenBy: null,
+          }),
+        }),
+      );
+    });
+
+    it("(b466-2) revert-probe: a substitute price differing from the SPECIAL tier price with no reason is REFUSED (400), product-named", async () => {
+      // Pre-fix, this branch had no tier awareness or reason gate at all — a
+      // bare 5 against list 10 silently stored priceType DISCOUNTED with no
+      // record anyone even tried to reprice a special line. Fails red pre-fix
+      // (the call resolves 200 instead of rejecting).
+      prisma.order.findUnique.mockResolvedValue(orderWithItems);
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findUniqueOrThrow.mockResolvedValue({
+        id: "prod-tob",
+        name: "Tiered Sub",
+        pricePerUnit: 10,
+        priceTier3: 8,
+        unitsPerBox: null,
+        trackedCategoryId: null,
+        trackedSubcategoryId: null,
+      });
+
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          {
+            items: [{ id: "li-A", substituteProductId: "prod-tob", qty: 2, unitPrice: 5 }],
+            replaceAll: false,
+          },
+          operatorPayload,
+        ),
+      ).rejects.toThrow(/Tiered Sub/);
+
+      expect(prisma.orderItem.update).not.toHaveBeenCalled();
+    });
+
+    it("(b466-3) a documented override (price + reason) on a SPECIAL substitute is honored — stores DISCOUNTED with the reason recorded", async () => {
+      prisma.order.findUnique.mockResolvedValue(orderWithItems);
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findUniqueOrThrow.mockResolvedValue({
+        id: "prod-tob",
+        name: "Tiered Sub",
+        pricePerUnit: 10,
+        priceTier3: 8,
+        unitsPerBox: null,
+        trackedCategoryId: null,
+        trackedSubcategoryId: null,
+      });
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 10, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [
+            {
+              id: "li-A",
+              substituteProductId: "prod-tob",
+              qty: 2,
+              unitPrice: 5,
+              overrideReason: "matched approval",
+            },
+          ],
+          replaceAll: false,
+        },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            unitPrice: 5,
+            subtotal: 10,
+            priceType: "DISCOUNTED",
+            originalPrice: 10,
+            overrideReason: "matched approval",
+            overriddenBy: "user-op",
+          }),
+        }),
+      );
+    });
+
+    it("(b466-3b) Opus MERGE-verdict fix: a documented override rounds to cents (8.004 -> 8.00)", async () => {
+      // Non-special (tier 1, no customer/CustomerPrice mock) so the override is
+      // unambiguously honored — 8.004 is well outside the 0.005 unchanged-from-
+      // tier tolerance here (baseline = list = 10), isolating the roundMoney fix.
+      prisma.order.findUnique.mockResolvedValue(orderWithItems);
+      prisma.product.findUniqueOrThrow.mockResolvedValue({
+        id: "prod-tob",
+        name: "Tiered Sub",
+        pricePerUnit: 10,
+        unitsPerBox: null,
+      });
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 8, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [
+            {
+              id: "li-A",
+              substituteProductId: "prod-tob",
+              qty: 1,
+              unitPrice: 8.004,
+              overrideReason: "matched approval",
+            },
+          ],
+          replaceAll: false,
+        },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            unitPrice: 8,
+            priceType: "DISCOUNTED",
+            originalPrice: 10,
+          }),
+        }),
+      );
+    });
+
+    it("(b466-4) revert-probe: a substitute to a SPECIAL-tier product with no unitPrice at all bills the tier price, SPECIAL", async () => {
+      // Pre-fix `let unitPrice = listPrice` unconditionally — a substitution
+      // with no price at all always billed list (10/STANDARD/null) regardless
+      // of tier. Fails red pre-fix (unitPrice/priceType/originalPrice all wrong).
+      prisma.order.findUnique.mockResolvedValue(orderWithItems);
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findUniqueOrThrow.mockResolvedValue({
+        id: "prod-tob",
+        name: "Tiered Sub",
+        pricePerUnit: 10,
+        priceTier3: 8,
+        unitsPerBox: null,
+        trackedCategoryId: null,
+        trackedSubcategoryId: null,
+      });
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 16, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-A", substituteProductId: "prod-tob", qty: 2 }], replaceAll: false },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            unitPrice: 8,
+            subtotal: 16,
+            priceType: "SPECIAL",
+            originalPrice: 10,
+            overrideReason: null,
+            overriddenBy: null,
+          }),
+        }),
+      );
+    });
+
+    it("(b466-5) revert-probe: a per-product CustomerPrice row on the SUBSTITUTE product wins over the customer's default tier", async () => {
+      // Pre-fix, operatorProductIds never collected substituteProductId at all
+      // (li-A's OWN pre-substitution product is "prod-A", not "prod-tob"), so
+      // operatorCpMap.get("prod-tob") was always undefined and this fell back
+      // to the customer's DEFAULT tier (1/STANDARD here) — no reason demanded,
+      // no throw. Fails red pre-fix (resolves 200 instead of rejecting).
+      prisma.order.findUnique.mockResolvedValue(orderWithItems);
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 1 }); // customer DEFAULT is STANDARD
+      prisma.customerPrice.findMany.mockResolvedValue([{ productId: "prod-tob", pricingTier: 3 }]);
+      prisma.product.findUniqueOrThrow.mockResolvedValue({
+        id: "prod-tob",
+        name: "Tiered Sub",
+        pricePerUnit: 10,
+        priceTier3: 8,
+        unitsPerBox: null,
+        trackedCategoryId: null,
+        trackedSubcategoryId: null,
+      });
+
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          {
+            items: [{ id: "li-A", substituteProductId: "prod-tob", qty: 2, unitPrice: 10 }],
+            replaceAll: false,
+          },
+          operatorPayload,
+        ),
+      ).rejects.toThrow(/Tiered Sub/);
+
+      expect(prisma.orderItem.update).not.toHaveBeenCalled();
+      expect(prisma.customerPrice.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            productId: expect.objectContaining({ in: expect.arrayContaining(["prod-tob"]) }),
+          }),
+        }),
+      );
+    });
+
     it("a driver's substitution attempt bills at the substitute's list price — override never reaches this line", async () => {
       // A DRIVER never reaches the staff-only substituteProductId branch above —
       // role routes to the always-replace buyer/driver path (top of this
@@ -4971,6 +5258,7 @@ describe("OrdersService", () => {
   describe("updateOrderItems — operator/admin tier pricing (WP1)", () => {
     const TIERED_PRODUCT = {
       id: "prod-1",
+      name: "Tiered Widget",
       pricePerUnit: 10,
       priceTier3: 8,
       unitsPerBox: null,
@@ -5115,24 +5403,47 @@ describe("OrdersService", () => {
       );
     });
 
-    it("(e) an explicit price EQUAL to list is stored verbatim — STANDARD, never tier-resolved", async () => {
-      // The operator line editors pre-fill the price field, so a typed $10.00
-      // (== list) for a tier-3 customer is a deliberate sell-at-list for this one
-      // order. Tier resolution must never quietly rewrite it down to $8.00.
+    it("(e) B465 fix-round-2: a bare price on a SPECIAL-tier ADD with no reason is REFUSED (400), never silently dropped", async () => {
+      // Round-1 (bcdeedda) silently fell through to the tier price here —
+      // Opus BLOCK: that 200's caller has no idea their price change never
+      // took effect. Reverses the old WP1 "sell at list for one order"
+      // allowance for a SPECIAL-tier line (mobile hunt R2/R9, closed on the
+      // owner's ruling 2026-09-16) by refusing outright instead.
       prisma.order.findUnique.mockResolvedValue({
         ...MOCK_ORDER,
         status: "DRAFT" as const,
         lineItems: [],
       });
-      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 3 });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 }); // operatorTierCtx read
       prisma.customerPrice.findMany.mockResolvedValue([]);
-      prisma.product.findUnique.mockResolvedValue(TIERED_PRODUCT);
       prisma.product.findMany.mockResolvedValue([TIERED_PRODUCT]);
-      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 20, status: "PENDING" }]);
+
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          { items: [{ productId: "prod-1", qty: 2, unitPrice: 10 }], replaceAll: false },
+          operatorPayload,
+        ),
+        // Item 4 (LOW): the 400 names the product, not a generic "a line".
+      ).rejects.toThrow(/Tiered Widget/);
+
+      expect(prisma.orderItem.create).not.toHaveBeenCalled();
+    });
+
+    it("(e2) B465: a SPECIAL-tier ADD with NO price at all still resolves the tier price silently (unaffected — no reprice attempt to refuse)", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findMany.mockResolvedValue([TIERED_PRODUCT]);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 16, status: "PENDING" }]);
 
       await service.updateOrderItems(
         "ord-1",
-        { items: [{ productId: "prod-1", qty: 2, unitPrice: 10 }], replaceAll: false },
+        { items: [{ productId: "prod-1", qty: 2 }], replaceAll: false },
         operatorPayload,
       );
 
@@ -5140,13 +5451,824 @@ describe("OrdersService", () => {
         expect.objectContaining({
           data: expect.objectContaining({
             productId: "prod-1",
-            unitPrice: 10,
-            originalPrice: null,
-            priceType: "STANDARD",
-            subtotal: 20,
+            unitPrice: 8,
+            originalPrice: 10,
+            priceType: "SPECIAL",
+            subtotal: 16,
           }),
         }),
       );
+    });
+
+    it("(f) B465: a documented override (price + reason) on a SPECIAL-tier ADD still works", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findMany.mockResolvedValue([TIERED_PRODUCT]);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 12, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [
+            { productId: "prod-1", qty: 2, unitPrice: 6, overrideReason: "manager approved" },
+          ],
+          replaceAll: false,
+        },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            productId: "prod-1",
+            unitPrice: 6,
+            originalPrice: 10,
+            priceType: "MANUAL",
+            overrideReason: "manager approved",
+            overriddenBy: "user-op",
+            subtotal: 12,
+          }),
+        }),
+      );
+    });
+
+    it("(g) B465 fix-round-2: a plain edit of an EXISTING SPECIAL line with no reason is REFUSED (400), never silently downgraded or dropped", async () => {
+      // The UPDATE-path twin of (e) — R9's "edit path" finding. A line already
+      // priced at this tier-3 customer's SPECIAL rate ($8, catalog $10) gets a
+      // plain qty/price touch that happens to type the catalog price back in,
+      // with no reason anywhere (payload or stored). Round-1 (bcdeedda) left
+      // the line's price untouched and returned 200 — Opus BLOCK: refuse
+      // instead so the caller learns their price change never took effect.
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: "prod-1",
+            qty: 3,
+            unitPrice: 8,
+            subtotal: 24,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+            priceType: "SPECIAL",
+            originalPrice: 10,
+          },
+        ],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      // Item 4 (LOW): the 400 names the product — fetched fresh in the throw
+      // path since this branch has no product row in scope otherwise.
+      prisma.product.findFirst.mockResolvedValue({ name: "Tiered Widget" });
+
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          { items: [{ id: "li-1", action: "UPDATE", qty: 3, unitPrice: 10 }], replaceAll: false },
+          operatorPayload,
+        ),
+      ).rejects.toThrow(/Tiered Widget/);
+
+      expect(prisma.orderItem.update).not.toHaveBeenCalled();
+    });
+
+    it("(g2) B465: a price change on a SPECIAL line falls back to the LINE's stored reason when the payload omits one (client re-saving under its existing reason)", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: "prod-1",
+            qty: 3,
+            unitPrice: 8,
+            subtotal: 24,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+            priceType: "SPECIAL",
+            originalPrice: 10,
+            overrideReason: "manager approved", // already on record from a prior edit
+          },
+        ],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findFirst.mockResolvedValue({ pricePerUnit: 10 }); // catalog anchor read
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 36, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        // No overrideReason in THIS payload — the line already has one on file.
+        { items: [{ id: "li-1", action: "UPDATE", qty: 3, unitPrice: 12 }], replaceAll: false },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "li-1" },
+          data: expect.objectContaining({ unitPrice: 12, subtotal: 36, priceType: "MANUAL" }),
+        }),
+      );
+    });
+
+    it("(item1) B465 fix-round-2: an id-only UPDATE resolves tier via the LINE's OWN product, not just the customer's default tier — a per-product SPECIAL row still needs a reason", async () => {
+      // Web/mobile send {id, action:'UPDATE', qty, unitPrice} with NO productId
+      // of their own for an existing-line edit. Round-1 (bcdeedda)'s
+      // operatorProductIds only covered productIds present in the PAYLOAD, so
+      // this line's per-product CustomerPrice override was never fetched and
+      // the tier silently fell back to the customer's DEFAULT tier (1,
+      // STANDARD here) — missing that THIS product is SPECIAL for them.
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: "prod-1",
+            qty: 3,
+            unitPrice: 8,
+            subtotal: 24,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+            priceType: "SPECIAL",
+            originalPrice: 10,
+          },
+        ],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 1 }); // customer's DEFAULT tier is STANDARD
+      prisma.customerPrice.findMany.mockResolvedValue([
+        { productId: "prod-1", pricingTier: 3 }, // but THIS product is SPECIAL for them
+      ]);
+
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          { items: [{ id: "li-1", action: "UPDATE", qty: 3, unitPrice: 10 }], replaceAll: false },
+          operatorPayload,
+        ),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(prisma.orderItem.update).not.toHaveBeenCalled();
+    });
+
+    it("(item1b) B465 fix-round-2: a per-product STANDARD CustomerPrice row wins over the customer's SPECIAL default tier — a plain price edit is allowed with no reason", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: "prod-1",
+            qty: 3,
+            unitPrice: 10,
+            subtotal: 30,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+            priceType: "STANDARD",
+            originalPrice: null,
+          },
+        ],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 }); // customer's DEFAULT tier is SPECIAL
+      prisma.customerPrice.findMany.mockResolvedValue([
+        { productId: "prod-1", pricingTier: 1 }, // but THIS product is explicitly STANDARD for them
+      ]);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 33, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-1", action: "UPDATE", qty: 3, unitPrice: 11 }], replaceAll: false },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "li-1" },
+          data: expect.objectContaining({ unitPrice: 11, subtotal: 33 }),
+        }),
+      );
+    });
+
+    it("(item3) B465 fix-round-2 (Opus BLOCK, MED): the replace-all branch applies the SAME reason-required guard for a SPECIAL-tier line", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findMany.mockResolvedValue([TIERED_PRODUCT]);
+
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          { items: [{ productId: "prod-1", qty: 2, unitPrice: 10 }], replaceAll: true },
+          operatorPayload,
+        ),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(prisma.orderItem.create).not.toHaveBeenCalled();
+    });
+
+    it("(item3b) B465: the replace-all branch honors a documented override (price + reason) on a SPECIAL-tier line", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findMany.mockResolvedValue([TIERED_PRODUCT]);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 12, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [
+            { productId: "prod-1", qty: 2, unitPrice: 6, overrideReason: "manager approved" },
+          ],
+          replaceAll: true,
+        },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            productId: "prod-1",
+            unitPrice: 6,
+            priceType: "MANUAL",
+            overrideReason: "manager approved",
+            subtotal: 12,
+          }),
+        }),
+      );
+    });
+
+    it("(item3c) B465 fix round 3 (Opus BLOCK item 2, revert-probe): replace-all echoing an existing SPECIAL line's OWN stored price needs no reason", async () => {
+      // Round-2's replace-all guard checked only whether a price was present,
+      // never whether it matched what this product's ONE unambiguous pre-edit
+      // line already had — an echoed (unchanged) price tripped the same 400
+      // as a genuine reprice.
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: "prod-1",
+            qty: 2,
+            unitPrice: 8,
+            subtotal: 16,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+            priceType: "SPECIAL",
+            originalPrice: 10,
+          },
+        ],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findMany.mockResolvedValue([TIERED_PRODUCT]);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 24, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        // qty 2 -> 3, price echoed at its own stored value (8) — not a reprice.
+        { items: [{ productId: "prod-1", qty: 3, unitPrice: 8 }], replaceAll: true },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            productId: "prod-1",
+            qty: 3,
+            unitPrice: 8,
+            subtotal: 24,
+          }),
+        }),
+      );
+    });
+
+    it("(item3d) B465 fix round 3 (Opus BLOCK item 2, merge test): auto-merge into an order with an existing reason-less MANUAL line on a SPECIAL-tier product gives 200, price unchanged", async () => {
+      // The staff auto-merge (orders.controller.ts's create-time consolidation
+      // via foldMergeItems) can fold in a line whose MANUAL override predates
+      // this fix and was saved with no reason at all — merging it back in at
+      // the SAME price must never retroactively demand one. This customer's
+      // default tier IS SPECIAL (3) for this product (tier price $8), but the
+      // line itself carries an even-lower MANUAL override ($6, no reason) —
+      // exactly the "reason-less MANUAL line" the review named.
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: "prod-1",
+            qty: 2,
+            unitPrice: 6,
+            subtotal: 12,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+            priceType: "MANUAL",
+            originalPrice: 10,
+            overrideReason: null,
+          },
+        ],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findMany.mockResolvedValue([TIERED_PRODUCT]);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 12, status: "PENDING" }]);
+
+      // foldMergeItems' own output shape for a surviving MANUAL line: unitPrice
+      // carried through, no overrideReason (never fabricated for a reason-less
+      // stored line — see merge-items.spec.ts REG-B465-MERGE-1/2).
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ productId: "prod-1", qty: 2, unitPrice: 6 }], replaceAll: true },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            productId: "prod-1",
+            qty: 2,
+            unitPrice: 6,
+            subtotal: 12,
+          }),
+        }),
+      );
+    });
+
+    it("(r4-1) B465 fix round 4 (Opus BLOCK item 1, HIGH, revert-probe): the staff create-merge's own auto-merge (isCreateMerge) lets a NEW line for a SPECIAL customer through with no reason, storing the sent price", async () => {
+      // Separate create (POST /orders with no existing PENDING order to merge
+      // into) has no reason requirement in this PR (the B465 follow-up covers
+      // it). The auto-merge branch of that SAME create endpoint folds a fresh
+      // scan into an EXISTING order via replaceAll:true — a line brand-new to
+      // that order (no existing counterpart at all) must be treated identically
+      // to separate create, not like an operator's own edit of an existing
+      // order. orders.controller.ts's create-merge call site is the ONLY
+      // caller that ever sets opts.isCreateMerge; a plain replaceAll:true from
+      // the edit screen never does, per test (item3)/(item3b) above.
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findMany.mockResolvedValue([TIERED_PRODUCT]);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 12, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        // A discounted price with NO reason -- would 400 on a plain edit-screen
+        // replaceAll (see (item3)), but this is the create path's own merge.
+        { items: [{ productId: "prod-1", qty: 2, unitPrice: 6 }], replaceAll: true },
+        operatorPayload,
+        { isCreateMerge: true },
+      );
+
+      expect(prisma.orderItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            productId: "prod-1",
+            qty: 2,
+            unitPrice: 6,
+            subtotal: 12,
+          }),
+        }),
+      );
+    });
+
+    it("(r4-2) B465 fix round 4 (Opus BLOCK item 1): isCreateMerge does NOT exempt an EXISTING line's genuine reprice — only a line brand-new to the order", async () => {
+      // The flag must be scoped to replaceAllExisting == null, never a
+      // blanket bypass for the whole create-merge call — an existing SPECIAL
+      // line being folded back in at a DIFFERENT price still needs a reason.
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: "prod-1",
+            qty: 2,
+            unitPrice: 8,
+            subtotal: 16,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+            priceType: "SPECIAL",
+            originalPrice: 10,
+          },
+        ],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findMany.mockResolvedValue([TIERED_PRODUCT]);
+
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          { items: [{ productId: "prod-1", qty: 2, unitPrice: 10 }], replaceAll: true },
+          operatorPayload,
+          { isCreateMerge: true },
+        ),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(prisma.orderItem.create).not.toHaveBeenCalled();
+    });
+
+    it("(r4-3) B465 fix round 4 (Opus BLOCK item 3, LOW): overrideReason: null on a genuine reprice falls back to the stored reason instead of throwing a 500", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: "prod-1",
+            qty: 3,
+            unitPrice: 8,
+            subtotal: 24,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+            priceType: "SPECIAL",
+            originalPrice: 10,
+            overrideReason: "manager approved",
+          },
+        ],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findFirst.mockResolvedValue({ pricePerUnit: 10 });
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 36, status: "PENDING" }]);
+
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          {
+            items: [
+              {
+                id: "li-1",
+                action: "UPDATE",
+                qty: 3,
+                unitPrice: 12,
+                overrideReason: null as unknown as string,
+              },
+            ],
+            replaceAll: false,
+          },
+          operatorPayload,
+        ),
+      ).resolves.not.toThrow();
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "li-1" },
+          data: expect.objectContaining({ unitPrice: 12, overrideReason: "manager approved" }),
+        }),
+      );
+    });
+
+    it("(r4-4) B465 fix round 4 (Opus BLOCK item 4, LOW): a half-cent float difference from the stored price is never treated as a MANUAL override", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: "prod-1",
+            qty: 3,
+            unitPrice: 8,
+            subtotal: 24,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+            priceType: "SPECIAL",
+            originalPrice: 10,
+          },
+        ],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 24, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        // 8.001 is within the 0.005 tolerance of the stored 8 -- a float
+        // rounding artifact, not a reprice decision.
+        { items: [{ id: "li-1", action: "UPDATE", qty: 3, unitPrice: 8.001 }], replaceAll: false },
+        operatorPayload,
+      );
+
+      const call = (prisma.orderItem.update as jest.Mock).mock.calls[0][0];
+      expect(call.data.priceType).toBeUndefined();
+      expect(call.data.originalPrice).toBeUndefined();
+      expect(call.data.overriddenBy).toBeUndefined();
+    });
+
+    it("(r5-1) B465 fix round 5 (Opus BLOCK item 2, LOW, revert-probe): a within-tolerance price echo persists the EXISTING clean value, never the incoming near-miss float", async () => {
+      // Round-4's fix made 8.001 correctly NOT a manual override, but the
+      // actual persisted unitPrice was still the raw incoming 8.001 (gated on
+      // `overridePrice !== null`, not `isManualOverride`) -- a no-op save
+      // could drift the stored price by a fraction of a cent every time.
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: "prod-1",
+            qty: 3,
+            unitPrice: 8,
+            subtotal: 24,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+            priceType: "SPECIAL",
+            originalPrice: 10,
+          },
+        ],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 24, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        // 8.004 is within the 0.005 tolerance of the stored 8.
+        { items: [{ id: "li-1", action: "UPDATE", qty: 3, unitPrice: 8.004 }], replaceAll: false },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "li-1" },
+          data: expect.objectContaining({ unitPrice: 8, subtotal: 24 }),
+        }),
+      );
+    });
+
+    it("(r3-1) B465 fix round 3 (Opus BLOCK item 2, revert-probe): a qty-only edit on a SPECIAL line — price echoed back UNCHANGED, no reason — gives 200, never a 400", async () => {
+      // Round-2 (cd704524) checked ONLY whether a price was present, never
+      // whether it was actually MOVING — a payload that redundantly echoes
+      // the line's own stored price alongside a qty change tripped the same
+      // refusal as a genuine reprice attempt.
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: "prod-1",
+            qty: 3,
+            unitPrice: 8,
+            subtotal: 24,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+            priceType: "SPECIAL",
+            originalPrice: 10,
+          },
+        ],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 40, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        // qty bumped 3 -> 5; unitPrice echoed back at its OWN stored value (8).
+        { items: [{ id: "li-1", action: "UPDATE", qty: 5, unitPrice: 8 }], replaceAll: false },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "li-1" },
+          data: expect.objectContaining({ qty: 5, unitPrice: 8, subtotal: 40 }),
+        }),
+      );
+    });
+
+    it("(r3-2) B465 fix round 3 (Opus BLOCK item 2, revert-probe): editing one line never demands a reason from an untouched SPECIAL sibling", async () => {
+      // The web-client half of this bug: an order carrying an untouched
+      // SPECIAL line (no unitPrice in ITS OWN payload entry at all — the real
+      // client behavior for anything it never touched) alongside a genuinely
+      // edited line must save cleanly. li-1 is SPECIAL/untouched (id+qty only,
+      // matching its own stored qty — a true no-op); li-2 is a plain line
+      // whose qty actually changes.
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: "prod-1",
+            qty: 3,
+            unitPrice: 8,
+            subtotal: 24,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+            priceType: "SPECIAL",
+            originalPrice: 10,
+          },
+          {
+            id: "li-2",
+            orderId: "ord-1",
+            productId: "prod-2",
+            qty: 2,
+            unitPrice: 5,
+            subtotal: 10,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+            priceType: "STANDARD",
+            originalPrice: null,
+          },
+        ],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 33, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [
+            // li-1: genuinely untouched — no unitPrice field at all.
+            { id: "li-1", action: "UPDATE", qty: 3 },
+            // li-2: the actual edit this save is for.
+            { id: "li-2", action: "UPDATE", qty: 4 },
+          ],
+          replaceAll: false,
+        },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "li-1" },
+          data: expect.objectContaining({ qty: 3 }),
+        }),
+      );
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "li-2" },
+          data: expect.objectContaining({ qty: 4 }),
+        }),
+      );
+    });
+
+    it("(r3-3) B465 fix round 3 (Opus BLOCK item 3, LOW): a blank incoming reason on a genuine reprice falls back to the stored reason, never clears it", async () => {
+      // A defensive client (or a future one) sends overrideReason: "" alongside
+      // a genuine price change for a line that ALREADY has a documented
+      // reason on file — the write must not wipe it out.
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: "prod-1",
+            qty: 3,
+            unitPrice: 8,
+            subtotal: 24,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+            priceType: "SPECIAL",
+            originalPrice: 10,
+            overrideReason: "manager approved",
+          },
+        ],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findFirst.mockResolvedValue({ pricePerUnit: 10 }); // catalog anchor read
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 36, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [{ id: "li-1", action: "UPDATE", qty: 3, unitPrice: 12, overrideReason: "" }],
+          replaceAll: false,
+        },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "li-1" },
+          data: expect.objectContaining({ unitPrice: 12, overrideReason: "manager approved" }),
+        }),
+      );
+    });
+
+    it("(h) B465: a documented override (price + reason) on an EXISTING SPECIAL line still works", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: "prod-1",
+            qty: 3,
+            unitPrice: 8,
+            subtotal: 24,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+            priceType: "SPECIAL",
+            originalPrice: 10,
+          },
+        ],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findFirst.mockResolvedValue({ pricePerUnit: 10 }); // catalog anchor read
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 36, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [
+            {
+              id: "li-1",
+              action: "UPDATE",
+              qty: 3,
+              unitPrice: 12,
+              overrideReason: "manager approved",
+            },
+          ],
+          replaceAll: false,
+        },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "li-1" },
+          data: expect.objectContaining({
+            unitPrice: 12,
+            subtotal: 36,
+            priceType: "MANUAL",
+            originalPrice: 10,
+            overriddenBy: "user-op",
+            overrideReason: "manager approved",
+          }),
+        }),
+      );
+    });
+
+    it("(i) B465: existing CANCELLED gate (unchanged) — items can't be edited on a CANCELLED order at all, refused before any mutation. This passes with or without B465 — the server's status gate already matches web's editWindow (computeEditWindow: editable = status !== CANCELLED), so no gate change was needed for B465; this pins that the pre-existing behavior is untouched.", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "CANCELLED" as const,
+        lineItems: [],
+      });
+
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          { items: [{ productId: "prod-1", qty: 2 }], replaceAll: false },
+          operatorPayload,
+        ),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(prisma.orderItem.create).not.toHaveBeenCalled();
+      expect(prisma.orderItem.update).not.toHaveBeenCalled();
     });
   });
 
@@ -8299,10 +9421,13 @@ describe("OrdersController — merge choice vs orderDate", () => {
 
     // F30/R11 (B199): the fold carries the EXISTING line's unitPrice through —
     // a merge is never where an operator's price override quietly disappears.
+    // B465 fix round 4: the create-merge call site now always passes a 4th
+    // opts argument naming isCreateMerge — the ONLY place this ever gets set.
     expect(ordersService.updateOrderItems).toHaveBeenCalledWith(
       "ord-open",
       expect.objectContaining({ items: [{ productId: "prod-1", qty: 3, unitPrice: 5 }] }),
       operatorPayload,
+      expect.objectContaining({ isCreateMerge: true }),
     );
   });
 

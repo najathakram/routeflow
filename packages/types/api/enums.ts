@@ -298,6 +298,12 @@ export type CrmConnectionStatus = (typeof CRM_CONNECTION_STATUS_VALUES)[number];
 export const CRM_TRIGGER_MODE_VALUES = ["STAGE", "WON"] as const;
 export type CrmTriggerMode = (typeof CRM_TRIGGER_MODE_VALUES)[number];
 
+export const MAILBOX_PROVIDER_VALUES = ["GOOGLE", "MICROSOFT"] as const;
+export type MailboxProvider = (typeof MAILBOX_PROVIDER_VALUES)[number];
+
+export const MAILBOX_CONNECTION_STATUS_VALUES = ["CONNECTED", "REVOKED", "THROTTLED"] as const;
+export type MailboxConnectionStatus = (typeof MAILBOX_CONNECTION_STATUS_VALUES)[number];
+
 export const CRM_HANDOFF_STATUS_VALUES = [
   "PENDING",
   "CREATED",
@@ -338,6 +344,22 @@ export const CHECK_RETURN_REASON_VALUES = [
 ] as const;
 export type CheckReturnReason = (typeof CHECK_RETURN_REASON_VALUES)[number];
 export type TenantClass = (typeof TENANT_CLASS_VALUES)[number];
+
+// Feature grants PR-1: per-tenant entitlement override effect. Pinned set-equal to the
+// generated Prisma `FeatureOverrideEffect` enum (see `enum-parity.spec.ts`'s `ENUM_TABLE` row).
+export const FEATURE_OVERRIDE_EFFECT_VALUES = ["GRANT", "DENY"] as const;
+export type FeatureOverrideEffect = (typeof FEATURE_OVERRIDE_EFFECT_VALUES)[number];
+
+// Feature grants v2 PR-3 (2026-09-17): why an override exists, for MRR-truth and the console's
+// "why" popover — see FeatureOverrideKind in apps/api/prisma/schema/platform.prisma.
+export const FEATURE_OVERRIDE_KIND_VALUES = [
+  "PILOT",
+  "SUPPORT",
+  "COMP",
+  "TRIAL",
+  "GRANDFATHER",
+] as const;
+export type FeatureOverrideKind = (typeof FEATURE_OVERRIDE_KIND_VALUES)[number];
 
 // Public demo booking (2026-09-16): pinned set-equal to the generated Prisma
 // `DemoBookingStatus` enum (see `enum-parity.spec.ts`'s `ENUM_TABLE` row).

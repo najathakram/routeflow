@@ -100,6 +100,23 @@ now contributes alongside api/mobile).
   `@/components/tenant-provider` for the whole file** — its assertions no longer exercise
   `tenantSlugFromHostname` directly (still covered by `lib/tenant-host.test.ts`); fidelity-loss
   note, registry B260.
+- **`app/layout-exports.test.ts` (fix/web-platform-admin-layout-export, B452 followups (d)
+  2026-09-16 #802)** — static guard, same walk-the-tree shape as `no-next-image.test.ts` below:
+  every `layout.tsx` under `app/` may export ONLY `default`/`metadata`/`viewport` plus Next's own
+  legal route-segment/async-metadata exports (`generateMetadata`/`generateViewport`/`dynamic`/
+  `revalidate`/`fetchCache`/`runtime`/`preferredRegion`/`maxDuration`). Exists because
+  `(platform-admin)/layout.tsx` once re-exported `superAdminClient` from `@/lib/admin-api` "for
+  backwards compat" — a non-default export from an App Router layout trips Next's typed-routes
+  check in any worktree that has run `next dev` (masked in prod by `ignoreBuildErrors`), so it
+  surfaced only as a dev-only error in someone else's worktree until this guard made it a CI
+  failure. Line-level regex extractor (`EXPORT_LINE`) handles `default`/`const`/`let`/`var`/
+  `function`(+`async`)/`class`/re-export-list forms, asserts it finds ≥6 layout files including
+  the root one (a silent zero-file walk would make the offender check vacuously green), and pins
+  the exact B-pattern (`export { superAdminClient } from "..."` → flagged) plus the B452
+  followup-(d) fix (an `async function` export line, previously a silent extractor non-match) as
+  its own regression cases. This is exactly the class of bug `RouteGuard.tsx`/
+  `PlanGateBoundary.tsx` (see `app-shell-lib.md`'s B449 entry) were split OUT of `layout.tsx` to
+  avoid re-triggering.
 - **Marketing-port specs (11, PR #657)** — static guards: `components/no-next-image.test.ts`
   (walks `app/`+`components/` for any `next/image` import — see `components/brand/` above),
   `app/(marketing)/marketing-port.static.test.ts` (MKT-PIN: dead asset/dependency scans,

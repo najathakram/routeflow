@@ -1,6 +1,6 @@
 {
-  "mappedSha": "bc24582d22fd2662122ecfe4fa5776ab5b337732",
-  "generatedAt": "2026-09-15T23:42:50.000Z",
+  "mappedSha": "bd1a84570e00435585696f75c910f75edf330538",
+  "generatedAt": "2026-09-17T16:43:44.000Z",
   "layout": "split-2026-09-13",
   "areas": ["api", "web", "mobile", "packages"],
   "partCounts": {
@@ -10,5 +10,5 @@
     "packages": 0
   },
   "fileCount": 1027,
-  "notes": "**2026-09-15 (worktree rf-lite-L2, fix-round follow-up to Lite-L2) — findings 1-7 from an Opus refute-first review fixed**: billing-cron.service.ts's applyScheduledDowngrades re-pins planVersionId + fails loudly (new PlanNotInCatalogError) instead of silently pricing an unresolvable target as $0; platform-admin.service.ts gained a shared resolvePublishedPlan() guard used by createTenant/updatePlan/activateManualSubscription; plan-catalog-v11.definitions.ts's ENTERPRISE_FLAGS is now a frozen 13-key literal, not derived from the live FLAG_KEYS array; billing.service.ts's onCheckoutCompleted preserves an existing negotiated price override; settings-billing.controller.ts's createCheckout now checks the self-serve-checkout kill switch; SubscriptionView.flags widened to optional and every web/mobile reader (RouteGuard, filterPlanGatedNav, both usePlanFlag hooks, planLockedSection) now fails OPEN on an absent flags key instead of `?? []`; 6 *.plan-gate.spec.ts files' TS2352 casts fixed, proven by a new scoped apps/api/tsconfig.plan-gate-specs.json. api/lite-plan.md, packages.md, web/app-shell-lib.md, web/api-hooks.md, mobile/app-shell-lib.md each got a short amendment; no new area file. See CHANGELOG.md for the full note; do not accumulate further history here — replace this field each session per that file's header convention."
+  "notes": "**2026-09-17 — Mailbox connect bookkeeping (#824/#830/#841, N2 #811, docs-only, Bookkeeping Option B)** — `api/feature-modules-7.md`'s `email/` section gains two entries: N2 account/invite mail (`sendSetPasswordEmail`/`sendEmailChangedNotice`/`sendEmailChangeConfirmation`/`sendRoleChangedNotice`, `sendPlatform`) and the `email/mailbox/` subdirectory (`MailboxConnectionService` OAuth for Google + Microsoft, `MailboxSendService.trySend`, `MailboxController`'s two-step confirm binding, web `MailboxCard.tsx`). See CHANGELOG.md."
 }

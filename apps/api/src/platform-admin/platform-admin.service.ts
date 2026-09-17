@@ -18,6 +18,8 @@ import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { ProrationService } from "../billing/proration.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { MeterService } from "../billing/meter.service";
+import { FeatureOverrideService } from "../billing/feature-override.service";
+import { gateVia } from "../billing/feature-registry";
 import { BillingEventService } from "../billing/billing-event.service";
 import { MrrService } from "../billing/mrr.service";
 import { TenantMirrorService } from "./tenant-mirror.service";
@@ -40,6 +42,7 @@ import { UpdateTenantStatusDto } from "./dto/update-tenant-status.dto";
 import { UpdateTenantPlanDto } from "./dto/update-tenant-plan.dto";
 import { CreateTenantDto } from "./dto/create-tenant.dto";
 import { classifyTenantSlug } from "../tenant/tenant-class";
+import { CreateTenantAdminDto } from "./dto/create-tenant-admin.dto";
 import { IRS_SYSTEM_CATEGORIES } from "../bookkeeping/irs-categories.constant";
 import { ActivateSubscriptionDto } from "./dto/activate-subscription.dto";
 import { UpdateTenantConfigDto } from "./dto/update-tenant-config.dto";
@@ -75,6 +78,7 @@ export class PlatformAdminService {
     private readonly auditService: AuditService,
     private readonly mrrService: MrrService,
     private readonly tenantMirror: TenantMirrorService,
+    private readonly featureOverrides: FeatureOverrideService,
   ) {}
 
   /**
@@ -86,7 +90,11 @@ export class PlatformAdminService {
    * failure never breaks the mutation.
    */
   async recordAdminAction(
-    tenantId: string,
+    // Nullable for platform-global actions with no single tenant (feature grants v2 brief A:
+    // the entitlements.mode switch and diff-explain actions apply platform-wide) — AuditService
+    // itself already accepts `tenantId: string | null`; every existing call site still passes a
+    // real tenant id unchanged.
+    tenantId: string | null,
     adminId: string | null,
     action: AdminAuditActionCode,
     meta?: Record<string, unknown>,
@@ -376,6 +384,9 @@ ${
     : `<p>Your trial expires in ${trialDays} days. Complete payment to continue using RouteFlow.</p>`
 }
 <p>RouteFlow Platform</p>`,
+        // email-connect-google PR-3: contains a temp password — platform sender only, never
+        // a tenant mailbox/SMTP.
+        senderClass: "platform",
       });
     } catch {
       /* best-effort — don't fail tenant creation over email */
@@ -1461,13 +1472,28 @@ ${
    */
   async getTenantEntitlements(tenantId: string) {
     await this._findOrThrow(tenantId);
-    const [entitlements, usage] = await Promise.all([
+    const [entitlements, usage, overrides] = await Promise.all([
       this.entitlementsService.resolve(tenantId),
       this.meterService.readAll(tenantId),
+      this.featureOverrides.allActive(tenantId),
     ]);
+
+    // Opus review of 8130b204, item 4: this admin-facing entitlements view must agree with the
+    // tenant's own Overrides table -- same RequirePlanFlag-filtered merge as
+    // SubscriptionService.getSubscription. `entitlements.addons` is SKU codes ("REGULATED_ITEMS"),
+    // a different namespace from a feature-registry addon KEY ("tobacco_dealer") -- unlike
+    // tenants.controller.ts's getMyAddons, whose `addons` array IS addonKey-shaped, there is no
+    // unambiguous key->SKU mapping to merge a GRANT/DENY into here, so it stays untouched.
+    const flags = new Set(entitlements.flags);
+    for (const [key, effect] of overrides) {
+      if (gateVia(key) !== "RequirePlanFlag") continue;
+      if (effect === "GRANT") flags.add(key);
+      else flags.delete(key);
+    }
+
     return {
       planKey: entitlements.planKey,
-      flags: entitlements.flags,
+      flags: Array.from(flags),
       addons: entitlements.addons,
       caps: entitlements.caps,
       usage,
@@ -1557,7 +1583,7 @@ ${
 
   async createTenantAdmin(
     tenantId: string,
-    dto: { username: string; email: string; password?: string },
+    dto: CreateTenantAdminDto,
     adminId: string | null = null,
   ) {
     await this._findOrThrow(tenantId);
@@ -1613,6 +1639,9 @@ ${
 <strong>Password:</strong> ${rawPassword}</p>
 <p><em>Please log in and change your password immediately.</em></p>
 <p>RouteFlow Platform</p>`,
+        // email-connect-google PR-3: contains a password — platform sender only, never a
+        // tenant mailbox/SMTP.
+        senderClass: "platform",
       });
     } catch {
       /* best-effort */

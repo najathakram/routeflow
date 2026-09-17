@@ -55,10 +55,19 @@ version|audit-allowlist-retired)\\.spec\\.ts$"` (the third joined it
 - **`src/common/{next-version,no-react-skew-hacks,client-page-params,audit-allowlist-retired}.spec.ts`
   (2026-09-10, `chore/next-15` #5b3b3c4e, S4 T1/T2/T3/T6)** — the Next 15 upgrade's repo-truth
   lane additions (see above); none import runtime code, all `fs.readFileSync` the tree directly
-  (house convention, matches `no-dead-deps.spec.ts`). **`next-version.spec.ts` (T1)** pins
-  `apps/web/package.json`'s exact `next`/`eslint-config-next`/`@next/swc-win32-x64-msvc` literals
-  (`15.5.25`/`15.5.25`/`^15.5.25`) — clears the two CRITICAL advisories the
-  `security/audit-allowlist.json` entries (now retired) were carrying. **`no-react-skew-hacks.spec.ts`
+  (house convention, matches `no-dead-deps.spec.ts`). **`next-version.spec.ts` (T1)** clears the
+  two CRITICAL advisories the `security/audit-allowlist.json` entries (now retired) were carrying
+  by pinning `apps/web/package.json`'s `next`/`eslint-config-next`/`@next/swc-win32-x64-msvc` to
+  the major-15 line — **B352 (2026-09-15) fix:** the original exact-literal pins (`15.5.25`/
+  `15.5.25`/`^15.5.25`) broke on every routine Next patch bump; now uses
+  `src/common/next-version.ts`'s `pinnedToMajorLine(version, major)` helper (same fix shape as
+  #745's sibling React-version guard), with its own `REG-B352` block pinning the tolerant matcher
+  itself. **Fix round, same day (L-164):** a major-line-only check accepts any `15.x`, including a
+  downgrade to `15.0.0` that predates the fix and loses the CRITICAL-advisory protection — T1's
+  three assertions now call the sibling `meetsMinimumOnMajorLine(version, major, minMinor,
+minPatch)` helper (major must match exactly, minor/patch compared numerically >= the minimum)
+  with the minimum set to `15.5.25`; `pinnedToMajorLine` and its REG-B352 block are unchanged and
+  gained 4 more edge-case assertions for the new function. **`no-react-skew-hacks.spec.ts`
   (T2)** pins that `apps/web/Dockerfile`'s `npm install --force --no-save react@18…` line and
   `jest.config.js`'s single-react `moduleNameMapper` are BOTH gone — a half-reverted skew (one
   hack back, one still removed) breaks every RTL suite, so the pair is asserted together, not as
@@ -71,6 +80,23 @@ version|audit-allowlist-retired)\\.spec\\.ts$"` (the third joined it
   ALLOWLISTED-suppresses) a fixture audit reporting one of them — the allowlist itself stays
   available for a future, unrelated advisory (see the `security/audit-allowlist.json` bullet
   above and `ci-audit-script.spec.ts`'s "policy guard" describe update).
+- **`src/common/denied-identifiers.spec.ts` (2026-09-16, #797)** — LOCAL, gitignored tripwire for
+  scrubbing real client identifiers (tenant slugs, business names, emails, per CLAUDE.md's "Test
+  tenants & real-client data" policy) out of the repo before a public CI window. Reads one
+  identifier per line from gitignored `local-assets/security/denied-identifiers.txt` (never
+  committed); missing/empty file → a single no-op PASS with a `console.warn` (every other
+  contributor, and CI on a fresh clone, never has this local file, so the guard is inert for
+  them). When populated: word-boundary (`\b…\b`, case-insensitive) `it.each` per identifier across
+  every `.ts/.tsx/.js/.jsx/.mjs/.cjs/.md/.mdx/.json/.yml/.yaml/.html/.txt` file under the repo
+  root (excludes `node_modules/.git/.next/.turbo/dist/build/coverage/out/.vercel/local-assets`),
+  plus a sanity assertion the walk found >500 files (a silent zero-file walk would make every
+  identifier check vacuously green). Companion PR made every then-remaining live-identifier
+  occurrence comment-only/JSDoc-example text (`packages/types/index.ts`, mobile
+  `payment.tsx`/`addons.ts`, `scrub-demo-contacts.mjs`) with no runtime logic change — confirmed
+  zero remaining occurrences on that tree via `git grep`. **Known gap, owner-acknowledged:** this
+  cleans HEAD only; the identifiers remain in git history, exposed during every public merge
+  window — removing them needs a history rewrite, filed as a follow-up. Wired into
+  `jest.repo-truth.config.js`'s `testRegex` (own lane, not the default jest run).
 - **`src/common/campaign-check-freshness.spec.ts` (2026-09-06, campaign-check report freshness,
   L-083)** — contract spec for `scripts/campaign-check.mjs`'s freshness rule and its new
   `--freshness-only` pre-step (see [`INDEX`](INDEX.md)'s "Bug-register burn-down campaign" row).

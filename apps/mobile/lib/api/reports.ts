@@ -21,6 +21,8 @@ export interface ProfitAndLoss {
   cogs: number;
   grossProfit: number;
   operatingExpenses: number;
+  /** B456: unpaid pre-tax share of invoices WRITTEN_OFF in the window. */
+  badDebtExpense?: number;
   netProfit: number;
   netMarginPct?: number;
   expensesByCategory?: Record<string, number>;

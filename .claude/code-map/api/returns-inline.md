@@ -2,8 +2,10 @@
 
 New capability, landing across PR-1a–5 (design: `local-assets/handoff/2026-09-15/order-returns/`;
 not committed — a local planning artifact, read at build time only). STANDARD (existing
-post-delivery RMA) stays documented in [`feature-modules-3.md`](feature-modules-3.md) `returns/` —
-this file covers only the new `kind: INLINE` path, added incrementally per PR.
+post-delivery RMA) stays documented in [`feature-modules-3/returns.md`](feature-modules-3/returns.md) —
+this file covers only the new `kind: INLINE` path, added incrementally per PR. PR-1a/1b/1c
+(schema, quote pricing, capture/issue/approve/reject/cancel) are landed; PR-1d (tenant grant) is
+blocked on B467 (DB-backed specs), see "Not yet built" below.
 
 ## PR-1a (2026-09-15) — schema + shared readers
 
@@ -102,8 +104,86 @@ this file covers only the new `kind: INLINE` path, added incrementally per PR.
   concurrent STANDARD `create()`s on different orders for one customer stand in for the "STANDARD
   vs. INLINE" pair the brief asked for, since no INLINE endpoint exists yet to seed a real one.
 
+## PR-1b (2026-09-16, #809) — quote pricing engine
+
+- **`returns/inline-returns-pricing.ts`** — pure engine (design §3): matches a requested return
+  qty against a customer's invoiced sales (matching set = `REAL_INVOICE_STATUSES` union non-VOID
+  DRAFT of a DELIVERED/PARTIALLY_DELIVERED order, 90-day sold window), allocates newest-order-first
+  per `(sourceOrderId, productId)` against `returnedPiecesByProduct` (PR-1a), and prices each chunk
+  via `priceSellingUnitChunk` (shared by matched/unreferenced/manual — `computeLineSubtotal` +
+  `normalizeBoxesPieces`, never `qty * unitPrice` on a boxed line): **matched**
+  (`prorateLineSubtotal`, discount share, m-7 zero-tax guard, snapshot `line.taxRate` — never the
+  tenant's current rate), **unreferenced** (tier/`CustomerPrice` or base price, tax via
+  `currentTaxRate` since PR-1c), or **staff manual override**. `CandidateInvoiceLine.piecesQty`
+  (added in the fix round) is the ONLY axis used for pooling/capping against sold pieces — `qty`
+  stays the proration axis inside `priceMatchedChunk`, so a selling-unit line's boxes are never
+  pooled as if they were pieces.
+- **`InlineReturnsQuoteService.quote(dto, user): Promise<...>`** — wires the DB reads (customer,
+  `CustomerPrice`, products, matching-set invoices) into the pure engine. M8: a DRIVER caller must
+  supply `routeRunStopId` and can only quote for that stop's own customer on their own IN_PROGRESS,
+  non-COMPLETED/SKIPPED run (mirrors `orders.service.ts`'s B309 guard) — checked before any other
+  read. `UserRole.CUSTOMER` refused with an explicit `ForbiddenException` at the top (Q5 — buyers
+  keep the post-delivery `returns.service.ts` flow), defense-in-depth alongside the controller's
+  `@Roles`.
+- **`POST /returns/inline/quote`** (`returns.controller.ts`, OPERATOR/TENANT_ADMIN/DRIVER, never
+  CUSTOMER) gated `@RequireAddon("orders_inline_returns")`, registered **ENFORCED from day one**
+  (owner-answers.md Q-A's written exception to "new gates ship dark" — zero existing users, blast
+  radius empty by construction).
+- Customer lookup uses `findFirst({where:{id, deletedAt:null}})`, never `findUnique` (bypasses the
+  tenant-scoping post-filter — B131 convention).
+- **Specs:** `inline-returns-pricing.spec.ts` (all 7 §3.5 literal oracles pinned with revert
+  probes — box-split, selling-unit, BOGO, discount-share, exempt x2, rate-change; oracle 8 is
+  PR-1a's), `inline-returns-quote.service.spec.ts` (M8 scoping + wiring).
+
+## PR-1c (2026-09-16, #816) — capture/issue/approve/reject/cancel
+
+- **`returns/inline-returns.service.ts` — `InlineReturnsService`.** `capture(dto, user)`: CUSTOMER
+  refused up front (Q5); an unlocked pre-read resolves an already-captured `returnKey` (required on
+  `CaptureInlineReturnDto` — no client calls this route yet, so every capture is replay-safe from
+  day one) WITHOUT opening a transaction, routed through the SAME post-processing tail as a fresh
+  capture (a stuck RECEIVED row — issue failed after capture committed — is retried here too, not
+  just on a fresh capture); only trusted as a replay when it matches THIS `(customerId, orderId)`
+  pair (a collision across two unrelated requests 409s). Inside the transaction: the same
+  customer-scoped advisory lock STANDARD returns use (§5), an `Order FOR UPDATE` read, prices via
+  `InlineReturnsQuoteService`'s engine, restocks + reverses the regulated ledger per source order,
+  then either mints a standalone credit note immediately (`mintStandaloneInTx`, credit-notes.
+  service.ts) or — above the driver cap (`sumInlineReturnCredit`, driver-cap Σ over the order's
+  prior INLINE captures) — holds the WHOLE credit for approval (**HIGH-4**: restock/ledger reversal
+  are DEFERRED to `approve()` for a held return, never applied at capture). A driver capture must be
+  on their own CURRENT route run. `approve(id, user, dto?)`: the driver-cap claim now lives inside
+  the SAME transaction as the mint/link (a failure rolls back atomically); throws before any
+  restock/ledger reversal when the held/override amount rounds to ≤ $0.001 (use `reject()` instead).
+  `reject(id, user)` and `cancel(id, user)` (m-5) undo a captured return's stock/ledger/credit
+  effects — `cancel` skips restock entirely for a never-captured PENDING row, and writes a
+  COMPENSATING (negative-qty) stock movement rather than deleting the original by a fragile
+  reference-prefix match.
+- **`credit-notes.service.ts` §6.3 — exclude an INLINE return's own credit from the general sweep
+  until its carrying order is "met".** `isOrderMetInTx(tx, orderId)`: the order's non-VOID invoices
+  must ALL be fully paid (CONFIRMED-basis `sumConfirmed`, never a bare not-VOID filter — a
+  DRAFT/PENDING payment must not count, #816 payment-status-filter review) or the order is
+  CANCELLED; **not met when there are no invoices yet** (the order-entry-time common case —
+  MED-6, a pre-fix fallthrough silently treated "no invoice" as "met"). `isSystemOwnedInlineCreditInTx`
+  identifies the ONE standalone CN an INLINE return minted for ITS OWN carrying order (no new
+  column — a join through `Return`). `autoApplyOldestCreditsInTx` excludes while unmet;
+  `syncOrderCreditSelections` never drops/re-amounts the system-owned intent. `mintStandaloneInTx`
+  (m-1) / `cancelStandaloneInTx` (m-5, restores CREDIT_NOTE-method `InvoicePayment` rows — kept as
+  a not-VOID filter, `scan-ok: draft-payment-not-void`: that payment shape is an internal ledger
+  write this service creates atomically as CONFIRMED, never DRAFT/PENDING).
+- **`orders.service.ts` — `ORDER_BELOW_RETURN_CREDIT` guard.** A DRIVER order-item edit that would
+  drop the order's gross below its already-committed inline-return credit (`sumInlineReturnCredit`,
+  `returns/inline-return-credit.util.ts`) is refused — read AFTER the existing `Order FOR UPDATE`,
+  so it sees every inline return committed before this edit's lock was granted. Staff edits are NOT
+  capped here (they can also approve/reduce a held return). Sits alongside, not instead of, B451's
+  `assertMoneyInvariantsOrThrow` guard at the same call site.
+- **`common/tax-rate.ts`'s `currentTaxRate`** (see `bootstrap-and-money-pricing.md`) resolves
+  PR-1b's deferred unreferenced-chunk tax-rate item.
+- **Specs:** `inline-returns.service.spec.ts`, `credit-notes.inline-returns.spec.ts`,
+  `inline-return-credit.util.spec.ts`, `orders.inline-return-cap-guard.spec.ts`,
+  `returns/dto/{approve,capture}-inline-return.dto.spec.ts`.
+
 ## Not yet built (tracked here so the next PR starts from this file, not a re-read)
 
-INLINE's own quote/capture/issue/approve/reject/cancel endpoints, `InlineReturnsService`, driver
-cap + whole-credit hold, alerts, web/mobile UI, `CreditNote.taxAmount` — PR-1b–5, per the design's
-§10 PR plan.
+Alerts, web/mobile UI, `CreditNote.taxAmount`, and B467 (DB-backed specs proving the transactional
+invariants — advisory locking, `Order FOR UPDATE`, the driver-cap Σ, `returnKey` replay races —
+against a real Postgres, not mocked Prisma; **required before PR-1d or any tenant grant**) — PR-1d/e,
+per the design's §10 PR plan.

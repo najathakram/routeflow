@@ -67,7 +67,7 @@ describe("components/auth/auth-shell.css — T2c (R5)", () => {
   it.each([
     "--rf-navy: #10264d",
     "--rf-plum: #623691",
-    "--rf-muted: #616b7c",
+    "--rf-muted: #637992",
     ".rf-auth-story small",
     "@media (max-width: 850px)",
     "prefers-reduced-motion",
@@ -80,7 +80,7 @@ describe("components/auth/auth-shell.css — T2c (R5)", () => {
     // Longhands: the `padding`/`border` shorthands out-specify `pr-10`/`border-danger`.
     "padding-block: 12px",
     "padding-inline-start: 12px",
-    "border-color: #d7dce4",
+    "border-color: #ffffffed",
     'input[aria-invalid="true"]',
     // The footer row wraps its page-supplied links instead of colliding with them.
     ".rf-auth-footer-links",

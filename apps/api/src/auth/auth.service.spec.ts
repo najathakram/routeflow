@@ -1,7 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
-import { UnauthorizedException, BadRequestException } from "@nestjs/common";
+import { UnauthorizedException, BadRequestException, ForbiddenException } from "@nestjs/common";
 import * as bcrypt from "bcrypt";
 import { AuthService } from "./auth.service";
 import { EmailService } from "../email/email.service";
@@ -47,6 +47,7 @@ describe("AuthService", () => {
     findByEmailCrossTenant: jest.Mock;
   };
   let jwtService: { sign: jest.Mock; verify: jest.Mock; decode: jest.Mock };
+  let emailService: { send: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
@@ -60,6 +61,7 @@ describe("AuthService", () => {
       verify: jest.fn(),
       decode: jest.fn().mockReturnValue({ exp: Math.floor(Date.now() / 1000) + 3600 }),
     };
+    emailService = { send: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -73,7 +75,7 @@ describe("AuthService", () => {
         },
         {
           provide: EmailService,
-          useValue: { send: jest.fn().mockResolvedValue(undefined) },
+          useValue: emailService,
         },
         {
           provide: EntitlementsService,
@@ -119,10 +121,59 @@ describe("AuthService", () => {
       expect(result).toBeNull();
     });
 
-    it("should return null for inactive users", async () => {
+    it("should return null for suspended users even with the correct password", async () => {
       usersService.findByUsername.mockResolvedValue({ ...MOCK_USER, status: "SUSPENDED" });
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
       const result = await service.validateUser("admin", "correct-password");
       expect(result).toBeNull();
+    });
+
+    // Regression coverage for a self-reactivation vulnerability caught in
+    // review of PR #778: an earlier version of this fix threw a
+    // distinguishable EMAIL_NOT_VERIFIED for INACTIVE specifically, on the
+    // theory that INACTIVE means "self-signup admin pending email
+    // verification" (TenantsService.register). That's not true in general —
+    // INACTIVE is the SAME status UsersService.changeStatus writes to
+    // deactivate ANY staff member (apps/web settings page) and the same
+    // status BillingCronService's seat-cap enforcement writes on a plan
+    // downgrade. Surfacing EMAIL_NOT_VERIFIED handed a deactivated staff
+    // member a path back to ACTIVE via the resend-verification + email-verify
+    // flow. UserStatus has no column distinguishing "never verified" from
+    // "deliberately deactivated," so validateUser stays deliberately generic
+    // for every non-ACTIVE status — the timing-oracle fix (password checked
+    // before status) is kept, the distinguishing signal is not.
+    describe("INACTIVE user (e.g. self-signup pending verification, OR a deactivated staff member — indistinguishable without a schema discriminator)", () => {
+      it("returns null (generic, same as any other non-ACTIVE status) even when the password IS correct — no EMAIL_NOT_VERIFIED leak", async () => {
+        usersService.findByUsername.mockResolvedValue({ ...MOCK_USER, status: "INACTIVE" });
+        (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+
+        const result = await service.validateUser("admin", "correct-password");
+        expect(result).toBeNull();
+      });
+
+      it("a non-ACTIVE user found via the cross-tenant fallback is rejected even with the CORRECT password", async () => {
+        usersService.findByUsername.mockResolvedValue(null); // wrong tenant slug typed
+        usersService.findByUsernameCrossTenant.mockResolvedValue({
+          ...MOCK_USER,
+          status: "INACTIVE",
+        });
+        (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+
+        const result = await service.validateUser(
+          "admin",
+          "correct-password",
+          "some-other-tenant-id",
+        );
+        expect(result).toBeNull();
+      });
+
+      it("returns null when the password is WRONG too — identical response either way", async () => {
+        usersService.findByUsername.mockResolvedValue({ ...MOCK_USER, status: "INACTIVE" });
+        (bcrypt.compare as jest.Mock).mockResolvedValue(false);
+
+        const result = await service.validateUser("admin", "wrong-password");
+        expect(result).toBeNull();
+      });
     });
   });
 
@@ -213,6 +264,94 @@ describe("AuthService", () => {
     });
   });
 
+  // ─── verifyEmailAndLogin ────────────────────────────────────────────────────
+  //
+  // X2: this consumes a 24h-lived `email_verify` JWT signed at self-signup time
+  // (TenantsService.register). It used to flip ANY non-ACTIVE status straight
+  // to ACTIVE — including SUSPENDED — so an admin who suspended a still-
+  // unverified account (e.g. for abuse) within that 24h window could be
+  // silently un-suspended by whoever still held the stale link.
+  describe("verifyEmailAndLogin", () => {
+    const INACTIVE_USER = {
+      id: "user-1",
+      username: "acme_admin",
+      role: "TENANT_ADMIN" as const,
+      status: "INACTIVE" as const,
+      forcePasswordChange: false,
+      tenantId: "tenant-1",
+      deletedAt: null,
+      password: "hashed",
+    };
+
+    beforeEach(() => {
+      jwtService.verify.mockReturnValue({
+        sub: "user-1",
+        type: "email_verify",
+        tenantId: "tenant-1",
+      });
+      prisma.tenant.findUnique.mockResolvedValue({ slug: "acme-distribution" } as any);
+      prisma.refreshToken.upsert.mockResolvedValue({} as any);
+    });
+
+    it("activates an INACTIVE user and logs them in", async () => {
+      prisma.user.findUnique.mockResolvedValue(INACTIVE_USER as any);
+      prisma.user.update.mockResolvedValue({ ...INACTIVE_USER, status: "ACTIVE" } as any);
+
+      const result = await service.verifyEmailAndLogin("valid.jwt.token");
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: "user-1" },
+        data: { status: "ACTIVE" },
+      });
+      expect(result).toHaveProperty("accessToken");
+      expect(result.user.id).toBe("user-1");
+    });
+
+    it("clicking the link twice is smooth — an already-ACTIVE user just logs in, no update call", async () => {
+      prisma.user.findUnique.mockResolvedValue({ ...INACTIVE_USER, status: "ACTIVE" } as any);
+
+      const result = await service.verifyEmailAndLogin("valid.jwt.token");
+
+      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(result).toHaveProperty("accessToken");
+    });
+
+    it("REFUSES to reactivate a SUSPENDED user, even with a still-valid unexpired token", async () => {
+      prisma.user.findUnique.mockResolvedValue({ ...INACTIVE_USER, status: "SUSPENDED" } as any);
+
+      await expect(service.verifyEmailAndLogin("valid.jwt.token")).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it("rejects an invalid/expired token", async () => {
+      jwtService.verify.mockImplementation(() => {
+        throw new Error("jwt expired");
+      });
+
+      await expect(service.verifyEmailAndLogin("bad.token")).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+
+    it("rejects a token whose type is not email_verify", async () => {
+      jwtService.verify.mockReturnValue({ sub: "user-1", type: "password_reset" });
+
+      await expect(service.verifyEmailAndLogin("wrong-type.token")).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+
+    it("rejects when the user no longer exists", async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      await expect(service.verifyEmailAndLogin("valid.jwt.token")).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+  });
+
   // ─── login ────────────────────────────────────────────────────────────────
 
   describe("login", () => {
@@ -272,6 +411,20 @@ describe("AuthService", () => {
 
       expect(jwtService.sign.mock.calls[0]![0]).toMatchObject({ hasPassword: false });
       expect(result.user).toMatchObject({ hasPassword: false });
+    });
+
+    it("RF-228/B421: sends the new-device notification via the platform sender", async () => {
+      prisma.refreshToken.upsert.mockResolvedValue({} as any);
+      prisma.refreshToken.count.mockResolvedValue(0); // no prior sessions on this device
+
+      await service.login({ ...validUser, email: "admin@test.com" } as any, {
+        userAgent: "Mozilla/5.0",
+        ipAddress: "1.2.3.4",
+      });
+
+      expect(emailService.send).toHaveBeenCalledWith(
+        expect.objectContaining({ senderClass: "platform" }),
+      );
     });
   });
 
@@ -427,6 +580,20 @@ describe("AuthService", () => {
       await expect(service.changePassword("nobody", "old", "new")).rejects.toThrow(
         UnauthorizedException,
       );
+    });
+
+    it("N2 review fix: invalidates any outstanding PasswordResetToken so a 72h staff-invite/admin-reset link can't outlive a self-service password change", async () => {
+      prisma.user.findUnique.mockResolvedValue(MOCK_USER);
+      (bcrypt.compare as jest.Mock).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+      (bcrypt.hash as jest.Mock).mockResolvedValue("new-hash");
+      prisma.user.update.mockResolvedValue({} as any);
+
+      await service.changePassword("user-1", "old", "new");
+
+      expect(prisma.passwordResetToken.updateMany).toHaveBeenCalledWith({
+        where: { userId: "user-1", usedAt: null },
+        data: { usedAt: expect.any(Date) },
+      });
     });
   });
 

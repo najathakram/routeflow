@@ -1,4 +1,5 @@
 import { MrrService } from "./mrr.service";
+import { FeatureOverrideService } from "./feature-override.service";
 
 function make() {
   const prisma = {
@@ -323,5 +324,136 @@ describe("MrrService.computeOverview", () => {
       subscription: { planKey: "GROWTH", basePriceSnapshot: 249, discount: 0 },
     });
     expect(await svc.priceTenant("t-deleted")).toBe(0);
+  });
+});
+
+// Feature grants v2 (brief B) — MRR-truth oracle: an override GRANT of any `kind` is a comp,
+// never a Stripe item, never counted in MRR (see mrr.service.ts's exclusion-invariant comment).
+// This wires MrrService and FeatureOverrideService against ONE shared mock prisma so the same
+// tenant's state is genuinely shared across both collaborators, not two independently-stubbed
+// fixtures that could drift apart.
+describe("MrrService — feature-override MRR exclusion oracle (brief B)", () => {
+  function makeShared() {
+    let addonRows: { tenantId: string; priceSnapshot: number; quantity: number }[] = [];
+    const overrideRows: any[] = [];
+    const prisma = {
+      tenantSubscription: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { tenantId: "t-starter", planKey: "STARTER", basePriceSnapshot: 59, discount: 0 },
+          ]),
+      },
+      tenantAddon: {
+        findMany: jest
+          .fn()
+          .mockImplementation(({ where }: any) =>
+            Promise.resolve(
+              where?.tenantId ? addonRows.filter((a) => a.tenantId === where.tenantId) : addonRows,
+            ),
+          ),
+      },
+      tenant: {
+        count: jest.fn().mockResolvedValue(0),
+        findUnique: jest.fn().mockImplementation(({ where }: any) =>
+          Promise.resolve(
+            where.id === "t-starter"
+              ? {
+                  status: "ACTIVE",
+                  class: "PRODUCTION",
+                  deletedAt: null,
+                  subscription: { planKey: "STARTER", basePriceSnapshot: 59, discount: 0 },
+                }
+              : null,
+          ),
+        ),
+      },
+      billingEvent: { aggregate: jest.fn().mockResolvedValue({ _sum: { amountDelta: 0 } }) },
+      tenantFeatureOverride: {
+        findMany: jest
+          .fn()
+          .mockImplementation(({ where }: any) =>
+            Promise.resolve(overrideRows.filter((r) => r.tenantId === where.tenantId)),
+          ),
+        create: jest.fn().mockImplementation(({ data }: any) => {
+          const created = { id: `ov-${overrideRows.length + 1}`, revokedAt: null, ...data };
+          overrideRows.push(created);
+          return Promise.resolve(created);
+        }),
+        update: jest.fn().mockImplementation(({ where, data }: any) => {
+          const target = overrideRows.find(
+            (r) => r.id === where.id && r.tenantId === where.tenantId,
+          );
+          Object.assign(target, data);
+          return Promise.resolve(target);
+        }),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+    } as any;
+    return {
+      mrr: new MrrService(prisma),
+      overrides: new FeatureOverrideService(prisma),
+      prisma,
+      purchaseAddon: (row: { tenantId: string; priceSnapshot: number; quantity: number }) =>
+        addonRows.push(row),
+    };
+  }
+
+  it("STARTER tenant at $S: a PILOT GRANT override never moves MRR; purchasing the real AddonSku does; revoking the override leaves the purchase untouched", async () => {
+    const { mrr, overrides, prisma, purchaseAddon } = makeShared();
+
+    await expect(mrr.priceTenant("t-starter")).resolves.toBe(59); // $S baseline
+
+    const grant = await overrides.create({
+      tenantId: "t-starter",
+      featureKey: "tobacco_dealer",
+      effect: "GRANT",
+      kind: "PILOT",
+      reason: "pilot: waive addon gate while evaluating",
+      expiresAt: null,
+      createdById: "admin1",
+    });
+    await expect(mrr.priceTenant("t-starter")).resolves.toBe(59); // unchanged — no TenantAddon row
+
+    purchaseAddon({ tenantId: "t-starter", priceSnapshot: 12, quantity: 2 }); // $A = 24
+    await expect(mrr.priceTenant("t-starter")).resolves.toBe(83); // $S + $A
+
+    await overrides.revoke("t-starter", grant.id);
+    await expect(mrr.priceTenant("t-starter")).resolves.toBe(83); // unchanged — purchase stands
+
+    // Not just "the number came out right" -- MrrService itself never once touched the
+    // overrides table across any of the four priceTenant() calls above. Only overrides.create()/
+    // revoke() did (and neither of those is findMany).
+    expect(prisma.tenantFeatureOverride.findMany).not.toHaveBeenCalled();
+  });
+
+  it("same invariant for a GRANDFATHER-kind override", async () => {
+    const { mrr, overrides } = makeShared();
+    await overrides.create({
+      tenantId: "t-starter",
+      featureKey: "recurring_routes",
+      effect: "GRANT",
+      kind: "GRANDFATHER",
+      reason: "grandfathered under the old pricing",
+      expiresAt: null,
+      createdById: null,
+    });
+    await expect(mrr.priceTenant("t-starter")).resolves.toBe(59);
+  });
+
+  it("computeOverview() never queries tenantFeatureOverride at all", async () => {
+    const { mrr, overrides, prisma } = makeShared();
+    await overrides.create({
+      tenantId: "t-starter",
+      featureKey: "tobacco_dealer",
+      effect: "GRANT",
+      kind: "COMP",
+      reason: "comp",
+      expiresAt: null,
+      createdById: null,
+    });
+    const o = await mrr.computeOverview();
+    expect(o.mrr).toBe(59); // unaffected by the override created above
+    expect(prisma.tenantFeatureOverride.findMany).not.toHaveBeenCalled();
   });
 });

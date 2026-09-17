@@ -145,6 +145,20 @@ describe("prod-migrate.mjs contract (R4)", () => {
       expect(res.stderr).toContain("DRIFT DETECTED");
       expect(res.stderr).toContain("post-deploy drift check FAILED");
       expect(res.stdout).not.toContain("✅ Migration applied.");
+      // A spawnSync timeout-kill (Node's own {timeout} option firing) also leaves res.status
+      // null, indistinguishable from a real wrong value by the bare toBe(2) below. Assert
+      // res.signal first so a timeout-kill fails here with a clear, distinguishable message
+      // instead of the misleading "Expected 2, Received null".
+      //
+      // FIX3 note: the brief also called for applying this same res.signal-then-status
+      // precondition to "RT3's new case" (REG-B418, a timeout-kill fixture spawned with the
+      // same {timeout: 30_000} shape as run()) and reporting which outcome resulted. RT3 never
+      // landed -- it was blocked upstream, during this same run, by an unrelated untracked-file
+      // guard failure in the test-author step (not a defect in this spec or in prod-migrate.mjs
+      // itself). No REG-B418 case exists in this file to apply the precondition to, so there is
+      // no second outcome to report -- this is the only assertion FIX3 has scope to change until
+      // RT3 is unblocked and lands.
+      expect(res.signal).toBeNull();
       expect(res.status).toBe(2);
     });
 

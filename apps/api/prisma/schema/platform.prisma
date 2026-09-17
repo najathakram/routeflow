@@ -75,6 +75,25 @@ model TenantSubscription {
   @@index([downgradeEffectiveAt])
 }
 
+// N3 (2026-09-16): idempotency log for billing-lifecycle emails to the tenant admin
+// (trial ending, downgrade scheduled/applied, upgrade confirmed, cancelled, suspended).
+// `key` is a milestone-specific disambiguator (e.g. the scheduled downgrade's effective
+// date) so a genuinely NEW occurrence of a repeatable milestone still sends, while a
+// retry/re-run of the SAME occurrence is blocked by the unique constraint below — the
+// create() call is the atomic claim (a caught unique-violation means "already sent").
+model BillingNotificationLog {
+  id        String   @id @default(uuid())
+  tenantId  String
+  milestone String
+  key       String   @default("")
+  sentAt    DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, milestone, key])
+  @@index([tenantId])
+}
+
 model TenantAddon {
   id            String   @id @default(uuid())
   tenantId      String
@@ -96,6 +115,104 @@ model TenantAddon {
   @@unique([tenantId, addonKey])
   @@index([tenantId])
   @@index([tenantId, sku])
+}
+
+enum FeatureOverrideEffect {
+  GRANT
+  DENY
+}
+
+/// Feature grants v2 (design 2026-09-17 §2 PR-3): why an override exists, for MRR-truth
+/// (only ADDON_SKU charges; every override kind here is a comp, never billed) and for the
+/// console's "why" popover. DEFAULT 'COMP' for #795's existing rows and any caller that
+/// doesn't set one explicitly.
+enum FeatureOverrideKind {
+  PILOT
+  SUPPORT
+  COMP
+  TRIAL
+  GRANDFATHER
+}
+
+/// Per-tenant, per-key entitlement override. When a non-revoked row exists for
+/// (tenantId, featureKey) it decides the gate outright — GRANT allows, DENY denies —
+/// regardless of plan/addon state or dark/enforced gate mode (FeatureOverrideService).
+/// featureKey must name a row in FEATURE_REGISTRY (feature-registry.ts), validated at
+/// write time. Partial unique index (raw SQL in the migration): one non-revoked row
+/// per (tenantId, featureKey) — revoking closes it and a new row may be created.
+model TenantFeatureOverride {
+  id          String                @id @default(uuid())
+  tenantId    String
+  featureKey  String
+  effect      FeatureOverrideEffect
+  kind        FeatureOverrideKind   @default(COMP)
+  reason      String
+  expiresAt   DateTime?
+  createdById String?
+  createdAt   DateTime              @default(now())
+  revokedAt   DateTime?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, featureKey])
+  @@index([featureKey])
+}
+
+/// Feature grants v2 §2 "Explain trace": OVERRIDE_DENY/OVERRIDE_GRANT/ADDON_SKU/PRESET take
+/// priority in that order over NONE; UNKNOWN is the resolver's own fail-open verdict on a DB
+/// error, never a real source. Mirrors packages/types/api/features.ts's FEATURE_SOURCE_VALUES.
+enum FeatureSource {
+  OVERRIDE_DENY
+  OVERRIDE_GRANT
+  ADDON_SKU
+  PRESET
+  NONE
+  UNKNOWN
+}
+
+/// Feature grants v2 §2 "Effective"/PR-0a: shadow-mode disagreement between the old
+/// enforcement path and FeatureResolverService, one row per (tenantId, featureKey, before,
+/// after) pair — a recurrence upserts count/lastSeenAt rather than inserting again. Explained
+/// rows unblock `PUT entitlements.mode=live`; an unexplained row keeps it refused.
+model FeatureResolverDiff {
+  id          String        @id @default(uuid())
+  tenantId    String
+  featureKey  String
+  before      Boolean
+  after       Boolean
+  source      FeatureSource
+  firstSeenAt DateTime      @default(now())
+  lastSeenAt  DateTime      @default(now())
+  count       Int           @default(1)
+  explainedAt DateTime?
+  explanation String?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, featureKey, before, after])
+  @@index([tenantId])
+  @@index([explainedAt])
+}
+
+/// Feature grants v2 §2 "Modes"/PR-4: per-tenant override of a `config`-bearing feature's mode
+/// (e.g. routes_dispatch: scheduled|adhoc|mixed). `mode` is a plain string, not a Prisma enum —
+/// different features have different mode vocabularies, validated against the registry at the
+/// application level, not DB-constrained. Absence means `mode.source: REGISTRY_DEFAULT`.
+model TenantFeatureConfig {
+  id          String   @id @default(uuid())
+  tenantId    String
+  featureKey  String
+  mode        String
+  settings    Json?
+  reason      String
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, featureKey])
+  @@index([tenantId])
 }
 
 // ─── Billing plan catalog (GLOBAL reference data — not tenant-scoped) ─────────
@@ -289,6 +406,11 @@ enum NotificationEvent {
   ORDER_CONFIRMED
   OUT_FOR_DELIVERY
   DELIVERED
+  // N1 (2026-09-16): buyer-facing order-status email/messaging events, added
+  // alongside the real EMAIL channel provider — CONFIRMED/OUT_FOR_DELIVERY/
+  // DELIVERED already existed; CANCELLED did not (only the older, separate
+  // push-notification path in orders.service.ts's `notifMap` covered it).
+  CANCELLED
   ORDER_CHANGED_AT_DOOR
   INVOICE_SENT // email/portal only; WA/SMS cells render disabled
   PAYMENT_REMINDER
@@ -782,6 +904,54 @@ model CrmHandoff {
 
   @@unique([tenantId, provider, opportunityId])
   @@index([tenantId, status, createdAt])
+}
+
+// ─── Connected mailbox (email-connect-google, PR-2/PR-3) ──────────────────────
+// A tenant-owned Google or Microsoft mailbox used to SEND tenant-branded mail
+// (Gmail API users.messages.send scope gmail.send / Graph me.sendMail scope
+// Mail.Send — never a read scope). One connection per tenant, either provider
+// (reconnect replaces it, including switching provider); the platform-level row
+// (ownerKey="platform", PR-5) is not built yet — this PR is tenant-only, mirrors
+// `CrmConnection`'s `tenantId @unique` shape rather than the design's ownerKey
+// scheme, since there is no second owner kind to disambiguate here yet.
+
+enum MailboxProvider {
+  GOOGLE
+  MICROSOFT
+}
+
+enum MailboxConnectionStatus {
+  CONNECTED
+  REVOKED
+  THROTTLED
+}
+
+model MailboxConnection {
+  id                   String                  @id @default(uuid())
+  tenantId             String                  @unique
+  provider             MailboxProvider         @default(GOOGLE)
+  accountEmail         String
+  /// Google `sub` (id-token subject) — identifies the connected Google account,
+  /// independent of `accountEmail` (which can theoretically change upstream).
+  externalSubject      String
+  scopesGranted        String[]
+  /// EncryptionService AES-256-GCM ciphertext (IV_HEX:TAG_HEX:CIPHERTEXT_B64).
+  /// Decrypted ONLY by MailboxSendService's single decrypt helper, at send/refresh
+  /// time — never logged, never serialized in a DTO/response.
+  refreshTokenCipher   String
+  accessTokenCipher    String?
+  accessTokenExpiresAt DateTime?
+  status               MailboxConnectionStatus @default(CONNECTED)
+  throttledUntil       DateTime?
+  lastError            String?
+  lastErrorAt          DateTime?
+  lastSentAt           DateTime?
+  connectedByUserId    String?
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
+  tenant               Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([status])
 }
 
 // ─── Marketing demo bookings (NOT tenant-scoped — prospects, not customers) ───

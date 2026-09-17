@@ -811,3 +811,13 @@ saving)` → `confirm(...)`). Specs: `__tests__/discard-guard.test.ts`,
   `lib/query-client.ts`, `app/(driver)/route/stop/[stopId]/payment.tsx` alongside — pre-existing
   files this lane's original (orphaned) patch touched; no NEW capability beyond what their own
   diffs already carry (see PR-2's own body once opened).
+- **`__tests__/invoice-credit-advance-pins.test.ts` (new, B421, 2026-09-16):** source-text pins
+  that `(operator)/(tabs)/invoices/[id].tsx` and `(customer)/invoices/[id].tsx` render
+  `creditApplied`/`advanceApplied` (from `lib/api/admin.ts`/`lib/api/buyer.ts`) as separate
+  line items in the balance breakdown, never folded into `paidAmount` — see
+  `app-shell-lib.md`'s B421 entry.
+- **`__tests__/plan-flags.test.ts` (new, Lite-L2 WP11, 2026-09-15):** pure-logic coverage for
+  `lib/plan-flags.ts` — `PLAN_GATED_SECTIONS` membership, `planLockedSection` segment parsing
+  (route-group skip, unknown/unresolved/failed/`undefined`-flags fail-open cases), and
+  `planFlagVisible`'s three-valued resolved/unresolved/failed rule; mirrors web's
+  `lib/plan-gated-nav.test.ts`. See `app-shell-lib.md`'s `lib/plan-flags.ts` entry.

@@ -30,13 +30,15 @@ describe("GoogleOAuthService — buyer auto-create passwordSet", () => {
       sign: jest.fn().mockReturnValue("tok"),
       decode: jest.fn().mockReturnValue({ exp: Math.floor(Date.now() / 1000) + 3600 }),
     } as unknown as JwtService;
-    return new GoogleOAuthService(
+    const emailService = { send: jest.fn().mockResolvedValue(undefined) };
+    const service = new GoogleOAuthService(
       prisma as any,
       jwt,
       config,
-      { send: jest.fn().mockResolvedValue(undefined) } as any, // email
+      emailService as any, // email
       { claimsFor: jest.fn().mockResolvedValue(null) } as any, // entitlements
     );
+    return { service, emailService };
   }
 
   const profile = {
@@ -56,7 +58,7 @@ describe("GoogleOAuthService — buyer auto-create passwordSet", () => {
     prisma.customerLink.count.mockResolvedValue(0);
     prisma.buyerRefreshToken.upsert.mockResolvedValue({} as any);
 
-    const service = buildService(prisma);
+    const { service } = buildService(prisma);
     const result: any = await service.findOrCreateUser(profile as any);
 
     expect(prisma.buyerAccount.create).toHaveBeenCalledWith({
@@ -97,7 +99,7 @@ describe("GoogleOAuthService — buyer auto-create passwordSet", () => {
     prisma.customerLink.count.mockResolvedValue(1);
     prisma.buyerRefreshToken.upsert.mockResolvedValue({} as any);
 
-    const service = buildService(prisma);
+    const { service, emailService } = buildService(prisma);
     const result: any = await service.findOrCreateUser(profile as any);
 
     // googleId gets linked, but passwordHash/passwordSet are untouched — and
@@ -108,6 +110,10 @@ describe("GoogleOAuthService — buyer auto-create passwordSet", () => {
       data: { googleId: "google-1" },
     });
     expect(result.buyer).toMatchObject({ hasPassword: true });
+    // B421 pinning: the first-link "Google Sign-In linked" notice is platform-sent.
+    expect(emailService.send).toHaveBeenCalledWith(
+      expect.objectContaining({ senderClass: "platform" }),
+    );
   });
 
   // ── Google attests the mailbox → satisfies the registration verification gate ──
@@ -140,7 +146,7 @@ describe("GoogleOAuthService — buyer auto-create passwordSet", () => {
     prisma.customerLink.count.mockResolvedValue(1);
     prisma.buyerRefreshToken.upsert.mockResolvedValue({} as any);
 
-    const service = buildService(prisma);
+    const { service } = buildService(prisma);
     await service.findOrCreateUser(profile as any);
 
     expect(prisma.buyerAccount.update).toHaveBeenCalledWith({
@@ -184,7 +190,7 @@ describe("GoogleOAuthService — buyer auto-create passwordSet", () => {
     prisma.customerLink.count.mockResolvedValue(1);
     prisma.buyerRefreshToken.upsert.mockResolvedValue({} as any);
 
-    const service = buildService(prisma);
+    const { service } = buildService(prisma);
     await service.findOrCreateUser(profile as any);
 
     expect(prisma.buyerAccount.update).toHaveBeenCalledWith({
@@ -215,7 +221,7 @@ describe("GoogleOAuthService — buyer auto-create passwordSet", () => {
     prisma.customerLink.count.mockResolvedValue(1);
     prisma.buyerRefreshToken.upsert.mockResolvedValue({} as any);
 
-    const service = buildService(prisma);
+    const { service } = buildService(prisma);
     await service.findOrCreateUser(profile as any);
 
     expect(prisma.buyerAccount.update).not.toHaveBeenCalled();
@@ -250,7 +256,7 @@ describe("GoogleOAuthService — buyer auto-create passwordSet", () => {
     prisma.buyerRefreshToken.upsert.mockResolvedValue({} as any);
 
     const victimProfile = { ...profile, email: "victim@corp.com" };
-    const service = buildService(prisma);
+    const { service } = buildService(prisma);
     await service.findOrCreateUser(victimProfile as any);
 
     expect(prisma.buyerAccount.update).toHaveBeenCalledWith({

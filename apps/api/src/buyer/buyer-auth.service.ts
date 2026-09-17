@@ -115,6 +115,8 @@ export class BuyerAuthService {
 <p><a href="${verifyUrl}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">Verify my email</a></p>
 <p>This link expires in <strong>24 hours</strong>.</p>
 <p><strong>Didn't create this account?</strong> Ignore this email and do not click the button — the account will simply stay unverified.</p>`,
+      // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
+      senderClass: "platform",
     });
   }
 
@@ -196,10 +198,9 @@ export class BuyerAuthService {
     });
 
     // F3-005: return a CONSTANT "Invalid credentials" for not-found, deleted,
-    // AND suspended accounts. A distinct "suspended" message was an enumeration
-    // oracle — it confirmed the email belongs to a real (suspended) account.
-    // Mirrors staff validateUser, which returns null for any non-ACTIVE status.
-    if (!account || account.deletedAt || account.status !== "ACTIVE") {
+    // suspended, AND wrong-password alike — never a distinct message, so none
+    // of these leaks account existence/status via the response BODY.
+    if (!account || account.deletedAt) {
       throw new UnauthorizedException("Invalid credentials");
     }
 
@@ -213,6 +214,19 @@ export class BuyerAuthService {
     const valid = await bcrypt.compare(dto.password, account.passwordHash);
     if (!valid) {
       await this.recordFailedLogin(account.id, account.failedLoginAttempts, account.lockedUntil);
+      throw new UnauthorizedException("Invalid credentials");
+    }
+
+    // Status is checked AFTER the password (B213-class fix, mirroring
+    // auth.service.ts validateUser): the message stays the SAME constant
+    // "Invalid credentials" either way (buyers have no email-verification
+    // login gate to explain), but checking status FIRST used to make a
+    // SUSPENDED account's response consistently fast (no bcrypt) while an
+    // ACTIVE account's wrong-password response was consistently slow (bcrypt
+    // runs) — a timing oracle for "is this email a suspended buyer account"
+    // that the message-level fix above never addressed. Only reachable with
+    // the CORRECT password, so nothing new leaks to a stranger guessing.
+    if (account.status !== "ACTIVE") {
       throw new UnauthorizedException("Invalid credentials");
     }
     if (account.failedLoginAttempts > 0 || account.lockedUntil) {
@@ -450,6 +464,8 @@ export class BuyerAuthService {
                <p><strong>Time:</strong> ${new Date().toUTCString()}</p>
                <p><strong>IP address:</strong> ${deviceInfo?.ipAddress ?? "unknown"}</p>
                <p>You can now sign in with your email and this password as well as with Google. If this wasn't you, reset your password immediately and contact support.</p>`,
+        // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
+        senderClass: "platform",
       })
       .catch(() => {});
 
@@ -493,6 +509,14 @@ export class BuyerAuthService {
     const urls = this.configService.get<AppConfig["urls"]>("urls")!;
     const resetUrl = `${urls.web}/buyer/reset-password?token=${rawToken}`;
 
+    // B212-class fix: a real delivery failure for a real buyer used to leave
+    // zero trace anywhere. Still fire-and-forget (NOT awaited): the response
+    // text is the SAME fixed, enumeration-safe message regardless of delivery
+    // outcome, and awaiting the send here would make a registered address
+    // cost an extra SMTP/Resend round-trip that an unknown address never pays
+    // for — a timing oracle on the one endpoint whose whole contract is
+    // enumeration safety (review finding on PR #778). The attempt is logged,
+    // just never blocks the response.
     this.emailService
       .send({
         to: account.email,
@@ -501,8 +525,23 @@ export class BuyerAuthService {
 <p>We received a request to reset the password for your RouteFlow portal account.</p>
 <p><a href="${resetUrl}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">Reset password</a></p>
 <p>This link expires in <strong>15 minutes</strong>. If you didn't request this, you can safely ignore this email — your password will not change.</p>`,
+        // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
+        senderClass: "platform",
       })
-      .catch(() => {});
+      .then((sendResult) => {
+        if (!sendResult.delivered) {
+          this.logger.error(
+            `Password reset email NOT delivered for buyer ${account.id} (${account.email}) — ` +
+              `transport=${sendResult.transport} ` +
+              `error=${sendResult.error ?? sendResult.smtpFallbackReason ?? "unknown"}.`,
+          );
+        }
+      })
+      .catch((err: Error) => {
+        this.logger.error(
+          `Failed to send password reset email for buyer ${account.id} (${account.email}): ${err.message}`,
+        );
+      });
 
     return MSG;
   }

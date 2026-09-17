@@ -11,7 +11,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
-import { roundMoney } from "@routeflow/pricing";
+import { roundMoney, sumConfirmed, remainingCapacity } from "@routeflow/pricing";
 import { InvoiceStatus, PaymentMethod } from "@prisma/client";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NumberingService } from "../import/numbering.service";
@@ -259,6 +259,115 @@ export class CreditNotesService {
     if (totalPaid > 0) return InvoiceStatus.PARTIAL;
     if (dueDate && new Date(dueDate) < new Date()) return InvoiceStatus.OVERDUE;
     return InvoiceStatus.SENT;
+  }
+
+  /**
+   * Returns Inside Order Creation — PR-1c (m-1): mints a STANDALONE (`invoiceId: null`)
+   * credit note INSIDE the caller's own already-open transaction — never opens one of its
+   * own. Built for `InlineReturnsService`'s issue step (design.md §6.5.3: unlocked pre-read
+   * → `reserveNext("CREDIT_NOTE")` standalone → `tx`: Return FOR UPDATE → guard →
+   * `mintStandaloneInTx` → guarded link → intent → settle; ONE commit), so the number is
+   * reserved by the CALLER before opening `tx` (same hoisting `create()` uses, and for the
+   * same reason — a SERIALIZABLE counter UPDATE aborts rather than queues) and handed in
+   * here already-reserved.
+   *
+   * Keeps `create()`'s two money-safety checks verbatim: the null-tenant refusal (a
+   * SUPER_ADMIN context must never mint a tenant-owned credit) and the tenant-scoped
+   * customer lookup (a foreign-tenant customerId 404s instead of minting against it). Skips
+   * `create()`'s invoice/line validation entirely — a standalone mint has no `invoiceId` — and
+   * its own serialization-retry wrapper, since the caller's transaction (already holding the
+   * Return row lock) is what serializes concurrent issues for this return, not this method.
+   * `gateway.emitCreditNoteCreated` is deliberately NOT fired here — the caller emits it
+   * itself, once, AFTER its own transaction commits (never inside — an emit from inside a
+   * transaction that later rolls back would light up the operator dashboard for a credit
+   * note that was never actually minted).
+   */
+  async mintStandaloneInTx(
+    tx: any,
+    dto: { customerId: string; amount: number; reason?: string; expiresAt?: Date | null },
+    creditNoteNumber: string,
+    tenantId: string | null,
+  ): Promise<any> {
+    // REG-B267 / cause-ruling.md §2 D2 parity: refused before any write, same as create().
+    if (!tenantId) throw new BadRequestException("A tenant context is required.");
+    if (!dto.amount || dto.amount <= 0)
+      throw new BadRequestException("Amount must be greater than 0");
+
+    const customer = await tx.customer.findFirst({
+      where: { id: dto.customerId },
+      select: { id: true, businessName: true },
+    });
+    if (!customer) throw new NotFoundException("Customer not found");
+
+    const row = await tx.creditNote.create({
+      data: {
+        creditNoteNumber,
+        customerId: dto.customerId,
+        invoiceId: null,
+        amount: roundMoney(dto.amount),
+        reason: dto.reason,
+        status: "ISSUED",
+        expiresAt: dto.expiresAt ?? null,
+      },
+    });
+    return { ...row, customer };
+  }
+
+  /**
+   * §6.3: an INLINE return's credit is "met" against its OWN carrying order once that
+   * order has no open balance left on its non-VOID invoices (every dollar owed was covered
+   * some other way — cash, an earlier credit — so this return's credit is no longer needed
+   * there), or the order is CANCELLED (nothing is owed on it at all any more). Read on
+   * whatever client the caller passes (a bare tx has no `forTenant()` — every query here is
+   * already orderId-scoped, so no cross-tenant leak is possible either way).
+   */
+  private async isOrderMetInTx(tx: any, orderId: string): Promise<boolean> {
+    const order = await tx.order.findFirst({ where: { id: orderId }, select: { status: true } });
+    if (!order) return true; // no such order — nothing left for the credit to wait on
+    if (order.status === "CANCELLED") return true;
+    const invoices = await tx.invoice.findMany({
+      where: { orderId, status: { not: "VOID" } },
+      include: { payments: true },
+    });
+    // Opus review (PR-1c BLOCK, MED-6): the pre-fix fallthrough (`return true` after a
+    // no-op loop) treated "not invoiced yet" as "met" — exactly the common case at order-
+    // entry time, when an inline return is captured before the carrying order has any
+    // invoice at all. That made the §6.3 exclusion a no-op for every fresh capture: the
+    // credit was immediately available to the general oldest-first sweep on some OTHER
+    // invoice, before its own carrying order ever got a chance to consume it. Not met until
+    // there is at least one non-VOID invoice AND every one of them is fully paid.
+    if (invoices.length === 0) return false;
+    // PR-2 review (payment-status-filter scan): this is a CONFIRMATION question —
+    // "is this invoice actually paid off" — so paid must be the CONFIRMED-basis
+    // sum (sumConfirmed), never a bare not-VOID filter. A DRAFT bank-import row
+    // or a PENDING post-dated check must not count: crediting this return's
+    // credit back to the general sweep before the money has actually cleared
+    // would let it get consumed on some OTHER invoice while this order still
+    // owes on paper.
+    for (const inv of invoices) {
+      const paid = roundMoney(sumConfirmed(inv.payments));
+      if (roundMoney(Number(inv.total) - paid) > 0.001) return false;
+    }
+    return true; // every non-VOID invoice is fully paid (CONFIRMED basis)
+  }
+
+  /**
+   * §6.3: true when `creditNoteId` is the ONE standalone credit note an INLINE return
+   * minted for ITS OWN carrying order `orderId` — the "system-owned intent" design.md §2.1
+   * describes, as opposed to an ordinary staff-selected wallet credit. Both
+   * `autoApplyOldestCreditsInTx` (exclude while unmet) and `syncOrderCreditSelections`
+   * (never drop/re-amount) key off this same join — no new column, no migration.
+   */
+  private async isSystemOwnedInlineCreditInTx(
+    tx: any,
+    orderId: string,
+    creditNoteId: string,
+  ): Promise<boolean> {
+    const ret = await tx.return.findFirst({
+      where: { orderId, creditNoteId, kind: "INLINE" },
+      select: { id: true },
+    });
+    return !!ret;
   }
 
   async create(dto: {
@@ -569,12 +678,11 @@ export class CreditNotesService {
     const remaining = roundMoney(Number(cn.amount) - Number(cn.amountUsed));
     // P5-12: a bounced check flips its InvoicePayment to VOID — must NOT count as
     // paid, so the credit can correctly cover the re-opened balance.
-    const alreadyPaid = roundMoney(
-      (inv.payments ?? [])
-        .filter((p) => p.status !== "VOID")
-        .reduce((s, p) => s + Number(p.amount), 0),
-    );
-    const invoiceBalance = roundMoney(Number(inv.total) - alreadyPaid);
+    // PR-2 (check-payments B1 hardening, N4): shared remainingCapacity() replaces
+    // the hand-rolled `status !== "VOID"` filter — same DRAFT+PAID(+PENDING once
+    // it exists) basis, zero behavior change today (N4: capacity must keep
+    // counting DRAFT, never narrow to isHeldPayment/HELD_STATUSES here).
+    const invoiceBalance = remainingCapacity(Number(inv.total), inv.payments);
     const applyAmount = roundMoney(
       Math.min(remaining, invoiceBalance, requestedAmount ?? Infinity),
     );
@@ -601,7 +709,12 @@ export class CreditNotesService {
       },
     });
 
-    const newPaid = roundMoney(alreadyPaid + applyAmount);
+    // PR-2 review (routeflow-Lead, 2026-09-16): the status recompute must stay
+    // CONFIRMED-basis (sumConfirmed), never `total - invoiceBalance` — that capacity
+    // figure is DRAFT-inclusive (remainingCapacity), so a 40-dollar credit applied
+    // on top of a 60-dollar DRAFT sibling was flipping a $100 invoice straight to
+    // PAID off unconfirmed money. Matches restoreCreditFromPaymentInTx's own basis.
+    const newPaid = roundMoney(sumConfirmed(inv.payments) + applyAmount);
     const newStatus = this.recomputeStatus(newPaid, Number(inv.total), inv.dueDate, inv.status);
     await tx.invoice.update({
       where: { id: inv.id },
@@ -654,12 +767,9 @@ export class CreditNotesService {
       include: { payments: true },
     });
     if (!first) return nothing;
-    const paid = roundMoney(
-      (first.payments ?? [])
-        .filter((p: any) => p.status !== "VOID")
-        .reduce((s: number, p: any) => s + Number(p.amount), 0),
-    );
-    let running = roundMoney(Number(first.total) - paid);
+    // PR-2 (check-payments B1 hardening, N4): shared remainingCapacity() — see
+    // applyCreditInTx's identical note above.
+    let running = remainingCapacity(Number(first.total), first.payments);
     if (!(running > 0.001)) return nothing;
 
     const now = new Date();
@@ -672,9 +782,23 @@ export class CreditNotesService {
       },
       orderBy: { createdAt: "asc" },
     });
-    const open = (candidates ?? []).filter(
+    const openWithBalance = (candidates ?? []).filter(
       (c: any) => roundMoney(Number(c.amount) - Number(c.amountUsed)) > 0.001,
     );
+    // §6.3: an INLINE return's own credit note is reserved for ITS OWN carrying order
+    // until that order is "met" — skip it here so this general oldest-first sweep (any
+    // invoice for this customer) never sweeps it onto an UNRELATED invoice first. Once its
+    // carrying order is met, the remainder is ordinary wallet credit and this filter passes
+    // it through like any other note. A non-inline (ordinary) credit is never filtered.
+    const open: any[] = [];
+    for (const cn of openWithBalance) {
+      const ret = await tx.return.findFirst({
+        where: { creditNoteId: cn.id, kind: "INLINE" },
+        select: { orderId: true },
+      });
+      if (ret && !(await this.isOrderMetInTx(tx, ret.orderId))) continue;
+      open.push(cn);
+    }
     if (open.length === 0) return nothing;
 
     let totalApplied = 0;
@@ -739,6 +863,56 @@ export class CreditNotesService {
       },
       { isolationLevel: "Serializable" },
     );
+  }
+
+  /**
+   * Returns Inside Order Creation — PR-1c (m-5): cancels ONE standalone credit note an
+   * inline return minted, inside the CALLER's own transaction (`InlineReturnsService.
+   * cancel()`, which already holds the Return + carrying-Order locks) — never opens one of
+   * its own. Scoped to exactly this `creditNoteId`: unlike `releaseOrderCreditsInTx` (which
+   * sweeps EVERY credit note applied to an order), this never touches a different credit
+   * note that happens to sit on the same order/invoice (a manual credit, or a sibling
+   * inline return's own CN).
+   *
+   * Pulls back every non-VOID `CREDIT_NOTE` payment this note made (mirrors `voidCreditNote`'s
+   * "un-apply first" rule, but un-applies here instead of refusing), then voids it and undoes
+   * its regulated-ledger reversal. Throws `RETURN_CREDIT_CONSUMED` if `amountUsed` is still
+   * non-zero after restoring everything a payment row could account for — money consumed
+   * through some path this couldn't find and restore, which must block the cancel rather than
+   * silently void a note that's still "used" on paper (m-5's "restore < amountUsed" case).
+   */
+  async cancelStandaloneInTx(tx: any, creditNoteId: string): Promise<{ restored: number }> {
+    // scan-ok: draft-payment-not-void — a CREDIT_NOTE-method InvoicePayment is an
+    // internal ledger write this service itself creates atomically as CONFIRMED;
+    // it is never written as DRAFT/PENDING like an imported bank row or a
+    // post-dated check, so not-VOID is the correct (and only reachable) filter here.
+    const payments = await tx.invoicePayment.findMany({
+      where: { creditNoteId, method: PaymentMethod.CREDIT_NOTE, status: { not: "VOID" } },
+      orderBy: { createdAt: "desc" },
+    });
+    let restored = 0;
+    for (const p of payments) {
+      restored = roundMoney(restored + (await this.restoreCreditFromPaymentInTx(tx, p)));
+    }
+
+    const cn = await tx.creditNote.findFirst({
+      where: { id: creditNoteId },
+      select: { status: true, amountUsed: true },
+    });
+    if (!cn) return { restored };
+    if (cn.status === "VOID") return { restored };
+    if (Number(cn.amountUsed) > 0.001) {
+      throw new BadRequestException("RETURN_CREDIT_CONSUMED");
+    }
+
+    const flipped = await tx.creditNote.updateMany({
+      where: { id: creditNoteId, status: { not: "VOID" } },
+      data: { status: "VOID" },
+    });
+    if (flipped.count > 0) {
+      await this.ledger.unreverseCreditNoteEntries({ creditNoteId, db: tx });
+    }
+    return { restored };
   }
 
   async voidCreditNote(id: string) {
@@ -833,11 +1007,10 @@ export class CreditNotesService {
       include: { payments: true },
     });
     if (inv) {
-      const paid = roundMoney(
-        (inv.payments ?? [])
-          .filter((p: any) => p.status !== "VOID")
-          .reduce((s: number, p: any) => s + Number(p.amount), 0),
-      );
+      // PR-2 (check-payments B1 hardening): invoice STATUS must reflect only genuinely
+      // confirmed money, never a DRAFT (or, once PENDING exists, an un-cleared check) —
+      // sumConfirmed replaces the not-void filter (F03 discipline; design.md §3.4).
+      const paid = sumConfirmed(inv.payments);
       const newStatus = this.recomputeStatus(paid, Number(inv.total), inv.dueDate, inv.status);
       await tx.invoice.update({
         where: { id: inv.id },
@@ -895,11 +1068,9 @@ export class CreditNotesService {
       include: { payments: true },
     });
     if (inv) {
-      const paid = roundMoney(
-        (inv.payments ?? [])
-          .filter((p: any) => p.status !== "VOID")
-          .reduce((s: number, p: any) => s + Number(p.amount), 0),
-      );
+      // PR-2 (check-payments B1 hardening): same sumConfirmed basis as
+      // restoreCreditFromPaymentInTx above.
+      const paid = sumConfirmed(inv.payments);
       const newStatus = this.recomputeStatus(paid, Number(inv.total), inv.dueDate, inv.status);
       await tx.invoice.update({
         where: { id: inv.id },
@@ -968,6 +1139,8 @@ export class CreditNotesService {
       where: {
         creditNoteId,
         method: PaymentMethod.CREDIT_NOTE,
+        // scan-ok: draft-payment-not-void — method-scoped to CREDIT_NOTE; a CHECK/PENDING
+        // row can never match, so PR-2's PENDING concern doesn't apply here.
         status: { not: "VOID" },
         invoice: { orderId },
       },
@@ -1024,6 +1197,8 @@ export class CreditNotesService {
     const payments = await tx.invoicePayment.findMany({
       where: {
         method: PaymentMethod.CREDIT_NOTE,
+        // scan-ok: draft-payment-not-void — method-scoped to CREDIT_NOTE (see
+        // pullBackOrderCreditPair above).
         status: { not: "VOID" },
         invoice: invoiceWhere,
       },
@@ -1066,6 +1241,8 @@ export class CreditNotesService {
     const payments = await db.invoicePayment.findMany({
       where: {
         method: PaymentMethod.CREDIT_NOTE,
+        // scan-ok: draft-payment-not-void — method-scoped to CREDIT_NOTE (see
+        // pullBackOrderCreditPair above).
         status: { not: "VOID" },
         invoice: { orderId },
       },
@@ -1105,6 +1282,13 @@ export class CreditNotesService {
     const selectionById = new Map(selections.map((s) => [s.creditNoteId, s]));
 
     for (const row of existing) {
+      // design.md §2.1/§6.3: an INLINE return's own intent on its OWN carrying order is
+      // "system-owned" — InlineReturnsService.capture()/issueCredit() wrote it directly,
+      // never through a staff `selections` list, and it must never be dropped or
+      // re-amounted just because THIS sync call's list doesn't happen to name it (a staff
+      // member syncing this same order's OTHER, ordinary wallet-credit selections must not
+      // silently unwind the return's own credit).
+      if (await this.isSystemOwnedInlineCreditInTx(tx, orderId, row.creditNoteId)) continue;
       const sel = selectionById.get(row.creditNoteId);
       if (!sel) {
         // Dropped selection — pull back this pair's money then delete the row.
@@ -1171,6 +1355,14 @@ export class CreditNotesService {
 
     // (a) shrink
     for (const inv of invoices) {
+      // PR-2 review (routeflow-Lead, 2026-09-16): reverted the earlier sumConfirmed
+      // conversion here — with sumConfirmed, a DRAFT payment stacked on top of a PAID
+      // one (e.g. 40 PAID + 60 DRAFT on a total shrunk to 70) reports excess = 40-70
+      // (negative), so the shrink never refunds the real $30 over-collection sitting in
+      // the not-void total, leaving it stuck. Master's not-void basis restored; see the
+      // REG-B1-shrink test below for exactly this scenario.
+      // scan-ok: draft-payment-not-void — a candidate-selection list, never summed into a
+      // paid/status figure directly; the method-scoped filters below already exclude CHECK.
       const nonVoid = (inv.payments ?? []).filter((p: any) => p.status !== "VOID");
       const paid = roundMoney(nonVoid.reduce((s: number, p: any) => s + Number(p.amount), 0));
       let excess = roundMoney(paid - Number(inv.total));
@@ -1228,6 +1420,9 @@ export class CreditNotesService {
       const cn0 = intent.creditNote;
       if (!cn0 || cn0.status === "VOID") continue;
       if (cn0.expiresAt && new Date(cn0.expiresAt) <= now) continue;
+      // scan-ok: draft-payment-not-void — `creditNoteId` is only ever set on a
+      // CREDIT_NOTE-method payment (applyCreditInTx), so a CHECK/PENDING row can
+      // never match this filter regardless of its status.
       const appliedForPair = roundMoney(
         invoices
           .flatMap((inv: any) => inv.payments ?? [])
@@ -1265,6 +1460,8 @@ export class CreditNotesService {
   async unapplyFromInvoice(creditNoteId: string, invoiceId: string) {
     return this.prisma.tenantTransaction(
       async (tx: any) => {
+        // scan-ok: draft-payment-not-void — method-scoped to CREDIT_NOTE (see
+        // pullBackOrderCreditPair above).
         const payments = await tx.invoicePayment.findMany({
           where: {
             creditNoteId,

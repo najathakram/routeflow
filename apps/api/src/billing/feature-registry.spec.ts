@@ -102,6 +102,24 @@ const EXPECTED_LEGACY_REGISTRY = {
       "SKU exists, the pilot tenant holds it, and the blast-radius report is clean",
     reviewBy: "2027-03-11",
   },
+  "email.connected_mailbox": {
+    state: "dark",
+    added: "2026-09-17",
+    routes: [
+      "GET /settings/email/mailbox",
+      "GET /settings/email/mailbox/google/start",
+      "GET /settings/email/mailbox/microsoft/start",
+      "POST /settings/email/mailbox/confirm",
+      "DELETE /settings/email/mailbox",
+    ],
+    grantPath:
+      'Platform Admin → Tenants → [tenant] → add-ons (AddonService.enableAddon writes addonKey "email.connected_mailbox")',
+    backfill:
+      "New feature 2026-09-17: no tenant has a connection; gate stays dark through the pilot " +
+      "(owner review window for Google gmail.send verification — see local-assets/handoff/" +
+      "2026-09-17/email-connect/design.md §5).",
+    reviewBy: "2027-03-17",
+  },
   developer_mode: {
     state: "enforced",
     added: "2026-08-21",
@@ -117,6 +135,17 @@ const EXPECTED_LEGACY_REGISTRY = {
     grantPath:
       "Platform Admin internal switch (never named in tenant-facing text — see INTERNAL_ADDON_KEYS).",
     backfill: "Internal flag; no change.",
+  },
+  orders_inline_returns: {
+    state: "enforced",
+    added: "2026-09-16",
+    routes: [
+      "POST /returns/inline/quote",
+      "POST /orders/:id/inline-returns (PR-1d)",
+      "POST /returns/inline/:id/* (PR-1c/1d)",
+    ],
+    grantPath: 'Platform Admin → Tenants → [tenant] → add-ons (addonKey "orders_inline_returns")',
+    backfill: "New feature 2026-09-16; zero existing users; nothing to backfill.",
   },
 };
 
@@ -310,9 +339,37 @@ describe("FEATURE_REGISTRY (feature grants PR-1)", () => {
     expect(registryDarkPlanFlagKeys).toEqual(guardKeys);
   });
 
+  it("PREPIN_DARK_FLAGS (P0 2026-09-17) parity: every prepinned key is a real RequirePlanFlag registry key", () => {
+    // PREPIN_DARK_FLAGS is a SEPARATE literal from DARK_PLAN_FLAGS in the same file (unconditional
+    // courtesy allow until #777's flags are re-pinned into the v11 catalog) — same
+    // read-the-source-text approach as the DARK_PLAN_FLAGS parity check above, so a typo'd or
+    // renamed key fails loudly instead of silently no-op'ing the prepin.
+    const policyText = fs.readFileSync(
+      path.join(SRC_ROOT, "billing", "plan-flag-policy.ts"),
+      "utf8",
+    );
+    const setMatch = policyText.match(
+      /PREPIN_DARK_FLAGS(?::[^=]+)?\s*=\s*new Set\(\[([\s\S]*?)\]\)/,
+    );
+    expect(setMatch).not.toBeNull();
+    const prepinKeys = [...(setMatch?.[1].matchAll(/"([^"]+)"/g) ?? [])].map((m) => m[1]);
+    expect(prepinKeys.length).toBeGreaterThan(0);
+
+    const requirePlanFlagKeys = new Set(
+      FEATURE_REGISTRY.filter((f) => f.gate.via === "RequirePlanFlag").map((f) => f.key),
+    );
+    for (const key of prepinKeys) {
+      expect(requirePlanFlagKeys.has(key)).toBe(true);
+    }
+  });
+
   it("key convention: non-dotted keys are lower_snake_case, <= 50 chars", () => {
     const bad = FEATURE_REGISTRY.filter(
-      (f) => !f.key.startsWith("flag.") && !f.key.startsWith("addon."),
+      // "email." (email-connect-google, 2026-09-17): a RequireAddon key, not RequirePlanFlag —
+      // dotted on purpose per the owner's literal task spec ("email.connected_mailbox"), so it
+      // joins "flag."/"addon." in the allowed dotted-namespace exclusion here.
+      (f) =>
+        !f.key.startsWith("flag.") && !f.key.startsWith("addon.") && !f.key.startsWith("email."),
     )
       .filter((f) => !/^[a-z][a-z0-9_]*$/.test(f.key) || f.key.length > 50)
       .map((f) => f.key);
@@ -367,8 +424,17 @@ describe("FEATURE_REGISTRY (feature grants PR-1)", () => {
     expect(badRefs).toEqual([]);
   });
 
-  it("orders_inline_returns is deliberately excluded (no call site yet)", () => {
-    expect(byKey.has("orders_inline_returns")).toBe(false);
+  it("orders_inline_returns registers enforced from day one (owner-answers.md Q-A) with its first call site (PR-1b)", () => {
+    const row = byKey.get("orders_inline_returns");
+    expect(row).toBeDefined();
+    expect(row?.gate.via).toBe("RequireAddon");
+    expect(row?.gate.state).toBe("enforced");
+    // Q-A is an owner exception to "new gates ship dark" specifically because zero
+    // tenants use the surface yet — an enforced row with no reviewBy deadline (that
+    // field only applies to dark rows awaiting a flip) is the correct shape here,
+    // never a silent omission.
+    expect(row?.gate.reviewBy).toBeUndefined();
+    expect(row?.gate.routes).toContain("POST /returns/inline/quote");
   });
 });
 

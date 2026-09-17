@@ -200,6 +200,13 @@ function ProfitLossBody({ from, to }: { from: string; to: string }) {
           <TableRow key={cat} label={cat} value={fmtCurrency(amt)} />
         ))}
         <TableRow label="Operating Expenses" value={fmtCurrency(d?.operatingExpenses)} bold />
+        {!!d?.badDebtExpense && (
+          <TableRow
+            label="Bad Debt Expense (written-off invoices)"
+            value={fmtCurrency(d.badDebtExpense)}
+            bold
+          />
+        )}
         <TableRow label="Net Profit" value={fmtCurrency(d?.netProfit)} bold />
       </View>
     </Body>

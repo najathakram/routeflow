@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
 import * as bcrypt from "bcrypt";
@@ -59,6 +60,8 @@ const RESERVED_USERNAMES = new Set([
 
 @Injectable()
 export class TenantsService {
+  private readonly logger = new Logger(TenantsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly encryption: EncryptionService,
@@ -140,7 +143,16 @@ export class TenantsService {
       return { tenant, user };
     });
 
-    // Generate a 24-hour email verification JWT and send it
+    // Generate a 24-hour email verification JWT and send it. Registration itself
+    // must never fail over a mail-transport problem (the tenant+user rows are
+    // already committed above), but a failed send used to be swallowed here with
+    // NO trace anywhere: not logged, not reported to the caller, not visible to
+    // the frontend — the account sat INACTIVE forever and the owner had no way
+    // to tell a real delivery failure apart from "user hasn't checked their inbox
+    // yet". emailSent now flows back to the controller response so the web
+    // check-email page can warn instead of lying, and every failure is logged
+    // with the reason `EmailService.send()` already computed.
+    let emailSent = false;
     try {
       const webUrl = this.config.get<string>("WEB_URL") ?? "http://localhost:3001";
       const jwtSecret = this.config.get<string>("jwt.secret")!;
@@ -152,7 +164,7 @@ export class TenantsService {
 
       const verifyUrl = `${webUrl}/verify-email?token=${verifyToken}`;
 
-      await this.email.send({
+      const sendResult = await this.email.send({
         to: result.user.email,
         subject: "Verify your email to activate RouteFlow",
         html: `<p>Hi ${result.user.username},</p>
@@ -163,9 +175,28 @@ export class TenantsService {
 <p>Or paste this link into your browser:<br/><a href="${verifyUrl}">${verifyUrl}</a></p>
 <p><em>This link expires in 24 hours. If you didn't sign up, you can safely ignore this email.</em></p>
 <p>The RouteFlow Team</p>`,
+        // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
+        senderClass: "platform",
       });
-    } catch {
-      /* best-effort — don't fail signup over email */
+      emailSent = sendResult.delivered;
+      if (!sendResult.delivered) {
+        this.logger.error(
+          `Verification email NOT delivered for new tenant "${result.tenant.slug}" ` +
+            `(user ${result.user.id}, ${result.user.email}) — transport=${sendResult.transport} ` +
+            `error=${sendResult.error ?? sendResult.smtpFallbackReason ?? "unknown"}. ` +
+            `Account is INACTIVE until verified; the self-service resend-verification endpoint ` +
+            `will hit the same failure until the underlying mail config is fixed.`,
+        );
+      }
+    } catch (err: any) {
+      // EmailService.send() is documented to never throw for a delivery/config
+      // problem — reaching here means something upstream of it broke (bad JWT
+      // config, etc). Log it just as loudly; a swallowed exception here is
+      // exactly how this class of outage went unnoticed before.
+      this.logger.error(
+        `Failed to send verification email for new tenant "${result.tenant.slug}" ` +
+          `(user ${result.user.id}, ${result.user.email}): ${err?.message ?? err}`,
+      );
     }
 
     return {
@@ -180,18 +211,42 @@ export class TenantsService {
         username: result.user.username,
         email: result.user.email,
       },
+      emailSent,
     };
   }
 
-  /** Resend a verification email to an INACTIVE user (best-effort, always 200) */
-  async resendVerification(email: string): Promise<void> {
+  /**
+   * Resend a verification email to an INACTIVE user. The HTTP response stays a
+   * fixed, enumeration-safe message regardless of outcome (never reveals whether
+   * the address is registered), but the ATTEMPT is no longer silent: a real
+   * delivery failure for a real account is logged here so it's diagnosable
+   * server-side instead of only ever manifesting as "user says they never got
+   * the email". Returns whether a send was attempted and delivered, for callers
+   * that want to log/test — never expose this boolean to the client.
+   *
+   * KNOWN PRE-EXISTING LIMITATION (flagged in review of PR #778, not introduced
+   * or fixed by this PR): the `status: "INACTIVE"` filter below targets ANY
+   * INACTIVE user, not only a self-signup admin genuinely pending
+   * verification — the same status is written by UsersService.changeStatus
+   * (admin deactivation) and BillingCronService's seat-cap enforcement.
+   * Combined with verifyEmailAndLogin (auth.service.ts), this endpoint can
+   * mint a fresh 24h verify link — and thus a path back to ACTIVE — for a
+   * deliberately deactivated staff member, since the account's own inbox is
+   * always reachable by its own former holder. `UserStatus`
+   * (prisma/schema/tenancy.prisma) has no column distinguishing "never
+   * verified" from "deliberately deactivated," so this cannot be closed
+   * safely without a schema discriminator (e.g. a nullable `emailVerifiedAt`
+   * column or a distinct `PENDING_VERIFICATION` status) — proposed as a
+   * follow-up bug, not attempted here.
+   */
+  async resendVerification(email: string): Promise<boolean> {
     const user = await this.prisma.user.findFirst({
       where: { email: email.toLowerCase().trim(), status: "INACTIVE", deletedAt: null },
       include: { tenant: { select: { id: true, name: true, slug: true } } },
     });
 
     // Silent return to prevent email enumeration
-    if (!user || !user.tenant) return;
+    if (!user || !user.tenant) return false;
 
     try {
       const webUrl = this.config.get<string>("WEB_URL") ?? "http://localhost:3001";
@@ -204,7 +259,7 @@ export class TenantsService {
 
       const verifyUrl = `${webUrl}/verify-email?token=${verifyToken}`;
 
-      await this.email.send({
+      const sendResult = await this.email.send({
         to: user.email,
         subject: "Verify your email to activate RouteFlow",
         html: `<p>Hi ${user.username},</p>
@@ -214,9 +269,23 @@ export class TenantsService {
 </p>
 <p><em>This link expires in 24 hours.</em></p>
 <p>The RouteFlow Team</p>`,
+        // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
+        senderClass: "platform",
       });
-    } catch {
-      /* best-effort */
+      if (!sendResult.delivered) {
+        this.logger.error(
+          `Resend-verification email NOT delivered for tenant "${user.tenant.slug}" ` +
+            `(user ${user.id}, ${user.email}) — transport=${sendResult.transport} ` +
+            `error=${sendResult.error ?? sendResult.smtpFallbackReason ?? "unknown"}.`,
+        );
+      }
+      return sendResult.delivered;
+    } catch (err: any) {
+      this.logger.error(
+        `Failed to resend verification email for tenant "${user.tenant.slug}" ` +
+          `(user ${user.id}, ${user.email}): ${err?.message ?? err}`,
+      );
+      return false;
     }
   }
 

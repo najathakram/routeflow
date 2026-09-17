@@ -155,7 +155,7 @@ test.describe("T2 — mobile (375) chrome + interactions (R2 R7 R8 R14)", () => 
     await expect(sheet.getByRole("link"), "mobile sheet link count").toHaveCount(9);
     await expect(sheet.getByRole("link", { name: /book a demo/i })).toHaveAttribute(
       "href",
-      "/contact",
+      "/book-a-demo",
     );
 
     await page.keyboard.press("Escape");

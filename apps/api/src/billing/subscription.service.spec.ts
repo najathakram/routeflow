@@ -152,6 +152,75 @@ describe("SubscriptionService.getSubscription", () => {
     expect(s.addons).toEqual([{ sku: "SEAT_EXTRA", name: "Extra seat", quantity: 2, monthly: 24 }]);
   });
 
+  // Feature-grants PR-1 (owner ruling 2026-09-16, Opus review fix 1): this IS the web's actual
+  // flag-gating read path (usePlanFlag → useSubscription().flags) — an active override must be
+  // absolute here too, or a GRANT is invisible (nav stays hidden) and a DENY dead-ends (nav
+  // shown, every call 403s).
+  describe("feature-grants PR-1: override merge", () => {
+    function baseFixtures(planKey: string, planFlags: string[]) {
+      const catalog = {
+        getVersionForTenant: jest.fn().mockResolvedValue({ definitions: DEFS, addonSkus: [] }),
+      } as any;
+      const entitlements = {
+        resolve: jest.fn().mockResolvedValue({
+          planKey,
+          planName: planKey,
+          status: "ACTIVE",
+          planVersionId: "v7",
+          trialEndsAt: null,
+          flags: planFlags,
+        }),
+      } as any;
+      const prisma = {
+        tenantSubscription: { findUnique: jest.fn().mockResolvedValue(null) },
+        tenantAddon: { findMany: jest.fn().mockResolvedValue([]) },
+      } as any;
+      const meters = {} as any;
+      return { catalog, entitlements, prisma, meters };
+    }
+
+    it("a GRANT override on a LITE tenant surfaces a flag the plan doesn't grant", async () => {
+      const { catalog, entitlements, prisma, meters } = baseFixtures("LITE", []);
+      const featureOverrides = {
+        allActive: jest.fn().mockResolvedValue(new Map([["flag.msrp", "GRANT"]])),
+      } as any;
+      const svc = new SubscriptionService(prisma, catalog, entitlements, meters, featureOverrides);
+
+      const s = await svc.getSubscription("t1");
+      expect(s.flags).toContain("flag.msrp");
+    });
+
+    it("a DENY override on a GROWTH tenant removes a flag the plan grants", async () => {
+      const { catalog, entitlements, prisma, meters } = baseFixtures("GROWTH", ["flag.msrp"]);
+      const featureOverrides = {
+        allActive: jest.fn().mockResolvedValue(new Map([["flag.msrp", "DENY"]])),
+      } as any;
+      const svc = new SubscriptionService(prisma, catalog, entitlements, meters, featureOverrides);
+
+      const s = await svc.getSubscription("t1");
+      expect(s.flags).not.toContain("flag.msrp");
+    });
+
+    it("an addon-keyed override is never merged into flags (gateVia filter)", async () => {
+      const { catalog, entitlements, prisma, meters } = baseFixtures("GROWTH", []);
+      const featureOverrides = {
+        allActive: jest.fn().mockResolvedValue(new Map([["tobacco_dealer", "GRANT"]])),
+      } as any;
+      const svc = new SubscriptionService(prisma, catalog, entitlements, meters, featureOverrides);
+
+      const s = await svc.getSubscription("t1");
+      expect(s.flags).not.toContain("tobacco_dealer");
+    });
+
+    it("no featureOverrides collaborator (the 4-arg form) behaves exactly as before", async () => {
+      const { catalog, entitlements, prisma, meters } = baseFixtures("GROWTH", ["flag.msrp"]);
+      const svc = new SubscriptionService(prisma, catalog, entitlements, meters);
+
+      const s = await svc.getSubscription("t1");
+      expect(s.flags).toContain("flag.msrp");
+    });
+  });
+
   // RO-1: settings-billing + a future dashboard-wide banner both need to know WHY a tenant
   // is read-only (trial_expired vs. subscription_cancelled vs. trial_cancelled) — today the
   // view exposes only the raw `status` enum, never the reason sub-field.
@@ -233,6 +302,60 @@ describe("SubscriptionService.getSubscription", () => {
       expect(s.flags.filter((f: string) => f === "flag.reports")).toHaveLength(1);
     });
 
+    describe("P0 2026-09-17: PREPIN_DARK_FLAGS surfaced in the client-visible flags list", () => {
+      const originalEnforcement = process.env.PLAN_FLAG_ENFORCEMENT;
+      afterEach(() => {
+        if (originalEnforcement === undefined) delete process.env.PLAN_FLAG_ENFORCEMENT;
+        else process.env.PLAN_FLAG_ENFORCEMENT = originalEnforcement;
+      });
+
+      it("a SCALE tenant on the v11 catalog (no prepin flags held) sees all five in flags with enforcement ON", async () => {
+        process.env.PLAN_FLAG_ENFORCEMENT = "on";
+        const entitlements = {
+          resolve: jest.fn().mockResolvedValue({
+            planKey: "SCALE",
+            planName: "Scale",
+            status: "ACTIVE",
+            planVersionId: "v11",
+            trialEndsAt: null,
+            flags: [],
+          }),
+        } as any;
+        const svc = new SubscriptionService(prisma, catalog, entitlements, meters);
+
+        const s = await svc.getSubscription("t1");
+
+        for (const flagKey of [
+          "flag.estimates",
+          "flag.recurring_invoices",
+          "flag.credit_notes",
+          "flag.suppliers",
+          "flag.messaging",
+        ]) {
+          expect(s.flags).toContain(flagKey);
+        }
+      });
+
+      it("a LITE tenant does NOT see the five unless actually held, even with enforcement ON (no courtesy allow for always-enforced plans)", async () => {
+        process.env.PLAN_FLAG_ENFORCEMENT = "on";
+        const entitlements = {
+          resolve: jest.fn().mockResolvedValue({
+            planKey: "LITE",
+            planName: "Lite",
+            status: "ACTIVE",
+            planVersionId: "v11",
+            trialEndsAt: null,
+            flags: [],
+          }),
+        } as any;
+        const svc = new SubscriptionService(prisma, catalog, entitlements, meters);
+
+        const s = await svc.getSubscription("t1");
+
+        expect(s.flags).not.toContain("flag.estimates");
+      });
+    });
+
     it("still resolves flags when the entitlements mock omits `flags` entirely (defensive fallback)", async () => {
       const entitlements = {
         resolve: jest.fn().mockResolvedValue({
@@ -284,6 +407,49 @@ describe("SubscriptionService.getSubscription", () => {
       const s = await svc.getSubscription("t1");
 
       expect(s.paymentRequired).toBe(false);
+    });
+
+    // B449 fix-round finding 7 (Opus re-review, ruled a false alarm): the client
+    // (RouteGuard/PlanGateBoundary/usePlanFlag) reads `subscription.flags` and does a
+    // bare `.includes(key)` with no dark-flag-policy awareness of its own. This pins
+    // WHY that's already correct and needs no client-side `allowsFlag` mirror: the
+    // dark-flag courtesy allow (plan-flag-policy.ts) is baked into `flags` HERE, once,
+    // server-side — not left for each consumer to re-derive.
+    it("bakes the dark-flag courtesy allow into flags for a non-always-enforced plan, but not for LITE (why the client needs no allowsFlag mirror)", async () => {
+      // v11's GROWTH definition (plan-catalog-v11.definitions.ts) does not grant
+      // flag.estimates — it's a Lite-L2 flag with no catalog row on v11 at all — yet
+      // flag.estimates IS in DARK_PLAN_FLAGS and GROWTH is not in
+      // ALWAYS_ENFORCED_PLAN_KEYS, so the courtesy allow must still grant it.
+      const growthEntitlements = {
+        resolve: jest.fn().mockResolvedValue({
+          planKey: "GROWTH",
+          planName: "Growth",
+          status: "ACTIVE",
+          planVersionId: "v11",
+          trialEndsAt: null,
+          flags: ["flag.reports"],
+        }),
+      } as any;
+      const growthSvc = new SubscriptionService(prisma, catalog, growthEntitlements, meters);
+      const growthView = await growthSvc.getSubscription("t1");
+      expect(growthView.flags).toContain("flag.estimates");
+
+      // LITE is the one entry in ALWAYS_ENFORCED_PLAN_KEYS — it gets NO courtesy allow,
+      // so an ungranted dark flag stays ungranted (this is the enforcement Lite-L2 exists
+      // to ship; the courtesy allow above must never leak onto it).
+      const liteEntitlements = {
+        resolve: jest.fn().mockResolvedValue({
+          planKey: "LITE",
+          planName: "Lite",
+          status: "ACTIVE",
+          planVersionId: "v12",
+          trialEndsAt: null,
+          flags: [],
+        }),
+      } as any;
+      const liteSvc = new SubscriptionService(prisma, catalog, liteEntitlements, meters);
+      const liteView = await liteSvc.getSubscription("t1");
+      expect(liteView.flags).not.toContain("flag.estimates");
     });
 
     it("paymentRequired is false for a non-invite-only plan regardless of status", async () => {
