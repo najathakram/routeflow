@@ -402,6 +402,7 @@ export class PlatformAdminController {
       tenantId: id,
       featureKey: dto.featureKey,
       effect: dto.effect,
+      kind: dto.kind,
       reason: dto.reason,
       expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
       createdById: admin.sub,
@@ -409,6 +410,9 @@ export class PlatformAdminController {
     await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.FEATURE_OVERRIDE_SET, {
       featureKey: dto.featureKey,
       effect: dto.effect,
+      // result.kind (not dto.kind): the row's actual persisted value, so an omitted `kind`
+      // still audits the true default (COMP) rather than `undefined`.
+      kind: result.kind,
       reason: dto.reason,
       expiresAt: dto.expiresAt ?? null,
     });
