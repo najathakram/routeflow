@@ -4762,6 +4762,213 @@ describe("OrdersService", () => {
       );
     });
 
+    // ─── B466: SPECIAL-tier lock on substitution ───────────────────────────
+    // The substitute branch above never checked tier at all — a bare unitPrice
+    // was compared only against the substitute's LIST price, so typing this
+    // customer's correct SPECIAL price on a substitution was silently stored
+    // as DISCOUNTED (B466). Same guard shape as B465's ADD/UPDATE branches,
+    // reusing isSpecialTier() — but the baseline is the substitute's own tier
+    // price, not list.
+
+    it("(b466-1) revert-probe: a substitute price equal to the SPECIAL tier price needs no reason and stores SPECIAL, not DISCOUNTED", async () => {
+      // Pre-fix, this branch compared only to list (10): unitPrice 8 !== 10 was
+      // treated as a genuine override, storing priceType DISCOUNTED/originalPrice
+      // 10 for a price that is in fact this customer's own correct contract
+      // price. Fails red on the pre-fix tree (priceType comes back "DISCOUNTED").
+      prisma.order.findUnique.mockResolvedValue(orderWithItems);
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 }); // operatorTierCtx read
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findUniqueOrThrow.mockResolvedValue({
+        id: "prod-tob",
+        name: "Tiered Sub",
+        pricePerUnit: 10,
+        priceTier3: 8,
+        unitsPerBox: null,
+        trackedCategoryId: null,
+        trackedSubcategoryId: null,
+      });
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 16, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [{ id: "li-A", substituteProductId: "prod-tob", qty: 2, unitPrice: 8 }],
+          replaceAll: false,
+        },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            productId: "prod-tob",
+            unitPrice: 8,
+            subtotal: 16,
+            priceType: "SPECIAL",
+            originalPrice: 10,
+            overrideReason: null,
+            overriddenBy: null,
+          }),
+        }),
+      );
+    });
+
+    it("(b466-2) revert-probe: a substitute price differing from the SPECIAL tier price with no reason is REFUSED (400), product-named", async () => {
+      // Pre-fix, this branch had no tier awareness or reason gate at all — a
+      // bare 5 against list 10 silently stored priceType DISCOUNTED with no
+      // record anyone even tried to reprice a special line. Fails red pre-fix
+      // (the call resolves 200 instead of rejecting).
+      prisma.order.findUnique.mockResolvedValue(orderWithItems);
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findUniqueOrThrow.mockResolvedValue({
+        id: "prod-tob",
+        name: "Tiered Sub",
+        pricePerUnit: 10,
+        priceTier3: 8,
+        unitsPerBox: null,
+        trackedCategoryId: null,
+        trackedSubcategoryId: null,
+      });
+
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          {
+            items: [{ id: "li-A", substituteProductId: "prod-tob", qty: 2, unitPrice: 5 }],
+            replaceAll: false,
+          },
+          operatorPayload,
+        ),
+      ).rejects.toThrow(/Tiered Sub/);
+
+      expect(prisma.orderItem.update).not.toHaveBeenCalled();
+    });
+
+    it("(b466-3) a documented override (price + reason) on a SPECIAL substitute is honored — stores DISCOUNTED with the reason recorded", async () => {
+      prisma.order.findUnique.mockResolvedValue(orderWithItems);
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findUniqueOrThrow.mockResolvedValue({
+        id: "prod-tob",
+        name: "Tiered Sub",
+        pricePerUnit: 10,
+        priceTier3: 8,
+        unitsPerBox: null,
+        trackedCategoryId: null,
+        trackedSubcategoryId: null,
+      });
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 10, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [
+            {
+              id: "li-A",
+              substituteProductId: "prod-tob",
+              qty: 2,
+              unitPrice: 5,
+              overrideReason: "matched approval",
+            },
+          ],
+          replaceAll: false,
+        },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            unitPrice: 5,
+            subtotal: 10,
+            priceType: "DISCOUNTED",
+            originalPrice: 10,
+            overrideReason: "matched approval",
+            overriddenBy: "user-op",
+          }),
+        }),
+      );
+    });
+
+    it("(b466-4) revert-probe: a substitute to a SPECIAL-tier product with no unitPrice at all bills the tier price, SPECIAL", async () => {
+      // Pre-fix `let unitPrice = listPrice` unconditionally — a substitution
+      // with no price at all always billed list (10/STANDARD/null) regardless
+      // of tier. Fails red pre-fix (unitPrice/priceType/originalPrice all wrong).
+      prisma.order.findUnique.mockResolvedValue(orderWithItems);
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findUniqueOrThrow.mockResolvedValue({
+        id: "prod-tob",
+        name: "Tiered Sub",
+        pricePerUnit: 10,
+        priceTier3: 8,
+        unitsPerBox: null,
+        trackedCategoryId: null,
+        trackedSubcategoryId: null,
+      });
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 16, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-A", substituteProductId: "prod-tob", qty: 2 }], replaceAll: false },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            unitPrice: 8,
+            subtotal: 16,
+            priceType: "SPECIAL",
+            originalPrice: 10,
+            overrideReason: null,
+            overriddenBy: null,
+          }),
+        }),
+      );
+    });
+
+    it("(b466-5) revert-probe: a per-product CustomerPrice row on the SUBSTITUTE product wins over the customer's default tier", async () => {
+      // Pre-fix, operatorProductIds never collected substituteProductId at all
+      // (li-A's OWN pre-substitution product is "prod-A", not "prod-tob"), so
+      // operatorCpMap.get("prod-tob") was always undefined and this fell back
+      // to the customer's DEFAULT tier (1/STANDARD here) — no reason demanded,
+      // no throw. Fails red pre-fix (resolves 200 instead of rejecting).
+      prisma.order.findUnique.mockResolvedValue(orderWithItems);
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 1 }); // customer DEFAULT is STANDARD
+      prisma.customerPrice.findMany.mockResolvedValue([{ productId: "prod-tob", pricingTier: 3 }]);
+      prisma.product.findUniqueOrThrow.mockResolvedValue({
+        id: "prod-tob",
+        name: "Tiered Sub",
+        pricePerUnit: 10,
+        priceTier3: 8,
+        unitsPerBox: null,
+        trackedCategoryId: null,
+        trackedSubcategoryId: null,
+      });
+
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          {
+            items: [{ id: "li-A", substituteProductId: "prod-tob", qty: 2, unitPrice: 10 }],
+            replaceAll: false,
+          },
+          operatorPayload,
+        ),
+      ).rejects.toThrow(/Tiered Sub/);
+
+      expect(prisma.orderItem.update).not.toHaveBeenCalled();
+      expect(prisma.customerPrice.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            productId: expect.objectContaining({ in: expect.arrayContaining(["prod-tob"]) }),
+          }),
+        }),
+      );
+    });
+
     it("a driver's substitution attempt bills at the substitute's list price — override never reaches this line", async () => {
       // A DRIVER never reaches the staff-only substituteProductId branch above —
       // role routes to the always-replace buyer/driver path (top of this
