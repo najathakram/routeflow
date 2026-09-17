@@ -717,5 +717,17 @@ export default defineConfig({
         ...devices["Desktop Chrome"],
       },
     },
+
+    // Feature grants v2 PR-2 (2026-09-17) — the data-driven Feature Console. Same reasoning as
+    // "feature-overrides" above: every endpoint mocked, auth faked client-side, so no "setup"
+    // dependency and no storageState needed. Runs mocked now (brief B/C's real services aren't
+    // wired yet); becomes a real-backend regression pass once they land.
+    {
+      name: "feature-console",
+      testMatch: /49-feature-console\.spec\.ts/,
+      use: {
+        ...devices["Desktop Chrome"],
+      },
+    },
   ],
 });
