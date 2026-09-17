@@ -755,6 +755,42 @@
   color: var(--g-ink);
 }
 
+/* .split-panel — net-new layout (no marketing.css equivalent), used by
+   product's wholesale-details+photo section. Matches the design study's own
+   .split-panel: text + photo side by side in one glass card. */
+.glass-page .split-panel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 40px;
+  align-items: center;
+  padding: 40px;
+  background: var(--g-glass);
+  border: 1px solid var(--g-glass-border);
+  border-radius: var(--g-r-lg);
+  box-shadow: var(--g-shadow-glass);
+}
+
+.glass-page .split-panel h2 {
+  color: var(--g-ink);
+}
+
+.glass-page .split-panel p {
+  color: var(--g-body);
+}
+
+.glass-page .split-panel-photo {
+  border-radius: var(--g-r-sm);
+  overflow: hidden;
+  margin: 0;
+}
+
+.glass-page .split-panel-photo img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--g-r-sm);
+}
+
 .glass-page .split-hero p {
   color: var(--g-body);
 }
@@ -1466,7 +1502,8 @@
     grid-template-columns: repeat(2, 1fr);
   }
   .glass-page .tour-panel,
-  .glass-page .retailer-detail-section {
+  .glass-page .retailer-detail-section,
+  .glass-page .split-panel {
     grid-template-columns: 1fr;
   }
 }
