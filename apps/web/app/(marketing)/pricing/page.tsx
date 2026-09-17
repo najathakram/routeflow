@@ -56,7 +56,7 @@ const PLANS = [
 
 export default function PricingPage() {
   return (
-    <>
+    <div className="glass-page">
       <section className="page-hero centered wrap">
         <Eyebrow>ROUTEFLOW PRICING</Eyebrow>
         <h1>
@@ -134,6 +134,6 @@ export default function PricingPage() {
         </div>
       </section>
       <CTA />
-    </>
+    </div>
   );
 }
