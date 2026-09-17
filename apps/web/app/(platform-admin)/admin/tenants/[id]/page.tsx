@@ -1248,7 +1248,332 @@ function AddonsTab({ tenant }: { tenant: TenantDetail }) {
           </div>
         </>
       )}
+
+      <FeatureOverridesSection tenant={tenant} />
     </>
+  );
+}
+
+// ─── Feature Overrides (within the Addons & Features tab) ─────────────────────
+
+interface FeatureOverrideRow {
+  id: string;
+  tenantId: string;
+  featureKey: string;
+  effect: "GRANT" | "DENY";
+  reason: string;
+  expiresAt: string | null;
+  createdById: string | null;
+  createdAt: string;
+  revokedAt: string | null;
+}
+
+interface FeatureRegistryOption {
+  key: string;
+  label: string;
+  area: string;
+  kind: string;
+  internal: boolean;
+  via: string;
+}
+
+const OVERRIDE_EXPIRY_PRESETS = [
+  { value: "none", label: "No expiry (standing)" },
+  { value: "30", label: "30 days" },
+  { value: "90", label: "90 days" },
+] as const;
+
+function FeatureOverridesSection({ tenant }: { tenant: TenantDetail }) {
+  const [overrides, setOverrides] = React.useState<FeatureOverrideRow[]>([]);
+  const [registry, setRegistry] = React.useState<FeatureRegistryOption[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+  const [showForm, setShowForm] = React.useState(false);
+  const [form, setForm] = React.useState({
+    featureKey: "",
+    effect: "GRANT" as "GRANT" | "DENY",
+    reason: "",
+    expiryPreset: "none" as "none" | "30" | "90",
+  });
+  const [submitting, setSubmitting] = React.useState(false);
+  const [formError, setFormError] = React.useState<string | null>(null);
+  const [revokingId, setRevokingId] = React.useState<string | null>(null);
+
+  const fetchOverrides = React.useCallback(() => {
+    setLoading(true);
+    setError(null);
+    superAdminClient
+      .get(`/platform-admin/tenants/${tenant.id}/feature-overrides`)
+      .then((res) => setOverrides(res.data))
+      .catch(() => setError("Failed to load feature overrides."))
+      .finally(() => setLoading(false));
+  }, [tenant.id]);
+
+  React.useEffect(() => {
+    fetchOverrides();
+    superAdminClient
+      .get("/platform-admin/features/registry")
+      .then((res) => setRegistry(res.data))
+      .catch(() => setRegistry([]));
+  }, [fetchOverrides]);
+
+  function openForm() {
+    setForm({
+      featureKey: registry[0]?.key ?? "",
+      effect: "GRANT",
+      reason: "",
+      expiryPreset: "none",
+    });
+    setFormError(null);
+    setShowForm(true);
+  }
+
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault();
+    setSubmitting(true);
+    setFormError(null);
+    try {
+      const expiresAt =
+        form.expiryPreset === "none"
+          ? null
+          : new Date(Date.now() + Number(form.expiryPreset) * 24 * 60 * 60 * 1000).toISOString();
+      await superAdminClient.post(`/platform-admin/tenants/${tenant.id}/feature-overrides`, {
+        featureKey: form.featureKey,
+        effect: form.effect,
+        reason: form.reason,
+        expiresAt,
+      });
+      setShowForm(false);
+      fetchOverrides();
+    } catch (e: unknown) {
+      // Opus review of 8130b204, item 7c: a class-validator 400 (e.g. EXPIRES_AT_MUST_BE_FUTURE,
+      // or a DTO field failing multiple rules) sends `message` as string[], not string — join it
+      // into one readable line rather than rendering an array where text is expected.
+      const err = e as { response?: { data?: { message?: string | string[] } } };
+      const message = err?.response?.data?.message;
+      setFormError(
+        Array.isArray(message)
+          ? message.join("; ")
+          : (message ?? "Could not create that override. Try again."),
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleRevoke(id: string) {
+    setRevokingId(id);
+    try {
+      await superAdminClient.post(
+        `/platform-admin/tenants/${tenant.id}/feature-overrides/${id}/revoke`,
+      );
+      fetchOverrides();
+    } catch {
+      setError("Could not revoke that override. Try again.");
+    } finally {
+      setRevokingId(null);
+    }
+  }
+
+  const activeOverrides = overrides.filter((o) => !o.revokedAt);
+  const selectedRegistryEntry = registry.find((r) => r.key === form.featureKey);
+
+  return (
+    <div className="mt-6">
+      <div className="mb-3 flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-slate-300">Overrides</h3>
+        <button
+          onClick={openForm}
+          className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
+        >
+          + New Override
+        </button>
+      </div>
+
+      {error && (
+        <div className="mb-3 rounded-lg bg-red-900/30 px-4 py-3 text-sm text-red-300 ring-1 ring-red-600/30">
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="py-8 text-center text-slate-500">Loading overrides...</div>
+      ) : (
+        <div className="rounded-xl bg-slate-800 ring-1 ring-white/5 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
+                  <th className="px-4 py-3 text-left">Feature Key</th>
+                  <th className="px-4 py-3 text-left">Effect</th>
+                  <th className="px-4 py-3 text-left">Reason</th>
+                  <th className="px-4 py-3 text-left">Expires</th>
+                  <th className="px-4 py-3 text-left">Status</th>
+                  <th className="px-4 py-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-700/50">
+                {activeOverrides.map((o) => {
+                  const expired = o.expiresAt
+                    ? new Date(o.expiresAt).getTime() <= Date.now()
+                    : false;
+                  return (
+                    <tr key={o.id} className="hover:bg-slate-700/20">
+                      <td className="px-4 py-2 font-mono text-slate-300">{o.featureKey}</td>
+                      <td className="px-4 py-2">
+                        <span
+                          className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                            o.effect === "GRANT"
+                              ? "bg-emerald-500/20 text-emerald-300"
+                              : "bg-red-500/20 text-red-300"
+                          }`}
+                        >
+                          {o.effect}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 text-slate-400" title={o.reason}>
+                        {o.reason}
+                      </td>
+                      <td className="px-4 py-2 text-slate-500">
+                        {o.expiresAt ? new Date(o.expiresAt).toLocaleDateString() : "Standing"}
+                      </td>
+                      <td className="px-4 py-2">
+                        {expired ? (
+                          <span className="text-amber-400">Expired</span>
+                        ) : (
+                          <span className="text-emerald-400">Active</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        <button
+                          disabled={revokingId === o.id}
+                          onClick={() => handleRevoke(o.id)}
+                          className="rounded px-2 py-1 text-slate-400 hover:bg-slate-700 hover:text-white disabled:opacity-50"
+                        >
+                          {revokingId === o.id ? "Revoking..." : "Revoke"}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {activeOverrides.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-10 text-center text-slate-500">
+                      No active overrides.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <AdminModal
+        open={showForm}
+        onClose={() => setShowForm(false)}
+        title="New Feature Override"
+        footer={
+          <>
+            <button
+              onClick={() => setShowForm(false)}
+              className="rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-slate-700"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              form="feature-override-form"
+              disabled={submitting || !form.featureKey || !form.reason}
+              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+            >
+              {submitting ? "Creating..." : "Create Override"}
+            </button>
+          </>
+        }
+      >
+        <form id="feature-override-form" onSubmit={handleCreate} className="flex flex-col gap-4">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Feature Key</label>
+            <select
+              aria-label="Feature Key"
+              value={form.featureKey}
+              onChange={(e) => setForm((f) => ({ ...f, featureKey: e.target.value }))}
+              className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
+            >
+              <option value="" disabled>
+                Select a feature key…
+              </option>
+              {registry.map((r) => (
+                <option key={r.key} value={r.key}>
+                  {r.label} ({r.key}){r.internal ? " — internal" : ""}
+                </option>
+              ))}
+            </select>
+            {selectedRegistryEntry?.via === "none" && (
+              <p className="mt-1 text-xs text-amber-400">
+                This key has no wired gate (catalog metadata only) — an override here will have no
+                effect.
+              </p>
+            )}
+            {form.featureKey === "flag.credit_limits" && (
+              <p className="mt-1 text-xs text-amber-400">
+                Polarity trap: holding this flag TURNS ON the customer credit-limit check. GRANT
+                enforces the limit; DENY disables it (removes a financial safety check), not the
+                other way around.
+              </p>
+            )}
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Effect</label>
+            <select
+              aria-label="Effect"
+              value={form.effect}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, effect: e.target.value as "GRANT" | "DENY" }))
+              }
+              className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
+            >
+              <option value="GRANT">Grant</option>
+              <option value="DENY">Deny</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Reason</label>
+            <textarea
+              aria-label="Reason"
+              value={form.reason}
+              onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))}
+              rows={3}
+              className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
+              placeholder="Why does this override exist?"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Expires</label>
+            <select
+              aria-label="Expires"
+              value={form.expiryPreset}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, expiryPreset: e.target.value as "none" | "30" | "90" }))
+              }
+              className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
+            >
+              {OVERRIDE_EXPIRY_PRESETS.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {formError && <p className="text-xs text-red-400">{formError}</p>}
+        </form>
+      </AdminModal>
+    </div>
   );
 }
 

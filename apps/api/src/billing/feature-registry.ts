@@ -1046,3 +1046,22 @@ export const ADDON_GATE_REGISTRY: Readonly<Record<string, AddonGateEntry>> = Obj
 export function addonGateState(key: string): AddonGateState {
   return ADDON_GATE_REGISTRY[key]?.state ?? "enforced";
 }
+
+const REGISTERED_FEATURE_KEYS = new Set(FEATURE_REGISTRY.map((f) => f.key));
+const GATE_VIA_BY_KEY = new Map(FEATURE_REGISTRY.map((f) => [f.key, f.gate.via]));
+
+/** True when `key` names a row in FEATURE_REGISTRY (any gate kind) — feature-grant overrides
+ * may target any registered key, not only RequireAddon/RequirePlanFlag ones. */
+export function isRegisteredFeatureKey(key: string): boolean {
+  return REGISTERED_FEATURE_KEYS.has(key);
+}
+
+/**
+ * `key`'s gate.via, or undefined when unregistered. Feature-grants PR-1: a key's override
+ * only belongs in a given "list of held X" response when its gate.via matches that list's
+ * kind — an addon-keyed override belongs in an addons array, a plan-flag-keyed override in a
+ * flags array; mixing them in would surface a key a consumer never checks.
+ */
+export function gateVia(key: string): FeatureGateVia | undefined {
+  return GATE_VIA_BY_KEY.get(key);
+}

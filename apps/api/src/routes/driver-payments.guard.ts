@@ -1,5 +1,6 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from "@nestjs/common";
 import { AddonService } from "../billing/addon.service";
+import { FeatureOverrideService } from "../billing/feature-override.service";
 
 // Literal, matching tobacco.controller's "tobacco_dealer" style — the API
 // deliberately never imports @routeflow/types at runtime (pinned by
@@ -25,7 +26,10 @@ const DRIVER_PAYMENTS_ADDON = "driver_payments";
  */
 @Injectable()
 export class DriverPaymentsGuard implements CanActivate {
-  constructor(private readonly addonService: AddonService) {}
+  constructor(
+    private readonly addonService: AddonService,
+    private readonly featureOverrides: FeatureOverrideService,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<{
@@ -38,6 +42,18 @@ export class DriverPaymentsGuard implements CanActivate {
 
     const tenantId = request.user?.tenantId ?? null;
     if (tenantId == null) return true;
+
+    // An active override is absolute (owner ruling, feature-grants PR-1), same as every other
+    // gate driver_payments's registry row implies it has — this guard was the one consumer
+    // that bypassed FeatureOverrideService entirely (Opus review of 8130b204, item 2): an
+    // override on this key showed "Active" in the admin panel while every payment still 403'd.
+    const override = await this.featureOverrides.get(tenantId, DRIVER_PAYMENTS_ADDON);
+    if (override === "GRANT") return true;
+    if (override === "DENY") {
+      throw new ForbiddenException(
+        "At-door payment collection is not enabled for this workspace. Complete the stop on account instead — the office records the payment.",
+      );
+    }
 
     if (await this.addonService.hasAddon(tenantId, DRIVER_PAYMENTS_ADDON)) return true;
     throw new ForbiddenException(
