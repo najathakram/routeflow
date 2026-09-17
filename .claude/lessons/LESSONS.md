@@ -182,28 +182,6 @@
 - **Guard:** none yet — propose `-p routeflow` in `local:up`/`local:down`/`local:reset`, or a
   top-level `name: routeflow`.
 
-### L-139 · 2026-09-14 · tooling · B420 GIT_* env leak into self-test throwaway repos
-
-- **Symptom:** a pre-push hook's `validate-code-map.stamp.self-test.mjs` renamed a live worktree's
-  branch twice and stacked fixture commits on real work, mid-session (rf-mobile-lanes incident).
-- **Root cause:** git sets `GIT_DIR`/`GIT_WORK_TREE` (+8 siblings) in a hook's environment; this
-  self-test's `spawnSync("git", …)` calls inherited them unscrubbed, so its "isolated" scratch
-  repo's `init`/`add`/`commit`/`branch -M` silently resolved against the REAL repo instead of
-  `cwd`. Identical root cause to L-082's sibling incident (`bugs.mjs self-test`, 2026-09-04, fixed
-  in that one file) — that lesson was never written down ("no headroom"), so a second, newer
-  self-test script repeated the exact anti-pattern ten days later.
-- **Lesson:** **Any script driving a THROWAWAY git repo as a fixture must scrub all ten `GIT_*`
-  vars (`GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE`/`GIT_COMMON_DIR`/`GIT_OBJECT_DIRECTORY`/
-  `GIT_ALTERNATE_OBJECT_DIRECTORIES`/`GIT_QUARANTINE_PATH`/`GIT_PREFIX`/`GIT_NAMESPACE`/
-  `GIT_CEILING_DIRECTORIES`) from every child process — it WILL run inside a hook eventually, and
-  git always exports them there. Scrubbing alone is not proof: assert the result too — after
-  `git init`, resolve `--show-toplevel` and confirm it lands inside the scratch dir before doing
-  anything that could mutate a real repo.**
-- **Guard:** the post-init toplevel check (throws on mismatch) + `REG-B420` (a second "victim"
-  repo's branches/HEAD/config asserted byte-unchanged after a polluted-env fixture op) in
-  `scripts/validate-code-map.stamp.self-test.mjs`. Sibling [[L-082]] — no shared guard between the
-  two files, so a third such script would still need its own.
-
 ### L-149 · 2026-09-15 · tooling · #743 fix-round T8 lesson-id staleness
 
 - **Symptom:** an engine task's brief hardcoded specific lesson ids (L-140/L-141) and a `nextId`
@@ -279,6 +257,22 @@ floor", ...)`), not after the generic thing being tested — restored in `next-v
 - **Guard:** none — judgment. Grep `isWeb`/`Platform.OS` in any file a fix touches.
 
 ## domain
+
+### L-187 · 2026-09-17 · domain · demo-booking slot TOCTOU (check-then-insert race)
+
+- **Symptom:** two concurrent bookings for the same slot could both pass an application-level
+  "is this slot free" check before either had written its row, so both inserted — a genuine
+  double-booking the app-level guard was supposed to prevent.
+- **Root cause:** the availability check and the insert were two separate statements with no
+  atomicity between them — a classic check-then-act race. An application-level check can only
+  ever narrow the window, never close it; the two statements can always interleave under load.
+- **Lesson:** **A slot/resource booking that must never double-allocate needs the DB to enforce
+  it, not application code — a partial unique index (`WHERE status != 'CANCELLED'`, so a
+  cancelled booking never blocks a fresh one for the same slot) makes the second concurrent
+  insert fail atomically at the constraint, instead of racing an app-level read.**
+- **Guard:** the `demo_booking_race_guard` migration's partial unique index; a concurrent-insert
+  regression test proves the second request gets a real constraint violation, not a silent
+  double-book.
 
 ### L-185 · 2026-09-17 · domain · B440 (report `total` repurposed, footer stopped matching its own column)
 
@@ -449,22 +443,6 @@ floor", ...)`), not after the generic thing being tested — restored in `next-v
   files that are each individually right.**
 - **Guard:** REG-B305 round 4 + the source pin `short-pick-category-tax.pins.test.ts` (the
   composition lives in a screen unit tests cannot import).
-
-### L-123 · 2026-09-14 · process · W1 seam rows
-
-- **Symptom:** an independent pre-merge review found two live defects in code three in-lane
-  rounds had passed — a cancel that never reached the payment provider, and a resume that
-  cleared the one flag a new guard reads.
-- **Root cause:** each round fixed what it was handed. Round 1 added an idempotence
-  short-circuit; a later round added a provider call BELOW it; a third gave that call a
-  three-condition gate and left the local write on one. Every diff was correct read alone.
-- **Lesson:** **When a function is edited by more than one review round, the seam between the
-  rounds is where the defect lives: a guard added early can end up ahead of a call added late,
-  and a gate tightened on one branch can leave its sibling ungated. Touching a function an
-  earlier round changed means re-reading it whole — an in-lane reviewer holding one diff cannot
-  see this, which is what the independent pre-merge pass is for.**
-- **Guard:** the W1 rows (`STRIPE-CANCEL-2`, `STRIPE-RESUME-1`) plus the rewritten spec that
-  asserted the defect. Sibling [[L-119]].
 
 ### L-124 · 2026-09-13 · domain · cron sweep silently dropped null-tenant orders
 
@@ -755,6 +733,20 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   assumed, on any enum-value addition.
 
 ## security
+
+### L-188 · 2026-09-17 · security · demo-booking OAuth/booking tokens in URL query strings
+
+- **Symptom:** an OAuth/booking token traveled as a URL query parameter — the exact shape that
+  ends up in server access logs, browser history, the `Referer` header of any outbound link on
+  the same page, and third-party analytics scripts that record the full URL.
+- **Root cause:** a query string is the easiest place to carry a value across a redirect, but
+  it is also the least private transport HTTP offers — nothing about the URL is treated as
+  secret by any layer between the browser and the server.
+- **Lesson:** **Never carry an OAuth token, booking token, or any other bearer-shaped secret in
+  a URL query string — use a fragment (`#`, never sent to the server or logged server-side) for
+  a client-side handoff, or a POST body for a server-side one.**
+- **Guard:** none yet — propose a lint/review checklist item flagging `token`/`code`/`secret`-
+  named query params on any new route.
 
 ### L-178 · 2026-09-16 · security · demo-booking PR-2 (raw error message leak)
 
