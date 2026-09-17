@@ -906,6 +906,52 @@ model CrmHandoff {
   @@index([tenantId, status, createdAt])
 }
 
+// ─── Connected mailbox (email-connect-google, PR-2/PR-3) ──────────────────────
+// A tenant-owned Google mailbox used to SEND tenant-branded mail (Gmail API
+// users.messages.send, scope gmail.send ONLY — never a read scope). One
+// connection per tenant (reconnect replaces it); the platform-level row
+// (ownerKey="platform", PR-5) is not built yet — this PR is tenant-only, mirrors
+// `CrmConnection`'s `tenantId @unique` shape rather than the design's ownerKey
+// scheme, since there is no second owner kind to disambiguate here yet.
+
+enum MailboxProvider {
+  GOOGLE
+}
+
+enum MailboxConnectionStatus {
+  CONNECTED
+  REVOKED
+  THROTTLED
+}
+
+model MailboxConnection {
+  id                   String                  @id @default(uuid())
+  tenantId             String                  @unique
+  provider             MailboxProvider         @default(GOOGLE)
+  accountEmail         String
+  /// Google `sub` (id-token subject) — identifies the connected Google account,
+  /// independent of `accountEmail` (which can theoretically change upstream).
+  externalSubject      String
+  scopesGranted        String[]
+  /// EncryptionService AES-256-GCM ciphertext (IV_HEX:TAG_HEX:CIPHERTEXT_B64).
+  /// Decrypted ONLY by MailboxSendService's single decrypt helper, at send/refresh
+  /// time — never logged, never serialized in a DTO/response.
+  refreshTokenCipher   String
+  accessTokenCipher    String?
+  accessTokenExpiresAt DateTime?
+  status               MailboxConnectionStatus @default(CONNECTED)
+  throttledUntil       DateTime?
+  lastError            String?
+  lastErrorAt          DateTime?
+  lastSentAt           DateTime?
+  connectedByUserId    String?
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
+  tenant               Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+}
+
 // ─── Marketing demo bookings (NOT tenant-scoped — prospects, not customers) ───
 // A visitor on the public marketing site books a product walkthrough against the
 // admin@routeflow.info Google Calendar. These rows are the RouteFlow-side record

@@ -298,6 +298,12 @@ export type CrmConnectionStatus = (typeof CRM_CONNECTION_STATUS_VALUES)[number];
 export const CRM_TRIGGER_MODE_VALUES = ["STAGE", "WON"] as const;
 export type CrmTriggerMode = (typeof CRM_TRIGGER_MODE_VALUES)[number];
 
+export const MAILBOX_PROVIDER_VALUES = ["GOOGLE"] as const;
+export type MailboxProvider = (typeof MAILBOX_PROVIDER_VALUES)[number];
+
+export const MAILBOX_CONNECTION_STATUS_VALUES = ["CONNECTED", "REVOKED", "THROTTLED"] as const;
+export type MailboxConnectionStatus = (typeof MAILBOX_CONNECTION_STATUS_VALUES)[number];
+
 export const CRM_HANDOFF_STATUS_VALUES = [
   "PENDING",
   "CREATED",

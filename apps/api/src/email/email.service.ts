@@ -4,6 +4,7 @@ import { Resend } from "resend";
 import * as nodemailer from "nodemailer";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../common/encryption.service";
+import { MailboxSendService } from "./mailbox/mailbox-send.service";
 // F03/R9: ONE original-price display decision shared with the PDF, so the two
 // customer-facing documents of the same send can never disagree (a pure helper —
 // no Nest/module coupling, and unlike ./invoice-pdf-template it is not mocked
@@ -258,6 +259,7 @@ export class EmailService {
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
     private readonly encryption: EncryptionService,
+    private readonly mailboxSend: MailboxSendService,
   ) {
     const apiKey = this.config.get<string>("RESEND_API_KEY");
 
@@ -1016,9 +1018,19 @@ export class EmailService {
      *  EXISTING caller is unaffected — a transport that doesn't get one just sends
      *  HTML-only, same as before this field existed. */
     text?: string;
+    /**
+     * email-connect-google PR-3 (security review Phase 2): `"platform"` DELEGATES the whole
+     * send to `sendPlatform()` — bare platform From, no tenant Reply-To, no tenant domain, no
+     * connected mailbox, no tenant SMTP. Security/platform mail (invites, password reset/set,
+     * verification, new-device, email/role-change notices) must never leave from a tenant's
+     * own mailbox or SMTP server, or carry a tenant's own branding. Every EXISTING caller
+     * omits this (defaults to tenant-eligible), so no prior behavior changes except for the
+     * specific call sites migrated to `"platform"`.
+     */
+    senderClass?: "tenant" | "platform";
   }): Promise<{
     delivered: boolean;
-    transport: "smtp" | "resend" | "none";
+    transport: "mailbox" | "smtp" | "resend" | "none";
     id?: string;
     error?: string;
     /**
@@ -1035,9 +1047,52 @@ export class EmailService {
      */
     fromAddress?: string;
   }> {
+    // Security review Phase 2: a platform-class send is a full DELEGATION to `sendPlatform()`
+    // — not a set of skipped branches inside this method. `sendPlatform` never resolves
+    // tenant SMTP, a tenant's own Reply-To, or a tenant's connected mailbox; it always uses
+    // the bare platform From. This also means it never reads `prisma.getTenantId()`, so an
+    // in-request platform send (e.g. an admin's own action triggering a security notice)
+    // cannot accidentally pick up THEIR tenant's own anything.
+    if (params.senderClass === "platform") {
+      return this.sendPlatform({
+        to: params.to,
+        subject: params.subject,
+        html: params.html,
+        text: params.text,
+        replyTo: params.replyTo,
+      });
+    }
+
     // Reply-To = the business's own email so customer replies reach the tenant, not the
-    // (platform) sending address. Applies to both transports.
+    // (platform) sending address. Applies to every transport, including the mailbox.
     const replyTo = params.replyTo ?? (await this.getReplyTo());
+
+    // 0. Leading branch (PR-3, no parallel path — every other branch is unchanged): a
+    // CONNECTED (or THROTTLED-but-past-its-window) tenant Google mailbox sends first.
+    // `MailboxSendService.trySend` never throws and returns delivered:false for "not
+    // applicable" (no connection, REVOKED, still THROTTLED, a refresh failure, or a Gmail API
+    // error) — every one of those falls through to the existing tenant-SMTP → platform-SMTP →
+    // Resend chain below, unchanged.
+    const tenantId = this.prisma.getTenantId();
+    if (tenantId) {
+      const businessName = this.sanitizeDisplayName(await this.getTenantBusinessName());
+      const mailboxResult = await this.mailboxSend.trySend(tenantId, {
+        to: params.to,
+        subject: params.subject,
+        html: params.html,
+        text: params.text,
+        replyTo,
+        fromName: businessName || undefined,
+      });
+      if (mailboxResult.delivered) {
+        return {
+          delivered: true,
+          transport: "mailbox",
+          id: mailboxResult.id,
+          fromAddress: mailboxResult.fromAddress,
+        };
+      }
+    }
 
     // 1. Try per-tenant SMTP if configured. A config/SSRF error or send failure is
     // caught (not thrown) so we can fall back to Resend and stay honest-by-result.
@@ -1537,7 +1592,11 @@ export class EmailService {
     to: string; // secondary account's email
     primaryEmail: string; // the primary account requesting the merge
     verifyUrl: string; // one-click verification link
-  }): Promise<{ delivered: boolean; transport: "smtp" | "resend" | "none"; error?: string }> {
+  }): Promise<{
+    delivered: boolean;
+    transport: "mailbox" | "smtp" | "resend" | "none";
+    error?: string;
+  }> {
     const html = `<!DOCTYPE html>
 <html><body style="margin:0;padding:0;background:#f9fafb;font-family:Arial,sans-serif;">
 <table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:32px 16px;">
@@ -1573,7 +1632,14 @@ export class EmailService {
 
     // Return the honest send result so the caller can avoid claiming the verification
     // email "has been sent" when it hasn't (R5).
-    return this.send({ to: params.to, subject: "Confirm account merge — RouteFlow", html });
+    // Security review Phase 2: account-merge verification is security mail — platform sender
+    // only, never a tenant's connected mailbox/SMTP.
+    return this.send({
+      to: params.to,
+      subject: "Confirm account merge — RouteFlow",
+      html,
+      senderClass: "platform",
+    });
   }
 
   // ─── Buyer account merge completion email ──────────────────────────────────
@@ -1741,7 +1807,11 @@ export class EmailService {
     to: string;
     businessName: string;
     items: { name: string; sku: string | null; currentStock: number; reorderPoint: number }[];
-  }): Promise<{ delivered: boolean; transport: "smtp" | "resend" | "none"; error?: string }> {
+  }): Promise<{
+    delivered: boolean;
+    transport: "mailbox" | "smtp" | "resend" | "none";
+    error?: string;
+  }> {
     const html = this.buildLowStockDigestEmail(params);
     const count = params.items.length;
     return this.send({

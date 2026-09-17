@@ -338,6 +338,63 @@ describe("GoogleOAuthService device info threading (Phase 0 T6)", () => {
   });
 });
 
+/**
+ * B421 pinning: linkGoogleAccount's fire-and-forget "Google Sign-In linked"
+ * notice must go out via the platform sender, never a tenant's connected
+ * mailbox/SMTP (email-connect-google PR-3).
+ */
+describe("GoogleOAuthService.linkGoogleAccount (B421 pinning)", () => {
+  function buildService() {
+    const config = {
+      get: (key: string) =>
+        key === "jwt" ? { secret: "test-jwt-secret-for-oauth-state" } : undefined,
+    } as unknown as ConfigService;
+
+    const emailService = {
+      send: jest.fn().mockResolvedValue({ delivered: true, transport: "resend" }),
+    };
+    const prisma = {
+      user: {
+        findUnique: jest.fn(),
+        findFirst: jest.fn().mockResolvedValue(null),
+        update: jest.fn().mockResolvedValue({}),
+      },
+    } as any;
+
+    const service = new GoogleOAuthService(
+      prisma,
+      {} as unknown as JwtService,
+      config,
+      emailService as any,
+      { claimsFor: jest.fn().mockResolvedValue(null) } as any,
+    );
+
+    return { service, prisma, emailService };
+  }
+
+  it("sends the Google-linked security notification via the platform sender", async () => {
+    const { service, prisma, emailService } = buildService();
+    prisma.user.findUnique.mockResolvedValue({
+      id: "user-1",
+      email: "alice@example.com",
+      tenantId: "tenant-1",
+      googleId: null,
+      deletedAt: null,
+    });
+
+    await service.linkGoogleAccount({
+      linkUserId: "user-1",
+      googleId: "google-1",
+      email: "alice@example.com",
+    } as any);
+    await Promise.resolve(); // flush the fire-and-forget send
+
+    expect(emailService.send).toHaveBeenCalledWith(
+      expect.objectContaining({ senderClass: "platform" }),
+    );
+  });
+});
+
 describe("GoogleOAuthService construction (B349 round 1 — fail closed without a secret)", () => {
   it("throws instead of deriving the state-signing key from an empty string when JWT_SECRET is missing", () => {
     const config = {

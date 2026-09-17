@@ -78,12 +78,16 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
       // retired idempotency case above). "demo-booking" (2026-09-16, review finding 4) backs
       // DemoBookingService#create/#reschedule's check-then-write window on the public,
       // unauthenticated demo-booking endpoint, keyed on the slot's start instant.
+      // "mailbox" (2026-09-17, email-connect-google PR-3) backs MailboxSendService's lazy
+      // access-token refresh — a session-scoped critical section (POST to Google's token
+      // endpoint plus the row update that persists the refreshed token).
       expect(mod.LOCK_FAMILIES).toEqual([
         "order-merge",
         "cron",
         "billing",
         "tenant-mirror",
         "demo-booking",
+        "mailbox",
       ]);
     });
   });

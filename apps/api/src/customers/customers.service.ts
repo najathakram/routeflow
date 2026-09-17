@@ -2936,6 +2936,9 @@ export class CustomersService {
 </p>
 <p>Or paste this link into your browser:<br/><a href="${inviteUrl}">${inviteUrl}</a></p>
 <p><em>This link expires in 7 days.</em></p>`,
+      // Security review Phase 2: a buyer-portal invite carries an account-linking action
+      // link — platform sender only, never a tenant's connected mailbox/SMTP.
+      senderClass: "platform",
     });
 
     if (!sendResult.delivered) {

@@ -85,6 +85,7 @@ import { RegulatedSettingsTab } from "./_components/RegulatedSettingsTab";
 import { NotificationsSettingsTab } from "./_components/NotificationsSettingsTab";
 import { SettingsHub } from "./_components/SettingsHub";
 import { SendingDomainCard } from "./_components/SendingDomainCard";
+import { MailboxCard } from "./_components/MailboxCard";
 import { StripeConnectCard } from "./_components/StripeConnectCard";
 import GoHighLevelSettingsTab from "./_components/GoHighLevelSettingsTab";
 import NextLink from "next/link";
@@ -1555,6 +1556,10 @@ function EmailSettingsTab() {
           )}
         </div>
       </div>
+
+      {/* Connect Gmail (email-connect-google) — hidden entirely unless the
+          email.connected_mailbox add-on is granted; see MailboxCard's own doc comment. */}
+      <MailboxCard />
 
       {/* OPTIONAL: RouteFlow-managed sending (platform transactional service with a
           verified domain) — for tenants who don't want to touch their mail account. */}

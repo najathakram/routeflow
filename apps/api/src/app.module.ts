@@ -43,6 +43,7 @@ import { SuppliersModule } from "./suppliers/suppliers.module";
 import { RecurringInvoicesModule } from "./recurring-invoices/recurring-invoices.module";
 import { ImportModule } from "./import/import.module";
 import { EmailModule } from "./email/email.module";
+import { MailboxModule } from "./email/mailbox/mailbox.module";
 import { PlatformAdminModule } from "./platform-admin/platform-admin.module";
 import { AuditModule } from "./audit/audit.module";
 import { BillingModule } from "./billing/billing.module";
@@ -152,6 +153,7 @@ import { AppService } from "./app.service";
     RecurringInvoicesModule,
     ImportModule,
     EmailModule,
+    MailboxModule,
     // ─── Platform administration + audit (global) ─────────────────────────────
     PlatformAdminModule,
     AuditModule,

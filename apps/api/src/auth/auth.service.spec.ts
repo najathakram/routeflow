@@ -47,6 +47,7 @@ describe("AuthService", () => {
     findByEmailCrossTenant: jest.Mock;
   };
   let jwtService: { sign: jest.Mock; verify: jest.Mock; decode: jest.Mock };
+  let emailService: { send: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
@@ -60,6 +61,7 @@ describe("AuthService", () => {
       verify: jest.fn(),
       decode: jest.fn().mockReturnValue({ exp: Math.floor(Date.now() / 1000) + 3600 }),
     };
+    emailService = { send: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -73,7 +75,7 @@ describe("AuthService", () => {
         },
         {
           provide: EmailService,
-          useValue: { send: jest.fn().mockResolvedValue(undefined) },
+          useValue: emailService,
         },
         {
           provide: EntitlementsService,
@@ -409,6 +411,20 @@ describe("AuthService", () => {
 
       expect(jwtService.sign.mock.calls[0]![0]).toMatchObject({ hasPassword: false });
       expect(result.user).toMatchObject({ hasPassword: false });
+    });
+
+    it("RF-228/B421: sends the new-device notification via the platform sender", async () => {
+      prisma.refreshToken.upsert.mockResolvedValue({} as any);
+      prisma.refreshToken.count.mockResolvedValue(0); // no prior sessions on this device
+
+      await service.login({ ...validUser, email: "admin@test.com" } as any, {
+        userAgent: "Mozilla/5.0",
+        ipAddress: "1.2.3.4",
+      });
+
+      expect(emailService.send).toHaveBeenCalledWith(
+        expect.objectContaining({ senderClass: "platform" }),
+      );
     });
   });
 
