@@ -150,6 +150,67 @@ describe("PlanGateBoundary (B449)", () => {
     expect(screen.getByTestId("gated-page-content")).toBeInTheDocument();
   });
 
+  // P0 lock-mirror hotfix (2026-09-17): production denied estimates/credit-notes/
+  // recurring-invoices to non-LITE tenants; the concern was that RouteGuard's lock
+  // hard-tests `!flags.includes(key)` with no dark-flag courtesy of its own. It
+  // doesn't need one: `subscription.flags` is server-computed and already bakes the
+  // dark-flag courtesy allow in (SubscriptionService.getSubscription — see "bakes the
+  // dark-flag courtesy allow into flags..." in subscription.service.spec.ts, which
+  // pins the exact same guarantee one layer down). These two REG tests close the loop
+  // at THIS layer, using the subscription shape the real API actually returns for
+  // each case, per the acceptance criteria: a SCALE tenant on an old catalog missing
+  // flag.estimates must NOT be locked; a LITE tenant must still be locked.
+  describe("P0 lock-mirror hotfix — SCALE-on-old-catalog vs LITE (REG)", () => {
+    it("does NOT lock a SCALE tenant whose old catalog never granted flag.estimates — the server's dark-flag courtesy allow already added it to `flags`", () => {
+      const onMount = jest.fn();
+      render(
+        <PlanGateBoundary
+          planGateKey="flag.estimates"
+          pathname="/estimates"
+          // Mirrors what getSubscription() actually returns for a SCALE tenant on an
+          // old catalog: its own stored flags never included flag.estimates, but the
+          // dark-flag courtesy allow (SCALE is not ALWAYS_ENFORCED) baked it into the
+          // union before this ever reaches the client.
+          subscription={{
+            ...subscription,
+            planKey: "SCALE",
+            planName: "Scale",
+            flags: ["flag.estimates"],
+          }}
+          subscriptionResolved
+          subscriptionErrored={false}
+        >
+          <GatedPage onMount={onMount} />
+        </PlanGateBoundary>,
+      );
+
+      expect(onMount).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("gated-page-content")).toBeInTheDocument();
+      expect(mockToast).not.toHaveBeenCalled();
+    });
+
+    it("still locks a LITE tenant — LITE is ALWAYS_ENFORCED and gets no dark-flag courtesy", () => {
+      const onMount = jest.fn();
+      render(
+        <PlanGateBoundary
+          planGateKey="flag.estimates"
+          pathname="/estimates"
+          // LITE's own subscription never has flag.estimates in its flags union — no
+          // courtesy allow reaches an always-enforced plan (see plan-flag-policy.ts).
+          subscription={{ ...subscription, planKey: "LITE", planName: "Lite", flags: [] }}
+          subscriptionResolved
+          subscriptionErrored={false}
+        >
+          <GatedPage onMount={onMount} />
+        </PlanGateBoundary>,
+      );
+
+      expect(onMount).not.toHaveBeenCalled();
+      expect(screen.queryByTestId("gated-page-content")).not.toBeInTheDocument();
+      expect(screen.getByText("Not on your plan")).toBeInTheDocument();
+    });
+  });
+
   describe("fix-round finding 2 — the boundary owns the navigation's one notice", () => {
     it("fires exactly one toast naming this route's plan when it decides locked", () => {
       render(
