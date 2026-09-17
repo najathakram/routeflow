@@ -5,6 +5,41 @@ import { EntitlementsService } from "./entitlements.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { FeatureOverrideService } from "./feature-override.service";
 import { PlanGateErrorBody } from "./plan-gate";
+import { EntitlementAuthority } from "./entitlement-authority.service";
+import { FeatureResolverService } from "./feature-resolver.service";
+import { EntitlementsModeService } from "./entitlements-mode.service";
+import { FeatureDiffService } from "./feature-diff.service";
+
+/**
+ * Feature grants v2 brief A: PlanFlagGuard's decision now lives in
+ * EntitlementAuthority.can() (see plan-flag.guard.ts's header comment). Every test in this file
+ * pre-dates that refactor and asserts on the OLD-PATH decision specifically — mocking the
+ * resolver to return `null` (as if unavailable) makes `can()` degrade to exactly that old-path
+ * computation (see entitlement-authority.service.ts's `if (resolved === null) return
+ * oldVerdict;`), so these fixtures keep meaning what they always meant without knowing
+ * anything about the resolver/diff-log machinery this brief adds.
+ */
+function buildAuthority(
+  entitlements: { resolve: jest.Mock },
+  featureOverrides: { get: jest.Mock },
+): EntitlementAuthority {
+  const prisma = { tenantAddon: { findUnique: jest.fn().mockResolvedValue(null) } } as any;
+  const resolver = {
+    resolve: jest.fn().mockResolvedValue(null),
+  } as unknown as FeatureResolverService;
+  const modeService = {
+    getMode: jest.fn().mockResolvedValue("shadow"),
+  } as unknown as EntitlementsModeService;
+  const diffService = { record: jest.fn() } as unknown as FeatureDiffService;
+  return new EntitlementAuthority(
+    entitlements as unknown as EntitlementsService,
+    featureOverrides as unknown as FeatureOverrideService,
+    resolver,
+    modeService,
+    diffService,
+    prisma,
+  );
+}
 
 function contextFor(user: { tenantId: string | null } | undefined): ExecutionContext {
   return {
@@ -52,6 +87,7 @@ describe("PlanFlagGuard", () => {
       entitlements as unknown as EntitlementsService,
       catalog as unknown as PlanCatalogService,
       featureOverrides as unknown as FeatureOverrideService,
+      buildAuthority(entitlements, featureOverrides),
     );
   });
 
@@ -148,6 +184,7 @@ describe("PLAN_FLAG_ENFORCEMENT kill switch", () => {
       entitlements as unknown as EntitlementsService,
       catalog as unknown as PlanCatalogService,
       featureOverrides as unknown as FeatureOverrideService,
+      buildAuthority(entitlements, featureOverrides),
     );
   });
 
@@ -277,6 +314,7 @@ describe("WP2 always-enforced plan (LITE) — no dark-flag courtesy allow", () =
       entitlements as unknown as EntitlementsService,
       catalog as unknown as PlanCatalogService,
       featureOverrides as unknown as FeatureOverrideService,
+      buildAuthority(entitlements, featureOverrides),
     );
   });
 
@@ -358,6 +396,7 @@ describe("feature-grants PR-1: override precedence (absolute, ignores plan and d
       entitlements as unknown as EntitlementsService,
       catalog as unknown as PlanCatalogService,
       featureOverrides as unknown as FeatureOverrideService,
+      buildAuthority(entitlements, featureOverrides),
     );
   });
 

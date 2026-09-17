@@ -1,8 +1,8 @@
 /**
- * Lite-L2 (WP7): `usePlanFlag` reads the shared `useSubscription` query and reports the
- * three-valued {enabled, resolved, failed} contract `lib/plan-gated-nav.ts`'s
- * `planFlagVisible` expects. Pinned behaviourally through the real hook + a real
- * QueryClient, same pattern as addons.delivery-access.test.tsx.
+ * Lite-L2 (WP7); feature grants v2 brief A: `usePlanFlag` reads `useTenantFeatures`
+ * (`GET /tenants/me/features`) and reports the three-valued {enabled, resolved, failed}
+ * contract `lib/plan-gated-nav.ts`'s `planFlagVisible` expects. Pinned behaviourally through
+ * the real hook + a real QueryClient, same pattern as addons.delivery-access.test.tsx.
  */
 import * as React from "react";
 import { renderHook, waitFor } from "@testing-library/react";
@@ -28,7 +28,7 @@ beforeEach(() => {
 
 describe("usePlanFlag", () => {
   it("resolved + flag present -> enabled true", async () => {
-    mockedGet.mockResolvedValue({ data: { flags: ["flag.estimates", "flag.returns"] } });
+    mockedGet.mockResolvedValue({ data: { effective: ["flag.estimates", "flag.returns"] } });
 
     const { result } = renderHook(() => usePlanFlag("flag.estimates"), { wrapper: Wrapper });
 
@@ -38,7 +38,7 @@ describe("usePlanFlag", () => {
   });
 
   it("resolved + flag absent -> enabled false", async () => {
-    mockedGet.mockResolvedValue({ data: { flags: ["flag.returns"] } });
+    mockedGet.mockResolvedValue({ data: { effective: ["flag.returns"] } });
 
     const { result } = renderHook(() => usePlanFlag("flag.estimates"), { wrapper: Wrapper });
 
@@ -72,7 +72,7 @@ describe("usePlanFlag", () => {
   });
 
   it("resolved + flags: [] (real empty grant list) -> enabled false (still gates)", async () => {
-    mockedGet.mockResolvedValue({ data: { flags: [] } });
+    mockedGet.mockResolvedValue({ data: { effective: [] } });
 
     const { result } = renderHook(() => usePlanFlag("flag.estimates"), { wrapper: Wrapper });
 

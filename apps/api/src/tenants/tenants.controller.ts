@@ -20,7 +20,8 @@ import { TenantsService } from "./tenants.service";
 import { EmailService } from "../email/email.service";
 import { AddonService } from "../billing/addon.service";
 import { FeatureOverrideService } from "../billing/feature-override.service";
-import { gateVia } from "../billing/feature-registry";
+import { gateVia, FEATURE_REGISTRY } from "../billing/feature-registry";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
@@ -40,7 +41,49 @@ export class TenantsController {
     private readonly emailService: EmailService,
     private readonly addonService: AddonService,
     private readonly featureOverrides: FeatureOverrideService,
+    private readonly authority: EntitlementAuthority,
   ) {}
+
+  // ─── Me: Features (feature grants v2 brief A) ─────────────────────────────────
+
+  @Get("me/features")
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      "Server-computed effective features for the current tenant (design 2026-09-17 §2) — " +
+      "web/mobile read this instead of any local list or JWT claim",
+  })
+  async getMyFeatures(@CurrentUser() user: JwtPayload) {
+    if (!user.tenantId) {
+      return {
+        effective: [],
+        modes: {},
+        catalogVersionId: "",
+        computedAt: new Date().toISOString(),
+      };
+    }
+    const resolved = await this.authority.resolveAll(user.tenantId);
+    if (!resolved) {
+      // Resolver unavailable: an empty effective set is the SAFE degrade — every consumer
+      // (plan-gated-nav.ts/PlanGates.tsx/mobile plan-flags.ts) treats "not in the list" as
+      // "hide the gated surface," never as "show it" — never fail open on the client.
+      return {
+        effective: [],
+        modes: {},
+        catalogVersionId: "",
+        computedAt: new Date().toISOString(),
+      };
+    }
+    return {
+      effective: FEATURE_REGISTRY.filter((f) => resolved.byKey.get(f.key)?.effective).map(
+        (f) => f.key,
+      ),
+      modes: {},
+      catalogVersionId: resolved.catalogVersionId,
+      computedAt: resolved.computedAt,
+    };
+  }
 
   // ─── Me: Addons ──────────────────────────────────────────────────────────────
 

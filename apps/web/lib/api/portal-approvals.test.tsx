@@ -26,7 +26,7 @@ function Wrapper({ children }: { children: React.ReactNode }) {
 
 function mockSubscription(flags: string[] | undefined) {
   mockedGet.mockImplementation((url: string) => {
-    if (url === "/billing/subscription") return Promise.resolve({ data: { flags } });
+    if (url === "/tenants/me/features") return Promise.resolve({ data: { effective: flags } });
     if (url === "/customers/pending-portal-approvals") return Promise.resolve({ data: [] });
     return Promise.reject(new Error(`unexpected GET ${url}`));
   });
@@ -41,7 +41,7 @@ describe("usePendingPortalApprovals — B449 fix-round finding 2", () => {
     mockSubscription(["flag.estimates"]); // resolved, buyer_portal absent
     renderHook(() => usePendingPortalApprovals(), { wrapper: Wrapper });
 
-    await waitFor(() => expect(mockedGet).toHaveBeenCalledWith("/billing/subscription"));
+    await waitFor(() => expect(mockedGet).toHaveBeenCalledWith("/tenants/me/features"));
     expect(mockedGet).not.toHaveBeenCalledWith("/customers/pending-portal-approvals");
   });
 
@@ -63,7 +63,7 @@ describe("usePendingPortalApprovals — B449 fix-round finding 2", () => {
 
   it("fires the gated GET on a fetch failure (fail open, matches every other flag consumer)", async () => {
     mockedGet.mockImplementation((url: string) => {
-      if (url === "/billing/subscription") return Promise.reject(new Error("network error"));
+      if (url === "/tenants/me/features") return Promise.reject(new Error("network error"));
       if (url === "/customers/pending-portal-approvals") return Promise.resolve({ data: [] });
       return Promise.reject(new Error(`unexpected GET ${url}`));
     });
