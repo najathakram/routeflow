@@ -1,0 +1,814 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   RouteFlow marketing — glass design port for the remaining 9 pages (PR-3).
+
+   Same token system as glass.css/glass-pages.css (the book-a-demo/sign-in/auth
+   port, PR-2) — no new tokens introduced. This file restyles the SHARED
+   structural classes every marketing page already renders through
+   (site-header, .wrap, .button, .eyebrow, .section*, FeatureCatalog, FAQ,
+   AudienceCards, CTA, the numbered-step pattern, pricing cards) rather than
+   rewriting each page's JSX — zero component logic changed, CSS only.
+
+   Loaded after marketing.css AND after glass.css/glass-pages.css (see
+   app/layout.tsx), so these rules win regardless of marketing.css's own
+   internal cascade (which has three earlier, mutually-overriding attempts at
+   a header treatment — none of which reach the screen once this file's rules
+   apply). Scoped under `.glass-page`, applied per-page via the marketing
+   layout, so an unported page (none remain after this PR, but kept as the
+   same opt-in pattern PR-2 established) is unaffected.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* ── Site chrome (header + footer) — shared by every page, so this one block
+   carries the most visual weight of the whole port. ────────────────────── */
+
+.glass-page .site-header {
+  height: auto;
+  padding-block: 14px;
+  border: 0;
+  background: transparent;
+  backdrop-filter: none;
+  position: sticky;
+  top: 12px;
+  z-index: 50;
+}
+
+.glass-page .header-inner {
+  height: 75px;
+  max-width: none;
+  width: min(1320px, calc(100% - 40px));
+  margin-inline: auto;
+  padding-inline: 26px 16px;
+  background: var(--g-glass);
+  border: 1px solid var(--g-glass-border);
+  border-radius: var(--g-r-pill);
+  box-shadow: var(--g-shadow-glass);
+  backdrop-filter: var(--g-blur-header);
+  -webkit-backdrop-filter: var(--g-blur-header);
+}
+
+.glass-page .brand {
+  color: var(--g-ink);
+  letter-spacing: -0.04em;
+}
+
+.glass-page .brand-mark {
+  color: var(--g-ink);
+}
+
+.glass-page .desktop-nav a {
+  color: var(--g-body);
+}
+
+.glass-page .desktop-nav a:hover,
+.glass-page .desktop-nav [aria-current="page"] {
+  background: #ffffffa0;
+  color: var(--g-ink);
+}
+
+.glass-page .header-actions .button {
+  border-radius: var(--g-r-md);
+  background: var(--g-primary);
+  box-shadow: var(--g-shadow-primary);
+}
+
+.glass-page .header-actions .button:hover {
+  background: var(--g-primary-hover);
+}
+
+.glass-page .login-trigger,
+.glass-page .nav-login {
+  color: var(--g-body);
+}
+
+.glass-page .mobile-panel {
+  background: #f1f6fcf5;
+  backdrop-filter: var(--g-blur);
+}
+
+.glass-page .site-footer {
+  background: var(--g-glass);
+  border-top: 1px solid var(--g-glass-border);
+}
+
+.glass-page .footer-brand .brand {
+  color: var(--g-ink);
+}
+
+.glass-page .footer-bottom {
+  border-top: 1px solid var(--g-hairline);
+  color: var(--g-soft);
+}
+
+/* ── Core primitives ─────────────────────────────────────────────────────── */
+
+.glass-page .wrap {
+  width: min(1280px, calc(100% - 80px));
+}
+
+.glass-page .section {
+  padding-block: 82px;
+}
+
+.glass-page .surface {
+  background: transparent;
+}
+
+.glass-page .eyebrow {
+  color: var(--g-eyebrow);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.glass-page .eyebrow > span {
+  background: var(--g-brand-dot);
+  border-radius: 2px;
+}
+
+.glass-page h1,
+.glass-page h2,
+.glass-page h3 {
+  color: var(--g-ink);
+  letter-spacing: -0.04em;
+}
+
+.glass-page h1 em,
+.glass-page h2 em {
+  font-style: normal;
+  color: var(--g-teal);
+}
+
+.glass-page p.lead {
+  color: var(--g-body);
+}
+
+.glass-page .text-link {
+  color: var(--g-link);
+}
+
+.glass-page .text-link:hover {
+  color: var(--g-link-hover);
+}
+
+.glass-page .button {
+  border-radius: var(--g-r-md);
+  background: var(--g-primary);
+  border-color: var(--g-primary-border);
+  box-shadow: var(--g-shadow-primary);
+}
+
+.glass-page .button:hover {
+  background: var(--g-primary-hover);
+}
+
+.glass-page .button-outline,
+.glass-page .button-white {
+  background: linear-gradient(130deg, #ffffffad, #ffffff4d);
+  border-color: var(--g-field-border);
+  color: var(--g-ink);
+  box-shadow: inset 0 1px 0 #fff, 0 5px 14px #21436408;
+}
+
+.glass-page .button-outline:hover,
+.glass-page .button-white:hover {
+  background: #fff;
+}
+
+/* The design study's warm-apricot/sea-glass accents, used for the two
+   audience-specific CTAs (wholesaler = lime/apricot-adjacent teal, retailer =
+   sea-glass green) — kept distinct from the navy primary so the two paths
+   through the site (distributor vs retailer) stay visually distinguishable,
+   matching the source study's palette note (sea glass #63CDBB). */
+.glass-page .button-lime {
+  background: linear-gradient(140deg, #3b8374f5, #23645ced);
+  border-color: #7fb8ab44;
+}
+
+.glass-page .button-lime:hover {
+  background: #296b67;
+}
+
+.glass-page .button-green {
+  background: linear-gradient(140deg, #296b67f5, #1f4f4ced);
+  border-color: #7fb8ab44;
+}
+
+.glass-page .button-green:hover {
+  background: #1f4f4c;
+}
+
+.glass-page .check-list svg {
+  color: var(--g-teal);
+}
+
+.glass-page .check-list span {
+  color: var(--g-body);
+}
+
+/* ── Section headings ────────────────────────────────────────────────────── */
+
+.glass-page .split-heading > p {
+  color: var(--g-body);
+}
+
+/* ── Glass panel utility — the shared surface every card-like block below
+   builds on, matching PR-2's `.glass` exactly. ─────────────────────────── */
+
+.glass-page .page-hero,
+.glass-page .distributor-hero .split-hero,
+.glass-page .retailer-hero .split-hero,
+.glass-page .audience-card,
+.glass-page .capability-card,
+.glass-page .extras-grid article,
+.glass-page .benefit-grid article,
+.glass-page .faq-list,
+.glass-page .pricing-card,
+.glass-page .demo-form-card,
+.glass-page .connection-diagram,
+.glass-page .company-image,
+.glass-page .company-contact,
+.glass-page .retailer-price,
+.glass-page .contact-copy .demo-agenda {
+  background: var(--g-glass);
+  border: 1px solid var(--g-glass-border);
+  border-radius: var(--g-r-md);
+  box-shadow: var(--g-shadow-glass);
+  backdrop-filter: var(--g-blur);
+  -webkit-backdrop-filter: var(--g-blur);
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  .glass-page .page-hero,
+  .glass-page .distributor-hero .split-hero,
+  .glass-page .retailer-hero .split-hero,
+  .glass-page .audience-card,
+  .glass-page .capability-card,
+  .glass-page .extras-grid article,
+  .glass-page .benefit-grid article,
+  .glass-page .faq-list,
+  .glass-page .pricing-card,
+  .glass-page .demo-form-card,
+  .glass-page .connection-diagram,
+  .glass-page .company-image,
+  .glass-page .company-contact,
+  .glass-page .retailer-price,
+  .glass-page .contact-copy .demo-agenda {
+    background: #f1f6fcf5;
+  }
+}
+
+.glass-page .page-hero {
+  padding: 50px 44px;
+}
+
+/* ── AudienceCards ───────────────────────────────────────────────────────── */
+
+.glass-page .audience-card {
+  padding: 30px;
+}
+
+.glass-page .audience-card svg {
+  color: var(--g-link);
+}
+
+.glass-page .card-eyebrow {
+  color: var(--g-eyebrow);
+}
+
+/* ── FeatureCatalog (capability grid + wholesale extras + strip) ────────── */
+
+.glass-page .capability-card {
+  padding: 26px;
+}
+
+.glass-page .capability-card svg {
+  color: var(--g-link);
+}
+
+.glass-page .capability-card span {
+  color: var(--g-eyebrow);
+}
+
+/* The design study tints every 2nd/3rd/4th card faintly blue/mint/lilac so a
+   dense grid doesn't read as one flat repeated block — same technique here. */
+.glass-page .capability-card:nth-child(4n + 2) {
+  background: linear-gradient(130deg, #eaf3ffc2, #eaf3ff61);
+}
+
+.glass-page .capability-card:nth-child(4n + 3) {
+  background: linear-gradient(130deg, #eafbf6c2, #eafbf661);
+}
+
+.glass-page .capability-card:nth-child(4n + 4) {
+  background: linear-gradient(130deg, #f3edfec2, #f3edfe61);
+}
+
+.glass-page .wholesale-extras {
+  margin-top: 26px;
+}
+
+.glass-page .extras-grid article {
+  padding: 18px;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.glass-page .extras-grid svg {
+  color: var(--g-link);
+  flex: none;
+  margin-top: 2px;
+}
+
+.glass-page .capability-scope {
+  color: var(--g-soft);
+  font-size: 11px;
+}
+
+.glass-page .capability-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.glass-page .capability-strip a {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 14px;
+  border-radius: 999px;
+  background: var(--g-field);
+  border: 1px solid var(--g-field-border);
+  color: var(--g-body);
+  font-size: 12px;
+}
+
+.glass-page .capability-strip a:hover {
+  background: #fff;
+  color: var(--g-ink);
+}
+
+/* ── FAQ (native details/summary accordion) ─────────────────────────────── */
+
+.glass-page .faq-list {
+  padding: 6px 28px;
+}
+
+.glass-page .faq-list details {
+  border-top: 1px solid var(--g-hairline);
+}
+
+.glass-page .faq-list details:first-child {
+  border-top: 0;
+}
+
+.glass-page .faq-list summary {
+  color: var(--g-ink);
+  list-style: none;
+}
+
+.glass-page .faq-list summary::-webkit-details-marker {
+  display: none;
+}
+
+.glass-page .faq-list summary svg {
+  color: var(--g-link);
+  transition: transform 0.18s;
+}
+
+.glass-page .faq-list details[open] summary svg {
+  transform: rotate(180deg);
+}
+
+.glass-page .faq-list [data-slot="accordion-content"] {
+  color: var(--g-body);
+}
+
+/* ── Numbered step lists (wholesalers/retailers/company all share this
+   `<span>0N</span>` + h3/p shape) ───────────────────────────────────────── */
+
+.glass-page .getting-started ol,
+.glass-page .retailer-start ol,
+.glass-page .company-principles > div {
+  display: grid;
+  gap: 18px;
+}
+
+.glass-page .getting-started li,
+.glass-page .retailer-start li,
+.glass-page .company-principles article {
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+  padding: 20px;
+  background: var(--g-glass);
+  border: 1px solid var(--g-glass-border);
+  border-radius: var(--g-r-xs);
+  box-shadow: var(--g-shadow-glass);
+}
+
+.glass-page .getting-started li > span,
+.glass-page .retailer-start li > span,
+.glass-page .company-principles article > span {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--g-primary);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.glass-page .getting-started p,
+.glass-page .retailer-start p,
+.glass-page .company-principles p {
+  color: var(--g-body);
+}
+
+/* ── Pricing ──────────────────────────────────────────────────────────────── */
+
+.glass-page .pricing-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 18px;
+  background: #e4eef399;
+  border: 1px solid #fff;
+  border-radius: var(--g-r-xs);
+  color: var(--g-muted);
+  font-size: 12px;
+  margin-bottom: 26px;
+}
+
+.glass-page .pulse-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--g-teal);
+  flex: none;
+}
+
+.glass-page .pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+}
+
+.glass-page .pricing-card {
+  padding: 30px;
+  display: flex;
+  flex-direction: column;
+}
+
+.glass-page .pricing-card.featured {
+  background: linear-gradient(140deg, #eaf3ffd9, #eaf3ff85);
+  border-color: #a4c4e5;
+  box-shadow: 0 18px 40px #264b7518, inset 0 1px 1px #fff;
+}
+
+.glass-page .plan-ribbon {
+  align-self: flex-start;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--g-primary);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  margin-bottom: 14px;
+}
+
+.glass-page .plan-name {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 4px 0 10px;
+}
+
+.glass-page .plan-name svg {
+  color: var(--g-link);
+}
+
+.glass-page .plan-description {
+  color: var(--g-body);
+  flex: none;
+}
+
+.glass-page .plan-price {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--g-ink);
+  margin: 16px 0;
+}
+
+.glass-page .plan-price span {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--g-soft);
+  margin-top: 4px;
+}
+
+.glass-page .pricing-card h3 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--g-eyebrow);
+  margin-top: 22px;
+}
+
+.glass-page .pricing-footnote {
+  color: var(--g-soft);
+  font-size: 11px;
+  margin-top: 20px;
+}
+
+.glass-page .retailer-price {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 24px 30px;
+  margin-block: 26px;
+}
+
+.glass-page .retailer-price svg {
+  color: var(--g-teal);
+  flex: none;
+}
+
+.glass-page .retailer-price p {
+  color: var(--g-body);
+}
+
+/* ── Company ──────────────────────────────────────────────────────────────── */
+
+.glass-page .company-image {
+  padding: 12px;
+  position: relative;
+  overflow: hidden;
+}
+
+.glass-page .company-image img {
+  border-radius: var(--g-r-sm);
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.glass-page .company-image > div {
+  position: absolute;
+  left: 30px;
+  bottom: 30px;
+  padding: 14px 18px;
+  background: #ffffffe6;
+  border-radius: var(--g-r-xs);
+  box-shadow: 0 10px 25px #284a7018;
+}
+
+.glass-page .company-image span {
+  display: block;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--g-eyebrow);
+  margin-bottom: 4px;
+}
+
+.glass-page .company-image p {
+  color: var(--g-ink);
+  font-weight: 600;
+  margin: 0;
+}
+
+.glass-page .photo-credit {
+  font-size: 10px;
+  color: var(--g-soft);
+  margin-top: 8px;
+}
+
+.glass-page .company-contact {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 24px 30px;
+  margin-top: 26px;
+}
+
+.glass-page .company-contact svg {
+  color: var(--g-link);
+  flex: none;
+}
+
+.glass-page .company-contact p {
+  color: var(--g-body);
+}
+
+/* ── Contact ──────────────────────────────────────────────────────────────── */
+
+.glass-page .contact-copy .demo-agenda {
+  padding: 22px;
+  margin: 22px 0;
+}
+
+.glass-page .contact-copy .demo-agenda > div {
+  display: flex;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.glass-page .contact-copy .demo-agenda svg {
+  color: var(--g-link);
+  flex: none;
+  margin-top: 2px;
+}
+
+.glass-page .contact-copy .demo-agenda p {
+  color: var(--g-body);
+  margin: 2px 0 0;
+}
+
+.glass-page .direct-contact a {
+  color: var(--g-link);
+}
+
+.glass-page .demo-form-card {
+  padding: 30px;
+}
+
+.glass-page .demo-form-card .field label {
+  color: #688099;
+  font-size: 10px;
+}
+
+.glass-page .demo-form-card input,
+.glass-page .demo-form-card textarea {
+  background: var(--g-field);
+  border: 1px solid var(--g-field-border);
+  border-radius: var(--g-r-field);
+  color: #355c7e;
+}
+
+/* ── Product: connection diagram ─────────────────────────────────────────── */
+
+.glass-page .connection-diagram {
+  padding: 30px;
+  text-align: center;
+}
+
+.glass-page .connection-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--g-ink);
+  font-weight: 600;
+}
+
+.glass-page .connection-nodes {
+  display: flex;
+  justify-content: center;
+  gap: 22px;
+  margin: 22px 0;
+}
+
+.glass-page .connection-nodes > div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  color: var(--g-body);
+  font-size: 11px;
+}
+
+.glass-page .connection-nodes svg {
+  color: var(--g-link);
+}
+
+.glass-page .connection-diagram > p {
+  color: var(--g-soft);
+  font-size: 11px;
+}
+
+/* ── Retailer benefit grid ───────────────────────────────────────────────── */
+
+.glass-page .benefit-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+}
+
+.glass-page .benefit-grid article {
+  padding: 24px;
+}
+
+.glass-page .benefit-grid svg {
+  color: var(--g-link);
+}
+
+.glass-page .benefit-grid p {
+  color: var(--g-body);
+}
+
+/* ── CTA block ────────────────────────────────────────────────────────────── */
+
+.glass-page .cta-block {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 30px;
+  padding: 34px 40px;
+  border-radius: var(--g-r-lg);
+  background: linear-gradient(120deg, #10264d, #16375f 55%, #1c4a52);
+  color: #fff;
+  margin-block: 60px;
+}
+
+.glass-page .cta-block .eyebrow {
+  color: #9fd9c8;
+}
+
+.glass-page .cta-block .eyebrow > span {
+  background: #63cdbb;
+}
+
+.glass-page .cta-block h2,
+.glass-page .cta-block p {
+  color: #fff;
+}
+
+.glass-page .cta-block p {
+  opacity: 0.82;
+}
+
+.glass-page .cta-block > div:last-child {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  text-align: right;
+}
+
+.glass-page .cta-block > div:last-child > span {
+  color: #ffffffb0;
+  font-size: 11px;
+  max-width: 220px;
+}
+
+/* ── Legal pages (privacy/terms) ─────────────────────────────────────────── */
+
+.glass-page .legal-content {
+  padding: 40px;
+}
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+
+@media (max-width: 1100px) {
+  .glass-page .wrap {
+    width: calc(100% - 48px);
+  }
+  .glass-page .pricing-grid,
+  .glass-page .benefit-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 850px) {
+  .glass-page .header-inner {
+    width: calc(100% - 24px);
+    padding-inline: 18px 10px;
+  }
+}
+
+@media (max-width: 700px) {
+  .glass-page .cta-block {
+    flex-direction: column;
+    align-items: flex-start;
+    text-align: left;
+  }
+  .glass-page .cta-block > div:last-child {
+    align-items: flex-start;
+    text-align: left;
+  }
+}
+
+@media (max-width: 600px) {
+  .glass-page .wrap {
+    width: calc(100% - 28px);
+  }
+  .glass-page .section {
+    padding-block: 55px;
+  }
+  .glass-page .page-hero,
+  .glass-page .pricing-card,
+  .glass-page .audience-card,
+  .glass-page .capability-card,
+  .glass-page .demo-form-card {
+    padding: 22px;
+  }
+  .glass-page .pricing-grid,
+  .glass-page .benefit-grid {
+    grid-template-columns: 1fr;
+  }
+}

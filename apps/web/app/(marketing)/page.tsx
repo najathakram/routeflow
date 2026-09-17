@@ -32,7 +32,7 @@ export const metadata: Metadata = {
 
 export default function Home() {
   return (
-    <>
+    <div className="glass-page">
       <section className="glass-hero wrap">
         <div className="glass-hero-copy">
           <Eyebrow>WHOLESALE ORDER & DELIVERY SOFTWARE</Eyebrow>
@@ -95,6 +95,6 @@ export default function Home() {
       <BuyingConfidence />
       <FAQ />
       <CTA />
-    </>
+    </div>
   );
 }
