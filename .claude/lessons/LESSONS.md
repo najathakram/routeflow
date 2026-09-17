@@ -40,17 +40,25 @@
   sufficient gate for tooling-timing changes, only for correctness.**
 - **Guard:** the merge session re-measures self-test wall-clock during its scoped review.
 
-### L-180 · 2026-09-16 · tooling · git worktree move leaves stale npm junctions
+### L-180 · 2026-09-16 · tooling · npm/dir junctions across worktrees are unsafe near git worktree ops
 
-- **Symptom:** after `git worktree move`, invalid-hook-call errors and mangled Jest file paths —
-  initially looked like [[L-055]]'s dot-directory glob bug, but a different mechanism.
-- **Root cause:** `git worktree move` relocates git metadata and working files but never rewrites
-  npm's workspace junctions (Windows) inside `node_modules` — those are absolute-path-based and
-  keep resolving to wherever `npm install` last ran, i.e. the OLD path.
-- **Lesson:** **After `git worktree move`, treat `node_modules` as stale — run `npm ci` (+
-  `npx prisma generate` for apps/api) at the FINAL path. Never move a worktree after installing
-  if you can install at the final path from the start.**
-- **Guard:** none yet — propose a post-move check comparing a junction's resolved target to cwd.
+- **Symptom:** (a) after `git worktree move`, invalid-hook-call errors and mangled Jest paths —
+  looked like [[L-055]]'s dot-directory glob bug, but wasn't; (b) 2026-09-17: a scratch worktree
+  was junctioned to a SIBLING's `node_modules` (to dodge an `npm install` under a disk-critical
+  constraint), and `git worktree remove --force` on the scratch tree cascaded a recursive delete
+  through the junction, wiping the sibling's `node_modules` and ~2,388 of its tracked files.
+- **Root cause:** Windows npm junctions are absolute-path reparse points, invisible to git and
+  not junction-aware to a naive recursive delete — `worktree move` leaves one pointing at the OLD
+  path forever; `worktree remove --force`/`rm -rf` walks THROUGH one into its real target instead
+  of unlinking the reparse point.
+- **Lesson:** **Never let a junction outlive the git worktree op around it. After
+  `git worktree move`, treat `node_modules` as stale — `npm ci` (+ `prisma generate` for
+  apps/api) at the final path. Before removing/recursively deleting ANY worktree, `rmdir` (never
+  `rm -rf`) every junction inside it and confirm it's gone first. Best: never junction
+  `node_modules` between two DIFFERENT live worktrees — the disk saved isn't worth the blast
+  radius.**
+- **Guard:** none yet — propose a pre-remove check refusing `git worktree remove` while a
+  junction exists under the tree, plus a post-move check comparing a junction's target to cwd.
 
 ### L-179 · 2026-09-16 · tooling · campaign-check freshness ritual
 
