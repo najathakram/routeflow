@@ -40,43 +40,59 @@ test.describe("routes_dispatch config mode — platform-admin endpoint round tri
     if (!tenantId) return;
 
     const configUrl = `${base}/platform-admin/tenants/${tenantId}/feature-config/${FEATURE_KEY}`;
+    const addonsBase = `${base}/platform-admin/tenants/${tenantId}/addons`;
 
-    // Baseline: no row yet -> unset / REGISTRY_DEFAULT (or whatever a prior run of this same
-    // spec left it as — clean up defensively before asserting anything).
+    // Fix round 1 (Opus review, item 3): revoke the granted addon (and clear the config row) in
+    // a finally block, at both ends of this test — so a re-run never inherits a prior run's
+    // partial state and this test tenant is never left holding an addon it didn't have before.
+    await page.request.post(`${addonsBase}/disable`, { data: { addonKey: "recurring_routes" } });
     await page.request.delete(configUrl);
-    const baseline = await (await page.request.get(configUrl)).json();
-    expect(baseline).toMatchObject({ value: "unset", source: "REGISTRY_DEFAULT" });
 
-    // 409 before the tenant holds recurring_routes.
-    const deniedRes = await page.request.put(configUrl, {
-      data: { mode: "scheduled", reason: "e2e 50-routes-dispatch-mode" },
-    });
-    expect(deniedRes.status()).toBe(409);
-    const deniedBody = await deniedRes.json();
-    expect(deniedBody.message).toMatchObject({
-      key: FEATURE_KEY,
-      mode: "scheduled",
-      missing: "recurring_routes",
-    });
+    try {
+      // Baseline: no row yet -> unset / REGISTRY_DEFAULT.
+      const baseline = await (await page.request.get(configUrl)).json();
+      expect(baseline).toMatchObject({ value: "unset", source: "REGISTRY_DEFAULT" });
 
-    // Grant recurring_routes, then the PUT succeeds and GET reflects it.
-    const grantRes = await page.request.post(`${base}/platform-admin/tenants/${tenantId}/addons`, {
-      data: { addonKey: "recurring_routes" },
-    });
-    expect(grantRes.ok()).toBeTruthy();
+      // 409 before the tenant holds recurring_routes.
+      const deniedRes = await page.request.put(configUrl, {
+        data: { mode: "scheduled", reason: "e2e 50-routes-dispatch-mode" },
+      });
+      expect(deniedRes.status()).toBe(409);
+      const deniedBody = await deniedRes.json();
+      expect(deniedBody.message).toMatchObject({
+        key: FEATURE_KEY,
+        mode: "scheduled",
+        missing: "recurring_routes",
+      });
 
-    const setRes = await page.request.put(configUrl, {
-      data: { mode: "scheduled", reason: "e2e 50-routes-dispatch-mode" },
-    });
-    expect(setRes.ok()).toBeTruthy();
-    const setBody = await setRes.json();
-    expect(setBody).toMatchObject({ value: "scheduled", effective: "scheduled", source: "TENANT" });
+      // Grant recurring_routes, then the PUT succeeds and GET reflects it.
+      const grantRes = await page.request.post(`${addonsBase}/enable`, {
+        data: { addonKey: "recurring_routes" },
+      });
+      expect(grantRes.ok()).toBeTruthy();
 
-    // DELETE reverts to the registry default, never leaving this test tenant configured.
-    const clearRes = await page.request.delete(configUrl);
-    expect(clearRes.ok()).toBeTruthy();
-    const clearBody = await clearRes.json();
-    expect(clearBody).toMatchObject({ value: "unset", source: "REGISTRY_DEFAULT" });
+      const setRes = await page.request.put(configUrl, {
+        data: { mode: "scheduled", reason: "e2e 50-routes-dispatch-mode" },
+      });
+      expect(setRes.ok()).toBeTruthy();
+      const setBody = await setRes.json();
+      expect(setBody).toMatchObject({
+        value: "scheduled",
+        effective: "scheduled",
+        source: "TENANT",
+      });
+
+      // DELETE reverts to the registry default, never leaving this test tenant configured.
+      const clearRes = await page.request.delete(configUrl);
+      expect(clearRes.ok()).toBeTruthy();
+      const clearBody = await clearRes.json();
+      expect(clearBody).toMatchObject({ value: "unset", source: "REGISTRY_DEFAULT" });
+    } finally {
+      // Always revoke, even on assertion failure — never leave e2e-routeflow holding an addon
+      // (and a stale mode row) it didn't have before this test ran, so the next run starts clean.
+      await page.request.post(`${addonsBase}/disable`, { data: { addonKey: "recurring_routes" } });
+      await page.request.delete(configUrl);
+    }
   });
 });
 

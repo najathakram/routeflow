@@ -19,7 +19,7 @@ import { InvoicesService } from "../invoices/invoices.service";
 // settlement from every other confirmed-money read in the codebase.
 import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 import { StorageService } from "../storage/storage.service";
-import { FeatureConfigStore } from "../billing/feature-config.store";
+import { FeatureConfigService } from "../billing/feature-config.service";
 import { geocodeAddress } from "../common/geocode.util";
 import { compressImage } from "../storage/compress.util";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -137,10 +137,8 @@ describe("RoutesService", () => {
         // Feature grants v2 brief C (PR-5): resolves "unset" so every existing test in this
         // file keeps exercising today's (every-kind-allowed) dispatch behavior unchanged.
         {
-          provide: FeatureConfigStore,
-          useValue: {
-            getMode: jest.fn().mockResolvedValue({ value: "unset", source: "REGISTRY_DEFAULT" }),
-          },
+          provide: FeatureConfigService,
+          useValue: { getEffectiveMode: jest.fn().mockResolvedValue("unset") },
         },
       ],
     }).compile();
@@ -1139,10 +1137,14 @@ describe("RoutesService", () => {
     });
 
     // Feature grants v2 brief C (PR-5), oracle 5/6 — routes_dispatch mode gates createRun's
-    // dispatch by Route.kind. The beforeEach's FeatureConfigStore mock resolves "unset" by
+    // dispatch by Route.kind. The beforeEach's FeatureConfigService mock resolves "unset" by
     // default (matching every real tenant today, since no TenantFeatureConfig row exists yet)
     // — these tests override it per-case to prove the gate is actually wired through the
-    // service, not just unit-tested in isolation (route-dispatch-mode.spec.ts).
+    // service, not just unit-tested in isolation (route-dispatch-mode.spec.ts). Fix round 1
+    // (Opus review, item 1): createRun gates on FeatureConfigService.getEffectiveMode (which
+    // resolves fallback when requires.allOf is no longer met), not the raw stored value — these
+    // tests stub getEffectiveMode directly, so they exercise the SAME seam whether the stored
+    // value or the fallback is what should actually gate.
     describe("routes_dispatch mode gate (feature grants v2 brief C)", () => {
       const routeStops = [{ id: "rs-1", stopNumber: 1, customerId: "c1", customerAddressId: "a1" }];
       const createdRun = {
@@ -1152,10 +1154,7 @@ describe("RoutesService", () => {
       };
 
       function mockMode(value: string) {
-        (service as any).featureConfig.getMode.mockResolvedValue({
-          value,
-          source: value === "unset" ? "REGISTRY_DEFAULT" : "TENANT",
-        });
+        (service as any).featureConfig.getEffectiveMode.mockResolvedValue(value);
       }
 
       it("HARD INVARIANT — unset (today's default, no TenantFeatureConfig row) dispatches a SCHEDULED route exactly as before", async () => {
@@ -1287,7 +1286,7 @@ describe("RoutesService", () => {
         ).resolves.toBeDefined();
       });
 
-      it("reads the mode for the ambient tenant (getTenantId()), scoped per-tenant via FeatureConfigStore", async () => {
+      it("reads the mode for the ambient tenant (getTenantId()), scoped per-tenant via FeatureConfigService", async () => {
         mockMode("unset");
         prisma.route.findUnique.mockResolvedValue({
           ...MOCK_ROUTE,
@@ -1299,10 +1298,35 @@ describe("RoutesService", () => {
 
         await service.createRun({ routeId: "route-1", scheduledDate: "2025-06-01" } as any);
 
-        expect((service as any).featureConfig.getMode).toHaveBeenCalledWith(
+        expect((service as any).featureConfig.getEffectiveMode).toHaveBeenCalledWith(
           "test-tenant",
           "routes_dispatch",
         );
+      });
+
+      // Fix round 1 (Opus review, item 1) — the exact case named in the review: a tenant SET to
+      // "scheduled" who no longer holds recurring_routes (addon revoked after being configured)
+      // must still be able to dispatch an ADHOC route. getEffectiveMode is what computes this
+      // fallback (feature-config.service.spec.ts owns the unit-level proof); here it's stubbed
+      // to return the ALREADY-FALLEN-BACK value ("unset"), proving createRun trusts whatever
+      // getEffectiveMode says rather than re-deriving it from a raw stored value of its own.
+      it("a tenant stored as 'scheduled' but effectively fallen back to 'unset' (lost recurring_routes) can still dispatch ADHOC", async () => {
+        mockMode("unset");
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.ADHOC,
+          stops: routeStops,
+        });
+        prisma.routeRun.create.mockResolvedValue(createdRun);
+        prisma.order.updateMany.mockResolvedValue({ count: 1 });
+
+        await expect(
+          service.createRun({
+            routeId: "route-1",
+            scheduledDate: "2025-06-01",
+            orderIds: ["ord-1"],
+          } as any),
+        ).resolves.toBeDefined();
       });
     });
   });

@@ -8,7 +8,7 @@ import { NotificationsService } from "../notifications/notifications.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { StorageService } from "../storage/storage.service";
-import { FeatureConfigStore } from "../billing/feature-config.store";
+import { FeatureConfigService } from "../billing/feature-config.service";
 import { geocodeAddress } from "../common/geocode.util";
 import { compressImage } from "../storage/compress.util";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -218,10 +218,8 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
         // Feature grants v2 brief C (PR-5): resolves "unset" so every existing test in this
         // file keeps exercising today's (every-kind-allowed) dispatch behavior unchanged.
         {
-          provide: FeatureConfigStore,
-          useValue: {
-            getMode: jest.fn().mockResolvedValue({ value: "unset", source: "REGISTRY_DEFAULT" }),
-          },
+          provide: FeatureConfigService,
+          useValue: { getEffectiveMode: jest.fn().mockResolvedValue("unset") },
         },
       ],
     }).compile();

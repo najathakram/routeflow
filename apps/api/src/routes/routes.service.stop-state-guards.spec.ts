@@ -12,7 +12,7 @@ import { InvoicesService } from "../invoices/invoices.service";
 // `status: "PAID"`, same convention as every other confirmed-money read.
 import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 import { StorageService } from "../storage/storage.service";
-import { FeatureConfigStore } from "../billing/feature-config.store";
+import { FeatureConfigService } from "../billing/feature-config.service";
 import { geocodeAddress } from "../common/geocode.util";
 import { compressImage } from "../storage/compress.util";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -137,10 +137,8 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
         // Feature grants v2 brief C (PR-5): resolves "unset" so every existing test in this
         // file keeps exercising today's (every-kind-allowed) dispatch behavior unchanged.
         {
-          provide: FeatureConfigStore,
-          useValue: {
-            getMode: jest.fn().mockResolvedValue({ value: "unset", source: "REGISTRY_DEFAULT" }),
-          },
+          provide: FeatureConfigService,
+          useValue: { getEffectiveMode: jest.fn().mockResolvedValue("unset") },
         },
       ],
     }).compile();
