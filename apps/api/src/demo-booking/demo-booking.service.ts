@@ -38,7 +38,7 @@ export interface AvailabilityDay {
  * availability right now (unconfigured, misconfigured, or the calendar is
  * unreachable) — distinct from `"ok"` with an empty `days`, which means the
  * system is working and there is genuinely nothing free in the requested
- * range. The client must not say "fully booked" for the former (B499).
+ * range. The client must not say "fully booked" for the former (B500).
  */
 export type AvailabilityStatus = "ok" | "unavailable";
 
@@ -82,7 +82,7 @@ const MANAGE_TOKEN_TTL_AFTER_END_MS = 7 * 86_400_000;
  * How long the "calendar not configured" warning is suppressed after firing
  * once. Unthrottled, this line would repeat on every single call to a public,
  * unauthenticated, 20/min-throttled endpoint for as long as the feature stays
- * unconfigured — burying the one signal that matters (B499).
+ * unconfigured — burying the one signal that matters (B500).
  */
 const UNAVAILABLE_WARN_THROTTLE_MS = 5 * 60_000;
 
@@ -159,7 +159,7 @@ export class DemoBookingService {
       // Unreachable calendar. Offering slots here is how a prospect books a
       // time the team is not actually free for, so offer none — and, same as
       // "not configured", tell the client this is an outage, not a full
-      // calendar (B499). `GoogleCalendarService` already logs the underlying
+      // calendar (B500). `GoogleCalendarService` already logs the underlying
       // failure at error level per attempt; no duplicate log here.
       return this.unavailableResult(visitorZone, config);
     }

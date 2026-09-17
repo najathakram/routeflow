@@ -337,7 +337,7 @@ export function DemoScheduler() {
               <span>{loadError}</span>
             </div>
           ) : availability?.status === "unavailable" ? (
-            // Distinct from "no free times below" (B499): the booking system
+            // Distinct from "no free times below" (B500): the booking system
             // itself cannot serve real availability right now (unconfigured
             // or the calendar is unreachable), not a genuinely full calendar.
             <div className="g-alert" role="alert">

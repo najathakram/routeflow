@@ -83,10 +83,10 @@ describe("DemoScheduler — availability load errors", () => {
   });
 });
 
-// B499 — the availability response's `status` field distinguishes "the
+// B500 — the availability response's `status` field distinguishes "the
 // booking system is broken" from "this window is genuinely fully booked".
 // Both render an empty grid, so only the message below it tells them apart.
-describe("DemoScheduler — availability status (B499)", () => {
+describe("DemoScheduler — availability status (B500)", () => {
   let fetchSpy: jest.Mock;
 
   beforeEach(() => {
