@@ -481,6 +481,20 @@ function isPriceOverridden(it: { unitPrice: number; basePrice: number }): boolea
 }
 
 /**
+ * B465 (Opus BLOCK item 2, client half): a SPECIAL-tier line's price is this
+ * customer's documented contract price — the server now REFUSES a price
+ * change on one with no reason (400), so the client must never let the
+ * operator reach that refusal: catalog/unlisted lines keep an optional
+ * reason, a SPECIAL-tier line with an overridden price needs one before save.
+ */
+function needsSpecialTierReason(
+  it: { unitPrice: number; basePrice: number; overrideReason?: string; isUnlisted?: boolean },
+  isSpecial: boolean,
+): boolean {
+  return !it.isUnlisted && isSpecial && isPriceOverridden(it) && !(it.overrideReason ?? "").trim();
+}
+
+/**
  * The line's own price, for the Undo handlers. Substituting rewrites unitPrice /
  * basePrice / overrideReason to the SUBSTITUTE's; without this an abandoned
  * substitution leaves the original product carrying the substitute's price, and
@@ -791,6 +805,7 @@ function PriceEditRow({
   unitCost,
   unitsPerBox,
   floor,
+  isSpecial,
 }: {
   basePrice: number;
   unitPrice: number;
@@ -800,6 +815,9 @@ function PriceEditRow({
   unitCost?: number | null;
   unitsPerBox?: number | null;
   floor?: number;
+  /** B465: this customer's documented contract price for the product — a
+   *  reason is REQUIRED to override it, never optional like a plain line. */
+  isSpecial?: boolean;
 }) {
   // "Sell anyway" acknowledges a below-floor price for this session; the override
   // is logged via overrideReason so reports can isolate below-floor sales.
@@ -874,8 +892,18 @@ function PriceEditRow({
             type="text"
             value={overrideReason ?? ""}
             onChange={(e) => onReasonChange(e.target.value)}
-            placeholder="reason (optional)"
-            className="min-w-0 flex-1 rounded border border-surface-border bg-white px-2 py-1 text-navy outline-none placeholder:text-navy/40"
+            // B465: a SPECIAL-tier line's contract price can only be changed
+            // with a documented reason — the server refuses the save
+            // otherwise (400), so this reads as required, never optional.
+            placeholder={isSpecial ? "reason (required)" : "reason (optional)"}
+            required={isSpecial}
+            aria-required={isSpecial}
+            aria-invalid={isSpecial && !overrideReason?.trim() ? true : undefined}
+            className={
+              isSpecial && !overrideReason?.trim()
+                ? "min-w-0 flex-1 rounded border border-danger bg-danger-bg/30 px-2 py-1 text-navy outline-none ring-1 ring-danger placeholder:text-danger/70"
+                : "min-w-0 flex-1 rounded border border-surface-border bg-white px-2 py-1 text-navy outline-none placeholder:text-navy/40"
+            }
           />
         </>
       )}
@@ -1323,6 +1351,11 @@ function EditableLineItems({
               unitCost={item.unitCost}
               unitsPerBox={item.unitsPerBox}
               floor={floorForCategory(marginConfig, item.category)}
+              isSpecial={
+                !item.isUnlisted &&
+                item.productId != null &&
+                isSpecialTierFor({ id: item.productId } as SubstituteOption)
+              }
             />
           )}
 
@@ -1648,6 +1681,13 @@ export default function OrderDetailPage() {
   );
   const isSpecialTierFor = React.useCallback(
     (p: SubstituteOption) => (cpMap.get(p.id) ?? customerTier ?? 1) !== 1,
+    [cpMap, customerTier],
+  );
+  // B465: id-only variant for call sites that only have `productId` (an
+  // EditItemState line, not a full SubstituteOption/product row) — same rule,
+  // shared so the save-time guard below and the row's own render never drift.
+  const isSpecialTierForProductId = React.useCallback(
+    (productId: string) => (cpMap.get(productId) ?? customerTier ?? 1) !== 1,
     [cpMap, customerTier],
   );
   const router = useRouter();
@@ -2031,6 +2071,24 @@ export default function OrderDetailPage() {
   }
 
   function handleSaveItems() {
+    // B465: refuse client-side before the server has to — a SPECIAL-tier line
+    // whose price was overridden with no reason would otherwise round-trip a
+    // 400 "A reason is required to change a special-price line" with no
+    // indication of WHICH line to fix.
+    const missingReasonLine = editItems.find(
+      (it) =>
+        !it.cancelled &&
+        it.productId != null &&
+        needsSpecialTierReason(it, isSpecialTierForProductId(it.productId)),
+    );
+    if (missingReasonLine) {
+      toast({
+        title: `A reason is required to change ${missingReasonLine.productName || "this"} — it's this customer's special price`,
+        variant: "error",
+      });
+      return;
+    }
+
     // Hard-delete (or CANCEL fallback) for lines the user removed with the trash button.
     const updates: ItemUpdate[] = [
       ...pendingDeletes.map((id): ItemUpdate => ({ id, action: "DELETE" })),

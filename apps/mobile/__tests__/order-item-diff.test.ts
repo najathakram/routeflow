@@ -110,6 +110,24 @@ describe("buildOrderItemDiff", () => {
     expect(out).toEqual([{ id: "L1", action: "UPDATE", qty: 10, overrideReason: "" }]);
   });
 
+  it("B465: a price-only edit STILL carries the line's already-stored (unchanged) reason — the server refuses a special-price change with no reason on the wire to fall back to", () => {
+    // Draft state seeds overrideReason from the original line (edit-items.tsx),
+    // so a genuine price edit that never touches the reason field arrives here
+    // with catalog.overrideReason === originals.overrideReason — reasonChanged
+    // is false, but the reason must still ride along with the price. Before
+    // this fix, overrideReason was gated on reasonChanged ALONE, so this exact
+    // shape sent unitPrice with no overrideReason at all.
+    const out = run({
+      catalog: [cat({ lineId: "L1", qty: 10, unitPrice: 8, overrideReason: "manager approved" })],
+      originals: [
+        origLine({ id: "L1", qty: 10, unitPrice: 10, overrideReason: "manager approved" }),
+      ],
+    });
+    expect(out).toEqual([
+      { id: "L1", action: "UPDATE", qty: 10, unitPrice: 8, overrideReason: "manager approved" },
+    ]);
+  });
+
   it("new catalog line at the tier base sends NO unitPrice", () => {
     const out = run({ catalog: [cat({ productId: "P9", qty: 3, unitPrice: 5, basePrice: 5 })] });
     expect(out).toEqual([{ productId: "P9", qty: 3 }]);
