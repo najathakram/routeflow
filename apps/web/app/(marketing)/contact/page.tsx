@@ -39,7 +39,8 @@ const AGENDA: Array<[typeof Route, string, string]> = [
 
 export default function ContactPage() {
   return (
-    <section className="contact-section wrap">
+    <div className="glass-page">
+      <section className="contact-section wrap">
       <div className="contact-copy">
         <Eyebrow>SEE ROUTEFLOW IN ACTION</Eyebrow>
         <h1>
@@ -70,6 +71,7 @@ export default function ContactPage() {
         </div>
       </div>
       <DemoForm />
-    </section>
+      </section>
+    </div>
   );
 }
