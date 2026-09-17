@@ -1328,6 +1328,61 @@ describe("RoutesService", () => {
           } as any),
         ).resolves.toBeDefined();
       });
+
+      // Fix round 2 (Opus review, item 1) — end-to-end proof: a REAL FeatureConfigService (not
+      // the fully-mocked one this describe block otherwise uses) whose can() dependency throws
+      // must still let createRun succeed, gated on the registry default. resolveEffective's
+      // try/catch is what makes this true (feature-config.service.spec.ts owns the unit-level
+      // proof); this is the "can() throws -> createRun still succeeds" case named in review.
+      it("resilience: FeatureConfigService.can() throwing (a DB blip) still lets createRun succeed, gated on the registry default", async () => {
+        const throwingAddons = { hasAddon: jest.fn().mockRejectedValue(new Error("db blip")) };
+        const noOverride = { get: jest.fn().mockResolvedValue(null) };
+        const noFlag = { hasFlag: jest.fn().mockResolvedValue(false) };
+        const realStore = {
+          getMode: jest.fn().mockResolvedValue({ value: "scheduled", source: "TENANT" }),
+          invalidate: jest.fn(),
+        };
+        const realAudit = { log: jest.fn().mockResolvedValue(undefined) };
+        const realFeatureConfig = new FeatureConfigService(
+          prisma as any,
+          realStore as any,
+          realAudit as any,
+          throwingAddons as any,
+          noFlag as any,
+          noOverride as any,
+        );
+
+        const resilientService = new RoutesService(
+          prisma as any,
+          gateway as any,
+          notifications as any,
+          messaging as any,
+          invoicesService as any,
+          { get: jest.fn().mockReturnValue("test-key") } as any,
+          storage as any,
+          realFeatureConfig,
+        );
+
+        // stored "scheduled" would normally FORBID an ADHOC dispatch — this route.kind proves
+        // resolveEffective actually fell back to "unset" (which allows both), not that the
+        // stored value happened to already allow it.
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.ADHOC,
+          stops: routeStops,
+        });
+        prisma.routeRun.create.mockResolvedValue(createdRun);
+        prisma.order.updateMany.mockResolvedValue({ count: 1 });
+
+        await expect(
+          resilientService.createRun({
+            routeId: "route-1",
+            scheduledDate: "2025-06-01",
+            orderIds: ["ord-1"],
+          } as any),
+        ).resolves.toBeDefined();
+        expect(throwingAddons.hasAddon).toHaveBeenCalled();
+      });
     });
   });
 

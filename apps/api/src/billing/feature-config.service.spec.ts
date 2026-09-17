@@ -282,5 +282,24 @@ describe("FeatureConfigService", () => {
     it("returns the registry fallback for a key with no config block", async () => {
       await expect(service.getEffectiveMode("tenant-a", "ocr")).resolves.toBe("unset");
     });
+
+    // Fix round 2 (Opus review, item 1) — a can() read throwing (a DB blip inside
+    // AddonService/EntitlementsService/FeatureOverrideService) must never propagate out of
+    // getEffectiveMode/resolveEffective; it falls back to the registry default, logged, exactly
+    // like a "requires not met" resolution would. routes.service.spec.ts proves createRun still
+    // succeeds end to end when this happens.
+    it("addons.hasAddon throwing resolves to the registry default, never rejects", async () => {
+      store.getMode.mockResolvedValue({ value: "scheduled", source: "TENANT" });
+      addons.hasAddon.mockRejectedValue(new Error("db blip"));
+
+      await expect(service.getEffectiveMode("tenant-a", "routes_dispatch")).resolves.toBe("unset");
+    });
+
+    it("the #795 override lookup throwing also resolves to the registry default, never rejects", async () => {
+      store.getMode.mockResolvedValue({ value: "adhoc", source: "TENANT" });
+      overrides.get.mockRejectedValue(new Error("db blip"));
+
+      await expect(service.getEffectiveMode("tenant-a", "routes_dispatch")).resolves.toBe("unset");
+    });
   });
 });
