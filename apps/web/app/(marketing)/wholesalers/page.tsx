@@ -41,7 +41,7 @@ const GETTING_STARTED: Array<[string, string]> = [
 
 export default function WholesalersPage() {
   return (
-    <>
+    <div className="glass-page">
       <section className="distributor-hero">
         <div className="wrap split-hero">
           <div>
@@ -116,6 +116,6 @@ export default function WholesalersPage() {
         </ol>
       </section>
       <CTA />
-    </>
+    </div>
   );
 }
