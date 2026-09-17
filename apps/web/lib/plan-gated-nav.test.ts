@@ -12,6 +12,21 @@ describe("matchPlanGatedRoute", () => {
     expect(matchPlanGatedRoute("/finance/reports/export")).toBe("flag.reports");
   });
 
+  // P0 lock-mirror hotfix: recurring invoices has no sidebar nav entry (reached from
+  // within Invoices) but IS its own route with its own @RequirePlanFlag server-side
+  // gate — a denied tenant deep-linking to /invoices/recurring previously got an
+  // unhandled 403 instead of the graceful lock every other plan-gated route shows.
+  it("matches /invoices/recurring (and nested new/[id]) to flag.recurring_invoices", () => {
+    expect(matchPlanGatedRoute("/invoices/recurring")).toBe("flag.recurring_invoices");
+    expect(matchPlanGatedRoute("/invoices/recurring/new")).toBe("flag.recurring_invoices");
+    expect(matchPlanGatedRoute("/invoices/recurring/rec-1")).toBe("flag.recurring_invoices");
+  });
+
+  it("does not gate the rest of /invoices — only the /invoices/recurring subtree", () => {
+    expect(matchPlanGatedRoute("/invoices")).toBeNull();
+    expect(matchPlanGatedRoute("/invoices/inv-1")).toBeNull();
+  });
+
   it("does not prefix-match a sibling path that merely starts with the same characters", () => {
     // "/returns-policy" starts with "/returns" as a raw string but is not "/returns" or
     // "/returns/..." — the exact-or-slash-boundary check must reject it.
