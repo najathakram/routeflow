@@ -303,7 +303,14 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     );
   }
   if (!isAuthenticated || user?.forcePasswordChange) return null;
-  return <RouteGuard>{children}</RouteGuard>;
+  // B471: DashboardShell wraps RouteGuard (not the other way around) so a locked route's
+  // panel renders INSIDE the shell's <main> — the sidebar and header stay mounted and the
+  // user can navigate away, instead of the lock replacing the whole shell.
+  return (
+    <DashboardShell>
+      <RouteGuard>{children}</RouteGuard>
+    </DashboardShell>
+  );
 }
 
 // ─── Nav link ─────────────────────────────────────────────────────────────────
@@ -1434,9 +1441,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   return (
     <ToastProvider>
       <PageTitleProvider>
-        <AuthGuard>
-          <DashboardShell>{children}</DashboardShell>
-        </AuthGuard>
+        <AuthGuard>{children}</AuthGuard>
       </PageTitleProvider>
     </ToastProvider>
   );
