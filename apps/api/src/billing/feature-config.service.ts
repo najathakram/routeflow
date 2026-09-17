@@ -3,6 +3,7 @@ import {
   ConflictException,
   NotFoundException,
   Injectable,
+  Logger,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -32,6 +33,8 @@ export interface FeatureConfigModeState {
  */
 @Injectable()
 export class FeatureConfigService {
+  private readonly logger = new Logger(FeatureConfigService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly store: FeatureConfigStore,
@@ -75,6 +78,13 @@ export class FeatureConfigService {
    * every kind) rather than stay stuck enforcing a mode it no longer qualifies for. A stored
    * value naming a mode that no longer exists in the registry (a removed mode) falls back the
    * same way.
+   *
+   * Fix round 2 (Opus review, item 1): wrapped in try/catch — `can()`'s reads (the override
+   * lookup, AddonService/EntitlementsService) can throw on a DB blip, and this method's whole
+   * point is deciding what a request-path consumer (RoutesService.createRun) gates dispatch on.
+   * A thrown error here must never fail that request; it falls back to the same registry
+   * default a normal "requires not met" resolution would, exactly like FeatureConfigStore's own
+   * fail-open-to-default convention.
    */
   private async resolveEffective(
     tenantId: string,
@@ -84,12 +94,20 @@ export class FeatureConfigService {
     },
     value: string,
   ): Promise<string> {
-    const modeDef = config.modes[value];
-    if (!modeDef) return config.fallbackMode;
-    for (const required of modeDef.requires?.allOf ?? []) {
-      if (!(await this.can(tenantId, required))) return config.fallbackMode;
+    try {
+      const modeDef = config.modes[value];
+      if (!modeDef) return config.fallbackMode;
+      for (const required of modeDef.requires?.allOf ?? []) {
+        if (!(await this.can(tenantId, required))) return config.fallbackMode;
+      }
+      return value;
+    } catch (err) {
+      this.logger.warn(
+        `resolveEffective(${tenantId}, value="${value}") failed, falling back to registry ` +
+          `default "${config.fallbackMode}": ${(err as Error)?.message ?? err}`,
+      );
+      return config.fallbackMode;
     }
-    return value;
   }
 
   /** The tenant's effective `key` mode — what a consumer (RoutesService.createRun) should

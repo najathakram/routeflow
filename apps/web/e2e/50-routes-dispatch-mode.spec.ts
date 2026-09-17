@@ -42,9 +42,17 @@ test.describe("routes_dispatch config mode — platform-admin endpoint round tri
     const configUrl = `${base}/platform-admin/tenants/${tenantId}/feature-config/${FEATURE_KEY}`;
     const addonsBase = `${base}/platform-admin/tenants/${tenantId}/addons`;
 
-    // Fix round 1 (Opus review, item 3): revoke the granted addon (and clear the config row) in
-    // a finally block, at both ends of this test — so a re-run never inherits a prior run's
-    // partial state and this test tenant is never left holding an addon it didn't have before.
+    // Fix round 2 (Opus review, item 2): record whatever this tenant's recurring_routes state
+    // ACTUALLY was before this test touched it, so the finally below restores exactly that —
+    // never a blind "always disable" (fix round 1's version), which would silently take the
+    // addon away from a tenant that legitimately held it before this spec ever ran.
+    const addonsListRes = await page.request.get(addonsBase);
+    expect(addonsListRes.ok()).toBeTruthy();
+    const addonsList = (await addonsListRes.json()) as Array<{ addonKey: string; active: boolean }>;
+    const hadRecurringRoutes =
+      addonsList.find((a) => a.addonKey === "recurring_routes")?.active ?? false;
+
+    // Disable it for a clean 409 baseline below — restored to `hadRecurringRoutes` in finally.
     await page.request.post(`${addonsBase}/disable`, { data: { addonKey: "recurring_routes" } });
     await page.request.delete(configUrl);
 
@@ -88,9 +96,14 @@ test.describe("routes_dispatch config mode — platform-admin endpoint round tri
       const clearBody = await clearRes.json();
       expect(clearBody).toMatchObject({ value: "unset", source: "REGISTRY_DEFAULT" });
     } finally {
-      // Always revoke, even on assertion failure — never leave e2e-routeflow holding an addon
-      // (and a stale mode row) it didn't have before this test ran, so the next run starts clean.
-      await page.request.post(`${addonsBase}/disable`, { data: { addonKey: "recurring_routes" } });
+      // Restore recurring_routes to EXACTLY the state it was in before this test ran (fix round
+      // 2, item 2) — even on assertion failure — rather than always disabling it, which would
+      // wrongly take the addon away from a tenant that already held it. The config row itself
+      // has no "before" to preserve (it's this test's own key, cleared at the start too), so
+      // it's always cleared here.
+      await page.request.post(`${addonsBase}/${hadRecurringRoutes ? "enable" : "disable"}`, {
+        data: { addonKey: "recurring_routes" },
+      });
       await page.request.delete(configUrl);
     }
   });
