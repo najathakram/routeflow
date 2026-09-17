@@ -306,9 +306,18 @@ export class EmailService {
     return /^(true|1|yes)$/i.test(raw ?? "");
   }
 
-  /** Strip characters that could break out of a `Name <addr>` From/Reply-To header. */
+  /**
+   * Strip characters that could break out of a `Name <addr>` From/Reply-To
+   * header. `\r`/`\n` are the CRLF-injection vector — a tenant business name
+   * containing them could otherwise smuggle a second header (e.g. a forged
+   * `Bcc:`) into the raw message; `["<>]` guard the `Name <addr>` quoting
+   * itself.
+   */
   private sanitizeDisplayName(name: string): string {
-    return name.replace(/["<>]/g, "").trim();
+    return name
+      .replace(/["<>]/g, "")
+      .replace(/[\r\n]+/g, " ")
+      .trim();
   }
 
   /**
@@ -432,25 +441,30 @@ export class EmailService {
     return (await this.getTenantEmailConfig()) != null;
   }
 
-  private async getTenantFromAddress(): Promise<string> {
+  /**
+   * The From header for a tenant's email sent via the TENANT'S OWN SMTP
+   * transport, when no `smtpFromEmail` is configured. `smtpUser` — the
+   * mailbox the tenant's SMTP server actually authenticated as — is the
+   * fallback address, NOT the platform's: the message is physically
+   * transmitted through the tenant's own mail server, so claiming the
+   * platform's `EMAIL_FROM` address here is exactly the SPF/DKIM/DMARC
+   * misalignment those checks exist to catch (B452 followups (c) — this
+   * used to fall back to the platform's verified address; before that, an
+   * even worse hard-coded "noreply@routeflow.app", a domain RouteFlow
+   * doesn't even own).
+   */
+  private async getTenantFromAddress(smtpUser: string): Promise<string> {
     const tenantId = this.prisma.getTenantId();
-    if (!tenantId) return this.platformFrom;
+    if (!tenantId) return smtpUser;
 
     const cfg = await this.prisma.tenantConfig.findFirst({ where: { tenantId } });
     if (cfg?.smtpFromEmail) {
       return cfg.smtpFromName ? `${cfg.smtpFromName} <${cfg.smtpFromEmail}>` : cfg.smtpFromEmail;
     }
-    // Fall back to businessName as sender name, riding the platform's OWN verified
-    // address (EMAIL_FROM) — B452: this used to hard-code "noreply@routeflow.app",
-    // a domain RouteFlow doesn't even own (routeflow.info is the real domain), so
-    // a tenant with no From-email configured sent SMTP mail from a bogus address.
     // The name is sanitized — an unescaped businessName here is a From-header
     // injection vector (e.g. `Acme <evil@attacker.com>` becomes the real From).
     const businessName = cfg?.businessName ? this.sanitizeDisplayName(cfg.businessName) : "";
-    if (businessName) {
-      return `${businessName} via RouteFlow <${this.addressOf(this.platformFrom)}>`;
-    }
-    return this.platformFrom;
+    return businessName ? `${businessName} <${smtpUser}>` : smtpUser;
   }
 
   /**
@@ -539,7 +553,10 @@ export class EmailService {
     const configured = cfg?.customerEmail?.trim() || cfg?.smtpFromEmail?.trim();
     if (configured) return configured;
     const admin = await this.prisma.user.findFirst({
-      where: { tenantId, role: "TENANT_ADMIN", deletedAt: null },
+      where: { tenantId, role: "TENANT_ADMIN", deletedAt: null, status: "ACTIVE" },
+      // Deterministic pick among multiple ACTIVE admins — the longest-tenured
+      // one, not whatever order the DB happens to return.
+      orderBy: { createdAt: "asc" },
       select: { email: true },
     });
     return admin?.email?.trim() || undefined;
@@ -931,7 +948,15 @@ export class EmailService {
    * whose `result.error` was never inspected), which is why the UI said "sent" when
    * nothing went out.
    */
-  async send(params: { to: string; subject: string; html: string; replyTo?: string }): Promise<{
+  async send(params: {
+    to: string;
+    subject: string;
+    html: string;
+    /** N3: plain-text alternative. Optional so every EXISTING caller is unaffected —
+     *  a transport that doesn't get one just sends HTML-only, same as before this field. */
+    text?: string;
+    replyTo?: string;
+  }): Promise<{
     delivered: boolean;
     transport: "smtp" | "resend" | "none";
     id?: string;
@@ -966,7 +991,7 @@ export class EmailService {
           ? emailCfg.fromName
             ? `${emailCfg.fromName} <${emailCfg.fromEmail}>`
             : emailCfg.fromEmail
-          : await this.getTenantFromAddress();
+          : await this.getTenantFromAddress(emailCfg.user);
         const transport = this.createSendTransport(
           emailCfg.host,
           emailCfg.port,
@@ -979,6 +1004,7 @@ export class EmailService {
           to: params.to,
           subject: params.subject,
           html: params.html,
+          text: params.text,
           replyTo,
         });
         this.logger.log(
@@ -1061,6 +1087,7 @@ export class EmailService {
           to: params.to,
           subject: params.subject,
           html: params.html,
+          text: params.text,
           replyTo,
         });
         if ((result as any)?.error) {
@@ -1101,6 +1128,61 @@ export class EmailService {
       error: smtpError,
       smtpFallbackReason,
     };
+  }
+
+  /**
+   * N3 fix round (Opus review of 1dba2bca, finding 4): a PLATFORM-only send that never
+   * resolves tenant SMTP or tenant branding — `send()` above reads `prisma.getTenantId()`
+   * (set on every in-request call, including a tenant admin's OWN authenticated action like
+   * upgrade()/downgrade()), so a billing-lifecycle notification sent through `send()` would
+   * leave from the ACTING TENANT's own mailbox with their own From name. `sendPlatform()`
+   * always uses `this.platformFrom` and skips tenant SMTP entirely, regardless of request
+   * context. Still Resend-only as reviewed (post-merge note, 2026-09-16: B452/#789 landed
+   * `this.platformSmtp` and wired it into `send()` above — `sendPlatform()` does NOT yet use
+   * it, so a deploy with platformSmtp configured but no Resend key would leave every N3
+   * notification undelivered, same as before this merge. Not fixed here — this is a merge
+   * (test/push), not a second review round; flagged to the lead as a follow-up, not silently
+   * expanded).
+   */
+  async sendPlatform(params: {
+    to: string;
+    subject: string;
+    html: string;
+    text?: string;
+    replyTo?: string;
+  }): Promise<{ delivered: boolean; transport: "resend" | "none"; id?: string; error?: string }> {
+    if (this.resend) {
+      try {
+        const result = await this.resend.emails.send({
+          from: this.platformFrom,
+          to: params.to,
+          subject: params.subject,
+          html: params.html,
+          text: params.text,
+          replyTo: params.replyTo,
+        });
+        if ((result as any)?.error) {
+          const msg = (result as any).error?.message ?? "Resend rejected the message";
+          this.logger.error(`Resend rejected platform email to ${params.to}: ${msg}`);
+          return { delivered: false, transport: "resend", error: msg };
+        }
+        this.logger.log(
+          `Platform email sent via Resend to ${params.to} — id: ${(result.data as any)?.id}`,
+        );
+        return { delivered: true, transport: "resend", id: (result.data as any)?.id };
+      } catch (err: any) {
+        this.logger.error(`Failed to send platform email to ${params.to}: ${err?.message}`);
+        return {
+          delivered: false,
+          transport: "resend",
+          error: err?.message ?? "Resend send failed",
+        };
+      }
+    }
+    this.logger.warn(
+      `[EMAIL NOT SENT] To: ${params.to} | Subject: ${params.subject} — no platform email transport is configured.`,
+    );
+    return { delivered: false, transport: "none" };
   }
 
   // ─── Email template ────────────────────────────────────────────────────────
