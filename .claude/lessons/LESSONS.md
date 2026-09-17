@@ -68,6 +68,27 @@
   remap atomically, or a self-test case that renames a fixture record and asserts `index`
   refuses/warns instead of silently carrying forward mismatched fields.
 
+### L-194 · 2026-09-17 · tooling · preview_start binds to the main checkout, not the calling session's worktree
+
+- **Symptom:** a UI proof for a worktree branch (`feat/collapsible-sidebar`) via
+  `preview_start({name})` started servers fine and produced plausible-looking screenshots, but a
+  responsive CSS breakpoint that definitely existed in the branch's code appeared completely
+  broken — grepping the main checkout's own copy of the changed file found zero references to
+  the new component, still the old markup.
+- **Root cause:** `preview_start` launches its named `launch.json` configs from the MAIN
+  CHECKOUT's working directory, never the calling session's actual worktree — a worktree branch
+  whose changes aren't ALSO checked out in the main checkout gets proofed against stale,
+  unrelated code with no error or warning.
+- **Lesson:** **A UI proof for a worktree/branch not checked out in the main checkout must run
+  its OWN dev server FROM the worktree** (`node dist/main.js` with env sourced explicitly for a
+  built API, `next dev -p <port>` for web) **rather than `preview_start`, and must positively
+  verify what's actually being served — grep the rendered HTML/response for something only the
+  branch's changes would produce — before trusting any screenshot as proof. A server coming up
+  and a page looking plausible is not evidence the right code is running.**
+- **Guard:** none yet — propose a one-line reminder in whichever runbook covers worktree UI
+  proofs: confirm the served code matches the branch BEFORE capturing, not after a screenshot
+  looks wrong.
+
 ### L-190 · 2026-09-17 · tooling · FG-B (#819) had to be rebuilt, not rebased, after FG-A squash-merged
 
 - **Symptom:** #819 (FG-B, feature-override kind + MRR exclusion) conflicted after #825 (FG-A,
@@ -691,21 +712,6 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
 - **Guard:** `payment-predicates.ts`'s `resolveConfirmedAmounts(precomputed, payments)` (API) and
   the hand-rolled web mirror in `invoices/[id]/page.tsx` both gate on one field's presence; each
   has a red-first regression test pinning the double-subtraction case.
-
-### L-160 · 2026-09-15 · domain · T14 catalog-driven plan select vs server's PLAN_KEYS allow-list (REG-743-F1)
-
-- **Symptom:** the catalog-driven plan `<select>` on `admin/tenants/new/page.tsx` rendered every
-  row `fetchPlanCatalog()` returned; `create-tenant.dto.ts` validates `@IsIn(PLAN_KEYS)`, a
-  narrower allow-list, so a legacy or not-yet-launched catalog row would 400 on submit.
-- **Root cause:** two sources of truth for "which plans can this form offer" — the published
-  pricing catalog (business config, can carry legacy/future rows) and the server's accepted-value
-  enum — were conflated; the UI trusted the broader one.
-- **Lesson:** **When a form's options come from a dynamic/business-config source rather than a
-  hardcoded enum, filter to whatever narrower set the server actually validates against — a
-  catalog superset is not a submittable set.**
-- **Guard:** `page.test.tsx`'s REG-743-F1 cases — an extra non-`PLAN_KEYS` catalog row is excluded
-  from rendered options; a catalog with zero `PLAN_KEYS`-eligible rows falls back to exactly
-  `PLAN_KEYS`.
 
 ### L-162 · 2026-09-15 · tooling · post-dated check payments PR-1 (schema-only, additive)
 
