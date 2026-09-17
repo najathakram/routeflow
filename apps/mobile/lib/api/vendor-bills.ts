@@ -105,6 +105,12 @@ export function getDuplicateVendorBillError(error: unknown): DuplicateVendorBill
   return data?.code === "DUPLICATE_VENDOR_BILL" ? (data as DuplicateVendorBillError) : null;
 }
 
+// isMoneyInvariantError lives in ../vendor-bill-scan (a pure, react-native-free
+// module) instead of here, so it stays reachable from the mobile pure-logic
+// Jest suite — this file transitively imports react-native via ../api-client
+// and can't be pulled into those tests.
+export { isMoneyInvariantError } from "../vendor-bill-scan";
+
 /** A DRAFT bill whose receive would skip inventory/cost updates. */
 export function billNeedsMapping(bill: VendorBill): boolean {
   return (

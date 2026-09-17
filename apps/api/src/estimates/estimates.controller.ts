@@ -6,6 +6,7 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { PlanFlagGuard } from "../billing/plan-flag.guard";
 import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { EstimatesService } from "./estimates.service";
+import { CreateEstimateDto } from "./dto/create-estimate.dto";
 
 // WP5a (R3b.3, R3b.5): flag.estimates ships dark (DARK_PLAN_FLAGS in
 // plan-flag-policy.ts) — this class-level guard is a courtesy allow until the
@@ -17,7 +18,7 @@ import { EstimatesService } from "./estimates.service";
 export class EstimatesController {
   constructor(private readonly estimatesService: EstimatesService) {}
 
-  @Post() create(@Body() dto: any) {
+  @Post() create(@Body() dto: CreateEstimateDto) {
     return this.estimatesService.create(dto);
   }
   @Get() findAll(
