@@ -289,9 +289,18 @@ export class EmailService {
     return /^(true|1|yes)$/i.test(raw ?? "");
   }
 
-  /** Strip characters that could break out of a `Name <addr>` From/Reply-To header. */
+  /**
+   * Strip characters that could break out of a `Name <addr>` From/Reply-To
+   * header. `\r`/`\n` are the CRLF-injection vector — a tenant business name
+   * containing them could otherwise smuggle a second header (e.g. a forged
+   * `Bcc:`) into the raw message; `["<>]` guard the `Name <addr>` quoting
+   * itself.
+   */
   private sanitizeDisplayName(name: string): string {
-    return name.replace(/["<>]/g, "").trim();
+    return name
+      .replace(/["<>]/g, "")
+      .replace(/[\r\n]+/g, " ")
+      .trim();
   }
 
   /**
@@ -415,25 +424,30 @@ export class EmailService {
     return (await this.getTenantEmailConfig()) != null;
   }
 
-  private async getTenantFromAddress(): Promise<string> {
+  /**
+   * The From header for a tenant's email sent via the TENANT'S OWN SMTP
+   * transport, when no `smtpFromEmail` is configured. `smtpUser` — the
+   * mailbox the tenant's SMTP server actually authenticated as — is the
+   * fallback address, NOT the platform's: the message is physically
+   * transmitted through the tenant's own mail server, so claiming the
+   * platform's `EMAIL_FROM` address here is exactly the SPF/DKIM/DMARC
+   * misalignment those checks exist to catch (B452 followups (c) — this
+   * used to fall back to the platform's verified address; before that, an
+   * even worse hard-coded "noreply@routeflow.app", a domain RouteFlow
+   * doesn't even own).
+   */
+  private async getTenantFromAddress(smtpUser: string): Promise<string> {
     const tenantId = this.prisma.getTenantId();
-    if (!tenantId) return this.platformFrom;
+    if (!tenantId) return smtpUser;
 
     const cfg = await this.prisma.tenantConfig.findFirst({ where: { tenantId } });
     if (cfg?.smtpFromEmail) {
       return cfg.smtpFromName ? `${cfg.smtpFromName} <${cfg.smtpFromEmail}>` : cfg.smtpFromEmail;
     }
-    // Fall back to businessName as sender name, riding the platform's OWN verified
-    // address (EMAIL_FROM) — B452: this used to hard-code "noreply@routeflow.app",
-    // a domain RouteFlow doesn't even own (routeflow.info is the real domain), so
-    // a tenant with no From-email configured sent SMTP mail from a bogus address.
     // The name is sanitized — an unescaped businessName here is a From-header
     // injection vector (e.g. `Acme <evil@attacker.com>` becomes the real From).
     const businessName = cfg?.businessName ? this.sanitizeDisplayName(cfg.businessName) : "";
-    if (businessName) {
-      return `${businessName} via RouteFlow <${this.addressOf(this.platformFrom)}>`;
-    }
-    return this.platformFrom;
+    return businessName ? `${businessName} <${smtpUser}>` : smtpUser;
   }
 
   /**
@@ -522,7 +536,10 @@ export class EmailService {
     const configured = cfg?.customerEmail?.trim() || cfg?.smtpFromEmail?.trim();
     if (configured) return configured;
     const admin = await this.prisma.user.findFirst({
-      where: { tenantId, role: "TENANT_ADMIN", deletedAt: null },
+      where: { tenantId, role: "TENANT_ADMIN", deletedAt: null, status: "ACTIVE" },
+      // Deterministic pick among multiple ACTIVE admins — the longest-tenured
+      // one, not whatever order the DB happens to return.
+      orderBy: { createdAt: "asc" },
       select: { email: true },
     });
     return admin?.email?.trim() || undefined;
@@ -949,7 +966,7 @@ export class EmailService {
           ? emailCfg.fromName
             ? `${emailCfg.fromName} <${emailCfg.fromEmail}>`
             : emailCfg.fromEmail
-          : await this.getTenantFromAddress();
+          : await this.getTenantFromAddress(emailCfg.user);
         const transport = this.createSendTransport(
           emailCfg.host,
           emailCfg.port,

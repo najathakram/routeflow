@@ -508,9 +508,9 @@ race guard present; typecheck passes.
 **Files:** `apps/api/scripts/scrub-demo-contacts.mjs` (NEW), `apps/api/scripts/demo-seed.js`
 
 **Verified:** prod `routeflow-demo` customers include `najathakram1@gmail.com` (owner's personal
-email — hardcoded as `OWNER_EMAIL` at demo-seed.js line ~92) and
-`ali@affamerchantservices.com` + phone `7187754019` on "ABC Wholesale" (a runtime-created row, id
-`4b53feb1-96c9-48b4-a509-d721cfc3f577`). Policy: demo tenant carries fictional
+email — hardcoded as `OWNER_EMAIL` at demo-seed.js line ~92) and `<redacted third-party contact>`
+(a runtime-created row, id `4b53feb1-96c9-48b4-a509-d721cfc3f577`) — a real customer contact had
+leaked into the demo tenant; verified and removed. Policy: demo tenant carries fictional
 `*.example.com` contacts only.
 
 **7-1. New script `scrub-demo-contacts.mjs`** — follow the house pattern EXACTLY as in
@@ -525,9 +525,10 @@ email — hardcoded as `OWNER_EMAIL` at demo-seed.js line ~92) and
 - Dry-run by default: print each offending customer (id, businessName, email, phone) and the
   planned replacement; write only with `--execute`.
 - Scope: customers of tenant slug `routeflow-demo` where email is NOT null and NOT ending in
-  `example.com`, or phone matches `7187754019`. Replacements: email →
+  `example.com`, or phone is a real (non-fictional-marker) number — see WP7's verified leak
+  above. Replacements: email →
   `<slugified businessName>@<slugified businessName>.example.com` truncated sensibly (e.g.
-  `ali@abcwholesale.example.com`), phone → `(512) 555-0190` style (increment last two digits per
+  `dana@acmewholesale.example.com`), phone → `(512) 555-0190` style (increment last two digits per
   row to keep them unique).
 - Print a summary line: `scrubbed N customers (dry-run|executed)`.
 - Header comment with the run command:

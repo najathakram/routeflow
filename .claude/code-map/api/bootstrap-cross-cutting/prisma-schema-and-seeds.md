@@ -178,7 +178,9 @@
   guard-first (`assertTestTenant("routeflow-demo")` at module top, before the Prisma client
   exists), dry-run default / `--execute`, offenders matched by SHAPE (email not `*.example.com`
   and not the deliberate `@placeholder.local` no-email sentinel; phone digits without `555`) —
-  never by literal value, so no real PII lives in the file; also sweeps demo-tenant `User.email`
+  never by literal value, so no real PII lives in the file (2026-09-16: `replacementEmail`'s own
+  doc-comment example was a real leaked business name slugified — generalized to an acme-style
+  placeholder, same fix as chore/scrub-client-identifiers); also sweeps demo-tenant `User.email`
   (reusing the matched customer's replacement) and REPORTS — never modifies — linked global
   `BuyerAccount`s. Executed against prod 2026-08-26: 2 customers + 1 user scrubbed, verify pass
   clean, 1 buyer account left for the owner to unlink.

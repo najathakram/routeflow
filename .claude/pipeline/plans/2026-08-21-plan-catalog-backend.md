@@ -21,7 +21,7 @@ The owner has renamed and repriced the ladder. This PR publishes a **new catalog
 
 Annual = monthly × 10 — compute it with the existing `annualPrice()` helper in `apps/api/src/billing/billing-math.ts`, never hardcode.
 
-**The rename is data-safe (verified against production):** only three `TenantSubscription` rows carry a `planKey` and all three are `ENTERPRISE` (the owner's own `affa`, `test`, `e2e-routeflow`). **Zero tenants are on TEAM or BUSINESS**, so renaming those keys cannot orphan a paying customer. v7 keeps its historical TEAM/BUSINESS rows; code must tolerate reading them rather than rewriting history.
+**The rename is data-safe (verified against production):** only three `TenantSubscription` rows carry a `planKey` and all three are `ENTERPRISE` (the owner's own `acme`, `test`, `e2e-routeflow`). **Zero tenants are on TEAM or BUSINESS**, so renaming those keys cannot orphan a paying customer. v7 keeps its historical TEAM/BUSINESS rows; code must tolerate reading them rather than rewriting history.
 
 Admin UI, marketing-site pricing, and tenant plan pickers are a SEPARATE follow-up PR. **Do not touch `apps/web` or `apps/mobile` in this PR.**
 
