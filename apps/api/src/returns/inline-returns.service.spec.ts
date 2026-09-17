@@ -349,7 +349,7 @@ describe("InlineReturnsService", () => {
     );
   });
 
-  it("a returnKey belonging to a DIFFERENT customer/order is never treated as a replay", async () => {
+  it("a returnKey belonging to a DIFFERENT customer/order (found only at the PRE-tx check, gone by the in-tx re-check) is never treated as a replay", async () => {
     prisma.return.findFirst.mockResolvedValueOnce({
       id: "ret-other",
       returnKey: "nonce-1",
@@ -360,11 +360,29 @@ describe("InlineReturnsService", () => {
       items: [],
     });
 
-    // Falls through to a real capture attempt (which succeeds here since the mocked create
-    // has no real uniqueness enforcement) rather than short-circuiting as a replay.
+    // Falls through to a real capture attempt (the in-tx re-check below reverts to the
+    // beforeEach default, which finds no match for this returnKey) rather than
+    // short-circuiting as a replay of someone else's return.
     const result = await service.capture(CAPTURE_DTO as any, OPERATOR);
     expect(prisma.return.create).toHaveBeenCalled();
     expect(result.id).toBe("ret-1");
+  });
+
+  it("MED-7 (re-review): the SAME mismatch, found only by the IN-TX re-check (a racer committed it while this call waited for the lock), also throws 409 — revert ⇒ silent replay", async () => {
+    prisma.return.findFirst
+      .mockResolvedValueOnce(null) // pre-tx check: no match yet, proceeds to open the tx
+      .mockResolvedValueOnce({
+        id: "ret-other",
+        returnKey: "nonce-1",
+        kind: "INLINE",
+        customerId: "cust-OTHER",
+        orderId: "ord-OTHER",
+        status: "REFUNDED",
+        items: [],
+      }); // the IN-TX re-check, after the row lock, finds the racer's mismatched row
+
+    await expect(service.capture(CAPTURE_DTO as any, OPERATOR)).rejects.toThrow(ConflictException);
+    expect(prisma.return.create).not.toHaveBeenCalled();
   });
 
   // ─── MED-7: P2002 returnKey collision outside the aborted transaction ───────
@@ -510,6 +528,32 @@ describe("InlineReturnsService", () => {
       const result = await service.capture(DRIVER_CAPTURE_DTO as any, DRIVER);
       expect(result.holdReason).toBe("DRIVER_CAP");
     });
+
+    it("re-review LOW-MED: a zero-total DRIVER capture is NEVER held, even when Σ already exceeds the order's gross on its own", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-carrying",
+        customerId: "cust-1",
+        total: 5, // tiny gross
+        status: "PENDING",
+        routeRunId: "run-1",
+      });
+      // Σ ALREADY over the gross before this return even prices anything.
+      prisma.return.findMany.mockResolvedValue([
+        { creditSubtotal: 10, creditTax: 0, creditCategoryTax: 0 },
+      ]);
+      quoteService.priceInlineReturn.mockResolvedValue(priced(0, 0, 0, 0)); // this return's own total is $0.00
+
+      const result = await service.capture(DRIVER_CAPTURE_DTO as any, DRIVER);
+
+      expect(prisma.return.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.not.objectContaining({ holdReason: "DRIVER_CAP" }),
+        }),
+      );
+      // Not held ⇒ restock/ledger reversal run immediately, same as any non-held capture.
+      expect(ledger.reverseReturnEntries).toHaveBeenCalled();
+      expect(result.holdReason ?? null).toBeNull();
+    });
   });
 
   // ─── MED-5: a DRIVER may only capture on their own current route run ────────
@@ -636,6 +680,28 @@ describe("InlineReturnsService", () => {
         BadRequestException,
       );
       expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+    });
+
+    it("re-review LOW-MED: a hold with heldAmount 0 throws BEFORE any restock or ledger reversal — use reject() instead", async () => {
+      prisma.return.findFirst.mockResolvedValue({ ...HELD, heldAmount: 0 });
+
+      await expect(service.approve("ret-held", OPERATOR)).rejects.toThrow(BadRequestException);
+
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(prisma.product.update).not.toHaveBeenCalled();
+      expect(ledger.reverseReturnEntries).not.toHaveBeenCalled();
+      expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+    });
+
+    it("re-review LOW-MED: an explicit approve amount of 0 (or ≤ $0.001) also throws BEFORE any restock/ledger reversal", async () => {
+      prisma.return.findFirst.mockResolvedValue(HELD);
+
+      await expect(service.approve("ret-held", OPERATOR, { amount: 0 })).rejects.toThrow(
+        BadRequestException,
+      );
+
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(ledger.reverseReturnEntries).not.toHaveBeenCalled();
     });
 
     it("HIGH-2: a retried/duplicate approve (the row lock re-read finds it already resolved) mints NO second credit note — revert ⇒ two CNs", async () => {

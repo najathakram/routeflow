@@ -202,13 +202,20 @@ export class InlineReturnsService {
           }
 
           // Re-check the replay key INSIDE the lock — a racer that lost the acquire above may
-          // have committed a matching row while this call waited for it.
+          // have committed a matching row while this call waited for it. MED-7 (re-review):
+          // only trusted as a replay when it matches THIS (customerId, orderId) — the same
+          // rule the pre-tx check and the post-catch P2002 recovery both apply. A returnKey
+          // collision against a DIFFERENT customer/order here is a genuine conflict, never a
+          // silent replay of someone else's return.
           if (dto.returnKey) {
             const raced = await tx.return.findFirst({
               where: { returnKey: dto.returnKey, kind: "INLINE" },
               include: { items: true },
             });
             if (raced) {
+              if (raced.customerId !== dto.customerId || raced.orderId !== dto.orderId) {
+                throw new ConflictException("A different return already used this capture key");
+              }
               return {
                 replayed: true as const,
                 ret: raced,
@@ -233,7 +240,10 @@ export class InlineReturnsService {
           const cap = roundMoney(Number(order.total ?? 0));
           const wouldBe = roundMoney(priorCredit + priced.total);
           const isDriver = user.role === UserRole.DRIVER;
-          const overCap = isDriver && wouldBe > cap + 0.001;
+          // Re-review LOW-MED: a zero-total return has nothing to hold — a $0.00 "credit
+          // awaiting approval" is never a real DRIVER_CAP case, so it's excluded even when
+          // Σ is already at/over the order's gross.
+          const overCap = isDriver && priced.total > 0.001 && wouldBe > cap + 0.001;
 
           const year = new Date().getFullYear();
           const returnNumber = await this.numbering.reserveNext("RETURN", {
@@ -485,8 +495,17 @@ export class InlineReturnsService {
       throw new BadRequestException("Only a driver-cap hold awaiting approval can be approved");
     }
     const heldAmountPre = roundMoney(Number(pre.heldAmount ?? 0));
-    if (dto?.amount != null && roundMoney(dto.amount) > heldAmountPre + 0.001) {
+    const requestedPre = dto?.amount != null ? roundMoney(dto.amount) : heldAmountPre;
+    if (dto?.amount != null && requestedPre > heldAmountPre + 0.001) {
       throw new BadRequestException("Approved amount cannot exceed the held credit");
+    }
+    // Re-review LOW-MED: a zero (or near-zero) amount is never a real "approval" — that's
+    // what reject() is for. Thrown here, BEFORE the transaction opens, so a garbage/zero
+    // amount never triggers a restock or regulated-ledger reversal at all.
+    if (!(requestedPre > 0.001)) {
+      throw new BadRequestException(
+        "Approved amount must be greater than 0 — use reject() to decline a hold entirely",
+      );
     }
 
     let minted: any;
@@ -508,6 +527,13 @@ export class InlineReturnsService {
       const amount = dto?.amount != null ? roundMoney(dto.amount) : heldAmount;
       if (amount > heldAmount + 0.001) {
         throw new BadRequestException("Approved amount cannot exceed the held credit");
+      }
+      // Authoritative re-check under the row lock — same rule as the pre-check above, in
+      // case a concurrent write shrank `heldAmount` to ~0 between the two reads.
+      if (!(amount > 0.001)) {
+        throw new BadRequestException(
+          "Approved amount must be greater than 0 — use reject() to decline a hold entirely",
+        );
       }
 
       // HIGH-4: apply what capture() deferred — restock + regulated-ledger reversal — now

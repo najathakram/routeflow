@@ -90,10 +90,13 @@ export class CaptureInlineReturnDto {
   routeRunStopId?: string;
 
   /** Client nonce for this capture tray — `@@unique([tenantId, returnKey])` makes a retried
-   * submission (offline replay, double-tap) resolve to the SAME row instead of a duplicate. */
-  @IsOptional()
+   * submission (offline replay, double-tap) resolve to the SAME row instead of a duplicate.
+   * REQUIRED (re-review LOW): no client calls this route yet, so there is no back-compat
+   * cost to closing off an unkeyed capture — every capture must be replay-safe from day one
+   * rather than opting in later. */
   @IsString()
-  returnKey?: string;
+  @IsNotEmpty()
+  returnKey!: string;
 
   @IsOptional()
   @IsIn(CAPTURE_REASONS)
