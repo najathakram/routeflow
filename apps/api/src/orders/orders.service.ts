@@ -3422,9 +3422,16 @@ export class OrdersService implements OnApplicationBootstrap {
     orderId: string,
     dto: UpdateOrderItemsDto,
     user?: JwtPayload,
-    // B215: set ONLY by the staff create-merge branch (OrdersController.create). Not reachable
-    // from a request body — the PATCH routes and the buyer merge call with three arguments.
-    opts?: { idempotency?: { key: string; responseHash: string } },
+    // B215/B465: set ONLY by the staff create-merge branch (OrdersController.create). Not
+    // reachable from a request body — the PATCH routes and the buyer merge call with three
+    // arguments. isCreateMerge: this replace-all IS the create path's own auto-merge, so a
+    // line NEW to the order (no existing counterpart) skips the reason-required guard below,
+    // matching separate create's own unchecked behavior — never inferred from the DTO/order
+    // state, only ever set here by the one call site that means it.
+    opts?: {
+      idempotency?: { key: string; responseHash: string };
+      isCreateMerge?: boolean;
+    },
   ) {
     const order = await this.prisma.forTenant().order.findUnique({
       where: { id: orderId },
@@ -4060,9 +4067,20 @@ export class OrdersService implements OnApplicationBootstrap {
                 (item.overrideReason && item.overrideReason.trim()) ||
                 (replaceAllExisting?.overrideReason && replaceAllExisting.overrideReason.trim())
               );
+              // B465 fix round 4 (Opus BLOCK item 1, HIGH): a line NEW to the order
+              // (no existing counterpart at all — replaceAllExisting is null) inside
+              // the STAFF CREATE PATH's own auto-merge is exactly the same shape as
+              // a brand-new order's line at create time, which carries no reason
+              // requirement in this PR (tracked as the B465 follow-up for create).
+              // Gated on the explicit isCreateMerge flag from the ONE call site that
+              // means it — never inferred from replaceAllExisting being null alone,
+              // since an operator's own replaceAll:true edit of an EXISTING order can
+              // also add a brand-new line and that path still needs the guard.
+              const skipAsCreateMergeNewLine = !!opts?.isCreateMerge && replaceAllExisting == null;
               if (
                 !bogoPriceUnchanged &&
                 !replaceAllPriceUnchanged &&
+                !skipAsCreateMergeNewLine &&
                 overridePrice !== null &&
                 replaceAllIsSpecialTier &&
                 !replaceAllHasOverrideReason
@@ -4663,8 +4681,13 @@ export class OrdersService implements OnApplicationBootstrap {
                     `A reason is required to change ${priceProduct?.name ?? "this line"} — it's this customer's special price`,
                   );
                 }
-                const isManualOverride =
-                  overridePrice !== null && overridePrice !== existingUnitPrice;
+                // B465 fix round 4 (Opus BLOCK item 4, LOW): the SAME half-cent
+                // tolerance as priceUnchangedFromStored above — a strict `!==` here
+                // disagreed with that check on a float-rounding-only difference
+                // (e.g. 8.000000001 vs 8), so a price the reason-guard correctly
+                // treated as unchanged still got stamped MANUAL/originalPrice/
+                // overriddenBy as if the operator had genuinely repriced it.
+                const isManualOverride = overridePrice !== null && !priceUnchangedFromStored;
                 const unitPrice = overridePrice !== null ? overridePrice : existingUnitPrice;
                 // Anchor the struck-through original to the CATALOG list price (like the
                 // replace-all / new-item branches), never the line's prior net price —
@@ -4764,10 +4787,14 @@ export class OrdersService implements OnApplicationBootstrap {
                     // edit (isManualOverride false — price unchanged) keeps F2's
                     // original contract: an explicit blank there is a deliberate
                     // clear and is written verbatim.
+                    // B465 fix round 4 (Opus BLOCK item 3, LOW): `?.trim()` — a
+                    // caller sending overrideReason: null explicitly (defined,
+                    // not undefined, so this branch runs) would 500 on a bare
+                    // `.trim()`; treat null the same as blank.
                     ...(item.overrideReason !== undefined
                       ? {
                           overrideReason:
-                            isManualOverride && !item.overrideReason.trim()
+                            isManualOverride && !item.overrideReason?.trim()
                               ? storedOverrideReason
                               : (item.overrideReason ?? null),
                           overriddenBy: user?.sub ?? null,

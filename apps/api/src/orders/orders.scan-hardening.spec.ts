@@ -737,6 +737,9 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
         ]),
       }),
       expect.anything(),
+      // B465 fix round 4: the create-merge call site always passes a 4th opts
+      // argument now, naming isCreateMerge.
+      expect.objectContaining({ isCreateMerge: true }),
     );
   });
 

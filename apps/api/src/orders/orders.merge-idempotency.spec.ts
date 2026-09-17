@@ -539,11 +539,17 @@ describe("OrdersService.replayMergeReconcile — the convergent post-fold tail (
 // ─── Pins P1-P2 — controller merge branch, colour today/after: GREEN/GREEN ─
 
 describe("OrdersController.create — B215 pins P1-P2", () => {
-  it("B215 pin P1: a merge with no Idempotency-Key calls updateOrderItems with exactly three arguments", async () => {
+  it("B215/B465 pin P1: a merge with no Idempotency-Key calls updateOrderItems with a 4th opts argument carrying ONLY isCreateMerge (no idempotency key)", async () => {
+    // Was "exactly three arguments" pre-B465 (round 4 made the 4th argument
+    // unconditional, carrying isCreateMerge so a NEW line for a SPECIAL
+    // customer skips the reason-required guard on this path — see
+    // orders.service.spec.ts's (r4-1)/(r4-2)). A keyless merge still gets the
+    // 4th argument now; it just carries no `idempotency` key inside it.
     const { svc } = statefulOrdersService({ orderKey: null });
     const controller = buildController(svc);
     await controller.create(mergeDto(), operatorPayload as any);
-    expect(svc.updateOrderItems.mock.calls[0]).toHaveLength(3);
+    expect(svc.updateOrderItems.mock.calls[0]).toHaveLength(4);
+    expect(svc.updateOrderItems.mock.calls[0][3]).toEqual({ isCreateMerge: true });
   });
 
   it("B215 pin P2: a key that sits only on the Order column (create()'s key) still replays a merge", async () => {

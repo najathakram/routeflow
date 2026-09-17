@@ -5534,6 +5534,177 @@ describe("OrdersService", () => {
       );
     });
 
+    it("(r4-1) B465 fix round 4 (Opus BLOCK item 1, HIGH, revert-probe): the staff create-merge's own auto-merge (isCreateMerge) lets a NEW line for a SPECIAL customer through with no reason, storing the sent price", async () => {
+      // Separate create (POST /orders with no existing PENDING order to merge
+      // into) has no reason requirement in this PR (the B465 follow-up covers
+      // it). The auto-merge branch of that SAME create endpoint folds a fresh
+      // scan into an EXISTING order via replaceAll:true — a line brand-new to
+      // that order (no existing counterpart at all) must be treated identically
+      // to separate create, not like an operator's own edit of an existing
+      // order. orders.controller.ts's create-merge call site is the ONLY
+      // caller that ever sets opts.isCreateMerge; a plain replaceAll:true from
+      // the edit screen never does, per test (item3)/(item3b) above.
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findMany.mockResolvedValue([TIERED_PRODUCT]);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 12, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        // A discounted price with NO reason -- would 400 on a plain edit-screen
+        // replaceAll (see (item3)), but this is the create path's own merge.
+        { items: [{ productId: "prod-1", qty: 2, unitPrice: 6 }], replaceAll: true },
+        operatorPayload,
+        { isCreateMerge: true },
+      );
+
+      expect(prisma.orderItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            productId: "prod-1",
+            qty: 2,
+            unitPrice: 6,
+            subtotal: 12,
+          }),
+        }),
+      );
+    });
+
+    it("(r4-2) B465 fix round 4 (Opus BLOCK item 1): isCreateMerge does NOT exempt an EXISTING line's genuine reprice — only a line brand-new to the order", async () => {
+      // The flag must be scoped to replaceAllExisting == null, never a
+      // blanket bypass for the whole create-merge call — an existing SPECIAL
+      // line being folded back in at a DIFFERENT price still needs a reason.
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: "prod-1",
+            qty: 2,
+            unitPrice: 8,
+            subtotal: 16,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+            priceType: "SPECIAL",
+            originalPrice: 10,
+          },
+        ],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findMany.mockResolvedValue([TIERED_PRODUCT]);
+
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          { items: [{ productId: "prod-1", qty: 2, unitPrice: 10 }], replaceAll: true },
+          operatorPayload,
+          { isCreateMerge: true },
+        ),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(prisma.orderItem.create).not.toHaveBeenCalled();
+    });
+
+    it("(r4-3) B465 fix round 4 (Opus BLOCK item 3, LOW): overrideReason: null on a genuine reprice falls back to the stored reason instead of throwing a 500", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: "prod-1",
+            qty: 3,
+            unitPrice: 8,
+            subtotal: 24,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+            priceType: "SPECIAL",
+            originalPrice: 10,
+            overrideReason: "manager approved",
+          },
+        ],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findFirst.mockResolvedValue({ pricePerUnit: 10 });
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 36, status: "PENDING" }]);
+
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          {
+            items: [
+              {
+                id: "li-1",
+                action: "UPDATE",
+                qty: 3,
+                unitPrice: 12,
+                overrideReason: null as unknown as string,
+              },
+            ],
+            replaceAll: false,
+          },
+          operatorPayload,
+        ),
+      ).resolves.not.toThrow();
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "li-1" },
+          data: expect.objectContaining({ unitPrice: 12, overrideReason: "manager approved" }),
+        }),
+      );
+    });
+
+    it("(r4-4) B465 fix round 4 (Opus BLOCK item 4, LOW): a half-cent float difference from the stored price is never treated as a MANUAL override", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: "prod-1",
+            qty: 3,
+            unitPrice: 8,
+            subtotal: 24,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+            priceType: "SPECIAL",
+            originalPrice: 10,
+          },
+        ],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 24, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        // 8.001 is within the 0.005 tolerance of the stored 8 -- a float
+        // rounding artifact, not a reprice decision.
+        { items: [{ id: "li-1", action: "UPDATE", qty: 3, unitPrice: 8.001 }], replaceAll: false },
+        operatorPayload,
+      );
+
+      const call = (prisma.orderItem.update as jest.Mock).mock.calls[0][0];
+      expect(call.data.priceType).toBeUndefined();
+      expect(call.data.originalPrice).toBeUndefined();
+      expect(call.data.overriddenBy).toBeUndefined();
+    });
+
     it("(r3-1) B465 fix round 3 (Opus BLOCK item 2, revert-probe): a qty-only edit on a SPECIAL line — price echoed back UNCHANGED, no reason — gives 200, never a 400", async () => {
       // Round-2 (cd704524) checked ONLY whether a price was present, never
       // whether it was actually MOVING — a payload that redundantly echoes
@@ -8920,10 +9091,13 @@ describe("OrdersController — merge choice vs orderDate", () => {
 
     // F30/R11 (B199): the fold carries the EXISTING line's unitPrice through —
     // a merge is never where an operator's price override quietly disappears.
+    // B465 fix round 4: the create-merge call site now always passes a 4th
+    // opts argument naming isCreateMerge — the ONLY place this ever gets set.
     expect(ordersService.updateOrderItems).toHaveBeenCalledWith(
       "ord-open",
       expect.objectContaining({ items: [{ productId: "prod-1", qty: 3, unitPrice: 5 }] }),
       operatorPayload,
+      expect.objectContaining({ isCreateMerge: true }),
     );
   });
 

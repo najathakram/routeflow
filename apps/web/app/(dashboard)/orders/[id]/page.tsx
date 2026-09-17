@@ -1438,6 +1438,16 @@ function EditableLineItems({
                   // substitution look un-overridden, so no unitPrice reached the
                   // server and a tier customer silently lost their price.
                   unitPrice: tierPriceFor(p),
+                  // B465 fix round 4 (Opus BLOCK item 2): reset the reason-required
+                  // baseline to the SUBSTITUTE's own resolved price — a substitution
+                  // is a fresh starting point, not a reprice of the replaced line's
+                  // price. Without this, originalUnitPrice kept the OLD product's
+                  // price; substituting into a SPECIAL-tier product then made
+                  // needsSpecialTierReason compare the new tier price against the
+                  // stale old one and demand a reason for a change the operator
+                  // never made. Only a price edit AFTER this substitution should
+                  // ever trip the guard now.
+                  originalUnitPrice: tierPriceFor(p),
                   basePrice: Number(p.pricePerUnit ?? 0),
                   overrideReason: undefined,
                   qty: split.qty,
