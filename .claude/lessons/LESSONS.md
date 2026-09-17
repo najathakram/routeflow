@@ -813,5 +813,4 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   overwritten by the OTHER service's unrelated re-affirm within seconds. Read the full status
   history, or confirm the actually-served commit directly (API: `GET /api/v1/health`; web: the
   E2E readiness gate) before declaring a deploy failed or successful.**
-- **Guard:** none yet — propose `post-deploy-check` reading the full status array (not just index
-  0) or verifying the served commit sha directly, whichever ships first.
+- **Guard:** none yet — propose `post-deploy-check` reading the full status array (not just index 0) or verifying the served commit sha directly, whichever ships first.
