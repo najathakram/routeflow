@@ -14,6 +14,7 @@ import * as crypto from "crypto";
 import { PrismaService } from "../../prisma/prisma.service";
 import { EncryptionService } from "../../common/encryption.service";
 import { AuditService } from "../../audit/audit.service";
+import { withAdvisoryLock } from "../../common/db-locks";
 
 /** Scope granted to the mailbox client — send-only, never a read scope (design D1/§3). */
 const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
@@ -282,6 +283,13 @@ export class MailboxConnectionService {
     if (!oauthPayload?.tenantId || !oauthPayload?.userId || !oauthPayload?.verifier) {
       throw new BadRequestException("state_invalid");
     }
+    // A state minted by startConnectMicrosoft (or any future provider) redeemed here would
+    // otherwise exchange fine — the nonce carries no provider-specific secret — but bind a
+    // MICROSOFT grant through the GOOGLE code path (wrong scopes, wrong token endpoint already
+    // consumed the code). Reject it exactly like a tampered/unknown state (Opus review, LOW).
+    if (oauthPayload.provider !== "GOOGLE") {
+      throw new BadRequestException("state_invalid");
+    }
 
     const client = this.newOAuthClient();
     const { tokens } = await client
@@ -407,6 +415,11 @@ export class MailboxConnectionService {
     if (!oauthPayload?.tenantId || !oauthPayload?.userId || !oauthPayload?.verifier) {
       throw new BadRequestException("state_invalid");
     }
+    // A state minted by startConnect (Google) redeemed here — same reasoning as the Google
+    // callback's mirror check just above it in this file (Opus review, LOW).
+    if (oauthPayload.provider !== "MICROSOFT") {
+      throw new BadRequestException("state_invalid");
+    }
 
     let tokenData: any;
     try {
@@ -521,34 +534,52 @@ export class MailboxConnectionService {
       throw new ForbiddenException("mailbox_confirm_identity_mismatch");
     }
 
-    const existing = await this.prisma.mailboxConnection.findUnique({
-      where: { tenantId: pending.tenantId },
-    });
-    const isReconnect = !!existing;
-    const externalSubjectChanged = existing && existing.externalSubject !== pending.externalSubject;
+    // Serialize against MailboxSendService's token-refresh critical section — the SAME
+    // "mailbox" advisory lock, keyed by tenantId (Opus review, LOW — rotation race). Without
+    // this, an in-flight refresh that read the OLD row before this reconnect could finish AFTER
+    // the upsert below and persist a rotated (Microsoft) or merely re-cached (Google) token pair
+    // derived from the SUPERSEDED grant, clobbering the just-connected one.
+    const lockResult = await withAdvisoryLock(
+      { family: "mailbox", key: pending.tenantId, mode: "wait", waitMs: 10_000 },
+      async () => {
+        const existing = await this.prisma.mailboxConnection.findUnique({
+          where: { tenantId: pending.tenantId },
+        });
+        const isReconnect = !!existing;
+        const externalSubjectChanged =
+          !!existing && existing.externalSubject !== pending.externalSubject;
 
-    const data = {
-      provider: pending.provider,
-      accountEmail: pending.accountEmail,
-      externalSubject: pending.externalSubject,
-      scopesGranted: pending.scopesGranted,
-      refreshTokenCipher: pending.refreshTokenCipher,
-      accessTokenCipher: pending.accessTokenCipher,
-      accessTokenExpiresAt: pending.accessTokenExpiresAt
-        ? new Date(pending.accessTokenExpiresAt)
-        : null,
-      status: "CONNECTED" as const,
-      throttledUntil: null,
-      lastError: null,
-      lastErrorAt: null,
-      connectedByUserId: pending.userId,
-    };
+        const data = {
+          provider: pending.provider,
+          accountEmail: pending.accountEmail,
+          externalSubject: pending.externalSubject,
+          scopesGranted: pending.scopesGranted,
+          refreshTokenCipher: pending.refreshTokenCipher,
+          accessTokenCipher: pending.accessTokenCipher,
+          accessTokenExpiresAt: pending.accessTokenExpiresAt
+            ? new Date(pending.accessTokenExpiresAt)
+            : null,
+          status: "CONNECTED" as const,
+          throttledUntil: null,
+          lastError: null,
+          lastErrorAt: null,
+          connectedByUserId: pending.userId,
+        };
 
-    const row = await this.prisma.mailboxConnection.upsert({
-      where: { tenantId: pending.tenantId },
-      create: { tenantId: pending.tenantId, ...data },
-      update: data,
-    });
+        const row = await this.prisma.mailboxConnection.upsert({
+          where: { tenantId: pending.tenantId },
+          create: { tenantId: pending.tenantId, ...data },
+          update: data,
+        });
+
+        return { row, isReconnect, externalSubjectChanged };
+      },
+    );
+
+    if (!lockResult.acquired) {
+      throw new ServiceUnavailableException("Couldn't complete the connection — try again.");
+    }
+    const { row, isReconnect, externalSubjectChanged } = lockResult.value;
 
     await this.audit.log({
       tenantId: pending.tenantId,

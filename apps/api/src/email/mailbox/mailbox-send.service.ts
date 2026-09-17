@@ -15,6 +15,14 @@ const MS_GRAPH_SEND_MAIL_URL = "https://graph.microsoft.com/v1.0/me/sendMail";
 /** Must match `MailboxConnectionService`'s startConnectMicrosoft/handleMicrosoftCallback scope
  *  request (design §3) — a refresh with a NARROWER scope than what was granted is rejected. */
 const MS_MAILBOX_SCOPES = ["offline_access", "Mail.Send", "User.Read"];
+/** Graph's documented raw-MIME `sendMail` size cap (design §2). */
+const MS_GRAPH_MAX_MIME_BYTES = 4 * 1024 * 1024;
+/** Graph error `code`s (the JSON body's `error.code`, not the HTTP status) that mean the TOKEN
+ *  itself is the problem — as opposed to a 403 like `ErrorSendAsDenied` or
+ *  `MailboxNotEnabledForRESTAPI`, which mean the account/mailbox can't do this regardless of
+ *  how fresh the token is, and reconnecting would not fix them (Opus review, LOW). */
+const MS_GRAPH_REAUTH_ERROR_CODE_PATTERN =
+  /Authentication|InvalidToken|TokenExpired|TokenNotFound/i;
 /** Refresh a bit before actual expiry so a send never races an access token dying mid-flight. */
 const ACCESS_TOKEN_REFRESH_SKEW_MS = 60_000;
 const DEFAULT_THROTTLE_MS = 60 * 60_000; // 1 hour, mirrors the design's default Retry-After.
@@ -400,6 +408,27 @@ export class MailboxSendService {
     accessToken: string,
     mimeBuffer: Buffer,
   ): Promise<MailboxSendResult> {
+    if (mimeBuffer.length > MS_GRAPH_MAX_MIME_BYTES) {
+      // Graph's raw-MIME sendMail documents a 4 MB cap — this is never retryable by falling
+      // back to another transport being right for THIS message, but it must still fall through
+      // (never REVOKED/THROTTLED — the connection itself is fine) so the caller's existing
+      // tenant-SMTP/platform chain gets a chance.
+      this.logger.error(
+        `Mailbox Graph send skipped for tenant ${tenantId}: MIME message ${mimeBuffer.length}B exceeds Graph's 4MB sendMail limit`,
+      );
+      await this.prisma.mailboxConnection
+        .update({
+          where: { tenantId },
+          data: {
+            lastError:
+              "Message too large for Microsoft Graph's 4 MB limit — falling back to the next sender.",
+            lastErrorAt: new Date(),
+          },
+        })
+        .catch(() => {});
+      return { delivered: false, transport: "mailbox", error: "message_too_large" };
+    }
+
     const raw = mimeBuffer.toString("base64");
 
     try {
@@ -445,9 +474,14 @@ export class MailboxSendService {
         return { delivered: false, transport: "mailbox", error: "throttled" };
       }
 
-      if (status === 401 || status === 403) {
-        // Graph rejected the token outright (consent revoked since the last refresh, the app
-        // removed from the account, etc.) — reconnect required, never retried automatically.
+      const graphErrorCode: string = err?.response?.data?.error?.code ?? "";
+      const isTokenRejection =
+        status === 401 ||
+        (status === 403 && MS_GRAPH_REAUTH_ERROR_CODE_PATTERN.test(graphErrorCode));
+
+      if (isTokenRejection) {
+        // Graph rejected the TOKEN itself (expired/invalid/consent revoked since the last
+        // refresh) — reconnect required, never retried automatically.
         await this.prisma.mailboxConnection
           .update({
             where: { tenantId },
@@ -459,6 +493,33 @@ export class MailboxSendService {
           })
           .catch(() => {});
         return { delivered: false, transport: "mailbox", error: "revoked" };
+      }
+
+      if (status === 403) {
+        // A 403 whose code is NOT a token/auth problem — e.g. ErrorSendAsDenied (the mailbox
+        // can't send as this address) or MailboxNotEnabledForRESTAPI (no Exchange mailbox on
+        // this account). Reconnecting wouldn't fix either, so this is a real send failure, not
+        // a revoked grant: record it and fall through WITHOUT touching `status` (Opus review,
+        // LOW — a bad-mailbox-config 403 was flipping a perfectly good connection to REVOKED).
+        this.logger.error(
+          `Mailbox Graph send forbidden for tenant ${tenantId} [code=${graphErrorCode || "unknown"}]: ${err?.message ?? err}`,
+        );
+        await this.prisma.mailboxConnection
+          .update({
+            where: { tenantId },
+            data: {
+              lastError: graphErrorCode
+                ? `Microsoft rejected the send (${graphErrorCode}).`
+                : "Microsoft rejected the send.",
+              lastErrorAt: new Date(),
+            },
+          })
+          .catch(() => {});
+        return {
+          delivered: false,
+          transport: "mailbox",
+          error: graphErrorCode || "graph_send_forbidden",
+        };
       }
 
       this.logger.error(
