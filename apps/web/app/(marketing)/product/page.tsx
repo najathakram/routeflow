@@ -36,7 +36,7 @@ const CONNECTION_NODES: Array<[typeof Users, string]> = [
 
 export default function ProductPage() {
   return (
-    <>
+    <div className="glass-page">
       <section className="page-hero centered wrap">
         <Eyebrow>CONNECTED OPERATIONS. AI INVOICE SCANNING.</Eyebrow>
         <h1>
@@ -112,6 +112,6 @@ export default function ProductPage() {
       <BuyingConfidence />
       <FAQ />
       <CTA />
-    </>
+    </div>
   );
 }
