@@ -3,6 +3,7 @@ import {
   Get,
   Patch,
   Post,
+  Put,
   Delete,
   Param,
   Body,
@@ -10,6 +11,8 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  ConflictException,
+  NotFoundException,
 } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from "@nestjs/swagger";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -32,7 +35,15 @@ import { UpdatePlanPricesDto } from "./dto/update-plan-prices.dto";
 import { UpdateTenantClassDto } from "./dto/update-tenant-class.dto";
 import { EnableAddonDto, DisableAddonDto } from "../billing/dto/manage-addon.dto";
 import { CreateFeatureOverrideDto } from "./dto/manage-feature-override.dto";
+import { SetEntitlementsModeDto } from "./dto/set-entitlements-mode.dto";
+import { ExplainFeatureDiffDto } from "./dto/explain-feature-diff.dto";
 import { FEATURE_REGISTRY } from "../billing/feature-registry";
+import { EntitlementsModeService } from "../billing/entitlements-mode.service";
+import { FeatureDiffService } from "../billing/feature-diff.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
+import { FeaturePreviewService } from "../billing/feature-preview.service";
+import { toEffectiveFeature } from "../billing/feature-resolver.service";
+import type { FeaturePreviewRequest } from "@routeflow/types";
 import { AdminAuditAction } from "./audit-actions.constant";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 
@@ -47,6 +58,10 @@ export class PlatformAdminController {
     private readonly billingService: BillingService,
     private readonly addonService: AddonService,
     private readonly featureOverrides: FeatureOverrideService,
+    private readonly entitlementsMode: EntitlementsModeService,
+    private readonly featureDiffs: FeatureDiffService,
+    private readonly authority: EntitlementAuthority,
+    private readonly featurePreview: FeaturePreviewService,
   ) {}
 
   @Get("stats")
@@ -367,19 +382,160 @@ export class PlatformAdminController {
   // ─── Feature overrides ────────────────────────────────────────────────────
 
   @Get("features/registry")
-  @ApiOperation({ summary: "Every feature registry key — for the override key select" })
+  @ApiOperation({ summary: "The full feature registry — FeatureRegistryRow[] (design contract)" })
   listFeatureRegistry() {
     return FEATURE_REGISTRY.map((f) => ({
       key: f.key,
-      label: f.label,
-      area: f.area,
       kind: f.kind,
+      area: f.area,
+      label: f.label,
+      description: f.description,
+      lifecycle: f.gate.state === "dark" ? "beta" : "ga",
       internal: f.internal ?? false,
       // Opus review of 8130b204, item 2: `via` lets the web warn before creating an override
       // that has no wired consultation point. "none" is a verified-no-gate key by definition
       // (catalog metadata only) -- an override there can never have any effect.
-      via: f.gate.via,
+      gate: { via: f.gate.via, state: f.gate.state },
+      billing: { skus: [...f.billing.skus] },
+      ...(f.config
+        ? {
+            config: {
+              fallbackMode: f.config.fallbackMode,
+              modes: Object.entries(f.config.modes).map(([key, m]) => ({
+                key,
+                label: m.label,
+                lifecycle: "ga" as const,
+                ...(m.requires?.allOf ? { requires: [...m.requires.allOf] } : {}),
+              })),
+            },
+          }
+        : {}),
     }));
+  }
+
+  // ─── Feature grants v2 brief A (design 2026-09-17 §2): shadow/live switch + diff log ───────
+
+  @Get("entitlements/mode")
+  @ApiOperation({ summary: "The global shadow/live entitlements-resolver switch" })
+  async getEntitlementsMode() {
+    return { mode: await this.entitlementsMode.getMode() };
+  }
+
+  @Put("entitlements/mode")
+  @ApiOperation({
+    summary:
+      "Switch shadow/live. live refuses (409) while any diff row is unexplained, unless force+reason.",
+  })
+  async setEntitlementsMode(@Body() dto: SetEntitlementsModeDto, @CurrentUser() admin: JwtPayload) {
+    if (dto.mode === "live") {
+      const hasUnexplained = await this.featureDiffs.hasUnexplained();
+      if (hasUnexplained && !(dto.force && dto.reason)) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: "UNEXPLAINED_DIFFS",
+          message:
+            "Unexplained FeatureResolverDiff rows exist — explain them, or pass {force:true, reason} to override.",
+        });
+      }
+    }
+    await this.entitlementsMode.setMode(dto.mode);
+    await this.svc.recordAdminAction(null, admin.sub, AdminAuditAction.ENTITLEMENTS_MODE_CHANGED, {
+      mode: dto.mode,
+      force: dto.force ?? false,
+      reason: dto.reason ?? null,
+    });
+    return { mode: dto.mode };
+  }
+
+  @Get("features/diffs")
+  @ApiOperation({ summary: "Shadow-mode disagreements between the old path and the resolver" })
+  @ApiQuery({ name: "tenantId", required: false })
+  @ApiQuery({ name: "unexplainedOnly", required: false, type: Boolean })
+  listFeatureDiffs(
+    @Query("tenantId") tenantId?: string,
+    @Query("unexplainedOnly") unexplainedOnly?: string,
+  ) {
+    return this.featureDiffs.list({
+      tenantId: tenantId || undefined,
+      unexplainedOnly: unexplainedOnly === "true" || unexplainedOnly === "1",
+    });
+  }
+
+  @Post("features/diffs/:id/explain")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Record why a diff row is expected, unblocking the live switch" })
+  async explainFeatureDiff(
+    @Param("id") id: string,
+    @Body() dto: ExplainFeatureDiffDto,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    const result = await this.featureDiffs.explain(id, dto.explanation);
+    await this.svc.recordAdminAction(null, admin.sub, AdminAuditAction.FEATURE_DIFF_EXPLAINED, {
+      diffId: id,
+    });
+    return result;
+  }
+
+  @Get("tenants/:id/features/effective")
+  @ApiOperation({ summary: "Every registry key's resolved verdict for one tenant (explain trace)" })
+  async getTenantFeaturesEffective(@Param("id") id: string) {
+    const [resolved, oldPathByKey, mode] = await Promise.all([
+      this.authority.resolveAll(id),
+      this.authority.computeOldPathAll(id),
+      this.entitlementsMode.getMode(),
+    ]);
+    if (!resolved) {
+      return { effective: [], computedAt: new Date().toISOString(), unavailable: true };
+    }
+    return {
+      effective: FEATURE_REGISTRY.map((f) => {
+        const entry = resolved.byKey.get(f.key)!;
+        // Opus review of 9923b87c, item 5: `serving` is the OLD PATH's verdict (what's
+        // actually applied while entitlements.mode is "shadow"), not the resolver's own
+        // value — those two only coincide by construction, and the whole point of the
+        // explain trace is to show where they diverge. `enforced` reflects the REAL mode:
+        // true only once "live" makes the resolver's verdict the one that's applied.
+        const serving = oldPathByKey.get(f.key) ?? entry.effective;
+        return toEffectiveFeature(
+          entry,
+          serving,
+          resolved.planKey,
+          resolved.catalogVersionId,
+          mode === "live",
+        );
+      }),
+      computedAt: resolved.computedAt,
+    };
+  }
+
+  @Get("tenants/:id/features/effective/:key")
+  @ApiOperation({ summary: "One registry key's resolved verdict for one tenant (explain trace)" })
+  async getTenantFeatureEffective(@Param("id") id: string, @Param("key") key: string) {
+    const [resolved, oldPathByKey, mode] = await Promise.all([
+      this.authority.resolveAll(id),
+      this.authority.computeOldPathAll(id),
+      this.entitlementsMode.getMode(),
+    ]);
+    if (!resolved) return { key, unavailable: true };
+    const entry = resolved.byKey.get(key);
+    if (!entry) throw new NotFoundException(`"${key}" is not a registered feature key.`);
+    const serving = oldPathByKey.get(key) ?? entry.effective;
+    return toEffectiveFeature(
+      entry,
+      serving,
+      resolved.planKey,
+      resolved.catalogVersionId,
+      mode === "live",
+    );
+  }
+
+  @Post("tenants/:id/features/preview")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: "Before/after per key for a hypothetical plan/override/mode change — writes nothing",
+  })
+  previewTenantFeatures(@Param("id") id: string, @Body() body: FeaturePreviewRequest) {
+    return this.featurePreview.preview(id, body ?? {});
   }
 
   @Get("tenants/:id/feature-overrides")

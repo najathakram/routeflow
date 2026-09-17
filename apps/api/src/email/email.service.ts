@@ -349,6 +349,19 @@ export class EmailService {
   }
 
   /**
+   * "Good enough" syntactic email check (not a full RFC 5322 grammar) — gates
+   * whether a value is safe to place bare in a From `addr-spec`. Exists
+   * because `smtpUser` (an SMTP AUTH username) is not guaranteed to be an
+   * email address at all: SendGrid's literal `"apikey"`, an AWS SES access-
+   * key id, etc. Excludes whitespace outright, so a CRLF/space that survived
+   * `sanitizeDisplayName` (folded to a single space, not removed) still fails
+   * here (B468).
+   */
+  private isPlausibleEmailAddress(value: string): boolean {
+    return /^[^\s<>"';,\\]+@[^\s<>"';,\\]+\.[^\s<>"';,\\]+$/.test(value);
+  }
+
+  /**
    * Build a nodemailer transport with the shared fail-fast timeouts + fail-secure
    * STARTTLS behaviour used by every SMTP send path (tenant SMTP, platform SMTP).
    * `mapSmtpError`'s provider-aware guidance (Gmail app-passwords, M365 Authenticated
@@ -480,19 +493,28 @@ export class EmailService {
    * used to fall back to the platform's verified address; before that, an
    * even worse hard-coded "noreply@routeflow.app", a domain RouteFlow
    * doesn't even own).
+   *
+   * B468: `smtpUser` is an SMTP AUTH username, not guaranteed to be an email
+   * address (SendGrid's literal `"apikey"`, an AWS SES key id) — and even
+   * when it looks address-shaped it's operator input, so it gets the exact
+   * same sanitization pass as businessName before it can reach a From
+   * header. Returns null (never throws) when no usable address survives —
+   * the caller reports a clean "not sent", not a broken From.
    */
-  private async getTenantFromAddress(smtpUser: string): Promise<string> {
+  private async getTenantFromAddress(smtpUser: string): Promise<string | null> {
+    const sanitizedUser = this.sanitizeDisplayName(smtpUser);
     const tenantId = this.prisma.getTenantId();
-    if (!tenantId) return smtpUser;
+    if (!tenantId) return this.isPlausibleEmailAddress(sanitizedUser) ? sanitizedUser : null;
 
     const cfg = await this.prisma.tenantConfig.findFirst({ where: { tenantId } });
     if (cfg?.smtpFromEmail) {
       return cfg.smtpFromName ? `${cfg.smtpFromName} <${cfg.smtpFromEmail}>` : cfg.smtpFromEmail;
     }
+    if (!this.isPlausibleEmailAddress(sanitizedUser)) return null;
     // The name is sanitized — an unescaped businessName here is a From-header
     // injection vector (e.g. `Acme <evil@attacker.com>` becomes the real From).
     const businessName = cfg?.businessName ? this.sanitizeDisplayName(cfg.businessName) : "";
-    return businessName ? `${businessName} <${smtpUser}>` : smtpUser;
+    return businessName ? `${businessName} <${sanitizedUser}>` : sanitizedUser;
   }
 
   /**
@@ -1030,6 +1052,19 @@ export class EmailService {
             ? `${emailCfg.fromName} <${emailCfg.fromEmail}>`
             : emailCfg.fromEmail
           : await this.getTenantFromAddress(emailCfg.user);
+        // B468: smtpUser isn't guaranteed to be a usable From address
+        // (SendGrid's "apikey", an SES key id, a CRLF-injection attempt that
+        // sanitized down to nothing address-shaped) — report a clean
+        // not-sent result instead of handing nodemailer a broken From, and
+        // never fall through to Resend/platform SMTP for what is a
+        // configuration problem, not a transient send failure.
+        if (!from) {
+          return {
+            delivered: false,
+            transport: "smtp",
+            error: "Set a From email in Settings → Email",
+          };
+        }
         const transport = this.createSendTransport(
           emailCfg.host,
           emailCfg.port,

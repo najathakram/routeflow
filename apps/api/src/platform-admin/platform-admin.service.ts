@@ -90,7 +90,11 @@ export class PlatformAdminService {
    * failure never breaks the mutation.
    */
   async recordAdminAction(
-    tenantId: string,
+    // Nullable for platform-global actions with no single tenant (feature grants v2 brief A:
+    // the entitlements.mode switch and diff-explain actions apply platform-wide) — AuditService
+    // itself already accepts `tenantId: string | null`; every existing call site still passes a
+    // real tenant id unchanged.
+    tenantId: string | null,
     adminId: string | null,
     action: AdminAuditActionCode,
     meta?: Record<string, unknown>,

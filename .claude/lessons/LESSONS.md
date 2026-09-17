@@ -40,17 +40,25 @@
   sufficient gate for tooling-timing changes, only for correctness.**
 - **Guard:** the merge session re-measures self-test wall-clock during its scoped review.
 
-### L-180 · 2026-09-16 · tooling · git worktree move leaves stale npm junctions
+### L-180 · 2026-09-16 · tooling · npm/dir junctions across worktrees are unsafe near git worktree ops
 
-- **Symptom:** after `git worktree move`, invalid-hook-call errors and mangled Jest file paths —
-  initially looked like [[L-055]]'s dot-directory glob bug, but a different mechanism.
-- **Root cause:** `git worktree move` relocates git metadata and working files but never rewrites
-  npm's workspace junctions (Windows) inside `node_modules` — those are absolute-path-based and
-  keep resolving to wherever `npm install` last ran, i.e. the OLD path.
-- **Lesson:** **After `git worktree move`, treat `node_modules` as stale — run `npm ci` (+
-  `npx prisma generate` for apps/api) at the FINAL path. Never move a worktree after installing
-  if you can install at the final path from the start.**
-- **Guard:** none yet — propose a post-move check comparing a junction's resolved target to cwd.
+- **Symptom:** (a) after `git worktree move`, invalid-hook-call errors and mangled Jest paths —
+  looked like [[L-055]]'s dot-directory glob bug, but wasn't; (b) 2026-09-17: a scratch worktree
+  was junctioned to a SIBLING's `node_modules` (to dodge an `npm install` under a disk-critical
+  constraint), and `git worktree remove --force` on the scratch tree cascaded a recursive delete
+  through the junction, wiping the sibling's `node_modules` and ~2,388 of its tracked files.
+- **Root cause:** Windows npm junctions are absolute-path reparse points, invisible to git and
+  not junction-aware to a naive recursive delete — `worktree move` leaves one pointing at the OLD
+  path forever; `worktree remove --force`/`rm -rf` walks THROUGH one into its real target instead
+  of unlinking the reparse point.
+- **Lesson:** **Never let a junction outlive the git worktree op around it. After
+  `git worktree move`, treat `node_modules` as stale — `npm ci` (+ `prisma generate` for
+  apps/api) at the final path. Before removing/recursively deleting ANY worktree, `rmdir` (never
+  `rm -rf`) every junction inside it and confirm it's gone first. Best: never junction
+  `node_modules` between two DIFFERENT live worktrees — the disk saved isn't worth the blast
+  radius.**
+- **Guard:** none yet — propose a pre-remove check refusing `git worktree remove` while a
+  junction exists under the tree, plus a post-move check comparing a junction's target to cwd.
 
 ### L-179 · 2026-09-16 · tooling · campaign-check freshness ritual
 
@@ -273,6 +281,27 @@ floor", ...)`), not after the generic thing being tested — restored in `next-v
 - **Guard:** the `demo_booking_race_guard` migration's partial unique index; a concurrent-insert
   regression test proves the second request gets a real constraint violation, not a silent
   double-book.
+
+### L-189 · 2026-09-17 · domain · B466 (substitute path bypassed the tier-aware pricer)
+
+- **Symptom:** substituting a product on an order item priced the new line at LIST regardless of
+  the customer's SPECIAL-tier contract price — a correctly-typed override at the real contract
+  price was silently stored as DISCOUNTED with no reason, on a code path nobody had ever pointed
+  a tier-3 customer at before.
+- **Root cause:** the substitution branch was its own independent price path — it reused neither
+  `resolveBuyerLinePrice`'s tier resolution nor the batched `CustomerPrice` lookup the ADD/UPDATE
+  branches share (the substitute's NEW product id was never even added to that lookup's id set)
+  — so it defaulted to the simplest case, list price, and had no way to learn a per-product tier
+  existed for the new product at all.
+- **Lesson:** **A new mutation path onto an already-priced entity (substitute, replace, clone,
+  ...) must resolve price through the SAME tier-aware pricer AND read from the SAME batched
+  price-lookup key set every sibling path uses — a fresh, path-specific reimplementation silently
+  regresses to the simplest case, and the gap is invisible until someone diffs it against a
+  sibling branch by hand.**
+- **Guard:** `orders.service.spec.ts`'s B466 suite (a SPECIAL-tier substitute prices at tier, not
+  list; the reason-required guard fires on a bare override; the batched lookup includes
+  `substituteProductId`). Sibling [[L-072]] (reuse vs. reimplement, applied here to a pricer
+  instead of an enum).
 
 ### L-185 · 2026-09-17 · domain · B440 (report `total` repurposed, footer stopped matching its own column)
 
@@ -522,26 +551,6 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   (`REG-MSCAN-A4-anon`, source-text pin in `edit-items-drawer.test.ts`);
   `session-teardown.ts` step (6) also sweeps `editItemsSnapshotUserPrefix(null)`
   (`REG-EDIT-SWEEP-B`/`REG-MSCAN-A4-anon` in `session-teardown.test.ts`).
-
-### L-146 · 2026-09-14 · domain · B221 driver return-list scoping
-
-- **Symptom:** `GET /returns` is `@Roles(OPERATOR, DRIVER, CUSTOMER)` on the controller, but
-  `ReturnsService.findAllForUser` had a scoping branch for CUSTOMER only — a DRIVER fell through
-  to the unscoped, tenant-wide `findAll`, seeing every return in the tenant rather than just
-  ones on orders assigned to their own route runs.
-- **Root cause:** the role was added to the endpoint's authorization list (so a driver COULD
-  call it at all) without a matching branch in the service's OWN scoping logic — `@Roles` and
-  tenant-scoping (`forTenant()`) both silently read as "this is handled," but neither actually
-  restricts results to the CALLER's own data once past the tenant boundary.
-- **Lesson:** **`@Roles(...)` is authorization (can this role call the endpoint at all), never
-  scoping (which rows can this specific caller see). Adding a role to an endpoint's allow-list
-  is only half the change — grep the SERVICE method's own list-scoping for a branch per role
-  actually granted access, and add one for any that's missing, or the new role inherits
-  whichever existing branch's fallthrough happens to run (often the most-privileged one).**
-- **Guard:** `ReturnsService.findAllForUser`'s DRIVER branch (resolves the caller's `Driver` row,
-  scopes via `where.order = {routeRun: {driverId}}`); `returns.security.spec.ts`'s B221 suite.
-  Sibling pattern already fixed once in `credit-notes.service.ts` (DRIVER denied outright there,
-  a different but equally deliberate choice — the point is BOTH required an explicit branch).
 
 ### L-155 · 2026-09-15 · domain · PR-2 fix round (F2: retired-writer branch vs legacy data)
 

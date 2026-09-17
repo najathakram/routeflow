@@ -1009,6 +1009,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       {priceEditItem ? (
         <PriceOverrideModal
           item={priceEditItem}
+          isSpecial={isSpecialFor(priceEditItem.productId)}
           onSave={(price, reason) => {
             // B263 D2: rounding + lineTotal recompute now live in the shared
             // helper (money discipline) — never write the raw typed price.
@@ -1092,6 +1093,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
           // strip's "Edit price" and its modal — so it is that LINE's gate, not
           // the order's (SPECIAL-tier lock + web's edit window, RULINGS R2/R9).
           canEditPrice={lastAddedLine ? canEditPriceFor(lastAddedLine.productId) : false}
+          isSpecialTierFor={isSpecialFor}
           initialScanOpen={pickerScanIntent}
           // Add-and-stay (scans + wedge input): the picker stays open so N
           // items scan with zero taps — closes web's long-standing edit-screen
@@ -1835,10 +1837,17 @@ function PriceOverrideModal({
   item,
   onSave,
   onCancel,
+  isSpecial = false,
 }: {
   item: DraftItem;
   onSave: (newPrice: number, reason: string) => void;
   onCancel: () => void;
+  /** B465: this customer's documented contract price for the product — a
+   *  reason is REQUIRED to override it here, never optional like a plain
+   *  line. `canEditPriceFor` already hides this modal's own trigger for a
+   *  SPECIAL line today; this is defense-in-depth for any path that reaches
+   *  it, mirroring the server's own refusal and the web reference. */
+  isSpecial?: boolean;
 }) {
   const [priceText, setPriceText] = useState(item.unitPrice.toFixed(2));
   // "$ off / unit" is a lens over (catalogPrice - newPrice); the two inputs stay in sync.
@@ -1849,7 +1858,8 @@ function PriceOverrideModal({
   );
   const [reason, setReason] = useState(item.overrideReason ?? "");
   const newPrice = toNumber(priceText);
-  const valid = newPrice > 0;
+  const reasonMissing = isSpecial && reason.trim() === "";
+  const valid = newPrice > 0 && !reasonMissing;
 
   const onChangePrice = (raw: string) => {
     setPriceText(raw);
@@ -1902,13 +1912,19 @@ function PriceOverrideModal({
             placeholderTextColor={ios.label3}
           />
 
-          <Text style={styles.modalFieldLabel}>Reason (optional)</Text>
+          <Text style={styles.modalFieldLabel}>
+            {isSpecial ? "Reason (required)" : "Reason (optional)"}
+          </Text>
           <TextInput
-            style={[styles.modalInput, { marginBottom: 16 }]}
+            style={[
+              styles.modalInput,
+              { marginBottom: 16 },
+              reasonMissing ? styles.modalInputError : null,
+            ]}
             value={reason}
             onChangeText={setReason}
-            placeholder="e.g. daily market price"
-            placeholderTextColor={ios.label3}
+            placeholder={isSpecial ? "e.g. manager approved" : "e.g. daily market price"}
+            placeholderTextColor={reasonMissing ? ios.system.red : ios.label3}
           />
 
           <View style={styles.modalBtns}>
@@ -2242,6 +2258,7 @@ function ProductPicker({
   onEditPrice,
   onSetToFloor,
   canEditPrice = false,
+  isSpecialTierFor,
   onScanSessionStart,
   onScanSessionEnd,
   trayRows,
@@ -2317,6 +2334,15 @@ function ProductPicker({
    * line (RULINGS R2/R9). Defaults to false.
    */
   canEditPrice?: boolean;
+  /**
+   * B465: the list branch's `isSpecialFor`, threaded verbatim so the picker's
+   * own `PriceOverrideModal` requires a reason on a SPECIAL-tier line exactly
+   * like the list branch's modal does — defense-in-depth for any path that
+   * reaches it, since `canEditPrice` above already excludes SPECIAL lines
+   * from the picker's price-edit affordance entirely. Absent in a caller that
+   * has no tier context; treated as "not special" (never requires a reason).
+   */
+  isSpecialTierFor?: (productId: string) => boolean;
   /** A camera session is opening — the parent clears its "last scan-added" line. */
   onScanSessionStart?: () => void;
   /** A camera session ended. Does NOT clear the last-added line (RULINGS R5). */
@@ -2716,6 +2742,7 @@ function ProductPicker({
       {canEditPrice && pickerPriceEditItem ? (
         <PriceOverrideModal
           item={pickerPriceEditItem}
+          isSpecial={isSpecialTierFor ? isSpecialTierFor(pickerPriceEditItem.productId) : false}
           onSave={(price, reason) => {
             // Same money path as the list branch (B263 D2): round + recompute
             // through the shared helper, never write the raw typed price.
@@ -3240,6 +3267,12 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_500Medium",
     color: ios.label,
     marginBottom: 12,
+  },
+  // B465: a SPECIAL-tier override's reason field reads as required, not
+  // optional — a thin red ring, mirroring the web reference's danger styling.
+  modalInputError: {
+    borderWidth: 1,
+    borderColor: ios.system.red,
   },
   modalBtns: { flexDirection: "row", gap: 10 },
   modalBtnGhost: {

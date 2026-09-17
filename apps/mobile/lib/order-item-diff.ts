@@ -184,10 +184,15 @@ export function buildOrderItemDiff(args: {
         // read as "not manual" and risk re-deriving a SPECIAL/manually-priced
         // line's billed price.
         ...(priceChanged ? { unitPrice: line.unitPrice } : {}),
-        // overrideReason is sent whenever it changed, empty string included —
-        // omitting it on a clear is the same bug M1 fixed, for the opposite
-        // direction (the server keeps whatever it last had).
-        ...(reasonChanged ? { overrideReason: line.overrideReason ?? "" } : {}),
+        // B465: the reason travels WITH the price — sent whenever EITHER
+        // changed, not just when the reason itself did. A price change alone
+        // (reason already carried forward unchanged from the stored line, per
+        // the draft's own seeding) must still land the reason on the SAME
+        // request, or the server's "a reason is required to change a
+        // special-price line" refusal has nothing to fall back on. Empty
+        // string included on a clear — omitting it is the same bug M1 fixed,
+        // for the opposite direction (the server keeps whatever it last had).
+        ...(priceChanged || reasonChanged ? { overrideReason: line.overrideReason ?? "" } : {}),
         ...(notesChanged ? { notes: noteVal } : {}),
       });
     }

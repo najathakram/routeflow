@@ -9,6 +9,7 @@ import {
   Post,
   Put,
   Req,
+  ServiceUnavailableException,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -20,7 +21,9 @@ import { TenantsService } from "./tenants.service";
 import { EmailService } from "../email/email.service";
 import { AddonService } from "../billing/addon.service";
 import { FeatureOverrideService } from "../billing/feature-override.service";
-import { gateVia } from "../billing/feature-registry";
+import { gateVia, FEATURE_REGISTRY } from "../billing/feature-registry";
+import type { ResolvedFeatures } from "../billing/feature-resolver.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
@@ -31,6 +34,7 @@ import { UpdateGoogleOAuthConfigDto } from "./dto/update-google-oauth-config.dto
 import { UpdateBrandingDto } from "./dto/update-branding.dto";
 import { MB, uploadLimits } from "../common/upload-limits";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import type { TenantFeaturesResponse } from "@routeflow/types";
 
 @ApiTags("tenants")
 @Controller("tenants")
@@ -40,7 +44,53 @@ export class TenantsController {
     private readonly emailService: EmailService,
     private readonly addonService: AddonService,
     private readonly featureOverrides: FeatureOverrideService,
+    private readonly authority: EntitlementAuthority,
   ) {}
+
+  // ─── Me: Features (feature grants v2 brief A) ─────────────────────────────────
+
+  @Get("me/features")
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      "Server-computed feature trace for the current tenant (design 2026-09-17 §2): `served` " +
+      "(the old enforcement path, what's actually enforced today) and `resolver` (the shadow " +
+      "resolver's own verdict, informational). Not yet a client gating read path (Opus review " +
+      "of 9923b87c, item 1) — web/mobile still gate on useSubscription().flags.",
+  })
+  async getMyFeatures(@CurrentUser() user: JwtPayload): Promise<TenantFeaturesResponse> {
+    // Opus review of 9923b87c, item 2: no tenant context or a resolver/old-path failure must
+    // 503, never 200 with an empty list — a client gate reading this endpoint someday must be
+    // able to tell "genuinely nothing granted" apart from "the server couldn't tell you."
+    if (!user.tenantId) {
+      throw new ServiceUnavailableException({
+        code: "FEATURES_UNAVAILABLE",
+        message: "No tenant context.",
+      });
+    }
+    const [resolved, served]: [ResolvedFeatures | null, string[] | null] = await Promise.all([
+      this.authority.resolveAll(user.tenantId),
+      this.authority.servedFlags(user.tenantId).catch(() => null),
+    ]);
+    if (!resolved || served === null) {
+      throw new ServiceUnavailableException({
+        code: "FEATURES_UNAVAILABLE",
+        message: "Feature resolution is temporarily unavailable. Please retry.",
+      });
+    }
+    const resolver: Record<string, boolean> = {};
+    for (const f of FEATURE_REGISTRY) {
+      resolver[f.key] = resolved.byKey.get(f.key)?.effective ?? false;
+    }
+    return {
+      served,
+      resolver,
+      modes: {},
+      catalogVersionId: resolved.catalogVersionId,
+      computedAt: resolved.computedAt,
+    };
+  }
 
   // ─── Me: Addons ──────────────────────────────────────────────────────────────
 

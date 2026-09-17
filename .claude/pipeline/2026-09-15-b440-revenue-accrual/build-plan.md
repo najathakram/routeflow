@@ -142,7 +142,7 @@ will execute, not just `SKILL.md`'s prose (which is stale in three places below)
 
 1. **`task-brief.mjs` slices a `### <id>` markdown H3 heading from `build-plan.md` itself**
    (fence-aware — code fences are skipped when scanning for headings), default cap 16 KB, and
-   *that* file (`<runDir>/tasks/<id>/brief.md`) is what every implementer/root-cause/test-author/
+   _that_ file (`<runDir>/tasks/<id>/brief.md`) is what every implementer/root-cause/test-author/
    docs prompt is told to read. The JS `tasks[].brief` string is never read by any agent prompt —
    `pipeline.js` only ever hands agents the path to `brief.md`. `CFG.caps.briefBytes` (1536)
    exists as a config constant but is referenced nowhere else in `pipeline.js` — it is unenforced.
@@ -156,7 +156,7 @@ will execute, not just `SKILL.md`'s prose (which is stale in three places below)
 3. **`radius` on a task is `[before, after]` — two non-negative integers, context-line counts
    around each call-site hit `review-pack.mjs` finds automatically by grepping the repo for the
    diff's newly-exported symbols** (confirmed in `review-pack.mjs`'s own arg parser, which now
-   *rejects* a file-path-shaped `--radius` as a usage error, and in `pipeline.js`'s
+   _rejects_ a file-path-shaped `--radius` as a usage error, and in `pipeline.js`'s
    `radiusFlag` builder, which silently drops the flag unless `t.radius` is a 2-element numeric
    array). `SKILL.md`'s own inline example (`radius: ['<path>']`) and last week's F27-build
    precedent (which passed a 3-file array) both reflect a **now-superseded** scheme — replaying
@@ -186,9 +186,9 @@ the work; cause-ruling.md §1 states the verdict) that the following still holds
 (`7b8bf085`), re-anchoring every citation by content if a line number has drifted:
 
 **Two independent read-side defects in `apps/api/src/bookkeeping/bookkeeping.service.ts`, no
-shared write-side cause.** Defect A (cash used as accrual): `getSummary` (~:1093-1096) and
-`getProfitAndLoss` revenue (~:985-989)/COGS (~:990-995) key on `status:PAID`+`paidAt` instead of
-`issueDate`; `getMobileDashboard` (~:1223-1225) literally sets `revenue`/`netIncome` from
+shared write-side cause.** Defect A (cash used as accrual): `getSummary` (~~:1093-1096) and
+`getProfitAndLoss` revenue (~~:985-989)/COGS (~~:990-995) key on `status:PAID`+`paidAt` instead of
+`issueDate`; `getMobileDashboard` (~~:1223-1225) literally sets `revenue`/`netIncome` from
 `totalCollected`. `paidAt` itself is correct — it has 4 legitimate cash consumers (`getCashFlow`
 ~:49, `analytics.service.ts` ~:655, `buyer/statement.service.ts` ~:103, `customers.service.ts`
 ~:1698) that must NOT change. Defect B (gross, never net): no site subtracts `CreditNote`
@@ -225,7 +225,7 @@ copy each test's Setup/Asserts/Fails-today column verbatim, do not invent a diff
   sum (`refundMethod:"EXTERNAL_REFUND"`)→50. Assert the invoice query's `where` is exactly
   `{status: ACCRUAL_REVENUE_STATUSES, issueDate: window}` with no `paidAt` key anywhere; assert
   `fetchAccrualNetSales(...)` deep-equals `{gross:500, creditNotes:200, externalRefunds:50,
-  net:250}`. Fails today: `fetchAccrualNetSales` is not exported.
+net:250}`. Fails today: `fetchAccrualNetSales` is not exported.
 - **T3 `REG-B455-refund`** — two variants on the T2 stub: (a) no Return row → net 300; (b) Return
   row `{refundMethod:"EXTERNAL_REFUND", refundedAt: window, refundAmount:50}` → net 250. Assert the
   Return query's `where` is `{refundMethod:"EXTERNAL_REFUND", refundedAt: window}`,
@@ -240,7 +240,7 @@ copy each test's Setup/Asserts/Fails-today column verbatim, do not invent a diff
   500/200/50/250 sentinels (T4-T11 chain off those): invoice `subtotal` 400, `discount` 20,
   `shippingFee` 15, `regularTax` 20, `categoryTax` 30 → `taxAmount` 50 → `total` 445. Assert
   `fetchAccrualNetSales(...).gross === 395` (`= total − taxAmount = subtotal − discount +
-  shippingFee`, proving BOTH regular and category tax are excluded via the one `taxAmount`
+shippingFee`, proving BOTH regular and category tax are excluded via the one `taxAmount`
   subtraction, and that shipping/discount stay IN `gross`). Fails today (before this amendment):
   `gross` would be 445 (full `total`, tax included).
 
@@ -260,7 +260,7 @@ depends on this task; do not touch anything inside `describe("REG-B11 ...")` (:6
   financial summary" (:262-278): swap the blanket 5000 `invoice.aggregate` mock for the T2 fixture
   (gross 500/CN 200/refund 50); `invoicePayment.aggregate`/`invoice.count` fixtures unchanged.
   Assert `result.totalRevenue===250`, response also carries `grossRevenue:500, creditNotes:200,
-  externalRefunds:50`, helper called with the request's own window, no `invoice.aggregate` call
+externalRefunds:50`, helper called with the request's own window, no `invoice.aggregate` call
   carries `paidAt`. **Same edit also updates** "should handle empty data gracefully" (:280-294,
   P-f in bug-test-plan.md — not a new REG, just keeping the all-zero fixture's shape in sync: it
   gains `grossRevenue:0, creditNotes:0, externalRefunds:0` alongside `totalRevenue:0`).
@@ -328,15 +328,30 @@ immediate statement without pulling in the surrounding 20-line dashboard method;
 **Exact shapes (cause-ruling.md §2, "F1" — transplant, do not reinvent):**
 
 ```ts
-export const ACCRUAL_REVENUE_STATUSES = { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID] } as const;
+export const ACCRUAL_REVENUE_STATUSES = {
+  notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID],
+} as const;
 // revenue/net-sales predicate -- WRITTEN_OFF *is* revenue at issue (bad debt is a later expense);
 // REAL_INVOICE_STATUSES is the units/COGS-lines predicate and is unchanged.
 
-export type AccrualNetSales = { gross: number; creditNotes: number; externalRefunds: number; net: number };
-export async function fetchAccrualNetSales(prisma, tenantId: string, window: { gte: Date; lte: Date },
-  opts?: { customerId?: string }): Promise<AccrualNetSales>
-export async function fetchAccrualNetSalesByCustomer(prisma, tenantId, window): Promise<Map<string, AccrualNetSales>>
-export async function fetchBadDebtExpense(prisma, tenantId, window): Promise<number>
+export type AccrualNetSales = {
+  gross: number;
+  creditNotes: number;
+  externalRefunds: number;
+  net: number;
+};
+export async function fetchAccrualNetSales(
+  prisma,
+  tenantId: string,
+  window: { gte: Date; lte: Date },
+  opts?: { customerId?: string },
+): Promise<AccrualNetSales>;
+export async function fetchAccrualNetSalesByCustomer(
+  prisma,
+  tenantId,
+  window,
+): Promise<Map<string, AccrualNetSales>>;
+export async function fetchBadDebtExpense(prisma, tenantId, window): Promise<number>;
 ```
 
 Place `ACCRUAL_REVENUE_STATUSES` directly below `REAL_INVOICE_STATUSES` (:39-41) — same file, so
@@ -344,7 +359,7 @@ the two predicates and their difference live in one place. `REAL_INVOICE_STATUSE
 current consumer of it stay byte-identical.
 
 - **AMENDMENT 2026-09-15 — `gross` excludes sales tax:** `gross = roundMoney(sumTotal −
-  sumTaxAmount)`, from ONE `invoice.aggregate` call reading both `_sum.total` AND `_sum.taxAmount`
+sumTaxAmount)`, from ONE `invoice.aggregate` call reading both `_sum.total` AND `_sum.taxAmount`
   where `{tenantId, status: ACCRUAL_REVENUE_STATUSES, issueDate: window}` — **no `paidAt` key
   anywhere in this helper.** `Invoice.taxAmount` already includes category/excise tax
   (`taxAmount = regularTax + categoryTax`, verified across `invoices.service.ts`'s single-invoice
@@ -357,15 +372,15 @@ current consumer of it stay byte-identical.
   applied and unapplied CNs; exclude a VOID/DRAFT-like CN status if the model has one.
   **AMENDMENT 2026-09-15 — subtract `amount` as-is (CreditNote has no `taxAmount` column today,
   verified `finance.prisma:470-503`).** Add this exact comment at the subtraction site: `// TODO
-  B459 (returns-in-orders lane): once CreditNote.taxAmount ships, subtract (amount - taxAmount)
-  here instead of amount.` Do not add the column yourself. **PR-body note (verified against
+B459 (returns-in-orders lane): once CreditNote.taxAmount ships, subtract (amount - taxAmount)
+here instead of amount.` Do not add the column yourself. **PR-body note (verified against
   `apps/web/app/(dashboard)/credit-notes/page.tsx`):** a line-based manual credit is pre-tax (UI
   prefills/caps each line at `InvoiceItem.subtotal`, :152-157/:172-174); a freeform/lump-sum credit
   (no line selected) is a bare operator-typed number with no cap or validation against any invoice
   figure (:447-454) — it MAY include tax in practice, and PR1 cannot detect or correct that. State
   this as a known imprecision that closes with B459, not a PR1 blocker.
 - `externalRefunds` = `Return` `_sum.refundAmount` where `{refundMethod: EXTERNAL_REFUND,
-  refundedAt: window}`. The `refundMethod` filter is load-bearing — CN-method returns are already
+refundedAt: window}`. The `refundMethod` filter is load-bearing — CN-method returns are already
   netted via their CreditNote. **No change needed (2026-09-15 amendment): already pre-tax —
   `priceReturn` prices from `subtotal` only, verified on master by the minter.**
 - `net = roundMoney(gross − creditNotes − externalRefunds)`, every component `roundMoney`'d.
@@ -381,7 +396,7 @@ current consumer of it stay byte-identical.
   `total − amountPaid − creditsApplied`. Extract this amount expression out of the current
   `getBadDebtsReport()` (~:1665-1698 on HEAD) so the report and the P&L share ONE expression.
 - `fetchInvoicedSaleLines`'s `status` option currently only accepts `InvoiceStatus |
-  typeof REAL_INVOICE_STATUSES` (verified on HEAD, ~:87) — widen it to a general Prisma status
+typeof REAL_INVOICE_STATUSES` (verified on HEAD, ~:87) — widen it to a general Prisma status
   filter so FIX2's COGS call can pass `ACCRUAL_REVENUE_STATUSES`. No other change to that function.
 - Header comment (~:28-30, verified byte-identical to cause-ruling.md's citation): keep "returns /
   credit notes are not netted out of units or COGS" (still true, deliberate — FU-2) and add "net
@@ -392,7 +407,7 @@ current consumer of it stay byte-identical.
 - **type:** fix · **files:** `apps/api/src/bookkeeping/bookkeeping.service.ts` · **dependsOn:**
   RC1, RT2, FIX1 · **risk:** HIGH · **effort:** high · **radius:** `[3, 3]`
 
-**Radius reasoning:** this task consumes FIX1's exports but is unlikely to introduce any *new*
+**Radius reasoning:** this task consumes FIX1's exports but is unlikely to introduce any _new_
 top-level export of its own (it's a NestJS service method body) — `review-pack.mjs`'s Radius
 section will likely read "(no new exported symbols in the diff)" for this task, which is fine; a
 tight `[3,3]` costs nothing extra and stays consistent with FIX1/FIX3.
@@ -401,12 +416,12 @@ tight `[3,3]` costs nothing extra and stays consistent with FIX1/FIX3.
 `getCashFlow`; every `invoicePayment` read; `credit-notes.service.ts:605-608` (different file,
 covered by the pin at `credit-notes.service.spec.ts:393` in RT2/RT3's scope — do not touch).
 
-- **Revenue** (~:985-989) → `fetchAccrualNetSales(prisma, tenantId, window)`; `revenue = net`; add
+- **Revenue** (~~:985-989) → `fetchAccrualNetSales(prisma, tenantId, window)`; `revenue = net`; add
   `grossRevenue`, `creditNotes`, `externalRefunds` to the return (additive — lets a reviewer check
-  the identity from the response). **COGS** (~:990-995) → same call's `dateBasis: "issueDate"`,
+  the identity from the response). **COGS** (~~:990-995) → same call's `dateBasis: "issueDate"`,
   `status: ACCRUAL_REVENUE_STATUSES` (one collection with revenue, L-119). Add
   `badDebtExpense = fetchBadDebtExpense(...)`; `netProfit = revenue − cogs − expenses −
-  badDebtExpense` (~:1019-1028). COGS stays gross of restocked returns (FU-2, deliberate).
+badDebtExpense` (~:1019-1028). COGS stays gross of restocked returns (FU-2, deliberate).
 - **getSummary** (~:1093-1096) → `totalRevenue = net` + the same three breakdown fields; if the
   method returns a net/profit figure, subtract `badDebtExpense` too.
 - **getBadDebtsReport** (~:1665-1698) → totals via `fetchBadDebtExpense` (same window semantics —
@@ -425,7 +440,7 @@ covered by the pin at `credit-notes.service.spec.ts:393` in RT2/RT3's scope — 
 (B421); CN ledger methods `:2090`/`:2167`.
 
 - **Mobile** (~:1223-1225): `revenue = net`, `netIncome = net − <existing expense term> −
-  badDebtExpense`; `totalInvoiced`/`totalCollected` untouched; no new fields (mobile mirrors web
+badDebtExpense`; `totalInvoiced`/`totalCollected` untouched; no new fields (mobile mirrors web
   later, not this diff).
 - **Finance dashboard** (~:1286-1294, :1318, :1336-1375): every `sales`/`totalSales`/
   `summaryTable.*.sales` = the helper's per-bucket `net` (one call per bucket, `Promise.all`);
@@ -636,12 +651,12 @@ cd apps/api && npx jest src/common/invoiced-sales.spec.ts src/bookkeeping/bookke
 
 ## Risks & rollback
 
-| Risk | Likelihood | Blast radius | Mitigation |
-|---|---|---|---|
-| A sixth revenue/sales site elsewhere in the repo shares the same cash-as-accrual or gross-not-net shape | medium | money report wrong elsewhere | `siblingPatterns` sweep (post-loop, `mode:'bugfix'`) — every hit is a filed owner-question (FU-3 candidate: `analytics.service.ts`), never fixed in this run (scope discipline, L-008) |
-| `getBadDebtsReport` needs a new window parameter it didn't have before | low-medium | callers of `getBadDebtsReport()` (report/controller) need a signature update | FIX2's own brief names this; T11 pins the P&L/report consistency; the controller call site is inside `apps/api` and covered by the full-suite final gate |
-| Registry proof lines flipped before B455/B456 exist as filed rows | low (raised, not guessed) | a `bugs.mjs` command referencing a nonexistent id fails loudly, not silently | DOCS1's brief explicitly defers this decision — see Open questions |
-| (AMENDMENT 2026-09-15) A freeform/lump-sum manual credit note's `amount` may include tax (no UI cap ties it to an invoice figure) | low-medium, unmeasured | net sales slightly over-subtracted for those specific credits until B459 | Documented as a known imprecision in the PR body, not fixed here (CreditNote has no `taxAmount` column to net against) |
+| Risk                                                                                                                              | Likelihood                | Blast radius                                                                 | Mitigation                                                                                                                                                                             |
+| --------------------------------------------------------------------------------------------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A sixth revenue/sales site elsewhere in the repo shares the same cash-as-accrual or gross-not-net shape                           | medium                    | money report wrong elsewhere                                                 | `siblingPatterns` sweep (post-loop, `mode:'bugfix'`) — every hit is a filed owner-question (FU-3 candidate: `analytics.service.ts`), never fixed in this run (scope discipline, L-008) |
+| `getBadDebtsReport` needs a new window parameter it didn't have before                                                            | low-medium                | callers of `getBadDebtsReport()` (report/controller) need a signature update | FIX2's own brief names this; T11 pins the P&L/report consistency; the controller call site is inside `apps/api` and covered by the full-suite final gate                               |
+| Registry proof lines flipped before B455/B456 exist as filed rows                                                                 | low (raised, not guessed) | a `bugs.mjs` command referencing a nonexistent id fails loudly, not silently | DOCS1's brief explicitly defers this decision — see Open questions                                                                                                                     |
+| (AMENDMENT 2026-09-15) A freeform/lump-sum manual credit note's `amount` may include tax (no UI cap ties it to an invoice figure) | low-medium, unmeasured    | net sales slightly over-subtracted for those specific credits until B459     | Documented as a known imprecision in the PR body, not fixed here (CreditNote has no `taxAmount` column to net against)                                                                 |
 
 - **Rollback:** revert the diff (`FIX1`/`FIX2`/`FIX3`'s commits); no migration, no data repair
   (cause-ruling.md §6) — every figure is computed at read time from correctly persisted facts.

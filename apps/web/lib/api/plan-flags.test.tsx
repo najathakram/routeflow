@@ -1,6 +1,6 @@
 /**
- * Lite-L2 (WP7): `usePlanFlag` reads the shared `useSubscription` query and reports the
- * three-valued {enabled, resolved, failed} contract `lib/plan-gated-nav.ts`'s
+ * Lite-L2 (WP7): `usePlanFlag` reads `useSubscription` (`GET /billing/subscription`) and
+ * reports the three-valued {enabled, resolved, failed} contract `lib/plan-gated-nav.ts`'s
  * `planFlagVisible` expects. Pinned behaviourally through the real hook + a real
  * QueryClient, same pattern as addons.delivery-access.test.tsx.
  */

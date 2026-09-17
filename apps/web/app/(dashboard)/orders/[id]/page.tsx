@@ -392,6 +392,16 @@ interface EditItemState {
   originalUnitPrice?: number;
   originalBasePrice?: number;
   originalOverrideReason?: string;
+  /** B465 fix round 5: the reason-required baseline for THIS session, separate
+   *  from originalUnitPrice (which Undo restores the line's own price from —
+   *  see restoredPrice). Set to the substitute's own resolved tier price at
+   *  substitution time so needsSpecialTierReason compares against a fresh
+   *  starting point, not the REPLACED product's price; cleared on Undo so the
+   *  comparison falls back to originalUnitPrice again. Reusing
+   *  originalUnitPrice itself for this (round 4) broke Undo: restoring it to
+   *  the substitute's price left Undo unable to restore the pre-substitution
+   *  price, silently repricing the line. */
+  reasonBaselinePrice?: number;
   productId: string;
   productName: string;
   qty: number;
@@ -481,6 +491,44 @@ function isPriceOverridden(it: { unitPrice: number; basePrice: number }): boolea
 }
 
 /**
+ * B465 (Opus BLOCK item 2, client half): a SPECIAL-tier line's price is this
+ * customer's documented contract price — the server now REFUSES a price
+ * CHANGE on one with no reason (400), so the client must never let the
+ * operator reach that refusal: catalog/unlisted lines keep an optional
+ * reason, a SPECIAL-tier line whose price is being CHANGED this session
+ * needs one before save.
+ *
+ * Fix round 3 (Opus BLOCK): this must key on `unitPrice !== originalUnitPrice`
+ * (this SESSION's own edit), never `isPriceOverridden` (`unitPrice !==
+ * basePrice`, the tier/list reference price) — a SPECIAL line's stored price
+ * is ALREADY below/above its `basePrice` by design (that's what "SPECIAL tier"
+ * means), so the old check flagged every untouched SPECIAL line as needing a
+ * fresh reason and blocked every save that merely touched a DIFFERENT line.
+ * `originalUnitPrice` is seeded to the line's own starting price for BOTH an
+ * existing line (its stored unitPrice, :1794/:1949) and a fresh add (its
+ * initial resolved price, :1062) — undefined only defensively, where there is
+ * no baseline to compare against and therefore nothing provably changed.
+ */
+function needsSpecialTierReason(
+  it: {
+    unitPrice: number;
+    originalUnitPrice?: number;
+    /** B465 fix round 5: a substitution's own baseline, when set, wins over
+     *  originalUnitPrice (Undo's restore point for the REPLACED product's
+     *  price — never the comparison basis for a line that's since been
+     *  substituted). See reasonBaselinePrice on EditItemState. */
+    reasonBaselinePrice?: number;
+    overrideReason?: string;
+    isUnlisted?: boolean;
+  },
+  isSpecial: boolean,
+): boolean {
+  const baseline = it.reasonBaselinePrice ?? it.originalUnitPrice;
+  const priceChanged = baseline != null && Math.abs(it.unitPrice - baseline) > 0.0001;
+  return !it.isUnlisted && isSpecial && priceChanged && !(it.overrideReason ?? "").trim();
+}
+
+/**
  * The line's own price, for the Undo handlers. Substituting rewrites unitPrice /
  * basePrice / overrideReason to the SUBSTITUTE's; without this an abandoned
  * substitution leaves the original product carrying the substitute's price, and
@@ -491,6 +539,11 @@ function restoredPrice(it: EditItemState): Partial<EditItemState> {
     ...(it.originalUnitPrice != null ? { unitPrice: it.originalUnitPrice } : {}),
     ...(it.originalBasePrice != null ? { basePrice: it.originalBasePrice } : {}),
     overrideReason: it.originalOverrideReason,
+    // B465 fix round 5: undoing a substitution must drop the substitute's own
+    // reason-required baseline too — the comparison falls back to
+    // originalUnitPrice (just restored above), the REPLACED product's own
+    // stored price, exactly as if the substitution never happened.
+    reasonBaselinePrice: undefined,
   };
 }
 
@@ -785,21 +838,32 @@ function SubstitutePicker({
 function PriceEditRow({
   basePrice,
   unitPrice,
+  originalUnitPrice,
   overrideReason,
   onPriceChange,
   onReasonChange,
   unitCost,
   unitsPerBox,
   floor,
+  isSpecial,
 }: {
   basePrice: number;
   unitPrice: number;
+  /** B465 fix round 3: this line's OWN price when the edit session started —
+   *  the reason-required check keys on THIS diverging from `unitPrice`, never
+   *  on `overridden` (unitPrice vs `basePrice`, the tier/list reference) — a
+   *  SPECIAL line's stored price is already below/above basePrice by design,
+   *  so that comparison flagged every untouched SPECIAL line. */
+  originalUnitPrice?: number;
   overrideReason?: string;
   onPriceChange: (netPrice: number) => void;
   onReasonChange: (reason: string) => void;
   unitCost?: number | null;
   unitsPerBox?: number | null;
   floor?: number;
+  /** B465: this customer's documented contract price for the product — a
+   *  reason is REQUIRED to override it, never optional like a plain line. */
+  isSpecial?: boolean;
 }) {
   // "Sell anyway" acknowledges a below-floor price for this session; the override
   // is logged via overrideReason so reports can isolate below-floor sales.
@@ -831,6 +895,20 @@ function PriceEditRow({
 
   const overridden = Math.abs(unitPrice - basePrice) > 0.0001;
   const isUpsell = unitPrice > basePrice + 0.0001;
+  // B465 fix round 3: the reason-REQUIRED state is scoped to a price this
+  // session actually changed — never to `overridden` alone, which a SPECIAL
+  // line trips just by being priced at its (correct, untouched) tier rate.
+  const priceChangedThisSession =
+    originalUnitPrice != null && Math.abs(unitPrice - originalUnitPrice) > 0.0001;
+  const reasonRequired = !!isSpecial && priceChangedThisSession;
+  // #815 proof-run finding: the block below (was-$X/upsell badge + reason input) used
+  // to render ONLY on `overridden` (vs basePrice) — so repricing a SPECIAL line to
+  // EXACTLY the list price made `overridden` false and hid the reason field entirely,
+  // even though `reasonRequired` (vs originalUnitPrice, a DIFFERENT baseline) was still
+  // true and the server still 400s without one. The render gate below is
+  // `overridden || reasonRequired`; the was-$X/upsell badge itself stays scoped to
+  // `overridden` alone (showing "was $10.00" when the price literally is $10.00 would
+  // be nonsensical).
 
   return (
     <div className="ml-11 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
@@ -857,25 +935,40 @@ function PriceEditRow({
           />
         </span>
       </label>
-      {overridden && (
+      {(overridden || reasonRequired) && (
         <>
-          {isUpsell ? (
-            // Upsell: green "+$X" instead of a struck-through "was" (which would
-            // read as a discount). The base is hidden from the customer server-side.
-            <span className="font-medium text-emerald-600">
-              Upsell +${(unitPrice - basePrice).toFixed(2)}
-            </span>
-          ) : (
-            <span className="text-navy/50">
-              was <span className="line-through">${basePrice.toFixed(2)}</span>
-            </span>
-          )}
+          {overridden &&
+            (isUpsell ? (
+              // Upsell: green "+$X" instead of a struck-through "was" (which would
+              // read as a discount). The base is hidden from the customer server-side.
+              <span className="font-medium text-emerald-600">
+                Upsell +${(unitPrice - basePrice).toFixed(2)}
+              </span>
+            ) : (
+              <span className="text-navy/50">
+                was <span className="line-through">${basePrice.toFixed(2)}</span>
+              </span>
+            ))}
           <input
             type="text"
             value={overrideReason ?? ""}
             onChange={(e) => onReasonChange(e.target.value)}
-            placeholder="reason (optional)"
-            className="min-w-0 flex-1 rounded border border-surface-border bg-white px-2 py-1 text-navy outline-none placeholder:text-navy/40"
+            // B465: a SPECIAL-tier line's contract price can only be CHANGED
+            // with a documented reason — the server refuses the save
+            // otherwise (400), so this reads as required, never optional,
+            // but ONLY while this session is actually changing the price
+            // (reasonRequired) — an untouched SPECIAL line, or one whose
+            // price reverted back to its original value, is not a repricing
+            // attempt and keeps the reason optional like any other line.
+            placeholder={reasonRequired ? "reason (required)" : "reason (optional)"}
+            required={reasonRequired}
+            aria-required={reasonRequired}
+            aria-invalid={reasonRequired && !overrideReason?.trim() ? true : undefined}
+            className={
+              reasonRequired && !overrideReason?.trim()
+                ? "min-w-0 flex-1 rounded border border-danger bg-danger-bg/30 px-2 py-1 text-navy outline-none ring-1 ring-danger placeholder:text-danger/70"
+                : "min-w-0 flex-1 rounded border border-surface-border bg-white px-2 py-1 text-navy outline-none placeholder:text-navy/40"
+            }
           />
         </>
       )}
@@ -1317,12 +1410,22 @@ function EditableLineItems({
             <PriceEditRow
               basePrice={item.basePrice}
               unitPrice={item.unitPrice}
+              // B465 fix round 5: a substitution's own baseline wins over the
+              // REPLACED product's originalUnitPrice — same resolution as
+              // needsSpecialTierReason, so the required-field styling and the
+              // save-time check never disagree.
+              originalUnitPrice={item.reasonBaselinePrice ?? item.originalUnitPrice}
               overrideReason={item.overrideReason}
               onPriceChange={(net) => update(item.id, { unitPrice: net })}
               onReasonChange={(reason) => update(item.id, { overrideReason: reason || undefined })}
               unitCost={item.unitCost}
               unitsPerBox={item.unitsPerBox}
               floor={floorForCategory(marginConfig, item.category)}
+              isSpecial={
+                !item.isUnlisted &&
+                item.productId != null &&
+                isSpecialTierFor({ id: item.productId } as SubstituteOption)
+              }
             />
           )}
 
@@ -1368,6 +1471,17 @@ function EditableLineItems({
                   // substitution look un-overridden, so no unitPrice reached the
                   // server and a tier customer silently lost their price.
                   unitPrice: tierPriceFor(p),
+                  // B465 fix round 5 (Opus BLOCK item 1): reset the reason-required
+                  // baseline to the SUBSTITUTE's own resolved price via
+                  // reasonBaselinePrice, NEVER originalUnitPrice — that field is
+                  // Undo's own restore point (restoredPrice) for the REPLACED
+                  // product's price, and round 4 briefly overwrote it here, which
+                  // broke Undo: restoring "originalUnitPrice" after a substitute
+                  // just put the substitute's own price back, so Undo silently
+                  // repriced the line instead of reverting it. A substitution is a
+                  // fresh reason-required starting point, not a reprice — only a
+                  // price edit AFTER this substitution should trip the guard.
+                  reasonBaselinePrice: tierPriceFor(p),
                   basePrice: Number(p.pricePerUnit ?? 0),
                   overrideReason: undefined,
                   qty: split.qty,
@@ -1648,6 +1762,13 @@ export default function OrderDetailPage() {
   );
   const isSpecialTierFor = React.useCallback(
     (p: SubstituteOption) => (cpMap.get(p.id) ?? customerTier ?? 1) !== 1,
+    [cpMap, customerTier],
+  );
+  // B465: id-only variant for call sites that only have `productId` (an
+  // EditItemState line, not a full SubstituteOption/product row) — same rule,
+  // shared so the save-time guard below and the row's own render never drift.
+  const isSpecialTierForProductId = React.useCallback(
+    (productId: string) => (cpMap.get(productId) ?? customerTier ?? 1) !== 1,
     [cpMap, customerTier],
   );
   const router = useRouter();
@@ -2031,6 +2152,24 @@ export default function OrderDetailPage() {
   }
 
   function handleSaveItems() {
+    // B465: refuse client-side before the server has to — a SPECIAL-tier line
+    // whose price was overridden with no reason would otherwise round-trip a
+    // 400 "A reason is required to change a special-price line" with no
+    // indication of WHICH line to fix.
+    const missingReasonLine = editItems.find(
+      (it) =>
+        !it.cancelled &&
+        it.productId != null &&
+        needsSpecialTierReason(it, isSpecialTierForProductId(it.productId)),
+    );
+    if (missingReasonLine) {
+      toast({
+        title: `A reason is required to change ${missingReasonLine.productName || "this"} — it's this customer's special price`,
+        variant: "error",
+      });
+      return;
+    }
+
     // Hard-delete (or CANCEL fallback) for lines the user removed with the trash button.
     const updates: ItemUpdate[] = [
       ...pendingDeletes.map((id): ItemUpdate => ({ id, action: "DELETE" })),

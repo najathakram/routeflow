@@ -671,10 +671,13 @@ describe("BookkeepingService", () => {
   // below; there is no separate service-level `getDashboard` to test here.
   describe('REG-B11 — dashboard money reads use the CONFIRMED (PAID) basis, not "not: VOID"', () => {
     const NOW = new Date();
-    // Simulated DB rows for the one invoice's payments.
+    // Simulated DB rows for the one invoice's payments. `paidAt` (not
+    // `createdAt`) is the real collected-basis field the aggregates below
+    // filter on (check-payments PR-2b/M2: settledAt ?? paidAt); `settledAt`
+    // is omitted (legacy row) so the OR's paidAt branch is what matches.
     const FAKE_PAYMENTS = [
-      { amount: 200, status: "PAID", method: "CASH", createdAt: NOW },
-      { amount: 300, status: "DRAFT", method: "CASH", createdAt: NOW }, // must NOT count as collected
+      { amount: 200, status: "PAID", method: "CASH", paidAt: NOW },
+      { amount: 300, status: "DRAFT", method: "CASH", paidAt: NOW }, // must NOT count as collected
     ];
     // The unpaid invoice those payments sit on, and the balance it must still show.
     const INVOICE_TOTAL = 1000;
@@ -692,7 +695,42 @@ describe("BookkeepingService", () => {
       if (cond === undefined) return true;
       if (cond.gte !== undefined && value < cond.gte) return false;
       if (cond.lte !== undefined && value > cond.lte) return false;
+      if (cond.lt !== undefined && value >= cond.lt) return false;
       return true;
+    };
+    // check-payments PR-2b (M2): the service now filters receipts through
+    // `settledDateFilter` — `where: { OR: [{settledAt: <range>}, {settledAt:
+    // null, paidAt: <range>}] }` — instead of a bare `where.createdAt` range.
+    // A fixture row with no `settledAt` (the legacy-row convention every
+    // FAKE_PAYMENTS entry uses) matches through the second OR branch, tested
+    // against its `paidAt`.
+    const matchesSettledDate = (
+      payment: { paidAt: Date; settledAt?: Date | null },
+      where: any,
+    ): boolean => {
+      const cond = where?.OR;
+      if (cond !== undefined) {
+        return (cond as any[]).some((branch) => {
+          if (branch.settledAt === null) {
+            return payment.settledAt == null && matchesCreatedAt(payment.paidAt, branch.paidAt);
+          }
+          return payment.settledAt != null && matchesCreatedAt(payment.settledAt, branch.settledAt);
+        });
+      }
+      // Fallback for a reader that still filters on a plain paidAt/createdAt
+      // range instead of settledDateFilter's OR shape.
+      if (where?.paidAt !== undefined) return matchesCreatedAt(payment.paidAt, where.paidAt);
+      if (where?.createdAt !== undefined) {
+        return matchesCreatedAt((payment as any).createdAt ?? payment.paidAt, where.createdAt);
+      }
+      // Opus review of check-payments PR-2b: neither shape present — the
+      // query under test dropped its date filter entirely. Silently
+      // matching every row would hide that regression whenever every
+      // fixture row happens to share one date; fail loudly instead.
+      throw new Error(
+        "matchesSettledDate: where clause has neither `OR` (settledDateFilter) nor a plain " +
+          "paidAt/createdAt range — the query under test appears to have dropped its date filter",
+      );
     };
     // Simulates the real DB: sums FAKE_PAYMENTS honoring whatever `where` the
     // service actually passes, so the assertion pins the resulting NUMBER —
@@ -706,7 +744,7 @@ describe("BookkeepingService", () => {
           // B421: matchesStatus is really a generic Prisma string-filter
           // matcher (plain/equals/not/in) — reused here for `where.method`.
           matchesStatus(p.method, where.method) &&
-          matchesCreatedAt(p.createdAt, where.createdAt),
+          matchesSettledDate(p, where),
       ).reduce((s, p) => s + p.amount, 0);
       return { _sum: { amount: sum } };
     };
@@ -744,8 +782,8 @@ describe("BookkeepingService", () => {
     it("REG-B421: totalCollected/paymentsThisWeek/getFinanceDashboard receipts exclude a CREDIT_NOTE, keep an ADVANCE", async () => {
       const withCreditAndAdvance = [
         ...FAKE_PAYMENTS,
-        { amount: 638, status: "PAID", method: "CREDIT_NOTE", createdAt: NOW },
-        { amount: 50, status: "PAID", method: "ADVANCE", createdAt: NOW },
+        { amount: 638, status: "PAID", method: "CREDIT_NOTE", paidAt: NOW },
+        { amount: 50, status: "PAID", method: "ADVANCE", paidAt: NOW },
       ];
       prisma.invoicePayment.aggregate.mockImplementation(async (args: any) => {
         const where = args?.where ?? {};
@@ -754,7 +792,7 @@ describe("BookkeepingService", () => {
             (p) =>
               matchesStatus(p.status, where.status) &&
               matchesStatus(p.method, where.method) &&
-              matchesCreatedAt(p.createdAt, where.createdAt),
+              matchesSettledDate(p, where),
           )
           .reduce((s, p) => s + p.amount, 0);
         return { _sum: { amount: sum } };
@@ -804,6 +842,97 @@ describe("BookkeepingService", () => {
       const result = await service.getFinanceDashboard();
 
       expect(result.summaryTable.today.due).toBe(CONFIRMED_BALANCE);
+    });
+
+    // ── check-payments PR-2b (M2): collected basis is settledAt ?? paidAt ────
+    // Probe: revert any of the four receipts/totalCollected call sites in
+    // this file back to a bare `where.createdAt`/`where.paidAt` range and
+    // its matching test below goes red — the settled-outside-window row
+    // would then be counted by its paidAt alone. All four sites
+    // (getSummary.paymentsThisWeek, getMobileDashboard.totalCollected,
+    // getFinanceDashboard's monthly bucket and summary-table period) are
+    // covered, one test each, below.
+
+    const mockSettledOutsideWindow = (amount: number) => {
+      const future = new Date(NOW);
+      future.setFullYear(future.getFullYear() + 1);
+      const rows = [{ amount, status: "PAID", method: "CASH", paidAt: NOW, settledAt: future }];
+      prisma.invoicePayment.aggregate.mockImplementation(async (args: any) => {
+        const where = args?.where ?? {};
+        const sum = rows
+          .filter(
+            (p) =>
+              matchesStatus(p.status, where.status) &&
+              matchesStatus(p.method, where.method) &&
+              matchesSettledDate(p, where),
+          )
+          .reduce((s, p) => s + p.amount, 0);
+        return { _sum: { amount: sum } };
+      });
+    };
+
+    it("REG-M2-settled: getMobileDashboard.totalCollected excludes a payment settled outside the window, even though its paidAt falls inside it", async () => {
+      mockSettledOutsideWindow(200);
+      const dashboard = await service.getMobileDashboard();
+      expect(dashboard.totalCollected).toBe(0);
+    });
+
+    it("REG-M2-settled: getSummary.paymentsThisWeek excludes a payment settled outside the window", async () => {
+      mockSettledOutsideWindow(200);
+      const summary = await service.getSummary();
+      expect(summary.paymentsThisWeek).toBe(0);
+    });
+
+    it("REG-M2-settled: getFinanceDashboard's monthly-bucket receipts exclude a payment settled outside the window", async () => {
+      mockSettledOutsideWindow(200);
+      const result = await service.getFinanceDashboard();
+      expect(result.monthlySales.totalReceipts).toBe(0);
+    });
+
+    it("REG-M2-settled: getFinanceDashboard's summary-table period receipts exclude a payment settled outside the window", async () => {
+      mockSettledOutsideWindow(200);
+      const result = await service.getFinanceDashboard();
+      expect(result.summaryTable.today.receipts).toBe(0);
+    });
+
+    it("REG-M2-parity: a legacy payment with no settledAt is still counted off its paidAt (fixture parity)", async () => {
+      // FAKE_PAYMENTS' $200 PAID/CASH row carries paidAt: NOW and no settledAt
+      // (the beforeEach default) — this is the exact parity case M2 requires:
+      // identical output to the pre-PR-2b paidAt-only basis.
+      const dashboard = await service.getMobileDashboard();
+      expect(dashboard.totalCollected).toBe(200);
+    });
+
+    it("REG-M2-cap: getFinanceDashboard's current-month bucket window is capped at now, not the month's last instant (Opus review of PR-2b)", async () => {
+      const calls: any[] = [];
+      prisma.invoicePayment.aggregate.mockImplementation(async (args: any) => {
+        calls.push(args);
+        return simulateAggregate(args);
+      });
+
+      await service.getFinanceDashboard();
+
+      const nowInTest = new Date();
+      const startOfThisMonth = new Date(nowInTest.getFullYear(), nowInTest.getMonth(), 1);
+      const thisMonthCall = calls.find(
+        (c) => c.where?.OR?.[0]?.settledAt?.gte?.getTime() === startOfThisMonth.getTime(),
+      );
+      expect(thisMonthCall).toBeDefined();
+      const upperBound: Date = thisMonthCall.where.OR[0].settledAt.lte;
+      expect(upperBound.getTime()).toBeLessThanOrEqual(nowInTest.getTime());
+      // The uncapped month-end instant is always later than `now` (unless the
+      // test happens to run in the month's final millisecond) — proves the
+      // cap actually did something, not just that `lte` exists.
+      const rawMonthEnd = new Date(
+        nowInTest.getFullYear(),
+        nowInTest.getMonth() + 1,
+        0,
+        23,
+        59,
+        59,
+        999,
+      );
+      expect(upperBound.getTime()).not.toBe(rawMonthEnd.getTime());
     });
 
     // ── the sibling endpoints in this same file ──────────────────────────────

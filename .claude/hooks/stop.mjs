@@ -44,6 +44,7 @@
  */
 import { execSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 // Invoke prettier directly via node — this repo's root has no node_modules/.bin
@@ -70,6 +71,26 @@ function sh(cmd) {
   } catch (e) {
     return { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
   }
+}
+
+// B470: a lane worktree's stop hook running the registry sync (against that
+// lane's own, possibly stale or racing, local state) is how a record's body
+// got re-rendered from scratch and its History wiped. `--git-dir` is
+// per-worktree (a linked worktree's is `<main>/.git/worktrees/<name>`);
+// `--git-common-dir` always resolves to the ONE shared `.git` every
+// worktree of the same repo points at. They resolve to the same path only
+// in the main checkout — comparing the raw strings would false-negative
+// whenever one comes back relative (".git") and the other absolute, so
+// both are resolved to absolute paths first. Gate 4 below runs `sync` only
+// when this is true — a lane tree (`.claude/worktrees/*`, a sibling
+// `rf-*` checkout, anything not the main checkout) never runs it, and
+// neither does the main checkout itself unless it is actually on `master`.
+function isMainCheckoutOnMaster() {
+  const gitDir = sh("git rev-parse --git-dir").out.trim();
+  const commonDir = sh("git rev-parse --git-common-dir").out.trim();
+  if (!gitDir || !commonDir || resolve(gitDir) !== resolve(commonDir)) return false;
+  const branch = sh("git rev-parse --abbrev-ref HEAD").out.trim();
+  return branch === "master";
 }
 
 // Bookkeeping Option B (owner ruling 2026-09-05): a code PR may defer the
@@ -227,7 +248,17 @@ if (hasLessons && !changed.some(isLesson) && !bookkeepingDeferred) {
 //
 // Deliberately non-blocking and fully swallowed: a bookkeeping refresh must
 // never be able to fail a turn or mask Gates 1-3 above it.
-if (existsSync(".claude/campaign/bugs") && existsSync("scripts/campaign/bugs.mjs")) {
+//
+// B470: never in a lane worktree — only the main checkout, on master, ever
+// runs this. A lane's local ledger/registry state is not the tree the
+// registry is meant to reconcile against, and syncing there is exactly how
+// a record's body got wiped; the main checkout on master is always the
+// tree every other session's commits are already visible in.
+if (
+  isMainCheckoutOnMaster() &&
+  existsSync(".claude/campaign/bugs") &&
+  existsSync("scripts/campaign/bugs.mjs")
+) {
   // spawnSync, not sh()/execSync: execSync's return value on a SUCCESSFUL
   // exit is stdout only — stderr is silently discarded even though it is
   // piped — but `sync --quiet` deliberately writes its "an unscanned
