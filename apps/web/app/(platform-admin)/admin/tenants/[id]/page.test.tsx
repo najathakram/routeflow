@@ -137,7 +137,7 @@ describe("Tenant detail page — Feature Console 'Customise' action (brief D tes
     await gotoAddonsTab();
 
     const tobaccoRow = document.querySelector('[data-feature-key="tobacco_dealer"]') as HTMLElement;
-    fireEvent.click(within(tobaccoRow).getByRole("button", { name: "Customise" }));
+    fireEvent.click(within(tobaccoRow).getByRole("button", { name: /^Customise/ }));
 
     // Prefilled: the drawer opens with this feature key already selected.
     const featureSelect = (await screen.findByLabelText("Feature Key")) as HTMLSelectElement;
@@ -151,7 +151,13 @@ describe("Tenant detail page — Feature Console 'Customise' action (brief D tes
     await waitFor(() => expect(mockPreview).toHaveBeenCalledTimes(1));
     expect(mockPreview).toHaveBeenCalledWith(TENANT_ID, {
       overrides: [
-        { featureKey: "tobacco_dealer", effect: "GRANT", reason: "Pilot waiver", expiresAt: null },
+        {
+          featureKey: "tobacco_dealer",
+          effect: "GRANT",
+          kind: "COMP",
+          reason: "Pilot waiver",
+          expiresAt: null,
+        },
       ],
     });
     expect(mockPost).not.toHaveBeenCalled();
@@ -162,7 +168,13 @@ describe("Tenant detail page — Feature Console 'Customise' action (brief D tes
     expect(callOrder).toEqual(["preview", "create"]);
     expect(mockPost).toHaveBeenCalledWith(
       `/platform-admin/tenants/${TENANT_ID}/feature-overrides`,
-      { featureKey: "tobacco_dealer", effect: "GRANT", reason: "Pilot waiver", expiresAt: null },
+      {
+        featureKey: "tobacco_dealer",
+        effect: "GRANT",
+        kind: "COMP",
+        reason: "Pilot waiver",
+        expiresAt: null,
+      },
     );
   });
 });

@@ -227,4 +227,83 @@ describe("FeatureConsole — tier change preview → confirm → apply (test 3)"
     expect(onChangePlan).not.toHaveBeenCalled();
     expect(mockWriteConfig).not.toHaveBeenCalled();
   });
+
+  // Opus review of 73668ac2, item 4: a failed apply must surface, not silently look like success.
+  it("a failed plan-change surfaces an error and keeps the preview drawer open", async () => {
+    const onChangePlan = jest.fn().mockRejectedValue(new Error("plan patch failed"));
+    mockPreview.mockResolvedValueOnce(previewFixture({ planKey: "STARTER" }));
+
+    render(
+      <FeatureConsole
+        tenant={{ id: TENANT_ID, plan: "GROWTH" }}
+        onChangePlan={onChangePlan}
+        onCustomise={jest.fn()}
+      />,
+    );
+    await screen.findByText("compliance");
+
+    fireEvent.change(screen.getByLabelText("Tier"), { target: { value: "STARTER" } });
+    fireEvent.click(screen.getByRole("button", { name: "Preview tier change" }));
+    await screen.findByText("Preview tier change", { selector: "h3" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(onChangePlan).toHaveBeenCalledTimes(1));
+
+    // Still open — a failure must not look like success by silently closing the drawer.
+    expect(screen.getByText("Preview tier change", { selector: "h3" })).toBeInTheDocument();
+    expect(await screen.findByText("Could not apply that change. Try again.")).toBeInTheDocument();
+  });
+});
+
+describe("FeatureConsole — mode change preview → confirm → apply (test 5)", () => {
+  it("confirm sends {mode} to writeTenantFeatureConfig for a mode-only change (Confirm stays enabled)", async () => {
+    mockPreview.mockResolvedValueOnce(previewFixture({ modes: { route_optimization: "manual" } }));
+    mockWriteConfig.mockResolvedValueOnce({});
+
+    render(
+      <FeatureConsole
+        tenant={{ id: TENANT_ID, plan: "GROWTH" }}
+        onChangePlan={jest.fn()}
+        onCustomise={jest.fn()}
+      />,
+    );
+    await screen.findByText("compliance");
+
+    const row = document.querySelector('[data-feature-key="route_optimization"]') as HTMLElement;
+    fireEvent.click(within(row).getByRole("radio", { name: "Manual dispatch" }));
+
+    expect(await screen.findByText("Preview mode change", { selector: "h3" })).toBeInTheDocument();
+    expect(mockPreview).toHaveBeenCalledWith(TENANT_ID, {
+      modes: { route_optimization: "manual" },
+    });
+    const confirmButton = screen.getByRole("button", { name: "Confirm" });
+    expect(confirmButton).not.toBeDisabled();
+
+    fireEvent.click(confirmButton);
+    await waitFor(() => expect(mockWriteConfig).toHaveBeenCalledTimes(1));
+    expect(mockWriteConfig).toHaveBeenCalledWith(TENANT_ID, "route_optimization", {
+      mode: "manual",
+    });
+  });
+
+  it("cancel closes the drawer and calls writeTenantFeatureConfig with nothing", async () => {
+    mockPreview.mockResolvedValueOnce(previewFixture({ modes: { route_optimization: "manual" } }));
+
+    render(
+      <FeatureConsole
+        tenant={{ id: TENANT_ID, plan: "GROWTH" }}
+        onChangePlan={jest.fn()}
+        onCustomise={jest.fn()}
+      />,
+    );
+    await screen.findByText("compliance");
+
+    const row = document.querySelector('[data-feature-key="route_optimization"]') as HTMLElement;
+    fireEvent.click(within(row).getByRole("radio", { name: "Manual dispatch" }));
+    await screen.findByText("Preview mode change", { selector: "h3" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByText("Preview mode change", { selector: "h3" })).not.toBeInTheDocument();
+    expect(mockWriteConfig).not.toHaveBeenCalled();
+  });
 });

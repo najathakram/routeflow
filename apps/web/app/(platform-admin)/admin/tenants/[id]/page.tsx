@@ -9,6 +9,8 @@ import {
   RECURRING_ROUTES_ADDON,
   ORDER_DELIVERY_ADDON,
   OCR_ADDON,
+  FEATURE_OVERRIDE_KIND_VALUES,
+  type FeatureOverrideKind,
 } from "@routeflow/types";
 import { superAdminClient } from "@/lib/admin-api";
 import { setTenantCookie } from "@/lib/tenant-cookie";
@@ -1121,9 +1123,11 @@ function BillingTab({
 function AddonsTab({
   tenant,
   onAction,
+  actionLoading,
 }: {
   tenant: TenantDetail;
   onAction: (action: string, payload?: unknown) => Promise<void>;
+  actionLoading: string | null;
 }) {
   const overridesRef = React.useRef<FeatureOverridesSectionHandle>(null);
   const [addons, setAddons] = React.useState<Addon[]>([]);
@@ -1263,6 +1267,7 @@ function AddonsTab({
       <FeatureConsole
         tenant={tenant}
         onChangePlan={(plan) => onAction("change-plan", { plan })}
+        changePlanLoading={actionLoading === "change-plan"}
         onCustomise={(featureKey) => overridesRef.current?.openFor(featureKey)}
       />
 
@@ -1318,29 +1323,37 @@ const FeatureOverridesSection = React.forwardRef<
   const [form, setForm] = React.useState({
     featureKey: "",
     effect: "GRANT" as "GRANT" | "DENY",
+    kind: "COMP" as FeatureOverrideKind,
     reason: "",
     expiryPreset: "none" as "none" | "30" | "90",
   });
   const [submitting, setSubmitting] = React.useState(false);
   const [revokingId, setRevokingId] = React.useState<string | null>(null);
-  // Preview step (brief D item 3: every write is preview → confirm → apply). `pendingCreate`
-  // freezes the exact payload the preview was run against, so Confirm applies precisely what
-  // was previewed even if the form underneath changes.
+  // Owner rule: EVERY override write goes through preview — the "+ New Override" button and
+  // the Feature Console's "Customise" action share this ONE drawer and this ONE preview → confirm
+  // → apply flow (brief D item 3). `pendingCreate` freezes the exact payload the preview was run
+  // against, so Confirm applies precisely what was previewed even if the form underneath changes.
   const [previewResponse, setPreviewResponse] = React.useState<FeaturePreviewResponse | null>(null);
   const [previewing, setPreviewing] = React.useState(false);
   const [previewError, setPreviewError] = React.useState<string | null>(null);
   const [pendingCreate, setPendingCreate] = React.useState<{
     featureKey: string;
     effect: "GRANT" | "DENY";
+    kind: FeatureOverrideKind;
     reason: string;
     expiresAt: string | null;
   } | null>(null);
-  // The Feature Console's "Customise" action (brief D) goes through preview → confirm → apply;
-  // the pre-existing "+ New Override" button (#795) keeps its original one-step submit so
-  // apps/web/e2e/48-feature-overrides.spec.ts's already-locked-in flow stays unchanged. Same
-  // drawer either way — no duplicated overrides UI, just one extra confirm step when opened
-  // from the data-driven console.
-  const [viaCustomise, setViaCustomise] = React.useState(false);
+  // Only ONE AdminModal is ever open at a time (form OR preview) so Escape closes just the top
+  // one instead of both stacked dialogs; when the preview closes back to the form, focus returns
+  // to the form (Opus review of 73668ac2, item 6c).
+  const featureKeySelectRef = React.useRef<HTMLSelectElement>(null);
+  const wasPreviewOpen = React.useRef(false);
+  React.useEffect(() => {
+    if (wasPreviewOpen.current && !previewResponse && showForm) {
+      featureKeySelectRef.current?.focus();
+    }
+    wasPreviewOpen.current = !!previewResponse;
+  }, [previewResponse, showForm]);
 
   const fetchOverrides = React.useCallback(() => {
     setLoading(true);
@@ -1371,10 +1384,10 @@ const FeatureOverridesSection = React.forwardRef<
     setForm({
       featureKey: registry[0]?.key ?? "",
       effect: "GRANT",
+      kind: "COMP",
       reason: "",
       expiryPreset: "none",
     });
-    setViaCustomise(false);
     setPreviewError(null);
     setPreviewResponse(null);
     setShowForm(true);
@@ -1384,8 +1397,7 @@ const FeatureOverridesSection = React.forwardRef<
     ref,
     () => ({
       openFor: (featureKey: string) => {
-        setForm({ featureKey, effect: "GRANT", reason: "", expiryPreset: "none" });
-        setViaCustomise(true);
+        setForm({ featureKey, effect: "GRANT", kind: "COMP", reason: "", expiryPreset: "none" });
         setPreviewError(null);
         setPreviewResponse(null);
         setShowForm(true);
@@ -1394,41 +1406,8 @@ const FeatureOverridesSection = React.forwardRef<
     [],
   );
 
-  /** Original (#795) one-step submit — unchanged, still used by "+ New Override". */
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault();
-    setSubmitting(true);
-    setPreviewError(null);
-    try {
-      const expiresAt =
-        form.expiryPreset === "none"
-          ? null
-          : new Date(Date.now() + Number(form.expiryPreset) * 24 * 60 * 60 * 1000).toISOString();
-      await superAdminClient.post(`/platform-admin/tenants/${tenant.id}/feature-overrides`, {
-        featureKey: form.featureKey,
-        effect: form.effect,
-        reason: form.reason,
-        expiresAt,
-      });
-      setShowForm(false);
-      fetchOverrides();
-    } catch (e: unknown) {
-      // Opus review of 8130b204, item 7c: a class-validator 400 (e.g. EXPIRES_AT_MUST_BE_FUTURE,
-      // or a DTO field failing multiple rules) sends `message` as string[], not string — join it
-      // into one readable line rather than rendering an array where text is expected.
-      const err = e as { response?: { data?: { message?: string | string[] } } };
-      const message = err?.response?.data?.message;
-      setPreviewError(
-        Array.isArray(message)
-          ? message.join("; ")
-          : (message ?? "Could not create that override. Try again."),
-      );
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  /** Customise-only step 1 of preview → confirm → apply: previews the override, writes nothing. */
+  /** Step 1 of preview → confirm → apply: previews the override, writes nothing. Every override
+   * write goes through this — both "+ New Override" and the console's "Customise" action. */
   async function handlePreview(e: React.FormEvent) {
     e.preventDefault();
     setPreviewing(true);
@@ -1441,6 +1420,7 @@ const FeatureOverridesSection = React.forwardRef<
       const payload = {
         featureKey: form.featureKey,
         effect: form.effect,
+        kind: form.kind,
         reason: form.reason,
         expiresAt,
       };
@@ -1598,8 +1578,10 @@ const FeatureOverridesSection = React.forwardRef<
         </div>
       )}
 
+      {/* Only one of these two AdminModals is ever open at a time (never stacked) — the form
+          hides while the preview is up, so Escape always closes exactly the top dialog. */}
       <AdminModal
-        open={showForm}
+        open={showForm && !previewResponse}
         onClose={closeForm}
         title="New Feature Override"
         footer={
@@ -1613,30 +1595,19 @@ const FeatureOverridesSection = React.forwardRef<
             <button
               type="submit"
               form="feature-override-form"
-              disabled={
-                (viaCustomise ? previewing : submitting) || !form.featureKey || !form.reason
-              }
+              disabled={previewing || !form.featureKey || !form.reason}
               className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
             >
-              {viaCustomise
-                ? previewing
-                  ? "Loading preview..."
-                  : "Preview Override"
-                : submitting
-                  ? "Creating..."
-                  : "Create Override"}
+              {previewing ? "Loading preview..." : "Preview Override"}
             </button>
           </>
         }
       >
-        <form
-          id="feature-override-form"
-          onSubmit={viaCustomise ? handlePreview : handleCreate}
-          className="flex flex-col gap-4"
-        >
+        <form id="feature-override-form" onSubmit={handlePreview} className="flex flex-col gap-4">
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-400">Feature Key</label>
             <select
+              ref={featureKeySelectRef}
               aria-label="Feature Key"
               value={form.featureKey}
               onChange={(e) => setForm((f) => ({ ...f, featureKey: e.target.value }))}
@@ -1682,6 +1653,24 @@ const FeatureOverridesSection = React.forwardRef<
           </div>
 
           <div>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Kind</label>
+            <select
+              aria-label="Kind"
+              value={form.kind}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, kind: e.target.value as FeatureOverrideKind }))
+              }
+              className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
+            >
+              {FEATURE_OVERRIDE_KIND_VALUES.map((k) => (
+                <option key={k} value={k}>
+                  {k}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
             <label className="mb-1 block text-xs font-medium text-slate-400">Reason</label>
             <textarea
               aria-label="Reason"
@@ -1718,7 +1707,7 @@ const FeatureOverridesSection = React.forwardRef<
       </AdminModal>
 
       <PreviewDrawer
-        open={viaCustomise && !!previewResponse}
+        open={!!previewResponse}
         title="Preview override"
         response={previewResponse}
         registryByKey={Object.fromEntries(registry.map((r) => [r.key, r]))}
@@ -2034,6 +2023,11 @@ export default function AdminTenantDetailPage() {
         (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
           "Action failed",
       );
+      // The Feature Console's tier-change confirm (via onChangePlan) awaits this call and must
+      // observe the failure to keep its preview drawer open with the error, instead of silently
+      // closing as if the change applied — rethrow only for this action; every other call site
+      // here is a fire-and-forget onClick that already gets its feedback from statusMsg above.
+      if (action === "change-plan") throw err;
     } finally {
       setActionLoading(null);
     }
@@ -2089,7 +2083,9 @@ export default function AdminTenantDetailPage() {
         />
       )}
       {activeTab === "billing" && <BillingTab tenant={tenant} onRefreshTenant={fetchTenant} />}
-      {activeTab === "addons" && <AddonsTab tenant={tenant} onAction={handleAction} />}
+      {activeTab === "addons" && (
+        <AddonsTab tenant={tenant} onAction={handleAction} actionLoading={actionLoading} />
+      )}
       {activeTab === "config" && <ConfigTab tenant={tenant} />}
       {activeTab === "audit" && <AuditLogTab tenantId={tenant.id} />}
     </div>

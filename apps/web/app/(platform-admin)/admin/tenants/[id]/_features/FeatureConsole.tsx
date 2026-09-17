@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { PLAN_KEYS } from "@routeflow/types";
 import { planLabel } from "../../../../_components/AdminBadge";
 import {
   fetchEntitlementsMode,
@@ -20,11 +21,6 @@ import type {
   FeaturePreviewResponse,
   FeatureRegistryRow,
 } from "./types";
-
-// Tenant plan keys the console offers in its tier picker. Kept local (not imported from
-// page.tsx's `PLANS` const, which predates LITE) so brief D can offer the full catalog without
-// widening file ownership — @routeflow/types is the source of truth either way.
-const TIER_OPTIONS = ["LITE", "STARTER", "GROWTH", "SCALE", "ENTERPRISE"] as const;
 
 /** Best-effort client-side check — the real gate is the server + the route's SuperAdminGuard. */
 function currentRoleIsSuperAdmin(): boolean {
@@ -103,12 +99,6 @@ export function FeatureConsole({
     setSelectedPlan(tenant.plan);
   }, [tenant.plan]);
 
-  if (!currentRoleIsSuperAdmin()) {
-    return (
-      <p className="text-sm text-slate-500">Feature console is available to super admins only.</p>
-    );
-  }
-
   const registryByKey = React.useMemo(
     () => Object.fromEntries((registry ?? []).map((r) => [r.key, r])),
     [registry],
@@ -132,6 +122,23 @@ export function FeatureConsole({
     }
     return [...byArea.entries()];
   }, [visibleRows]);
+
+  // PLAN_KEYS (@routeflow/types) is the canonical tier list; a tenant already sitting on a
+  // legacy/off-catalog plan (e.g. "PROFESSIONAL", predates LITE) still needs its own current
+  // tier selectable and visibly current, so it's appended when missing.
+  const tierOptions = React.useMemo(() => {
+    const keys: string[] = [...PLAN_KEYS];
+    if (!keys.includes(tenant.plan)) keys.push(tenant.plan);
+    return keys;
+  }, [tenant.plan]);
+
+  // Every hook above runs unconditionally on every render (rules-of-hooks) — the SUPER_ADMIN
+  // gate and the loading/error/empty early returns come only after all of them are declared.
+  if (!currentRoleIsSuperAdmin()) {
+    return (
+      <p className="text-sm text-slate-500">Feature console is available to super admins only.</p>
+    );
+  }
 
   async function startTierPreview() {
     setPreviewError(null);
@@ -213,7 +220,7 @@ export function FeatureConsole({
             onChange={(e) => setSelectedPlan(e.target.value)}
             className="h-9 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
           >
-            {TIER_OPTIONS.map((p) => (
+            {tierOptions.map((p) => (
               <option key={p} value={p}>
                 {planLabel(p)}
                 {p === "LITE" ? " (invite-only)" : ""}
@@ -222,24 +229,34 @@ export function FeatureConsole({
             ))}
           </select>
           <button
-            disabled={selectedPlan === tenant.plan || previewLoading}
+            disabled={selectedPlan === tenant.plan || previewLoading || changePlanLoading}
             onClick={startTierPreview}
             className="rounded-lg bg-slate-600 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-500 disabled:opacity-50"
           >
-            {previewLoading ? "Loading preview..." : "Preview tier change"}
+            {changePlanLoading
+              ? "Applying..."
+              : previewLoading
+                ? "Loading preview..."
+                : "Preview tier change"}
           </button>
         </div>
         <div className="flex items-center gap-3 text-xs text-slate-500">
-          {entitlementsMode && (
+          {entitlementsMode === "shadow" && (
             <span className="rounded px-1.5 py-0.5 ring-1 ring-slate-600/40">
-              Entitlements: {entitlementsMode}
+              Preview mode — no customer changes yet
             </span>
           )}
-          {diffCount !== null && (
-            <span className={diffCount > 0 ? "text-amber-400" : ""}>
-              {diffCount} unexplained diff{diffCount === 1 ? "" : "s"}
+          {entitlementsMode === "live" && (
+            <span className="rounded px-1.5 py-0.5 ring-1 ring-slate-600/40">
+              Live — serving customers
             </span>
           )}
+          {diffCount !== null && diffCount > 0 && (
+            <span className="text-amber-400">
+              {diffCount} change{diffCount === 1 ? "" : "s"} need a look
+            </span>
+          )}
+          {diffCount === 0 && <span>No changes need a look</span>}
           <label className="flex items-center gap-1.5">
             <input
               type="checkbox"
@@ -269,7 +286,7 @@ export function FeatureConsole({
                 >
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="text-sm font-semibold text-white">{row.label}</span>
                         <span
                           data-testid="badge"
@@ -300,12 +317,15 @@ export function FeatureConsole({
                         onClick={() => setOpenWhy(openWhy === row.key ? null : row.key)}
                         className="rounded px-2 py-1 text-xs text-slate-400 hover:bg-slate-700 hover:text-white"
                         aria-expanded={openWhy === row.key}
+                        aria-controls={`why-panel-${row.key}`}
+                        aria-label={`Why is ${row.label} on or off?`}
                       >
                         Why is this on/off?
                       </button>
                       <button
                         onClick={() => onCustomise(row.key)}
                         className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
+                        aria-label={`Customise ${row.label}`}
                       >
                         Customise
                       </button>
@@ -313,8 +333,18 @@ export function FeatureConsole({
                   </div>
 
                   {openWhy === row.key && feature && (
-                    <div className="mt-3 rounded-lg bg-slate-900/50 p-3 text-xs text-slate-300 ring-1 ring-white/5">
-                      {explainSentence(feature)}
+                    <div
+                      id={`why-panel-${row.key}`}
+                      className="mt-3 rounded-lg bg-slate-900/50 p-3 text-xs text-slate-300 ring-1 ring-white/5"
+                    >
+                      <p>{explainSentence(feature)}</p>
+                      {feature.resolver !== feature.serving && (
+                        <p className="mt-2 text-amber-300">
+                          Note: the new resolver disagrees — it would say this is{" "}
+                          {feature.resolver ? "ON" : "OFF"}. Still in preview mode, so nothing
+                          changes for customers yet.
+                        </p>
+                      )}
                     </div>
                   )}
 
