@@ -173,6 +173,7 @@ describe("AuthService.setPassword", () => {
       expect.objectContaining({
         to: "alice@example.com",
         subject: expect.stringContaining("password was set"),
+        senderClass: "platform",
       }),
     );
   });

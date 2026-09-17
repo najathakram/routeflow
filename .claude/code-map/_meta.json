@@ -1,6 +1,6 @@
 {
-  "mappedSha": "8f329ec4deaa712161aa95563205554f7b565962",
-  "generatedAt": "2026-09-16T14:30:00.000Z",
+  "mappedSha": "bd1a84570e00435585696f75c910f75edf330538",
+  "generatedAt": "2026-09-17T16:43:44.000Z",
   "layout": "split-2026-09-13",
   "areas": ["api", "web", "mobile", "packages"],
   "partCounts": {
@@ -10,5 +10,5 @@
     "packages": 0
   },
   "fileCount": 1027,
-  "notes": "**2026-09-17 — refresh the #789 email/ bullet for #802 (B452 follow-ups) — docs-only bookkeeping** — `api/feature-modules-7.md`: three clauses of the #789 bullet had gone stale after #802 — `getTenantFromAddress(smtpUser)` now falls back to the tenant's own SMTP login instead of the platform address, `sanitizeDisplayName()` now collapses CR/LF, and `getReplyTo()`'s admin fallback now filters ACTIVE with a deterministic order. Also: `docs/runbooks/deploy-visibility-flip.md` step 3 now requires proving each service's served commit via its health probe, never the GitHub deployments API's `statuses[0]`. `mappedSha` unchanged. See CHANGELOG.md."
+  "notes": "**2026-09-17 — Mailbox connect bookkeeping (#824/#830/#841, N2 #811, docs-only, Bookkeeping Option B)** — `api/feature-modules-7.md`'s `email/` section gains two entries: N2 account/invite mail (`sendSetPasswordEmail`/`sendEmailChangedNotice`/`sendEmailChangeConfirmation`/`sendRoleChangedNotice`, `sendPlatform`) and the `email/mailbox/` subdirectory (`MailboxConnectionService` OAuth for Google + Microsoft, `MailboxSendService.trySend`, `MailboxController`'s two-step confirm binding, web `MailboxCard.tsx`). See CHANGELOG.md."
 }

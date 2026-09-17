@@ -2407,3 +2407,28 @@ citations, closed-out with its own post-init assertion guard).
   scopes via `where.order = {routeRun: {driverId}}`); `returns.security.spec.ts`'s B221 suite.
   Sibling pattern already fixed once in `credit-notes.service.ts` (DRIVER denied outright there,
   a different but equally deliberate choice — the point is BOTH required an explicit branch).
+
+## Archived 2026-09-17 — headroom for L-190 (feature grants v2 bookkeeping follow-up, #825/#837/#838)
+
+### L-144 · 2026-09-14 · domain · PR #748 review — a fallback key for an unresolved identity is a cross-user leak
+
+- **Symptom:** the same staged-edit keyspace [[L-145]] fixed can still deliver operator A's edit
+  to operator B on a shared tablet: `editItemsSnapshotKey` falls back to an `anon` bucket when
+  `useAuthStore`'s `user?.id` reads undefined — reachable on a cold open or deep link, before
+  `initialize()` resolves the stored user — and teardown swept only the resolved user's own
+  prefix, never `anon`.
+  - **Root cause:** "no user id yet" was treated as one more value to derive a key from (a
+    `?? "anon"` fallback), not as a distinct state that must refuse the write entirely. A fallback
+    bucket is by construction shared by every caller who ever hits the same unresolved state — the
+    cross-user leak is what a shared default key always is, discovered late because sign-in
+    normally resolves fast enough that the window is rarely hit.
+- **Lesson:** **An unresolved identity is not "no identity" — it is "don't know yet," and a
+  fallback default for it silently becomes a SHARED bucket every not-yet-authenticated caller
+  writes into. Never derive a user-scoped storage key with a `?? someDefault`; gate the write
+  itself on the id being resolved, and skip it (not write-then-hope-to-sweep-later) when it
+  isn't. A teardown sweep of the fallback bucket is legitimate belt-and-braces, never the fix on
+  its own.**
+- **Guard:** `edit-items.tsx`'s `snapshotWriteRef.current` refuses on `userId == null`
+  (`REG-MSCAN-A4-anon`, source-text pin in `edit-items-drawer.test.ts`);
+  `session-teardown.ts` step (6) also sweeps `editItemsSnapshotUserPrefix(null)`
+  (`REG-EDIT-SWEEP-B`/`REG-MSCAN-A4-anon` in `session-teardown.test.ts`).

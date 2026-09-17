@@ -102,6 +102,24 @@ const EXPECTED_LEGACY_REGISTRY = {
       "SKU exists, the pilot tenant holds it, and the blast-radius report is clean",
     reviewBy: "2027-03-11",
   },
+  "email.connected_mailbox": {
+    state: "dark",
+    added: "2026-09-17",
+    routes: [
+      "GET /settings/email/mailbox",
+      "GET /settings/email/mailbox/google/start",
+      "GET /settings/email/mailbox/microsoft/start",
+      "POST /settings/email/mailbox/confirm",
+      "DELETE /settings/email/mailbox",
+    ],
+    grantPath:
+      'Platform Admin → Tenants → [tenant] → add-ons (AddonService.enableAddon writes addonKey "email.connected_mailbox")',
+    backfill:
+      "New feature 2026-09-17: no tenant has a connection; gate stays dark through the pilot " +
+      "(owner review window for Google gmail.send verification — see local-assets/handoff/" +
+      "2026-09-17/email-connect/design.md §5).",
+    reviewBy: "2027-03-17",
+  },
   developer_mode: {
     state: "enforced",
     added: "2026-08-21",
@@ -347,7 +365,11 @@ describe("FEATURE_REGISTRY (feature grants PR-1)", () => {
 
   it("key convention: non-dotted keys are lower_snake_case, <= 50 chars", () => {
     const bad = FEATURE_REGISTRY.filter(
-      (f) => !f.key.startsWith("flag.") && !f.key.startsWith("addon."),
+      // "email." (email-connect-google, 2026-09-17): a RequireAddon key, not RequirePlanFlag —
+      // dotted on purpose per the owner's literal task spec ("email.connected_mailbox"), so it
+      // joins "flag."/"addon." in the allowed dotted-namespace exclusion here.
+      (f) =>
+        !f.key.startsWith("flag.") && !f.key.startsWith("addon.") && !f.key.startsWith("email."),
     )
       .filter((f) => !/^[a-z][a-z0-9_]*$/.test(f.key) || f.key.length > 50)
       .map((f) => f.key);

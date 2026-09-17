@@ -518,15 +518,24 @@ subscription, subscriptionResolved, subscriptionErrored, children}`: while resol
   dedup key also changed from `gate.flag ?? gate.message` to `pathname` (a burst across several
   DIFFERENT flags failing together on one navigation now coalesces to one toast, not one per
   flag), with an explicit `lastNotified.current = null` reset on `pathname` change so a stale
-  dedup entry from the PREVIOUS route can never suppress this one. **Known follow-up, not fixed
-  here:** the locked panel still renders in place of the WHOLE `DashboardShell` (RouteGuard sits
-  above it), so a Lite user has no sidebar to navigate away with — only "See plans" or the
-  browser back button; filed to render the lock inside `<main>` instead. `lib/api/portal-approvals.ts`
+  dedup entry from the PREVIOUS route can never suppress this one. `lib/api/portal-approvals.ts`
   also picked up an unrelated hardening pass in the same PR (see its own entry below). Specs:
   `PlanGateBoundary.test.tsx`, `RouteGuard.test.tsx` (asserts children are never wrapped inside
   `LockedPage`, pinning the #777 regression shape), `PlanGateNotice.test.tsx`,
   `lib/api/portal-approvals.test.tsx`, `apps/web/e2e/48-lite-locked-route-ux.spec.ts` (see
   `e2e-tests.md`).
+- **B471 (2026-09-17) — the locked panel now renders INSIDE the shell, not in place of it.**
+  Fixed the "known follow-up" noted above: `DashboardShell` used to be the OUTER wrapper
+  (`AuthGuard` rendered `<DashboardShell>{children}</DashboardShell>`, then `AuthGuard`'s own
+  `children` was `<RouteGuard>…</RouteGuard>`), so `PlanGateBoundary`'s `<LockedPage>` replaced
+  the whole shell — no sidebar/header, only "See plans" or the browser back button to escape a
+  locked route. `AuthGuard` now renders `<DashboardShell><RouteGuard>{children}</RouteGuard></DashboardShell>`
+  instead (`DashboardLayout` itself just renders `<AuthGuard>{children}</AuthGuard>`) — the
+  lock/spinner/real-page decision still happens exactly where it did (inside `RouteGuard` →
+  `PlanGateBoundary`), but now lands inside `DashboardShell`'s `<main id="main-content">`, so the
+  sidebar and header stay mounted on a locked route. `48-lite-locked-route-ux.spec.ts`'s first
+  test extended to assert the sidebar nav's "Dashboard" link is attached to the DOM on a locked
+  route (viewport-agnostic — the desktop `<aside>` is CSS-hidden, not DOM-removed, below `lg`).
 - **`_components/gates/PlanGates.tsx` `LockedPage` gains an optional `secondary?: string`
   prop (Lite-L2 WP8)** — a plain line rendered under the CTA (e.g. RouteGuard's "Want it?
   Contact us to upgrade."); no link target invented, "See plans" stays the only action.
@@ -540,3 +549,20 @@ subscription, subscriptionResolved, subscriptionErrored, children}`: while resol
   local Playwright allow-list (`apps/web/e2e/LOCAL-LANE.md`) — same convention as the
   sales-agents-gate/compliance-pack-gate/trip-builder-gate projects. **Without the project
   entry the spec never runs** (cf. the #08 note above).
+
+- **`lib/tenant-features.ts` (new, feature grants v2 brief A, 2026-09-17, #825)** —
+  `useTenantFeatures(options?)`: `useQuery` wrapping `GET /tenants/me/features` (the
+  server-computed shadow-resolver + old-path trace). Query key includes the tenant slug so a
+  stale answer can never leak across a tenant switch. **NOT yet a gating read path** (Opus
+  review of 9923b87c, item 1) — `usePlanFlag`/nav gates stay on `useSubscription()`
+  (`lib/api/plan-flags.ts`, above); this hook exists for a future PR that revisits the switch,
+  and for admin/debug surfaces that want the raw resolver trace. Mirrors mobile's
+  `lib/tenant-features.ts` byte-for-byte in contract.
+- **`lib/feature-modes.ts` (new, feature grants v2 brief C, 2026-09-17, #837)** — pure
+  selectors over a tenant's `modes` record (`TenantFeaturesResponse.modes`,
+  `packages/types/api/features.ts`). `getRoutesDispatchVisibility(modes?)` →
+  `{showScheduledEntry, showAdhocEntry}`: `"scheduled"` hides ad-hoc, `"adhoc"` hides scheduled,
+  anything else (unset/mixed/unrecognized) shows both — never narrower on an unknown mode
+  string. **Deliberately unwired into any page yet** — brief A's `/tenants/me/features` hook
+  isn't consumed by routes pages on this base, so the "unset → before == after" invariant holds
+  by construction rather than by testing an unwired call site. Test: `feature-modes.test.ts`.

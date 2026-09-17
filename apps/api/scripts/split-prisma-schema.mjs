@@ -245,6 +245,7 @@ const MODEL_DOMAIN = {
   DemoBooking: "platform",
   CrmConnection: "platform",
   CrmHandoff: "platform",
+  MailboxConnection: "platform",
 
   // ─── compliance ────────────────────────────────────────────────────────────
   TobaccoReport: "compliance",

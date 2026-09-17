@@ -384,6 +384,9 @@ ${
     : `<p>Your trial expires in ${trialDays} days. Complete payment to continue using RouteFlow.</p>`
 }
 <p>RouteFlow Platform</p>`,
+        // email-connect-google PR-3: contains a temp password — platform sender only, never
+        // a tenant mailbox/SMTP.
+        senderClass: "platform",
       });
     } catch {
       /* best-effort — don't fail tenant creation over email */
@@ -1636,6 +1639,9 @@ ${
 <strong>Password:</strong> ${rawPassword}</p>
 <p><em>Please log in and change your password immediately.</em></p>
 <p>RouteFlow Platform</p>`,
+        // email-connect-google PR-3: contains a password — platform sender only, never a
+        // tenant mailbox/SMTP.
+        senderClass: "platform",
       });
     } catch {
       /* best-effort */

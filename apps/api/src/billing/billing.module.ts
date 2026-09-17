@@ -1,4 +1,4 @@
-import { Module } from "@nestjs/common";
+import { Module, forwardRef } from "@nestjs/common";
 import { StripeService } from "./stripe.service";
 import { BillingService } from "./billing.service";
 import { PlatformPricingService } from "./platform-pricing.service";
@@ -21,7 +21,9 @@ import { EmailModule } from "../email/email.module";
 import { EntitlementsModule } from "./entitlements.module";
 
 @Module({
-  imports: [EmailModule, EntitlementsModule],
+  // forwardRef: MailboxModule (imported by EmailModule for MailboxSendService) imports this
+  // module back for AddonGuard — see MailboxModule's doc comment for the full cycle.
+  imports: [forwardRef(() => EmailModule), EntitlementsModule],
   controllers: [
     BillingController,
     BillingWebhookController,

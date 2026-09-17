@@ -175,6 +175,8 @@ export class TenantsService {
 <p>Or paste this link into your browser:<br/><a href="${verifyUrl}">${verifyUrl}</a></p>
 <p><em>This link expires in 24 hours. If you didn't sign up, you can safely ignore this email.</em></p>
 <p>The RouteFlow Team</p>`,
+        // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
+        senderClass: "platform",
       });
       emailSent = sendResult.delivered;
       if (!sendResult.delivered) {
@@ -267,6 +269,8 @@ export class TenantsService {
 </p>
 <p><em>This link expires in 24 hours.</em></p>
 <p>The RouteFlow Team</p>`,
+        // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
+        senderClass: "platform",
       });
       if (!sendResult.delivered) {
         this.logger.error(

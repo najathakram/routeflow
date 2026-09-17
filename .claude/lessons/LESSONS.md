@@ -13,6 +13,44 @@
 
 ## tooling
 
+### L-191 · 2026-09-17 · tooling · MailboxCard.tsx JSX apostrophes only caught by a full web lint
+
+- **Symptom:** `MailboxCard.tsx` (email-connect-google/#824, email-connect-microsoft/#830/#841)
+  shipped with five raw `'` characters in JSX text nodes (`react/no-unescaped-entities`). `tsc`,
+  Jest, and a targeted `eslint` pass on just the changed file were all clean; the errors only
+  surfaced when `npm run lint -w apps/web` (i.e. `next lint`) ran against the whole workspace.
+- **Root cause:** `next lint` fails the ENTIRE web workspace on a single error, and that failure
+  reads as noise — the run's output is dominated by pre-existing warnings elsewhere in the repo,
+  so a real new error in the diff is easy to mistake for one more line of the existing warning
+  backlog instead of the thing that actually failed the run.
+- **Lesson:** **A JSX text change needs web lint run locally before push, not inferred from
+  `tsc`/Jest passing — `next lint` fails the whole workspace on one error, and the failure hides
+  behind pre-existing warnings, so scan the full lint output for NEW errors in the touched
+  file(s) rather than assuming a clean `tsc` means the JSX is clean too.**
+- **Guard:** none yet — propose `npm run lint -w apps/web -- --file <changed-file>`-style
+  scoped invocation, or a pre-push hook step that diffs lint output against a baseline so a new
+  error can't hide in the existing warning noise.
+
+### L-190 · 2026-09-17 · tooling · FG-B (#819) had to be rebuilt, not rebased, after FG-A squash-merged
+
+- **Symptom:** #819 (FG-B, feature-override kind + MRR exclusion) conflicted after #825 (FG-A,
+  the shadow resolver) squash-merged to master. #819 carried FG-A's own schema+contract commit
+  (stacked locally before either landed), and master's squash-merge of that same content under a
+  NEW sha meant #819's branch and master now disagreed about whether that commit's content was
+  "already applied" — a normal `git rebase`/`git merge origin/master` treats it as new content to
+  reconcile a second time, corrupting the schema state instead of cleanly resolving.
+- **Root cause:** two PRs stacked on a shared, not-yet-landed schema/contract commit — when the
+  owner squashes the FIRST one, the commit that content came from no longer exists on master
+  under its original identity, so any operation that diffs/merges by commit history (rebase,
+  ordinary merge) sees a phantom conflict between "the same change, twice."
+- **Lesson:** **A PR stacked on another PR's not-yet-landed schema/contract commit must be
+  REBUILT from a fresh branch off the post-squash master — by cherry-picking only its OWN
+  commits (never the shared ancestor commit, never a merge commit) — once the base PR lands.
+  Never rebase or ordinary-merge a stacked branch through someone else's squash.**
+- **Guard:** none automatic yet — a landing coordinator diffs `origin/master...HEAD` on the
+  rebuilt branch and confirms zero changes under the schema-owning PR's files (e.g. `prisma/`)
+  before pushing, proving only the stacked PR's own commits landed.
+
 ### L-186 · 2026-09-17 · tooling · web code-map catch-up (layout.tsx named re-export)
 
 - **Symptom:** an App Router `layout.tsx` re-exported a named client component. It compiled
@@ -528,29 +566,6 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
 - **Guard:** `session-teardown.ts` imports and calls `editItemsSnapshotUserPrefix` +
   `clearStorageByPrefix` — grep for it before trusting this reasoning again on the same file.
   `apps/mobile/lib/edit-items-draft.ts` carries the design-rationale comment inline.
-
-### L-144 · 2026-09-14 · domain · PR #748 review — a fallback key for an unresolved identity is a cross-user leak
-
-- **Symptom:** the same staged-edit keyspace [[L-145]] fixed can still deliver operator A's edit
-  to operator B on a shared tablet: `editItemsSnapshotKey` falls back to an `anon` bucket when
-  `useAuthStore`'s `user?.id` reads undefined — reachable on a cold open or deep link, before
-  `initialize()` resolves the stored user — and teardown swept only the resolved user's own
-  prefix, never `anon`.
-  - **Root cause:** "no user id yet" was treated as one more value to derive a key from (a
-    `?? "anon"` fallback), not as a distinct state that must refuse the write entirely. A fallback
-    bucket is by construction shared by every caller who ever hits the same unresolved state — the
-    cross-user leak is what a shared default key always is, discovered late because sign-in
-    normally resolves fast enough that the window is rarely hit.
-- **Lesson:** **An unresolved identity is not "no identity" — it is "don't know yet," and a
-  fallback default for it silently becomes a SHARED bucket every not-yet-authenticated caller
-  writes into. Never derive a user-scoped storage key with a `?? someDefault`; gate the write
-  itself on the id being resolved, and skip it (not write-then-hope-to-sweep-later) when it
-  isn't. A teardown sweep of the fallback bucket is legitimate belt-and-braces, never the fix on
-  its own.**
-- **Guard:** `edit-items.tsx`'s `snapshotWriteRef.current` refuses on `userId == null`
-  (`REG-MSCAN-A4-anon`, source-text pin in `edit-items-drawer.test.ts`);
-  `session-teardown.ts` step (6) also sweeps `editItemsSnapshotUserPrefix(null)`
-  (`REG-EDIT-SWEEP-B`/`REG-MSCAN-A4-anon` in `session-teardown.test.ts`).
 
 ### L-155 · 2026-09-15 · domain · PR-2 fix round (F2: retired-writer branch vs legacy data)
 

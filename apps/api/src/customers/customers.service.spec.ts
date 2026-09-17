@@ -3099,7 +3099,9 @@ describe("CustomersService", () => {
     it("actually sends the invite email (not just a logged 'best-effort' claim)", async () => {
       const result = await service.sendPortalInvite("cust-invite", { method: "EMAIL" }, "tenant-1");
 
-      expect(email.send).toHaveBeenCalledWith(expect.objectContaining({ to: "buyer@example.com" }));
+      expect(email.send).toHaveBeenCalledWith(
+        expect.objectContaining({ to: "buyer@example.com", senderClass: "platform" }),
+      );
       expect(result.emailSent).toBe(true);
       expect(result.message).toMatch(/emailed to buyer@example\.com/i);
     });

@@ -22,7 +22,10 @@ function makeService(opts: { systemConfigRows?: any[]; tenantConfig?: any } = {}
     tenantConfig: { findFirst: jest.fn().mockResolvedValue(opts.tenantConfig ?? null) },
   } as any;
   const encryption = { decrypt: (v: string) => v } as any;
-  return new EmailService(config, prisma, encryption);
+  const mailboxSend = {
+    trySend: jest.fn().mockResolvedValue({ delivered: false, transport: "mailbox" }),
+  } as any;
+  return new EmailService(config, prisma, encryption, mailboxSend);
 }
 
 const mockTransport = (verify: jest.Mock) =>

@@ -93,6 +93,14 @@ test.describe("Lite locked-route UX (B449)", () => {
         });
         await expect(page.locator("table")).toHaveCount(0);
 
+        // B471: the locked panel renders INSIDE the dashboard shell, not in place of it —
+        // the sidebar nav stays mounted (present at every viewport; CSS-hidden, not
+        // DOM-removed, below the lg breakpoint by responsive design) so the user can
+        // still navigate away from the locked route.
+        await expect(
+          page.getByRole("navigation").getByText("Dashboard", { exact: true }),
+        ).toBeAttached();
+
         const dir = path.join(SCREENSHOT_DIR, vp.name);
         await page.screenshot({ path: shot(dir, "estimates-locked"), fullPage: true });
 

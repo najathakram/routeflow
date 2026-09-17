@@ -23,6 +23,10 @@ function makeService(
     smtpUser?: string;
     smtpPass?: string;
     adminUser?: any;
+    /** email-connect-google PR-3 — defaults to "no mailbox connected", so every pre-existing
+     *  test in this file exercises the unchanged tenant-SMTP/platform chain unless a test
+     *  explicitly overrides this to exercise the new leading mailbox branch. */
+    mailboxSend?: { trySend: jest.Mock };
   } = {},
 ): EmailService {
   const envMap: Record<string, string | undefined> = {
@@ -48,7 +52,16 @@ function makeService(
     user: { findFirst: jest.fn().mockResolvedValue(opts.adminUser ?? null) },
   } as any;
   const encryption = { decrypt: (v: string) => v } as any;
-  return new EmailService(config, prisma, encryption);
+  const mailboxSend =
+    opts.mailboxSend ??
+    ({
+      trySend: jest.fn().mockResolvedValue({
+        delivered: false,
+        transport: "mailbox",
+        error: "not_connected",
+      }),
+    } as any);
+  return new EmailService(config, prisma, encryption, mailboxSend);
 }
 
 describe("EmailService — honest send (R5)", () => {
@@ -1388,6 +1401,25 @@ describe("EmailService.sendPlatform — platform-only send, never tenant SMTP/br
     expect(sendSpy).toHaveBeenCalledWith(expect.objectContaining({ text: "plain text body" }));
   });
 
+  // email-connect-google PR-3: security/platform mail (this is exactly that class — invites,
+  // password, verification callers all route through sendPlatform) must NEVER reach a
+  // tenant's connected mailbox, even when one exists and is CONNECTED.
+  it("never calls MailboxSendService — a connected tenant mailbox is never used for platform mail", async () => {
+    const mailboxSend = { trySend: jest.fn() };
+    const svc = makeService({
+      resendKey: "re_test",
+      emailFrom: "RouteFlow <invoices@send.routeflow.info>",
+      mailboxSend: mailboxSend as any,
+    });
+    (svc as any).resend.emails.send = jest
+      .fn()
+      .mockResolvedValue({ data: { id: "eml_1" }, error: null });
+
+    await svc.sendPlatform({ to: "admin@acme.test", subject: "x", html: "<p>x</p>" });
+
+    expect(mailboxSend.trySend).not.toHaveBeenCalled();
+  });
+
   it("tries platform SMTP before Resend when both are configured (N2's original capability, folded back in during merge)", async () => {
     const sendMail = jest.fn().mockResolvedValue({ messageId: "plat-smtp-1" });
     (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
@@ -1407,6 +1439,27 @@ describe("EmailService.sendPlatform — platform-only send, never tenant SMTP/br
   });
 });
 
+// Security review Phase 2 pinning: an account-merge verification link is security mail —
+// platform sender only, never a tenant's connected mailbox/SMTP.
+describe("EmailService.sendMergeVerificationEmail (security review pinning)", () => {
+  it("sends via the platform sender (senderClass: 'platform')", async () => {
+    const svc = makeService({ resendKey: "re_test" });
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "resend" } as any);
+
+    await svc.sendMergeVerificationEmail({
+      to: "secondary@example.com",
+      primaryEmail: "primary@example.com",
+      verifyUrl: "https://web.test/merge/verify?token=abc",
+    });
+
+    expect(sendSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ to: "secondary@example.com", senderClass: "platform" }),
+    );
+  });
+});
+
 /**
  * N4 — low-stock digest template. Deliberately built with `getTenantId: () => null` (no
  * ALS tenant context), matching how `LowStockDigestService`'s cron actually calls this —
@@ -1421,7 +1474,10 @@ describe("EmailService.sendLowStockDigest (N4)", () => {
     } as any;
     const prisma = { getTenantId: () => null } as any;
     const encryption = { decrypt: (v: string) => v } as any;
-    return new EmailService(config, prisma, encryption);
+    const mailboxSend = {
+      trySend: jest.fn().mockResolvedValue({ delivered: false, transport: "mailbox" }),
+    } as any;
+    return new EmailService(config, prisma, encryption, mailboxSend);
   }
 
   const items = [

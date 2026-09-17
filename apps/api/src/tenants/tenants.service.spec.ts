@@ -93,7 +93,7 @@ describe("TenantsService", () => {
       expect(result.user.email).toBe("owner@acme.example");
       expect(result.emailSent).toBe(true);
       expect(email.send).toHaveBeenCalledWith(
-        expect.objectContaining({ to: "owner@acme.example" }),
+        expect.objectContaining({ to: "owner@acme.example", senderClass: "platform" }),
       );
     });
 
@@ -159,7 +159,7 @@ describe("TenantsService", () => {
 
       expect(sent).toBe(true);
       expect(email.send).toHaveBeenCalledWith(
-        expect.objectContaining({ to: "owner@acme.example" }),
+        expect.objectContaining({ to: "owner@acme.example", senderClass: "platform" }),
       );
     });
 

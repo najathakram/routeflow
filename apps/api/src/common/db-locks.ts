@@ -108,6 +108,7 @@ export const LOCK_FAMILIES = [
   "billing",
   "tenant-mirror",
   "demo-booking",
+  "mailbox",
 ] as const;
 export type LockFamily = (typeof LOCK_FAMILIES)[number];
 export interface AdvisoryLockOptions {
@@ -161,6 +162,14 @@ const POOL_MAX: Record<string, number | undefined> = {
   // many concurrent submissions arrive, but each holds its slot only for one
   // availability re-check + one insert.
   "demo-booking": 4,
+  // `mailbox` (email-connect-google, PR-3): `MailboxSendService`'s lazy access-token
+  // refresh, one checkout per connected-mailbox send that finds the cached access token
+  // within 60s of expiry — request-path and short (one token POST + one row update), and
+  // bounded by how many tenants have a connected mailbox AND are sending concurrently at
+  // the exact moment their token expires, a narrower slice than `billing`'s per-tenant
+  // admin actions. Same size as `billing`/`tenant-mirror` for the same reason: short,
+  // request-path, no real hot-path volume.
+  mailbox: 4,
 };
 const DEFAULT_POOL_MAX = 8;
 function lockPool(family: string): Pool {

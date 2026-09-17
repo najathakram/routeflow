@@ -12,6 +12,7 @@ import {
   FEATURE_OVERRIDE_KIND_VALUES,
   type FeatureOverrideKind,
 } from "@routeflow/types";
+import type { FeatureRegistryRow } from "@routeflow/types";
 import { superAdminClient } from "@/lib/admin-api";
 import { setTenantCookie } from "@/lib/tenant-cookie";
 import { setImpersonation } from "@/lib/impersonation";
@@ -1290,15 +1291,6 @@ interface FeatureOverrideRow {
   revokedAt: string | null;
 }
 
-interface FeatureRegistryOption {
-  key: string;
-  label: string;
-  area: string;
-  kind: string;
-  internal: boolean;
-  via: string;
-}
-
 const OVERRIDE_EXPIRY_PRESETS = [
   { value: "none", label: "No expiry (standing)" },
   { value: "30", label: "30 days" },
@@ -1325,7 +1317,7 @@ const FeatureOverridesSection = React.forwardRef<
   { tenant: TenantDetail }
 >(function FeatureOverridesSection({ tenant }, ref) {
   const [overrides, setOverrides] = React.useState<FeatureOverrideRow[]>([]);
-  const [registry, setRegistry] = React.useState<FeatureRegistryOption[]>([]);
+  const [registry, setRegistry] = React.useState<FeatureRegistryRow[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [showForm, setShowForm] = React.useState(false);
@@ -1631,7 +1623,7 @@ const FeatureOverridesSection = React.forwardRef<
                 </option>
               ))}
             </select>
-            {selectedRegistryEntry?.via === "none" && (
+            {selectedRegistryEntry?.gate.via === "none" && (
               <p className="mt-1 text-xs text-amber-400">
                 This key has no wired gate (catalog metadata only) — an override here will have no
                 effect.
