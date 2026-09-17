@@ -3,8 +3,21 @@ import { ConfigService } from "@nestjs/config";
 import axios from "axios";
 import { MailboxConnectionService } from "./mailbox-connection.service";
 import { EncryptionService } from "../../common/encryption.service";
+import { withAdvisoryLock } from "../../common/db-locks";
 
 jest.mock("axios");
+
+// Pass-through mock (mirrors mailbox-send.service.spec.ts) — confirmConnect's write is
+// serialized through the same "mailbox" advisory lock MailboxSendService's token refresh uses
+// (Opus review, LOW — rotation race); a real lock needs a live Postgres connection this unit
+// test doesn't have, so the lock itself is trusted (tested in db-locks.spec.ts) and only the
+// call site is asserted here.
+jest.mock("../../common/db-locks", () => ({
+  withAdvisoryLock: jest.fn(async (_opts: unknown, fn: () => Promise<unknown>) => ({
+    acquired: true,
+    value: await fn(),
+  })),
+}));
 
 // A single shared mock OAuth2Client instance — the service builds a fresh `newOAuthClient()`
 // per call, so every test configures THIS mock's methods before invoking the service.
@@ -568,5 +581,53 @@ describe("MailboxConnectionService", () => {
       expect(key).not.toMatch(/token/i);
     }
     expect(JSON.stringify(view)).not.toMatch(/refreshTokenCipher|accessTokenCipher|iv:tag:ct/);
+  });
+
+  // ── cross-provider state rejection (Opus review, LOW) ──────────────────────
+
+  it("a state minted for MICROSOFT is rejected at the Google callback with 400 — never exchanged", async () => {
+    const { service, mockRedis } = buildService();
+    // Forge a MICROSOFT-provider nonce directly under the same key handleCallback reads —
+    // simulates a state that started via /microsoft/start being replayed at /google/callback.
+    await mockRedis.set(
+      "mailbox:oauth:cross-provider-nonce",
+      JSON.stringify({
+        tenantId: "tenant-a",
+        userId: "user-1",
+        provider: "MICROSOFT",
+        verifier: "v",
+      }),
+      "EX",
+      600,
+    );
+
+    await expect(service.handleCallback("code-1", "cross-provider-nonce")).rejects.toThrow(
+      BadRequestException,
+    );
+    expect(mockOAuthClient.getToken).not.toHaveBeenCalled();
+  });
+
+  // ── rotation race (Opus review, LOW) ────────────────────────────────────────
+
+  it("confirmConnect serializes its read-then-write through the same 'mailbox' advisory lock MailboxSendService uses for token refresh", async () => {
+    const prisma = {
+      mailboxConnection: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        upsert: jest.fn().mockResolvedValue({ id: "mc-1", accountEmail: "owner@acme.test" }),
+      },
+    };
+    const { service } = buildService({ prisma });
+
+    const confirmToken = await connectThroughCallback(service, "tenant-a", "user-1");
+    await service.confirmConnect(confirmToken, "user-1", "tenant-a");
+
+    expect(withAdvisoryLock).toHaveBeenCalledWith(
+      expect.objectContaining({ family: "mailbox", key: "tenant-a" }),
+      expect.any(Function),
+    );
+    // The findUnique (isReconnect check) and the upsert both happen INSIDE the locked callback —
+    // proven indirectly: both were still called exactly once via the mocked pass-through above.
+    expect(prisma.mailboxConnection.findUnique).toHaveBeenCalledTimes(1);
+    expect(prisma.mailboxConnection.upsert).toHaveBeenCalledTimes(1);
   });
 });

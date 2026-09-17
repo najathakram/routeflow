@@ -14,6 +14,7 @@ import * as crypto from "crypto";
 import { PrismaService } from "../../prisma/prisma.service";
 import { EncryptionService } from "../../common/encryption.service";
 import { AuditService } from "../../audit/audit.service";
+import { withAdvisoryLock } from "../../common/db-locks";
 
 /** Scope granted to the mailbox client — send-only, never a read scope (design D1/§3). */
 const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
@@ -21,10 +22,24 @@ const NONCE_TTL_SECS = 600; // 10 minutes, mirrors GoogleOAuthService's sign-in 
 const OAUTH_NONCE_PREFIX = "mailbox:oauth:";
 const PENDING_GRANT_PREFIX = "mailbox:pending:";
 
+/**
+ * Microsoft identity platform v2 endpoints, tenant `common` (multi-tenant + personal Microsoft
+ * accounts, design §2). `Mail.Send User.Read offline_access` only (design §3) — `User.Read` is
+ * needed to look up the connected account's own address via Graph `/me` after token exchange
+ * (Microsoft ID tokens don't reliably carry an email claim on `common`); never a mail-read scope.
+ */
+const MS_AUTHORITY = "https://login.microsoftonline.com/common";
+const MS_AUTHORIZE_URL = `${MS_AUTHORITY}/oauth2/v2.0/authorize`;
+const MS_TOKEN_URL = `${MS_AUTHORITY}/oauth2/v2.0/token`;
+const MS_GRAPH_ME_URL = "https://graph.microsoft.com/v1.0/me";
+const MS_MAILBOX_SCOPES = ["offline_access", "Mail.Send", "User.Read"];
+
+type MailboxProviderName = "GOOGLE" | "MICROSOFT";
+
 interface OAuthNoncePayload {
   tenantId: string;
   userId: string;
-  provider: "GOOGLE";
+  provider: MailboxProviderName;
   verifier: string;
 }
 
@@ -42,7 +57,7 @@ interface OAuthNoncePayload {
 interface PendingGrant {
   tenantId: string;
   userId: string;
-  provider: "GOOGLE";
+  provider: MailboxProviderName;
   accountEmail: string;
   externalSubject: string;
   scopesGranted: string[];
@@ -54,11 +69,15 @@ interface PendingGrant {
 
 /** The ONLY connection shape that ever crosses a controller boundary — no token field, ever. */
 export interface MailboxStatusView {
-  /** Whether the Google mailbox client env vars are set — the web hides "Connect Gmail" (and
-   *  this whole card) when false, regardless of add-on grant (design §4). */
+  /** True when EITHER provider's mailbox client env vars are set — the web hides the whole
+   *  card when false, regardless of add-on grant (design §4). */
   configured: boolean;
+  /** Per-provider configured flags — the web shows "Connect Gmail"/"Connect Outlook"
+   *  independently, only for the provider(s) whose client env vars are actually set. */
+  googleConfigured: boolean;
+  microsoftConfigured: boolean;
   connected: boolean;
-  provider?: "GOOGLE";
+  provider?: MailboxProviderName;
   accountEmail?: string;
   status?: "CONNECTED" | "REVOKED" | "THROTTLED";
   throttledUntil?: string | null;
@@ -119,9 +138,30 @@ export class MailboxConnectionService {
     return this.config.get<string>("GOOGLE_MAILBOX_REDIRECT_URI") ?? "";
   }
 
+  private msClientId(): string {
+    return this.config.get<string>("MICROSOFT_MAILBOX_CLIENT_ID") ?? "";
+  }
+  private msClientSecret(): string {
+    return this.config.get<string>("MICROSOFT_MAILBOX_CLIENT_SECRET") ?? "";
+  }
+  private msRedirectUri(): string {
+    return this.config.get<string>("MICROSOFT_MAILBOX_REDIRECT_URI") ?? "";
+  }
+
   /** Whether the Google mailbox client is configured — the web only shows "Connect Gmail" when true. */
-  isConfigured(): boolean {
+  isGoogleConfigured(): boolean {
     return !!(this.clientId() && this.clientSecret() && this.redirectUri());
+  }
+
+  /** Whether the Microsoft mailbox client is configured — the web only shows "Connect Outlook"
+   *  when true (design §4's "buttons render only when the provider env vars are set"). */
+  isMicrosoftConfigured(): boolean {
+    return !!(this.msClientId() && this.msClientSecret() && this.msRedirectUri());
+  }
+
+  /** True when EITHER provider is configured — drives whether the card renders at all. */
+  isConfigured(): boolean {
+    return this.isGoogleConfigured() || this.isMicrosoftConfigured();
   }
 
   private newOAuthClient(): OAuth2Client {
@@ -160,11 +200,16 @@ export class MailboxConnectionService {
       lastSentAt: Date | null;
     } | null,
   ): MailboxStatusView {
-    if (!row) return { configured: this.isConfigured(), connected: false };
-    return {
+    const base = {
       configured: this.isConfigured(),
+      googleConfigured: this.isGoogleConfigured(),
+      microsoftConfigured: this.isMicrosoftConfigured(),
+    };
+    if (!row) return { ...base, connected: false };
+    return {
+      ...base,
       connected: true,
-      provider: row.provider as "GOOGLE",
+      provider: row.provider as MailboxProviderName,
       accountEmail: row.accountEmail,
       status: row.status as "CONNECTED" | "REVOKED" | "THROTTLED",
       throttledUntil: row.throttledUntil ? row.throttledUntil.toISOString() : null,
@@ -184,7 +229,7 @@ export class MailboxConnectionService {
    * identity against the confirming JWT before ever writing a row.
    */
   async startConnect(tenantId: string, userId: string): Promise<string> {
-    if (!this.isConfigured()) {
+    if (!this.isGoogleConfigured()) {
       throw new ServiceUnavailableException(
         "Google mailbox connect is not configured on this server yet.",
       );
@@ -236,6 +281,13 @@ export class MailboxConnectionService {
       throw new BadRequestException("state_invalid");
     }
     if (!oauthPayload?.tenantId || !oauthPayload?.userId || !oauthPayload?.verifier) {
+      throw new BadRequestException("state_invalid");
+    }
+    // A state minted by startConnectMicrosoft (or any future provider) redeemed here would
+    // otherwise exchange fine — the nonce carries no provider-specific secret — but bind a
+    // MICROSOFT grant through the GOOGLE code path (wrong scopes, wrong token endpoint already
+    // consumed the code). Reject it exactly like a tampered/unknown state (Opus review, LOW).
+    if (oauthPayload.provider !== "GOOGLE") {
       throw new BadRequestException("state_invalid");
     }
 
@@ -295,6 +347,164 @@ export class MailboxConnectionService {
   }
 
   /**
+   * Build the Microsoft consent URL (v2 authorize endpoint, tenant `common` — multi-tenant +
+   * personal accounts, design §2) and persist the same single-use, PKCE-bound nonce shape
+   * `startConnect` uses for Google — `confirmConnect` below is provider-agnostic and binds
+   * either grant through the identical pending-grant → authenticated-confirm flow.
+   */
+  async startConnectMicrosoft(tenantId: string, userId: string): Promise<string> {
+    if (!this.isMicrosoftConfigured()) {
+      throw new ServiceUnavailableException(
+        "Microsoft mailbox connect is not configured on this server yet.",
+      );
+    }
+
+    const codeVerifier = randomToken(); // 32 random bytes, base64url — well within the 43-128 char PKCE range.
+    const codeChallenge = crypto.createHash("sha256").update(codeVerifier).digest("base64url");
+    const nonce = randomToken();
+
+    const payload: OAuthNoncePayload = {
+      tenantId,
+      userId,
+      provider: "MICROSOFT",
+      verifier: codeVerifier,
+    };
+    await this.redis.set(
+      `${OAUTH_NONCE_PREFIX}${nonce}`,
+      JSON.stringify(payload),
+      "EX",
+      NONCE_TTL_SECS,
+    );
+
+    const params = new URLSearchParams({
+      client_id: this.msClientId(),
+      response_type: "code",
+      redirect_uri: this.msRedirectUri(),
+      response_mode: "query",
+      scope: MS_MAILBOX_SCOPES.join(" "),
+      state: nonce,
+      code_challenge: codeChallenge,
+      code_challenge_method: "S256",
+    });
+    return `${MS_AUTHORIZE_URL}?${params.toString()}`;
+  }
+
+  /**
+   * Exchange the Microsoft callback's `code` for tokens and stash a `PendingGrant` — mirrors
+   * `handleCallback` exactly (never binds a row; single-use state; PKCE verifier). The one extra
+   * step is a Graph `/me` lookup: Microsoft's token response carries no reliable email address
+   * on `common`, so `User.Read` + one Graph call resolves `accountEmail`/`externalSubject`
+   * instead of decoding an ID token (never requested — no `openid`/`profile` scope needed).
+   *
+   * Admin-consent-required orgs (risk-based step-up consent, design §1) reject at the token
+   * endpoint with `AADSTS65001` — surfaced as `microsoft_admin_consent_required` so the
+   * controller can point the admin at the tenant's admin-consent URL instead of a bare error.
+   */
+  async handleMicrosoftCallback(code: string, state: string): Promise<{ confirmToken: string }> {
+    if (!code || !state) throw new BadRequestException("state_invalid");
+
+    const stored = await this.getdel(`${OAUTH_NONCE_PREFIX}${state}`);
+    if (!stored) throw new BadRequestException("state_invalid");
+
+    let oauthPayload: OAuthNoncePayload;
+    try {
+      oauthPayload = JSON.parse(stored) as OAuthNoncePayload;
+    } catch {
+      throw new BadRequestException("state_invalid");
+    }
+    if (!oauthPayload?.tenantId || !oauthPayload?.userId || !oauthPayload?.verifier) {
+      throw new BadRequestException("state_invalid");
+    }
+    // A state minted by startConnect (Google) redeemed here — same reasoning as the Google
+    // callback's mirror check just above it in this file (Opus review, LOW).
+    if (oauthPayload.provider !== "MICROSOFT") {
+      throw new BadRequestException("state_invalid");
+    }
+
+    let tokenData: any;
+    try {
+      const resp = await axios.post(
+        MS_TOKEN_URL,
+        new URLSearchParams({
+          client_id: this.msClientId(),
+          client_secret: this.msClientSecret(),
+          grant_type: "authorization_code",
+          code,
+          redirect_uri: this.msRedirectUri(),
+          code_verifier: oauthPayload.verifier,
+          scope: MS_MAILBOX_SCOPES.join(" "),
+        }).toString(),
+        { headers: { "Content-Type": "application/x-www-form-urlencoded" }, timeout: 10_000 },
+      );
+      tokenData = resp.data;
+    } catch (err: any) {
+      const desc: string = err?.response?.data?.error_description ?? "";
+      this.logger.error(`Mailbox Microsoft code exchange failed: ${err?.message ?? err}`);
+      if (/AADSTS65001/.test(desc)) {
+        throw new BadRequestException("microsoft_admin_consent_required");
+      }
+      throw new BadRequestException("microsoft_token_invalid");
+    }
+
+    if (!tokenData?.refresh_token) {
+      // No refresh token means Microsoft didn't grant offline access — nothing usable to store.
+      throw new BadRequestException("microsoft_no_refresh_token");
+    }
+
+    const grantedScopes: string[] = String(tokenData.scope ?? "")
+      .split(" ")
+      .filter(Boolean);
+    // Graph returns granted scopes as full resource URIs (e.g.
+    // "https://graph.microsoft.com/Mail.Send"), so match on the trailing segment.
+    if (!grantedScopes.some((s) => /(^|\/)Mail\.Send$/i.test(s))) {
+      throw new BadRequestException("microsoft_scope_missing");
+    }
+
+    let me: { id?: string; mail?: string; userPrincipalName?: string };
+    try {
+      const meResp = await axios.get(MS_GRAPH_ME_URL, {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` },
+        timeout: 10_000,
+      });
+      me = meResp.data ?? {};
+    } catch (err: any) {
+      this.logger.error(`Mailbox Microsoft /me lookup failed: ${err?.message ?? err}`);
+      throw new BadRequestException("microsoft_token_invalid");
+    }
+
+    const accountEmail = (me.mail || me.userPrincipalName || "").toLowerCase();
+    if (!accountEmail || !me.id) {
+      throw new BadRequestException("microsoft_email_not_verified");
+    }
+
+    const pending: PendingGrant = {
+      tenantId: oauthPayload.tenantId,
+      userId: oauthPayload.userId,
+      provider: "MICROSOFT",
+      accountEmail,
+      externalSubject: me.id,
+      scopesGranted: grantedScopes,
+      refreshTokenCipher: this.encryption.encrypt(tokenData.refresh_token),
+      accessTokenCipher: tokenData.access_token
+        ? this.encryption.encrypt(tokenData.access_token)
+        : null,
+      accessTokenExpiresAt: tokenData.expires_in
+        ? new Date(Date.now() + Number(tokenData.expires_in) * 1000).toISOString()
+        : null,
+    };
+
+    const confirmToken = randomToken();
+    await this.redis.set(
+      `${PENDING_GRANT_PREFIX}${confirmToken}`,
+      JSON.stringify(pending),
+      "EX",
+      NONCE_TTL_SECS,
+    );
+
+    return { confirmToken };
+  }
+
+  /**
    * Bind the pending grant to a real `MailboxConnection` row — ONLY IF the confirming JWT's
    * `(userId, tenantId)` matches who started the connect. The pending grant is single-use
    * (GETDEL) regardless of outcome, so a mismatched confirm cannot be retried against the same
@@ -324,34 +534,52 @@ export class MailboxConnectionService {
       throw new ForbiddenException("mailbox_confirm_identity_mismatch");
     }
 
-    const existing = await this.prisma.mailboxConnection.findUnique({
-      where: { tenantId: pending.tenantId },
-    });
-    const isReconnect = !!existing;
-    const externalSubjectChanged = existing && existing.externalSubject !== pending.externalSubject;
+    // Serialize against MailboxSendService's token-refresh critical section — the SAME
+    // "mailbox" advisory lock, keyed by tenantId (Opus review, LOW — rotation race). Without
+    // this, an in-flight refresh that read the OLD row before this reconnect could finish AFTER
+    // the upsert below and persist a rotated (Microsoft) or merely re-cached (Google) token pair
+    // derived from the SUPERSEDED grant, clobbering the just-connected one.
+    const lockResult = await withAdvisoryLock(
+      { family: "mailbox", key: pending.tenantId, mode: "wait", waitMs: 10_000 },
+      async () => {
+        const existing = await this.prisma.mailboxConnection.findUnique({
+          where: { tenantId: pending.tenantId },
+        });
+        const isReconnect = !!existing;
+        const externalSubjectChanged =
+          !!existing && existing.externalSubject !== pending.externalSubject;
 
-    const data = {
-      provider: "GOOGLE" as const,
-      accountEmail: pending.accountEmail,
-      externalSubject: pending.externalSubject,
-      scopesGranted: pending.scopesGranted,
-      refreshTokenCipher: pending.refreshTokenCipher,
-      accessTokenCipher: pending.accessTokenCipher,
-      accessTokenExpiresAt: pending.accessTokenExpiresAt
-        ? new Date(pending.accessTokenExpiresAt)
-        : null,
-      status: "CONNECTED" as const,
-      throttledUntil: null,
-      lastError: null,
-      lastErrorAt: null,
-      connectedByUserId: pending.userId,
-    };
+        const data = {
+          provider: pending.provider,
+          accountEmail: pending.accountEmail,
+          externalSubject: pending.externalSubject,
+          scopesGranted: pending.scopesGranted,
+          refreshTokenCipher: pending.refreshTokenCipher,
+          accessTokenCipher: pending.accessTokenCipher,
+          accessTokenExpiresAt: pending.accessTokenExpiresAt
+            ? new Date(pending.accessTokenExpiresAt)
+            : null,
+          status: "CONNECTED" as const,
+          throttledUntil: null,
+          lastError: null,
+          lastErrorAt: null,
+          connectedByUserId: pending.userId,
+        };
 
-    const row = await this.prisma.mailboxConnection.upsert({
-      where: { tenantId: pending.tenantId },
-      create: { tenantId: pending.tenantId, ...data },
-      update: data,
-    });
+        const row = await this.prisma.mailboxConnection.upsert({
+          where: { tenantId: pending.tenantId },
+          create: { tenantId: pending.tenantId, ...data },
+          update: data,
+        });
+
+        return { row, isReconnect, externalSubjectChanged };
+      },
+    );
+
+    if (!lockResult.acquired) {
+      throw new ServiceUnavailableException("Couldn't complete the connection — try again.");
+    }
+    const { row, isReconnect, externalSubjectChanged } = lockResult.value;
 
     await this.audit.log({
       tenantId: pending.tenantId,
@@ -364,7 +592,7 @@ export class MailboxConnectionService {
       entityType: "mailbox_connection",
       entityId: row.id,
       // Never a token — provider + account only (spec §3).
-      meta: { provider: "GOOGLE", accountEmail: row.accountEmail },
+      meta: { provider: pending.provider, accountEmail: row.accountEmail },
     });
 
     return this.toStatusView(row);
@@ -375,6 +603,12 @@ export class MailboxConnectionService {
    * A failed revoke keeps the row (marked REVOKED, with a clear message) so a later disconnect
    * can retry — deleting on a failed revoke would silently leave Google still holding a grant
    * with no local record anyone could act on.
+   *
+   * Microsoft Graph has NO app-side revoke endpoint equivalent to Google's
+   * `oauth2.googleapis.com/revoke` — there is nothing this server can call to invalidate the
+   * grant at Microsoft. So for a MICROSOFT row, disconnect hard-deletes immediately (nothing
+   * here is retryable against Microsoft) and returns a message telling the admin to remove
+   * RouteFlow's access themselves from their Microsoft account's app permissions page.
    */
   async disconnect(
     tenantId: string,
@@ -382,6 +616,26 @@ export class MailboxConnectionService {
   ): Promise<{ deleted: boolean; message?: string }> {
     const row = await this.prisma.mailboxConnection.findUnique({ where: { tenantId } });
     if (!row) throw new NotFoundException("No mailbox is connected for this tenant.");
+
+    if (row.provider === "MICROSOFT") {
+      await this.prisma.mailboxConnection.delete({ where: { tenantId } });
+      await this.audit.log({
+        tenantId,
+        userId,
+        action: "mailbox.disconnected",
+        entityType: "mailbox_connection",
+        entityId: row.id,
+        meta: { provider: row.provider, accountEmail: row.accountEmail },
+      });
+      return {
+        deleted: true,
+        message:
+          "Disconnected. Microsoft doesn't let RouteFlow revoke access on its own — remove " +
+          "RouteFlow from your Microsoft account's app permissions " +
+          "(myaccount.microsoft.com → Privacy → Apps and services, or account.live.com/consent/Manage " +
+          "for a personal account) to fully revoke it.",
+      };
+    }
 
     let revokeOk = false;
     try {

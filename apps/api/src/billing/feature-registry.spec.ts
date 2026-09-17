@@ -108,6 +108,7 @@ const EXPECTED_LEGACY_REGISTRY = {
     routes: [
       "GET /settings/email/mailbox",
       "GET /settings/email/mailbox/google/start",
+      "GET /settings/email/mailbox/microsoft/start",
       "POST /settings/email/mailbox/confirm",
       "DELETE /settings/email/mailbox",
     ],
