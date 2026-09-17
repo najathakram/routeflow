@@ -8,7 +8,14 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { ForbiddenException, NotFoundException } from "@nestjs/common";
 import { InlineReturnsQuoteService } from "./inline-returns-quote.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { SystemConfigService } from "../system-config/system-config.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+
+// PR-1c: priceInlineReturn's unreferenced-chunk tax fallback reads the tenant's current
+// rate (deferred PR-1b item) via SystemConfigService — 0% here so every pre-existing oracle
+// in this file (hand-derived before this reader existed) is unaffected; the fallback itself
+// gets its own dedicated tax-rate describe block below.
+const ZERO_TAX_SYSTEM_CONFIG = { get: jest.fn().mockResolvedValue(null) };
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 
 const OPERATOR: JwtPayload = {
@@ -49,7 +56,11 @@ describe("InlineReturnsQuoteService — M8 driver scoping", () => {
   beforeEach(async () => {
     prisma = createMockPrisma();
     const module: TestingModule = await Test.createTestingModule({
-      providers: [InlineReturnsQuoteService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        InlineReturnsQuoteService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: SystemConfigService, useValue: ZERO_TAX_SYSTEM_CONFIG },
+      ],
     }).compile();
     service = module.get(InlineReturnsQuoteService);
     db = prisma.forTenant();
@@ -193,7 +204,11 @@ describe("InlineReturnsQuoteService — Opus fix-round BLOCKER: the matching/all
   beforeEach(async () => {
     prisma = createMockPrisma();
     const module: TestingModule = await Test.createTestingModule({
-      providers: [InlineReturnsQuoteService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        InlineReturnsQuoteService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: SystemConfigService, useValue: ZERO_TAX_SYSTEM_CONFIG },
+      ],
     }).compile();
     service = module.get(InlineReturnsQuoteService);
     db = prisma.forTenant();
@@ -387,5 +402,100 @@ describe("InlineReturnsQuoteService — Opus fix-round BLOCKER: the matching/all
 
     expect(result.total).toBe(8.0);
     expect(result.total).not.toBe(48.0);
+  });
+});
+
+// PR-1c deferred item (from PR-1b): an unreferenced chunk with NO candidate invoice line at
+// all used to fall back to a hand-rolled 0 tax rate — every such chunk was silently zero-taxed
+// regardless of the tenant's configured rate. Fixed via the shared currentTaxRate() reader.
+describe("InlineReturnsQuoteService — PR-1c: unreferenced-chunk tax fallback reads the tenant's current rate", () => {
+  let service: InlineReturnsQuoteService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+  let db: ReturnType<PrismaService["forTenant"]>;
+  let systemConfig: { get: jest.Mock };
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    systemConfig = { get: jest.fn().mockResolvedValue("8") }; // 8% tenant rate
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        InlineReturnsQuoteService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: SystemConfigService, useValue: systemConfig },
+      ],
+    }).compile();
+    service = module.get(InlineReturnsQuoteService);
+    db = prisma.forTenant();
+
+    (db.customer.findFirst as jest.Mock).mockResolvedValue({
+      id: "cust-1",
+      pricingTier: 1,
+      isTaxExempt: false,
+    });
+    (db.customerPrice.findMany as jest.Mock).mockResolvedValue([]);
+    (db.product.findMany as jest.Mock).mockResolvedValue([
+      {
+        id: "prod-1",
+        pricePerUnit: 10,
+        priceTier2: 10,
+        priceTier3: 10,
+        priceTier4: 10,
+        priceTier5: 10,
+      },
+      {
+        id: "prod-2",
+        pricePerUnit: 20,
+        priceTier2: 20,
+        priceTier3: 20,
+        priceTier4: 20,
+        priceTier5: 20,
+      },
+    ]);
+    // NO candidate invoice line at all for this product — every returned piece is the
+    // unreferenced (case 3, BASE price) chunk, which is exactly where the fallback fires.
+    (db.invoice.findMany as jest.Mock).mockResolvedValue([]);
+    (db.return.findMany as jest.Mock).mockResolvedValue([]);
+    (db.returnItem.findMany as jest.Mock).mockResolvedValue([]);
+  });
+
+  it("prices tax at the tenant's CURRENT 8% rate — $50.00 subtotal, $4.00 tax (revert ⇒ $0.00 tax)", async () => {
+    const result = await service.quote(
+      { customerId: "cust-1", items: [{ productId: "prod-1", qty: 5 }] },
+      OPERATOR,
+    );
+
+    expect(result.subtotal).toBe(50.0);
+    expect(result.taxAmount).toBe(4.0);
+    expect(result.taxAmount).not.toBe(0);
+    expect(systemConfig.get).toHaveBeenCalledWith("settings.taxRate");
+  });
+
+  it("still charges $0.00 tax for an exempt customer, even with a non-zero tenant rate", async () => {
+    (db.customer.findFirst as jest.Mock).mockResolvedValue({
+      id: "cust-1",
+      pricingTier: 1,
+      isTaxExempt: true,
+    });
+
+    const result = await service.quote(
+      { customerId: "cust-1", items: [{ productId: "prod-1", qty: 5 }] },
+      OPERATOR,
+    );
+
+    expect(result.taxAmount).toBe(0);
+  });
+
+  it("reads the tenant rate ONCE per quote — not once per item", async () => {
+    await service.quote(
+      {
+        customerId: "cust-1",
+        items: [
+          { productId: "prod-1", qty: 5 },
+          { productId: "prod-2", qty: 3 },
+        ],
+      },
+      OPERATOR,
+    );
+    expect(systemConfig.get).toHaveBeenCalledTimes(1);
   });
 });

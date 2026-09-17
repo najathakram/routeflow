@@ -1,4 +1,4 @@
-import { taxRateFractionFrom } from "./tax-rate";
+import { currentTaxRate, taxRateFractionFrom } from "./tax-rate";
 
 describe("taxRateFractionFrom", () => {
   it("converts a stored percent string to a fraction", () => {
@@ -31,5 +31,21 @@ describe("taxRateFractionFrom", () => {
 
   it("converts a fractional percent string to a fraction", () => {
     expect(taxRateFractionFrom("0.5")).toBe(0.005);
+  });
+});
+
+// PR-1c: extracted from orders.service.ts's private getTaxRate() so
+// InlineReturnsQuoteService's unreferenced-chunk pricing can share the exact same reader
+// (deferred PR-1b item — see inline-returns-quote.service.ts's fallbackTaxRate).
+describe("currentTaxRate", () => {
+  it("reads settings.taxRate through SystemConfigService.get and converts percent→fraction", async () => {
+    const systemConfig = { get: jest.fn().mockResolvedValue("8") } as any;
+    await expect(currentTaxRate(systemConfig)).resolves.toBe(0.08);
+    expect(systemConfig.get).toHaveBeenCalledWith("settings.taxRate");
+  });
+
+  it("returns 0 for an unconfigured tenant (no surprise charge)", async () => {
+    const systemConfig = { get: jest.fn().mockResolvedValue(null) } as any;
+    await expect(currentTaxRate(systemConfig)).resolves.toBe(0);
   });
 });
