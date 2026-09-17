@@ -451,7 +451,7 @@
 - **`components/ResponsiveSidebar.tsx` (NEW, 2026-09-17, owner build) — the collapsible-sidebar
   pattern shared across shells.** `(dashboard)/layout.tsx`'s `DashboardShell` was the only shell
   with a responsive sidebar (collapse-to-icon-rail on desktop, off-canvas drawer below `lg`) —
-  the buyer portal (B478) and platform-admin (B479) shells had a fixed-width `<aside>` with no
+  the buyer portal (B479) and platform-admin (B480) shells had a fixed-width `<aside>` with no
   breakpoints at all, the owner's phone complaint. Exports: `useResponsiveSidebar(storageKey)` —
   the STATEFUL pieces extracted verbatim from `DashboardShell` (collapsed persisted to
   `localStorage[storageKey]`, auto-collapsed under a 768px initial width, mobile drawer
@@ -477,10 +477,12 @@
   - **`app/(platform-admin)/layout.tsx`** applies it: `Sidebar`'s nav list factored into
     `SidebarNavItems({pathname, collapsed, onNavigate})`, rendered once for the desktop rail and
     once inside the drawer. Same new mobile-only top bar pattern as the buyer portal (no
-    pre-existing header here either). **B479 carve-out:** the classifier flagged this file
-    "touches tenancy" (agent may plan, must not fix unattended) — applied with the lead's explicit
-    go-ahead after flagging it back; scope stayed to sidebar responsiveness only, no auth/
-    tenant-switching logic touched (`SuperAdminGuard` untouched).
+    pre-existing header here either). **B480 carve-out:** the classifier flagged this file
+    "touches tenancy" (agent may plan, must not fix unattended) — cleared by an explicit owner
+    request (2026-09-17, recorded by the lead, quoted verbatim in B480's record): "we need to
+    have the option to close the side bar, and open it whenever we want … It is valid for
+    customer side, admins as well as for super admin." Scope stayed to sidebar responsiveness
+    only — no auth/tenant-switching logic touched (`SuperAdminGuard` untouched).
   - **`(dashboard)/layout.tsx` deliberately NOT refactored onto this** despite being the pattern's
     origin — its `DashboardShell` is large and heavily depended-on (keyboard shortcuts, command
     palette, draft dock, realtime updates, read-only/impersonation banners, addon/plan-gated nav
@@ -488,7 +490,7 @@
     its logic, so a future low-risk migration stays open, but doing it under this task's own time
     budget wasn't worth the integration risk for a shell that already works. Left as-is, per the
     owner's own "only if low-risk, otherwise leave it and say so."
-  - **`app/buyer/layout.tsx`** — B480: removed `maximumScale: 1` / `userScalable: false` from the
+  - **`app/buyer/layout.tsx`** — B481: removed `maximumScale: 1` / `userScalable: false` from the
     `viewport` export (was locking pinch-zoom portal-wide, failing WCAG 2.1 §1.4.4); now matches
     the root layout, which never had this restriction.
 - **Buyer-portal hotfix (2026-08-20): logos + connect copy.** Tenant logos must render via `GET /public/tenants/:slug/logo` (public, streams inline) — NEVER `\${apiUrl}/uploads/\${logoKey}`, which has required JWT-or-signature since RF-075 (2026-05-01) and an `<img>` can send neither; that raw pattern sat broken for 3.5 months in the portal SellerCard, the invite page, and the staff login page (all three now fixed). `ConnectSellerModal` now shows the SERVER's message: the backend auto-approves an exact email match straight to ACTIVE (no seller review since 0a245e89/April), and the modal's old hardcoded "your seller will review" copy told instantly-connected buyers they were pending. **SUPERSEDED the same day** — the "nothing writes `PENDING_SELLER_APPROVAL` anymore / the Approve button + `notifySellerOfRequest` are dead code" residue no longer holds: the identity-gated connect flow (see the `lib/api/portal-approvals.ts` bullet above and api.md `buyer/` "connect flow") writes PENDING again and re-wires both. **Residue still open:** `X-Tenant-Slug` is sourced ONLY from localStorage `activeSeller` — never the `[seller]` URL param — so deep links can misroute; a `[seller]`-layout reconciliation is the proper fix.

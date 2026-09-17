@@ -75,7 +75,7 @@ describe("useResponsiveSidebar — desktop collapse toggle + persistence", () =>
     expect(screen.getByTestId("collapsed-state")).toHaveTextContent("true");
   });
 
-  it("two shells' storage keys never collide — B478/B479/dashboard each get their own preference", () => {
+  it("two shells' storage keys never collide — B479/B480/dashboard each get their own preference", () => {
     localStorage.setItem("rf-sidebar-collapsed", "true"); // dashboard's key, pre-collapsed
     render(<Harness storageKey="rf-buyer-sidebar-collapsed" />); // buyer portal's own key
     // The buyer harness must NOT pick up the dashboard's collapsed=true.

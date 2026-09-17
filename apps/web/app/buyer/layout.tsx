@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 
-// B480: maximumScale/userScalable previously locked pinch-zoom here, failing WCAG 2.1 §1.4.4
+// B481: maximumScale/userScalable previously locked pinch-zoom here, failing WCAG 2.1 §1.4.4
 // (Resize Text) — removed to match the root layout, which deliberately avoids this restriction.
 export const viewport: Viewport = {
   width: "device-width",

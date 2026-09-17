@@ -10,7 +10,7 @@ import { cn } from "@routeflow/ui/web";
  * phone/tablet hides the sidebar behind a menu button that slides one over; desktop
  * collapses to a narrow icon rail; the choice is remembered per device. Extracted from
  * `(dashboard)/layout.tsx`'s `DashboardShell` (the one shell that already had this,
- * B449/B471 lineage) so buyer portal and platform-admin (B478/B479) get the identical
+ * B449/B471 lineage) so buyer portal and platform-admin (B479/B480) get the identical
  * mechanics instead of a second, drifting reimplementation.
  *
  * This module shares the STATEFUL/behavioral pieces — the ones actually risky to get
