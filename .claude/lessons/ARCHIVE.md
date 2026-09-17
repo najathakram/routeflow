@@ -2342,3 +2342,46 @@ regression guard).
   its process-level timezone before a test file's own `TZ` write takes effect, so that approach
   silently no-ops; confirmed by reproducing the false-pass first). Both call sites in
   `estimates/page.tsx` now share one `defaultIssueDate()` helper.
+
+Eighth pass, same batch: L-187 (TOCTOU slot booking) and L-188 (token transport) folded in from
+the demo-booking lane. Archived two more to keep the register at 3 entries of headroom: L-123
+(1 outside citation, closed-out with a real regression-test guard) and L-139 (2 outside
+citations, closed-out with its own post-init assertion guard).
+
+### L-139 · 2026-09-14 · tooling · B420 GIT_* env leak into self-test throwaway repos
+
+- **Symptom:** a pre-push hook's `validate-code-map.stamp.self-test.mjs` renamed a live worktree's
+  branch twice and stacked fixture commits on real work, mid-session (rf-mobile-lanes incident).
+- **Root cause:** git sets `GIT_DIR`/`GIT_WORK_TREE` (+8 siblings) in a hook's environment; this
+  self-test's `spawnSync("git", …)` calls inherited them unscrubbed, so its "isolated" scratch
+  repo's `init`/`add`/`commit`/`branch -M` silently resolved against the REAL repo instead of
+  `cwd`. Identical root cause to L-082's sibling incident (`bugs.mjs self-test`, 2026-09-04, fixed
+  in that one file) — that lesson was never written down ("no headroom"), so a second, newer
+  self-test script repeated the exact anti-pattern ten days later.
+- **Lesson:** **Any script driving a THROWAWAY git repo as a fixture must scrub all ten `GIT_*`
+  vars (`GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE`/`GIT_COMMON_DIR`/`GIT_OBJECT_DIRECTORY`/
+  `GIT_ALTERNATE_OBJECT_DIRECTORIES`/`GIT_QUARANTINE_PATH`/`GIT_PREFIX`/`GIT_NAMESPACE`/
+  `GIT_CEILING_DIRECTORIES`) from every child process — it WILL run inside a hook eventually, and
+  git always exports them there. Scrubbing alone is not proof: assert the result too — after
+  `git init`, resolve `--show-toplevel` and confirm it lands inside the scratch dir before doing
+  anything that could mutate a real repo.**
+- **Guard:** the post-init toplevel check (throws on mismatch) + `REG-B420` (a second "victim"
+  repo's branches/HEAD/config asserted byte-unchanged after a polluted-env fixture op) in
+  `scripts/validate-code-map.stamp.self-test.mjs`. Sibling [[L-082]] — no shared guard between the
+  two files, so a third such script would still need its own.
+
+### L-123 · 2026-09-14 · process · W1 seam rows
+
+- **Symptom:** an independent pre-merge review found two live defects in code three in-lane
+  rounds had passed — a cancel that never reached the payment provider, and a resume that
+  cleared the one flag a new guard reads.
+- **Root cause:** each round fixed what it was handed. Round 1 added an idempotence
+  short-circuit; a later round added a provider call BELOW it; a third gave that call a
+  three-condition gate and left the local write on one. Every diff was correct read alone.
+- **Lesson:** **When a function is edited by more than one review round, the seam between the
+  rounds is where the defect lives: a guard added early can end up ahead of a call added late,
+  and a gate tightened on one branch can leave its sibling ungated. Touching a function an
+  earlier round changed means re-reading it whole — an in-lane reviewer holding one diff cannot
+  see this, which is what the independent pre-merge pass is for.**
+- **Guard:** the W1 rows (`STRIPE-CANCEL-2`, `STRIPE-RESUME-1`) plus the rewritten spec that
+  asserted the defect. Sibling [[L-119]].
