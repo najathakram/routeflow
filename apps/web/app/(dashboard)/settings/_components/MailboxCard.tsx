@@ -44,6 +44,10 @@ export function MailboxCard() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const hasAddon = useHasAddon(EMAIL_CONNECTED_MAILBOX_ADDON);
+  // Guards against React re-running the confirm effect twice (StrictMode double-invoke, a
+  // re-render before the URL is cleaned up) — the confirm token is single-use server-side
+  // anyway, but this avoids a spurious second "couldn't confirm" toast.
+  const confirmedRef = React.useRef(false);
 
   const { data, isLoading } = useQuery<MailboxStatus>({
     queryKey: KEY,
@@ -53,9 +57,20 @@ export function MailboxCard() {
 
   const disconnect = useMutation({
     mutationFn: () => apiClient.delete("/settings/email/mailbox").then((r) => r.data),
-    onSuccess: () => {
-      qc.setQueryData(KEY, { configured: data?.configured ?? true, connected: false });
-      toast({ title: "Gmail mailbox disconnected", variant: "success" });
+    onSuccess: (d: { deleted: boolean; message?: string }) => {
+      if (d?.deleted) {
+        qc.setQueryData(KEY, { configured: data?.configured ?? true, connected: false });
+        toast({ title: "Gmail mailbox disconnected", variant: "success" });
+      } else {
+        // Revoke-at-Google failed — the row is kept (marked REVOKED) so a retry can pick it
+        // back up; refetch so the card reflects that instead of assuming success.
+        qc.invalidateQueries({ queryKey: KEY });
+        toast({
+          title: "Couldn't fully disconnect",
+          description: d?.message,
+          variant: "warning",
+        });
+      }
     },
     onError: (e: any) =>
       toast({
@@ -77,6 +92,52 @@ export function MailboxCard() {
         variant: "error",
       }),
   });
+
+  // Confirm-on-return step (security review fix round, HIGH): the OAuth callback never binds
+  // the connection itself — it redirects here with a one-time `mailbox_confirm` token that
+  // this authenticated tab must POST back to /confirm before anything is actually connected.
+  const confirm = useMutation({
+    mutationFn: (state: string) =>
+      apiClient.post("/settings/email/mailbox/confirm", { state }).then((r) => r.data),
+    onSuccess: (d: MailboxStatus) => {
+      qc.setQueryData(KEY, d);
+      toast({ title: "Gmail mailbox connected", variant: "success" });
+    },
+    onError: (e: any) =>
+      toast({
+        title: "Couldn't finish connecting Gmail",
+        description:
+          e?.response?.status === 403
+            ? "That connect attempt didn't match your account — try connecting again."
+            : e?.response?.data?.message || e.message,
+        variant: "error",
+      }),
+  });
+
+  React.useEffect(() => {
+    if (confirmedRef.current) return;
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const confirmToken = params.get("mailbox_confirm");
+    const hadError = params.get("mailbox_error");
+    if (!confirmToken && !hadError) return;
+
+    confirmedRef.current = true;
+    params.delete("mailbox_confirm");
+    params.delete("mailbox_error");
+    const query = params.toString();
+    window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
+
+    if (confirmToken) confirm.mutate(confirmToken);
+    else if (hadError) {
+      toast({
+        title: "Couldn't connect Gmail",
+        description: "Google didn't complete the connection — try again.",
+        variant: "error",
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (!hasAddon || isLoading) return null;
   if (!data?.configured) return null; // Google mailbox client env vars not set yet.

@@ -2,12 +2,14 @@ import { ConfigService } from "@nestjs/config";
 import axios from "axios";
 import { MailboxSendService } from "./mailbox-send.service";
 import { EncryptionService } from "../../common/encryption.service";
+import { withAdvisoryLock } from "../../common/db-locks";
 
 jest.mock("axios");
 
 // Pass-through mock — a single-process test has no real cross-replica contention to model,
 // so this simply awaits `fn()` under the (unused) lock, mirroring addon.service.spec.ts's
-// simplest mode.
+// simplest mode. Kept as a real jest.fn() (not just an inline arrow) so tests can assert on
+// the `family`/`key` it was called with (security review NIT #7).
 jest.mock("../../common/db-locks", () => ({
   withAdvisoryLock: jest.fn(async (_opts: unknown, fn: () => Promise<unknown>) => ({
     acquired: true,
@@ -90,6 +92,60 @@ describe("MailboxSendService", () => {
     expect(body.raw).toBeTruthy();
     const decoded = Buffer.from(body.raw, "base64").toString("utf8");
     expect(decoded).toContain("Acme Wholesale <owner@acme.test>");
+  });
+
+  it("uses the withAdvisoryLock 'mailbox' family, keyed by tenantId, for the access-token refresh path (security review NIT)", async () => {
+    const encryption = realEncryption();
+    const prisma = {
+      mailboxConnection: {
+        findUnique: jest.fn().mockResolvedValue(connectedRow({}, encryption)),
+        update: jest.fn().mockResolvedValue({}),
+      },
+    };
+    (axios.post as jest.Mock).mockResolvedValue({ data: { id: "gmail-msg-1" } });
+    const { service } = buildService({ prisma });
+
+    await service.trySend("tenant-a", { to: "x@y.com", subject: "s", html: "<p>h</p>" });
+
+    expect(withAdvisoryLock).toHaveBeenCalledWith(
+      expect.objectContaining({ family: "mailbox", key: "tenant-a" }),
+      expect.any(Function),
+    );
+  });
+
+  it("a successful send recovers a THROTTLED connection back to CONNECTED", async () => {
+    const encryption = realEncryption();
+    const prisma = {
+      mailboxConnection: {
+        findUnique: jest.fn().mockResolvedValue(
+          connectedRow(
+            // Throttle window already passed — trySend treats this as eligible-to-retry.
+            { status: "THROTTLED", throttledUntil: new Date(Date.now() - 1000) },
+            encryption,
+          ),
+        ),
+        update: jest.fn().mockResolvedValue({}),
+      },
+    };
+    (axios.post as jest.Mock).mockImplementation((url: string) => {
+      if (url === GMAIL_SEND_URL) return Promise.resolve({ data: { id: "gmail-msg-1" } });
+      throw new Error(`unexpected POST to ${url}`);
+    });
+    const { service } = buildService({ prisma });
+
+    const res = await service.trySend("tenant-a", {
+      to: "x@y.com",
+      subject: "s",
+      html: "<p>h</p>",
+    });
+
+    expect(res).toMatchObject({ delivered: true, transport: "mailbox" });
+    expect(prisma.mailboxConnection.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { tenantId: "tenant-a" },
+        data: expect.objectContaining({ status: "CONNECTED", throttledUntil: null }),
+      }),
+    );
   });
 
   it("no connection for the tenant: returns delivered:false without any HTTP call", async () => {

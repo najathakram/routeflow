@@ -106,8 +106,9 @@ const EXPECTED_LEGACY_REGISTRY = {
     state: "dark",
     added: "2026-09-17",
     routes: [
+      "GET /settings/email/mailbox",
       "GET /settings/email/mailbox/google/start",
-      "GET /settings/email/mailbox/google/callback",
+      "POST /settings/email/mailbox/confirm",
       "DELETE /settings/email/mailbox",
     ],
     grantPath:

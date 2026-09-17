@@ -219,8 +219,18 @@ export class MailboxSendService {
         { raw },
         { headers: { Authorization: `Bearer ${accessToken}` }, timeout: 15_000 },
       );
+      // A successful send recovers a THROTTLED connection back to CONNECTED — the throttle
+      // window existing to protect against a rate limit that has now demonstrably cleared.
       await this.prisma.mailboxConnection
-        .update({ where: { tenantId }, data: { lastSentAt: new Date(), lastError: null } })
+        .update({
+          where: { tenantId },
+          data: {
+            status: "CONNECTED",
+            throttledUntil: null,
+            lastSentAt: new Date(),
+            lastError: null,
+          },
+        })
         .catch(() => {});
       return {
         delivered: true,

@@ -1,4 +1,4 @@
-import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import axios from "axios";
 import { MailboxConnectionService } from "./mailbox-connection.service";
@@ -19,9 +19,19 @@ jest.mock("google-auth-library", () => ({
   CodeChallengeMethod: { S256: "S256" },
 }));
 
+const GOOD_TOKENS = {
+  refresh_token: "rt-1",
+  access_token: "at-1",
+  id_token: "idt-1",
+  expiry_date: Date.now() + 3600_000,
+  scope: "https://www.googleapis.com/auth/gmail.send",
+};
+const GOOD_ID_PAYLOAD = { sub: "google-sub-1", email: "owner@acme.test", email_verified: true };
+
 /**
- * email-connect-google PR-2 — state + PKCE, tenant isolation, ciphertext-at-rest, and
- * best-effort revoke-then-hard-delete on disconnect.
+ * email-connect-google PR-2 — state + PKCE, the two-step account-binding split (security
+ * review fix round, HIGH), tenant isolation, ciphertext-at-rest, and revoke-then-delete on
+ * disconnect (kept as REVOKED, not deleted, when the revoke call fails).
  */
 describe("MailboxConnectionService", () => {
   function makeMockRedis() {
@@ -75,6 +85,30 @@ describe("MailboxConnectionService", () => {
     return { service, mockRedis, prisma, audit, encryption };
   }
 
+  /** Runs a full startConnect -> handleCallback pair and returns the minted confirmToken. */
+  async function connectThroughCallback(
+    service: MailboxConnectionService,
+    tenantId = "tenant-a",
+    userId = "user-1",
+    tokens: Record<string, unknown> = GOOD_TOKENS,
+    idPayload: Record<string, unknown> = GOOD_ID_PAYLOAD,
+  ): Promise<string> {
+    mockOAuthClient.generateCodeVerifierAsync.mockResolvedValue({
+      codeVerifier: "verifier-1",
+      codeChallenge: "challenge-1",
+    });
+    mockOAuthClient.generateAuthUrl.mockImplementation(
+      (opts: any) => `https://accounts.google.com/auth?state=${opts.state}`,
+    );
+    mockOAuthClient.getToken.mockResolvedValue({ tokens });
+    mockOAuthClient.verifyIdToken.mockResolvedValue({ getPayload: () => idPayload });
+
+    const url = await service.startConnect(tenantId, userId);
+    const state = new URL(url).searchParams.get("state")!;
+    const { confirmToken } = await service.handleCallback("code-1", state);
+    return confirmToken;
+  }
+
   beforeEach(() => {
     jest.clearAllMocks();
   });
@@ -112,6 +146,16 @@ describe("MailboxConnectionService", () => {
     expect(ttl).toBeLessThanOrEqual(600);
   });
 
+  it("startConnect 503s when the Google mailbox client isn't configured (NIT)", async () => {
+    const { service } = buildService();
+    (service as any).config = { get: () => undefined };
+
+    await expect(service.startConnect("tenant-a", "user-1")).rejects.toMatchObject({
+      status: 503,
+    });
+    expect(mockOAuthClient.generateCodeVerifierAsync).not.toHaveBeenCalled();
+  });
+
   it("rejects a tampered/unknown state with 400 — the code exchange is never attempted", async () => {
     const { service } = buildService();
 
@@ -130,7 +174,9 @@ describe("MailboxConnectionService", () => {
     expect(mockOAuthClient.getToken).not.toHaveBeenCalled();
   });
 
-  it("a REPLAYED state (used once already) is rejected the second time — single-use via GETDEL", async () => {
+  it("a REPLAYED oauth state (used once already) is rejected the second time — single-use via GETDEL", async () => {
+    const { service } = buildService();
+
     mockOAuthClient.generateCodeVerifierAsync.mockResolvedValue({
       codeVerifier: "verifier-xyz",
       codeChallenge: "challenge-xyz",
@@ -138,28 +184,8 @@ describe("MailboxConnectionService", () => {
     mockOAuthClient.generateAuthUrl.mockImplementation(
       (opts: any) => `https://accounts.google.com/auth?state=${opts.state}`,
     );
-    mockOAuthClient.getToken.mockResolvedValue({
-      tokens: {
-        refresh_token: "rt-1",
-        access_token: "at-1",
-        id_token: "idt-1",
-        expiry_date: Date.now() + 3600_000,
-        scope: "https://www.googleapis.com/auth/gmail.send",
-      },
-    });
-    mockOAuthClient.verifyIdToken.mockResolvedValue({
-      getPayload: () => ({ sub: "google-sub-1", email: "owner@acme.test", email_verified: true }),
-    });
-
-    const prisma = {
-      mailboxConnection: {
-        findUnique: jest.fn().mockResolvedValue(null),
-        upsert: jest.fn().mockResolvedValue({ id: "mc-1", accountEmail: "owner@acme.test" }),
-        update: jest.fn(),
-        delete: jest.fn(),
-      },
-    };
-    const { service } = buildService({ prisma });
+    mockOAuthClient.getToken.mockResolvedValue({ tokens: GOOD_TOKENS });
+    mockOAuthClient.verifyIdToken.mockResolvedValue({ getPayload: () => GOOD_ID_PAYLOAD });
 
     const url = await service.startConnect("tenant-a", "user-1");
     const state = new URL(url).searchParams.get("state")!;
@@ -175,6 +201,7 @@ describe("MailboxConnectionService", () => {
   });
 
   it("passes the stored PKCE verifier to the token exchange", async () => {
+    const { service } = buildService();
     mockOAuthClient.generateCodeVerifierAsync.mockResolvedValue({
       codeVerifier: "the-real-verifier",
       codeChallenge: "the-real-challenge",
@@ -182,25 +209,8 @@ describe("MailboxConnectionService", () => {
     mockOAuthClient.generateAuthUrl.mockImplementation(
       (opts: any) => `https://accounts.google.com/auth?state=${opts.state}`,
     );
-    mockOAuthClient.getToken.mockResolvedValue({
-      tokens: {
-        refresh_token: "rt-1",
-        access_token: "at-1",
-        id_token: "idt-1",
-        expiry_date: Date.now() + 3600_000,
-        scope: "https://www.googleapis.com/auth/gmail.send",
-      },
-    });
-    mockOAuthClient.verifyIdToken.mockResolvedValue({
-      getPayload: () => ({ sub: "google-sub-1", email: "owner@acme.test", email_verified: true }),
-    });
-    const prisma = {
-      mailboxConnection: {
-        findUnique: jest.fn().mockResolvedValue(null),
-        upsert: jest.fn().mockResolvedValue({ id: "mc-1", accountEmail: "owner@acme.test" }),
-      },
-    };
-    const { service } = buildService({ prisma });
+    mockOAuthClient.getToken.mockResolvedValue({ tokens: GOOD_TOKENS });
+    mockOAuthClient.verifyIdToken.mockResolvedValue({ getPayload: () => GOOD_ID_PAYLOAD });
 
     const url = await service.startConnect("tenant-a", "user-1");
     const state = new URL(url).searchParams.get("state")!;
@@ -209,53 +219,6 @@ describe("MailboxConnectionService", () => {
     expect(mockOAuthClient.getToken).toHaveBeenCalledWith(
       expect.objectContaining({ code: "code-1", codeVerifier: "the-real-verifier" }),
     );
-  });
-
-  // ── ciphertext-at-rest ────────────────────────────────────────────────────
-
-  it("stores the refresh token ONLY as EncryptionService ciphertext, never plaintext", async () => {
-    mockOAuthClient.generateCodeVerifierAsync.mockResolvedValue({
-      codeVerifier: "v1",
-      codeChallenge: "c1",
-    });
-    mockOAuthClient.generateAuthUrl.mockImplementation(
-      (opts: any) => `https://accounts.google.com/auth?state=${opts.state}`,
-    );
-    mockOAuthClient.getToken.mockResolvedValue({
-      tokens: {
-        refresh_token: "super-secret-refresh-token",
-        access_token: "super-secret-access-token",
-        id_token: "idt-1",
-        expiry_date: Date.now() + 3600_000,
-        scope: "https://www.googleapis.com/auth/gmail.send",
-      },
-    });
-    mockOAuthClient.verifyIdToken.mockResolvedValue({
-      getPayload: () => ({ sub: "google-sub-1", email: "owner@acme.test", email_verified: true }),
-    });
-    let savedData: any;
-    const prisma = {
-      mailboxConnection: {
-        findUnique: jest.fn().mockResolvedValue(null),
-        upsert: jest.fn().mockImplementation(({ create }) => {
-          savedData = create;
-          return Promise.resolve({ id: "mc-1", accountEmail: "owner@acme.test" });
-        }),
-      },
-    };
-    const { service } = buildService({ prisma });
-
-    const url = await service.startConnect("tenant-a", "user-1");
-    const state = new URL(url).searchParams.get("state")!;
-    await service.handleCallback("code-1", state);
-
-    // AES-256-GCM storage format: IV_HEX:TAG_HEX:CIPHERTEXT_B64 (email.service.ts's
-    // ENCRYPTED_FORMAT, EncryptionService's documented contract).
-    const CIPHERTEXT_FORMAT = /^[0-9a-f]{32}:[0-9a-f]{32}:[A-Za-z0-9+/=]+$/;
-    expect(savedData.refreshTokenCipher).toMatch(CIPHERTEXT_FORMAT);
-    expect(savedData.refreshTokenCipher).not.toContain("super-secret-refresh-token");
-    expect(savedData.accessTokenCipher).toMatch(CIPHERTEXT_FORMAT);
-    expect(savedData.accessTokenCipher).not.toContain("super-secret-access-token");
   });
 
   it("rejects the callback when Google didn't grant a refresh token (no offline access)", async () => {
@@ -275,6 +238,180 @@ describe("MailboxConnectionService", () => {
     await expect(service.handleCallback("code-1", state)).rejects.toThrow(BadRequestException);
   });
 
+  it("rejects the callback when the granted scopes don't include gmail.send (LOW)", async () => {
+    mockOAuthClient.generateCodeVerifierAsync.mockResolvedValue({
+      codeVerifier: "v1",
+      codeChallenge: "c1",
+    });
+    mockOAuthClient.generateAuthUrl.mockImplementation(
+      (opts: any) => `https://accounts.google.com/auth?state=${opts.state}`,
+    );
+    mockOAuthClient.getToken.mockResolvedValue({
+      tokens: { ...GOOD_TOKENS, scope: "openid email" }, // gmail.send missing
+    });
+    const { service } = buildService();
+
+    const url = await service.startConnect("tenant-a", "user-1");
+    const state = new URL(url).searchParams.get("state")!;
+
+    await expect(service.handleCallback("code-1", state)).rejects.toThrow(BadRequestException);
+    expect(mockOAuthClient.verifyIdToken).not.toHaveBeenCalled();
+  });
+
+  it("handleCallback never touches the database — it only mints a pending-grant confirm token", async () => {
+    const prisma = {
+      mailboxConnection: {
+        findUnique: jest.fn(),
+        upsert: jest.fn(),
+        update: jest.fn(),
+        delete: jest.fn(),
+      },
+    };
+    const { service } = buildService({ prisma });
+
+    const confirmToken = await connectThroughCallback(service);
+
+    expect(typeof confirmToken).toBe("string");
+    expect(confirmToken.length).toBeGreaterThan(20);
+    expect(prisma.mailboxConnection.findUnique).not.toHaveBeenCalled();
+    expect(prisma.mailboxConnection.upsert).not.toHaveBeenCalled();
+  });
+
+  // ── confirmConnect: the ONLY place a row is bound (security review fix round, HIGH) ──────
+
+  it("confirmConnect binds the row when the confirming JWT matches who started the connect", async () => {
+    let savedData: any;
+    const prisma = {
+      mailboxConnection: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        upsert: jest.fn().mockImplementation(({ create }) => {
+          savedData = create;
+          return Promise.resolve({ id: "mc-1", accountEmail: "owner@acme.test" });
+        }),
+      },
+    };
+    const audit = { log: jest.fn().mockResolvedValue(undefined) };
+    const { service } = buildService({ prisma, audit });
+
+    const confirmToken = await connectThroughCallback(service, "tenant-a", "user-1");
+    const view = await service.confirmConnect(confirmToken, "user-1", "tenant-a");
+
+    expect(view).toMatchObject({ connected: true, accountEmail: "owner@acme.test" });
+    expect(savedData.tenantId).toBe("tenant-a");
+    expect(audit.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "mailbox.connected",
+        tenantId: "tenant-a",
+        userId: "user-1",
+      }),
+    );
+  });
+
+  it("confirmConnect 403s when the confirming JWT's userId doesn't match who started the connect — no row is written", async () => {
+    const prisma = {
+      mailboxConnection: { findUnique: jest.fn().mockResolvedValue(null), upsert: jest.fn() },
+    };
+    const { service } = buildService({ prisma });
+
+    const confirmToken = await connectThroughCallback(service, "tenant-a", "user-1");
+
+    await expect(service.confirmConnect(confirmToken, "user-2", "tenant-a")).rejects.toThrow(
+      ForbiddenException,
+    );
+    expect(prisma.mailboxConnection.upsert).not.toHaveBeenCalled();
+  });
+
+  it("confirmConnect 403s when the confirming JWT's tenantId doesn't match who started the connect — no row is written", async () => {
+    const prisma = {
+      mailboxConnection: { findUnique: jest.fn().mockResolvedValue(null), upsert: jest.fn() },
+    };
+    const { service } = buildService({ prisma });
+
+    const confirmToken = await connectThroughCallback(service, "tenant-a", "user-1");
+
+    await expect(service.confirmConnect(confirmToken, "user-1", "tenant-b")).rejects.toThrow(
+      ForbiddenException,
+    );
+    expect(prisma.mailboxConnection.upsert).not.toHaveBeenCalled();
+  });
+
+  it("a mismatched confirm still consumes the pending grant — retrying with the correct identity afterwards also fails", async () => {
+    const prisma = {
+      mailboxConnection: { findUnique: jest.fn().mockResolvedValue(null), upsert: jest.fn() },
+    };
+    const { service } = buildService({ prisma });
+
+    const confirmToken = await connectThroughCallback(service, "tenant-a", "user-1");
+
+    await expect(service.confirmConnect(confirmToken, "user-2", "tenant-a")).rejects.toThrow(
+      ForbiddenException,
+    );
+    // The SAME token, now presented with the RIGHT identity, is already gone (single-use).
+    await expect(service.confirmConnect(confirmToken, "user-1", "tenant-a")).rejects.toThrow(
+      BadRequestException,
+    );
+    expect(prisma.mailboxConnection.upsert).not.toHaveBeenCalled();
+  });
+
+  it("a REPLAYED confirm token (used once already) is rejected the second time", async () => {
+    const prisma = {
+      mailboxConnection: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        upsert: jest.fn().mockResolvedValue({ id: "mc-1", accountEmail: "owner@acme.test" }),
+      },
+    };
+    const { service } = buildService({ prisma });
+
+    const confirmToken = await connectThroughCallback(service, "tenant-a", "user-1");
+
+    await service.confirmConnect(confirmToken, "user-1", "tenant-a");
+    await expect(service.confirmConnect(confirmToken, "user-1", "tenant-a")).rejects.toThrow(
+      BadRequestException,
+    );
+    expect(prisma.mailboxConnection.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("confirmConnect rejects a missing/unknown token with 400", async () => {
+    const { service } = buildService();
+    await expect(service.confirmConnect("", "user-1", "tenant-a")).rejects.toThrow(
+      BadRequestException,
+    );
+    await expect(service.confirmConnect("not-a-real-token", "user-1", "tenant-a")).rejects.toThrow(
+      BadRequestException,
+    );
+  });
+
+  // ── ciphertext-at-rest ────────────────────────────────────────────────────
+
+  it("confirmConnect stores the refresh/access tokens ONLY as EncryptionService ciphertext, never plaintext", async () => {
+    let savedData: any;
+    const prisma = {
+      mailboxConnection: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        upsert: jest.fn().mockImplementation(({ create }) => {
+          savedData = create;
+          return Promise.resolve({ id: "mc-1", accountEmail: "owner@acme.test" });
+        }),
+      },
+    };
+    const { service } = buildService({ prisma });
+
+    const confirmToken = await connectThroughCallback(service, "tenant-a", "user-1", {
+      ...GOOD_TOKENS,
+      refresh_token: "super-secret-refresh-token",
+      access_token: "super-secret-access-token",
+    });
+    await service.confirmConnect(confirmToken, "user-1", "tenant-a");
+
+    // AES-256-GCM storage format: IV_HEX:TAG_HEX:CIPHERTEXT_B64 (email.service.ts's
+    // ENCRYPTED_FORMAT, EncryptionService's documented contract).
+    const CIPHERTEXT_FORMAT = /^[0-9a-f]{32}:[0-9a-f]{32}:[A-Za-z0-9+/=]+$/;
+    expect(savedData.refreshTokenCipher).toMatch(CIPHERTEXT_FORMAT);
+    expect(savedData.refreshTokenCipher).not.toContain("super-secret-refresh-token");
+    expect(savedData.accessTokenCipher).toMatch(CIPHERTEXT_FORMAT);
+    expect(savedData.accessTokenCipher).not.toContain("super-secret-access-token");
+  });
+
   // ── tenant isolation ──────────────────────────────────────────────────────
 
   it("getStatus/disconnect only ever query by the CALLER's own tenantId — never a second tenant's row", async () => {
@@ -285,16 +422,19 @@ describe("MailboxConnectionService", () => {
           provider: "GOOGLE",
           accountEmail: "a@acme.test",
           status: "CONNECTED",
-          refreshTokenCipher: "iv:tag:ct",
+          // Real ciphertext so disconnect's revoke call actually succeeds below — this test
+          // is about isolation (the `where` clause), not disconnect's revoke-failure branch.
+          refreshTokenCipher: realEncryption().encrypt("real-refresh-token"),
           throttledUntil: null,
           lastError: null,
           lastSentAt: null,
         }),
         delete: jest.fn().mockResolvedValue({}),
+        update: jest.fn().mockResolvedValue({}),
       },
     };
     const { service } = buildService({ prisma });
-    (axios.post as jest.Mock).mockResolvedValue({});
+    (axios.post as jest.Mock).mockResolvedValue({ status: 200 });
 
     // Tenant A reads/disconnects using ONLY its own id — never tenant B's.
     await service.getStatus("tenant-a");
@@ -332,7 +472,7 @@ describe("MailboxConnectionService", () => {
     expect(axios.post).not.toHaveBeenCalled();
   });
 
-  // ── disconnect = revoke-at-Google (best-effort) + hard delete ────────────
+  // ── disconnect = revoke-at-Google, delete ONLY if revoke succeeded ───────
 
   it("disconnect revokes at Google exactly once, then hard-deletes the row and audits it", async () => {
     const row = {
@@ -351,8 +491,9 @@ describe("MailboxConnectionService", () => {
     (axios.post as jest.Mock).mockResolvedValue({ status: 200 });
     const { service } = buildService({ prisma, audit });
 
-    await service.disconnect("tenant-a", "user-1");
+    const result = await service.disconnect("tenant-a", "user-1");
 
+    expect(result).toEqual({ deleted: true });
     expect(axios.post).toHaveBeenCalledTimes(1);
     expect(axios.post).toHaveBeenCalledWith(
       "https://oauth2.googleapis.com/revoke",
@@ -367,7 +508,7 @@ describe("MailboxConnectionService", () => {
     );
   });
 
-  it("disconnect still hard-deletes the row even when the Google revoke call fails", async () => {
+  it("disconnect KEEPS the row (marked REVOKED, not deleted) when the Google revoke call fails, and returns a clear message (LOW)", async () => {
     const row = {
       id: "mc-1",
       provider: "GOOGLE",
@@ -377,17 +518,28 @@ describe("MailboxConnectionService", () => {
     const prisma = {
       mailboxConnection: {
         findUnique: jest.fn().mockResolvedValue(row),
-        delete: jest.fn().mockResolvedValue(row),
+        delete: jest.fn(),
+        update: jest.fn().mockResolvedValue({}),
       },
     };
+    const audit = { log: jest.fn().mockResolvedValue(undefined) };
     (axios.post as jest.Mock).mockRejectedValue(new Error("network error"));
-    const { service } = buildService({ prisma });
+    const { service } = buildService({ prisma, audit });
 
-    await service.disconnect("tenant-a", "user-1");
+    const result = await service.disconnect("tenant-a", "user-1");
 
-    expect(prisma.mailboxConnection.delete).toHaveBeenCalledWith({
-      where: { tenantId: "tenant-a" },
-    });
+    expect(result.deleted).toBe(false);
+    expect(result.message).toMatch(/revoke RouteFlow's access/i);
+    expect(prisma.mailboxConnection.delete).not.toHaveBeenCalled();
+    expect(prisma.mailboxConnection.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { tenantId: "tenant-a" },
+        data: expect.objectContaining({ status: "REVOKED" }),
+      }),
+    );
+    expect(audit.log).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "mailbox.disconnect_revoke_failed", tenantId: "tenant-a" }),
+    );
   });
 
   // ── DTO/response never carries a token ────────────────────────────────────
