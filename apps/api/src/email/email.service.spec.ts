@@ -134,11 +134,17 @@ describe("EmailService — honest send (R5)", () => {
  * B452 (a) — the tenant-branded sender fallback must never hard-code a domain
  * RouteFlow doesn't own. Previously `getTenantFromAddress()` fell back to a literal
  * "noreply@routeflow.app" (the real domain is routeflow.info) whenever a tenant had
- * a businessName but no From-email configured under Settings → Email. It must now
- * ride the platform's own verified EMAIL_FROM address instead.
+ * a businessName but no From-email configured under Settings → Email.
+ *
+ * B452 followups (c) — 9b's review of #789 caught that the fix above went too far:
+ * it rode the PLATFORM's own verified EMAIL_FROM address, but this fallback fires
+ * on the TENANT-OWN-SMTP send path — the message is physically transmitted through
+ * the tenant's mail server (`emailCfg.user`), not the platform's, so a platform
+ * From address there is exactly the SPF/DKIM/DMARC misalignment those checks exist
+ * to catch. It must use the tenant's own authenticated SMTP user instead.
  */
 describe("EmailService — sender resolver never hard-codes a domain (B452)", () => {
-  it("tenant SMTP send with no fromEmail configured uses the platform address, not routeflow.app", async () => {
+  it("tenant SMTP send with no fromEmail configured uses the tenant's OWN authenticated SMTP user, never the platform address (B452 followups c)", async () => {
     const sendMail = jest.fn().mockResolvedValue({ messageId: "m1" });
     (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
     const svc = makeService({
@@ -150,21 +156,25 @@ describe("EmailService — sender resolver never hard-codes a domain (B452)", ()
         { key: "email.smtpPort", value: "587" },
       ],
       // No smtpFromEmail on TenantConfig — only a businessName — is exactly the
-      // fallback branch that used to hard-code routeflow.app.
+      // fallback branch that used to hard-code routeflow.app, then the platform address.
       tenantConfig: { businessName: "Acme Co" },
     });
 
     const res = await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
 
     expect(res).toMatchObject({ delivered: true, transport: "smtp" });
+    // The tenant's own authenticated mailbox (email.smtpUser), not the platform's
+    // EMAIL_FROM — the SMTP transport authenticated as user@example.com, so that's
+    // the only address that won't SPF/DKIM/DMARC-fail.
     expect(sendMail).toHaveBeenCalledWith(
-      expect.objectContaining({ from: "Acme Co via RouteFlow <noreply@routeflow.info>" }),
+      expect.objectContaining({ from: "Acme Co <user@example.com>" }),
     );
     const sentFrom = sendMail.mock.calls[0][0].from as string;
     expect(sentFrom).not.toMatch(/routeflow\.app/);
+    expect(sentFrom).not.toMatch(/routeflow\.info/);
   });
 
-  it("falls back to the bare platform address when the tenant has no businessName either", async () => {
+  it("falls back to the bare tenant SMTP user when the tenant has no businessName either (B452 followups c)", async () => {
     const sendMail = jest.fn().mockResolvedValue({ messageId: "m1" });
     (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
     const svc = makeService({
@@ -180,9 +190,7 @@ describe("EmailService — sender resolver never hard-codes a domain (B452)", ()
 
     await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
 
-    expect(sendMail).toHaveBeenCalledWith(
-      expect.objectContaining({ from: "RouteFlow <noreply@routeflow.info>" }),
-    );
+    expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({ from: "user@example.com" }));
   });
 });
 
@@ -348,6 +356,29 @@ describe("EmailService — B452 review fixes: From-header injection via business
   // can only ever find ONE addr-spec (the platform's own, at the end), no matter what
   // the tenant puts in businessName. It does not scrub email-shaped text from the
   // display name entirely — that's cosmetic, not a security property.
+
+  // B452 followups (a) — 9b's review: `< > "` alone don't stop CRLF injection. A
+  // businessName carrying a raw `\r\n` could smuggle a second header (e.g. a forged
+  // `Bcc:` or `Subject:` line) into the raw SMTP message once nodemailer folds the
+  // From string into headers.
+  it("strips \\r\\n from businessName — no smuggled header line survives into From (B452 followups a)", async () => {
+    const sendMail = jest.fn().mockResolvedValue({ messageId: "m1" });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({
+      emailFrom: "RouteFlow <noreply@routeflow.info>",
+      smtpHost: "smtp.gmail.com",
+      smtpUser: "noreply@routeflow.info",
+      smtpPass: "app-pw",
+      tenantConfig: { businessName: "Acme\r\nBcc: attacker@evil.com" },
+    });
+
+    await svc.send({ to: "buyer@x.com", subject: "x", html: "<p>x</p>" });
+
+    const from = (sendMail.mock.calls[0][0] as any).from as string;
+    expect(from).not.toMatch(/[\r\n]/);
+    expect(from).toBe("Acme Bcc: attacker@evil.com via RouteFlow <noreply@routeflow.info>");
+  });
+
   it("sanitizes businessName on the platform-SMTP branded From — exactly one address survives", async () => {
     const sendMail = jest.fn().mockResolvedValue({ messageId: "m1" });
     (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
@@ -369,7 +400,7 @@ describe("EmailService — B452 review fixes: From-header injection via business
     expect(from.match(/<([^>]+)>/)?.[1]).toBe("noreply@routeflow.info");
   });
 
-  it("sanitizes businessName on the tenant-SMTP fallback From too — exactly one address survives", async () => {
+  it("sanitizes businessName on the tenant-SMTP fallback From too — exactly one address survives, and it's the tenant's own SMTP user (B452 followups c)", async () => {
     const sendMail = jest.fn().mockResolvedValue({ messageId: "m1" });
     (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
     const svc = makeService({
@@ -386,10 +417,12 @@ describe("EmailService — B452 review fixes: From-header injection via business
     await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
 
     const from = (sendMail.mock.calls[0][0] as any).from as string;
-    expect(from).toBe("Acme evil@attacker.com via RouteFlow <noreply@routeflow.info>");
+    expect(from).toBe("Acme evil@attacker.com <user@example.com>");
     expect(from.match(/</g)).toHaveLength(1);
     expect(from.match(/>/g)).toHaveLength(1);
-    expect(from.match(/<([^>]+)>/)?.[1]).toBe("noreply@routeflow.info");
+    // The one surviving address is the tenant's OWN authenticated SMTP user —
+    // never the platform's — the mail is physically sent through it.
+    expect(from.match(/<([^>]+)>/)?.[1]).toBe("user@example.com");
   });
 });
 
@@ -429,6 +462,37 @@ describe("EmailService — B452 review fixes: replyTo falls back to the tenant a
     await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
 
     expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({ replyTo: undefined }));
+  });
+
+  // B452 followups (b) — 9b's review: the tenant-admin fallback query had no
+  // status filter (could pick a deactivated admin's stale email) and no
+  // orderBy (arbitrary pick among multiple ACTIVE admins).
+  it("filters the tenant-admin fallback to status: ACTIVE, ordered by createdAt asc (B452 followups b)", async () => {
+    const sendMail = jest.fn().mockResolvedValue({ messageId: "m1" });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({
+      systemConfigRows: [
+        { key: "email.smtpHost", value: "smtp.example.com" },
+        { key: "email.smtpUser", value: "user@example.com" },
+        { key: "email.smtpPassword", value: "pw" },
+        { key: "email.smtpPort", value: "587" },
+      ],
+      tenantConfig: { businessName: "Acme Co" },
+      adminUser: { email: "admin@acme.com" },
+    });
+
+    await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+
+    expect((svc as any).prisma.user.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          role: "TENANT_ADMIN",
+          deletedAt: null,
+          status: "ACTIVE",
+        }),
+        orderBy: { createdAt: "asc" },
+      }),
+    );
   });
 });
 
