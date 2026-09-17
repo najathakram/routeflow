@@ -29,20 +29,22 @@ import { MailboxConnectionService } from "./mailbox-connection.service";
 import { ConfirmMailboxDto } from "./dto/confirm-mailbox.dto";
 
 /**
- * Connect/disconnect a tenant Google mailbox for sending (email-connect-google PR-2). Every
- * route except the OAuth callback is TENANT_ADMIN-only and gated behind the
- * `email.connected_mailbox` add-on (registered `dark` — `feature-registry.ts`).
+ * Connect/disconnect a tenant Google OR Microsoft mailbox for sending (email-connect-google
+ * PR-2, email-connect-microsoft PR-4 — one row per tenant, either provider). Every route except
+ * the two OAuth callbacks is TENANT_ADMIN-only and gated behind the `email.connected_mailbox`
+ * add-on (registered `dark` — `feature-registry.ts`).
  *
- * Connect is TWO HTTP steps (security review fix round, HIGH — account-binding): the callback
- * (below) cannot carry the app's bearer token (it's a top-level browser redirect FROM Google,
- * and this app authenticates via `Authorization: Bearer` from localStorage, not cookies), so it
- * is deliberately unguarded and does NOT bind a `MailboxConnection` row — it only stashes a
- * pending grant and hands the browser a one-time confirm token via the redirect. `POST
- * .../confirm` is the authenticated, TENANT_ADMIN-gated step that actually binds the row, and
- * only after `MailboxConnectionService.confirmConnect` proves the confirming JWT's
- * `(userId, tenantId)` matches whoever called `/google/start`. Without this split, anyone who
+ * Connect is TWO HTTP steps for BOTH providers (security review fix round, HIGH —
+ * account-binding): a callback (below) cannot carry the app's bearer token (it's a top-level
+ * browser redirect FROM the provider, and this app authenticates via `Authorization: Bearer`
+ * from localStorage, not cookies), so each callback is deliberately unguarded and does NOT bind
+ * a `MailboxConnection` row — it only stashes a pending grant and hands the browser a one-time
+ * confirm token via the redirect. `POST .../confirm` is the ONE authenticated, TENANT_ADMIN-gated
+ * step (shared by both providers) that actually binds the row, and only after
+ * `MailboxConnectionService.confirmConnect` proves the confirming JWT's `(userId, tenantId)`
+ * matches whoever called `/google/start` or `/microsoft/start`. Without this split, anyone who
  * could observe or guess the callback URL (shared machine, browser history sync, referrer leak)
- * could attach an attacker's Gmail grant to whatever tenant happens to be signed in.
+ * could attach an attacker's mailbox grant to whatever tenant happens to be signed in.
  */
 @ApiTags("settings")
 @Controller(["settings/email/mailbox", "tenant/settings/email/mailbox"])
@@ -97,6 +99,52 @@ export class MailboxController {
     } catch (err: any) {
       this.logger.warn(`Mailbox Google callback failed: ${err?.message ?? err}`);
       return res.redirect(`${this.webUrl}/settings?tab=email&mailbox_error=1`);
+    }
+  }
+
+  @Get("microsoft/start")
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard, AddonGuard)
+  @Roles(UserRole.TENANT_ADMIN)
+  @RequireAddon("email.connected_mailbox")
+  async startMicrosoft(@CurrentUser() user: JwtPayload) {
+    if (!user.tenantId) throw new ForbiddenException("A tenant context is required.");
+    const url = await this.mailboxConnection.startConnectMicrosoft(user.tenantId, user.sub);
+    return { url };
+  }
+
+  // No guards — mirrors google/callback exactly (see class doc). Microsoft can also redirect
+  // here with `error`/`error_description` instead of a `code` — e.g. the user cancelled, or
+  // their org's risk-based step-up consent blocked it (AADSTS65001, design §1) — surfaced to
+  // the web as a distinct query flag so it can point the admin at the admin-consent URL instead
+  // of a bare "couldn't connect" message.
+  @Get("microsoft/callback")
+  async microsoftCallback(
+    @Query("code") code: string,
+    @Query("state") state: string,
+    @Query("error") error: string | undefined,
+    @Query("error_description") errorDescription: string | undefined,
+    @Res() res: Response,
+  ) {
+    if (error) {
+      this.logger.warn(`Mailbox Microsoft callback denied: ${error} — ${errorDescription ?? ""}`);
+      const flag = /AADSTS65001/.test(errorDescription ?? "")
+        ? "mailbox_admin_consent_required"
+        : "mailbox_error";
+      return res.redirect(`${this.webUrl}/settings?tab=email&${flag}=1`);
+    }
+    try {
+      const { confirmToken } = await this.mailboxConnection.handleMicrosoftCallback(code, state);
+      return res.redirect(
+        `${this.webUrl}/settings?tab=email&mailbox_confirm=${encodeURIComponent(confirmToken)}`,
+      );
+    } catch (err: any) {
+      this.logger.warn(`Mailbox Microsoft callback failed: ${err?.message ?? err}`);
+      const flag =
+        err?.message === "microsoft_admin_consent_required"
+          ? "mailbox_admin_consent_required"
+          : "mailbox_error";
+      return res.redirect(`${this.webUrl}/settings?tab=email&${flag}=1`);
     }
   }
 

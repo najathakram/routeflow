@@ -258,7 +258,8 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
     kind: "boolean",
     area: "integrations",
     label: "Connected email mailbox",
-    description: "Send tenant-branded mail through a connected Google mailbox (Gmail API).",
+    description:
+      "Send tenant-branded mail through a connected Google or Microsoft mailbox (Gmail API / Graph).",
     gate: {
       via: "RequireAddon",
       state: "dark",
@@ -266,6 +267,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
       routes: [
         "GET /settings/email/mailbox",
         "GET /settings/email/mailbox/google/start",
+        "GET /settings/email/mailbox/microsoft/start",
         "POST /settings/email/mailbox/confirm",
         "DELETE /settings/email/mailbox",
       ],

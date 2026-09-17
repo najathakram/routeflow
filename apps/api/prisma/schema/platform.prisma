@@ -837,15 +837,17 @@ model CrmHandoff {
 }
 
 // ─── Connected mailbox (email-connect-google, PR-2/PR-3) ──────────────────────
-// A tenant-owned Google mailbox used to SEND tenant-branded mail (Gmail API
-// users.messages.send, scope gmail.send ONLY — never a read scope). One
-// connection per tenant (reconnect replaces it); the platform-level row
+// A tenant-owned Google or Microsoft mailbox used to SEND tenant-branded mail
+// (Gmail API users.messages.send scope gmail.send / Graph me.sendMail scope
+// Mail.Send — never a read scope). One connection per tenant, either provider
+// (reconnect replaces it, including switching provider); the platform-level row
 // (ownerKey="platform", PR-5) is not built yet — this PR is tenant-only, mirrors
 // `CrmConnection`'s `tenantId @unique` shape rather than the design's ownerKey
 // scheme, since there is no second owner kind to disambiguate here yet.
 
 enum MailboxProvider {
   GOOGLE
+  MICROSOFT
 }
 
 enum MailboxConnectionStatus {

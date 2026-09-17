@@ -12,8 +12,10 @@ export const EMAIL_CONNECTED_MAILBOX_ADDON = "email.connected_mailbox";
 
 type MailboxStatus = {
   configured: boolean;
+  googleConfigured: boolean;
+  microsoftConfigured: boolean;
   connected: boolean;
-  provider?: "GOOGLE";
+  provider?: "GOOGLE" | "MICROSOFT";
   accountEmail?: string;
   status?: "CONNECTED" | "REVOKED" | "THROTTLED";
   throttledUntil?: string | null;
@@ -33,12 +35,15 @@ function formatDate(iso: string | null | undefined): string {
 }
 
 /**
- * "Connect Gmail" card (email-connect-google PR-2/PR-3). Send tenant-branded mail through the
- * tenant's own Google mailbox (Gmail API, `gmail.send` scope only) instead of RouteFlow's
- * relay — falls back automatically to the tenant's own SMTP, then "<Business> via RouteFlow",
- * whenever the mailbox is disconnected, revoked, or rate-limited. Hidden entirely unless the
- * `email.connected_mailbox` add-on is granted (dark rollout) — independent of `configured`,
- * which additionally requires the Google mailbox OAuth client env vars to be set.
+ * "Connect Gmail" / "Connect Outlook" card (email-connect-google PR-2/PR-3,
+ * email-connect-microsoft PR-4). Send tenant-branded mail through the tenant's own Google or
+ * Microsoft mailbox (Gmail API `gmail.send` / Graph `Mail.Send` — never a read scope) instead
+ * of RouteFlow's relay — falls back automatically to the tenant's own SMTP, then "<Business> via
+ * RouteFlow", whenever the mailbox is disconnected, revoked, or rate-limited. One connection per
+ * tenant, either provider (reconnecting with the other provider replaces it). Hidden entirely
+ * unless the `email.connected_mailbox` add-on is granted (dark rollout) — independent of
+ * `googleConfigured`/`microsoftConfigured`, which each require that provider's mailbox OAuth
+ * client env vars to be set (the buttons render independently per provider, design §4).
  */
 export function MailboxCard() {
   const { toast } = useToast();
@@ -55,12 +60,33 @@ export function MailboxCard() {
     enabled: hasAddon,
   });
 
+  // Which provider was connected before a disconnect — the DELETE response doesn't echo it
+  // back, and by onSuccess time the query cache has already been overwritten.
+  const disconnectingProviderRef = React.useRef<"GOOGLE" | "MICROSOFT" | undefined>(undefined);
+
   const disconnect = useMutation({
-    mutationFn: () => apiClient.delete("/settings/email/mailbox").then((r) => r.data),
+    mutationFn: () => {
+      disconnectingProviderRef.current = data?.provider;
+      return apiClient.delete("/settings/email/mailbox").then((r) => r.data);
+    },
     onSuccess: (d: { deleted: boolean; message?: string }) => {
+      const wasMicrosoft = disconnectingProviderRef.current === "MICROSOFT";
+      const label = wasMicrosoft ? "Outlook" : "Gmail";
       if (d?.deleted) {
-        qc.setQueryData(KEY, { configured: data?.configured ?? true, connected: false });
-        toast({ title: "Gmail mailbox disconnected", variant: "success" });
+        qc.setQueryData(KEY, {
+          configured: data?.configured ?? true,
+          googleConfigured: data?.googleConfigured ?? true,
+          microsoftConfigured: data?.microsoftConfigured ?? true,
+          connected: false,
+        });
+        // Microsoft has no app-side revoke — `message` carries the "remove RouteFlow from your
+        // Microsoft account" instruction even though `deleted` is true; Google's `message` only
+        // appears on a FAILED disconnect (handled below), so this branch is a no-op for Google.
+        toast({
+          title: `${label} mailbox disconnected`,
+          description: wasMicrosoft ? d.message : undefined,
+          variant: "success",
+        });
       } else {
         // Revoke-at-Google failed — the row is kept (marked REVOKED) so a retry can pick it
         // back up; refetch so the card reflects that instead of assuming success.
@@ -81,13 +107,20 @@ export function MailboxCard() {
   });
 
   const connect = useMutation({
-    mutationFn: () => apiClient.get("/settings/email/mailbox/google/start").then((r) => r.data),
+    mutationFn: (provider: "GOOGLE" | "MICROSOFT") =>
+      apiClient
+        .get(
+          provider === "MICROSOFT"
+            ? "/settings/email/mailbox/microsoft/start"
+            : "/settings/email/mailbox/google/start",
+        )
+        .then((r) => r.data),
     onSuccess: (d: { url?: string }) => {
       if (d?.url) window.location.href = d.url;
     },
-    onError: (e: any) =>
+    onError: (e: any, provider) =>
       toast({
-        title: "Couldn't start Google connect",
+        title: `Couldn't start ${provider === "MICROSOFT" ? "Microsoft" : "Google"} connect`,
         description: e?.response?.data?.message || e.message,
         variant: "error",
       }),
@@ -101,11 +134,14 @@ export function MailboxCard() {
       apiClient.post("/settings/email/mailbox/confirm", { state }).then((r) => r.data),
     onSuccess: (d: MailboxStatus) => {
       qc.setQueryData(KEY, d);
-      toast({ title: "Gmail mailbox connected", variant: "success" });
+      toast({
+        title: `${d.provider === "MICROSOFT" ? "Outlook" : "Gmail"} mailbox connected`,
+        variant: "success",
+      });
     },
     onError: (e: any) =>
       toast({
-        title: "Couldn't finish connecting Gmail",
+        title: "Couldn't finish connecting the mailbox",
         description:
           e?.response?.status === 403
             ? "That connect attempt didn't match your account — try connecting again."
@@ -120,19 +156,31 @@ export function MailboxCard() {
     const params = new URLSearchParams(window.location.search);
     const confirmToken = params.get("mailbox_confirm");
     const hadError = params.get("mailbox_error");
-    if (!confirmToken && !hadError) return;
+    // Risk-based step-up consent (design §1) — the tenant's Microsoft org blocked user consent
+    // for an unverified multitenant app; only an org admin can grant it.
+    const adminConsentRequired = params.get("mailbox_admin_consent_required");
+    if (!confirmToken && !hadError && !adminConsentRequired) return;
 
     confirmedRef.current = true;
     params.delete("mailbox_confirm");
     params.delete("mailbox_error");
+    params.delete("mailbox_admin_consent_required");
     const query = params.toString();
     window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
 
     if (confirmToken) confirm.mutate(confirmToken);
-    else if (hadError) {
+    else if (adminConsentRequired) {
       toast({
-        title: "Couldn't connect Gmail",
-        description: "Google didn't complete the connection — try again.",
+        title: "Your organisation requires admin approval",
+        description:
+          "An admin needs to approve RouteFlow for your Microsoft organisation before you can " +
+          "connect Outlook — ask a Microsoft 365 admin to grant consent, then try again.",
+        variant: "error",
+      });
+    } else if (hadError) {
+      toast({
+        title: "Couldn't connect the mailbox",
+        description: "The provider didn't complete the connection — try again.",
         variant: "error",
       });
     }
@@ -140,9 +188,12 @@ export function MailboxCard() {
   }, []);
 
   if (!hasAddon || isLoading) return null;
-  if (!data?.configured) return null; // Google mailbox client env vars not set yet.
+  if (!data?.configured) return null; // Neither provider's mailbox client env vars are set yet.
 
   const status = data.status ?? null;
+  const isMicrosoft = data.provider === "MICROSOFT";
+  const providerLabel = isMicrosoft ? "Outlook" : "Gmail";
+  const vendorLabel = isMicrosoft ? "Microsoft" : "Google";
 
   const statusBadge =
     status === "CONNECTED" ? (
@@ -157,21 +208,34 @@ export function MailboxCard() {
     <Card className="flex flex-col gap-4">
       <div className="flex items-center gap-2">
         <Mail className="h-5 w-5 text-brand-600" />
-        <h3 className="text-base font-semibold text-navy">Connect Gmail</h3>
+        <h3 className="text-base font-semibold text-navy">
+          {data.connected ? `Connect ${providerLabel}` : "Connect your email"}
+        </h3>
         {statusBadge}
       </div>
 
       {!data.connected && (
         <>
           <p className="text-sm text-navy/70">
-            Send customer emails directly from your own Gmail account instead of RouteFlow's relay —
-            replies and bounces land in your own inbox. Falls back automatically to your SMTP setup
-            above (or RouteFlow's) if the connection ever needs attention.
+            Send customer emails directly from your own Gmail or Outlook account instead of
+            RouteFlow's relay — replies and bounces land in your own inbox. Falls back automatically
+            to your SMTP setup above (or RouteFlow's) if the connection ever needs attention.
           </p>
-          <div>
-            <Button onClick={() => connect.mutate()} disabled={connect.isPending}>
-              {connect.isPending ? "Redirecting…" : "Connect Gmail"}
-            </Button>
+          <div className="flex flex-wrap gap-2">
+            {data.googleConfigured && (
+              <Button onClick={() => connect.mutate("GOOGLE")} disabled={connect.isPending}>
+                {connect.isPending ? "Redirecting…" : "Connect Gmail"}
+              </Button>
+            )}
+            {data.microsoftConfigured && (
+              <Button
+                variant="secondary"
+                onClick={() => connect.mutate("MICROSOFT")}
+                disabled={connect.isPending}
+              >
+                {connect.isPending ? "Redirecting…" : "Connect Outlook"}
+              </Button>
+            )}
           </div>
         </>
       )}
@@ -186,7 +250,7 @@ export function MailboxCard() {
             <div className="flex items-start gap-2 rounded-ctl bg-warning-bg px-3 py-2 text-sm text-warning">
               <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
               <span>
-                Rate-limited by Google
+                Rate-limited by {vendorLabel}
                 {data.throttledUntil ? ` until ${formatDate(data.throttledUntil)}` : ""} — falling
                 back to your SMTP setup (or RouteFlow's) until then.
               </span>
@@ -197,8 +261,8 @@ export function MailboxCard() {
             <div className="flex items-start gap-2 rounded-ctl bg-danger-bg px-3 py-2 text-sm text-danger">
               <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
               <span>
-                Google revoked access to this mailbox — reconnect below. Mail is falling back to
-                your SMTP setup (or RouteFlow's) until then.
+                {vendorLabel} revoked access to this mailbox — reconnect below. Mail is falling back
+                to your SMTP setup (or RouteFlow's) until then.
               </span>
             </div>
           )}
@@ -208,13 +272,16 @@ export function MailboxCard() {
           )}
 
           <p className="text-xs text-navy/50">
-            Bounces and replies arrive in your own Gmail inbox — RouteFlow can't read them (only
-            `gmail.send` is granted, never a read scope).
+            Bounces and replies arrive in your own {providerLabel} inbox — RouteFlow can't read them
+            (only {isMicrosoft ? "`Mail.Send`" : "`gmail.send`"} is granted, never a read scope).
           </p>
 
           <div className="flex flex-wrap gap-2">
             {status === "REVOKED" && (
-              <Button onClick={() => connect.mutate()} disabled={connect.isPending}>
+              <Button
+                onClick={() => connect.mutate(isMicrosoft ? "MICROSOFT" : "GOOGLE")}
+                disabled={connect.isPending}
+              >
                 {connect.isPending ? "Redirecting…" : "Reconnect"}
               </Button>
             )}
