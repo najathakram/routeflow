@@ -159,6 +159,13 @@ message}` (mirrors the pattern already correct in `skip-stop.ts:48-57`) — `api
   `useAuthStore`'s `user?.id` is undefined (cold open/deep link) — no snapshot is ever written
   under the shared `anon` key bucket, closing a B136/B137-class cross-operator leak on a shared
   device; `session-teardown.ts` also sweeps the anon prefix belt-and-braces.
+  **B465 (2026-09-16/17, mirrors web):** `PriceOverrideModal`'s save is disabled
+  (`reasonMissing = isSpecial && reason.trim() === ""`) with a required-field red ring when the
+  line resolves SPECIAL tier — server-side guard is `orders.service.ts`'s reason-required check
+  (see `api.md` orders/ B465 bullet). `lib/order-item-diff.ts`'s `buildOrderItemDiff` now sends
+  `overrideReason` whenever EITHER the price OR the reason changed (was: reason-changed only) —
+  a price-only change on an already-reasoned line must still carry that reason on the SAME
+  request, or the server's reason-required refusal has no stored reason to fall back on.
 - **Share retap made synchronous (2026-08-27, Samsung Internet dead-end):** `lib/share-pdf.ts`
   `canShareFilesHere()` now probes FILE support via a sync `canShare({files:[probe]})` (Samsung
   Internet exposes share()/canShare() but rejects files — it was taking the file-share path and
