@@ -11,7 +11,11 @@ import {
 } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 import {
+  ACCRUAL_REVENUE_STATUSES,
   estimateCogs,
+  fetchAccrualNetSales,
+  fetchAccrualNetSalesByCustomer,
+  fetchBadDebtExpense,
   fetchCostIndex,
   fetchInvoicedSaleLines,
   fetchProductCostFacts,
@@ -66,6 +70,20 @@ export class BookkeepingService implements OnModuleInit {
     // mode there is no tenant context at startup, so they would run unscoped
     // across ALL tenants — potentially hanging on large data sets. Skip them
     // at boot; they will be lazily called per-tenant on first request instead.
+  }
+
+  /**
+   * B440 fix-round finding 2: the accrual-net-sales helpers (invoiced-sales.ts)
+   * fail CLOSED on tenant scoping — they take `tenantId: string`, not
+   * `string | null`, and put it in every where-clause explicitly rather than
+   * relying solely on `forTenant()`'s ambient injection (which silently
+   * returns the UNSCOPED client under a null tenant context). Every caller
+   * of those helpers resolves its tenantId through here first.
+   */
+  private requireTenantId(): string {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) throw new Error("No tenant context for bookkeeping read");
+    return tenantId;
   }
 
   async findAll(query: ListTransactionsDto) {
@@ -964,13 +982,20 @@ export class BookkeepingService implements OnModuleInit {
 
   // ── P&L Report ──
   /**
-   * COGS is estimated from invoiced sales — the SAME invoice set as revenue
-   * (status PAID, windowed on paidAt), so both sides of gross profit share a
-   * basis. Each line is costed at qty × the product's point-in-time average
-   * cost at the invoice's issueDate (invoice lines carry no cost of their
-   * own; `StockMovement type:"SALE"` rows are dead — see
-   * common/invoiced-sales.ts). No tobacco exclusion here: accounting records
-   * always reflect real financials.
+   * B440: revenue is accrual net sales (issued, non-void/draft, net of
+   * credit notes and external refunds — see `fetchAccrualNetSales`), never
+   * cash. COGS is estimated from the SAME accrual invoice set as revenue
+   * (ACCRUAL_REVENUE_STATUSES, windowed on issueDate — one collection with
+   * revenue, L-119) so both sides of gross profit share a basis. Each line
+   * is costed at qty × the product's point-in-time average cost at the
+   * invoice's issueDate (invoice lines carry no cost of their own;
+   * `StockMovement type:"SALE"` rows are dead — see common/invoiced-sales.ts).
+   * COGS stays gross of restocked returns (FU-2, deliberate — not fixed
+   * here). No tobacco exclusion here: accounting records always reflect real
+   * financials. B456: `netProfit` also subtracts `badDebtExpense` — the
+   * unpaid balance of any invoice WRITTEN_OFF in this window — a cost
+   * `revenue` (WRITTEN_OFF *is* revenue at issue) makes necessary the
+   * instant it's counted.
    */
   async getProfitAndLoss(from?: string, to?: string) {
     const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
@@ -981,25 +1006,25 @@ export class BookkeepingService implements OnModuleInit {
           return d;
         })()
       : new Date();
+    const window = { gte: fromDate, lte: toDate };
+    const tenantId = this.requireTenantId();
 
-    const [revenueAgg, cogsLines, expenses] = await Promise.all([
-      this.prisma.forTenant().invoice.aggregate({
-        where: { status: InvoiceStatus.PAID, paidAt: { gte: fromDate, lte: toDate } },
-        _sum: { total: true },
-      }),
+    const [netSales, cogsLines, expenses, badDebtExpense] = await Promise.all([
+      fetchAccrualNetSales(this.prisma.forTenant(), tenantId, window),
       fetchInvoicedSaleLines(this.prisma.forTenant(), {
         from: fromDate,
         to: toDate,
-        dateBasis: "paidAt",
-        status: InvoiceStatus.PAID,
+        dateBasis: "issueDate",
+        status: ACCRUAL_REVENUE_STATUSES,
       }),
       this.prisma.forTenant().expense.findMany({
         where: { deletedAt: null, date: { gte: fromDate, lte: toDate } },
         include: { category: true },
       }),
+      fetchBadDebtExpense(this.prisma.forTenant(), tenantId, window),
     ]);
 
-    const revenue = Number(revenueAgg._sum.total ?? 0);
+    const revenue = netSales.net;
     const productIds = soldProductIds(cogsLines);
     const [costIndex, costFacts] = await Promise.all([
       fetchCostIndex(this.prisma.forTenant(), productIds, toDate),
@@ -1008,7 +1033,7 @@ export class BookkeepingService implements OnModuleInit {
     const cogs = roundMoney(estimateCogs(cogsLines, costIndex, costFacts));
     const grossProfit = roundMoney(revenue - cogs);
     const opEx = roundMoney(expenses.reduce((s, e) => s + Number(e.amount), 0));
-    const netProfit = roundMoney(grossProfit - opEx);
+    const netProfit = roundMoney(grossProfit - opEx - badDebtExpense);
 
     const byCategory = expenses.reduce((acc: any, e) => {
       const cat = e.category?.name ?? "Uncategorized";
@@ -1018,9 +1043,13 @@ export class BookkeepingService implements OnModuleInit {
 
     return {
       revenue,
+      grossRevenue: netSales.gross,
+      creditNotes: netSales.creditNotes,
+      externalRefunds: netSales.externalRefunds,
       cogs,
       grossProfit,
       operatingExpenses: opEx,
+      badDebtExpense,
       netProfit,
       netMarginPct: revenue > 0 ? (netProfit / revenue) * 100 : 0,
       expensesByCategory: byCategory,
@@ -1088,11 +1117,13 @@ export class BookkeepingService implements OnModuleInit {
     const sevenDaysAgo = new Date(now);
     sevenDaysAgo.setDate(now.getDate() - 7);
 
-    const [totalRevenueResult, outstandingInvoices, paymentsThisWeekResult, overdueCount] =
-      await Promise.all([
-        this.prisma.forTenant().invoice.aggregate({
-          where: { status: InvoiceStatus.PAID, paidAt: { gte: startOfMonth } },
-          _sum: { total: true },
+    const [netSales, outstandingInvoices, paymentsThisWeekResult, overdueCount] = await Promise.all(
+      [
+        // B440: totalRevenue is accrual net sales (this month to date), never
+        // a cash/paidAt-windowed aggregate.
+        fetchAccrualNetSales(this.prisma.forTenant(), this.requireTenantId(), {
+          gte: startOfMonth,
+          lte: now,
         }),
         this.prisma.forTenant().invoice.findMany({
           where: {
@@ -1139,7 +1170,8 @@ export class BookkeepingService implements OnModuleInit {
             dueDate: { lt: now },
           },
         }),
-      ]);
+      ],
+    );
 
     const outstandingReceivables = outstandingInvoices.reduce((sum, inv) => {
       const paid = inv.payments.reduce((s: number, p: any) => s + Number(p.amount), 0);
@@ -1147,7 +1179,10 @@ export class BookkeepingService implements OnModuleInit {
     }, 0);
 
     return {
-      totalRevenue: Number(totalRevenueResult._sum.total ?? 0),
+      totalRevenue: netSales.net,
+      grossRevenue: netSales.gross,
+      creditNotes: netSales.creditNotes,
+      externalRefunds: netSales.externalRefunds,
       outstandingReceivables,
       paymentsThisWeek: Number(paymentsThisWeekResult._sum.amount ?? 0),
       overdueCount,
@@ -1162,54 +1197,65 @@ export class BookkeepingService implements OnModuleInit {
   async getMobileDashboard() {
     const now = new Date();
     const startOfYear = new Date(now.getFullYear(), 0, 1);
+    const window = { gte: startOfYear, lte: now };
+    const tenantId = this.requireTenantId();
 
-    const [invoiceAgg, paymentAgg, expenseAgg, outstandingInvoices] = await Promise.all([
-      // Total invoiced (YTD, non-draft/void)
-      this.prisma.forTenant().invoice.aggregate({
-        where: {
-          issueDate: { gte: startOfYear },
-          status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF] },
-        },
-        _sum: { total: true },
-      }),
-      // Total collected (YTD invoice payments) — CONFIRMED (PAID) only (F03/R1/
-      // T-B11s): an unconfirmed DRAFT payment is not money in hand any more than
-      // a VOID (bounced, P5-12) one is; this must match getCashFlow's basis.
-      // B421: same RECEIVED_METHOD_FILTER — a CREDIT_NOTE application was
-      // never "collected", an ADVANCE application already was (at deposit time).
-      this.prisma.forTenant().invoicePayment.aggregate({
-        where: {
-          ...CONFIRMED_PAYMENT,
-          method: RECEIVED_METHOD_FILTER,
-          createdAt: { gte: startOfYear },
-        },
-        _sum: { amount: true },
-      }),
-      // Total expenses (YTD)
-      this.prisma.forTenant().expense.aggregate({
-        where: { deletedAt: null, date: { gte: startOfYear } },
-        _sum: { amount: true },
-      }),
-      // Outstanding receivables (unpaid balances)
-      this.prisma.forTenant().invoice.findMany({
-        where: {
-          status: {
-            in: [
-              InvoiceStatus.SENT,
-              InvoiceStatus.VIEWED,
-              InvoiceStatus.PARTIAL,
-              InvoiceStatus.OVERDUE,
-            ],
+    const [invoiceAgg, paymentAgg, expenseAgg, outstandingInvoices, netSales, badDebtExpense] =
+      await Promise.all([
+        // Total invoiced (YTD, non-draft/void)
+        this.prisma.forTenant().invoice.aggregate({
+          where: {
+            issueDate: { gte: startOfYear },
+            status: {
+              notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF],
+            },
           },
-        },
-        select: {
-          total: true,
-          // F03/R1: only a CONFIRMED payment actually reduces what's outstanding —
-          // a DRAFT one hasn't been collected yet, so the balance still stands.
-          payments: { where: CONFIRMED_PAYMENT, select: { amount: true } },
-        },
-      }),
-    ]);
+          _sum: { total: true },
+        }),
+        // Total collected (YTD invoice payments) — CONFIRMED (PAID) only (F03/R1/
+        // T-B11s): an unconfirmed DRAFT payment is not money in hand any more than
+        // a VOID (bounced, P5-12) one is; this must match getCashFlow's basis.
+        // B421: same RECEIVED_METHOD_FILTER — a CREDIT_NOTE application was
+        // never "collected", an ADVANCE application already was (at deposit time).
+        this.prisma.forTenant().invoicePayment.aggregate({
+          where: {
+            ...CONFIRMED_PAYMENT,
+            method: RECEIVED_METHOD_FILTER,
+            createdAt: { gte: startOfYear },
+          },
+          _sum: { amount: true },
+        }),
+        // Total expenses (YTD)
+        this.prisma.forTenant().expense.aggregate({
+          where: { deletedAt: null, date: { gte: startOfYear } },
+          _sum: { amount: true },
+        }),
+        // Outstanding receivables (unpaid balances)
+        this.prisma.forTenant().invoice.findMany({
+          where: {
+            status: {
+              in: [
+                InvoiceStatus.SENT,
+                InvoiceStatus.VIEWED,
+                InvoiceStatus.PARTIAL,
+                InvoiceStatus.OVERDUE,
+              ],
+            },
+          },
+          select: {
+            total: true,
+            // F03/R1: only a CONFIRMED payment actually reduces what's outstanding —
+            // a DRAFT one hasn't been collected yet, so the balance still stands.
+            payments: { where: CONFIRMED_PAYMENT, select: { amount: true } },
+          },
+        }),
+        // B440: revenue = accrual net sales, never totalCollected.
+        fetchAccrualNetSales(this.prisma.forTenant(), tenantId, window),
+        // B456: an invoice WRITTEN_OFF this year is a P&L expense the instant
+        // its total counts as revenue (ACCRUAL_REVENUE_STATUSES includes
+        // WRITTEN_OFF).
+        fetchBadDebtExpense(this.prisma.forTenant(), tenantId, window),
+      ]);
 
     const totalInvoiced = Number(invoiceAgg._sum.total ?? 0);
     const totalCollected = Number(paymentAgg._sum.amount ?? 0);
@@ -1220,9 +1266,9 @@ export class BookkeepingService implements OnModuleInit {
     }, 0);
 
     return {
-      revenue: totalCollected,
+      revenue: netSales.net,
       expenses: totalExpenses,
-      netIncome: totalCollected - totalExpenses,
+      netIncome: roundMoney(netSales.net - totalExpenses - badDebtExpense),
       totalInvoiced,
       totalCollected,
       totalOutstanding,
@@ -1238,6 +1284,7 @@ export class BookkeepingService implements OnModuleInit {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const startOfQuarter = new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3, 1);
     const startOfYear = new Date(now.getFullYear(), 0, 1);
+    const tenantId = this.requireTenantId();
 
     const unpaidInvoices = await this.prisma.forTenant().invoice.findMany({
       where: {
@@ -1279,19 +1326,18 @@ export class BookkeepingService implements OnModuleInit {
 
     const monthlyData: Array<{ month: string; sales: number; receipts: number; expenses: number }> =
       [];
+    // B440: gross/creditNotes/externalRefunds summed across the 12 buckets,
+    // for the top-level breakdown below (mirrors getSummary/getProfitAndLoss's
+    // own additive breakdown fields).
+    let grossSalesYtd = 0,
+      creditNotesYtd = 0,
+      externalRefundsYtd = 0;
     for (let m = 0; m < 12; m++) {
       const mStart = new Date(now.getFullYear(), m, 1);
       const mEnd = new Date(now.getFullYear(), m + 1, 0, 23, 59, 59, 999);
-      const [salesAgg, receiptsAgg, expensesAgg] = await Promise.all([
-        this.prisma.forTenant().invoice.aggregate({
-          where: {
-            status: {
-              notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF],
-            },
-            issueDate: { gte: mStart, lte: mEnd },
-          },
-          _sum: { total: true },
-        }),
+      const [netSales, receiptsAgg, expensesAgg] = await Promise.all([
+        // B440: sales is accrual net sales, not the inline gross aggregate.
+        fetchAccrualNetSales(this.prisma.forTenant(), tenantId, { gte: mStart, lte: mEnd }),
         // F03/R1/T-B11s: receipts are CONFIRMED (PAID) money only — matches
         // getCashFlow's basis, not the historical "everything but VOID" one.
         // B421: same RECEIVED_METHOD_FILTER as getCashFlow.totalIn.
@@ -1308,9 +1354,12 @@ export class BookkeepingService implements OnModuleInit {
           _sum: { amount: true },
         }),
       ]);
+      grossSalesYtd = roundMoney(grossSalesYtd + netSales.gross);
+      creditNotesYtd = roundMoney(creditNotesYtd + netSales.creditNotes);
+      externalRefundsYtd = roundMoney(externalRefundsYtd + netSales.externalRefunds);
       monthlyData.push({
         month: mStart.toLocaleString("default", { month: "short" }),
-        sales: Number(salesAgg._sum.total ?? 0),
+        sales: netSales.net,
         receipts: Number(receiptsAgg._sum.amount ?? 0),
         expenses: Number(expensesAgg._sum.amount ?? 0),
       });
@@ -1334,16 +1383,10 @@ export class BookkeepingService implements OnModuleInit {
       .map(([name, amount]) => ({ name, amount }));
 
     const getPeriodSummary = async (from: Date) => {
-      const [s, r] = await Promise.all([
-        this.prisma.forTenant().invoice.aggregate({
-          where: {
-            status: {
-              notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF],
-            },
-            issueDate: { gte: from },
-          },
-          _sum: { total: true },
-        }),
+      const [netSales, r] = await Promise.all([
+        // B440: sales is accrual net sales, not the inline gross aggregate —
+        // same fix as the monthlySales loop above.
+        fetchAccrualNetSales(this.prisma.forTenant(), tenantId, { gte: from, lte: now }),
         // F03/R1/T-B11s: same CONFIRMED (PAID) basis as monthlySales.totalReceipts.
         // B421: same RECEIVED_METHOD_FILTER too.
         this.prisma.forTenant().invoicePayment.aggregate({
@@ -1371,7 +1414,7 @@ export class BookkeepingService implements OnModuleInit {
         const b = Number(inv.total) - inv.payments.reduce((s, p) => s + Number(p.amount), 0);
         return sum + Math.max(0, b);
       }, 0);
-      return { sales: Number(s._sum.total ?? 0), receipts: Number(r._sum.amount ?? 0), due };
+      return { sales: netSales.net, receipts: Number(r._sum.amount ?? 0), due };
     };
     const [today, thisWeek, thisMonth, thisQuarter, thisYear] = await Promise.all([
       getPeriodSummary(startOfToday),
@@ -1393,6 +1436,11 @@ export class BookkeepingService implements OnModuleInit {
       monthlySales: { data: monthlyData, totalSales, totalReceipts, totalExpenses },
       topExpenses,
       summaryTable: { today, thisWeek, thisMonth, thisQuarter, thisYear },
+      // B440: additive breakdown of totalSales into its accrual components,
+      // mirroring getSummary/getProfitAndLoss's own breakdown fields.
+      grossSales: grossSalesYtd,
+      creditNotes: creditNotesYtd,
+      externalRefunds: externalRefundsYtd,
     };
   }
 
@@ -1474,31 +1522,42 @@ export class BookkeepingService implements OnModuleInit {
           return d;
         })()
       : new Date();
-    const invoices = await this.prisma.forTenant().invoice.findMany({
-      where: {
-        status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF] },
-        issueDate: { gte: fromDate, lte: toDate },
-      },
-      include: { customer: { select: { id: true, businessName: true } } },
-    });
-    const byCustomer: Record<
-      string,
-      { customerId: string; businessName: string; invoiceCount: number; salesAmount: number }
-    > = {};
+    const tenantId = this.requireTenantId();
+    // B440: salesAmount is accrual net (gross - creditNotes - externalRefunds)
+    // per customer, never clamped at 0 — a CN-only customer (no invoices of
+    // its own) legitimately nets negative.
+    const [netByCustomer, invoices, customers] = await Promise.all([
+      fetchAccrualNetSalesByCustomer(this.prisma.forTenant(), tenantId, {
+        gte: fromDate,
+        lte: toDate,
+      }),
+      // B440 Fable review of #791: invoiceCount uses the SAME predicate as
+      // salesAmount (ACCRUAL_REVENUE_STATUSES — WRITTEN_OFF counts, only
+      // DRAFT/VOID excluded), not the narrower REAL_INVOICE_STATUSES-style
+      // filter — otherwise a customer's row could show sales from an invoice
+      // its own invoiceCount didn't count.
+      this.prisma.forTenant().invoice.findMany({
+        where: {
+          status: { notIn: [...ACCRUAL_REVENUE_STATUSES.notIn] },
+          issueDate: { gte: fromDate, lte: toDate },
+        },
+        include: { customer: { select: { id: true, businessName: true } } },
+      }),
+      this.prisma.forTenant().customer.findMany({ select: { id: true, businessName: true } }),
+    ]);
+    const businessNameById = new Map(customers.map((c) => [c.id, c.businessName]));
+    const invoiceCountById = new Map<string, number>();
     for (const inv of invoices) {
-      const key = inv.customerId;
-      if (!byCustomer[key])
-        byCustomer[key] = {
-          customerId: key,
-          businessName: inv.customer.businessName,
-          invoiceCount: 0,
-          salesAmount: 0,
-        };
-      byCustomer[key].invoiceCount++;
-      byCustomer[key].salesAmount += Number(inv.total);
+      invoiceCountById.set(inv.customerId, (invoiceCountById.get(inv.customerId) ?? 0) + 1);
     }
+    const data = [...netByCustomer.entries()].map(([customerId, net]) => ({
+      customerId,
+      businessName: businessNameById.get(customerId) ?? "Unknown",
+      invoiceCount: invoiceCountById.get(customerId) ?? 0,
+      salesAmount: net.net,
+    }));
     return {
-      data: Object.values(byCustomer).sort((a, b) => b.salesAmount - a.salesAmount),
+      data: data.sort((a, b) => b.salesAmount - a.salesAmount),
       period: { from: fromDate, to: toDate },
     };
   }
@@ -1662,38 +1721,66 @@ export class BookkeepingService implements OnModuleInit {
     };
   }
 
-  async getBadDebtsReport() {
-    const invoices = await this.prisma.forTenant().invoice.findMany({
-      where: { status: InvoiceStatus.WRITTEN_OFF },
-      include: {
-        customer: { select: { id: true, businessName: true } },
-        // F03/R1: bad-debt paid/balance totals count CONFIRMED (PAID) payments
-        // only — a DRAFT one isn't recovered money, nor is a VOID one (P5-12).
-        payments: { where: CONFIRMED_PAYMENT },
-      },
-      orderBy: { writtenOffAt: "desc" },
+  /**
+   * B456: `total` is sourced through `fetchBadDebtExpense` — the SAME
+   * expression the P&L's `badDebtExpense` uses — so the two figures always
+   * agree for the same window. `from`/`to` are optional and default to
+   * full-tenant-history (this method had no window before B440); `data`'s
+   * own listing query is intentionally left unwindowed (unlike `total`) so a
+   * legacy WRITTEN_OFF invoice with no `writtenOffAt` timestamp still shows
+   * up in the human-readable list even though it can't be windowed.
+   */
+  async getBadDebtsReport(from?: string, to?: string) {
+    const fromDate = from ? new Date(from) : new Date(0);
+    const toDate = to
+      ? (() => {
+          const d = new Date(to);
+          d.setUTCHours(23, 59, 59, 999);
+          return d;
+        })()
+      : new Date();
+
+    const [invoices, expense] = await Promise.all([
+      this.prisma.forTenant().invoice.findMany({
+        where: { status: InvoiceStatus.WRITTEN_OFF },
+        include: {
+          customer: { select: { id: true, businessName: true } },
+          // F03/R1: bad-debt paid/balance totals count CONFIRMED (PAID)
+          // payments only — a DRAFT one isn't recovered money, nor is a VOID
+          // one (P5-12).
+          payments: { where: CONFIRMED_PAYMENT },
+        },
+        orderBy: { writtenOffAt: "desc" },
+      }),
+      // B456/Fable review of #791: this is the P&L's pre-tax, windowed
+      // expense figure — NOT the same number as `total` below, which is the
+      // gross balance the `data` rows sum to (what the web footer displays).
+      fetchBadDebtExpense(this.prisma.forTenant(), this.requireTenantId(), {
+        gte: fromDate,
+        lte: toDate,
+      }),
+    ]);
+    const data = invoices.map((inv) => {
+      const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+      return {
+        id: inv.id,
+        invoiceNumber: inv.invoiceNumber,
+        customer: inv.customer,
+        issueDate: inv.issueDate,
+        dueDate: inv.dueDate,
+        writtenOffAt: inv.writtenOffAt,
+        writeOffReason: inv.writeOffReason,
+        total: Number(inv.total),
+        paid,
+        balance: Number(inv.total) - paid,
+      };
     });
     return {
-      data: invoices.map((inv) => {
-        const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
-        return {
-          id: inv.id,
-          invoiceNumber: inv.invoiceNumber,
-          customer: inv.customer,
-          issueDate: inv.issueDate,
-          dueDate: inv.dueDate,
-          writtenOffAt: inv.writtenOffAt,
-          writeOffReason: inv.writeOffReason,
-          total: Number(inv.total),
-          paid,
-          balance: Number(inv.total) - paid,
-        };
-      }),
-      total: invoices.reduce(
-        (s, inv) =>
-          s + Number(inv.total) - inv.payments.reduce((p, py) => p + Number(py.amount), 0),
-        0,
-      ),
+      data,
+      // Gross — Σ balance over `data`, so the web footer always equals the
+      // column it's summing. Never the pre-tax/windowed `expense` figure.
+      total: data.reduce((sum, d) => sum + d.balance, 0),
+      expense,
     };
   }
 
