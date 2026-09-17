@@ -1097,7 +1097,7 @@ describe("BookkeepingService", () => {
   // ─── getBadDebtsReport ────────────────────────────────────────────────────
 
   describe("getBadDebtsReport", () => {
-    it("REG-B456-report: .total equals the P&L's badDebtExpense for the same window -- both must derive from the same fetchBadDebtExpense amount", async () => {
+    it("REG-B456-report: .expense equals the P&L's badDebtExpense for the same window -- both derive from the same fetchBadDebtExpense amount; .total stays the GROSS balance sum the web footer displays (Fable review of #791)", async () => {
       const writtenOffInvoice = {
         id: "inv-wo-1",
         invoiceNumber: "INV-WO-1",
@@ -1107,6 +1107,10 @@ describe("BookkeepingService", () => {
         writtenOffAt: new Date("2026-06-15"),
         writeOffReason: "uncollectible",
         total: 500,
+        // taxAmount 50 makes the pre-tax `expense` (270) diverge from the
+        // gross `total` (300) -- proves the two fields are genuinely split,
+        // not coincidentally equal.
+        taxAmount: 50,
         payments: [{ amount: 150 }, { amount: 50 }], // cash 150 + credit-note-applied 50 -> balance 300
       };
       prisma.invoice.aggregate.mockResolvedValue({ _sum: { total: 0, taxAmount: 0 } });
@@ -1119,8 +1123,10 @@ describe("BookkeepingService", () => {
       const pnl = await service.getProfitAndLoss("2026-06-01", "2026-06-30");
 
       expect(report.total).toBe(300);
-      expect(pnl.badDebtExpense).toBe(300);
-      expect(report.total).toBe(pnl.badDebtExpense);
+      expect(report.expense).toBe(270);
+      expect(pnl.badDebtExpense).toBe(270);
+      expect(report.expense).toBe(pnl.badDebtExpense);
+      expect(report.total).not.toBe(report.expense);
     });
   });
 

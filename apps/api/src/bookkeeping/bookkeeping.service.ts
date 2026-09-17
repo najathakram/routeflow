@@ -1531,9 +1531,14 @@ export class BookkeepingService implements OnModuleInit {
         gte: fromDate,
         lte: toDate,
       }),
+      // B440 Fable review of #791: invoiceCount uses the SAME predicate as
+      // salesAmount (ACCRUAL_REVENUE_STATUSES — WRITTEN_OFF counts, only
+      // DRAFT/VOID excluded), not the narrower REAL_INVOICE_STATUSES-style
+      // filter — otherwise a customer's row could show sales from an invoice
+      // its own invoiceCount didn't count.
       this.prisma.forTenant().invoice.findMany({
         where: {
-          status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF] },
+          status: { notIn: [...ACCRUAL_REVENUE_STATUSES.notIn] },
           issueDate: { gte: fromDate, lte: toDate },
         },
         include: { customer: { select: { id: true, businessName: true } } },
@@ -1735,7 +1740,7 @@ export class BookkeepingService implements OnModuleInit {
         })()
       : new Date();
 
-    const [invoices, total] = await Promise.all([
+    const [invoices, expense] = await Promise.all([
       this.prisma.forTenant().invoice.findMany({
         where: { status: InvoiceStatus.WRITTEN_OFF },
         include: {
@@ -1747,28 +1752,35 @@ export class BookkeepingService implements OnModuleInit {
         },
         orderBy: { writtenOffAt: "desc" },
       }),
+      // B456/Fable review of #791: this is the P&L's pre-tax, windowed
+      // expense figure — NOT the same number as `total` below, which is the
+      // gross balance the `data` rows sum to (what the web footer displays).
       fetchBadDebtExpense(this.prisma.forTenant(), this.requireTenantId(), {
         gte: fromDate,
         lte: toDate,
       }),
     ]);
+    const data = invoices.map((inv) => {
+      const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+      return {
+        id: inv.id,
+        invoiceNumber: inv.invoiceNumber,
+        customer: inv.customer,
+        issueDate: inv.issueDate,
+        dueDate: inv.dueDate,
+        writtenOffAt: inv.writtenOffAt,
+        writeOffReason: inv.writeOffReason,
+        total: Number(inv.total),
+        paid,
+        balance: Number(inv.total) - paid,
+      };
+    });
     return {
-      data: invoices.map((inv) => {
-        const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
-        return {
-          id: inv.id,
-          invoiceNumber: inv.invoiceNumber,
-          customer: inv.customer,
-          issueDate: inv.issueDate,
-          dueDate: inv.dueDate,
-          writtenOffAt: inv.writtenOffAt,
-          writeOffReason: inv.writeOffReason,
-          total: Number(inv.total),
-          paid,
-          balance: Number(inv.total) - paid,
-        };
-      }),
-      total,
+      data,
+      // Gross — Σ balance over `data`, so the web footer always equals the
+      // column it's summing. Never the pre-tax/windowed `expense` figure.
+      total: data.reduce((sum, d) => sum + d.balance, 0),
+      expense,
     };
   }
 

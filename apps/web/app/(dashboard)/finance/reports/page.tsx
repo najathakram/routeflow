@@ -1743,6 +1743,7 @@ function ProfitLossReport({ from, to }: { from?: string; to?: string }) {
     cogs: number;
     grossProfit: number;
     operatingExpenses: number;
+    badDebtExpense?: number;
     netProfit: number;
     expensesByCategory?: Record<string, number>;
   };
@@ -1812,6 +1813,12 @@ function ProfitLossReport({ from, to }: { from?: string; to?: string }) {
                 {fmt(d.operatingExpenses)}
               </td>
             </tr>
+            {!!d.badDebtExpense && (
+              <tr>
+                <td className="px-4 py-2.5 pl-8 text-navy/70">Bad Debt Expense</td>
+                <td className="px-4 py-2.5 text-right text-danger">{fmt(d.badDebtExpense)}</td>
+              </tr>
+            )}
             <tr className="border-t-2 border-navy">
               <td className="px-4 py-3 font-bold text-navy">Net Profit</td>
               <td

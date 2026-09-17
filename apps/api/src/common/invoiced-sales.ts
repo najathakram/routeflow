@@ -335,7 +335,10 @@ export async function fetchBadDebtExpense(
   for (const inv of invoices) {
     const paid = (inv.payments ?? []).reduce((s: number, p: any) => s + Number(p.amount ?? 0), 0);
     const invTotal = Number(inv.total ?? 0);
-    const unpaid = invTotal - paid;
+    // Fable review of #791: an overpaid write-off (paid > total) must never
+    // contribute a NEGATIVE expense — clamp at 0, same as every other
+    // balance computation in this file.
+    const unpaid = Math.max(0, invTotal - paid);
     const taxAmount = Number(inv.taxAmount ?? 0);
     const preTaxShare = invTotal > 0 ? (invTotal - taxAmount) / invTotal : 0;
     total += unpaid * preTaxShare;
