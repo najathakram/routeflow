@@ -31,19 +31,31 @@ function overrideRow(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
-function build(rows: ReturnType<typeof overrideRow>[]) {
+// pre-merge review (2026-09-17), MUST-4: the mock applies the job's ACTUAL `where` clause --
+// not a hardcoded assumption baked into the fixture filter -- so dropping `revokedAt: null` (or
+// `expiresAt.lte`) from the real query changes what this mock returns, and the assertions below
+// fail instead of silently passing.
+function build(rows: ReturnType<typeof overrideRow>[], auditedIds: string[] = []) {
   const prisma = {
     tenantFeatureOverride: {
-      // Real Prisma semantics would apply `where` server-side; this in-memory filter mirrors
-      // that so the job's own where-clause shape is what actually selects the fixture rows,
-      // not a fixture pre-filtered by the test.
       findMany: jest.fn().mockImplementation(({ where }: any) => {
-        const now = where.expiresAt.lte as Date;
+        const lte = where?.expiresAt?.lte as Date | undefined;
         return Promise.resolve(
           rows.filter(
             (r) =>
-              r.revokedAt === null && r.expiresAt != null && r.expiresAt.getTime() <= now.getTime(),
+              r.revokedAt === where?.revokedAt &&
+              r.expiresAt != null &&
+              lte != null &&
+              (r.expiresAt as Date).getTime() <= lte.getTime(),
           ),
+        );
+      }),
+    },
+    auditLog: {
+      findMany: jest.fn().mockImplementation(({ where }: any) => {
+        const ids: string[] = where?.entityId?.in ?? [];
+        return Promise.resolve(
+          ids.filter((id) => auditedIds.includes(id)).map((entityId) => ({ entityId })),
         );
       }),
     },
@@ -91,6 +103,18 @@ describe("FeatureOverrideReviewJob.reviewExpiredOverrides", () => {
     expect(audit.log).not.toHaveBeenCalled();
   });
 
+  it("queries with revokedAt: null, expiresAt.lte <= now, oldest first, capped at 500", async () => {
+    const { job, prisma } = build([]);
+    await job.reviewExpiredOverrides();
+    expect(prisma.tenantFeatureOverride.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ revokedAt: null, expiresAt: { lte: expect.any(Date) } }),
+        orderBy: { expiresAt: "asc" },
+        take: 500,
+      }),
+    );
+  });
+
   it("never revokes the row -- update() is not even wired on this collaborator", async () => {
     const { job, prisma } = build([
       overrideRow({ id: "ov-expired", expiresAt: new Date("2000-01-01T00:00:00Z") }),
@@ -99,6 +123,50 @@ describe("FeatureOverrideReviewJob.reviewExpiredOverrides", () => {
     await job.reviewExpiredOverrides();
     // Still true after the tick ran -- confirms the job never even tries to call it.
     expect(prisma.tenantFeatureOverride.update).toBeUndefined();
+  });
+
+  // pre-merge review, SHOULD-3: audit once EVER, not once per night.
+  it("skips a row that already carries a FEATURE_OVERRIDE_EXPIRED_REVIEW audit row from a prior tick", async () => {
+    const { job, audit, prisma } = build(
+      [overrideRow({ id: "ov-already-flagged", expiresAt: new Date("2000-01-01T00:00:00Z") })],
+      ["ov-already-flagged"],
+    );
+
+    const result = await job.reviewExpiredOverrides();
+
+    expect(result.reviewed).toBe(0);
+    expect(audit.log).not.toHaveBeenCalled();
+    expect(prisma.auditLog.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          action: FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION,
+          entityType: "tenantFeatureOverride",
+          entityId: { in: ["ov-already-flagged"] },
+        }),
+      }),
+    );
+  });
+
+  it("audits a not-yet-flagged row while skipping an already-flagged one in the SAME tick", async () => {
+    const { job, audit } = build(
+      [
+        overrideRow({ id: "ov-new", expiresAt: new Date("2000-01-01T00:00:00Z") }),
+        overrideRow({ id: "ov-old-flagged", expiresAt: new Date("1999-01-01T00:00:00Z") }),
+      ],
+      ["ov-old-flagged"],
+    );
+
+    const result = await job.reviewExpiredOverrides();
+
+    expect(result.reviewed).toBe(1);
+    expect(audit.log).toHaveBeenCalledTimes(1);
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ entityId: "ov-new" }));
+  });
+
+  it("skips the auditLog dedupe query entirely when there is nothing expired", async () => {
+    const { job, prisma } = build([]);
+    await job.reviewExpiredOverrides();
+    expect(prisma.auditLog.findMany).not.toHaveBeenCalled();
   });
 
   it("runs the tick under the shared advisory lock, keyed by the pinned job name", async () => {
