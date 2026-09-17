@@ -901,6 +901,14 @@ function PriceEditRow({
   const priceChangedThisSession =
     originalUnitPrice != null && Math.abs(unitPrice - originalUnitPrice) > 0.0001;
   const reasonRequired = !!isSpecial && priceChangedThisSession;
+  // #815 proof-run finding: the block below (was-$X/upsell badge + reason input) used
+  // to render ONLY on `overridden` (vs basePrice) — so repricing a SPECIAL line to
+  // EXACTLY the list price made `overridden` false and hid the reason field entirely,
+  // even though `reasonRequired` (vs originalUnitPrice, a DIFFERENT baseline) was still
+  // true and the server still 400s without one. The render gate below is
+  // `overridden || reasonRequired`; the was-$X/upsell badge itself stays scoped to
+  // `overridden` alone (showing "was $10.00" when the price literally is $10.00 would
+  // be nonsensical).
 
   return (
     <div className="ml-11 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
@@ -927,19 +935,20 @@ function PriceEditRow({
           />
         </span>
       </label>
-      {overridden && (
+      {(overridden || reasonRequired) && (
         <>
-          {isUpsell ? (
-            // Upsell: green "+$X" instead of a struck-through "was" (which would
-            // read as a discount). The base is hidden from the customer server-side.
-            <span className="font-medium text-emerald-600">
-              Upsell +${(unitPrice - basePrice).toFixed(2)}
-            </span>
-          ) : (
-            <span className="text-navy/50">
-              was <span className="line-through">${basePrice.toFixed(2)}</span>
-            </span>
-          )}
+          {overridden &&
+            (isUpsell ? (
+              // Upsell: green "+$X" instead of a struck-through "was" (which would
+              // read as a discount). The base is hidden from the customer server-side.
+              <span className="font-medium text-emerald-600">
+                Upsell +${(unitPrice - basePrice).toFixed(2)}
+              </span>
+            ) : (
+              <span className="text-navy/50">
+                was <span className="line-through">${basePrice.toFixed(2)}</span>
+              </span>
+            ))}
           <input
             type="text"
             value={overrideReason ?? ""}

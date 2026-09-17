@@ -5,6 +5,17 @@
  * change a special-price line") and closing the mobile hunt's R2/R9 hole on
  * the web reference too.
  *
+ * #815 proof-run finding (this test never actually ran until that proof —
+ * see the "NOT part of the local red gate" note below): the reason-input
+ * block rendered only on `overridden` (unitPrice vs `basePrice`, the LIST
+ * price for a SPECIAL line), while `reasonRequired` compares against
+ * `originalUnitPrice` (this session's own starting price) instead. Repricing
+ * a SPECIAL line to EXACTLY the list price (test below: tier $8 -> list $20)
+ * makes `overridden` false — hiding the reason field the server still 400s
+ * without — even though `reasonRequired` stays true. This test's core
+ * assertion (`reasonInput` visible after typing the list price) is the
+ * regression pin for that render-gate fix (`overridden || reasonRequired`).
+ *
  * Proof requested by the review: Playwright screenshots at 1440/768/390 of
  * the required-reason state (the reason input styled as required, Save
  * blocked with a toast naming the line).
@@ -50,7 +61,7 @@ test.describe("Order-edit SPECIAL-tier reason required (B465 fix round 2)", () =
     await setTenantCookie(context, BASE);
   });
 
-  test("REG-B465-WEB: a SPECIAL-tier line's price override requires a reason before Save, at 1440/768/390", async ({
+  test("REG-B465-WEB / REG-B815-WEB: a SPECIAL-tier line's price override (including repriced to exactly list) requires a reason before Save, at 1440/768/390", async ({
     page,
     request,
   }) => {
@@ -129,9 +140,18 @@ test.describe("Order-edit SPECIAL-tier reason required (B465 fix round 2)", () =
 
       // ── Type a bare override with no reason (list price, the exact B465
       // hole: an operator-typed value with nothing on record explaining it).
+      // This value is ALSO exactly `basePrice` for this line (server sets
+      // originalPrice = list price for a SPECIAL-tier line) — the #815
+      // render-gate finding: `overridden` (unitPrice vs basePrice) goes
+      // FALSE the instant the typed price equals list, even though this is
+      // still a genuine reprice relative to the session's own starting
+      // value and the server still requires a reason.
       await unitPriceInput.fill(listPrice.toFixed(2));
       await unitPriceInput.blur();
 
+      // REG-B815-WEB: the reason input must stay visible even though the
+      // price now equals basePrice (list) — proving the render gate is
+      // `overridden || reasonRequired`, never `overridden` alone.
       const reasonInput = lineRow.getByPlaceholder(/reason \(required\)/i);
       await expect(reasonInput).toBeVisible({ timeout: 10_000 });
 
