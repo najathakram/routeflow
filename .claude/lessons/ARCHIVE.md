@@ -2028,7 +2028,6 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
 - **Guard:** `returns-idempotency.spec.ts`'s retry-after-state-changed case;
   `idempotency.service.spec.ts` REG-IDEM-SVC-9; `returns-idempotency.db.spec.ts` (real Postgres).
 
-
 ## Archived 2026-09-16 — headroom for L-165-L-167/L-172-L-174 (post-#779/#781 merge)
 
 Two more active entries archived to clear both caps after landing six new entries
@@ -2071,4 +2070,3 @@ archived entry's narrower mechanism.
   never a bare `new PrismaClient()`. A writer resolving a special row by id must re-validate its
   identity/class on every write, not just once.**
 - **Guard:** `bootstrap-house-tenant.db.spec.ts`, `tenant-mirror.service.spec.ts`.
-
