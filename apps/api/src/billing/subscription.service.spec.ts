@@ -302,6 +302,60 @@ describe("SubscriptionService.getSubscription", () => {
       expect(s.flags.filter((f: string) => f === "flag.reports")).toHaveLength(1);
     });
 
+    describe("P0 2026-09-17: PREPIN_DARK_FLAGS surfaced in the client-visible flags list", () => {
+      const originalEnforcement = process.env.PLAN_FLAG_ENFORCEMENT;
+      afterEach(() => {
+        if (originalEnforcement === undefined) delete process.env.PLAN_FLAG_ENFORCEMENT;
+        else process.env.PLAN_FLAG_ENFORCEMENT = originalEnforcement;
+      });
+
+      it("a SCALE tenant on the v11 catalog (no prepin flags held) sees all five in flags with enforcement ON", async () => {
+        process.env.PLAN_FLAG_ENFORCEMENT = "on";
+        const entitlements = {
+          resolve: jest.fn().mockResolvedValue({
+            planKey: "SCALE",
+            planName: "Scale",
+            status: "ACTIVE",
+            planVersionId: "v11",
+            trialEndsAt: null,
+            flags: [],
+          }),
+        } as any;
+        const svc = new SubscriptionService(prisma, catalog, entitlements, meters);
+
+        const s = await svc.getSubscription("t1");
+
+        for (const flagKey of [
+          "flag.estimates",
+          "flag.recurring_invoices",
+          "flag.credit_notes",
+          "flag.suppliers",
+          "flag.messaging",
+        ]) {
+          expect(s.flags).toContain(flagKey);
+        }
+      });
+
+      it("a LITE tenant does NOT see the five unless actually held, even with enforcement ON (no courtesy allow for always-enforced plans)", async () => {
+        process.env.PLAN_FLAG_ENFORCEMENT = "on";
+        const entitlements = {
+          resolve: jest.fn().mockResolvedValue({
+            planKey: "LITE",
+            planName: "Lite",
+            status: "ACTIVE",
+            planVersionId: "v11",
+            trialEndsAt: null,
+            flags: [],
+          }),
+        } as any;
+        const svc = new SubscriptionService(prisma, catalog, entitlements, meters);
+
+        const s = await svc.getSubscription("t1");
+
+        expect(s.flags).not.toContain("flag.estimates");
+      });
+    });
+
     it("still resolves flags when the entitlements mock omits `flags` entirely (defensive fallback)", async () => {
       const entitlements = {
         resolve: jest.fn().mockResolvedValue({

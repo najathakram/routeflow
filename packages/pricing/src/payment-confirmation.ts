@@ -207,6 +207,40 @@ export function isHeldPayment(p: { status?: string }): boolean {
 }
 
 /**
+ * Every `InvoicePayment.status` that should still BLOCK a destructive action on the invoice/order
+ * it's attached to (a void, a cancel) — i.e. everything except VOID. `PaymentStatus` today is
+ * DRAFT | PAID | VOID | PENDING (no separate "failed" status), so this is exactly DRAFT + PAID +
+ * PENDING.
+ *
+ * N4 (binding — independent Opus review of the design, quoted verbatim; see `remainingCapacity`
+ * below for the same citation in full):
+ *
+ * > N4: HELD = PAID ∪ PENDING omits DRAFT... `externalPaidOn`/`cancelImpact` become
+ * > `isHeldPayment`. A DRAFT external payment... would stop blocking an invoice void or order
+ * > cancel. That silently reverses a block master deliberately keeps.
+ *
+ * Owner ruling (2026-09-16, relayed by the lead): DRAFT payments KEEP blocking invoice void /
+ * order cancel — a recorded-but-unconfirmed payment is money in flight. `HELD_STATUSES`/
+ * `HELD_PAYMENT`/`isHeldPayment` above answer "is this money spoken-for" for MONEY TOTALS; this
+ * constant answers "is there a payment here that should block a destructive action" for EXISTENCE
+ * checks — a different question that must NEVER be answered with `isHeldPayment` (that is
+ * precisely the regression N4 exists to prevent). Kept as its own named, documented export
+ * (rather than reusing the internal `sumNotVoid` filter `remainingCapacity` uses below) because
+ * existence and capacity are different questions that happen to share a filter today; a future
+ * split of either must update its own export explicitly, never silently share the other's.
+ */
+export const BLOCKING_PAYMENT_STATUSES = ["DRAFT", "PAID", "PENDING"] as const;
+
+/** Prisma `where: { status: { in: [...] } }` filter for `BLOCKING_PAYMENT_STATUSES`. */
+export const BLOCKING_PAYMENT = { status: { in: [...BLOCKING_PAYMENT_STATUSES] } } as const;
+
+/** True iff `p.status` is one of `BLOCKING_PAYMENT_STATUSES` (i.e. not VOID) — the existence-
+ *  check predicate `externalPaidOn`/`cancelImpact` use instead of `isHeldPayment`. */
+export function isBlockingPayment(p: { status?: string }): boolean {
+  return p.status !== "VOID";
+}
+
+/**
  * Sum the `amount` of every HELD (PAID or PENDING) row in a payments array — money currently
  * held: either fully confirmed, or a post-dated check on file that hasn't cleared yet. Used
  * later where a reader needs "this money is spoken for" without yet being bankable. Distinct
