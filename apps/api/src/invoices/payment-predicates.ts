@@ -25,6 +25,12 @@ export {
   sumHeld,
   collectedDateOf,
   remainingCapacity,
+  // PR-2 (check-payments B1 hardening) — the EXISTENCE-check predicate (externalPaidOn/
+  // cancelImpact), deliberately distinct from isHeldPayment (N4 owner ruling: DRAFT still
+  // blocks). See @routeflow/pricing/src/payment-confirmation.ts for the full doc.
+  BLOCKING_PAYMENT_STATUSES,
+  BLOCKING_PAYMENT,
+  isBlockingPayment,
 } from "@routeflow/pricing";
 export type {
   ConfirmablePaymentRow,

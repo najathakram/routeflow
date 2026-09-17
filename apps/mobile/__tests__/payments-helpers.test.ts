@@ -6,6 +6,7 @@
 import {
   allocationTotals,
   checkNextStates,
+  editPaymentMaxAmount,
   oldestInvoicesFirst,
   paymentActionFlags,
   paymentMethodPill,
@@ -163,5 +164,34 @@ describe("oldestInvoicesFirst", () => {
     const rows = [{ issueDate: "2026-08-01" }, { issueDate: "2026-06-01" }];
     oldestInvoicesFirst(rows);
     expect(rows[0].issueDate).toBe("2026-08-01");
+  });
+});
+
+// PR-2 (check-payments B1 hardening): editPaymentMaxAmount routes through the
+// shared remainingCapacity() predicate (DRAFT+PAID+PENDING all reserve
+// capacity) — this locks the mobile edit-payment cap to the same semantics
+// the server (updatePayment) and web (editPaymentMax) now use.
+describe("editPaymentMaxAmount", () => {
+  it("reserves a DRAFT sibling's capacity, not just PAID ones", () => {
+    // total 100, siblings: $30 DRAFT + $10 PAID -> capacity 60.
+    const max = editPaymentMaxAmount(100, [
+      { amount: 30, status: "DRAFT" },
+      { amount: 10, status: "PAID" },
+    ]);
+    expect(max).toBe(60);
+  });
+
+  it("ignores a VOID sibling entirely", () => {
+    const max = editPaymentMaxAmount(100, [{ amount: 999, status: "VOID" }]);
+    expect(max).toBe(100);
+  });
+
+  it("floors at 0 rather than going negative when siblings already exceed the total", () => {
+    const max = editPaymentMaxAmount(100, [{ amount: 150, status: "PAID" }]);
+    expect(max).toBe(0);
+  });
+
+  it("returns the full total with no siblings", () => {
+    expect(editPaymentMaxAmount(250, [])).toBe(250);
   });
 });

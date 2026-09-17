@@ -19,6 +19,7 @@ import {
   useDeletePaymentImage,
   useGetPaymentImageUrl,
 } from "../../../../../../../lib/api/payments";
+import { editPaymentMaxAmount } from "../../../../../../../lib/payments-logic";
 import {
   SELECTABLE_METHOD_OPTIONS,
   type SelectablePaymentMethod,
@@ -48,11 +49,12 @@ export default function EditPaymentScreen() {
   const deleteImageMut = useDeletePaymentImage();
   const getImageUrlMut = useGetPaymentImageUrl();
 
-  // Amount cap = invoice total − the OTHER (non-void, non-this) payments, mirroring web.
-  const others = (invoice?.payments ?? [])
-    .filter((p: any) => p.id !== paymentId && p.status !== "VOID")
-    .reduce((s: number, p: any) => s + Number(p.amount ?? 0), 0);
-  const maxAmount = Math.max(0, Number(invoice?.total ?? 0) - others);
+  // PR-2 (check-payments B1 hardening): shared editPaymentMaxAmount() helper
+  // (payments-logic.ts) instead of a hand-rolled not-VOID sum — same
+  // DRAFT-inclusive semantics this screen already had, now testable and the
+  // one copy web/api also use.
+  const otherPayments = (invoice?.payments ?? []).filter((p: any) => p.id !== paymentId);
+  const maxAmount = editPaymentMaxAmount(Number(invoice?.total ?? 0), otherPayments);
 
   const [method, setMethod] = useState<SelectablePaymentMethod | null>(null);
   const [amount, setAmount] = useState<string | null>(null);
