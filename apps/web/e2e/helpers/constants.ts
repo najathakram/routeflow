@@ -16,6 +16,16 @@ export const TENANT_SLUG: string = assertTestTenant(
   "playwright e2e",
 );
 
+// B449 fix-round finding 3: `qa-lite` is a standing LITE-plan tenant, seeded by
+// apps/api/scripts/e2e-seed.js alongside e2e-routeflow — so a LITE-plan spec
+// (48-lite-locked-route-ux.spec.ts) no longer self-skips when this env var is
+// unset locally. Override PLAYWRIGHT_LITE_TENANT_SLUG for a post-deploy run
+// against a differently-named LITE tenant.
+export const LITE_TENANT_SLUG: string = assertTestTenant(
+  process.env.PLAYWRIGHT_LITE_TENANT_SLUG ?? "qa-lite",
+  "playwright e2e (lite)",
+);
+
 export const CREDENTIALS = {
   superAdmin: {
     username: process.env.PLAYWRIGHT_SA_USERNAME ?? "",

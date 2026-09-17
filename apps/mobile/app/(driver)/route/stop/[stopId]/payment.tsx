@@ -180,7 +180,7 @@ export default function PaymentScreen() {
     : "PAYMENT";
 
   // Per-tenant opt-in for at-door money collection (owner decision
-  // 2026-08-24: affa collects, bb-distro bills on account). Fail-CLOSED:
+  // 2026-08-24: acme collects, acme-distribution bills on account). Fail-CLOSED:
   // while the flag is unknown the collection UI stays hidden and the close
   // sends no payment — that path is allowed for every tenant, so a flaky
   // addons fetch can never strand a driver at the door (the server's
