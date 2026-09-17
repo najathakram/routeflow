@@ -343,3 +343,11 @@ export type TenantClass = (typeof TENANT_CLASS_VALUES)[number];
 // generated Prisma `FeatureOverrideEffect` enum (see `enum-parity.spec.ts`'s `ENUM_TABLE` row).
 export const FEATURE_OVERRIDE_EFFECT_VALUES = ["GRANT", "DENY"] as const;
 export type FeatureOverrideEffect = (typeof FEATURE_OVERRIDE_EFFECT_VALUES)[number];
+
+// Public demo booking (2026-09-16): pinned set-equal to the generated Prisma
+// `DemoBookingStatus` enum (see `enum-parity.spec.ts`'s `ENUM_TABLE` row).
+// Consumed by the marketing site's demo-booking client instead of a
+// hand-typed local union (lesson L-072: a hand-typed mirror is how three
+// real bugs shipped).
+export const DEMO_BOOKING_STATUS_VALUES = ["CONFIRMED", "CANCELLED", "COMPLETED"] as const;
+export type DemoBookingStatus = (typeof DEMO_BOOKING_STATUS_VALUES)[number];

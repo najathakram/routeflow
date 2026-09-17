@@ -75,8 +75,16 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
       // "tenant-mirror" (F3, Phase 0 T12-T15 review round, 2026-09-15) backs
       // TenantMirrorService#upsert's session-scoped critical section (spans a $transaction PLUS
       // a separate ContactPerson find-then-create loop — genuinely session-scoped, unlike the
-      // retired idempotency case above).
-      expect(mod.LOCK_FAMILIES).toEqual(["order-merge", "cron", "billing", "tenant-mirror"]);
+      // retired idempotency case above). "demo-booking" (2026-09-16, review finding 4) backs
+      // DemoBookingService#create/#reschedule's check-then-write window on the public,
+      // unauthenticated demo-booking endpoint, keyed on the slot's start instant.
+      expect(mod.LOCK_FAMILIES).toEqual([
+        "order-merge",
+        "cron",
+        "billing",
+        "tenant-mirror",
+        "demo-booking",
+      ]);
     });
   });
 

@@ -14,6 +14,7 @@ import { PlatformConfigService } from "../platform-admin/platform-config.service
 import { Prisma, MovementType, PaymentMethod } from "@prisma/client";
 import { costDecimal, nextAverageCost, reverseAverageCost } from "../inventory/costing";
 import { roundMoney } from "@routeflow/pricing";
+import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import Anthropic from "@anthropic-ai/sdk";
 import sharp from "sharp";
 import { buildTokenWeights, composedProductName, matchLine } from "./product-matcher";
@@ -190,18 +191,25 @@ export class VendorBillsService {
     const supplierId = dto.supplierId && dto.supplierId.trim() ? dto.supplierId.trim() : null;
 
     // Calculate totalOwed from line items if provided, otherwise use dto.totalOwed
-    let totalOwed = dto.totalOwed ?? 0;
+    let preTaxOwed = dto.totalOwed ?? 0;
     if (dto.items && Array.isArray(dto.items) && dto.items.length > 0) {
-      totalOwed = dto.items.reduce(
+      preTaxOwed = dto.items.reduce(
         (sum: number, item: any) =>
           sum + (Number(item.qty) || 1) * Number(item.unitCost ?? item.unitPrice ?? 0),
         0,
       );
     }
+    const billTaxAmount = Number(dto.taxAmount) || 0;
     // Sales tax on the supplier invoice is owed too (the scan flow passes it as
     // taxAmount — line items only carry the pre-tax unit costs). totalOwed is a
     // monetary write, so round it.
-    totalOwed = roundMoney(totalOwed + (Number(dto.taxAmount) || 0));
+    const totalOwed = roundMoney(preTaxOwed + billTaxAmount);
+
+    // B451 gap 4: VendorBillItemDto.qty/unitCost/unitPrice now carry @Min(0),
+    // but this method also accepts an internal caller's raw `dto.totalOwed`/
+    // `dto.items` bypassing that DTO (see class comment) — the shared guard
+    // covers both paths.
+    assertMoneyInvariantsOrThrow({ subtotal: preTaxOwed, tax: billTaxAmount, total: totalOwed });
 
     const supplierInvoiceNumber = this.resolveSupplierInvoiceNumber(dto);
     const billDate = this.parseDate(dto.billDate);
@@ -636,6 +644,11 @@ export class VendorBillsService {
       const tax =
         dto.taxAmount !== undefined ? Number(dto.taxAmount) || 0 : Number(bill.taxAmount ?? 0);
       totalOwed = roundMoney(itemsTotal + tax);
+
+      // B451 gap 4: same guard as create() — a negative qty/unitCost line
+      // (or a negative taxAmount) must not persist a negative totalOwed here
+      // either.
+      assertMoneyInvariantsOrThrow({ subtotal: itemsTotal, tax, total: totalOwed });
     }
 
     const billInclude = {
