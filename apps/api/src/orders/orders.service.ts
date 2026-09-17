@@ -4562,7 +4562,9 @@ export class OrdersService implements OnApplicationBootstrap {
                 let originalPrice: number | null = isSpecialTier ? listPrice : null;
                 const isOverridden = overridePrice != null && !priceUnchangedFromTier;
                 if (isOverridden && overridePrice != null) {
-                  unitPrice = overridePrice;
+                  // Opus MERGE-verdict fix: round the honored override, matching the
+                  // UPDATE branch's convention — never persist a raw client float.
+                  unitPrice = roundMoney(overridePrice);
                   priceType = overridePrice < listPrice ? PriceType.DISCOUNTED : PriceType.MANUAL;
                   originalPrice = listPrice;
                 }
