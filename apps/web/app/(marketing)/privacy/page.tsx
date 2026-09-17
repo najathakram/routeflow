@@ -26,16 +26,18 @@ export const metadata: Metadata = {
 
 export default function PrivacyPage() {
   return (
-    <section className="legal-page wrap">
-      <Eyebrow>ROUTEFLOW</Eyebrow>
-      <h1>Privacy information</h1>
-      <p>
-        Our privacy policy is being finalised. For any question about how RouteFlow handles your
-        data, contact <a href={`mailto:${site.email}`}>{site.email}</a>.
-      </p>
-      <Link href="/" className="text-link">
-        Return to RouteFlow <ArrowRight size={18} />
-      </Link>
-    </section>
+    <div className="glass-page">
+      <section className="legal-page wrap">
+        <Eyebrow>ROUTEFLOW</Eyebrow>
+        <h1>Privacy information</h1>
+        <p>
+          Our privacy policy is being finalised. For any question about how RouteFlow handles your
+          data, contact <a href={`mailto:${site.email}`}>{site.email}</a>.
+        </p>
+        <Link href="/" className="text-link">
+          Return to RouteFlow <ArrowRight size={18} />
+        </Link>
+      </section>
+    </div>
   );
 }

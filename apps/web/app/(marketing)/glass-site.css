@@ -227,7 +227,8 @@
 .glass-page .company-image,
 .glass-page .company-contact,
 .glass-page .retailer-price,
-.glass-page .contact-copy .demo-agenda {
+.glass-page .contact-copy .demo-agenda,
+.glass-page .legal-page {
   background: var(--g-glass);
   border: 1px solid var(--g-glass-border);
   border-radius: var(--g-r-md);
@@ -251,7 +252,8 @@
   .glass-page .company-image,
   .glass-page .company-contact,
   .glass-page .retailer-price,
-  .glass-page .contact-copy .demo-agenda {
+  .glass-page .contact-copy .demo-agenda,
+  .glass-page .legal-page {
     background: #f1f6fcf5;
   }
 }
@@ -758,8 +760,17 @@
 
 /* ── Legal pages (privacy/terms) ─────────────────────────────────────────── */
 
-.glass-page .legal-content {
+.glass-page .legal-page {
   padding: 40px;
+  margin-block: 50px;
+}
+
+.glass-page .legal-page p {
+  color: var(--g-body);
+}
+
+.glass-page .legal-page a:not(.text-link) {
+  color: var(--g-link);
 }
 
 /* ── Responsive ──────────────────────────────────────────────────────────── */
