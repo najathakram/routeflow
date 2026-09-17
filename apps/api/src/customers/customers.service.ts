@@ -1503,8 +1503,10 @@ export class CustomersService {
       // capacity figure is DRAFT-inclusive (remainingCapacity), so a $40 advance
       // applied on top of a $60 DRAFT sibling was flipping a $100 invoice straight
       // to PAID off unconfirmed money. Matches credit-notes.service.ts's
-      // applyCreditInTx and restoreCreditFromPaymentInTx's own basis.
-      const newPaid = sumConfirmed(inv.payments) + applyAmount;
+      // applyCreditInTx and restoreCreditFromPaymentInTx's own basis — including
+      // the roundMoney wrap (PR-2 re-review nit): without it, a float remainder
+      // (e.g. 0.1 + 0.2) can leave a fully-covered invoice reading PARTIAL.
+      const newPaid = roundMoney(sumConfirmed(inv.payments) + applyAmount);
       const total = Number(inv.total);
       let newStatus: any = "SENT";
       if (newPaid >= total - 0.001) newStatus = "PAID";

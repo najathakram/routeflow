@@ -1591,6 +1591,29 @@ describe("CustomersService", () => {
       );
     });
 
+    // PR-2 re-review (routeflow-Lead, 2026-09-17): newPaid must be roundMoney'd, matching
+    // credit-notes.service.ts's applyCreditInTx — without it, a float remainder (the
+    // classic 0.1 + 0.2 = 0.30000000000000004 case) can leave a fully-covered invoice
+    // reading PARTIAL instead of PAID.
+    it("applyAdvancePaymentToInvoice: a 0.1 + 0.2-style float remainder still reads PAID (PR-2 REG)", async () => {
+      prisma.advancePayment.findUnique.mockResolvedValue({ id: "ap-1", balance: 0.2 });
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-float",
+        total: 0.3,
+        status: "SENT",
+        dueDate: null,
+        payments: [{ amount: 0.1, status: "PAID" }],
+      });
+
+      await service.applyAdvancePaymentToInvoice("ap-1", { invoiceId: "inv-float" });
+
+      // Unrounded: 0.1 + 0.2 === 0.30000000000000004 (a real JS float value) — asserting
+      // PAID (not PARTIAL) proves newPaid was rounded before the total comparison.
+      expect(prisma.invoice.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: "PAID" }) }),
+      );
+    });
+
     it("REG-B310 two concurrent applies of the SAME advance never drive its balance negative", async () => {
       // The mocked `withAdvisoryLock` is a module-level jest.fn shared across every test in this
       // file (a prior test above also calls applyAdvancePaymentToInvoice) — clear its call
