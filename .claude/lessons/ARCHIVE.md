@@ -2313,3 +2313,32 @@ tooling gotcha with its own pre-existing standing guard spec).
   suite at least once per fix round; a boot-crash guard does nothing if it never runs.
 - **Guard:** `no-runtime-workspace-imports.spec.ts` (pre-existing). Fix: derive the value from
   `@prisma/client`'s real enum instead, or mirror it locally like the file's own `METER_KEYS`.
+
+Seventh pass, same batch: L-186 (tooling, layout.tsx named re-export — candidate from the
+code-map catch-up session) folded in. Archived one more to keep the register at 3 entries of
+headroom: L-138 (zero outside citations, closed-out review-round lesson with its own standing
+regression guard).
+
+### L-138 · 2026-09-15 · testing · #711 review round (F1 issue-date default)
+
+- **Symptom:** a review fix at the cited line (the create-modal's `issueDate` `useState`
+  initializer) looked complete and type-checked clean, but a "reset on open" `useEffect` a few
+  lines down independently recomputed the SAME default with the SAME buggy expression
+  (`new Date().toISOString().slice(0, 10)`, the UTC calendar date, not the operator's local one)
+  — every time the modal opened, that effect overwrote the fixed initial value with the still-wrong
+  one. Caught only because the new regression test opened the modal and read the rendered input's
+  actual value, rather than asserting on the initializer expression in isolation.
+- **Root cause:** the same wrong default had been copy-pasted (or independently re-derived) at a
+  second call site the review didn't name; fixing the cited line alone left the component's
+  observable behavior unchanged, since the effect runs after mount and wins.
+- **Lesson:** **A review finding that names one line of a bug is a starting point, not the full
+  blast radius — grep the component/file for other call sites computing the same value the same
+  way before declaring the fix done, and prove it with a test that exercises the real interaction
+  (open the modal, click the button) and reads the rendered/observable state, never one that only
+  asserts on the helper function in isolation.**
+- **Guard:** `apps/web/app/(dashboard)/estimates/page.f1-issue-date-default.test.tsx` opens the
+  create-modal and reads the actual `<input type="date">` value under a mocked local-vs-UTC date
+  split (`Date.prototype` getter spies, not `process.env.TZ` reassignment — a Jest worker can cache
+  its process-level timezone before a test file's own `TZ` write takes effect, so that approach
+  silently no-ops; confirmed by reproducing the false-pass first). Both call sites in
+  `estimates/page.tsx` now share one `defaultIssueDate()` helper.
