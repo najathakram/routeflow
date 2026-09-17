@@ -4970,11 +4970,11 @@ export class InvoicesService {
         // moves to remainingCapacity() (DRAFT+PAID, N4: capacity must count DRAFT,
         // closing a real double-book gap this narrower query previously masked),
         // while recomputeStatus below keeps reading CONFIRMED-only via sumConfirmed
-        // — F03/R1 status discipline is unchanged.
-        // scan-ok: draft-payment-not-void — feeds remainingCapacity()'s own
+        // — F03/R1 status discipline is unchanged. Feeds remainingCapacity()'s own
         // internal not-void filter; @routeflow/pricing deliberately exports no
-        // Prisma "not void" filter (see remainingCapacity's docstring), so this
-        // is the correct inline form, not a re-derived mirror.
+        // Prisma "not void" filter (see remainingCapacity's docstring), so this is
+        // the correct inline form, not a re-derived mirror.
+        // scan-ok: draft-payment-not-void — see comment above.
         include: { payments: { where: { status: { not: "VOID" } } } },
       });
       if (!inv) throw new NotFoundException("Invoice not found");
