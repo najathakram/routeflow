@@ -17,6 +17,10 @@ export function EditorialMotion() {
   useEffect(() => {
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
     if (reduced.matches) return;
+    // Progressive enhancement: no IntersectionObserver support means no classes are
+    // ever added below, so content is left in its default (fully visible) state
+    // instead of being marked reveal-pending with nothing able to clear it.
+    if (typeof IntersectionObserver === "undefined") return;
 
     const nodes = Array.from(document.querySelectorAll<HTMLElement>(REVEAL_SELECTOR));
     const observer = new IntersectionObserver(

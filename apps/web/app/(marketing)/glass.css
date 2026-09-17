@@ -22,7 +22,7 @@
   --g-ink: #152d51;
   --g-body: #4c607a;
   --g-muted: #637992;
-  --g-soft: #738aa0;
+  --g-soft: #587289; /* B504: was #738aa0 (3.58:1 on white, fails AA); 5.02:1 */
   --g-eyebrow: #466e94;
 
   /* Accent */

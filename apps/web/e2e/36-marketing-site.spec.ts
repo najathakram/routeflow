@@ -320,7 +320,9 @@ test.describe("T12 — a mobile UA still gets the marketing site on /pricing (R1
 // become real: scrolling clears every pending node, and reduced motion never
 // sets one in the first place.
 test.describe("T13 — below-the-fold sections reveal (R7 R14)", () => {
-  test("T13 — scrolling to the bottom of / clears every .reveal-pending node", async ({ page }) => {
+  test("T13 — scrolling to the bottom of / clears every .reveal-pending node and reaches opacity 1 (B504)", async ({
+    page,
+  }) => {
     await page.goto("/");
 
     const viewport = page.viewportSize()?.height ?? 720;
@@ -332,12 +334,49 @@ test.describe("T13 — below-the-fold sections reveal (R7 R14)", () => {
       await page.waitForTimeout(150);
     }
     await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-    await page.waitForTimeout(300);
+    // Give the 0.7s opacity transition (marketing.css) time to settle before
+    // reading computed style, on top of the reveal-pending class removal.
+    await page.waitForTimeout(1000);
 
     await expect(
       page.locator(".reveal-pending"),
       "a section stayed hidden after the page was scrolled end to end",
     ).toHaveCount(0);
+
+    // B504: removing .reveal-pending used to leave computed opacity at 0
+    // forever (no rule ever declared the revealed state) — the class-count
+    // assertion above could not have caught that. Assert the actual visual
+    // outcome, not just that the marker class is gone.
+    const revealOpacities = await page
+      .locator(".editorial-reveal")
+      .evaluateAll((els) => els.map((el) => window.getComputedStyle(el).opacity));
+    expect(revealOpacities.length, "reveal targets present on /").toBeGreaterThan(0);
+    expect(
+      revealOpacities.filter((o) => o !== "1"),
+      "a .editorial-reveal node stayed transparent after its .reveal-pending class was cleared",
+    ).toEqual([]);
+  });
+
+  test("T13 — capability cards and section headings are visible with JavaScript disabled (B504)", async ({
+    browser,
+  }) => {
+    // editorial-motion.tsx only ever ADDS .reveal-pending via a client effect —
+    // with JS disabled that effect never runs, so nothing should ever be
+    // hidden. This is the progressive-enhancement guarantee itself, not an
+    // inference from the JS source.
+    const context = await browser.newContext({ javaScriptEnabled: false });
+    const page = await context.newPage();
+    await page.goto("/");
+
+    await expect(page.locator(".reveal-pending")).toHaveCount(0);
+    const card = page.locator(".capability-card").first();
+    await expect(card).toBeVisible();
+    await expect(card).toHaveCSS("opacity", "1");
+    const heading = page.locator(".section-heading").first();
+    await expect(heading).toBeVisible();
+    await expect(heading).toHaveCSS("opacity", "1");
+
+    await context.close();
   });
 
   test("T13 — under prefers-reduced-motion the CTA block is opaque without scrolling", async ({
@@ -363,4 +402,136 @@ test.describe("T13 — below-the-fold sections reveal (R7 R14)", () => {
       "a reveal target was transparent under prefers-reduced-motion",
     ).toEqual([]);
   });
+});
+
+// ─── T14 — WCAG AA contrast for the B504-fixed roles (R7) ───────────────────
+
+// WCAG relative-luminance contrast, computed in-page against the element's
+// own resolved foreground color and its nearest ancestor with a non-transparent
+// background-color (gradients/backdrop images resolve to a transparent
+// background-color, so this walks up to the page's own white canvas — a
+// conservative reference: the real composited background under a light glass
+// panel is at least as light, so passing against white is not a false pass).
+async function minContrast(locator: import("@playwright/test").Locator): Promise<number | null> {
+  const values = await locator.evaluateAll((els) => {
+    function parseColor(str: string): [number, number, number, number] | null {
+      const m = str.match(/rgba?\(([^)]+)\)/);
+      if (!m) return null;
+      const [r, g, b, a = 1] = m[1].split(",").map((s) => parseFloat(s.trim()));
+      return [r!, g!, b!, a!];
+    }
+    function luminance([r, g, b]: [number, number, number, number]): number {
+      const chan = [r, g, b].map((v) => {
+        const c = v / 255;
+        return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+      });
+      return 0.2126 * chan[0]! + 0.7152 * chan[1]! + 0.0722 * chan[2]!;
+    }
+    return els.map((el) => {
+      const fg = parseColor(getComputedStyle(el).color);
+      if (!fg) return null;
+      let node: Element | null = el;
+      let bg: [number, number, number, number] | null = null;
+      while (node) {
+        const parsed = parseColor(getComputedStyle(node).backgroundColor);
+        if (parsed && parsed[3] > 0) {
+          bg = parsed;
+          break;
+        }
+        node = node.parentElement;
+      }
+      if (!bg) bg = [255, 255, 255, 1];
+      const lf = luminance(fg);
+      const lb = luminance(bg);
+      const lighter = Math.max(lf, lb);
+      const darker = Math.min(lf, lb);
+      return (lighter + 0.05) / (darker + 0.05);
+    });
+  });
+  const real = values.filter((v): v is number => v !== null);
+  return real.length ? Math.min(...real) : null;
+}
+
+const AA_NORMAL = 4.5;
+
+test.describe("T14 — WCAG AA contrast for the B504-fixed roles (R7)", () => {
+  for (const width of [1440, 390]) {
+    test.describe(`at ${width}px`, () => {
+      test.use({ viewport: { width, height: 900 } });
+
+      test(`T14 — operation-story heading ("Know what is ready to go.") clears AA on /, /product, /wholesalers`, async ({
+        page,
+      }) => {
+        let checked = 0;
+        for (const route of ["/", "/product", "/wholesalers"]) {
+          await page.goto(route);
+          const heading = page.locator(".story-intro h3");
+          const count = await heading.count();
+          if (count === 0) continue;
+          checked += count;
+          const contrast = await minContrast(heading);
+          expect(contrast, `${route} .story-intro h3 contrast`).not.toBeNull();
+          expect(contrast!, `${route} .story-intro h3 contrast`).toBeGreaterThanOrEqual(AA_NORMAL);
+        }
+        expect(checked, "at least one operation-story heading was checked").toBeGreaterThan(0);
+      });
+
+      test('T14 — the purple AI-scan card ("Let AI scan the invoice." + its paragraph) clears AA on /, /product', async ({
+        page,
+      }) => {
+        let checked = 0;
+        for (const route of ["/", "/product"]) {
+          await page.goto(route);
+          const step = page.locator("li.ai-assisted-step");
+          if ((await step.count()) === 0) continue;
+          const heading = step.locator("h3");
+          const paragraph = step.locator("p");
+          checked += (await heading.count()) + (await paragraph.count());
+          const headingContrast = await minContrast(heading);
+          const paragraphContrast = await minContrast(paragraph);
+          expect(headingContrast, `${route} .ai-assisted-step h3 contrast`).not.toBeNull();
+          expect(headingContrast!, `${route} .ai-assisted-step h3 contrast`).toBeGreaterThanOrEqual(
+            AA_NORMAL,
+          );
+          expect(paragraphContrast, `${route} .ai-assisted-step p contrast`).not.toBeNull();
+          expect(
+            paragraphContrast!,
+            `${route} .ai-assisted-step p contrast`,
+          ).toBeGreaterThanOrEqual(AA_NORMAL);
+        }
+        expect(checked, "at least one AI-scan card was checked").toBeGreaterThan(0);
+      });
+
+      test("T14 — muted caption color (--g-soft) clears AA on /, /pricing, /product, /wholesalers", async ({
+        page,
+      }) => {
+        const CAPTION_SELECTOR =
+          ".story-chapter-count, .story-disclaimer, .pricing-footnote, .sample-note, .capability-scope, .record-note p, .connection-diagram > p, .form-disclosure";
+        let checked = 0;
+        for (const route of ["/", "/pricing", "/product", "/wholesalers"]) {
+          await page.goto(route);
+          const captions = page.locator(CAPTION_SELECTOR);
+          const count = await captions.count();
+          if (count === 0) continue;
+          checked += count;
+          const contrast = await minContrast(captions);
+          expect(contrast, `${route} caption contrast`).not.toBeNull();
+          expect(contrast!, `${route} caption contrast`).toBeGreaterThanOrEqual(AA_NORMAL);
+        }
+        expect(checked, "at least one caption was checked").toBeGreaterThan(0);
+      });
+
+      test("T14 — the difference-section intro paragraphs clear AA on /", async ({ page }) => {
+        await page.goto("/");
+        const paragraphs = page.locator(
+          ".difference-section .split-heading > p, .difference-section .difference-footer > p",
+        );
+        const count = await paragraphs.count();
+        expect(count, "difference-section paragraphs present on /").toBeGreaterThan(0);
+        const contrast = await minContrast(paragraphs);
+        expect(contrast).not.toBeNull();
+        expect(contrast!).toBeGreaterThanOrEqual(AA_NORMAL);
+      });
+    });
+  }
 });
