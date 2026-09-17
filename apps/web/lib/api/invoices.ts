@@ -489,8 +489,11 @@ export function useApplyCreditNote() {
 
 export function useApplyAdvanceToInvoice() {
   const qc = useQueryClient();
+  // F7 (money discipline): the server's response carries an additive `appliedAmount` —
+  // the amount it actually applied (min(wallet balance, invoice balance)) — so callers
+  // report that instead of re-deriving it client-side.
   return useMutation<
-    Invoice,
+    Invoice & { appliedAmount: number },
     Error,
     { customerId: string; advancePaymentId: string; invoiceId: string; amount?: number }
   >({

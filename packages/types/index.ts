@@ -173,8 +173,8 @@ export const DEVELOPER_MODE_ADDON = "developer_mode";
 
 /**
  * TenantAddon.addonKey gating at-door payment collection by drivers (owner
- * decision 2026-08-24: OPT-IN per tenant — affa collects at the door,
- * bb-distro bills on account only). Server-enforced: complete-with-payment
+ * decision 2026-08-24: OPT-IN per tenant — acme collects at the door,
+ * acme-distribution bills on account only). Server-enforced: complete-with-payment
  * 403s without it; the plain complete endpoint (deliveries + POD +
  * auto-invoice, no money) is always available.
  */

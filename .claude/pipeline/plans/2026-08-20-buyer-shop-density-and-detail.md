@@ -5,7 +5,7 @@
 ## Problem (owner's words)
 
 1. "we need to fix the grid view for the customer. they are too big. may be let them adjust the
-   size?" — at `https://www.routeflow.info/buyer/portal/affa/shop` the grid caps at
+   size?" — at `https://www.routeflow.info/buyer/portal/acme/shop` the grid caps at
    `xl:grid-cols-4` beside a 210px rail, so on a wide screen each 4:5-image card is enormous.
 2. "clicking the item does not open the product page. we need a product page, and go to it when
    the item is selected" — there is NO buyer-facing product detail page. `useBuyerProduct` in

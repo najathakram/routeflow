@@ -2,7 +2,6 @@
 
 > Split from [`../feature-modules-3.md`](../feature-modules-3.md) (verbatim, lines 202-253 of the pre-split file) on 2026-09-16. Originally itself split from `.claude/code-map/api.md` (verbatim, lines 1344-1592) on 2026-09-13. See [`../../INDEX.md`](../../INDEX.md).
 
-
 - **controller** `order-templates` — get/patch/delete, items add/remove, `:id/generate`.
 - **service** — `findAll`, `findOne`, `update`, `delete`, `addItem`, `removeItem`, `generateOrder` (draft Order from template). side effects: OrderTemplate(+Item)/Order writes. **Tax on `generateOrder` reads the TENANT's `settings.taxRate` per-request via `SystemConfigService` + `common/tax-rate.ts` `taxRateFractionFrom` — it used to be a constructor-cached `env TAX_RATE ?? 0.1`, i.e. a flat 10% regardless of tenant settings. `OrderTemplatesModule` therefore imports `SystemConfigModule` (without it the app fails to boot on the new constructor arg).**
 - **DRIVER removed from every mutation (B133, F14 2026-09-02)** — `create`/`update`/`removeItem`
@@ -52,4 +51,3 @@ freeUnits})`; the line persists `priceType`/`originalPrice`/`promoFreeUnits` lik
   treated as absent (class-validator skips every validator for null); `items: []` is a 400. Specs:
   `dto/update-order-template.dto.spec.ts` (REG-B09 T23 + whitelist pins — no client `unitPrice` on a
   template item), `order-templates.pricing-and-items.spec.ts` (REG-B09 T25/T26).
-

@@ -39,6 +39,7 @@ import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { EmailService } from "../email/email.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 describe("CustomersService — purge paths reverse the regulated ledger", () => {
@@ -100,6 +101,10 @@ describe("CustomersService — purge paths reverse the regulated ledger", () => 
           },
         },
         { provide: RegulatedLedgerService, useValue: ledger },
+        {
+          provide: EmailService,
+          useValue: { send: jest.fn().mockResolvedValue({ delivered: true, transport: "resend" }) },
+        },
       ],
     }).compile();
 

@@ -23,7 +23,16 @@ export class RegisterTenantDto {
   })
   adminUsername: string;
 
+  // B03: unify with every other password-setting flow (reset-password, buyer
+  // register/change-password) — previously this DTO enforced only @MinLength(8),
+  // so a password rejected by every other flow could still create a self-service
+  // tenant admin, and the web signup form's weaker client-side rule (B03) was
+  // silently the ONLY gate in practice.
   @IsString()
   @MinLength(8)
+  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*[\d\W])/, {
+    message:
+      "adminPassword must contain at least one uppercase letter, one lowercase letter, and one number or special character",
+  })
   adminPassword: string;
 }

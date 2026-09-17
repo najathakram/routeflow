@@ -1,3 +1,5 @@
+Status: IMPLEMENTED
+
 # RESUME — Train 4, Run B (B215 OrderIdempotencyKey table + migration)
 
 - **slug**: `2026-09-10-train4-run-b`

@@ -17,12 +17,24 @@ function makeService(
     systemConfigRows?: any[];
     sendingDomainRow?: any;
     tenantConfig?: any;
+    smtpHost?: string;
+    smtpPort?: string;
+    smtpSecure?: string;
+    smtpUser?: string;
+    smtpPass?: string;
+    adminUser?: any;
   } = {},
 ): EmailService {
-  const config = {
-    get: (k: string) =>
-      k === "RESEND_API_KEY" ? opts.resendKey : k === "EMAIL_FROM" ? opts.emailFrom : undefined,
-  } as any;
+  const envMap: Record<string, string | undefined> = {
+    RESEND_API_KEY: opts.resendKey,
+    EMAIL_FROM: opts.emailFrom,
+    SMTP_HOST: opts.smtpHost,
+    SMTP_PORT: opts.smtpPort,
+    SMTP_SECURE: opts.smtpSecure,
+    SMTP_USER: opts.smtpUser,
+    SMTP_PASS: opts.smtpPass,
+  };
+  const config = { get: (k: string) => envMap[k] } as any;
   const prisma = {
     getTenantId: () => "t1",
     forTenant: () => ({
@@ -33,6 +45,7 @@ function makeService(
       },
     }),
     tenantConfig: { findFirst: jest.fn().mockResolvedValue(opts.tenantConfig ?? null) },
+    user: { findFirst: jest.fn().mockResolvedValue(opts.adminUser ?? null) },
   } as any;
   const encryption = { decrypt: (v: string) => v } as any;
   return new EmailService(config, prisma, encryption);
@@ -99,6 +112,428 @@ describe("EmailService — honest send (R5)", () => {
       ],
     });
     expect(await svc.isEmailConfigured()).toBe(false);
+  });
+
+  // B452 (c) — fail-closed is a promise this codebase makes to every fire-and-forget
+  // caller (password reset, account-merge): a misconfigured/absent provider must
+  // resolve to a structured result, never reject the promise into the caller.
+  it("send() never throws when no provider is configured — resolves to a not-sent result", async () => {
+    const svc = makeService();
+    await expect(
+      svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" }),
+    ).resolves.toMatchObject({ delivered: false, transport: "none", error: undefined });
+  });
+
+  it("sendTestEmail() never throws when no provider is configured", async () => {
+    const svc = makeService();
+    await expect(svc.sendTestEmail("a@b.com")).resolves.toMatchObject({ success: false });
+  });
+});
+
+/**
+ * B452 (a) — the tenant-branded sender fallback must never hard-code a domain
+ * RouteFlow doesn't own. Previously `getTenantFromAddress()` fell back to a literal
+ * "noreply@routeflow.app" (the real domain is routeflow.info) whenever a tenant had
+ * a businessName but no From-email configured under Settings → Email.
+ *
+ * B452 followups (c) — 9b's review of #789 caught that the fix above went too far:
+ * it rode the PLATFORM's own verified EMAIL_FROM address, but this fallback fires
+ * on the TENANT-OWN-SMTP send path — the message is physically transmitted through
+ * the tenant's mail server (`emailCfg.user`), not the platform's, so a platform
+ * From address there is exactly the SPF/DKIM/DMARC misalignment those checks exist
+ * to catch. It must use the tenant's own authenticated SMTP user instead.
+ */
+describe("EmailService — sender resolver never hard-codes a domain (B452)", () => {
+  it("tenant SMTP send with no fromEmail configured uses the tenant's OWN authenticated SMTP user, never the platform address (B452 followups c)", async () => {
+    const sendMail = jest.fn().mockResolvedValue({ messageId: "m1" });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({
+      emailFrom: "RouteFlow <noreply@routeflow.info>",
+      systemConfigRows: [
+        { key: "email.smtpHost", value: "smtp.example.com" },
+        { key: "email.smtpUser", value: "user@example.com" },
+        { key: "email.smtpPassword", value: "pw" },
+        { key: "email.smtpPort", value: "587" },
+      ],
+      // No smtpFromEmail on TenantConfig — only a businessName — is exactly the
+      // fallback branch that used to hard-code routeflow.app, then the platform address.
+      tenantConfig: { businessName: "Acme Co" },
+    });
+
+    const res = await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+
+    expect(res).toMatchObject({ delivered: true, transport: "smtp" });
+    // The tenant's own authenticated mailbox (email.smtpUser), not the platform's
+    // EMAIL_FROM — the SMTP transport authenticated as user@example.com, so that's
+    // the only address that won't SPF/DKIM/DMARC-fail.
+    expect(sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({ from: "Acme Co <user@example.com>" }),
+    );
+    const sentFrom = sendMail.mock.calls[0][0].from as string;
+    expect(sentFrom).not.toMatch(/routeflow\.app/);
+    expect(sentFrom).not.toMatch(/routeflow\.info/);
+  });
+
+  it("falls back to the bare tenant SMTP user when the tenant has no businessName either (B452 followups c)", async () => {
+    const sendMail = jest.fn().mockResolvedValue({ messageId: "m1" });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({
+      emailFrom: "RouteFlow <noreply@routeflow.info>",
+      systemConfigRows: [
+        { key: "email.smtpHost", value: "smtp.example.com" },
+        { key: "email.smtpUser", value: "user@example.com" },
+        { key: "email.smtpPassword", value: "pw" },
+        { key: "email.smtpPort", value: "587" },
+      ],
+      tenantConfig: null,
+    });
+
+    await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+
+    expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({ from: "user@example.com" }));
+  });
+});
+
+/**
+ * B452 (d) — owner ruling 2026-09-16: the PLATFORM sender is Google Workspace SMTP,
+ * not Resend. SMTP_HOST/PORT/SECURE/USER/PASS configure the platform transport;
+ * it is selected over Resend whenever set, and the two are never both attempted for
+ * the same send.
+ */
+describe("EmailService — platform SMTP transport (B452 owner ruling 2026-09-16)", () => {
+  it("isEmailConfigured() is true when platform SMTP is set and no Resend key exists", async () => {
+    const svc = makeService({
+      smtpHost: "smtp.gmail.com",
+      smtpUser: "noreply@routeflow.info",
+      smtpPass: "app-pw",
+    });
+    expect(await svc.isEmailConfigured()).toBe(true);
+  });
+
+  it("sends via platform SMTP (not Resend) when SMTP_HOST is set, even if RESEND_API_KEY is also set", async () => {
+    const sendMail = jest.fn().mockResolvedValue({ messageId: "plat-1" });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({
+      emailFrom: "RouteFlow <noreply@routeflow.info>",
+      smtpHost: "smtp.gmail.com",
+      smtpPort: "587",
+      smtpSecure: "false",
+      smtpUser: "noreply@routeflow.info",
+      smtpPass: "app-pw",
+      resendKey: "re_should_be_ignored",
+    });
+    // No Resend client should even exist — never both transports active.
+    expect((svc as any).resend).toBeNull();
+
+    const res = await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+
+    expect(res).toMatchObject({ delivered: true, transport: "smtp", id: "plat-1" });
+    expect(nodemailer.createTransport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        host: "smtp.gmail.com",
+        port: 587,
+        secure: false,
+        requireTLS: true,
+      }),
+    );
+    expect(sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({ from: "RouteFlow <noreply@routeflow.info>", to: "a@b.com" }),
+    );
+  });
+
+  it("platform SMTP failure is honest (delivered:false) and never throws, with no Resend to rescue it", async () => {
+    const gmailAuthError = Object.assign(new Error("Invalid login: 535-5.7.8"), {
+      code: "EAUTH",
+      responseCode: 535,
+    });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({
+      sendMail: jest.fn().mockRejectedValue(gmailAuthError),
+    });
+    const svc = makeService({
+      smtpHost: "smtp.gmail.com",
+      smtpUser: "noreply@routeflow.info",
+      smtpPass: "wrong-pw",
+    });
+
+    const res = await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+
+    expect(res.delivered).toBe(false);
+    expect(res.transport).toBe("smtp");
+    expect(res.smtpFallbackReason).toMatch(/App Password|password/i);
+  });
+
+  it("falls back to Resend when SMTP_HOST is not set but RESEND_API_KEY is", async () => {
+    const svc = makeService({ resendKey: "re_test" });
+    expect((svc as any).platformSmtp).toBeNull();
+    expect((svc as any).resend).not.toBeNull();
+  });
+});
+
+/**
+ * Opus review of B452 (2026-09-16) — MAJOR findings, fixed here with failing-first tests.
+ */
+describe("EmailService — B452 review fixes: partial SMTP config never disables Resend", () => {
+  it("ignores a partial platform SMTP config (host set, user/pass missing) and falls through to Resend", async () => {
+    const svc = makeService({ smtpHost: "smtp.gmail.com", resendKey: "re_test" });
+    expect((svc as any).platformSmtp).toBeNull();
+    expect((svc as any).resend).not.toBeNull();
+    expect(await svc.isEmailConfigured()).toBe(true);
+  });
+
+  it("ignores a partial platform SMTP config (user set, pass missing) even with no Resend key", async () => {
+    const svc = makeService({ smtpHost: "smtp.gmail.com", smtpUser: "noreply@routeflow.info" });
+    expect((svc as any).platformSmtp).toBeNull();
+    expect(await svc.isEmailConfigured()).toBe(false);
+  });
+
+  it("only selects platform SMTP when host, user, AND pass are all present", async () => {
+    const svc = makeService({
+      smtpHost: "smtp.gmail.com",
+      smtpUser: "noreply@routeflow.info",
+      smtpPass: "app-pw",
+      resendKey: "re_should_be_ignored",
+    });
+    expect((svc as any).platformSmtp).not.toBeNull();
+    expect((svc as any).resend).toBeNull();
+  });
+});
+
+describe("EmailService — B452 review fixes: EMAIL_FROM derivation + tenant branding on platform SMTP", () => {
+  it("derives the sender from SMTP_USER when EMAIL_FROM is unset but platform SMTP is fully configured", async () => {
+    const svc = makeService({
+      smtpHost: "smtp.gmail.com",
+      smtpUser: "noreply@routeflow.info",
+      smtpPass: "app-pw",
+    });
+    expect((svc as any).platformFrom).toBe("RouteFlow <noreply@routeflow.info>");
+  });
+
+  it("keeps the built-in Resend-style default when platform SMTP is not configured at all", async () => {
+    const svc = makeService({ resendKey: "re_test" });
+    expect((svc as any).platformFrom).toBe("RouteFlow <invoices@send.routeflow.info>");
+  });
+
+  it("platform SMTP sends carry the tenant's brand, not just the bare platform address", async () => {
+    const sendMail = jest.fn().mockResolvedValue({ messageId: "m1" });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({
+      emailFrom: "RouteFlow <noreply@routeflow.info>",
+      smtpHost: "smtp.gmail.com",
+      smtpUser: "noreply@routeflow.info",
+      smtpPass: "app-pw",
+      tenantConfig: { businessName: "Acme Co" },
+    });
+
+    await svc.send({ to: "buyer@x.com", subject: "x", html: "<p>x</p>" });
+
+    expect(sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({ from: "Acme Co via RouteFlow <noreply@routeflow.info>" }),
+    );
+  });
+
+  it("platform SMTP falls back to the bare platform address with no tenant context", async () => {
+    const sendMail = jest.fn().mockResolvedValue({ messageId: "m1" });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({
+      emailFrom: "RouteFlow <noreply@routeflow.info>",
+      smtpHost: "smtp.gmail.com",
+      smtpUser: "noreply@routeflow.info",
+      smtpPass: "app-pw",
+    });
+    (svc as any).prisma.getTenantId = () => null;
+
+    await svc.send({ to: "buyer@x.com", subject: "x", html: "<p>x</p>" });
+
+    expect(sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({ from: "RouteFlow <noreply@routeflow.info>" }),
+    );
+  });
+});
+
+describe("EmailService — B452 review fixes: From-header injection via businessName", () => {
+  // The sanitizer strips the STRUCTURAL `< > "` characters (matching the pre-existing
+  // getResendFrom() convention) — that's what prevents header injection: a mail parser
+  // can only ever find ONE addr-spec (the platform's own, at the end), no matter what
+  // the tenant puts in businessName. It does not scrub email-shaped text from the
+  // display name entirely — that's cosmetic, not a security property.
+
+  // B452 followups (a) — 9b's review: `< > "` alone don't stop CRLF injection. A
+  // businessName carrying a raw `\r\n` could smuggle a second header (e.g. a forged
+  // `Bcc:` or `Subject:` line) into the raw SMTP message once nodemailer folds the
+  // From string into headers.
+  it("strips \\r\\n from businessName — no smuggled header line survives into From (B452 followups a)", async () => {
+    const sendMail = jest.fn().mockResolvedValue({ messageId: "m1" });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({
+      emailFrom: "RouteFlow <noreply@routeflow.info>",
+      smtpHost: "smtp.gmail.com",
+      smtpUser: "noreply@routeflow.info",
+      smtpPass: "app-pw",
+      tenantConfig: { businessName: "Acme\r\nBcc: attacker@evil.com" },
+    });
+
+    await svc.send({ to: "buyer@x.com", subject: "x", html: "<p>x</p>" });
+
+    const from = (sendMail.mock.calls[0][0] as any).from as string;
+    expect(from).not.toMatch(/[\r\n]/);
+    expect(from).toBe("Acme Bcc: attacker@evil.com via RouteFlow <noreply@routeflow.info>");
+  });
+
+  it("sanitizes businessName on the platform-SMTP branded From — exactly one address survives", async () => {
+    const sendMail = jest.fn().mockResolvedValue({ messageId: "m1" });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({
+      emailFrom: "RouteFlow <noreply@routeflow.info>",
+      smtpHost: "smtp.gmail.com",
+      smtpUser: "noreply@routeflow.info",
+      smtpPass: "app-pw",
+      tenantConfig: { businessName: "Acme <evil@attacker.com>" },
+    });
+
+    await svc.send({ to: "buyer@x.com", subject: "x", html: "<p>x</p>" });
+
+    const from = (sendMail.mock.calls[0][0] as any).from as string;
+    expect(from).toBe("Acme evil@attacker.com via RouteFlow <noreply@routeflow.info>");
+    expect(from.match(/</g)).toHaveLength(1);
+    expect(from.match(/>/g)).toHaveLength(1);
+    // The one surviving address is the platform's own — not the injected one.
+    expect(from.match(/<([^>]+)>/)?.[1]).toBe("noreply@routeflow.info");
+  });
+
+  it("sanitizes businessName on the tenant-SMTP fallback From too — exactly one address survives, and it's the tenant's own SMTP user (B452 followups c)", async () => {
+    const sendMail = jest.fn().mockResolvedValue({ messageId: "m1" });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({
+      emailFrom: "RouteFlow <noreply@routeflow.info>",
+      systemConfigRows: [
+        { key: "email.smtpHost", value: "smtp.example.com" },
+        { key: "email.smtpUser", value: "user@example.com" },
+        { key: "email.smtpPassword", value: "pw" },
+        { key: "email.smtpPort", value: "587" },
+      ],
+      tenantConfig: { businessName: "Acme <evil@attacker.com>" },
+    });
+
+    await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+
+    const from = (sendMail.mock.calls[0][0] as any).from as string;
+    expect(from).toBe("Acme evil@attacker.com <user@example.com>");
+    expect(from.match(/</g)).toHaveLength(1);
+    expect(from.match(/>/g)).toHaveLength(1);
+    // The one surviving address is the tenant's OWN authenticated SMTP user —
+    // never the platform's — the mail is physically sent through it.
+    expect(from.match(/<([^>]+)>/)?.[1]).toBe("user@example.com");
+  });
+});
+
+describe("EmailService — B452 review fixes: replyTo falls back to the tenant admin", () => {
+  it("uses the tenant admin's email when no customerEmail/smtpFromEmail is configured", async () => {
+    const sendMail = jest.fn().mockResolvedValue({ messageId: "m1" });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({
+      systemConfigRows: [
+        { key: "email.smtpHost", value: "smtp.example.com" },
+        { key: "email.smtpUser", value: "user@example.com" },
+        { key: "email.smtpPassword", value: "pw" },
+        { key: "email.smtpPort", value: "587" },
+      ],
+      tenantConfig: { businessName: "Acme Co" },
+      adminUser: { email: "admin@acme.com" },
+    });
+
+    await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+
+    expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({ replyTo: "admin@acme.com" }));
+  });
+
+  it("stays undefined when no admin user exists either", async () => {
+    const sendMail = jest.fn().mockResolvedValue({ messageId: "m1" });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({
+      systemConfigRows: [
+        { key: "email.smtpHost", value: "smtp.example.com" },
+        { key: "email.smtpUser", value: "user@example.com" },
+        { key: "email.smtpPassword", value: "pw" },
+        { key: "email.smtpPort", value: "587" },
+      ],
+      tenantConfig: { businessName: "Acme Co" },
+    });
+
+    await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+
+    expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({ replyTo: undefined }));
+  });
+
+  // B452 followups (b) — 9b's review: the tenant-admin fallback query had no
+  // status filter (could pick a deactivated admin's stale email) and no
+  // orderBy (arbitrary pick among multiple ACTIVE admins).
+  it("filters the tenant-admin fallback to status: ACTIVE, ordered by createdAt asc (B452 followups b)", async () => {
+    const sendMail = jest.fn().mockResolvedValue({ messageId: "m1" });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({
+      systemConfigRows: [
+        { key: "email.smtpHost", value: "smtp.example.com" },
+        { key: "email.smtpUser", value: "user@example.com" },
+        { key: "email.smtpPassword", value: "pw" },
+        { key: "email.smtpPort", value: "587" },
+      ],
+      tenantConfig: { businessName: "Acme Co" },
+      adminUser: { email: "admin@acme.com" },
+    });
+
+    await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+
+    expect((svc as any).prisma.user.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          role: "TENANT_ADMIN",
+          deletedAt: null,
+          status: "ACTIVE",
+        }),
+        orderBy: { createdAt: "asc" },
+      }),
+    );
+  });
+});
+
+describe("EmailService — B452 review fixes: SMTP_SECURE/SMTP_PORT parsing", () => {
+  it("accepts '1' and 'yes' as truthy for SMTP_SECURE, not only the literal 'true'", async () => {
+    const svc1 = makeService({ smtpHost: "h", smtpUser: "u", smtpPass: "p", smtpSecure: "1" });
+    const svc2 = makeService({ smtpHost: "h", smtpUser: "u", smtpPass: "p", smtpSecure: "yes" });
+    expect((svc1 as any).platformSmtp.secure).toBe(true);
+    expect((svc2 as any).platformSmtp.secure).toBe(true);
+  });
+
+  it("falls back to port 587 for a non-positive-integer SMTP_PORT", async () => {
+    const svc = makeService({
+      smtpHost: "h",
+      smtpUser: "u",
+      smtpPass: "p",
+      smtpPort: "not-a-number",
+    });
+    expect((svc as any).platformSmtp.port).toBe(587);
+  });
+
+  it("falls back to port 587 for a negative or zero SMTP_PORT", async () => {
+    const svc = makeService({ smtpHost: "h", smtpUser: "u", smtpPass: "p", smtpPort: "-1" });
+    expect((svc as any).platformSmtp.port).toBe(587);
+  });
+});
+
+describe("EmailService — B452 review fixes: addSendingDomain / getSendingDomainStatus with platform SMTP", () => {
+  it("getSendingDomainStatus reports platformConfigured true when platform SMTP is active (no Resend)", async () => {
+    const svc = makeService({ smtpHost: "h", smtpUser: "u", smtpPass: "p" });
+    expect((await svc.getSendingDomainStatus()).platformConfigured).toBe(true);
+  });
+
+  it("addSendingDomain says own-domain sending is Resend-only when platform SMTP is active", async () => {
+    const svc = makeService({ smtpHost: "h", smtpUser: "u", smtpPass: "p" });
+    await expect(svc.addSendingDomain("mail.acme.com")).rejects.toThrow(/Resend-only/i);
+  });
+
+  it("addSendingDomain keeps the generic message when neither transport is configured", async () => {
+    const svc = makeService();
+    await expect(svc.addSendingDomain("mail.acme.com")).rejects.toThrow(/isn't set up yet/i);
   });
 });
 
@@ -673,5 +1108,91 @@ describe("EmailService.sendInvoice — BOGO/promo item display (T-B103, R9, REG-
     expect(row).toContain("1 free");
     expect(row).toContain("$10.00");
     expect(row).toContain("$50.00");
+  });
+});
+
+/**
+ * N3 fix round (Opus review of 1dba2bca, finding 4): `sendPlatform()` must NEVER resolve
+ * tenant SMTP or tenant branding, even though `makeService()`'s mocked `prisma.getTenantId()`
+ * always returns "t1" here — exactly the in-request condition (a tenant admin's own
+ * authenticated action, e.g. upgrade()/downgrade()) where `send()` WOULD pick up the
+ * tenant's own mailbox. `sendPlatform` must be immune to that.
+ */
+describe("EmailService.sendPlatform — platform-only send, never tenant SMTP/branding", () => {
+  const smtpRows = () => [
+    { key: "email.smtpHost", value: "smtp.office365.com" },
+    { key: "email.smtpUser", value: "user@example.com" },
+    { key: "email.smtpPassword", value: "pw" },
+    { key: "email.smtpPort", value: "587" },
+    { key: "email.smtpSecure", value: "false" },
+  ];
+
+  it("with the tenant's own SMTP configured AND Resend configured, sendPlatform uses Resend with the PLATFORM from-address — nodemailer is never even invoked", async () => {
+    const svc = makeService({
+      resendKey: "re_test",
+      emailFrom: "RouteFlow <invoices@send.routeflow.info>",
+      systemConfigRows: smtpRows(), // the tenant's own SMTP IS configured
+      tenantConfig: { businessName: "Acme Retail" }, // and tenant branding IS available
+    });
+    (svc as any).resend.emails.send = jest
+      .fn()
+      .mockResolvedValue({ data: { id: "eml_1" }, error: null });
+    // `nodemailer` is one jest.mock() shared across this whole file, so its call count
+    // accumulates across tests — snapshot-and-diff instead of `.not.toHaveBeenCalled()`.
+    const nodemailerCallsBefore = (nodemailer.createTransport as jest.Mock).mock.calls.length;
+
+    const res = await svc.sendPlatform({ to: "admin@acme.test", subject: "x", html: "<p>x</p>" });
+
+    expect(res).toMatchObject({ delivered: true, transport: "resend", id: "eml_1" });
+    expect((nodemailer.createTransport as jest.Mock).mock.calls.length).toBe(nodemailerCallsBefore); // tenant SMTP never touched
+    expect((svc as any).resend.emails.send).toHaveBeenCalledWith(
+      expect.objectContaining({ from: "RouteFlow <invoices@send.routeflow.info>" }), // platform from, not Acme Retail's
+    );
+  });
+
+  it("Resend rejecting the message returns delivered:false, transport:'resend'", async () => {
+    const svc = makeService({
+      resendKey: "re_test",
+      emailFrom: "RouteFlow <invoices@send.routeflow.info>",
+    });
+    (svc as any).resend.emails.send = jest
+      .fn()
+      .mockResolvedValue({ data: null, error: { message: "domain not verified" } });
+
+    const res = await svc.sendPlatform({ to: "admin@acme.test", subject: "x", html: "<p>x</p>" });
+
+    expect(res).toMatchObject({
+      delivered: false,
+      transport: "resend",
+      error: "domain not verified",
+    });
+  });
+
+  it("no Resend configured ⇒ delivered:false, transport:'none' — never falls back to tenant SMTP even if one is configured", async () => {
+    const svc = makeService({ systemConfigRows: smtpRows() }); // no resendKey, but tenant SMTP IS configured
+    const nodemailerCallsBefore = (nodemailer.createTransport as jest.Mock).mock.calls.length;
+
+    const res = await svc.sendPlatform({ to: "admin@acme.test", subject: "x", html: "<p>x</p>" });
+
+    expect(res).toMatchObject({ delivered: false, transport: "none" });
+    expect((nodemailer.createTransport as jest.Mock).mock.calls.length).toBe(nodemailerCallsBefore);
+  });
+
+  it("threads the optional text param through to Resend", async () => {
+    const svc = makeService({
+      resendKey: "re_test",
+      emailFrom: "RouteFlow <invoices@send.routeflow.info>",
+    });
+    const sendSpy = jest.fn().mockResolvedValue({ data: { id: "eml_1" }, error: null });
+    (svc as any).resend.emails.send = sendSpy;
+
+    await svc.sendPlatform({
+      to: "admin@acme.test",
+      subject: "x",
+      html: "<p>x</p>",
+      text: "plain text body",
+    });
+
+    expect(sendSpy).toHaveBeenCalledWith(expect.objectContaining({ text: "plain text body" }));
   });
 });

@@ -14,6 +14,13 @@ minutes it takes to run. This is the ONLY reason the flip exists — the push-tr
 that used to run on every merge was retired 2026-08-30 (`ci.yml` no longer has a `push:` trigger);
 this routine covers PR CI only.
 
+> **Observed 2026-09-16 — private PR CI now executes.** `pull_request` `Verify` runs completed
+> green in 10–12 minutes while the repo was **private** (#778 run 35082061621, #781 run
+> 35089782573, #789 run 35118809863), so the 0-step billing failure above no longer reproduces.
+> Private runs still consume metered minutes. In practice this shortened windows to 3–8 minutes:
+> push and let CI go green while private, then open the window only for merge + deploy (step 3's
+> `SUCCESS` and served-commit check still apply — the deploy snapshot is why the window remains).
+
 ## Actions minutes
 
 Runs that happen **inside** a public window (this routine's step 1–4) are free — public-repo
@@ -65,13 +72,32 @@ after every attempt failed, and clears it itself on the next confirmed flip.
 3. **Wait until BOTH deployments (`@routeflow/api` and `@routeflow/web`) reach `SUCCESS`** — never
    flip on `BUILDING` (see Failure modes: that is not a safe flip point, only timing luck made it
    look like one). `SUCCESS` typically lands ≈2.5 minutes after the merge:
+
    ```bash
    until railway deployment list --service @routeflow/api | sed -n '2p' | grep -qE 'SUCCESS|FAILED'; do sleep 10; done
    until railway deployment list --service @routeflow/web | sed -n '2p' | grep -qE 'SUCCESS|FAILED'; do sleep 10; done
    ```
+
    Do not include `BUILDING`/`DEPLOYING` in that pattern — a mid-build state is precisely the case
    where you must not conclude the snapshot succeeded. A `FAILED` result means the deploy did not
    go out; see the recovery steps below before flipping.
+
+   **Then prove each service is serving the merge commit** — before flipping, check what both
+   services actually serve:
+
+   ```bash
+   curl -s https://routeflowapi-production.up.railway.app/api/v1/health   # .commit
+   curl -s -H 'cache-control: no-cache' https://www.routeflow.info/api/health   # .sha
+   ```
+
+   A service that the merge did not touch (outside its `watchPatterns`) keeps serving its previous
+   commit — that is expected, not a failure. **Never use the GitHub deployments API's
+   `statuses[0].state` as proof:** both services post to the one `routeflow / production`
+   environment, so an untouched service re-asserting its own deployment flips a fresh, successful
+   deploy's record to `inactive` within seconds, and a two-service deploy can show a single
+   `success` (#801 and #802, 2026-09-17). Read the whole status history at most — the served commits
+   are the proof.
+
 4. **Make the repo private again — as a `finally`.** Run this even if CI failed, the merge failed,
    or the deploy failed:
    `gh repo edit najathakram/routeflow --visibility private --accept-visibility-change-consequences`
