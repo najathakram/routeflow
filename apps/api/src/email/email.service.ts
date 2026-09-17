@@ -212,17 +212,6 @@ interface PlatformSmtpConfig {
   pass: string;
 }
 
-/** Escapes a value for safe interpolation into an HTML email body (N2 ground rule —
- *  every interpolated value must be escaped; a username/email is user-supplied). */
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
 /** Shared card/header/footer shell for the N2 account-notification templates — same
  *  visual grammar as sendMergeVerificationEmail/sendMergeCompleteEmail (page background,
  *  rounded white card, colored header bar, light-gray footer), factored out once here
