@@ -51,10 +51,17 @@ const EXPECTED_FILES = [
 // folder, not re-derived by arithmetic.)
 // (2026-09-17, public demo booking API PR-2 (#808): +1 model, +1 enum — re-verified the
 // same way.)
-// (2026-09-17, email-connect-google merged onto master post-#811: counts below re-verified
-// against the actual merged schema folder via the --check script, not summed by hand.)
-const EXPECTED_MODEL_COUNT = 132;
-const EXPECTED_ENUM_COUNT = 90;
+// (2026-09-17, feature grants v2 brief A: +2 models — FeatureResolverDiff,
+// TenantFeatureConfig; +2 enums — FeatureOverrideKind, FeatureSource. Stacked on #795,
+// own migration, later timestamp — re-verified via split-prisma-schema.mjs --check.)
+// (2026-09-17, email-connect-google merged onto master post-#811: +1 model —
+// MailboxConnection; +2 enums — MailboxProvider, MailboxConnectionStatus.)
+// (2026-09-17, migration-batch-2 merge tree: feature grants v2 brief A + email-connect-google
+// merged together — counts summed and re-verified directly via
+// `node apps/api/scripts/split-prisma-schema.mjs --check` against the merged schema folder,
+// not re-derived by arithmetic.)
+const EXPECTED_MODEL_COUNT = 134;
+const EXPECTED_ENUM_COUNT = 92;
 
 function listSchemaFiles(): string[] {
   if (!fs.existsSync(SCHEMA_DIR)) return [];

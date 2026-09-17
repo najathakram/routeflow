@@ -101,6 +101,8 @@ model Tenant {
   subscription  TenantSubscription?
   addons        TenantAddon[]
   featureOverrides TenantFeatureOverride[]
+  featureResolverDiffs FeatureResolverDiff[]
+  featureConfigs TenantFeatureConfig[]
   planVersion   PlanVersion?        @relation(fields: [planVersionId], references: [id])
   meterUsages   MeterUsage[]
   billingEvents BillingEvent[]

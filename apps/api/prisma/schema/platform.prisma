@@ -122,6 +122,18 @@ enum FeatureOverrideEffect {
   DENY
 }
 
+/// Feature grants v2 (design 2026-09-17 §2 PR-3): why an override exists, for MRR-truth
+/// (only ADDON_SKU charges; every override kind here is a comp, never billed) and for the
+/// console's "why" popover. DEFAULT 'COMP' for #795's existing rows and any caller that
+/// doesn't set one explicitly.
+enum FeatureOverrideKind {
+  PILOT
+  SUPPORT
+  COMP
+  TRIAL
+  GRANDFATHER
+}
+
 /// Per-tenant, per-key entitlement override. When a non-revoked row exists for
 /// (tenantId, featureKey) it decides the gate outright — GRANT allows, DENY denies —
 /// regardless of plan/addon state or dark/enforced gate mode (FeatureOverrideService).
@@ -133,6 +145,7 @@ model TenantFeatureOverride {
   tenantId    String
   featureKey  String
   effect      FeatureOverrideEffect
+  kind        FeatureOverrideKind   @default(COMP)
   reason      String
   expiresAt   DateTime?
   createdById String?
@@ -143,6 +156,63 @@ model TenantFeatureOverride {
 
   @@index([tenantId, featureKey])
   @@index([featureKey])
+}
+
+/// Feature grants v2 §2 "Explain trace": OVERRIDE_DENY/OVERRIDE_GRANT/ADDON_SKU/PRESET take
+/// priority in that order over NONE; UNKNOWN is the resolver's own fail-open verdict on a DB
+/// error, never a real source. Mirrors packages/types/api/features.ts's FEATURE_SOURCE_VALUES.
+enum FeatureSource {
+  OVERRIDE_DENY
+  OVERRIDE_GRANT
+  ADDON_SKU
+  PRESET
+  NONE
+  UNKNOWN
+}
+
+/// Feature grants v2 §2 "Effective"/PR-0a: shadow-mode disagreement between the old
+/// enforcement path and FeatureResolverService, one row per (tenantId, featureKey, before,
+/// after) pair — a recurrence upserts count/lastSeenAt rather than inserting again. Explained
+/// rows unblock `PUT entitlements.mode=live`; an unexplained row keeps it refused.
+model FeatureResolverDiff {
+  id          String        @id @default(uuid())
+  tenantId    String
+  featureKey  String
+  before      Boolean
+  after       Boolean
+  source      FeatureSource
+  firstSeenAt DateTime      @default(now())
+  lastSeenAt  DateTime      @default(now())
+  count       Int           @default(1)
+  explainedAt DateTime?
+  explanation String?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, featureKey, before, after])
+  @@index([tenantId])
+  @@index([explainedAt])
+}
+
+/// Feature grants v2 §2 "Modes"/PR-4: per-tenant override of a `config`-bearing feature's mode
+/// (e.g. routes_dispatch: scheduled|adhoc|mixed). `mode` is a plain string, not a Prisma enum —
+/// different features have different mode vocabularies, validated against the registry at the
+/// application level, not DB-constrained. Absence means `mode.source: REGISTRY_DEFAULT`.
+model TenantFeatureConfig {
+  id          String   @id @default(uuid())
+  tenantId    String
+  featureKey  String
+  mode        String
+  settings    Json?
+  reason      String
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, featureKey])
+  @@index([tenantId])
 }
 
 // ─── Billing plan catalog (GLOBAL reference data — not tenant-scoped) ─────────

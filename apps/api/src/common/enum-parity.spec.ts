@@ -103,6 +103,11 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   // Public demo booking (2026-09-16): another brand-new Prisma enum, mirrored so the marketing
   // site's demo-booking client derives its status type instead of hand-typing a union.
   ["DEMO_BOOKING_STATUS_VALUES", "DemoBookingStatus"],
+  // Feature grants v2 PR-0a/PR-3 (2026-09-17): two brand-new Prisma enums, mirrored immediately —
+  // FeatureOverrideKind (enums.ts, read by console "why" trace + MRR-truth) and FeatureSource
+  // (features.ts, the shared contract — the explain-trace/diff-log `source` field).
+  ["FEATURE_OVERRIDE_KIND_VALUES", "FeatureOverrideKind"],
+  ["FEATURE_SOURCE_VALUES", "FeatureSource"],
 ];
 
 describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
@@ -156,11 +161,18 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // `FeatureOverrideService` to decide GRANT/DENY.
 // Triage for DemoBookingStatus (public demo booking, 2026-09-16): new Prisma enum, mirrored
 // immediately as `DEMO_BOOKING_STATUS_VALUES` + an `ENUM_TABLE` row above.
-// (2026-09-17, email-connect-google merge onto master post-#811): three independent lanes each
-// bumped this constant off their own base; merged, the true count is verified directly via
-// `Object.keys(PrismaEnums.$Enums).length` against the MERGED Prisma client, never summed by
-// hand — see the value actually asserted below.
-const PINNED_PRISMA_ENUM_COUNT = 90;
+// (2026-09-17, combined migration-batch merge tree): Feature grants PR-1 and demo booking each
+// independently anticipated the other landing first and bumped this constant by only +1; merged
+// together the true count is +2 over the pre-both baseline (86 → 88), verified directly via
+// `Object.keys(PrismaEnums.$Enums).length` against the merged Prisma client, not summed by hand.
+// Triage for FeatureOverrideKind + FeatureSource (feature grants v2, brief A, 2026-09-17): two
+// brand-new Prisma enums in the SAME migration — verified via
+// `node apps/api/scripts/split-prisma-schema.mjs --check` (88 → 90), not summed by hand.
+// (2026-09-17, migration-batch-2 merge tree): feature grants v2 brief A and email-connect-google
+// (MailboxProvider, MailboxConnectionStatus) merged together — the true count is verified
+// directly via `node apps/api/scripts/split-prisma-schema.mjs --check` (92) against the merged
+// schema folder, never summed by hand.
+const PINNED_PRISMA_ENUM_COUNT = 92;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {

@@ -1,4 +1,5 @@
-import { isAlwaysEnforcedPlan } from "./plan-catalog.constants";
+import { isAlwaysEnforcedPlan, FLAG_KEYS } from "./plan-catalog.constants";
+import { gateVia } from "./feature-registry";
 
 /**
  * Flags whose server-side enforcement the 2026-08-23 rollout (and the WP2 Lite
@@ -60,4 +61,31 @@ export function allowsFlag(
 ): boolean {
   if (isDarkFlag(flagKey, env) && !isAlwaysEnforcedPlan(ent.planKey)) return true;
   return ent.flags.includes(flagKey);
+}
+
+/**
+ * Feature grants v2 (design 2026-09-17 §2), Opus review of 9923b87c item 2: the EXACT
+ * algorithm `SubscriptionService.getSubscription()` uses to build its `flags` array,
+ * extracted so `/tenants/me/features`'s `served` field can call the SAME function —
+ * provably identical by construction, not a re-derivation that could silently drift from
+ * it. Order matters: dark-flag courtesy first (FLAG_KEYS ∪ entFlags), THEN the
+ * RequirePlanFlag-gated override merge (GRANT adds, DENY removes) — an override on an
+ * addon-keyed or unrouted key never belongs in this array (see gateVia's own doc comment).
+ */
+export function computeServedFlags(
+  planKey: string,
+  entFlags: readonly string[],
+  overrides: ReadonlyMap<string, "GRANT" | "DENY">,
+  env = process.env,
+): string[] {
+  const flagSet = new Set<string>([
+    ...FLAG_KEYS.filter((k) => allowsFlag({ planKey, flags: entFlags }, k, env)),
+    ...entFlags,
+  ]);
+  for (const [key, effect] of overrides) {
+    if (gateVia(key) !== "RequirePlanFlag") continue;
+    if (effect === "GRANT") flagSet.add(key);
+    else flagSet.delete(key);
+  }
+  return Array.from(flagSet);
 }

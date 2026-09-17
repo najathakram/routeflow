@@ -31,6 +31,7 @@ describe("TenantsController.getMyAddons — override merge", () => {
       {} as any, // emailService — unused by getMyAddons
       addonService,
       featureOverrides,
+      {} as any, // authority (feature grants v2 brief A) — unused by getMyAddons
     );
     return { controller, addonService, featureOverrides };
   }
