@@ -90,6 +90,8 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["MOVEMENT_TYPE_VALUES", "MovementType"],
   ["CRM_CONNECTION_STATUS_VALUES", "CrmConnectionStatus"],
   ["CRM_TRIGGER_MODE_VALUES", "CrmTriggerMode"],
+  ["MAILBOX_PROVIDER_VALUES", "MailboxProvider"],
+  ["MAILBOX_CONNECTION_STATUS_VALUES", "MailboxConnectionStatus"],
   ["CRM_HANDOFF_STATUS_VALUES", "CrmHandoffStatus"],
   ["TENANT_CLASS_VALUES", "TenantClass"],
   // Post-dated check payments PR-1 (2026-09-15): CheckReturnReason is a brand-new Prisma enum
@@ -143,7 +145,10 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // this PR. `RETURN_HOLD_REASON_VALUES`/`RETURN_PRICE_SOURCE_VALUES` (same file) are NOT
 // generated Prisma enums (plain-string columns, see Return.holdReason's schema comment), so
 // they add no row here and do not move this count.
-const PINNED_PRISMA_ENUM_COUNT = 87;
+// Triage for MailboxProvider/MailboxConnectionStatus (email-connect-google, PR-2, 2026-09-17):
+// two brand-new Prisma enums, mirrored immediately as `MAILBOX_PROVIDER_VALUES`/
+// `MAILBOX_CONNECTION_STATUS_VALUES` + their `ENUM_TABLE` rows in this same PR.
+const PINNED_PRISMA_ENUM_COUNT = 89;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {

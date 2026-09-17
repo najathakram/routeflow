@@ -41,8 +41,10 @@ const EXPECTED_FILES = [
 // (2026-09-16, public demo booking PR-1: +1 model — DemoBooking; +1 enum — DemoBookingStatus.)
 // (2026-09-16, N3 billing lifecycle emails: +1 model — BillingNotificationLog; enum count
 // untouched by that lane.)
-const EXPECTED_MODEL_COUNT = 130;
-const EXPECTED_ENUM_COUNT = 87;
+// (2026-09-17, email-connect-google PR-2/PR-3: +1 model — MailboxConnection; +2 enums —
+// MailboxProvider, MailboxConnectionStatus.)
+const EXPECTED_MODEL_COUNT = 131;
+const EXPECTED_ENUM_COUNT = 89;
 
 function listSchemaFiles(): string[] {
   if (!fs.existsSync(SCHEMA_DIR)) return [];

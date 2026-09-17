@@ -203,6 +203,7 @@ model Tenant {
   commissionStatementLines CommissionStatementLine[]
   commissionPayouts        CommissionPayout[]
   crmConnection            CrmConnection?
+  mailboxConnection        MailboxConnection?
 
   @@index([slug])
   @@index([status])
