@@ -931,7 +931,15 @@ export class EmailService {
    * whose `result.error` was never inspected), which is why the UI said "sent" when
    * nothing went out.
    */
-  async send(params: { to: string; subject: string; html: string; replyTo?: string }): Promise<{
+  async send(params: {
+    to: string;
+    subject: string;
+    html: string;
+    /** N3: plain-text alternative. Optional so every EXISTING caller is unaffected —
+     *  a transport that doesn't get one just sends HTML-only, same as before this field. */
+    text?: string;
+    replyTo?: string;
+  }): Promise<{
     delivered: boolean;
     transport: "smtp" | "resend" | "none";
     id?: string;
@@ -979,6 +987,7 @@ export class EmailService {
           to: params.to,
           subject: params.subject,
           html: params.html,
+          text: params.text,
           replyTo,
         });
         this.logger.log(
@@ -1061,6 +1070,7 @@ export class EmailService {
           to: params.to,
           subject: params.subject,
           html: params.html,
+          text: params.text,
           replyTo,
         });
         if ((result as any)?.error) {
@@ -1101,6 +1111,61 @@ export class EmailService {
       error: smtpError,
       smtpFallbackReason,
     };
+  }
+
+  /**
+   * N3 fix round (Opus review of 1dba2bca, finding 4): a PLATFORM-only send that never
+   * resolves tenant SMTP or tenant branding — `send()` above reads `prisma.getTenantId()`
+   * (set on every in-request call, including a tenant admin's OWN authenticated action like
+   * upgrade()/downgrade()), so a billing-lifecycle notification sent through `send()` would
+   * leave from the ACTING TENANT's own mailbox with their own From name. `sendPlatform()`
+   * always uses `this.platformFrom` and skips tenant SMTP entirely, regardless of request
+   * context. Still Resend-only as reviewed (post-merge note, 2026-09-16: B452/#789 landed
+   * `this.platformSmtp` and wired it into `send()` above — `sendPlatform()` does NOT yet use
+   * it, so a deploy with platformSmtp configured but no Resend key would leave every N3
+   * notification undelivered, same as before this merge. Not fixed here — this is a merge
+   * (test/push), not a second review round; flagged to the lead as a follow-up, not silently
+   * expanded).
+   */
+  async sendPlatform(params: {
+    to: string;
+    subject: string;
+    html: string;
+    text?: string;
+    replyTo?: string;
+  }): Promise<{ delivered: boolean; transport: "resend" | "none"; id?: string; error?: string }> {
+    if (this.resend) {
+      try {
+        const result = await this.resend.emails.send({
+          from: this.platformFrom,
+          to: params.to,
+          subject: params.subject,
+          html: params.html,
+          text: params.text,
+          replyTo: params.replyTo,
+        });
+        if ((result as any)?.error) {
+          const msg = (result as any).error?.message ?? "Resend rejected the message";
+          this.logger.error(`Resend rejected platform email to ${params.to}: ${msg}`);
+          return { delivered: false, transport: "resend", error: msg };
+        }
+        this.logger.log(
+          `Platform email sent via Resend to ${params.to} — id: ${(result.data as any)?.id}`,
+        );
+        return { delivered: true, transport: "resend", id: (result.data as any)?.id };
+      } catch (err: any) {
+        this.logger.error(`Failed to send platform email to ${params.to}: ${err?.message}`);
+        return {
+          delivered: false,
+          transport: "resend",
+          error: err?.message ?? "Resend send failed",
+        };
+      }
+    }
+    this.logger.warn(
+      `[EMAIL NOT SENT] To: ${params.to} | Subject: ${params.subject} — no platform email transport is configured.`,
+    );
+    return { delivered: false, transport: "none" };
   }
 
   // ─── Email template ────────────────────────────────────────────────────────

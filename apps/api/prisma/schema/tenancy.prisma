@@ -103,6 +103,7 @@ model Tenant {
   planVersion   PlanVersion?        @relation(fields: [planVersionId], references: [id])
   meterUsages   MeterUsage[]
   billingEvents BillingEvent[]
+  billingNotificationLogs BillingNotificationLog[]
   rfInvoices    RfInvoice[]
 
   userPreferences          UserPreference[]

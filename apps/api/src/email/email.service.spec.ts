@@ -1110,3 +1110,89 @@ describe("EmailService.sendInvoice — BOGO/promo item display (T-B103, R9, REG-
     expect(row).toContain("$50.00");
   });
 });
+
+/**
+ * N3 fix round (Opus review of 1dba2bca, finding 4): `sendPlatform()` must NEVER resolve
+ * tenant SMTP or tenant branding, even though `makeService()`'s mocked `prisma.getTenantId()`
+ * always returns "t1" here — exactly the in-request condition (a tenant admin's own
+ * authenticated action, e.g. upgrade()/downgrade()) where `send()` WOULD pick up the
+ * tenant's own mailbox. `sendPlatform` must be immune to that.
+ */
+describe("EmailService.sendPlatform — platform-only send, never tenant SMTP/branding", () => {
+  const smtpRows = () => [
+    { key: "email.smtpHost", value: "smtp.office365.com" },
+    { key: "email.smtpUser", value: "user@example.com" },
+    { key: "email.smtpPassword", value: "pw" },
+    { key: "email.smtpPort", value: "587" },
+    { key: "email.smtpSecure", value: "false" },
+  ];
+
+  it("with the tenant's own SMTP configured AND Resend configured, sendPlatform uses Resend with the PLATFORM from-address — nodemailer is never even invoked", async () => {
+    const svc = makeService({
+      resendKey: "re_test",
+      emailFrom: "RouteFlow <invoices@send.routeflow.info>",
+      systemConfigRows: smtpRows(), // the tenant's own SMTP IS configured
+      tenantConfig: { businessName: "Acme Retail" }, // and tenant branding IS available
+    });
+    (svc as any).resend.emails.send = jest
+      .fn()
+      .mockResolvedValue({ data: { id: "eml_1" }, error: null });
+    // `nodemailer` is one jest.mock() shared across this whole file, so its call count
+    // accumulates across tests — snapshot-and-diff instead of `.not.toHaveBeenCalled()`.
+    const nodemailerCallsBefore = (nodemailer.createTransport as jest.Mock).mock.calls.length;
+
+    const res = await svc.sendPlatform({ to: "admin@acme.test", subject: "x", html: "<p>x</p>" });
+
+    expect(res).toMatchObject({ delivered: true, transport: "resend", id: "eml_1" });
+    expect((nodemailer.createTransport as jest.Mock).mock.calls.length).toBe(nodemailerCallsBefore); // tenant SMTP never touched
+    expect((svc as any).resend.emails.send).toHaveBeenCalledWith(
+      expect.objectContaining({ from: "RouteFlow <invoices@send.routeflow.info>" }), // platform from, not Acme Retail's
+    );
+  });
+
+  it("Resend rejecting the message returns delivered:false, transport:'resend'", async () => {
+    const svc = makeService({
+      resendKey: "re_test",
+      emailFrom: "RouteFlow <invoices@send.routeflow.info>",
+    });
+    (svc as any).resend.emails.send = jest
+      .fn()
+      .mockResolvedValue({ data: null, error: { message: "domain not verified" } });
+
+    const res = await svc.sendPlatform({ to: "admin@acme.test", subject: "x", html: "<p>x</p>" });
+
+    expect(res).toMatchObject({
+      delivered: false,
+      transport: "resend",
+      error: "domain not verified",
+    });
+  });
+
+  it("no Resend configured ⇒ delivered:false, transport:'none' — never falls back to tenant SMTP even if one is configured", async () => {
+    const svc = makeService({ systemConfigRows: smtpRows() }); // no resendKey, but tenant SMTP IS configured
+    const nodemailerCallsBefore = (nodemailer.createTransport as jest.Mock).mock.calls.length;
+
+    const res = await svc.sendPlatform({ to: "admin@acme.test", subject: "x", html: "<p>x</p>" });
+
+    expect(res).toMatchObject({ delivered: false, transport: "none" });
+    expect((nodemailer.createTransport as jest.Mock).mock.calls.length).toBe(nodemailerCallsBefore);
+  });
+
+  it("threads the optional text param through to Resend", async () => {
+    const svc = makeService({
+      resendKey: "re_test",
+      emailFrom: "RouteFlow <invoices@send.routeflow.info>",
+    });
+    const sendSpy = jest.fn().mockResolvedValue({ data: { id: "eml_1" }, error: null });
+    (svc as any).resend.emails.send = sendSpy;
+
+    await svc.sendPlatform({
+      to: "admin@acme.test",
+      subject: "x",
+      html: "<p>x</p>",
+      text: "plain text body",
+    });
+
+    expect(sendSpy).toHaveBeenCalledWith(expect.objectContaining({ text: "plain text body" }));
+  });
+});
