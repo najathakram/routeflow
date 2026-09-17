@@ -217,6 +217,8 @@ const MODEL_DOMAIN = {
   BillingNotificationLog: "platform",
   TenantAddon: "platform",
   TenantFeatureOverride: "platform",
+  FeatureResolverDiff: "platform",
+  TenantFeatureConfig: "platform",
   PlanVersion: "platform",
   PlanDefinition: "platform",
   AddonSku: "platform",

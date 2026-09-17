@@ -344,6 +344,17 @@ export type TenantClass = (typeof TENANT_CLASS_VALUES)[number];
 export const FEATURE_OVERRIDE_EFFECT_VALUES = ["GRANT", "DENY"] as const;
 export type FeatureOverrideEffect = (typeof FEATURE_OVERRIDE_EFFECT_VALUES)[number];
 
+// Feature grants v2 PR-3 (2026-09-17): why an override exists, for MRR-truth and the console's
+// "why" popover — see FeatureOverrideKind in apps/api/prisma/schema/platform.prisma.
+export const FEATURE_OVERRIDE_KIND_VALUES = [
+  "PILOT",
+  "SUPPORT",
+  "COMP",
+  "TRIAL",
+  "GRANDFATHER",
+] as const;
+export type FeatureOverrideKind = (typeof FEATURE_OVERRIDE_KIND_VALUES)[number];
+
 // Public demo booking (2026-09-16): pinned set-equal to the generated Prisma
 // `DemoBookingStatus` enum (see `enum-parity.spec.ts`'s `ENUM_TABLE` row).
 // Consumed by the marketing site's demo-booking client instead of a
