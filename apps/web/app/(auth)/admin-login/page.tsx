@@ -105,28 +105,44 @@ export default function AdminLoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-900 p-4">
+    <div
+      className="flex min-h-screen items-center justify-center p-4"
+      style={{ background: "linear-gradient(155deg, #10264d, #16375f 60%, #0c1f3d)" }}
+    >
       <div className="w-full max-w-sm">
         {/* Header */}
         <div className="mb-8 flex flex-col items-center gap-3">
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-600 shadow-lg">
+          <div
+            className="flex h-14 w-14 items-center justify-center rounded-2xl shadow-lg backdrop-blur"
+            style={{
+              background: "linear-gradient(140deg, #234a74f5, #10264ded)",
+              boxShadow: "inset 0 1px 0 #ffffff33, 0 7px 15px #10264d18",
+            }}
+          >
             <Shield className="h-7 w-7 text-white" />
           </div>
           <h1 className="text-2xl font-bold text-white">RouteFlow Platform</h1>
-          <p className="text-sm text-slate-400">Platform Administrator Login</p>
+          <p className="text-sm text-[#c2d0e5]">Platform Administrator Login</p>
         </div>
 
         {/* Card */}
-        <div className="rounded-xl bg-slate-800 p-6 shadow-xl ring-1 ring-white/10">
+        <div
+          className="rounded-xl p-6 shadow-xl backdrop-blur-xl"
+          style={{
+            background: "linear-gradient(130deg, #ffffffc2, #ffffff61 48%, #f5faff85)",
+            border: "1px solid #ffffffdb",
+            boxShadow: "inset 0 1px 1px #fff, inset 0 -1px 1px #54718e17, 0 14px 45px #284a7210",
+          }}
+        >
           <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
             {error && (
-              <div className="rounded-lg bg-red-900/50 px-3 py-2 text-sm text-red-300 ring-1 ring-red-700">
+              <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200">
                 {error}
               </div>
             )}
 
             <div className="flex flex-col gap-1">
-              <label htmlFor="username" className="text-sm font-medium text-slate-300">
+              <label htmlFor="username" className="text-sm font-medium text-[#355c7e]">
                 Username
               </label>
               <input
@@ -136,12 +152,12 @@ export default function AdminLoginPage() {
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="Platform admin username"
                 autoComplete="username"
-                className="h-10 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+                className="h-10 w-full rounded-lg border border-[#ffffffed] bg-[#ffffff73] px-3 text-sm text-[#152d51] placeholder:text-[#8fa3b6] focus:border-[#a8c4dd] focus:outline-none focus:ring-2 focus:ring-[#2c70b8]/30"
               />
             </div>
 
             <div className="flex flex-col gap-1">
-              <label htmlFor="password" className="text-sm font-medium text-slate-300">
+              <label htmlFor="password" className="text-sm font-medium text-[#355c7e]">
                 Password
               </label>
               <div className="relative">
@@ -152,13 +168,13 @@ export default function AdminLoginPage() {
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Password"
                   autoComplete="current-password"
-                  className="h-10 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 pr-10 text-sm text-white placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+                  className="h-10 w-full rounded-lg border border-[#ffffffed] bg-[#ffffff73] px-3 pr-10 text-sm text-[#152d51] placeholder:text-[#8fa3b6] focus:border-[#a8c4dd] focus:outline-none focus:ring-2 focus:ring-[#2c70b8]/30"
                 />
                 <button
                   type="button"
                   tabIndex={-1}
                   onClick={() => setShowPassword((v) => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition-colors"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#688099] hover:text-[#152d51] transition-colors"
                 >
                   {showPassword ? (
                     <svg
@@ -198,7 +214,11 @@ export default function AdminLoginPage() {
             <button
               type="submit"
               disabled={isLoading}
-              className="mt-2 flex h-10 w-full items-center justify-center rounded-lg bg-indigo-600 text-sm font-semibold text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
+              className="mt-2 flex h-10 w-full items-center justify-center rounded-lg text-sm font-semibold text-white transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+              style={{
+                background: "linear-gradient(140deg, #234a74f5, #10264ded)",
+                boxShadow: "inset 0 1px 0 #ffffff33, 0 7px 15px #10264d18",
+              }}
             >
               {isLoading ? "Signing in…" : "Sign in"}
             </button>
@@ -209,13 +229,13 @@ export default function AdminLoginPage() {
         <div className="mt-4">
           {/* Divider */}
           <div className="my-4 flex items-center gap-3">
-            <div className="h-px flex-1 bg-slate-700" />
-            <span className="text-xs text-slate-500">or</span>
-            <div className="h-px flex-1 bg-slate-700" />
+            <div className="h-px flex-1 bg-white/15" />
+            <span className="text-xs text-[#c2d0e5]">or</span>
+            <div className="h-px flex-1 bg-white/15" />
           </div>
 
           {googleError && (
-            <div className="mb-3 rounded-lg bg-red-900/50 px-3 py-2 text-sm text-red-300 ring-1 ring-red-700">
+            <div className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200">
               {googleError}
             </div>
           )}
@@ -224,11 +244,11 @@ export default function AdminLoginPage() {
             type="button"
             onClick={handleGoogleSignIn}
             disabled={googleLoading || isLoading}
-            className="flex h-10 w-full items-center justify-center gap-3 rounded-lg border border-slate-600 bg-slate-700 px-4 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-60"
+            className="flex h-10 w-full items-center justify-center gap-3 rounded-lg border border-[#ffffffed] bg-[#ffffffad] px-4 text-sm font-medium text-[#152d51] backdrop-blur transition-colors hover:bg-white focus:outline-none focus:ring-2 focus:ring-[#2c70b8]/30 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {googleLoading ? (
               <>
-                <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-[#688099] border-t-transparent" />
                 <span>Redirecting to Google…</span>
               </>
             ) : (
@@ -240,7 +260,7 @@ export default function AdminLoginPage() {
           </button>
         </div>
 
-        <p className="mt-6 text-center text-xs text-slate-600">
+        <p className="mt-6 text-center text-xs text-[#c2d0e5]">
           RouteFlow Platform Administration — authorized personnel only
         </p>
       </div>

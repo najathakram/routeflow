@@ -52,14 +52,23 @@ function AuthCallbackInner() {
   }, [params, router]);
 
   return (
-    <div className="flex h-screen flex-col items-center justify-center gap-4 bg-surface-raised">
-      <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand-500 text-lg font-bold text-white">
+    <div
+      className="flex h-screen flex-col items-center justify-center gap-4"
+      style={{ background: "linear-gradient(155deg, #10264d, #16375f 60%, #0c1f3d)" }}
+    >
+      <div
+        className="flex h-12 w-12 items-center justify-center rounded-xl text-lg font-bold text-white backdrop-blur"
+        style={{
+          background: "linear-gradient(140deg, #234a74f5, #10264ded)",
+          boxShadow: "inset 0 1px 0 #ffffff33, 0 7px 15px #10264d18",
+        }}
+      >
         RF
       </div>
       {error ? (
-        <p className="text-sm text-danger">{error}</p>
+        <p className="text-sm text-red-300">{error}</p>
       ) : (
-        <p className="text-sm text-navy/70">Signing you in...</p>
+        <p className="text-sm text-[#c2d0e5]">Signing you in...</p>
       )}
     </div>
   );
@@ -69,11 +78,20 @@ export default function AuthCallbackPage() {
   return (
     <React.Suspense
       fallback={
-        <div className="flex h-screen flex-col items-center justify-center gap-4 bg-surface-raised">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand-500 text-lg font-bold text-white">
+        <div
+          className="flex h-screen flex-col items-center justify-center gap-4"
+          style={{ background: "linear-gradient(155deg, #10264d, #16375f 60%, #0c1f3d)" }}
+        >
+          <div
+            className="flex h-12 w-12 items-center justify-center rounded-xl text-lg font-bold text-white backdrop-blur"
+            style={{
+              background: "linear-gradient(140deg, #234a74f5, #10264ded)",
+              boxShadow: "inset 0 1px 0 #ffffff33, 0 7px 15px #10264d18",
+            }}
+          >
             RF
           </div>
-          <p className="text-sm text-navy/70">Signing you in...</p>
+          <p className="text-sm text-[#c2d0e5]">Signing you in...</p>
         </div>
       }
     >
