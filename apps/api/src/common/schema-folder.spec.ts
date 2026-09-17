@@ -38,11 +38,15 @@ const EXPECTED_FILES = [
 // pin in the same PR. (2026-09-13, Phase 0 T1: +1 enum — TenantClass.)
 // (2026-09-15, post-dated check payments PR-1: +1 enum — CheckReturnReason.)
 // (2026-09-15, Returns Inside Order Creation PR-1a: +1 enum — ReturnKind.)
+// (2026-09-16, N3 billing lifecycle emails: +1 model — BillingNotificationLog; enum count
+// untouched.)
 // (2026-09-16, Feature grants PR-1: +1 model — TenantFeatureOverride; +1 enum —
-// FeatureOverrideEffect. NOTE: the sibling feat/demo-booking-api lane also adds a new
-// model/enum landing around the same time; whichever of these two PRs merges SECOND must
-// bump these constants again in its own follow-up.)
-const EXPECTED_MODEL_COUNT = 129;
+// FeatureOverrideEffect.)
+// (2026-09-17, combined migration-batch merge tree: N3 + Feature grants PR-1 merged
+// together — counts summed and re-verified directly via
+// `node apps/api/scripts/split-prisma-schema.mjs --check` against the merged schema
+// folder, not re-derived by arithmetic.)
+const EXPECTED_MODEL_COUNT = 130;
 const EXPECTED_ENUM_COUNT = 87;
 
 function listSchemaFiles(): string[] {

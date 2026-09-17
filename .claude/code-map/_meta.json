@@ -10,5 +10,5 @@
     "packages": 0
   },
   "fileCount": 1027,
-  "notes": "**2026-09-16 — mappedSha repointed to 8f329ec4 (#786's own squash commit).** mappedSha must be a MASTER sha — squash merges orphan branch shas; #786 stamped its branch HEAD (61a70b0e), which is not an ancestor of master, so validate-code-map failed every local pre-push with MAPPED SHA NOT ANCESTOR (CI only warned: its clone lacks the orphaned commit). Map content is unchanged — 8f329ec4 carries exactly #786's refresh. Replace this field each session per CHANGELOG.md's header convention."
+  "notes": "**2026-09-17 — refresh the #789 email/ bullet for #802 (B452 follow-ups) — docs-only bookkeeping** — `api/feature-modules-7.md`: three clauses of the #789 bullet had gone stale after #802 — `getTenantFromAddress(smtpUser)` now falls back to the tenant's own SMTP login instead of the platform address, `sanitizeDisplayName()` now collapses CR/LF, and `getReplyTo()`'s admin fallback now filters ACTIVE with a deterministic order. Also: `docs/runbooks/deploy-visibility-flip.md` step 3 now requires proving each service's served commit via its health probe, never the GitHub deployments API's `statuses[0]`. `mappedSha` unchanged. See CHANGELOG.md."
 }

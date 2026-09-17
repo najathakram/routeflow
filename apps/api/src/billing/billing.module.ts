@@ -15,6 +15,7 @@ import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BillingEventService } from "./billing-event.service";
 import { BillingCronService } from "./billing-cron.service";
 import { MrrService } from "./mrr.service";
+import { BillingNotificationService } from "./billing-notification.service";
 import { EmailModule } from "../email/email.module";
 import { EntitlementsModule } from "./entitlements.module";
 
@@ -39,6 +40,7 @@ import { EntitlementsModule } from "./entitlements.module";
     BillingEventService,
     BillingCronService,
     MrrService,
+    BillingNotificationService,
   ],
   exports: [
     StripeService,

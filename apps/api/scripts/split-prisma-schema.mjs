@@ -214,6 +214,7 @@ const MODEL_DOMAIN = {
 
   // ─── platform ──────────────────────────────────────────────────────────────
   TenantSubscription: "platform",
+  BillingNotificationLog: "platform",
   TenantAddon: "platform",
   TenantFeatureOverride: "platform",
   PlanVersion: "platform",

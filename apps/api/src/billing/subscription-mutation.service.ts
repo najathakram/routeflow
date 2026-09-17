@@ -30,6 +30,7 @@ import {
   isInviteOnlyPlanKey,
 } from "./plan-catalog.constants";
 import { addCycle, Cycle } from "./billing-math";
+import { BillingNotificationService } from "./billing-notification.service";
 
 export interface SubscribeInput {
   planKey: string;
@@ -143,6 +144,7 @@ export class SubscriptionMutationService {
     // Stripe subscription keeps invoicing after our local cancellation. Already provided by
     // BillingModule; no module change needed.
     private readonly stripe: StripeService,
+    private readonly billingNotification: BillingNotificationService,
   ) {}
 
   private readonly logger = new Logger(SubscriptionMutationService.name);
@@ -718,6 +720,25 @@ export class SubscriptionMutationService {
     });
 
     this.entitlements.invalidate(tenantId);
+
+    // N3: best-effort admin notification, never blocks the upgrade above. `proratedNow` is
+    // the SAME value just committed to the event/ledger above — never recomputed here.
+    const fromDef = version.definitions.find((d) => d.planKey === fromKey);
+    try {
+      await this.billingNotification.notifyUpgradeConfirmed(
+        tenantId,
+        fromDef?.name ?? fromKey,
+        def.name,
+        proratedNow,
+        sub.periodEnd,
+      );
+    } catch (e) {
+      this.logger.error(
+        `N3 notifyUpgradeConfirmed threw unexpectedly for tenant ${tenantId}`,
+        e as Error,
+      );
+    }
+
     return { proratedNow, subscription: await this.subscription.getSubscription(tenantId) };
   }
 
@@ -795,6 +816,23 @@ export class SubscriptionMutationService {
         { amountDelta: 0, actorId, tx },
       );
     });
+
+    // N3: best-effort admin notification, never blocks the schedule write above.
+    const fromDefDown = version.definitions.find((d) => d.planKey === fromKey);
+    try {
+      await this.billingNotification.notifyDowngradeScheduled(
+        tenantId,
+        fromDefDown?.name ?? fromKey,
+        def.name,
+        sub.periodEnd,
+      );
+    } catch (e) {
+      this.logger.error(
+        `N3 notifyDowngradeScheduled threw unexpectedly for tenant ${tenantId}`,
+        e as Error,
+      );
+    }
+
     // Entitlements unchanged until the cron applies it at period end.
     return this.subscription.getSubscription(tenantId);
   }
