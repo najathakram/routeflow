@@ -39,12 +39,12 @@ Repro (input → observed → expected):
 - **Mechanism, sites 1-2**: `returns.service.ts:701-704,738-743` (CN method) →
   `creditNotes.create()` → `applyCreditInTx()` (`credit-notes.service.ts:542`), diverging at
   `:605-608` — full settlement writes `{status:newStatus, paidAt: newStatus===PAID ? new
-  Date():null}`: the CN-application instant, not `issueDate` (finance.prisma:185) — so downstream
+Date():null}`: the CN-application instant, not `issueDate` (finance.prisma:185) — so downstream
   `paidAt`-windowed reads misattribute the period (**L-125**: `paidAt`="settled", not "earned").
 - **getSummary**(:1093-1096) + **getProfitAndLoss** `revenueAgg`(:985-989, doc :966-973): both
   gate `invoice.aggregate({where:{status:PAID,paidAt:{window}},_sum:{total}})`, no CN
   subtraction; COGS shares this exact set (`fetchInvoicedSaleLines(...,{dateBasis:"paidAt",
-  status:PAID})`, :990-995) — **L-119**: one shared collection today.
+status:PAID})`, :990-995) — **L-119**: one shared collection today.
 - **getMobileDashboard** (:1214 `totalInvoiced` accrual-correct, unused; :1223-1225
   `revenue:totalCollected` ← `invoicePayment.aggregate`:1180-1187, CONFIRMED+
   RECEIVED_METHOD_FILTER — cash figure, **L-143**).
@@ -59,6 +59,7 @@ Repro (input → observed → expected):
 ## History
 
 `git log --oneline -8 -- apps/api/src/bookkeeping/bookkeeping.service.ts`:
+
 ```
 d83819cd fix: CN never counted as payment (B421)
 2e5602ae fix: F39 wallet+payment guards
@@ -69,7 +70,9 @@ ea8a7479 fix: tenant-scope findUnique sweep
 e460b3f8 feat: commission ledger
 661191a5 feat: payment allocation
 ```
+
 `git blame` of diverging lines:
+
 - getSummary :1093-1096 — `c620aae0c`/`ae438b633`/`da5e89faa` (2026-03-10–04-08); untouched since.
 - getProfitAndLoss :985-989 — same origin commits as getSummary; doc :966-973 is newer
   (`bbcb58eaa`, 08-12, docs-only).
@@ -116,7 +119,7 @@ None sought — a code-logic defect provable from source, not a data-corruption 
   (sales.prisma:996-998) has only `refundedAt`, matching the ruling.
 - `invoiced-sales.ts` exports `REAL_INVOICE_STATUSES` (same notIn set wanted for
   `REVENUE_INVOICE_STATUSES`) + `fetchInvoicedSaleLines`, but no `{gross,creditNotes,
-  externalRefunds,net}` shape exists yet (grep: 0 hits repo-wide).
+externalRefunds,net}` shape exists yet (grep: 0 hits repo-wide).
 - `getBadDebtsReport()` (bookkeeping.service.ts:1665-1694) already totals written-off invoices by
   `writtenOffAt` but isn't read by `getProfitAndLoss`, and is itself untested — reuse-or-duplicate
   for B456 not asked here.

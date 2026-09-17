@@ -2385,3 +2385,25 @@ citations, closed-out with its own post-init assertion guard).
   see this, which is what the independent pre-merge pass is for.**
 - **Guard:** the W1 rows (`STRIPE-CANCEL-2`, `STRIPE-RESUME-1`) plus the rewritten spec that
   asserted the defect. Sibling [[L-119]].
+
+## Archived 2026-09-17 — headroom for L-189 (B466 bookkeeping follow-up, #834)
+
+### L-146 · 2026-09-14 · domain · B221 driver return-list scoping
+
+- **Symptom:** `GET /returns` is `@Roles(OPERATOR, DRIVER, CUSTOMER)` on the controller, but
+  `ReturnsService.findAllForUser` had a scoping branch for CUSTOMER only — a DRIVER fell through
+  to the unscoped, tenant-wide `findAll`, seeing every return in the tenant rather than just
+  ones on orders assigned to their own route runs.
+- **Root cause:** the role was added to the endpoint's authorization list (so a driver COULD
+  call it at all) without a matching branch in the service's OWN scoping logic — `@Roles` and
+  tenant-scoping (`forTenant()`) both silently read as "this is handled," but neither actually
+  restricts results to the CALLER's own data once past the tenant boundary.
+- **Lesson:** **`@Roles(...)` is authorization (can this role call the endpoint at all), never
+  scoping (which rows can this specific caller see). Adding a role to an endpoint's allow-list
+  is only half the change — grep the SERVICE method's own list-scoping for a branch per role
+  actually granted access, and add one for any that's missing, or the new role inherits
+  whichever existing branch's fallthrough happens to run (often the most-privileged one).**
+- **Guard:** `ReturnsService.findAllForUser`'s DRIVER branch (resolves the caller's `Driver` row,
+  scopes via `where.order = {routeRun: {driverId}}`); `returns.security.spec.ts`'s B221 suite.
+  Sibling pattern already fixed once in `credit-notes.service.ts` (DRIVER denied outright there,
+  a different but equally deliberate choice — the point is BOTH required an explicit branch).

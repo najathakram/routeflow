@@ -5,16 +5,24 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
+import { Prisma, FeatureOverrideKind } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { isRegisteredFeatureKey } from "./feature-registry";
 
 export type FeatureOverrideEffect = "GRANT" | "DENY";
+export type { FeatureOverrideKind };
 
 export interface CreateFeatureOverrideParams {
   tenantId: string;
   featureKey: string;
   effect: FeatureOverrideEffect;
+  // Feature grants v2 PR-3 (brief B): why the override exists, for MRR-truth + the console's
+  // "why" trace. Optional — defaults to COMP (a plain comp, never a Stripe item / never MRR)
+  // when the caller omits it, matching the column's own `@default(COMP)` for every pre-PR-3
+  // row. Imported straight from `@prisma/client` (a real npm dep, safe to value-import at API
+  // runtime) rather than hand-typed — unlike the DTO layer, which deliberately avoids a VALUE
+  // import from the @routeflow/types workspace package (L-151: crashes prod boot).
+  kind?: FeatureOverrideKind;
   reason: string;
   expiresAt: Date | null;
   createdById: string | null;
@@ -189,6 +197,10 @@ export class FeatureOverrideService {
           tenantId: params.tenantId,
           featureKey: params.featureKey,
           effect: params.effect,
+          // Explicit default here (not just the column's own `@default(COMP)`) so a caller
+          // that omits `kind` gets a value it can read straight back off the returned row —
+          // e.g. the controller's audit payload, which logs the row's actual persisted kind.
+          kind: params.kind ?? "COMP",
           reason: params.reason,
           expiresAt: params.expiresAt,
           createdById: params.createdById,

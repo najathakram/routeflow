@@ -1,5 +1,14 @@
-import { IsIn, IsOptional, IsDateString, IsString, MinLength, MaxLength } from "class-validator";
+import {
+  IsEnum,
+  IsIn,
+  IsOptional,
+  IsDateString,
+  IsString,
+  MinLength,
+  MaxLength,
+} from "class-validator";
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
+import { FeatureOverrideKind } from "@prisma/client";
 
 // Two literal values — not worth a shared packages/types constant, and a VALUE import from
 // @routeflow/types would crash the API's production boot (L-151: nest build doesn't bundle
@@ -21,6 +30,17 @@ export class CreateFeatureOverrideDto {
   @ApiProperty({ enum: FEATURE_OVERRIDE_EFFECTS, example: "GRANT" })
   @IsIn(FEATURE_OVERRIDE_EFFECTS)
   effect: (typeof FEATURE_OVERRIDE_EFFECTS)[number];
+
+  @ApiPropertyOptional({
+    description:
+      "Why this override exists, for billing honesty and MRR-truth — defaults to " +
+      "COMP (a plain comp) when omitted; every pre-PR-3 row defaults the same way at the DB layer",
+    enum: FeatureOverrideKind,
+    example: "PILOT",
+  })
+  @IsOptional()
+  @IsEnum(FeatureOverrideKind)
+  kind?: FeatureOverrideKind;
 
   @ApiProperty({
     description: "Why this override exists — shown in the tenant's override history",

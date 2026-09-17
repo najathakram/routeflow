@@ -33,7 +33,7 @@ plus one line the fix must create.** There is NO shared write-side root cause.
 - **D1 — predicate.** New export in `apps/api/src/common/invoiced-sales.ts`, directly below
   `REAL_INVOICE_STATUSES`:
   `export const ACCRUAL_REVENUE_STATUSES = { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID] } as const;`
-  with a 3-line comment: "revenue/net-sales predicate — WRITTEN_OFF *is* revenue at issue (bad debt is a
+  with a 3-line comment: "revenue/net-sales predicate — WRITTEN_OFF _is_ revenue at issue (bad debt is a
   later expense); `REAL_INVOICE_STATUSES` is the units/COGS-lines predicate and is unchanged." Same file
   so the two predicates and their difference live in one place. `REAL_INVOICE_STATUSES` and every
   current consumer of it: byte-identical.
@@ -43,16 +43,16 @@ plus one line the fix must create.** There is NO shared write-side root cause.
   dashboard that drops a written-off invoice retroactively would disagree with the P&L for the same
   month. Sales ≠ profit: these two sites get net sales, NOT a bad-debt term.
 - **D3 — out of scope, must NOT change:** `credit-notes.service.ts:608` (`{status: PAID, paidAt: new
-  Date()}`), `bookkeeping.service.ts:238` (payment-path stamp), `invoices.service.ts:5415`
+Date()}`), `bookkeeping.service.ts:238` (payment-path stamp), `invoices.service.ts:5415`
   (`dto.paidAt`), and the four cash readers `getCashFlow` (:49), `analytics.service.ts:655`,
   `buyer/statement.service.ts:103`, `customers.service.ts:1698`. `getMobileDashboard.totalCollected`
   (:1180-1187, `RECEIVED_METHOD_FILTER`) byte-identical. `returns.service.ts`: 0 lines.
 - **D4 — B456 packaging.** One coupled task (F2) with the P&L revenue-basis change. REG-B456 asserts
   the FINAL end-state; its "fails today" value is the compound failure (revenue $0 because of the `PAID`
   filter AND `badDebtExpense` undefined). No intermediate tree is isolated. Rule generalised: wherever a
-  *profit/net-income* figure is derived from accrual revenue (`getProfitAndLoss`, `getMobileDashboard.
-  netIncome`, `getSummary` if it returns a net figure) the bad-debt term is subtracted in the same diff;
-  wherever only *sales* is shown (finance dashboard, by-customer) there is no bad-debt term.
+  _profit/net-income_ figure is derived from accrual revenue (`getProfitAndLoss`, `getMobileDashboard.
+netIncome`, `getSummary` if it returns a net figure) the bad-debt term is subtracted in the same diff;
+  wherever only _sales_ is shown (finance dashboard, by-customer) there is no bad-debt term.
 - **D5 — EXTERNAL_REFUND pricing basis (`priceReturn` vs `billedBasisFor`): DEFERRED, filed.** Net
   sales subtracts the money actually given back — the persisted `Return.refundAmount` is the economic
   fact regardless of how it was priced. Reconciling here would mean either changing what
@@ -71,11 +71,24 @@ plus one line the fix must create.** There is NO shared write-side root cause.
 ### F1 — `apps/api/src/common/invoiced-sales.ts` (new exports; mirror `fetchInvoicedSaleLines`' client/arg conventions)
 
 ```ts
-export type AccrualNetSales = { gross: number; creditNotes: number; externalRefunds: number; net: number };
-export async function fetchAccrualNetSales(prisma, tenantId: string, window: { gte: Date; lte: Date },
-  opts?: { customerId?: string }): Promise<AccrualNetSales>
-export async function fetchAccrualNetSalesByCustomer(prisma, tenantId, window): Promise<Map<string, AccrualNetSales>>
-export async function fetchBadDebtExpense(prisma, tenantId, window): Promise<number>
+export type AccrualNetSales = {
+  gross: number;
+  creditNotes: number;
+  externalRefunds: number;
+  net: number;
+};
+export async function fetchAccrualNetSales(
+  prisma,
+  tenantId: string,
+  window: { gte: Date; lte: Date },
+  opts?: { customerId?: string },
+): Promise<AccrualNetSales>;
+export async function fetchAccrualNetSalesByCustomer(
+  prisma,
+  tenantId,
+  window,
+): Promise<Map<string, AccrualNetSales>>;
+export async function fetchBadDebtExpense(prisma, tenantId, window): Promise<number>;
 ```
 
 - **AMENDMENT 2026-09-15 (owner ruling, relayed by lead, post-S5): revenue excludes sales tax collected — standard accounting.** `gross` = Σ`(invoice.total − invoice.taxAmount)`, not Σ`invoice.total`. Verified against `apps/api/src/invoices/invoices.service.ts` (4+ independent computation sites: single-invoice create ~:527-533, order-driven reconcile ~:1550-1564, multi-invoice split ~:1272-1278, invoice edit/recreate ~:3543-3549, partial-bill drafts ~:1985-1990): `taxAmount = roundMoney(regularTax + categoryTax)` in every path, and `total = subtotal − discount + shippingFee + taxAmount`. **Category/excise tax is already folded into `taxAmount`, not a separate component of `total`** — `InvoiceItem.categoryTaxAmount` (finance.prisma:277) is a per-line snapshot summed into `categoryTax` and folded into the invoice's single `taxAmount` field (comment at invoices.service.ts:461: "folded into taxTotal below"). **Consequence: subtracting `taxAmount` once already excludes both regular AND category tax — no separate category-tax term is needed.** Shipping and discount stay IN revenue (only tax comes out): `gross = total − taxAmount = subtotal − discount + shippingFee`.
@@ -149,7 +162,7 @@ export async function fetchBadDebtExpense(prisma, tenantId, window): Promise<num
 - **I6** `REAL_INVOICE_STATUSES` and all its consumers unchanged.
 - **I7 (AMENDMENT 2026-09-15)** `gross` excludes ALL sales tax (regular + category/excise, both folded
   into `Invoice.taxAmount`) but keeps shipping and discount: `gross = total − taxAmount = subtotal −
-  discount + shippingFee`. Every consumer's "Revenue"/"Sales" figure is therefore pre-tax — state this
+discount + shippingFee`. Every consumer's "Revenue"/"Sales" figure is therefore pre-tax — state this
   explicitly in the PR body.
 
 ## 3. Regression tests
@@ -158,20 +171,20 @@ Fixture sentinels (no two figures coincide): gross 500 · CN 200 · external ref
 collected 100 · bad debt 300 · expenses 40 · cogs 0. Helper spec = `common/invoiced-sales.spec.ts`
 (create if absent); service tests in `bookkeeping.service.spec.ts` with the helper mocked.
 
-| T# | REG token | fails-today-on | passes-after | notes |
-|---|---|---|---|---|
-| T1 | REG-B440-predicate | `ACCRUAL_REVENUE_STATUSES` undefined | deep-equals `{notIn:[DRAFT,VOID]}`; `REAL_INVOICE_STATUSES` still `{notIn:[DRAFT,VOID,WRITTEN_OFF]}` | second half is a pin |
-| T2 | REG-B440-net | helper undefined | `where` shapes: invoice `{status: ACCRUAL_REVENUE_STATUSES, issueDate: window}` and no `paidAt` key; CN on `createdAt` not `appliedAt`; result `{500,200,50,250}` | helper spec |
-| T3 | REG-B455-refund | helper undefined | Return read `{refundMethod: EXTERNAL_REFUND, refundedAt: window}`, `_sum.refundAmount`; with return→0 net is 300, →50 net is 250 | proves the method filter + passthrough (no re-pricing) |
-| T4 | REG-B440-summary | `totalRevenue` = blanket `PAID`/`paidAt` aggregate value | `totalRevenue` 250, breakdown fields present, helper called with the request window, no `invoice.aggregate` call carrying `paidAt` | re-base the 2 whole-object `toEqual`s to the new shape (keep strict) |
-| T5 | REG-B440-pnl | pin :896-904 asserts `status PAID` + `paidAt` | `revenue` 250; `cogsFetch` called with `{dateBasis:"issueDate", status: ACCRUAL_REVENUE_STATUSES}` and window; `paidAt` undefined | the old pin is inverted, not deleted |
-| T6 | REG-B456-baddebt | `badDebtExpense` undefined AND revenue 0 (compound) | `badDebtExpense` 300; `netProfit = 250 − 0 − 40 − 300 = −90`; `revenue` unchanged by the bad-debt mock | end-state assertion (D4) |
-| T7 | REG-B456-basis | helper undefined | `fetchBadDebtExpense` where `{status: WRITTEN_OFF, writtenOffAt: window}` (not `issueDate`); amount = unpaid balance for a PARTIAL fixture (total 500, paid 150, credits 50 → 300) | helper spec; pins I5 |
-| T8 | REG-B440-mobile | `revenue === totalCollected` (100) | `revenue` 250, `netIncome` 250 − 40 − 300, `totalCollected` 100, `revenue !== totalCollected` | split out of REG-B11: its `totalCollected` lines stay byte-identical |
-| T9 | REG-B440-finance | `sales` 500 gross; WRITTEN_OFF excluded | `sales`/`totalSales`/each `summaryTable.*.sales` = per-bucket `net`; helper called once per bucket; no inline sales aggregate with `notIn` | receipts assertions untouched |
-| T10 | REG-B440-bycustomer | `salesAmount` gross | per-customer `salesAmount` = map `net`; a CN-only customer appears with −200 | negative net allowed |
-| T11 | REG-B456-report | P&L field undefined | `getBadDebtsReport` total === P&L `badDebtExpense` for one window | consistency guard |
-| T12 | REG-B440-tax | `gross` = 445 (full `total`, tax included) | `gross` = 395 (`total − taxAmount`); dedicated fixture: subtotal 400, discount 20, shippingFee 15, regularTax 20, categoryTax 30 → `taxAmount` 50, `total` 445 → `gross` 395 (= subtotal − discount + shippingFee, proving BOTH tax components are excluded via the one `taxAmount` subtraction, and shipping/discount stay IN revenue) | **AMENDMENT 2026-09-15** — proves I7; own fixture, does not reuse the 500/200/50/250 sentinels since T4-T11 chain off those |
+| T#  | REG token           | fails-today-on                                           | passes-after                                                                                                                                                                                                                                                                                                                            | notes                                                                                                                       |
+| --- | ------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| T1  | REG-B440-predicate  | `ACCRUAL_REVENUE_STATUSES` undefined                     | deep-equals `{notIn:[DRAFT,VOID]}`; `REAL_INVOICE_STATUSES` still `{notIn:[DRAFT,VOID,WRITTEN_OFF]}`                                                                                                                                                                                                                                    | second half is a pin                                                                                                        |
+| T2  | REG-B440-net        | helper undefined                                         | `where` shapes: invoice `{status: ACCRUAL_REVENUE_STATUSES, issueDate: window}` and no `paidAt` key; CN on `createdAt` not `appliedAt`; result `{500,200,50,250}`                                                                                                                                                                       | helper spec                                                                                                                 |
+| T3  | REG-B455-refund     | helper undefined                                         | Return read `{refundMethod: EXTERNAL_REFUND, refundedAt: window}`, `_sum.refundAmount`; with return→0 net is 300, →50 net is 250                                                                                                                                                                                                        | proves the method filter + passthrough (no re-pricing)                                                                      |
+| T4  | REG-B440-summary    | `totalRevenue` = blanket `PAID`/`paidAt` aggregate value | `totalRevenue` 250, breakdown fields present, helper called with the request window, no `invoice.aggregate` call carrying `paidAt`                                                                                                                                                                                                      | re-base the 2 whole-object `toEqual`s to the new shape (keep strict)                                                        |
+| T5  | REG-B440-pnl        | pin :896-904 asserts `status PAID` + `paidAt`            | `revenue` 250; `cogsFetch` called with `{dateBasis:"issueDate", status: ACCRUAL_REVENUE_STATUSES}` and window; `paidAt` undefined                                                                                                                                                                                                       | the old pin is inverted, not deleted                                                                                        |
+| T6  | REG-B456-baddebt    | `badDebtExpense` undefined AND revenue 0 (compound)      | `badDebtExpense` 300; `netProfit = 250 − 0 − 40 − 300 = −90`; `revenue` unchanged by the bad-debt mock                                                                                                                                                                                                                                  | end-state assertion (D4)                                                                                                    |
+| T7  | REG-B456-basis      | helper undefined                                         | `fetchBadDebtExpense` where `{status: WRITTEN_OFF, writtenOffAt: window}` (not `issueDate`); amount = unpaid balance for a PARTIAL fixture (total 500, paid 150, credits 50 → 300)                                                                                                                                                      | helper spec; pins I5                                                                                                        |
+| T8  | REG-B440-mobile     | `revenue === totalCollected` (100)                       | `revenue` 250, `netIncome` 250 − 40 − 300, `totalCollected` 100, `revenue !== totalCollected`                                                                                                                                                                                                                                           | split out of REG-B11: its `totalCollected` lines stay byte-identical                                                        |
+| T9  | REG-B440-finance    | `sales` 500 gross; WRITTEN_OFF excluded                  | `sales`/`totalSales`/each `summaryTable.*.sales` = per-bucket `net`; helper called once per bucket; no inline sales aggregate with `notIn`                                                                                                                                                                                              | receipts assertions untouched                                                                                               |
+| T10 | REG-B440-bycustomer | `salesAmount` gross                                      | per-customer `salesAmount` = map `net`; a CN-only customer appears with −200                                                                                                                                                                                                                                                            | negative net allowed                                                                                                        |
+| T11 | REG-B456-report     | P&L field undefined                                      | `getBadDebtsReport` total === P&L `badDebtExpense` for one window                                                                                                                                                                                                                                                                       | consistency guard                                                                                                           |
+| T12 | REG-B440-tax        | `gross` = 445 (full `total`, tax included)               | `gross` = 395 (`total − taxAmount`); dedicated fixture: subtotal 400, discount 20, shippingFee 15, regularTax 20, categoryTax 30 → `taxAmount` 50, `total` 445 → `gross` 395 (= subtotal − discount + shippingFee, proving BOTH tax components are excluded via the one `taxAmount` subtraction, and shipping/discount stay IN revenue) | **AMENDMENT 2026-09-15** — proves I7; own fixture, does not reuse the 500/200/50/250 sentinels since T4-T11 chain off those |
 
 **Pins (must stay green, unchanged):** REG-B11/B421 `totalCollected` assertions (:720-725, :748-750
 minus the moved `revenue` line); every `credit-notes.service.spec` assertion on the :608 stamp; any
@@ -181,14 +194,14 @@ minus the moved `revenue` line); every `credit-notes.service.spec` assertion on 
 
 Radius = lines that change; anchors = context lines that must be byte-identical before/after.
 
-| Task | Radius (changes) | Anchors (must not change) |
-|---|---|---|
-| F1 `common/invoiced-sales.ts` | new exports after :41; `fetchInvoicedSaleLines` status-option type only if needed; header :28-30 comment | `REAL_INVOICE_STATUSES` :39-41 literal; `fetchInvoicedSaleLines` query/return shape |
-| F2 `bookkeeping.service.ts` | :985-995 (revenue+COGS), :1019-1028 (return), :1093-1096 + getSummary return, :1665-1694 (`getBadDebtsReport` body) | :238 paidAt stamp; :49 `getCashFlow`; every `invoicePayment` read |
-| F2 `bookkeeping.service.spec.ts` | `describe("getSummary")` :259-295 expected objects; `describe("getProfitAndLoss")` :862-958 — flip :896-904, replace the blanket `invoice.aggregate` reliance with helper mocks | all non-P&L/non-summary describes |
-| F3 `bookkeeping.service.ts` | :1223-1225; :1286-1294, :1318, :1336-1375 sales expressions only; :1468-1504 sales expression | :1180-1187 + :1214 (mobile); `receipts`/`RECEIVED_METHOD_FILTER` lines (B421); CN ledger methods :2090/:2167 |
-| F3 `bookkeeping.service.spec.ts` | REG-B11 :720-725/:748-750 — move ONLY the `revenue` assertion into T8 | the `totalCollected` assertions |
-| never | `credit-notes.service.ts:605-608`, `returns.service.ts`, `invoices.service.ts:5415`/`:5527-5559`, the four cash readers | entire files |
+| Task                             | Radius (changes)                                                                                                                                                                | Anchors (must not change)                                                                                    |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| F1 `common/invoiced-sales.ts`    | new exports after :41; `fetchInvoicedSaleLines` status-option type only if needed; header :28-30 comment                                                                        | `REAL_INVOICE_STATUSES` :39-41 literal; `fetchInvoicedSaleLines` query/return shape                          |
+| F2 `bookkeeping.service.ts`      | :985-995 (revenue+COGS), :1019-1028 (return), :1093-1096 + getSummary return, :1665-1694 (`getBadDebtsReport` body)                                                             | :238 paidAt stamp; :49 `getCashFlow`; every `invoicePayment` read                                            |
+| F2 `bookkeeping.service.spec.ts` | `describe("getSummary")` :259-295 expected objects; `describe("getProfitAndLoss")` :862-958 — flip :896-904, replace the blanket `invoice.aggregate` reliance with helper mocks | all non-P&L/non-summary describes                                                                            |
+| F3 `bookkeeping.service.ts`      | :1223-1225; :1286-1294, :1318, :1336-1375 sales expressions only; :1468-1504 sales expression                                                                                   | :1180-1187 + :1214 (mobile); `receipts`/`RECEIVED_METHOD_FILTER` lines (B421); CN ledger methods :2090/:2167 |
+| F3 `bookkeeping.service.spec.ts` | REG-B11 :720-725/:748-750 — move ONLY the `revenue` assertion into T8                                                                                                           | the `totalCollected` assertions                                                                              |
+| never                            | `credit-notes.service.ts:605-608`, `returns.service.ts`, `invoices.service.ts:5415`/`:5527-5559`, the four cash readers                                                         | entire files                                                                                                 |
 
 Cross-workspace: response types in `packages/types/api/*` (if the summary/P&L/finance DTOs live there)
 gain optional fields only — additive; web/mobile consumers need no change. Web `npm test` must stay green.
@@ -206,7 +219,7 @@ Run after F3; hits inside `bookkeeping.service.ts` must be zero for sales; hits 
 - `_sum:\s*\{\s*total:\s*true` in a method with no `creditNote` read — gross-not-net candidate.
 - `refundMethod` outside `returns.service.ts`/the helper — any other consumer netting returns via CN only.
 - Priority file for the sweep: `apps/api/src/analytics/analytics.service.ts` (has a `paidAt` DSO read;
-  any *revenue* series there is the same shape → file FU-3).
+  any _revenue_ series there is the same shape → file FU-3).
 
 ## 6. Data repair
 
@@ -217,19 +230,19 @@ exists, it is stale under the new basis → read-only report first, not a rewrit
 
 ## 7. Probe plan (revert-probe task per file; each must turn the named REG red, and nothing else)
 
-| Probe | Revert | Must go red | Must stay green |
-|---|---|---|---|
-| P1 `invoiced-sales.ts` | `ACCRUAL_REVENUE_STATUSES` → contents of `REAL_INVOICE_STATUSES` | T1, T2 (where shape) | T3, T7 |
-| P2 `invoiced-sales.ts` | CN read → 0 | T2 | T3 |
-| P3 `invoiced-sales.ts` | Return read → 0 / drop `refundMethod` filter | T3 | T2 gross |
-| P4 `invoiced-sales.ts` | bad-debt amount → `total` (ignore paid/credits) | T7 | — |
-| P5 `bookkeeping.service.ts` | `getSummary` back to inline `PAID`/`paidAt` aggregate | T4 | T5–T11 |
-| P6 `bookkeeping.service.ts` | P&L revenue back to inline aggregate; COGS back to `paidAt`/`PAID` | T5, T6 | T4 |
-| P7 `bookkeeping.service.ts` | drop the `badDebtExpense` term from `netProfit` | T6, T11 | T5 |
-| P8 `bookkeeping.service.ts` | `revenue: totalCollected` | T8 | REG-B11 pins (proves the split kept the cash pin) |
-| P9 `bookkeeping.service.ts` | finance `sales` back to inline gross aggregate | T9 | receipts assertions |
-| P10 `bookkeeping.service.ts` | by-customer back to inline gross | T10 | — |
-| P11 `invoiced-sales.ts` (AMENDMENT 2026-09-15) | `gross` back to `total` (drop the `− taxAmount` term) | T12 | T2, T3, T7 |
+| Probe                                          | Revert                                                             | Must go red          | Must stay green                                   |
+| ---------------------------------------------- | ------------------------------------------------------------------ | -------------------- | ------------------------------------------------- |
+| P1 `invoiced-sales.ts`                         | `ACCRUAL_REVENUE_STATUSES` → contents of `REAL_INVOICE_STATUSES`   | T1, T2 (where shape) | T3, T7                                            |
+| P2 `invoiced-sales.ts`                         | CN read → 0                                                        | T2                   | T3                                                |
+| P3 `invoiced-sales.ts`                         | Return read → 0 / drop `refundMethod` filter                       | T3                   | T2 gross                                          |
+| P4 `invoiced-sales.ts`                         | bad-debt amount → `total` (ignore paid/credits)                    | T7                   | —                                                 |
+| P5 `bookkeeping.service.ts`                    | `getSummary` back to inline `PAID`/`paidAt` aggregate              | T4                   | T5–T11                                            |
+| P6 `bookkeeping.service.ts`                    | P&L revenue back to inline aggregate; COGS back to `paidAt`/`PAID` | T5, T6               | T4                                                |
+| P7 `bookkeeping.service.ts`                    | drop the `badDebtExpense` term from `netProfit`                    | T6, T11              | T5                                                |
+| P8 `bookkeeping.service.ts`                    | `revenue: totalCollected`                                          | T8                   | REG-B11 pins (proves the split kept the cash pin) |
+| P9 `bookkeeping.service.ts`                    | finance `sales` back to inline gross aggregate                     | T9                   | receipts assertions                               |
+| P10 `bookkeeping.service.ts`                   | by-customer back to inline gross                                   | T10                  | —                                                 |
+| P11 `invoiced-sales.ts` (AMENDMENT 2026-09-15) | `gross` back to `total` (drop the `− taxAmount` term)              | T12                  | T2, T3, T7                                        |
 
 Harness-integrity: P5–P10 are what prove the helper mocks are not tautological — a reverted site reads
 the blanket aggregate (500), never the mocked net (250).
