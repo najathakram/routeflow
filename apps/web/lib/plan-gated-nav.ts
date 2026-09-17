@@ -15,6 +15,12 @@ export const PLAN_GATED_NAV: Readonly<Record<string, FlagKey>> = {
   "/credit-notes": "flag.credit_notes",
   "/finance/reports": "flag.reports",
   "/analytics": "flag.analytics",
+  // P0 lock-mirror hotfix: recurring invoices has no sidebar entry (it's reached from
+  // within Invoices, not its own nav item) but IS its own route and its own
+  // @RequirePlanFlag("flag.recurring_invoices") gate server-side — PLAN_GATED_NAV had
+  // no entry for it at all, so a denied tenant deep-linking to /invoices/recurring got
+  // an unhandled 403 instead of the graceful lock every other plan-gated route shows.
+  "/invoices/recurring": "flag.recurring_invoices",
 };
 
 export type PlanFlagState = { enabled: boolean; resolved: boolean; failed: boolean };
