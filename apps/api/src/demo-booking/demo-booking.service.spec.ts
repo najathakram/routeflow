@@ -275,9 +275,9 @@ describe("DemoBookingService.getAvailability", () => {
     expect(starts).not.toContain(FRIDAY_9AM);
   });
 
-  // B500: "the calendar is unreachable" is an outage, not "fully booked" —
+  // B502: "the calendar is unreachable" is an outage, not "fully booked" —
   // the client must be able to tell them apart.
-  it("offers nothing when the calendar cannot be read — never guesses free, and reports unavailable (B500)", async () => {
+  it("offers nothing when the calendar cannot be read — never guesses free, and reports unavailable (B502)", async () => {
     const { calendar, service } = build();
     calendar.busy = null;
     const result = await service.getAvailability(WINDOW.from, WINDOW.to, "America/Chicago");
@@ -285,7 +285,7 @@ describe("DemoBookingService.getAvailability", () => {
     expect(result.status).toBe("unavailable");
   });
 
-  it("offers nothing when Google credentials are absent, and reports unavailable (B500)", async () => {
+  it("offers nothing when Google credentials are absent, and reports unavailable (B502)", async () => {
     const { service } = build({ saEmail: "", saPrivateKey: "" });
     const result = await service.getAvailability(WINDOW.from, WINDOW.to, "America/Chicago");
     expect(result.days).toEqual([]);
@@ -302,7 +302,7 @@ describe("DemoBookingService.getAvailability", () => {
     expect(result.status).toBe("unavailable");
   });
 
-  // These are the "ok" side of B500: the service is working, there is just
+  // These are the "ok" side of B502: the service is working, there is just
   // nothing bookable in this particular window — never "unavailable".
   it("honours the minimum-notice window, reporting ok with an empty grid", async () => {
     // NOW is 08:00 Chicago Thursday; 12h notice rules out the rest of Thursday.
@@ -340,7 +340,7 @@ describe("DemoBookingService.getAvailability", () => {
     expect(result.status).toBe("ok");
   });
 
-  it("logs the not-configured state at warn level once per throttle window, not once per request (B500)", async () => {
+  it("logs the not-configured state at warn level once per throttle window, not once per request (B502)", async () => {
     const { service } = build({ saEmail: "", saPrivateKey: "" });
     const warn = jest.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
 
@@ -522,10 +522,10 @@ describe("DemoBookingService.create", () => {
     ).rejects.toBeInstanceOf(ConflictException);
   });
 
-  // B500: confirms the missing-DEMO_BOOKING_TOKEN_SECRET 503 already carries a
+  // B502: confirms the missing-DEMO_BOOKING_TOKEN_SECRET 503 already carries a
   // readable, visitor-facing message rather than a raw error — not a
   // NestJS-internal string, and no config detail (which env var, etc.) leaked.
-  it("refuses booking when the feature is unconfigured, with a readable message (B500)", async () => {
+  it("refuses booking when the feature is unconfigured, with a readable message (B502)", async () => {
     const { service } = build({ tokenSecret: "" });
     await expect(service.create(input)).rejects.toThrow(
       new ServiceUnavailableException(

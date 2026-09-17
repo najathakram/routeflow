@@ -26,7 +26,7 @@ export interface AvailabilityDay {
  * `"unavailable"` means the booking system itself cannot serve real
  * availability right now (unconfigured, misconfigured, or the calendar is
  * unreachable) — distinct from `"ok"` with an empty `days`, which means
- * there is genuinely nothing free in the requested range (B500).
+ * there is genuinely nothing free in the requested range (B502).
  */
 export type AvailabilityStatus = "ok" | "unavailable";
 
