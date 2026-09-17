@@ -261,9 +261,27 @@
 }
 
 /* ── AudienceCards ───────────────────────────────────────────────────────── */
+/* Photo added (owner layout ruling, 2026-09-16, PR-3) — the card is now
+   image-top, padded-content-below, so padding moves off the card itself
+   (which needs overflow:hidden to clip the image to its own radius) onto
+   the new inner content div. */
 
 .glass-page .audience-card {
-  padding: 30px;
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.glass-page .audience-card img {
+  display: block;
+  width: 100%;
+  height: 200px;
+  object-fit: cover;
+}
+
+.glass-page .audience-card > div {
+  padding: 26px 30px 30px;
 }
 
 .glass-page .audience-card svg {
