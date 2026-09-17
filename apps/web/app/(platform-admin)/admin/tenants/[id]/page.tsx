@@ -9,6 +9,8 @@ import {
   RECURRING_ROUTES_ADDON,
   ORDER_DELIVERY_ADDON,
   OCR_ADDON,
+  FEATURE_OVERRIDE_KIND_VALUES,
+  type FeatureOverrideKind,
 } from "@routeflow/types";
 import type { FeatureRegistryRow } from "@routeflow/types";
 import { superAdminClient } from "@/lib/admin-api";
@@ -20,6 +22,10 @@ import { AdminCard } from "../../../_components/AdminCard";
 import { AdminModal } from "../../../_components/AdminModal";
 import { TenantPricingCard } from "./_components/TenantPricingCard";
 import { LayoutDashboard, CreditCard, Puzzle, Settings, ScrollText } from "lucide-react";
+import { FeatureConsole } from "./_features/FeatureConsole";
+import { PreviewDrawer } from "./_features/PreviewDrawer";
+import { previewTenantFeatures } from "@/lib/platform-admin/features";
+import type { FeaturePreviewResponse } from "./_features/types";
 
 const usd = (n: number) =>
   new Intl.NumberFormat("en-US", {
@@ -592,7 +598,7 @@ function OverviewTab({
             </select>
             <button
               disabled={actionLoading === "plan" || selectedPlan === tenant.plan}
-              onClick={() => onAction("change-plan", { plan: selectedPlan })}
+              onClick={() => onAction("change-plan", { plan: selectedPlan }).catch(() => {})}
               className="rounded-lg bg-slate-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-500 disabled:opacity-50"
             >
               Change Plan
@@ -1115,7 +1121,16 @@ function BillingTab({
 
 // ─── Addons Tab ────────────────────────────────────────────────────────────────
 
-function AddonsTab({ tenant }: { tenant: TenantDetail }) {
+function AddonsTab({
+  tenant,
+  onAction,
+  actionLoading,
+}: {
+  tenant: TenantDetail;
+  onAction: (action: string, payload?: unknown) => Promise<void>;
+  actionLoading: string | null;
+}) {
+  const overridesRef = React.useRef<FeatureOverridesSectionHandle>(null);
   const [addons, setAddons] = React.useState<Addon[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [toggling, setToggling] = React.useState<string | null>(null);
@@ -1250,7 +1265,14 @@ function AddonsTab({ tenant }: { tenant: TenantDetail }) {
         </>
       )}
 
-      <FeatureOverridesSection tenant={tenant} />
+      <FeatureConsole
+        tenant={tenant}
+        onChangePlan={(plan) => onAction("change-plan", { plan })}
+        changePlanLoading={actionLoading === "change-plan"}
+        onCustomise={(featureKey) => overridesRef.current?.openFor(featureKey)}
+      />
+
+      <FeatureOverridesSection ref={overridesRef} tenant={tenant} />
     </>
   );
 }
@@ -1275,7 +1297,25 @@ const OVERRIDE_EXPIRY_PRESETS = [
   { value: "90", label: "90 days" },
 ] as const;
 
-export function FeatureOverridesSection({ tenant }: { tenant: TenantDetail }) {
+// Plain-English labels for the Kind select — values stay the raw FeatureOverrideKind enum.
+const OVERRIDE_KIND_LABELS: Record<FeatureOverrideKind, string> = {
+  PILOT: "Pilot",
+  SUPPORT: "Support",
+  COMP: "Complimentary",
+  TRIAL: "Trial",
+  GRANDFATHER: "Grandfathered",
+};
+
+/** Imperative handle so the Feature Console's per-row "Customise" button can open this
+ * drawer prefilled for one key, without a second overrides UI (brief D done-checklist item 1). */
+export interface FeatureOverridesSectionHandle {
+  openFor: (featureKey: string) => void;
+}
+
+export const FeatureOverridesSection = React.forwardRef<
+  FeatureOverridesSectionHandle,
+  { tenant: TenantDetail }
+>(function FeatureOverridesSection({ tenant }, ref) {
   const [overrides, setOverrides] = React.useState<FeatureOverrideRow[]>([]);
   const [registry, setRegistry] = React.useState<FeatureRegistryRow[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -1284,12 +1324,37 @@ export function FeatureOverridesSection({ tenant }: { tenant: TenantDetail }) {
   const [form, setForm] = React.useState({
     featureKey: "",
     effect: "GRANT" as "GRANT" | "DENY",
+    kind: "COMP" as FeatureOverrideKind,
     reason: "",
     expiryPreset: "none" as "none" | "30" | "90",
   });
   const [submitting, setSubmitting] = React.useState(false);
-  const [formError, setFormError] = React.useState<string | null>(null);
   const [revokingId, setRevokingId] = React.useState<string | null>(null);
+  // Owner rule: EVERY override write goes through preview — the "+ New Override" button and
+  // the Feature Console's "Customise" action share this ONE drawer and this ONE preview → confirm
+  // → apply flow (brief D item 3). `pendingCreate` freezes the exact payload the preview was run
+  // against, so Confirm applies precisely what was previewed even if the form underneath changes.
+  const [previewResponse, setPreviewResponse] = React.useState<FeaturePreviewResponse | null>(null);
+  const [previewing, setPreviewing] = React.useState(false);
+  const [previewError, setPreviewError] = React.useState<string | null>(null);
+  const [pendingCreate, setPendingCreate] = React.useState<{
+    featureKey: string;
+    effect: "GRANT" | "DENY";
+    kind: FeatureOverrideKind;
+    reason: string;
+    expiresAt: string | null;
+  } | null>(null);
+  // Only ONE AdminModal is ever open at a time (form OR preview) so Escape closes just the top
+  // one instead of both stacked dialogs; when the preview closes back to the form, focus returns
+  // to the form (Opus review of 73668ac2, item 6c).
+  const featureKeySelectRef = React.useRef<HTMLSelectElement>(null);
+  const wasPreviewOpen = React.useRef(false);
+  React.useEffect(() => {
+    if (wasPreviewOpen.current && !previewResponse && showForm) {
+      featureKeySelectRef.current?.focus();
+    }
+    wasPreviewOpen.current = !!previewResponse;
+  }, [previewResponse, showForm]);
 
   const fetchOverrides = React.useCallback(() => {
     setLoading(true);
@@ -1309,32 +1374,85 @@ export function FeatureOverridesSection({ tenant }: { tenant: TenantDetail }) {
       .catch(() => setRegistry([]));
   }, [fetchOverrides]);
 
+  function closeForm() {
+    setShowForm(false);
+    setPreviewResponse(null);
+    setPendingCreate(null);
+    setPreviewError(null);
+  }
+
   function openForm() {
     setForm({
       featureKey: registry[0]?.key ?? "",
       effect: "GRANT",
+      kind: "COMP",
       reason: "",
       expiryPreset: "none",
     });
-    setFormError(null);
+    setPreviewError(null);
+    setPreviewResponse(null);
     setShowForm(true);
   }
 
-  async function handleCreate(e: React.FormEvent) {
+  React.useImperativeHandle(
+    ref,
+    () => ({
+      openFor: (featureKey: string) => {
+        setForm({ featureKey, effect: "GRANT", kind: "COMP", reason: "", expiryPreset: "none" });
+        setPreviewError(null);
+        setPreviewResponse(null);
+        setShowForm(true);
+      },
+    }),
+    [],
+  );
+
+  /** Step 1 of preview → confirm → apply: previews the override, writes nothing. Every override
+   * write goes through this — both "+ New Override" and the console's "Customise" action. */
+  async function handlePreview(e: React.FormEvent) {
     e.preventDefault();
-    setSubmitting(true);
-    setFormError(null);
+    setPreviewing(true);
+    setPreviewError(null);
     try {
       const expiresAt =
         form.expiryPreset === "none"
           ? null
           : new Date(Date.now() + Number(form.expiryPreset) * 24 * 60 * 60 * 1000).toISOString();
-      await superAdminClient.post(`/platform-admin/tenants/${tenant.id}/feature-overrides`, {
+      const payload = {
         featureKey: form.featureKey,
         effect: form.effect,
+        kind: form.kind,
         reason: form.reason,
         expiresAt,
-      });
+      };
+      const response = await previewTenantFeatures(tenant.id, { overrides: [payload] });
+      setPendingCreate(payload);
+      setPreviewResponse(response);
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { message?: string | string[] } } };
+      const message = err?.response?.data?.message;
+      setPreviewError(
+        Array.isArray(message)
+          ? message.join("; ")
+          : (message ?? "Could not preview that override. Try again."),
+      );
+    } finally {
+      setPreviewing(false);
+    }
+  }
+
+  /** Step 2: the actual write, run only after preview and an explicit Confirm. */
+  async function handleConfirmCreate() {
+    if (!pendingCreate) return;
+    setSubmitting(true);
+    setPreviewError(null);
+    try {
+      await superAdminClient.post(
+        `/platform-admin/tenants/${tenant.id}/feature-overrides`,
+        pendingCreate,
+      );
+      setPreviewResponse(null);
+      setPendingCreate(null);
       setShowForm(false);
       fetchOverrides();
     } catch (e: unknown) {
@@ -1343,7 +1461,7 @@ export function FeatureOverridesSection({ tenant }: { tenant: TenantDetail }) {
       // into one readable line rather than rendering an array where text is expected.
       const err = e as { response?: { data?: { message?: string | string[] } } };
       const message = err?.response?.data?.message;
-      setFormError(
+      setPreviewError(
         Array.isArray(message)
           ? message.join("; ")
           : (message ?? "Could not create that override. Try again."),
@@ -1461,14 +1579,16 @@ export function FeatureOverridesSection({ tenant }: { tenant: TenantDetail }) {
         </div>
       )}
 
+      {/* Only one of these two AdminModals is ever open at a time (never stacked) — the form
+          hides while the preview is up, so Escape always closes exactly the top dialog. */}
       <AdminModal
-        open={showForm}
-        onClose={() => setShowForm(false)}
+        open={showForm && !previewResponse}
+        onClose={closeForm}
         title="New Feature Override"
         footer={
           <>
             <button
-              onClick={() => setShowForm(false)}
+              onClick={closeForm}
               className="rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-slate-700"
             >
               Cancel
@@ -1476,18 +1596,19 @@ export function FeatureOverridesSection({ tenant }: { tenant: TenantDetail }) {
             <button
               type="submit"
               form="feature-override-form"
-              disabled={submitting || !form.featureKey || !form.reason}
+              disabled={previewing || !form.featureKey || !form.reason}
               className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
             >
-              {submitting ? "Creating..." : "Create Override"}
+              {previewing ? "Loading preview..." : "Preview Override"}
             </button>
           </>
         }
       >
-        <form id="feature-override-form" onSubmit={handleCreate} className="flex flex-col gap-4">
+        <form id="feature-override-form" onSubmit={handlePreview} className="flex flex-col gap-4">
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-400">Feature Key</label>
             <select
+              ref={featureKeySelectRef}
               aria-label="Feature Key"
               value={form.featureKey}
               onChange={(e) => setForm((f) => ({ ...f, featureKey: e.target.value }))}
@@ -1502,7 +1623,7 @@ export function FeatureOverridesSection({ tenant }: { tenant: TenantDetail }) {
                 </option>
               ))}
             </select>
-            {selectedRegistryEntry?.gate.via === "none" && (
+            {selectedRegistryEntry?.gate?.via === "none" && (
               <p className="mt-1 text-xs text-amber-400">
                 This key has no wired gate (catalog metadata only) — an override here will have no
                 effect.
@@ -1529,6 +1650,24 @@ export function FeatureOverridesSection({ tenant }: { tenant: TenantDetail }) {
             >
               <option value="GRANT">Grant</option>
               <option value="DENY">Deny</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Kind</label>
+            <select
+              aria-label="Kind"
+              value={form.kind}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, kind: e.target.value as FeatureOverrideKind }))
+              }
+              className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
+            >
+              {FEATURE_OVERRIDE_KIND_VALUES.map((k) => (
+                <option key={k} value={k}>
+                  {OVERRIDE_KIND_LABELS[k]}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -1562,12 +1701,30 @@ export function FeatureOverridesSection({ tenant }: { tenant: TenantDetail }) {
             </select>
           </div>
 
-          {formError && <p className="text-xs text-red-400">{formError}</p>}
+          {previewError && !previewResponse && (
+            <p className="text-xs text-red-400">{previewError}</p>
+          )}
         </form>
       </AdminModal>
+
+      <PreviewDrawer
+        open={!!previewResponse}
+        title="Preview override"
+        response={previewResponse}
+        registryByKey={Object.fromEntries(registry.map((r) => [r.key, r]))}
+        confirming={submitting}
+        error={previewResponse ? previewError : null}
+        onConfirm={handleConfirmCreate}
+        onClose={() => {
+          setPreviewResponse(null);
+          setPendingCreate(null);
+          setPreviewError(null);
+        }}
+      />
     </div>
   );
-}
+});
+FeatureOverridesSection.displayName = "FeatureOverridesSection";
 
 // ─── Configuration Tab ─────────────────────────────────────────────────────────
 
@@ -1867,6 +2024,11 @@ export default function AdminTenantDetailPage() {
         (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
           "Action failed",
       );
+      // The Feature Console's tier-change confirm (via onChangePlan) awaits this call and must
+      // observe the failure to keep its preview drawer open with the error, instead of silently
+      // closing as if the change applied — rethrow only for this action; every other call site
+      // here is a fire-and-forget onClick that already gets its feedback from statusMsg above.
+      if (action === "change-plan") throw err;
     } finally {
       setActionLoading(null);
     }
@@ -1922,7 +2084,9 @@ export default function AdminTenantDetailPage() {
         />
       )}
       {activeTab === "billing" && <BillingTab tenant={tenant} onRefreshTenant={fetchTenant} />}
-      {activeTab === "addons" && <AddonsTab tenant={tenant} />}
+      {activeTab === "addons" && (
+        <AddonsTab tenant={tenant} onAction={handleAction} actionLoading={actionLoading} />
+      )}
       {activeTab === "config" && <ConfigTab tenant={tenant} />}
       {activeTab === "audit" && <AuditLogTab tenantId={tenant.id} />}
     </div>

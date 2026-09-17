@@ -500,13 +500,11 @@ describe("MailboxConnectionService — Microsoft", () => {
     const prisma = {
       mailboxConnection: {
         findUnique: jest.fn().mockResolvedValue(null),
-        upsert: jest
-          .fn()
-          .mockResolvedValue({
-            id: "mc-1",
-            accountEmail: "owner@acme.test",
-            provider: "MICROSOFT",
-          }),
+        upsert: jest.fn().mockResolvedValue({
+          id: "mc-1",
+          accountEmail: "owner@acme.test",
+          provider: "MICROSOFT",
+        }),
       },
     };
     const { service } = buildService({ prisma });

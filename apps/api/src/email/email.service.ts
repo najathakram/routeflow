@@ -213,32 +213,111 @@ interface PlatformSmtpConfig {
   pass: string;
 }
 
-/** Shared card/header/footer shell for the N2 account-notification templates — same
- *  visual grammar as sendMergeVerificationEmail/sendMergeCompleteEmail (page background,
- *  rounded white card, colored header bar, light-gray footer), factored out once here
- *  since N2 adds four templates rather than one. Not a rewrite of buildInvoiceEmail's own
- *  shell — that one stays as-is for invoices. */
-function renderEmailShell(params: {
-  headerColor: string;
-  headerTitle: string;
+/**
+ * RouteFlow brand tokens for transactional email — extracted from
+ * `marketing/RouteFlow_Brand_Guide.pdf`; full extraction at
+ * `local-assets/handoff/2026-09-17/email-brand/notes.md`. Route Navy for the header/heading,
+ * Route Teal for the one CTA per email, Cloud for the footer band, Steel for footer text —
+ * Signal Mint is deliberately UNUSED here (the guide reserves it for dark surfaces/icons; it
+ * fails contrast as body/link text on white).
+ */
+const BRAND_NAVY = "#1D2A3D";
+const BRAND_TEAL = "#087D76";
+const BRAND_CLOUD = "#F3F7F8";
+const BRAND_STEEL = "#536579";
+const BRAND_WHITE = "#FFFFFF";
+
+/**
+ * Absolute https URL — an email client can neither load a `data:` URI reliably nor a
+ * relative path, so the logo must be hosted on the live marketing site. Points at the mark
+ * checked into `apps/web/public/brand/routeflow-mark-192.png` (192px source for a
+ * retina-safe ~28px display size in the header).
+ */
+const BRAND_LOGO_URL = "https://www.routeflow.info/brand/routeflow-mark-192.png";
+
+/** RouteFlow's own logo + wordmark header row — for platform-sent mail (password reset,
+ *  verification, security notices) that represents RouteFlow itself, not a tenant. */
+function brandHeaderHtml(): string {
+  // The only mark asset in the repo is the DARK-navy "R" (apps/web/public/brand/
+  // routeflow-mark-*.png) — the guide's own reversed/light mark for dark surfaces was never
+  // supplied. Wrapped in a small white chip so the dark mark stays visible on the Route Navy
+  // header rather than rendering nearly invisible (dark-on-dark) — this changes nothing about
+  // the mark itself (no redraw/rotate/proportion change, per the guide's own rule), only what
+  // sits behind it.
+  return `<table cellpadding="0" cellspacing="0" role="presentation"><tr>
+    <td style="vertical-align:middle;padding-right:10px;">
+      <table cellpadding="0" cellspacing="0" role="presentation"><tr><td style="background:${BRAND_WHITE};border-radius:6px;padding:4px;" bgcolor="${BRAND_WHITE}">
+        <img src="${BRAND_LOGO_URL}" width="24" height="24" alt="RouteFlow" style="display:block;border:0;outline:none;">
+      </td></tr></table>
+    </td>
+    <td style="vertical-align:middle;">
+      <span style="font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;color:${BRAND_WHITE};letter-spacing:-0.3px;">routeflow.</span>
+    </td>
+  </tr></table>`;
+}
+
+/** A tenant-branded header row — for mail sent AS the tenant to their own customers/admins
+ *  (invoices, the low-stock digest). Shows the tenant's business name, not the RouteFlow
+ *  mark: this is the tenant's own correspondence: RouteFlow is the platform underneath it,
+ *  not the sender the recipient should see. */
+function tenantHeaderHtml(businessName: string): string {
+  return `<span style="font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;color:${BRAND_WHITE};letter-spacing:-0.3px;">${escapeHtml(businessName)}</span>`;
+}
+
+/**
+ * The ONE shared branded shell every transactional email in this file renders through —
+ * Route Navy header, a heading, the caller's body, a Cloud-gray footer. Table-based, inline
+ * CSS only, Arial/Helvetica stack (email-safe and deliberate — never "fix" this to a
+ * design-system font; see notes.md), explicit hex `bgcolor`+CSS on every surface
+ * (dark-mode-safe: a client's auto-dark-mode only re-colors what it can't already see is an
+ * intentional choice). Returns the HTML AND a plain-text alternative built from the SAME
+ * structured pieces the caller supplies — never derived by stripping tags, which could
+ * silently drop a dollar figure or a link — so the two can never drift apart.
+ */
+function renderBrandedEmail(params: {
+  headerHtml: string;
+  heading: string;
   bodyHtml: string;
-}): string {
-  return `<!DOCTYPE html>
-<html><body style="margin:0;padding:0;background:#f9fafb;font-family:Arial,sans-serif;">
-<table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:32px 16px;">
-<table width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:8px;border:1px solid #e5e7eb;">
-  <tr><td style="background:${params.headerColor};padding:24px 32px;border-radius:8px 8px 0 0;">
-    <p style="margin:0;font-size:20px;font-weight:700;color:#ffffff;">${params.headerTitle}</p>
-  </td></tr>
-  <tr><td style="padding:32px;">
-    ${params.bodyHtml}
-  </td></tr>
-  <tr><td style="background:#f9fafb;padding:16px 32px;border-top:1px solid #f0f0f0;border-radius:0 0 8px 8px;">
-    <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;">RouteFlow Platform — this is an automated account email.</p>
+  /** Plain-text paragraphs — parallel content to `bodyHtml`, `\n\n`-joined in the output. */
+  bodyText: string[];
+  footerNote: string;
+}): { html: string; text: string } {
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="supported-color-schemes" content="light dark">
+</head>
+<body style="margin:0;padding:0;background:${BRAND_CLOUD};font-family:Arial,Helvetica,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background:${BRAND_CLOUD};" bgcolor="${BRAND_CLOUD}">
+  <tr><td align="center" style="padding:32px 16px;">
+    <table width="600" cellpadding="0" cellspacing="0" role="presentation" style="max-width:600px;width:100%;background:${BRAND_WHITE};border-radius:8px;overflow:hidden;" bgcolor="${BRAND_WHITE}">
+      <tr><td style="background:${BRAND_NAVY};padding:24px 32px;" bgcolor="${BRAND_NAVY}">${params.headerHtml}</td></tr>
+      <tr><td style="padding:32px;" bgcolor="${BRAND_WHITE}">
+        <h1 style="margin:0 0 20px;font-family:Arial,Helvetica,sans-serif;font-size:21px;font-weight:700;color:${BRAND_NAVY};">${escapeHtml(params.heading)}</h1>
+        ${params.bodyHtml}
+      </td></tr>
+      <tr><td style="background:${BRAND_CLOUD};padding:20px 32px;border-top:1px solid #e2e8ef;" bgcolor="${BRAND_CLOUD}">
+        <p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:${BRAND_STEEL};text-align:center;">${escapeHtml(params.footerNote)}</p>
+      </td></tr>
+    </table>
   </td></tr>
 </table>
-</td></tr></table>
-</body></html>`;
+</body>
+</html>`;
+
+  const text = `${params.heading}\n\n${params.bodyText.join("\n\n")}\n\n--\n${params.footerNote}`;
+  return { html, text };
+}
+
+/** A branded CTA button — Route Teal, ≥44px tap target (14px vertical padding either side of
+ *  a 16px line-height = 44px total, meeting the email tap-target guideline). */
+function renderBrandButton(label: string, url: string): string {
+  return `<table cellpadding="0" cellspacing="0" role="presentation"><tr><td style="background:${BRAND_TEAL};border-radius:6px;" bgcolor="${BRAND_TEAL}">
+    <a href="${url}" style="display:inline-block;padding:14px 28px;line-height:16px;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;color:${BRAND_WHITE};text-decoration:none;">${escapeHtml(label)}</a>
+  </td></tr></table>`;
 }
 
 @Injectable()
@@ -990,8 +1069,8 @@ export class EmailService {
       ? `Payment Reminder — Invoice ${params.invoiceNumber}`
       : `Invoice ${params.invoiceNumber}`;
 
-    const html = this.buildInvoiceEmail(params, businessName);
-    return this.send({ to: params.to, subject, html });
+    const { html, text } = this.buildInvoiceEmail(params, businessName);
+    return this.send({ to: params.to, subject, html, text });
   }
 
   // ─── Internal send ─────────────────────────────────────────────────────────
@@ -1397,7 +1476,7 @@ export class EmailService {
       depositDueDate?: string | null;
     },
     businessName: string,
-  ): string {
+  ): { html: string; text: string } {
     const fmt = (n: number) =>
       new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
 
@@ -1414,13 +1493,13 @@ export class EmailService {
         const showOriginal = showOriginalPrice(it, !!params.hideOriginalPrice);
         return `
         <tr>
-          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1a2033;">${it.description}</td>
-          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1a2033;text-align:center;">${it.qty}${
+          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1D2A3D;">${it.description}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1D2A3D;text-align:center;">${it.qty}${
             freeUnits > 0
               ? `<div style="font-size:11px;color:#b45309;font-weight:600;margin-top:2px;">${freeUnits} free</div>`
               : ""
           }</td>
-          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1a2033;text-align:right;">${
+          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1D2A3D;text-align:right;">${
             showOriginal
               ? `<s style="color:#9ca3af;font-weight:400;text-decoration:line-through;">${fmt(original as number)}</s><br/>`
               : ""
@@ -1429,7 +1508,7 @@ export class EmailService {
               ? `<div style="font-size:11px;color:#9ca3af;font-weight:400;margin-top:2px;">MSRP ${fmt(it.msrp)}/pc</div>`
               : ""
           }</td>
-          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1a2033;text-align:right;font-weight:600;">${fmt(it.subtotal)}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1D2A3D;text-align:right;font-weight:600;">${fmt(it.subtotal)}</td>
         </tr>`;
       })
       .join("");
@@ -1496,30 +1575,15 @@ export class EmailService {
       params.balanceDue != null
         ? `${amountPaidRow}${creditAppliedRow}${advanceAppliedRow}
               <tr style="background:#f9fafb;">
-                <td colspan="3" style="padding:12px;font-size:14px;font-weight:700;color:#1a2033;text-align:right;">Balance Due</td>
+                <td colspan="3" style="padding:12px;font-size:14px;font-weight:700;color:#1D2A3D;text-align:right;">Balance Due</td>
                 <td style="padding:12px;font-size:16px;font-weight:700;color:${params.balanceDue > 0 ? "#dc2626" : "#16a34a"};text-align:right;">${fmt(params.balanceDue)}</td>
               </tr>`
         : `<tr style="background:#f9fafb;">
-                <td colspan="3" style="padding:12px;font-size:14px;font-weight:700;color:#1a2033;text-align:right;">Amount Due</td>
-                <td style="padding:12px;font-size:16px;font-weight:700;color:#1a2033;text-align:right;">${fmt(params.total)}</td>
+                <td colspan="3" style="padding:12px;font-size:14px;font-weight:700;color:#1D2A3D;text-align:right;">Amount Due</td>
+                <td style="padding:12px;font-size:16px;font-weight:700;color:#1D2A3D;text-align:right;">${fmt(params.total)}</td>
               </tr>`;
 
-    return `<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;padding:40px 0;">
-    <tr><td align="center">
-      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
-
-        <!-- Header -->
-        <tr><td style="background:#1a2033;padding:28px 32px;">
-          <p style="margin:0;font-size:22px;font-weight:700;color:#ffffff;letter-spacing:-0.5px;">${businessName}</p>
-          <p style="margin:4px 0 0;font-size:13px;color:rgba(255,255,255,0.6);">Invoice</p>
-        </td></tr>
-
-        <!-- Body -->
-        <tr><td style="padding:32px;">
+    const bodyHtml = `
           ${reminderBanner}
           ${depositBanner}
           <p style="margin:0 0 8px;font-size:15px;color:#6b7280;">Dear ${params.customerName},</p>
@@ -1531,21 +1595,21 @@ export class EmailService {
           <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
             <tr>
               <td style="font-size:13px;color:#6b7280;">Invoice No.</td>
-              <td style="font-size:13px;color:#1a2033;font-weight:600;text-align:right;">${params.invoiceNumber}</td>
+              <td style="font-size:13px;color:#1D2A3D;font-weight:600;text-align:right;">${params.invoiceNumber}</td>
             </tr>
             <tr>
               <td style="font-size:13px;color:#6b7280;padding-top:6px;">Issue Date</td>
-              <td style="font-size:13px;color:#1a2033;text-align:right;padding-top:6px;">${params.issueDate}</td>
+              <td style="font-size:13px;color:#1D2A3D;text-align:right;padding-top:6px;">${params.issueDate}</td>
             </tr>
             <tr>
               <td style="font-size:13px;color:#6b7280;padding-top:6px;">Due Date</td>
-              <td style="font-size:13px;color:#1a2033;font-weight:600;text-align:right;padding-top:6px;${params.isReminder ? "color:#dc2626;" : ""}">${params.dueDate}</td>
+              <td style="font-size:13px;color:#1D2A3D;font-weight:600;text-align:right;padding-top:6px;${params.isReminder ? "color:#dc2626;" : ""}">${params.dueDate}</td>
             </tr>
             ${
               params.paymentTermsLabel
                 ? `<tr>
               <td style="font-size:13px;color:#6b7280;padding-top:6px;">Terms</td>
-              <td style="font-size:13px;color:#1a2033;text-align:right;padding-top:6px;">${params.paymentTermsLabel}</td>
+              <td style="font-size:13px;color:#1D2A3D;text-align:right;padding-top:6px;">${params.paymentTermsLabel}</td>
             </tr>`
                 : ""
             }
@@ -1571,19 +1635,70 @@ export class EmailService {
 
           <p style="margin:24px 0 0;font-size:14px;color:#6b7280;">
             If you have any questions about this invoice, please don't hesitate to contact us.
-          </p>
-        </td></tr>
+          </p>`;
 
-        <!-- Footer -->
-        <tr><td style="background:#f9fafb;padding:20px 32px;border-top:1px solid #f0f0f0;">
-          <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;">This is an automated email from ${businessName}.</p>
-        </td></tr>
+    // Plain-text alternative — built from the same figures, not derived from the HTML
+    // above, so a tag-stripping approximation can never silently drop a dollar figure.
+    const bodyText: string[] = [];
+    if (params.isReminder) {
+      bodyText.push(
+        "Payment Reminder: This invoice is overdue. Please arrange payment at your earliest convenience.",
+      );
+    }
+    if (params.depositAmount != null) {
+      bodyText.push(
+        `Deposit due${params.depositDueDate ? ` by ${params.depositDueDate}` : ""}: ${fmt(params.depositAmount)}. Remainder due by ${params.dueDate}.`,
+      );
+    }
+    bodyText.push(`Dear ${params.customerName},`);
+    bodyText.push(
+      params.isReminder
+        ? "This is a reminder that the following invoice is outstanding."
+        : "Please find your invoice details below.",
+    );
+    bodyText.push(
+      [
+        `Invoice No. ${params.invoiceNumber}`,
+        `Issue Date: ${params.issueDate}`,
+        `Due Date: ${params.dueDate}`,
+        params.paymentTermsLabel ? `Terms: ${params.paymentTermsLabel}` : null,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+    bodyText.push(
+      params.items
+        .map((it) => {
+          const freeUnits = it.promoFreeUnits != null ? Number(it.promoFreeUnits) : 0;
+          return `${it.description} — qty ${it.qty}${freeUnits > 0 ? ` (${freeUnits} free)` : ""} @ ${fmt(it.unitPrice)} = ${fmt(it.subtotal)}`;
+        })
+        .join("\n"),
+    );
+    const totalsLines: string[] = [];
+    if (params.totalPaid != null && params.totalPaid > 0)
+      totalsLines.push(`Amount Paid: ${fmt(params.totalPaid)}`);
+    if (params.creditApplied != null && params.creditApplied > 0)
+      totalsLines.push(`${creditNoteLabel}: ${fmt(params.creditApplied)}`);
+    if (params.advanceApplied != null && params.advanceApplied > 0)
+      totalsLines.push(`Advance applied: ${fmt(params.advanceApplied)}`);
+    totalsLines.push(
+      params.balanceDue != null
+        ? `Balance Due: ${fmt(params.balanceDue)}`
+        : `Amount Due: ${fmt(params.total)}`,
+    );
+    bodyText.push(totalsLines.join("\n"));
+    if (params.pdfUrl) bodyText.push(`Download PDF: ${params.pdfUrl}`);
+    bodyText.push(
+      "If you have any questions about this invoice, please don't hesitate to contact us.",
+    );
 
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>`;
+    return renderBrandedEmail({
+      headerHtml: tenantHeaderHtml(businessName),
+      heading: "Invoice",
+      bodyHtml,
+      bodyText,
+      footerNote: `This is an automated email from ${businessName}.`,
+    });
   }
 
   // ─── Buyer account merge verification email ────────────────────────────────
@@ -1597,15 +1712,7 @@ export class EmailService {
     transport: "mailbox" | "smtp" | "resend" | "none";
     error?: string;
   }> {
-    const html = `<!DOCTYPE html>
-<html><body style="margin:0;padding:0;background:#f9fafb;font-family:Arial,sans-serif;">
-<table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:32px 16px;">
-<table width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:8px;border:1px solid #e5e7eb;">
-  <tr><td style="background:#4f46e5;padding:24px 32px;border-radius:8px 8px 0 0;">
-    <p style="margin:0;font-size:20px;font-weight:700;color:#ffffff;">RouteFlow — Account Merge Request</p>
-  </td></tr>
-  <tr><td style="padding:32px;">
-    <p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi,</p>
+    const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi,</p>
     <p style="margin:0 0 16px;font-size:15px;color:#374151;">
       An account merge request has been submitted. The account signed in as <strong>${params.primaryEmail}</strong> wants
       to merge <strong>this account</strong> (${params.to}) into it. After the merge, you'll only need to use the other
@@ -1614,21 +1721,23 @@ export class EmailService {
     <p style="margin:0 0 24px;font-size:15px;color:#374151;">
       If you own both accounts and want to proceed, click the button below to confirm ownership of this account.
     </p>
-    <table cellpadding="0" cellspacing="0"><tr><td style="background:#4f46e5;border-radius:6px;">
-      <a href="${params.verifyUrl}" style="display:inline-block;padding:12px 28px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;">
-        Confirm — I own this account
-      </a>
-    </td></tr></table>
+    ${renderBrandButton("Confirm — I own this account", params.verifyUrl)}
     <p style="margin:24px 0 0;font-size:13px;color:#9ca3af;">
       This link expires in 24 hours. If you did not request this merge, you can safely ignore this email — your account will not be affected.
-    </p>
-  </td></tr>
-  <tr><td style="background:#f9fafb;padding:16px 32px;border-top:1px solid #f0f0f0;border-radius:0 0 8px 8px;">
-    <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;">RouteFlow Platform — this is an automated security email.</p>
-  </td></tr>
-</table>
-</td></tr></table>
-</body></html>`;
+    </p>`;
+    const { html, text } = renderBrandedEmail({
+      headerHtml: brandHeaderHtml(),
+      heading: "Account Merge Request",
+      bodyHtml: body,
+      bodyText: [
+        "Hi,",
+        `An account merge request has been submitted. The account signed in as ${params.primaryEmail} wants to merge this account (${params.to}) into it. After the merge, you'll only need to use the other email to sign in.`,
+        "If you own both accounts and want to proceed, confirm ownership of this account here:",
+        params.verifyUrl,
+        "This link expires in 24 hours. If you did not request this merge, you can safely ignore this email — your account will not be affected.",
+      ],
+      footerNote: "RouteFlow Platform — this is an automated security email.",
+    });
 
     // Return the honest send result so the caller can avoid claiming the verification
     // email "has been sent" when it hasn't (R5).
@@ -1638,6 +1747,7 @@ export class EmailService {
       to: params.to,
       subject: "Confirm account merge — RouteFlow",
       html,
+      text,
       senderClass: "platform",
     });
   }
@@ -1649,15 +1759,14 @@ export class EmailService {
     secondaryEmail: string;
     primaryName: string;
   }) {
-    const html = `<!DOCTYPE html>
-<html><body style="margin:0;padding:0;background:#f9fafb;font-family:Arial,sans-serif;">
-<table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:32px 16px;">
-<table width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:8px;border:1px solid #e5e7eb;">
-  <tr><td style="background:#059669;padding:24px 32px;border-radius:8px 8px 0 0;">
-    <p style="margin:0;font-size:20px;font-weight:700;color:#ffffff;">RouteFlow — Accounts Merged</p>
-  </td></tr>
-  <tr><td style="padding:32px;">
-    <p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${params.primaryName},</p>
+    // Built directly for each recipient (rather than one render + string-replace on the
+    // primary's HTML) so the plain-text alternative can be built the same way, in parallel,
+    // without a second layer of substitutions on top of the first — the final copy for
+    // each recipient is unchanged from before this restyle.
+    const closing = (
+      greeting: string,
+      signInLine: string,
+    ) => `<p style="margin:0 0 16px;font-size:15px;color:#374151;">${greeting}</p>
     <p style="margin:0 0 16px;font-size:15px;color:#374151;">
       Your two RouteFlow buyer accounts have been successfully merged.
     </p>
@@ -1667,34 +1776,60 @@ export class EmailService {
     </ul>
     <p style="margin:0 0 16px;font-size:15px;color:#374151;">
       All your seller connections from the deactivated account have been transferred to your active account.
-      You can now sign in with <strong>${params.primaryEmail}</strong> to access everything in one place.
+      ${signInLine}
     </p>
     <p style="margin:0;font-size:13px;color:#9ca3af;">
       If you did not request this change, contact our support team immediately.
-    </p>
-  </td></tr>
-  <tr><td style="background:#f9fafb;padding:16px 32px;border-top:1px solid #f0f0f0;border-radius:0 0 8px 8px;">
-    <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;">RouteFlow Platform — automated notification.</p>
-  </td></tr>
-</table>
-</td></tr></table>
-</body></html>`;
+    </p>`;
 
+    const primary = renderBrandedEmail({
+      headerHtml: brandHeaderHtml(),
+      heading: "Accounts Merged",
+      bodyHtml: closing(
+        `Hi ${params.primaryName},`,
+        `You can now sign in with <strong>${params.primaryEmail}</strong> to access everything in one place.`,
+      ),
+      bodyText: [
+        `Hi ${params.primaryName},`,
+        "Your two RouteFlow buyer accounts have been successfully merged.",
+        `Active account: ${params.primaryEmail}`,
+        `Deactivated account: ${params.secondaryEmail}`,
+        `All your seller connections from the deactivated account have been transferred to your active account. You can now sign in with ${params.primaryEmail} to access everything in one place.`,
+        "If you did not request this change, contact our support team immediately.",
+      ],
+      footerNote: "RouteFlow Platform — automated notification.",
+    });
     await this.send({
       to: params.primaryEmail,
       subject: "Your accounts have been merged — RouteFlow",
-      html,
+      html: primary.html,
+      text: primary.text,
     });
-    // Also notify the secondary inbox (in case the buyer checks it)
+
+    // Also notify the secondary inbox (in case the buyer checks it) — same facts, addressed
+    // generically (no name on file for this side) and naming which account to use going forward.
+    const secondary = renderBrandedEmail({
+      headerHtml: brandHeaderHtml(),
+      heading: "Accounts Merged",
+      bodyHtml: closing(
+        "Hi,",
+        `Please use <strong>${params.primaryEmail}</strong> to sign in going forward. This account (${params.secondaryEmail}) is now deactivated.`,
+      ),
+      bodyText: [
+        "Hi,",
+        "Your two RouteFlow buyer accounts have been successfully merged.",
+        `Active account: ${params.primaryEmail}`,
+        `Deactivated account: ${params.secondaryEmail}`,
+        `All your seller connections from the deactivated account have been transferred to your active account. Please use ${params.primaryEmail} to sign in going forward. This account (${params.secondaryEmail}) is now deactivated.`,
+        "If you did not request this change, contact our support team immediately.",
+      ],
+      footerNote: "RouteFlow Platform — automated notification.",
+    });
     await this.send({
       to: params.secondaryEmail,
       subject: "This account has been merged — RouteFlow",
-      html: html
-        .replace(`Hi ${params.primaryName}`, `Hi`)
-        .replace(
-          `You can now sign in with <strong>${params.primaryEmail}</strong> to access everything in one place.`,
-          `Please use <strong>${params.primaryEmail}</strong> to sign in going forward. This account (${params.secondaryEmail}) is now deactivated.`,
-        ),
+      html: secondary.html,
+      text: secondary.text,
     });
   }
 
@@ -1712,20 +1847,28 @@ export class EmailService {
     <p style="margin:0 0 16px;font-size:15px;color:#374151;">
       Your RouteFlow account is ready. Click below to set your password and finish signing in.
     </p>
-    <table cellpadding="0" cellspacing="0"><tr><td style="background:#4f46e5;border-radius:6px;">
-      <a href="${params.setPasswordUrl}" style="display:inline-block;padding:12px 28px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;">
-        Set your password
-      </a>
-    </td></tr></table>
+    ${renderBrandButton("Set your password", params.setPasswordUrl)}
     <p style="margin:24px 0 0;font-size:13px;color:#9ca3af;">
       This link expires in ${params.expiryHours} hours. If you weren't expecting this, contact your administrator.
     </p>`;
-    const html = renderEmailShell({
-      headerColor: "#4f46e5",
-      headerTitle: "RouteFlow — Set your password",
+    const { html, text } = renderBrandedEmail({
+      headerHtml: brandHeaderHtml(),
+      heading: "Set your password",
       bodyHtml: body,
+      bodyText: [
+        `Hi ${params.username},`,
+        "Your RouteFlow account is ready. Set your password here to finish signing in:",
+        params.setPasswordUrl,
+        `This link expires in ${params.expiryHours} hours. If you weren't expecting this, contact your administrator.`,
+      ],
+      footerNote: "RouteFlow Platform — this is an automated account email.",
     });
-    return this.sendPlatform({ to: params.to, subject: "Set your RouteFlow password", html });
+    return this.sendPlatform({
+      to: params.to,
+      subject: "Set your RouteFlow password",
+      html,
+      text,
+    });
   }
 
   /** Notice to a user's OLD address after their login email is changed — never opt-out. */
@@ -1737,15 +1880,22 @@ export class EmailService {
     <p style="margin:0;font-size:13px;color:#9ca3af;">
       If you didn't make this change, contact your administrator immediately.
     </p>`;
-    const html = renderEmailShell({
-      headerColor: "#4f46e5",
-      headerTitle: "RouteFlow — Login email changed",
+    const { html, text } = renderBrandedEmail({
+      headerHtml: brandHeaderHtml(),
+      heading: "Login email changed",
       bodyHtml: body,
+      bodyText: [
+        `Hi ${params.username},`,
+        `Your RouteFlow login email was changed to ${params.newEmail}.`,
+        "If you didn't make this change, contact your administrator immediately.",
+      ],
+      footerNote: "RouteFlow Platform — this is an automated account email.",
     });
     return this.sendPlatform({
       to: params.to,
       subject: "Your RouteFlow login email was changed",
       html,
+      text,
     });
   }
 
@@ -1755,15 +1905,18 @@ export class EmailService {
     <p style="margin:0;font-size:15px;color:#374151;">
       This address is now your RouteFlow login email.
     </p>`;
-    const html = renderEmailShell({
-      headerColor: "#4f46e5",
-      headerTitle: "RouteFlow — This is now your login email",
+    const { html, text } = renderBrandedEmail({
+      headerHtml: brandHeaderHtml(),
+      heading: "This is now your login email",
       bodyHtml: body,
+      bodyText: [`Hi ${params.username},`, "This address is now your RouteFlow login email."],
+      footerNote: "RouteFlow Platform — this is an automated account email.",
     });
     return this.sendPlatform({
       to: params.to,
       subject: "This is now your RouteFlow login email",
       html,
+      text,
     });
   }
 
@@ -1780,12 +1933,22 @@ export class EmailService {
       Your RouteFlow role was changed from <strong>${escapeHtml(params.oldRole)}</strong> to
       <strong>${escapeHtml(params.newRole)}</strong> by ${escapeHtml(params.changedBy)}.
     </p>`;
-    const html = renderEmailShell({
-      headerColor: "#4f46e5",
-      headerTitle: "RouteFlow — Your role was changed",
+    const { html, text } = renderBrandedEmail({
+      headerHtml: brandHeaderHtml(),
+      heading: "Your role was changed",
       bodyHtml: body,
+      bodyText: [
+        `Hi ${params.username},`,
+        `Your RouteFlow role was changed from ${params.oldRole} to ${params.newRole} by ${params.changedBy}.`,
+      ],
+      footerNote: "RouteFlow Platform — this is an automated account email.",
     });
-    return this.sendPlatform({ to: params.to, subject: "Your RouteFlow role was changed", html });
+    return this.sendPlatform({
+      to: params.to,
+      subject: "Your RouteFlow role was changed",
+      html,
+      text,
+    });
   }
 
   // ─── N4: low-stock daily digest (platform-sent, tenant-admin-facing) ───────
@@ -1812,12 +1975,13 @@ export class EmailService {
     transport: "mailbox" | "smtp" | "resend" | "none";
     error?: string;
   }> {
-    const html = this.buildLowStockDigestEmail(params);
+    const { html, text } = this.buildLowStockDigestEmail(params);
     const count = params.items.length;
     return this.send({
       to: params.to,
       subject: `Low stock alert — ${count} item${count === 1 ? "" : "s"} below threshold`,
       html,
+      text,
     });
   }
 
@@ -1837,7 +2001,7 @@ export class EmailService {
   private buildLowStockDigestEmail(params: {
     businessName: string;
     items: { name: string; sku: string | null; currentStock: number; reorderPoint: number }[];
-  }): string {
+  }): { html: string; text: string } {
     const shown = params.items.slice(0, EmailService.MAX_DIGEST_ROWS);
     const overflow = params.items.length - shown.length;
     const rows =
@@ -1845,7 +2009,7 @@ export class EmailService {
         .map(
           (it) => `
         <tr>
-          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1a2033;">${escapeHtml(it.name)}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1D2A3D;">${escapeHtml(it.name)}</td>
           <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#6b7280;">${it.sku ? escapeHtml(it.sku) : "—"}</td>
           <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#dc2626;font-weight:600;text-align:right;">${it.currentStock}</td>
           <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#6b7280;text-align:right;">${it.reorderPoint}</td>
@@ -1859,22 +2023,7 @@ export class EmailService {
         </tr>`
         : "");
 
-    return `<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;padding:40px 0;">
-    <tr><td align="center">
-      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
-
-        <!-- Header -->
-        <tr><td style="background:#1a2033;padding:28px 32px;">
-          <p style="margin:0;font-size:22px;font-weight:700;color:#ffffff;letter-spacing:-0.5px;">${escapeHtml(params.businessName)}</p>
-          <p style="margin:4px 0 0;font-size:13px;color:rgba(255,255,255,0.6);">Low Stock Alert</p>
-        </td></tr>
-
-        <!-- Body -->
-        <tr><td style="padding:32px;">
+    const bodyHtml = `
           <p style="margin:0 0 24px;font-size:15px;color:#374151;">
             ${params.items.length} item${params.items.length === 1 ? " is" : "s are"} below its reorder point:
           </p>
@@ -1892,17 +2041,26 @@ export class EmailService {
           <p style="margin:24px 0 0;font-size:13px;color:#9ca3af;">
             This is a daily summary — you will not receive another alert for these items until tomorrow.
             You can turn this digest off in your account preferences.
-          </p>
-        </td></tr>
+          </p>`;
 
-        <!-- Footer -->
-        <tr><td style="background:#f9fafb;padding:16px 32px;border-top:1px solid #f0f0f0;">
-          <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;">RouteFlow Platform — automated notification.</p>
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>`;
+    const bodyText: string[] = [
+      `${params.items.length} item${params.items.length === 1 ? " is" : "s are"} below its reorder point:`,
+      shown
+        .map(
+          (it) =>
+            `${it.name} (SKU ${it.sku ?? "—"}) — in stock ${it.currentStock}, reorder at ${it.reorderPoint}`,
+        )
+        .join("\n") +
+        (overflow > 0 ? `\n…and ${overflow} more item${overflow === 1 ? "" : "s"}` : ""),
+      "This is a daily summary — you will not receive another alert for these items until tomorrow. You can turn this digest off in your account preferences.",
+    ];
+
+    return renderBrandedEmail({
+      headerHtml: tenantHeaderHtml(params.businessName),
+      heading: "Low Stock Alert",
+      bodyHtml,
+      bodyText,
+      footerNote: "RouteFlow Platform — automated notification.",
+    });
   }
 }
