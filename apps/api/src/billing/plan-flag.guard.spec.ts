@@ -1,9 +1,91 @@
-import { ExecutionContext, ForbiddenException } from "@nestjs/common";
+import { ExecutionContext, ForbiddenException, Logger } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { PlanFlagGuard } from "./plan-flag.guard";
 import { EntitlementsService } from "./entitlements.service";
 import { PlanCatalogService } from "./plan-catalog.service";
+import { FeatureOverrideService } from "./feature-override.service";
 import { PlanGateErrorBody } from "./plan-gate";
+import { EntitlementAuthority } from "./entitlement-authority.service";
+import { FeatureResolverService } from "./feature-resolver.service";
+import { EntitlementsModeService } from "./entitlements-mode.service";
+import { FeatureDiffService } from "./feature-diff.service";
+
+/**
+ * Feature grants v2 brief A: PlanFlagGuard's decision now lives in
+ * EntitlementAuthority.can() (see plan-flag.guard.ts's header comment). Every test in this file
+ * pre-dates that refactor and asserts on the OLD-PATH decision specifically — mocking the
+ * resolver to return `null` (as if unavailable) makes `can()` degrade to exactly that old-path
+ * computation (see entitlement-authority.service.ts's `if (resolved === null) return
+ * oldVerdict;`), so these fixtures keep meaning what they always meant without knowing
+ * anything about the resolver/diff-log machinery this brief adds.
+ */
+function buildAuthority(
+  entitlements: { resolve: jest.Mock },
+  featureOverrides: { get: jest.Mock },
+): EntitlementAuthority {
+  const prisma = { tenantAddon: { findUnique: jest.fn().mockResolvedValue(null) } } as any;
+  const resolver = {
+    resolve: jest.fn().mockResolvedValue(null),
+  } as unknown as FeatureResolverService;
+  const modeService = {
+    getMode: jest.fn().mockResolvedValue("shadow"),
+  } as unknown as EntitlementsModeService;
+  const diffService = { record: jest.fn() } as unknown as FeatureDiffService;
+  return new EntitlementAuthority(
+    entitlements as unknown as EntitlementsService,
+    featureOverrides as unknown as FeatureOverrideService,
+    resolver,
+    modeService,
+    diffService,
+    prisma,
+  );
+}
+
+/**
+ * Item 7 (Opus review of 9923b87c): unlike `buildAuthority` above (resolver always
+ * unavailable, degrading `can()` to pure old-path), this builds a REAL EntitlementAuthority
+ * whose resolver DOES answer, and DISAGREES with the old path — proving the guard's
+ * caller-visible outcome (allow/deny) stays on the old path in shadow mode even when a live
+ * resolver verdict exists, and that the disagreement is still recorded.
+ */
+function buildAuthorityWithDisagreeingResolver(
+  entitlements: { resolve: jest.Mock },
+  featureOverrides: { get: jest.Mock },
+  flagKey: string,
+  resolverVerdict: boolean,
+): { authority: EntitlementAuthority; diffService: { record: jest.Mock } } {
+  const prisma = { tenantAddon: { findUnique: jest.fn().mockResolvedValue(null) } } as any;
+  const byKey = new Map([
+    [
+      flagKey,
+      { key: flagKey, effective: resolverVerdict, source: "NONE" as const, charged: false },
+    ],
+  ]);
+  const resolver = {
+    resolve: jest.fn().mockResolvedValue({
+      tenantId: "t1",
+      planKey: "STARTER",
+      catalogVersionId: "v1",
+      byKey,
+      computedAt: new Date().toISOString(),
+    }),
+  } as unknown as FeatureResolverService;
+  const modeService = {
+    getMode: jest.fn().mockResolvedValue("shadow"),
+  } as unknown as EntitlementsModeService;
+  // The real record() is async — recordDiffMemoized calls `.catch()` on its return value
+  // (fire-and-forget, item 3), so the mock must return a Promise too, not `undefined`.
+  const diffService = { record: jest.fn().mockResolvedValue(undefined) };
+  const authority = new EntitlementAuthority(
+    entitlements as unknown as EntitlementsService,
+    featureOverrides as unknown as FeatureOverrideService,
+    resolver,
+    modeService,
+    diffService as unknown as FeatureDiffService,
+    prisma,
+  );
+  return { authority, diffService };
+}
 
 function contextFor(user: { tenantId: string | null } | undefined): ExecutionContext {
   return {
@@ -35,16 +117,23 @@ describe("PlanFlagGuard", () => {
   // preserved by feeding `resolve` an equivalent { planKey, flags } snapshot.
   let entitlements: { resolve: jest.Mock };
   let catalog: { upgradeTargetForFlag: jest.Mock };
+  let featureOverrides: { get: jest.Mock };
 
   beforeEach(() => {
     process.env = { ...ORIGINAL_ENV, PLAN_FLAG_ENFORCEMENT: "on" };
     reflector = { getAllAndOverride: jest.fn() };
     entitlements = { resolve: jest.fn() };
     catalog = { upgradeTargetForFlag: jest.fn().mockResolvedValue(NO_UPGRADE) };
+    // Every pre-existing test in this file exercises a tenant with no override rows, so this
+    // collaborator-contract addition (feature-grants PR-1) defaults to "no override" — the
+    // same plan+dark behavior those tests already assert on.
+    featureOverrides = { get: jest.fn().mockResolvedValue(null) };
     guard = new PlanFlagGuard(
       reflector as unknown as Reflector,
       entitlements as unknown as EntitlementsService,
       catalog as unknown as PlanCatalogService,
+      featureOverrides as unknown as FeatureOverrideService,
+      buildAuthority(entitlements, featureOverrides),
     );
   });
 
@@ -125,16 +214,23 @@ describe("PLAN_FLAG_ENFORCEMENT kill switch", () => {
   let reflector: { getAllAndOverride: jest.Mock };
   let entitlements: { resolve: jest.Mock };
   let catalog: { upgradeTargetForFlag: jest.Mock };
+  let featureOverrides: { get: jest.Mock };
 
   beforeEach(() => {
     process.env = { ...ORIGINAL_ENV };
     reflector = { getAllAndOverride: jest.fn() };
     entitlements = { resolve: jest.fn() };
     catalog = { upgradeTargetForFlag: jest.fn().mockResolvedValue(NO_UPGRADE) };
+    // Every pre-existing test in this file exercises a tenant with no override rows, so this
+    // collaborator-contract addition (feature-grants PR-1) defaults to "no override" — the
+    // same plan+dark behavior those tests already assert on.
+    featureOverrides = { get: jest.fn().mockResolvedValue(null) };
     guard = new PlanFlagGuard(
       reflector as unknown as Reflector,
       entitlements as unknown as EntitlementsService,
       catalog as unknown as PlanCatalogService,
+      featureOverrides as unknown as FeatureOverrideService,
+      buildAuthority(entitlements, featureOverrides),
     );
   });
 
@@ -247,6 +343,7 @@ describe("WP2 always-enforced plan (LITE) — no dark-flag courtesy allow", () =
   let reflector: { getAllAndOverride: jest.Mock };
   let entitlements: { resolve: jest.Mock };
   let catalog: { upgradeTargetForFlag: jest.Mock };
+  let featureOverrides: { get: jest.Mock };
 
   beforeEach(() => {
     process.env = { ...ORIGINAL_ENV };
@@ -254,10 +351,16 @@ describe("WP2 always-enforced plan (LITE) — no dark-flag courtesy allow", () =
     reflector = { getAllAndOverride: jest.fn() };
     entitlements = { resolve: jest.fn() };
     catalog = { upgradeTargetForFlag: jest.fn().mockResolvedValue(NO_UPGRADE) };
+    // Every pre-existing test in this file exercises a tenant with no override rows, so this
+    // collaborator-contract addition (feature-grants PR-1) defaults to "no override" — the
+    // same plan+dark behavior those tests already assert on.
+    featureOverrides = { get: jest.fn().mockResolvedValue(null) };
     guard = new PlanFlagGuard(
       reflector as unknown as Reflector,
       entitlements as unknown as EntitlementsService,
       catalog as unknown as PlanCatalogService,
+      featureOverrides as unknown as FeatureOverrideService,
+      buildAuthority(entitlements, featureOverrides),
     );
   });
 
@@ -311,5 +414,178 @@ describe("WP2 always-enforced plan (LITE) — no dark-flag courtesy allow", () =
     reflector.getAllAndOverride.mockReturnValue("flag.reports");
     await expect(guard.canActivate(contextFor({ tenantId: null }))).resolves.toBe(true);
     expect(entitlements.resolve).not.toHaveBeenCalled();
+  });
+});
+
+// Feature-grants PR-1 (owner ruling 2026-09-16): an active override is absolute — it decides
+// before plan resolution, regardless of dark/enforced gate mode. Only its absence falls through
+// to today's plan+dark behaviour (proven byte-identical by every test above, none of which
+// configures featureOverrides.get beyond its "no override" default).
+describe("feature-grants PR-1: override precedence (absolute, ignores plan and dark/enforced)", () => {
+  const ORIGINAL_ENV = process.env;
+
+  let guard: PlanFlagGuard;
+  let reflector: { getAllAndOverride: jest.Mock };
+  let entitlements: { resolve: jest.Mock };
+  let catalog: { upgradeTargetForFlag: jest.Mock };
+  let featureOverrides: { get: jest.Mock };
+  let warnSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    process.env = { ...ORIGINAL_ENV, PLAN_FLAG_ENFORCEMENT: "on" };
+    reflector = { getAllAndOverride: jest.fn() };
+    entitlements = { resolve: jest.fn() };
+    catalog = { upgradeTargetForFlag: jest.fn().mockResolvedValue(NO_UPGRADE) };
+    featureOverrides = { get: jest.fn() };
+    guard = new PlanFlagGuard(
+      reflector as unknown as Reflector,
+      entitlements as unknown as EntitlementsService,
+      catalog as unknown as PlanCatalogService,
+      featureOverrides as unknown as FeatureOverrideService,
+      buildAuthority(entitlements, featureOverrides),
+    );
+  });
+
+  afterEach(() => {
+    process.env = ORIGINAL_ENV;
+    warnSpy?.mockRestore();
+  });
+
+  it("row 6: GRANT wins even though the plan lacks the flag and the gate is enforced", async () => {
+    reflector.getAllAndOverride.mockReturnValue("flag.msrp"); // not in DARK_PLAN_FLAGS
+    featureOverrides.get.mockResolvedValue("GRANT");
+    entitlements.resolve.mockResolvedValue({ planKey: "STARTER", flags: [] });
+    await expect(guard.canActivate(contextFor({ tenantId: "t1" }))).resolves.toBe(true);
+    expect(entitlements.resolve).not.toHaveBeenCalled(); // GRANT short-circuits before plan resolution
+  });
+
+  it("row 5: GRANT wins on a dark flag too (uniform — dark/enforced is irrelevant once GRANT applies)", async () => {
+    reflector.getAllAndOverride.mockReturnValue("flag.reports"); // a DARK_PLAN_FLAGS member
+    featureOverrides.get.mockResolvedValue("GRANT");
+    await expect(guard.canActivate(contextFor({ tenantId: "t1" }))).resolves.toBe(true);
+  });
+
+  it("row 4/8: DENY wins over a held flag on an enforced gate", async () => {
+    reflector.getAllAndOverride.mockReturnValue("flag.msrp");
+    featureOverrides.get.mockResolvedValue("DENY");
+    entitlements.resolve.mockResolvedValue({ planKey: "ENTERPRISE", flags: ["flag.msrp"] });
+    const err = await guard.canActivate(contextFor({ tenantId: "t1" })).catch((e) => e);
+    expect(err).toBeInstanceOf(ForbiddenException);
+    const body = err.getResponse() as PlanGateErrorBody;
+    expect(body.code).toBe("PLAN_GATE");
+    expect(body.flag).toBe("flag.msrp");
+    // No self-service fix exists for an admin override — never suggest an upgrade that would do nothing.
+    expect(body.upgrade).toEqual(NO_UPGRADE);
+    expect(entitlements.resolve).not.toHaveBeenCalled(); // DENY short-circuits before plan resolution
+  });
+
+  it("row 3/7: DENY wins on a dark flag too — dark-gate semantics never soften an explicit DENY", async () => {
+    delete process.env.PLAN_FLAG_ENFORCEMENT; // flag.reports is genuinely dark here (isDarkFlag)
+    reflector.getAllAndOverride.mockReturnValue("flag.reports"); // a DARK_PLAN_FLAGS member
+    featureOverrides.get.mockResolvedValue("DENY");
+    const err = await guard.canActivate(contextFor({ tenantId: "t1" })).catch((e) => e);
+    expect(err).toBeInstanceOf(ForbiddenException);
+    expect((err.getResponse() as PlanGateErrorBody).flag).toBe("flag.reports");
+  });
+
+  it("row 3/7: a DENY firing on a dark flag logs a would-deny-style warn line for the blast report", async () => {
+    delete process.env.PLAN_FLAG_ENFORCEMENT; // flag.reports is genuinely dark here (isDarkFlag)
+    warnSpy = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    reflector.getAllAndOverride.mockReturnValue("flag.reports");
+    featureOverrides.get.mockResolvedValue("DENY");
+    await guard.canActivate(contextFor({ tenantId: "t1" })).catch((e) => e);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][0]).toEqual(expect.stringContaining("flag=flag.reports"));
+    expect(warnSpy.mock.calls[0][0]).toEqual(expect.stringContaining("tenant=t1"));
+  });
+
+  it("row 4/8: a DENY on an already-enforced (non-dark) flag does NOT log the dark-specific warn", async () => {
+    warnSpy = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    reflector.getAllAndOverride.mockReturnValue("flag.msrp"); // not in DARK_PLAN_FLAGS
+    featureOverrides.get.mockResolvedValue("DENY");
+    await guard.canActivate(contextFor({ tenantId: "t1" })).catch((e) => e);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("no override (null) falls through to today's plan+dark behaviour unchanged", async () => {
+    featureOverrides.get.mockResolvedValue(null);
+    reflector.getAllAndOverride.mockReturnValue("flag.msrp");
+    entitlements.resolve.mockResolvedValue({ planKey: "ENTERPRISE", flags: ["flag.msrp"] });
+    await expect(guard.canActivate(contextFor({ tenantId: "t1" }))).resolves.toBe(true);
+    expect(entitlements.resolve).toHaveBeenCalledWith("t1");
+  });
+});
+
+// Item 7 (Opus review of 9923b87c): the guard's caller-visible outcome must stay on the old
+// path in shadow mode even when a LIVE resolver verdict disagrees with it — proving the
+// client-facing behavior is unchanged regardless of what the shadow resolver computes.
+describe("feature-grants v2: guard stays on the old path when the live resolver disagrees", () => {
+  const ORIGINAL_ENV = process.env;
+  let reflector: { getAllAndOverride: jest.Mock };
+  let entitlements: { resolve: jest.Mock };
+  let catalog: { upgradeTargetForFlag: jest.Mock };
+  let featureOverrides: { get: jest.Mock };
+
+  beforeEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+    delete process.env.PLAN_FLAG_ENFORCEMENT; // flag.reports genuinely dark for this tenant
+    reflector = { getAllAndOverride: jest.fn() };
+    entitlements = { resolve: jest.fn() };
+    catalog = { upgradeTargetForFlag: jest.fn().mockResolvedValue(NO_UPGRADE) };
+    featureOverrides = { get: jest.fn().mockResolvedValue(null) };
+  });
+
+  afterEach(() => {
+    process.env = ORIGINAL_ENV;
+  });
+
+  it("resolver says DENY, old path says courtesy-ALLOW — guard still allows, and a diff is recorded", async () => {
+    reflector.getAllAndOverride.mockReturnValue("flag.reports");
+    entitlements.resolve.mockResolvedValue({ planKey: "STARTER", flags: [] });
+    const { authority, diffService } = buildAuthorityWithDisagreeingResolver(
+      entitlements,
+      featureOverrides,
+      "flag.reports",
+      false,
+    );
+    const guard = new PlanFlagGuard(
+      reflector as unknown as Reflector,
+      entitlements as unknown as EntitlementsService,
+      catalog as unknown as PlanCatalogService,
+      featureOverrides as unknown as FeatureOverrideService,
+      authority,
+    );
+
+    await expect(guard.canActivate(contextFor({ tenantId: "t1" }))).resolves.toBe(true);
+    expect(diffService.record).toHaveBeenCalledWith("t1", "flag.reports", true, false, "NONE");
+  });
+
+  it("resolver says ALLOW, old path says DENY (enforced, no courtesy) — guard still denies", async () => {
+    reflector.getAllAndOverride.mockReturnValue("flag.msrp"); // not in DARK_PLAN_FLAGS
+    entitlements.resolve.mockResolvedValue({ planKey: "STARTER", flags: [] });
+    catalog.upgradeTargetForFlag.mockResolvedValue({
+      planKey: "SCALE",
+      planMonthlyPrice: "499.00",
+      addonSku: null,
+      addonMonthlyPrice: null,
+    });
+    const { authority, diffService } = buildAuthorityWithDisagreeingResolver(
+      entitlements,
+      featureOverrides,
+      "flag.msrp",
+      true,
+    );
+    const guard = new PlanFlagGuard(
+      reflector as unknown as Reflector,
+      entitlements as unknown as EntitlementsService,
+      catalog as unknown as PlanCatalogService,
+      featureOverrides as unknown as FeatureOverrideService,
+      authority,
+    );
+
+    const err = await guard.canActivate(contextFor({ tenantId: "t1" })).catch((e) => e);
+    expect(err).toBeInstanceOf(ForbiddenException);
+    expect((err.getResponse() as PlanGateErrorBody).flag).toBe("flag.msrp");
+    expect(diffService.record).toHaveBeenCalledWith("t1", "flag.msrp", false, true, "NONE");
   });
 });

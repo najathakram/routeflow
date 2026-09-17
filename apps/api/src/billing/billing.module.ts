@@ -1,4 +1,4 @@
-import { Module } from "@nestjs/common";
+import { Module, forwardRef } from "@nestjs/common";
 import { StripeService } from "./stripe.service";
 import { BillingService } from "./billing.service";
 import { PlatformPricingService } from "./platform-pricing.service";
@@ -15,11 +15,15 @@ import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BillingEventService } from "./billing-event.service";
 import { BillingCronService } from "./billing-cron.service";
 import { MrrService } from "./mrr.service";
+import { FeatureOverrideReviewJob } from "./feature-override-review.job";
+import { BillingNotificationService } from "./billing-notification.service";
 import { EmailModule } from "../email/email.module";
 import { EntitlementsModule } from "./entitlements.module";
 
 @Module({
-  imports: [EmailModule, EntitlementsModule],
+  // forwardRef: MailboxModule (imported by EmailModule for MailboxSendService) imports this
+  // module back for AddonGuard — see MailboxModule's doc comment for the full cycle.
+  imports: [forwardRef(() => EmailModule), EntitlementsModule],
   controllers: [
     BillingController,
     BillingWebhookController,
@@ -39,6 +43,10 @@ import { EntitlementsModule } from "./entitlements.module";
     BillingEventService,
     BillingCronService,
     MrrService,
+    BillingNotificationService,
+    // Feature grants v2 PR-3 (brief B): nightly review sweep for expired-unrevoked overrides.
+    // PrismaService/AuditService are both @Global() modules -- no new import needed here.
+    FeatureOverrideReviewJob,
   ],
   exports: [
     StripeService,

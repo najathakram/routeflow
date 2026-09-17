@@ -211,7 +211,7 @@ Acceptance criteria:
 
 - Per round: `npm run check-types`
 - Final: `npm run verify` (= turbo run check-types lint test)
-- Post-deploy (main session): impersonate bb-distro from the tenants LIST in the owner's browser —
-  logo/name/chip must show bb-distro's branding and the acting username; delete the bb-distro
+- Post-deploy (main session): impersonate acme-distribution from the tenants LIST in the owner's browser —
+  logo/name/chip must show acme-distribution's branding and the acting username; delete the acme-distribution
   ghost "admin" driver → verify it stays gone and Settings "Act as driver" reads OFF; verify a
   non-driver admin no longer sees "My Routes" after re-login.

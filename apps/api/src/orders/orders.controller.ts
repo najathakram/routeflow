@@ -233,17 +233,21 @@ export class OrdersController {
                     ? { appliedCreditNotes: dto.appliedCreditNotes }
                     : {}),
                 } as any;
-                if (idempotencyKey) {
-                  // B215: the key rides INTO updateOrderItems and commits inside the fold's own
-                  // transaction — a crash or a later throw can no longer separate the two. The
-                  // 4th argument is passed ONLY when a key exists, so keyless merges keep the
-                  // exact three-argument call.
-                  await this.ordersService.updateOrderItems(current.id, foldDto, user, {
-                    idempotency: { key: idempotencyKey, responseHash: requestHash! },
-                  });
-                } else {
-                  await this.ordersService.updateOrderItems(current.id, foldDto, user);
-                }
+                // B215: the idempotency key (when present) rides INTO updateOrderItems and
+                // commits inside the fold's own transaction — a crash or a later throw can no
+                // longer separate the two.
+                // B465: isCreateMerge tells updateOrderItems this replace-all IS the staff
+                // create path's own auto-merge, not an operator editing an existing order —
+                // a line NEW to the order (no existing counterpart) skips the reason-required
+                // guard here, exactly as separate create (no merge at all) already does. This
+                // is an internal flag threaded from THIS call site only, never inferred from
+                // the request body or the order's own state.
+                await this.ordersService.updateOrderItems(current.id, foldDto, user, {
+                  isCreateMerge: true,
+                  ...(idempotencyKey
+                    ? { idempotency: { key: idempotencyKey, responseHash: requestHash! } }
+                    : {}),
+                });
                 // Recorded only after the fold actually landed: a merge that threw
                 // is retryable, and a retry must re-run rather than replay a write
                 // that never happened.

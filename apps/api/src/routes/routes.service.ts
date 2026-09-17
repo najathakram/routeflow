@@ -25,6 +25,7 @@ import {
   ChangeRequestStatus,
 } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
+import { LIVE_CUSTOMER_STOP_WHERE, SCHEDULED_ROUTE_KIND_WHERE } from "./route-stop-filters.util";
 // F03/F05: the settlement cash basis stays pinned to the shared CONFIRMED
 // predicate rather than a literal `status: "PAID"`, so it can never silently
 // desync from every other confirmed-money read in the codebase.
@@ -43,7 +44,7 @@ import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NotificationsService } from "../notifications/notifications.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { InvoicesService } from "../invoices/invoices.service";
-import { formatMoney } from "../messaging/messaging.helpers";
+import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CompleteStopDto } from "./dto/complete-stop.dto";
 import { CompleteWithPaymentDto } from "./dto/complete-with-payment.dto";
 import { SettleRunDto } from "./dto/settle-run.dto";
@@ -63,6 +64,12 @@ import {
   loadAgeIdCategorySets,
   type RegulatedDeliveryDb,
 } from "../common/regulated-delivery";
+// Feature grants v2 brief C (PR-5): FeatureConfigService is @Global() (feature-config.module.ts)
+// so no RoutesModule import is needed to inject it here. Fix round 1 (Opus review, item 1): use
+// the SERVICE (getEffectiveMode), not the raw Store — the service resolves fallback if the
+// stored mode's requires.allOf is no longer met.
+import { FeatureConfigService } from "../billing/feature-config.service";
+import { ROUTES_DISPATCH_KEY, assertRouteKindDispatchAllowed } from "./route-dispatch-mode";
 
 // F11 (B129 / B211): the `resolutionReason` stamped on a ChangeRequest that a
 // run-terminal release declined. Exported so a UI/report can recognise a
@@ -185,6 +192,7 @@ export class RoutesService {
     private readonly invoicesService: InvoicesService,
     private readonly configService: ConfigService,
     private readonly storage: StorageService,
+    private readonly featureConfig: FeatureConfigService,
   ) {}
 
   // ── Route Templates ────────────────────────────────────────────────────
@@ -232,7 +240,11 @@ export class RoutesService {
     const route = await this.prisma.forTenant().route.findUnique({
       where: { id },
       include: {
+        // REG-B157: a removed customer's stop dropped out at dispatch (createRun) but
+        // stayed fully visible in the route plan itself — same shared filter as dispatch,
+        // applied to every planning read too, not just the dispatch-time one.
         stops: {
+          where: LIVE_CUSTOMER_STOP_WHERE,
           include: {
             customer: { select: { id: true, businessName: true } },
             customerAddress: true,
@@ -489,6 +501,18 @@ export class RoutesService {
   async addStop(routeId: string, dto: AddStopDto) {
     await this.findRouteOrThrow(routeId);
 
+    // REG-B157: addStop had no customer lookup at all — a removed customer could be added
+    // to a route exactly like a live one, with only createRun's dispatch-time filter ever
+    // dropping the stop silently. Refuse it here instead.
+    const customer = await this.prisma.forTenant().customer.findUnique({
+      where: { id: dto.customerId },
+      select: { deletedAt: true },
+    });
+    if (!customer) throw new NotFoundException("Customer not found");
+    if (customer.deletedAt) {
+      throw new ConflictException("Restore the customer first");
+    }
+
     let stopNumber = dto.stopNumber;
     if (stopNumber === undefined) {
       const last = await this.prisma.forTenant().routeStop.findFirst({
@@ -668,7 +692,11 @@ export class RoutesService {
     const route = await this.prisma.forTenant().route.findUnique({
       where: { id: routeId },
       include: {
+        // REG-B157: without this, a removed customer's still-PENDING/CONFIRMED order kept
+        // showing up here for the warehouse to pack even after dispatch had already
+        // dropped that stop — the exact gap createRun's own filter closed for dispatch.
         stops: {
+          where: LIVE_CUSTOMER_STOP_WHERE,
           include: { customer: { select: { id: true, businessName: true } } },
           orderBy: { stopNumber: "asc" },
         },
@@ -746,8 +774,14 @@ export class RoutesService {
     const stops = await this.prisma.forTenant().routeStop.findMany({
       // ADHOC trips must never populate the "Currently in:" customer hints —
       // those are a SCHEDULED-route concept and a one-shot trip isn't a
-      // recurring assignment.
-      where: { customerId: { not: null }, route: { kind: RouteKind.SCHEDULED } },
+      // recurring assignment. REG-B157: also exclude a removed customer's stop —
+      // shares SCHEDULED_ROUTE_KIND_WHERE with customers.service.ts's own
+      // `unassigned=1` filter so the two can never disagree on the same screen.
+      where: {
+        customerId: { not: null },
+        route: SCHEDULED_ROUTE_KIND_WHERE,
+        customer: { deletedAt: null },
+      },
       select: {
         customerId: true,
         route: { select: { id: true, name: true } },
@@ -848,18 +882,32 @@ export class RoutesService {
     const route = await this.prisma.forTenant().route.findUnique({
       where: { id: dto.routeId },
       include: {
-        // REG-B131: a removed (soft-deleted) customer's stop is not dispatched — no RouteRunStop
-        // and, because the order sweep below runs off run.stops, no order attached either. Filtered
-        // in the query (never in JS after the fact) so the count below is the only other read. A
-        // stop with NO customer (customerId null — a manual/depot stop) is not a customer stop and
-        // stays. Stateless: restoreCustomer() clears deletedAt and the next dispatch includes it.
+        // REG-B131/REG-B157: a removed (soft-deleted) customer's stop is not dispatched — no
+        // RouteRunStop and, because the order sweep below runs off run.stops, no order attached
+        // either. Filtered in the query (never in JS after the fact) so the count below is the
+        // only other read. Shared with every other planning read (findOneRoute, getPackingList)
+        // via LIVE_CUSTOMER_STOP_WHERE so they can't drift apart again. Stateless:
+        // restoreCustomer() clears deletedAt and the next dispatch includes it.
         stops: {
-          where: { OR: [{ customerId: null }, { customer: { deletedAt: null } }] },
+          where: LIVE_CUSTOMER_STOP_WHERE,
           orderBy: { stopNumber: "asc" },
         },
       },
     });
     if (!route) throw new NotFoundException("Route not found");
+
+    // Feature grants v2 brief C (PR-5): gate on the tenant's EFFECTIVE routes_dispatch mode
+    // before anything else — no tenant has a TenantFeatureConfig row yet, so this always
+    // resolves "unset" today, which allows every kind (HARD INVARIANT: byte-for-byte unchanged
+    // dispatch behavior until a tenant is explicitly configured).
+    const tenantId = this.prisma.getTenantId();
+    if (tenantId) {
+      const dispatchMode = await this.featureConfig.getEffectiveMode(tenantId, ROUTES_DISPATCH_KEY);
+      // route.kind carries the schema's own `@default(SCHEDULED)` on every real row; only a
+      // trimmed test fixture omits it, so treat a missing value the same as that DB default
+      // rather than as a third, unrecognized kind.
+      assertRouteKindDispatchAllowed(dispatchMode, route.kind ?? RouteKind.SCHEDULED);
+    }
 
     // A stop the filter above dropped leaves no trace in the dispatch response (stopCount simply
     // reads lower), so count the suppressed set once per dispatch — otherwise a route whose stops
@@ -2446,7 +2494,11 @@ export class RoutesService {
         .notifyEvent(NotificationEvent.DELIVERED, {
           customerId: o.customerId,
           senderId: user.sub || null,
-          vars: { orderNumber: o.orderNumber ?? "", orderTotal: formatMoney(o.total) },
+          vars: {
+            orderNumber: o.orderNumber ?? "",
+            orderTotal: formatMoney(o.total),
+            deliveredAt: formatDate(new Date()),
+          },
         })
         .catch(() => {});
     }
@@ -2720,7 +2772,11 @@ export class RoutesService {
         .notifyEvent(NotificationEvent.DELIVERED, {
           customerId: o.customerId,
           senderId: user.sub || null,
-          vars: { orderNumber: o.orderNumber ?? "", orderTotal: formatMoney(o.total) },
+          vars: {
+            orderNumber: o.orderNumber ?? "",
+            orderTotal: formatMoney(o.total),
+            deliveredAt: formatDate(new Date()),
+          },
         })
         .catch(() => {});
     }

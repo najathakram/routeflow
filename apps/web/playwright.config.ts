@@ -397,6 +397,20 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
 
+    // ── B465 fix round 2: SPECIAL-tier reason required (spec 48) ─────────────
+    // Same posture as order-edit-pricing above — a client-side requirement
+    // with no web unit runner behind it, so this runs only against a live app
+    // instance (deploy-triggered or `local:e2e`), self-provisions its own
+    // customer/product/order fixtures, and deletes nothing.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
+    // header for the precedent where exactly that happened and a spec sat dead.
+    {
+      name: "special-tier-reason-required",
+      testMatch: /48-special-tier-reason-required\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
     // ── Cancelled-order "editing closed" banner (F07, spec 27) ────────────────
     // REG-B10: the operator order-detail page must explain WHY the edit window
     // is closed on a CANCELLED order ("Order cancelled — editing closed")
@@ -518,6 +532,23 @@ export default defineConfig({
     {
       name: "credit-note-wallet",
       testMatch: /28-credit-note-wallet\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // ── Apply advance to invoice (F09, spec 38) ────────────────────────────────
+    // REG-B13: web's invoice detail page can now apply a customer's
+    // advance-payment wallet balance (previously mobile-only — the web hook
+    // had zero callers). Mutating but self-contained: a throwaway `E2E B13 …`
+    // customer + invoice on the approved seed tenant, same residue tolerance
+    // 21/22/24/27/28/29 already take. Uses operator auth state.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's precedent.
+    {
+      name: "apply-advance",
+      testMatch: /38-apply-advance\.spec\.ts/,
       dependencies: ["setup"],
       use: {
         ...devices["Desktop Chrome"],
@@ -655,6 +686,24 @@ export default defineConfig({
         storageState: path.join(AUTH_DIR, "operator.json"),
       },
     },
+    // ── Lite locked-route UX (B449, spec 48) ───────────────────────────────────
+    // R1-4 of the fix-round: a locked route never mounts the gated page, exactly one
+    // plan-gate notice per navigation naming THIS tenant's plan, no stray notice on the
+    // LITE dashboard. Fixture is `qa-lite`, a standing LITE-plan tenant every
+    // global.setup.ts pass seeds (apps/api/scripts/e2e-seed.js's seedQaLiteTenant) — unlike
+    // "lite-plan-gate" above, this project IS in the local allow-list (LOCAL-LANE.md) and
+    // does NOT self-skip: the fixture is guaranteed, so a failure here is real.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's precedent.
+    {
+      name: "lite-locked-route-ux",
+      testMatch: /48-lite-locked-route-ux\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
     // House-tenant / MRR reconciliation (spec 47, review round 2026-09-15) — mirrors
     // "super-admin"'s auth shape exactly (same setup dependency, same storageState). NOT in
     // LOCAL-LANE.md's allow-list, same as "super-admin": no SA creds are seeded locally, so
@@ -667,6 +716,19 @@ export default defineConfig({
       use: {
         ...devices["Desktop Chrome"],
         storageState: path.join(AUTH_DIR, "super-admin.json"),
+      },
+    },
+
+    // Feature grants PR-1 (2026-09-16) — every endpoint the spec touches is mocked, AND auth
+    // is faked client-side (SuperAdminGuard only decodes+checks the JWT payload locally, never
+    // a server round-trip — see the spec's fakeSuperAdminToken()), so this project needs no
+    // "setup" dependency and no storageState: it runs against a bare `npm run dev -w apps/web`
+    // with no live API/DB at all. Viewport is set per test.describe (1440/768/390) in the spec.
+    {
+      name: "feature-overrides",
+      testMatch: /48-feature-overrides\.spec\.ts/,
+      use: {
+        ...devices["Desktop Chrome"],
       },
     },
   ],

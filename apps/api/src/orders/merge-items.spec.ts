@@ -378,3 +378,60 @@ describe("merge-items — bare incoming selling-unit expansion (T-B47 / REG-B47)
     expect(expanded).toEqual(incoming);
   });
 });
+
+describe("merge-items — overrideReason threading (B465 fix round 2, Opus BLOCK item 3)", () => {
+  // A MANUAL-priced existing line's unitPrice survives the fold (R0), but its
+  // overrideReason never did — `MergeLineSnapshot` had no such field. If that
+  // MANUAL line's product also resolves to SPECIAL tier for this customer,
+  // updateOrderItems's B465 guard (a price change on a SPECIAL line needs a
+  // documented reason) would refuse the merge outright even though nothing
+  // about the price is actually changing: the fold just dropped the reason
+  // that already justified it.
+  it("REG-B465-MERGE-1: a surviving MANUAL override's overrideReason folds through alongside its unitPrice", () => {
+    const existingLines: MergeLineSnapshot[] = [
+      {
+        productId: "prod-1",
+        qty: 3,
+        unitPrice: 12,
+        priceType: "MANUAL",
+        overrideReason: "manager approved",
+      },
+    ];
+    const incoming: MergeIncomingItem[] = [{ productId: "prod-1", qty: 2 }];
+
+    const merged = foldMergeItems(existingLines, incoming);
+
+    expect(merged).toEqual([
+      expect.objectContaining({
+        productId: "prod-1",
+        unitPrice: 12,
+        overrideReason: "manager approved",
+      }),
+    ]);
+  });
+
+  it("REG-B465-MERGE-2: a derived (non-MANUAL) line's price does NOT survive the fold, so its overrideReason (if any, e.g. stale data) is never carried either", () => {
+    const existingLines: MergeLineSnapshot[] = [
+      {
+        productId: "prod-1",
+        qty: 3,
+        unitPrice: 8,
+        priceType: "SPECIAL",
+        overrideReason: null,
+      },
+    ];
+    const incoming: MergeIncomingItem[] = [{ productId: "prod-1", qty: 2 }];
+
+    const merged = foldMergeItems(existingLines, incoming);
+
+    expect(merged[0]).not.toHaveProperty("unitPrice");
+    expect(merged[0]).not.toHaveProperty("overrideReason");
+  });
+
+  it("REG-B465-MERGE-3: a brand-new merged line (no existing counterpart) never fabricates an overrideReason", () => {
+    const merged = foldMergeItems([], [{ productId: "prod-new", qty: 2, unitPrice: 12 }]);
+
+    expect(merged).toEqual([expect.objectContaining({ productId: "prod-new", unitPrice: 12 })]);
+    expect(merged[0]).not.toHaveProperty("overrideReason");
+  });
+});

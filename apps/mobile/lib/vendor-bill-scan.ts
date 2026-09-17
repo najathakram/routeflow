@@ -84,6 +84,50 @@ export interface ScanProductMapping {
   productId: string;
 }
 
+/**
+ * A scanned line with a NEGATIVE `qty` is a deposit return / credit line — the
+ * AI extracts a printed quantity like "-1" against a positive per-unit price.
+ * That is not a physical stock movement (nothing is being received), so it's
+ * normalized to a money-only adjustment before it reaches the server:
+ * `qty` flips positive (the server's `qty` bound is `@Min(0)` — every real
+ * caller sends non-negative), `unitCost` flips negative so the line still
+ * NETS the same amount owed, `lineTotal`'s sign follows `unitCost`'s, and
+ * `productId` is dropped so `receive()`'s stock/inventory logic (which only
+ * ever touches lines carrying a `productId`) can never move stock for it.
+ * A line whose `qty` was already non-negative passes through unchanged —
+ * this only fires for the deposit-return shape.
+ */
+function normalizeScanLine(i: ScannedItemEx): ScanBillItemDto {
+  const rawQty = i.qty ?? 1;
+  const isNegativeQtyLine = rawQty < 0;
+  if (!isNegativeQtyLine) {
+    return {
+      description: i.extractedName,
+      productId: i.matchedProductId ?? undefined,
+      qty: rawQty,
+      unitCost: i.unitCost ?? 0,
+      sku: i.sku?.trim() || undefined,
+      packSize: i.packSize ?? undefined,
+      lineTotal: i.lineTotal ?? undefined,
+    };
+  }
+  return {
+    description: i.extractedName,
+    productId: undefined,
+    // Plain negation, not -Math.abs(...): preserves the amount owed for
+    // EITHER sign the AI extracted the cost as (a deposit return can arrive
+    // as qty:-1/unitCost:+5 OR qty:-1/unitCost:-5 depending on how the
+    // invoice printed it) — -Math.abs would silently flip a
+    // already-negative unitCost positive, doubling the line's effect on
+    // totalOwed instead of preserving it.
+    qty: Math.abs(rawQty),
+    unitCost: -(i.unitCost ?? 0),
+    sku: i.sku?.trim() || undefined,
+    packSize: i.packSize ?? undefined,
+    lineTotal: i.lineTotal != null ? -i.lineTotal : undefined,
+  };
+}
+
 /** Build the POST /vendor-bills DTO from a scan result. Lines with neither a
  * quantity nor a cost are dropped (blank AI rows); everything else is kept even
  * when unmatched (`productId` omitted) so the bill can be linked later.
@@ -119,16 +163,12 @@ export function buildBillDtoFromScan(
     subtotal: subtotal > 0 ? subtotal : undefined,
     scanId: result.scanId ?? undefined,
     items: (result.items ?? [])
-      .filter((i) => (i.qty ?? 0) > 0 || (i.unitCost ?? 0) > 0)
-      .map((i) => ({
-        description: i.extractedName,
-        productId: i.matchedProductId ?? undefined,
-        qty: i.qty ?? 1,
-        unitCost: i.unitCost ?? 0,
-        sku: i.sku?.trim() || undefined,
-        packSize: i.packSize ?? undefined,
-        lineTotal: i.lineTotal ?? undefined,
-      })),
+      // Opus review of #791: `> 0` on both clauses silently dropped a
+      // discount line printed with a null/0 qty and a negative unitCost
+      // (`0 > 0` and `-5 > 0` are both false). `!== 0` keeps any line that
+      // carries a real qty OR a real cost, in either direction.
+      .filter((i) => (i.qty ?? 0) !== 0 || (i.unitCost ?? 0) !== 0)
+      .map((i) => normalizeScanLine(i)),
   };
 }
 
@@ -200,6 +240,22 @@ export function priorScanPrompt(prior: PriorScanSummary): {
     billId: null,
     billLabel: "",
   };
+}
+
+/**
+ * True when the API rejected a vendor-bill create with `MONEY_INVARIANT`
+ * (B451/#791) — the whole document's lines net negative (e.g. every line is
+ * a return/discount, so `totalOwed` would come out negative). The scan UI
+ * shows a dedicated "this looks like a credit memo" message for this
+ * instead of the generic error toast; see
+ * apps/mobile/app/(operator)/vendor-bills/scan.tsx submitBill. Kept in this
+ * pure, react-native-free module (rather than lib/api/vendor-bills.ts, which
+ * transitively imports react-native via api-client) so it stays reachable
+ * from the mobile pure-logic Jest suite.
+ */
+export function isMoneyInvariantError(error: unknown): boolean {
+  const data = (error as { response?: { data?: { code?: string } } })?.response?.data;
+  return data?.code === "MONEY_INVARIANT";
 }
 
 /** "Jul 3, 2026" for a stored ISO timestamp; empty when it can't be read. */

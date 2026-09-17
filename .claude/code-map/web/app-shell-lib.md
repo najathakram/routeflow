@@ -446,7 +446,7 @@
 - **`lib/use-sortable-data.ts`** — table sort/pagination hook.
 - **`lib/stock-count-storage.ts`**, **`lib/buyer-cart.ts`**, **`lib/fetch-pdf-blob.ts`** — local state + PDF blobs. **`lib/print-pdf-blob.ts`** (NEW, WP4, 2026-09-15, R6.6) — `printPdfBlob(blob: Blob)`: `URL.createObjectURL`, hidden `<iframe>` `onload` → `contentWindow.print()`, revokes the object URL after 60s. Lifted VERBATIM out of `invoices/[id]/page.tsx`'s pre-existing `handlePrint` iframe body (zero behavior change there) so `invoices/page.tsx`'s row Print button and `orders/[id]/page.tsx`'s "Invoice Ready" modal Print button share the same print path.
 - **`lib/admin-api.ts`**, **`lib/buyer-auth.ts`**, **`lib/buyer-api-client.ts`** — admin & buyer clients/types. **F4 (2026-08-22):** `BuyerSeller.customer` is now `{...} | null` — the API redacts customer identity on non-ACTIVE links, so EVERY portal render site must guard it: `app/buyer/portal/page.tsx` (`SellerCard` — both variants carry `data-testid="seller-card"` since 2026-08-26; e2e 04/17 locate it by that or by role+text, never by class) and the sidebar `app/buyer/portal/layout.tsx` (`SellerItem` shows "Pending approval" instead of a businessName, and is `disabled` unless `linkStatus === "ACTIVE"` — mirroring mobile's `canOpenSeller`, so a redacted row can never be stored as the active seller), plus the `activeSeller.customer` subtitles in `[seller]/{account,dashboard,finances,invoices,orders,payments}/page.tsx` (all switched to `activeSeller?.customer &&` / `?.`). An unguarded dereference throws inside the layout and blanks the whole portal.
-- **`lib/api/portal-approvals.ts` (2026-08-20) — the SINGLE home for pending buyer-connect approvals.** Exports `PendingPortalApproval` (the raw link row + its `customer`/`buyerAccount` relations + the flattened `customerName`/`buyerName`/`buyerEmail`/`requestedAt` the API appends), the shared `pendingApprovalsKey` (`["customers", "pending-portal-approvals"]`), `usePendingPortalApprovals()` (60s poll — server state is what makes the bell's "Action needed" rows survive mark-all-read/clear/localStorage loss), and `useApprovePortalRequest()` / `useDeclinePortalRequest()`, which each invalidate the pending list AND `["customers", id, "portal-status"]`. **`lib/api/customers.ts` deliberately exports none of these** — it used to carry a second `usePendingPortalApprovals`/`useApprovePortalRequest` (plus `useApprovePortalFromList`) on the same cache key with a different declared row shape, so importing from the wrong module silently left the bell row on screen after an approve. Consumers: header bell (`(dashboard)/layout.tsx`), the customers-list banner, the customer-detail Buyer Portal card (approve + decline), and `useNotifications.ts` (socket invalidation).
+- **`lib/api/portal-approvals.ts` (2026-08-20) — the SINGLE home for pending buyer-connect approvals.** Exports `PendingPortalApproval` (the raw link row + its `customer`/`buyerAccount` relations + the flattened `customerName`/`buyerName`/`buyerEmail`/`requestedAt` the API appends), the shared `pendingApprovalsKey` (`["customers", "pending-portal-approvals"]`), `usePendingPortalApprovals(options?: {enabled?})` (60s poll — server state is what makes the bell's "Action needed" rows survive mark-all-read/clear/localStorage loss), and `useApprovePortalRequest()` / `useDeclinePortalRequest()`, which each invalidate the pending list AND `["customers", id, "portal-status"]`. **B449 fix-round finding 2 (2026-09-17):** `GET /customers/pending-portal-approvals` is `@RequirePlanFlag("addon.buyer_portal")` (a dark flag every plan except LITE courtesy-allows) — the hook fired unconditionally from both call sites (header bell + customers list), so a LITE tenant 403'd here on every page load and every 60s poll regardless of route. Now gated on `usePlanFlag("addon.buyer_portal", {enabled: options?.enabled})`: `gateVisible = gate.resolved ? gate.enabled : gate.failed` (resolved → go by the flag; unresolved → don't fire yet; fetch failed → fire, fail-open, same three-valued rule used elsewhere) folds into the query's own `enabled`. The passed-through `options.enabled` ALSO gates the inner `usePlanFlag`'s `useSubscription` call, not just the final fetch — `GET /billing/subscription` is `@Roles(OPERATOR)`, so a CUSTOMER/DRIVER caller passing `enabled:false` must fire ZERO requests here, not a 403 in place of the intended no-op. **`lib/api/customers.ts` deliberately exports none of these** — it used to carry a second `usePendingPortalApprovals`/`useApprovePortalRequest` (plus `useApprovePortalFromList`) on the same cache key with a different declared row shape, so importing from the wrong module silently left the bell row on screen after an approve. Consumers: header bell (`(dashboard)/layout.tsx`), the customers-list banner, the customer-detail Buyer Portal card (approve + decline), and `useNotifications.ts` (socket invalidation).
 - **Bell "Action needed" section (2026-08-20)** — `(dashboard)/layout.tsx` `Header` renders `usePendingPortalApprovals()` rows PINNED above the license-expiry section and the localStorage feed (`bellCount = unreadCount + expiring.length + pendingApprovals.length`); each row is "<buyerName> wants to connect" / "<buyerEmail> → <customerName>" and `router.push("/customers/<customerId>")` on select, where Approve/Decline live. Because the rows come from the server they are NOT part of the `AppNotification` feed and NOT cleared by "mark all read"/"clear" — they vanish only when the link is approved or declined (that is what "in the bar until addressed" means). `useNotifications.ts` gained the `"buyer"` `NotificationType` (Users icon) and subscribes to `buyer.connect.requested` (push a feed item + `invalidateQueries(pendingApprovalsKey)` so the pinned row appears without waiting for the 60s poll) and `buyer.connect.autolinked` (informational feed item only — an auto-connect leaves no pending row).
 - **Buyer-portal hotfix (2026-08-20): logos + connect copy.** Tenant logos must render via `GET /public/tenants/:slug/logo` (public, streams inline) — NEVER `\${apiUrl}/uploads/\${logoKey}`, which has required JWT-or-signature since RF-075 (2026-05-01) and an `<img>` can send neither; that raw pattern sat broken for 3.5 months in the portal SellerCard, the invite page, and the staff login page (all three now fixed). `ConnectSellerModal` now shows the SERVER's message: the backend auto-approves an exact email match straight to ACTIVE (no seller review since 0a245e89/April), and the modal's old hardcoded "your seller will review" copy told instantly-connected buyers they were pending. **SUPERSEDED the same day** — the "nothing writes `PENDING_SELLER_APPROVAL` anymore / the Approve button + `notifySellerOfRequest` are dead code" residue no longer holds: the identity-gated connect flow (see the `lib/api/portal-approvals.ts` bullet above and api.md `buyer/` "connect flow") writes PENDING again and re-wires both. **Residue still open:** `X-Tenant-Slug` is sourced ONLY from localStorage `activeSeller` — never the `[seller]` URL param — so deep links can misroute; a `[seller]`-layout reconciliation is the proper fix.
 
@@ -492,9 +492,45 @@ enabled:isStaff})` call the RO-1 banner already reads (`isSuccess`/`isError` cap
   `planLocked` and `filterPlanGatedNav`'s `planState.flags` both now treat `undefined` as
   "unresolved, fail OPEN" (never gate/hide), distinct from `flags: []` ("resolved, no grants" —
   gate for real). Do not reintroduce `subscription?.flags ?? []` here.
+- **B449 (2026-09-17, #804) — `RouteGuard`/the plan-flag lock split into their own files; the
+  gated page no longer mounts underneath the lock.** Pre-fix (shipped in #777), `RouteGuard`
+  wrapped `children` INSIDE `LockedPage` itself — the locked card rendered on top, but the gated
+  page still mounted underneath and fired its own data queries, flashing gated content/errors
+  before the lock appeared. Two named exports moved OUT of `(dashboard)/layout.tsx` into their own
+  files (a named export from an App Router `layout.tsx` fails `next build`'s layout-file export
+  check — finding 1 — and each needed to be unit-testable alone): **`_components/gates/RouteGuard.tsx`**
+  (role-based guard: `CUSTOMER_ALLOWED`/`DRIVER_ALLOWED` prefix lists, `GATED_PREFIXES`
+  routes/delivery/either addon redirects, `RECURRING_ROUTES_PATHS`/`matchGatedPrefix` — unchanged
+  logic, just relocated) now DELEGATES the plan-flag decision entirely to
+  **`_components/gates/PlanGateBoundary.tsx`**, a new component taking `{planGateKey, pathname,
+subscription, subscriptionResolved, subscriptionErrored, children}`: while resolving it renders
+  a spinner (NEITHER the page NOR the lock — the fix's core: `children` never mounts until the
+  answer is known), then renders exactly one of `<LockedPage>` (a `Card` skeleton as its own
+  children, `children` from the caller only reachable via the unlocked branch) or `{children}`;
+  fails OPEN on `subscriptionErrored`/undefined flags, same invariant as before. **The ONE
+  navigation notice (finding 2):** when `PlanGateBoundary` decides locked, its own `useEffect`
+  fires the toast (naming THIS route's tier + a `secondary` "Want it? Contact us to upgrade." line)
+  and calls **`lib/plan-gate-lock.ts`**'s `setRouteLocked(pathname, true)` (a tiny module-level
+  `Set<string>`, cleared on unmount) — **`components/PlanGateNotice.tsx`** now checks
+  `isRouteLocked(pathname)` FIRST in its `registerPlanGateListener` callback and swallows any
+  stray 403-driven gate on that exact path, so a page whose other widgets 403 on unrelated flags
+  can never stack a second, contradictory toast on top of the boundary's own. `PlanGateNotice`'s
+  dedup key also changed from `gate.flag ?? gate.message` to `pathname` (a burst across several
+  DIFFERENT flags failing together on one navigation now coalesces to one toast, not one per
+  flag), with an explicit `lastNotified.current = null` reset on `pathname` change so a stale
+  dedup entry from the PREVIOUS route can never suppress this one. **Known follow-up, not fixed
+  here:** the locked panel still renders in place of the WHOLE `DashboardShell` (RouteGuard sits
+  above it), so a Lite user has no sidebar to navigate away with — only "See plans" or the
+  browser back button; filed to render the lock inside `<main>` instead. `lib/api/portal-approvals.ts`
+  also picked up an unrelated hardening pass in the same PR (see its own entry below). Specs:
+  `PlanGateBoundary.test.tsx`, `RouteGuard.test.tsx` (asserts children are never wrapped inside
+  `LockedPage`, pinning the #777 regression shape), `PlanGateNotice.test.tsx`,
+  `lib/api/portal-approvals.test.tsx`, `apps/web/e2e/48-lite-locked-route-ux.spec.ts` (see
+  `e2e-tests.md`).
 - **`_components/gates/PlanGates.tsx` `LockedPage` gains an optional `secondary?: string`
   prop (Lite-L2 WP8)** — a plain line rendered under the CTA (e.g. RouteGuard's "Want it?
   Contact us to upgrade."); no link target invented, "See plans" stays the only action.
+  Test: `PlanGates.test.tsx` (new — renders with/without `secondary`, CTA target unchanged).
 - **`lib/api/plan-flags.ts` / `lib/api/billing.ts`** — see [`api-hooks`](api-hooks.md).
 - **`e2e/47-lite-plan-gate.spec.ts` + `playwright.config.ts` `lite-plan-gate` project (Lite-L2,
   2026-09-15)** — R2.2/R2.5/R2.6/R2.8/R3b.8/R4.3/R4.5/R7.7 coverage (sidebar/route gate, Settings
@@ -504,3 +540,20 @@ enabled:isStaff})` call the RO-1 banner already reads (`isSuccess`/`isError` cap
   local Playwright allow-list (`apps/web/e2e/LOCAL-LANE.md`) — same convention as the
   sales-agents-gate/compliance-pack-gate/trip-builder-gate projects. **Without the project
   entry the spec never runs** (cf. the #08 note above).
+
+- **`lib/tenant-features.ts` (new, feature grants v2 brief A, 2026-09-17, #825)** —
+  `useTenantFeatures(options?)`: `useQuery` wrapping `GET /tenants/me/features` (the
+  server-computed shadow-resolver + old-path trace). Query key includes the tenant slug so a
+  stale answer can never leak across a tenant switch. **NOT yet a gating read path** (Opus
+  review of 9923b87c, item 1) — `usePlanFlag`/nav gates stay on `useSubscription()`
+  (`lib/api/plan-flags.ts`, above); this hook exists for a future PR that revisits the switch,
+  and for admin/debug surfaces that want the raw resolver trace. Mirrors mobile's
+  `lib/tenant-features.ts` byte-for-byte in contract.
+- **`lib/feature-modes.ts` (new, feature grants v2 brief C, 2026-09-17, #837)** — pure
+  selectors over a tenant's `modes` record (`TenantFeaturesResponse.modes`,
+  `packages/types/api/features.ts`). `getRoutesDispatchVisibility(modes?)` →
+  `{showScheduledEntry, showAdhocEntry}`: `"scheduled"` hides ad-hoc, `"adhoc"` hides scheduled,
+  anything else (unset/mixed/unrecognized) shows both — never narrower on an unknown mode
+  string. **Deliberately unwired into any page yet** — brief A's `/tenants/me/features` hook
+  isn't consumed by routes pages on this base, so the "unset → before == after" invariant holds
+  by construction rather than by testing an unwired call site. Test: `feature-modes.test.ts`.

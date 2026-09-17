@@ -214,7 +214,11 @@ const MODEL_DOMAIN = {
 
   // ─── platform ──────────────────────────────────────────────────────────────
   TenantSubscription: "platform",
+  BillingNotificationLog: "platform",
   TenantAddon: "platform",
+  TenantFeatureOverride: "platform",
+  FeatureResolverDiff: "platform",
+  TenantFeatureConfig: "platform",
   PlanVersion: "platform",
   PlanDefinition: "platform",
   AddonSku: "platform",
@@ -241,6 +245,7 @@ const MODEL_DOMAIN = {
   DemoBooking: "platform",
   CrmConnection: "platform",
   CrmHandoff: "platform",
+  MailboxConnection: "platform",
 
   // ─── compliance ────────────────────────────────────────────────────────────
   TobaccoReport: "compliance",

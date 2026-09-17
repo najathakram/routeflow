@@ -1,12 +1,14 @@
 "use client";
 
 import * as React from "react";
+import { usePathname } from "next/navigation";
 import { useToast } from "@routeflow/ui/web";
 import { registerPlanGateListener } from "@/lib/api-client";
+import { isRouteLocked } from "@/lib/plan-gate-lock";
 import type { PlanGateBody } from "@/lib/plan-gate";
 
-/** Repeat gates on the same flag are swallowed for this long — a little longer
- *  than the 4s toast duration, so a burst never stacks. */
+/** Repeat gates for one navigation are swallowed for this long — a little
+ *  longer than the 4s toast duration, so a burst never stacks. */
 const DEDUP_WINDOW_MS = 5_000;
 
 /**
@@ -23,26 +25,43 @@ const DEDUP_WINDOW_MS = 5_000;
  */
 export function PlanGateNotice(): null {
   const { toast } = useToast();
-  // One gated page fires many gated requests at once (the analytics page alone
-  // fires 12 GETs, all behind flag.analytics) and every failure reaches the
-  // bridge. The notice is about the plan, not the request, so collapse a burst
-  // on the same flag into one toast instead of burying the page under N.
-  const lastNotified = React.useRef<{ key: string; at: number } | null>(null);
+  const pathname = usePathname();
+  // A single navigation can fire several gated requests at once — one page
+  // firing many GETs behind the SAME flag (the analytics page alone fires 12,
+  // all behind flag.analytics), or, for a tenant licensed for some but not all
+  // of a page's features, several DIFFERENT flags failing together (B449: a
+  // LITE tenant hitting a locked route saw up to three toasts stack, naming
+  // contradictory tiers). Either way it's one navigation and one notice — key
+  // the dedup by pathname, not by flag, so it coalesces regardless of which
+  // query happened to fail first.
+  const lastNotified = React.useRef<{ pathname: string; at: number } | null>(null);
+
+  // Explicit reset on navigation — a stale dedup entry from the PREVIOUS path must
+  // never suppress (or be mistaken for) a notice on this one; keying by pathname
+  // already implies this, but make it an actual invariant rather than an emergent one.
+  React.useEffect(() => {
+    lastNotified.current = null;
+  }, [pathname]);
 
   React.useEffect(() => {
     return registerPlanGateListener((gate) => {
-      const key = gate.flag ?? gate.message;
+      // B449 fix-round finding 2: while `PlanGateBoundary` has this exact path locked,
+      // it already fired the ONE deterministic notice for this navigation, naming the
+      // route's own gate tier. A 403 from some other widget (e.g. a header/dashboard
+      // fetch that isn't fully suppressed) must never add a second, possibly
+      // contradictory one.
+      if (isRouteLocked(pathname)) return;
       const now = Date.now();
       const prev = lastNotified.current;
-      if (prev && prev.key === key && now - prev.at < DEDUP_WINDOW_MS) return;
-      lastNotified.current = { key, at: now };
+      if (prev && prev.pathname === pathname && now - prev.at < DEDUP_WINDOW_MS) return;
+      lastNotified.current = { pathname, at: now };
       toast({
         title: gate.message,
         description: upgradeHint(gate) ?? undefined,
         variant: "warning",
       });
     });
-  }, [toast]);
+  }, [toast, pathname]);
 
   return null;
 }

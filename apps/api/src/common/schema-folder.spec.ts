@@ -39,8 +39,29 @@ const EXPECTED_FILES = [
 // (2026-09-15, post-dated check payments PR-1: +1 enum — CheckReturnReason.)
 // (2026-09-15, Returns Inside Order Creation PR-1a: +1 enum — ReturnKind.)
 // (2026-09-16, public demo booking PR-1: +1 model — DemoBooking; +1 enum — DemoBookingStatus.)
-const EXPECTED_MODEL_COUNT = 129;
-const EXPECTED_ENUM_COUNT = 87;
+// (2026-09-16, N3 billing lifecycle emails: +1 model — BillingNotificationLog; enum count
+// untouched by that lane.)
+// (2026-09-17, email-connect-google PR-2/PR-3: +1 model — MailboxConnection; +2 enums —
+// MailboxProvider, MailboxConnectionStatus.)
+// (2026-09-16, Feature grants PR-1: +1 model — TenantFeatureOverride; +1 enum —
+// FeatureOverrideEffect.)
+// (2026-09-17, combined migration-batch merge tree: N3 + Feature grants PR-1 merged
+// together — counts summed and re-verified directly via
+// `node apps/api/scripts/split-prisma-schema.mjs --check` against the merged schema
+// folder, not re-derived by arithmetic.)
+// (2026-09-17, public demo booking API PR-2 (#808): +1 model, +1 enum — re-verified the
+// same way.)
+// (2026-09-17, feature grants v2 brief A: +2 models — FeatureResolverDiff,
+// TenantFeatureConfig; +2 enums — FeatureOverrideKind, FeatureSource. Stacked on #795,
+// own migration, later timestamp — re-verified via split-prisma-schema.mjs --check.)
+// (2026-09-17, email-connect-google merged onto master post-#811: +1 model —
+// MailboxConnection; +2 enums — MailboxProvider, MailboxConnectionStatus.)
+// (2026-09-17, migration-batch-2 merge tree: feature grants v2 brief A + email-connect-google
+// merged together — counts summed and re-verified directly via
+// `node apps/api/scripts/split-prisma-schema.mjs --check` against the merged schema folder,
+// not re-derived by arithmetic.)
+const EXPECTED_MODEL_COUNT = 134;
+const EXPECTED_ENUM_COUNT = 92;
 
 function listSchemaFiles(): string[] {
   if (!fs.existsSync(SCHEMA_DIR)) return [];

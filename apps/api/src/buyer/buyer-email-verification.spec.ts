@@ -112,6 +112,7 @@ describe("BuyerAuthService — registration email verification", () => {
       const sendArg = emailService.send.mock.calls[0]![0];
       expect(sendArg.to).toBe("buyer@example.com");
       expect(sendArg.html).toContain("https://web.test/buyer/verify-email?token=");
+      expect(sendArg.senderClass).toBe("platform");
 
       // The DB stores only the sha256 of the raw token that was emailed.
       const rawToken = /token=([0-9a-f]{64})/.exec(sendArg.html)![1]!;

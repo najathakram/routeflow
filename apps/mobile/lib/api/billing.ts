@@ -25,7 +25,10 @@ export function useSubscription() {
 }
 
 /**
- * Does the tenant's current plan+addons grant `key`? `resolved`/`failed` follow the
+ * Does the tenant's current subscription grant `key`? Backed by `useSubscription().flags`
+ * (`GET /billing/subscription`) — feature grants v2's server-computed `/tenants/me/features`
+ * (design 2026-09-17 §2) exists but is not yet a client read path (Opus review of 9923b87c,
+ * item 1: the client switch reintroduces P0-class risk). `resolved`/`failed` follow the
  * same contract as useDeveloperMode/useDriverPayments/useRoutesAccess: `resolved` says
  * the flag was actually READ (not just "not loading"), and any caller that can strand a
  * user (the operator section lock, `planLockedSection`) must key off `resolved`, never a

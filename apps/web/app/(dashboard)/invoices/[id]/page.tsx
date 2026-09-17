@@ -30,6 +30,7 @@ import {
   Upload,
   X,
   Clock,
+  Wallet,
 } from "lucide-react";
 import { Badge, Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -57,6 +58,7 @@ import {
   useUpdateInvoiceShipment,
   useUpdateInvoiceTerms,
   useSetCheckStatus,
+  useApplyAdvanceToInvoice,
   type Invoice,
   type InvoiceStatus,
   type InvoicePayment,
@@ -65,9 +67,10 @@ import {
 import { useParams, useRouter } from "next/navigation";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
+import { useCustomerAdvancePayments } from "@/lib/api/customers";
 import { fmt, fmtCalendarDate, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
-import { formatQtySplit, resolveConfirmedAmounts } from "@routeflow/pricing";
+import { formatQtySplit, remainingCapacity, resolveConfirmedAmounts } from "@routeflow/pricing";
 import { CHECK_TRANSITIONS } from "@routeflow/types";
 import { InvoiceTotalsSummary } from "./InvoiceTotalsSummary";
 import {
@@ -510,6 +513,102 @@ function RecordPaymentModal({
           )}
         </div>
       </form>
+    </Modal>
+  );
+}
+
+// ─── Apply advance modal (B13) ─────────────────────────────────────────────────
+
+/**
+ * Lists the customer's advance-payment wallet rows with a remaining balance
+ * and applies the picked one to this invoice — mirrors mobile's
+ * ApplyAdvanceSheet (apps/mobile/app/(operator)/(tabs)/invoices/[id].tsx), the
+ * first client for this action. The server caps the applied amount at
+ * min(wallet balance, invoice balance) and writes the InvoicePayment
+ * (method ADVANCE, reference AP-<id8>); the client does no money math.
+ */
+function ApplyAdvanceModal({
+  isOpen,
+  onClose,
+  customerId,
+  invoiceId,
+  invoiceNumber,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  customerId: string;
+  invoiceId: string;
+  invoiceNumber: string;
+}) {
+  const { toast } = useToast();
+  const { data, isLoading } = useCustomerAdvancePayments(customerId);
+  const applyAdvance = useApplyAdvanceToInvoice();
+  const open = (data ?? []).filter((ap) => Number(ap.balance) > 0.001);
+
+  // F7 (money discipline): the client does no money math — the server caps the
+  // applied amount at min(wallet balance, invoice balance) and is the only source of
+  // truth for what actually landed (the mutation resolves the server's own
+  // `appliedAmount`, reported in the success toast below).
+  const handleApply = (advancePaymentId: string) => {
+    if (
+      !window.confirm(
+        `Apply advance AP-${advancePaymentId.slice(0, 8)}? Up to the invoice's outstanding balance will be applied.`,
+      )
+    ) {
+      return;
+    }
+    applyAdvance.mutate(
+      { customerId, advancePaymentId, invoiceId },
+      {
+        onSuccess: (updated) => {
+          toast({
+            title: "Advance applied",
+            description: `${fmt(updated.appliedAmount)} applied to ${invoiceNumber}.`,
+            variant: "success",
+          });
+          onClose();
+        },
+        onError: (e: any) =>
+          toast({
+            title: "Could not apply advance",
+            description: e?.response?.data?.message ?? e?.message ?? "Try again.",
+            variant: "error",
+          }),
+      },
+    );
+  };
+
+  return (
+    <Modal open={isOpen} onClose={onClose} title="Apply advance">
+      {isLoading ? (
+        <p className="py-6 text-center text-sm text-navy/60">Loading…</p>
+      ) : open.length === 0 ? (
+        <p className="py-6 text-center text-sm text-navy/60">
+          No advance balance for this customer. Record one from the customer page, or an overpaid
+          standalone payment creates one automatically.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {open.map((ap) => {
+            const remaining = Number(ap.balance) || 0;
+            return (
+              <button
+                key={ap.id}
+                type="button"
+                disabled={applyAdvance.isPending}
+                onClick={() => handleApply(ap.id)}
+                className="flex w-full items-center justify-between rounded-lg border border-surface-border bg-white px-3 py-2.5 text-left text-sm transition-colors hover:bg-surface-raised disabled:opacity-50"
+              >
+                <span className="flex items-center gap-2 text-navy/80">
+                  <Wallet className="h-3.5 w-3.5 text-navy/50" />
+                  {ap.reference || `Advance · ${fmtDate(ap.createdAt)}`}
+                </span>
+                <span className="font-medium text-navy">{fmt(remaining)}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </Modal>
   );
 }
@@ -1447,6 +1546,7 @@ export default function InvoiceDetailPage() {
   const isOperator = user?.role === "OPERATOR";
 
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
+  const [isAdvanceOpen, setIsAdvanceOpen] = React.useState(false);
   // Payment row whose "Remove credit" was clicked — confirm before un-applying.
   const [removingCreditPayment, setRemovingCreditPayment] = React.useState<InvoicePayment | null>(
     null,
@@ -2032,15 +2132,19 @@ export default function InvoiceDetailPage() {
     );
   };
 
-  // For edit payment: max amount = total - (all other CONFIRMED payments).
-  // F03/R1: mirrors the server guard, whose `othersTotal` is sumConfirmed over the
-  // sibling rows (invoices.service updatePayment) — a DRAFT sibling counts for
-  // neither side, so the modal no longer refuses an amount the API would accept.
+  // PR-2 (check-payments B1 hardening): mirrors the server guard's capacity
+  // check (invoices.service updatePayment), which moved from summing only
+  // CONFIRMED siblings to remainingCapacity() over every non-VOID sibling — a
+  // DRAFT sibling now reserves capacity on both sides, so the modal still
+  // refuses exactly what the API would refuse.
   const editPaymentMax = editingPayment
-    ? total -
-      payments
-        .filter((p) => p.id !== editingPayment.id && p.status === "PAID")
-        .reduce((s, p) => s + Number(p.amount), 0)
+    ? Math.max(
+        0,
+        remainingCapacity(
+          total,
+          payments.filter((p) => p.id !== editingPayment.id),
+        ),
+      )
     : 0;
 
   return (
@@ -2198,7 +2302,10 @@ export default function InvoiceDetailPage() {
           {canRecordPayment && (
             <DropdownMenu
               trigger={
-                <button className="flex items-center gap-1.5 rounded-lg border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy shadow-card transition-colors hover:bg-surface-raised">
+                <button
+                  data-testid="record-payment-trigger"
+                  className="flex items-center gap-1.5 rounded-lg border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy shadow-card transition-colors hover:bg-surface-raised"
+                >
                   <CreditCard className="h-3.5 w-3.5" />
                   Record Payment
                   <ChevronDown className="h-3.5 w-3.5" />
@@ -2206,6 +2313,12 @@ export default function InvoiceDetailPage() {
               }
               items={[
                 { label: "Record Payment", onClick: () => setIsPaymentOpen(true) },
+                // B13: web had no way to apply a customer's advance-payment wallet balance —
+                // only mobile could. Same gate as Record Payment; the server also refuses a
+                // settled/dead/forgiven invoice (CREDIT_NOT_APPLICABLE) regardless.
+                ...(invoice.customerId
+                  ? [{ label: "Apply Advance", onClick: () => setIsAdvanceOpen(true) }]
+                  : []),
                 { label: "Write Off", onClick: () => setIsWriteOffOpen(true), danger: true },
               ]}
             />
@@ -2859,6 +2972,16 @@ export default function InvoiceDetailPage() {
         balanceDue={balanceDue}
         isPending={recordPayment.isPending}
       />
+
+      {isAdvanceOpen && invoice.customerId && (
+        <ApplyAdvanceModal
+          isOpen={isAdvanceOpen}
+          onClose={() => setIsAdvanceOpen(false)}
+          customerId={invoice.customerId}
+          invoiceId={invoice.id}
+          invoiceNumber={invoice.invoiceNumber}
+        />
+      )}
 
       <EditPaymentModal
         isOpen={!!editingPayment}

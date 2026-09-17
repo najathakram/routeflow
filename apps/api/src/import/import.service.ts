@@ -1058,6 +1058,9 @@ export class ImportService {
             // real row away — dropping its method/reference/notes and leaving the
             // placeholder standing. VOID rows (e.g. a bounced check) are likewise
             // not something a legitimately re-recorded payment collides with.
+            // scan-ok: draft-payment-not-void — a dedup candidate list (does this
+            // new row collide with an existing one), never summed into a paid/
+            // status figure.
             .filter((p) => p.reference !== "zoho-import" && p.status !== "VOID")
             .map((p) => ({
               amount: Number(p.amount),

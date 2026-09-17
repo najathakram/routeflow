@@ -43,9 +43,11 @@ import { SuppliersModule } from "./suppliers/suppliers.module";
 import { RecurringInvoicesModule } from "./recurring-invoices/recurring-invoices.module";
 import { ImportModule } from "./import/import.module";
 import { EmailModule } from "./email/email.module";
+import { MailboxModule } from "./email/mailbox/mailbox.module";
 import { PlatformAdminModule } from "./platform-admin/platform-admin.module";
 import { AuditModule } from "./audit/audit.module";
 import { BillingModule } from "./billing/billing.module";
+import { FeatureConfigModule } from "./billing/feature-config.module"; // feature grants v2 brief C (PR-4)
 import { StripeConnectModule } from "./stripe-connect/stripe-connect.module";
 import { PaymentRequestsModule } from "./payment-requests/payment-requests.module";
 import { BuyerModule } from "./buyer/buyer.module";
@@ -151,11 +153,13 @@ import { AppService } from "./app.service";
     RecurringInvoicesModule,
     ImportModule,
     EmailModule,
+    MailboxModule,
     // ─── Platform administration + audit (global) ─────────────────────────────
     PlatformAdminModule,
     AuditModule,
     // ─── Billing (Stripe) ──────────────────────────────────────────────────────
     BillingModule,
+    FeatureConfigModule,
     // ─── Stripe Connect (tenant's own account) + buyer payment requests ────────
     StripeConnectModule,
     PaymentRequestsModule,

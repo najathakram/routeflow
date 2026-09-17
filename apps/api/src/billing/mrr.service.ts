@@ -64,6 +64,20 @@ export interface MrrOverview {
  * SNAPSHOTS (basePriceSnapshot / addon priceSnapshot) so grandfathered pricing is
  * honoured, and reconciles the total against the append-only BillingEvent ledger.
  * MRR is a MONTHLY run-rate (annual subs count their monthly-equivalent snapshot).
+ *
+ * MRR-truth / feature-override exclusion (feature grants v2, brief B): every query in
+ * `computeOverview()` and `priceTenant()` reads ONLY `tenantSubscription` and `tenantAddon` —
+ * `tenantFeatureOverride` (any `kind`: PILOT/SUPPORT/COMP/TRIAL/GRANDFATHER) is never queried
+ * here at all, so a feature-override GRANT can never inflate MRR by construction, not by a
+ * filter that could drift. `FeatureOverrideService.create()`/`revoke()` write only that table
+ * and never call Stripe (see feature-override.service.spec.ts) — a GRANT on a paid addon-gated
+ * key unlocks the GATE (AddonGuard/PlanFlagGuard), it does not create a `TenantAddon` row, so
+ * it stays invisible to `addonMrr`/`baseMrr` until someone actually purchases the AddonSku.
+ * Regression oracle: mrr.service.spec.ts's "feature-override MRR exclusion oracle" describe
+ * block. SEAM: the tenant-facing "why does this flag work" summary
+ * (`SubscriptionService.getSubscription`'s merged `flags` array) has no per-flag `source`
+ * annotation yet — that file is brief A's, out of scope here; `FeatureSource` (schema,
+ * OVERRIDE_GRANT/OVERRIDE_DENY/ADDON_SKU/PRESET/NONE) is the future home for it.
  */
 @Injectable()
 export class MrrService {

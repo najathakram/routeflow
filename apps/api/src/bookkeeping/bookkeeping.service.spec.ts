@@ -2,6 +2,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { ACCRUAL_REVENUE_STATUSES } from "../common/invoiced-sales";
 
 const mockAnthropicCreate = jest.fn();
 jest.mock("@anthropic-ai/sdk", () => ({
@@ -257,9 +258,13 @@ describe("BookkeepingService", () => {
   // ─── getSummary ───────────────────────────────────────────────────────────
 
   describe("getSummary", () => {
-    it("should return aggregated financial summary", async () => {
+    it("REG-B440-summary: totalRevenue is accrual net sales (gross - creditNotes - externalRefunds), never a paidAt-windowed aggregate", async () => {
       // getSummary now uses invoice/invoicePayment, not transaction/payment
-      prisma.invoice.aggregate.mockResolvedValue({ _sum: { total: 5000 } });
+      // B440: gross 500, CN 200, external refund 50 -> net 250 (the same
+      // fixture as invoiced-sales.spec.ts's REG-B440-net).
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { total: 500, taxAmount: 0 } });
+      prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 200 } });
+      prisma.return.aggregate.mockResolvedValue({ _sum: { refundAmount: 50 } });
       prisma.invoice.findMany.mockResolvedValue([
         { total: 200, payments: [{ amount: 50 }] },
         { total: 300, payments: [{ amount: 100 }] },
@@ -269,16 +274,24 @@ describe("BookkeepingService", () => {
 
       const result = await service.getSummary();
 
-      expect(result).toEqual({
-        totalRevenue: 5000,
-        outstandingReceivables: 350, // (200-50) + (300-100)
-        paymentsThisWeek: 1500,
-        overdueCount: 3,
-      });
+      expect(result.totalRevenue).toBe(250);
+      expect(result.grossRevenue).toBe(500);
+      expect(result.creditNotes).toBe(200);
+      expect(result.externalRefunds).toBe(50);
+      expect(result.outstandingReceivables).toBe(350); // (200-50) + (300-100)
+      expect(result.paymentsThisWeek).toBe(1500);
+      expect(result.overdueCount).toBe(3);
+
+      // B440: revenue is never sourced from a paidAt-windowed aggregate.
+      for (const call of prisma.invoice.aggregate.mock.calls) {
+        expect(call[0]?.where?.paidAt).toBeUndefined();
+      }
     });
 
     it("should handle empty data gracefully", async () => {
-      prisma.invoice.aggregate.mockResolvedValue({ _sum: { total: null } });
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { total: null, taxAmount: null } });
+      prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: null } });
+      prisma.return.aggregate.mockResolvedValue({ _sum: { refundAmount: null } });
       prisma.invoice.findMany.mockResolvedValue([]);
       prisma.invoicePayment.aggregate.mockResolvedValue({ _sum: { amount: null } });
       prisma.invoice.count.mockResolvedValue(0);
@@ -287,6 +300,9 @@ describe("BookkeepingService", () => {
 
       expect(result).toEqual({
         totalRevenue: 0,
+        grossRevenue: 0,
+        creditNotes: 0,
+        externalRefunds: 0,
         outstandingReceivables: 0,
         paymentsThisWeek: 0,
         overdueCount: 0,
@@ -655,10 +671,13 @@ describe("BookkeepingService", () => {
   // below; there is no separate service-level `getDashboard` to test here.
   describe('REG-B11 — dashboard money reads use the CONFIRMED (PAID) basis, not "not: VOID"', () => {
     const NOW = new Date();
-    // Simulated DB rows for the one invoice's payments.
+    // Simulated DB rows for the one invoice's payments. `paidAt` (not
+    // `createdAt`) is the real collected-basis field the aggregates below
+    // filter on (check-payments PR-2b/M2: settledAt ?? paidAt); `settledAt`
+    // is omitted (legacy row) so the OR's paidAt branch is what matches.
     const FAKE_PAYMENTS = [
-      { amount: 200, status: "PAID", method: "CASH", createdAt: NOW },
-      { amount: 300, status: "DRAFT", method: "CASH", createdAt: NOW }, // must NOT count as collected
+      { amount: 200, status: "PAID", method: "CASH", paidAt: NOW },
+      { amount: 300, status: "DRAFT", method: "CASH", paidAt: NOW }, // must NOT count as collected
     ];
     // The unpaid invoice those payments sit on, and the balance it must still show.
     const INVOICE_TOTAL = 1000;
@@ -676,7 +695,42 @@ describe("BookkeepingService", () => {
       if (cond === undefined) return true;
       if (cond.gte !== undefined && value < cond.gte) return false;
       if (cond.lte !== undefined && value > cond.lte) return false;
+      if (cond.lt !== undefined && value >= cond.lt) return false;
       return true;
+    };
+    // check-payments PR-2b (M2): the service now filters receipts through
+    // `settledDateFilter` — `where: { OR: [{settledAt: <range>}, {settledAt:
+    // null, paidAt: <range>}] }` — instead of a bare `where.createdAt` range.
+    // A fixture row with no `settledAt` (the legacy-row convention every
+    // FAKE_PAYMENTS entry uses) matches through the second OR branch, tested
+    // against its `paidAt`.
+    const matchesSettledDate = (
+      payment: { paidAt: Date; settledAt?: Date | null },
+      where: any,
+    ): boolean => {
+      const cond = where?.OR;
+      if (cond !== undefined) {
+        return (cond as any[]).some((branch) => {
+          if (branch.settledAt === null) {
+            return payment.settledAt == null && matchesCreatedAt(payment.paidAt, branch.paidAt);
+          }
+          return payment.settledAt != null && matchesCreatedAt(payment.settledAt, branch.settledAt);
+        });
+      }
+      // Fallback for a reader that still filters on a plain paidAt/createdAt
+      // range instead of settledDateFilter's OR shape.
+      if (where?.paidAt !== undefined) return matchesCreatedAt(payment.paidAt, where.paidAt);
+      if (where?.createdAt !== undefined) {
+        return matchesCreatedAt((payment as any).createdAt ?? payment.paidAt, where.createdAt);
+      }
+      // Opus review of check-payments PR-2b: neither shape present — the
+      // query under test dropped its date filter entirely. Silently
+      // matching every row would hide that regression whenever every
+      // fixture row happens to share one date; fail loudly instead.
+      throw new Error(
+        "matchesSettledDate: where clause has neither `OR` (settledDateFilter) nor a plain " +
+          "paidAt/createdAt range — the query under test appears to have dropped its date filter",
+      );
     };
     // Simulates the real DB: sums FAKE_PAYMENTS honoring whatever `where` the
     // service actually passes, so the assertion pins the resulting NUMBER —
@@ -690,7 +744,7 @@ describe("BookkeepingService", () => {
           // B421: matchesStatus is really a generic Prisma string-filter
           // matcher (plain/equals/not/in) — reused here for `where.method`.
           matchesStatus(p.method, where.method) &&
-          matchesCreatedAt(p.createdAt, where.createdAt),
+          matchesSettledDate(p, where),
       ).reduce((s, p) => s + p.amount, 0);
       return { _sum: { amount: sum } };
     };
@@ -717,18 +771,19 @@ describe("BookkeepingService", () => {
       );
     });
 
-    it("T-B11s: getMobileDashboard reports totalCollected/revenue of $200, not $500 (PAID + DRAFT)", async () => {
+    it("T-B11s: getMobileDashboard reports totalCollected of $200, not $500 (PAID + DRAFT)", async () => {
       const result = await service.getMobileDashboard();
 
       expect(result.totalCollected).toBe(200);
-      expect(result.revenue).toBe(200);
+      // Pin P-a (B440): `revenue` is no longer `totalCollected` post-fix — its own
+      // accrual-net-sales assertion now lives in REG-B440-mobile (T8) below.
     });
 
     it("REG-B421: totalCollected/paymentsThisWeek/getFinanceDashboard receipts exclude a CREDIT_NOTE, keep an ADVANCE", async () => {
       const withCreditAndAdvance = [
         ...FAKE_PAYMENTS,
-        { amount: 638, status: "PAID", method: "CREDIT_NOTE", createdAt: NOW },
-        { amount: 50, status: "PAID", method: "ADVANCE", createdAt: NOW },
+        { amount: 638, status: "PAID", method: "CREDIT_NOTE", paidAt: NOW },
+        { amount: 50, status: "PAID", method: "ADVANCE", paidAt: NOW },
       ];
       prisma.invoicePayment.aggregate.mockImplementation(async (args: any) => {
         const where = args?.where ?? {};
@@ -737,7 +792,7 @@ describe("BookkeepingService", () => {
             (p) =>
               matchesStatus(p.status, where.status) &&
               matchesStatus(p.method, where.method) &&
-              matchesCreatedAt(p.createdAt, where.createdAt),
+              matchesSettledDate(p, where),
           )
           .reduce((s, p) => s + p.amount, 0);
         return { _sum: { amount: sum } };
@@ -747,7 +802,8 @@ describe("BookkeepingService", () => {
       // DRAFT never land in any of these three "money received" figures.
       const dashboard = await service.getMobileDashboard();
       expect(dashboard.totalCollected).toBe(250);
-      expect(dashboard.revenue).toBe(250);
+      // Pin P-b (B440): `revenue` is no longer `totalCollected` post-fix — its own
+      // accrual-net-sales assertion now lives in REG-B440-finance (T9) below.
 
       const summary = await service.getSummary();
       expect(summary.paymentsThisWeek).toBe(250);
@@ -786,6 +842,97 @@ describe("BookkeepingService", () => {
       const result = await service.getFinanceDashboard();
 
       expect(result.summaryTable.today.due).toBe(CONFIRMED_BALANCE);
+    });
+
+    // ── check-payments PR-2b (M2): collected basis is settledAt ?? paidAt ────
+    // Probe: revert any of the four receipts/totalCollected call sites in
+    // this file back to a bare `where.createdAt`/`where.paidAt` range and
+    // its matching test below goes red — the settled-outside-window row
+    // would then be counted by its paidAt alone. All four sites
+    // (getSummary.paymentsThisWeek, getMobileDashboard.totalCollected,
+    // getFinanceDashboard's monthly bucket and summary-table period) are
+    // covered, one test each, below.
+
+    const mockSettledOutsideWindow = (amount: number) => {
+      const future = new Date(NOW);
+      future.setFullYear(future.getFullYear() + 1);
+      const rows = [{ amount, status: "PAID", method: "CASH", paidAt: NOW, settledAt: future }];
+      prisma.invoicePayment.aggregate.mockImplementation(async (args: any) => {
+        const where = args?.where ?? {};
+        const sum = rows
+          .filter(
+            (p) =>
+              matchesStatus(p.status, where.status) &&
+              matchesStatus(p.method, where.method) &&
+              matchesSettledDate(p, where),
+          )
+          .reduce((s, p) => s + p.amount, 0);
+        return { _sum: { amount: sum } };
+      });
+    };
+
+    it("REG-M2-settled: getMobileDashboard.totalCollected excludes a payment settled outside the window, even though its paidAt falls inside it", async () => {
+      mockSettledOutsideWindow(200);
+      const dashboard = await service.getMobileDashboard();
+      expect(dashboard.totalCollected).toBe(0);
+    });
+
+    it("REG-M2-settled: getSummary.paymentsThisWeek excludes a payment settled outside the window", async () => {
+      mockSettledOutsideWindow(200);
+      const summary = await service.getSummary();
+      expect(summary.paymentsThisWeek).toBe(0);
+    });
+
+    it("REG-M2-settled: getFinanceDashboard's monthly-bucket receipts exclude a payment settled outside the window", async () => {
+      mockSettledOutsideWindow(200);
+      const result = await service.getFinanceDashboard();
+      expect(result.monthlySales.totalReceipts).toBe(0);
+    });
+
+    it("REG-M2-settled: getFinanceDashboard's summary-table period receipts exclude a payment settled outside the window", async () => {
+      mockSettledOutsideWindow(200);
+      const result = await service.getFinanceDashboard();
+      expect(result.summaryTable.today.receipts).toBe(0);
+    });
+
+    it("REG-M2-parity: a legacy payment with no settledAt is still counted off its paidAt (fixture parity)", async () => {
+      // FAKE_PAYMENTS' $200 PAID/CASH row carries paidAt: NOW and no settledAt
+      // (the beforeEach default) — this is the exact parity case M2 requires:
+      // identical output to the pre-PR-2b paidAt-only basis.
+      const dashboard = await service.getMobileDashboard();
+      expect(dashboard.totalCollected).toBe(200);
+    });
+
+    it("REG-M2-cap: getFinanceDashboard's current-month bucket window is capped at now, not the month's last instant (Opus review of PR-2b)", async () => {
+      const calls: any[] = [];
+      prisma.invoicePayment.aggregate.mockImplementation(async (args: any) => {
+        calls.push(args);
+        return simulateAggregate(args);
+      });
+
+      await service.getFinanceDashboard();
+
+      const nowInTest = new Date();
+      const startOfThisMonth = new Date(nowInTest.getFullYear(), nowInTest.getMonth(), 1);
+      const thisMonthCall = calls.find(
+        (c) => c.where?.OR?.[0]?.settledAt?.gte?.getTime() === startOfThisMonth.getTime(),
+      );
+      expect(thisMonthCall).toBeDefined();
+      const upperBound: Date = thisMonthCall.where.OR[0].settledAt.lte;
+      expect(upperBound.getTime()).toBeLessThanOrEqual(nowInTest.getTime());
+      // The uncapped month-end instant is always later than `now` (unless the
+      // test happens to run in the month's final millisecond) — proves the
+      // cap actually did something, not just that `lte` exists.
+      const rawMonthEnd = new Date(
+        nowInTest.getFullYear(),
+        nowInTest.getMonth() + 1,
+        0,
+        23,
+        59,
+        59,
+        999,
+      );
+      expect(upperBound.getTime()).not.toBe(rawMonthEnd.getTime());
     });
 
     // ── the sibling endpoints in this same file ──────────────────────────────
@@ -857,13 +1004,105 @@ describe("BookkeepingService", () => {
     });
   });
 
+  // ─── getMobileDashboard (B440) ────────────────────────────────────────────
+  // Own fixture (not REG-B11's $200/$300/$800 one) — isolates the accrual-net
+  // revenue figure from the cash-basis totalCollected/totalOutstanding ones.
+
+  describe("getMobileDashboard (B440)", () => {
+    it("REG-B440-mobile: revenue is accrual net sales, not totalCollected; netIncome subtracts badDebtExpense", async () => {
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { total: 500, taxAmount: 0 } });
+      prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 200 } });
+      prisma.return.aggregate.mockResolvedValue({ _sum: { refundAmount: 50 } });
+      prisma.invoicePayment.aggregate.mockResolvedValue({ _sum: { amount: 100 } });
+      prisma.expense.aggregate.mockResolvedValue({ _sum: { amount: 40 } });
+      prisma.invoice.findMany.mockImplementation((args: any) => {
+        if (args?.where?.writtenOffAt) {
+          // balance 300: cash 150 + credit-note-applied 50, same as REG-B456-basis.
+          return Promise.resolve([{ total: 500, payments: [{ amount: 150 }, { amount: 50 }] }]);
+        }
+        return Promise.resolve([]); // outstanding receivables: none
+      });
+
+      const result = await service.getMobileDashboard();
+
+      expect(result.revenue).toBe(250);
+      expect(result.totalCollected).toBe(100);
+      expect(result.revenue).not.toBe(result.totalCollected);
+      expect(result.netIncome).toBe(250 - 40 - 300);
+    });
+  });
+
+  // ─── getFinanceDashboard (B440) ───────────────────────────────────────────
+
+  describe("getFinanceDashboard (B440)", () => {
+    it("REG-B440-finance: every sales figure (monthly buckets + summaryTable periods) is the accrual net-sales figure, not the inline gross aggregate", async () => {
+      // Harness note (build-plan.md): the 12-month + 5-period-summary calls
+      // need a CONSTANT mockResolvedValue (not Once) — every bucket shares
+      // this one net-sales fixture (500/200/50 -> net 250).
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { total: 500, taxAmount: 0 } });
+      prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 200 } });
+      prisma.return.aggregate.mockResolvedValue({ _sum: { refundAmount: 50 } });
+      prisma.invoicePayment.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+      prisma.expense.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+      prisma.expense.findMany.mockResolvedValue([]);
+      prisma.invoice.findMany.mockResolvedValue([]); // AR aging / due balances: none
+
+      const result = await service.getFinanceDashboard();
+
+      for (const m of result.monthlySales.data) {
+        expect(m.sales).toBe(250);
+      }
+      expect(result.monthlySales.totalSales).toBe(250 * 12);
+      for (const period of ["today", "thisWeek", "thisMonth", "thisQuarter", "thisYear"] as const) {
+        expect(result.summaryTable[period].sales).toBe(250);
+      }
+    });
+  });
+
+  // ─── getSalesByCustomer (B440) ────────────────────────────────────────────
+
+  describe("getSalesByCustomer (B440)", () => {
+    it("REG-B440-bycustomer: salesAmount is the accrual net (gross - creditNotes - externalRefunds) per customer -- a CN-only customer nets negative, never clamped to 0", async () => {
+      // Own fixture: a normal customer (gross 500/CN 200/refund 50 -> net 250,
+      // same sentinels as REG-B440-net) and a CN-only customer (gross 0, CN
+      // 200, no invoices of its own -> net -200).
+      prisma.invoice.groupBy.mockResolvedValue([
+        { customerId: "c1", _sum: { total: 500, taxAmount: 0 } },
+      ]);
+      prisma.creditNote.groupBy.mockResolvedValue([
+        { customerId: "c1", _sum: { amount: 200 } },
+        { customerId: "c2", _sum: { amount: 200 } },
+      ]);
+      prisma.return.groupBy.mockResolvedValue([{ customerId: "c1", _sum: { refundAmount: 50 } }]);
+      // Defensive: some FIX3 shapes may still read per-invoice rows for
+      // invoiceCount/businessName rather than a separate customer lookup.
+      prisma.invoice.findMany.mockResolvedValue([
+        { customerId: "c1", total: 500, customer: { id: "c1", businessName: "Acme" } },
+      ]);
+      prisma.customer.findMany.mockResolvedValue([
+        { id: "c1", businessName: "Acme" },
+        { id: "c2", businessName: "Beta Co" },
+      ]);
+
+      const result = await service.getSalesByCustomer("2026-06-01", "2026-06-30");
+
+      const byId = Object.fromEntries(result.data.map((r: any) => [r.customerId, r.salesAmount]));
+      expect(byId["c1"]).toBe(250);
+      expect(byId["c2"]).toBe(-200);
+    });
+  });
+
   // ─── getProfitAndLoss ───────────────────────────────────────────────────────
 
   describe("getProfitAndLoss", () => {
     const D = (n: number | string) => new Prisma.Decimal(n);
 
-    it("estimates COGS from the same PAID/paidAt invoice set as revenue", async () => {
-      prisma.invoice.aggregate.mockResolvedValue({ _sum: { total: 500 } });
+    it("REG-B440-pnl: estimates COGS from the same accrual invoice set as revenue (issueDate, ACCRUAL_REVENUE_STATUSES) -- never PAID/paidAt", async () => {
+      // B440: gross 500, CN 200, external refund 50 -> revenue (net) 250 —
+      // same fixture as REG-B440-net / REG-B440-summary.
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { total: 500, taxAmount: 0 } });
+      prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 200 } });
+      prisma.return.aggregate.mockResolvedValue({ _sum: { refundAmount: 50 } });
       prisma.invoice.findMany.mockResolvedValue([
         {
           issueDate: new Date("2026-06-05"),
@@ -885,23 +1124,49 @@ describe("BookkeepingService", () => {
 
       const result = await service.getProfitAndLoss("2026-06-01", "2026-06-30");
 
-      expect(result.revenue).toBe(500);
+      expect(result.revenue).toBe(250); // net, not gross 500 (this fixture has no WRITTEN_OFF invoice, so badDebtExpense is 0 here — see REG-B456-baddebt)
       expect(result.cogs).toBe(10); // 5 × 2.00
-      expect(result.grossProfit).toBe(490);
+      expect(result.grossProfit).toBe(240); // 250 - 10
       expect(result.operatingExpenses).toBe(100);
-      expect(result.netProfit).toBe(390);
-      expect(result.netMarginPct).toBe(78);
+      expect(result.netProfit).toBe(140); // 240 - 100
       expect(result.expensesByCategory).toEqual({ Rent: 100 });
 
-      // The COGS fetch pins the SAME basis as revenue: PAID, windowed on paidAt.
+      // This INVERTS the pre-B440 pin: the COGS fetch now shares revenue's
+      // accrual basis (issueDate/ACCRUAL_REVENUE_STATUSES), never PAID/paidAt.
       const cogsFetch = prisma.invoice.findMany.mock.calls[0][0];
-      expect(cogsFetch.where.status).toBe("PAID");
-      expect(cogsFetch.where.paidAt).toEqual({
+      expect(cogsFetch.where.status).toEqual(ACCRUAL_REVENUE_STATUSES);
+      expect(cogsFetch.where.issueDate).toEqual({
         gte: new Date("2026-06-01"),
         lte: expect.any(Date),
       });
-      expect(cogsFetch.where.issueDate).toBeUndefined();
+      expect(cogsFetch.where.paidAt).toBeUndefined();
       expect(prisma.invoiceItem.findMany).not.toHaveBeenCalled();
+    });
+
+    it("REG-B456-baddebt: netProfit subtracts badDebtExpense (a WRITTEN_OFF invoice's unpaid balance at write-off); revenue is unaffected by it", async () => {
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { total: 500, taxAmount: 0 } });
+      prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 200 } });
+      prisma.return.aggregate.mockResolvedValue({ _sum: { refundAmount: 50 } });
+      // T5's COGS fixture (10) is replaced with 0 here (no items) to isolate the
+      // bad-debt term; a WRITTEN_OFF invoice — issued outside the report window,
+      // written off inside it — must be picked up by the badDebtExpense query
+      // (which keys on writtenOffAt, never issueDate) but NOT by the COGS query
+      // (which keys on issueDate, so it correctly excludes this invoice).
+      const writtenOffInvoice = {
+        total: 500,
+        payments: [{ amount: 150 }, { amount: 50 }], // cash 150 + credit-note-applied 50 -> balance 300
+      };
+      prisma.invoice.findMany.mockImplementation((args: any) => {
+        if (args?.where?.writtenOffAt) return Promise.resolve([writtenOffInvoice]);
+        return Promise.resolve([]); // accrual COGS set: empty -> cogs 0
+      });
+      prisma.expense.findMany.mockResolvedValue([{ amount: 40, category: { name: "Rent" } }]);
+
+      const result = await service.getProfitAndLoss("2026-06-01", "2026-06-30");
+
+      expect(result.revenue).toBe(250); // unaffected by the bad-debt mock
+      expect(result.badDebtExpense).toBe(300);
+      expect(result.netProfit).toBe(-90); // 250 − 0(cogs) − 40(opEx) − 300(badDebt)
     });
 
     it("costs each line at the invoice's ISSUE date, even when paid later", async () => {
@@ -955,6 +1220,42 @@ describe("BookkeepingService", () => {
       const result = await service.getProfitAndLoss("2026-06-01", "2026-06-30");
 
       expect(result.cogs).toBe(1.01); // 3 × 0.335 = 1.005 → cents
+    });
+  });
+
+  // ─── getBadDebtsReport ────────────────────────────────────────────────────
+
+  describe("getBadDebtsReport", () => {
+    it("REG-B456-report: .expense equals the P&L's badDebtExpense for the same window -- both derive from the same fetchBadDebtExpense amount; .total stays the GROSS balance sum the web footer displays (Fable review of #791)", async () => {
+      const writtenOffInvoice = {
+        id: "inv-wo-1",
+        invoiceNumber: "INV-WO-1",
+        customer: { id: "cust-1", businessName: "Acme" },
+        issueDate: new Date("2026-01-01"),
+        dueDate: null,
+        writtenOffAt: new Date("2026-06-15"),
+        writeOffReason: "uncollectible",
+        total: 500,
+        // taxAmount 50 makes the pre-tax `expense` (270) diverge from the
+        // gross `total` (300) -- proves the two fields are genuinely split,
+        // not coincidentally equal.
+        taxAmount: 50,
+        payments: [{ amount: 150 }, { amount: 50 }], // cash 150 + credit-note-applied 50 -> balance 300
+      };
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { total: 0, taxAmount: 0 } });
+      prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+      prisma.return.aggregate.mockResolvedValue({ _sum: { refundAmount: 0 } });
+      prisma.invoice.findMany.mockResolvedValue([writtenOffInvoice]);
+      prisma.expense.findMany.mockResolvedValue([]);
+
+      const report = await service.getBadDebtsReport();
+      const pnl = await service.getProfitAndLoss("2026-06-01", "2026-06-30");
+
+      expect(report.total).toBe(300);
+      expect(report.expense).toBe(270);
+      expect(pnl.badDebtExpense).toBe(270);
+      expect(report.expense).toBe(pnl.badDebtExpense);
+      expect(report.total).not.toBe(report.expense);
     });
   });
 

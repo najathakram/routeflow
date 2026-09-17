@@ -12,6 +12,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { BillingEventService } from "../billing/billing-event.service";
 import { MeterService } from "../billing/meter.service";
 import { MrrService } from "../billing/mrr.service";
+import { FeatureOverrideService } from "../billing/feature-override.service";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -35,6 +36,7 @@ describe("PlatformAdminService — audit provenance", () => {
   let entitlementsService: { resolve: jest.Mock; invalidate: jest.Mock };
   let billingEventService: { emit: jest.Mock };
   let meterService: { readAll: jest.Mock };
+  let featureOverrides: { allActive: jest.Mock };
   let platformPricingService: { resolveTenantPricing: jest.Mock };
   let mrrService: { computeOverview: jest.Mock; priceTenant: jest.Mock };
   // WP3b: named so the createTenant — LITE plan describe block can assert on the checkout
@@ -84,6 +86,10 @@ describe("PlatformAdminService — audit provenance", () => {
     entitlementsService = { resolve: jest.fn(), invalidate: jest.fn() };
     billingEventService = { emit: jest.fn().mockResolvedValue({}) };
     meterService = { readAll: jest.fn() };
+    // Every pre-existing test in this file exercises a tenant with no override rows, so this
+    // collaborator-contract addition (Opus review of 8130b204, item 4) defaults to "no
+    // override" — the same raw-entitlements behavior those tests already assert on.
+    featureOverrides = { allActive: jest.fn().mockResolvedValue(new Map()) };
     platformPricingService = { resolveTenantPricing: jest.fn() };
     // Default: zeroed overview — the getStats-enrichment describe block below overrides
     // per-case to prove getStats() reads MrrService, not a re-derived estimate.
@@ -131,6 +137,7 @@ describe("PlatformAdminService — audit provenance", () => {
         { provide: AuditService, useValue: { log: auditLog } },
         { provide: MrrService, useValue: mrrService },
         { provide: TenantMirrorService, useValue: tenantMirror },
+        { provide: FeatureOverrideService, useValue: featureOverrides },
       ],
     }).compile();
 
@@ -1271,6 +1278,57 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(meterService.readAll).toHaveBeenCalledWith(TENANT_ID);
     });
 
+    // Opus review of 8130b204, item 4: this admin-facing view must agree with the tenant's own
+    // Overrides table.
+    it("a GRANT override on a RequirePlanFlag key adds it to flags", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      entitlementsService.resolve.mockResolvedValue({
+        tenantId: TENANT_ID,
+        planKey: "STARTER",
+        flags: [],
+        addons: [],
+        caps: { seats: 1, routes: 1, scans: 20, msgs: 200 },
+      });
+      meterService.readAll.mockResolvedValue([]);
+      featureOverrides.allActive.mockResolvedValue(new Map([["flag.msrp", "GRANT"]]));
+
+      const result = await service.getTenantEntitlements(TENANT_ID);
+      expect(result.flags).toContain("flag.msrp");
+    });
+
+    it("a DENY override on a RequirePlanFlag key removes it from flags", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      entitlementsService.resolve.mockResolvedValue({
+        tenantId: TENANT_ID,
+        planKey: "ENTERPRISE",
+        flags: ["flag.msrp"],
+        addons: [],
+        caps: { seats: null, routes: null, scans: null, msgs: 200 },
+      });
+      meterService.readAll.mockResolvedValue([]);
+      featureOverrides.allActive.mockResolvedValue(new Map([["flag.msrp", "DENY"]]));
+
+      const result = await service.getTenantEntitlements(TENANT_ID);
+      expect(result.flags).not.toContain("flag.msrp");
+    });
+
+    it("an addon-keyed override never touches the SKU-shaped addons array", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      entitlementsService.resolve.mockResolvedValue({
+        tenantId: TENANT_ID,
+        planKey: "GROWTH",
+        flags: [],
+        addons: ["BUYER_PORTAL"],
+        caps: { seats: 10, routes: 3, scans: 100, msgs: 200 },
+      });
+      meterService.readAll.mockResolvedValue([]);
+      // "tobacco_dealer" is a registry addon KEY, not a SKU code — must not leak in here.
+      featureOverrides.allActive.mockResolvedValue(new Map([["tobacco_dealer", "GRANT"]]));
+
+      const result = await service.getTenantEntitlements(TENANT_ID);
+      expect(result.addons).toEqual(["BUYER_PORTAL"]);
+    });
+
     it("404s for a tenant that doesn't exist, without calling the entitlements/meter services", async () => {
       prisma.tenant.findUnique.mockResolvedValue(null);
 
@@ -1318,6 +1376,11 @@ describe("PlatformAdminService — audit provenance", () => {
         }),
       );
       expect((prisma as any).driver.create).not.toHaveBeenCalled();
+
+      // B421 pinning: the admin-account welcome email carries a password — platform sender only.
+      expect(emailServiceMock.send).toHaveBeenCalledWith(
+        expect.objectContaining({ senderClass: "platform" }),
+      );
     });
   });
 
@@ -1498,6 +1561,8 @@ describe("PlatformAdminService — audit provenance", () => {
       const emailCall = (emailServiceMock.send as jest.Mock).mock.calls[0][0];
       expect(emailCall.html).toContain("Complete payment to activate your account.");
       expect(emailCall.html).not.toMatch(/trial expires in/i);
+      // B421 pinning: the welcome email carries a temp password — platform sender only.
+      expect(emailCall.senderClass).toBe("platform");
     });
   });
 

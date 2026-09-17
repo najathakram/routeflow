@@ -42,7 +42,7 @@ describe("AuthService — password reset (RF-018)", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
-    emailService = { send: jest.fn().mockResolvedValue(undefined) };
+    emailService = { send: jest.fn().mockResolvedValue({ delivered: true, transport: "resend" }) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -120,6 +120,7 @@ describe("AuthService — password reset (RF-018)", () => {
         expect.objectContaining({
           to: "alice@example.com",
           subject: expect.stringContaining("Reset"),
+          senderClass: "platform",
         }),
       );
     });

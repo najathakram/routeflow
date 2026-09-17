@@ -7,7 +7,12 @@ import {
   Optional,
 } from "@nestjs/common";
 
-const VALID_RETURN_REASONS = [
+// PR-1c: exported so InlineReturnsService (inline-returns.service.ts) shares the SAME
+// reason set and restock default instead of a second hand-typed copy (L-072-class risk) —
+// the values/text stay byte-identical, so returns-restock-parity.spec.ts's scan of this
+// exact declaration (it matches from `const NO_RESTOCK_REASONS` onward, `export` prefix and
+// all) still passes unchanged.
+export const VALID_RETURN_REASONS = [
   "DAMAGED",
   "WRONG_ITEM",
   "CUSTOMER_REFUSED",
@@ -17,7 +22,7 @@ const VALID_RETURN_REASONS = [
 
 // Reasons where the returned goods are physically unsellable never restock by
 // default; the rest go back into stock unless the caller says otherwise.
-const NO_RESTOCK_REASONS = new Set(["DAMAGED", "QUALITY_ISSUE"]);
+export const NO_RESTOCK_REASONS = new Set(["DAMAGED", "QUALITY_ISSUE"]);
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
@@ -34,6 +39,7 @@ import {
   soldPiecesForProduct,
   standardReturnPieces,
 } from "./returns-pieces.util";
+import { restockReturnItems } from "./returns-restock.util";
 
 /** M6/§2.3: every standard-path method refuses an INLINE-kind return — it has its own
  * endpoints and state machine (PR-1c/1d). Thrown the moment a `kind` is known to be INLINE. */
@@ -486,33 +492,8 @@ export class ReturnsService {
         // actually put back on the shelf (nothing).
         await tx.returnItem.updateMany({ where: { returnId: id }, data: { restock: false } });
       } else {
-        for (const item of ret.items) {
-          if (item.restock) {
-            // Restock at the current average — leaves the average unchanged but
-            // records the cost so COGS/valuation reporting stays complete
-            const product = await tx.product.findFirst({
-              where: { id: item.productId },
-              select: { currentStock: true, averageCost: true },
-            });
-            const qty = new Prisma.Decimal(item.qty);
-            await tx.stockMovement.create({
-              data: {
-                productId: item.productId,
-                type: "RETURN",
-                quantity: qty,
-                unitCost: product?.averageCost ?? null,
-                avgCostAfter: product?.averageCost ?? null,
-                stockAfter: (product?.currentStock ?? new Prisma.Decimal(0)).add(qty),
-                performedById: userId,
-                reference: `RET-${ret.id.slice(0, 8)}`,
-              },
-            });
-            await tx.product.update({
-              where: { id: item.productId },
-              data: { currentStock: { increment: qty } },
-            });
-          }
-        }
+        // PR-1c: shared with InlineReturnsService.capture() — see returns-restock.util.ts.
+        await restockReturnItems(tx, ret, userId);
       }
       // W5c: reverse the regulated sales ledger for the returned goods (pro-rated,
       // idempotent per return). Independent of `restock` — a returned regulated

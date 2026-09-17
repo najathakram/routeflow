@@ -4,6 +4,7 @@ import { Resend } from "resend";
 import * as nodemailer from "nodemailer";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../common/encryption.service";
+import { MailboxSendService } from "./mailbox/mailbox-send.service";
 // F03/R9: ONE original-price display decision shared with the PDF, so the two
 // customer-facing documents of the same send can never disagree (a pure helper —
 // no Nest/module coupling, and unlike ./invoice-pdf-template it is not mocked
@@ -186,33 +187,209 @@ function redactAddresses(msg: string): string {
     .replace(/(?:[0-9a-f]{0,4}:){2,8}[0-9a-f]{0,4}/gi, "[address]"); // IPv6 incl. ::-compressed
 }
 
+/**
+ * N4 ground rule: every interpolated value in a NEW email template must be
+ * HTML-escaped — none of the existing templates in this file do (their
+ * inputs are operator/tenant-typed strings from an already-authenticated
+ * session, an accepted pre-existing gap, not this PR's to fix), but a
+ * low-stock digest interpolates PRODUCT NAMES, which a tenant's own staff
+ * can set to arbitrary text via the catalogue import/edit flow.
+ */
+export function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/** Platform-level Google Workspace SMTP config (B452, owner ruling 2026-09-16). */
+interface PlatformSmtpConfig {
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  pass: string;
+}
+
+/** Shared card/header/footer shell for the N2 account-notification templates — same
+ *  visual grammar as sendMergeVerificationEmail/sendMergeCompleteEmail (page background,
+ *  rounded white card, colored header bar, light-gray footer), factored out once here
+ *  since N2 adds four templates rather than one. Not a rewrite of buildInvoiceEmail's own
+ *  shell — that one stays as-is for invoices. */
+function renderEmailShell(params: {
+  headerColor: string;
+  headerTitle: string;
+  bodyHtml: string;
+}): string {
+  return `<!DOCTYPE html>
+<html><body style="margin:0;padding:0;background:#f9fafb;font-family:Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:32px 16px;">
+<table width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:8px;border:1px solid #e5e7eb;">
+  <tr><td style="background:${params.headerColor};padding:24px 32px;border-radius:8px 8px 0 0;">
+    <p style="margin:0;font-size:20px;font-weight:700;color:#ffffff;">${params.headerTitle}</p>
+  </td></tr>
+  <tr><td style="padding:32px;">
+    ${params.bodyHtml}
+  </td></tr>
+  <tr><td style="background:#f9fafb;padding:16px 32px;border-top:1px solid #f0f0f0;border-radius:0 0 8px 8px;">
+    <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;">RouteFlow Platform — this is an automated account email.</p>
+  </td></tr>
+</table>
+</td></tr></table>
+</body></html>`;
+}
+
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
   private readonly resend: Resend | null;
+  /**
+   * Platform-level SMTP (Google Workspace mailbox), set from SMTP_HOST/PORT/SECURE/
+   * USER/PASS. This is the platform transport per the owner's 2026-09-16 ruling
+   * ("RouteFlow's mail is on Google, not Resend") — selected instead of Resend
+   * whenever SMTP_HOST is set; Resend remains an alternative for when it isn't.
+   * The two are never both active for the same send (see constructor).
+   */
+  private readonly platformSmtp: PlatformSmtpConfig | null;
   private readonly platformFrom: string;
 
   constructor(
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
     private readonly encryption: EncryptionService,
+    private readonly mailboxSend: MailboxSendService,
   ) {
     const apiKey = this.config.get<string>("RESEND_API_KEY");
-    // Platform verified sending address (must be on a domain verified in Resend).
-    // Per-tenant sends swap the display name for the tenant's business name and set
-    // Reply-To to the tenant's own email (see getResendFrom/getReplyTo).
-    this.platformFrom =
-      this.config.get<string>("EMAIL_FROM") ?? "RouteFlow <invoices@send.routeflow.info>";
 
-    if (apiKey) {
+    // Platform SMTP requires ALL THREE of host/user/pass — a partial config (e.g. an
+    // env var typo dropping SMTP_USER) must never half-activate: previously `SMTP_HOST`
+    // alone was enough to disable Resend and report "configured" while every real send
+    // 535'd on empty credentials. `smtpFullyConfigured` gates BOTH which transport wins
+    // below AND the EMAIL_FROM derivation right after it.
+    const smtpHost = this.config.get<string>("SMTP_HOST");
+    const smtpUser = this.config.get<string>("SMTP_USER");
+    const smtpPass = this.config.get<string>("SMTP_PASS");
+    const smtpFullyConfigured = !!(smtpHost && smtpUser && smtpPass);
+    if (smtpHost && !smtpFullyConfigured) {
+      this.logger.error(
+        "SMTP_HOST is set but SMTP_USER/SMTP_PASS are missing — ignoring platform SMTP " +
+          "and falling back to Resend (or logging-only if that isn't set either).",
+      );
+    }
+
+    // Platform verified sending address. With platform SMTP this MUST be the
+    // authenticated Google Workspace mailbox (SMTP_USER); with Resend it must be on a
+    // domain verified in Resend. Per-tenant sends swap the display name for the
+    // tenant's business name and set Reply-To to the tenant's own email (see
+    // getResendFrom/getReplyTo/getTenantFromAddress/getPlatformSmtpFrom). If platform
+    // SMTP is active but EMAIL_FROM was never set, defaulting to the Resend-shaped
+    // literal would send from an address that doesn't match the authenticated mailbox
+    // — a guaranteed SPF/DKIM misalignment — so derive it from SMTP_USER instead.
+    const rawEmailFrom = this.config.get<string>("EMAIL_FROM");
+    if (smtpFullyConfigured && !rawEmailFrom) {
+      this.platformFrom = `RouteFlow <${smtpUser}>`;
+      this.logger.error(
+        `EMAIL_FROM is not set while platform SMTP is configured — using the authenticated ` +
+          `mailbox (${smtpUser}) as the sender so SPF/DKIM stay aligned. Set EMAIL_FROM ` +
+          "explicitly to control the display name.",
+      );
+    } else {
+      this.platformFrom = rawEmailFrom ?? "RouteFlow <invoices@send.routeflow.info>";
+    }
+
+    if (smtpFullyConfigured) {
+      // Platform SMTP wins when fully configured — never run both transports for the
+      // same platform send.
+      this.platformSmtp = {
+        host: smtpHost!,
+        port: this.parseSmtpPort(this.config.get<string>("SMTP_PORT")),
+        secure: this.parseSmtpSecure(this.config.get<string>("SMTP_SECURE")),
+        user: smtpUser!,
+        pass: smtpPass!,
+      };
+      this.resend = null;
+      this.logger.log("Email service initialised (platform SMTP)");
+    } else if (apiKey) {
+      this.platformSmtp = null;
       this.resend = new Resend(apiKey);
       this.logger.log("Email service initialised (Resend)");
     } else {
+      this.platformSmtp = null;
       this.resend = null;
       this.logger.warn(
-        "RESEND_API_KEY not set — emails will be logged only. Set the key to enable real delivery.",
+        "Neither SMTP_HOST nor RESEND_API_KEY is set — emails will be logged only. " +
+          "Set one to enable real platform delivery.",
       );
     }
+  }
+
+  /** SMTP_PORT parsing shared with check-email-sender.mjs: any positive integer, else 587. */
+  private parseSmtpPort(raw: string | undefined): number {
+    const n = Number(raw);
+    return Number.isInteger(n) && n > 0 ? n : 587;
+  }
+
+  /** SMTP_SECURE parsing shared with check-email-sender.mjs: true/1/yes, case-insensitive. */
+  private parseSmtpSecure(raw: string | undefined): boolean {
+    return /^(true|1|yes)$/i.test(raw ?? "");
+  }
+
+  /**
+   * Strip characters that could break out of a `Name <addr>` From/Reply-To
+   * header. `\r`/`\n` are the CRLF-injection vector — a tenant business name
+   * containing them could otherwise smuggle a second header (e.g. a forged
+   * `Bcc:`) into the raw message; `["<>]` guard the `Name <addr>` quoting
+   * itself.
+   */
+  private sanitizeDisplayName(name: string): string {
+    return name
+      .replace(/["<>]/g, "")
+      .replace(/[\r\n]+/g, " ")
+      .trim();
+  }
+
+  /**
+   * "Good enough" syntactic email check (not a full RFC 5322 grammar) — gates
+   * whether a value is safe to place bare in a From `addr-spec`. Exists
+   * because `smtpUser` (an SMTP AUTH username) is not guaranteed to be an
+   * email address at all: SendGrid's literal `"apikey"`, an AWS SES access-
+   * key id, etc. Excludes whitespace outright, so a CRLF/space that survived
+   * `sanitizeDisplayName` (folded to a single space, not removed) still fails
+   * here (B468).
+   */
+  private isPlausibleEmailAddress(value: string): boolean {
+    return /^[^\s<>"';,\\]+@[^\s<>"';,\\]+\.[^\s<>"';,\\]+$/.test(value);
+  }
+
+  /**
+   * Build a nodemailer transport with the shared fail-fast timeouts + fail-secure
+   * STARTTLS behaviour used by every SMTP send path (tenant SMTP, platform SMTP).
+   * `mapSmtpError`'s provider-aware guidance (Gmail app-passwords, M365 Authenticated
+   * SMTP, …) is applied by each caller's catch block, not here.
+   */
+  private createSendTransport(
+    host: string,
+    port: number,
+    secure: boolean,
+    user: string,
+    pass: string,
+  ) {
+    return nodemailer.createTransport({
+      host,
+      port,
+      secure,
+      // A 587 server that won't offer STARTTLS would otherwise hand the password
+      // over in cleartext — refuse instead of silently degrading.
+      requireTLS: port === 587 && !secure,
+      auth: { user, pass },
+      // Fail fast — invoice send/download UX awaits this round-trip.
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 15_000,
+      dnsTimeout: 10_000,
+    });
   }
 
   // ─── Per-tenant SMTP helpers ───────────────────────────────────────────────
@@ -297,29 +474,79 @@ export class EmailService {
   }
 
   /**
-   * Is real email delivery available for the current tenant? True when platform
-   * Resend is configured OR the tenant has SMTP set. The invoice send + settings
-   * surfaces use this to warn/guide BEFORE claiming an email went out.
+   * Is real email delivery available for the current tenant? True when a platform
+   * transport (SMTP or Resend) is configured OR the tenant has SMTP set. The
+   * invoice send + settings surfaces use this to warn/guide BEFORE claiming an
+   * email went out.
    */
   async isEmailConfigured(): Promise<boolean> {
-    if (this.resend) return true;
+    if (this.resend || this.platformSmtp) return true;
     return (await this.getTenantEmailConfig()) != null;
   }
 
-  private async getTenantFromAddress(): Promise<string> {
+  /**
+   * The From header for a tenant's email sent via the TENANT'S OWN SMTP
+   * transport, when no `smtpFromEmail` is configured. `smtpUser` — the
+   * mailbox the tenant's SMTP server actually authenticated as — is the
+   * fallback address, NOT the platform's: the message is physically
+   * transmitted through the tenant's own mail server, so claiming the
+   * platform's `EMAIL_FROM` address here is exactly the SPF/DKIM/DMARC
+   * misalignment those checks exist to catch (B452 followups (c) — this
+   * used to fall back to the platform's verified address; before that, an
+   * even worse hard-coded "noreply@routeflow.app", a domain RouteFlow
+   * doesn't even own).
+   *
+   * B468: `smtpUser` is an SMTP AUTH username, not guaranteed to be an email
+   * address (SendGrid's literal `"apikey"`, an AWS SES key id) — and even
+   * when it looks address-shaped it's operator input, so it gets the exact
+   * same sanitization pass as businessName before it can reach a From
+   * header. Returns null (never throws) when no usable address survives —
+   * the caller reports a clean "not sent", not a broken From.
+   */
+  private async getTenantFromAddress(smtpUser: string): Promise<string | null> {
+    const sanitizedUser = this.sanitizeDisplayName(smtpUser);
     const tenantId = this.prisma.getTenantId();
-    if (!tenantId) return this.platformFrom;
+    if (!tenantId) return this.isPlausibleEmailAddress(sanitizedUser) ? sanitizedUser : null;
 
     const cfg = await this.prisma.tenantConfig.findFirst({ where: { tenantId } });
     if (cfg?.smtpFromEmail) {
       return cfg.smtpFromName ? `${cfg.smtpFromName} <${cfg.smtpFromEmail}>` : cfg.smtpFromEmail;
     }
-    // Fall back to businessName as sender name
-    if (cfg?.businessName) return `${cfg.businessName} <noreply@routeflow.app>`;
-    return this.platformFrom;
+    if (!this.isPlausibleEmailAddress(sanitizedUser)) return null;
+    // The name is sanitized — an unescaped businessName here is a From-header
+    // injection vector (e.g. `Acme <evil@attacker.com>` becomes the real From).
+    const businessName = cfg?.businessName ? this.sanitizeDisplayName(cfg.businessName) : "";
+    return businessName ? `${businessName} <${sanitizedUser}>` : sanitizedUser;
   }
 
-  private async getTenantBusinessName(): Promise<string> {
+  /**
+   * The From header for a tenant's email sent via the PLATFORM SMTP transport:
+   * `"<Business Name> via RouteFlow" <authenticated platform mailbox>`. Unlike Resend,
+   * platform SMTP is a single authenticated Google Workspace mailbox — a tenant's
+   * verified own-domain (Resend domains API) cannot be used here, only the display
+   * name changes; the address is always the authenticated mailbox so SPF/DKIM/DMARC
+   * alignment holds. Used when a tenant has no SMTP of their own configured, so the
+   * platform sends on their behalf — mirrors getResendFrom()'s branding but without
+   * the Resend-only own-domain lookup.
+   */
+  private async getPlatformSmtpFrom(): Promise<string> {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) return this.platformFrom;
+    const cfg = await this.prisma.tenantConfig.findFirst({ where: { tenantId } });
+    const businessName = cfg?.businessName ? this.sanitizeDisplayName(cfg.businessName) : "";
+    return businessName
+      ? `${businessName} via RouteFlow <${this.addressOf(this.platformFrom)}>`
+      : this.platformFrom;
+  }
+
+  /**
+   * The tenant's display name for outbound email, "RouteFlow" when there's no
+   * tenant context or no businessName configured. Public (N1) — EmailChannelProvider
+   * (the messaging engine's EMAIL transport) calls this to brand order-status/POD
+   * notification emails the same way invoice emails are branded, rather than
+   * hard-coding "RouteFlow" for every tenant.
+   */
+  async getTenantBusinessName(): Promise<string> {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) return "RouteFlow";
     const cfg = await this.prisma.tenantConfig.findFirst({ where: { tenantId } });
@@ -366,7 +593,7 @@ export class EmailService {
    * display name + Reply-To to identify the business.
    */
   private async getResendFrom(): Promise<string> {
-    const businessName = (await this.getTenantBusinessName()).replace(/["<>]/g, "").trim();
+    const businessName = this.sanitizeDisplayName(await this.getTenantBusinessName());
     const address = (await this.getVerifiedOwnDomainFrom()) ?? this.addressOf(this.platformFrom);
     return businessName ? `${businessName} <${address}>` : address;
   }
@@ -374,14 +601,24 @@ export class EmailService {
   /**
    * Reply-To for tenant email — the business's own email, so a customer replying to an
    * invoice reaches the tenant, not the platform sending domain. Uses the customer-
-   * facing email, falling back to the tenant's configured From email; undefined when
-   * neither is set (replies then go to the sending address).
+   * facing email, falling back to the tenant's configured From email, then the tenant
+   * admin's own login email; undefined only when none of those exist (replies then go
+   * to the sending address).
    */
   private async getReplyTo(): Promise<string | undefined> {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) return undefined;
     const cfg = await this.prisma.tenantConfig.findFirst({ where: { tenantId } });
-    return cfg?.customerEmail?.trim() || cfg?.smtpFromEmail?.trim() || undefined;
+    const configured = cfg?.customerEmail?.trim() || cfg?.smtpFromEmail?.trim();
+    if (configured) return configured;
+    const admin = await this.prisma.user.findFirst({
+      where: { tenantId, role: "TENANT_ADMIN", deletedAt: null, status: "ACTIVE" },
+      // Deterministic pick among multiple ACTIVE admins — the longest-tenured
+      // one, not whatever order the DB happens to return.
+      orderBy: { createdAt: "asc" },
+      select: { email: true },
+    });
+    return admin?.email?.trim() || undefined;
   }
 
   // ─── Per-tenant sending-domain verification (Resend domains API, Phase 2) ────
@@ -464,7 +701,9 @@ export class EmailService {
   }> {
     const cfg = await this.readSendingDomainConfig();
     return {
-      platformConfigured: !!this.resend,
+      // Either platform transport counts as "platform email is set up" — own-domain
+      // sending itself remains Resend-only (enforced in addSendingDomain below).
+      platformConfigured: !!(this.resend || this.platformSmtp),
       domain: cfg?.domain ?? null,
       status: cfg?.status ?? "none",
       records: cfg?.records ?? [],
@@ -472,9 +711,21 @@ export class EmailService {
     };
   }
 
-  /** Register the tenant's sending domain with Resend and store the DNS records to add. */
+  /**
+   * Register the tenant's sending domain with Resend and store the DNS records to add.
+   * Own-domain sending is a Resend-only feature — platform SMTP is a single
+   * authenticated Google Workspace mailbox and can never send as another domain, so
+   * that case gets its own explanation rather than the generic "not set up" message.
+   */
   async addSendingDomain(domain: string) {
     if (!this.resend) {
+      if (this.platformSmtp) {
+        throw new BadRequestException(
+          "Own-domain sending is a Resend-only feature — platform email is currently routed " +
+            "through Google Workspace SMTP, a single authenticated mailbox that can't send as " +
+            "another domain. Set RESEND_API_KEY (and unset SMTP_HOST) to use your own domain.",
+        );
+      }
       throw new BadRequestException(
         "Platform email isn't set up yet. An admin must set RESEND_API_KEY before verifying a domain.",
       );
@@ -756,9 +1007,30 @@ export class EmailService {
    * whose `result.error` was never inspected), which is why the UI said "sent" when
    * nothing went out.
    */
-  async send(params: { to: string; subject: string; html: string; replyTo?: string }): Promise<{
+  async send(params: {
+    to: string;
+    subject: string;
+    html: string;
+    replyTo?: string;
+    /** Plain-text alternative (added independently by both N1 and N3 — same field,
+     *  reconciled on merge). Both nodemailer and Resend accept it alongside `html`;
+     *  email clients that can't/won't render HTML fall back to this. Optional so every
+     *  EXISTING caller is unaffected — a transport that doesn't get one just sends
+     *  HTML-only, same as before this field existed. */
+    text?: string;
+    /**
+     * email-connect-google PR-3 (security review Phase 2): `"platform"` DELEGATES the whole
+     * send to `sendPlatform()` — bare platform From, no tenant Reply-To, no tenant domain, no
+     * connected mailbox, no tenant SMTP. Security/platform mail (invites, password reset/set,
+     * verification, new-device, email/role-change notices) must never leave from a tenant's
+     * own mailbox or SMTP server, or carry a tenant's own branding. Every EXISTING caller
+     * omits this (defaults to tenant-eligible), so no prior behavior changes except for the
+     * specific call sites migrated to `"platform"`.
+     */
+    senderClass?: "tenant" | "platform";
+  }): Promise<{
     delivered: boolean;
-    transport: "smtp" | "resend" | "none";
+    transport: "mailbox" | "smtp" | "resend" | "none";
     id?: string;
     error?: string;
     /**
@@ -775,9 +1047,52 @@ export class EmailService {
      */
     fromAddress?: string;
   }> {
+    // Security review Phase 2: a platform-class send is a full DELEGATION to `sendPlatform()`
+    // — not a set of skipped branches inside this method. `sendPlatform` never resolves
+    // tenant SMTP, a tenant's own Reply-To, or a tenant's connected mailbox; it always uses
+    // the bare platform From. This also means it never reads `prisma.getTenantId()`, so an
+    // in-request platform send (e.g. an admin's own action triggering a security notice)
+    // cannot accidentally pick up THEIR tenant's own anything.
+    if (params.senderClass === "platform") {
+      return this.sendPlatform({
+        to: params.to,
+        subject: params.subject,
+        html: params.html,
+        text: params.text,
+        replyTo: params.replyTo,
+      });
+    }
+
     // Reply-To = the business's own email so customer replies reach the tenant, not the
-    // (platform) sending address. Applies to both transports.
+    // (platform) sending address. Applies to every transport, including the mailbox.
     const replyTo = params.replyTo ?? (await this.getReplyTo());
+
+    // 0. Leading branch (PR-3, no parallel path — every other branch is unchanged): a
+    // CONNECTED (or THROTTLED-but-past-its-window) tenant Google mailbox sends first.
+    // `MailboxSendService.trySend` never throws and returns delivered:false for "not
+    // applicable" (no connection, REVOKED, still THROTTLED, a refresh failure, or a Gmail API
+    // error) — every one of those falls through to the existing tenant-SMTP → platform-SMTP →
+    // Resend chain below, unchanged.
+    const tenantId = this.prisma.getTenantId();
+    if (tenantId) {
+      const businessName = this.sanitizeDisplayName(await this.getTenantBusinessName());
+      const mailboxResult = await this.mailboxSend.trySend(tenantId, {
+        to: params.to,
+        subject: params.subject,
+        html: params.html,
+        text: params.text,
+        replyTo,
+        fromName: businessName || undefined,
+      });
+      if (mailboxResult.delivered) {
+        return {
+          delivered: true,
+          transport: "mailbox",
+          id: mailboxResult.id,
+          fromAddress: mailboxResult.fromAddress,
+        };
+      }
+    }
 
     // 1. Try per-tenant SMTP if configured. A config/SSRF error or send failure is
     // caught (not thrown) so we can fall back to Resend and stay honest-by-result.
@@ -791,30 +1106,33 @@ export class EmailService {
           ? emailCfg.fromName
             ? `${emailCfg.fromName} <${emailCfg.fromEmail}>`
             : emailCfg.fromEmail
-          : await this.getTenantFromAddress();
-        const transport = nodemailer.createTransport({
-          host: emailCfg.host,
-          port: emailCfg.port,
-          secure: emailCfg.secure,
-          // A 587 server that won't offer STARTTLS would otherwise hand the tenant's
-          // password over in cleartext — refuse instead of silently degrading (mirrors
-          // the pre-save verify transport above).
-          requireTLS: emailCfg.port === 587 && !emailCfg.secure,
-          auth: { user: emailCfg.user, pass: emailCfg.pass },
-          // Fail fast — invoice send/download UX awaits this round-trip. Without
-          // these, nodemailer's 2-minute default connect timeout makes an
-          // unreachable tenant SMTP (e.g. an IPv6 AAAA pick on a no-IPv6-egress
-          // host) hang the request before the Resend fallback kicks in.
-          connectionTimeout: 10_000,
-          greetingTimeout: 10_000,
-          socketTimeout: 15_000,
-          dnsTimeout: 10_000,
-        });
+          : await this.getTenantFromAddress(emailCfg.user);
+        // B468: smtpUser isn't guaranteed to be a usable From address
+        // (SendGrid's "apikey", an SES key id, a CRLF-injection attempt that
+        // sanitized down to nothing address-shaped) — report a clean
+        // not-sent result instead of handing nodemailer a broken From, and
+        // never fall through to Resend/platform SMTP for what is a
+        // configuration problem, not a transient send failure.
+        if (!from) {
+          return {
+            delivered: false,
+            transport: "smtp",
+            error: "Set a From email in Settings → Email",
+          };
+        }
+        const transport = this.createSendTransport(
+          emailCfg.host,
+          emailCfg.port,
+          emailCfg.secure,
+          emailCfg.user,
+          emailCfg.pass,
+        );
         const info = await transport.sendMail({
           from,
           to: params.to,
           subject: params.subject,
           html: params.html,
+          text: params.text,
           replyTo,
         });
         this.logger.log(
@@ -833,7 +1151,61 @@ export class EmailService {
       }
     }
 
-    // 2. Try platform Resend. The SDK returns `{data, error}` (it does NOT throw on an
+    // 2. Try platform SMTP (Google Workspace mailbox) — the platform transport per the
+    // owner's 2026-09-16 ruling. Mutually exclusive with Resend (constructor picks one),
+    // so there is no cascading fallback between the two platform transports here. No
+    // SSRF guard here (unlike tenant SMTP): host/port come from owner-set env vars, not
+    // tenant-controlled input, and the local dev target (mailpit on port 1025) isn't in
+    // the tenant-facing ALLOWED_SMTP_PORTS allow-list.
+    if (this.platformSmtp) {
+      try {
+        const transport = this.createSendTransport(
+          this.platformSmtp.host,
+          this.platformSmtp.port,
+          this.platformSmtp.secure,
+          this.platformSmtp.user,
+          this.platformSmtp.pass,
+        );
+        const from = await this.getPlatformSmtpFrom();
+        const info = await transport.sendMail({
+          from,
+          to: params.to,
+          subject: params.subject,
+          html: params.html,
+          replyTo,
+        });
+        this.logger.log(
+          `Email sent via platform SMTP to ${params.to} — messageId: ${info.messageId}`,
+        );
+        return {
+          delivered: true,
+          transport: "smtp",
+          id: info.messageId,
+          smtpFallbackReason,
+          fromAddress: smtpFallbackReason ? this.addressOf(from) : undefined,
+        };
+      } catch (err: any) {
+        const rawMessage: string = err?.message ?? "Platform SMTP send failed";
+        const mapped = mapSmtpError(
+          err,
+          this.platformSmtp.host,
+          this.platformSmtp.port,
+          this.platformSmtp.user,
+        );
+        this.logger.error(
+          `Platform SMTP send failed [code=${err?.code ?? "unknown"}]: ` +
+            `${redactAddresses(rawMessage)}. Mapped reason: ${mapped}`,
+        );
+        return {
+          delivered: false,
+          transport: "smtp",
+          error: smtpError ?? redactAddresses(rawMessage),
+          smtpFallbackReason: smtpFallbackReason ?? mapped,
+        };
+      }
+    }
+
+    // 3. Try platform Resend. The SDK returns `{data, error}` (it does NOT throw on an
     // API-level rejection like an unverified domain / bad key), so inspect `error`.
     if (this.resend) {
       try {
@@ -843,6 +1215,7 @@ export class EmailService {
           to: params.to,
           subject: params.subject,
           html: params.html,
+          text: params.text,
           replyTo,
         });
         if ((result as any)?.error) {
@@ -873,7 +1246,7 @@ export class EmailService {
       }
     }
 
-    // 3. No transport configured — NOT delivered (was a silent mock "success").
+    // 4. No transport configured — NOT delivered (was a silent mock "success").
     this.logger.warn(
       `[EMAIL NOT SENT] To: ${params.to} | Subject: ${params.subject} — no SMTP or platform email is configured.`,
     );
@@ -883,6 +1256,103 @@ export class EmailService {
       error: smtpError,
       smtpFallbackReason,
     };
+  }
+
+  /**
+   * Platform-only send — NEVER reads or uses a tenant's own SMTP config or branding
+   * (unlike `send()`, which tries the tenant's own mailbox first). For security/account
+   * mail (verification, password reset, invites, account/role-change notices — N2 ground
+   * rule 1) and billing-lifecycle mail (N3), the sender must always be the bare platform
+   * identity, never "<Business> via RouteFlow" — `send()` reads `prisma.getTenantId()` on
+   * every in-request call, including a tenant admin's own authenticated action, so routing
+   * either kind of notification through `send()` would leave from the ACTING TENANT's own
+   * mailbox. Merge of N2's and N3's independent copies (both added this method on separate
+   * branches, as planned): platform SMTP (Google Workspace) is tried first, same as it is
+   * in `send()` above, THEN Resend — N3's original Resend-only version left platformSmtp
+   * unused here, which its own review flagged as a gap (a deploy with platformSmtp
+   * configured but no Resend key would leave every N3 notification undelivered); folded in
+   * as part of this merge rather than left dangling. `text` (N3's plain-text alternative)
+   * is threaded through both transports.
+   */
+  async sendPlatform(params: {
+    to: string;
+    subject: string;
+    html: string;
+    text?: string;
+    replyTo?: string;
+  }): Promise<{
+    delivered: boolean;
+    transport: "smtp" | "resend" | "none";
+    id?: string;
+    error?: string;
+  }> {
+    // 1. Platform SMTP (Google Workspace mailbox) — same transport as send()'s own
+    // platform-SMTP step, but the From identity is always the bare platform address.
+    if (this.platformSmtp) {
+      try {
+        const transport = this.createSendTransport(
+          this.platformSmtp.host,
+          this.platformSmtp.port,
+          this.platformSmtp.secure,
+          this.platformSmtp.user,
+          this.platformSmtp.pass,
+        );
+        const info = await transport.sendMail({
+          from: this.platformFrom,
+          to: params.to,
+          subject: params.subject,
+          html: params.html,
+          text: params.text,
+          replyTo: params.replyTo,
+        });
+        this.logger.log(
+          `Platform email sent via platform SMTP to ${params.to} — messageId: ${info.messageId}`,
+        );
+        return { delivered: true, transport: "smtp", id: info.messageId };
+      } catch (err: any) {
+        const rawMessage: string = err?.message ?? "Platform SMTP send failed";
+        this.logger.error(
+          `Platform SMTP send failed [code=${err?.code ?? "unknown"}]: ${redactAddresses(rawMessage)}.`,
+        );
+        return { delivered: false, transport: "smtp", error: redactAddresses(rawMessage) };
+      }
+    }
+
+    // 2. Platform Resend, bare platform From — never the tenant's own verified domain.
+    if (this.resend) {
+      try {
+        const result = await this.resend.emails.send({
+          from: this.platformFrom,
+          to: params.to,
+          subject: params.subject,
+          html: params.html,
+          text: params.text,
+          replyTo: params.replyTo,
+        });
+        if ((result as any)?.error) {
+          const msg = (result as any).error?.message ?? "Resend rejected the message";
+          this.logger.error(`Resend rejected platform email to ${params.to}: ${msg}`);
+          return { delivered: false, transport: "resend", error: msg };
+        }
+        this.logger.log(
+          `Platform email sent via Resend to ${params.to} — id: ${(result.data as any)?.id}`,
+        );
+        return { delivered: true, transport: "resend", id: (result.data as any)?.id };
+      } catch (err: any) {
+        this.logger.error(`Failed to send platform email to ${params.to}: ${err?.message}`);
+        return {
+          delivered: false,
+          transport: "resend",
+          error: err?.message ?? "Resend send failed",
+        };
+      }
+    }
+
+    // 3. No platform transport configured.
+    this.logger.warn(
+      `[PLATFORM EMAIL NOT SENT] To: ${params.to} | Subject: ${params.subject} — no platform SMTP or Resend configured.`,
+    );
+    return { delivered: false, transport: "none" };
   }
 
   // ─── Email template ────────────────────────────────────────────────────────
@@ -1122,7 +1592,11 @@ export class EmailService {
     to: string; // secondary account's email
     primaryEmail: string; // the primary account requesting the merge
     verifyUrl: string; // one-click verification link
-  }): Promise<{ delivered: boolean; transport: "smtp" | "resend" | "none"; error?: string }> {
+  }): Promise<{
+    delivered: boolean;
+    transport: "mailbox" | "smtp" | "resend" | "none";
+    error?: string;
+  }> {
     const html = `<!DOCTYPE html>
 <html><body style="margin:0;padding:0;background:#f9fafb;font-family:Arial,sans-serif;">
 <table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:32px 16px;">
@@ -1158,7 +1632,14 @@ export class EmailService {
 
     // Return the honest send result so the caller can avoid claiming the verification
     // email "has been sent" when it hasn't (R5).
-    return this.send({ to: params.to, subject: "Confirm account merge — RouteFlow", html });
+    // Security review Phase 2: account-merge verification is security mail — platform sender
+    // only, never a tenant's connected mailbox/SMTP.
+    return this.send({
+      to: params.to,
+      subject: "Confirm account merge — RouteFlow",
+      html,
+      senderClass: "platform",
+    });
   }
 
   // ─── Buyer account merge completion email ──────────────────────────────────
@@ -1215,5 +1696,213 @@ export class EmailService {
           `Please use <strong>${params.primaryEmail}</strong> to sign in going forward. This account (${params.secondaryEmail}) is now deactivated.`,
         ),
     });
+  }
+
+  // ─── N2: account + invite emails (staff invite, admin reset, email/role change) ────
+
+  /** Staff invite (createOperator) and admin-triggered password reset share this one
+   *  template — both hand the recipient the same single-use set-password link. */
+  async sendSetPasswordEmail(params: {
+    to: string;
+    username: string;
+    setPasswordUrl: string;
+    expiryHours: number;
+  }) {
+    const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${escapeHtml(params.username)},</p>
+    <p style="margin:0 0 16px;font-size:15px;color:#374151;">
+      Your RouteFlow account is ready. Click below to set your password and finish signing in.
+    </p>
+    <table cellpadding="0" cellspacing="0"><tr><td style="background:#4f46e5;border-radius:6px;">
+      <a href="${params.setPasswordUrl}" style="display:inline-block;padding:12px 28px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;">
+        Set your password
+      </a>
+    </td></tr></table>
+    <p style="margin:24px 0 0;font-size:13px;color:#9ca3af;">
+      This link expires in ${params.expiryHours} hours. If you weren't expecting this, contact your administrator.
+    </p>`;
+    const html = renderEmailShell({
+      headerColor: "#4f46e5",
+      headerTitle: "RouteFlow — Set your password",
+      bodyHtml: body,
+    });
+    return this.sendPlatform({ to: params.to, subject: "Set your RouteFlow password", html });
+  }
+
+  /** Notice to a user's OLD address after their login email is changed — never opt-out. */
+  async sendEmailChangedNotice(params: { to: string; username: string; newEmail: string }) {
+    const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${escapeHtml(params.username)},</p>
+    <p style="margin:0 0 16px;font-size:15px;color:#374151;">
+      Your RouteFlow login email was changed to <strong>${escapeHtml(params.newEmail)}</strong>.
+    </p>
+    <p style="margin:0;font-size:13px;color:#9ca3af;">
+      If you didn't make this change, contact your administrator immediately.
+    </p>`;
+    const html = renderEmailShell({
+      headerColor: "#4f46e5",
+      headerTitle: "RouteFlow — Login email changed",
+      bodyHtml: body,
+    });
+    return this.sendPlatform({
+      to: params.to,
+      subject: "Your RouteFlow login email was changed",
+      html,
+    });
+  }
+
+  /** Confirmation to a user's NEW address once it becomes their login email. */
+  async sendEmailChangeConfirmation(params: { to: string; username: string }) {
+    const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${escapeHtml(params.username)},</p>
+    <p style="margin:0;font-size:15px;color:#374151;">
+      This address is now your RouteFlow login email.
+    </p>`;
+    const html = renderEmailShell({
+      headerColor: "#4f46e5",
+      headerTitle: "RouteFlow — This is now your login email",
+      bodyHtml: body,
+    });
+    return this.sendPlatform({
+      to: params.to,
+      subject: "This is now your RouteFlow login email",
+      html,
+    });
+  }
+
+  /** Notice to a user when an operator/admin changes their role — never opt-out. */
+  async sendRoleChangedNotice(params: {
+    to: string;
+    username: string;
+    oldRole: string;
+    newRole: string;
+    changedBy: string;
+  }) {
+    const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${escapeHtml(params.username)},</p>
+    <p style="margin:0;font-size:15px;color:#374151;">
+      Your RouteFlow role was changed from <strong>${escapeHtml(params.oldRole)}</strong> to
+      <strong>${escapeHtml(params.newRole)}</strong> by ${escapeHtml(params.changedBy)}.
+    </p>`;
+    const html = renderEmailShell({
+      headerColor: "#4f46e5",
+      headerTitle: "RouteFlow — Your role was changed",
+      bodyHtml: body,
+    });
+    return this.sendPlatform({ to: params.to, subject: "Your RouteFlow role was changed", html });
+  }
+
+  // ─── N4: low-stock daily digest (platform-sent, tenant-admin-facing) ───────
+
+  /**
+   * N4. Always sent via the platform sender — this is an operational alert
+   * to the tenant's OWN admins, not tenant-branded customer mail, so it
+   * deliberately does NOT resolve tenant SMTP the way `sendInvoice` does.
+   * Callers therefore invoke this with no tenant ALS context active
+   * (`this.prisma.getTenantId()` returns null inside `send()`), which is
+   * what makes it skip straight to whichever platform transport is active —
+   * platform SMTP (Google Workspace mailbox, B452) when `SMTP_HOST` is
+   * fully configured, else Resend, else logged-only. Fails closed: `send()`
+   * never throws, and this method does not add a throwing await on top of
+   * it — a caller iterating many tenants/admins must be able to keep going
+   * past one bad address.
+   */
+  async sendLowStockDigest(params: {
+    to: string;
+    businessName: string;
+    items: { name: string; sku: string | null; currentStock: number; reorderPoint: number }[];
+  }): Promise<{
+    delivered: boolean;
+    transport: "mailbox" | "smtp" | "resend" | "none";
+    error?: string;
+  }> {
+    const html = this.buildLowStockDigestEmail(params);
+    const count = params.items.length;
+    return this.send({
+      to: params.to,
+      subject: `Low stock alert — ${count} item${count === 1 ? "" : "s"} below threshold`,
+      html,
+    });
+  }
+
+  /** A tenant with a large catalogue and a low blanket reorderPoint could have thousands
+   * of below-threshold SKUs — 2,000 rows would be ~850 KB of HTML. Cap the rendered table;
+   * the subject line (built from the UN-truncated `items.length` in `sendLowStockDigest`)
+   * stays truthful about the real total either way. */
+  private static readonly MAX_DIGEST_ROWS = 100;
+
+  /**
+   * Same 600px shell/header/body/footer markup as `buildInvoiceEmail`
+   * ("no new look" — N4 ground rule) with the invoice's item TABLE shape
+   * carried over for the product list. Every interpolated value is
+   * `escapeHtml`'d — product names are tenant-catalogue-typed strings, not
+   * server-controlled.
+   */
+  private buildLowStockDigestEmail(params: {
+    businessName: string;
+    items: { name: string; sku: string | null; currentStock: number; reorderPoint: number }[];
+  }): string {
+    const shown = params.items.slice(0, EmailService.MAX_DIGEST_ROWS);
+    const overflow = params.items.length - shown.length;
+    const rows =
+      shown
+        .map(
+          (it) => `
+        <tr>
+          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1a2033;">${escapeHtml(it.name)}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#6b7280;">${it.sku ? escapeHtml(it.sku) : "—"}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#dc2626;font-weight:600;text-align:right;">${it.currentStock}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#6b7280;text-align:right;">${it.reorderPoint}</td>
+        </tr>`,
+        )
+        .join("") +
+      (overflow > 0
+        ? `
+        <tr>
+          <td colspan="4" style="padding:8px 12px;font-size:13px;color:#9ca3af;font-style:italic;">…and ${overflow} more item${overflow === 1 ? "" : "s"}</td>
+        </tr>`
+        : "");
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;padding:40px 0;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+
+        <!-- Header -->
+        <tr><td style="background:#1a2033;padding:28px 32px;">
+          <p style="margin:0;font-size:22px;font-weight:700;color:#ffffff;letter-spacing:-0.5px;">${escapeHtml(params.businessName)}</p>
+          <p style="margin:4px 0 0;font-size:13px;color:rgba(255,255,255,0.6);">Low Stock Alert</p>
+        </td></tr>
+
+        <!-- Body -->
+        <tr><td style="padding:32px;">
+          <p style="margin:0 0 24px;font-size:15px;color:#374151;">
+            ${params.items.length} item${params.items.length === 1 ? " is" : "s are"} below its reorder point:
+          </p>
+
+          <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:8px;">
+            <tr>
+              <td style="padding:0 12px 8px;font-size:12px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.5px;">Product</td>
+              <td style="padding:0 12px 8px;font-size:12px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.5px;">SKU</td>
+              <td style="padding:0 12px 8px;font-size:12px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.5px;text-align:right;">In Stock</td>
+              <td style="padding:0 12px 8px;font-size:12px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.5px;text-align:right;">Reorder At</td>
+            </tr>
+            ${rows}
+          </table>
+
+          <p style="margin:24px 0 0;font-size:13px;color:#9ca3af;">
+            This is a daily summary — you will not receive another alert for these items until tomorrow.
+            You can turn this digest off in your account preferences.
+          </p>
+        </td></tr>
+
+        <!-- Footer -->
+        <tr><td style="background:#f9fafb;padding:16px 32px;border-top:1px solid #f0f0f0;">
+          <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;">RouteFlow Platform — automated notification.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
   }
 }

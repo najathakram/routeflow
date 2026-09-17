@@ -25,6 +25,7 @@ import { NotificationsService } from "../notifications/notifications.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { StorageService } from "../storage/storage.service";
+import { FeatureConfigService } from "../billing/feature-config.service";
 import { geocodeAddress } from "../common/geocode.util";
 import { compressImage } from "../storage/compress.util";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -112,6 +113,12 @@ describe("RoutesService — F11 run cancel/skip pins (no REG- token; excluded fr
         { provide: InvoicesService, useValue: invoicesService },
         { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue("test-key") } },
         { provide: StorageService, useValue: storage },
+        // Feature grants v2 brief C (PR-5): resolves "unset" so every existing test in this
+        // file keeps exercising today's (every-kind-allowed) dispatch behavior unchanged.
+        {
+          provide: FeatureConfigService,
+          useValue: { getEffectiveMode: jest.fn().mockResolvedValue("unset") },
+        },
       ],
     }).compile();
 

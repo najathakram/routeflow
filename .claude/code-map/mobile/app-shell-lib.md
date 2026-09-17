@@ -117,6 +117,28 @@ nonce}` so a re-scan re-flashes; **2026-09-14:** optional `freeUnitsFor(id,line)
   POSTED-with-a-bill reads "You already scanned this" and offers the bill; anything else reads
   "Picking up where you left off" with nothing to open. `(operator)/vendor-bills/scan.tsx` fires it
   through `chooseAction` on scan success AND keeps a standing `PriorScanBanner` in ReviewStep
+- **B451/#791 negative-line handling (2026-09-17, Opus review round) — `lib/vendor-bill-scan.ts`
+  `buildBillDtoFromScan`.** A NEGATIVE `qty` line is a deposit-return/credit, not a stock receipt
+  (the AI prints e.g. `qty:-1` against a positive per-unit price) — new private
+  `normalizeScanLine(i)` flips it to a money-only adjustment before it reaches the server: `qty`
+  → `Math.abs(qty)` (server DTO is `@Min(0)`), `unitCost` → negated by PLAIN NEGATION not
+  `-Math.abs` (a deposit-return can print with EITHER sign on `unitCost` depending on the invoice
+  layout — `-Math.abs` would silently flip an already-negative cost positive, doubling the line's
+  effect on `totalOwed` instead of preserving it), `lineTotal`'s sign follows `unitCost`'s (`undefined`
+  stays `undefined`, never coerced to 0/`-0`), and `productId` is dropped so `receive()`'s
+  stock/inventory logic (which only touches lines carrying a `productId`) can never move stock for
+  a line that isn't one. A non-negative-`qty` line passes through unchanged. **Fix, same round:**
+  the line-keep filter was `(qty??0)>0 || (unitCost??0)>0`, which silently DROPPED a discount line
+  printed with a null/0 `qty` and a negative `unitCost` (`0>0` and `-5>0` are both false) — now
+  `!== 0` on both clauses, keeping any line with a real qty OR cost in EITHER direction. New
+  `isMoneyInvariantError(error)` — true when the API 400s a vendor-bill create with
+  `code:"MONEY_INVARIANT"` (the whole document's lines net negative, e.g. every line is a
+  return/discount); `(operator)/vendor-bills/scan.tsx` `submitBill` shows a dedicated "this looks
+  like a credit memo" message instead of the generic error toast. Kept in this pure,
+  react-native-free module (not `lib/api/vendor-bills.ts`, which transitively imports
+  react-native via `api-client`) so it stays reachable from the mobile pure-logic Jest suite. See
+  `bootstrap-cross-cutting/bootstrap-and-money-pricing.md`'s B451 entry for the server-side
+  `assertMoneyInvariants` guard this responds to. Spec: `__tests__/vendor-bill-scan.test.ts`.
   (orange wash w/ bill link, green wash when merely restored).
 - **Build/typecheck hermetics (2026-08-28, npm-ci migration):** `tsconfig.json` pins `typeRoots` to `./node_modules/@types` + `../../node_modules/@types` — without it tsc walks EVERY ancestor `node_modules/@types`, and from a git worktree that reaches the MAIN checkout's install (silent drift; broke when a concurrent session touched it). `package.json` declares `expo-modules-core 55.0.25` EXACT — must track `expo`'s own exact pin (bump both together): root expo-* packages (expo-notifications et al) import it without declaring it, and without the explicit dep npm nests the only copy under `node_modules/expo/node_modules/`, unreachable by walk-up → skipLibCheck-silenced import failure → phantom TS2339s on expo types. `jest ^30.2.0` must stay range-compatible with the root override pin (`jest 30.2.0`) or npm 10's override-unaware `npm ci` validator explodes (see code-map CHANGELOG 2026-08-28 night). `react-test-renderer 19.2.0` is EXACT for the same reason and must track this workspace's `react` pin (and `jest-expo`'s own exact pin): it is declared nowhere else and enters only as a floating peer of `@testing-library/react-native` (`>=18.2.0`, non-optional), so before the pin a from-scratch resolution ERESOLVE'd on 19.2.8 wanting `react@^19.2.8`. (The now-removed `@testing-library/jest-native` had the same floating peer at `>=16.0.0`.) Pinned in `apps/mobile` rather than root `overrides` because the lock records NO `overrides` field, which makes an override invisible to `npm ci`'s own validator. ⚠️ Dropping `@testing-library/jest-native` (done) did NOT make the pin redundant — `react-native` declares its OWN non-optional `react-test-renderer >=18.2.0` peer (only `jest` is optional in its `peerDependenciesMeta`); measured, from-scratch ERESOLVEs with jest-native AND the pin both removed. Do not remove the pin.
 - **Operator invoice print (2026-09-15, WP3):** `lib/print-logic.ts` (NEW, node-safe, no RN
@@ -180,4 +202,22 @@ planName={sub.data?.planName ?? "current"} />` in place of the section's own sta
   Invoices/Estimates/Credit Notes/Returns/Analytics/Reports/Messages rows each wrapped in
   `planFlagVisible(usePlanFlag("flag.<key>"))` (seven `usePlanFlag` calls) instead of always
   rendering; unchanged rows (Payments, Shipments, Purchase Orders, etc.) are not gated.
+- **Invoice balance = cash-received only (B421, 2026-09-16):** `lib/api/admin.ts` `AdminInvoice`
+  and `lib/api/buyer.ts` `BuyerInvoice` each gained `creditApplied?: number` and
+  `advanceApplied?: number` — confirmed credit-note/advance-payment applications that reduce
+  `balanceDue` but were never cash paid; mirrors web's same fields on `Invoice`/`BuyerInvoice`.
+  Consumed by `app/(operator)/(tabs)/invoices/[id].tsx` and
+  `app/(customer)/invoices/[id].tsx` totals rendering. Test:
+  `__tests__/invoice-credit-advance-pins.test.ts` (new, source-text pin).
+- **Post-dated check payments PR-1 (2026-09-16):** `lib/check-badge.ts` `CheckBadgeVariant`
+  gains `"orange"`; `checkBadgeFor` now checks `p.status === "PENDING"` BEFORE the
+  `checkStatus` switch (a post-dated check on file, not yet clearable — `checkStatus` is
+  typically `RECORDED` so the switch would otherwise mask it) → `{label: "Post-dated ·
+pending", variant: "orange"}`. `lib/payments-logic.ts`: local `CheckStatus` type and
+  `CHECK_TRANSITIONS` const (P5-12 mirror of the server's `invoices.service.ts` table) are
+  REMOVED and re-exported from `@routeflow/types` (`packages/types/api/checks.ts`) instead —
+  now the one canonical copy shared with API + web; no behavior change, V1-only (no
+  `CHECK_TRANSITIONS_V2` here yet). Test: `__tests__/check-badge.test.ts` updated for the new
+  variant/branch.
 - **mobile↔web parity waves (2026-07-11, #225):** ~14 waves of mobile-only fixes bringing mobile to web parity across scan UX, money flows, compliance, invoicing, returns, and the buyer portal — see the dedicated "Where to find" rows above (Returns, Continuous barcode scan, Always-visible scanned cart rows, Incremental order-item edit, Regulated-license guard, Buyer favorites/finances/licenses, Buyer cart promotions, Scan-driven stock count, Product cost-basis tools + photos, Post-delivery invoice send, Invoice write-off/payment edit, Save order as draft/reopen/recurring create, Live margin hint). Also: `store/cartStore.ts` `CartItem` gained `category` (so CATEGORY-scoped buyer promos can match a cart line); `package.json` added `expo-image-manipulator ~55.0.16` (JPEG transcode for product-photo upload — needs a native rebuild on deploy); `lib/api/admin.ts` `AdminOrder.customer` widened with `mobile`/`email` (feeds the send-invoice sheet) + new `useAdminProductsInfinite` (pages the whole catalog, was a single `limit:100` call that silently dropped rows past 100 — same fix on the buyer side via `useBuyerProductsInfinite` in `lib/api/buyer.ts`). Two waves described in the PR's commit messages (ProductForm "Variant of" create-link UI, product-detail "Variant(s)" card) did **not** land in the final reconciled merge — verified absent from `ProductForm.tsx`/`products/[id].tsx`; only the photo-upload half of that wave (12) is present.
+- **`lib/tenant-features.ts` + `lib/feature-modes.ts` (new, feature grants v2 briefs A/C, 2026-09-17, #825/#837)** — mirror web's `lib/tenant-features.ts`/`lib/feature-modes.ts` byte-for-byte in contract (mobile-mirrors-web; duplicated rather than shared since these are small pure UI selectors, not DTO shapes). `tenant-features.ts`: `useTenantFeatures()` wraps `GET /tenants/me/features` — NOT a gating read path yet, debug/future-PR surface only. `feature-modes.ts`: `getRoutesDispatchVisibility(modes?)` → `{showScheduledEntry, showAdhocEntry}`, unwired into any screen (the operator route/trip screens this brief owns are untouched, so the "unset → before == after" invariant holds by construction). See [`api/feature-modules-4/billing.md`](../../api/feature-modules-4/billing.md) for the full brief A/B/C story. Test: `__tests__/feature-modes.test.ts`.

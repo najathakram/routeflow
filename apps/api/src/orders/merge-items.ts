@@ -19,6 +19,13 @@ export interface MergeLineSnapshot {
   // override freezes it wrongly forever). R0 of the F30 close-out.
   priceType?: string | null;
   notes?: string | null;
+  // B465: the existing row's documented reason for a MANUAL override. Must
+  // travel WITH unitPrice (never separately) — a MANUAL-priced line on a
+  // SPECIAL-tier product that folds through with its price but not its reason
+  // would trip updateOrderItems's "a price change on a SPECIAL line needs a
+  // reason" refusal on every future merge, even though nothing here is
+  // actually changing the price.
+  overrideReason?: string | null;
 }
 
 export interface MergeIncomingItem {
@@ -97,6 +104,7 @@ export function foldMergeItems(
       unitPrice?: number;
       existingPriceType?: string | null;
       notes?: string | null;
+      overrideReason?: string | null;
     }
   >();
   // Unlisted lines (no productId) can't be keyed by product — pass them
@@ -125,6 +133,7 @@ export function foldMergeItems(
       unitPrice: li.unitPrice != null ? Number(li.unitPrice) : undefined,
       existingPriceType: li.priceType ?? null,
       notes: li.notes ?? null,
+      overrideReason: li.overrideReason ?? null,
     });
   }
 
@@ -208,6 +217,11 @@ export function foldMergeItems(
       ...(boxes != null ? { boxes } : {}),
       ...(pieces != null ? { pieces } : {}),
       ...(acc.unitPrice != null && priceSurvives ? { unitPrice: acc.unitPrice } : {}),
+      // B465: the reason travels with the price it justifies — never survives
+      // when the price itself doesn't (a re-derived line has nothing to
+      // document), never fabricated when the price does (only a genuine
+      // stored MANUAL reason is carried, not synthesized here).
+      ...(acc.overrideReason && priceSurvives ? { overrideReason: acc.overrideReason } : {}),
       ...(acc.notes ? { notes: acc.notes } : {}),
     });
   }

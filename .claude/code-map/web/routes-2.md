@@ -71,6 +71,14 @@ AgentFormModal` in a nested modal (`isAgentModalOpen` state); on create it selec
 - **Shipment card gating (`orders/[id]/page.tsx`, `invoices/[id]/page.tsx`)** — `ShipmentCard` now
   renders only when `order.fulfillPath === "SHIP"` or the row already carries a
   `shippingCarrier`/`shippingTrackingNumber` (historical rows), instead of unconditionally.
+- **Rescue PR B (2026-09-15) — `ApplyAdvanceModal` on `invoices/[id]/page.tsx` (B13):** lists the
+  invoice's customer's open `useCustomerAdvancePayments` rows (balance > 0), applies the picked
+  one via `useApplyAdvanceToInvoice` (server caps at `min(wallet balance, invoice balance)` — no
+  client-side money math). Wired into the "Record Payment" dropdown's new "Apply Advance" item,
+  shown only when `invoice.customerId` is set, same gate as Record Payment/Write Off. Mirrors
+  mobile's `ApplyAdvanceSheet` (`apps/mobile/app/(operator)/(tabs)/invoices/[id].tsx`) — mobile was
+  previously the only client for this action. Test: `apps/web/e2e/38-apply-advance.spec.ts` (T2,
+  Playwright — proof pending a host grant, not yet run locally).
   The invoice page can't see `fulfillPath` (its `order` select doesn't carry it, deliberately not
   widened), so it gates on `!invoice.orderId || carrier || trackingNumber`: an order-linked invoice
   gets tracking mirrored down from `orders.service.updateShipment`, but a STANDALONE invoice has no
@@ -100,3 +108,19 @@ AgentFormModal` in a nested modal (`isAgentModalOpen` state); on create it selec
   `deliveredOn` semantics in `apps/api/src/orders/orders.service.ts` (`changeStatus` /
   `deleteOrder(id, user?)` / `createSale`) — see `api.md` `orders/` section for the exact rules,
   including the run-stop-completed 409 the Reopen button surfaces through the global error toast.
+- **B465 (2026-09-16/17) — `orders/[id]/page.tsx` mirrors the server's SPECIAL-tier
+  reason-required guard.** `needsSpecialTierReason(line)` computes `reasonRequired` against the
+  line's own `reasonBaselinePrice ?? originalUnitPrice` (never the CATALOG/list price that
+  `overridden`'s was-$X/upsell-badge comparison uses) — a SPECIAL line repriced back to its
+  original value, or never touched this session, is not a repricing attempt and stays optional.
+  **#815 fix:** the reason input + required-styling block used to render ONLY on `overridden`
+  (vs list price) — so retyping a SPECIAL line to EXACTLY the list price made `overridden` false
+  and hid the reason field entirely, even though `reasonRequired` (a different baseline) was
+  still true and the server still 400s with none. Render gate is now `overridden || reasonRequired`;
+  the was-$X/upsell badge itself stays scoped to `overridden` alone. **#815 FIX2 (isSpecialTier
+  hoist):** see `api.md`'s orders/ F13 addendum — the server-side helper this page's contract
+  mirrors moved from a private method to a module-level function. Substituting a product resets
+  the reason-required baseline to the SUBSTITUTE's own resolved price via a separate
+  `reasonBaselinePrice` field, never `originalUnitPrice` (that field is Undo's own restore point
+  for the REPLACED product). Spec: `e2e/48-special-tier-reason-required.spec.ts` — see
+  `e2e-tests.md`.

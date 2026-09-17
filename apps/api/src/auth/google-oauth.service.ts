@@ -331,6 +331,8 @@ export class GoogleOAuthService {
           to: user.email,
           subject: "Google Sign-In linked to your RouteFlow account",
           html: `<p>Your Google account (<strong>${email}</strong>) has been linked to your RouteFlow account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
+          // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
+          senderClass: "platform",
         })
         .catch((e: Error) => this.logger.warn(`Google link notification failed: ${e.message}`));
     }
@@ -656,6 +658,8 @@ export class GoogleOAuthService {
             to: buyer.email,
             subject: "Google Sign-In linked to your RouteFlow account",
             html: `<p>Your Google account (<strong>${profile.email}</strong>) has been linked to your RouteFlow portal account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
+            // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
+            senderClass: "platform",
           })
           .catch((e: Error) => this.logger.warn(`Google link notification failed: ${e.message}`));
       } else if (googleAttestsMailbox && !buyer.emailVerified) {

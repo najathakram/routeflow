@@ -30,6 +30,10 @@ export const AdminAuditAction = {
   ADDON_DISABLED: "ADDON_DISABLED",
   IMPERSONATION_STARTED: "IMPERSONATION_STARTED",
   TENANT_CLASS_CHANGED: "TENANT_CLASS_CHANGED",
+  FEATURE_OVERRIDE_SET: "FEATURE_OVERRIDE_SET",
+  FEATURE_OVERRIDE_REVOKED: "FEATURE_OVERRIDE_REVOKED",
+  ENTITLEMENTS_MODE_CHANGED: "ENTITLEMENTS_MODE_CHANGED",
+  FEATURE_DIFF_EXPLAINED: "FEATURE_DIFF_EXPLAINED",
 } as const;
 
 export type AdminAuditActionCode = (typeof AdminAuditAction)[keyof typeof AdminAuditAction];
@@ -51,6 +55,10 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   ADDON_DISABLED: "Add-on disabled",
   IMPERSONATION_STARTED: "Impersonation started",
   TENANT_CLASS_CHANGED: "Class changed",
+  FEATURE_OVERRIDE_SET: "Feature override set",
+  FEATURE_OVERRIDE_REVOKED: "Feature override revoked",
+  ENTITLEMENTS_MODE_CHANGED: "Entitlements mode changed",
+  FEATURE_DIFF_EXPLAINED: "Feature resolver diff explained",
 };
 
 /** Facet list for the audit-log filter dropdown (code + label), ordered as declared. */

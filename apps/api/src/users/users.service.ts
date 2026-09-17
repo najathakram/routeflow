@@ -2,28 +2,92 @@ import {
   Injectable,
   BadRequestException,
   ForbiddenException,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
-import { User, UserRole, UserStatus } from "@prisma/client";
+import { ConfigService } from "@nestjs/config";
+import { User, UserRole } from "@prisma/client";
 import * as crypto from "crypto";
 import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
+import { EmailService } from "../email/email.service";
+import { AppConfig } from "../config/configuration";
 import { ListUsersDto } from "./dto/list-users.dto";
 import { CreateOperatorDto } from "./dto/create-operator.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { ChangeUserStatusDto } from "./dto/change-user-status.dto";
 
+/** How long a staff invite / admin-reset set-password link stays valid (NOTIFY-SPEC N2). */
+const SET_PASSWORD_TOKEN_TTL_MS = 72 * 60 * 60 * 1000;
+
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(UsersService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly email: EmailService,
+    private readonly configService: ConfigService<AppConfig>,
+  ) {}
+
+  /** Hash a raw token with SHA-256 for storage — same shape as auth.service.ts's and
+   *  buyer-auth.service.ts's own copies (no shared helper exists in this codebase yet). */
+  private hashToken(token: string): string {
+    return crypto.createHash("sha256").update(token).digest("hex");
+  }
+
+  /**
+   * Creates a single-use, 72h PasswordResetToken (the same model/consuming endpoint as
+   * self-service password reset — POST /auth/reset-password) and emails a set-password
+   * link. Used by both createOperator (staff invite) and resetPassword (admin-triggered).
+   * Fails closed: a delivery failure is logged, never thrown — the caller's own action
+   * (account created / password reset) always succeeds regardless of email delivery.
+   */
+  private async sendSetPasswordInvite(userId: string, to: string, username: string): Promise<void> {
+    try {
+      const rawToken = crypto.randomBytes(32).toString("hex");
+      const tokenHash = this.hashToken(rawToken);
+      const expiresAt = new Date(Date.now() + SET_PASSWORD_TOKEN_TTL_MS);
+
+      await this.prisma.passwordResetToken.deleteMany({
+        where: { userId, usedAt: null, expiresAt: { gt: new Date() } },
+      });
+      await this.prisma.passwordResetToken.create({ data: { userId, tokenHash, expiresAt } });
+
+      const urls = this.configService.get<AppConfig["urls"]>("urls")!;
+      const setPasswordUrl = `${urls.web}/reset-password?token=${rawToken}`;
+      const result = await this.email.sendSetPasswordEmail({
+        to,
+        username,
+        setPasswordUrl,
+        expiryHours: SET_PASSWORD_TOKEN_TTL_MS / (60 * 60 * 1000),
+      });
+      if (!result.delivered) {
+        this.logger.error(
+          `Set-password email NOT delivered for user ${userId} (${to}): transport=${result.transport} error=${result.error ?? "unknown"}.`,
+        );
+      }
+    } catch (err) {
+      this.logger.error(
+        `Failed to send set-password email for user ${userId} (${to}): ${(err as Error).message}`,
+      );
+    }
+  }
 
   async findByUsername(username: string, tenantId?: string | null): Promise<User | null> {
-    // Accept either username or email in the login field
+    // Accept either username or email in the login field. Email match is
+    // case-insensitive (N2 review fix, #811) — updateUser now lowercases a
+    // stored email going forward, but neither web nor mobile lowercases the
+    // identifier before sending a login request, so an existing user whose
+    // email carries any uppercase (pre-dating that normalization, or an
+    // admin who typed "Name@Acme.com" into the login field) must still be
+    // found. Username stays exact-match — usernames are not email addresses
+    // and are not normalized anywhere else in this codebase.
     return this.prisma.forTenant().user.findFirst({
       where: {
         OR: [
           { username, tenantId: tenantId ?? null },
-          { email: username, tenantId: tenantId ?? null },
+          { email: { equals: username, mode: "insensitive" }, tenantId: tenantId ?? null },
         ],
       },
     });
@@ -133,6 +197,8 @@ export class UsersService {
       },
     });
 
+    await this.sendSetPasswordInvite(user.id, user.email, user.username);
+
     return { user, tempPassword };
   }
 
@@ -146,7 +212,7 @@ export class UsersService {
     });
   }
 
-  async updateUser(userId: string, dto: UpdateUserDto) {
+  async updateUser(userId: string, dto: UpdateUserDto, changedByUsername?: string) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
 
@@ -165,9 +231,21 @@ export class UsersService {
       throw new BadRequestException("Users can only be assigned OPERATOR or DRIVER roles.");
     }
 
-    return this.prisma.forTenant().user.update({
+    // N2 review fix: normalize BEFORE compare and write — a case-only edit
+    // ("Acme@Example.com" -> "acme@example.com") must not read as a change (it
+    // fires both notices for nothing) and must not persist inconsistently with
+    // every other email lookup in this codebase, which is case-sensitive as
+    // stored.
+    const normalizedEmail = dto.email ? dto.email.trim().toLowerCase() : dto.email;
+
+    const previousEmail = user.email;
+    const previousRole = user.role;
+    const emailChanged = !!normalizedEmail && normalizedEmail !== previousEmail;
+    const roleChanged = !!dto.role && dto.role !== previousRole;
+
+    const updated = await this.prisma.forTenant().user.update({
       where: { id: userId },
-      data: dto,
+      data: { ...dto, email: normalizedEmail },
       select: {
         id: true,
         username: true,
@@ -176,8 +254,107 @@ export class UsersService {
         status: true,
         isAdmin: true,
         canActAsDriver: true,
+        forcePasswordChange: true,
       },
     });
+
+    // Best-effort account notices (NOTIFY-SPEC N2) — never let a delivery failure
+    // undo or block an update that has already committed.
+    if (emailChanged) {
+      // N2 review fix (#811 merge-session finding): a set-password invite link sent to
+      // a mistyped address must not keep working after the admin corrects the email —
+      // otherwise the wrong recipient can still set a password and log in. Invalidate
+      // any outstanding token unconditionally on an email change, then — only if the
+      // user has never set their own password — mint and send a fresh one to the
+      // corrected address so they aren't left with no way in at all.
+      await this.prisma.passwordResetToken.updateMany({
+        where: { userId, usedAt: null },
+        data: { usedAt: new Date() },
+      });
+      await this.notifyEmailChanged(userId, previousEmail, updated.email, updated.username);
+      if (updated.forcePasswordChange && updated.email) {
+        await this.sendSetPasswordInvite(userId, updated.email, updated.username);
+      }
+    }
+    if (roleChanged) {
+      await this.notifyRoleChanged(
+        userId,
+        updated.email,
+        updated.username,
+        previousRole,
+        updated.role,
+        changedByUsername ?? "an administrator",
+      );
+    }
+
+    return updated;
+  }
+
+  /** Notice to the OLD address (always) + confirmation to the NEW address (notice-only —
+   *  see NOTIFY-SPEC N2: real hold-until-verified gating is a follow-up, not this PR;
+   *  tenants.service.ts:155's JWT verification flow is registration-specific and holds
+   *  no pending-email state to reuse for an in-place change without adding that state). */
+  private async notifyEmailChanged(
+    userId: string,
+    previousEmail: string | null,
+    newEmail: string | null,
+    username: string,
+  ): Promise<void> {
+    if (!newEmail) return;
+    try {
+      if (previousEmail) {
+        const result = await this.email.sendEmailChangedNotice({
+          to: previousEmail,
+          username,
+          newEmail,
+        });
+        if (!result.delivered) {
+          this.logger.error(
+            `Email-changed notice NOT delivered to old address for user ${userId}.`,
+          );
+        }
+      }
+      const confirmResult = await this.email.sendEmailChangeConfirmation({
+        to: newEmail,
+        username,
+      });
+      if (!confirmResult.delivered) {
+        this.logger.error(
+          `Email-change confirmation NOT delivered to new address for user ${userId}.`,
+        );
+      }
+    } catch (err) {
+      this.logger.error(
+        `Failed to send email-change notices for user ${userId}: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  private async notifyRoleChanged(
+    userId: string,
+    to: string | null,
+    username: string,
+    oldRole: UserRole,
+    newRole: UserRole,
+    changedBy: string,
+  ): Promise<void> {
+    if (!to) return;
+    try {
+      const result = await this.email.sendRoleChangedNotice({
+        to,
+        username,
+        oldRole,
+        newRole,
+        changedBy,
+      });
+      if (!result.delivered) {
+        this.logger.error(`Role-changed notice NOT delivered for user ${userId}.`);
+      }
+    } catch (err) {
+      this.logger.error(
+        `Failed to send role-changed notice for user ${userId}: ${(err as Error).message}`,
+      );
+    }
   }
 
   async unlockUser(userId: string) {
@@ -199,6 +376,14 @@ export class UsersService {
       where: { id: userId },
       data: { password: hashedPassword, forcePasswordChange: true },
     });
+
+    // N2 review fix: never email a set-password link for a deactivated/deleted
+    // account — an admin resetting a SUSPENDED/INACTIVE user's password (e.g. to
+    // lock them out) must not hand them a working way back in.
+    if (user.email && user.status === "ACTIVE" && !user.deletedAt) {
+      await this.sendSetPasswordInvite(userId, user.email, user.username);
+    }
+
     return { tempPassword };
   }
 
