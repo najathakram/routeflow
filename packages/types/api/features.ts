@@ -74,6 +74,12 @@ export interface EffectiveFeature {
   mode?: FeatureModeState;
 }
 
+/** `GET /platform-admin/tenants/:id/features/effective` response shape (brief A) — a wrapper
+ *  object, not a bare array. */
+export interface TenantEffectiveFeaturesResponse {
+  effective: EffectiveFeature[];
+}
+
 export interface TenantFeaturesResponse {
   /** The old enforcement path's verdict, per key that path actually covers — byte-identical
    *  to `getSubscription().flags` (same gateVia filter, PREPIN, dark courtesy, and LITE). */
