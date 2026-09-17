@@ -251,9 +251,21 @@ test.describe("Order-edit SPECIAL-tier reason required (B465 fix round 2)", () =
 
     // ── Substituted line now resolves to the SPECIAL tier price with no
     // reason typed — save must succeed with NO required-reason refusal at
-    // all (the substitution itself is never a repricing decision).
-    await page.getByRole("button", { name: "Save Draft", exact: true }).click();
-    await expect(page.getByText(/A reason is required/i)).not.toBeVisible({ timeout: 5_000 });
+    // all (the substitution itself is never a repricing decision). Wait for
+    // the actual PATCH response and assert 2xx — a vacuous
+    // `not.toBeVisible` on the error toast would pass just as well if the
+    // click silently did nothing, proving nothing about a real save.
+    const [saveResponse] = await Promise.all([
+      page.waitForResponse(
+        (r) => r.url().includes(`/orders/${order.id}/items`) && r.request().method() === "PATCH",
+      ),
+      page.getByRole("button", { name: "Save Draft", exact: true }).click(),
+    ]);
+    expect(
+      saveResponse.status(),
+      `PATCH /orders/${order.id}/items returned ${saveResponse.status()}`,
+    ).toBeGreaterThanOrEqual(200);
+    expect(saveResponse.status()).toBeLessThan(300);
 
     // Reopen for a fresh edit session and prove Undo-ing a substitution sends
     // NO PATCH at all: a perfect Undo restores every field to its pre-
