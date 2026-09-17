@@ -10,19 +10,28 @@ This is an **owner-only setup** — it needs access to the `routeflow.info` Goog
 console and DNS. No real Google credentials are ever committed to this repo; only environment
 variable **names** live here (`apps/api/.env.example`).
 
-## 1. Create the mailbox
+## 1. Add `noreply@` as an alias on the existing licensed user
 
-1. In the Google Workspace admin console (admin.google.com), go to **Directory → Users → Add new
-   user**. Create **`noreply@routeflow.info`** as a real user (licensed mailbox) — **not** a group
-   or an alias. An alias cannot authenticate over SMTP; it must be a user with its own login.
-2. Sign in as that user once (or use "Sign in as user") to accept the terms and set a real
-   (throwaway) password — SMTP auth uses an App Password, not this one, but the account must be
-   activated first.
+`noreply@`, `hello@`, and `security@` are **aliases on one existing licensed Google Workspace
+user** — not separate mailboxes. Do **not** create a new licensed user for `noreply@`; Workspace
+authenticates SMTP as the licensed user's own login, with the alias only changing the visible
+sender.
+
+1. In the Google Workspace admin console (admin.google.com), confirm `noreply@routeflow.info` is
+   already listed as an **alias** on the licensed user (Directory → Users → the licensed user →
+   **Email aliases**). Add it there if it isn't yet.
+2. Sign in as **that licensed user** (not `noreply@` — it has no login of its own) at
+   **mail.google.com**, go to **Settings → See all settings → Accounts → "Send mail as"**, and add
+   `noreply@routeflow.info`, choosing **"Treat as an alias"**. Verify it now appears in the "Send
+   mail as" list. **Without this step, Gmail silently rewrites the From address back to the
+   licensed user's own login on every send**, regardless of what `EMAIL_FROM` says.
 
 ## 2. Enable 2-Step Verification + generate an App Password
 
-1. As `noreply@routeflow.info`, go to **myaccount.google.com/security** and turn on **2-Step
-   Verification** (required — Google only issues App Passwords to accounts that have it on).
+1. Signed in as **the licensed user** (App Passwords belong to the login account, not an alias —
+   there is no separate `noreply@` account to sign into), go to
+   **myaccount.google.com/security** and turn on **2-Step Verification** (required — Google only
+   issues App Passwords to accounts that have it on).
 2. Go to **myaccount.google.com/apppasswords**, create an app password named `RouteFlow SMTP`,
    and copy the 16-character code. This is the value for `SMTP_PASS` below — store it only in
    Railway's environment, never in the repo.
@@ -30,7 +39,8 @@ variable **names** live here (`apps/api/.env.example`).
 ## 3. Confirm SPF, turn on DKIM, add DMARC
 
 Deliverability for a Workspace mailbox depends on all three being correct on `routeflow.info`'s
-DNS:
+DNS. Steps in the admin console (not the mailbox itself) are unaffected by aliasing — do them as
+an admin, same as before this ruling:
 
 1. **SPF** — should already be published for Workspace. Confirm the TXT record on `routeflow.info`
    contains `include:_spf.google.com`, e.g.:
@@ -43,7 +53,8 @@ DNS:
 2. **DKIM** — in the admin console, go to **Apps → Google Workspace → Gmail → Authenticate email**,
    generate a key for `routeflow.info`, publish the shown TXT record, then click **Start
    authentication**. Without this, mail from a Workspace mailbox is far more likely to land in spam
-   at large recipients (Gmail, Outlook).
+   at large recipients (Gmail, Outlook). DKIM signs for the whole domain, not per-alias, so this is
+   unaffected by `noreply@` being an alias rather than its own mailbox.
 3. **DMARC** — add a TXT record at `_dmarc.routeflow.info`:
    ```
    v=DMARC1; p=quarantine; rua=mailto:dmarc@routeflow.info
@@ -56,18 +67,30 @@ DNS:
 
 Set these on the `api` service (Railway dashboard → Variables, or `railway variables set`):
 
-| Variable      | Value                                         |
-| ------------- | --------------------------------------------- |
-| `SMTP_HOST`   | `smtp.gmail.com`                              |
-| `SMTP_PORT`   | `587`                                         |
-| `SMTP_SECURE` | `false` (587 uses STARTTLS, not implicit TLS) |
-| `SMTP_USER`   | `noreply@routeflow.info`                      |
-| `SMTP_PASS`   | the 16-character App Password from step 2     |
-| `EMAIL_FROM`  | `RouteFlow <noreply@routeflow.info>`          |
+| Variable      | Value                                                                                                 |
+| ------------- | ----------------------------------------------------------------------------------------------------- |
+| `SMTP_HOST`   | `smtp.gmail.com`                                                                                      |
+| `SMTP_PORT`   | `587`                                                                                                 |
+| `SMTP_SECURE` | `false` (587 uses STARTTLS, not implicit TLS)                                                         |
+| `SMTP_USER`   | the **licensed user's own login address** — not `noreply@routeflow.info` (it's an alias, not a login) |
+| `SMTP_PASS`   | the 16-character App Password from step 2                                                             |
+| `EMAIL_FROM`  | `RouteFlow <noreply@routeflow.info>`                                                                  |
+
+`SMTP_USER` authenticates the connection; `EMAIL_FROM` sets the visible sender. Because
+`noreply@routeflow.info` is added as "Send mail as" (step 1.2), Gmail lets the authenticated
+licensed user send with that From address instead of rewriting it back to the login — this is the
+whole reason step 1.2 exists.
 
 Leave `RESEND_API_KEY` unset (or remove it) — `EmailService`'s constructor selects platform SMTP
 over Resend whenever `SMTP_HOST` is set, and never runs both for the same send. If a Resend key is
 still set from before this change, it is simply ignored while `SMTP_HOST` is present.
+
+**Replies land in the licensed user's own inbox, not a separate `noreply@` mailbox** — since
+`noreply@` is an alias with no mailbox of its own, any reply to a `noreply@routeflow.info` message
+(bounces, out-of-office autoresponses, a customer replying anyway) arrives in the licensed user's
+Gmail inbox, mixed with their own mail. `EmailService`'s `Reply-To` header (set to the tenant's
+own email — see `getReplyTo()`) routes intentional replies to the tenant instead, but anything
+sent directly to `noreply@` itself still lands here.
 
 ## 5. Verify without sending anything
 

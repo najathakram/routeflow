@@ -210,6 +210,8 @@ interface Opts {
   /** R5: override the stripe mock instead of mutating the shared default (e.g. a hostile/
    *  unconfigured Stripe used to prove the `stripeSubId == null` path never touches it). */
   stripe?: any;
+  /** N3: override the BillingNotificationService mock instead of the shared default. */
+  billingNotification?: any;
   priorAddons?: any[];
   existingAddon?: any;
   addonRow?: any;
@@ -306,6 +308,12 @@ function make(opts: Opts = {}) {
       // subscription so a generic failure still surfaces the 503.
       getSubscription: jest.fn().mockResolvedValue({ status: "active" }),
     } as any);
+  const billingNotification =
+    opts.billingNotification ??
+    ({
+      notifyUpgradeConfirmed: jest.fn().mockResolvedValue(undefined),
+      notifyDowngradeScheduled: jest.fn().mockResolvedValue(undefined),
+    } as any);
   const svc = new SubscriptionMutationService(
     prisma,
     cat,
@@ -315,8 +323,9 @@ function make(opts: Opts = {}) {
     events,
     tenantStatus,
     stripe,
+    billingNotification,
   );
-  return { svc, prisma, tx, events, entitlements, tenantStatus, cat, stripe };
+  return { svc, prisma, tx, events, entitlements, tenantStatus, cat, stripe, billingNotification };
 }
 
 const deltaOf = (events: any, type: string) => {
@@ -472,6 +481,49 @@ describe("SubscriptionMutationService.upgrade", () => {
     });
     expect(tx.tenant.update.mock.calls[0][0].data).toMatchObject({ plan: "BUSINESS" });
   });
+
+  it("N3: notifies with the SAME proratedNow returned to the caller — never a recomputed number", async () => {
+    const { svc, billingNotification } = make({
+      sub: { planKey: "STARTER", cycle: "MONTHLY", periodStart: null, periodEnd: null },
+    });
+    const result = await svc.upgrade("t1", "BUSINESS", "admin");
+    expect(billingNotification.notifyUpgradeConfirmed).toHaveBeenCalledWith(
+      "t1",
+      expect.any(String),
+      expect.any(String),
+      result.proratedNow,
+      null, // this fixture's sub.periodEnd
+    );
+  });
+
+  it("N3: passes the subscription's CURRENT periodEnd through to notifyUpgradeConfirmed's dedup key", async () => {
+    const periodEnd = new Date("2026-10-01T00:00:00.000Z");
+    const { svc, billingNotification } = make({
+      sub: { planKey: "STARTER", cycle: "MONTHLY", periodStart: null, periodEnd },
+    });
+    await svc.upgrade("t1", "BUSINESS", "admin");
+    expect(billingNotification.notifyUpgradeConfirmed).toHaveBeenCalledWith(
+      "t1",
+      expect.any(String),
+      expect.any(String),
+      expect.any(Number),
+      periodEnd,
+    );
+  });
+
+  it("N3: a rejected notifyUpgradeConfirmed never blocks upgrade() — it still resolves with the real result", async () => {
+    const billingNotification = {
+      notifyUpgradeConfirmed: jest.fn().mockRejectedValue(new Error("email down")),
+      notifyDowngradeScheduled: jest.fn(),
+    };
+    const { svc } = make({
+      sub: { planKey: "STARTER", cycle: "MONTHLY", periodStart: null, periodEnd: null },
+      billingNotification,
+    });
+    await expect(svc.upgrade("t1", "BUSINESS", "admin")).resolves.toMatchObject({
+      subscription: expect.anything(),
+    });
+  });
 });
 
 describe("SubscriptionMutationService — plan-less rows are not subscriptions (REG-B58)", () => {
@@ -571,6 +623,36 @@ describe("SubscriptionMutationService downgrade / add-ons", () => {
     });
     expect(emitted(events)).toContain(BILLING_EVENTS.PLAN_DOWNGRADE_SCHEDULED);
     expect(entitlements.invalidate).not.toHaveBeenCalled();
+  });
+
+  it("N3: notifies the admin with the SAME effectiveAt just written to the schedule", async () => {
+    const periodEnd = new Date("2026-08-01");
+    const { svc, billingNotification } = make({
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodEnd },
+    });
+    await svc.downgrade("t1", "STARTER", ["u1"], "admin");
+    expect(billingNotification.notifyDowngradeScheduled).toHaveBeenCalledWith(
+      "t1",
+      expect.any(String),
+      expect.any(String),
+      periodEnd,
+    );
+  });
+
+  it("N3: a rejected notifyDowngradeScheduled never blocks downgrade() — the schedule write still stands", async () => {
+    const periodEnd = new Date("2026-08-01");
+    const billingNotification = {
+      notifyUpgradeConfirmed: jest.fn(),
+      notifyDowngradeScheduled: jest.fn().mockRejectedValue(new Error("email down")),
+    };
+    const { svc, tx } = make({
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodEnd },
+      billingNotification,
+    });
+    await expect(svc.downgrade("t1", "STARTER", ["u1"], "admin")).resolves.toBeDefined();
+    expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
+      downgradeToPlanKey: "STARTER",
+    });
   });
 
   it("enableAddon charges the qty delta only (idempotent re-enable at same qty emits nothing)", async () => {
@@ -712,6 +794,10 @@ describe("SubscriptionMutationService.enableAddon — F1 tenant-path concurrency
     const events = { emit: jest.fn().mockResolvedValue({}) } as any;
     const tenantStatus = { invalidate: jest.fn() } as any;
     const stripe = { isConfigured: false } as any;
+    const billingNotification = {
+      notifyUpgradeConfirmed: jest.fn().mockResolvedValue(undefined),
+      notifyDowngradeScheduled: jest.fn().mockResolvedValue(undefined),
+    } as any;
     const svc = new SubscriptionMutationService(
       prisma,
       cat,
@@ -721,6 +807,7 @@ describe("SubscriptionMutationService.enableAddon — F1 tenant-path concurrency
       events,
       tenantStatus,
       stripe,
+      billingNotification,
     );
 
     const [a, b] = await Promise.allSettled([

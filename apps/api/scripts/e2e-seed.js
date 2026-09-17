@@ -74,6 +74,12 @@ async function bootstrap() {
 }
 
 const TENANT_SLUG = assertTestTenant("e2e-routeflow", "e2e-seed");
+// B449 fix-round finding 3: a real, standing LITE-plan tenant for
+// 48-lite-locked-route-ux.spec.ts (and any future LITE-plan spec) — same
+// operator credentials as e2e-routeflow (usernames are per-tenant, disambiguated
+// by the x-tenant-slug header/cookie the login flow already sets), so the SAME
+// loginAsOperator() helper works unmodified against either tenant.
+const LITE_TENANT_SLUG = assertTestTenant("qa-lite", "e2e-seed");
 const OPERATOR_USERNAME = "admin";
 const OPERATOR_PASSWORD = "Admin@123";
 const CUSTOMER_USERNAME = "harbor_cafe";
@@ -375,8 +381,111 @@ async function main() {
   console.log("\n✅ E2E seed complete.\n");
 }
 
+/**
+ * Idempotent seed for `qa-lite` — a standing LITE-plan tenant (B449 fix-round
+ * finding 3). Writes `TenantSubscription.planKey = "LITE"` pinned to the
+ * currently PUBLISHED plan catalog version, the same shape
+ * `PlatformAdminService.updatePlan`/`activateManualSubscription` produce for a
+ * real invite+activate, so `EntitlementsService.resolve()` sees exactly what a
+ * real LITE tenant would — no flags granted, `flag.recurring_invoices` /
+ * `flag.estimates` / etc. all 403.
+ */
+async function seedQaLiteTenant() {
+  const version = await prisma.planVersion.findFirst({
+    where: { status: "PUBLISHED" },
+    orderBy: { version: "desc" },
+  });
+  if (!version) {
+    // Fix-round finding 3: no published catalog is a real, non-fatal state on a
+    // fresh/partially-seeded DB (e.g. a compose stack before local:seed's genesis
+    // catalog-publish step has run) — e2e-routeflow above already seeded fine
+    // without needing one. Skip ONLY this tenant, log why, and let the run
+    // otherwise succeed; 48-lite-locked-route-ux.spec.ts fails loudly on its own
+    // if qa-lite genuinely doesn't exist when it runs.
+    console.log(
+      "⚠ qa-lite seed skipped — no PUBLISHED plan catalog version exists yet. Run " +
+        "`npm run db:publish:catalog:v12` (or whichever is current) and re-seed to provision it.\n",
+    );
+    return;
+  }
+
+  const existing = await prisma.tenant.findUnique({ where: { slug: LITE_TENANT_SLUG } });
+  if (existing) {
+    console.log(`✓ Tenant "${LITE_TENANT_SLUG}" already exists (id: ${existing.id})`);
+    const op = await prisma.user.findFirst({
+      where: { tenantId: existing.id, username: OPERATOR_USERNAME },
+    });
+    if (!op) {
+      await prisma.user.create({
+        data: {
+          email: "admin@qa-lite.test",
+          username: OPERATOR_USERNAME,
+          password: await bcrypt.hash(OPERATOR_PASSWORD, 10),
+          role: "OPERATOR",
+          status: "ACTIVE",
+          forcePasswordChange: false,
+          tenantId: existing.id,
+        },
+      });
+      console.log(`  ✓ Created missing operator: ${OPERATOR_USERNAME}`);
+    }
+    await prisma.tenantSubscription.upsert({
+      where: { tenantId: existing.id },
+      create: {
+        tenantId: existing.id,
+        currentPlan: "LITE",
+        planKey: "LITE",
+        planVersionId: version.id,
+        cycle: "MONTHLY",
+      },
+      update: { currentPlan: "LITE", planKey: "LITE", planVersionId: version.id },
+    });
+    console.log(`  ✓ TenantSubscription pinned to LITE @ catalog v${version.version}`);
+    console.log("✅ qa-lite tenant ready.\n");
+    return;
+  }
+
+  console.log(`Creating tenant "${LITE_TENANT_SLUG}"...`);
+  const tenant = await prisma.tenant.create({
+    data: {
+      slug: LITE_TENANT_SLUG,
+      name: "QA Lite Plan",
+      status: "ACTIVE",
+      plan: "LITE",
+    },
+  });
+  await prisma.tenantConfig.create({
+    data: { tenantId: tenant.id, businessName: "QA Lite Plan" },
+  });
+  await prisma.user.create({
+    data: {
+      email: "admin@qa-lite.test",
+      username: OPERATOR_USERNAME,
+      password: await bcrypt.hash(OPERATOR_PASSWORD, 10),
+      role: "OPERATOR",
+      status: "ACTIVE",
+      forcePasswordChange: false,
+      tenantId: tenant.id,
+    },
+  });
+  await prisma.tenantSubscription.create({
+    data: {
+      tenantId: tenant.id,
+      currentPlan: "LITE",
+      planKey: "LITE",
+      planVersionId: version.id,
+      cycle: "MONTHLY",
+    },
+  });
+  console.log(
+    `  ✓ Tenant created (id: ${tenant.id}), pinned to LITE @ catalog v${version.version}`,
+  );
+  console.log("✅ qa-lite seed complete.\n");
+}
+
 bootstrap()
   .then(main)
+  .then(seedQaLiteTenant)
   .catch((e) => {
     // Print the WHOLE error: Prisma wraps connection failures in an
     // "Invalid invocation" whose .message can be empty, hiding the cause.

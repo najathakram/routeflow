@@ -21,6 +21,7 @@ import { EmailService } from "../email/email.service";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { BillingEventService } from "./billing-event.service";
 import { PlatformPricingService } from "./platform-pricing.service";
+import { BillingNotificationService } from "./billing-notification.service";
 
 /**
  * MRR-ledger reconciliation for the LEGACY Stripe lifecycle (Plans & Billing P6 follow-up).
@@ -100,8 +101,20 @@ function make(
       currency: "usd",
     }),
   };
-  const svc = new BillingService(prisma, stripe, email, tenantStatus, events, pricing);
-  return { svc, prisma, tx, stripe, events, tenantStatus, pricing };
+  const billingNotification = {
+    notifyCancelled: jest.fn().mockResolvedValue(undefined),
+    notifySuspended: jest.fn().mockResolvedValue(undefined),
+  } as any;
+  const svc = new BillingService(
+    prisma,
+    stripe,
+    email,
+    tenantStatus,
+    events,
+    pricing,
+    billingNotification,
+  );
+  return { svc, prisma, tx, stripe, events, tenantStatus, pricing, billingNotification };
 }
 
 const deltaOf = (events: any, type: string) => {
@@ -157,6 +170,20 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
         retainedUserIds: [],
       });
     });
+
+    it("N3: notifies the tenant admin of the cancellation, after the DB writes above", async () => {
+      const { svc, billingNotification } = make({ transitionCount: 1 });
+      await (svc as any).onSubscriptionDeleted({ customer: "cus_1" });
+      expect(billingNotification.notifyCancelled).toHaveBeenCalledWith("t1");
+    });
+
+    it("N3: a rejected notifyCancelled never blocks the cancellation — onSubscriptionDeleted still resolves", async () => {
+      const { svc, billingNotification } = make({ transitionCount: 1 });
+      billingNotification.notifyCancelled.mockRejectedValueOnce(new Error("email down"));
+      await expect(
+        (svc as any).onSubscriptionDeleted({ customer: "cus_1" }),
+      ).resolves.toBeUndefined();
+    });
   });
 
   describe("onSubscriptionUpdated (round 3, finding 10)", () => {
@@ -204,6 +231,24 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
         data: { status: "SUSPENDED" },
       });
       expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_SUSPENDED)).toBe(-373);
+    });
+
+    it("N3: notifies the tenant admin with reason 'overdue payment' only when the suspension actually applied", async () => {
+      const { svc, billingNotification } = make({ stripeStatus: "unpaid", transitionCount: 1 });
+      await svc.suspendOverdueTenants();
+      expect(billingNotification.notifySuspended).toHaveBeenCalledWith("t1", "overdue payment");
+    });
+
+    it("N3: does NOT notify when the CAS lost the race (already suspended elsewhere)", async () => {
+      const { svc, billingNotification } = make({ stripeStatus: "unpaid", transitionCount: 0 });
+      await svc.suspendOverdueTenants();
+      expect(billingNotification.notifySuspended).not.toHaveBeenCalled();
+    });
+
+    it("N3: a rejected notifySuspended never blocks the cron tick", async () => {
+      const { svc, billingNotification } = make({ stripeStatus: "unpaid", transitionCount: 1 });
+      billingNotification.notifySuspended.mockRejectedValueOnce(new Error("email down"));
+      await expect(svc.suspendOverdueTenants()).resolves.toBeUndefined();
     });
 
     it("does NOT transition or emit when Stripe reports the sub is still active", async () => {
@@ -658,6 +703,10 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
         { provide: TenantStatusGuard, useValue: { invalidate: jest.fn() } },
         { provide: BillingEventService, useValue: events },
         { provide: PlatformPricingService, useValue: pricing },
+        {
+          provide: BillingNotificationService,
+          useValue: { notifyCancelled: jest.fn(), notifySuspended: jest.fn() },
+        },
       ],
     }).compile();
 
