@@ -4,7 +4,6 @@ import { PrismaService } from "../prisma/prisma.service";
 import {
   CheckStatus,
   InvoiceStatus,
-  Prisma,
   TxnStatus,
   PaymentStatus,
   CreditNoteStatus,
@@ -38,6 +37,7 @@ import {
   splitConfirmed,
   sumConfirmed,
 } from "../invoices/payment-predicates";
+import { settledDateFilter } from "../invoices/settled-date-filter";
 
 /**
  * Receipt-extraction model. Receipts are small documents where a misread line
@@ -45,13 +45,6 @@ import {
  * kept as its own constant so it can diverge from the OCR scanners'.
  */
 const RECEIPT_MODEL = "claude-opus-4-5-20251101";
-
-// Cash-basis window on InvoicePayment: the settled (bank) date when one is recorded,
-// otherwise the recorded payment date — legacy rows carry no settledAt and therefore
-// keep reporting on paidAt.
-const settledDateFilter = (from: Date, to: Date): Prisma.InvoicePaymentWhereInput => ({
-  OR: [{ settledAt: { gte: from, lte: to } }, { settledAt: null, paidAt: { gte: from, lte: to } }],
-});
 
 @Injectable()
 export class BookkeepingService implements OnModuleInit {
@@ -1085,7 +1078,7 @@ export class BookkeepingService implements OnModuleInit {
         where: {
           status: CfPayStatus.PAID,
           method: RECEIVED_METHOD_FILTER,
-          ...settledDateFilter(fromDate, toDate),
+          ...settledDateFilter({ gte: fromDate, lte: toDate }),
         },
         orderBy: { paidAt: "asc" },
       }),
@@ -1149,11 +1142,13 @@ export class BookkeepingService implements OnModuleInit {
         // getCashFlow's basis, not the historical "everything but VOID" one.
         // B421: same RECEIVED_METHOD_FILTER as getCashFlow.totalIn — a
         // CREDIT_NOTE application is not a "receipt", an ADVANCE application is.
+        // check-payments PR-2b (M2): collected basis is settledAt ?? paidAt,
+        // same as getCashFlow — never the raw recorded (createdAt) date.
         this.prisma.forTenant().invoicePayment.aggregate({
           where: {
             ...CONFIRMED_PAYMENT,
             method: RECEIVED_METHOD_FILTER,
-            createdAt: { gte: sevenDaysAgo },
+            ...settledDateFilter({ gte: sevenDaysAgo, lte: now }),
           },
           _sum: { amount: true },
         }),
@@ -1217,11 +1212,12 @@ export class BookkeepingService implements OnModuleInit {
         // a VOID (bounced, P5-12) one is; this must match getCashFlow's basis.
         // B421: same RECEIVED_METHOD_FILTER — a CREDIT_NOTE application was
         // never "collected", an ADVANCE application already was (at deposit time).
+        // check-payments PR-2b (M2): collected basis is settledAt ?? paidAt.
         this.prisma.forTenant().invoicePayment.aggregate({
           where: {
             ...CONFIRMED_PAYMENT,
             method: RECEIVED_METHOD_FILTER,
-            createdAt: { gte: startOfYear },
+            ...settledDateFilter(window),
           },
           _sum: { amount: true },
         }),
@@ -1334,18 +1330,24 @@ export class BookkeepingService implements OnModuleInit {
       externalRefundsYtd = 0;
     for (let m = 0; m < 12; m++) {
       const mStart = new Date(now.getFullYear(), m, 1);
-      const mEnd = new Date(now.getFullYear(), m + 1, 0, 23, 59, 59, 999);
+      const rawMEnd = new Date(now.getFullYear(), m + 1, 0, 23, 59, 59, 999);
+      // Opus review of check-payments PR-2b: cap the CURRENT (in-progress)
+      // month's bucket at `now`, not the month's last instant — otherwise it
+      // disagrees with getPeriodSummary's "thisMonth" figure below, which
+      // already caps at `now`. A finished month is unaffected (rawMEnd <= now).
+      const mEnd = rawMEnd > now ? now : rawMEnd;
       const [netSales, receiptsAgg, expensesAgg] = await Promise.all([
         // B440: sales is accrual net sales, not the inline gross aggregate.
         fetchAccrualNetSales(this.prisma.forTenant(), tenantId, { gte: mStart, lte: mEnd }),
         // F03/R1/T-B11s: receipts are CONFIRMED (PAID) money only — matches
         // getCashFlow's basis, not the historical "everything but VOID" one.
         // B421: same RECEIVED_METHOD_FILTER as getCashFlow.totalIn.
+        // check-payments PR-2b (M2): collected basis is settledAt ?? paidAt.
         this.prisma.forTenant().invoicePayment.aggregate({
           where: {
             ...CONFIRMED_PAYMENT,
             method: RECEIVED_METHOD_FILTER,
-            createdAt: { gte: mStart, lte: mEnd },
+            ...settledDateFilter({ gte: mStart, lte: mEnd }),
           },
           _sum: { amount: true },
         }),
@@ -1389,8 +1391,13 @@ export class BookkeepingService implements OnModuleInit {
         fetchAccrualNetSales(this.prisma.forTenant(), tenantId, { gte: from, lte: now }),
         // F03/R1/T-B11s: same CONFIRMED (PAID) basis as monthlySales.totalReceipts.
         // B421: same RECEIVED_METHOD_FILTER too.
+        // check-payments PR-2b (M2): collected basis is settledAt ?? paidAt.
         this.prisma.forTenant().invoicePayment.aggregate({
-          where: { ...CONFIRMED_PAYMENT, method: RECEIVED_METHOD_FILTER, createdAt: { gte: from } },
+          where: {
+            ...CONFIRMED_PAYMENT,
+            method: RECEIVED_METHOD_FILTER,
+            ...settledDateFilter({ gte: from, lte: now }),
+          },
           _sum: { amount: true },
         }),
       ]);
@@ -1800,7 +1807,7 @@ export class BookkeepingService implements OnModuleInit {
       where: {
         status: PaymentStatus.PAID,
         method: RECEIVED_METHOD_FILTER,
-        ...settledDateFilter(fromDate, toDate),
+        ...settledDateFilter({ gte: fromDate, lte: toDate }),
       },
       include: {
         invoice: {
@@ -2256,6 +2263,9 @@ export class BookkeepingService implements OnModuleInit {
         include: { customer: { select: { id: true, businessName: true } } },
       }),
       this.prisma.forTenant().invoicePayment.findMany({
+        // check-payments PR-2b (M2): stays on createdAt intentionally — this
+        // is a raw LISTING of payment rows for display, not a collected-
+        // money total, so it isn't one of the collected readers M2 governs.
         where: { createdAt: { gte: fromDate, lte: toDate } },
         include: {
           invoice: {
