@@ -16,11 +16,36 @@ import * as fs from "fs";
 import * as path from "path";
 
 const WEB_ROOT = path.resolve(__dirname, "..");
-const ALLOWED_EXPORTS = new Set(["default", "metadata", "viewport"]);
+/**
+ * B452 followups (d): Next's own legal layout/route-segment exports, alongside
+ * the App Router trio (default/metadata/viewport) this guard already allowed —
+ * `generateMetadata`/`generateViewport` are the async-computed forms of
+ * metadata/viewport, and the rest are route-segment config Next reads
+ * statically (never a "backwards compat" re-export like the B this guard
+ * exists for).
+ */
+const ALLOWED_EXPORTS = new Set([
+  "default",
+  "metadata",
+  "viewport",
+  "generateMetadata",
+  "generateViewport",
+  "dynamic",
+  "revalidate",
+  "fetchCache",
+  "runtime",
+  "preferredRegion",
+  "maxDuration",
+]);
 
-/** One export per line, matching how every layout.tsx in this repo is written. */
+/**
+ * One export per line, matching how every layout.tsx in this repo is written.
+ * `(?:async\s+)?` before `function` so `export async function generateMetadata()`
+ * — the standard shape for that export — is actually captured, not silently
+ * skipped as a non-match (B452 followups (d)).
+ */
 const EXPORT_LINE =
-  /^export\s+(?:default\b|const\s+(\w+)|let\s+(\w+)|var\s+(\w+)|function\s+(\w+)|class\s+(\w+)|\{([^}]+)\})/;
+  /^export\s+(?:default\b|const\s+(\w+)|let\s+(\w+)|var\s+(\w+)|(?:async\s+)?function\s+(\w+)|class\s+(\w+)|\{([^}]+)\})/;
 
 function findLayoutFiles(dir: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -88,5 +113,31 @@ describe("app/**/layout.tsx exports only default/metadata/viewport", () => {
     expect(exportNamesFromLine("export const metadata: Metadata = {")).toEqual(["metadata"]);
     expect(exportNamesFromLine("export const viewport: Viewport = {")).toEqual(["viewport"]);
     expect(exportNamesFromLine("  // not an export line")).toEqual([]);
+  });
+
+  it("B452 followups (d): the extractor captures export async function (previously a silent non-match)", () => {
+    expect(exportNamesFromLine("export async function generateMetadata() {")).toEqual([
+      "generateMetadata",
+    ]);
+    expect(exportNamesFromLine("export async function generateViewport() {")).toEqual([
+      "generateViewport",
+    ]);
+  });
+
+  it("B452 followups (d): Next's legal layout/route-segment exports are allowed, not flagged as stray", () => {
+    const legal = [
+      'export const dynamic = "force-dynamic";',
+      "export const revalidate = 60;",
+      'export const fetchCache = "force-no-store";',
+      'export const runtime = "nodejs";',
+      'export const preferredRegion = "auto";',
+      "export const maxDuration = 30;",
+      "export async function generateMetadata() {",
+      "export async function generateViewport() {",
+    ];
+    for (const line of legal) {
+      const stray = exportNamesFromLine(line).filter((name) => !ALLOWED_EXPORTS.has(name));
+      expect(stray).toEqual([]);
+    }
   });
 });
