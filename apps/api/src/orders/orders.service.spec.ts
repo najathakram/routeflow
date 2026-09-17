@@ -5705,6 +5705,49 @@ describe("OrdersService", () => {
       expect(call.data.overriddenBy).toBeUndefined();
     });
 
+    it("(r5-1) B465 fix round 5 (Opus BLOCK item 2, LOW, revert-probe): a within-tolerance price echo persists the EXISTING clean value, never the incoming near-miss float", async () => {
+      // Round-4's fix made 8.001 correctly NOT a manual override, but the
+      // actual persisted unitPrice was still the raw incoming 8.001 (gated on
+      // `overridePrice !== null`, not `isManualOverride`) -- a no-op save
+      // could drift the stored price by a fraction of a cent every time.
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: "prod-1",
+            qty: 3,
+            unitPrice: 8,
+            subtotal: 24,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+            priceType: "SPECIAL",
+            originalPrice: 10,
+          },
+        ],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 24, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        // 8.004 is within the 0.005 tolerance of the stored 8.
+        { items: [{ id: "li-1", action: "UPDATE", qty: 3, unitPrice: 8.004 }], replaceAll: false },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "li-1" },
+          data: expect.objectContaining({ unitPrice: 8, subtotal: 24 }),
+        }),
+      );
+    });
+
     it("(r3-1) B465 fix round 3 (Opus BLOCK item 2, revert-probe): a qty-only edit on a SPECIAL line — price echoed back UNCHANGED, no reason — gives 200, never a 400", async () => {
       // Round-2 (cd704524) checked ONLY whether a price was present, never
       // whether it was actually MOVING — a payload that redundantly echoes

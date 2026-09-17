@@ -392,6 +392,16 @@ interface EditItemState {
   originalUnitPrice?: number;
   originalBasePrice?: number;
   originalOverrideReason?: string;
+  /** B465 fix round 5: the reason-required baseline for THIS session, separate
+   *  from originalUnitPrice (which Undo restores the line's own price from —
+   *  see restoredPrice). Set to the substitute's own resolved tier price at
+   *  substitution time so needsSpecialTierReason compares against a fresh
+   *  starting point, not the REPLACED product's price; cleared on Undo so the
+   *  comparison falls back to originalUnitPrice again. Reusing
+   *  originalUnitPrice itself for this (round 4) broke Undo: restoring it to
+   *  the substitute's price left Undo unable to restore the pre-substitution
+   *  price, silently repricing the line. */
+  reasonBaselinePrice?: number;
   productId: string;
   productName: string;
   qty: number;
@@ -503,13 +513,18 @@ function needsSpecialTierReason(
   it: {
     unitPrice: number;
     originalUnitPrice?: number;
+    /** B465 fix round 5: a substitution's own baseline, when set, wins over
+     *  originalUnitPrice (Undo's restore point for the REPLACED product's
+     *  price — never the comparison basis for a line that's since been
+     *  substituted). See reasonBaselinePrice on EditItemState. */
+    reasonBaselinePrice?: number;
     overrideReason?: string;
     isUnlisted?: boolean;
   },
   isSpecial: boolean,
 ): boolean {
-  const priceChanged =
-    it.originalUnitPrice != null && Math.abs(it.unitPrice - it.originalUnitPrice) > 0.0001;
+  const baseline = it.reasonBaselinePrice ?? it.originalUnitPrice;
+  const priceChanged = baseline != null && Math.abs(it.unitPrice - baseline) > 0.0001;
   return !it.isUnlisted && isSpecial && priceChanged && !(it.overrideReason ?? "").trim();
 }
 
@@ -524,6 +539,11 @@ function restoredPrice(it: EditItemState): Partial<EditItemState> {
     ...(it.originalUnitPrice != null ? { unitPrice: it.originalUnitPrice } : {}),
     ...(it.originalBasePrice != null ? { basePrice: it.originalBasePrice } : {}),
     overrideReason: it.originalOverrideReason,
+    // B465 fix round 5: undoing a substitution must drop the substitute's own
+    // reason-required baseline too — the comparison falls back to
+    // originalUnitPrice (just restored above), the REPLACED product's own
+    // stored price, exactly as if the substitution never happened.
+    reasonBaselinePrice: undefined,
   };
 }
 
@@ -1381,7 +1401,11 @@ function EditableLineItems({
             <PriceEditRow
               basePrice={item.basePrice}
               unitPrice={item.unitPrice}
-              originalUnitPrice={item.originalUnitPrice}
+              // B465 fix round 5: a substitution's own baseline wins over the
+              // REPLACED product's originalUnitPrice — same resolution as
+              // needsSpecialTierReason, so the required-field styling and the
+              // save-time check never disagree.
+              originalUnitPrice={item.reasonBaselinePrice ?? item.originalUnitPrice}
               overrideReason={item.overrideReason}
               onPriceChange={(net) => update(item.id, { unitPrice: net })}
               onReasonChange={(reason) => update(item.id, { overrideReason: reason || undefined })}
@@ -1438,16 +1462,17 @@ function EditableLineItems({
                   // substitution look un-overridden, so no unitPrice reached the
                   // server and a tier customer silently lost their price.
                   unitPrice: tierPriceFor(p),
-                  // B465 fix round 4 (Opus BLOCK item 2): reset the reason-required
-                  // baseline to the SUBSTITUTE's own resolved price — a substitution
-                  // is a fresh starting point, not a reprice of the replaced line's
-                  // price. Without this, originalUnitPrice kept the OLD product's
-                  // price; substituting into a SPECIAL-tier product then made
-                  // needsSpecialTierReason compare the new tier price against the
-                  // stale old one and demand a reason for a change the operator
-                  // never made. Only a price edit AFTER this substitution should
-                  // ever trip the guard now.
-                  originalUnitPrice: tierPriceFor(p),
+                  // B465 fix round 5 (Opus BLOCK item 1): reset the reason-required
+                  // baseline to the SUBSTITUTE's own resolved price via
+                  // reasonBaselinePrice, NEVER originalUnitPrice — that field is
+                  // Undo's own restore point (restoredPrice) for the REPLACED
+                  // product's price, and round 4 briefly overwrote it here, which
+                  // broke Undo: restoring "originalUnitPrice" after a substitute
+                  // just put the substitute's own price back, so Undo silently
+                  // repriced the line instead of reverting it. A substitution is a
+                  // fresh reason-required starting point, not a reprice — only a
+                  // price edit AFTER this substitution should trip the guard.
+                  reasonBaselinePrice: tierPriceFor(p),
                   basePrice: Number(p.pricePerUnit ?? 0),
                   overrideReason: undefined,
                   qty: split.qty,

@@ -159,4 +159,125 @@ test.describe("Order-edit SPECIAL-tier reason required (B465 fix round 2)", () =
       await expect(requiredReasonToast).not.toBeVisible({ timeout: 10_000 });
     }
   });
+
+  test("REG-B465-WEB-SUB: substituting into a SPECIAL-tier product needs no reason to save; Undo-ing the substitution sends no UPDATE for that line at all (B465 fix round 5)", async ({
+    page,
+    request,
+  }) => {
+    // Round-4 briefly reset originalUnitPrice (Undo's own restore point) to
+    // the substitute's price at substitution time — Undo then "restored" the
+    // substitute's own price instead of the pre-substitution one, silently
+    // repricing the line on save. Round 5 uses a separate reasonBaselinePrice
+    // for the reason-required check and leaves originalUnitPrice untouched.
+    await page.goto("/orders");
+    await expect(page.getByRole("button", { name: "New Order" })).toBeVisible({
+      timeout: 15_000,
+    });
+
+    const headers = await apiHeaders(page);
+    expect(
+      headers,
+      "no operator access token in localStorage — operator storageState is stale or the setup project did not run",
+    ).toBeTruthy();
+    const api = apiBase(page.url());
+    const suffix = Date.now();
+
+    // ── Fixture: an ordinary (non-special) starting product for the line —
+    // substitution replaces this with the SPECIAL product below.
+    const plainProductRes = await request.post(`${api}/api/v1/products`, {
+      headers: headers!,
+      data: { name: `E2E B465 Sub Plain ${suffix}`, unit: "unit", pricePerUnit: "5.00" },
+    });
+    expect(
+      plainProductRes.ok(),
+      `POST /products (plain) returned ${plainProductRes.status()}`,
+    ).toBe(true);
+    const plainProduct: { id: string; name: string } = await plainProductRes.json();
+
+    // ── Fixture: the SPECIAL-tier substitute target.
+    const specialListPrice = 20.0;
+    const specialTier3Price = 8.0;
+    const specialProductRes = await request.post(`${api}/api/v1/products`, {
+      headers: headers!,
+      data: {
+        name: `E2E B465 Sub Special ${suffix}`,
+        unit: "unit",
+        pricePerUnit: specialListPrice.toFixed(2),
+        priceTier3: specialTier3Price.toFixed(2),
+      },
+    });
+    expect(
+      specialProductRes.ok(),
+      `POST /products (special) returned ${specialProductRes.status()}`,
+    ).toBe(true);
+    const specialProduct: { id: string; name: string } = await specialProductRes.json();
+
+    const customerRes = await request.post(`${api}/api/v1/customers`, {
+      headers: headers!,
+      data: {
+        username: `e2e_b465_sub_${suffix}`,
+        businessName: `E2E B465 Substitute Baseline ${suffix}`,
+        contactName: "E2E Tester",
+        pricingTier: 3,
+      },
+    });
+    expect(customerRes.ok(), `POST /customers returned ${customerRes.status()}`).toBe(true);
+    const customer: { id: string } = (await customerRes.json()).customer;
+    expect(customer?.id, "POST /customers response carried no customer.id").toBeTruthy();
+
+    const orderRes = await request.post(`${api}/api/v1/orders`, {
+      headers: headers!,
+      data: {
+        customerId: customer.id,
+        status: "DRAFT",
+        items: [{ productId: plainProduct.id, qty: 1 }],
+      },
+    });
+    expect(orderRes.ok(), `POST /orders returned ${orderRes.status()}`).toBe(true);
+    const order: { id: string } = await orderRes.json();
+    expect(order?.id, "POST /orders response carried no id").toBeTruthy();
+
+    await page.goto(`/orders/${order.id}`);
+    const lineRow = page
+      .getByText(plainProduct.name, { exact: true })
+      .locator('xpath=ancestor::div[.//*[normalize-space(text())="Unit price"]][1]');
+    await expect(lineRow).toBeVisible({ timeout: 15_000 });
+
+    await lineRow.getByRole("button", { name: "Substitute", exact: true }).click();
+    // SubstitutePicker fetches by search term (no default full listing) — type
+    // the product's own name before selecting it, same as the add-input flow.
+    await page.getByPlaceholder("Search products...").fill(specialProduct.name);
+    await page.getByRole("button", { name: specialProduct.name }).click();
+
+    // ── Substituted line now resolves to the SPECIAL tier price with no
+    // reason typed — save must succeed with NO required-reason refusal at
+    // all (the substitution itself is never a repricing decision).
+    await page.getByRole("button", { name: "Save Draft", exact: true }).click();
+    await expect(page.getByText(/A reason is required/i)).not.toBeVisible({ timeout: 5_000 });
+
+    // Reopen for a fresh edit session and prove Undo-ing a substitution sends
+    // NO PATCH at all: a perfect Undo restores every field to its pre-
+    // substitution value, so buildItemUpdates() finds nothing changed and
+    // handleSaveItems short-circuits before ever calling the mutation.
+    await page.goto(`/orders/${order.id}`);
+    const specialLineRow = page
+      .getByText(specialProduct.name, { exact: true })
+      .locator('xpath=ancestor::div[.//*[normalize-space(text())="Unit price"]][1]');
+    await expect(specialLineRow).toBeVisible({ timeout: 15_000 });
+    await specialLineRow.getByRole("button", { name: "Substitute", exact: true }).click();
+    await page.getByPlaceholder("Search products...").fill(plainProduct.name);
+    await page.getByRole("button", { name: plainProduct.name }).click();
+    await specialLineRow.getByRole("button", { name: "Undo", exact: true }).click();
+
+    let itemsPatchFired = false;
+    page.on("request", (r) => {
+      if (r.method() === "PATCH" && r.url().includes(`/orders/${order.id}/items`)) {
+        itemsPatchFired = true;
+      }
+    });
+    await page.getByRole("button", { name: "Save Draft", exact: true }).click();
+    // Give any (unwanted) request a moment to fire before asserting its absence.
+    await page.waitForTimeout(1_500);
+    expect(itemsPatchFired).toBe(false);
+  });
 });

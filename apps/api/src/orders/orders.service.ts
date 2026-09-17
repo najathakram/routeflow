@@ -4067,15 +4067,22 @@ export class OrdersService implements OnApplicationBootstrap {
                 (item.overrideReason && item.overrideReason.trim()) ||
                 (replaceAllExisting?.overrideReason && replaceAllExisting.overrideReason.trim())
               );
-              // B465 fix round 4 (Opus BLOCK item 1, HIGH): a line NEW to the order
-              // (no existing counterpart at all — replaceAllExisting is null) inside
-              // the STAFF CREATE PATH's own auto-merge is exactly the same shape as
-              // a brand-new order's line at create time, which carries no reason
-              // requirement in this PR (tracked as the B465 follow-up for create).
-              // Gated on the explicit isCreateMerge flag from the ONE call site that
-              // means it — never inferred from replaceAllExisting being null alone,
-              // since an operator's own replaceAll:true edit of an EXISTING order can
-              // also add a brand-new line and that path still needs the guard.
+              // B465 fix round 4 (Opus BLOCK item 1, HIGH), comment fixed round 5
+              // (NIT): `replaceAllExisting == null` is null both for a line
+              // genuinely NEW to the order and for an AMBIGUOUS pre-edit/incoming
+              // pairing (0 or 2+ lines of that product — the same "no sound
+              // mapping" shape bogoCounterparts/existingLineByProduct both refuse
+              // above). Skipping the reason check for either shape here is safe:
+              // this is the STAFF CREATE PATH's own auto-merge (gated on the
+              // explicit isCreateMerge flag from the ONE call site that means it),
+              // and `foldMergeItems` only ever forwards a stored price for an
+              // EXISTING line whose priceType is MANUAL (R0's own contract) — an
+              // ambiguous pairing here never carries a SPECIAL/derived price
+              // forward to under-check, only ever a brand-new or MANUAL one, both
+              // of which this PR's create path already leaves unchecked. Never
+              // inferred from replaceAllExisting being null alone: an operator's
+              // own replaceAll:true edit of an EXISTING order (isCreateMerge
+              // unset) still needs the guard for a brand-new OR ambiguous line.
               const skipAsCreateMergeNewLine = !!opts?.isCreateMerge && replaceAllExisting == null;
               if (
                 !bogoPriceUnchanged &&
@@ -4688,7 +4695,15 @@ export class OrdersService implements OnApplicationBootstrap {
                 // treated as unchanged still got stamped MANUAL/originalPrice/
                 // overriddenBy as if the operator had genuinely repriced it.
                 const isManualOverride = overridePrice !== null && !priceUnchangedFromStored;
-                const unitPrice = overridePrice !== null ? overridePrice : existingUnitPrice;
+                // B465 fix round 5 (Opus BLOCK item 2, LOW): keyed on
+                // isManualOverride, not "a price was sent" — a within-tolerance
+                // echo (e.g. 8.004 against a stored 8) is NOT a manual override
+                // (round-4's own fix above), so it must persist the EXISTING
+                // clean value, never the incoming near-miss float, or repeated
+                // saves could drift the stored price by fractions of a cent.
+                // roundMoney on the genuine-override branch matches every other
+                // money-write path in this file (never store a raw client float).
+                const unitPrice = isManualOverride ? roundMoney(overridePrice!) : existingUnitPrice;
                 // Anchor the struck-through original to the CATALOG list price (like the
                 // replace-all / new-item branches), never the line's prior net price —
                 // otherwise re-editing an override (e.g. an upsell nudged down but still
