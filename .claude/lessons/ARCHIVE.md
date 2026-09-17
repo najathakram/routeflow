@@ -2313,3 +2313,97 @@ tooling gotcha with its own pre-existing standing guard spec).
   suite at least once per fix round; a boot-crash guard does nothing if it never runs.
 - **Guard:** `no-runtime-workspace-imports.spec.ts` (pre-existing). Fix: derive the value from
   `@prisma/client`'s real enum instead, or mirror it locally like the file's own `METER_KEYS`.
+
+Seventh pass, same batch: L-186 (tooling, layout.tsx named re-export — candidate from the
+code-map catch-up session) folded in. Archived one more to keep the register at 3 entries of
+headroom: L-138 (zero outside citations, closed-out review-round lesson with its own standing
+regression guard).
+
+### L-138 · 2026-09-15 · testing · #711 review round (F1 issue-date default)
+
+- **Symptom:** a review fix at the cited line (the create-modal's `issueDate` `useState`
+  initializer) looked complete and type-checked clean, but a "reset on open" `useEffect` a few
+  lines down independently recomputed the SAME default with the SAME buggy expression
+  (`new Date().toISOString().slice(0, 10)`, the UTC calendar date, not the operator's local one)
+  — every time the modal opened, that effect overwrote the fixed initial value with the still-wrong
+  one. Caught only because the new regression test opened the modal and read the rendered input's
+  actual value, rather than asserting on the initializer expression in isolation.
+- **Root cause:** the same wrong default had been copy-pasted (or independently re-derived) at a
+  second call site the review didn't name; fixing the cited line alone left the component's
+  observable behavior unchanged, since the effect runs after mount and wins.
+- **Lesson:** **A review finding that names one line of a bug is a starting point, not the full
+  blast radius — grep the component/file for other call sites computing the same value the same
+  way before declaring the fix done, and prove it with a test that exercises the real interaction
+  (open the modal, click the button) and reads the rendered/observable state, never one that only
+  asserts on the helper function in isolation.**
+- **Guard:** `apps/web/app/(dashboard)/estimates/page.f1-issue-date-default.test.tsx` opens the
+  create-modal and reads the actual `<input type="date">` value under a mocked local-vs-UTC date
+  split (`Date.prototype` getter spies, not `process.env.TZ` reassignment — a Jest worker can cache
+  its process-level timezone before a test file's own `TZ` write takes effect, so that approach
+  silently no-ops; confirmed by reproducing the false-pass first). Both call sites in
+  `estimates/page.tsx` now share one `defaultIssueDate()` helper.
+
+Eighth pass, same batch: L-187 (TOCTOU slot booking) and L-188 (token transport) folded in from
+the demo-booking lane. Archived two more to keep the register at 3 entries of headroom: L-123
+(1 outside citation, closed-out with a real regression-test guard) and L-139 (2 outside
+citations, closed-out with its own post-init assertion guard).
+
+### L-139 · 2026-09-14 · tooling · B420 GIT_* env leak into self-test throwaway repos
+
+- **Symptom:** a pre-push hook's `validate-code-map.stamp.self-test.mjs` renamed a live worktree's
+  branch twice and stacked fixture commits on real work, mid-session (rf-mobile-lanes incident).
+- **Root cause:** git sets `GIT_DIR`/`GIT_WORK_TREE` (+8 siblings) in a hook's environment; this
+  self-test's `spawnSync("git", …)` calls inherited them unscrubbed, so its "isolated" scratch
+  repo's `init`/`add`/`commit`/`branch -M` silently resolved against the REAL repo instead of
+  `cwd`. Identical root cause to L-082's sibling incident (`bugs.mjs self-test`, 2026-09-04, fixed
+  in that one file) — that lesson was never written down ("no headroom"), so a second, newer
+  self-test script repeated the exact anti-pattern ten days later.
+- **Lesson:** **Any script driving a THROWAWAY git repo as a fixture must scrub all ten `GIT_*`
+  vars (`GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE`/`GIT_COMMON_DIR`/`GIT_OBJECT_DIRECTORY`/
+  `GIT_ALTERNATE_OBJECT_DIRECTORIES`/`GIT_QUARANTINE_PATH`/`GIT_PREFIX`/`GIT_NAMESPACE`/
+  `GIT_CEILING_DIRECTORIES`) from every child process — it WILL run inside a hook eventually, and
+  git always exports them there. Scrubbing alone is not proof: assert the result too — after
+  `git init`, resolve `--show-toplevel` and confirm it lands inside the scratch dir before doing
+  anything that could mutate a real repo.**
+- **Guard:** the post-init toplevel check (throws on mismatch) + `REG-B420` (a second "victim"
+  repo's branches/HEAD/config asserted byte-unchanged after a polluted-env fixture op) in
+  `scripts/validate-code-map.stamp.self-test.mjs`. Sibling [[L-082]] — no shared guard between the
+  two files, so a third such script would still need its own.
+
+### L-123 · 2026-09-14 · process · W1 seam rows
+
+- **Symptom:** an independent pre-merge review found two live defects in code three in-lane
+  rounds had passed — a cancel that never reached the payment provider, and a resume that
+  cleared the one flag a new guard reads.
+- **Root cause:** each round fixed what it was handed. Round 1 added an idempotence
+  short-circuit; a later round added a provider call BELOW it; a third gave that call a
+  three-condition gate and left the local write on one. Every diff was correct read alone.
+- **Lesson:** **When a function is edited by more than one review round, the seam between the
+  rounds is where the defect lives: a guard added early can end up ahead of a call added late,
+  and a gate tightened on one branch can leave its sibling ungated. Touching a function an
+  earlier round changed means re-reading it whole — an in-lane reviewer holding one diff cannot
+  see this, which is what the independent pre-merge pass is for.**
+- **Guard:** the W1 rows (`STRIPE-CANCEL-2`, `STRIPE-RESUME-1`) plus the rewritten spec that
+  asserted the defect. Sibling [[L-119]].
+
+## Archived 2026-09-17 — headroom for L-189 (B466 bookkeeping follow-up, #834)
+
+### L-146 · 2026-09-14 · domain · B221 driver return-list scoping
+
+- **Symptom:** `GET /returns` is `@Roles(OPERATOR, DRIVER, CUSTOMER)` on the controller, but
+  `ReturnsService.findAllForUser` had a scoping branch for CUSTOMER only — a DRIVER fell through
+  to the unscoped, tenant-wide `findAll`, seeing every return in the tenant rather than just
+  ones on orders assigned to their own route runs.
+- **Root cause:** the role was added to the endpoint's authorization list (so a driver COULD
+  call it at all) without a matching branch in the service's OWN scoping logic — `@Roles` and
+  tenant-scoping (`forTenant()`) both silently read as "this is handled," but neither actually
+  restricts results to the CALLER's own data once past the tenant boundary.
+- **Lesson:** **`@Roles(...)` is authorization (can this role call the endpoint at all), never
+  scoping (which rows can this specific caller see). Adding a role to an endpoint's allow-list
+  is only half the change — grep the SERVICE method's own list-scoping for a branch per role
+  actually granted access, and add one for any that's missing, or the new role inherits
+  whichever existing branch's fallthrough happens to run (often the most-privileged one).**
+- **Guard:** `ReturnsService.findAllForUser`'s DRIVER branch (resolves the caller's `Driver` row,
+  scopes via `where.order = {routeRun: {driverId}}`); `returns.security.spec.ts`'s B221 suite.
+  Sibling pattern already fixed once in `credit-notes.service.ts` (DRIVER denied outright there,
+  a different but equally deliberate choice — the point is BOTH required an explicit branch).

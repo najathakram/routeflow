@@ -55,7 +55,7 @@ export function CTA({ retailer = false }: { retailer?: boolean } = {}) {
       <div>
         <Link
           className="button button-white"
-          href={retailer ? authLinks.retailerSignUp : "/contact"}
+          href={retailer ? authLinks.retailerSignUp : "/book-a-demo"}
         >
           {retailer ? "Create a retailer account" : "Book a workflow demo"}
           <ArrowUpRight size={19} />

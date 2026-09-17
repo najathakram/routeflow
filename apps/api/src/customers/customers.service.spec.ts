@@ -1698,6 +1698,33 @@ describe("CustomersService", () => {
         }),
       );
     });
+
+    it("REG-M2: getIncomeChart buckets a payment by its settled month, not its paidAt month (check-payments PR-2b — the 8th collected reader)", async () => {
+      prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
+      const now = new Date();
+      const paidMonthDate = new Date(now.getFullYear(), now.getMonth() - 2, 15);
+      const settledMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 15);
+      prisma.invoicePayment.findMany.mockResolvedValue([
+        { amount: 150, paidAt: paidMonthDate, settledAt: settledMonthDate },
+      ]);
+      prisma.expense.findMany.mockResolvedValue([]);
+
+      const chart = await service.getIncomeChart("cust-1");
+
+      const paidMonthLabel = paidMonthDate.toLocaleString("en-US", {
+        month: "short",
+        year: "numeric",
+      });
+      const settledMonthLabel = settledMonthDate.toLocaleString("en-US", {
+        month: "short",
+        year: "numeric",
+      });
+      const paidBucket = chart.find((m) => m.month === paidMonthLabel);
+      const settledBucket = chart.find((m) => m.month === settledMonthLabel);
+
+      expect(settledBucket?.income).toBe(150);
+      expect(paidBucket?.income).toBe(0);
+    });
   });
 
   // ─── T2 (REG-B169) — orderBy carries an id tiebreaker (createdAt ties are

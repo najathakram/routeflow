@@ -96,7 +96,7 @@ export function SiteHeader() {
             </DropdownMenu.Root>
           </div>
 
-          <Link className="button button-small" href="/contact">
+          <Link className="button button-small" href="/book-a-demo">
             Book a demo
           </Link>
 
@@ -144,7 +144,7 @@ export function SiteHeader() {
                       </a>
                       {/* ux-spec §3: the sheet carries the primary CTA too — the
                           header's "Book a demo" button is hidden ≤ 480px. */}
-                      <Link href="/contact" onClick={() => setOpen(false)}>
+                      <Link href="/book-a-demo" onClick={() => setOpen(false)}>
                         Book a demo <ArrowUpRight size={16} aria-hidden="true" />
                       </Link>
                     </div>

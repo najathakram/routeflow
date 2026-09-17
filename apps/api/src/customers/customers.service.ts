@@ -17,10 +17,12 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { roundMoney, remainingCapacity } from "@routeflow/pricing";
 import {
+  collectedDateOf,
   CONFIRMED_PAYMENT,
   RECEIVED_METHOD_FILTER,
   sumConfirmed,
 } from "../invoices/payment-predicates";
+import { settledDateFilter } from "../invoices/settled-date-filter";
 import {
   CREDIT_NOT_APPLICABLE,
   KPI_SUMMARY_EXCLUDED,
@@ -1747,9 +1749,12 @@ export class CustomersService {
         // only CREDIT_NOTE, keeps ADVANCE.
         ...CONFIRMED_PAYMENT,
         method: RECEIVED_METHOD_FILTER,
-        paidAt: { gte: sixMonthsAgo },
+        // check-payments PR-2b (M2): collected basis is settledAt ?? paidAt,
+        // same as getCashFlow/the bookkeeping dashboards — this chart is the
+        // 8th collected reader and must not diverge from them either.
+        ...settledDateFilter({ gte: sixMonthsAgo }),
       },
-      select: { amount: true, paidAt: true },
+      select: { amount: true, paidAt: true, settledAt: true },
     });
 
     // Get all expenses for this customer in the last 6 months
@@ -1764,7 +1769,10 @@ export class CustomersService {
 
     return months.map(({ month, start, end }) => {
       const income = payments
-        .filter((p) => p.paidAt >= start && p.paidAt <= end)
+        .filter((p) => {
+          const collected = collectedDateOf(p) as Date;
+          return collected >= start && collected <= end;
+        })
         .reduce((sum, p) => sum + Number(p.amount), 0);
 
       const expense = expenses

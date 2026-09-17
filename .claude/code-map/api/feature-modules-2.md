@@ -260,7 +260,39 @@ qtyPieces, qtyUnits, lastPrice, boxCtx)` dropped `private`; bodies are byte-iden
   "Reorder"), so `order-templates.service.generateOrder` prices through these instead of keeping a
   second, list-price-only pricing writer. **They are a contract now — do not narrow them back, and
   do not fork a second copy.** Callers: `orders.service.create` (buyer path) and
-  `order-templates.service.generateOrder`.
+  `order-templates.service.generateOrder`. `isSpecialTier(tierForProduct)` (used inside
+  `resolveBuyerLinePrice` to decide `priceType: SPECIAL`) is a **module-level exported pure
+  function** (`tierForProduct !== 1`), not a class method (#815 verify finding, 2026-09-17):
+  `order-templates.service.spec.ts` calls `(OrdersService.prototype as any).resolveBuyerLinePrice(...)`
+  detached from an instance, so `this.isSpecialTier(...)` threw. Every call site was updated;
+  three local shadowing `const isSpecialTier = …` declarations were renamed `lineIsSpecialTier`
+  to avoid a TDZ collision with the new module-level binding.
+- **B465/B466 (2026-09-16/17) — SPECIAL-tier repricing needs a documented reason, staff order
+  edit.** A line whose `tierForProduct` resolves SPECIAL (`isSpecialTier`, contract price) refuses
+  a bare price change with no `overrideReason` (`BadRequestException`, before any mutation) —
+  gated at every staff-edit branch of `updateOrderItems`: diff ADD, diff UPDATE, `replaceAll`, and
+  B466's own substitution branch (`item.substituteProductId` — a swap prices the SUBSTITUTE's own
+  tier, guarded the same way; before this fix the branch never checked tier at all and compared a
+  typed price only against LIST, so a correctly-priced substitute at this customer's real contract
+  price was silently stored DISCOUNTED with no reason). B466 also fixed a fetch gap one level up:
+  `substituteProductId` was missing entirely from the batched `operatorProductIds`/CustomerPrice
+  lookup (neither a fresh add's `productId` nor an existing line's OLD `productId` covers it), so
+  the substitute branch's tier resolution silently fell back to the customer's DEFAULT tier even
+  when a per-product SPECIAL row existed for the substitute specifically — the honored override is
+  `roundMoney()`'d before persisting, matching the UPDATE branch's convention (was a raw float).
+  Each branch compares against the line's OWN prior price (an
+  unambiguous pre-edit/incoming pairing by product, or the substitute's own tier price), never a
+  blanket "any SPECIAL line", so an untouched or re-saved-unchanged line never re-trips the guard;
+  a blank incoming reason falls back to the existing line's stored one before refusing. New
+  `UpdateOrderItemsDto.isCreateMerge` (threaded ONLY from `orders.controller.ts`'s staff
+  create-auto-merge call site, never inferred) exempts a line brand-new to the order — matching
+  plain `create()`'s own unchecked behavior. `merge-items.ts`'s `foldMergeItems` now carries
+  `overrideReason` alongside `unitPrice` in its snapshot/output (a MANUAL reason must travel WITH
+  the price it justifies, or a later merge re-trips the same-price refusal with nothing to fall
+  back on). Mirrored client-side in `apps/web/app/(dashboard)/orders/[id]/page.tsx`
+  (`needsSpecialTierReason`/`reasonRequired`) and mobile `edit-items.tsx`/`order-item-diff.ts` —
+  see `web/routes-2.md` and `mobile/screens-by-role.md`. Specs: `orders.service.spec.ts`,
+  `order-templates.service.spec.ts`.
 - **F16 (2026-09-07, #656) — B144 search composes, B169 tiebreaker, limit capped:** `findAll`'s
   `where` used to swallow `search` in an `else if` under `customerId`/CUSTOMER-role scope (search
   silently dropped whenever either was present) and only matched `customer.businessName`. Now

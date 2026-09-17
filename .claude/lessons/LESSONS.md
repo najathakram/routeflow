@@ -13,6 +13,20 @@
 
 ## tooling
 
+### L-186 · 2026-09-17 · tooling · web code-map catch-up (layout.tsx named re-export)
+
+- **Symptom:** an App Router `layout.tsx` re-exported a named client component. It compiled
+  clean in prod (`ignoreBuildErrors` masked it) but broke only under `next dev`'s typed-routes
+  checking.
+- **Root cause:** neither CI nor `check-types` runs the pass that catches this — a named export
+  from a Next.js App Router special file is invisible to both the type checker and the
+  production build's relaxed error mode.
+- **Lesson:** **`layout.tsx` may export only `default`, `metadata`, `viewport`, and Next's own
+  segment-config exports — never a named re-export of shared logic. Put shared logic in its own
+  file, imported by the layout.**
+- **Guard:** `apps/web/app/layout-exports.test.ts` walks every layout in the app tree and
+  asserts its export set stays within the allowed list (currently covers ≥ 6 layout files).
+
 ### L-182 · 2026-09-16 · tooling · #799 self-test wall-clock regression (host vs CI)
 
 - **Symptom:** #799 added spawn-heavy self-test cases; the self-test's wall-clock went from
@@ -26,17 +40,25 @@
   sufficient gate for tooling-timing changes, only for correctness.**
 - **Guard:** the merge session re-measures self-test wall-clock during its scoped review.
 
-### L-180 · 2026-09-16 · tooling · git worktree move leaves stale npm junctions
+### L-180 · 2026-09-16 · tooling · npm/dir junctions across worktrees are unsafe near git worktree ops
 
-- **Symptom:** after `git worktree move`, invalid-hook-call errors and mangled Jest file paths —
-  initially looked like [[L-055]]'s dot-directory glob bug, but a different mechanism.
-- **Root cause:** `git worktree move` relocates git metadata and working files but never rewrites
-  npm's workspace junctions (Windows) inside `node_modules` — those are absolute-path-based and
-  keep resolving to wherever `npm install` last ran, i.e. the OLD path.
-- **Lesson:** **After `git worktree move`, treat `node_modules` as stale — run `npm ci` (+
-  `npx prisma generate` for apps/api) at the FINAL path. Never move a worktree after installing
-  if you can install at the final path from the start.**
-- **Guard:** none yet — propose a post-move check comparing a junction's resolved target to cwd.
+- **Symptom:** (a) after `git worktree move`, invalid-hook-call errors and mangled Jest paths —
+  looked like [[L-055]]'s dot-directory glob bug, but wasn't; (b) 2026-09-17: a scratch worktree
+  was junctioned to a SIBLING's `node_modules` (to dodge an `npm install` under a disk-critical
+  constraint), and `git worktree remove --force` on the scratch tree cascaded a recursive delete
+  through the junction, wiping the sibling's `node_modules` and ~2,388 of its tracked files.
+- **Root cause:** Windows npm junctions are absolute-path reparse points, invisible to git and
+  not junction-aware to a naive recursive delete — `worktree move` leaves one pointing at the OLD
+  path forever; `worktree remove --force`/`rm -rf` walks THROUGH one into its real target instead
+  of unlinking the reparse point.
+- **Lesson:** **Never let a junction outlive the git worktree op around it. After
+  `git worktree move`, treat `node_modules` as stale — `npm ci` (+ `prisma generate` for
+  apps/api) at the final path. Before removing/recursively deleting ANY worktree, `rmdir` (never
+  `rm -rf`) every junction inside it and confirm it's gone first. Best: never junction
+  `node_modules` between two DIFFERENT live worktrees — the disk saved isn't worth the blast
+  radius.**
+- **Guard:** none yet — propose a pre-remove check refusing `git worktree remove` while a
+  junction exists under the tree, plus a post-move check comparing a junction's target to cwd.
 
 ### L-179 · 2026-09-16 · tooling · campaign-check freshness ritual
 
@@ -168,52 +190,6 @@
 - **Guard:** none yet — propose `-p routeflow` in `local:up`/`local:down`/`local:reset`, or a
   top-level `name: routeflow`.
 
-### L-138 · 2026-09-15 · testing · #711 review round (F1 issue-date default)
-
-- **Symptom:** a review fix at the cited line (the create-modal's `issueDate` `useState`
-  initializer) looked complete and type-checked clean, but a "reset on open" `useEffect` a few
-  lines down independently recomputed the SAME default with the SAME buggy expression
-  (`new Date().toISOString().slice(0, 10)`, the UTC calendar date, not the operator's local one)
-  — every time the modal opened, that effect overwrote the fixed initial value with the still-wrong
-  one. Caught only because the new regression test opened the modal and read the rendered input's
-  actual value, rather than asserting on the initializer expression in isolation.
-- **Root cause:** the same wrong default had been copy-pasted (or independently re-derived) at a
-  second call site the review didn't name; fixing the cited line alone left the component's
-  observable behavior unchanged, since the effect runs after mount and wins.
-- **Lesson:** **A review finding that names one line of a bug is a starting point, not the full
-  blast radius — grep the component/file for other call sites computing the same value the same
-  way before declaring the fix done, and prove it with a test that exercises the real interaction
-  (open the modal, click the button) and reads the rendered/observable state, never one that only
-  asserts on the helper function in isolation.**
-- **Guard:** `apps/web/app/(dashboard)/estimates/page.f1-issue-date-default.test.tsx` opens the
-  create-modal and reads the actual `<input type="date">` value under a mocked local-vs-UTC date
-  split (`Date.prototype` getter spies, not `process.env.TZ` reassignment — a Jest worker can cache
-  its process-level timezone before a test file's own `TZ` write takes effect, so that approach
-  silently no-ops; confirmed by reproducing the false-pass first). Both call sites in
-  `estimates/page.tsx` now share one `defaultIssueDate()` helper.
-
-### L-139 · 2026-09-14 · tooling · B420 GIT_* env leak into self-test throwaway repos
-
-- **Symptom:** a pre-push hook's `validate-code-map.stamp.self-test.mjs` renamed a live worktree's
-  branch twice and stacked fixture commits on real work, mid-session (rf-mobile-lanes incident).
-- **Root cause:** git sets `GIT_DIR`/`GIT_WORK_TREE` (+8 siblings) in a hook's environment; this
-  self-test's `spawnSync("git", …)` calls inherited them unscrubbed, so its "isolated" scratch
-  repo's `init`/`add`/`commit`/`branch -M` silently resolved against the REAL repo instead of
-  `cwd`. Identical root cause to L-082's sibling incident (`bugs.mjs self-test`, 2026-09-04, fixed
-  in that one file) — that lesson was never written down ("no headroom"), so a second, newer
-  self-test script repeated the exact anti-pattern ten days later.
-- **Lesson:** **Any script driving a THROWAWAY git repo as a fixture must scrub all ten `GIT_*`
-  vars (`GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE`/`GIT_COMMON_DIR`/`GIT_OBJECT_DIRECTORY`/
-  `GIT_ALTERNATE_OBJECT_DIRECTORIES`/`GIT_QUARANTINE_PATH`/`GIT_PREFIX`/`GIT_NAMESPACE`/
-  `GIT_CEILING_DIRECTORIES`) from every child process — it WILL run inside a hook eventually, and
-  git always exports them there. Scrubbing alone is not proof: assert the result too — after
-  `git init`, resolve `--show-toplevel` and confirm it lands inside the scratch dir before doing
-  anything that could mutate a real repo.**
-- **Guard:** the post-init toplevel check (throws on mismatch) + `REG-B420` (a second "victim"
-  repo's branches/HEAD/config asserted byte-unchanged after a polluted-env fixture op) in
-  `scripts/validate-code-map.stamp.self-test.mjs`. Sibling [[L-082]] — no shared guard between the
-  two files, so a third such script would still need its own.
-
 ### L-149 · 2026-09-15 · tooling · #743 fix-round T8 lesson-id staleness
 
 - **Symptom:** an engine task's brief hardcoded specific lesson ids (L-140/L-141) and a `nextId`
@@ -289,6 +265,43 @@ floor", ...)`), not after the generic thing being tested — restored in `next-v
 - **Guard:** none — judgment. Grep `isWeb`/`Platform.OS` in any file a fix touches.
 
 ## domain
+
+### L-187 · 2026-09-17 · domain · demo-booking slot TOCTOU (check-then-insert race)
+
+- **Symptom:** two concurrent bookings for the same slot could both pass an application-level
+  "is this slot free" check before either had written its row, so both inserted — a genuine
+  double-booking the app-level guard was supposed to prevent.
+- **Root cause:** the availability check and the insert were two separate statements with no
+  atomicity between them — a classic check-then-act race. An application-level check can only
+  ever narrow the window, never close it; the two statements can always interleave under load.
+- **Lesson:** **A slot/resource booking that must never double-allocate needs the DB to enforce
+  it, not application code — a partial unique index (`WHERE status != 'CANCELLED'`, so a
+  cancelled booking never blocks a fresh one for the same slot) makes the second concurrent
+  insert fail atomically at the constraint, instead of racing an app-level read.**
+- **Guard:** the `demo_booking_race_guard` migration's partial unique index; a concurrent-insert
+  regression test proves the second request gets a real constraint violation, not a silent
+  double-book.
+
+### L-189 · 2026-09-17 · domain · B466 (substitute path bypassed the tier-aware pricer)
+
+- **Symptom:** substituting a product on an order item priced the new line at LIST regardless of
+  the customer's SPECIAL-tier contract price — a correctly-typed override at the real contract
+  price was silently stored as DISCOUNTED with no reason, on a code path nobody had ever pointed
+  a tier-3 customer at before.
+- **Root cause:** the substitution branch was its own independent price path — it reused neither
+  `resolveBuyerLinePrice`'s tier resolution nor the batched `CustomerPrice` lookup the ADD/UPDATE
+  branches share (the substitute's NEW product id was never even added to that lookup's id set)
+  — so it defaulted to the simplest case, list price, and had no way to learn a per-product tier
+  existed for the new product at all.
+- **Lesson:** **A new mutation path onto an already-priced entity (substitute, replace, clone,
+  ...) must resolve price through the SAME tier-aware pricer AND read from the SAME batched
+  price-lookup key set every sibling path uses — a fresh, path-specific reimplementation silently
+  regresses to the simplest case, and the gap is invisible until someone diffs it against a
+  sibling branch by hand.**
+- **Guard:** `orders.service.spec.ts`'s B466 suite (a SPECIAL-tier substitute prices at tier, not
+  list; the reason-required guard fires on a bare override; the batched lookup includes
+  `substituteProductId`). Sibling [[L-072]] (reuse vs. reimplement, applied here to a pricer
+  instead of an enum).
 
 ### L-185 · 2026-09-17 · domain · B440 (report `total` repurposed, footer stopped matching its own column)
 
@@ -381,7 +394,8 @@ floor", ...)`), not after the generic thing being tested — restored in `next-v
   boolean check unrounded will diverge from what the user sees.**
 - **Guard:** `invoices.service.ts`'s two `balanceDue` sites and `invoice-pdf-template.tsx`'s
   balance now wrap in `roundMoney()` before `Math.max`/the comparison; existing invoice-balance
-  suites cover it.
+  suites cover it. Also: `customers.service.ts`'s `applyAdvancePaymentToInvoiceLocked` (#814,
+  same class — `newPaid` compared unrounded).
 
 ### L-171 · 2026-09-16 · domain · PR-1a F1 (pooled cap vs single-line price basis mismatch)
 
@@ -458,22 +472,6 @@ floor", ...)`), not after the generic thing being tested — restored in `next-v
   files that are each individually right.**
 - **Guard:** REG-B305 round 4 + the source pin `short-pick-category-tax.pins.test.ts` (the
   composition lives in a screen unit tests cannot import).
-
-### L-123 · 2026-09-14 · process · W1 seam rows
-
-- **Symptom:** an independent pre-merge review found two live defects in code three in-lane
-  rounds had passed — a cancel that never reached the payment provider, and a resume that
-  cleared the one flag a new guard reads.
-- **Root cause:** each round fixed what it was handed. Round 1 added an idempotence
-  short-circuit; a later round added a provider call BELOW it; a third gave that call a
-  three-condition gate and left the local write on one. Every diff was correct read alone.
-- **Lesson:** **When a function is edited by more than one review round, the seam between the
-  rounds is where the defect lives: a guard added early can end up ahead of a call added late,
-  and a gate tightened on one branch can leave its sibling ungated. Touching a function an
-  earlier round changed means re-reading it whole — an in-lane reviewer holding one diff cannot
-  see this, which is what the independent pre-merge pass is for.**
-- **Guard:** the W1 rows (`STRIPE-CANCEL-2`, `STRIPE-RESUME-1`) plus the rewritten spec that
-  asserted the defect. Sibling [[L-119]].
 
 ### L-124 · 2026-09-13 · domain · cron sweep silently dropped null-tenant orders
 
@@ -553,26 +551,6 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   (`REG-MSCAN-A4-anon`, source-text pin in `edit-items-drawer.test.ts`);
   `session-teardown.ts` step (6) also sweeps `editItemsSnapshotUserPrefix(null)`
   (`REG-EDIT-SWEEP-B`/`REG-MSCAN-A4-anon` in `session-teardown.test.ts`).
-
-### L-146 · 2026-09-14 · domain · B221 driver return-list scoping
-
-- **Symptom:** `GET /returns` is `@Roles(OPERATOR, DRIVER, CUSTOMER)` on the controller, but
-  `ReturnsService.findAllForUser` had a scoping branch for CUSTOMER only — a DRIVER fell through
-  to the unscoped, tenant-wide `findAll`, seeing every return in the tenant rather than just
-  ones on orders assigned to their own route runs.
-- **Root cause:** the role was added to the endpoint's authorization list (so a driver COULD
-  call it at all) without a matching branch in the service's OWN scoping logic — `@Roles` and
-  tenant-scoping (`forTenant()`) both silently read as "this is handled," but neither actually
-  restricts results to the CALLER's own data once past the tenant boundary.
-- **Lesson:** **`@Roles(...)` is authorization (can this role call the endpoint at all), never
-  scoping (which rows can this specific caller see). Adding a role to an endpoint's allow-list
-  is only half the change — grep the SERVICE method's own list-scoping for a branch per role
-  actually granted access, and add one for any that's missing, or the new role inherits
-  whichever existing branch's fallthrough happens to run (often the most-privileged one).**
-- **Guard:** `ReturnsService.findAllForUser`'s DRIVER branch (resolves the caller's `Driver` row,
-  scopes via `where.order = {routeRun: {driverId}}`); `returns.security.spec.ts`'s B221 suite.
-  Sibling pattern already fixed once in `credit-notes.service.ts` (DRIVER denied outright there,
-  a different but equally deliberate choice — the point is BOTH required an explicit branch).
 
 ### L-155 · 2026-09-15 · domain · PR-2 fix round (F2: retired-writer branch vs legacy data)
 
@@ -764,6 +742,20 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   assumed, on any enum-value addition.
 
 ## security
+
+### L-188 · 2026-09-17 · security · demo-booking OAuth/booking tokens in URL query strings
+
+- **Symptom:** an OAuth/booking token traveled as a URL query parameter — the exact shape that
+  ends up in server access logs, browser history, the `Referer` header of any outbound link on
+  the same page, and third-party analytics scripts that record the full URL.
+- **Root cause:** a query string is the easiest place to carry a value across a redirect, but
+  it is also the least private transport HTTP offers — nothing about the URL is treated as
+  secret by any layer between the browser and the server.
+- **Lesson:** **Never carry an OAuth token, booking token, or any other bearer-shaped secret in
+  a URL query string — use a fragment (`#`, never sent to the server or logged server-side) for
+  a client-side handoff, or a POST body for a server-side one.**
+- **Guard:** none yet — propose a lint/review checklist item flagging `token`/`code`/`secret`-
+  named query params on any new route.
 
 ### L-178 · 2026-09-16 · security · demo-booking PR-2 (raw error message leak)
 
