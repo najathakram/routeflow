@@ -540,3 +540,20 @@ subscription, subscriptionResolved, subscriptionErrored, children}`: while resol
   local Playwright allow-list (`apps/web/e2e/LOCAL-LANE.md`) — same convention as the
   sales-agents-gate/compliance-pack-gate/trip-builder-gate projects. **Without the project
   entry the spec never runs** (cf. the #08 note above).
+
+- **`lib/tenant-features.ts` (new, feature grants v2 brief A, 2026-09-17, #825)** —
+  `useTenantFeatures(options?)`: `useQuery` wrapping `GET /tenants/me/features` (the
+  server-computed shadow-resolver + old-path trace). Query key includes the tenant slug so a
+  stale answer can never leak across a tenant switch. **NOT yet a gating read path** (Opus
+  review of 9923b87c, item 1) — `usePlanFlag`/nav gates stay on `useSubscription()`
+  (`lib/api/plan-flags.ts`, above); this hook exists for a future PR that revisits the switch,
+  and for admin/debug surfaces that want the raw resolver trace. Mirrors mobile's
+  `lib/tenant-features.ts` byte-for-byte in contract.
+- **`lib/feature-modes.ts` (new, feature grants v2 brief C, 2026-09-17, #837)** — pure
+  selectors over a tenant's `modes` record (`TenantFeaturesResponse.modes`,
+  `packages/types/api/features.ts`). `getRoutesDispatchVisibility(modes?)` →
+  `{showScheduledEntry, showAdhocEntry}`: `"scheduled"` hides ad-hoc, `"adhoc"` hides scheduled,
+  anything else (unset/mixed/unrecognized) shows both — never narrower on an unknown mode
+  string. **Deliberately unwired into any page yet** — brief A's `/tenants/me/features` hook
+  isn't consumed by routes pages on this base, so the "unset → before == after" invariant holds
+  by construction rather than by testing an unwired call site. Test: `feature-modes.test.ts`.
