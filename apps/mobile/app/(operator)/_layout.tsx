@@ -7,7 +7,6 @@ import { OperatorTabBar } from "../../components/OperatorTabBar";
 import { PlanLockedScreen } from "../../components/PlanLockedScreen";
 import { useDeliveryAccess, useRoutesAccess } from "../../lib/api/addons";
 import { useSubscription } from "../../lib/api/billing";
-import { useTenantFeatures } from "../../lib/tenant-features";
 import { planLockedSection } from "../../lib/plan-flags";
 
 // Owner split 2026-08-25: recurring routes and ad-hoc order delivery are two
@@ -56,9 +55,6 @@ export default function OperatorLayout() {
   useSocket();
   const routesAccess = useRoutesAccess();
   const deliveryAccess = useDeliveryAccess();
-  const features = useTenantFeatures();
-  // Display metadata only (the locked-screen's plan name) — NOT part of the feature grants
-  // v2 contract (TenantFeaturesResponse has no planName), so this stays a separate read.
   const sub = useSubscription();
   const segments = useSegments() as string[];
 
@@ -101,9 +97,9 @@ export default function OperatorLayout() {
   // RouteGuard, apps/web/app/(dashboard)/layout.tsx). planLockedSection already fails
   // OPEN while unresolved/failed, so this never strands a tenant on an unknown answer.
   const lockedKey = planLockedSection(segments, {
-    flags: features.data?.effective,
-    resolved: features.isSuccess,
-    failed: features.isError,
+    flags: sub.data?.flags,
+    resolved: sub.isSuccess,
+    failed: sub.isError,
   });
   if (lockedKey) {
     return <PlanLockedScreen planName={sub.data?.planName ?? "current"} />;

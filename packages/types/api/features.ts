@@ -75,7 +75,12 @@ export interface EffectiveFeature {
 }
 
 export interface TenantFeaturesResponse {
-  effective: string[];
+  /** The old enforcement path's verdict, per key that path actually covers — byte-identical
+   *  to `getSubscription().flags` (same gateVia filter, PREPIN, dark courtesy, and LITE). */
+  served: string[];
+  /** The shadow resolver's own verdict for every FEATURE_REGISTRY key — informational only;
+   *  `served` is what's actually enforced while entitlements.mode is "shadow". */
+  resolver: Record<string, boolean>;
   modes: Record<string, string>;
   catalogVersionId: string;
   computedAt: string;

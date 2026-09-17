@@ -3,7 +3,6 @@ import type { FlagKey, SubscriptionView } from "@routeflow/types";
 import { apiClient } from "../api-client";
 import { useAuthStore } from "../auth-store";
 import { useTenantStore } from "../tenant-store";
-import { useTenantFeatures } from "../tenant-features";
 
 // ─── Subscription (Lite-L2, WP11) ──────────────────────────────────────────────
 //
@@ -26,10 +25,10 @@ export function useSubscription() {
 }
 
 /**
- * Feature grants v2 brief A (design 2026-09-17 §2): does the tenant's server-computed
- * effective set grant `key`? Backed by `GET /tenants/me/features` (`useTenantFeatures`,
- * `lib/tenant-features.ts`) instead of `useSubscription().flags` — the single
- * server-computed source, not a local list or JWT claim. `resolved`/`failed` follow the
+ * Does the tenant's current subscription grant `key`? Backed by `useSubscription().flags`
+ * (`GET /billing/subscription`) — feature grants v2's server-computed `/tenants/me/features`
+ * (design 2026-09-17 §2) exists but is not yet a client read path (Opus review of 9923b87c,
+ * item 1: the client switch reintroduces P0-class risk). `resolved`/`failed` follow the
  * same contract as useDeveloperMode/useDriverPayments/useRoutesAccess: `resolved` says
  * the flag was actually READ (not just "not loading"), and any caller that can strand a
  * user (the operator section lock, `planLockedSection`) must key off `resolved`, never a
@@ -40,9 +39,9 @@ export function usePlanFlag(key: FlagKey): {
   resolved: boolean;
   failed: boolean;
 } {
-  const q = useTenantFeatures();
+  const q = useSubscription();
   return {
-    enabled: q.data?.effective === undefined ? true : q.data.effective.includes(key),
+    enabled: q.data?.flags === undefined ? true : q.data.flags.includes(key),
     resolved: q.isSuccess,
     failed: q.isError,
   };

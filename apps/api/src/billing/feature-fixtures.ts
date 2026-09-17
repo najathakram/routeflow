@@ -190,12 +190,18 @@ export function mockCollaborators(fixture: FeatureFixture, flagsOverride?: strin
     allActive: jest.fn().mockResolvedValue(overrideMap),
   };
 
+  // getPublishedCatalog defaults to the SAME version/definitions as getVersionForTenant — most
+  // fixtures don't distinguish "tenant's pinned version" from "current published catalog"; a
+  // test that needs them to differ (a plan swap resolving against a newer published catalog)
+  // overrides this mock directly rather than adding a second fixture shape here.
+  const catalogVersion = {
+    id: fixture.planVersionId,
+    definitions: fixture.definitions,
+    addonSkus: [],
+  };
   const catalog = {
-    getVersionForTenant: jest.fn().mockResolvedValue({
-      id: fixture.planVersionId,
-      definitions: fixture.definitions,
-      addonSkus: [],
-    }),
+    getVersionForTenant: jest.fn().mockResolvedValue(catalogVersion),
+    getPublishedCatalog: jest.fn().mockResolvedValue(catalogVersion),
   };
 
   return { entitlements, featureOverrides, catalog, prisma };

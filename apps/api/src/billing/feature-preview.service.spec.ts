@@ -1,15 +1,18 @@
 import { FeaturePreviewService } from "./feature-preview.service";
 import { V11_PIN_FIXTURE, mockCollaborators } from "./feature-fixtures";
 
-function buildPreview(fixture: typeof V11_PIN_FIXTURE) {
-  const { entitlements, featureOverrides, catalog, prisma } = mockCollaborators(fixture);
+function buildPreview(fixture: typeof V11_PIN_FIXTURE, flagsOverride?: string[]) {
+  const { entitlements, featureOverrides, catalog, prisma } = mockCollaborators(
+    fixture,
+    flagsOverride,
+  );
   const preview = new FeaturePreviewService(
     entitlements as any,
     featureOverrides as any,
     catalog as any,
     prisma as any,
   );
-  return { preview, featureOverrides };
+  return { preview, featureOverrides, catalog };
 }
 
 // Oracle 6: preview == post-apply trace, 0 writes.
@@ -63,5 +66,68 @@ describe("FeaturePreviewService — oracle 6 (preview == post-apply trace, 0 wri
     expect(afterReports.resolver).toBe(false); // STARTER's fixture featureFlags do not
     expect(result.changed).toContain("flag.reports");
     expect(featureOverrides.get).not.toHaveBeenCalled();
+  });
+
+  // Item 6 (Opus review of 9923b87c): preview == post-apply, covering an addon-granted flag
+  // AND a plan swap together — the combination the two isolated tests above never exercise.
+  it("preview == post-apply: an addon-granted flag survives a plan swap", async () => {
+    // flag.messaging is bridged via an active addon SKU (in ent.flags, NOT in SCALE's own
+    // featureFlags) — exactly resolveOneKey's ADDON_SKU branch.
+    const scaleWithAddonFlag = { ...V11_PIN_FIXTURE, name: "scale-with-addon-flag" };
+    const { preview } = buildPreview(scaleWithAddonFlag, [
+      "flag.msrp",
+      "flag.sales_agents",
+      "flag.reports",
+      "flag.returns",
+      "flag.messaging",
+    ]);
+
+    const previewResult = await preview.preview("t1", { planKey: "STARTER" }); // lacks flag.messaging too
+    const previewAfterMessaging = previewResult.after.find((f) => f.key === "flag.messaging")!;
+    expect(previewAfterMessaging.resolver).toBe(true);
+    expect(previewAfterMessaging.source).toBe("ADDON_SKU");
+    // Sanity: a flag genuinely lost by the swap (SCALE-included, STARTER-excluded, never
+    // addon-bridged) really is lost — proves the addon isolation isn't "everything survives".
+    const previewAfterReports = previewResult.after.find((f) => f.key === "flag.reports")!;
+    expect(previewAfterReports.resolver).toBe(false);
+
+    // "Post-apply": the tenant is now ACTUALLY on STARTER, still holding the same
+    // addon-bridged flag — a real plan swap never touches addon grants.
+    const postApplyFixture = { ...scaleWithAddonFlag, planKey: "STARTER" };
+    const { preview: postApplyPreview } = buildPreview(postApplyFixture, [
+      "flag.msrp",
+      "flag.messaging",
+    ]);
+    const postApplyResult = await postApplyPreview.preview("t1", {});
+    const postApplyBeforeMessaging = postApplyResult.before.find(
+      (f) => f.key === "flag.messaging",
+    )!;
+
+    expect(previewAfterMessaging.resolver).toBe(postApplyBeforeMessaging.resolver);
+    expect(previewAfterMessaging.source).toBe(postApplyBeforeMessaging.source);
+  });
+
+  // Item 6(b): the target plan resolves against the CURRENT PUBLISHED catalog, never the
+  // tenant's own (possibly stale) pinned version — a plan the pinned version doesn't even
+  // carry must still preview correctly.
+  it("resolves the swap target against the published catalog, not the tenant's pinned version", async () => {
+    const { preview, catalog } = buildPreview(V11_PIN_FIXTURE);
+    (catalog.getPublishedCatalog as jest.Mock).mockResolvedValue({
+      id: "fixture-v12-published",
+      definitions: [
+        ...V11_PIN_FIXTURE.definitions,
+        {
+          planKey: "ENTERPRISE",
+          featureFlags: ["flag.msrp", "flag.sales_agents", "flag.reports", "flag.analytics"],
+        },
+      ],
+      addonSkus: [],
+    });
+
+    const result = await preview.preview("t1", { planKey: "ENTERPRISE" });
+
+    const afterAnalytics = result.after.find((f) => f.key === "flag.analytics")!;
+    expect(afterAnalytics.resolver).toBe(true); // only resolvable via the PUBLISHED catalog's def
+    expect(afterAnalytics.detail.catalogVersionId).toBe("fixture-v12-published");
   });
 });

@@ -2,8 +2,22 @@ import { EntitlementAuthority } from "./entitlement-authority.service";
 import { FeatureResolverService } from "./feature-resolver.service";
 import { FeatureDiffService } from "./feature-diff.service";
 import { EntitlementsModeService } from "./entitlements-mode.service";
+import { SubscriptionService } from "./subscription.service";
 import { FEATURE_REGISTRY } from "./feature-registry";
-import { V11_PIN_FIXTURE, LITE_FIXTURE, mockCollaborators } from "./feature-fixtures";
+import {
+  V11_PIN_FIXTURE,
+  LITE_FIXTURE,
+  GRANT_OVERRIDE_FIXTURE,
+  DENY_OVERRIDE_FIXTURE,
+  mockCollaborators,
+} from "./feature-fixtures";
+
+/** Item 3 (Opus review of 9923b87c): the diff write is now fire-and-forget — its own
+ *  `record()` call happens synchronously (so a spy sees it immediately), but the mocked
+ *  Prisma calls INSIDE it are still promise-deferred, so a test that inspects the write's
+ *  SIDE EFFECT (the diffRows map) must let that chain settle first. setImmediate runs after
+ *  the current microtask queue drains, which is enough for record()'s handful of awaits. */
+const flushMicrotasks = () => new Promise((resolve) => setImmediate(resolve));
 
 /** Bare-bones PrismaService mock — only the shapes FeatureDiffService/EntitlementsModeService touch. */
 function mockPrisma() {
@@ -126,6 +140,7 @@ describe("EntitlementAuthority — feature grants v2 brief A oracles", () => {
     // flag.estimates is dark and NOT in V11_PIN_FIXTURE's SCALE featureFlags.
     const verdict = await authority.can("t1", "flag.estimates");
     expect(verdict).toBe(true); // old path still decides in shadow — no behavior change
+    await flushMicrotasks(); // the diff write is fire-and-forget (item 3) — let it land
     const rows = [...prisma.__diffRows.values()];
     const row = rows.find((r) => r.featureKey === "flag.estimates");
     expect(row).toBeDefined();
@@ -146,6 +161,7 @@ describe("EntitlementAuthority — feature grants v2 brief A oracles", () => {
   it("hasUnexplained() reports true after a diff, false once every row is explained", async () => {
     const { authority, diffService } = buildAuthority(V11_PIN_FIXTURE);
     await authority.can("t1", "flag.estimates"); // produces one diff row
+    await flushMicrotasks(); // the diff write is fire-and-forget (item 3) — let it land
     expect(await diffService.hasUnexplained()).toBe(true);
 
     const [row] = await diffService.list({ unexplainedOnly: true });
@@ -177,4 +193,87 @@ describe("EntitlementAuthority — feature grants v2 brief A oracles", () => {
     await modeService.setMode("live");
     expect(await authority.can("t1", "flag.estimates")).toBe(false);
   });
+
+  // Item 3 (Opus review of 9923b87c): the fire-and-forget write is memoized — a second
+  // disagreement for the identical (tenant, key, before, after) tuple within the TTL must
+  // not re-invoke FeatureDiffService.record (only count/lastSeenAt churn would result, and
+  // that's exactly the redundant-write traffic the memo exists to suppress).
+  it("suppresses a repeat fire-and-forget diff write for the identical disagreement within the TTL", async () => {
+    const { authority, diffService } = buildAuthority(V11_PIN_FIXTURE);
+    const recordSpy = jest.spyOn(diffService, "record");
+    await authority.can("t1", "flag.estimates");
+    await authority.can("t1", "flag.estimates");
+    await authority.can("t1", "flag.estimates");
+    expect(recordSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Item 7 (Opus review of 9923b87c): an authority oracle that sets PLAN_FLAG_ENFORCEMENT
+// explicitly for both "on" and "off", proving the old path (what `served`/shadow-mode
+// actually enforces) responds to the switch exactly like PlanFlagGuard always has.
+describe("EntitlementAuthority — old path respects PLAN_FLAG_ENFORCEMENT explicitly, on and off", () => {
+  const ORIGINAL_ENV = process.env;
+
+  afterEach(() => {
+    process.env = ORIGINAL_ENV;
+  });
+
+  // flag.analytics is a DARK_PLAN_FLAGS member OUTSIDE PREPIN_DARK_FLAGS (the 5 P0 keys stay
+  // dark unconditionally) — the only kind of key PLAN_FLAG_ENFORCEMENT actually gates.
+  it('enforcement "on": a dark-rollout flag the tenant does not hold is denied (no courtesy allow)', async () => {
+    process.env = { ...ORIGINAL_ENV, PLAN_FLAG_ENFORCEMENT: "on" };
+    const { authority } = buildAuthority(V11_PIN_FIXTURE); // SCALE; featureFlags omit flag.analytics
+    expect(await authority.can("t1", "flag.analytics")).toBe(false);
+  });
+
+  it('enforcement "off" (and unset): the same flag/tenant gets the courtesy allow', async () => {
+    process.env = { ...ORIGINAL_ENV };
+    delete process.env.PLAN_FLAG_ENFORCEMENT;
+    const { authority } = buildAuthority(V11_PIN_FIXTURE);
+    expect(await authority.can("t1", "flag.analytics")).toBe(true);
+
+    process.env.PLAN_FLAG_ENFORCEMENT = "off";
+    const { authority: authorityOff } = buildAuthority(V11_PIN_FIXTURE);
+    expect(await authorityOff.can("t1", "flag.analytics")).toBe(true);
+  });
+});
+
+// Item 2 (Opus review of 9923b87c): `served` must be byte-identical to
+// `getSubscription().flags` — not just tested-equal to a hand-written expectation, but
+// verified against a REAL SubscriptionService instance built from the SAME fixture, so a
+// future change to either side that drifts them apart fails this oracle immediately.
+describe("EntitlementAuthority.servedFlags() — parity oracle vs SubscriptionService.getSubscription().flags", () => {
+  function buildSubscriptionService(fixture: typeof V11_PIN_FIXTURE) {
+    const { entitlements, featureOverrides, catalog } = mockCollaborators(fixture);
+    const prisma = {
+      tenantSubscription: { findUnique: jest.fn().mockResolvedValue(null) },
+      tenantAddon: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    const meters = {} as any;
+    return new SubscriptionService(
+      prisma as any,
+      catalog as any,
+      entitlements as any,
+      meters,
+      featureOverrides as any,
+    );
+  }
+
+  it.each([
+    ["v11-pin (SCALE)", V11_PIN_FIXTURE],
+    ["LITE", LITE_FIXTURE],
+    ["GRANT override", GRANT_OVERRIDE_FIXTURE],
+    ["DENY override", DENY_OVERRIDE_FIXTURE],
+  ])(
+    "%s: EntitlementAuthority.servedFlags() matches getSubscription().flags key for key",
+    async (_label, fixture) => {
+      const { authority } = buildAuthority(fixture);
+      const subscription = buildSubscriptionService(fixture);
+
+      const served = await authority.servedFlags("t1");
+      const subscriptionFlags = (await subscription.getSubscription("t1")).flags;
+
+      expect(new Set(served)).toEqual(new Set(subscriptionFlags));
+    },
+  );
 });

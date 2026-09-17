@@ -479,19 +479,29 @@ export class PlatformAdminController {
   @Get("tenants/:id/features/effective")
   @ApiOperation({ summary: "Every registry key's resolved verdict for one tenant (explain trace)" })
   async getTenantFeaturesEffective(@Param("id") id: string) {
-    const resolved = await this.authority.resolveAll(id);
+    const [resolved, oldPathByKey, mode] = await Promise.all([
+      this.authority.resolveAll(id),
+      this.authority.computeOldPathAll(id),
+      this.entitlementsMode.getMode(),
+    ]);
     if (!resolved) {
       return { effective: [], computedAt: new Date().toISOString(), unavailable: true };
     }
     return {
       effective: FEATURE_REGISTRY.map((f) => {
         const entry = resolved.byKey.get(f.key)!;
+        // Opus review of 9923b87c, item 5: `serving` is the OLD PATH's verdict (what's
+        // actually applied while entitlements.mode is "shadow"), not the resolver's own
+        // value — those two only coincide by construction, and the whole point of the
+        // explain trace is to show where they diverge. `enforced` reflects the REAL mode:
+        // true only once "live" makes the resolver's verdict the one that's applied.
+        const serving = oldPathByKey.get(f.key) ?? entry.effective;
         return toEffectiveFeature(
           entry,
-          entry.effective,
+          serving,
           resolved.planKey,
           resolved.catalogVersionId,
-          true,
+          mode === "live",
         );
       }),
       computedAt: resolved.computedAt,
@@ -501,16 +511,21 @@ export class PlatformAdminController {
   @Get("tenants/:id/features/effective/:key")
   @ApiOperation({ summary: "One registry key's resolved verdict for one tenant (explain trace)" })
   async getTenantFeatureEffective(@Param("id") id: string, @Param("key") key: string) {
-    const resolved = await this.authority.resolveAll(id);
+    const [resolved, oldPathByKey, mode] = await Promise.all([
+      this.authority.resolveAll(id),
+      this.authority.computeOldPathAll(id),
+      this.entitlementsMode.getMode(),
+    ]);
     if (!resolved) return { key, unavailable: true };
     const entry = resolved.byKey.get(key);
     if (!entry) throw new NotFoundException(`"${key}" is not a registered feature key.`);
+    const serving = oldPathByKey.get(key) ?? entry.effective;
     return toEffectiveFeature(
       entry,
-      entry.effective,
+      serving,
       resolved.planKey,
       resolved.catalogVersionId,
-      true,
+      mode === "live",
     );
   }
 

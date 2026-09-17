@@ -7,8 +7,14 @@ import { EntitlementsModeService } from "./entitlements-mode.service";
 import { FeatureDiffService } from "./feature-diff.service";
 import { FEATURE_REGISTRY } from "./feature-registry";
 import { addonGateState } from "./addon-gate-registry";
-import { isDarkFlag, allowsFlag } from "./plan-flag-policy";
-import type { FeatureModeState } from "@routeflow/types";
+import { isDarkFlag, allowsFlag, computeServedFlags } from "./plan-flag-policy";
+import type { FeatureModeState, FeatureSource } from "@routeflow/types";
+
+/** Fire-and-forget diff writes (item 3): suppress a re-write of the SAME disagreement from
+ *  the SAME tenant within this window — a hot key flips the guard on every request, and
+ *  without this a busy tenant would hammer the DB with redundant upserts of a row whose
+ *  count/lastSeenAt churn nobody reads at that frequency. */
+const DIFF_MEMO_TTL_MS = 10 * 60_000;
 
 const FEATURE_BY_KEY = new Map(FEATURE_REGISTRY.map((f) => [f.key, f]));
 
@@ -31,6 +37,8 @@ const FEATURE_BY_KEY = new Map(FEATURE_REGISTRY.map((f) => [f.key, f]));
 @Injectable()
 export class EntitlementAuthority {
   private readonly logger = new Logger(EntitlementAuthority.name);
+  /** memo key `tenantId:featureKey:before:after` → expiresAt (ms) — see DIFF_MEMO_TTL_MS. */
+  private readonly diffMemo = new Map<string, number>();
 
   constructor(
     private readonly entitlements: EntitlementsService,
@@ -59,16 +67,109 @@ export class EntitlementAuthority {
     const newEntry = resolved.byKey.get(key);
     const newVerdict = newEntry?.effective ?? false;
     if (newVerdict !== oldVerdict) {
-      await this.diffService.record(
-        tenantId,
-        key,
-        oldVerdict,
-        newVerdict,
-        newEntry?.source ?? "UNKNOWN",
-      );
+      // Item 3 (Opus review of 9923b87c): fire-and-forget — a diff-log write is an audit
+      // trail, never a reason to add latency or a failure mode to the guard decision that
+      // triggered it. Not `await`ed; errors are caught and logged, never thrown.
+      this.recordDiffMemoized(tenantId, key, oldVerdict, newVerdict, newEntry?.source ?? "UNKNOWN");
     }
 
     return mode === "live" ? newVerdict : oldVerdict;
+  }
+
+  /** Suppresses a redundant fire-and-forget write of the identical disagreement within
+   *  DIFF_MEMO_TTL_MS (see the constant's own comment), else delegates to
+   *  FeatureDiffService.record() without awaiting it. */
+  private recordDiffMemoized(
+    tenantId: string,
+    key: string,
+    before: boolean,
+    after: boolean,
+    source: FeatureSource,
+  ): void {
+    const memoKey = `${tenantId}:${key}:${before}:${after}`;
+    const now = Date.now();
+    const expiresAt = this.diffMemo.get(memoKey);
+    if (expiresAt !== undefined && expiresAt > now) return;
+    this.diffMemo.set(memoKey, now + DIFF_MEMO_TTL_MS);
+    if (this.diffMemo.size > 5000) this.pruneDiffMemo(now);
+
+    void this.diffService.record(tenantId, key, before, after, source).catch((err) => {
+      this.logger.error(
+        `Fire-and-forget diff record failed for tenant ${tenantId} key ${key}`,
+        err as Error,
+      );
+    });
+  }
+
+  private pruneDiffMemo(now: number): void {
+    for (const [k, expiresAt] of this.diffMemo) {
+      if (expiresAt <= now) this.diffMemo.delete(k);
+    }
+  }
+
+  /**
+   * `served` for `/tenants/me/features` (item 2): the SAME array `getSubscription().flags`
+   * returns, via the SAME shared function — see plan-flag-policy.ts's computeServedFlags
+   * doc comment for why this is provably identical rather than a re-derivation.
+   */
+  async servedFlags(tenantId: string): Promise<string[]> {
+    const [ent, overrides] = await Promise.all([
+      this.entitlements.resolve(tenantId),
+      this.featureOverrides.allActive(tenantId),
+    ]);
+    return computeServedFlags(ent.planKey, ent.flags, overrides);
+  }
+
+  /**
+   * Old-path verdict for EVERY registry key (item 5's `serving`) — fetches each collaborator
+   * ONCE (mirrors FeatureResolverService.compute()'s own batching) rather than computeOldPath's
+   * per-key round trips, which would mean up to 2×|FEATURE_REGISTRY| queries for a full trace.
+   * Semantics match computeOldPath exactly, including its resolve-failure fallback to
+   * isDarkFlag(key) for the flag-keyed half.
+   */
+  async computeOldPathAll(tenantId: string): Promise<Map<string, boolean>> {
+    const [overrides, activeAddonRows, ent, isAlwaysEnforced] = await Promise.all([
+      this.featureOverrides.allActive(tenantId),
+      this.prisma.tenantAddon.findMany({
+        where: { tenantId, active: true },
+        select: { addonKey: true },
+      }),
+      this.entitlements.resolve(tenantId).catch((err) => {
+        this.logger.error(
+          `Old-path bulk entitlement resolution failed for tenant ${tenantId}`,
+          err as Error,
+        );
+        return null;
+      }),
+      this.entitlements.isAlwaysEnforcedTenant(tenantId),
+    ]);
+    const activeAddonSet = new Set(activeAddonRows.map((a) => a.addonKey));
+
+    const result = new Map<string, boolean>();
+    for (const feature of FEATURE_REGISTRY) {
+      const override = overrides.get(feature.key);
+      if (override === "GRANT") {
+        result.set(feature.key, true);
+        continue;
+      }
+      if (override === "DENY") {
+        result.set(feature.key, false);
+        continue;
+      }
+
+      const isAddonKeyed = feature.gate.via === "RequireAddon" || feature.gate.via === "guard";
+      if (isAddonKeyed) {
+        const active = activeAddonSet.has(feature.key);
+        result.set(
+          feature.key,
+          active || (addonGateState(feature.key) === "dark" && !isAlwaysEnforced),
+        );
+        continue;
+      }
+
+      result.set(feature.key, ent ? allowsFlag(ent, feature.key) : isDarkFlag(feature.key));
+    }
+    return result;
   }
 
   /**

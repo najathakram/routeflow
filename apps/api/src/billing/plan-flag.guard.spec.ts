@@ -41,6 +41,52 @@ function buildAuthority(
   );
 }
 
+/**
+ * Item 7 (Opus review of 9923b87c): unlike `buildAuthority` above (resolver always
+ * unavailable, degrading `can()` to pure old-path), this builds a REAL EntitlementAuthority
+ * whose resolver DOES answer, and DISAGREES with the old path — proving the guard's
+ * caller-visible outcome (allow/deny) stays on the old path in shadow mode even when a live
+ * resolver verdict exists, and that the disagreement is still recorded.
+ */
+function buildAuthorityWithDisagreeingResolver(
+  entitlements: { resolve: jest.Mock },
+  featureOverrides: { get: jest.Mock },
+  flagKey: string,
+  resolverVerdict: boolean,
+): { authority: EntitlementAuthority; diffService: { record: jest.Mock } } {
+  const prisma = { tenantAddon: { findUnique: jest.fn().mockResolvedValue(null) } } as any;
+  const byKey = new Map([
+    [
+      flagKey,
+      { key: flagKey, effective: resolverVerdict, source: "NONE" as const, charged: false },
+    ],
+  ]);
+  const resolver = {
+    resolve: jest.fn().mockResolvedValue({
+      tenantId: "t1",
+      planKey: "STARTER",
+      catalogVersionId: "v1",
+      byKey,
+      computedAt: new Date().toISOString(),
+    }),
+  } as unknown as FeatureResolverService;
+  const modeService = {
+    getMode: jest.fn().mockResolvedValue("shadow"),
+  } as unknown as EntitlementsModeService;
+  // The real record() is async — recordDiffMemoized calls `.catch()` on its return value
+  // (fire-and-forget, item 3), so the mock must return a Promise too, not `undefined`.
+  const diffService = { record: jest.fn().mockResolvedValue(undefined) };
+  const authority = new EntitlementAuthority(
+    entitlements as unknown as EntitlementsService,
+    featureOverrides as unknown as FeatureOverrideService,
+    resolver,
+    modeService,
+    diffService as unknown as FeatureDiffService,
+    prisma,
+  );
+  return { authority, diffService };
+}
+
 function contextFor(user: { tenantId: string | null } | undefined): ExecutionContext {
   return {
     getHandler: () => ({}),
@@ -467,5 +513,79 @@ describe("feature-grants PR-1: override precedence (absolute, ignores plan and d
     entitlements.resolve.mockResolvedValue({ planKey: "ENTERPRISE", flags: ["flag.msrp"] });
     await expect(guard.canActivate(contextFor({ tenantId: "t1" }))).resolves.toBe(true);
     expect(entitlements.resolve).toHaveBeenCalledWith("t1");
+  });
+});
+
+// Item 7 (Opus review of 9923b87c): the guard's caller-visible outcome must stay on the old
+// path in shadow mode even when a LIVE resolver verdict disagrees with it — proving the
+// client-facing behavior is unchanged regardless of what the shadow resolver computes.
+describe("feature-grants v2: guard stays on the old path when the live resolver disagrees", () => {
+  const ORIGINAL_ENV = process.env;
+  let reflector: { getAllAndOverride: jest.Mock };
+  let entitlements: { resolve: jest.Mock };
+  let catalog: { upgradeTargetForFlag: jest.Mock };
+  let featureOverrides: { get: jest.Mock };
+
+  beforeEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+    delete process.env.PLAN_FLAG_ENFORCEMENT; // flag.reports genuinely dark for this tenant
+    reflector = { getAllAndOverride: jest.fn() };
+    entitlements = { resolve: jest.fn() };
+    catalog = { upgradeTargetForFlag: jest.fn().mockResolvedValue(NO_UPGRADE) };
+    featureOverrides = { get: jest.fn().mockResolvedValue(null) };
+  });
+
+  afterEach(() => {
+    process.env = ORIGINAL_ENV;
+  });
+
+  it("resolver says DENY, old path says courtesy-ALLOW — guard still allows, and a diff is recorded", async () => {
+    reflector.getAllAndOverride.mockReturnValue("flag.reports");
+    entitlements.resolve.mockResolvedValue({ planKey: "STARTER", flags: [] });
+    const { authority, diffService } = buildAuthorityWithDisagreeingResolver(
+      entitlements,
+      featureOverrides,
+      "flag.reports",
+      false,
+    );
+    const guard = new PlanFlagGuard(
+      reflector as unknown as Reflector,
+      entitlements as unknown as EntitlementsService,
+      catalog as unknown as PlanCatalogService,
+      featureOverrides as unknown as FeatureOverrideService,
+      authority,
+    );
+
+    await expect(guard.canActivate(contextFor({ tenantId: "t1" }))).resolves.toBe(true);
+    expect(diffService.record).toHaveBeenCalledWith("t1", "flag.reports", true, false, "NONE");
+  });
+
+  it("resolver says ALLOW, old path says DENY (enforced, no courtesy) — guard still denies", async () => {
+    reflector.getAllAndOverride.mockReturnValue("flag.msrp"); // not in DARK_PLAN_FLAGS
+    entitlements.resolve.mockResolvedValue({ planKey: "STARTER", flags: [] });
+    catalog.upgradeTargetForFlag.mockResolvedValue({
+      planKey: "SCALE",
+      planMonthlyPrice: "499.00",
+      addonSku: null,
+      addonMonthlyPrice: null,
+    });
+    const { authority, diffService } = buildAuthorityWithDisagreeingResolver(
+      entitlements,
+      featureOverrides,
+      "flag.msrp",
+      true,
+    );
+    const guard = new PlanFlagGuard(
+      reflector as unknown as Reflector,
+      entitlements as unknown as EntitlementsService,
+      catalog as unknown as PlanCatalogService,
+      featureOverrides as unknown as FeatureOverrideService,
+      authority,
+    );
+
+    const err = await guard.canActivate(contextFor({ tenantId: "t1" })).catch((e) => e);
+    expect(err).toBeInstanceOf(ForbiddenException);
+    expect((err.getResponse() as PlanGateErrorBody).flag).toBe("flag.msrp");
+    expect(diffService.record).toHaveBeenCalledWith("t1", "flag.msrp", false, true, "NONE");
   });
 });
