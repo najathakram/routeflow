@@ -1317,3 +1317,124 @@ describe("EmailService.sendPlatform — platform-only send, never tenant SMTP/br
     expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({ to: "admin@acme.test" }));
   });
 });
+
+/**
+ * N4 — low-stock digest template. Deliberately built with `getTenantId: () => null` (no
+ * ALS tenant context), matching how `LowStockDigestService`'s cron actually calls this —
+ * that null tenantId is what routes `send()` to the platform sender (EMAIL_FROM) instead
+ * of resolving tenant SMTP, per the N4 ground rule ("platform emails via EMAIL_FROM").
+ */
+describe("EmailService.sendLowStockDigest (N4)", () => {
+  function makePlatformService(): EmailService {
+    const config = {
+      get: (k: string) =>
+        k === "EMAIL_FROM" ? "RouteFlow <invoices@send.routeflow.info>" : undefined,
+    } as any;
+    const prisma = { getTenantId: () => null } as any;
+    const encryption = { decrypt: (v: string) => v } as any;
+    return new EmailService(config, prisma, encryption);
+  }
+
+  const items = [
+    { name: "Acme Widget", sku: "WID-001", currentStock: 3, reorderPoint: 10 },
+    { name: "Acme Gadget", sku: null, currentStock: 0, reorderPoint: 5 },
+  ];
+
+  it("REG-N4: subject names the item count, recipient and body carry the digest's key lines", async () => {
+    const svc = makePlatformService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "resend" } as any);
+
+    await svc.sendLowStockDigest({
+      to: "admin@acme.example",
+      businessName: "Acme Wholesale",
+      items,
+    });
+
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    const call = sendSpy.mock.calls[0][0];
+    expect(call.to).toBe("admin@acme.example");
+    expect(call.subject).toBe("Low stock alert — 2 items below threshold");
+    expect(call.html).toContain("Acme Wholesale");
+    expect(call.html).toContain("Low Stock Alert");
+    expect(call.html).toContain("Acme Widget");
+    expect(call.html).toContain("WID-001");
+    expect(call.html).toContain("Acme Gadget");
+    // no SKU on file renders an em dash, never a blank/undefined cell
+    expect(call.html).toContain("—");
+  });
+
+  it("REG-N4: a single item gets singular subject/body wording", async () => {
+    const svc = makePlatformService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "resend" } as any);
+
+    await svc.sendLowStockDigest({
+      to: "admin@acme.example",
+      businessName: "Acme Wholesale",
+      items: [items[0]],
+    });
+
+    expect(sendSpy.mock.calls[0][0].subject).toBe("Low stock alert — 1 item below threshold");
+    expect(sendSpy.mock.calls[0][0].html).toContain("1 item is below its reorder point");
+  });
+
+  it("REG-N4: a product name containing HTML is escaped, never injected raw", async () => {
+    const svc = makePlatformService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "resend" } as any);
+
+    await svc.sendLowStockDigest({
+      to: "admin@acme.example",
+      businessName: "Acme Wholesale",
+      items: [
+        { name: "<img src=x onerror=alert(1)>", sku: null, currentStock: 1, reorderPoint: 2 },
+      ],
+    });
+
+    const html = sendSpy.mock.calls[0][0].html;
+    expect(html).not.toContain("<img src=x onerror=alert(1)>");
+    expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+  });
+
+  it("REG-N4: never resolves tenant SMTP — routes via the platform sender (no tenant ALS context)", async () => {
+    const svc = makePlatformService();
+    const res = await svc.sendLowStockDigest({
+      to: "admin@acme.example",
+      businessName: "Acme Wholesale",
+      items,
+    });
+    // No RESEND_API_KEY and no tenant SMTP configured (getTenantId → null short-circuits
+    // getTenantEmailConfig) → honest "not delivered, no transport", never a silent mock
+    // success and never an attempt to read tenant-scoped config.
+    expect(res).toMatchObject({ delivered: false, transport: "none" });
+  });
+
+  it("REG-N4: a large item list is capped at 100 rendered rows with an '…and N more' row, but the subject stays truthful about the real total", async () => {
+    const svc = makePlatformService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "resend" } as any);
+    const many = Array.from({ length: 137 }, (_, i) => ({
+      name: `SKU ${i}`,
+      sku: `S-${i}`,
+      currentStock: 1,
+      reorderPoint: 10,
+    }));
+
+    await svc.sendLowStockDigest({
+      to: "admin@acme.example",
+      businessName: "Acme Wholesale",
+      items: many,
+    });
+
+    const call = sendSpy.mock.calls[0][0];
+    expect(call.subject).toBe("Low stock alert — 137 items below threshold");
+    expect(call.html).toContain("SKU 99");
+    expect(call.html).not.toContain("SKU 100");
+    expect(call.html).toContain("…and 37 more items");
+  });
+});

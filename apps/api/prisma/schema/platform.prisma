@@ -117,6 +117,34 @@ model TenantAddon {
   @@index([tenantId, sku])
 }
 
+enum FeatureOverrideEffect {
+  GRANT
+  DENY
+}
+
+/// Per-tenant, per-key entitlement override. When a non-revoked row exists for
+/// (tenantId, featureKey) it decides the gate outright — GRANT allows, DENY denies —
+/// regardless of plan/addon state or dark/enforced gate mode (FeatureOverrideService).
+/// featureKey must name a row in FEATURE_REGISTRY (feature-registry.ts), validated at
+/// write time. Partial unique index (raw SQL in the migration): one non-revoked row
+/// per (tenantId, featureKey) — revoking closes it and a new row may be created.
+model TenantFeatureOverride {
+  id          String                @id @default(uuid())
+  tenantId    String
+  featureKey  String
+  effect      FeatureOverrideEffect
+  reason      String
+  expiresAt   DateTime?
+  createdById String?
+  createdAt   DateTime              @default(now())
+  revokedAt   DateTime?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, featureKey])
+  @@index([featureKey])
+}
+
 // ─── Billing plan catalog (GLOBAL reference data — not tenant-scoped) ─────────
 
 model PlanVersion {
@@ -308,6 +336,11 @@ enum NotificationEvent {
   ORDER_CONFIRMED
   OUT_FOR_DELIVERY
   DELIVERED
+  // N1 (2026-09-16): buyer-facing order-status email/messaging events, added
+  // alongside the real EMAIL channel provider — CONFIRMED/OUT_FOR_DELIVERY/
+  // DELIVERED already existed; CANCELLED did not (only the older, separate
+  // push-notification path in orders.service.ts's `notifMap` covered it).
+  CANCELLED
   ORDER_CHANGED_AT_DOOR
   INVOICE_SENT // email/portal only; WA/SMS cells render disabled
   PAYMENT_REMINDER
@@ -801,4 +834,66 @@ model CrmHandoff {
 
   @@unique([tenantId, provider, opportunityId])
   @@index([tenantId, status, createdAt])
+}
+
+// ─── Marketing demo bookings (NOT tenant-scoped — prospects, not customers) ───
+// A visitor on the public marketing site books a product walkthrough against the
+// admin@routeflow.info Google Calendar. These rows are the RouteFlow-side record
+// of that booking: Google owns the event, we own the lead. No `tenantId` — the
+// person booking does not have a workspace yet, which is the whole point.
+
+enum DemoBookingStatus {
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+/// RACE GUARD: migration `20260916031500_demo_booking_race_guard` adds a
+/// PARTIAL unique index — `CREATE UNIQUE INDEX ... ON "DemoBooking"("startsAt")
+/// WHERE status = 'CONFIRMED'` — that Prisma's schema language cannot express
+/// (no `WHERE` on `@@index`/`@@unique`), so it exists ONLY in that migration
+/// file; `prisma migrate dev` will not see it as drift because nothing here
+/// declares a conflicting full unique constraint on `startsAt`. Application
+/// code also serializes create/reschedule through a `demo-booking` advisory
+/// lock (`common/db-locks.ts`) keyed on the slot's start instant — the index
+/// is the second, database-level line of defence for the same invariant.
+model DemoBooking {
+  id       String  @id @default(uuid())
+  name     String
+  email    String
+  company  String
+  phone    String?
+  notes    String?
+
+  /// Slot boundaries, always stored in UTC. `timeZone` is the IANA zone the
+  /// visitor booked in — kept so confirmation emails and the manage page can
+  /// echo the time back in the zone they actually chose.
+  startsAt DateTime
+  endsAt   DateTime
+  timeZone String
+
+  status       DemoBookingStatus @default(CONFIRMED)
+  cancelledAt  DateTime?
+  cancelReason String?
+
+  /// The Google Calendar event this row mirrors, and its generated Meet link.
+  /// Null when the calendar write failed — the lead is still captured.
+  googleEventId String?
+  meetUrl       String?
+
+  /// SHA-256 of the signed manage token handed out in the confirmation email.
+  /// The raw token is never stored, so a database read cannot cancel a booking.
+  manageTokenHash String @unique
+
+  /// Set when this booking replaced an earlier slot, for support context.
+  rescheduledFrom DateTime?
+  rescheduleCount Int       @default(0)
+
+  sourcePage String?
+  createdIp  String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([startsAt, status])
+  @@index([email, createdAt])
 }

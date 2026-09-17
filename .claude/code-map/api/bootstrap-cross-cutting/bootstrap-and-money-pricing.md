@@ -166,6 +166,16 @@ specs.json`** (`apps/api/`, sibling build config) — extends `tsconfig.json`, `
     `utils/pricing.ts` are deleted, api imports the bare specifier).
     `msrp.ts` is **server-only, no mirror**, since the only resolution moment is the invoice-line
     write. Spec: `common/msrp.spec.ts`.
+    **B451 (Strix gap 4) — `assertMoneyInvariants`** (`packages/pricing/src/money-invariants.ts`,
+    see `packages.md`) throws `MoneyInvariantError` (`code: "MONEY_INVARIANT"`) on a negative/
+    non-finite subtotal/discount/tax/shipping/total or `discount > subtotal`. HTTP call sites wrap
+    it via `apps/api/src/common/money-invariants.util.ts`'s `assertMoneyInvariantsOrThrow`, which
+    maps the error to a `BadRequestException({code: "MONEY_INVARIANT"})` — never a 500. Wired into
+    `orders.service.ts` `create()` and the `PATCH :id/items` recompute (defense-in-depth only
+    there — `UpdateOrderItemsDto` carries no `discountAmount`), `estimates.service.ts` `create()`,
+    and `vendor-bills.service.ts` `create()`/`update()` (see `feature-modules-4/estimates.md` and
+    `feature-modules-4/vendor-bills.md`). `invoices.service.ts`'s own inline checks (lines
+    ~469-502) are equivalent but not yet migrated to the shared guard.
     **`@routeflow/pricing`** — `computeLineSubtotal` (boxed BOX-price proration; optional
     **`freeUnits`** subtracts whole SELLING units before pricing — default 0, so every pre-existing
     call site is byte-for-byte unaffected), `normalizeBoxesPieces` (integer boxes/pieces + rollover),

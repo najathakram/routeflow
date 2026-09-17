@@ -216,6 +216,7 @@ const MODEL_DOMAIN = {
   TenantSubscription: "platform",
   BillingNotificationLog: "platform",
   TenantAddon: "platform",
+  TenantFeatureOverride: "platform",
   PlanVersion: "platform",
   PlanDefinition: "platform",
   AddonSku: "platform",
@@ -239,6 +240,7 @@ const MODEL_DOMAIN = {
   ImportQueueItem: "platform",
   AiUsageEvent: "platform",
   IdempotencyKey: "platform",
+  DemoBooking: "platform",
   CrmConnection: "platform",
   CrmHandoff: "platform",
 

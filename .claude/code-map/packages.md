@@ -205,6 +205,15 @@ it mixed with a freshly re-derived one (lesson L-159). `apps/api/src/invoices/pa
 is now a thin re-export facade (existing `from "./payment-predicates"` call sites unchanged);
 `apps/web/app/(dashboard)/invoices/[id]/page.tsx` imports directly from `@routeflow/pricing`
 (its own hand-rolled mirror deleted). Mobile not yet wired — due when that surface is fixed.
+**`money-invariants.ts`** (B451, Strix gap 4) — `assertMoneyInvariants({subtotal, discount?, tax?,
+shipping?, total})` throws `MoneyInvariantError` (`readonly code: "MONEY_INVARIANT"`) on any
+component negative/non-finite, or `discount > subtotal`; own spec `money-invariants.spec.ts`. HTTP
+callers wrap it via `apps/api/src/common/money-invariants.util.ts`'s `assertMoneyInvariantsOrThrow`
+→ `BadRequestException({code:"MONEY_INVARIANT"})`, never a 500. Consumers: `orders.service.ts`
+`create()`/`updateOrderItems`, `estimates.service.ts` `create()`, `vendor-bills.service.ts`
+`create()`/`update()` — see `api/feature-modules-2.md`, `api/feature-modules-4/estimates.md`,
+`api/feature-modules-4/vendor-bills.md`. `invoices.service.ts` has its own equivalent inline
+checks, not yet migrated to this shared guard.
 **Ships `dist/` (CJS + `.d.ts`), not source** — `main`/`types` point at `dist`, `package.json`
 declares `"build": "tsc -p tsconfig.build.json"`. This is load-bearing, unlike `@routeflow/types`'
 raw-TS `main`: the API consumes it at runtime through `nest build`'s emitted `require()`, and a

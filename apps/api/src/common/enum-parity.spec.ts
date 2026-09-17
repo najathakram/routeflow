@@ -95,6 +95,12 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   // Post-dated check payments PR-1 (2026-09-15): CheckReturnReason is a brand-new Prisma enum
   // (not a value added to an existing one) — see the triage tripwire below.
   ["CHECK_RETURN_REASON_VALUES", "CheckReturnReason"],
+  // Feature grants PR-1 (2026-09-16): FeatureOverrideEffect is a brand-new Prisma enum — see
+  // the triage tripwire below.
+  ["FEATURE_OVERRIDE_EFFECT_VALUES", "FeatureOverrideEffect"],
+  // Public demo booking (2026-09-16): another brand-new Prisma enum, mirrored so the marketing
+  // site's demo-booking client derives its status type instead of hand-typing a union.
+  ["DEMO_BOOKING_STATUS_VALUES", "DemoBookingStatus"],
 ];
 
 describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
@@ -140,7 +146,16 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // this PR. `RETURN_HOLD_REASON_VALUES`/`RETURN_PRICE_SOURCE_VALUES` (same file) are NOT
 // generated Prisma enums (plain-string columns, see Return.holdReason's schema comment), so
 // they add no row here and do not move this count.
-const PINNED_PRISMA_ENUM_COUNT = 86;
+// Triage for FeatureOverrideEffect (Feature grants PR-1, 2026-09-16): new Prisma enum, mirrored
+// immediately as `FEATURE_OVERRIDE_EFFECT_VALUES` + an `ENUM_TABLE` row above — read by
+// `FeatureOverrideService` to decide GRANT/DENY.
+// Triage for DemoBookingStatus (public demo booking, 2026-09-16): new Prisma enum, mirrored
+// immediately as `DEMO_BOOKING_STATUS_VALUES` + an `ENUM_TABLE` row above.
+// (2026-09-17, combined migration-batch merge tree): Feature grants PR-1 and demo booking each
+// independently anticipated the other landing first and bumped this constant by only +1; merged
+// together the true count is +2 over the pre-both baseline (86 → 88), verified directly via
+// `Object.keys(PrismaEnums.$Enums).length` against the merged Prisma client, not summed by hand.
+const PINNED_PRISMA_ENUM_COUNT = 88;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {

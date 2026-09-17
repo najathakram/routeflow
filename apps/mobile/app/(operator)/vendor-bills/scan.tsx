@@ -22,6 +22,7 @@ import {
   useCreateVendorBill,
   useSaveProductMapping,
   getDuplicateVendorBillError,
+  isMoneyInvariantError,
   type DuplicateVendorBillInfo,
   type PriorScanSummary,
 } from "../../../lib/api/vendor-bills";
@@ -154,6 +155,17 @@ export default function ScanInvoiceScreen() {
         const dup = getDuplicateVendorBillError(e);
         if (dup) {
           promptDuplicate(dup.duplicate, dto);
+          return;
+        }
+        // B451/#791: the whole document's lines net negative — every line is a
+        // return/discount/credit, so the server's assertMoneyInvariantsOrThrow
+        // refuses to persist a bill with a negative amount owed. A raw 400 here
+        // reads as a broken scan; this is really a document-shape mismatch — a
+        // supplier CREDIT MEMO scanned through the wrong flow.
+        if (isMoneyInvariantError(e)) {
+          showToast(
+            "These lines net to a negative amount — if this is a credit memo, record it as a supplier credit.",
+          );
           return;
         }
         showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");

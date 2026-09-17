@@ -15,6 +15,8 @@ import {
   computeCategoryTax,
   roundMoney,
   normalizeBoxesPieces,
+  isBlockingPayment,
+  remainingCapacity,
   type CategoryTaxType,
 } from "@routeflow/pricing";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
@@ -4247,11 +4249,16 @@ export class InvoicesService {
    * Returns the external total so callers can decide whether to block.
    */
   private externalPaidOn(payments: Array<{ method?: unknown; amount: unknown; status?: string }>) {
+    // PR-2 (check-payments B1 hardening, N4 owner ruling): isBlockingPayment (NOT
+    // isHeldPayment) — a DRAFT external payment is money in flight and must keep
+    // blocking the void exactly as it does today; HELD (PAID ∪ PENDING) is for money
+    // TOTALS only, never an existence/blocking check. See orders.service.ts's
+    // cancelImpact for the identical conversion.
     return roundMoney(
       payments
         .filter(
           (p) =>
-            p.status !== "VOID" &&
+            isBlockingPayment(p) &&
             (p.method as any) !== "CREDIT_NOTE" &&
             (p.method as any) !== "ADVANCE",
         )
@@ -4958,22 +4965,39 @@ export class InvoicesService {
 
       const inv = await tx.invoice.findUnique({
         where: { id },
-        // F03/R1: CONFIRMED (PAID) rows only — this feeds the remaining-balance
-        // check and recomputeStatus below, never a listing, so it narrows at the
-        // query rather than fetch-then-filter.
-        include: { payments: { where: CONFIRMED_PAYMENT } },
+        // PR-2 (check-payments B1 hardening, review-opus-v2 condition #6): fetches
+        // every non-VOID row now, not just CONFIRMED — the capacity guard below
+        // moves to remainingCapacity() (DRAFT+PAID, N4: capacity must count DRAFT,
+        // closing a real double-book gap this narrower query previously masked),
+        // while recomputeStatus below keeps reading CONFIRMED-only via sumConfirmed
+        // — F03/R1 status discipline is unchanged. Feeds remainingCapacity()'s own
+        // internal not-void filter; @routeflow/pricing deliberately exports no
+        // Prisma "not void" filter (see remainingCapacity's docstring), so this is
+        // the correct inline form, not a re-derived mirror.
+        // scan-ok: draft-payment-not-void — see comment above.
+        include: { payments: { where: { status: { not: "VOID" } } } },
       });
       if (!inv) throw new NotFoundException("Invoice not found");
       if (inv.status === InvoiceStatus.VOID)
         throw new BadRequestException("Cannot record payment on voided invoice");
 
-      const alreadyPaid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
       const total = Number(inv.total);
-      const remaining = total - alreadyPaid;
+      const alreadyPaid = sumConfirmed(inv.payments);
+      const remaining = remainingCapacity(total, inv.payments);
       const paymentStatus = dto.status ?? "PAID";
 
       if (paymentStatus === "PAID") {
-        if (remaining <= 0) throw new BadRequestException("Invoice is already fully paid");
+        if (remaining <= 0) {
+          // PR-2 review (routeflow-Lead, 2026-09-16): `remaining` is capacity
+          // (DRAFT+PAID+PENDING), so it can hit 0 while `alreadyPaid` (CONFIRMED
+          // only) is still below the total — the invoice isn't actually fully
+          // paid, its remaining capacity is reserved by unconfirmed payments.
+          throw new BadRequestException(
+            alreadyPaid >= total - 0.001
+              ? "Invoice is already fully paid"
+              : "Invoice's remaining balance is already reserved by unconfirmed payments",
+          );
+        }
         if (dto.amount > remaining + 0.001)
           throw new BadRequestException(
             `Payment exceeds remaining balance of ${remaining.toFixed(2)}`,
@@ -5352,6 +5376,11 @@ export class InvoicesService {
       );
     }
     return this.prisma.tenantTransaction(async (tx) => {
+      // PR-2 (check-payments B1 hardening, review-opus-v2 finding m3): recordPayment
+      // already row-locks the invoice before reading its payments; updatePayment had
+      // no equivalent, so two concurrent edits could both read a stale remaining
+      // balance and jointly overshoot the invoice total.
+      await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${invoiceId} FOR UPDATE`;
       const inv = await tx.invoice.findUnique({
         where: { id: invoiceId },
         include: { payments: true },
@@ -5393,12 +5422,19 @@ export class InvoicesService {
       // DRAFT still cannot be parked above the invoice total.
       const effectiveAmount = newPaymentStatus === "PAID" ? dto.amount : 0;
 
-      // F03/R1: sum all other CONFIRMED (PAID) payments plus the effective new
-      // amount — an unconfirmed DRAFT "other" payment must not inflate the
-      // remaining-balance check or the recomputed status any more than a VOID one.
-      const othersTotal = sumConfirmed(inv.payments.filter((p) => p.id !== paymentId));
+      // F03/R1: the recomputed status still funds only off CONFIRMED (PAID)
+      // payments — an unconfirmed DRAFT "other" payment must not inflate the
+      // status any more than a VOID one.
+      const otherPayments = inv.payments.filter((p) => p.id !== paymentId);
+      const othersTotal = sumConfirmed(otherPayments);
       const total = Number(inv.total);
-      if (newPaymentStatus !== "VOID" && dto.amount > total - othersTotal + 0.001) {
+      // PR-2 (B1 hardening, review-opus-v2 condition #6): the remaining-balance
+      // *guard* moves to remainingCapacity() (DRAFT+PAID+PENDING) — a DRAFT "other"
+      // payment now also reserves capacity here, closing the same double-book gap
+      // recordPayment's conversion closes, so this edit can no longer be parked
+      // above what the invoice can actually hold once that DRAFT confirms.
+      const capacity = remainingCapacity(total, otherPayments);
+      if (newPaymentStatus !== "VOID" && dto.amount > capacity + 0.001) {
         throw new BadRequestException(`Payment amount exceeds remaining balance`);
       }
 
@@ -5445,6 +5481,13 @@ export class InvoicesService {
   async deletePayment(invoiceId: string, paymentId: string) {
     let imageKey: string | null = null;
     const updated = await this.prisma.tenantTransaction(async (tx) => {
+      // PR-2 review (routeflow-Lead, 2026-09-16): same Invoice FOR UPDATE lock as
+      // updatePayment/recordPayment, taken BEFORE touching the payment row, and in
+      // the same order — deletePayment and voidPayment previously took no lock at
+      // all, so a concurrent updatePayment/recordPayment on the same invoice could
+      // deadlock against them (each waiting on a row the other already touched) or
+      // simply race on a stale remaining-balance read.
+      await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${invoiceId} FOR UPDATE`;
       const inv = await tx.invoice.findUnique({
         where: { id: invoiceId },
         include: { payments: true },
@@ -5470,6 +5513,8 @@ export class InvoicesService {
       // notes had before their unapply primitive). Skip when the payment is already
       // VOID: voidPayment already restored the balance, so re-crediting on delete
       // would double-credit the wallet.
+      // scan-ok: draft-payment-not-void — a same-row already-VOID guard on the
+      // payment being deleted, never a sibling sum/capacity check.
       if (
         (payment.method as any) === "ADVANCE" &&
         (payment as any).advancePaymentId &&
@@ -5765,6 +5810,12 @@ export class InvoicesService {
 
   async voidPayment(invoiceId: string, paymentId: string) {
     return this.prisma.tenantTransaction(async (tx) => {
+      // PR-2 review (routeflow-Lead, 2026-09-16): same Invoice FOR UPDATE lock as
+      // updatePayment/recordPayment/deletePayment, taken BEFORE touching the
+      // payment row, and in the same order — voidPayment previously took no lock
+      // at all, so a concurrent updatePayment/recordPayment/deletePayment on the
+      // same invoice could deadlock against it or race on a stale balance read.
+      await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${invoiceId} FOR UPDATE`;
       const payment = await tx.invoicePayment.findFirst({
         where: { id: paymentId, invoiceId },
       });
@@ -5870,6 +5921,12 @@ export class InvoicesService {
    */
   async setCheckStatus(invoiceId: string, paymentId: string, dto: SetCheckStatusDto) {
     return this.prisma.tenantTransaction(async (tx) => {
+      // PR-2 review (routeflow-Lead, 2026-09-16): same Invoice FOR UPDATE lock as
+      // recordPayment/updatePayment/deletePayment/voidPayment, taken BEFORE
+      // touching the payment row, and in the same order — setCheckStatus
+      // previously took no lock at all, so a BOUNCED transition racing a
+      // concurrent void or edit on the same invoice could deadlock against it.
+      await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${invoiceId} FOR UPDATE`;
       const payment = await tx.invoicePayment.findFirst({
         where: { id: paymentId, invoiceId },
       });
@@ -5930,6 +5987,8 @@ export class InvoicesService {
       // is now VOID) and we abort BEFORE billing the NSF fee / bumping the
       // stored total a second time. The `findFirst` guard alone is not enough —
       // it reads a stale snapshot under READ COMMITTED.
+      // scan-ok: draft-payment-not-void — a single-row (id-scoped) CAS guard,
+      // never a sibling sum/capacity check.
       const bounced = await tx.invoicePayment.updateMany({
         where: { id: paymentId, status: { not: "VOID" as any } },
         data: {

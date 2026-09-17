@@ -44,7 +44,7 @@ import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NotificationsService } from "../notifications/notifications.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { InvoicesService } from "../invoices/invoices.service";
-import { formatMoney } from "../messaging/messaging.helpers";
+import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CompleteStopDto } from "./dto/complete-stop.dto";
 import { CompleteWithPaymentDto } from "./dto/complete-with-payment.dto";
 import { SettleRunDto } from "./dto/settle-run.dto";
@@ -2474,7 +2474,11 @@ export class RoutesService {
         .notifyEvent(NotificationEvent.DELIVERED, {
           customerId: o.customerId,
           senderId: user.sub || null,
-          vars: { orderNumber: o.orderNumber ?? "", orderTotal: formatMoney(o.total) },
+          vars: {
+            orderNumber: o.orderNumber ?? "",
+            orderTotal: formatMoney(o.total),
+            deliveredAt: formatDate(new Date()),
+          },
         })
         .catch(() => {});
     }
@@ -2748,7 +2752,11 @@ export class RoutesService {
         .notifyEvent(NotificationEvent.DELIVERED, {
           customerId: o.customerId,
           senderId: user.sub || null,
-          vars: { orderNumber: o.orderNumber ?? "", orderTotal: formatMoney(o.total) },
+          vars: {
+            orderNumber: o.orderNumber ?? "",
+            orderTotal: formatMoney(o.total),
+            deliveredAt: formatDate(new Date()),
+          },
         })
         .catch(() => {});
     }

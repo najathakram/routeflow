@@ -12,6 +12,8 @@ import { loadMsrpMap } from "../common/msrp";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { NumberingService } from "../import/numbering.service";
+import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
+import { CreateEstimateDto } from "./dto/create-estimate.dto";
 
 // B70: terminal status set — CONVERTED is terminal and cannot be re-transitioned; voided
 // (DECLINED) is also terminal per the requirement that send/decline/accept refuse both.
@@ -85,7 +87,7 @@ export class EstimatesService {
     });
   }
 
-  async create(dto: any) {
+  async create(dto: CreateEstimateDto) {
     // B79: issueDate is optional and, unlike expiresAt, has no legacy loose-parse
     // behavior to preserve — validate the shape before touching the DB so a
     // malformed value 400s instead of writing Invalid Date or a misparsed date.
@@ -196,9 +198,16 @@ export class EstimatesService {
     });
 
     subtotal = roundMoney(subtotal);
-    const discount = dto.discount ?? 0;
-    const tax = dto.taxAmount ?? 0;
+    // B451 gap 4: neither `discount` nor `taxAmount` is a declared field on
+    // CreateEstimateDto — no current caller sends either, and the global
+    // ValidationPipe's forbidNonWhitelisted now 400s a request that does.
+    // Read via `as any` only so this stays defense-in-depth (via the shared
+    // guard below) if either is ever added to the DTO, not a live input path.
+    const discount = (dto as any).discount ?? 0;
+    const tax = (dto as any).taxAmount ?? 0;
     const total = roundMoney(subtotal - discount + tax);
+
+    assertMoneyInvariantsOrThrow({ subtotal, discount, tax, total });
 
     try {
       return await this.prisma.forTenant().estimate.create({

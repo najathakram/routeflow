@@ -11,6 +11,8 @@ import {
   INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT,
 } from "./plan-catalog.constants";
 import { allowsFlag } from "./plan-flag-policy";
+import { FeatureOverrideService } from "./feature-override.service";
+import { gateVia } from "./feature-registry";
 
 /**
  * Tenant self-service READ surface for settings-billing + choose-plan: the current
@@ -24,6 +26,11 @@ export class SubscriptionService {
     private readonly catalog: PlanCatalogService,
     private readonly entitlements: EntitlementsService,
     private readonly meters: MeterService,
+    // Optional (not a real DI concern — BillingModule already provides it, so production
+    // always wires a real instance): keeps this file's large existing test surface passing
+    // unchanged rather than adding a 5th arg to every one of its `new SubscriptionService(...)`
+    // call sites. Absent (undefined) degrades to "no override", byte-identical to today.
+    private readonly featureOverrides?: FeatureOverrideService,
   ) {}
 
   /** The tenant's current plan + add-ons + renewal state (settings-billing header). */
@@ -58,17 +65,32 @@ export class SubscriptionService {
     // without it — never let a missing array crash the settings-billing view.
     const entFlags = ent.flags ?? [];
 
+    // Feature-grants PR-1 (owner ruling 2026-09-16): an active override is absolute, and this
+    // IS the web's actual flag-gating read path (usePlanFlag → useSubscription().flags → nav/
+    // lock-wall gates) — without this merge, a GRANT override is invisible (nav stays hidden)
+    // and a DENY override dead-ends (nav shown, every call 403s). Mirrors tenants.controller.ts's
+    // getMyAddons merge, filtered to RequirePlanFlag-gated keys only (an addon-keyed override
+    // has no business in this array — see gateVia/item 6's parity fix).
+    const overrides = this.featureOverrides
+      ? await this.featureOverrides.allActive(tenantId)
+      : new Map();
+
+    const flagSet = new Set([
+      ...FLAG_KEYS.filter((k) => allowsFlag({ planKey: ent.planKey, flags: entFlags }, k)),
+      ...entFlags,
+    ]);
+    for (const [key, effect] of overrides) {
+      if (gateVia(key) !== "RequirePlanFlag") continue;
+      if (effect === "GRANT") flagSet.add(key);
+      else flagSet.delete(key);
+    }
+
     return {
       planKey: ent.planKey,
-      // R1.7/R2.5: the flags this tenant can actually use right now — the union of its
-      // own stored entitlement flags and any FLAG_KEYS still under the dark-flag
-      // courtesy allow (see allowsFlag/isDarkFlag). Deduped via Set.
-      flags: Array.from(
-        new Set([
-          ...FLAG_KEYS.filter((k) => allowsFlag({ planKey: ent.planKey, flags: entFlags }, k)),
-          ...entFlags,
-        ]),
-      ),
+      // R1.7/R2.5: the flags this tenant can actually use right now — the union of its own
+      // stored entitlement flags and any FLAG_KEYS still under the dark-flag courtesy allow
+      // (see allowsFlag/isDarkFlag), with any RequirePlanFlag-keyed override folded in last.
+      flags: Array.from(flagSet),
       // R2.8/R2.9/R7.6: an invited-but-not-yet-paying LITE tenant needs to complete
       // Stripe checkout before it's truly ACTIVE — structural, never derived from a
       // client-supplied planKey (see SettingsBillingController.createCheckout).

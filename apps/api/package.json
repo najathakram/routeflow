@@ -69,6 +69,7 @@
     "csv-parse": "^6.2.1",
     "expo-server-sdk": "^6.1.0",
     "firebase-admin": "^13.7.0",
+    "google-auth-library": "^10.6.1",
     "helmet": "^8.3.0",
     "ioredis": "^5.11.1",
     "libphonenumber-js": "^1.13.13",
