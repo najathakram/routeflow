@@ -261,6 +261,104 @@ export class CreditNotesService {
     return InvoiceStatus.SENT;
   }
 
+  /**
+   * Returns Inside Order Creation — PR-1c (m-1): mints a STANDALONE (`invoiceId: null`)
+   * credit note INSIDE the caller's own already-open transaction — never opens one of its
+   * own. Built for `InlineReturnsService`'s issue step (design.md §6.5.3: unlocked pre-read
+   * → `reserveNext("CREDIT_NOTE")` standalone → `tx`: Return FOR UPDATE → guard →
+   * `mintStandaloneInTx` → guarded link → intent → settle; ONE commit), so the number is
+   * reserved by the CALLER before opening `tx` (same hoisting `create()` uses, and for the
+   * same reason — a SERIALIZABLE counter UPDATE aborts rather than queues) and handed in
+   * here already-reserved.
+   *
+   * Keeps `create()`'s two money-safety checks verbatim: the null-tenant refusal (a
+   * SUPER_ADMIN context must never mint a tenant-owned credit) and the tenant-scoped
+   * customer lookup (a foreign-tenant customerId 404s instead of minting against it). Skips
+   * `create()`'s invoice/line validation entirely — a standalone mint has no `invoiceId` — and
+   * its own serialization-retry wrapper, since the caller's transaction (already holding the
+   * Return row lock) is what serializes concurrent issues for this return, not this method.
+   * `gateway.emitCreditNoteCreated` is deliberately NOT fired here — the caller emits it
+   * itself, once, AFTER its own transaction commits (never inside — an emit from inside a
+   * transaction that later rolls back would light up the operator dashboard for a credit
+   * note that was never actually minted).
+   */
+  async mintStandaloneInTx(
+    tx: any,
+    dto: { customerId: string; amount: number; reason?: string; expiresAt?: Date | null },
+    creditNoteNumber: string,
+    tenantId: string | null,
+  ): Promise<any> {
+    // REG-B267 / cause-ruling.md §2 D2 parity: refused before any write, same as create().
+    if (!tenantId) throw new BadRequestException("A tenant context is required.");
+    if (!dto.amount || dto.amount <= 0)
+      throw new BadRequestException("Amount must be greater than 0");
+
+    const customer = await tx.customer.findFirst({
+      where: { id: dto.customerId },
+      select: { id: true, businessName: true },
+    });
+    if (!customer) throw new NotFoundException("Customer not found");
+
+    const row = await tx.creditNote.create({
+      data: {
+        creditNoteNumber,
+        customerId: dto.customerId,
+        invoiceId: null,
+        amount: roundMoney(dto.amount),
+        reason: dto.reason,
+        status: "ISSUED",
+        expiresAt: dto.expiresAt ?? null,
+      },
+    });
+    return { ...row, customer };
+  }
+
+  /**
+   * §6.3: an INLINE return's credit is "met" against its OWN carrying order once that
+   * order has no open balance left on its non-VOID invoices (every dollar owed was covered
+   * some other way — cash, an earlier credit — so this return's credit is no longer needed
+   * there), or the order is CANCELLED (nothing is owed on it at all any more). Read on
+   * whatever client the caller passes (a bare tx has no `forTenant()` — every query here is
+   * already orderId-scoped, so no cross-tenant leak is possible either way).
+   */
+  private async isOrderMetInTx(tx: any, orderId: string): Promise<boolean> {
+    const order = await tx.order.findFirst({ where: { id: orderId }, select: { status: true } });
+    if (!order) return true; // no such order — nothing left for the credit to wait on
+    if (order.status === "CANCELLED") return true;
+    const invoices = await tx.invoice.findMany({
+      where: { orderId, status: { not: "VOID" } },
+      include: { payments: true },
+    });
+    for (const inv of invoices) {
+      const paid = roundMoney(
+        (inv.payments ?? [])
+          .filter((p: any) => p.status !== "VOID")
+          .reduce((s: number, p: any) => s + Number(p.amount), 0),
+      );
+      if (roundMoney(Number(inv.total) - paid) > 0.001) return false;
+    }
+    return true; // no invoices yet, or every one is already fully paid
+  }
+
+  /**
+   * §6.3: true when `creditNoteId` is the ONE standalone credit note an INLINE return
+   * minted for ITS OWN carrying order `orderId` — the "system-owned intent" design.md §2.1
+   * describes, as opposed to an ordinary staff-selected wallet credit. Both
+   * `autoApplyOldestCreditsInTx` (exclude while unmet) and `syncOrderCreditSelections`
+   * (never drop/re-amount) key off this same join — no new column, no migration.
+   */
+  private async isSystemOwnedInlineCreditInTx(
+    tx: any,
+    orderId: string,
+    creditNoteId: string,
+  ): Promise<boolean> {
+    const ret = await tx.return.findFirst({
+      where: { orderId, creditNoteId, kind: "INLINE" },
+      select: { id: true },
+    });
+    return !!ret;
+  }
+
   async create(dto: {
     customerId: string;
     invoiceId?: string;
@@ -673,9 +771,23 @@ export class CreditNotesService {
       },
       orderBy: { createdAt: "asc" },
     });
-    const open = (candidates ?? []).filter(
+    const openWithBalance = (candidates ?? []).filter(
       (c: any) => roundMoney(Number(c.amount) - Number(c.amountUsed)) > 0.001,
     );
+    // §6.3: an INLINE return's own credit note is reserved for ITS OWN carrying order
+    // until that order is "met" — skip it here so this general oldest-first sweep (any
+    // invoice for this customer) never sweeps it onto an UNRELATED invoice first. Once its
+    // carrying order is met, the remainder is ordinary wallet credit and this filter passes
+    // it through like any other note. A non-inline (ordinary) credit is never filtered.
+    const open: any[] = [];
+    for (const cn of openWithBalance) {
+      const ret = await tx.return.findFirst({
+        where: { creditNoteId: cn.id, kind: "INLINE" },
+        select: { orderId: true },
+      });
+      if (ret && !(await this.isOrderMetInTx(tx, ret.orderId))) continue;
+      open.push(cn);
+    }
     if (open.length === 0) return nothing;
 
     let totalApplied = 0;
@@ -740,6 +852,52 @@ export class CreditNotesService {
       },
       { isolationLevel: "Serializable" },
     );
+  }
+
+  /**
+   * Returns Inside Order Creation — PR-1c (m-5): cancels ONE standalone credit note an
+   * inline return minted, inside the CALLER's own transaction (`InlineReturnsService.
+   * cancel()`, which already holds the Return + carrying-Order locks) — never opens one of
+   * its own. Scoped to exactly this `creditNoteId`: unlike `releaseOrderCreditsInTx` (which
+   * sweeps EVERY credit note applied to an order), this never touches a different credit
+   * note that happens to sit on the same order/invoice (a manual credit, or a sibling
+   * inline return's own CN).
+   *
+   * Pulls back every non-VOID `CREDIT_NOTE` payment this note made (mirrors `voidCreditNote`'s
+   * "un-apply first" rule, but un-applies here instead of refusing), then voids it and undoes
+   * its regulated-ledger reversal. Throws `RETURN_CREDIT_CONSUMED` if `amountUsed` is still
+   * non-zero after restoring everything a payment row could account for — money consumed
+   * through some path this couldn't find and restore, which must block the cancel rather than
+   * silently void a note that's still "used" on paper (m-5's "restore < amountUsed" case).
+   */
+  async cancelStandaloneInTx(tx: any, creditNoteId: string): Promise<{ restored: number }> {
+    const payments = await tx.invoicePayment.findMany({
+      where: { creditNoteId, method: PaymentMethod.CREDIT_NOTE, status: { not: "VOID" } },
+      orderBy: { createdAt: "desc" },
+    });
+    let restored = 0;
+    for (const p of payments) {
+      restored = roundMoney(restored + (await this.restoreCreditFromPaymentInTx(tx, p)));
+    }
+
+    const cn = await tx.creditNote.findFirst({
+      where: { id: creditNoteId },
+      select: { status: true, amountUsed: true },
+    });
+    if (!cn) return { restored };
+    if (cn.status === "VOID") return { restored };
+    if (Number(cn.amountUsed) > 0.001) {
+      throw new BadRequestException("RETURN_CREDIT_CONSUMED");
+    }
+
+    const flipped = await tx.creditNote.updateMany({
+      where: { id: creditNoteId, status: { not: "VOID" } },
+      data: { status: "VOID" },
+    });
+    if (flipped.count > 0) {
+      await this.ledger.unreverseCreditNoteEntries({ creditNoteId, db: tx });
+    }
+    return { restored };
   }
 
   async voidCreditNote(id: string) {
@@ -1109,6 +1267,13 @@ export class CreditNotesService {
     const selectionById = new Map(selections.map((s) => [s.creditNoteId, s]));
 
     for (const row of existing) {
+      // design.md §2.1/§6.3: an INLINE return's own intent on its OWN carrying order is
+      // "system-owned" — InlineReturnsService.capture()/issueCredit() wrote it directly,
+      // never through a staff `selections` list, and it must never be dropped or
+      // re-amounted just because THIS sync call's list doesn't happen to name it (a staff
+      // member syncing this same order's OTHER, ordinary wallet-credit selections must not
+      // silently unwind the return's own credit).
+      if (await this.isSystemOwnedInlineCreditInTx(tx, orderId, row.creditNoteId)) continue;
       const sel = selectionById.get(row.creditNoteId);
       if (!sel) {
         // Dropped selection — pull back this pair's money then delete the row.
