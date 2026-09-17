@@ -38,7 +38,16 @@ export function PreviewDrawer({
 
   const beforeByKey = new Map(response?.before.map((f) => [f.key, f]));
   const afterByKey = new Map(response?.after.map((f) => [f.key, f]));
-  const changed = response?.changed ?? [];
+  // Union with `response.changed`, never trust it alone — a mode-only diff (serving unchanged)
+  // must still enable Confirm even if the server's `changed[]` only tracks serving/source flips.
+  const changedKeys = new Set(response?.changed ?? []);
+  for (const [key, after] of afterByKey) {
+    const before = beforeByKey.get(key);
+    if (!before) continue;
+    if (before.serving !== after.serving) changedKeys.add(key);
+    if (before.mode?.effective !== after.mode?.effective) changedKeys.add(key);
+  }
+  const changed = [...changedKeys];
 
   return (
     <AdminModal

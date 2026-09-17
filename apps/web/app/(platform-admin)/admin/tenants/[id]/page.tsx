@@ -597,7 +597,7 @@ function OverviewTab({
             </select>
             <button
               disabled={actionLoading === "plan" || selectedPlan === tenant.plan}
-              onClick={() => onAction("change-plan", { plan: selectedPlan })}
+              onClick={() => onAction("change-plan", { plan: selectedPlan }).catch(() => {})}
               className="rounded-lg bg-slate-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-500 disabled:opacity-50"
             >
               Change Plan
@@ -1305,6 +1305,15 @@ const OVERRIDE_EXPIRY_PRESETS = [
   { value: "90", label: "90 days" },
 ] as const;
 
+// Plain-English labels for the Kind select — values stay the raw FeatureOverrideKind enum.
+const OVERRIDE_KIND_LABELS: Record<FeatureOverrideKind, string> = {
+  PILOT: "Pilot",
+  SUPPORT: "Support",
+  COMP: "Complimentary",
+  TRIAL: "Trial",
+  GRANDFATHER: "Grandfathered",
+};
+
 /** Imperative handle so the Feature Console's per-row "Customise" button can open this
  * drawer prefilled for one key, without a second overrides UI (brief D done-checklist item 1). */
 export interface FeatureOverridesSectionHandle {
@@ -1664,7 +1673,7 @@ const FeatureOverridesSection = React.forwardRef<
             >
               {FEATURE_OVERRIDE_KIND_VALUES.map((k) => (
                 <option key={k} value={k}>
-                  {k}
+                  {OVERRIDE_KIND_LABELS[k]}
                 </option>
               ))}
             </select>
