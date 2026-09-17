@@ -4544,7 +4544,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 const tierForProduct = isStaffCaller
                   ? (operatorCpMap.get(item.substituteProductId) ?? operatorDefaultTier)
                   : 1;
-                const isSpecialTier = this.isSpecialTier(tierForProduct);
+                const lineIsSpecialTier = isSpecialTier(tierForProduct);
                 const tierPrice = Number(getTierPrice(product, tierForProduct));
                 const overridePrice =
                   isStaffCaller && item.unitPrice != null ? Number(item.unitPrice) : null;
@@ -4558,7 +4558,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 const hasOverrideReason = !!(item.overrideReason && item.overrideReason.trim());
                 if (
                   overridePrice != null &&
-                  isSpecialTier &&
+                  lineIsSpecialTier &&
                   !priceUnchangedFromTier &&
                   !hasOverrideReason
                 ) {
@@ -4567,8 +4567,10 @@ export class OrdersService implements OnApplicationBootstrap {
                   );
                 }
                 let unitPrice = tierPrice;
-                let priceType: PriceType = isSpecialTier ? PriceType.SPECIAL : PriceType.STANDARD;
-                let originalPrice: number | null = isSpecialTier ? listPrice : null;
+                let priceType: PriceType = lineIsSpecialTier
+                  ? PriceType.SPECIAL
+                  : PriceType.STANDARD;
+                let originalPrice: number | null = lineIsSpecialTier ? listPrice : null;
                 const isOverridden = overridePrice != null && !priceUnchangedFromTier;
                 if (isOverridden && overridePrice != null) {
                   // Opus MERGE-verdict fix: round the honored override, matching the
