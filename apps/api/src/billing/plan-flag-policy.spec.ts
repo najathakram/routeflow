@@ -66,6 +66,33 @@ describe("isDarkFlag", () => {
     expect(isDarkFlag("flag.msrp", {})).toBe(false);
     expect(isDarkFlag("flag.msrp", { PLAN_FLAG_ENFORCEMENT: "on" })).toBe(false);
   });
+
+  describe("PREPIN_DARK_FLAGS (P0 2026-09-17: #777's flags missing from the pinned v11 catalog)", () => {
+    const PREPIN_FLAGS = [
+      "flag.estimates",
+      "flag.recurring_invoices",
+      "flag.credit_notes",
+      "flag.suppliers",
+      "flag.messaging",
+    ];
+
+    it("is true for every prepin flag with enforcement ON — the catalog gap, not the kill switch, is the reason they're dark", () => {
+      for (const flagKey of PREPIN_FLAGS) {
+        expect(isDarkFlag(flagKey, { PLAN_FLAG_ENFORCEMENT: "on" })).toBe(true);
+      }
+    });
+
+    it("is true for every prepin flag with enforcement OFF too (unconditional, unlike a plain DARK_PLAN_FLAGS member)", () => {
+      for (const flagKey of PREPIN_FLAGS) {
+        expect(isDarkFlag(flagKey, {})).toBe(true);
+      }
+    });
+
+    it("does NOT widen a non-prepin DARK_PLAN_FLAGS member — flag.reports stays enforcement-gated as before", () => {
+      expect(isDarkFlag("flag.reports", { PLAN_FLAG_ENFORCEMENT: "on" })).toBe(false);
+      expect(isDarkFlag("flag.reports", {})).toBe(true);
+    });
+  });
 });
 
 describe("allowsFlag", () => {
@@ -104,5 +131,47 @@ describe("allowsFlag", () => {
   it("with enforcement ON, a non-always-enforced tenant loses the dark courtesy allow too", () => {
     const ent = { planKey: "STARTER", flags: [] as string[] };
     expect(allowsFlag(ent, "flag.reports", { PLAN_FLAG_ENFORCEMENT: "on" })).toBe(false);
+  });
+
+  describe("P0 2026-09-17: PREPIN_DARK_FLAGS courtesy allow", () => {
+    const PREPIN_FLAGS = [
+      "flag.estimates",
+      "flag.recurring_invoices",
+      "flag.credit_notes",
+      "flag.suppliers",
+      "flag.messaging",
+    ];
+    const onEnv = { PLAN_FLAG_ENFORCEMENT: "on" };
+
+    it("with enforcement ON, a SCALE tenant on the v11 catalog (no prepin flags held) is allowed all five anyway", () => {
+      const ent = { planKey: "SCALE", flags: [] as string[] };
+      for (const flagKey of PREPIN_FLAGS) {
+        expect(allowsFlag(ent, flagKey, onEnv)).toBe(true);
+      }
+    });
+
+    it("with enforcement ON, a non-prepin dark flag missing is still denied — the fix is scoped to the five, not a blanket reopen", () => {
+      const ent = { planKey: "SCALE", flags: [] as string[] };
+      expect(allowsFlag(ent, "flag.reports", onEnv)).toBe(false);
+    });
+
+    it("with enforcement ON, LITE (always-enforced) is denied a prepin flag it doesn't hold — no courtesy allow for LITE (R3a.7)", () => {
+      const ent = { planKey: "LITE", flags: [] as string[] };
+      for (const flagKey of PREPIN_FLAGS) {
+        expect(allowsFlag(ent, flagKey, onEnv)).toBe(false);
+      }
+    });
+
+    it("with enforcement ON, LITE holding a prepin flag explicitly is allowed", () => {
+      const ent = { planKey: "LITE", flags: ["flag.estimates"] };
+      expect(allowsFlag(ent, "flag.estimates", onEnv)).toBe(true);
+    });
+
+    it("with enforcement OFF, behavior for the five is unchanged from today (already courtesy-allowed via DARK_PLAN_FLAGS)", () => {
+      const ent = { planKey: "SCALE", flags: [] as string[] };
+      for (const flagKey of PREPIN_FLAGS) {
+        expect(allowsFlag(ent, flagKey, {})).toBe(true);
+      }
+    });
   });
 });

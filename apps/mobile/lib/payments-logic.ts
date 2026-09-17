@@ -1,7 +1,7 @@
 import type { Ionicons } from "@expo/vector-icons";
 import type { PaymentMethod } from "./api/invoices";
 import type { PaymentStatus } from "./api/payments";
-import { roundMoney } from "@routeflow/pricing";
+import { remainingCapacity, roundMoney } from "@routeflow/pricing";
 import { CHECK_TRANSITIONS, type CheckStatus } from "@routeflow/types";
 
 // Re-exported for backward compatibility — nothing in this repo currently imports either symbol
@@ -76,6 +76,23 @@ export function paymentActionFlags(
   method?: PaymentMethod,
 ): PaymentActionFlags {
   return { canVoid: status !== "VOID" && method !== "CREDIT_NOTE" };
+}
+
+/**
+ * Amount cap when editing an existing payment: how much more capacity the
+ * invoice has once every OTHER payment (not this one) is reserved. PR-2
+ * (check-payments B1 hardening): routes through the shared remainingCapacity()
+ * predicate (DRAFT+PAID+PENDING) — the same "not VOID" semantics this screen
+ * already had, now the one copy web/api also use — mirroring the server's
+ * updatePayment guard and web's editPaymentMax. `otherPayments` must already
+ * exclude the payment being edited; the caller does that filtering since this
+ * module carries no payment id.
+ */
+export function editPaymentMaxAmount(
+  total: number,
+  otherPayments: ReadonlyArray<{ amount: unknown; status?: string }>,
+): number {
+  return Math.max(0, remainingCapacity(total, otherPayments));
 }
 
 // ─── Check lifecycle (P5-12; Wave 3 operator controls) ───────────────────────

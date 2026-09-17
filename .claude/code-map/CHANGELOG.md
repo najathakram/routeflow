@@ -8,6 +8,10 @@ newest first**. This file replaces the old habit of prepending each session's no
 below, and set `_meta.json` `"notes"` to that same note plus the pointer to this file —
 never accumulate history in `"notes"`.
 
+- **2026-09-17 — refresh the #789 email/ bullet for #802 (B452 follow-ups) — docs-only bookkeeping** — `api/feature-modules-7.md`: three clauses of the #789 bullet had gone stale after #802 — `getTenantFromAddress(smtpUser)` now falls back to the tenant's own SMTP login instead of the platform address, `sanitizeDisplayName()` now collapses CR/LF, and `getReplyTo()`'s admin fallback now filters ACTIVE with a deterministic order. Also: `docs/runbooks/deploy-visibility-flip.md` step 3 now requires proving each service's served commit via its health probe, never the GitHub deployments API's `statuses[0]`. `mappedSha` unchanged.
+
+- **2026-09-16 — map #789 (B452 platform email sender) — docs-only bookkeeping follow-up** — `api/feature-modules-7.md` `email/`: new bullet for the platform Google Workspace SMTP transport (all-or-nothing `SMTP_*` selection over Resend), the `platformFrom` derivation, `getTenantFromAddress()`'s `<Business> via RouteFlow` fallback replacing the unowned `noreply@routeflow.app`, `sanitizeDisplayName()`'s scope, `getReplyTo()`'s fallback chain, and the read-only `apps/api/scripts/check-email-sender.mjs` diagnostic. Also corrected the module bullet's stale "global `EmailService`" — `EmailModule` is a plain `@Module`, so consumers import it (`CustomersModule` has since #778). `mappedSha` unchanged.
+
 - **2026-09-16 — merge origin/master + map #778/#779 (worktree `rf-B420`, branch
   `docs/code-map-refresh-2026-09-16`)** — merged origin/master (bringing in #781's
   customer-lifecycle rescue, #778's auth rescue, and #779's tooling fixes) into this

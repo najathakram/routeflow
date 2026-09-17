@@ -62,8 +62,8 @@ function make(
   const catalog = {
     getVersionForTenant: jest.fn().mockResolvedValue({
       definitions: [
-        { planKey: "STARTER", monthlyPrice: 59, seatsIncluded: 1 },
-        { planKey: "BUSINESS", monthlyPrice: 349, seatsIncluded: 15 },
+        { planKey: "STARTER", name: "Starter", monthlyPrice: 59, seatsIncluded: 1 },
+        { planKey: "BUSINESS", name: "Business", monthlyPrice: 349, seatsIncluded: 15 },
       ],
     }),
     // Finding 1 fallback path: a target plan missing from the tenant's PINNED version falls
@@ -83,8 +83,30 @@ function make(
       resetsAt: null,
     }),
   } as any;
-  const svc = new BillingCronService(prisma, events, entitlements, tenantStatus, catalog, meters);
-  return { svc, prisma, tx, events, entitlements, tenantStatus, catalog, meters };
+  const billingNotification = {
+    notifyTrialEnding: jest.fn().mockResolvedValue(undefined),
+    notifyDowngradeApplied: jest.fn().mockResolvedValue(undefined),
+  } as any;
+  const svc = new BillingCronService(
+    prisma,
+    events,
+    entitlements,
+    tenantStatus,
+    catalog,
+    meters,
+    billingNotification,
+  );
+  return {
+    svc,
+    prisma,
+    tx,
+    events,
+    entitlements,
+    tenantStatus,
+    catalog,
+    meters,
+    billingNotification,
+  };
 }
 
 const emitted = (events: any) => events.emit.mock.calls.map((c: any[]) => c[1]);
@@ -103,6 +125,68 @@ describe("BillingCronService", () => {
     });
     expect(emitted(events)).toContain(BILLING_EVENTS.TRIAL_EXPIRED);
     expect(tenantStatus.invalidate).toHaveBeenCalledWith("t1");
+  });
+
+  it("N3: expireTrials notifies TRIAL_ENDING_EXPIRY with the tenant's trialEndsAt", async () => {
+    const trialEndsAt = new Date("2026-09-10T00:00:00.000Z");
+    const { svc, billingNotification } = make({ trials: [{ id: "t1", trialEndsAt }] });
+    await svc.expireTrials();
+    expect(billingNotification.notifyTrialEnding).toHaveBeenCalledWith(
+      "t1",
+      "TRIAL_ENDING_EXPIRY",
+      trialEndsAt,
+    );
+  });
+
+  it("N3: a rejected notifyTrialEnding never blocks expireTrials for the REST of the batch", async () => {
+    const { svc, prisma, billingNotification } = make({
+      trials: [
+        { id: "t1", trialEndsAt: new Date() },
+        { id: "t2", trialEndsAt: new Date() },
+      ],
+    });
+    billingNotification.notifyTrialEnding.mockRejectedValueOnce(new Error("email down"));
+    await svc.expireTrials();
+    expect(prisma.tenant.update).toHaveBeenCalledTimes(2); // both tenants still transitioned
+    expect(billingNotification.notifyTrialEnding).toHaveBeenCalledTimes(2); // t2 still attempted
+  });
+
+  describe("N3: warnTrialsEnding", () => {
+    it("notifies TRIAL_ENDING_7D for a tenant whose trial ends in the 6-7 day window", async () => {
+      const now = Date.now();
+      const trialEndsAt = new Date(now + 6.5 * 24 * 60 * 60 * 1000);
+      const { svc, prisma, billingNotification } = make();
+      prisma.tenant.findMany.mockResolvedValueOnce([{ id: "t1", trialEndsAt }]); // 7d window
+      prisma.tenant.findMany.mockResolvedValueOnce([]); // 1d window
+      await svc.warnTrialsEnding();
+      expect(billingNotification.notifyTrialEnding).toHaveBeenCalledWith(
+        "t1",
+        "TRIAL_ENDING_7D",
+        trialEndsAt,
+      );
+    });
+
+    it("notifies TRIAL_ENDING_1D for a tenant whose trial ends within 24 hours", async () => {
+      const now = Date.now();
+      const trialEndsAt = new Date(now + 12 * 60 * 60 * 1000);
+      const { svc, prisma, billingNotification } = make();
+      prisma.tenant.findMany.mockResolvedValueOnce([]); // 7d window
+      prisma.tenant.findMany.mockResolvedValueOnce([{ id: "t1", trialEndsAt }]); // 1d window
+      await svc.warnTrialsEnding();
+      expect(billingNotification.notifyTrialEnding).toHaveBeenCalledWith(
+        "t1",
+        "TRIAL_ENDING_1D",
+        trialEndsAt,
+      );
+    });
+
+    it("a tenant outside both windows (e.g. trial ends in 3 days) gets neither reminder", async () => {
+      const { svc, prisma, billingNotification } = make();
+      prisma.tenant.findMany.mockResolvedValueOnce([]);
+      prisma.tenant.findMany.mockResolvedValueOnce([]);
+      await svc.warnTrialsEnding();
+      expect(billingNotification.notifyTrialEnding).not.toHaveBeenCalled();
+    });
   });
 
   it("expireGrace clears grace windows older than 7 days", async () => {
@@ -190,6 +274,56 @@ describe("BillingCronService", () => {
       expect.arrayContaining([BILLING_EVENTS.SEAT_FREED, BILLING_EVENTS.PLAN_CHANGED]),
     );
     expect(entitlements.invalidate).toHaveBeenCalledWith("t1");
+  });
+
+  it("N3: applyScheduledDowngrades notifies with the effectiveAt the row carried BEFORE the transaction cleared it", async () => {
+    const downgradeEffectiveAt = new Date("2026-09-01T00:00:00.000Z");
+    const { svc, billingNotification } = make({
+      downgrades: [
+        {
+          tenantId: "t1",
+          planKey: "BUSINESS",
+          planVersionId: "v7",
+          downgradeToPlanKey: "STARTER",
+          downgradeEffectiveAt,
+          retainedUserIds: ["u1"],
+        },
+      ],
+      activeTeam: 5,
+    });
+    await svc.applyScheduledDowngrades();
+    expect(billingNotification.notifyDowngradeApplied).toHaveBeenCalledWith(
+      "t1",
+      "Business",
+      "Starter",
+      downgradeEffectiveAt,
+    );
+  });
+
+  it("N3: a rejected notifyDowngradeApplied never blocks the sweep for the rest of the batch", async () => {
+    const { svc, tx, billingNotification } = make({
+      downgrades: [
+        {
+          tenantId: "t1",
+          planKey: "BUSINESS",
+          planVersionId: "v7",
+          downgradeToPlanKey: "STARTER",
+          retainedUserIds: [],
+        },
+        {
+          tenantId: "t2",
+          planKey: "BUSINESS",
+          planVersionId: "v7",
+          downgradeToPlanKey: "STARTER",
+          retainedUserIds: [],
+        },
+      ],
+      activeTeam: 0,
+    });
+    billingNotification.notifyDowngradeApplied.mockRejectedValueOnce(new Error("email down"));
+    await svc.applyScheduledDowngrades();
+    expect(tx.tenantSubscription.update).toHaveBeenCalledTimes(2); // both applied regardless
+    expect(billingNotification.notifyDowngradeApplied).toHaveBeenCalledTimes(2); // t2 still attempted
   });
 
   it("downgrade with an EMPTY retained list still frees seats when over cap (keeps only admins)", async () => {

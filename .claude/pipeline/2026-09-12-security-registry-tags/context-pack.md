@@ -108,7 +108,7 @@ memory, not a lessons entry).
 
 3 newest RUN-LOG headings (`~/.claude/skills/dev-pipeline/references/RUN-LOG.md`, 484 lines, all
 2026-09-08): ul-rmc-papr ($9.83, clean:false/stale WP4 only) · static-gain (~$30) ·
-2026-09-07-ingestion-affa (bugfix, $14.94).
+2026-09-07-ingestion-acme (bugfix, $14.94).
 
 `cost-ledger.jsonl` last 3 rows: plane-harness (clean, $31.78) · plane-learning (clean, $50.42) ·
 crm-gohighlevel-handoff (clean, $50.68). No rollup `summary` block — per-run rows only.

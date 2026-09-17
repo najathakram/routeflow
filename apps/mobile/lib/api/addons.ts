@@ -55,7 +55,7 @@ export function useDeveloperMode(): { enabled: boolean; isLoading: boolean; reso
 // ─── Driver payments (per-tenant at-door collection opt-in) ───────────────────
 //
 // Owner decision 2026-08-24: collecting money at the door is opt-in per tenant
-// (affa yes, bb-distro no). Same query/cache as useDeveloperMode — one addons
+// (acme yes, acme-distribution no). Same query/cache as useDeveloperMode — one addons
 // fetch serves both. Fail-CLOSED on `enabled` (unknown ⇒ no payment UI) but the
 // at-door flow must key the "which completion endpoint" choice off `resolved`
 // where it can strand a driver: when the flag is unknown, payment.tsx falls

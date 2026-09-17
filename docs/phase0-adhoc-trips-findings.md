@@ -37,13 +37,13 @@ back to seeded/stored coordinates.
 ## Driver payments are per-tenant opt-in (added 2026-08-24, same PR)
 
 At-door money collection by drivers is now gated by the `driver_payments`
-TenantAddon (owner direction: affa collects at the door; bb-distro bills on
+TenantAddon (owner direction: acme collects at the door; acme-distribution bills on
 account only). Enforcement is `DriverPaymentsGuard` on
 `POST /route-runs/:id/stops/:stopId/complete-with-payment` — body-aware, so
 completions with no payment (or $0 "on account") keep working for every tenant;
 only `payment.amount > 0` requires the addon. Mobile hides the collection UI
 (method picker, keypad, payment photo) without the addon and completes on
-account. **Rollout:** enable `driver_payments` for `affa` (platform-admin →
+account. **Rollout:** enable `driver_payments` for `acme` (platform-admin →
 tenant → addons) at deploy time; `routeflow-demo` gets it from `demo-seed.js`;
 every other tenant stays off (bills on account) until asked.
 
