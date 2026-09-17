@@ -4198,18 +4198,36 @@ export class OrdersService implements OnApplicationBootstrap {
                 const piecesForLine = hasBoxSplit ? (item.pieces ?? null) : null;
                 const catalogPrice = Number(product.pricePerUnit);
                 const overridePrice = item.unitPrice !== undefined ? Number(item.unitPrice) : null;
-                // An explicit price DIFFERENT from catalog is a genuine operator override
-                // (MANUAL); one that EQUALS catalog is stored verbatim as STANDARD/list
-                // (unchanged behavior — selling at list for one order). WP1: ONLY a line
-                // with no price at all falls through to the tier ladder, and only for
-                // staff — a DRIVER diff add (prices stripped by B13) keeps list pricing.
-                const isManualOverride = overridePrice !== null && overridePrice !== catalogPrice;
                 const unitsPerBoxNum = Number(product.unitsPerBox ?? 0);
                 const qtyPieces =
                   boxesForLine != null ? qty : unitsPerBoxNum > 1 ? qty * unitsPerBoxNum : qty;
                 const qtyUnits = boxesForLine != null ? boxesForLine : qty;
+                const tierForProduct = isStaffEdit
+                  ? (operatorCpMap.get(item.productId) ?? operatorDefaultTier)
+                  : 1;
+                // B465: a customer/product that resolves to SPECIAL tier is a documented
+                // contract price. A bare staff-typed price must never override it — that
+                // included a typed price equal to CATALOG, the original hole: the client
+                // pre-fills the price field with the list price for a fresh add, and that
+                // silently saved as STANDARD even though this customer's real price for the
+                // product is the SPECIAL tier rate. Only a genuine documented override (a
+                // price change WITH a reason — the same path `applyPriceOverride` uses on
+                // the client) is honored; anything else falls through to the SAME tier
+                // ladder as a no-price add.
+                const isSpecialTier = tierForProduct !== 1;
+                const hasOverrideReason = !!(item.overrideReason && item.overrideReason.trim());
+                const honorOverride =
+                  overridePrice !== null && (!isSpecialTier || hasOverrideReason);
+                // An explicit HONORED price DIFFERENT from catalog is a genuine operator
+                // override (MANUAL); one that EQUALS catalog is stored verbatim as
+                // STANDARD/list (unchanged behavior — selling at list for one order). WP1:
+                // ONLY a line with no HONORED price falls through to the tier ladder, and
+                // only for staff — a DRIVER diff add (prices stripped by B13) keeps list
+                // pricing.
+                const isManualOverride =
+                  honorOverride && overridePrice !== null && overridePrice !== catalogPrice;
                 const priced =
-                  overridePrice !== null
+                  honorOverride && overridePrice !== null
                     ? {
                         unitPrice: overridePrice,
                         originalPrice: isManualOverride ? catalogPrice : null,
@@ -4219,7 +4237,7 @@ export class OrdersService implements OnApplicationBootstrap {
                     : isStaffEdit
                       ? this.resolveBuyerLinePrice(
                           product,
-                          operatorCpMap.get(item.productId) ?? operatorDefaultTier,
+                          tierForProduct,
                           buyerPromos,
                           qtyPieces,
                           qtyUnits,
@@ -4508,9 +4526,26 @@ export class OrdersService implements OnApplicationBootstrap {
 
                 const existingUnitPrice = Number(li.unitPrice);
                 const overridePrice = item.unitPrice !== undefined ? Number(item.unitPrice) : null;
+                const tierForProduct =
+                  isStaffEdit && li.productId
+                    ? (operatorCpMap.get(li.productId) ?? operatorDefaultTier)
+                    : 1;
+                // B465: same guard as the new-item branch above — a SPECIAL-tier line
+                // (this customer's contract price) can only be repriced through a
+                // genuine documented override (a price change WITH a reason). A bare
+                // price change on a SPECIAL-tier line is IGNORED — the line keeps its
+                // existing (already-tier) price — instead of silently landing as
+                // isManualOverride, which is exactly the hole R9 found: typing a value
+                // over a stored SPECIAL price was accepted and attributed, but never
+                // refused.
+                const isSpecialTier = tierForProduct !== 1;
+                const hasOverrideReason = !!(item.overrideReason && item.overrideReason.trim());
+                const honorOverride =
+                  overridePrice !== null && (!isSpecialTier || hasOverrideReason);
                 const isManualOverride =
-                  overridePrice !== null && overridePrice !== existingUnitPrice;
-                const unitPrice = isManualOverride ? overridePrice : existingUnitPrice;
+                  honorOverride && overridePrice !== null && overridePrice !== existingUnitPrice;
+                const unitPrice =
+                  honorOverride && overridePrice !== null ? overridePrice : existingUnitPrice;
                 // Anchor the struck-through original to the CATALOG list price (like the
                 // replace-all / new-item branches), never the line's prior net price —
                 // otherwise re-editing an override (e.g. an upsell nudged down but still

@@ -5115,20 +5115,24 @@ describe("OrdersService", () => {
       );
     });
 
-    it("(e) an explicit price EQUAL to list is stored verbatim — STANDARD, never tier-resolved", async () => {
-      // The operator line editors pre-fill the price field, so a typed $10.00
-      // (== list) for a tier-3 customer is a deliberate sell-at-list for this one
-      // order. Tier resolution must never quietly rewrite it down to $8.00.
+    it("(e) B465: a bare price EQUAL to list on a SPECIAL-tier customer no longer stores STANDARD — falls through to the tier price", async () => {
+      // Reverses the old WP1 "sell at list for one order" allowance for a
+      // SPECIAL-tier line (mobile hunt R2/R9, closed on the owner's ruling
+      // 2026-09-16): the client (mobile/web) pre-fills the price field with
+      // the CATALOG price on a fresh add, and a typed $10.00 for a tier-3
+      // customer used to save verbatim as STANDARD — silently overriding
+      // this customer's $8.00 contract price with no reason on record. Only
+      // a genuine documented override (a price change WITH a reason) may
+      // still do that — see the sibling override-with-reason tests below.
       prisma.order.findUnique.mockResolvedValue({
         ...MOCK_ORDER,
         status: "DRAFT" as const,
         lineItems: [],
       });
-      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 3 });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 }); // operatorTierCtx read
       prisma.customerPrice.findMany.mockResolvedValue([]);
-      prisma.product.findUnique.mockResolvedValue(TIERED_PRODUCT);
       prisma.product.findMany.mockResolvedValue([TIERED_PRODUCT]);
-      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 20, status: "PENDING" }]);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 16, status: "PENDING" }]);
 
       await service.updateOrderItems(
         "ord-1",
@@ -5140,13 +5144,172 @@ describe("OrdersService", () => {
         expect.objectContaining({
           data: expect.objectContaining({
             productId: "prod-1",
-            unitPrice: 10,
-            originalPrice: null,
-            priceType: "STANDARD",
-            subtotal: 20,
+            unitPrice: 8,
+            originalPrice: 10,
+            priceType: "SPECIAL",
+            subtotal: 16,
           }),
         }),
       );
+    });
+
+    it("(f) B465: a documented override (price + reason) on a SPECIAL-tier ADD still works", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findMany.mockResolvedValue([TIERED_PRODUCT]);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 12, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [
+            { productId: "prod-1", qty: 2, unitPrice: 6, overrideReason: "manager approved" },
+          ],
+          replaceAll: false,
+        },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            productId: "prod-1",
+            unitPrice: 6,
+            originalPrice: 10,
+            priceType: "MANUAL",
+            overrideReason: "manager approved",
+            overriddenBy: "user-op",
+            subtotal: 12,
+          }),
+        }),
+      );
+    });
+
+    it("(g) B465: a plain edit of an EXISTING SPECIAL line can't downgrade it to STANDARD (revert-probe: fails pre-fix, stores unitPrice 10/STANDARD)", async () => {
+      // The UPDATE-path twin of (e) — R9's "edit path" finding. A line already
+      // priced at this tier-3 customer's SPECIAL rate ($8, catalog $10) gets a
+      // plain qty/price touch that happens to type the catalog price back in,
+      // with no reason. Pre-fix this compared only against the line's OWN
+      // stored price (`isManualOverride = overridePrice !== existingUnitPrice`),
+      // so it silently landed as a $10 MANUAL override. Fixed: the line's price
+      // is left untouched (no priceType/originalPrice in the update payload at
+      // all) because the override was never honored.
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: "prod-1",
+            qty: 3,
+            unitPrice: 8,
+            subtotal: 24,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+            priceType: "SPECIAL",
+            originalPrice: 10,
+          },
+        ],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 24, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-1", action: "UPDATE", qty: 3, unitPrice: 10 }], replaceAll: false },
+        operatorPayload,
+      );
+
+      const call = (prisma.orderItem.update as jest.Mock).mock.calls[0][0];
+      expect(call.where).toEqual({ id: "li-1" });
+      expect(call.data.unitPrice).toBe(8);
+      expect(call.data.subtotal).toBe(24);
+      expect(call.data.priceType).toBeUndefined();
+      expect(call.data.originalPrice).toBeUndefined();
+    });
+
+    it("(h) B465: a documented override (price + reason) on an EXISTING SPECIAL line still works", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: "prod-1",
+            qty: 3,
+            unitPrice: 8,
+            subtotal: 24,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+            priceType: "SPECIAL",
+            originalPrice: 10,
+          },
+        ],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findFirst.mockResolvedValue({ pricePerUnit: 10 }); // catalog anchor read
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 36, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [
+            {
+              id: "li-1",
+              action: "UPDATE",
+              qty: 3,
+              unitPrice: 12,
+              overrideReason: "manager approved",
+            },
+          ],
+          replaceAll: false,
+        },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "li-1" },
+          data: expect.objectContaining({
+            unitPrice: 12,
+            subtotal: 36,
+            priceType: "MANUAL",
+            originalPrice: 10,
+            overriddenBy: "user-op",
+            overrideReason: "manager approved",
+          }),
+        }),
+      );
+    });
+
+    it("(i) B465: items can't be edited on a CANCELLED order at all (edit-window gate, refused before any mutation)", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "CANCELLED" as const,
+        lineItems: [],
+      });
+
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          { items: [{ productId: "prod-1", qty: 2 }], replaceAll: false },
+          operatorPayload,
+        ),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(prisma.orderItem.create).not.toHaveBeenCalled();
+      expect(prisma.orderItem.update).not.toHaveBeenCalled();
     });
   });
 
