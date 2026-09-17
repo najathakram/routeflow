@@ -224,7 +224,6 @@
 .glass-page .pricing-card,
 .glass-page .demo-form-card,
 .glass-page .connection-diagram,
-.glass-page .company-image,
 .glass-page .company-contact,
 .glass-page .retailer-price,
 .glass-page .contact-copy .demo-agenda,
@@ -249,7 +248,6 @@
   .glass-page .pricing-card,
   .glass-page .demo-form-card,
   .glass-page .connection-diagram,
-  .glass-page .company-image,
   .glass-page .company-contact,
   .glass-page .retailer-price,
   .glass-page .contact-copy .demo-agenda,
@@ -545,44 +543,9 @@
 }
 
 /* ── Company ──────────────────────────────────────────────────────────────── */
-
-.glass-page .company-image {
-  padding: 12px;
-  position: relative;
-  overflow: hidden;
-}
-
-.glass-page .company-image img {
-  border-radius: var(--g-r-sm);
-  display: block;
-  width: 100%;
-  height: auto;
-}
-
-.glass-page .company-image > div {
-  position: absolute;
-  left: 30px;
-  bottom: 30px;
-  padding: 14px 18px;
-  background: #ffffffe6;
-  border-radius: var(--g-r-xs);
-  box-shadow: 0 10px 25px #284a7018;
-}
-
-.glass-page .company-image span {
-  display: block;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  color: var(--g-eyebrow);
-  margin-bottom: 4px;
-}
-
-.glass-page .company-image p {
-  color: var(--g-ink);
-  font-weight: 600;
-  margin: 0;
-}
+/* .company-image (the old stacked-section layout) replaced by .company-photo
+   (see the "Reference-literal patterns" block below) — combined hero+photo
+   layout ruling, 2026-09-16. */
 
 .glass-page .photo-credit {
   font-size: 10px;
@@ -756,6 +719,90 @@
   color: #ffffffb0;
   font-size: 11px;
   max-width: 220px;
+}
+
+/* ── Reference-literal patterns (owner layout ruling, 2026-09-16 second pass)
+   — `.feature-grid.three` and `.split-hero` are the design study's own class
+   names, reused directly for a closer structural match (company's combined
+   hero+photo, product's wholesale-details split, home's audience/pricing
+   sections below). Layout (grid-template-columns, spacing) already comes
+   from marketing.css's own `.feature-grid`/`.split-hero` rules — these only
+   add the glass surface. ─────────────────────────────────────────────────── */
+
+.glass-page .feature-grid.three article {
+  padding: 26px;
+  border-top: 0;
+  background: var(--g-glass);
+  border: 1px solid var(--g-glass-border);
+  border-radius: var(--g-r-md);
+  box-shadow: var(--g-shadow-glass);
+}
+
+.glass-page .feature-grid.three article > svg {
+  color: var(--g-link);
+}
+
+.glass-page .feature-grid.three h3 {
+  color: var(--g-ink);
+}
+
+.glass-page .feature-grid.three p {
+  color: var(--g-body);
+}
+
+.glass-page .split-hero h1,
+.glass-page .split-hero h2 {
+  color: var(--g-ink);
+}
+
+.glass-page .split-hero p {
+  color: var(--g-body);
+}
+
+.glass-page .company-intro.split-hero {
+  padding: 40px;
+  background: var(--g-glass);
+  border: 1px solid var(--g-glass-border);
+  border-radius: var(--g-r-lg);
+  box-shadow: var(--g-shadow-glass);
+}
+
+.glass-page .company-photo {
+  position: relative;
+  border-radius: var(--g-r-sm);
+  overflow: hidden;
+}
+
+.glass-page .company-photo img {
+  border-radius: var(--g-r-sm);
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.glass-page .company-photo figcaption {
+  position: absolute;
+  left: 20px;
+  bottom: 20px;
+  padding: 14px 18px;
+  background: #ffffffe6;
+  border-radius: var(--g-r-xs);
+  box-shadow: 0 10px 25px #284a7018;
+}
+
+.glass-page .company-photo figcaption span {
+  display: block;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--g-eyebrow);
+  margin-bottom: 4px;
+}
+
+.glass-page .company-photo figcaption p {
+  color: var(--g-ink);
+  font-weight: 600;
+  margin: 0;
 }
 
 /* ── Legal pages (privacy/terms) ─────────────────────────────────────────── */
