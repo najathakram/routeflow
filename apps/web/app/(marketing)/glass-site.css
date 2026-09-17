@@ -1347,7 +1347,7 @@
 /* ── DeliveryDemo / OperationStory (components/operation-story.tsx) — a
    deliberately elaborate interactive "product passport" simulation (phone
    mockup, live scene chrome, auto-play timer, reduced-motion aware). Its
-   INTERNAL chrome (passport-*/scene-*/story-light-* etc., 50+ classes) is
+   INTERNAL chrome (passport-*, scene-*, story-light-* etc., 50+ classes) is
    left as its own product-accurate styling rather than reskinned — it is
    meant to read as a real product screenshot inside a window, not another
    marketing card, matching how the current production homepage's dashboard
