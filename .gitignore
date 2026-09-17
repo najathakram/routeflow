@@ -134,3 +134,18 @@ apps/mobile/.tmpjest/
 #     Per-machine tool state, not source. Same reason as .tmpjest above: it lands
 #     in whichever workspace was last edited and gets swept up by `git add -A`.
 **/.impeccable/
+
+# ─── Strix security-scan output (generated) ────────────────────────────────────
+#     Heavy scan artifacts, not source -- belongs in local-assets/ per the heavy
+#     files policy, never in git.
+strix_runs/
+
+# ─── dev-pipeline run-wide bookkeeping (engine-owned, not source) ─────────────
+#     agent-log.jsonl and approach-rotation.json are per-machine runtime state
+#     the engine/router write and read every session -- unlike the durable,
+#     committed cost-ledger.jsonl, these were always meant to be gitignored
+#     per the task-loop-rebuild plan's own Part C scope; dry-run.mjs's fixtures
+#     already treat agent-log.jsonl as untracked engine-owned state.
+.claude/pipeline/agent-log.jsonl
+.claude/pipeline/approach-rotation.json
+.claude/approach.json

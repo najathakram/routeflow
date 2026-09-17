@@ -17,6 +17,7 @@ import {
   UnknownPlanKeyError,
 } from "./plan-catalog.constants";
 import { addCycle } from "./billing-math";
+import { BillingNotificationService } from "./billing-notification.service";
 
 /**
  * Plan lifecycle crons (Plans & Billing Phase 5). Operate cross-tenant with explicit
@@ -34,6 +35,7 @@ export class BillingCronService {
     private readonly tenantStatus: TenantStatusGuard,
     private readonly catalog: PlanCatalogService,
     private readonly meters: MeterService,
+    private readonly billingNotification: BillingNotificationService,
   ) {}
 
   private planMonthly(version: PlanVersionWithCatalog | null, planKey: string | null): number {
@@ -63,7 +65,7 @@ export class BillingCronService {
     const now = new Date();
     const expired = await this.prisma.tenant.findMany({
       where: { status: "TRIAL", trialEndsAt: { lt: now }, deletedAt: null },
-      select: { id: true },
+      select: { id: true, trialEndsAt: true },
     });
     for (const t of expired) {
       await this.prisma.tenant.update({
@@ -73,8 +75,74 @@ export class BillingCronService {
       await this.events.emit(t.id, BILLING_EVENTS.TRIAL_EXPIRED, { at: now.toISOString() });
       this.entitlements.invalidate(t.id);
       this.tenantStatus.invalidate(t.id);
+      // N3: best-effort admin notification, never blocks the expiry transition above.
+      try {
+        await this.billingNotification.notifyTrialEnding(
+          t.id,
+          "TRIAL_ENDING_EXPIRY",
+          t.trialEndsAt as Date,
+        );
+      } catch (e) {
+        this.logger.error(
+          `N3 notifyTrialEnding(EXPIRY) threw unexpectedly for tenant ${t.id}`,
+          e as Error,
+        );
+      }
     }
     if (expired.length) this.logger.log(`Expired ${expired.length} trials → READ_ONLY`);
+  }
+
+  /**
+   * N3: trial-ending reminders at 7 days and 1 day before `trialEndsAt`. Runs hourly, same
+   * as expireTrials — each window is ~24h wide (not a point-in-time match), so a tenant is
+   * seen multiple times within it; BillingNotificationService's own (tenant, milestone)
+   * idempotency claim is what actually caps each milestone to exactly one send.
+   */
+  @LeaderCron(CronExpression.EVERY_HOUR, "billing-cron.warnTrialsEnding")
+  async warnTrialsEnding(): Promise<void> {
+    const now = new Date();
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const in6d = new Date(now.getTime() + 6 * DAY_MS);
+    const in7d = new Date(now.getTime() + 7 * DAY_MS);
+    const in1d = new Date(now.getTime() + DAY_MS);
+
+    const sevenDayWindow = await this.prisma.tenant.findMany({
+      where: { status: "TRIAL", trialEndsAt: { gte: in6d, lt: in7d }, deletedAt: null },
+      select: { id: true, trialEndsAt: true },
+    });
+    for (const t of sevenDayWindow) {
+      try {
+        await this.billingNotification.notifyTrialEnding(
+          t.id,
+          "TRIAL_ENDING_7D",
+          t.trialEndsAt as Date,
+        );
+      } catch (e) {
+        this.logger.error(
+          `N3 notifyTrialEnding(7D) threw unexpectedly for tenant ${t.id}`,
+          e as Error,
+        );
+      }
+    }
+
+    const oneDayWindow = await this.prisma.tenant.findMany({
+      where: { status: "TRIAL", trialEndsAt: { gte: now, lt: in1d }, deletedAt: null },
+      select: { id: true, trialEndsAt: true },
+    });
+    for (const t of oneDayWindow) {
+      try {
+        await this.billingNotification.notifyTrialEnding(
+          t.id,
+          "TRIAL_ENDING_1D",
+          t.trialEndsAt as Date,
+        );
+      } catch (e) {
+        this.logger.error(
+          `N3 notifyTrialEnding(1D) threw unexpectedly for tenant ${t.id}`,
+          e as Error,
+        );
+      }
+    }
   }
 
   /**
@@ -143,6 +211,7 @@ export class BillingCronService {
         planKey: true,
         planVersionId: true,
         downgradeToPlanKey: true,
+        downgradeEffectiveAt: true,
         retainedUserIds: true,
       },
     });
@@ -242,6 +311,26 @@ export class BillingCronService {
             { amountDelta, tx },
           );
         });
+
+        // N3: best-effort admin notification, never blocks the transaction above. `key` is
+        // the effective date this tenant's row carried before the transaction cleared it —
+        // `s.downgradeEffectiveAt`, captured before this loop iteration started, so a re-run
+        // of this cron tick dedupes correctly even though the row no longer shows a pending
+        // downgrade after this point.
+        try {
+          const fromDefApplied = findPlanDefinition(fromVersion.definitions, s.planKey);
+          await this.billingNotification.notifyDowngradeApplied(
+            s.tenantId,
+            fromDefApplied?.name ?? s.planKey ?? "your previous plan",
+            targetDef.name,
+            s.downgradeEffectiveAt as Date,
+          );
+        } catch (e) {
+          this.logger.error(
+            `N3 notifyDowngradeApplied threw unexpectedly for tenant ${s.tenantId}`,
+            e as Error,
+          );
+        }
       } catch (err) {
         // F2: narrowed from "catch everything" — only planKeyToEnum()'s own unresolvable-key
         // Error is a data problem this sweep may skip past. Anything else (pool exhaustion, a

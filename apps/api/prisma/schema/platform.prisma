@@ -75,6 +75,25 @@ model TenantSubscription {
   @@index([downgradeEffectiveAt])
 }
 
+// N3 (2026-09-16): idempotency log for billing-lifecycle emails to the tenant admin
+// (trial ending, downgrade scheduled/applied, upgrade confirmed, cancelled, suspended).
+// `key` is a milestone-specific disambiguator (e.g. the scheduled downgrade's effective
+// date) so a genuinely NEW occurrence of a repeatable milestone still sends, while a
+// retry/re-run of the SAME occurrence is blocked by the unique constraint below — the
+// create() call is the atomic claim (a caught unique-violation means "already sent").
+model BillingNotificationLog {
+  id        String   @id @default(uuid())
+  tenantId  String
+  milestone String
+  key       String   @default("")
+  sentAt    DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, milestone, key])
+  @@index([tenantId])
+}
+
 model TenantAddon {
   id            String   @id @default(uuid())
   tenantId      String

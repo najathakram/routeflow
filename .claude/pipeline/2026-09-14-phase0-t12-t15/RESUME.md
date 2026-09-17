@@ -1,3 +1,5 @@
+Status: IMPLEMENTED
+
 # RESUME — Phase 0 W2 Tasks T12-T15
 
 - **Slug:** 2026-09-14-phase0-t12-t15

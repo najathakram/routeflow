@@ -45,6 +45,7 @@ import {
   useCustomerTags,
   useExportCustomers,
   useMergeCustomers,
+  useRestoreCustomer,
 } from "@/lib/api/customers";
 import { usePendingPortalApprovals, useApprovePortalRequest } from "@/lib/api/portal-approvals";
 import { apiClient } from "@/lib/api-client";
@@ -70,6 +71,8 @@ interface Customer {
   tagAssignments?: Array<{ tag: { id: string; name: string; color: string } }>;
   user: { id: string; email: string; username: string; status: string };
   addresses: any[];
+  /** REG-B170: set when the customer has been removed (soft-deleted). */
+  deletedAt?: string | null;
 }
 
 // ─── Import Modal ─────────────────────────────────────────────────────────────
@@ -249,9 +252,16 @@ export default function CustomersPage() {
   const [urlFilters, setUrlFilter, clearUrlFilters] = useUrlFilters({
     status: "",
     regulated: false,
+    unassigned: false,
+    removed: false,
   });
   const statusFilter = urlFilters.status;
   const regulatedFilter = urlFilters.regulated;
+  // REG-B156: URL-synced like status/regulated, and sent to the server (see
+  // customersQueryParams) instead of filtering client-side over one page.
+  const unassignedFilter = urlFilters.unassigned;
+  // REG-B170: an explicit trash view — never mixed with live customers.
+  const removedFilter = urlFilters.removed;
   const [typeFilter, setTypeFilter] = React.useState("");
   const [tagFilter, setTagFilter] = React.useState("");
   // Seed the tag filter from ?tag= (bell notification deep-links, e.g. the
@@ -262,7 +272,6 @@ export default function CustomersPage() {
     const t = searchParams.get("tag");
     if (t) setTagFilter(t);
   }, [searchParams]);
-  const [unassignedOnly, setUnassignedOnly] = React.useState(false);
   const [isAddOpen, setIsAddOpen] = React.useState(false);
   const [isImportOpen, setIsImportOpen] = React.useState(false);
   const [editingCustomer, setEditingCustomer] = React.useState<any>(null);
@@ -289,6 +298,8 @@ export default function CustomersPage() {
     typeFilter,
     tagFilter,
     regulatedFilter,
+    unassignedFilter,
+    removedFilter,
   ]);
 
   // REG-B154 class fix: selection used to accumulate across page/search/filter
@@ -309,7 +320,8 @@ export default function CustomersPage() {
     typeFilter,
     tagFilter,
     regulatedFilter,
-    unassignedOnly,
+    unassignedFilter,
+    removedFilter,
     sortBy,
     sortDir,
   ]);
@@ -328,6 +340,10 @@ export default function CustomersPage() {
     sortBy: sortBy || undefined,
     sortDir: sortBy ? sortDir : undefined,
     regulated: regulatedFilter ? "1" : undefined,
+    // REG-B156: sent to the server (customers.service's shared where-builder)
+    // instead of filtered client-side over one page.
+    unassigned: unassignedFilter ? "1" : undefined,
+    removed: removedFilter ? "1" : undefined,
   };
   const { data: result, isLoading, isError, refetch } = useCustomers(customersQueryParams);
   const customers: Customer[] = result?.data ?? [];
@@ -342,17 +358,28 @@ export default function CustomersPage() {
   const updateStatus = useUpdateCustomerStatus();
   const deleteCustomer = useDeleteCustomer();
   const batchDelete = useBatchDeleteCustomers();
+  const restoreCustomer = useRestoreCustomer();
 
   // ── Pending portal approvals ──────────────────────────────────────────────
   const { data: pendingApprovals = [] } = usePendingPortalApprovals();
   const approveFromList = useApprovePortalRequest();
   const [approvalsExpanded, setApprovalsExpanded] = React.useState(true);
 
-  // ── Filter: unassigned only ───────────────────────────────────────────────
-  const visibleCustomers = React.useMemo(() => {
-    if (!unassignedOnly) return customers;
-    return customers.filter((c) => !assignments?.[c.id]?.length);
-  }, [customers, assignments, unassignedOnly]);
+  // REG-B158: export now shares the list's own filters (search/status/type/tag/regulated/
+  // unassigned/removed) — page/limit/sortBy/sortDir are dropped, the export always dumps every
+  // matching row, not one page. Previously this sent {} and exported the whole tenant regardless
+  // of the screen's filters.
+  const exportParams = {
+    search: debouncedSearch || undefined,
+    status: statusFilter || undefined,
+    tag: tagFilter || undefined,
+    customerType: typeFilter || undefined,
+    regulated: regulatedFilter ? "1" : undefined,
+    unassigned: unassignedFilter ? "1" : undefined,
+    removed: removedFilter ? "1" : undefined,
+  };
+
+  const visibleCustomers = customers;
 
   const toggleSelect = (id: string) =>
     setSelected((prev) => {
@@ -365,6 +392,13 @@ export default function CustomersPage() {
     setSelectMode(false);
     setSelected(new Set());
   };
+
+  // F3: the trash view never offers bulk actions — a selection carried in from the live
+  // view (or made before toggling into trash) must not survive the switch.
+  React.useEffect(() => {
+    if (removedFilter) exitSelectMode();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [removedFilter]);
 
   const handleBulkDelete = async () => {
     if (isDeleting || selected.size === 0) return;
@@ -613,9 +647,12 @@ export default function CustomersPage() {
         id: "status",
         header: "Status",
         accessorFn: (row) => row.user?.status ?? "ACTIVE",
-        cell: ({ row }) => (
-          <Badge status={(row.original.user?.status ?? "ACTIVE") as BadgeStatus} />
-        ),
+        cell: ({ row }) =>
+          row.original.deletedAt ? (
+            <Badge variant="danger" label="Removed" />
+          ) : (
+            <Badge status={(row.original.user?.status ?? "ACTIVE") as BadgeStatus} />
+          ),
       },
       {
         id: "actions",
@@ -623,6 +660,31 @@ export default function CustomersPage() {
         enableSorting: false,
         cell: ({ row }) => {
           const status = row.original.user?.status ?? "ACTIVE";
+          // REG-B170: a removed row offers Restore (+ View, reads still work) instead of
+          // Edit/toggle-status — those would 409 server-side ("Restore the customer first").
+          if (row.original.deletedAt) {
+            return (
+              <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                <button
+                  title="Restore customer"
+                  aria-label="Restore customer"
+                  onClick={() => restoreCustomer.mutate({ id: row.original.id })}
+                  disabled={restoreCustomer.isPending}
+                  className="rounded p-1.5 text-brand-600 hover:bg-brand-50 transition-colors"
+                >
+                  <UserCheck className="h-4 w-4" />
+                </button>
+                <button
+                  title="View customer"
+                  aria-label="View customer"
+                  onClick={() => router.push(`/customers/${row.original.id}`)}
+                  className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
+                >
+                  <Eye className="h-4 w-4" />
+                </button>
+              </div>
+            );
+          }
           return (
             <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
               <button
@@ -667,6 +729,7 @@ export default function CustomersPage() {
     [
       router,
       toggleStatus,
+      restoreCustomer,
       assignments,
       selectMode,
       selected,
@@ -698,27 +761,30 @@ export default function CustomersPage() {
             <Button
               variant="secondary"
               leftIcon={<Download className="h-4 w-4" />}
-              onClick={() => exportCustomers.mutate({})}
+              onClick={() => exportCustomers.mutate(exportParams)}
               loading={exportCustomers.isPending}
             >
               Export
             </Button>
-            <Button
-              variant="secondary"
-              leftIcon={
-                selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />
-              }
-              onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
-            >
-              {selectMode ? "Cancel" : "Select"}
-            </Button>
+            {!removedFilter && (
+              <Button
+                variant="secondary"
+                leftIcon={
+                  selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />
+                }
+                onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
+              >
+                {selectMode ? "Cancel" : "Select"}
+              </Button>
+            )}
             <Button onClick={() => setIsAddOpen(true)}>New Customer</Button>
           </div>
         }
       />
 
-      {/* Selection action bar */}
-      {selectMode && selected.size > 0 && (
+      {/* Selection action bar — never shown in the trash view (F3): the operator can only
+          View + inline Restore a removed row, never bulk-act on it. */}
+      {!removedFilter && selectMode && selected.size > 0 && (
         <div className="flex items-center justify-between rounded-lg border border-danger/30 bg-danger-bg px-4 py-3">
           <span className="text-sm font-medium text-navy">
             {selected.size} customer{selected.size !== 1 ? "s" : ""} selected
@@ -901,10 +967,10 @@ export default function CustomersPage() {
 
           {/* Unassigned only toggle chip */}
           <button
-            onClick={() => setUnassignedOnly((v) => !v)}
+            onClick={() => setUrlFilter("unassigned", !unassignedFilter)}
             className={cn(
               "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors",
-              unassignedOnly
+              unassignedFilter
                 ? "border-brand-500 bg-brand-50 text-brand-600"
                 : "border-surface-border bg-white text-navy hover:bg-surface-raised",
             )}
@@ -912,12 +978,26 @@ export default function CustomersPage() {
             <span
               className={cn(
                 "inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border text-[10px]",
-                unassignedOnly ? "border-brand-500 bg-brand-500 text-white" : "border-navy/30",
+                unassignedFilter ? "border-brand-500 bg-brand-500 text-white" : "border-navy/30",
               )}
             >
-              {unassignedOnly && "✓"}
+              {unassignedFilter && "✓"}
             </span>
             Unassigned only
+          </button>
+
+          {/* REG-B170: removed (soft-deleted) customers trash view */}
+          <button
+            onClick={() => setUrlFilter("removed", !removedFilter)}
+            className={cn(
+              "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors",
+              removedFilter
+                ? "border-danger bg-danger-bg text-danger"
+                : "border-surface-border bg-white text-navy hover:bg-surface-raised",
+            )}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Removed
           </button>
 
           {/* Search — pushed to the right */}
@@ -953,13 +1033,32 @@ export default function CustomersPage() {
               else router.push(`/customers/${row.original.id}`);
             }}
             emptyState={
-              unassignedOnly ? (
+              removedFilter ? (
+                <EmptyState
+                  variant="customers"
+                  title="No removed customers"
+                  description="Nothing is in the trash right now."
+                  action={
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setUrlFilter("removed", false)}
+                    >
+                      Show all customers
+                    </Button>
+                  }
+                />
+              ) : unassignedFilter ? (
                 <EmptyState
                   variant="customers"
                   title="No unassigned customers"
                   description="Every customer is already assigned to a route."
                   action={
-                    <Button variant="secondary" size="sm" onClick={() => setUnassignedOnly(false)}>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setUrlFilter("unassigned", false)}
+                    >
                       Show all customers
                     </Button>
                   }

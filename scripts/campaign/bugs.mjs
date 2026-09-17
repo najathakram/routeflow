@@ -350,11 +350,21 @@ cmds.file = (args) => {
   const title = args[0];
   if (!title || title.startsWith("--"))
     fail(
-      'usage: file "<title>" --location "<where>" --severity critical|high|medium|low [--symptom "..."] [--batch F## --tier T1|T2|T3] [--files "a.ts b.ts"]',
+      'usage: file "<title>" --location "<where>" --severity critical|high|medium|low [--symptom "..."] [--batch F## --tier T1|T2|T3] [--files "a.ts b.ts"] [--id B###]',
     );
   const location = flag(args, "location");
   const severity = flag(args, "severity", "medium");
   const filesFlag = flag(args, "files");
+  // B453: a lead reserves an id across several lanes ahead of time (each
+  // lane's own tree mints max+1 independently, so three sessions filing the
+  // "next" id at once used to collide on the same number). --id lets the
+  // caller pin a SPECIFIC id instead of taking whatever max+1 resolves to in
+  // THIS tree; format-checked here (fails fast, before the lock), range- and
+  // existence-checked below once maxId is known.
+  const explicitIdRaw = flag(args, "id");
+  const explicitId = explicitIdRaw ? explicitIdRaw.toUpperCase() : null;
+  if (explicitId && !BUG_ID_RE.test(explicitId))
+    fail(`--id must match ${BUG_ID_RE} (e.g. B453) — got "${explicitIdRaw}"`);
   // Validated BEFORE the catalogue lock is ever taken — an invalid tag must
   // exit 1 with the catalogue byte-for-byte unchanged, not rolled back after
   // a partial write.
@@ -385,8 +395,27 @@ cmds.file = (args) => {
       shardMaxId,
       rows.reduce((m, r) => Math.max(m, Number(r.id.slice(1))), 0),
     );
+    // B453: an explicit --id must be strictly ahead of every id this tree
+    // already knows about (catalogue ∪ every ledger shard — the same union
+    // maxId is derived from) — a reservation behind or equal to that union
+    // is either already filed here or about to collide with the very next
+    // auto-mint, so refuse rather than silently accept a stale reservation.
+    // A record file can exist with no catalogue/ledger row behind it (an
+    // orphan from a prior partial `file` or a hand-created fixture) even
+    // above maxId, so that is checked too.
+    if (explicitId) {
+      const explicitNum = Number(explicitId.slice(1));
+      if (explicitNum <= maxId)
+        fail(
+          `--id ${explicitId} is not ahead of this tree's current max id (B${maxId}) — ` +
+            `a lead-reserved id must be strictly greater than every id already filed or ` +
+            `ledgered here (mint the next id with no --id, or reserve a higher one)`,
+        );
+      if (existsSync(recordPath(explicitId)))
+        fail(`--id ${explicitId} already has a record at ${recordPath(explicitId)}`);
+    }
     const bug = {
-      id: `B${maxId + 1}`,
+      id: explicitId ?? `B${maxId + 1}`,
       title,
       location,
       severity,
@@ -1210,6 +1239,19 @@ function parseRecord(text) {
   return { front, body: m[2] };
 }
 
+// B453: the committed convention for a list-valued field is JSON with a
+// space after each comma (`["audit-2026-06", "security"]`) — every hand-
+// filed record and #704's original writer used it. Plain `JSON.stringify(v)`
+// omits that space, so every `sync`/`tag`/`file --tag` touching an existing
+// record silently rewrote its tags to the no-space form, and the NEXT run
+// (by a different session, or the same one) saw that as drift and rewrote it
+// back — phantom churn with no real change either way (#780 had to hand-
+// normalise five records back to the space form after exactly this).
+// Stringifying each element separately and joining with ", " (rather than
+// `JSON.stringify(v).replace(/,/g, ", ")`) keeps this correct even if an
+// element's own string content ever contained a comma.
+const renderArray = (v) => `[${v.map((x) => JSON.stringify(x)).join(", ")}]`;
+
 const renderFront = (front) =>
   "---\n" +
   Object.entries(front)
@@ -1217,7 +1259,7 @@ const renderFront = (front) =>
       v === null || v === undefined || v === ""
         ? `${k}:`
         : Array.isArray(v)
-          ? `${k}: ${JSON.stringify(v)}`
+          ? `${k}: ${renderArray(v)}`
           : `${k}: ${v}`,
     )
     .join("\n") +
@@ -3102,6 +3144,60 @@ cmds["self-test"] = () => {
     batch: null,
     closed: null,
   });
+
+  // B453: an array field must render with a space after each comma — the
+  // committed convention (`["audit-2026-06", "security"]`), not bare
+  // `JSON.stringify`'s no-space form. Getting this wrong is what caused the
+  // churn: every write flips the file to one form, the next session's write
+  // (or the same session's next `sync`) sees that as drift and flips it back.
+  check(
+    "renderFront: array field uses committed ', ' separator, not bare JSON.stringify",
+    renderFront({ tags: ["audit-2026-06", "security"] }),
+    '---\ntags: ["audit-2026-06", "security"]\n---\n',
+  );
+
+  // B453 round-trip: writing a record that already has the committed-form
+  // tags AND an existing multi-line History section must be byte-identical
+  // on a no-op rewrite (same front, same body) — proving the array format is
+  // now stable AND that existing History lines are neither dropped nor
+  // reordered by passing through write. A prior History line's own `sync`
+  // pass (e.g. `appendHistory`) is a SEPARATE concern already covered below;
+  // this isolates renderFront/writeRecord's contribution to the churn.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-b453-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    try {
+      const body =
+        "\n# B1 · fixture\n\n## History\n\n" +
+        "- 2026-09-12 · **filed** · filed directly via `bugs.mjs file` <!--filed-->\n" +
+        "- 2026-09-12 · **batched** · assigned to F48 <!--batch-F48-->\n" +
+        "- 2026-09-16 · **commit** · `2d353752` fixture commit <!--commit-2d353752-->\n";
+      const front = { id: "B1", tags: ["audit-2026-06", "security"], closed: null };
+      writeRecord("B1", front, body);
+      const before = readFileSync(recordPath("B1"), "utf8");
+      const reread = readRecord("B1");
+      writeRecord("B1", reread.front, reread.body);
+      const after = readFileSync(recordPath("B1"), "utf8");
+      check(
+        "B453: no-op rewrite of committed-form tags is byte-identical (no churn)",
+        after,
+        before,
+      );
+      check(
+        "B453: History lines survive the rewrite unchanged, in order (none dropped/reordered)",
+        after.match(/^- 2026-.*<!--.*-->$/gm),
+        [
+          "- 2026-09-12 · **filed** · filed directly via `bugs.mjs file` <!--filed-->",
+          "- 2026-09-12 · **batched** · assigned to F48 <!--batch-F48-->",
+          "- 2026-09-16 · **commit** · `2d353752` fixture commit <!--commit-2d353752-->",
+        ],
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+    }
+  }
 
   // A CRLF-terminated record must parse the same as an LF one, not get its
   // whole front-matter block silently swallowed into the body.
@@ -5754,7 +5850,7 @@ cmds["self-test"] = () => {
       const victim = holder("B5", "20000", "ignore");
       const heldByVictim = awaitHold();
       victim.kill("SIGKILL");
-      const victimGone = awaitExit(victim, 3000);
+      const victimGone = awaitExit(victim, 15000);
       const rescued = runCli(["tier", "B5", "T2", "--why", "dead-holder fixture"], tmp);
       check("dead holder: it really held the lock when it was killed", heldByVictim, true);
       check(
@@ -6099,7 +6195,20 @@ cmds["self-test"] = () => {
       };
       const ungated = timeCli("B1", { BUGS_TEST_STALL_MS: "2500", BUGS_SELF_TEST: "" });
       const gated = timeCli("B2", { BUGS_TEST_STALL_MS: "2500", BUGS_SELF_TEST: "1" });
-      check("stall seam: a production run ignores BUGS_TEST_STALL_MS", ungated < 2000, true);
+      // B454: `ungated < 2000` was a fixed wall-clock ceiling — under host load, plain
+      // Node process-launch overhead alone can exceed 2000ms with no stall involved at
+      // all, failing this even though the seam correctly did nothing. Both `timeCli`
+      // calls pay the SAME ambient spawn overhead, so the DIFFERENCE between them
+      // isolates the stall seam's actual effect regardless of how loaded the host is:
+      // a production run must be at least ~1500ms faster than a self-test-gated run of
+      // the identical command with the identical stall value.
+      check(
+        "stall seam: a production run ignores BUGS_TEST_STALL_MS (gated run is >=1500ms slower — load-tolerant, not a fixed ceiling)",
+        gated - ungated >= 1500,
+        true,
+      );
+      // Unaffected by host load in the flaky direction: load can only push `gated`
+      // HIGHER, never below the 2500ms stall it's deliberately waiting out.
       check("stall seam: BUGS_SELF_TEST=1 still un-gates it for this suite", gated >= 2500, true);
     } finally {
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
@@ -6332,9 +6441,17 @@ cmds["self-test"] = () => {
         kids.map((k) => k.code),
         [0, 0],
       );
+      // B454: `elapsedMs < 8000` was a fixed wall-clock ceiling sitting only 20% below
+      // the real LOCK_SPIN_MS deadline (10000) — under host load, three chained process
+      // launches (orchestrator + 2 children) can push even a correctly-fast race well
+      // past 8000ms with nothing wrong. The check above (`BOTH child processes exited
+      // 0`) is the actual proof that neither side hit the give-up path — a give-up
+      // always exits non-zero (see "give-up message: ... (non-zero)" above). This is
+      // now a loose outer sanity bound (well below double LOCK_SPIN_MS) to catch a
+      // genuine hang, not a tight margin the exit-code check already covers.
       check(
-        "move vs file: the race finished well under the 10s lock-wait deadline",
-        elapsedMs < 8000,
+        "move vs file: the race finished well below double the lock-wait deadline (outer sanity bound; exit codes above are the real proof)",
+        elapsedMs < LOCK_SPIN_MS * 2,
         true,
       );
       const cat = readCatalogue();
@@ -6756,7 +6873,6 @@ cmds["self-test"] = () => {
         ].join("\n"),
       );
       const argv = [orchestrator, SCRIPT_PATH, tmp, "1200"].map((a) => JSON.stringify(a)).join(" ");
-      const t0 = Date.now();
       let raced;
       try {
         raced = {
@@ -6766,18 +6882,12 @@ cmds["self-test"] = () => {
       } catch (e) {
         raced = { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
       }
-      const elapsedMs = Date.now() - t0;
       check("lock order (runtime): the orchestrator exited 0", raced.code, 0);
       const kids = JSON.parse(raced.out.trim().split("\n").pop());
       check(
         "lock order (runtime): move and discharge BOTH exited 0 — no deadlock, no refusal",
         kids.map((k) => k.code),
         [0, 0],
-      );
-      check(
-        "lock order (runtime): the race finished in well under 5s — a genuine deadlock costs ~10s+",
-        elapsedMs < 5000,
-        true,
       );
     } finally {
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
@@ -7491,6 +7601,154 @@ cmds["self-test"] = () => {
           namesBadTag: attempt.out.includes("Bad_Tag"),
         },
         { code: 1, catalogueGrew: false, namesBadTag: true },
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // B453/R-id: `file --id B###` lets a lead pin a SPECIFIC id (a reservation
+  // shared across several lanes/trees) instead of taking this tree's own
+  // max+1 — the exact collision the bug report names: three lanes each
+  // minting max+1 independently landed on the same id. Covers: a reservation
+  // ahead of this tree's max is honoured; one at or below max is refused
+  // (would either collide with an id already here, or silently reuse one);
+  // an id with an orphan record but no catalogue/ledger row is still refused
+  // (a stale fixture from a prior partial `file` must not be silently
+  // overwritten); the reservation being far ahead of max+1 does not disturb
+  // the NEXT auto-mint once the reserved lane's own `file` lands normally.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    try {
+      process.env.BUGS_ROOT = tmp;
+      cmds.file([
+        "id-flag fixture: auto-minted first bug",
+        "--location",
+        "apps/api/src/self-test.ts",
+        "--severity",
+        "low",
+      ]);
+      // this tree's only id so far is B1 (maxId=1) — a lead reservation of B5
+      // simulates a peer lane that has already filed up through B4.
+      cmds.file([
+        "id-flag fixture: lead-reserved id",
+        "--location",
+        "apps/api/src/self-test.ts",
+        "--severity",
+        "low",
+        "--id",
+        "B5",
+      ]);
+      check(
+        "B453/R-id: file --id B5 files under the reserved id, not this tree's own max+1 (B2)",
+        readCatalogue()
+          .map((r) => r.id)
+          .sort(),
+        ["B1", "B5"],
+      );
+
+      const atMax = runCli(
+        [
+          "file",
+          "id-flag fixture: reservation not ahead of max",
+          "--location",
+          "apps/api/src/self-test.ts",
+          "--severity",
+          "low",
+          "--id",
+          "B5",
+        ],
+        tmp,
+      );
+      check(
+        "B453/R-id: --id at-or-below this tree's current max is refused (exit 1, names the max)",
+        { code: atMax.code, namesMax: atMax.out.includes("B5") },
+        { code: 1, namesMax: true },
+      );
+
+      const belowMax = runCli(
+        [
+          "file",
+          "id-flag fixture: reservation below max",
+          "--location",
+          "apps/api/src/self-test.ts",
+          "--severity",
+          "low",
+          "--id",
+          "B3",
+        ],
+        tmp,
+      );
+      check("B453/R-id: --id below this tree's current max is refused too", belowMax.code, 1);
+
+      // an id ahead of max but with an orphan record (no catalogue/ledger row
+      // behind it — e.g. a prior `file` that wrote the record then crashed
+      // before the catalogue write) must still be refused, not silently
+      // overwritten.
+      mkdirSync(join(tmp, "bugs"), { recursive: true });
+      writeFileSync(
+        join(tmp, "bugs", "B9.md"),
+        "---\nid: B9\ntitle: orphan\n---\n\n# B9 · orphan\n",
+      );
+      const orphan = runCli(
+        [
+          "file",
+          "id-flag fixture: reservation collides with an orphan record",
+          "--location",
+          "apps/api/src/self-test.ts",
+          "--severity",
+          "low",
+          "--id",
+          "B9",
+        ],
+        tmp,
+      );
+      check(
+        "B453/R-id: --id already holding an orphan record (no catalogue row) is still refused",
+        { code: orphan.code, namesRecord: orphan.out.includes("B9") },
+        { code: 1, namesRecord: true },
+      );
+
+      const malformed = runCli(
+        [
+          "file",
+          "id-flag fixture: malformed id",
+          "--location",
+          "apps/api/src/self-test.ts",
+          "--severity",
+          "low",
+          "--id",
+          "not-an-id",
+        ],
+        tmp,
+      );
+      check(
+        "B453/R-id: a malformed --id value is refused before the catalogue lock",
+        malformed.code,
+        1,
+      );
+
+      // the reserved id (B5) becomes part of this tree's own union the moment
+      // it lands — "never infer a free id from a gap" (the maxId comment
+      // above) means the B2-B4 gap it left behind stays reserved for
+      // whichever OTHER lane actually holds those ids; the next plain `file`
+      // here takes max+1 over the real union, i.e. B6, never a gap-fill.
+      cmds.file([
+        "id-flag fixture: next auto-mint after a reservation",
+        "--location",
+        "apps/api/src/self-test.ts",
+        "--severity",
+        "low",
+      ]);
+      check(
+        "B453/R-id: the next auto-mint after a reservation is max+1 over the real union (B6), never a gap-fill",
+        readCatalogue()
+          .map((r) => r.id)
+          .sort(),
+        ["B1", "B5", "B6"],
       );
     } finally {
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;

@@ -39,7 +39,9 @@ const EXPECTED_FILES = [
 // (2026-09-15, post-dated check payments PR-1: +1 enum — CheckReturnReason.)
 // (2026-09-15, Returns Inside Order Creation PR-1a: +1 enum — ReturnKind.)
 // (2026-09-16, public demo booking PR-1: +1 model — DemoBooking; +1 enum — DemoBookingStatus.)
-const EXPECTED_MODEL_COUNT = 129;
+// (2026-09-16, N3 billing lifecycle emails: +1 model — BillingNotificationLog; enum count
+// untouched by that lane.)
+const EXPECTED_MODEL_COUNT = 130;
 const EXPECTED_ENUM_COUNT = 87;
 
 function listSchemaFiles(): string[] {

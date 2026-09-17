@@ -28,11 +28,16 @@ const signupSchema = z
       .min(3, "Username must be at least 3 characters")
       .max(30, "Username must be 30 characters or less")
       .regex(/^[a-zA-Z0-9_]{3,30}$/, "Only letters, numbers, and underscores"),
+    // B03: mirrors the server DTO (register-tenant.dto.ts) and every other
+    // password-setting flow (reset-password, buyer register/change-password) —
+    // this used to require only uppercase+digit, so a password that passed
+    // signup could then be rejected the first time the user tried to reset it.
     adminPassword: z
       .string()
       .min(8, "Password must be at least 8 characters")
       .regex(/[A-Z]/, "Must contain at least one uppercase letter")
-      .regex(/[0-9]/, "Must contain at least one number"),
+      .regex(/[a-z]/, "Must contain at least one lowercase letter")
+      .regex(/[0-9\W]/, "Must contain at least one number or special character"),
     confirmPassword: z.string().min(1, "Please confirm your password"),
   })
   .refine((d) => d.adminPassword === d.confirmPassword, {
@@ -225,8 +230,16 @@ function SignupInner() {
         return;
       }
 
+      // The account is created either way, but the verification email itself
+      // may have failed to send (mail transport down, etc.) — carry that
+      // honestly to the check-email screen instead of always implying success.
+      const regBody: { emailSent?: boolean } = await regRes.json().catch(() => ({}));
+      const emailSentParam = regBody.emailSent === false ? "&emailSent=false" : "";
+
       // Redirect to "check your email" page — no auto-login, must verify first
-      router.push(`/signup/check-email?email=${encodeURIComponent(data.adminEmail)}`);
+      router.push(
+        `/signup/check-email?email=${encodeURIComponent(data.adminEmail)}${emailSentParam}`,
+      );
     } catch {
       setApiError("Something went wrong. Please try again.");
       setIsLoading(false);
@@ -351,7 +364,7 @@ function SignupInner() {
             <input
               id="signup-password"
               type={showPassword ? "text" : "password"}
-              placeholder="At least 8 chars, 1 uppercase, 1 number"
+              placeholder="At least 8 characters"
               autoComplete="new-password"
               className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/70 transition-colors focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
               {...register("adminPassword")}
@@ -366,8 +379,12 @@ function SignupInner() {
               {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
           </div>
-          {errors.adminPassword && (
+          {errors.adminPassword ? (
             <p className="text-xs text-danger">{errors.adminPassword.message}</p>
+          ) : (
+            <p className="text-xs text-navy/70">
+              Uppercase, lowercase, and a number or symbol required.
+            </p>
           )}
         </div>
 
