@@ -1623,7 +1623,7 @@ export const FeatureOverridesSection = React.forwardRef<
                 </option>
               ))}
             </select>
-            {selectedRegistryEntry?.gate.via === "none" && (
+            {selectedRegistryEntry?.gate?.via === "none" && (
               <p className="mt-1 text-xs text-amber-400">
                 This key has no wired gate (catalog metadata only) — an override here will have no
                 effect.

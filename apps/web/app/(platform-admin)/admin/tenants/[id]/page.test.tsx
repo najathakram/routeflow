@@ -62,14 +62,16 @@ function tenantFixture() {
 }
 
 // The overrides drawer's own registry fetch (a direct superAdminClient.get call, #795-era —
-// unrelated to lib/platform-admin/features) only reads {key,label,internal,via}.
+// unrelated to lib/platform-admin/features). B478 (#843) fixed the drawer to read the real
+// nested `gate.via`/`gate.state` shape instead of a flat `via` — this fixture must match, or
+// `selectedRegistryEntry?.gate.via` crashes with "Cannot read properties of undefined".
 const OVERRIDES_REGISTRY_OPTION_FIXTURE = REGISTRY_FIXTURE.map((r) => ({
   key: r.key,
   label: r.label,
   area: r.area,
   kind: r.kind,
   internal: r.internal,
-  via: r.gate.via,
+  gate: r.gate,
 }));
 
 const mockPost = jest.fn();
