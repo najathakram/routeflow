@@ -230,21 +230,6 @@
 - **Guard:** none yet — a build-plan lint flagging a literal `L-\d+`/`nextId: \d+` inside any
   non-first-wave task's `brief` would catch this class before launch.
 
-### L-151 · 2026-09-15 · tooling · #743 fix-round value-importing @routeflow/types crashed api boot
-
-- **Symptom:** two commits value-imported (not `import type`) a constant from `@routeflow/types`.
-  `tsc --noEmit`/`ts-jest` passed clean. `node dist/main.js` (real prod boot) would have crashed:
-  `nest build` doesn't bundle workspace deps, and that package ships raw TS with no build step, so
-  the import emits a `require("@routeflow/types")` into `dist/` that fails to parse.
-- **Root cause:** a guard test for this exact mistake already existed
-  (`no-runtime-workspace-imports.spec.ts`) but never ran against these commits — only the task's own
-  spec files ran, not the full suite, until this session ran it in full for the first time.
-- **Lesson:** **`tsc`/`ts-jest` passing is not proof a workspace-package import is safe at actual
-  runtime boot — only a guard test on the real imports (or an actual boot) proves it.** Run the FULL
-  suite at least once per fix round; a boot-crash guard does nothing if it never runs.
-- **Guard:** `no-runtime-workspace-imports.spec.ts` (pre-existing). Fix: derive the value from
-  `@prisma/client`'s real enum instead, or mirror it locally like the file's own `METER_KEYS`.
-
 ## testing
 
 ### L-165 · 2026-09-16 · testing · #779 (B225/B244/B411)
@@ -304,6 +289,19 @@
 - **Guard:** none — judgment. Grep `isWeb`/`Platform.OS` in any file a fix touches.
 
 ## domain
+
+### L-185 · 2026-09-17 · domain · B440 (report `total` repurposed, footer stopped matching its own column)
+
+- **Symptom:** a report's `total` field was repurposed from "sum of the displayed column" to a
+  pre-tax, windowed expense figure — the footer stopped equalling the sum of its own column.
+- **Root cause:** one field was serving two consumers at once: a UI sum-of-column invariant and a
+  cross-report reconciliation value. Changing the value for one consumer silently broke the other,
+  because nothing named which contract the field actually promised.
+- **Lesson:** **When a report field feeds both a displayed column's own sum AND a value another
+  report must reconcile against, give the two consumers separate named fields (e.g. `total` for
+  the column sum, `expense` for the reconciliation value) — never let one field serve both.**
+- **Guard:** none yet — propose a regression test with a fixture where the two diverge (nonzero
+  tax), asserting both formulas independently.
 
 ### L-181 · 2026-09-16 · domain · B451 (dto `any` vs real callers)
 

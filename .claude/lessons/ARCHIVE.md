@@ -2296,3 +2296,22 @@ testing pattern with its own standing guard and reference spec file).
   integer key/version from the table (`max(col) + 1`), never `Date.now()` — a timestamp overflowed
   `PlanVersion.version` (int4) only on CI's fresh DB, the one environment you cannot run locally.
 
+Sixth pass, same batch: L-185 (domain, B440 report-field dual-consumer lesson) folded in. Archived
+one more to keep the register at 3 entries of headroom: L-151 (zero outside citations, closed-out
+tooling gotcha with its own pre-existing standing guard spec).
+
+### L-151 · 2026-09-15 · tooling · #743 fix-round value-importing @routeflow/types crashed api boot
+
+- **Symptom:** two commits value-imported (not `import type`) a constant from `@routeflow/types`.
+  `tsc --noEmit`/`ts-jest` passed clean. `node dist/main.js` (real prod boot) would have crashed:
+  `nest build` doesn't bundle workspace deps, and that package ships raw TS with no build step, so
+  the import emits a `require("@routeflow/types")` into `dist/` that fails to parse.
+- **Root cause:** a guard test for this exact mistake already existed
+  (`no-runtime-workspace-imports.spec.ts`) but never ran against these commits — only the task's own
+  spec files ran, not the full suite, until this session ran it in full for the first time.
+- **Lesson:** **`tsc`/`ts-jest` passing is not proof a workspace-package import is safe at actual
+  runtime boot — only a guard test on the real imports (or an actual boot) proves it.** Run the FULL
+  suite at least once per fix round; a boot-crash guard does nothing if it never runs.
+- **Guard:** `no-runtime-workspace-imports.spec.ts` (pre-existing). Fix: derive the value from
+  `@prisma/client`'s real enum instead, or mirror it locally like the file's own `METER_KEYS`.
+
