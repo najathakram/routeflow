@@ -29,6 +29,7 @@ import { MarginHint } from "@/components/MarginHint";
 import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
 import { displayProductName } from "@/lib/product-display";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
+import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { resolveProductByCode } from "@/lib/barcode-resolve";
 import { LicenseGuardModal } from "./LicenseGuardModal";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
@@ -1201,7 +1202,7 @@ export function CreateOrderModal({
             <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">Products</p>
 
             {/* Product search */}
-            <div className="relative">
+            <div className="relative flex items-center gap-1.5">
               <input
                 ref={productSearchRef}
                 type="search"
@@ -1220,11 +1221,18 @@ export function CreateOrderModal({
                   }
                 }}
                 className={cn(
-                  "h-10 w-full rounded border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:outline-none focus:ring-2 focus:ring-brand-500",
+                  "h-10 min-w-0 flex-1 rounded border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:outline-none focus:ring-2 focus:ring-brand-500",
                   lineItemsError && lineItems.length === 0
                     ? "border-danger focus:border-transparent"
                     : "border-surface-border focus:border-transparent",
                 )}
+              />
+              <BarcodeScannerButton
+                inputRef={productSearchRef}
+                onScan={(code) => barcodeScanHandlerRef.current(code)}
+                onError={(message) => toast({ variant: "error", title: message })}
+                className="h-10 min-h-[44px] w-10 min-w-[44px] shrink-0"
+                title="Scan barcode"
               />
               {productSearch &&
                 (filteredProducts.length > 0 || debouncedProductSearch.length > 0) && (
