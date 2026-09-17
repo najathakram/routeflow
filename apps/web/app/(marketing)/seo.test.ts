@@ -9,11 +9,16 @@ import { metadata as contactMetadata } from "./contact/page";
 import { metadata as privacyMetadata } from "./privacy/page";
 import { metadata as termsMetadata } from "./terms/page";
 
-// R-MKT T9 — production SEO stance: 7-URL sitemap (legal shells excluded),
-// permissive robots.ts pointing at it, and per-route metadata carried
-// verbatim from M1 §2 (local-assets/handoff/2026-09-06/redesign/
-// marketing-inventory-redesign.md, sourced from the redesign's lib/site.ts
-// routes[] table — the plan's cited, implementation-independent oracle).
+// R-MKT T9 — production SEO stance: 9-URL sitemap, permissive robots.ts
+// pointing at it, and per-route metadata carried verbatim from M1 §2
+// (local-assets/handoff/2026-09-06/redesign/marketing-inventory-redesign.md,
+// sourced from the redesign's lib/site.ts routes[] table — the plan's
+// cited, implementation-independent oracle), except privacy/terms, whose
+// title/description are the published legal pages' own copy (R9 follow-up
+// — those two routes were interim placeholder shells, deliberately
+// excluded from the sitemap and noindex'd, until the real policy text
+// shipped; they are now ordinary indexable pages like the rest of the
+// site — see SITEMAP_EXCLUDED_SLUGS in lib/site.ts).
 
 const EXPECTED_ROUTE_METADATA: Record<string, { title: string; description: string }> = {
   product: {
@@ -46,14 +51,12 @@ const EXPECTED_ROUTE_METADATA: Record<string, { title: string; description: stri
       "Request a focused walkthrough of wholesale orders, routes, and customer accounts.",
   },
   privacy: {
-    title: "Privacy information",
-    description:
-      "How RouteFlow handles the information you share with us while the full privacy policy is finalised.",
+    title: "Privacy Policy",
+    description: "How RouteFlow collects, uses, and protects the information you share with us.",
   },
   terms: {
-    title: "Terms information",
-    description:
-      "The terms that apply to using RouteFlow while the full terms of service are finalised.",
+    title: "Terms of Service",
+    description: "The terms that apply to accessing and using the RouteFlow platform.",
   },
 };
 
@@ -74,7 +77,7 @@ const metadataByRoute: Record<string, { title?: unknown; description?: unknown }
 };
 
 describe("marketing SEO — R-MKT T9", () => {
-  it("sitemap.ts lists exactly the 7 public URLs and excludes the legal shells (R-MKT T9)", () => {
+  it("sitemap.ts lists exactly the 9 public URLs, privacy/terms included now that they're published (R-MKT T9)", () => {
     const entries = sitemap();
     const urls = entries
       .map((entry) => entry.url)
@@ -88,11 +91,11 @@ describe("marketing SEO — R-MKT T9", () => {
       "https://www.routeflow.info/pricing",
       "https://www.routeflow.info/company",
       "https://www.routeflow.info/contact",
+      "https://www.routeflow.info/privacy",
+      "https://www.routeflow.info/terms",
     ].sort();
 
     expect(urls).toEqual(expected);
-    expect(urls).not.toContain("https://www.routeflow.info/privacy");
-    expect(urls).not.toContain("https://www.routeflow.info/terms");
   });
 
   it("robots.ts allows everything and points at the sitemap (R-MKT T9)", () => {
@@ -120,13 +123,13 @@ describe("marketing SEO — R-MKT T9", () => {
     }
   });
 
-  it("privacy and terms opt out of indexing (R-MKT T9)", () => {
+  it("privacy and terms do NOT opt out of indexing — they carry the real policy text now (R-MKT T9)", () => {
     // `Metadata["robots"]` is typed `string | Robots | ...`; these routes
-    // must use the object form, so narrow to the object shape before reading
-    // `.index`.
+    // don't declare a `robots` override at all now that they're ordinary
+    // indexable pages, so narrow to the object shape only if one is present.
     const privacyRobots = privacyMetadata?.robots as { index?: boolean } | undefined;
     const termsRobots = termsMetadata?.robots as { index?: boolean } | undefined;
-    expect(privacyRobots?.index).toBe(false);
-    expect(termsRobots?.index).toBe(false);
+    expect(privacyRobots?.index).not.toBe(false);
+    expect(termsRobots?.index).not.toBe(false);
   });
 });

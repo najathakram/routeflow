@@ -3,9 +3,9 @@
 // and every route's <title>/description — never hand-mirror this shape
 // elsewhere (lesson L-072: a hand-typed mirror is how bugs ship).
 // Titles/descriptions are verbatim from the redesign's lib/site.ts
-// (M1 §2 / marketing-inventory-redesign.md), except the two legal-shell
-// rows, whose <title>/description carry R9's interim production copy
-// (matching the page body) instead of the redesign's preview-only text.
+// (M1 §2 / marketing-inventory-redesign.md), except the two legal rows
+// (privacy/terms), whose <title>/description match the published legal
+// pages' own copy instead of the redesign's preview-only text.
 
 import { Package, Route, Warehouse, type LucideIcon } from "lucide-react";
 
@@ -67,16 +67,14 @@ export const routes: MarketingRoute[] = [
   {
     slug: "privacy",
     label: "Privacy",
-    title: "Privacy information",
-    description:
-      "How RouteFlow handles the information you share with us while the full privacy policy is finalised.",
+    title: "Privacy Policy",
+    description: "How RouteFlow collects, uses, and protects the information you share with us.",
   },
   {
     slug: "terms",
     label: "Terms",
-    title: "Terms information",
-    description:
-      "The terms that apply to using RouteFlow while the full terms of service are finalised.",
+    title: "Terms of Service",
+    description: "The terms that apply to accessing and using the RouteFlow platform.",
   },
 ];
 
@@ -84,7 +82,9 @@ export const routes: MarketingRoute[] = [
 export const NAV_SLUGS = ["product", "wholesalers", "retailers", "pricing", "company"] as const;
 
 /** Slugs excluded from the sitemap (legal shells, R9/T9). */
-export const SITEMAP_EXCLUDED_SLUGS = ["privacy", "terms"] as const;
+// privacy/terms were excluded while they were placeholder shells; now that they carry the
+// real published policy they are ordinary indexable pages like the rest of the site.
+export const SITEMAP_EXCLUDED_SLUGS = [] as const;
 
 export interface PricingPlan {
   name: string;
