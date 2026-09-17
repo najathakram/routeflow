@@ -70,17 +70,43 @@ describe("FeaturePreviewService — oracle 6 (preview == post-apply trace, 0 wri
 
   // Item 6 (Opus review of 9923b87c): preview == post-apply, covering an addon-granted flag
   // AND a plan swap together — the combination the two isolated tests above never exercise.
+  // Addon-origin is real SKU/grantsFlags metadata (nit 3 of the 3585e1ec re-review), not a
+  // flag stuffed into ent.flags via flagsOverride alone.
   it("preview == post-apply: an addon-granted flag survives a plan swap", async () => {
-    // flag.messaging is bridged via an active addon SKU (in ent.flags, NOT in SCALE's own
-    // featureFlags) — exactly resolveOneKey's ADDON_SKU branch.
-    const scaleWithAddonFlag = { ...V11_PIN_FIXTURE, name: "scale-with-addon-flag" };
-    const { preview } = buildPreview(scaleWithAddonFlag, [
+    const messagingAddonSkus = [
+      {
+        sku: "MSG_BUNDLE_500",
+        name: "Messaging",
+        monthlyPrice: "9.00",
+        grantsFlags: ["flag.messaging"],
+        meteredKey: null,
+        capacityPerUnit: null,
+      },
+    ];
+    // flag.messaging is bridged via an active addon SKU (NOT in SCALE's own featureFlags) —
+    // exactly resolveOneKey's ADDON_SKU branch.
+    const scaleWithAddonFlag = {
+      ...V11_PIN_FIXTURE,
+      name: "scale-with-addon-flag",
+      activeSkuCodes: ["MSG_BUNDLE_500"],
+    };
+    const { preview, catalog } = buildPreview(scaleWithAddonFlag, [
       "flag.msrp",
       "flag.sales_agents",
       "flag.reports",
       "flag.returns",
       "flag.messaging",
     ]);
+    (catalog.getVersionForTenant as jest.Mock).mockResolvedValue({
+      id: scaleWithAddonFlag.planVersionId,
+      definitions: scaleWithAddonFlag.definitions,
+      addonSkus: messagingAddonSkus,
+    });
+    (catalog.getPublishedCatalog as jest.Mock).mockResolvedValue({
+      id: scaleWithAddonFlag.planVersionId,
+      definitions: scaleWithAddonFlag.definitions,
+      addonSkus: messagingAddonSkus,
+    });
 
     const previewResult = await preview.preview("t1", { planKey: "STARTER" }); // lacks flag.messaging too
     const previewAfterMessaging = previewResult.after.find((f) => f.key === "flag.messaging")!;
@@ -93,11 +119,25 @@ describe("FeaturePreviewService — oracle 6 (preview == post-apply trace, 0 wri
 
     // "Post-apply": the tenant is now ACTUALLY on STARTER, still holding the same
     // addon-bridged flag — a real plan swap never touches addon grants.
-    const postApplyFixture = { ...scaleWithAddonFlag, planKey: "STARTER" };
-    const { preview: postApplyPreview } = buildPreview(postApplyFixture, [
-      "flag.msrp",
-      "flag.messaging",
-    ]);
+    const postApplyFixture = {
+      ...scaleWithAddonFlag,
+      planKey: "STARTER",
+      definitions: scaleWithAddonFlag.definitions,
+    };
+    const { preview: postApplyPreview, catalog: postApplyCatalog } = buildPreview(
+      postApplyFixture,
+      ["flag.msrp", "flag.messaging"],
+    );
+    (postApplyCatalog.getVersionForTenant as jest.Mock).mockResolvedValue({
+      id: postApplyFixture.planVersionId,
+      definitions: postApplyFixture.definitions,
+      addonSkus: messagingAddonSkus,
+    });
+    (postApplyCatalog.getPublishedCatalog as jest.Mock).mockResolvedValue({
+      id: postApplyFixture.planVersionId,
+      definitions: postApplyFixture.definitions,
+      addonSkus: messagingAddonSkus,
+    });
     const postApplyResult = await postApplyPreview.preview("t1", {});
     const postApplyBeforeMessaging = postApplyResult.before.find(
       (f) => f.key === "flag.messaging",
@@ -105,6 +145,48 @@ describe("FeaturePreviewService — oracle 6 (preview == post-apply trace, 0 wri
 
     expect(previewAfterMessaging.resolver).toBe(postApplyBeforeMessaging.resolver);
     expect(previewAfterMessaging.source).toBe(postApplyBeforeMessaging.source);
+  });
+
+  // Opus re-review of 3585e1ec, nit 3: a flag granted by BOTH the current plan's own
+  // featureFlags AND an active addon's grantsFlags must survive a swap to a plan that
+  // doesn't include it — the old `ent.flags minus currentDef.featureFlags` subtraction
+  // silently excluded it, since "already in the current plan" looked indistinguishable
+  // from "not addon-granted."
+  it("keeps a flag granted by BOTH the current plan and an active addon across a plan swap", async () => {
+    const fixtureWithDoubleCoveredFlag = {
+      ...V11_PIN_FIXTURE,
+      name: "scale-with-double-covered-flag",
+      activeSkuCodes: ["FORECASTING_PACK"],
+    };
+    const { preview, catalog } = buildPreview(fixtureWithDoubleCoveredFlag);
+    // flag.reports is already in SCALE's own featureFlags (V11_PIN_FIXTURE) — here it's ALSO
+    // granted by an active addon SKU, the double-covered shape the fix targets.
+    const addonSkus = [
+      {
+        sku: "FORECASTING_PACK",
+        name: "Forecasting",
+        monthlyPrice: "19.00",
+        grantsFlags: ["flag.reports"],
+        meteredKey: null,
+        capacityPerUnit: null,
+      },
+    ];
+    (catalog.getVersionForTenant as jest.Mock).mockResolvedValue({
+      id: fixtureWithDoubleCoveredFlag.planVersionId,
+      definitions: fixtureWithDoubleCoveredFlag.definitions,
+      addonSkus,
+    });
+    (catalog.getPublishedCatalog as jest.Mock).mockResolvedValue({
+      id: fixtureWithDoubleCoveredFlag.planVersionId,
+      definitions: fixtureWithDoubleCoveredFlag.definitions,
+      addonSkus,
+    });
+
+    const result = await preview.preview("t1", { planKey: "STARTER" }); // STARTER lacks flag.reports
+
+    const afterReports = result.after.find((f) => f.key === "flag.reports")!;
+    expect(afterReports.resolver).toBe(true); // survives via the addon grant, not the plan
+    expect(afterReports.source).toBe("ADDON_SKU");
   });
 
   // Item 6(b): the target plan resolves against the CURRENT PUBLISHED catalog, never the

@@ -22,7 +22,7 @@ export interface PlanFlagState {
  * and fail OPEN while the answer is unknown.
  */
 export function usePlanFlag(key: FlagKey, opts?: { enabled?: boolean }): PlanFlagState {
-  const q = useSubscription(opts);
+  const q = useSubscription({ staleTime: 60_000, ...opts });
   return {
     enabled: q.data?.flags === undefined ? true : q.data.flags.includes(key),
     resolved: q.isSuccess,

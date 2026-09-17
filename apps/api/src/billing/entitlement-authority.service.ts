@@ -141,7 +141,17 @@ export class EntitlementAuthority {
         );
         return null;
       }),
-      this.entitlements.isAlwaysEnforcedTenant(tenantId),
+      // Opus re-review of 3585e1ec (nit 2): must not let a throw here reject the whole
+      // Promise.all — that would 500 the explain trace instead of returning a partial
+      // answer. Only the addon-keyed dark-courtesy branch below consults this value;
+      // every other key in the returned map stays fully accurate regardless.
+      this.entitlements.isAlwaysEnforcedTenant(tenantId).catch((err) => {
+        this.logger.error(
+          `Old-path bulk isAlwaysEnforcedTenant check failed for tenant ${tenantId}`,
+          err as Error,
+        );
+        return false;
+      }),
     ]);
     const activeAddonSet = new Set(activeAddonRows.map((a) => a.addonKey));
 

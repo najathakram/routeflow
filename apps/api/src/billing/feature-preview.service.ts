@@ -88,11 +88,20 @@ export class FeaturePreviewService {
       ? findPlanDefinition(publishedCatalog.definitions, afterPlanKey)
       : currentDef;
     const afterCatalogVersionId = isSwap ? publishedCatalog.id : version.id;
-    // Addon-granted flags don't depend on plan — isolate them from the current merged set so a
-    // hypothetical plan swap doesn't lose or fabricate an addon-sourced flag.
-    const addonGrantedFlags = ent.flags.filter(
-      (f) => !(currentDef?.featureFlags ?? []).includes(f),
-    );
+    // Opus review of 3585e1ec (re-review nit 3): addon-granted flags must be read from the
+    // addon SKU's OWN grantsFlags metadata, never inferred by subtracting the current plan's
+    // featureFlags from ent.flags — that subtraction silently drops a flag that happens to be
+    // granted by BOTH the current plan AND an active addon (a real, common shape), losing it
+    // the moment a swap targets a plan that doesn't also include it. Falls back to the
+    // published catalog for a SKU code absent from the tenant's pinned version, mirroring
+    // EntitlementsService.compute()'s own addon-metadata fallback.
+    const pinnedSkuByCode = new Map(version.addonSkus.map((s) => [s.sku, s]));
+    const publishedSkuByCode = new Map(publishedCatalog.addonSkus.map((s) => [s.sku, s]));
+    const addonGrantedFlags = new Set<string>();
+    for (const code of ent.addons) {
+      const meta = pinnedSkuByCode.get(code) ?? publishedSkuByCode.get(code);
+      if (meta) for (const flag of meta.grantsFlags) addonGrantedFlags.add(flag);
+    }
     const afterEntFlags = [...new Set([...(afterDef?.featureFlags ?? []), ...addonGrantedFlags])];
 
     const afterCtx: ResolveContext = {
