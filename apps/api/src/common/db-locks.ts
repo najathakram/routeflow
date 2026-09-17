@@ -102,7 +102,13 @@ export type LockMode = "wait" | "try";
  * derived from data, so the list is closed: `withAdvisoryLock` rejects anything else BEFORE it
  * connects (see the header's "WHY ONE POOL PER FAMILY").
  */
-export const LOCK_FAMILIES = ["order-merge", "cron", "billing", "tenant-mirror"] as const;
+export const LOCK_FAMILIES = [
+  "order-merge",
+  "cron",
+  "billing",
+  "tenant-mirror",
+  "demo-booking",
+] as const;
 export type LockFamily = (typeof LOCK_FAMILIES)[number];
 export interface AdvisoryLockOptions {
   family: string;
@@ -148,6 +154,13 @@ const POOL_MAX: Record<string, number | undefined> = {
   cron: 12,
   billing: 4,
   "tenant-mirror": 4,
+  // Public, anonymous, request-path and short (check-slot-then-create), same
+  // shape as `billing`'s reasoning — but reachable by anyone on the internet
+  // rather than an authenticated admin action, so it gets `billing`'s size
+  // rather than `order-merge`'s: there is no real tenant base bounding how
+  // many concurrent submissions arrive, but each holds its slot only for one
+  // availability re-check + one insert.
+  "demo-booking": 4,
 };
 const DEFAULT_POOL_MAX = 8;
 function lockPool(family: string): Pool {

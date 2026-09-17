@@ -6195,7 +6195,20 @@ cmds["self-test"] = () => {
       };
       const ungated = timeCli("B1", { BUGS_TEST_STALL_MS: "2500", BUGS_SELF_TEST: "" });
       const gated = timeCli("B2", { BUGS_TEST_STALL_MS: "2500", BUGS_SELF_TEST: "1" });
-      check("stall seam: a production run ignores BUGS_TEST_STALL_MS", ungated < 2000, true);
+      // B454: `ungated < 2000` was a fixed wall-clock ceiling — under host load, plain
+      // Node process-launch overhead alone can exceed 2000ms with no stall involved at
+      // all, failing this even though the seam correctly did nothing. Both `timeCli`
+      // calls pay the SAME ambient spawn overhead, so the DIFFERENCE between them
+      // isolates the stall seam's actual effect regardless of how loaded the host is:
+      // a production run must be at least ~1500ms faster than a self-test-gated run of
+      // the identical command with the identical stall value.
+      check(
+        "stall seam: a production run ignores BUGS_TEST_STALL_MS (gated run is >=1500ms slower — load-tolerant, not a fixed ceiling)",
+        gated - ungated >= 1500,
+        true,
+      );
+      // Unaffected by host load in the flaky direction: load can only push `gated`
+      // HIGHER, never below the 2500ms stall it's deliberately waiting out.
       check("stall seam: BUGS_SELF_TEST=1 still un-gates it for this suite", gated >= 2500, true);
     } finally {
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
@@ -6428,9 +6441,17 @@ cmds["self-test"] = () => {
         kids.map((k) => k.code),
         [0, 0],
       );
+      // B454: `elapsedMs < 8000` was a fixed wall-clock ceiling sitting only 20% below
+      // the real LOCK_SPIN_MS deadline (10000) — under host load, three chained process
+      // launches (orchestrator + 2 children) can push even a correctly-fast race well
+      // past 8000ms with nothing wrong. The check above (`BOTH child processes exited
+      // 0`) is the actual proof that neither side hit the give-up path — a give-up
+      // always exits non-zero (see "give-up message: ... (non-zero)" above). This is
+      // now a loose outer sanity bound (well below double LOCK_SPIN_MS) to catch a
+      // genuine hang, not a tight margin the exit-code check already covers.
       check(
-        "move vs file: the race finished well under the 10s lock-wait deadline",
-        elapsedMs < 8000,
+        "move vs file: the race finished well below double the lock-wait deadline (outer sanity bound; exit codes above are the real proof)",
+        elapsedMs < LOCK_SPIN_MS * 2,
         true,
       );
       const cat = readCatalogue();

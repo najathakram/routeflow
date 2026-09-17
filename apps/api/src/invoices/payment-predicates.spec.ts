@@ -8,6 +8,14 @@ import {
   resolveConfirmedAmounts,
   splitConfirmed,
   sumConfirmed,
+  HELD_STATUSES,
+  HELD_PAYMENT,
+  isHeldPayment,
+  sumHeld,
+  remainingCapacity,
+  BLOCKING_PAYMENT_STATUSES,
+  BLOCKING_PAYMENT,
+  isBlockingPayment,
 } from "./payment-predicates";
 import * as Pricing from "@routeflow/pricing";
 
@@ -29,6 +37,15 @@ describe("payment-predicates re-exports @routeflow/pricing verbatim", () => {
     expect(ADVANCE_METHOD).toBe(Pricing.ADVANCE_METHOD);
     expect(CASH_METHOD_FILTER).toEqual(Pricing.CASH_METHOD_FILTER);
     expect(RECEIVED_METHOD_FILTER).toEqual(Pricing.RECEIVED_METHOD_FILTER);
+    expect(HELD_STATUSES).toEqual(Pricing.HELD_STATUSES);
+    expect(HELD_PAYMENT).toEqual(Pricing.HELD_PAYMENT);
+    expect(isHeldPayment).toBe(Pricing.isHeldPayment);
+    expect(sumHeld).toBe(Pricing.sumHeld);
+    expect(remainingCapacity).toBe(Pricing.remainingCapacity);
+    // PR-2 (check-payments B1 hardening)
+    expect(BLOCKING_PAYMENT_STATUSES).toEqual(Pricing.BLOCKING_PAYMENT_STATUSES);
+    expect(BLOCKING_PAYMENT).toEqual(Pricing.BLOCKING_PAYMENT);
+    expect(isBlockingPayment).toBe(Pricing.isBlockingPayment);
   });
 
   it("REG-B421 smoke case still resolves correctly through the facade", () => {

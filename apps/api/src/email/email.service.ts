@@ -186,6 +186,23 @@ function redactAddresses(msg: string): string {
     .replace(/(?:[0-9a-f]{0,4}:){2,8}[0-9a-f]{0,4}/gi, "[address]"); // IPv6 incl. ::-compressed
 }
 
+/**
+ * N4 ground rule: every interpolated value in a NEW email template must be
+ * HTML-escaped — none of the existing templates in this file do (their
+ * inputs are operator/tenant-typed strings from an already-authenticated
+ * session, an accepted pre-existing gap, not this PR's to fix), but a
+ * low-stock digest interpolates PRODUCT NAMES, which a tenant's own staff
+ * can set to arbitrary text via the catalogue import/edit flow.
+ */
+export function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 /** Platform-level Google Workspace SMTP config (B452, owner ruling 2026-09-16). */
 interface PlatformSmtpConfig {
   host: string;
@@ -289,9 +306,18 @@ export class EmailService {
     return /^(true|1|yes)$/i.test(raw ?? "");
   }
 
-  /** Strip characters that could break out of a `Name <addr>` From/Reply-To header. */
+  /**
+   * Strip characters that could break out of a `Name <addr>` From/Reply-To
+   * header. `\r`/`\n` are the CRLF-injection vector — a tenant business name
+   * containing them could otherwise smuggle a second header (e.g. a forged
+   * `Bcc:`) into the raw message; `["<>]` guard the `Name <addr>` quoting
+   * itself.
+   */
   private sanitizeDisplayName(name: string): string {
-    return name.replace(/["<>]/g, "").trim();
+    return name
+      .replace(/["<>]/g, "")
+      .replace(/[\r\n]+/g, " ")
+      .trim();
   }
 
   /**
@@ -415,25 +441,30 @@ export class EmailService {
     return (await this.getTenantEmailConfig()) != null;
   }
 
-  private async getTenantFromAddress(): Promise<string> {
+  /**
+   * The From header for a tenant's email sent via the TENANT'S OWN SMTP
+   * transport, when no `smtpFromEmail` is configured. `smtpUser` — the
+   * mailbox the tenant's SMTP server actually authenticated as — is the
+   * fallback address, NOT the platform's: the message is physically
+   * transmitted through the tenant's own mail server, so claiming the
+   * platform's `EMAIL_FROM` address here is exactly the SPF/DKIM/DMARC
+   * misalignment those checks exist to catch (B452 followups (c) — this
+   * used to fall back to the platform's verified address; before that, an
+   * even worse hard-coded "noreply@routeflow.app", a domain RouteFlow
+   * doesn't even own).
+   */
+  private async getTenantFromAddress(smtpUser: string): Promise<string> {
     const tenantId = this.prisma.getTenantId();
-    if (!tenantId) return this.platformFrom;
+    if (!tenantId) return smtpUser;
 
     const cfg = await this.prisma.tenantConfig.findFirst({ where: { tenantId } });
     if (cfg?.smtpFromEmail) {
       return cfg.smtpFromName ? `${cfg.smtpFromName} <${cfg.smtpFromEmail}>` : cfg.smtpFromEmail;
     }
-    // Fall back to businessName as sender name, riding the platform's OWN verified
-    // address (EMAIL_FROM) — B452: this used to hard-code "noreply@routeflow.app",
-    // a domain RouteFlow doesn't even own (routeflow.info is the real domain), so
-    // a tenant with no From-email configured sent SMTP mail from a bogus address.
     // The name is sanitized — an unescaped businessName here is a From-header
     // injection vector (e.g. `Acme <evil@attacker.com>` becomes the real From).
     const businessName = cfg?.businessName ? this.sanitizeDisplayName(cfg.businessName) : "";
-    if (businessName) {
-      return `${businessName} via RouteFlow <${this.addressOf(this.platformFrom)}>`;
-    }
-    return this.platformFrom;
+    return businessName ? `${businessName} <${smtpUser}>` : smtpUser;
   }
 
   /**
@@ -522,7 +553,10 @@ export class EmailService {
     const configured = cfg?.customerEmail?.trim() || cfg?.smtpFromEmail?.trim();
     if (configured) return configured;
     const admin = await this.prisma.user.findFirst({
-      where: { tenantId, role: "TENANT_ADMIN", deletedAt: null },
+      where: { tenantId, role: "TENANT_ADMIN", deletedAt: null, status: "ACTIVE" },
+      // Deterministic pick among multiple ACTIVE admins — the longest-tenured
+      // one, not whatever order the DB happens to return.
+      orderBy: { createdAt: "asc" },
       select: { email: true },
     });
     return admin?.email?.trim() || undefined;
@@ -914,7 +948,15 @@ export class EmailService {
    * whose `result.error` was never inspected), which is why the UI said "sent" when
    * nothing went out.
    */
-  async send(params: { to: string; subject: string; html: string; replyTo?: string }): Promise<{
+  async send(params: {
+    to: string;
+    subject: string;
+    html: string;
+    /** N3: plain-text alternative. Optional so every EXISTING caller is unaffected —
+     *  a transport that doesn't get one just sends HTML-only, same as before this field. */
+    text?: string;
+    replyTo?: string;
+  }): Promise<{
     delivered: boolean;
     transport: "smtp" | "resend" | "none";
     id?: string;
@@ -949,7 +991,7 @@ export class EmailService {
           ? emailCfg.fromName
             ? `${emailCfg.fromName} <${emailCfg.fromEmail}>`
             : emailCfg.fromEmail
-          : await this.getTenantFromAddress();
+          : await this.getTenantFromAddress(emailCfg.user);
         const transport = this.createSendTransport(
           emailCfg.host,
           emailCfg.port,
@@ -962,6 +1004,7 @@ export class EmailService {
           to: params.to,
           subject: params.subject,
           html: params.html,
+          text: params.text,
           replyTo,
         });
         this.logger.log(
@@ -1044,6 +1087,7 @@ export class EmailService {
           to: params.to,
           subject: params.subject,
           html: params.html,
+          text: params.text,
           replyTo,
         });
         if ((result as any)?.error) {
@@ -1084,6 +1128,61 @@ export class EmailService {
       error: smtpError,
       smtpFallbackReason,
     };
+  }
+
+  /**
+   * N3 fix round (Opus review of 1dba2bca, finding 4): a PLATFORM-only send that never
+   * resolves tenant SMTP or tenant branding — `send()` above reads `prisma.getTenantId()`
+   * (set on every in-request call, including a tenant admin's OWN authenticated action like
+   * upgrade()/downgrade()), so a billing-lifecycle notification sent through `send()` would
+   * leave from the ACTING TENANT's own mailbox with their own From name. `sendPlatform()`
+   * always uses `this.platformFrom` and skips tenant SMTP entirely, regardless of request
+   * context. Still Resend-only as reviewed (post-merge note, 2026-09-16: B452/#789 landed
+   * `this.platformSmtp` and wired it into `send()` above — `sendPlatform()` does NOT yet use
+   * it, so a deploy with platformSmtp configured but no Resend key would leave every N3
+   * notification undelivered, same as before this merge. Not fixed here — this is a merge
+   * (test/push), not a second review round; flagged to the lead as a follow-up, not silently
+   * expanded).
+   */
+  async sendPlatform(params: {
+    to: string;
+    subject: string;
+    html: string;
+    text?: string;
+    replyTo?: string;
+  }): Promise<{ delivered: boolean; transport: "resend" | "none"; id?: string; error?: string }> {
+    if (this.resend) {
+      try {
+        const result = await this.resend.emails.send({
+          from: this.platformFrom,
+          to: params.to,
+          subject: params.subject,
+          html: params.html,
+          text: params.text,
+          replyTo: params.replyTo,
+        });
+        if ((result as any)?.error) {
+          const msg = (result as any).error?.message ?? "Resend rejected the message";
+          this.logger.error(`Resend rejected platform email to ${params.to}: ${msg}`);
+          return { delivered: false, transport: "resend", error: msg };
+        }
+        this.logger.log(
+          `Platform email sent via Resend to ${params.to} — id: ${(result.data as any)?.id}`,
+        );
+        return { delivered: true, transport: "resend", id: (result.data as any)?.id };
+      } catch (err: any) {
+        this.logger.error(`Failed to send platform email to ${params.to}: ${err?.message}`);
+        return {
+          delivered: false,
+          transport: "resend",
+          error: err?.message ?? "Resend send failed",
+        };
+      }
+    }
+    this.logger.warn(
+      `[EMAIL NOT SENT] To: ${params.to} | Subject: ${params.subject} — no platform email transport is configured.`,
+    );
+    return { delivered: false, transport: "none" };
   }
 
   // ─── Email template ────────────────────────────────────────────────────────
@@ -1416,5 +1515,119 @@ export class EmailService {
           `Please use <strong>${params.primaryEmail}</strong> to sign in going forward. This account (${params.secondaryEmail}) is now deactivated.`,
         ),
     });
+  }
+
+  // ─── N4: low-stock daily digest (platform-sent, tenant-admin-facing) ───────
+
+  /**
+   * N4. Always sent via the platform sender — this is an operational alert
+   * to the tenant's OWN admins, not tenant-branded customer mail, so it
+   * deliberately does NOT resolve tenant SMTP the way `sendInvoice` does.
+   * Callers therefore invoke this with no tenant ALS context active
+   * (`this.prisma.getTenantId()` returns null inside `send()`), which is
+   * what makes it skip straight to whichever platform transport is active —
+   * platform SMTP (Google Workspace mailbox, B452) when `SMTP_HOST` is
+   * fully configured, else Resend, else logged-only. Fails closed: `send()`
+   * never throws, and this method does not add a throwing await on top of
+   * it — a caller iterating many tenants/admins must be able to keep going
+   * past one bad address.
+   */
+  async sendLowStockDigest(params: {
+    to: string;
+    businessName: string;
+    items: { name: string; sku: string | null; currentStock: number; reorderPoint: number }[];
+  }): Promise<{ delivered: boolean; transport: "smtp" | "resend" | "none"; error?: string }> {
+    const html = this.buildLowStockDigestEmail(params);
+    const count = params.items.length;
+    return this.send({
+      to: params.to,
+      subject: `Low stock alert — ${count} item${count === 1 ? "" : "s"} below threshold`,
+      html,
+    });
+  }
+
+  /** A tenant with a large catalogue and a low blanket reorderPoint could have thousands
+   * of below-threshold SKUs — 2,000 rows would be ~850 KB of HTML. Cap the rendered table;
+   * the subject line (built from the UN-truncated `items.length` in `sendLowStockDigest`)
+   * stays truthful about the real total either way. */
+  private static readonly MAX_DIGEST_ROWS = 100;
+
+  /**
+   * Same 600px shell/header/body/footer markup as `buildInvoiceEmail`
+   * ("no new look" — N4 ground rule) with the invoice's item TABLE shape
+   * carried over for the product list. Every interpolated value is
+   * `escapeHtml`'d — product names are tenant-catalogue-typed strings, not
+   * server-controlled.
+   */
+  private buildLowStockDigestEmail(params: {
+    businessName: string;
+    items: { name: string; sku: string | null; currentStock: number; reorderPoint: number }[];
+  }): string {
+    const shown = params.items.slice(0, EmailService.MAX_DIGEST_ROWS);
+    const overflow = params.items.length - shown.length;
+    const rows =
+      shown
+        .map(
+          (it) => `
+        <tr>
+          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1a2033;">${escapeHtml(it.name)}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#6b7280;">${it.sku ? escapeHtml(it.sku) : "—"}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#dc2626;font-weight:600;text-align:right;">${it.currentStock}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#6b7280;text-align:right;">${it.reorderPoint}</td>
+        </tr>`,
+        )
+        .join("") +
+      (overflow > 0
+        ? `
+        <tr>
+          <td colspan="4" style="padding:8px 12px;font-size:13px;color:#9ca3af;font-style:italic;">…and ${overflow} more item${overflow === 1 ? "" : "s"}</td>
+        </tr>`
+        : "");
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;padding:40px 0;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+
+        <!-- Header -->
+        <tr><td style="background:#1a2033;padding:28px 32px;">
+          <p style="margin:0;font-size:22px;font-weight:700;color:#ffffff;letter-spacing:-0.5px;">${escapeHtml(params.businessName)}</p>
+          <p style="margin:4px 0 0;font-size:13px;color:rgba(255,255,255,0.6);">Low Stock Alert</p>
+        </td></tr>
+
+        <!-- Body -->
+        <tr><td style="padding:32px;">
+          <p style="margin:0 0 24px;font-size:15px;color:#374151;">
+            ${params.items.length} item${params.items.length === 1 ? " is" : "s are"} below its reorder point:
+          </p>
+
+          <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:8px;">
+            <tr>
+              <td style="padding:0 12px 8px;font-size:12px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.5px;">Product</td>
+              <td style="padding:0 12px 8px;font-size:12px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.5px;">SKU</td>
+              <td style="padding:0 12px 8px;font-size:12px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.5px;text-align:right;">In Stock</td>
+              <td style="padding:0 12px 8px;font-size:12px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.5px;text-align:right;">Reorder At</td>
+            </tr>
+            ${rows}
+          </table>
+
+          <p style="margin:24px 0 0;font-size:13px;color:#9ca3af;">
+            This is a daily summary — you will not receive another alert for these items until tomorrow.
+            You can turn this digest off in your account preferences.
+          </p>
+        </td></tr>
+
+        <!-- Footer -->
+        <tr><td style="background:#f9fafb;padding:16px 32px;border-top:1px solid #f0f0f0;">
+          <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;">RouteFlow Platform — automated notification.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
   }
 }

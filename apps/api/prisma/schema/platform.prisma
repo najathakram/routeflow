@@ -75,6 +75,25 @@ model TenantSubscription {
   @@index([downgradeEffectiveAt])
 }
 
+// N3 (2026-09-16): idempotency log for billing-lifecycle emails to the tenant admin
+// (trial ending, downgrade scheduled/applied, upgrade confirmed, cancelled, suspended).
+// `key` is a milestone-specific disambiguator (e.g. the scheduled downgrade's effective
+// date) so a genuinely NEW occurrence of a repeatable milestone still sends, while a
+// retry/re-run of the SAME occurrence is blocked by the unique constraint below — the
+// create() call is the atomic claim (a caught unique-violation means "already sent").
+model BillingNotificationLog {
+  id        String   @id @default(uuid())
+  tenantId  String
+  milestone String
+  key       String   @default("")
+  sentAt    DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, milestone, key])
+  @@index([tenantId])
+}
+
 model TenantAddon {
   id            String   @id @default(uuid())
   tenantId      String
@@ -782,4 +801,66 @@ model CrmHandoff {
 
   @@unique([tenantId, provider, opportunityId])
   @@index([tenantId, status, createdAt])
+}
+
+// ─── Marketing demo bookings (NOT tenant-scoped — prospects, not customers) ───
+// A visitor on the public marketing site books a product walkthrough against the
+// admin@routeflow.info Google Calendar. These rows are the RouteFlow-side record
+// of that booking: Google owns the event, we own the lead. No `tenantId` — the
+// person booking does not have a workspace yet, which is the whole point.
+
+enum DemoBookingStatus {
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+/// RACE GUARD: migration `20260916031500_demo_booking_race_guard` adds a
+/// PARTIAL unique index — `CREATE UNIQUE INDEX ... ON "DemoBooking"("startsAt")
+/// WHERE status = 'CONFIRMED'` — that Prisma's schema language cannot express
+/// (no `WHERE` on `@@index`/`@@unique`), so it exists ONLY in that migration
+/// file; `prisma migrate dev` will not see it as drift because nothing here
+/// declares a conflicting full unique constraint on `startsAt`. Application
+/// code also serializes create/reschedule through a `demo-booking` advisory
+/// lock (`common/db-locks.ts`) keyed on the slot's start instant — the index
+/// is the second, database-level line of defence for the same invariant.
+model DemoBooking {
+  id       String  @id @default(uuid())
+  name     String
+  email    String
+  company  String
+  phone    String?
+  notes    String?
+
+  /// Slot boundaries, always stored in UTC. `timeZone` is the IANA zone the
+  /// visitor booked in — kept so confirmation emails and the manage page can
+  /// echo the time back in the zone they actually chose.
+  startsAt DateTime
+  endsAt   DateTime
+  timeZone String
+
+  status       DemoBookingStatus @default(CONFIRMED)
+  cancelledAt  DateTime?
+  cancelReason String?
+
+  /// The Google Calendar event this row mirrors, and its generated Meet link.
+  /// Null when the calendar write failed — the lead is still captured.
+  googleEventId String?
+  meetUrl       String?
+
+  /// SHA-256 of the signed manage token handed out in the confirmation email.
+  /// The raw token is never stored, so a database read cannot cancel a booking.
+  manageTokenHash String @unique
+
+  /// Set when this booking replaced an earlier slot, for support context.
+  rescheduledFrom DateTime?
+  rescheduleCount Int       @default(0)
+
+  sourcePage String?
+  createdIp  String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([startsAt, status])
+  @@index([email, createdAt])
 }

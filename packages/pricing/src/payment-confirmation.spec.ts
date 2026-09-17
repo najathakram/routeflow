@@ -14,6 +14,9 @@ import {
   sumHeld,
   collectedDateOf,
   remainingCapacity,
+  BLOCKING_PAYMENT_STATUSES,
+  BLOCKING_PAYMENT,
+  isBlockingPayment,
 } from "./payment-confirmation";
 
 describe("splitConfirmed", () => {
@@ -222,6 +225,36 @@ describe("sumConfirmed vs sumHeld vs capacity — REG-PR1-N4 mixed fixture", () 
     expect(confirmed).not.toBe(held);
     expect(held).not.toBe(capacityConsumed);
     expect(confirmed).not.toBe(capacityConsumed);
+  });
+});
+
+/**
+ * PR-2 (check-payments): the N4 owner ruling (DRAFT keeps blocking void/cancel) fixes
+ * `externalPaidOn`/`cancelImpact` on `isBlockingPayment`/`BLOCKING_PAYMENT_STATUSES` —
+ * deliberately NOT `isHeldPayment`/`HELD_STATUSES`, which would silently drop DRAFT and reverse
+ * the block master already relies on (this is the exact regression N4 flags).
+ */
+describe("BLOCKING_PAYMENT_STATUSES / BLOCKING_PAYMENT / isBlockingPayment", () => {
+  it("BLOCKING_PAYMENT_STATUSES is exactly DRAFT, PAID, PENDING (i.e. not VOID)", () => {
+    expect(BLOCKING_PAYMENT_STATUSES).toEqual(["DRAFT", "PAID", "PENDING"]);
+  });
+
+  it("BLOCKING_PAYMENT is the matching Prisma `in` filter", () => {
+    expect(BLOCKING_PAYMENT).toEqual({ status: { in: ["DRAFT", "PAID", "PENDING"] } });
+  });
+
+  it.each(["DRAFT", "PAID", "PENDING"])("isBlockingPayment(%s) is true", (status) => {
+    expect(isBlockingPayment({ status })).toBe(true);
+  });
+
+  it("isBlockingPayment(VOID) is false", () => {
+    expect(isBlockingPayment({ status: "VOID" })).toBe(false);
+  });
+
+  it("N4 owner ruling: a DRAFT row is blocking (per isBlockingPayment) but NOT held (per isHeldPayment)", () => {
+    const draft = { status: "DRAFT" };
+    expect(isBlockingPayment(draft)).toBe(true);
+    expect(isHeldPayment(draft)).toBe(false);
   });
 });
 

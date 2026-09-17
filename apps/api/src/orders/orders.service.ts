@@ -23,11 +23,13 @@ import {
   normalizeBoxesPieces,
   promotionMatchesProduct,
   roundMoney,
+  isBlockingPayment,
   type CategoryTaxType,
   type PromoContext,
   type PromotionRule,
 } from "@routeflow/pricing";
 import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-locks";
+import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import {
   LOCK_UNAVAILABLE,
   LOCK_UNAVAILABLE_MESSAGE,
@@ -2471,7 +2473,11 @@ export class OrdersService implements OnApplicationBootstrap {
     });
 
     subtotal = roundMoney(subtotal);
-    const orderDiscount = dto.discountAmount ?? 0;
+    // Opus review of 942d5d69: rounded here (not left raw) so the
+    // discount-vs-subtotal comparison inside assertMoneyInvariantsOrThrow
+    // below compares two cents-rounded values, never a raw client float
+    // against an already-rounded subtotal.
+    const orderDiscount = roundMoney(dto.discountAmount ?? 0);
     // Optional shipping fee — never taxed; added after tax like Invoice.shippingFee.
     const orderShippingFee = roundMoney(Math.max(0, dto.shippingFee ?? 0));
     const tax = roundMoney(subtotal * (await this.getTaxRate()));
@@ -2482,6 +2488,17 @@ export class OrdersService implements OnApplicationBootstrap {
       lineItemsData.reduce((s, li) => s + Number(li.categoryTaxAmount ?? 0), 0),
     );
     const total = roundMoney(subtotal + tax + categoryTax - orderDiscount + orderShippingFee);
+
+    // B451 gap 4: reject a bounded-but-oversized discountAmount before it can
+    // drive the persisted total negative. Fails fast, before any stock lock
+    // or transaction opens.
+    assertMoneyInvariantsOrThrow({
+      subtotal,
+      discount: orderDiscount,
+      tax: tax + categoryTax,
+      shipping: orderShippingFee,
+      total,
+    });
 
     // W6: license guard — a real (non-draft) sale of a license-required category to
     // a customer without a VERIFIED authorization (or active §8 override) throws a
@@ -3273,12 +3290,17 @@ export class OrdersService implements OnApplicationBootstrap {
 
     // External money can't be un-taken by software; it blocks the cancel until a
     // human refunds it. Wallet money (credit notes, advances) is simply returned.
+    // PR-2 (check-payments B1 hardening, N4 owner ruling): isBlockingPayment (NOT
+    // isHeldPayment) — a DRAFT external payment is money in flight and must keep
+    // blocking the cancel exactly as it does today; HELD (PAID ∪ PENDING) is for
+    // money TOTALS only, never an existence/blocking check.
     const blockers: Array<{ invoiceNumber: string; amount: number }> = [];
     for (const inv of invoices) {
       const external = roundMoney(
         (inv.payments ?? [])
           .filter(
-            (p: any) => p.status !== "VOID" && p.method !== "CREDIT_NOTE" && p.method !== "ADVANCE",
+            (p: any) =>
+              isBlockingPayment(p) && p.method !== "CREDIT_NOTE" && p.method !== "ADVANCE",
           )
           .reduce((s: number, p: any) => s + Number(p.amount), 0),
       );
@@ -3287,6 +3309,8 @@ export class OrdersService implements OnApplicationBootstrap {
     }
 
     const credits = await this.creditNotes.previewOrderCreditRelease(id);
+    // scan-ok: draft-payment-not-void — method-scoped to ADVANCE; a CHECK/PENDING row
+    // can never match, so PR-2's PENDING concern doesn't apply here.
     const advances = roundMoney(
       invoices
         .flatMap((i) => i.payments ?? [])
@@ -4843,6 +4867,17 @@ export class OrdersService implements OnApplicationBootstrap {
           : roundMoney(Number((order as any).shippingFee ?? 0));
         const total = roundMoney(subtotal + tax + categoryTax + shippingFee);
 
+        // B451 gap 4: defense-in-depth — UpdateOrderItemsDto carries no
+        // discountAmount today (only create() does), so this path has no
+        // live negative-total vector yet, but the shared guard keeps it
+        // covered against a future field addition without a second review.
+        assertMoneyInvariantsOrThrow({
+          subtotal,
+          tax: tax + categoryTax,
+          shipping: shippingFee,
+          total,
+        });
+
         // P5-08b + WP1 inline guards (completes P5-08 "credit / regulated /
         // stock-violating edit blocked inline"). DRAFT edits are exempt,
         // matching the regulated guard above and create()'s !isDraft stock
@@ -5616,10 +5651,17 @@ export class OrdersService implements OnApplicationBootstrap {
     // Exclude VOID payments: a bounced check (P5-12) flips its InvoicePayment to VOID
     // and reverts the invoice to OPEN/PARTIAL, so a reversed payment must NOT reduce the
     // customer's credit exposure — otherwise a bounce lets them slip under the limit.
+    // PR-2 review (routeflow-Lead, 2026-09-16): reverted the earlier sumConfirmed
+    // conversion here — it silently changed credit-limit behavior (a DRAFT
+    // bank-import row would start producing a 409 CREDIT_LIMIT_EXCEEDED) with no
+    // sign-off. That behavior change is a real, separate decision out of PR-2's
+    // scope; flagged to the owner as a follow-up rather than made silently.
+    // Master's not-void basis kept as-is.
     const invoiceExposure = openInvoices.reduce(
       (sum: number, inv: any) =>
         sum +
         (Number(inv.total) -
+          // scan-ok: draft-payment-not-void — see comment above.
           inv.payments
             .filter((p: any) => p.status !== "VOID")
             .reduce((s: number, p: any) => s + Number(p.amount), 0)),

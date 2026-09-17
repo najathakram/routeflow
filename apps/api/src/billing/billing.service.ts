@@ -10,6 +10,7 @@ import { StripeService } from "./stripe.service";
 import { BillingEventService } from "./billing-event.service";
 import { PlatformPricingService } from "./platform-pricing.service";
 import { BILLING_EVENTS, BillingEventType, planKeyToEnum } from "./plan-catalog.constants";
+import { BillingNotificationService } from "./billing-notification.service";
 
 /** Grace period (in days) after a payment failure before suspending the tenant. */
 const PAYMENT_GRACE_DAYS = 3;
@@ -67,6 +68,7 @@ export class BillingService {
     private readonly tenantStatusGuard: TenantStatusGuard,
     private readonly events: BillingEventService,
     private readonly pricing: PlatformPricingService,
+    private readonly billingNotification: BillingNotificationService,
   ) {}
 
   /**
@@ -819,6 +821,19 @@ export class BillingService {
     });
 
     this.logger.log(`Subscription cancelled for tenant ${sub.tenantId} (customer ${customerId})`);
+
+    // N3: best-effort admin notification, never blocks the cancellation above (a Stripe
+    // webhook retry is deduped by BillingNotificationService's own idempotency claim).
+    // BillingNotificationService never throws by contract — this try/catch is defense in
+    // depth so a future change there can never turn a webhook 500 into a lost cancellation.
+    try {
+      await this.billingNotification.notifyCancelled(sub.tenantId);
+    } catch (e) {
+      this.logger.error(
+        `N3 notifyCancelled threw unexpectedly for tenant ${sub.tenantId}`,
+        e as Error,
+      );
+    }
   }
 
   private async onSubscriptionUpdated(subscription: any): Promise<void> {
@@ -905,6 +920,15 @@ export class BillingService {
             this.logger.log(
               `Overdue payment — suspended tenant ${sub.tenant.slug} (Stripe status: ${stripeSub.status})`,
             );
+            // N3: best-effort admin notification, never blocks the suspension above.
+            try {
+              await this.billingNotification.notifySuspended(sub.tenantId, "overdue payment");
+            } catch (e) {
+              this.logger.error(
+                `N3 notifySuspended threw unexpectedly for tenant ${sub.tenantId}`,
+                e as Error,
+              );
+            }
           }
         }
       } catch (err) {

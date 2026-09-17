@@ -310,6 +310,30 @@ describe("FEATURE_REGISTRY (feature grants PR-1)", () => {
     expect(registryDarkPlanFlagKeys).toEqual(guardKeys);
   });
 
+  it("PREPIN_DARK_FLAGS (P0 2026-09-17) parity: every prepinned key is a real RequirePlanFlag registry key", () => {
+    // PREPIN_DARK_FLAGS is a SEPARATE literal from DARK_PLAN_FLAGS in the same file (unconditional
+    // courtesy allow until #777's flags are re-pinned into the v11 catalog) — same
+    // read-the-source-text approach as the DARK_PLAN_FLAGS parity check above, so a typo'd or
+    // renamed key fails loudly instead of silently no-op'ing the prepin.
+    const policyText = fs.readFileSync(
+      path.join(SRC_ROOT, "billing", "plan-flag-policy.ts"),
+      "utf8",
+    );
+    const setMatch = policyText.match(
+      /PREPIN_DARK_FLAGS(?::[^=]+)?\s*=\s*new Set\(\[([\s\S]*?)\]\)/,
+    );
+    expect(setMatch).not.toBeNull();
+    const prepinKeys = [...(setMatch?.[1].matchAll(/"([^"]+)"/g) ?? [])].map((m) => m[1]);
+    expect(prepinKeys.length).toBeGreaterThan(0);
+
+    const requirePlanFlagKeys = new Set(
+      FEATURE_REGISTRY.filter((f) => f.gate.via === "RequirePlanFlag").map((f) => f.key),
+    );
+    for (const key of prepinKeys) {
+      expect(requirePlanFlagKeys.has(key)).toBe(true);
+    }
+  });
+
   it("key convention: non-dotted keys are lower_snake_case, <= 50 chars", () => {
     const bad = FEATURE_REGISTRY.filter(
       (f) => !f.key.startsWith("flag.") && !f.key.startsWith("addon."),
