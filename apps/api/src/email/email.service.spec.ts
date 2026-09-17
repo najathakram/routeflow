@@ -1583,3 +1583,119 @@ describe("EmailService.sendLowStockDigest (N4)", () => {
     expect(call.html).toContain("…and 37 more items");
   });
 });
+
+/**
+ * Brand restyle (2026-09-17) — every template routes through the ONE shared
+ * `renderBrandedEmail` shell now. These pin the shell's own invariants (never a
+ * per-template concern to re-prove): the logo is an absolute https URL with alt text, Route
+ * Navy/Teal actually appear, the email-safe Arial stack replaced the old system-font stack,
+ * and every send carries a non-empty plain-text alternative alongside the HTML.
+ */
+describe("EmailService — brand restyle (2026-09-17): shared layout invariants", () => {
+  const BRAND_LOGO_URL = "https://www.routeflow.info/brand/routeflow-mark-192.png";
+
+  it("sendSetPasswordEmail (platform-branded): logo is an absolute https URL with alt text, brand colors present, Arial stack, non-empty text part", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "sendPlatform")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendSetPasswordEmail({
+      to: "a@b.com",
+      username: "acme_owner",
+      setPasswordUrl: "https://app.routeflow.info/reset-password?token=abc123",
+      expiryHours: 72,
+    });
+
+    const call = sendSpy.mock.calls[0][0];
+    expect(call.html).toContain(`src="${BRAND_LOGO_URL}"`);
+    expect(call.html).toContain('alt="RouteFlow"');
+    expect(call.html).toContain("#1D2A3D"); // Route Navy header
+    expect(call.html).toContain("#087D76"); // Route Teal button
+    expect(call.html).toContain("Arial,Helvetica,sans-serif");
+    expect(call.html).not.toContain("-apple-system");
+    // Only the DARK mark asset exists (no reversed/light version) — it must sit on a white
+    // chip on the navy header, or it renders dark-on-dark and is effectively invisible (caught
+    // visually via the proof screenshots before this assertion was added).
+    const imgIndex = call.html.indexOf(`src="${BRAND_LOGO_URL}"`);
+    const surroundingMarkup = call.html.slice(Math.max(0, imgIndex - 200), imgIndex);
+    expect(surroundingMarkup).toContain(`background:${"#FFFFFF"}`);
+    expect(call.text).toBeTruthy();
+    expect(call.text).toContain("https://app.routeflow.info/reset-password?token=abc123");
+    expect(call.text).toContain("72 hours");
+  });
+
+  it("sendMergeVerificationEmail: branded header + button, text alternative carries the verify URL", async () => {
+    const svc = makeService({ resendKey: "re_test" });
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "resend" } as any);
+
+    await svc.sendMergeVerificationEmail({
+      to: "secondary@example.com",
+      primaryEmail: "primary@example.com",
+      verifyUrl: "https://web.test/merge/verify?token=abc",
+    });
+
+    const call = sendSpy.mock.calls[0][0];
+    expect(call.html).toContain(`src="${BRAND_LOGO_URL}"`);
+    expect(call.html).toContain("#087D76");
+    expect(call.text).toContain("https://web.test/merge/verify?token=abc");
+    expect(call.text).toContain("primary@example.com");
+  });
+
+  it("sendInvoice (tenant-branded): header shows the tenant's business name, not the RouteFlow mark; text alternative carries the totals", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendInvoice({
+      to: "buyer@example.com",
+      customerName: "Acme Buyer",
+      invoiceNumber: "INV-3001",
+      invoiceId: "inv-3001",
+      issueDate: "Feb 1, 2026",
+      dueDate: "Mar 1, 2026",
+      total: 100,
+      items: [{ description: "Widget", qty: 2, unitPrice: 50, subtotal: 100 }],
+    } as any);
+
+    const call = sendSpy.mock.calls[0][0];
+    // Tenant mail is the tenant's own correspondence — the header names THEM, not RouteFlow.
+    expect(call.html).not.toContain(`src="${BRAND_LOGO_URL}"`);
+    expect(call.html).toContain("#1D2A3D");
+    expect(call.text).toBeTruthy();
+    expect(call.text).toContain("Widget");
+    expect(call.text).toContain("$100.00");
+    expect(call.text).toContain("INV-3001");
+  });
+
+  it("sendLowStockDigest: branded shell + a non-empty text alternative naming the low-stock items", async () => {
+    const config = {
+      get: (k: string) =>
+        k === "EMAIL_FROM" ? "RouteFlow <invoices@send.routeflow.info>" : undefined,
+    } as any;
+    const prisma = { getTenantId: () => null } as any;
+    const encryption = { decrypt: (v: string) => v } as any;
+    const mailboxSend = {
+      trySend: jest.fn().mockResolvedValue({ delivered: false, transport: "mailbox" }),
+    } as any;
+    const svc = new EmailService(config, prisma, encryption, mailboxSend);
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "resend" } as any);
+
+    await svc.sendLowStockDigest({
+      to: "admin@acme.example",
+      businessName: "Acme Wholesale",
+      items: [{ name: "Acme Widget", sku: "WID-001", currentStock: 3, reorderPoint: 10 }],
+    });
+
+    const call = sendSpy.mock.calls[0][0];
+    expect(call.html).toContain("#1D2A3D");
+    expect(call.text).toBeTruthy();
+    expect(call.text).toContain("Acme Widget");
+    expect(call.text).toContain("WID-001");
+  });
+});
