@@ -3,14 +3,27 @@ import Link from "next/link";
 import { ArrowUpRight, Route, Users, Warehouse, Store } from "lucide-react";
 import { routes, site } from "../lib/site";
 import { CTA, Eyebrow, CheckList } from "../components/marketing";
-import { FAQ } from "../components/faq";
 import { DeliveryDemo } from "../components/delivery-demo";
 import { FeatureCatalog, CapabilityStrip } from "../components/feature-catalog";
 import { AISpotlight } from "../components/ai-spotlight";
 import { BrandSignature } from "@/components/brand";
-import { DifferenceSection, BuyingConfidence } from "../components/conversion-sections";
 
 // Copy verbatim from the redesign's app/[page]/page.tsx `Product()` (M1 §2a).
+//
+// Layout ruling (owner, 2026-09-16, PR-3): add the reference study's
+// "wholesale details + photo" split-panel (its `platform()` — WHOLESALE
+// DETAILS eyebrow, customer pricing/standing orders/supplier bills/returns/
+// credit notes/commissions/imports copy, regulated-goods note, a photo).
+// DifferenceSection/BuyingConfidence/FAQ dropped as duplicative — Home
+// carries the same DifferenceSection/BuyingConfidence content (merged) and
+// the same general FAQ, and the reference's own platform() never had a FAQ
+// section at all. connection-diagram is unique to this page (no equivalent
+// anywhere else in the port) and is kept.
+//
+// Photo: reuses public/marketing/warehouse.webp — no new binary. The
+// reference's own photo here (delivery-editorial.png) isn't a production
+// asset; warehouse.webp is the closest existing theme match and is already
+// established as "wholesale operations" imagery via the company page.
 
 const route = routes.find((r) => r.slug === "product")!;
 
@@ -36,7 +49,7 @@ const CONNECTION_NODES: Array<[typeof Users, string]> = [
 
 export default function ProductPage() {
   return (
-    <>
+    <div className="glass-page">
       <section className="page-hero centered wrap">
         <Eyebrow>CONNECTED OPERATIONS. AI INVOICE SCANNING.</Eyebrow>
         <h1>
@@ -108,10 +121,39 @@ export default function ProductPage() {
           <p>Orders · Delivery details · Customer records</p>
         </div>
       </section>
-      <DifferenceSection />
-      <BuyingConfidence />
-      <FAQ />
+      <section className="section wrap">
+        <div className="split-panel">
+          <div>
+            <Eyebrow>WHOLESALE DETAILS</Eyebrow>
+            <h2>
+              Handle repeat orders
+              <br />
+              and changes after a sale.
+            </h2>
+            <p>
+              Discuss customer-specific pricing, standing orders, supplier bills, returns, credit
+              notes, sales-agent commissions, and data imports.
+            </p>
+            <p>
+              For regulated goods, review the inventory and reporting requirements for your
+              operation. Reporting tools do not guarantee regulatory compliance.
+            </p>
+          </div>
+          <figure className="split-panel-photo">
+            {/* Plain <img>, not next/image (ruling B1); below the fold, so lazy. */}
+            {/* eslint-disable-next-line @next/next/no-img-element -- see above */}
+            <img
+              src="/marketing/warehouse.webp"
+              alt="Two warehouse workers carrying stock through an aisle."
+              width={1400}
+              height={933}
+              loading="lazy"
+              decoding="async"
+            />
+          </figure>
+        </div>
+      </section>
       <CTA />
-    </>
+    </div>
   );
 }

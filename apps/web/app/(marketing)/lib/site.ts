@@ -7,6 +7,8 @@
 // rows, whose <title>/description carry R9's interim production copy
 // (matching the page body) instead of the redesign's preview-only text.
 
+import { Package, Route, Warehouse, type LucideIcon } from "lucide-react";
+
 export const site = {
   name: "RouteFlow",
   origin: "https://www.routeflow.info",
@@ -83,6 +85,51 @@ export const NAV_SLUGS = ["product", "wholesalers", "retailers", "pricing", "com
 
 /** Slugs excluded from the sitemap (legal shells, R9/T9). */
 export const SITEMAP_EXCLUDED_SLUGS = ["privacy", "terms"] as const;
+
+export interface PricingPlan {
+  name: string;
+  tag: string;
+  text: string;
+  icon: LucideIcon;
+  items: string[];
+}
+
+/**
+ * The three pricing plans — shared between /pricing (the full page) and the
+ * home page's pricing teaser (owner layout ruling, 2026-09-16, PR-3: "3 real
+ * cards from the real pricing data"). Single source so the two never drift.
+ */
+export const PLANS: PricingPlan[] = [
+  {
+    name: "Starter",
+    tag: "GET YOUR WORKFLOW ORGANIZED",
+    text: "For a smaller team bringing customer orders into one place.",
+    icon: Package,
+    items: ["Customer and product records", "Order management", "Retailer ordering portal"],
+  },
+  {
+    name: "Growth",
+    tag: "CONNECT YOUR DELIVERY OPERATION",
+    text: "For teams coordinating orders, drivers, and regular delivery runs.",
+    icon: Route,
+    items: [
+      "Order-to-delivery workflow",
+      "Route planning and dispatch",
+      "Delivery status and customer accounts",
+    ],
+  },
+  {
+    name: "Scale",
+    tag: "DISCUSS A BROADER ROLLOUT",
+    text: "For more complex operations with specific rollout and access needs.",
+    icon: Warehouse,
+    items: [
+      "Review multiple locations",
+      "Discuss team and access requirements",
+      "Plan imports and implementation",
+    ],
+  },
+];
 
 export interface DemoFormValues {
   name: string;

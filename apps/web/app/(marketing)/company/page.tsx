@@ -1,9 +1,16 @@
 import type { Metadata } from "next";
-import { ArrowUpRight, Mail } from "lucide-react";
+import { ArrowUpRight, BookOpen, Link2, Mail, Target } from "lucide-react";
 import { routes, site } from "../lib/site";
 import { CTA, Eyebrow } from "../components/marketing";
 
 // Copy verbatim from the redesign's app/[page]/page.tsx `Company()` (M1 §2e).
+//
+// Layout ruling (owner, 2026-09-16, PR-3): combine the hero text and photo
+// into one section (matching the design study's `company()` — a single
+// `.audience-hero` with text + photo side by side, not two stacked
+// sections), and use a 3-card grid instead of the numbered PRINCIPLES list.
+// The three principles' own copy is unchanged — this only changes their
+// layout shape, not their content, so no factual claim is lost.
 
 const route = routes.find((r) => r.slug === "company")!;
 
@@ -20,16 +27,19 @@ export const metadata: Metadata = {
   },
 };
 
-const PRINCIPLES: Array<[string, string]> = [
+const PRINCIPLES: Array<[typeof BookOpen, string, string]> = [
   [
+    BookOpen,
     "Useful context",
     "Keep order details, delivery notes, and customer history within reach of the people doing the job.",
   ],
   [
+    Link2,
     "Connected handoffs",
     "Help the office, warehouse, and driver follow the same order through its next step.",
   ],
   [
+    Target,
     "Clear expectations",
     "Start a buying conversation with the workflow, the available features, and the scope of the plan.",
   ],
@@ -37,15 +47,15 @@ const PRINCIPLES: Array<[string, string]> = [
 
 export default function CompanyPage() {
   return (
-    <>
-      <section className="page-hero company-intro wrap">
-        <Eyebrow>ABOUT ROUTEFLOW</Eyebrow>
-        <h1>
-          For the people who <br />
-          keep local shelves <br />
-          <em>stocked.</em>
-        </h1>
+    <div className="glass-page">
+      <section className="company-intro wrap split-hero">
         <div>
+          <Eyebrow>ABOUT ROUTEFLOW</Eyebrow>
+          <h1>
+            For the people who <br />
+            keep local shelves <br />
+            <em>stocked.</em>
+          </h1>
           <p className="lead">
             Behind a stocked shelf, someone took an order, checked a product, loaded a van, and made
             the delivery.
@@ -56,38 +66,38 @@ export default function CompanyPage() {
             serve.
           </p>
         </div>
+        <figure className="company-photo">
+          {/* Plain <img>, not next/image (ruling B1); below the fold, so lazy. */}
+          {/* eslint-disable-next-line @next/next/no-img-element -- see above */}
+          <img
+            src="/marketing/warehouse.webp"
+            alt="Two warehouse workers carrying stock through an aisle."
+            width={1400}
+            height={933}
+            loading="lazy"
+            decoding="async"
+          />
+          <figcaption>
+            <span>THE WORK BEHIND THE DELIVERY</span>
+            <p>
+              Stock to move.
+              <br />
+              Customers to look after.
+            </p>
+          </figcaption>
+        </figure>
       </section>
-      <section className="company-image wrap">
-        {/* Plain <img>, not next/image (ruling B1); below the fold, so lazy. */}
-        {/* eslint-disable-next-line @next/next/no-img-element -- see above */}
-        <img
-          src="/marketing/warehouse.webp"
-          alt="Two warehouse workers carrying stock through an aisle."
-          width={1400}
-          height={933}
-          loading="lazy"
-          decoding="async"
-        />
-        <div>
-          <span>THE WORK BEHIND THE DELIVERY</span>
-          <p>
-            Stock to move.
-            <br />
-            Customers to look after.
-          </p>
-        </div>
-        <p className="photo-credit">
-          Illustrative industry photography.{" "}
-          <a
-            href="https://www.pexels.com/photo/men-working-in-a-warehouse-4487362/"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Tiger Lily / Pexels
-          </a>
-          .
-        </p>
-      </section>
+      <p className="photo-credit wrap">
+        Illustrative industry photography.{" "}
+        <a
+          href="https://www.pexels.com/photo/men-working-in-a-warehouse-4487362/"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Tiger Lily / Pexels
+        </a>
+        .
+      </p>
       <section className="section wrap company-principles">
         <div>
           <Eyebrow>OUR PRODUCT FOCUS</Eyebrow>
@@ -97,14 +107,12 @@ export default function CompanyPage() {
             to the work.
           </h2>
         </div>
-        <div>
-          {PRINCIPLES.map(([title, text], i) => (
+        <div className="feature-grid three">
+          {PRINCIPLES.map(([Icon, title, text]) => (
             <article key={title}>
-              <span>0{i + 1}</span>
-              <div>
-                <h3>{title}</h3>
-                <p>{text}</p>
-              </div>
+              <Icon size={26} />
+              <h3>{title}</h3>
+              <p>{text}</p>
             </article>
           ))}
         </div>
@@ -121,6 +129,6 @@ export default function CompanyPage() {
         </a>
       </section>
       <CTA />
-    </>
+    </div>
   );
 }
