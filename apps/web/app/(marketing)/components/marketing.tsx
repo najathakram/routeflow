@@ -104,8 +104,8 @@ export function AudienceCards() {
               <br />a shared plan.
             </h3>
             <p>
-              Manage orders, prepare routes, and follow each delivery with the customer record
-              close at hand.
+              Manage orders, prepare routes, and follow each delivery with the customer record close
+              at hand.
             </p>
             <Link className="text-link" href="/wholesalers">
               Explore RouteFlow for distributors <ArrowRight size={18} />

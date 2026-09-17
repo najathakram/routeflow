@@ -34,7 +34,7 @@
 ### L-192 · 2026-09-17 · tooling · jsdom offsetParent is always null (focus-trap RTL false negative)
 
 - **Symptom:** a focus trap's `getFocusable()` filtered candidates with `el.offsetParent !==
-  null`; three RTL tests failed as if the trap never moved focus at all, while the handler's own
+null`; three RTL tests failed as if the trap never moved focus at all, while the handler's own
   logic was correct.
 - **Root cause:** jsdom has no layout engine, so `offsetParent` (like `offsetWidth`/`offsetHeight`)
   is always `null` regardless of real visibility — the filter discarded every candidate element,
