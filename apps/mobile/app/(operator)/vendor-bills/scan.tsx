@@ -163,7 +163,9 @@ export default function ScanInvoiceScreen() {
         // reads as a broken scan; this is really a document-shape mismatch — a
         // supplier CREDIT MEMO scanned through the wrong flow.
         if (isMoneyInvariantError(e)) {
-          showToast("This looks like a credit memo — record it as a supplier credit.");
+          showToast(
+            "These lines net to a negative amount — if this is a credit memo, record it as a supplier credit.",
+          );
           return;
         }
         showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");

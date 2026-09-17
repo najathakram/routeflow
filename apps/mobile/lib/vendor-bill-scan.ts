@@ -114,11 +114,17 @@ function normalizeScanLine(i: ScannedItemEx): ScanBillItemDto {
   return {
     description: i.extractedName,
     productId: undefined,
+    // Plain negation, not -Math.abs(...): preserves the amount owed for
+    // EITHER sign the AI extracted the cost as (a deposit return can arrive
+    // as qty:-1/unitCost:+5 OR qty:-1/unitCost:-5 depending on how the
+    // invoice printed it) — -Math.abs would silently flip a
+    // already-negative unitCost positive, doubling the line's effect on
+    // totalOwed instead of preserving it.
     qty: Math.abs(rawQty),
-    unitCost: -Math.abs(i.unitCost ?? 0),
+    unitCost: -(i.unitCost ?? 0),
     sku: i.sku?.trim() || undefined,
     packSize: i.packSize ?? undefined,
-    lineTotal: i.lineTotal != null ? -Math.abs(i.lineTotal) : undefined,
+    lineTotal: i.lineTotal != null ? -i.lineTotal : undefined,
   };
 }
 
@@ -157,7 +163,11 @@ export function buildBillDtoFromScan(
     subtotal: subtotal > 0 ? subtotal : undefined,
     scanId: result.scanId ?? undefined,
     items: (result.items ?? [])
-      .filter((i) => (i.qty ?? 0) > 0 || (i.unitCost ?? 0) > 0)
+      // Opus review of #791: `> 0` on both clauses silently dropped a
+      // discount line printed with a null/0 qty and a negative unitCost
+      // (`0 > 0` and `-5 > 0` are both false). `!== 0` keeps any line that
+      // carries a real qty OR a real cost, in either direction.
+      .filter((i) => (i.qty ?? 0) !== 0 || (i.unitCost ?? 0) !== 0)
       .map((i) => normalizeScanLine(i)),
   };
 }

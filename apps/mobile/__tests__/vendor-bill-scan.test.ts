@@ -136,6 +136,9 @@ describe("buildBillDtoFromScan — negative-line handling (B451/#791 Opus review
   });
 
   it("a negative-qty deposit-return line is normalized: qty flips positive, unitCost flips negative, productId dropped", () => {
+    // lineTotal is OCR'd as a positive magnitude here (matching the AI's
+    // extraction convention: the sign lives on qty alone) — plain negation
+    // (not -Math.abs) turns that printed +10 into the credit's -10.
     const dto = buildBillDtoFromScan(
       scanResult({
         items: [
@@ -143,7 +146,7 @@ describe("buildBillDtoFromScan — negative-line handling (B451/#791 Opus review
             extractedName: "Bottle deposit return",
             qty: -2,
             unitCost: 5,
-            lineTotal: -10,
+            lineTotal: 10,
             matchedProductId: "prod-deposit",
             matchedProductName: "Bottle Deposit",
             confidence: "high",
@@ -198,6 +201,48 @@ describe("buildBillDtoFromScan — negative-line handling (B451/#791 Opus review
     );
     // -3 * 4 pre-normalization == 3 * -4 post-normalization == -12 either way.
     expect(before.items[0].qty * before.items[0].unitCost).toBe(-12);
+  });
+
+  it("plain negation (not -Math.abs): a negative-qty line whose unitCost is ALSO already negative nets +5, not doubled (Opus review of #791)", () => {
+    const dto = buildBillDtoFromScan(
+      scanResult({
+        items: [
+          {
+            extractedName: "Case return (cost printed negative)",
+            qty: -1,
+            unitCost: -5,
+            matchedProductId: "prod-x",
+            matchedProductName: "Some Product",
+            confidence: "high",
+          },
+        ],
+      }),
+      suppliers,
+    );
+    // -Math.abs(-5) would have flipped this to -5 again (qty 1 * unitCost -5 =
+    // -5, doubling the credit); plain negation gives qty 1 * unitCost +5 = +5.
+    expect(dto.items[0]).toMatchObject({ qty: 1, unitCost: 5 });
+    expect(dto.items[0].qty * dto.items[0].unitCost).toBe(5);
+  });
+
+  it("a discount line with a null/0 qty and a negative unitCost is kept (not silently dropped) and sent as qty 1 (Opus review of #791)", () => {
+    const dto = buildBillDtoFromScan(
+      scanResult({
+        items: [
+          {
+            extractedName: "Loyalty discount",
+            qty: null,
+            unitCost: -5,
+            matchedProductId: null,
+            matchedProductName: null,
+            confidence: "none",
+          },
+        ],
+      }),
+      suppliers,
+    );
+    expect(dto.items).toHaveLength(1);
+    expect(dto.items[0]).toMatchObject({ qty: 1, unitCost: -5 });
   });
 });
 
