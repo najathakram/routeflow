@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ArrowRight, ArrowUpRight, Package, Route, Store, Warehouse } from "lucide-react";
 import { routes, site } from "../lib/site";
 import { CTA, Eyebrow, CheckList } from "../components/marketing";
+import { FAQ } from "../components/faq";
 
 // Copy verbatim from the redesign's app/[page]/page.tsx `Pricing()` (M1 §2d).
 // No numeric prices — deliberately deferred to a sales conversation.
@@ -133,6 +134,7 @@ export default function PricingPage() {
           </p>
         </div>
       </section>
+      <FAQ />
       <CTA />
     </div>
   );
