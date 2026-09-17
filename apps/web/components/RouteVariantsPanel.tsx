@@ -17,6 +17,10 @@ export interface RouteVariantsPanelProps {
   onSelect: (variant: RouteVariant) => void;
   loading?: boolean;
   className?: string;
+  /** Mobile deliveries/new sheet: a horizontal snap-scrolling row instead of
+   *  the desktop's wrapping flex row. Default false — every existing caller
+   *  keeps today's wrap layout. */
+  scrollX?: boolean;
 }
 
 function VariantSkeletonCard() {
@@ -41,10 +45,11 @@ export function RouteVariantsPanel({
   onSelect,
   loading,
   className,
+  scrollX,
 }: RouteVariantsPanelProps) {
   if (loading) {
     return (
-      <div className={cn("flex gap-2", className)}>
+      <div className={cn(scrollX ? "flex gap-2 overflow-x-auto" : "flex gap-2", className)}>
         <VariantSkeletonCard />
         <VariantSkeletonCard />
         <VariantSkeletonCard />
@@ -55,7 +60,12 @@ export function RouteVariantsPanel({
   if (!variants.length) return null;
 
   return (
-    <div className={cn("flex flex-wrap gap-2", className)}>
+    <div
+      className={cn(
+        scrollX ? "flex gap-2 overflow-x-auto pb-1 snap-x snap-mandatory" : "flex flex-wrap gap-2",
+        className,
+      )}
+    >
       {variants.map((variant) => {
         const selected = selectedKey === variant.key;
         const minutes = Math.round(variant.durationSec / 60);
@@ -66,7 +76,8 @@ export function RouteVariantsPanel({
             type="button"
             onClick={() => onSelect(variant)}
             className={cn(
-              "min-w-[140px] flex-1 rounded-lg border p-3 text-left transition-colors",
+              "rounded-lg border p-3 text-left transition-colors",
+              scrollX ? "w-[150px] shrink-0 snap-start" : "min-w-[140px] flex-1",
               selected
                 ? "border-brand-500 bg-brand-50 ring-2 ring-brand-500"
                 : "border-surface-border bg-white hover:border-brand-300",

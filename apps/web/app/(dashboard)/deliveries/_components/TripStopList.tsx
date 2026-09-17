@@ -23,6 +23,15 @@ export interface TripStopListProps {
    * whole-customer remove above already covers that case.
    */
   onRemoveOrder?: (orderId: string) => void;
+  /**
+   * Row tap → map sync (mobile deliveries/new sheet only): highlights the
+   * matching marker and recenters the map. Omit for the plain, non-selectable
+   * list every other caller renders. Each row gets a stable
+   * `id="trip-stop-<customerId>"` (harmless when unused) so a marker tap can
+   * scroll the list back to the row via `scrollIntoView`.
+   */
+  onSelectGroup?: (customerId: string) => void;
+  selectedCustomerId?: string | null;
   emptyMessage?: string;
   className?: string;
 }
@@ -37,6 +46,8 @@ export function TripStopList({
   orderLookup,
   onRemoveCustomer,
   onRemoveOrder,
+  onSelectGroup,
+  selectedCustomerId,
   emptyMessage = "No stops yet.",
   className,
 }: TripStopListProps) {
@@ -64,10 +75,29 @@ export function TripStopList({
           return info?.orderNumber ? `#${info.orderNumber}` : `#${id.slice(0, 8).toUpperCase()}`;
         };
         const orderLabels = group.orderIds.map(orderLabel);
+        const selected = selectedCustomerId === group.customerId;
         return (
           <li
             key={group.customerId}
-            className="flex items-start gap-3 rounded-lg border border-surface-border bg-white p-3"
+            id={`trip-stop-${group.customerId}`}
+            role={onSelectGroup ? "button" : undefined}
+            tabIndex={onSelectGroup ? 0 : undefined}
+            onClick={onSelectGroup ? () => onSelectGroup(group.customerId) : undefined}
+            onKeyDown={
+              onSelectGroup
+                ? (e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onSelectGroup(group.customerId);
+                    }
+                  }
+                : undefined
+            }
+            className={cn(
+              "flex items-start gap-3 rounded-lg border bg-white p-3",
+              selected ? "border-brand-500 ring-2 ring-brand-500" : "border-surface-border",
+              onSelectGroup && "cursor-pointer",
+            )}
           >
             <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-100 text-xs font-bold text-brand-600">
               {index + 1}

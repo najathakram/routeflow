@@ -732,6 +732,23 @@ export default defineConfig({
       },
     },
 
+    // ── Deliveries/new mobile bottom sheet (owner UX request, spec 49) ────────
+    // Below `lg` (1024px) the fixed two-column desktop layout swaps for a
+    // map-canvas + draggable bottom-sheet layout. Read-only /
+    // assert-visibility-only, same convention as trip-builder-gate (spec 20):
+    // Build/Send are never clicked. Uses operator auth state; the spec reads
+    // its token out of that session, same pattern as spec 20. Viewport is set
+    // per test.describe (390/768/1440) in the spec.
+    // NOT added to LOCAL-LANE.md's allow-list here — that's the landing
+    // coordinator's call once this batch has run against the local stack.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's precedent.
+    {
+      name: "deliveries-mobile-sheet",
+      testMatch: /49-deliveries-new-responsive\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
     // Feature grants v2 PR-2 (2026-09-17) — the data-driven Feature Console. Same reasoning as
     // "feature-overrides" above: every endpoint mocked, auth faked client-side, so no "setup"
     // dependency and no storageState needed. Runs mocked now (brief B/C's real services aren't

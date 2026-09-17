@@ -188,6 +188,35 @@ function FitBoundsLayer({
   return null;
 }
 
+// ─── Pan (not fit) to the externally-selected stop ─────────────────────────────
+
+/**
+ * Opt-in companion to `FitBoundsLayer`: `FitBoundsLayer` only ever runs once
+ * (on first geo data), so a later change to `selectedStopId` — e.g. the
+ * mobile deliveries/new sheet's list↔marker sync — needs its own effect to
+ * recenter the map. Gated behind `panToSelectedStop` so existing callers
+ * (routes/templates/[id]/page.tsx) that already manage `selectedStopId` for
+ * highlight-only purposes see no behavior change.
+ */
+function PanToStopLayer({
+  stops,
+  selectedStopId,
+}: {
+  stops: RouteTemplateStop[];
+  selectedStopId?: string | null;
+}) {
+  const map = useMap();
+
+  React.useEffect(() => {
+    if (!map || !selectedStopId) return;
+    const stop = stops.find((s) => s.id === selectedStopId);
+    if (!stop?.customerAddress?.lat || !stop.customerAddress.lng) return;
+    map.panTo({ lat: stop.customerAddress.lat, lng: stop.customerAddress.lng });
+  }, [map, stops, selectedStopId]);
+
+  return null;
+}
+
 // ─── Placeholder when map cannot render ───────────────────────────────────────
 
 function MapPlaceholder({ message }: { message: string }) {
@@ -215,6 +244,14 @@ export interface TemplateRouteMapProps {
   /** Route-variant comparison polylines (Fastest/Shortest/No-tolls). When
    *  present (non-empty), these replace the default driving-path layer. */
   variantOverlays?: VariantOverlay[];
+  /** Opt-in: recenter (pan, not fit) on `selectedStopId` whenever it changes —
+   *  the mobile deliveries/new sheet's marker↔list sync. Omit/false preserves
+   *  today's highlight-only behavior for every other caller. */
+  panToSelectedStop?: boolean;
+  /** Opt-in: fires on a click that lands on the map background (not a marker
+   *  — see PanToStopLayer's doc comment). Used by the mobile deliveries/new
+   *  sheet to collapse to "peek" on an empty-map tap. */
+  onMapClick?: () => void;
 }
 
 function MapContent({
@@ -227,6 +264,7 @@ function MapContent({
   depotAddress,
   plannedPolyline,
   variantOverlays,
+  panToSelectedStop,
 }: TemplateRouteMapProps) {
   const [openInfoId, setOpenInfoId] = React.useState<string | null>(null);
   const [depotInfoOpen, setDepotInfoOpen] = React.useState(false);
@@ -240,6 +278,7 @@ function MapContent({
   return (
     <>
       <FitBoundsLayer stops={geoStops} depot={depot} />
+      {panToSelectedStop && <PanToStopLayer stops={geoStops} selectedStopId={selectedStopId} />}
       {variantOverlays && variantOverlays.length > 0 ? (
         <EncodedPolylineLayer overlays={variantOverlays} />
       ) : (
@@ -326,6 +365,8 @@ export function TemplateRouteMap({
   depotAddress,
   plannedPolyline,
   variantOverlays,
+  panToSelectedStop,
+  onMapClick,
 }: TemplateRouteMapProps) {
   const { key: MAPS_KEY, loading: mapsKeyLoading } = useGoogleMapsKey();
   const geoStops = stops.filter((s) => s.customerAddress?.lat != null);
@@ -367,12 +408,14 @@ export function TemplateRouteMap({
             gestureHandling="greedy"
             disableDefaultUI={false}
             style={{ width: "100%", height: "100%" }}
+            onClick={onMapClick ? () => onMapClick() : undefined}
           >
             <MapContent
               stops={stops}
               selectedStopId={selectedStopId}
               onSelectStop={onSelectStop}
               onRemoveStop={onRemoveStop}
+              panToSelectedStop={panToSelectedStop}
               depotLat={depotLat}
               depotLng={depotLng}
               depotAddress={depotAddress}

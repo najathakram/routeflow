@@ -156,6 +156,36 @@ card's result badge, because `importPayments`now reports rows it skipped as re-u
   against `GET /trips/eligible-orders` ({data, meta} envelope). e2e
   `20-trip-builder-gate.spec.ts` re-pinned to the picker UX (still assert-visibility-only —
   Build asserted DISABLED at 0 orders, never clicked).
+- **Mobile bottom-sheet layout (2026-09-17, owner UX request):** below `lg` (1024px),
+  `deliveries/new/page.tsx` swaps its fixed two-column body for a map-canvas + draggable
+  bottom-sheet layout, decided by a JS `isMobile` boolean (matching the `lg` breakpoint,
+  resolved in the same client-only effect as `hydrated` — no SSR flash) rather than a second
+  CSS-hidden tree: exactly one `TemplateRouteMap` (a real, billable Google Maps instance) may
+  ever be mounted, so the desktop body's own map mount gained a `!isMobile &&` guard (a no-op
+  at `lg`+, since `isMobile` is always false there) and the new `_components/DeliveryMobileLayout.tsx`
+  owns the other one. Top bar's action-button group (`Build`/`Send`/`Re-optimize`/`Discard`)
+  is `hidden lg:flex` below `lg` — those actions move into the new
+  `_components/DeliveryBottomSheet.tsx`'s own header (primary button always visible;
+  Re-optimize/Discard in an overflow menu). `DeliveryBottomSheet` is a hand-rolled, non-modal
+  sheet: three detents (peek ~132px / half 55vh default / full 90vh), pointer-drag +
+  velocity-fling snapping animating only `transform: translate3d` (never `height`), a real
+  `<button>` drag handle cycling peek→half→full→peek with `aria-expanded`, Escape→peek, and
+  `prefers-reduced-motion` honored via `_components/useReducedMotion.ts`. `DeliveryMobileLayout`
+  wires the interplay: tapping the map background collapses to peek; tapping a MARKER
+  highlights it, recenters the map, lifts the sheet to half, and scrolls the list to that stop;
+  tapping a STOP in the list highlights its marker and recenters the map (owner spec's literal
+  text also said "tapping the map OR a marker collapses to peek", contradicting the very next
+  clause about marker taps — resolved as above; see the PR description). `TemplateRouteMap`
+  gained two additive, opt-in props for this (`onMapClick`, `panToSelectedStop` — both
+  default-off, so `routes/templates/[id]/page.tsx`'s existing usage is unchanged);
+  `TripStopList` gained additive `onSelectGroup`/`selectedCustomerId` + a stable
+  `id="trip-stop-<customerId>"` per row; `RouteVariantsPanel` gained an additive `scrollX` prop
+  for the sheet's horizontal snap-scrolling route-options row. Order picker + skipped panel
+  render only at the "full" detent (owner spec item 2); everything else at half+. Tests:
+  `_components/DeliveryBottomSheet.test.tsx`, `_components/DeliveryMobileLayout.test.tsx`,
+  `new/page.test.tsx` (desktop-branch-unchanged smoke). E2E:
+  `e2e/49-deliveries-new-responsive.spec.ts` (390/768/1440, no-horizontal-scroll + detent
+  cycling) — written but not yet run against the local stack.
 - **Fulfillment-path forms (2026-08-24):** `orders/_components/CreateOrderModal.tsx`'s `fulfillPath` round-trips through the parked-draft payload AND its hydrate-from-draft path (a dropped field here silently reverts a draft's SHIP choice to ROUTE on resume); `customers/_components/CustomerFormModal.tsx` covers `fulfillPath` in both `buildDefaultValues` branches (create/edit), both create+update payloads, and both callers' `initialData`. `orders/[id]/page.tsx` gets a fulfillment-path control (`"Delivery route"`/`"Ship via carrier"` + one-line helper text, disabled once the order has shipped) driving `PATCH /orders/:id/fulfill-path`; the SHIP status label relabels on existing status-badge handlers only (no new component); `ShipmentCard` gained an optional, backwards-compatible `openSignal` prop that nudges the panel open after a fulfillment-path change.
 - **Finance:** `finance/dashboard/page.tsx` (AR aging, sales breakdowns), `finance/payments/page.tsx` + `[id]/page.tsx`, `finance/reports/page.tsx` (AR aging, P&L, cash flow, expense breakdown). ⚠️ 2026-08-28: the Bills & Purchasing hub UI moved VERBATIM from `finance/expenses/page.tsx` to **`vendor-bills/page.tsx`** (now the ONE terminal home); `finance/expenses/page.tsx` and `purchases/page.tsx` are thin redirect stubs/aliases onto `/vendor-bills` (query/tab forwarded — tab map `bills→inventory`, `expenses→other`); `finance/expenses/new/page.tsx` (expense creation, OCR) stays a real route and post-saves to `/vendor-bills`. Finance nav group no longer has an "Expenses" item.
 - **Comma-status 400 fix (2026-08-12):** `ListInvoicesDto.status` validates ONE enum value — a comma list 400s SILENTLY (verified live). `finance/payments` RecordPaymentModal now queries by `customerId` (+ `enabled` gate on `useInvoices` — `lib/api/invoices.ts` options gained `enabled`) and filters `OPEN_STATUSES` client-side, OLDEST FIRST (array order = allocation pre-fill order, mirrors mobile `payments/record`); `customers/[id]` Billing tab's "outstanding" filter had the same bug — client-filtered via `OUTSTANDING_STATUSES`. NEVER send a comma status to `/invoices`. **Waterfall extracted (2026-08-20, PR-E):** its greedy pre-fill + allocated/excess math now call `waterfallAllocations`/`allocationTotals` from `lib/api/supplier-payments.ts` — ONE copy shared with `components/CustomerRecordPaymentModal.tsx` and `components/RecordSupplierPaymentModal.tsx`; don't re-derive allocation arithmetic in a page.
