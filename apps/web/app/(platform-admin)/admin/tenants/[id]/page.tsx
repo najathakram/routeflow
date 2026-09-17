@@ -1312,7 +1312,7 @@ export interface FeatureOverridesSectionHandle {
   openFor: (featureKey: string) => void;
 }
 
-const FeatureOverridesSection = React.forwardRef<
+export const FeatureOverridesSection = React.forwardRef<
   FeatureOverridesSectionHandle,
   { tenant: TenantDetail }
 >(function FeatureOverridesSection({ tenant }, ref) {
