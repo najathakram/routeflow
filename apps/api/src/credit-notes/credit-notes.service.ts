@@ -337,15 +337,18 @@ export class CreditNotesService {
     // invoice, before its own carrying order ever got a chance to consume it. Not met until
     // there is at least one non-VOID invoice AND every one of them is fully paid.
     if (invoices.length === 0) return false;
+    // PR-2 review (payment-status-filter scan): this is a CONFIRMATION question —
+    // "is this invoice actually paid off" — so paid must be the CONFIRMED-basis
+    // sum (sumConfirmed), never a bare not-VOID filter. A DRAFT bank-import row
+    // or a PENDING post-dated check must not count: crediting this return's
+    // credit back to the general sweep before the money has actually cleared
+    // would let it get consumed on some OTHER invoice while this order still
+    // owes on paper.
     for (const inv of invoices) {
-      const paid = roundMoney(
-        (inv.payments ?? [])
-          .filter((p: any) => p.status !== "VOID")
-          .reduce((s: number, p: any) => s + Number(p.amount), 0),
-      );
+      const paid = roundMoney(sumConfirmed(inv.payments));
       if (roundMoney(Number(inv.total) - paid) > 0.001) return false;
     }
-    return true; // every non-VOID invoice is fully paid
+    return true; // every non-VOID invoice is fully paid (CONFIRMED basis)
   }
 
   /**
@@ -879,6 +882,10 @@ export class CreditNotesService {
    * silently void a note that's still "used" on paper (m-5's "restore < amountUsed" case).
    */
   async cancelStandaloneInTx(tx: any, creditNoteId: string): Promise<{ restored: number }> {
+    // scan-ok: draft-payment-not-void — a CREDIT_NOTE-method InvoicePayment is an
+    // internal ledger write this service itself creates atomically as CONFIRMED;
+    // it is never written as DRAFT/PENDING like an imported bank row or a
+    // post-dated check, so not-VOID is the correct (and only reachable) filter here.
     const payments = await tx.invoicePayment.findMany({
       where: { creditNoteId, method: PaymentMethod.CREDIT_NOTE, status: { not: "VOID" } },
       orderBy: { createdAt: "desc" },

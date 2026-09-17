@@ -181,6 +181,32 @@ describe("CreditNotesService — PR-1c (m-1 mintStandaloneInTx, §6.3 met exclus
       expect(result.applied).toBe(50);
     });
 
+    it("PR-2 review revert-probe: a carrying order whose invoice is only covered by a PENDING post-dated check is NOT met", async () => {
+      // Pre-fix, isOrderMetInTx's paid sum used a bare not-VOID filter — a PENDING
+      // check (post-dated, not yet cleared) is not VOID, so it silently counted as
+      // paid and this credit would sweep to some OTHER invoice while this order
+      // still shows an open balance on paper the moment the check bounces. Fails
+      // red pre-fix (result.applied comes back 50, not 0).
+      primeInvoice(50);
+      prisma.creditNote.findMany.mockResolvedValue([
+        { id: "cn-inline", amount: 50, amountUsed: 0, createdAt: new Date("2026-01-01") },
+      ]);
+      prisma.return.findFirst.mockResolvedValue({ orderId: "ord-carrying" });
+      prisma.order.findFirst.mockResolvedValue({ status: "PENDING" });
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          id: "inv-carrying",
+          total: 100,
+          status: "SENT",
+          payments: [{ amount: 100, status: "PENDING" }],
+        },
+      ]);
+
+      const result = await service.autoApplyOldestCreditsInTx(prisma, "inv-other", "cust-1");
+
+      expect(result.applied).toBe(0);
+    });
+
     it("a carrying order that is CANCELLED counts as met — the credit sweeps normally", async () => {
       primeInvoice(50);
       prisma.creditNote.findMany.mockResolvedValue([
