@@ -3939,6 +3939,33 @@ export class OrdersService implements OnApplicationBootstrap {
               }
             }
 
+            // B465 fix round 3 (Opus BLOCK item 2): the SAME unambiguous-pairing
+            // rule as bogoCounterparts, generalized to every line (not gated on
+            // promoFreeUnits) — the reason-required guard below must compare a
+            // repriced SPECIAL line against what it ALREADY billed, never treat
+            // every price on the wire as a fresh reprice attempt. An ambiguous
+            // pairing (0 or 2+ pre-edit/incoming lines for the product) has no
+            // sound "existing price" to compare against, so it falls through to
+            // requiring a reason like a brand-new line would.
+            const existingLineByProduct = new Map<
+              string,
+              { unitPrice: number; overrideReason: string | null }
+            >();
+            for (const li of order.lineItems ?? []) {
+              if (
+                li.productId &&
+                li.status !== "CANCELLED" &&
+                preEditLinesByProduct.get(li.productId) === 1 &&
+                incomingLinesByProduct.get(li.productId) === 1 &&
+                !existingLineByProduct.has(li.productId)
+              ) {
+                existingLineByProduct.set(li.productId, {
+                  unitPrice: Number(li.unitPrice),
+                  overrideReason: (li as any).overrideReason ?? null,
+                });
+              }
+            }
+
             await tx.orderItem.deleteMany({ where: { orderId } });
             // R2: full replace — stamp position from the client's array order.
             let pos = 0;
@@ -4006,29 +4033,42 @@ export class OrdersService implements OnApplicationBootstrap {
               // Not a repricing decision ⇒ the line's override attribution survives
               // the re-create, exactly as the qty-edit oracle leaves it untouched.
               const preservedOverride = bogoPriceUnchanged ? bogoCounterpart : null;
-              // B465 fix round (Opus BLOCK, MED): the same guard as the diff-add/
-              // diff-update branches — a bare price change on a SPECIAL-tier line
-              // needs a documented reason, or the request is refused before any
-              // mutation. Not gated when the price isn't actually changing
-              // (bogoPriceUnchanged). `foldMergeItems` (the staff auto-merge's own
-              // caller) now carries a surviving MANUAL override's reason forward
-              // as `item.overrideReason`, so a legitimate carried-over override
-              // never trips this — only a genuinely NEW, undocumented reprice does.
+              // B465 fix round 3 (Opus BLOCK item 2, HIGH): the same guard as the
+              // diff-add/diff-update branches — a bare PRICE CHANGE on a
+              // SPECIAL-tier line needs a documented reason, or the request is
+              // refused before any mutation. Scoped to an ACTUAL change: skip
+              // entirely when the price isn't moving relative either to the BOGO
+              // snapshot (bogoPriceUnchanged) or to the general unambiguous
+              // existing line for this product (replaceAllExisting) — an echoed
+              // MANUAL line saved earlier with no reason, or ANY untouched line,
+              // must round-trip unchanged, never retroactively demand a reason
+              // for a price nobody is repricing. `foldMergeItems` (the staff
+              // auto-merge's own caller) carries a surviving MANUAL override's
+              // reason forward as `item.overrideReason`; when the payload omits
+              // one anyway, fall back to the existing line's own stored reason
+              // before refusing (mirrors the UPDATE branch's same fallback).
+              const replaceAllExisting = existingLineByProduct.get(item.productId);
+              const replaceAllPriceUnchanged =
+                replaceAllExisting != null &&
+                (overridePrice === null ||
+                  Math.abs(overridePrice - replaceAllExisting.unitPrice) <= 0.005);
               const replaceAllTierForProduct = isStaffEdit
                 ? (operatorCpMap.get(item.productId) ?? operatorDefaultTier)
                 : 1;
               const replaceAllIsSpecialTier = this.isSpecialTier(replaceAllTierForProduct);
               const replaceAllHasOverrideReason = !!(
-                item.overrideReason && item.overrideReason.trim()
+                (item.overrideReason && item.overrideReason.trim()) ||
+                (replaceAllExisting?.overrideReason && replaceAllExisting.overrideReason.trim())
               );
               if (
                 !bogoPriceUnchanged &&
+                !replaceAllPriceUnchanged &&
                 overridePrice !== null &&
                 replaceAllIsSpecialTier &&
                 !replaceAllHasOverrideReason
               ) {
                 throw new BadRequestException(
-                  "A reason is required to change a special-price line",
+                  `A reason is required to change ${product.name ?? "this"} — it's this customer's special price`,
                 );
               }
               // An explicit price DIFFERENT from catalog is a genuine operator override
@@ -4126,8 +4166,15 @@ export class OrdersService implements OnApplicationBootstrap {
                   promoFreeUnits: priced.freeUnits > 0 ? priced.freeUnits : null,
                   // B60: on the preservation arm the attribution of WHO authorized
                   // this price is carried over, not erased by a no-op save.
+                  // B465 fix round 3 (Opus BLOCK item 3): a blank incoming reason on
+                  // a genuine override falls back to the existing line's own stored
+                  // reason (the same unambiguous-pairing lookup the reason-required
+                  // guard above uses) rather than clearing it — mirrors the diff/
+                  // incremental UPDATE branch's identical fix.
                   overrideReason: isManualOverride
-                    ? (item.overrideReason ?? null)
+                    ? item.overrideReason?.trim()
+                      ? item.overrideReason
+                      : (replaceAllExisting?.overrideReason ?? null)
                     : (preservedOverride?.overrideReason ?? null),
                   overriddenBy: isManualOverride
                     ? (user?.sub ?? null)
@@ -4266,7 +4313,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 const hasOverrideReason = !!(item.overrideReason && item.overrideReason.trim());
                 if (overridePrice !== null && isSpecialTier && !hasOverrideReason) {
                   throw new BadRequestException(
-                    "A reason is required to change a special-price line",
+                    `A reason is required to change ${product.name ?? "this"} — it's this customer's special price`,
                   );
                 }
                 // An explicit price DIFFERENT from catalog is a genuine operator override
@@ -4588,16 +4635,32 @@ export class OrdersService implements OnApplicationBootstrap {
                 // never silently dropped. A payload that omits overrideReason still
                 // counts as documented when the LINE ALREADY carries one (the client is
                 // re-saving under its existing reason) — only a line with no reason
-                // anywhere, old or new, is refused.
+                // anywhere, old or new, is refused. Fix-round-3 (Opus BLOCK item 2):
+                // scoped to an ACTUAL price change — a carried-over/echoed price equal
+                // to what is already stored is not a repricing decision and must never
+                // demand a reason, matching the replace-all branch's same guard.
                 const isSpecialTier = this.isSpecialTier(tierForProduct);
+                const priceUnchangedFromStored =
+                  overridePrice !== null && Math.abs(overridePrice - existingUnitPrice) <= 0.005;
                 const storedOverrideReason = (li as any).overrideReason ?? null;
                 const hasOverrideReason = !!(
                   (item.overrideReason && item.overrideReason.trim()) ||
                   (storedOverrideReason && String(storedOverrideReason).trim())
                 );
-                if (overridePrice !== null && isSpecialTier && !hasOverrideReason) {
+                if (
+                  overridePrice !== null &&
+                  !priceUnchangedFromStored &&
+                  isSpecialTier &&
+                  !hasOverrideReason
+                ) {
+                  const priceProduct = li.productId
+                    ? await tx.product.findFirst({
+                        where: { id: li.productId },
+                        select: { name: true },
+                      })
+                    : null;
                   throw new BadRequestException(
-                    "A reason is required to change a special-price line",
+                    `A reason is required to change ${priceProduct?.name ?? "this line"} — it's this customer's special price`,
                   );
                 }
                 const isManualOverride =
@@ -4693,9 +4756,20 @@ export class OrdersService implements OnApplicationBootstrap {
                     // overrideReason — writing the reason alone left the attribution
                     // stale (whoever last touched the isManualOverride branch, or null),
                     // so an audit/dispute of THIS edit pointed at the wrong operator.
+                    // B465 fix round 3 (Opus BLOCK item 3, LOW): a blank incoming
+                    // reason that rides along with a GENUINE price change (mobile's
+                    // order-item-diff.ts now always sends overrideReason whenever
+                    // unitPrice changes) must never silently clear a reason already
+                    // on file — fall back to the stored value instead. A reason-only
+                    // edit (isManualOverride false — price unchanged) keeps F2's
+                    // original contract: an explicit blank there is a deliberate
+                    // clear and is written verbatim.
                     ...(item.overrideReason !== undefined
                       ? {
-                          overrideReason: item.overrideReason ?? null,
+                          overrideReason:
+                            isManualOverride && !item.overrideReason.trim()
+                              ? storedOverrideReason
+                              : (item.overrideReason ?? null),
                           overriddenBy: user?.sub ?? null,
                         }
                       : {}),

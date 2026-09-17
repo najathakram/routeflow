@@ -483,15 +483,34 @@ function isPriceOverridden(it: { unitPrice: number; basePrice: number }): boolea
 /**
  * B465 (Opus BLOCK item 2, client half): a SPECIAL-tier line's price is this
  * customer's documented contract price — the server now REFUSES a price
- * change on one with no reason (400), so the client must never let the
+ * CHANGE on one with no reason (400), so the client must never let the
  * operator reach that refusal: catalog/unlisted lines keep an optional
- * reason, a SPECIAL-tier line with an overridden price needs one before save.
+ * reason, a SPECIAL-tier line whose price is being CHANGED this session
+ * needs one before save.
+ *
+ * Fix round 3 (Opus BLOCK): this must key on `unitPrice !== originalUnitPrice`
+ * (this SESSION's own edit), never `isPriceOverridden` (`unitPrice !==
+ * basePrice`, the tier/list reference price) — a SPECIAL line's stored price
+ * is ALREADY below/above its `basePrice` by design (that's what "SPECIAL tier"
+ * means), so the old check flagged every untouched SPECIAL line as needing a
+ * fresh reason and blocked every save that merely touched a DIFFERENT line.
+ * `originalUnitPrice` is seeded to the line's own starting price for BOTH an
+ * existing line (its stored unitPrice, :1794/:1949) and a fresh add (its
+ * initial resolved price, :1062) — undefined only defensively, where there is
+ * no baseline to compare against and therefore nothing provably changed.
  */
 function needsSpecialTierReason(
-  it: { unitPrice: number; basePrice: number; overrideReason?: string; isUnlisted?: boolean },
+  it: {
+    unitPrice: number;
+    originalUnitPrice?: number;
+    overrideReason?: string;
+    isUnlisted?: boolean;
+  },
   isSpecial: boolean,
 ): boolean {
-  return !it.isUnlisted && isSpecial && isPriceOverridden(it) && !(it.overrideReason ?? "").trim();
+  const priceChanged =
+    it.originalUnitPrice != null && Math.abs(it.unitPrice - it.originalUnitPrice) > 0.0001;
+  return !it.isUnlisted && isSpecial && priceChanged && !(it.overrideReason ?? "").trim();
 }
 
 /**
@@ -799,6 +818,7 @@ function SubstitutePicker({
 function PriceEditRow({
   basePrice,
   unitPrice,
+  originalUnitPrice,
   overrideReason,
   onPriceChange,
   onReasonChange,
@@ -809,6 +829,12 @@ function PriceEditRow({
 }: {
   basePrice: number;
   unitPrice: number;
+  /** B465 fix round 3: this line's OWN price when the edit session started —
+   *  the reason-required check keys on THIS diverging from `unitPrice`, never
+   *  on `overridden` (unitPrice vs `basePrice`, the tier/list reference) — a
+   *  SPECIAL line's stored price is already below/above basePrice by design,
+   *  so that comparison flagged every untouched SPECIAL line. */
+  originalUnitPrice?: number;
   overrideReason?: string;
   onPriceChange: (netPrice: number) => void;
   onReasonChange: (reason: string) => void;
@@ -849,6 +875,12 @@ function PriceEditRow({
 
   const overridden = Math.abs(unitPrice - basePrice) > 0.0001;
   const isUpsell = unitPrice > basePrice + 0.0001;
+  // B465 fix round 3: the reason-REQUIRED state is scoped to a price this
+  // session actually changed — never to `overridden` alone, which a SPECIAL
+  // line trips just by being priced at its (correct, untouched) tier rate.
+  const priceChangedThisSession =
+    originalUnitPrice != null && Math.abs(unitPrice - originalUnitPrice) > 0.0001;
+  const reasonRequired = !!isSpecial && priceChangedThisSession;
 
   return (
     <div className="ml-11 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
@@ -892,15 +924,19 @@ function PriceEditRow({
             type="text"
             value={overrideReason ?? ""}
             onChange={(e) => onReasonChange(e.target.value)}
-            // B465: a SPECIAL-tier line's contract price can only be changed
+            // B465: a SPECIAL-tier line's contract price can only be CHANGED
             // with a documented reason — the server refuses the save
-            // otherwise (400), so this reads as required, never optional.
-            placeholder={isSpecial ? "reason (required)" : "reason (optional)"}
-            required={isSpecial}
-            aria-required={isSpecial}
-            aria-invalid={isSpecial && !overrideReason?.trim() ? true : undefined}
+            // otherwise (400), so this reads as required, never optional,
+            // but ONLY while this session is actually changing the price
+            // (reasonRequired) — an untouched SPECIAL line, or one whose
+            // price reverted back to its original value, is not a repricing
+            // attempt and keeps the reason optional like any other line.
+            placeholder={reasonRequired ? "reason (required)" : "reason (optional)"}
+            required={reasonRequired}
+            aria-required={reasonRequired}
+            aria-invalid={reasonRequired && !overrideReason?.trim() ? true : undefined}
             className={
-              isSpecial && !overrideReason?.trim()
+              reasonRequired && !overrideReason?.trim()
                 ? "min-w-0 flex-1 rounded border border-danger bg-danger-bg/30 px-2 py-1 text-navy outline-none ring-1 ring-danger placeholder:text-danger/70"
                 : "min-w-0 flex-1 rounded border border-surface-border bg-white px-2 py-1 text-navy outline-none placeholder:text-navy/40"
             }
@@ -1345,6 +1381,7 @@ function EditableLineItems({
             <PriceEditRow
               basePrice={item.basePrice}
               unitPrice={item.unitPrice}
+              originalUnitPrice={item.originalUnitPrice}
               overrideReason={item.overrideReason}
               onPriceChange={(net) => update(item.id, { unitPrice: net })}
               onReasonChange={(reason) => update(item.id, { overrideReason: reason || undefined })}
