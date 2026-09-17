@@ -191,7 +191,7 @@ export function BuyingConfidence() {
           A useful demo starts with your operation. Walk through the parts of your workflow you want
           to improve and ask the team to show you how RouteFlow handles them.
         </p>
-        <Link href="/contact" className="button">
+        <Link href="/book-a-demo" className="button">
           Book a workflow demo <ArrowRight size={18} />
         </Link>
         <span className="confidence-note">

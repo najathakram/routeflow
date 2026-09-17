@@ -195,6 +195,95 @@ describe("EmailService — sender resolver never hard-codes a domain (B452)", ()
 });
 
 /**
+ * B468 — `getTenantFromAddress`'s smtpUser fallback used the tenant's SMTP
+ * AUTH username raw. That username is not guaranteed to be an email address
+ * at all (SendGrid's literal "apikey", an AWS SES access-key id), and even
+ * when it looks address-shaped it's operator/DB-sourced input that reached
+ * a From header with no CRLF sanitization. Both are now gated the same way
+ * businessName already was.
+ */
+describe("EmailService — B468: tenant SMTP From only uses smtpUser when it's a valid address", () => {
+  it("an SMTP auth username that isn't an email address (SendGrid's 'apikey') never becomes the From — delivered:false with Settings guidance, no send attempted", async () => {
+    const sendMail = jest.fn();
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({
+      systemConfigRows: [
+        { key: "email.smtpHost", value: "smtp.sendgrid.net" },
+        { key: "email.smtpUser", value: "apikey" },
+        { key: "email.smtpPassword", value: "SG.xxxxxxxxxxxx" },
+        { key: "email.smtpPort", value: "587" },
+      ],
+    });
+
+    const res = await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+
+    expect(res).toMatchObject({
+      delivered: false,
+      transport: "smtp",
+      error: "Set a From email in Settings → Email",
+    });
+    expect(sendMail).not.toHaveBeenCalled();
+  });
+
+  it("an AWS SES access-key id ('AKIA...', no @) is rejected the same way", async () => {
+    const sendMail = jest.fn();
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({
+      systemConfigRows: [
+        { key: "email.smtpHost", value: "email-smtp.us-east-1.amazonaws.com" },
+        { key: "email.smtpUser", value: "AKIAIOSFODNN7EXAMPLE" },
+        { key: "email.smtpPassword", value: "secret-key" },
+        { key: "email.smtpPort", value: "587" },
+      ],
+    });
+
+    const res = await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+
+    expect(res).toMatchObject({ delivered: false, transport: "smtp" });
+    expect(sendMail).not.toHaveBeenCalled();
+  });
+
+  it("a CRLF-injected smtpUser is rejected outright, never smuggled into the From header", async () => {
+    const sendMail = jest.fn();
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({
+      systemConfigRows: [
+        { key: "email.smtpHost", value: "smtp.example.com" },
+        { key: "email.smtpUser", value: "user@example.com\r\nBcc: attacker@evil.com" },
+        { key: "email.smtpPassword", value: "pw" },
+        { key: "email.smtpPort", value: "587" },
+      ],
+    });
+
+    const res = await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+
+    expect(res).toMatchObject({
+      delivered: false,
+      error: "Set a From email in Settings → Email",
+    });
+    expect(sendMail).not.toHaveBeenCalled();
+  });
+
+  it("a genuinely valid smtpUser address is unaffected — still becomes the From, exactly as before", async () => {
+    const sendMail = jest.fn().mockResolvedValue({ messageId: "m1" });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({
+      systemConfigRows: [
+        { key: "email.smtpHost", value: "smtp.example.com" },
+        { key: "email.smtpUser", value: "billing@tenant.com" },
+        { key: "email.smtpPassword", value: "pw" },
+        { key: "email.smtpPort", value: "587" },
+      ],
+    });
+
+    const res = await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+
+    expect(res).toMatchObject({ delivered: true, transport: "smtp" });
+    expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({ from: "billing@tenant.com" }));
+  });
+});
+
+/**
  * B452 (d) — owner ruling 2026-09-16: the PLATFORM sender is Google Workspace SMTP,
  * not Resend. SMTP_HOST/PORT/SECURE/USER/PASS configure the platform transport;
  * it is selected over Resend whenever set, and the two are never both attempted for

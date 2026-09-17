@@ -34,7 +34,7 @@ describe("SiteHeader portals stay inside the .rf-marketing scope", () => {
     const links = Array.from(sheet.querySelectorAll("a"));
     const demo = links.find((a) => /book a demo/i.test(a.textContent ?? ""));
     expect(demo).toBeTruthy();
-    expect(demo).toHaveAttribute("href", "/contact");
+    expect(demo).toHaveAttribute("href", "/book-a-demo");
     expect(links).toHaveLength(9);
   });
 

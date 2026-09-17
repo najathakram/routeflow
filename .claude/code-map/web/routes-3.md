@@ -51,6 +51,40 @@
   `Location`, production-only — `next dev` masked it; the deployment E2E's spec 36 T1 caught it).
   A `next.config` redirect is evaluated before middleware and always carries `Location`; the page
   is gone. Pinned by `distributors-redirect.static.test.ts` (below) — [[L-093]].
+  ⚠️ **`book-a-demo/` and `sign-in/` (2026-09-16, glass-design port, not yet in
+  `MARKETING_PAGE_PATHS`)** — add them there + `lib/site.ts#routes` before merge, or the
+  mobile-UA proxy carve-out and the sitemap miss both pages ([[L-072]] shape).
+- **`book-a-demo/page.tsx`** (2026-09-16) — real Google-Calendar-backed booking, replaces the
+  design study's simulated calendar. Renders `components/demo-scheduler.tsx#DemoScheduler`
+  (`"use client"`) against `lib/demo-booking.ts` (plain `fetch` to
+  `NEXT_PUBLIC_API_URL/public/demo-bookings/*` — deliberately NOT `lib/api-client.ts`, which
+  attaches the operator JWT + tenant header this public, tenant-less surface must not send).
+  `DemoScheduler`: month-grid calendar → time-slot grid → contact-detail form → confirmation,
+  each step re-fetching `getAvailability` on a 409/503 rather than dead-ending. See api.md
+  `demo-booking/` for the endpoints, fail-closed contract (no Google config ⇒ no slots, never
+  invented), and the 9+4 review-finding fixes.
+  **Availability-load errors show a fixed generic message only, never `error.message`**
+  (found + fixed during Playwright visual verification, 2026-09-16): the service never throws
+  with a curated message on this path, so a raw framework body (a route-mismatch 404's literal
+  `Cannot GET /api/v1/...`, a bare 500) would otherwise leak straight into an unauthenticated
+  public page. The booking-submit path (create/reschedule/cancel) is unaffected — its real
+  message sources (class-validator field errors, the service's own 409/503 text) are safe to
+  show. Spec: `demo-scheduler.test.tsx`.
+- **`sign-in/page.tsx`** (2026-09-16) — the wholesaler/retailer account chooser (glass design),
+  links straight to the unchanged `/login` and `/buyer/login` — collects nothing itself.
+- **Glass design system (2026-09-16, Codex study port)** — `glass.css` (tokens: `--g-*` custom
+  properties, `.glass`/`.g-btn`/`.g-tile`/`.g-input` etc.) + `glass-pages.css` (booking/auth page
+  layouts: `.booking-layout`, `.calendar-grid`, `.signin-grid`, `.login-choice`, `.auth-*`), both
+  scoped under `.rf-marketing` like `marketing.css`, loaded AFTER it from `app/layout.tsx` so glass
+  wins where the two overlap. Only `book-a-demo/`, `sign-in/`, and `components/auth/auth-shell.css`
+  (see "Top-level" below) consume the glass classes so far — the other 8 marketing pages are still
+  on the pre-port `marketing.css` look (full-port tracked as follow-up work, not yet started).
+- **CTA rewire (2026-09-16)** — every "Book a demo" CTA site-wide now points at `/book-a-demo`
+  instead of `/contact` (`site-header.tsx` ×2, `site-footer.tsx`, `page.tsx`, `pricing/page.tsx`,
+  `product/page.tsx`, `wholesalers/page.tsx`, `components/{ai-spotlight,conversion-sections,
+feature-catalog,marketing,workflow-tour}.tsx`); `contact/page.tsx`'s own "Talk to the team" link
+  and the footer's new separate "Contact us" entry still go to `/contact`, which is unchanged
+  (still the `DemoForm` mailto draft below).
 - **`layout.tsx`** wraps every route in a `.rf-marketing`-classed shell (the scope every rule in
   `marketing.css` — ~10,092 lines, ported near-verbatim from the redesign — hangs off) plus
   `SiteHeader` + `EditorialMotion` + a footer; `app/globals.css` and
@@ -111,6 +145,14 @@ center; width: 100%; white-space: nowrap`, its own `:focus-visible` ring (`outli
   (2026-09-08, PR #663):** both `change-password/page.tsx` and `verify-email/page.tsx` render
   through the shared `AuthShell`; `verify-email/page.tsx` gained a state-derived title
   (`Verifying your email…` / `Email verified!` / `Verification failed`) — logic byte-identical.
+  **Glass restyle (2026-09-16):** `components/auth/auth-shell.css` (the ONE file `AuthShell`
+  imports, `.rf-auth`-scoped) repainted navy/white flat → the marketing glass palette — every
+  class name, prop, and accessibility note (contrast-floor, reduced-motion, the
+  Tailwind-longhand-only rule on `.rf-auth input`) preserved verbatim. Zero changes to
+  `AuthShell.tsx` or to any of the 6 pages that use it (`(auth)/login`, `(auth)/signup`, and the
+  4 buyer auth pages above + `change-password`/`verify-email` here) — pure CSS, so validation,
+  Google OAuth, and the tenant-cookie flow are untouched. Verified visually (screenshot) on
+  `(auth)/login`, `(auth)/signup`, `buyer/login`, `buyer/register`, desktop + mobile.
 - **`app/api/health/route.ts`** (2026-08-29) — the web app's ONLY route handler. Deploy-readiness
   probe returning `{status, sha, branch, timestamp}`, where `sha` = `RAILWAY_GIT_COMMIT_SHA`.
   ⚠️ **`export const dynamic = "force-dynamic"` + `revalidate = 0` are load-bearing** — a statically

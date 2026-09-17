@@ -55,7 +55,7 @@ export default function WholesalersPage() {
               dispatch, delivery records, and customer accounts in one place.
             </p>
             <div className="hero-actions">
-              <Link href="/contact" className="button button-lime">
+              <Link href="/book-a-demo" className="button button-lime">
                 Book a distributor demo <ArrowUpRight size={18} />
               </Link>
             </div>

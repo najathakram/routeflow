@@ -18,40 +18,89 @@ import { fmt, fmtShort } from "@/lib/formatting";
 
 const CHART_COLORS = ["#1e3a5f", "#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"];
 
-// Simple bar chart using CSS
+// Simple bar chart using CSS. B440 (Fable review of #791): `sales` is now
+// accrual net and can go negative (a CN-heavy month) — a single items-end row
+// scaled off Math.max() silently rendered a negative bar at 0% height,
+// indistinguishable from a real $0 month. Split the row into a positive zone
+// (above a zero axis) and a negative zone (below it) sized by each side's own
+// magnitude; when nothing is negative the negative zone collapses to 0px and
+// this renders exactly as before.
+const BAR_CHART_HEIGHT_PX = 160;
+
 function BarChart({
   data,
 }: {
   data: Array<{ month: string; sales: number; receipts: number; expenses: number }>;
 }) {
-  const maxVal = Math.max(...data.flatMap((d) => [d.sales, d.receipts, d.expenses]));
-  if (maxVal === 0)
+  const allVals = data.flatMap((d) => [d.sales, d.receipts, d.expenses]);
+  const maxPositive = Math.max(0, ...allVals);
+  const maxNegative = Math.max(0, ...allVals.map((v) => -v));
+  if (maxPositive === 0 && maxNegative === 0)
     return (
       <div className="flex h-48 items-center justify-center text-sm text-navy/70">
         No data for this period
       </div>
     );
 
+  const posZonePx =
+    maxNegative > 0
+      ? (BAR_CHART_HEIGHT_PX * maxPositive) / (maxPositive + maxNegative)
+      : BAR_CHART_HEIGHT_PX;
+  const negZonePx = BAR_CHART_HEIGHT_PX - posZonePx;
+
+  const bars = [
+    { key: "sales", value: (d: (typeof data)[number]) => d.sales, className: "bg-navy/80" },
+    {
+      key: "receipts",
+      value: (d: (typeof data)[number]) => d.receipts,
+      className: "bg-brand-500/70",
+    },
+    { key: "expenses", value: (d: (typeof data)[number]) => d.expenses, className: "bg-danger/60" },
+  ];
+
   return (
     <div className="flex h-48 items-end gap-2 px-0.5 pt-1">
       {data.map((d, i) => (
         <div key={i} className="flex flex-1 flex-col items-center gap-1.5">
-          <div className="flex w-full items-end gap-px" style={{ height: "160px" }}>
-            <div
-              className="flex-1 rounded-t bg-navy/80 transition-all"
-              style={{ height: `${(d.sales / maxVal) * 100}%` }}
-              title={`Sales: ${fmt(d.sales)}`}
-            />
-            <div
-              className="flex-1 rounded-t bg-brand-500/70 transition-all"
-              style={{ height: `${(d.receipts / maxVal) * 100}%` }}
-              title={`Receipts: ${fmt(d.receipts)}`}
-            />
-            <div
-              className="flex-1 rounded-t bg-danger/60 transition-all"
-              style={{ height: `${(d.expenses / maxVal) * 100}%` }}
-              title={`Expenses: ${fmt(d.expenses)}`}
-            />
+          <div className="flex w-full flex-col" style={{ height: `${BAR_CHART_HEIGHT_PX}px` }}>
+            <div className="flex w-full items-end gap-px" style={{ height: `${posZonePx}px` }}>
+              {bars.map((b) => {
+                const v = b.value(d);
+                const label = `${b.key[0].toUpperCase()}${b.key.slice(1)}: ${fmt(v)}`;
+                return (
+                  <div
+                    key={b.key}
+                    className={cn("flex-1 rounded-t transition-all", b.className)}
+                    style={{ height: v > 0 && maxPositive > 0 ? `${(v / maxPositive) * 100}%` : 0 }}
+                    title={label}
+                  />
+                );
+              })}
+            </div>
+            {maxNegative > 0 && (
+              <>
+                <div className="h-px w-full shrink-0 bg-navy/25" />
+                <div
+                  className="flex w-full items-start gap-px"
+                  style={{ height: `${negZonePx}px` }}
+                >
+                  {bars.map((b) => {
+                    const v = b.value(d);
+                    const label = `${b.key[0].toUpperCase()}${b.key.slice(1)}: ${fmt(v)}`;
+                    return (
+                      <div
+                        key={b.key}
+                        className={cn("flex-1 rounded-b transition-all", b.className)}
+                        style={{
+                          height: v < 0 ? `${(-v / maxNegative) * 100}%` : 0,
+                        }}
+                        title={label}
+                      />
+                    );
+                  })}
+                </div>
+              </>
+            )}
           </div>
           <span className="font-mono text-[10.5px] text-navy/40">{d.month}</span>
         </div>

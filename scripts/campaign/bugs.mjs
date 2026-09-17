@@ -1280,6 +1280,46 @@ function writeRecord(id, front, body) {
   writeFileSync(recordPath(id), renderFront(front) + refreshHeaderLine(body, front));
 }
 
+/** Every `<!--key-->` History anchor present in a body — its identity set. */
+const historyAnchors = (body) => new Set([...body.matchAll(/<!--([^>]+)-->/g)].map((m) => m[1]));
+
+// B470: a record's body was found re-rendered from scratch and its History
+// wiped (2,891B -> 351B) by a `sync` run against unknown local
+// registry/ledger state in a lane worktree — stop.mjs now keeps `sync` out
+// of lane worktrees entirely (the root-cause fix), but the write path itself
+// stays a second, independent line of defence: it re-reads the file fresh
+// right here rather than trusting a `before` a caller captured earlier in
+// its own run (which could itself already be stale/racing), and refuses the
+// WHOLE write — front matter included — if the new body is shorter than
+// what is actually on disk, or drops any History anchor the disk currently
+// carries. A refusal is always loud, on stderr, regardless of `--quiet` —
+// masking a would-be data-loss write as a quiet no-op is worse than noise.
+function safeWriteRecord(id, front, body) {
+  const onDisk = readRecord(id);
+  if (onDisk) {
+    if (body.length < onDisk.body.length) {
+      process.stderr.write(
+        `sync: REFUSED to write ${id} — new body (${body.length}B) is shorter than the ` +
+          `${onDisk.body.length}B on disk. Record left untouched.\n`,
+      );
+      return false;
+    }
+    const diskAnchors = historyAnchors(onDisk.body);
+    const newAnchors = historyAnchors(body);
+    for (const a of diskAnchors) {
+      if (!newAnchors.has(a)) {
+        process.stderr.write(
+          `sync: REFUSED to write ${id} — new body drops History anchor <!--${a}-->. ` +
+            `Record left untouched.\n`,
+        );
+        return false;
+      }
+    }
+  }
+  writeRecord(id, front, body);
+  return true;
+}
+
 // History is append-only and deduped on `key` — so sync is idempotent and can
 // run from a hook on every turn without growing the file.
 //
@@ -1726,7 +1766,7 @@ cmds.sync = (args) => {
     // record cannot drift from the ledger, and that was false for exactly
     // this case. writeRecord regenerates the header line itself regardless.
     if (body !== before || JSON.stringify(nextFront) !== JSON.stringify(rec.front))
-      writeRecord(bug.id, nextFront, body);
+      safeWriteRecord(bug.id, nextFront, body);
   }
 
   // Persist the scan anchor LAST, only after every record above has actually
@@ -4716,6 +4756,87 @@ cmds["self-test"] = () => {
         "sync: a tier-only ledger change reaches the record (front-matter drift, not body drift)",
         readRecord("B1").front.tier,
         "T3",
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // B470: sync's write path must refuse a shrinking re-render outright — a
+  // torn/racing read must never let it permanently replace a record's real
+  // content with something smaller. Exercised in-process (no `runCli` spawn,
+  // per L-182/B454 — the self-test already spawns enough) by calling
+  // `safeWriteRecord` directly with the SAME record id the fixture already
+  // wrote a full body+History for, the same function `cmds.sync` itself now
+  // calls to write.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    try {
+      cmds.file([
+        "shrink-guard fixture",
+        "--location",
+        "apps/api/src/self-test.ts",
+        "--severity",
+        "low",
+      ]);
+      const before = readRecord("B1");
+      const goodBody = before.body;
+
+      const capturedStderr = [];
+      const realWrite = process.stderr.write.bind(process.stderr);
+      process.stderr.write = (chunk, ...rest) => {
+        capturedStderr.push(String(chunk));
+        return realWrite(chunk, ...rest);
+      };
+      let accepted;
+      try {
+        accepted = safeWriteRecord("B1", before.front, "way too short");
+      } finally {
+        process.stderr.write = realWrite;
+      }
+
+      check("safeWriteRecord: refuses a body shorter than what's on disk", accepted, false);
+      check(
+        "safeWriteRecord: the refusal is loud (reaches stderr)",
+        capturedStderr.some((l) => /REFUSED/.test(l)),
+        true,
+      );
+      check(
+        "safeWriteRecord: a refused write leaves the on-disk record byte-identical",
+        readRecord("B1").body,
+        goodBody,
+      );
+
+      // The other half of the same guard: dropping a History anchor while
+      // keeping (or growing) total length must refuse too — length alone
+      // would miss a same-size or larger rewrite that still lost a line.
+      const anchor = goodBody.match(/<!--([^>]+)-->/)?.[1];
+      const bodyMinusAnchor = goodBody.replace(`<!--${anchor}-->`, "") + " ".repeat(64);
+      const accepted2 = safeWriteRecord("B1", before.front, bodyMinusAnchor);
+      check(
+        "safeWriteRecord: refuses a same-size body that drops a History anchor",
+        accepted2,
+        false,
+      );
+      check(
+        "safeWriteRecord: that refusal also leaves the record untouched",
+        readRecord("B1").body,
+        goodBody,
+      );
+
+      // A pure History append — the normal, expected case — must still be
+      // allowed: longer, and it carries every anchor the disk already has.
+      const appended = appendHistory(goodBody, "self-test-append", "note", "guard allows growth");
+      const accepted3 = safeWriteRecord("B1", before.front, appended);
+      check("safeWriteRecord: allows a pure History append", accepted3, true);
+      check(
+        "safeWriteRecord: the appended body actually reached disk",
+        readRecord("B1").body,
+        appended,
       );
     } finally {
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
