@@ -31,33 +31,33 @@ function overrideRow(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
-// pre-merge review (2026-09-17), MUST-4: the mock applies the job's ACTUAL `where` clause --
-// not a hardcoded assumption baked into the fixture filter -- so dropping `revokedAt: null` (or
-// `expiresAt.lte`) from the real query changes what this mock returns, and the assertions below
-// fail instead of silently passing.
+// pre-merge review (2026-09-17), MUST-4 + STARVATION follow-up: the mock applies the job's
+// ACTUAL `where` clauses on BOTH queries -- not a hardcoded assumption baked into the fixture
+// filter -- so dropping `revokedAt: null`, `expiresAt.lte`, or the `id.notIn` exclusion from the
+// real queries changes what this mock returns, and the assertions below fail instead of
+// silently passing.
 function build(rows: ReturnType<typeof overrideRow>[], auditedIds: string[] = []) {
   const prisma = {
     tenantFeatureOverride: {
       findMany: jest.fn().mockImplementation(({ where }: any) => {
         const lte = where?.expiresAt?.lte as Date | undefined;
+        const notIn: string[] = where?.id?.notIn ?? [];
         return Promise.resolve(
           rows.filter(
             (r) =>
               r.revokedAt === where?.revokedAt &&
               r.expiresAt != null &&
               lte != null &&
-              (r.expiresAt as Date).getTime() <= lte.getTime(),
+              (r.expiresAt as Date).getTime() <= lte.getTime() &&
+              !notIn.includes(r.id as string),
           ),
         );
       }),
     },
     auditLog: {
-      findMany: jest.fn().mockImplementation(({ where }: any) => {
-        const ids: string[] = where?.entityId?.in ?? [];
-        return Promise.resolve(
-          ids.filter((id) => auditedIds.includes(id)).map((entityId) => ({ entityId })),
-        );
-      }),
+      findMany: jest
+        .fn()
+        .mockImplementation(() => Promise.resolve(auditedIds.map((entityId) => ({ entityId })))),
     },
   } as any;
   const audit = { log: jest.fn().mockResolvedValue(undefined) } as any;
@@ -115,6 +115,20 @@ describe("FeatureOverrideReviewJob.reviewExpiredOverrides", () => {
     );
   });
 
+  it("looks up already-audited ids for THIS action/entityType, bounded, before selecting rows", async () => {
+    const { job, prisma } = build([]);
+    await job.reviewExpiredOverrides();
+    expect(prisma.auditLog.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          action: FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION,
+          entityType: "tenantFeatureOverride",
+        },
+        take: 5000,
+      }),
+    );
+  });
+
   it("never revokes the row -- update() is not even wired on this collaborator", async () => {
     const { job, prisma } = build([
       overrideRow({ id: "ov-expired", expiresAt: new Date("2000-01-01T00:00:00Z") }),
@@ -136,13 +150,10 @@ describe("FeatureOverrideReviewJob.reviewExpiredOverrides", () => {
 
     expect(result.reviewed).toBe(0);
     expect(audit.log).not.toHaveBeenCalled();
-    expect(prisma.auditLog.findMany).toHaveBeenCalledWith(
+    // The exclusion is applied INSIDE the selection query, not as a post-filter.
+    expect(prisma.tenantFeatureOverride.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({
-          action: FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION,
-          entityType: "tenantFeatureOverride",
-          entityId: { in: ["ov-already-flagged"] },
-        }),
+        where: expect.objectContaining({ id: { notIn: ["ov-already-flagged"] } }),
       }),
     );
   });
@@ -163,10 +174,26 @@ describe("FeatureOverrideReviewJob.reviewExpiredOverrides", () => {
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ entityId: "ov-new" }));
   });
 
-  it("skips the auditLog dedupe query entirely when there is nothing expired", async () => {
-    const { job, prisma } = build([]);
-    await job.reviewExpiredOverrides();
-    expect(prisma.auditLog.findMany).not.toHaveBeenCalled();
+  // STARVATION oracle (pre-merge re-review, 2026-09-17): 501 (REVIEW_BATCH_SIZE + 1)
+  // already-audited-and-still-unrevoked rows plus ONE fresh, never-audited expired row. The
+  // pre-fix code (dedupe applied AFTER a fixed 500-row oldest-first page) would fill its entire
+  // page with already-audited rows and never even see the fresh one -- reviewed would stay 0
+  // forever. The fix excludes audited ids INSIDE the query, so the fresh row is selected
+  // regardless of how many already-audited rows precede it.
+  it("does not starve a fresh expired row behind >= REVIEW_BATCH_SIZE already-audited ones", async () => {
+    const staleAuditedIds = Array.from({ length: 501 }, (_, i) => `ov-stale-${i}`);
+    const staleRows = staleAuditedIds.map((id, i) =>
+      overrideRow({ id, expiresAt: new Date(Date.UTC(2000, 0, 1, 0, 0, i)) }),
+    );
+    const freshRow = overrideRow({ id: "ov-fresh", expiresAt: new Date("2005-01-01T00:00:00Z") });
+
+    const { job, audit } = build([...staleRows, freshRow], staleAuditedIds);
+
+    const result = await job.reviewExpiredOverrides();
+
+    expect(result.reviewed).toBe(1);
+    expect(audit.log).toHaveBeenCalledTimes(1);
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ entityId: "ov-fresh" }));
   });
 
   it("runs the tick under the shared advisory lock, keyed by the pinned job name", async () => {

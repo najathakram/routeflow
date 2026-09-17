@@ -14,6 +14,15 @@ export const FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION = "FEATURE_OVERRIDE_EXPIRED_
  * larger than the cap still drains in FIFO order across successive nightly ticks. */
 const REVIEW_BATCH_SIZE = 500;
 
+/** Bound on the "already audited" id lookup (pre-merge re-review, STARVATION-2026-09-17): once
+ * >= REVIEW_BATCH_SIZE older rows are already audited and still unrevoked, excluding them AFTER
+ * fetching a fixed-size oldest-first page starves every newer row forever -- the same oldest
+ * page wins every tick. Excluding them INSIDE the selection query (`id: { notIn }`) fixes that,
+ * but needs the audited-id set fetched first; bounded (not unbounded) so that lookup itself
+ * can't grow without limit. A backlog of more than this many already-audited-and-still-unrevoked
+ * rows is an operational problem (nobody is revoking) this job cannot fully solve alone. */
+const AUDIT_LOOKUP_BOUND = 5000;
+
 /**
  * Nightly review sweep for feature grants v2 (brief B, research §6.4): flags every
  * non-revoked `TenantFeatureOverride` whose `expiresAt` has passed. Writes ONE audit row per
@@ -43,8 +52,30 @@ export class FeatureOverrideReviewJob {
   @LeaderCron("0 6 * * *", "billing.reviewExpiredOverrides")
   async reviewExpiredOverrides(): Promise<{ reviewed: number }> {
     const now = new Date();
+
+    // Fetched FIRST and excluded INSIDE the selection query below (not a post-fetch filter on
+    // a fixed-size page) -- the audit log has no dedicated "reviewed" column, so this IS the
+    // once-ever contract's source of truth, and it must shape which rows the page below can
+    // even select, not just which of an already-decided page get skipped.
+    const auditedRows = await this.prisma.auditLog.findMany({
+      where: {
+        action: FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION,
+        entityType: "tenantFeatureOverride",
+      },
+      orderBy: { createdAt: "desc" },
+      take: AUDIT_LOOKUP_BOUND,
+      select: { entityId: true },
+    });
+    const auditedIds = auditedRows
+      .map((row) => row.entityId)
+      .filter((id): id is string => id != null);
+
     const expired = await this.prisma.tenantFeatureOverride.findMany({
-      where: { revokedAt: null, expiresAt: { lte: now } },
+      where: {
+        revokedAt: null,
+        expiresAt: { lte: now },
+        ...(auditedIds.length > 0 ? { id: { notIn: auditedIds } } : {}),
+      },
       orderBy: { expiresAt: "asc" },
       take: REVIEW_BATCH_SIZE,
       select: {
@@ -56,23 +87,8 @@ export class FeatureOverrideReviewJob {
         expiresAt: true,
       },
     });
-    if (expired.length === 0) return { reviewed: 0 };
 
-    // Already-audited rows within this batch -- the audit log has no dedicated "reviewed"
-    // column, so the audit trail itself is the source of truth for "have we flagged this one
-    // already": one row per (action, entityType, entityId) is exactly the once-ever contract.
-    const alreadyAudited = await this.prisma.auditLog.findMany({
-      where: {
-        action: FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION,
-        entityType: "tenantFeatureOverride",
-        entityId: { in: expired.map((row) => row.id) },
-      },
-      select: { entityId: true },
-    });
-    const alreadyAuditedIds = new Set(alreadyAudited.map((row) => row.entityId));
-    const toReview = expired.filter((row) => !alreadyAuditedIds.has(row.id));
-
-    for (const row of toReview) {
+    for (const row of expired) {
       this.logger.warn(
         `Feature override ${row.id} (tenant ${row.tenantId}, key "${row.featureKey}", ` +
           `kind ${row.kind}) expired at ${row.expiresAt?.toISOString()} and is still not ` +
@@ -95,6 +111,6 @@ export class FeatureOverrideReviewJob {
       });
     }
 
-    return { reviewed: toReview.length };
+    return { reviewed: expired.length };
   }
 }
