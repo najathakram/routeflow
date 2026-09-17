@@ -1815,8 +1815,12 @@ function ProfitLossReport({ from, to }: { from?: string; to?: string }) {
             </tr>
             {!!d.badDebtExpense && (
               <tr>
-                <td className="px-4 py-2.5 pl-8 text-navy/70">Bad Debt Expense</td>
-                <td className="px-4 py-2.5 text-right text-danger">{fmt(d.badDebtExpense)}</td>
+                <td className="px-4 py-2.5 font-semibold text-navy">
+                  Bad Debt Expense (written-off invoices)
+                </td>
+                <td className="px-4 py-2.5 text-right font-semibold text-danger">
+                  {fmt(d.badDebtExpense)}
+                </td>
               </tr>
             )}
             <tr className="border-t-2 border-navy">
