@@ -191,7 +191,7 @@ planName={sub.data?.planName ?? "current"} />` in place of the section's own sta
   gains `"orange"`; `checkBadgeFor` now checks `p.status === "PENDING"` BEFORE the
   `checkStatus` switch (a post-dated check on file, not yet clearable — `checkStatus` is
   typically `RECORDED` so the switch would otherwise mask it) → `{label: "Post-dated ·
-  pending", variant: "orange"}`. `lib/payments-logic.ts`: local `CheckStatus` type and
+pending", variant: "orange"}`. `lib/payments-logic.ts`: local `CheckStatus` type and
   `CHECK_TRANSITIONS` const (P5-12 mirror of the server's `invoices.service.ts` table) are
   REMOVED and re-exported from `@routeflow/types` (`packages/types/api/checks.ts`) instead —
   now the one canonical copy shared with API + web; no behavior change, V1-only (no
