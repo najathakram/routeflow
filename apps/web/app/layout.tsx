@@ -21,6 +21,10 @@ import "./(marketing)/marketing.css";
 // same `.rf-marketing` scope, loaded after so it wins where the two overlap.
 import "./(marketing)/glass.css";
 import "./(marketing)/glass-pages.css";
+// PR-3: the remaining 9 marketing pages, ported onto the same tokens — see
+// glass-site.css's own header for why this is a separate file from
+// glass-pages.css (booking/auth) rather than a merge.
+import "./(marketing)/glass-site.css";
 import { Providers } from "./providers";
 import { TenantProvider } from "@/components/tenant-provider";
 import { ServiceWorkerRegistry } from "@/components/ServiceWorkerRegistry";

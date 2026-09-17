@@ -44,7 +44,7 @@ const BENEFITS: Array<[typeof Package, string, string]> = [
 
 export default function RetailersPage() {
   return (
-    <div className="retailer-page">
+    <div className="retailer-page glass-page">
       <section className="retailer-hero">
         <div className="wrap split-hero">
           <div>
