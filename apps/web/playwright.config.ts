@@ -397,6 +397,20 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
 
+    // ── B465 fix round 2: SPECIAL-tier reason required (spec 48) ─────────────
+    // Same posture as order-edit-pricing above — a client-side requirement
+    // with no web unit runner behind it, so this runs only against a live app
+    // instance (deploy-triggered or `local:e2e`), self-provisions its own
+    // customer/product/order fixtures, and deletes nothing.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
+    // header for the precedent where exactly that happened and a spec sat dead.
+    {
+      name: "special-tier-reason-required",
+      testMatch: /48-special-tier-reason-required\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
     // ── Cancelled-order "editing closed" banner (F07, spec 27) ────────────────
     // REG-B10: the operator order-detail page must explain WHY the edit window
     // is closed on a CANCELLED order ("Order cancelled — editing closed")
