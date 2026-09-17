@@ -272,7 +272,15 @@ qtyPieces, qtyUnits, lastPrice, boxCtx)` dropped `private`; bodies are byte-iden
   a bare price change with no `overrideReason` (`BadRequestException`, before any mutation) —
   gated at every staff-edit branch of `updateOrderItems`: diff ADD, diff UPDATE, `replaceAll`, and
   B466's own substitution branch (`item.substituteProductId` — a swap prices the SUBSTITUTE's own
-  tier, guarded the same way). Each branch compares against the line's OWN prior price (an
+  tier, guarded the same way; before this fix the branch never checked tier at all and compared a
+  typed price only against LIST, so a correctly-priced substitute at this customer's real contract
+  price was silently stored DISCOUNTED with no reason). B466 also fixed a fetch gap one level up:
+  `substituteProductId` was missing entirely from the batched `operatorProductIds`/CustomerPrice
+  lookup (neither a fresh add's `productId` nor an existing line's OLD `productId` covers it), so
+  the substitute branch's tier resolution silently fell back to the customer's DEFAULT tier even
+  when a per-product SPECIAL row existed for the substitute specifically — the honored override is
+  `roundMoney()`'d before persisting, matching the UPDATE branch's convention (was a raw float).
+  Each branch compares against the line's OWN prior price (an
   unambiguous pre-edit/incoming pairing by product, or the substitute's own tier price), never a
   blanket "any SPECIAL line", so an untouched or re-saved-unchanged line never re-trips the guard;
   a blank incoming reason falls back to the existing line's stored one before refusing. New
