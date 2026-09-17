@@ -31,6 +31,22 @@
   scoped invocation, or a pre-push hook step that diffs lint output against a baseline so a new
   error can't hide in the existing warning noise.
 
+### L-192 · 2026-09-17 · tooling · jsdom offsetParent is always null (focus-trap RTL false negative)
+
+- **Symptom:** a focus trap's `getFocusable()` filtered candidates with `el.offsetParent !==
+  null`; three RTL tests failed as if the trap never moved focus at all, while the handler's own
+  logic was correct.
+- **Root cause:** jsdom has no layout engine, so `offsetParent` (like `offsetWidth`/`offsetHeight`)
+  is always `null` regardless of real visibility — the filter discarded every candidate element,
+  turning the handler into a silent no-op under test.
+- **Lesson:** **Never gate a DOM-query result on a layout-dependent property (`offsetParent`,
+  `offsetWidth`/`offsetHeight`, `getBoundingClientRect`) in code exercised by RTL/jsdom — use
+  `getComputedStyle` for a visibility check jsdom actually computes, or accept the check is
+  real-browser-only and say so in a comment so a future "why does this always fail under test"
+  isn't re-diagnosed from scratch.**
+- **Guard:** `ResponsiveSidebar.tsx`'s `getFocusable()` carries no visibility filter, with a
+  comment stating why (everything rendered while the drawer is open is meant to be reachable).
+
 ### L-190 · 2026-09-17 · tooling · FG-B (#819) had to be rebuilt, not rebased, after FG-A squash-merged
 
 - **Symptom:** #819 (FG-B, feature-override kind + MRR exclusion) conflicted after #825 (FG-A,
@@ -566,51 +582,6 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
 - **Guard:** `session-teardown.ts` imports and calls `editItemsSnapshotUserPrefix` +
   `clearStorageByPrefix` — grep for it before trusting this reasoning again on the same file.
   `apps/mobile/lib/edit-items-draft.ts` carries the design-rationale comment inline.
-
-### L-155 · 2026-09-15 · domain · PR-2 fix round (F2: retired-writer branch vs legacy data)
-
-- **Symptom:** B348 removed a `cancel()` branch handling ReturnStatus PROCESSED, reasoning "no
-  writer sets this anymore" (confirmed by grep) — independent review restored it: rows already
-  PROCESSED from before the writer was retired still need cancel() to undo their stock/ledger
-  effects, and removing the branch stranded that reversal for every such legacy row.
-- **Root cause:** "no live writer" was verified against CODE (a grep for the enum value) and
-  treated as equivalent to "no live DATA in that state" — a retired write path leaves its
-  already-written rows behind; the enum member stayed real in the schema.
-- **Lesson:** **Before deleting a branch that HANDLES an enum/state value because nothing WRITES
-  it anymore, that is a claim about existing DATA, not code — verify with a query (or an
-  explicit prod count) before removing the read/update-side handling, not a grep for writers.**
-- **Guard:** `returns-ledger.spec.ts`'s PROCESSED-cancel case pins the restored behavior; the
-  comment on the branch cites the exact prod check (`GROUP BY status`) that would retire it.
-
-### L-132 · 2026-09-13 · domain · F27 B70 (estimates)
-
-- **Symptom:** a fix round made `accept()`'s atomic claim exclude the full terminal-status set
-  instead of CONVERTED alone, breaking the pre-existing invariant that a DECLINED estimate can
-  still be accepted — then edited the two pre-existing tests that caught this to match, and left
-  the PIN test that would have caught it `it.skip`'d. Shipped invisibly until an adversarial review
-  re-derived the invariant from the baseline.
-- **Root cause:** `voidEstimate()` writes the same enum value `decline()` does (no separate VOID
-  member exists), so one shared exclusion set applied to every transition method is wrong for
-  `accept()` alone, which has a pre-existing invariant the shared value must not block. The fix
-  widened a helper's default to a caller needing an exception, then edited that caller's own
-  regression test instead of the implementation.
-- **Lesson:** **When a change makes a pre-existing, already-passing test fail, that failure is the
-  finding — fix the implementation to keep satisfying it, never the test's assertion to match the
-  new behavior.** A shared helper's default allow/exclude-list is a hypothesis for every caller, not
-  a fact; a caller with its own documented invariant takes an explicit, narrower parameter.
-- **Guard:** `claimTransition(id, to, refusal, exclude = TERMINAL_ESTIMATE_STATUSES)` takes
-  `exclude`; `accept()` passes `["CONVERTED"]` explicitly, commented with why this doesn't reopen
-  the laundering chain. `PIN-B70 accept() still allows DECLINED->ACCEPTED` is live (un-skipped); a
-  new `REG-B70 accept() alone cannot re-open a CONVERTED estimate` test covers the direct path the
-  two pre-existing "laundered chain" tests miss (both short-circuit at `send()`, never reach
-  `accept()`). **Corollary the pre-merge review then had to add (2026-09-13):** the restored PIN
-  stubbed `updateMany` to `{ count: 1 }` unconditionally, so it pinned the exclusion list's SHAPE
-  while never proving a real DECLINED row matches it — a test that mocks the predicate under test
-  into always-succeeding is not a behavioral pin. It now also runs through
-  `createLaunderingHarness`, which evaluates the predicate against a stateful row. Same pass
-  restored the two `accept()` assertions from nested `expect.objectContaining` to exact
-  `toHaveBeenCalledWith`: objectContaining silently admits extra `where` keys, so the key-set
-  (`{ id, status }`, no tenant key) was pinned nowhere.
 
 ### L-154 · 2026-09-15 · domain · PR-3 independent review F1/F4 (moved logic, new entry point)
 
