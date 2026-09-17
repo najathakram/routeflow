@@ -104,7 +104,7 @@ describeDb("B467 — InlineReturnsService.capture() concurrency, real Postgres",
       data: { name: `${tag} product ${run}`, unit: "each", pricePerUnit: "10.00", tenantId },
     });
     productIds.push(product.id);
-    const driver = await raw.user.create({
+    const driverUserRow = await raw.user.create({
       data: {
         email: `${tag}-drv-${run}@example.test`,
         username: `${tag}-drv-${run}`,
@@ -112,7 +112,11 @@ describeDb("B467 — InlineReturnsService.capture() concurrency, real Postgres",
         tenantId,
       },
     });
-    userIds.push(driver.id);
+    userIds.push(driverUserRow.id);
+    // RouteRun.driverId is a real FK to Driver (the profile row), never User directly.
+    const driver = await raw.driver.create({
+      data: { userId: driverUserRow.id, tenantId },
+    });
     const custUser = await raw.user.create({
       data: {
         email: `${tag}-cust-${run}@example.test`,
@@ -169,7 +173,10 @@ describeDb("B467 — InlineReturnsService.capture() concurrency, real Postgres",
     return {
       productId: product.id,
       customerId: customer.id,
-      driverId: driver.id,
+      // The JWT `sub` a captured-by/audit field stores is the USER id, never the
+      // Driver-profile id — keep them distinct even though this fixture creates one
+      // Driver row per driver user.
+      driverId: driverUserRow.id,
       orderId: order.id,
       routeRunStopId: routeRunStop.id,
     };
@@ -185,7 +192,15 @@ describeDb("B467 — InlineReturnsService.capture() concurrency, real Postgres",
     const idempotency = new IdempotencyService();
     const numbering = new NumberingService(prisma);
     const ledger = new RegulatedLedgerService(prisma);
-    const systemConfig = new SystemConfigService(prisma, new EncryptionService());
+    // EncryptionService needs a real ConfigService only to read ENCRYPTION_KEY/nodeEnv —
+    // a fake returning undefined for both is exactly the "no key configured" dev fallback
+    // path this service already has for a real (unconfigured) local/test environment; the
+    // tax-rate key this test's unreferenced pricing reads is never a SECRET_KEY, so
+    // encryption is never actually exercised here.
+    const systemConfig = new SystemConfigService(
+      prisma,
+      new EncryptionService({ get: () => undefined } as any),
+    );
     const quoteService = new InlineReturnsQuoteService(prisma, systemConfig);
     // `Object.create` runs no constructor — every instance FIELD the exercised code
     // dereferences must be supplied here (see returns-idempotency.db.spec.ts's note).
@@ -224,7 +239,12 @@ describeDb("B467 — InlineReturnsService.capture() concurrency, real Postgres",
     await raw.routeStop.deleteMany({ where: { tenantId } });
     await raw.route.deleteMany({ where: { tenantId } });
     await raw.customer.deleteMany({ where: { id: { in: customerIds } } });
+    // StockMovement (written by restockReturnItems) references productId — must clear
+    // before deleting Product. Driver (RouteRun.driverId's real target) references
+    // userId — must clear before deleting User.
+    await raw.stockMovement.deleteMany({ where: { productId: { in: productIds } } });
     await raw.product.deleteMany({ where: { id: { in: productIds } } });
+    await raw.driver.deleteMany({ where: { tenantId } });
     await raw.user.deleteMany({ where: { id: { in: userIds } } });
     await raw.tenant.deleteMany({ where: { id: tenantId } });
     await prisma?.$disconnect();

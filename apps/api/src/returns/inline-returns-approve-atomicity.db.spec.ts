@@ -7,23 +7,30 @@
  * (inline-returns.service.spec.ts) can distinguish "the transaction genuinely rolled back
  * every statement" from "the mock never wrote anything real in the first place".
  *
- * Forces a REAL, unavoidable failure — a Prisma `RecordNotFound` (P2025) — by giving the
- * held return TWO items: one against a real Product (so its restock actually writes a
- * StockMovement row + increments Product.currentStock FIRST, inside the open transaction),
- * and one against a productId that was never created at all (`ReturnItem.productId` carries
- * no foreign key — see returns-restock.util.ts, which tolerates a missing product for the
- * READ but `product.update` on a nonexistent id throws). This is not a contrived mock
- * failure: it is the exact same error class a genuinely deleted/corrupted product id would
- * produce in production, and nothing in the code defends against it (unlike, say,
- * NumberingService's own clash-retry logic, which is why forcing a credit-note-number
- * collision was deliberately NOT used here — it would just be silently routed around).
+ * Forces a REAL, unavoidable failure — a Postgres `integer out of range` (SQLSTATE 22003) —
+ * by pre-seeding this tenant's CREDIT_NOTE `NumberingSequence` row at `nextNumber =
+ * 2147483647` (int4 max) before calling approve(). `NumberingService.reserveNext`'s
+ * `mintForYear` finds this row already exists (skipping its own scan-seed path entirely)
+ * and increments it by 1 to reserve a number — an unavoidable int4 overflow nothing in that
+ * service defends against (unlike a duplicate NUMBER, which its own clash-retry loop would
+ * silently route around — see the file's earlier history for why that approach was
+ * abandoned). This happens inside `issueCreditInTx`, called AFTER `restockReturnItems` and
+ * `reverseLedgerForReturn` have already run for TWO real return items inside the same
+ * still-open transaction.
  *
- * After the failed call, asserts the FIRST item's restock (which DID succeed inside the
- * still-open transaction before the second item threw) was rolled back along with
- * everything after it — the real-item's stock is unchanged, no StockMovement survived for
- * either item, no credit note was minted, no OrderCreditNote link was created, and the
- * Return row itself is byte-identical to its pre-approve state (still RECEIVED +
- * DRIVER_CAP + heldAmount, never REFUNDED).
+ * (`ReturnItem.productId` was confirmed to carry a REAL foreign key at the DB level
+ * — `0_init/migration.sql`'s `ReturnItem_productId_fkey` — even though `schema.prisma`'s
+ * model declares no explicit `@relation` for it; an earlier draft of this spec tried a
+ * phantom/nonexistent productId to force a P2025 and failed at FIXTURE SETUP with a real
+ * FK violation before ever reaching approve(). The numbering-overflow trigger sidesteps
+ * that constraint entirely and needs only real, valid products.)
+ *
+ * After the failed call, asserts BOTH items' restock (which DID succeed inside the
+ * still-open transaction before the numbering reservation threw) was rolled back — neither
+ * product's stock changed, no StockMovement survived for either item, no credit note or
+ * OrderCreditNote link exists, the NumberingSequence row is back to its pre-approve value
+ * (the failed UPDATE never committed either), and the Return row itself is byte-identical
+ * to its pre-approve state.
  *
  * Constructs a REAL InlineReturnsService via `Object.create` (bypassing Nest DI, same
  * pattern as `returns-idempotency.db.spec.ts` / `inline-returns-capture-concurrency.db.spec.ts`),
@@ -54,6 +61,8 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
 
+const INT4_MAX = 2147483647;
+
 describeDb("B467 — InlineReturnsService.approve() rollback atomicity, real Postgres", () => {
   let pool: Pool;
   let raw: PrismaClient; // superuser fixture client — deliberately unscoped
@@ -68,9 +77,10 @@ describeDb("B467 — InlineReturnsService.approve() rollback atomicity, real Pos
   let tenantId = "";
   let customerId = "";
   let orderId = "";
-  let realProductId = "";
+  let productAId = "";
+  let productBId = "";
   let returnId = "";
-  const phantomProductId = randomUUID(); // never created — no row exists for this id
+  const year = new Date().getFullYear();
 
   const operator = (): JwtPayload => ({
     sub: "op-b467",
@@ -130,10 +140,24 @@ describeDb("B467 — InlineReturnsService.approve() rollback atomicity, real Pos
     });
     customerId = customer.id;
 
-    const product = await raw.product.create({
-      data: { name: `B467 approve product ${run}`, unit: "each", pricePerUnit: "10.00", tenantId },
+    const productA = await raw.product.create({
+      data: {
+        name: `B467 approve product A ${run}`,
+        unit: "each",
+        pricePerUnit: "10.00",
+        tenantId,
+      },
     });
-    realProductId = product.id;
+    productAId = productA.id;
+    const productB = await raw.product.create({
+      data: {
+        name: `B467 approve product B ${run}`,
+        unit: "each",
+        pricePerUnit: "20.00",
+        tenantId,
+      },
+    });
+    productBId = productB.id;
 
     const order = await raw.order.create({
       data: { customerId, tenantId, status: "DELIVERED", total: "50.00" },
@@ -155,15 +179,28 @@ describeDb("B467 — InlineReturnsService.approve() rollback atomicity, real Pos
         tenantId,
         items: {
           create: [
-            // Processed first (real product) — its restock DOES succeed inside the open
-            // transaction, before the second item's phantom productId throws.
-            { productId: realProductId, qty: "5.000", restock: true, tenantId },
-            { productId: phantomProductId, qty: "3.000", restock: true, tenantId },
+            { productId: productAId, qty: "5.000", restock: true, tenantId },
+            { productId: productBId, qty: "2.000", restock: true, tenantId },
           ],
         },
       },
     });
     returnId = ret.id;
+
+    // The unavoidable trigger: pre-seed this tenant's CREDIT_NOTE sequence at int4 max.
+    // NumberingService.reserveNext's mintForYear finds this row already exists (skips its
+    // own scan-seed path) and increments it by 1 -- a real Postgres integer-out-of-range
+    // error, not a simulated one.
+    await raw.numberingSequence.create({
+      data: {
+        tenantId,
+        docType: "CREDIT_NOTE",
+        year,
+        prefix: "CN-",
+        padding: 4,
+        nextNumber: INT4_MAX,
+      },
+    });
   }, 120_000);
 
   afterAll(async () => {
@@ -171,10 +208,11 @@ describeDb("B467 — InlineReturnsService.approve() rollback atomicity, real Pos
     await raw.returnItem.deleteMany({ where: { returnId } });
     await raw.return.deleteMany({ where: { id: returnId } });
     await raw.creditNote.deleteMany({ where: { customerId } });
-    await raw.stockMovement.deleteMany({ where: { productId: realProductId } });
+    await raw.stockMovement.deleteMany({ where: { productId: { in: [productAId, productBId] } } });
+    await raw.numberingSequence.deleteMany({ where: { tenantId, docType: "CREDIT_NOTE", year } });
     await raw.order.deleteMany({ where: { id: orderId } });
     await raw.customer.deleteMany({ where: { id: customerId } });
-    await raw.product.deleteMany({ where: { id: realProductId } });
+    await raw.product.deleteMany({ where: { id: { in: [productAId, productBId] } } });
     await raw.user.deleteMany({ where: { tenantId } });
     await raw.tenant.deleteMany({ where: { id: tenantId } });
     await prisma?.$disconnect();
@@ -182,24 +220,37 @@ describeDb("B467 — InlineReturnsService.approve() rollback atomicity, real Pos
     await pool?.end();
   }, 120_000);
 
-  it("a failure after the claim (restocking the phantom item) leaves no half-applied restock, ledger entry, or credit note", async () => {
-    const before = await raw.product.findUniqueOrThrow({ where: { id: realProductId } });
-    expect(Number(before.currentStock)).toBe(0);
+  it("a failure after the claim (credit-note numbering overflow) leaves no half-applied restock, ledger entry, or credit note", async () => {
+    const beforeA = await raw.product.findUniqueOrThrow({ where: { id: productAId } });
+    const beforeB = await raw.product.findUniqueOrThrow({ where: { id: productBId } });
+    expect(Number(beforeA.currentStock)).toBe(0);
+    expect(Number(beforeB.currentStock)).toBe(0);
 
     await expect(
       tenantCtx.run(tenantId, () => svc.approve(returnId, operator())),
     ).rejects.toThrow();
 
-    // The REAL product's restock (the first item processed) never survived the rollback —
-    // proof the transaction is atomic across BOTH items, not just the one that threw.
-    const afterProduct = await raw.product.findUniqueOrThrow({ where: { id: realProductId } });
-    expect(Number(afterProduct.currentStock)).toBe(0);
-    expect(await raw.stockMovement.count({ where: { productId: realProductId } })).toBe(0);
+    // Neither real product's restock survived the rollback -- proof the transaction is
+    // atomic across BOTH items AND the later numbering step that actually threw.
+    const afterA = await raw.product.findUniqueOrThrow({ where: { id: productAId } });
+    const afterB = await raw.product.findUniqueOrThrow({ where: { id: productBId } });
+    expect(Number(afterA.currentStock)).toBe(0);
+    expect(Number(afterB.currentStock)).toBe(0);
+    expect(
+      await raw.stockMovement.count({ where: { productId: { in: [productAId, productBId] } } }),
+    ).toBe(0);
 
-    // No credit note, no order-credit link — issueCreditInTx never got far enough to commit
-    // anything, and even if it had run first, the whole transaction still rolls back.
+    // No credit note, no order-credit link.
     expect(await raw.creditNote.count({ where: { customerId } })).toBe(0);
     expect(await raw.orderCreditNote.count({ where: { orderId } })).toBe(0);
+
+    // The numbering sequence's failed increment never committed either -- still exactly
+    // the pre-seeded overflow value, not int4-max-plus-one (which couldn't be stored) and
+    // not silently left at some other value.
+    const seq = await raw.numberingSequence.findUniqueOrThrow({
+      where: { tenantId_docType_year: { tenantId, docType: "CREDIT_NOTE", year } },
+    });
+    expect(seq.nextNumber).toBe(INT4_MAX);
 
     // The Return row itself is byte-identical to its pre-approve state.
     const ret = await raw.return.findUniqueOrThrow({ where: { id: returnId } });
