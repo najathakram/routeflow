@@ -1,3 +1,5 @@
+Status: IMPLEMENTED
+
 # Test plan — Plane harness: sync/intake/triage/apply + shared client (S4)
 
 > Stage S4. Authored by Sonnet 5 (transcription) from Fable 5.1's ruling, 2026-09-11.

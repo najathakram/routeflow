@@ -1,6 +1,6 @@
 {
-  "mappedSha": "bc24582d22fd2662122ecfe4fa5776ab5b337732",
-  "generatedAt": "2026-09-16T12:00:00.000Z",
+  "mappedSha": "8f329ec4deaa712161aa95563205554f7b565962",
+  "generatedAt": "2026-09-16T14:30:00.000Z",
   "layout": "split-2026-09-13",
   "areas": ["api", "web", "mobile", "packages"],
   "partCounts": {
@@ -10,5 +10,5 @@
     "packages": 0
   },
   "fileCount": 1027,
-  "notes": "**2026-09-16 — `feature-modules-3.md` area-cap split (docs-only, no code change, worktree rf-codemap-split)** — it had grown to 99,998 B against the 100,000 B cap (PR #781 hit it adding a single line). Split verbatim into seven parts under `api/feature-modules-3/`: routes.md, trips.md, invoices.md, credit-notes.md, returns.md, order-templates.md, drafts.md. `feature-modules-3.md` is now a 2.9 KB TOC. Repointed INDEX.md's three live cross-refs, api.md's row description, feature-modules-1.md's stale split-threshold note, and returns-inline.md's pointer. `mappedSha` left as-is (same convention as the 2026-09-15 bootstrap-cross-cutting.md split). See CHANGELOG.md for the full note; do not accumulate further history here — replace this field each session per that file's header convention."
+  "notes": "**2026-09-16 — map #789 (B452 platform email sender) — docs-only bookkeeping follow-up** — `api/feature-modules-7.md` `email/`: new bullet for the platform Google Workspace SMTP transport (all-or-nothing `SMTP_*` selection over Resend), the `platformFrom` derivation, `getTenantFromAddress()`'s `<Business> via RouteFlow` fallback replacing the unowned `noreply@routeflow.app`, `sanitizeDisplayName()`'s scope, `getReplyTo()`'s fallback chain, and the read-only `apps/api/scripts/check-email-sender.mjs` diagnostic. Also corrected the module bullet's stale \"global `EmailService`\" — `EmailModule` is a plain `@Module`, so consumers import it (`CustomersModule` has since #778). `mappedSha` unchanged. See CHANGELOG.md."
 }

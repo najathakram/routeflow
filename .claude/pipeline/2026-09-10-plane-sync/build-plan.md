@@ -1,3 +1,5 @@
+Status: IMPLEMENTED
+
 # Build plan — Plane BUGS mirror of the in-repo bug registry (dev-pipeline, small)
 
 Status: IMPLEMENTED (fix-round 1 applied 2026-09-11: F1 budget/timeout, F2 stdout guard, F3

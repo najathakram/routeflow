@@ -1,3 +1,5 @@
+Status: IMPLEMENTED
+
 # Context pack — 2026-09-11-plane-harness (S0.5)
 
 Worktree `.claude\worktrees\rf-plane2`, branch `feat/plane-harness`. HEAD `5912137`(spec's

@@ -13,6 +13,50 @@
 
 ## tooling
 
+### L-172 · 2026-09-16 · tooling · #779 (nested timeout mismatch)
+
+- **Symptom:** raising a Jest test's own timeout to fix one flake introduced a new, harder-to-
+  diagnose flake in the same test.
+- **Root cause:** the test's Jest-level timeout was raised without raising the timeout on the
+  `spawnSync` call running _inside_ it, so the inner call now times out and throws before Jest's
+  own outer timeout would ever fire — moving the failure mode to a confusing error shape instead
+  of fixing it.
+- **Lesson:** **When a test wraps a call with its own timeout (spawnSync, an HTTP client, a DB
+  pool), raising the test's outer timeout without raising the inner one moves the failure mode,
+  it doesn't fix it — always raise both together, inner first.**
+- **Guard:** none named in the PR body — propose a lint/review checklist item pairing any Jest
+  `testTimeout`/`jest.setTimeout` edit with a check for an inner call's own timeout in the same
+  test.
+
+### L-174 · 2026-09-16 · tooling · demo-booking lane (raw NUL byte from an escape literal)
+
+- **Symptom:** a source file kept "working" after an agent tool chain wrote a `\uXXXX`-shaped
+  escape literal into it — until `file`/git/prettier treated it as binary, because what actually
+  landed was the raw byte the escape describes (a NUL in a `.ts` file), not the 6-char sequence.
+- **Root cause:** a tool-chain step decoded the escape before the write, turning a literal meant
+  to stay text into its raw byte — nothing downstream checked the file was still actually text.
+- **Lesson:** **After writing any escape-sequence literal through an agent tool chain, verify it
+  landed as literal text, not the decoded byte — a file can silently stop being text the moment
+  one write step decodes what should have stayed escaped.**
+- **Guard:** `file <path>` (must say "text") or `grep -cP '\x00' <path>` (must be 0) before
+  trusting the write; a pre-commit NUL-byte check on text sources is the durable fix.
+
+### L-168 · 2026-09-16 · tooling · B421 CASH_METHOD_FILTER as-const gap
+
+- **Symptom:** `CASH_METHOD_FILTER`, a Prisma `notIn` filter constant, shipped with no real call
+  site yet. Its sibling `RECEIVED_METHOD_FILTER` was wired into a live `where` clause first and
+  immediately failed `tsc` — its array had widened to `string[]` for want of `as const`, which
+  Prisma's generated enum filter rejects. Checking the still-unused sibling found the same gap.
+- **Root cause:** a constant with no consumer can't fail a type check that only runs where it's
+  used — "compiles clean" meant nothing until a real call site exercised the type, so two
+  identically-built constants drifted: one was caught by chance, the other was not.
+- **Lesson:** **A typed constant with no call site yet is unproven, not correct — the moment one
+  sibling constant (same file, same shape, same commit) fails a type check for something subtle
+  like a missing `as const`, grep for every other constant built the same way.**
+- **Guard:** both constants now carry `as const` with an inline comment
+  (`packages/pricing/src/payment-confirmation.ts`); `payment-confirmation.spec.ts` pins both
+  filters' exact shape.
+
 ### L-105 · 2026-09-11 · tooling · train-4 engine gate
 
 - **Symptom:** two engine runs lost their whole Jest gate to one flag position — a spec path
@@ -51,17 +95,6 @@
 - **Guard:** none yet — propose `-p routeflow` in `local:up`/`local:down`/`local:reset`, or a
   top-level `name: routeflow`.
 
-### L-074 · 2026-09-05 · tooling
-
-- **Symptom:** a prod-capable seed run through `railway run --service postgres` wrote to the LOCAL
-  dev database.
-- **Root cause:** the script defaulted `DATABASE_URL` to a localhost URL and the postgres service
-  exposes only discrete POSTGRES_*/TCP-proxy vars.
-- **Lesson:** **a script that can target production never has a silent local default: resolve the
-  target from the variables the runner actually injects, print the resolved host before
-  connecting, and treat "nothing set" as a loud fallback.**
-- **Guard:** `resolveDatabaseUrl` + its spec; the seed logs its target host.
-
 ### L-055 · 2026-09-03 · tooling · wave D imp-05
 
 - **Symptom:** Jest matched **zero tests** in this worktree with the documented
@@ -75,25 +108,6 @@
   dot-directory; use a relative `testMatch` scoped by `roots` instead.
 - **Guard:** `apps/web/jest.config.js`'s inline comment on `testMatch`; the web suite count (19
   spec files) pinned in `.claude/code-map/web.md`.
-
-### L-068 · 2026-09-04 · tooling · #597
-
-- **Symptom:** a proven ledger row silently back to `queued`; a live lock stolen, admitting three
-  writers; a refused `move` destroying the authoritative row — every gate green.
-- **Root cause:** an unlocked read-modify-write (stale data enters at the READ, and a
-  read-back-assert re-reads the row that survived); staleness measured as AGE, so a waiter stole a
-  LIVE lock and release deleted the lock PATH unconditionally; and the durable record of intent was
-  written BEFORE the step that could still fail.
-- **Lesson:** **Hold an exclusive lock across the READ as well as the write wherever two processes
-  may touch one file — a read-back-assert can never see the write yours erased. Break a lock on
-  LIVENESS (owner pid/token, ESRCH), never on age; release only the lock you own; fix break and
-  release together; when two constants work in only one order, test the order. Order writes so any
-  failure leaves the safest reachable state: additive write first, verify it landed, irreversible
-  step last.**
-- **Guard:** `withShardLock`/`withCatalogueLock` (atomic `mkdir` lockdir, `owner.json` {pid, token},
-  released from an `exit` handler); `BUGS_TEST_STALL_MS` widens the race; planted failures
-  (cross-shard duplicate, real `EISDIR`, corrupted record mid-loop) assert the PRE-failure state
-  survives.
 
 ### L-138 · 2026-09-15 · testing · #711 review round (F1 issue-date default)
 
@@ -172,60 +186,34 @@
 - **Guard:** `no-runtime-workspace-imports.spec.ts` (pre-existing). Fix: derive the value from
   `@prisma/client`'s real enum instead, or mirror it locally like the file's own `METER_KEYS`.
 
-### L-152 · 2026-09-15 · process · #743 fix round T5 "one MRR engine" claim
-
-- **Symptom:** T5 replaced two retired catalog-fallback estimators
-  (`_catalogPriceByPlanKey`/`_monthlyPriceUsd`) with one shared `priceSubscription()`/
-  `priceTenant()` path and described the change as making `MrrService` "the one MRR engine" —
-  a claim about EVERY caller of money-pricing logic, verified only against the one call site
-  (`getTenant()`) the task brief named.
-- **Root cause:** "the one caller that was migrated" and "every caller of the retired helper" are
-  different claims; a brief that names one caller can leave a sibling call site (another service,
-  a script, a test fixture computing the same figure independently) still on the old path with
-  nothing failing to say so — the retired helper being deleted only proves the ONE known caller
-  broke, not that no other caller existed.
-- **Lesson:** **Before declaring a function "the one X" or "the single source of truth" for
-  anything, grep the whole tree for the OLD mechanism's name/signature, not just the call site the
-  task brief already named — a deletion only proves what it broke, never what it missed.**
-- **Guard:** `mrr.service.spec.ts`'s `REG-743-N1` test proves `priceTenant()` and
-  `computeOverview()` sum to the same total for the same fixture (structural proof, not just "the
-  old helper is gone"). Sibling [[L-119]] — same theme, an earlier money-figure seam.
-
-### L-153 · 2026-09-15 · tooling · #743 fix round T3 child-process env leak into a prod-capable CLI
-
-- **Symptom:** two DB-lane specs spawn a prod-capable backfill CLI via `execSync` with
-  `env: {...process.env, DATABASE_URL: dbUrl}`. The CLI's own `resolveDatabaseUrl()` prioritizes
-  Railway TCP-proxy vars OVER `DATABASE_URL` when set — so a parent process with a leftover
-  Railway proxy export (e.g. an earlier `railway run` in the same shell) leaks into the child,
-  pointing a "local-only" test's CLI at the production database.
-- **Root cause:** `{...process.env, DATABASE_URL: dbUrl}` ADDS a key, it does not REMOVE any —
-  scrubbing is the caller's job and neither spec did it. Overriding one variable doesn't guarantee
-  which variable wins inside the child's OWN resolution precedence.
-- **Lesson:** **A child process inherits variables, not a guard — when a spawned CLI has its own
-  "A beats B" precedence, setting B in the child's env isn't enough. Delete every variable in the
-  higher-precedence set before spawning, and test by FAKING those vars on the parent to prove the
-  child still resolves correctly.**
-- **Guard:** `childEnv(dbUrl)` helper in both DB specs deletes every `RAILWAY_*`/`POSTGRES_*` key
-  before setting `DATABASE_URL`; each file's `REG-743-N2` test fakes Railway vars on the spec's
-  own `process.env` and asserts the child still resolves to the local host.
-
 ## testing
 
-### L-063 · 2026-09-04 · testing · imp-04
+### L-165 · 2026-09-16 · testing · #779 (B225/B244/B411)
 
-- **Symptom:** after apps/api's suite was split into two `npx jest` invocations,
-  `scripts/campaign-check.mjs` reported 17 undischarged bug-registry claims that the first run
-  had already proven.
-- **Root cause:** apps/api's jest config wires a campaign reporter that OVERWRITES
-  `.campaign/runs/api.json` on every invocation (no merge), and non-anchored substring filters
-  (`auth` without a trailing slash) also ran `src/authorizations/**` in both partitions (239
-  suites/3686 tests vs the true 233/3632).
-- **Lesson:** **never split a jest invocation whose config wires a campaign/artifact reporter —
-  run apps/api's full suite in one `npx jest --maxWorkers=2` (~270 s) before `campaign-check`; if
-  partitioning is ever required, merge the reporter outputs and anchor patterns with a trailing
-  slash.**
-- **Guard:** `apps/api/package.json` `jest.reporters` (campaign reporter) +
-  `scripts/campaign-check.mjs`; the pre-push hook runs the suite unsplit.
+- **Symptom:** two unrelated integration tests intermittently failed under load —
+  `bugs-self-test-script.spec.ts` and `ci-freshness-guard-script.spec.ts`.
+- **Root cause:** both asserted a proxy for correctness instead of the run's own declared
+  outcome — elapsed wall-clock time in one, an ambient tmpdir file count shared across parallel
+  test workers in the other. Neither proxy is stable under load; the process's own exit
+  signal/result was available and ignored.
+- **Lesson:** **Assert a process's own reported result/exit signal, never wall-clock timing or a
+  shared/global count, as a stand-in for it.** A shared ambient count in particular races every
+  other parallel worker touching the same path.
+- **Guard:** code review should flag any `Date.now()`-delta or directory-listing-count assertion
+  in a spec touching a spawned process or shared tmp path — no automated lint yet.
+
+### L-166 · 2026-09-16 · testing · #779 (B352)
+
+- **Symptom:** `next-version.spec.ts` stopped enforcing a minimum patched Next.js version after
+  an unrelated fix round touched the same file — a security-advisory floor silently dropped.
+- **Root cause:** the fix round's own diff review didn't check which assertions the file already
+  carried before editing it; a generically-named test ("pins the version") gave no signal that
+  editing it deleted a security floor specifically.
+- **Lesson:** **A spec file that pins a security floor (a CVE-patched minimum version, an
+  advisory allowlist) needs its own named assertion — the next unrelated edit to that file can't
+  silently delete it without a visible red diff.**
+- **Guard:** name the assertion after the floor it enforces (e.g. `it("enforces the CVE-2026-xxxx
+floor", ...)`), not after the generic thing being tested — restored in `next-version.spec.ts`.
 
 ### L-050 · 2026-09-02 · testing · #598
 
@@ -258,20 +246,87 @@
 
 ## domain
 
-### L-100 · 2026-09-08 · domain · #678
+### L-167 · 2026-09-16 · domain · #781 (B156/B158/B170)
 
-- **Symptom:** three numbering series minted cross-tenant on a null request tenant and raced to a
-  raw 500; a rolled-back settlement re-minted the same payment number.
-- **Root cause:** `forTenant()` returns the UNSCOPED client on a null tenant, so a "tenant-scoped"
-  scan is only scoped when a request tenant exists; counters inside a rolled-back tx re-issue
-  numbers; TEXT max+1 scans have no wall past 9999.
-- **Lesson:** **Mint every document number through `NumberingService.reserveNext(type, { year,
-tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()`), reserved
-  STANDALONE before any transaction that can roll back, with P2002 → 409 and a bounded retry on
-  serialization failure that reuses the reserved number; a green pin must never carry a `REG-`
-  token (the red gate reads titles).**
-- **Guard:** `apps/api/src/**/{credit-note,payment,import}-numbering.db.spec.ts` (REG-B267/B268/B269),
-  `numbering.service.spec.ts`.
+- **Symptom:** three separately-reported bugs (B156/B158/B170) all traced to the same root cause
+  — a customer-list filter predicate living in more than one place.
+- **Root cause:** `findAll`'s `where` clause and `exportCustomers`'s hand-rolled one had drifted
+  apart, and neither was consulted by `update`/`changeStatus`'s removed-customer guard.
+- **Lesson:** **When an entity has more than one read/export/guard path (list, CSV export,
+  edit-guard), its filter predicate belongs in exactly ONE shared builder consumed by all of
+  them — three call-site-specific copies will silently drift, and each drift surfaces as its own
+  "unrelated" bug report.**
+- **Guard:** shared `buildListWhere()` backs `findAll`, `exportCustomers`, and the
+  `update`/`changeStatus` guards; a test should assert every consumer calls the _same_ function
+  reference, not just that each produces a matching result today (not yet added — flag for the
+  #781 landing coordinator).
+
+### L-173 · 2026-09-16 · domain · B449 (Lite lane, plan-gate boundary)
+
+- **Symptom:** a plan-gated page kept firing its own effects/queries while a locked/blurred
+  overlay showed over it — its 403 toasts and query errors leaked to a user who should never
+  have triggered that page's behavior at all.
+- **Root cause:** the gate ghosted the real page behind blur/opacity by rendering it as
+  `children` inside the locked view's own slot — that hides the DOM, it doesn't unmount it, so
+  "ghosted" was mistaken for "never mounts."
+- **Lesson:** **A route guard choosing between locked and unlocked must render exactly ONE of
+  two subtrees, never wrap the real page inside the locked view's ghost slot — a component
+  hidden behind blur/opacity is still mounted, and its effects/queries still fire.**
+- **Guard:** a route boundary needs a real third "still resolving" state (a spinner) distinct
+  from both outcomes; `layout.plan-gate-boundary.test.tsx` pins children absent from the tree
+  while resolving/locked, not just visually hidden.
+
+### L-169 · 2026-09-16 · domain · B421 / PR-1a shared-helper precondition no-op (two call sites)
+
+- **Symptom:** two surfaces hit the same shape. `statement.service.ts` moved a payment sum into
+  the shared `splitConfirmed` helper, which re-checks `.status` generically — its `select` never
+  needed `status` before, so every row read `undefined`, risking a silent zero.
+  `returns.service.ts`'s CANCELLED-line exclusion referenced `li.status`, but none of its four
+  real `lineItems` selects fetched it — dead code from the moment it was written. Both tests
+  passed anyway because their mocks supplied the field directly, never proving the real `select`
+  produced it.
+- **Root cause:** a shared helper that re-derives a precondition has no knowledge of a caller's
+  query shape — it assumes the field is present. A caller whose `select` never needed that field
+  before silently hands the helper `undefined`, which the check absorbs as a real value.
+- **Lesson:** **Before wiring a caller into a shared helper that re-derives a precondition
+  generically, check the caller's `select` actually fetches the field — a mock supplying it
+  directly proves nothing. A type-check alone won't catch a field silently resolving to
+  `undefined`.**
+- **Guard:** both selects now fetch `status`; `returns-lineitems-select.spec.ts` pins the real
+  shape at every call site.
+
+### L-170 · 2026-09-16 · domain · #743 fix round F3 (roundMoney before comparison)
+
+- **Symptom:** a fully-settled invoice rendered a red "Balance Due $0.00" badge instead of the
+  green paid state — the displayed number was right but its color-coding read non-zero.
+- **Root cause:** the balance summed three independently-derived floats (cash + credit +
+  advance) before subtracting from total; `Math.max(0, ...)`/color-coding ran on that raw sum,
+  where a sub-cent remnant (e.g. `-2.8e-14`) survives `Math.max` and still reads non-zero.
+  `roundMoney` was applied only at display-formatting time, never before the comparison.
+- **Lesson:** **`roundMoney` must wrap a sum of independently-derived floats BEFORE the value
+  drives any comparison or branch — color-coding, `>0` checks, conditional rendering — never only
+  where it's formatted for display. A value that looks like zero once rounded but drives a
+  boolean check unrounded will diverge from what the user sees.**
+- **Guard:** `invoices.service.ts`'s two `balanceDue` sites and `invoice-pdf-template.tsx`'s
+  balance now wrap in `roundMoney()` before `Math.max`/the comparison; existing invoice-balance
+  suites cover it.
+
+### L-171 · 2026-09-16 · domain · PR-1a F1 (pooled cap vs single-line price basis mismatch)
+
+- **Symptom:** `returns.service.ts`'s over-return cap was widened from "sold qty on one matched
+  line" to "sold qty summed across every live line for that product" — correct on its own — but
+  the sibling never-invoiced pricing branch, reading the SAME (order, product) key, still priced
+  off one matched line's rate against the newly-pooled quantity. A product split across two
+  differently-priced lines got over-credited.
+- **Root cause:** the cap and the price are two different readers of one key. Widening one
+  reader's basis fixed that reader alone — nothing re-examined the sibling reading the same key,
+  so the two computations silently disagreed on how many rows back the number.
+- **Lesson:** **When a guard/cap computation for a key is widened to pool across rows, grep every
+  OTHER reader of that key before calling the fix done — a cap and a price computed from
+  different bases silently mismatch, and the mismatch is a MONEY bug, not a correctness one.**
+- **Guard:** the pricing branch now pools qty/subtotal per product the same way the cap does,
+  with a `min(returned, sold)` backstop; `returns-refund.spec.ts`'s new F1 cases prove the pooled
+  pricing for a two-line split.
 
 ### L-072 · 2026-09-03 · domain · wave E `imp-10b`
 
@@ -576,25 +631,6 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
 - **Guard:** `returns-ledger.spec.ts`'s PROCESSED-cancel case pins the restored behavior; the
   comment on the branch cites the exact prod check (`GROUP BY status`) that would retire it.
 
-### L-158 · 2026-09-15 · domain · PR-2 fix round 3 (idempotency guard: ordering + fail-closed)
-
-- **Symptom:** two findings on one newly-built idempotency guard (returns.service.ts create()).
-  (a) the replay check ran AFTER order/DELIVERED/ownership validation, so a retry whose order
-  state changed for unrelated reasons since an already-successful attempt wrongly 404/400'd
-  instead of returning the saved result. (b) the lock acquisition was built fail-open like the
-  guard's other methods, but a failed lock has no other backstop against the race it prevents —
-  fail-open there silently defeats the whole guard.
-- **Root cause:** (a) validation predating the guard stayed in its original position instead of
-  being re-examined against the new replay path. (b) fail-open was applied uniformly, without
-  asking whether each method has an independent backstop if it fails.
-- **Lesson:** **Adding a replay guard around an existing operation: (1) the replay check runs
-  BEFORE any validation reading MUTABLE state the original attempt already passed; (2) fail-open
-  is a per-method decision — a step with NO other backstop against the harm it prevents (a lock
-  closing a race) must fail CLOSED, even when siblings safely fail open because a domain-level
-  guard backstops them.**
-- **Guard:** `returns-idempotency.spec.ts`'s retry-after-state-changed case;
-  `idempotency.service.spec.ts` REG-IDEM-SVC-9; `returns-idempotency.db.spec.ts` (real Postgres).
-
 ### L-132 · 2026-09-13 · domain · F27 B70 (estimates)
 
 - **Symptom:** a fix round made `accept()`'s atomic claim exclude the full terminal-status set
@@ -672,23 +708,6 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   scalar — a scalar assumes at most one row is ever in flight.**
 - **Guard:** `invoices/page.tsx` tracks `printingIds: Set<string>`; row `disabled={printingIds.has(inv.id)}`.
 
-### L-150 · 2026-09-15 · domain · B264/B265/B266 mobile scan FABs
-
-- **Symptom:** a `BarcodeFab` mounted inside a `FormSheet`-wrapped screen rendered but scrolled away
-  with the form content instead of floating fixed — the defect the floating-FAB pattern exists to
-  prevent, moved one layer down.
-- **Root cause:** `FormSheet`'s `children` render inside `FormSheet`'s OWN internal `ScrollView`
-  (`components/FormSheet.tsx`), not under the screen's stable outer container. `position:
-"absolute"` there is relative to the scrolling content box, not the viewport, so it moves with
-  the scroll. Every other `BarcodeFab` consumer uses a plain `SafeAreaView` + sibling `ScrollView`,
-  where this trap doesn't exist.
-- **Lesson:** **A wrapper whose `children` land inside its OWN scrolling container is not a safe
-  parent for an absolutely-positioned floating element — check the wrapper's own source for where
-  `children` actually renders before assuming position is unaffected. Mount the floating element
-  as a SIBLING of the wrapper instead (a Fragment), never inside its `children`.**
-- **Guard:** `apps/mobile/__tests__/scan-affordance-siblings.test.ts` pins the FAB's mount position
-  on all three screens (`fabAt > formSheetCloseAt`).
-
 ### L-154 · 2026-09-15 · domain · PR-3 independent review F1/F4 (moved logic, new entry point)
 
 - **Symptom:** two findings, same root shape. F1: a handler copied from `ProductPickerSheet.onScanned`
@@ -741,24 +760,6 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   (unaudited — dozens of hits, most single-instance and safe): `grep -rn '\.mutate([a-zA-Z].*{$'
 apps/web/app --include=*.tsx -A1 | grep -B1 onSuccess` — narrow to `.map()`-rendered LIST rows
   sharing one hook before assuming any hit is a real instance of this bug.
-
-### L-157 · 2026-09-15 · domain · #743 review round #3 (F1/F2)
-
-- **Symptom:** an admin MRR card fell back to a client-side per-plan price estimate when the
-  server rollup failed -- a free pilot showed at full list price. A reconciliation script's
-  `--apply` wrote real prices to live PRODUCTION tenants with nothing between "ran the dry run"
-  and "wrote to prod" -- a stale terminal was indistinguishable from a reviewed decision.
-- **Root cause:** both were "best-effort" conveniences added without asking what happens when
-  the safety net itself is wrong: a fallback estimate is a second, unaudited pricing engine; an
-  unconfirmed bulk write on money data has no seam between intent and action.
-- **Lesson:** **A money surface gets ONE engine, never a fallback estimate -- on failure, say so
-  ("unavailable"), never invent a number. A bulk write on live money data needs an explicit
-  confirmation naming what's about to apply (`--confirm-count <n>` matching the dry run),
-  refused otherwise.**
-- **Guard:** `admin/billing/page.tsx` deleted `PLAN_PRICES`, shows "MRR unavailable" on error.
-  `backfill-subscription-reconciliation.mjs` requires `--confirm-count` matching the scan when
-  `--apply` runs unscoped. Sibling fix same round: the write's `updateMany` re-asserts tenant
-  state, closing a scan-to-write race.
 
 ### L-163 · 2026-09-15 · domain · Lite-L2 fix round: plan re-pin + frozen-catalog literal
 
@@ -844,19 +845,6 @@ apps/web/app --include=*.tsx -A1 | grep -B1 onSuccess` — narrow to `.map()`-re
 - **Guard:** `page.test.tsx`'s REG-743-F1 cases — an extra non-`PLAN_KEYS` catalog row is excluded
   from rendered options; a catalog with zero `PLAN_KEYS`-eligible rows falls back to exactly
   `PLAN_KEYS`.
-
-### L-161 · 2026-09-15 · tooling · T12-T15 review round F1/F2 (house-tenant script + mirror re-validation)
-
-- **Symptom:** `bootstrap-house-tenant.mjs` called `new PrismaClient()` with no driver adapter —
-  Prisma 7 throws. `TenantMirrorService#upsert` trusted a once-resolved `platform.houseTenantId`
-  forever, so a config key later pointing at a deleted/reclassified tenant would write admin data
-  into it.
-- **Root cause:** a resolved or pattern-copied dependency was trusted without re-checking it
-  against its current siblings or current row.
-- **Lesson:** **A prod-targeting script must match its siblings' PrismaPg/pg.Pool client setup,
-  never a bare `new PrismaClient()`. A writer resolving a special row by id must re-validate its
-  identity/class on every write, not just once.**
-- **Guard:** `bootstrap-house-tenant.db.spec.ts`, `tenant-mirror.service.spec.ts`.
 
 ### L-162 · 2026-09-15 · tooling · post-dated check payments PR-1 (schema-only, additive)
 

@@ -46,6 +46,10 @@ describe("CustomersService — F4-002 sort-field allowlist", () => {
           provide: RegulatedLedgerService,
           useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
         },
+        {
+          provide: EmailService,
+          useValue: { send: jest.fn().mockResolvedValue({ delivered: true, transport: "resend" }) },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(null) } },
         {
@@ -112,6 +116,7 @@ import { UserRole } from "@prisma/client";
 import { CustomersController } from "./customers.controller";
 import { ROLES_KEY } from "../auth/decorators/roles.decorator";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { EmailService } from "../email/email.service";
 
 describe("CustomersController — statement endpoints role guard", () => {
   it.each([["getStatementMonths"], ["getStatementPdf"]] as const)(

@@ -407,9 +407,11 @@ status:"ISSUED"})` never runs unscoped; filters via `isCreditOpenForApply`; full
 - **`payments/[id].tsx`** — check badge + deposited/cleared/bounced KV rows; Mark deposited
   (confirm) / Mark cleared (optional bank-date → settledAt) / Mark bounced (NSF-fee modal:
   voids the row, re-opens the invoice, non-taxable fee line + stored-total bump server-side).
-- **`(tabs)/invoices/[id].tsx`** — `ApplyAdvanceSheet` (wallet rows balance>0; first client for
-  this action — web's `useApplyAdvanceToInvoice` is dead code). **`customers/[id].tsx`** —
-  Record-advance modal + "Record advance payment" row in Account standing.
+- **`(tabs)/invoices/[id].tsx`** — `ApplyAdvanceSheet` (wallet rows balance>0; mobile was the
+  first client for this action — **web's `useApplyAdvanceToInvoice` gained its own caller in
+  Rescue PR B, 2026-09-15**, `invoices/[id]/page.tsx`'s `ApplyAdvanceModal`, see `web/routes-2.md`).
+  **`customers/[id].tsx`** — Record-advance modal + "Record advance payment" row in Account
+  standing.
 
 ### PR-D 2026-08-20 — generic → variant stock assignment (first mobile variants UI)
 
