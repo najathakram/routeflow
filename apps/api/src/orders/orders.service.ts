@@ -3877,11 +3877,18 @@ export class OrdersService implements OnApplicationBootstrap {
           const existingLineProductIds = dto.items
             .map((i) => (i.id ? order.lineItems.find((li) => li.id === i.id)?.productId : null))
             .filter((id): id is string => !!id);
+          // B466: a substitution's NEW product id must resolve tier pricing too — it
+          // was missing from this collection entirely (neither a fresh add's productId
+          // nor an existing line's OLD productId covers it), so the substitute branch's
+          // CustomerPrice lookup always fell back to the customer's DEFAULT tier even
+          // when a per-product SPECIAL row existed for the substitute specifically.
+          const substituteProductIds = dto.items.map((i) => i.substituteProductId).filter(Boolean);
           const operatorProductIds = isStaffEdit
             ? ([
                 ...new Set([
                   ...dto.items.map((i) => i.productId).filter(Boolean),
                   ...existingLineProductIds,
+                  ...substituteProductIds,
                 ]),
               ] as string[])
             : [];
@@ -4522,17 +4529,47 @@ export class OrdersService implements OnApplicationBootstrap {
                 // operator/admin path (drivers/customers replace-all above and never
                 // carry substituteProductId), but the role check stays explicit so a
                 // driver/customer DTO can never buy price control here — B13, non-staff
-                // never set prices. No override (or one equal to list) keeps today's
-                // STANDARD/list-price behavior.
+                // never set prices. No override (or one equal to the substitute's own
+                // tier price) keeps today's SPECIAL/STANDARD tier-priced behavior.
                 const isStaffCaller =
                   user?.role === UserRole.OPERATOR || user?.role === UserRole.TENANT_ADMIN;
                 const listPrice = Number(product.pricePerUnit);
+                // B466: this branch never checked tier at all — a bare unitPrice on a
+                // substitute to a SPECIAL-tier product was compared only against LIST
+                // price, so a correctly-priced substitute (typed at this customer's real
+                // contract price) was silently stored as DISCOUNTED with no reason. Same
+                // tier resolution as the ADD/UPDATE branches above (reuse isSpecialTier(),
+                // operatorCpMap/operatorDefaultTier — operatorProductIds now also collects
+                // substituteProductId so the per-product CustomerPrice row is fetched).
+                const tierForProduct = isStaffCaller
+                  ? (operatorCpMap.get(item.substituteProductId) ?? operatorDefaultTier)
+                  : 1;
+                const isSpecialTier = this.isSpecialTier(tierForProduct);
+                const tierPrice = Number(getTierPrice(product, tierForProduct));
                 const overridePrice =
                   isStaffCaller && item.unitPrice != null ? Number(item.unitPrice) : null;
-                let unitPrice = listPrice;
-                let priceType: PriceType = PriceType.STANDARD;
-                let originalPrice: number | null = null;
-                const isOverridden = overridePrice != null && overridePrice !== listPrice;
+                // The baseline is the SUBSTITUTE's own tier price (equals list when
+                // tierForProduct is 1, so non-special behavior is unchanged) — a price
+                // matching what this customer already pays for the new product is not a
+                // repricing decision and needs no reason, same half-cent tolerance the
+                // UPDATE branch's priceUnchangedFromStored uses.
+                const priceUnchangedFromTier =
+                  overridePrice != null && Math.abs(overridePrice - tierPrice) <= 0.005;
+                const hasOverrideReason = !!(item.overrideReason && item.overrideReason.trim());
+                if (
+                  overridePrice != null &&
+                  isSpecialTier &&
+                  !priceUnchangedFromTier &&
+                  !hasOverrideReason
+                ) {
+                  throw new BadRequestException(
+                    `A reason is required to change ${product.name ?? "this"} — it's this customer's special price`,
+                  );
+                }
+                let unitPrice = tierPrice;
+                let priceType: PriceType = isSpecialTier ? PriceType.SPECIAL : PriceType.STANDARD;
+                let originalPrice: number | null = isSpecialTier ? listPrice : null;
+                const isOverridden = overridePrice != null && !priceUnchangedFromTier;
                 if (isOverridden && overridePrice != null) {
                   unitPrice = overridePrice;
                   priceType = overridePrice < listPrice ? PriceType.DISCOUNTED : PriceType.MANUAL;
