@@ -17,9 +17,6 @@ import {
 } from "lucide-react";
 import { BrandMark } from "@/components/brand";
 
-// Re-export for backwards compat (existing pages import from layout)
-export { superAdminClient } from "@/lib/admin-api";
-
 // ─── Auth guard ────────────────────────────────────────────────────────────────
 
 function parseJwt(token: string): Record<string, unknown> | null {

@@ -38,12 +38,21 @@ export class CreateTenantDto {
   @MaxLength(50)
   adminUsername: string;
 
+  // B03-class fix (2026-09-12): matches the platform-wide password policy
+  // (reset-password, buyer register/change-password, self-signup
+  // register-tenant.dto.ts) — this used to enforce only @MinLength(8), the
+  // exact pre-fix B03 gap, on a DTO nobody had ever pinned with a test.
   @ApiPropertyOptional({
-    description: "Admin password. If omitted, a secure temporary password is auto-generated.",
+    description:
+      "Admin password. If omitted, a secure temporary password is auto-generated. Min 8 chars, must contain uppercase, lowercase, and a number or special character.",
   })
   @IsOptional()
   @IsString()
   @MinLength(8)
+  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*[\d\W])/, {
+    message:
+      "adminPassword must contain at least one uppercase letter, one lowercase letter, and one number or special character",
+  })
   adminPassword?: string;
 
   @ApiPropertyOptional({ enum: PLAN_KEYS, default: "STARTER" })

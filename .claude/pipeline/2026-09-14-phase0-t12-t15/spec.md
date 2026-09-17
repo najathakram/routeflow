@@ -1,3 +1,5 @@
+Status: IMPLEMENTED
+
 # Spec — Phase 0 W2 Tasks T12–T15 must do
 
 **Status:** `APPROVED`
