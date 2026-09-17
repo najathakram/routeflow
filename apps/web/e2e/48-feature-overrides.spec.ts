@@ -148,6 +148,31 @@ async function mockOverridesList(page: Page, body: unknown, status = 200) {
   );
 }
 
+function effectiveFeatureStub(key: string, overrides: Record<string, unknown> = {}) {
+  return {
+    key,
+    area: "misc",
+    serving: false,
+    resolver: false,
+    source: "NONE",
+    detail: { planKey: "GROWTH", catalogVersionId: "catalog-v11", enforced: true },
+    billing: { charged: false },
+    ...overrides,
+  };
+}
+
+/** Mocks `POST .../tenants/:id/features/preview` — owner rule (2026-09-17): EVERY override
+ * write previews first, so every interactive test below needs this before it can reach Confirm. */
+async function mockOverridePreview(page: Page, featureKey: string) {
+  await page.route(new RegExp(`/platform-admin/tenants/${TENANT_ID}/features/preview$`), (route) =>
+    fulfillJson(route, {
+      before: [effectiveFeatureStub(featureKey)],
+      after: [effectiveFeatureStub(featureKey, { serving: true, source: "OVERRIDE_GRANT" })],
+      changed: [featureKey],
+    }),
+  );
+}
+
 async function gotoOverridesSection(page: Page) {
   // Runs before any page script on every navigation this context makes, so the guard's
   // useEffect sees the token on first paint — no real login, no live API.
@@ -254,6 +279,15 @@ async function openCreateForm(page: Page) {
   await expect(page.getByRole("heading", { name: "New Feature Override" })).toBeVisible();
 }
 
+/** Preview → confirm, the ONE path every override write takes now (owner rule, 2026-09-17):
+ * clicks "Preview Override" (opens the drawer, calling `POST .../features/preview` first), then
+ * "Confirm" (the actual `POST .../feature-overrides`, mocked separately by the caller). */
+async function previewAndConfirm(page: Page) {
+  await page.getByRole("button", { name: "Preview Override" }).click();
+  await expect(page.getByRole("heading", { name: "Preview override" })).toBeVisible();
+  await page.getByRole("button", { name: "Confirm" }).click();
+}
+
 async function fillCreateForm(page: Page, opts: { featureKey: string; reason: string }) {
   await page.getByLabel("Feature Key").selectOption(opts.featureKey);
   await page.getByLabel("Reason").fill(opts.reason);
@@ -279,13 +313,15 @@ test.describe("Feature overrides — interactive flows (1440px)", () => {
         return fulfillJson(route, created ? [overrideRow({ effect: "GRANT" })] : []);
       },
     );
+    await mockOverridePreview(page, "tobacco_dealer");
     await gotoOverridesSection(page);
     await expect(page.getByText("No active overrides.")).toBeVisible();
 
     await openCreateForm(page);
     await fillCreateForm(page, { featureKey: "tobacco_dealer", reason: "Pilot onboarding" });
-    await page.getByRole("button", { name: "Create Override" }).click();
+    await previewAndConfirm(page);
 
+    await expect(page.getByRole("heading", { name: "Preview override" })).not.toBeVisible();
     await expect(page.getByRole("heading", { name: "New Feature Override" })).not.toBeVisible();
     await expect(page.getByRole("cell", { name: "tobacco_dealer" })).toBeVisible();
     await page.getByRole("cell", { name: "tobacco_dealer" }).scrollIntoViewIfNeeded();
@@ -310,14 +346,17 @@ test.describe("Feature overrides — interactive flows (1440px)", () => {
         return fulfillJson(route, [overrideRow({ effect: "GRANT" })]);
       },
     );
+    await mockOverridePreview(page, "tobacco_dealer");
     await gotoOverridesSection(page);
 
     await openCreateForm(page);
     await fillCreateForm(page, { featureKey: "tobacco_dealer", reason: "Try again" });
-    await page.getByRole("button", { name: "Create Override" }).click();
+    await previewAndConfirm(page);
 
     await expect(page.getByText(/already exists for "tobacco_dealer"/)).toBeVisible();
-    await expect(page.getByRole("heading", { name: "New Feature Override" })).toBeVisible(); // still open
+    // "still open" now means the PREVIEW drawer (the form hides behind it while previewing —
+    // only one AdminModal is ever open at a time), not the original form.
+    await expect(page.getByRole("heading", { name: "Preview override" })).toBeVisible();
     await page.screenshot({
       path: "../../local-assets/feature-overrides-2026-09-16/1440-create-409.png",
     });
@@ -346,11 +385,12 @@ test.describe("Feature overrides — interactive flows (1440px)", () => {
         return fulfillJson(route, []);
       },
     );
+    await mockOverridePreview(page, "tobacco_dealer");
     await gotoOverridesSection(page);
 
     await openCreateForm(page);
     await fillCreateForm(page, { featureKey: "tobacco_dealer", reason: "x" });
-    await page.getByRole("button", { name: "Create Override" }).click();
+    await previewAndConfirm(page);
 
     await expect(
       page.getByText("expiresAt must be in the future.; reason must be longer than 3 characters"),

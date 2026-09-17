@@ -263,8 +263,8 @@ export function MailboxCard() {
             <div className="flex items-start gap-2 rounded-ctl bg-danger-bg px-3 py-2 text-sm text-danger">
               <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
               <span>
-                {vendorLabel} revoked access to this mailbox — reconnect below. Mail is falling
-                back to your SMTP setup (or RouteFlow&apos;s) until then.
+                {vendorLabel} revoked access to this mailbox — reconnect below. Mail is falling back
+                to your SMTP setup (or RouteFlow&apos;s) until then.
               </span>
             </div>
           )}
@@ -274,9 +274,9 @@ export function MailboxCard() {
           )}
 
           <p className="text-xs text-navy/50">
-            Bounces and replies arrive in your own {providerLabel} inbox — RouteFlow can&apos;t
-            read them (only {isMicrosoft ? "`Mail.Send`" : "`gmail.send`"} is granted, never a
-            read scope).
+            Bounces and replies arrive in your own {providerLabel} inbox — RouteFlow can&apos;t read
+            them (only {isMicrosoft ? "`Mail.Send`" : "`gmail.send`"} is granted, never a read
+            scope).
           </p>
 
           <div className="flex flex-wrap gap-2">

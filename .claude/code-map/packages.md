@@ -192,7 +192,7 @@ string` (B20 — free-form intake note, e.g. "DAMAGED_BOX") and its `restock?` d
   entry for the full story. Re-exported from `index.ts`.
 - **`api/enums.ts` — feature grants v2 (2026-09-17, briefs A + B, #825/#838)** —
   `FEATURE_SOURCE_VALUES`/`FeatureSource` (brief A) and `FEATURE_OVERRIDE_KIND_VALUES = ["PILOT",
-  "SUPPORT", "COMP", "TRIAL", "GRANDFATHER"]`/`FeatureOverrideKind` (brief B) — pinned set-equal to
+"SUPPORT", "COMP", "TRIAL", "GRANDFATHER"]`/`FeatureOverrideKind` (brief B) — pinned set-equal to
   the generated Prisma enums by `enum-parity.spec.ts` (L-072, never a hand mirror elsewhere).
   `FeatureOverrideKind` defaults to `COMP` on every existing `TenantFeatureOverride` row
   (migration `20260917000000_feature_grants_v2_shadow_resolver`, additive).
