@@ -183,7 +183,10 @@ export function FeatureConsole({
       if (pending.kind === "tier") {
         await onChangePlan(pending.planKey);
       } else {
-        await writeTenantFeatureConfig(tenant.id, pending.featureKey, { mode: pending.newMode });
+        await writeTenantFeatureConfig(tenant.id, pending.featureKey, {
+          mode: pending.newMode,
+          reason: `Mode set to "${pending.newMode}" via the tenant feature console.`,
+        });
       }
       setPending(null);
       load();

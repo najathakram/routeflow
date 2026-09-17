@@ -61,10 +61,8 @@ export async function previewTenantFeatures(
   return res.data;
 }
 
-// TODO(C): `PUT /platform-admin/tenants/:id/feature-config/:key` doesn't exist yet — brief C
-// owns it. Mocked here so the console's mode-write path is wired end-to-end now and becomes a
-// zero-diff swap (this function's signature already matches the contract note in types.ts)
-// once C merges; Jest/Playwright mock this module's export, not the endpoint, until then.
+/** `PUT /platform-admin/tenants/:id/feature-config/:key` (brief C, #837, landed). Response is
+ *  `FeatureModeState` directly — no wrapper. */
 export async function writeTenantFeatureConfig(
   tenantId: string,
   featureKey: string,

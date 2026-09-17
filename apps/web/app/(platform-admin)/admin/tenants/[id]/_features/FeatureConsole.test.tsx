@@ -274,7 +274,7 @@ describe("FeatureConsole — tier change preview → confirm → apply (test 3)"
 });
 
 describe("FeatureConsole — mode change preview → confirm → apply (test 5)", () => {
-  it("confirm sends {mode} to writeTenantFeatureConfig for a mode-only change (Confirm stays enabled)", async () => {
+  it("confirm sends {mode, reason} to writeTenantFeatureConfig for a mode-only change (Confirm stays enabled)", async () => {
     mockPreview.mockResolvedValueOnce(previewFixture({ modes: { route_optimization: "manual" } }));
     mockWriteConfig.mockResolvedValueOnce({});
 
@@ -301,7 +301,12 @@ describe("FeatureConsole — mode change preview → confirm → apply (test 5)"
     await waitFor(() => expect(mockWriteConfig).toHaveBeenCalledTimes(1));
     expect(mockWriteConfig).toHaveBeenCalledWith(TENANT_ID, "route_optimization", {
       mode: "manual",
+      reason: expect.any(String),
     });
+    // Regression: brief C's real PUT requires a non-empty `reason` (400 without one) — this
+    // caught it live (curled against the local backend), so pin it can't silently regress.
+    const sentReason = mockWriteConfig.mock.calls[0][2].reason as string;
+    expect(sentReason.length).toBeGreaterThan(0);
   });
 
   it("cancel closes the drawer and calls writeTenantFeatureConfig with nothing", async () => {

@@ -24,13 +24,11 @@ export type {
 export type FeatureBadge =
   "inherited" | "added" | "removed" | "grandfathered" | "purchased" | "off" | "unknown";
 
-// TODO(C): replace with brief C's real request/response shape for
-// `PUT /platform-admin/tenants/:id/feature-config/:key` once it exists — mocked here with the
-// minimal shape the console needs (mode write goes through preview → confirm → apply too).
+// Brief C's real request/response shape for `PUT /platform-admin/tenants/:id/feature-config/:key`
+// (#837, landed) — verified against the live endpoint: `reason` is required (400 without it),
+// and the response is `FeatureModeState` directly, not a `{key, mode}` wrapper.
 export interface FeatureConfigWriteRequest {
   mode: string;
+  reason: string;
 }
-export interface FeatureConfigWriteResponse {
-  key: string;
-  mode: import("@routeflow/types").FeatureModeState;
-}
+export type FeatureConfigWriteResponse = import("@routeflow/types").FeatureModeState;
