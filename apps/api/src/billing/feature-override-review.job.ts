@@ -9,11 +9,18 @@ import { AuditService } from "../audit/audit.service";
  * admin-action rows; `AuditService.log()`'s `action` field is a plain string with no registry). */
 export const FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION = "FEATURE_OVERRIDE_EXPIRED_REVIEW";
 
+/** Per-tick cap (pre-merge review, SHOULD-2026-09-17): bounds one tick's cost when a large
+ * backlog of expired-unrevoked rows exists. Oldest-`expiresAt`-first (`orderBy`) so a backlog
+ * larger than the cap still drains in FIFO order across successive nightly ticks. */
+const REVIEW_BATCH_SIZE = 500;
+
 /**
  * Nightly review sweep for feature grants v2 (brief B, research §6.4): flags every
- * non-revoked `TenantFeatureOverride` whose `expiresAt` has passed. Logs + writes ONE audit
- * row per still-expired-and-unrevoked row, every tick — re-flagging an override a human has
- * not yet revoked is the intended behaviour (a review queue, not a one-shot notice), not a bug.
+ * non-revoked `TenantFeatureOverride` whose `expiresAt` has passed. Writes ONE audit row per
+ * row, EVER — not once per night. A row that already has a `FEATURE_OVERRIDE_EXPIRED_REVIEW`
+ * audit entry is skipped on every later tick (pre-merge review, SHOULD-2026-09-17: re-auditing
+ * an unchanged, still-not-reviewed row nightly is pure noise, not a stronger signal), so the
+ * audit trail carries exactly one row per override, however many nights it stays unrevoked.
  *
  * NEVER auto-revokes: only a human calling `FeatureOverrideService.revoke()` ends an override.
  * `FeatureOverrideService.create()`'s own auto-close of an expired row is a side-effect of
@@ -38,6 +45,8 @@ export class FeatureOverrideReviewJob {
     const now = new Date();
     const expired = await this.prisma.tenantFeatureOverride.findMany({
       where: { revokedAt: null, expiresAt: { lte: now } },
+      orderBy: { expiresAt: "asc" },
+      take: REVIEW_BATCH_SIZE,
       select: {
         id: true,
         tenantId: true,
@@ -47,8 +56,23 @@ export class FeatureOverrideReviewJob {
         expiresAt: true,
       },
     });
+    if (expired.length === 0) return { reviewed: 0 };
 
-    for (const row of expired) {
+    // Already-audited rows within this batch -- the audit log has no dedicated "reviewed"
+    // column, so the audit trail itself is the source of truth for "have we flagged this one
+    // already": one row per (action, entityType, entityId) is exactly the once-ever contract.
+    const alreadyAudited = await this.prisma.auditLog.findMany({
+      where: {
+        action: FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION,
+        entityType: "tenantFeatureOverride",
+        entityId: { in: expired.map((row) => row.id) },
+      },
+      select: { entityId: true },
+    });
+    const alreadyAuditedIds = new Set(alreadyAudited.map((row) => row.entityId));
+    const toReview = expired.filter((row) => !alreadyAuditedIds.has(row.id));
+
+    for (const row of toReview) {
       this.logger.warn(
         `Feature override ${row.id} (tenant ${row.tenantId}, key "${row.featureKey}", ` +
           `kind ${row.kind}) expired at ${row.expiresAt?.toISOString()} and is still not ` +
@@ -71,6 +95,6 @@ export class FeatureOverrideReviewJob {
       });
     }
 
-    return { reviewed: expired.length };
+    return { reviewed: toReview.length };
   }
 }

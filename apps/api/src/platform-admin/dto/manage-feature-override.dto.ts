@@ -1,5 +1,14 @@
-import { IsIn, IsOptional, IsDateString, IsString, MinLength, MaxLength } from "class-validator";
+import {
+  IsEnum,
+  IsIn,
+  IsOptional,
+  IsDateString,
+  IsString,
+  MinLength,
+  MaxLength,
+} from "class-validator";
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
+import { FeatureOverrideKind } from "@prisma/client";
 
 // Two literal values — not worth a shared packages/types constant, and a VALUE import from
 // @routeflow/types would crash the API's production boot (L-151: nest build doesn't bundle
@@ -7,12 +16,6 @@ import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 // dist/). See feature-registry.ts's isRegisteredFeatureKey for the real gatekeeping check;
 // this only constrains the two literals the column itself accepts.
 const FEATURE_OVERRIDE_EFFECTS = ["GRANT", "DENY"] as const;
-
-// Feature grants v2 PR-3 (brief B, 2026-09-17): same L-151 rationale as FEATURE_OVERRIDE_EFFECTS
-// above — mirrors packages/types/api/enums.ts's FEATURE_OVERRIDE_KIND_VALUES (itself pinned
-// set-equal to the generated Prisma `FeatureOverrideKind` enum by enum-parity.spec.ts) rather
-// than a VALUE import from @routeflow/types, which would crash the API's production boot.
-const FEATURE_OVERRIDE_KINDS = ["PILOT", "SUPPORT", "COMP", "TRIAL", "GRANDFATHER"] as const;
 
 export class CreateFeatureOverrideDto {
   @ApiProperty({
@@ -32,12 +35,12 @@ export class CreateFeatureOverrideDto {
     description:
       "Why this override exists, for billing honesty and MRR-truth — defaults to " +
       "COMP (a plain comp) when omitted; every pre-PR-3 row defaults the same way at the DB layer",
-    enum: FEATURE_OVERRIDE_KINDS,
+    enum: FeatureOverrideKind,
     example: "PILOT",
   })
   @IsOptional()
-  @IsIn(FEATURE_OVERRIDE_KINDS)
-  kind?: (typeof FEATURE_OVERRIDE_KINDS)[number];
+  @IsEnum(FeatureOverrideKind)
+  kind?: FeatureOverrideKind;
 
   @ApiProperty({
     description: "Why this override exists — shown in the tenant's override history",

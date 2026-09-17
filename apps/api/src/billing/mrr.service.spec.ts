@@ -393,13 +393,14 @@ describe("MrrService — feature-override MRR exclusion oracle (brief B)", () =>
     return {
       mrr: new MrrService(prisma),
       overrides: new FeatureOverrideService(prisma),
+      prisma,
       purchaseAddon: (row: { tenantId: string; priceSnapshot: number; quantity: number }) =>
         addonRows.push(row),
     };
   }
 
   it("STARTER tenant at $S: a PILOT GRANT override never moves MRR; purchasing the real AddonSku does; revoking the override leaves the purchase untouched", async () => {
-    const { mrr, overrides, purchaseAddon } = makeShared();
+    const { mrr, overrides, prisma, purchaseAddon } = makeShared();
 
     await expect(mrr.priceTenant("t-starter")).resolves.toBe(59); // $S baseline
 
@@ -419,6 +420,11 @@ describe("MrrService — feature-override MRR exclusion oracle (brief B)", () =>
 
     await overrides.revoke("t-starter", grant.id);
     await expect(mrr.priceTenant("t-starter")).resolves.toBe(83); // unchanged — purchase stands
+
+    // Not just "the number came out right" -- MrrService itself never once touched the
+    // overrides table across any of the four priceTenant() calls above. Only overrides.create()/
+    // revoke() did (and neither of those is findMany).
+    expect(prisma.tenantFeatureOverride.findMany).not.toHaveBeenCalled();
   });
 
   it("same invariant for a GRANDFATHER-kind override", async () => {
@@ -436,7 +442,7 @@ describe("MrrService — feature-override MRR exclusion oracle (brief B)", () =>
   });
 
   it("computeOverview() never queries tenantFeatureOverride at all", async () => {
-    const { mrr, overrides } = makeShared();
+    const { mrr, overrides, prisma } = makeShared();
     await overrides.create({
       tenantId: "t-starter",
       featureKey: "tobacco_dealer",
@@ -448,5 +454,6 @@ describe("MrrService — feature-override MRR exclusion oracle (brief B)", () =>
     });
     const o = await mrr.computeOverview();
     expect(o.mrr).toBe(59); // unaffected by the override created above
+    expect(prisma.tenantFeatureOverride.findMany).not.toHaveBeenCalled();
   });
 });
