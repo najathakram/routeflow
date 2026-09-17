@@ -48,7 +48,7 @@ export default function ProductPage() {
           platform, with a retailer portal, AI-assisted purchase-invoice scanning for inventory and
           costing, and dedicated tools for regulated goods.
         </p>
-        <Link href="/contact" className="button">
+        <Link href="/book-a-demo" className="button">
           Book a workflow demo <ArrowUpRight size={18} />
         </Link>
       </section>

@@ -50,7 +50,7 @@ export default function Home() {
             with RouteFlow.
           </p>
           <div className="hero-actions">
-            <Link className="button" href="/contact">
+            <Link className="button" href="/book-a-demo">
               Book a workflow demo <ArrowUpRight size={18} />
             </Link>
             <Link className="text-link" href="#how-it-works">
