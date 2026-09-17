@@ -4905,6 +4905,47 @@ describe("OrdersService", () => {
       );
     });
 
+    it("(b466-3b) Opus MERGE-verdict fix: a documented override rounds to cents (8.004 -> 8.00)", async () => {
+      // Non-special (tier 1, no customer/CustomerPrice mock) so the override is
+      // unambiguously honored — 8.004 is well outside the 0.005 unchanged-from-
+      // tier tolerance here (baseline = list = 10), isolating the roundMoney fix.
+      prisma.order.findUnique.mockResolvedValue(orderWithItems);
+      prisma.product.findUniqueOrThrow.mockResolvedValue({
+        id: "prod-tob",
+        name: "Tiered Sub",
+        pricePerUnit: 10,
+        unitsPerBox: null,
+      });
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 8, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [
+            {
+              id: "li-A",
+              substituteProductId: "prod-tob",
+              qty: 1,
+              unitPrice: 8.004,
+              overrideReason: "matched approval",
+            },
+          ],
+          replaceAll: false,
+        },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            unitPrice: 8,
+            priceType: "DISCOUNTED",
+            originalPrice: 10,
+          }),
+        }),
+      );
+    });
+
     it("(b466-4) revert-probe: a substitute to a SPECIAL-tier product with no unitPrice at all bills the tier price, SPECIAL", async () => {
       // Pre-fix `let unitPrice = listPrice` unconditionally — a substitution
       // with no price at all always billed list (10/STANDARD/null) regardless
