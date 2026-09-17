@@ -215,6 +215,9 @@ export class AuthService {
                    <p><strong>IP address:</strong> ${deviceInfo.ipAddress ?? "unknown"}</p>
                    <p><strong>Time:</strong> ${loginTime}</p>
                    <p>If this wasn't you, please contact support immediately and change your password.</p>`,
+            // email-connect-google PR-3: a security notification must never leave from a
+            // tenant's own connected mailbox/SMTP — platform sender only.
+            senderClass: "platform",
           })
           .catch(() => {});
       }
@@ -520,6 +523,8 @@ export class AuthService {
 <p>We received a request to reset the password for your RouteFlow account.</p>
 <p><a href="${resetUrl}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">Reset password</a></p>
 <p>This link expires in <strong>15 minutes</strong>. If you didn't request this, you can safely ignore this email — your password will not change.</p>`,
+        // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
+        senderClass: "platform",
       })
       .then((sendResult) => {
         if (!sendResult.delivered) {
@@ -638,6 +643,8 @@ export class AuthService {
                  <p><strong>Time:</strong> ${new Date().toUTCString()}</p>
                  <p><strong>IP address:</strong> ${deviceInfo?.ipAddress ?? "unknown"}</p>
                  <p>You can now sign in with your username and this password as well as with Google. If this wasn't you, reset your password immediately and contact support.</p>`,
+          // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
+          senderClass: "platform",
         })
         .catch(() => {});
     }

@@ -115,6 +115,8 @@ export class BuyerAuthService {
 <p><a href="${verifyUrl}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">Verify my email</a></p>
 <p>This link expires in <strong>24 hours</strong>.</p>
 <p><strong>Didn't create this account?</strong> Ignore this email and do not click the button — the account will simply stay unverified.</p>`,
+      // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
+      senderClass: "platform",
     });
   }
 
@@ -462,6 +464,8 @@ export class BuyerAuthService {
                <p><strong>Time:</strong> ${new Date().toUTCString()}</p>
                <p><strong>IP address:</strong> ${deviceInfo?.ipAddress ?? "unknown"}</p>
                <p>You can now sign in with your email and this password as well as with Google. If this wasn't you, reset your password immediately and contact support.</p>`,
+        // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
+        senderClass: "platform",
       })
       .catch(() => {});
 
@@ -521,6 +525,8 @@ export class BuyerAuthService {
 <p>We received a request to reset the password for your RouteFlow portal account.</p>
 <p><a href="${resetUrl}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">Reset password</a></p>
 <p>This link expires in <strong>15 minutes</strong>. If you didn't request this, you can safely ignore this email — your password will not change.</p>`,
+        // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
+        senderClass: "platform",
       })
       .then((sendResult) => {
         if (!sendResult.delivered) {

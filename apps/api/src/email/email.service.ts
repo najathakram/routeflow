@@ -4,6 +4,7 @@ import { Resend } from "resend";
 import * as nodemailer from "nodemailer";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../common/encryption.service";
+import { MailboxSendService } from "./mailbox/mailbox-send.service";
 // F03/R9: ONE original-price display decision shared with the PDF, so the two
 // customer-facing documents of the same send can never disagree (a pure helper —
 // no Nest/module coupling, and unlike ./invoice-pdf-template it is not mocked
@@ -230,6 +231,7 @@ export class EmailService {
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
     private readonly encryption: EncryptionService,
+    private readonly mailboxSend: MailboxSendService,
   ) {
     const apiKey = this.config.get<string>("RESEND_API_KEY");
 
@@ -966,9 +968,17 @@ export class EmailService {
      *  EXISTING caller is unaffected — a transport that doesn't get one just sends
      *  HTML-only, same as before this field existed. */
     text?: string;
+    /**
+     * email-connect-google PR-3: `"platform"` skips BOTH the connected-mailbox branch below
+     * AND the tenant-SMTP branch — security/platform mail (invites, password reset/set,
+     * verification, new-device) must never leave from a tenant's own mailbox or SMTP server.
+     * Every EXISTING caller omits this (defaults to tenant-eligible), so no prior behavior
+     * changes except for the specific call sites migrated to `"platform"` in this PR.
+     */
+    senderClass?: "tenant" | "platform";
   }): Promise<{
     delivered: boolean;
-    transport: "smtp" | "resend" | "none";
+    transport: "mailbox" | "smtp" | "resend" | "none";
     id?: string;
     error?: string;
     /**
@@ -985,13 +995,46 @@ export class EmailService {
      */
     fromAddress?: string;
   }> {
+    const isPlatformSend = params.senderClass === "platform";
+
     // Reply-To = the business's own email so customer replies reach the tenant, not the
-    // (platform) sending address. Applies to both transports.
+    // (platform) sending address. Applies to every transport, including the mailbox.
     const replyTo = params.replyTo ?? (await this.getReplyTo());
+
+    // 0. Leading branch (PR-3, no parallel path — every other branch is unchanged): a
+    // CONNECTED (or THROTTLED-but-past-its-window) tenant Google mailbox sends first, never
+    // for a platform-class send. `MailboxSendService.trySend` never throws and returns
+    // delivered:false for "not applicable" (no connection, REVOKED, still THROTTLED, a
+    // refresh failure, or a Gmail API error) — every one of those falls through to the
+    // existing tenant-SMTP → platform-SMTP → Resend chain below, unchanged.
+    const tenantId = this.prisma.getTenantId();
+    if (!isPlatformSend && tenantId) {
+      const businessName = this.sanitizeDisplayName(await this.getTenantBusinessName());
+      const mailboxResult = await this.mailboxSend.trySend(tenantId, {
+        to: params.to,
+        subject: params.subject,
+        html: params.html,
+        text: params.text,
+        replyTo,
+        fromName: businessName || undefined,
+      });
+      if (mailboxResult.delivered) {
+        return {
+          delivered: true,
+          transport: "mailbox",
+          id: mailboxResult.id,
+          fromAddress: mailboxResult.fromAddress,
+        };
+      }
+    }
 
     // 1. Try per-tenant SMTP if configured. A config/SSRF error or send failure is
     // caught (not thrown) so we can fall back to Resend and stay honest-by-result.
-    const emailCfg = await this.getTenantEmailConfig();
+    // Skipped entirely for a platform-class send (ruling: security mail never uses tenant
+    // SMTP either) — `getTenantEmailConfig` reads `prisma.getTenantId()` internally, so an
+    // in-request platform send (e.g. an admin's own upgrade() triggering a notification)
+    // would otherwise still pick up THEIR tenant's own SMTP.
+    const emailCfg = isPlatformSend ? null : await this.getTenantEmailConfig();
     let smtpError: string | undefined;
     let smtpFallbackReason: string | undefined;
     if (emailCfg) {
@@ -1432,7 +1475,11 @@ export class EmailService {
     to: string; // secondary account's email
     primaryEmail: string; // the primary account requesting the merge
     verifyUrl: string; // one-click verification link
-  }): Promise<{ delivered: boolean; transport: "smtp" | "resend" | "none"; error?: string }> {
+  }): Promise<{
+    delivered: boolean;
+    transport: "mailbox" | "smtp" | "resend" | "none";
+    error?: string;
+  }> {
     const html = `<!DOCTYPE html>
 <html><body style="margin:0;padding:0;background:#f9fafb;font-family:Arial,sans-serif;">
 <table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:32px 16px;">
@@ -1546,7 +1593,11 @@ export class EmailService {
     to: string;
     businessName: string;
     items: { name: string; sku: string | null; currentStock: number; reorderPoint: number }[];
-  }): Promise<{ delivered: boolean; transport: "smtp" | "resend" | "none"; error?: string }> {
+  }): Promise<{
+    delivered: boolean;
+    transport: "mailbox" | "smtp" | "resend" | "none";
+    error?: string;
+  }> {
     const html = this.buildLowStockDigestEmail(params);
     const count = params.items.length;
     return this.send({

@@ -254,6 +254,32 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
     defaultGranted: false,
   },
   {
+    key: "email.connected_mailbox",
+    kind: "boolean",
+    area: "integrations",
+    label: "Connected email mailbox",
+    description: "Send tenant-branded mail through a connected Google mailbox (Gmail API).",
+    gate: {
+      via: "RequireAddon",
+      state: "dark",
+      added: "2026-09-17",
+      routes: [
+        "GET /settings/email/mailbox/google/start",
+        "GET /settings/email/mailbox/google/callback",
+        "DELETE /settings/email/mailbox",
+      ],
+      grantPath:
+        'Platform Admin → Tenants → [tenant] → add-ons (AddonService.enableAddon writes addonKey "email.connected_mailbox")',
+      backfill:
+        "New feature 2026-09-17: no tenant has a connection; gate stays dark through the pilot " +
+        "(owner review window for Google gmail.send verification — see local-assets/handoff/" +
+        "2026-09-17/email-connect/design.md §5).",
+      reviewBy: "2027-03-17",
+    },
+    billing: { skus: [], selfService: false },
+    defaultGranted: false,
+  },
+  {
     key: "developer_mode",
     kind: "boolean",
     area: "platform",
