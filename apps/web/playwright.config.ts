@@ -717,5 +717,20 @@ export default defineConfig({
         ...devices["Desktop Chrome"],
       },
     },
+
+    // Vendor-bill web line entry allows negative cost (B469, spec 49) — mirrors
+    // "order-edit-pricing" (24)'s shape exactly (same setup dependency, same
+    // storageState). NOT in LOCAL-LANE.md's allow-list yet; UI proof (screenshots)
+    // is pending a compose-slot run. WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see
+    // 08-create-order-escape's header for the precedent.
+    {
+      name: "vendor-bill-negative-cost",
+      testMatch: /49-vendor-bill-negative-cost\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
   ],
 });
