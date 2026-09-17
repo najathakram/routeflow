@@ -114,6 +114,15 @@ const POST_DELIVERY_EDIT_STATUSES: string[] = [
   OrderStatus.DELIVERED,
 ];
 
+/** B465: a tier different from 1 (list/STANDARD) is this customer's documented
+ * contract price for the product — shared by every call site that must decide
+ * whether a line is a SPECIAL-tier line, never re-derived ad hoc. A module-level
+ * pure function (not a class method) so it works when called detached from an
+ * OrdersService instance — e.g. `(OrdersService.prototype as any).resolveBuyerLinePrice(...)`
+ * in order-templates.service.spec.ts, where `this` inside resolveBuyerLinePrice
+ * is undefined and `this.isSpecialTier(...)` would throw (#815 verify finding). */
+export const isSpecialTier = (tierForProduct: number): boolean => tierForProduct !== 1;
+
 @Injectable()
 export class OrdersService implements OnApplicationBootstrap {
   private readonly logger = new Logger(OrdersService.name);
@@ -176,13 +185,6 @@ export class OrdersService implements OnApplicationBootstrap {
    * Shared with OrderTemplatesService (REG-B48): a standing order is priced as
    * the customer's own buyer checkout, whoever triggers it.
    */
-  /** B465: a tier different from 1 (list/STANDARD) is this customer's documented
-   * contract price for the product — shared by every call site that must decide
-   * whether a line is a SPECIAL-tier line, never re-derived ad hoc. */
-  private isSpecialTier(tierForProduct: number): boolean {
-    return tierForProduct !== 1;
-  }
-
   resolveBuyerLinePrice(
     product: { id: string; category: string | null; pricePerUnit: unknown },
     tierForProduct: number,
@@ -246,7 +248,7 @@ export class OrdersService implements OnApplicationBootstrap {
         freeUnits: promo.freeUnits,
       };
     }
-    if (this.isSpecialTier(tierForProduct)) {
+    if (isSpecialTier(tierForProduct)) {
       return {
         unitPrice: base,
         originalPrice: listPrice,
@@ -4093,7 +4095,7 @@ export class OrdersService implements OnApplicationBootstrap {
               const replaceAllTierForProduct = isStaffEdit
                 ? (operatorCpMap.get(item.productId) ?? operatorDefaultTier)
                 : 1;
-              const replaceAllIsSpecialTier = this.isSpecialTier(replaceAllTierForProduct);
+              const replaceAllIsSpecialTier = isSpecialTier(replaceAllTierForProduct);
               const replaceAllHasOverrideReason = !!(
                 (item.overrideReason && item.overrideReason.trim()) ||
                 (replaceAllExisting?.overrideReason && replaceAllExisting.overrideReason.trim())
@@ -4365,9 +4367,9 @@ export class OrdersService implements OnApplicationBootstrap {
                 // on a SPECIAL line is REFUSED outright, before any mutation — never
                 // silently dropped/ignored, which would 200 the request while quietly
                 // keeping the tier price with no record the caller even tried to change it.
-                const isSpecialTier = this.isSpecialTier(tierForProduct);
+                const lineIsSpecialTier = isSpecialTier(tierForProduct);
                 const hasOverrideReason = !!(item.overrideReason && item.overrideReason.trim());
-                if (overridePrice !== null && isSpecialTier && !hasOverrideReason) {
+                if (overridePrice !== null && lineIsSpecialTier && !hasOverrideReason) {
                   throw new BadRequestException(
                     `A reason is required to change ${product.name ?? "this"} — it's this customer's special price`,
                   );
@@ -4727,7 +4729,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 // scoped to an ACTUAL price change — a carried-over/echoed price equal
                 // to what is already stored is not a repricing decision and must never
                 // demand a reason, matching the replace-all branch's same guard.
-                const isSpecialTier = this.isSpecialTier(tierForProduct);
+                const lineIsSpecialTier = isSpecialTier(tierForProduct);
                 const priceUnchangedFromStored =
                   overridePrice !== null && Math.abs(overridePrice - existingUnitPrice) <= 0.005;
                 const storedOverrideReason = (li as any).overrideReason ?? null;
@@ -4738,7 +4740,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 if (
                   overridePrice !== null &&
                   !priceUnchangedFromStored &&
-                  isSpecialTier &&
+                  lineIsSpecialTier &&
                   !hasOverrideReason
                 ) {
                   const priceProduct = li.productId
