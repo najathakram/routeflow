@@ -127,10 +127,15 @@ export class MailboxController {
     @Res() res: Response,
   ) {
     if (error) {
-      this.logger.warn(`Mailbox Microsoft callback denied: ${error} — ${errorDescription ?? ""}`);
-      const flag = /AADSTS65001/.test(errorDescription ?? "")
-        ? "mailbox_admin_consent_required"
-        : "mailbox_error";
+      // `error_description` is Microsoft/attacker-controlled free text — potentially carrying
+      // the org/tenant name or other identifying detail — so only the bare AADSTS code (if any)
+      // is logged, never the raw description (Opus review, LOW).
+      const aadstsCode = (errorDescription ?? "").match(/AADSTS\d+/)?.[0];
+      this.logger.warn(
+        `Mailbox Microsoft callback denied: ${error}${aadstsCode ? ` (${aadstsCode})` : ""}`,
+      );
+      const flag =
+        aadstsCode === "AADSTS65001" ? "mailbox_admin_consent_required" : "mailbox_error";
       return res.redirect(`${this.webUrl}/settings?tab=email&${flag}=1`);
     }
     try {

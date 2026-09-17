@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
 import { Card, Button, Badge, useToast } from "@routeflow/ui/web";
 import { Mail, Trash2, AlertTriangle } from "lucide-react";
+import type { MailboxProvider } from "@routeflow/types";
 import { useHasAddon } from "@/lib/api/tobacco";
 
 /** email.connected_mailbox — registered `dark` in addon-gate-registry.ts (feature-registry.ts). */
@@ -15,7 +16,7 @@ type MailboxStatus = {
   googleConfigured: boolean;
   microsoftConfigured: boolean;
   connected: boolean;
-  provider?: "GOOGLE" | "MICROSOFT";
+  provider?: MailboxProvider;
   accountEmail?: string;
   status?: "CONNECTED" | "REVOKED" | "THROTTLED";
   throttledUntil?: string | null;
@@ -62,7 +63,7 @@ export function MailboxCard() {
 
   // Which provider was connected before a disconnect — the DELETE response doesn't echo it
   // back, and by onSuccess time the query cache has already been overwritten.
-  const disconnectingProviderRef = React.useRef<"GOOGLE" | "MICROSOFT" | undefined>(undefined);
+  const disconnectingProviderRef = React.useRef<MailboxProvider | undefined>(undefined);
 
   const disconnect = useMutation({
     mutationFn: () => {
@@ -107,7 +108,7 @@ export function MailboxCard() {
   });
 
   const connect = useMutation({
-    mutationFn: (provider: "GOOGLE" | "MICROSOFT") =>
+    mutationFn: (provider: MailboxProvider) =>
       apiClient
         .get(
           provider === "MICROSOFT"

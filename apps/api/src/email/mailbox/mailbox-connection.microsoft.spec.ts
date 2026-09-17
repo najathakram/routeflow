@@ -3,8 +3,17 @@ import { ConfigService } from "@nestjs/config";
 import axios from "axios";
 import { MailboxConnectionService } from "./mailbox-connection.service";
 import { EncryptionService } from "../../common/encryption.service";
+import { withAdvisoryLock } from "../../common/db-locks";
 
 jest.mock("axios");
+
+// Pass-through mock — see mailbox-connection.service.spec.ts's identical header for why.
+jest.mock("../../common/db-locks", () => ({
+  withAdvisoryLock: jest.fn(async (_opts: unknown, fn: () => Promise<unknown>) => ({
+    acquired: true,
+    value: await fn(),
+  })),
+}));
 
 const MS_TOKEN_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/token";
 const MS_GRAPH_ME_URL = "https://graph.microsoft.com/v1.0/me";
@@ -463,6 +472,51 @@ describe("MailboxConnectionService — Microsoft", () => {
     });
     expect(audit.log).toHaveBeenCalledWith(
       expect.objectContaining({ action: "mailbox.disconnected", tenantId: "tenant-a" }),
+    );
+  });
+
+  // ── cross-provider state rejection (Opus review, LOW) ──────────────────────
+
+  it("a state minted for GOOGLE is rejected at the Microsoft callback with 400 — never exchanged", async () => {
+    const { service, mockRedis } = buildService();
+    // Forge a GOOGLE-provider nonce directly under the same key handleMicrosoftCallback reads —
+    // simulates a state that started via /google/start being replayed at /microsoft/callback.
+    await mockRedis.set(
+      "mailbox:oauth:cross-provider-nonce",
+      JSON.stringify({ tenantId: "tenant-a", userId: "user-1", provider: "GOOGLE", verifier: "v" }),
+      "EX",
+      600,
+    );
+
+    await expect(service.handleMicrosoftCallback("code-1", "cross-provider-nonce")).rejects.toThrow(
+      BadRequestException,
+    );
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+
+  // ── rotation race (Opus review, LOW) ────────────────────────────────────────
+
+  it("confirmConnect for a MICROSOFT grant also serializes through the shared 'mailbox' advisory lock", async () => {
+    const prisma = {
+      mailboxConnection: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        upsert: jest
+          .fn()
+          .mockResolvedValue({
+            id: "mc-1",
+            accountEmail: "owner@acme.test",
+            provider: "MICROSOFT",
+          }),
+      },
+    };
+    const { service } = buildService({ prisma });
+
+    const confirmToken = await connectThroughMicrosoftCallback(service, "tenant-a", "user-1");
+    await service.confirmConnect(confirmToken, "user-1", "tenant-a");
+
+    expect(withAdvisoryLock).toHaveBeenCalledWith(
+      expect.objectContaining({ family: "mailbox", key: "tenant-a" }),
+      expect.any(Function),
     );
   });
 });

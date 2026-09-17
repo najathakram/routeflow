@@ -280,7 +280,7 @@ describe("MailboxSendService — Microsoft/Graph", () => {
     );
   });
 
-  it("403 from Graph also sets REVOKED and falls through", async () => {
+  it("a 403 with NO error code falls through without revoking (superseded by the refined 403 handling below — only a token-type CODE revokes)", async () => {
     const encryption = realEncryption();
     const prisma = {
       mailboxConnection: {
@@ -304,7 +304,11 @@ describe("MailboxSendService — Microsoft/Graph", () => {
       html: "<p>h</p>",
     });
 
-    expect(res).toEqual({ delivered: false, transport: "mailbox", error: "revoked" });
+    expect(res).toEqual({ delivered: false, transport: "mailbox", error: "graph_send_forbidden" });
+    const statusWrites = (prisma.mailboxConnection.update as jest.Mock).mock.calls
+      .map((c) => c[0].data.status)
+      .filter((s) => s !== undefined);
+    expect(statusWrites).not.toContain("REVOKED");
   });
 
   // ── refresh rotates the refresh token (Microsoft-only behavior) ───────────
@@ -403,5 +407,152 @@ describe("MailboxSendService — Microsoft/Graph", () => {
     await expect(
       service.trySend("tenant-a", { to: "x@y.com", subject: "s", html: "<p>h</p>" }),
     ).resolves.toMatchObject({ delivered: false, transport: "mailbox" });
+  });
+
+  // ── refined 403 handling (Opus review, LOW) ─────────────────────────────────
+
+  it("a 403 with an auth/token error code (e.g. InvalidAuthenticationToken) sets REVOKED", async () => {
+    const encryption = realEncryption();
+    const prisma = {
+      mailboxConnection: {
+        findUnique: jest.fn().mockResolvedValue(connectedRow({}, encryption)),
+        update: jest.fn().mockResolvedValue({}),
+      },
+    };
+    (axios.post as jest.Mock).mockImplementation((url: string) => {
+      if (url === MS_GRAPH_SEND_MAIL_URL) {
+        const err: any = new Error("forbidden");
+        err.response = {
+          status: 403,
+          data: { error: { code: "InvalidAuthenticationToken", message: "token expired" } },
+        };
+        return Promise.reject(err);
+      }
+      throw new Error(`unexpected POST to ${url}`);
+    });
+    const { service } = buildService({ prisma });
+
+    const res = await service.trySend("tenant-a", {
+      to: "x@y.com",
+      subject: "s",
+      html: "<p>h</p>",
+    });
+
+    expect(res).toEqual({ delivered: false, transport: "mailbox", error: "revoked" });
+    expect(prisma.mailboxConnection.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "REVOKED" }) }),
+    );
+  });
+
+  it("a 403 with a mailbox-configuration error code (ErrorSendAsDenied) records lastError and falls through WITHOUT revoking", async () => {
+    const encryption = realEncryption();
+    const prisma = {
+      mailboxConnection: {
+        findUnique: jest.fn().mockResolvedValue(connectedRow({}, encryption)),
+        update: jest.fn().mockResolvedValue({}),
+      },
+    };
+    (axios.post as jest.Mock).mockImplementation((url: string) => {
+      if (url === MS_GRAPH_SEND_MAIL_URL) {
+        const err: any = new Error("forbidden");
+        err.response = {
+          status: 403,
+          data: {
+            error: { code: "ErrorSendAsDenied", message: "Client does not have permissions" },
+          },
+        };
+        return Promise.reject(err);
+      }
+      throw new Error(`unexpected POST to ${url}`);
+    });
+    const { service } = buildService({ prisma });
+
+    const res = await service.trySend("tenant-a", {
+      to: "x@y.com",
+      subject: "s",
+      html: "<p>h</p>",
+    });
+
+    expect(res).toEqual({ delivered: false, transport: "mailbox", error: "ErrorSendAsDenied" });
+    expect(prisma.mailboxConnection.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ lastError: expect.stringContaining("ErrorSendAsDenied") }),
+      }),
+    );
+    // Never flipped to REVOKED — reconnecting would not fix a mailbox-configuration error.
+    const statusWrites = (prisma.mailboxConnection.update as jest.Mock).mock.calls
+      .map((c) => c[0].data.status)
+      .filter((s) => s !== undefined);
+    expect(statusWrites).not.toContain("REVOKED");
+  });
+
+  it("a 403 with 'no Exchange mailbox' (MailboxNotEnabledForRESTAPI) also falls through WITHOUT revoking", async () => {
+    const encryption = realEncryption();
+    const prisma = {
+      mailboxConnection: {
+        findUnique: jest.fn().mockResolvedValue(connectedRow({}, encryption)),
+        update: jest.fn().mockResolvedValue({}),
+      },
+    };
+    (axios.post as jest.Mock).mockImplementation((url: string) => {
+      if (url === MS_GRAPH_SEND_MAIL_URL) {
+        const err: any = new Error("forbidden");
+        err.response = {
+          status: 403,
+          data: { error: { code: "MailboxNotEnabledForRESTAPI", message: "no mailbox" } },
+        };
+        return Promise.reject(err);
+      }
+      throw new Error(`unexpected POST to ${url}`);
+    });
+    const { service } = buildService({ prisma });
+
+    const res = await service.trySend("tenant-a", {
+      to: "x@y.com",
+      subject: "s",
+      html: "<p>h</p>",
+    });
+
+    expect(res).toEqual({
+      delivered: false,
+      transport: "mailbox",
+      error: "MailboxNotEnabledForRESTAPI",
+    });
+    const statusWrites = (prisma.mailboxConnection.update as jest.Mock).mock.calls
+      .map((c) => c[0].data.status)
+      .filter((s) => s !== undefined);
+    expect(statusWrites).not.toContain("REVOKED");
+  });
+
+  // ── 4 MB Graph sendMail cap (Opus review, LOW) ──────────────────────────────
+
+  it("a MIME message over Graph's 4 MB cap is never sent — falls through without calling Graph or touching status", async () => {
+    const encryption = realEncryption();
+    const prisma = {
+      mailboxConnection: {
+        findUnique: jest.fn().mockResolvedValue(connectedRow({}, encryption)),
+        update: jest.fn().mockResolvedValue({}),
+      },
+    };
+    const { service } = buildService({ prisma });
+
+    // A ~4.5 MB html body forces the composed MIME buffer past the 4 MB cap.
+    const hugeHtml = `<p>${"a".repeat(4.5 * 1024 * 1024)}</p>`;
+    const res = await service.trySend("tenant-a", {
+      to: "x@y.com",
+      subject: "s",
+      html: hugeHtml,
+    });
+
+    expect(res).toEqual({ delivered: false, transport: "mailbox", error: "message_too_large" });
+    expect(axios.post).not.toHaveBeenCalledWith(
+      MS_GRAPH_SEND_MAIL_URL,
+      expect.anything(),
+      expect.anything(),
+    );
+    const statusWrites = (prisma.mailboxConnection.update as jest.Mock).mock.calls
+      .map((c) => c[0].data.status)
+      .filter((s) => s !== undefined);
+    expect(statusWrites).toHaveLength(0);
   });
 });
