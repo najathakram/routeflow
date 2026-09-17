@@ -1,9 +1,9 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import axios from "axios";
-// nodemailer's MIME composer is a submodule, not part of the top-level export surface.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const MailComposer = require("nodemailer/lib/mail-composer");
+// nodemailer's MIME composer is a submodule, not part of the top-level export surface --
+// esModuleInterop (tsconfig.json) makes a default import work against its `export =`.
+import MailComposer from "nodemailer/lib/mail-composer";
 import { PrismaService } from "../../prisma/prisma.service";
 import { EncryptionService } from "../../common/encryption.service";
 import { withAdvisoryLock } from "../../common/db-locks";

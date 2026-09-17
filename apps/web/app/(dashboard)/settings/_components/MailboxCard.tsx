@@ -164,9 +164,9 @@ export function MailboxCard() {
       {!data.connected && (
         <>
           <p className="text-sm text-navy/70">
-            Send customer emails directly from your own Gmail account instead of RouteFlow's relay —
-            replies and bounces land in your own inbox. Falls back automatically to your SMTP setup
-            above (or RouteFlow's) if the connection ever needs attention.
+            Send customer emails directly from your own Gmail account instead of RouteFlow&apos;s
+            relay — replies and bounces land in your own inbox. Falls back automatically to your
+            SMTP setup above (or RouteFlow&apos;s) if the connection ever needs attention.
           </p>
           <div>
             <Button onClick={() => connect.mutate()} disabled={connect.isPending}>
@@ -188,7 +188,7 @@ export function MailboxCard() {
               <span>
                 Rate-limited by Google
                 {data.throttledUntil ? ` until ${formatDate(data.throttledUntil)}` : ""} — falling
-                back to your SMTP setup (or RouteFlow's) until then.
+                back to your SMTP setup (or RouteFlow&apos;s) until then.
               </span>
             </div>
           )}
@@ -198,7 +198,7 @@ export function MailboxCard() {
               <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
               <span>
                 Google revoked access to this mailbox — reconnect below. Mail is falling back to
-                your SMTP setup (or RouteFlow's) until then.
+                your SMTP setup (or RouteFlow&apos;s) until then.
               </span>
             </div>
           )}
@@ -208,8 +208,8 @@ export function MailboxCard() {
           )}
 
           <p className="text-xs text-navy/50">
-            Bounces and replies arrive in your own Gmail inbox — RouteFlow can't read them (only
-            `gmail.send` is granted, never a read scope).
+            Bounces and replies arrive in your own Gmail inbox — RouteFlow can&apos;t read them
+            (only `gmail.send` is granted, never a read scope).
           </p>
 
           <div className="flex flex-wrap gap-2">
