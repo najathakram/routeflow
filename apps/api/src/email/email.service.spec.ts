@@ -1111,6 +1111,109 @@ describe("EmailService.sendInvoice — BOGO/promo item display (T-B103, R9, REG-
   });
 });
 
+// ─── N2: account + invite email templates ──────────────────────────────────────
+
+describe("EmailService — N2 account/invite templates", () => {
+  it("sendSetPasswordEmail: subject, link, and expiry hours all land in the html", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "sendPlatform")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendSetPasswordEmail({
+      to: "acme_owner@example.com",
+      username: "acme_owner",
+      setPasswordUrl: "https://app.routeflow.info/reset-password?token=abc123",
+      expiryHours: 72,
+    });
+
+    expect(sendSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "acme_owner@example.com",
+        subject: "Set your RouteFlow password",
+      }),
+    );
+    const html = sendSpy.mock.calls[0][0].html;
+    expect(html).toContain('href="https://app.routeflow.info/reset-password?token=abc123"');
+    expect(html).toContain("expires in 72 hours");
+  });
+
+  it("sendSetPasswordEmail: escapes a username containing HTML-special characters", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "sendPlatform")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendSetPasswordEmail({
+      to: "a@b.com",
+      username: '<script>alert("x")</script>',
+      setPasswordUrl: "https://app.routeflow.info/reset-password?token=t",
+      expiryHours: 72,
+    });
+
+    const html = sendSpy.mock.calls[0][0].html;
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;script&gt;");
+  });
+
+  it("sendEmailChangedNotice: names the new email to the OLD address", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "sendPlatform")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendEmailChangedNotice({
+      to: "old@example.com",
+      username: "acme_owner",
+      newEmail: "new@example.com",
+    });
+
+    expect(sendSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "old@example.com",
+        subject: "Your RouteFlow login email was changed",
+      }),
+    );
+    expect(sendSpy.mock.calls[0][0].html).toContain("new@example.com");
+  });
+
+  it("sendEmailChangeConfirmation: goes to the NEW address", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "sendPlatform")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendEmailChangeConfirmation({ to: "new@example.com", username: "acme_owner" });
+
+    expect(sendSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "new@example.com",
+        subject: "This is now your RouteFlow login email",
+      }),
+    );
+  });
+
+  it("sendRoleChangedNotice: names old role, new role, and who changed it", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "sendPlatform")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendRoleChangedNotice({
+      to: "acme_owner@example.com",
+      username: "acme_owner",
+      oldRole: "DRIVER",
+      newRole: "OPERATOR",
+      changedBy: "tenant_admin",
+    });
+
+    const html = sendSpy.mock.calls[0][0].html;
+    expect(html).toContain("DRIVER");
+    expect(html).toContain("OPERATOR");
+    expect(html).toContain("tenant_admin");
+  });
+});
+
 /**
  * N3 fix round (Opus review of 1dba2bca, finding 4): `sendPlatform()` must NEVER resolve
  * tenant SMTP or tenant branding, even though `makeService()`'s mocked `prisma.getTenantId()`
@@ -1194,5 +1297,144 @@ describe("EmailService.sendPlatform — platform-only send, never tenant SMTP/br
     });
 
     expect(sendSpy).toHaveBeenCalledWith(expect.objectContaining({ text: "plain text body" }));
+  });
+
+  it("tries platform SMTP before Resend when both are configured (N2's original capability, folded back in during merge)", async () => {
+    const sendMail = jest.fn().mockResolvedValue({ messageId: "plat-smtp-1" });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({
+      resendKey: "re_test",
+      smtpHost: "smtp.google.com",
+      smtpUser: "noreply@routeflow.info",
+      smtpPass: "app-password",
+      smtpPort: "465",
+      smtpSecure: "true",
+    });
+
+    const res = await svc.sendPlatform({ to: "admin@acme.test", subject: "x", html: "<p>x</p>" });
+
+    expect(res).toMatchObject({ delivered: true, transport: "smtp", id: "plat-smtp-1" });
+    expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({ to: "admin@acme.test" }));
+  });
+});
+
+/**
+ * N4 — low-stock digest template. Deliberately built with `getTenantId: () => null` (no
+ * ALS tenant context), matching how `LowStockDigestService`'s cron actually calls this —
+ * that null tenantId is what routes `send()` to the platform sender (EMAIL_FROM) instead
+ * of resolving tenant SMTP, per the N4 ground rule ("platform emails via EMAIL_FROM").
+ */
+describe("EmailService.sendLowStockDigest (N4)", () => {
+  function makePlatformService(): EmailService {
+    const config = {
+      get: (k: string) =>
+        k === "EMAIL_FROM" ? "RouteFlow <invoices@send.routeflow.info>" : undefined,
+    } as any;
+    const prisma = { getTenantId: () => null } as any;
+    const encryption = { decrypt: (v: string) => v } as any;
+    return new EmailService(config, prisma, encryption);
+  }
+
+  const items = [
+    { name: "Acme Widget", sku: "WID-001", currentStock: 3, reorderPoint: 10 },
+    { name: "Acme Gadget", sku: null, currentStock: 0, reorderPoint: 5 },
+  ];
+
+  it("REG-N4: subject names the item count, recipient and body carry the digest's key lines", async () => {
+    const svc = makePlatformService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "resend" } as any);
+
+    await svc.sendLowStockDigest({
+      to: "admin@acme.example",
+      businessName: "Acme Wholesale",
+      items,
+    });
+
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    const call = sendSpy.mock.calls[0][0];
+    expect(call.to).toBe("admin@acme.example");
+    expect(call.subject).toBe("Low stock alert — 2 items below threshold");
+    expect(call.html).toContain("Acme Wholesale");
+    expect(call.html).toContain("Low Stock Alert");
+    expect(call.html).toContain("Acme Widget");
+    expect(call.html).toContain("WID-001");
+    expect(call.html).toContain("Acme Gadget");
+    // no SKU on file renders an em dash, never a blank/undefined cell
+    expect(call.html).toContain("—");
+  });
+
+  it("REG-N4: a single item gets singular subject/body wording", async () => {
+    const svc = makePlatformService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "resend" } as any);
+
+    await svc.sendLowStockDigest({
+      to: "admin@acme.example",
+      businessName: "Acme Wholesale",
+      items: [items[0]],
+    });
+
+    expect(sendSpy.mock.calls[0][0].subject).toBe("Low stock alert — 1 item below threshold");
+    expect(sendSpy.mock.calls[0][0].html).toContain("1 item is below its reorder point");
+  });
+
+  it("REG-N4: a product name containing HTML is escaped, never injected raw", async () => {
+    const svc = makePlatformService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "resend" } as any);
+
+    await svc.sendLowStockDigest({
+      to: "admin@acme.example",
+      businessName: "Acme Wholesale",
+      items: [
+        { name: "<img src=x onerror=alert(1)>", sku: null, currentStock: 1, reorderPoint: 2 },
+      ],
+    });
+
+    const html = sendSpy.mock.calls[0][0].html;
+    expect(html).not.toContain("<img src=x onerror=alert(1)>");
+    expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+  });
+
+  it("REG-N4: never resolves tenant SMTP — routes via the platform sender (no tenant ALS context)", async () => {
+    const svc = makePlatformService();
+    const res = await svc.sendLowStockDigest({
+      to: "admin@acme.example",
+      businessName: "Acme Wholesale",
+      items,
+    });
+    // No RESEND_API_KEY and no tenant SMTP configured (getTenantId → null short-circuits
+    // getTenantEmailConfig) → honest "not delivered, no transport", never a silent mock
+    // success and never an attempt to read tenant-scoped config.
+    expect(res).toMatchObject({ delivered: false, transport: "none" });
+  });
+
+  it("REG-N4: a large item list is capped at 100 rendered rows with an '…and N more' row, but the subject stays truthful about the real total", async () => {
+    const svc = makePlatformService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "resend" } as any);
+    const many = Array.from({ length: 137 }, (_, i) => ({
+      name: `SKU ${i}`,
+      sku: `S-${i}`,
+      currentStock: 1,
+      reorderPoint: 10,
+    }));
+
+    await svc.sendLowStockDigest({
+      to: "admin@acme.example",
+      businessName: "Acme Wholesale",
+      items: many,
+    });
+
+    const call = sendSpy.mock.calls[0][0];
+    expect(call.subject).toBe("Low stock alert — 137 items below threshold");
+    expect(call.html).toContain("SKU 99");
+    expect(call.html).not.toContain("SKU 100");
+    expect(call.html).toContain("…and 37 more items");
   });
 });

@@ -62,6 +62,93 @@ flag OFF ⇒ the engine returns before touching a commission table and every rou
 - **P6-5 transactional trigger wiring (no migration; PAYMENT_REMINDER deferred)** — 5 in-request/cron sites call `MessagingService.notifyEvent` AFTER their business write commits (never inside a `tenantTransaction`, whose mock lacks messaging models): `orders.service.ts` `changeStatus` (CONFIRMED/OUT_FOR_DELIVERY/DELIVERED → `ORDER_CONFIRMED`/`OUT_FOR_DELIVERY`/`DELIVERED`, `senderId: user.sub`); `invoices.service.ts` `send()`+`sendEmail()` (fires `INVOICE_SENT` only on the DRAFT→SENT flip, `senderId: null` — no user param, van-sale calls send userless); `orders/change-requests.service.ts` `create()` (fires `ORDER_CHANGED_AT_DOOR`, `senderId: user.sub`, `summarizeChange()` builds the change text); `routes.service.ts` `completeStop`+`completeWithPayment` (per-order `DELIVERED` after the tx, skips already CANCELLED/DELIVERED, `senderId: user.sub` — driver completion bypasses `changeStatus`); `authorizations/authorization-expiry.service.ts` (fires `LICENSE_EXPIRING` under the existing `expiryNotifiedAt`/`expiringSoonNotifiedBucket` idempotency markers, `senderId: null`, awaited in-loop). All money/date vars are `formatMoney`/`formatDate` over STORED totals (`order.total`/`invoice.total`), never re-derived. `OrdersModule`/`InvoicesModule`/`RoutesModule`/`AuthorizationsModule` each gained a `MessagingModule` import (acyclic: `MessagingModule`→`EntitlementsModule`→nothing). Every affected spec (`orders.service.spec.ts`, `invoices.service.spec.ts`, `change-requests.service.spec.ts`, `routes.service.spec.ts`, `authorization-expiry.service.spec.ts`) provides a `MessagingService` mock (`notify` + `notifyEvent` both `jest.fn().mockResolvedValue(...)`) or DI compile breaks.
 - **P6-1 (F0) messaging thread schema (schema-only foundation, PR #163, no service yet):** `Message` additively gained `threadId String?` + `channel MessageChannel @default(INTERNAL)` (+`thread` relation, index) — run-chat rows stay `channel=INTERNAL`/`threadId=null`, unregressed. New tenant-scoped models: `MessageThread`, `MessageTemplate`, `NotificationRule`, `MessageOptOut`, `MessagingSettings` (per-tenant singleton, `tenantId @unique`; provider creds deferred to P6-3), `InboundTriage`; enums `MessageChannel`/`ThreadStatus`/`WaApprovalStatus`/`TriageStatus`/`NotificationEvent`. `Customer` gained `smsConsent`/`waConsent`/`consentUpdatedAt`. Migration `20260712000000_messaging_threads` (additive; applied to prod). Engine/inbox/settings/providers = later P6 increments.
 - **P6-6 Settings config (`messaging-config.service.ts`, no migration):** `MessagingConfigService` — `EVENT_CHANNELS`/`DEFAULT_TEMPLATES`/`DEFAULT_ON` consts are the single source of truth for the event×channel matrix, shared with P6-5's triggers. `getMatrix()` lazy-seeds every missing `(eventKey,channel)` `NotificationRule`+`MessageTemplate` pair on first `GET /messaging/config` via the shared `seedDefaultsFor(db,rules,templates)` (exported; `notify()` in `messaging.service.ts` also calls it — F23/B182) using `createMany({skipDuplicates:true})` (race-safe — `forTenant()` auto-injects `tenantId`); G12 pairs (`INVOICE_SENT`×WHATSAPP/SMS) are never seeded and render `locked:true` in the matrix (separate from `unavailable` below). `setRuleEnabled(id,enabled)` throws `BadRequestException` on enabling a G12 pair (disable still allowed), 404 on unknown id. **Post-dated check payments PR-1 (2026-09-15):** `NotificationEvent.CHECK_RETURNED` added to `EVENT_CHANNELS` ([INTERNAL]) and `DEFAULT_TEMPLATES` (label "Check returned") purely so the `Record<NotificationEvent,…>` types stay exhaustive, and to `NO_TRIGGER_EVENTS` — no firing site yet; a later PR adds the check-lifecycle→BOUNCED transition and moves it into `DEFAULT_ON` in that same PR (per this set's own header comment). **F23 (`B180`/`B182`/`B183a`, PR #650):** `MatrixCell` gains `unavailable?: "NO_TRANSPORT" | "NO_CONSENT_WRITER" | "NO_TRIGGER"`, computed by the private `unavailabilityReason(eventKey,channel)` — the SAME capability seam `sendMessage()` consults (precedence: `NO_TRIGGER` first for `NO_TRIGGER_EVENTS` [no firing site outside `messaging/`: `URGENT_ORDER_PLACED`/`LOW_STOCK`/`FAILED_DELIVERY`/`PAYMENT_FAILED_NSF` — re-add a key to both this set and `DEFAULT_ON` only in the PR that adds its firing site], then `NO_TRANSPORT` via `provider.transports(channel)` for non-INTERNAL, then `NO_CONSENT_WRITER` via `requiresConsent(channel)` for WA/SMS with no consent writer yet); `setRuleEnabled` also refuses (`BadRequestException`) enabling any `unavailable` cell. `DEFAULT_ON` now seeds only `OUT_FOR_DELIVERY:PORTAL`/`DELIVERED:PORTAL`/`INVOICE_SENT:EMAIL` — the four `NO_TRIGGER_EVENTS` keys were dropped (seeding a key nothing can fire is B180); static guard `default-on-is-wired.spec.ts` (precedent `no-bare-cron.spec.ts`) walks `apps/api/src` for `NotificationEvent.<KEY>` outside `messaging/`/specs and fails if `DEFAULT_ON`'s events have no firing site, with a harness-integrity pin (file-count floor + a known-wired/known-unwired sanity pair) in its own non-red-gate describe. `getSettings()` defaults `quietHoursEnabled` to `false` (was `true`) when no `MessagingSettings` row exists — the UI must not claim a hold the engine never enforces (B160). `updateTemplate(id,dto)` re-parses `{{vars}}` into `variables[]` via new `messaging.helpers.extractVariables` on every body edit. `preview(body,vars)` reuses the existing `renderTemplate`, pure. `getSettings`/`updateSettings` get/upsert the per-tenant `MessagingSettings` (quiet hours). Controller (`messaging.controller.ts`) +6 endpoints: `GET/PATCH /messaging/config,rules/:id,templates/:id`, `POST /messaging/templates/preview`, `GET/PATCH /messaging/settings` — reads `@Roles(OPERATOR)` (class default), writes method-level `@Roles(TENANT_ADMIN)` (overrides class per the settings/margin pattern; `RolesGuard.getAllAndOverride`, TENANT_ADMIN⊃OPERATOR). New DTOs in `messaging/dto/` (`update-rule`, `update-template`, `preview-template`, `update-messaging-settings.dto.ts`); global `ValidationPipe` (main.ts:160) validates, no `@UsePipes`. `messaging-config.service.spec.ts` covers seeding/idempotency/G12-lock/meter-failure-tolerant/toggle/template/preview/settings + F23's `unavailable` matrix (NO_TRANSPORT/NO_CONSENT_WRITER/NO_TRIGGER precedence, `setRuleEnabled` refusal); `messaging.service.spec.ts` gained REG-B182 T7 (seeds on first use), pins otherwise green.
+- **N1 (2026-09-16, `feat/notify-n1-email-channel`) — real EMAIL channel for the messaging
+  engine, fixing the StubProvider NO_TRANSPORT gap for order-status/POD emails (code + tests
+  done; migration + commit still pending a host disk-space outage on the build machine — see
+  below):** new `providers/email-channel.provider.ts` `EmailChannelProvider` (backed by
+  `EmailService`, `transports()` true for EMAIL ONLY — every other channel stays NO_TRANSPORT
+  exactly as `StubProvider` left it, so this is additive, not a regression) — `send()` wraps
+  `EmailService.send()` in try/catch (MessageProvider's own never-throw contract, defense in
+  depth beyond EmailService's documented R5 honesty) and maps `delivered→sent/failed`. New
+  `providers/email-notification-template.ts` `buildNotificationEmailHtml()` — a shared HTML
+  shell visually matching `buildInvoiceEmail`'s chrome (navy header/white card/gray footer)
+  without depending on that private method; escapes the WHOLE already-rendered body (renderTemplate
+  has already substituted `{{vars}}` by the time the provider sees it, so per-value escaping
+  isn't possible — escaping everything is a strict superset). `messaging.module.ts` now imports
+  `EmailModule` and binds `MESSAGE_PROVIDER → EmailChannelProvider` (was `StubProvider`).
+  `message-provider.interface.ts`'s `SendInput` (and `messaging.service.ts`'s
+  `SendMessageInput`) gain an optional `subject`, computed in `notify()` from
+  `DEFAULT_TEMPLATES[eventKey].label` and threaded through `sendMessage()` — ignored by
+  non-EMAIL channels. **`NotificationEvent` gains `CANCELLED`** (order-status event —
+  CONFIRMED/OUT_FOR_DELIVERY/DELIVERED already fired through this engine; CANCELLED only had
+  the older, separate push-notification path in `orders.service.ts`'s `notifMap` — now ALSO
+  wired into `messagingEventMap` there, `vars` needs only the already-present `orderNumber`).
+  **`Customer` gains `orderStatusEmails Boolean @default(true)`** (opt-OUT buyer preference,
+  unlike `smsConsent`/`waConsent` which are opt-IN) — gated in `messaging.service.ts`
+  `sendMessage()`'s step 3b, EMAIL + one of the four order-status events ONLY (never
+  INVOICE_SENT/PAYMENT_REMINDER/LICENSE_EXPIRING, never security mail); exposed for the buyer to
+  self-toggle via `UpdateBuyerProfileDto.orderStatusEmails` → `buyer.controller.ts updateMe()` →
+  `customersService.update()` (also on `UpdateCustomerDto` for staff-side edits) — API/field
+  only, no portal UI toggle yet (a later UI PR per the spec). **`EVENT_CHANNELS[INVOICE_SENT]`
+  drops `EMAIL`** (now `[PORTAL]` only, config-only change) — the messaging engine's own
+  `INVOICE_SENT:EMAIL` template was a second, previously-no-op attempt at the same email
+  `invoices.service.ts` already sends for real via `EmailService.sendInvoice()` (PDF, itemized
+  totals); no call-site change needed, `seedDefaultsFor`'s iteration over `EVENT_CHANNELS` just
+  stops producing that rule/template pair. **`DEFAULT_ON`** gains
+  `ORDER_CONFIRMED/OUT_FOR_DELIVERY/DELIVERED/CANCELLED : EMAIL` (the actual owner-facing point —
+  buyers get real order-status emails by default now that the channel is real) and drops
+  `INVOICE_SENT:EMAIL`; `default-on-is-wired.spec.ts`'s static guard re-confirms every key has a
+  firing site. Tests: new `providers/email-channel.provider.spec.ts` (6, mocks `EmailService`
+  per the "N1 mocks EmailService" review note — its own honesty is `email.service.spec.ts`'s
+  job), new `orderStatusEmails` describe block in `messaging.service.spec.ts` (6, opt-out scoped
+  to exactly the 4 events + EMAIL), 3 pre-existing `messaging-config.service.spec.ts`/
+  `messaging.service.spec.ts` cases updated for the new `INVOICE_SENT`/`ORDER_CONFIRMED` shape,
+  1 pre-existing `orders.service.spec.ts` case flipped from "CANCELLED fires no messaging
+  trigger" to asserting it now does. **Migration** `20260916061500_notify_n1_cancelled_event_and_order_status_email_pref`
+  generated via the no-DB path (host disk-space outage on the build machine ruled out
+  `prisma migrate dev`'s usual live-Postgres diff) — `prisma migrate diff --from-schema <an
+origin/master schema-folder export via git archive> --to-schema apps/api/prisma/schema
+--script`, reviewed by eye: exactly `ALTER TYPE "NotificationEvent" ADD VALUE 'CANCELLED'` +
+  `ALTER TABLE "Customer" ADD COLUMN "orderStatusEmails" BOOLEAN NOT NULL DEFAULT true` — additive
+  only, matches the schema edits exactly. NOT YET applied/proven against a real database (that
+  needs `npm run local:drift` or a real deploy, done later once host disk headroom is confirmed,
+  not by this session). Committed 6b2a7a8f.
+  **Opus review fix round (2026-09-16, same day) — 6 findings, all fixed, no further round:**
+  (1) BLOCKER — `notify()` selected rules by `{eventKey, enabled}` alone, never intersecting
+  `EVENT_CHANNELS`; a tenant with a persisted, still-enabled `INVOICE_SENT:EMAIL` row (seeded
+  before N1 removed EMAIL from that event) would keep firing it forever, and once
+  `EmailChannelProvider` made EMAIL real, would duplicate the PDF invoice email
+  `invoices.service.ts` already sends — invisibly, since the settings matrix no longer even
+  renders that cell to switch off. Fixed: `notify()` now filters `rules` through
+  `EVENT_CHANNELS[eventKey]` before dispatch (red-first test: "ignores a stale persisted rule…").
+  New migration `20260916070000_notify_n1_backfill_notification_rules` disables any such
+  persisted `INVOICE_SENT:EMAIL` rule + deactivates its template for existing tenants.
+  (2) MAJOR — the email template hard-coded "RouteFlow" in buyer-facing mail; `EmailService`'s
+  private `getTenantBusinessName()` is now PUBLIC (N1 callers only, no other change) and
+  `EmailChannelProvider` resolves the tenant's real brand for both the HTML and the new
+  plain-text alternative, escaped like everything else in the template.
+  (3) MAJOR (rollout consistency) — existing tenants had `ORDER_CONFIRMED`/`OUT_FOR_DELIVERY`/
+  `DELIVERED:EMAIL` persisted OFF (from before this PR); `seedDefaultsFor`'s `skipDuplicates`
+  never touches pre-existing rows, while the brand-new `CANCELLED` event seeds ON on first use —
+  left alone, existing tenants would email buyers on cancellation ONLY. The same backfill
+  migration above also flips those three pre-existing cells to enabled=true. PR note: pilot
+  tenants must be told their buyers now receive order-status email (owner default = ON).
+  (4) MINOR tests added: HTML-escaping of a `<`-bearing body, `subject === DEFAULT_TEMPLATES[
+eventKey].label` end-to-end via `notify()`.
+  (5) MINOR — `EmailService.send()` gained an optional `text` (plain-text alternative, both
+  nodemailer and Resend accept it), passed from the provider alongside `html`.
+  `DEFAULT_TEMPLATES[DELIVERED].body` gained `{{deliveredAt}}`, wired at all three firing sites
+  (`orders.service.ts`, `routes.service.ts` ×2) — a driver first name and a POD photo link were
+  scoped OUT of this round: the driver's display name isn't trivially available at the two
+  driver-completion call sites without a new query, and a photo-link clause would render as a
+  dangling label on stops with no photo across every channel this shared body serves (SMS/WA/
+  PORTAL too, not just EMAIL) — a real regression risk for a "no further round" fix, not an
+  oversight.
+  (6) Note (not a fix): `ORDER_CHANGED_AT_DOOR:EMAIL` is now a real transport outside the
+  buyer opt-out set (`orderStatusEmails` only gates the 4 order-status events) — spec-conformant,
+  owner decides later whether to extend the opt-out.
+  See `local-assets/handoff/2026-09-16/NOTIFY-SPEC.md` for the full ruled spec (N2/N3/N4 are
+  separate follow-on PRs, not part of N1).
 - **Post-dated check payments PR-1 (2026-09-15), additive-only:** `NotificationEvent` gains
   `CHECK_RETURNED` (fired on a CHECK bounce by a later PR's transition wiring — no firing site
   exists yet). `EVENT_CHANNELS`/`DEFAULT_TEMPLATES` gained an entry (`[INTERNAL]`) purely for

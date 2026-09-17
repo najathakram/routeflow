@@ -2070,3 +2070,246 @@ archived entry's narrower mechanism.
   never a bare `new PrismaClient()`. A writer resolving a special row by id must re-validate its
   identity/class on every write, not just once.**
 - **Guard:** `bootstrap-house-tenant.db.spec.ts`, `tenant-mirror.service.spec.ts`.
+
+## Archived 2026-09-16 — headroom for L-175–L-180 + next-fix headroom (72's lessons batch)
+
+Landing six new entries (L-175 disk budget, L-176 worktree node_modules, L-177 squash-simulate
+docs, L-178 demo-booking raw error message, L-179 campaign-check freshness ritual, L-180 git
+worktree move npm-junction staleness) would have pushed the register to 57/52 entries. Archived
+five by the fully-guarded/lowest-outside-citations rule, excluding L-072/L-081 (protected):
+L-055, L-129, L-133, L-147, L-148 — each already has a durable guard landed in the codebase
+(a fixed spec, a code assertion, or shipped state), and none turned up a live, currently-correct
+citation outside the register itself (two — L-055, L-129 — turned up STALE citations under their
+number for unrelated content; a prior id-renumbering left `prisma.service.ts` and
+`backfill-check-dates.mjs`/`.spec.ts` pointing at the wrong lesson text — a pre-existing defect,
+flagged separately, not fixed by this archive pass).
+
+### L-055 · 2026-09-03 · tooling · wave D imp-05
+
+- **Symptom:** Jest matched **zero tests** in this worktree with the documented
+  `testMatch: ["<rootDir>/**/*.test.{ts,tsx}"]` — `npx jest --listTests` returned empty.
+- **Root cause:** every worktree here lives under `.claude/worktrees/<name>`, so a
+  rootDir-substituted glob always contains a `\.claude` segment on Windows. `jest-config`'s glob
+  normalizer converts `\` → `/` EXCEPT when the backslash precedes one of `$()+.?^{}` (assumed an
+  escaped glob char), so that one separator survives literally and picomatch then compiles `\.` as
+  an escaped dot — matching nothing.
+- **Lesson:** on Windows, never embed `<rootDir>` in a Jest glob when the path can contain a
+  dot-directory; use a relative `testMatch` scoped by `roots` instead.
+- **Guard:** `apps/web/jest.config.js`'s inline comment on `testMatch`; the web suite count (19
+  spec files) pinned in `.claude/code-map/web.md`.
+
+### L-129 · 2026-09-14 · tooling · #745 react skew guard
+
+- **Symptom:** `no-react-skew-hacks.spec.ts` asserted `apps/web`'s `react`/`react-dom` deps
+  equal the exact string `"^19.2.0"`. #727's routine Dependabot minor/patch bump moved them to
+  `"^19.3.0"` and broke this unrelated guard on master, even though the React-18 pin hack it
+  exists to catch had not returned.
+- **Root cause:** the test was written to confirm one thing — the old React-18 pin never comes
+  back — but asserted a much narrower thing: the exact current semver string. An equality check
+  against a moving value stood in for the invariant that actually mattered.
+- **Lesson:** **A regression test guarding against a stale/incompatible dependency PIN should
+  assert the invariant it actually protects (the major line, or a pattern) — never the exact
+  current version string. Pinning the whole string makes every routine dependency bump
+  (Dependabot, a minor/patch upgrade) fail an unrelated guard, and repeated unrelated red trains
+  people to stop reading CI failures.**
+- **Guard:** both assertions now match `/^\^19\./` instead of `.toBe("^19.2.0")` in
+  `apps/api/src/common/no-react-skew-hacks.spec.ts`.
+
+### L-133 · 2026-09-14 · process · Phase 0 T10 deferred-gap markers
+
+- **Symptom:** the T9-T11 lane's plan pseudocode said `UpdateTenantPlanDto`/`ActivateSubscriptionDto`
+  "already use `@IsEnum(TenantPlan)`... nothing to do" for Task 10. The actual code (written by an
+  earlier lane) instead used `@IsIn(SELECTABLE_TENANT_PLANS)`, which deliberately EXCLUDED
+  GROWTH/SCALE with comments and dedicated specs both saying "not yet selectable — Phase 0 Task 10
+  gap." Following the plan text as written would have left that gap open while marking Task 10 done.
+- **Root cause:** the plan was written against an earlier snapshot of the code; a later lane (T1-T6)
+  had since built a more careful interim state (a real gap, explicitly fenced off with forward
+  references to the exact task that would close it) that the plan's pseudocode never anticipated.
+- **Lesson:** **Before implementing a task from a written plan, grep the touched files for the
+  task's own number/name in comments and spec titles ("Phase 0 Task N gap", "TODO: TaskN").** A
+  prior lane often leaves an explicit, load-bearing marker naming exactly what the next task must
+  close — trust that marker over the plan's stale pseudocode, and treat closing it as in-scope even
+  when the plan text says "nothing to do here."
+- **Guard:** `planKeyFromEnum()` now identity-maps GROWTH/SCALE, `SELECTABLE_TENANT_PLANS` includes
+  them, and both DTO specs flipped from "rejects" to "accepts" (`update-tenant-plan.dto.spec.ts`,
+  `activate-subscription.dto.spec.ts`).
+
+### L-147 · 2026-09-15 · domain · WP4 print-row state
+
+- **Symptom:** invoices-list Print used one `printingId` for every row; printing row A then
+  clicking row B cleared A's spinner, both buttons racing the same flag.
+- **Root cause:** a single scalar stood in for "this row's action is pending" across a list —
+  wrong once two rows can act at once.
+- **Lesson:** **Per-row async state in a list is keyed per row (`Set`/`Map` of ids), never one
+  scalar — a scalar assumes at most one row is ever in flight.**
+- **Guard:** `invoices/page.tsx` tracks `printingIds: Set<string>`; row `disabled={printingIds.has(inv.id)}`.
+
+### L-148 · 2026-09-15 · domain · #756 F1, shared mutation observer
+
+- **Symptom:** an invoices-list row's Print button called ONE shared `useDownloadInvoicePdf()`
+  hook's `.mutate(id, { onSuccess, onError, onSettled })` per row. Printing row A then row B
+  before A settled silently dropped row A's print, its error toast, and left its spinner stuck
+  forever.
+- **Root cause:** TanStack Query v5's `useMutation()` is a single observer per hook instance —
+  concurrent `.mutate()` calls share that state, so per-call callbacks passed to an EARLIER call
+  are overwritten by whichever call fires last, not accumulated.
+- **Lesson:** **A list's per-row action must never share one `useMutation()` hook across
+  concurrent rows via `.mutate(id, { onSuccess, ... })`. Use `mutateAsync(id)` with a LOCAL
+  try/catch/finally at each call site instead — no shared callback state to overwrite.**
+- **Guard:** `invoices/page.tsx` row Print now uses `mutateAsync`
+  (`print-row-concurrency.test.tsx`, two rows resolving out of order). Sibling-sweep grep
+  (unaudited — dozens of hits, most single-instance and safe): `grep -rn '\.mutate([a-zA-Z].*{$'
+apps/web/app --include=*.tsx -A1 | grep -B1 onSuccess` — narrow to `.map()`-rendered LIST rows
+  sharing one hook before assuming any hit is a real instance of this bug.
+
+Second pass, same batch, per the lead: exactly-at-cap (52/52) would have blocked the very next
+fix's lesson entry, so archived 4 more by the same rule (fully-guarded, lowest outside-citations,
+excluding L-072/L-081 and anything cited by CLAUDE.md): L-118, L-120, L-121, L-128 — each has a
+zero or changelog-only outside citation count (checked via repo-wide grep) and a durable
+regression-test guard that stays enforcing regardless of archival.
+
+### L-118 · 2026-09-13 · domain · F38 at-door money (B305)
+
+- **Symptom:** the at-door amount was the pre-tax line sum; three rounds refuted each "obvious"
+  server basis — `Order.total` omits discount, one draft misses a split order's siblings,
+  per-line tax snapshots ignore exemption.
+- **Root cause:** the client mirrored whichever column looked like the answer instead of
+  reproducing what the server bills.
+- **Lesson:** **A client money figure must reproduce the SERVER's billing rule from the inputs
+  the server bills from — its open DRAFT invoices — never a convenient column, and every flag
+  that rule applies must be projected to the client too.**
+- **Guard:** REG-B305 in `run-money.test.ts` + `routes.run-stop-select.spec.ts`.
+
+### L-120 · 2026-09-13 · domain · billing self-serve (TRIAL-1 / RO-1)
+
+- **Symptom:** every trial tenant's "Cancel" 404'd; an expired trial showed the same button, got
+  the same 404, and saw no explanation — a guard-enforced lockout with no UI.
+- **Root cause:** `cancel()` keyed on a `TenantSubscription` row `register()` never writes, while
+  the real lifecycle state lives on `Tenant.status`; the web rendered that status as a raw badge
+  with no branch for the guard's `READ_ONLY` code.
+- **Lesson:** **Key a lifecycle action on the table that owns the state; a sibling row some
+  creation path never writes is optional — a missing-row 404 there hides a legitimate transition.
+  Every status the API can return and every code a guard can emit needs a UI branch, or the
+  lockout is invisible.**
+- **Guard:** TRIAL-1 in `subscription-mutation.service.spec.ts`; RO-1 in
+  `subscription.service.spec.ts` + `billing-page.test.tsx`.
+
+### L-121 · 2026-09-13 · domain · STRIPE-CANCEL-1
+
+- **Symptom:** a tenant on an admin-provisioned Stripe subscription clicked Cancel; Stripe kept
+  invoicing; the cron made it READ_ONLY (−MRR), the next paid invoice lifted it back to ACTIVE
+  (+MRR) — a monthly flap while a cancelled customer was charged.
+- **Root cause:** `cancel()`/`resume()` wrote `cancelAtPeriodEnd` locally and never called Stripe;
+  `onPaymentSucceeded` reinstated ANY non-ACTIVE tenant without reading the local cancellation.
+- **Lesson:** **On a provider-billed tenant, write a scheduled billing transition to the provider
+  FIRST and locally second — a failed provider call changes nothing, a failed local write
+  self-heals off the webhook. Gate the provider call on the state that makes it meaningful (a
+  cancellation actually armed, a tenant actually paying): a fix for over-charging must never be
+  able to START charging. A webhook that promotes status must read the local intent it overrides —
+  an executed cancellation plus a payment is an anomaly to flag, never to resurrect.**
+- **Guard:** STRIPE-CANCEL-1 ×15 in `subscription-mutation.service.spec.ts` + ×4 in
+  `billing.service.spec.ts`. Class of B107.
+
+### L-128 · 2026-09-14 · domain · B408 terminal provider states
+
+- **Symptom:** a cancel path treated ONE provider status as "already done" and every other
+  terminal status as a hard failure, so those tenants got a 503 on every retry with the dead
+  provider pointer never cleared — a permanent lockout, produced by the code written to remove
+  one.
+- **Root cause:** the fix was written against the single status its reproduction produced.
+  `status === "canceled"` was a set-membership test disguised as an equality check; the
+  provider's enum had a second terminal member (`incomplete_expired`) and nothing pointed at it.
+- **Lesson:** **An equality check against one value of an external status enum is usually a SET
+  membership test nobody has written yet. Enumerate the whole class the branch cares about, name
+  it as a constant, and record in the comment which members are deliberately EXCLUDED and why —
+  the exclusions are the part the next reader cannot reconstruct from the code. An unrecognised
+  future member must fail CLOSED: an unknown state is not a safe state.**
+- **Guard:** `STRIPE_TERMINAL_STATUSES` + `REG-B408` ×8 in
+  `subscription-mutation.service.spec.ts` — one case per non-terminal status, plus one pinning
+  that an unrecognised status still surfaces the error. Sibling [[L-127]].
+
+Third pass, same batch: L-182 (self-test wall-clock regression) folded in, keeping headroom at
+the lead's minimum of 3 required one more archive: L-126 (zero outside citations, durable
+`REG-FINDING-1`/`REG-FINDING-4` guard in `platform-admin.service.spec.ts`).
+
+### L-126 · 2026-09-14 · domain · W1 admin plan change
+
+- **Symptom:** an admin plan-change branch cleared `cancelAtPeriodEnd`, revoking a cancellation
+  the TENANT had asked for — no event, no audit line, and the sweep then never churned them, so a
+  cancelled tenant was billed indefinitely. The SAME wave repeated it one row later: the fix for a
+  different row cleared the tenant's armed downgrade on admin reactivation.
+- **Root cause:** both writes were copied from a path where they ARE correct — the first from the
+  tenant's own `downgrade()`, the second from the Stripe webhook's reinstatement — into a path
+  where an operator acts on someone else's subscription. The code was identical; the authority
+  behind it was not.
+- **Lesson:** **Consent does not travel with copied code. Before lifting a write from a
+  self-service or provider-driven path into an admin path, ask who is acting and on whose behalf:
+  a flag the owner of a subscription may clear for themselves is not one an operator may clear for
+  them. Check every WRITER of the field first — where each one is a deliberate choice by the
+  owner, no third party may quietly undo it.**
+- **Guard:** the admin plan change REFUSES in either direction while a cancellation is armed
+  (`cancelAtPeriodEnd` added to the select it was blind to); admin reactivation leaves the
+  downgrade armed and audits it instead. `REG-FINDING-1`/`REG-FINDING-4` in
+  `platform-admin.service.spec.ts`. Sibling [[L-123]].
+
+Fourth pass, same batch: register dropped below the lead's 3-entry headroom minimum (50/52)
+after L-183 landed. Archived one more by the same rule: L-127 (zero outside citations, fully
+closed-out with a 5-case regression guard).
+
+### L-127 · 2026-09-14 · domain · B216 webhook disarm
+
+- **Symptom:** paying an overdue invoice silently cancelled the tenant's OWN scheduled
+  downgrade. They stayed on the plan they had asked to leave, with no event and no audit line —
+  the only trace was a downgrade that never happened.
+- **Root cause:** the disarm existed to stop a schedule that came due DURING a lapse from firing
+  on the first sweep after reactivation. That outcome looks surprising, so it was read as wrong.
+  But only the tenant ever arms those fields, so firing late was their intent arriving late, and
+  the guard destroyed the intent instead of the surprise.
+- **Lesson:** **Before adding a guard that suppresses a surprising outcome, decide whether the
+  outcome is WRONG or merely unexpected. Deferred intent that arrives late is still intent: make
+  it visible — log it, put it on the event, surface it in the UI — rather than cancelling it. A
+  guard that silently deletes a choice only the user could have made is a worse defect than the
+  surprise it was written to prevent.**
+- **Guard:** five `REG-B216` cases in `billing.service.spec.ts` — both reinstatement paths leave
+  the schedule armed and name it on `SUBSCRIPTION_RESUMED`. Sibling [[L-126]].
+
+Fifth pass, same batch: L-184 (deploy, #777 migration/drift gap) folded in. Archived one more to
+keep the register at 3 entries of headroom: L-134 (zero outside citations, a closed-out CI
+testing pattern with its own standing guard and reference spec file).
+
+### L-134 · 2026-09-14 · testing
+
+- **Symptom:** a new `*.db.spec.ts` passed locally but CI's "Replay migrations on a fresh
+  database" job failed its `beforeAll` with "No PUBLISHED PlanVersion … run `local:seed` first",
+  then `afterAll` threw `Cannot read properties of undefined (reading 'id')` and Jest hung on an
+  unclosed pool.
+- **Root cause:** `local:seed` publishes the plan catalog (global reference data `PlanVersion`
+  starts empty of); CI's replay job runs `test:db` on a freshly migrated DB with no seed at all,
+  so a spec assuming seeded reference data is green locally and red in CI.
+- **Lesson:** **A db spec creates every row it reads — including global reference data — in its
+  own `beforeAll` (use an existing row if present, else create a minimal one and remember it),
+  tears down only what it created, guards cleanup on the fixture existing, and always closes the
+  pool in `afterAll` even when `beforeAll` threw.**
+- **Guard:** CI's migration-replay job (fresh DB, no seed) is the standing check;
+  `backfill-subscription-reconciliation.db.spec.ts` is the reference pattern. Derive any fabricated
+  integer key/version from the table (`max(col) + 1`), never `Date.now()` — a timestamp overflowed
+  `PlanVersion.version` (int4) only on CI's fresh DB, the one environment you cannot run locally.
+
+Sixth pass, same batch: L-185 (domain, B440 report-field dual-consumer lesson) folded in. Archived
+one more to keep the register at 3 entries of headroom: L-151 (zero outside citations, closed-out
+tooling gotcha with its own pre-existing standing guard spec).
+
+### L-151 · 2026-09-15 · tooling · #743 fix-round value-importing @routeflow/types crashed api boot
+
+- **Symptom:** two commits value-imported (not `import type`) a constant from `@routeflow/types`.
+  `tsc --noEmit`/`ts-jest` passed clean. `node dist/main.js` (real prod boot) would have crashed:
+  `nest build` doesn't bundle workspace deps, and that package ships raw TS with no build step, so
+  the import emits a `require("@routeflow/types")` into `dist/` that fails to parse.
+- **Root cause:** a guard test for this exact mistake already existed
+  (`no-runtime-workspace-imports.spec.ts`) but never ran against these commits — only the task's own
+  spec files ran, not the full suite, until this session ran it in full for the first time.
+- **Lesson:** **`tsc`/`ts-jest` passing is not proof a workspace-package import is safe at actual
+  runtime boot — only a guard test on the real imports (or an actual boot) proves it.** Run the FULL
+  suite at least once per fix round; a boot-crash guard does nothing if it never runs.
+- **Guard:** `no-runtime-workspace-imports.spec.ts` (pre-existing). Fix: derive the value from
+  `@prisma/client`'s real enum instead, or mirror it locally like the file's own `METER_KEYS`.

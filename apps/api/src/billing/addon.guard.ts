@@ -8,6 +8,7 @@ import {
 import { Reflector } from "@nestjs/core";
 import { AddonService } from "./addon.service";
 import { EntitlementsService } from "./entitlements.service";
+import { FeatureOverrideService } from "./feature-override.service";
 import { REQUIRE_ADDON_KEY } from "./require-addon.decorator";
 import { addonGateState } from "./addon-gate-registry";
 
@@ -42,6 +43,7 @@ export class AddonGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly addonService: AddonService,
     private readonly entitlements: EntitlementsService,
+    private readonly featureOverrides: FeatureOverrideService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -64,22 +66,46 @@ export class AddonGuard implements CanActivate {
     // SUPER_ADMIN operates without a tenant — never addon-gated
     if (tenantId == null) return true;
 
+    // An active override is absolute — decided before the held-addon/dark check, regardless
+    // of gate mode (owner ruling, feature-grants PR-1). A DENY on one key of an any-of set
+    // only rules OUT that key; a sibling key with no override (or its own GRANT) still
+    // decides normally. FeatureOverrideService fails open to an empty Map on a DB error.
+    const overrides = await this.featureOverrides.getMany(tenantId, keys);
+    if (keys.some((k) => overrides.get(k) === "GRANT")) return true;
+
     const active = await this.addonService.getActiveAddons(tenantId); // one query for any-of
-    if (keys.some((k) => active.includes(k))) return true;
+    if (keys.some((k) => overrides.get(k) !== "DENY" && active.includes(k))) return true;
 
     // Observe-first, registry-driven: a key set whose EVERY key is registered `dark` is not enforced yet —
     // allow, and log the would-deny so the blast radius is readable before the flip. Any enforced (or
     // unregistered) key in the set keeps today's deny. EXCEPT an always-enforced tenant (R3a.3/R8.5 —
     // today just LITE): it never gets the dark courtesy allow and falls through to the deny below.
     const route = `${request.method ?? "?"} ${request.originalUrl ?? request.url ?? "?"}`;
+    // Keys already ruled out by their own DENY override can never contribute to the dark
+    // courtesy allow either — only a key with no override (or a GRANT, already handled above)
+    // may still be dark.
+    const remaining = keys.filter((k) => overrides.get(k) !== "DENY");
     if (
-      keys.every((k) => addonGateState(k) === "dark") &&
+      remaining.length > 0 &&
+      remaining.every((k) => addonGateState(k) === "dark") &&
       !(await this.entitlements.isAlwaysEnforcedTenant(tenantId))
     ) {
       this.logger.warn(
         `addon gate would deny (dark): keys=${keys.join(",")} tenant=${tenantId} route=${route}`,
       );
       return true;
+    }
+
+    // A DENY override firing while its own gate is dark needs its own would-deny-style trace
+    // line for the blast report, even though the final decision here is a hard deny
+    // (dark-gate semantics never soften an explicit DENY — owner ruling).
+    const deniedDarkKeys = keys.filter(
+      (k) => overrides.get(k) === "DENY" && addonGateState(k) === "dark",
+    );
+    if (deniedDarkKeys.length > 0) {
+      this.logger.warn(
+        `addon gate override-denied on a dark key: keys=${deniedDarkKeys.join(",")} tenant=${tenantId} route=${route}`,
+      );
     }
 
     // Name only the purchasable keys; internal flags stay out of tenant-facing text.

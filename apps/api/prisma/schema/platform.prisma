@@ -117,6 +117,34 @@ model TenantAddon {
   @@index([tenantId, sku])
 }
 
+enum FeatureOverrideEffect {
+  GRANT
+  DENY
+}
+
+/// Per-tenant, per-key entitlement override. When a non-revoked row exists for
+/// (tenantId, featureKey) it decides the gate outright — GRANT allows, DENY denies —
+/// regardless of plan/addon state or dark/enforced gate mode (FeatureOverrideService).
+/// featureKey must name a row in FEATURE_REGISTRY (feature-registry.ts), validated at
+/// write time. Partial unique index (raw SQL in the migration): one non-revoked row
+/// per (tenantId, featureKey) — revoking closes it and a new row may be created.
+model TenantFeatureOverride {
+  id          String                @id @default(uuid())
+  tenantId    String
+  featureKey  String
+  effect      FeatureOverrideEffect
+  reason      String
+  expiresAt   DateTime?
+  createdById String?
+  createdAt   DateTime              @default(now())
+  revokedAt   DateTime?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, featureKey])
+  @@index([featureKey])
+}
+
 // ─── Billing plan catalog (GLOBAL reference data — not tenant-scoped) ─────────
 
 model PlanVersion {
@@ -308,6 +336,11 @@ enum NotificationEvent {
   ORDER_CONFIRMED
   OUT_FOR_DELIVERY
   DELIVERED
+  // N1 (2026-09-16): buyer-facing order-status email/messaging events, added
+  // alongside the real EMAIL channel provider — CONFIRMED/OUT_FOR_DELIVERY/
+  // DELIVERED already existed; CANCELLED did not (only the older, separate
+  // push-notification path in orders.service.ts's `notifMap` covered it).
+  CANCELLED
   ORDER_CHANGED_AT_DOOR
   INVOICE_SENT // email/portal only; WA/SMS cells render disabled
   PAYMENT_REMINDER

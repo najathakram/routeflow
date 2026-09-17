@@ -29,6 +29,7 @@ import {
   type PromotionRule,
 } from "@routeflow/pricing";
 import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-locks";
+import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import {
   LOCK_UNAVAILABLE,
   LOCK_UNAVAILABLE_MESSAGE,
@@ -72,7 +73,7 @@ import {
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
-import { taxRateFractionFrom } from "../common/tax-rate";
+import { currentTaxRate } from "../common/tax-rate";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -86,6 +87,7 @@ import { assertNoUnspentSourcedCredits } from "../credit-notes/sourced-credit-gu
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { sumInlineReturnCredit } from "../returns/inline-return-credit.util";
 
 /**
  * B63 (REG-B63): the statuses past which a BUYER may no longer self-edit an
@@ -254,8 +256,10 @@ export class OrdersService implements OnApplicationBootstrap {
    * Falls back to 0 so that unconfigured tenants don't get a surprise 10% charge.
    */
   private async getTaxRate(): Promise<number> {
-    const stored = await this.systemConfig.get("settings.taxRate");
-    return taxRateFractionFrom(stored);
+    // Extracted to common/tax-rate.ts (Returns Inside Order Creation PR-1c) so
+    // InlineReturnsQuoteService's unreferenced-chunk pricing shares this exact reader
+    // instead of a second hand-rolled percent→fraction parse — same rule, one place.
+    return currentTaxRate(this.systemConfig);
   }
 
   /**
@@ -2465,7 +2469,11 @@ export class OrdersService implements OnApplicationBootstrap {
     });
 
     subtotal = roundMoney(subtotal);
-    const orderDiscount = dto.discountAmount ?? 0;
+    // Opus review of 942d5d69: rounded here (not left raw) so the
+    // discount-vs-subtotal comparison inside assertMoneyInvariantsOrThrow
+    // below compares two cents-rounded values, never a raw client float
+    // against an already-rounded subtotal.
+    const orderDiscount = roundMoney(dto.discountAmount ?? 0);
     // Optional shipping fee — never taxed; added after tax like Invoice.shippingFee.
     const orderShippingFee = roundMoney(Math.max(0, dto.shippingFee ?? 0));
     const tax = roundMoney(subtotal * (await this.getTaxRate()));
@@ -2476,6 +2484,17 @@ export class OrdersService implements OnApplicationBootstrap {
       lineItemsData.reduce((s, li) => s + Number(li.categoryTaxAmount ?? 0), 0),
     );
     const total = roundMoney(subtotal + tax + categoryTax - orderDiscount + orderShippingFee);
+
+    // B451 gap 4: reject a bounded-but-oversized discountAmount before it can
+    // drive the persisted total negative. Fails fast, before any stock lock
+    // or transaction opens.
+    assertMoneyInvariantsOrThrow({
+      subtotal,
+      discount: orderDiscount,
+      tax: tax + categoryTax,
+      shipping: orderShippingFee,
+      total,
+    });
 
     // W6: license guard — a real (non-draft) sale of a license-required category to
     // a customer without a VERIFIED authorization (or active §8 override) throws a
@@ -3184,6 +3203,10 @@ export class OrdersService implements OnApplicationBootstrap {
       [OrderStatus.CONFIRMED]: NotificationEvent.ORDER_CONFIRMED,
       [OrderStatus.OUT_FOR_DELIVERY]: NotificationEvent.OUT_FOR_DELIVERY,
       [OrderStatus.DELIVERED]: NotificationEvent.DELIVERED,
+      // N1 (2026-09-16): CANCELLED gains a real messaging-engine event — the
+      // older push-notification `notifMap` above already covered it; this adds
+      // the (now real, via EmailChannelProvider) EMAIL/PORTAL/WA/SMS channels.
+      [OrderStatus.CANCELLED]: NotificationEvent.CANCELLED,
     };
     const messagingEvent = messagingEventMap[dto.status];
     if (messagingEvent) {
@@ -3212,7 +3235,7 @@ export class OrdersService implements OnApplicationBootstrap {
           : {}),
         ...(messagingEvent === NotificationEvent.OUT_FOR_DELIVERY ? { driverName } : {}),
         ...(messagingEvent === NotificationEvent.DELIVERED
-          ? { orderTotal: formatMoney(updated.total) }
+          ? { orderTotal: formatMoney(updated.total), deliveredAt: formatDate(new Date()) }
           : {}),
       };
       this.messaging
@@ -4642,6 +4665,38 @@ export class OrdersService implements OnApplicationBootstrap {
           ? roundMoney(Math.max(0, dto.shippingFee!))
           : roundMoney(Number((order as any).shippingFee ?? 0));
         const total = roundMoney(subtotal + tax + categoryTax + shippingFee);
+
+        // B451 gap 4: defense-in-depth — UpdateOrderItemsDto carries no
+        // discountAmount today (only create() does), so this path has no
+        // live negative-total vector yet, but the shared guard keeps it
+        // covered against a future field addition without a second review.
+        assertMoneyInvariantsOrThrow({
+          subtotal,
+          tax: tax + categoryTax,
+          shipping: shippingFee,
+          total,
+        });
+
+        // Returns Inside Order Creation PR-1c (design.md §4/§6.4, M7): a DRIVER edit that
+        // drops this order's gross below the credit already issued/held against its own
+        // inline returns is refused — a driver could otherwise erase (by editing the sale
+        // down) the very goods the driver-cap check measured against. Read AFTER the
+        // `Order FOR UPDATE` above (:3587 in the pre-PR-1c line numbering) so it sees every
+        // inline return committed before this edit's lock was granted. Staff (OPERATOR/
+        // TENANT_ADMIN) edits are NOT capped here — they can also approve/reduce a held
+        // return, so they're trusted with the same edit CUSTOMER/system flows already allow.
+        if (user?.role === UserRole.DRIVER) {
+          const inlineReturnCredit = await sumInlineReturnCredit(tx, orderId);
+          if (inlineReturnCredit > 0.001 && total < inlineReturnCredit - 0.001) {
+            throw new BadRequestException({
+              statusCode: 400,
+              code: "ORDER_BELOW_RETURN_CREDIT",
+              message:
+                `Order total (${total}) cannot drop below the credit already issued/held ` +
+                `against its inline returns (${roundMoney(inlineReturnCredit)}).`,
+            });
+          }
+        }
 
         // P5-08b + WP1 inline guards (completes P5-08 "credit / regulated /
         // stock-violating edit blocked inline"). DRAFT edits are exempt,
