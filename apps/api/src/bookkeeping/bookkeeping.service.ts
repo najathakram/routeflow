@@ -1330,7 +1330,12 @@ export class BookkeepingService implements OnModuleInit {
       externalRefundsYtd = 0;
     for (let m = 0; m < 12; m++) {
       const mStart = new Date(now.getFullYear(), m, 1);
-      const mEnd = new Date(now.getFullYear(), m + 1, 0, 23, 59, 59, 999);
+      const rawMEnd = new Date(now.getFullYear(), m + 1, 0, 23, 59, 59, 999);
+      // Opus review of check-payments PR-2b: cap the CURRENT (in-progress)
+      // month's bucket at `now`, not the month's last instant — otherwise it
+      // disagrees with getPeriodSummary's "thisMonth" figure below, which
+      // already caps at `now`. A finished month is unaffected (rawMEnd <= now).
+      const mEnd = rawMEnd > now ? now : rawMEnd;
       const [netSales, receiptsAgg, expensesAgg] = await Promise.all([
         // B440: sales is accrual net sales, not the inline gross aggregate.
         fetchAccrualNetSales(this.prisma.forTenant(), tenantId, { gte: mStart, lte: mEnd }),
@@ -2258,6 +2263,9 @@ export class BookkeepingService implements OnModuleInit {
         include: { customer: { select: { id: true, businessName: true } } },
       }),
       this.prisma.forTenant().invoicePayment.findMany({
+        // check-payments PR-2b (M2): stays on createdAt intentionally — this
+        // is a raw LISTING of payment rows for display, not a collected-
+        // money total, so it isn't one of the collected readers M2 governs.
         where: { createdAt: { gte: fromDate, lte: toDate } },
         include: {
           invoice: {

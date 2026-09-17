@@ -273,6 +273,20 @@ describe("StatementService (P5-15 — monthly statement reconciliation)", () => 
 
       const stmt = await service.buildMonthlyStatement("cust-1", "2026-06");
 
+      // Opus review of PR-2b: pin the QUERY shape itself, not just the
+      // downstream numbers — the where clause must be settledDateFilter's
+      // OR (settledAt-or-legacy-paidAt), never a bare paidAt range.
+      expect(prisma.invoicePayment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            OR: [
+              { settledAt: { gte: expect.any(Date), lt: expect.any(Date) } },
+              { settledAt: null, paidAt: { gte: expect.any(Date), lt: expect.any(Date) } },
+            ],
+          }),
+        }),
+      );
+
       // Not yet settled as of June 1 -> the full $500 is still owed at opening.
       expect(stmt.opening).toBe(500);
       // Settled June 15, inside the month -> collected by closing (June 30).
