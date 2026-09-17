@@ -185,6 +185,17 @@ string` (B20 — free-form intake note, e.g. "DAMAGED_BOX") and its `restock?` d
   Consumed by `apps/web/lib/api/billing.ts` (`export type { SubscriptionView }`, no longer
   declared there) and `apps/mobile/lib/api/billing.ts`. Re-exported from `index.ts`
   (`export * from "./api/billing"`).
+- **`api/features.ts` (new, feature grants v2 brief A, 2026-09-17, #825)** — `FeaturePreviewRequest`
+  (`overrides[].kind` is the new `FeatureOverrideKind` enum) + the shadow-resolver's shared
+  request/response shapes for the admin preview/diff/effective-features endpoints — see
+  [`api/feature-modules-4/billing.md`](api/feature-modules-4/billing.md)'s "Feature grants v2"
+  entry for the full story. Re-exported from `index.ts`.
+- **`api/enums.ts` — feature grants v2 (2026-09-17, briefs A + B, #825/#838)** —
+  `FEATURE_SOURCE_VALUES`/`FeatureSource` (brief A) and `FEATURE_OVERRIDE_KIND_VALUES = ["PILOT",
+  "SUPPORT", "COMP", "TRIAL", "GRANDFATHER"]`/`FeatureOverrideKind` (brief B) — pinned set-equal to
+  the generated Prisma enums by `enum-parity.spec.ts` (L-072, never a hand mirror elsewhere).
+  `FeatureOverrideKind` defaults to `COMP` on every existing `TenantFeatureOverride` row
+  (migration `20260917000000_feature_grants_v2_shadow_resolver`, additive).
 
 ### `@routeflow/pricing` (`packages/pricing`)
 
