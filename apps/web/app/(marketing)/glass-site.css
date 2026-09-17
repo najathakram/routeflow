@@ -594,8 +594,34 @@
   margin: 2px 0 0;
 }
 
-.glass-page .direct-contact a {
-  color: var(--g-link);
+/* .direct-contact removed from contact/page.tsx (now-duplicative of the
+   General Enquiries card) — its one rule dropped with it. */
+
+.glass-page .contact-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.glass-page .contact-card {
+  padding: 26px;
+  background: var(--g-glass);
+  border: 1px solid var(--g-glass-border);
+  border-radius: var(--g-r-md);
+  box-shadow: var(--g-shadow-glass);
+  display: flex;
+  flex-direction: column;
+}
+
+.glass-page .contact-card h2 {
+  font-size: 19px;
+  margin: 4px 0 10px;
+}
+
+.glass-page .contact-card p {
+  color: var(--g-body);
+  flex: 1;
+  margin-bottom: 18px;
 }
 
 .glass-page .demo-form-card {
