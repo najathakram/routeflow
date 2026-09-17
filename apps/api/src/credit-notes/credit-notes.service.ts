@@ -329,6 +329,14 @@ export class CreditNotesService {
       where: { orderId, status: { not: "VOID" } },
       include: { payments: true },
     });
+    // Opus review (PR-1c BLOCK, MED-6): the pre-fix fallthrough (`return true` after a
+    // no-op loop) treated "not invoiced yet" as "met" — exactly the common case at order-
+    // entry time, when an inline return is captured before the carrying order has any
+    // invoice at all. That made the §6.3 exclusion a no-op for every fresh capture: the
+    // credit was immediately available to the general oldest-first sweep on some OTHER
+    // invoice, before its own carrying order ever got a chance to consume it. Not met until
+    // there is at least one non-VOID invoice AND every one of them is fully paid.
+    if (invoices.length === 0) return false;
     for (const inv of invoices) {
       const paid = roundMoney(
         (inv.payments ?? [])
@@ -337,7 +345,7 @@ export class CreditNotesService {
       );
       if (roundMoney(Number(inv.total) - paid) > 0.001) return false;
     }
-    return true; // no invoices yet, or every one is already fully paid
+    return true; // every non-VOID invoice is fully paid
   }
 
   /**

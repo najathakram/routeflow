@@ -16,22 +16,41 @@ export interface InlineReturnCreditTx {
 }
 
 /**
- * §4 N-5: Σ = issued + approved credit of non-CANCELLED INLINE returns on `orderId`. Each
- * INLINE `Return` carries its credit as EITHER `refundAmount` (issued — the CN has been
- * minted and linked) OR `heldAmount` (captured above the driver cap, held whole for
- * approval — N-5) — never both at once — so summing whichever is set on each row gives the
- * order's total committed inline-return credit. Read under the CALLER's own carrying-order
- * lock (this never locks anything itself).
+ * §4 N-5: Σ = committed credit of every RECEIVED/REFUNDED INLINE return on `orderId`.
+ *
+ * Opus review (PR-1c BLOCK, HIGH-1): summing `refundAmount ?? heldAmount` left a captured
+ * row INVISIBLE to this sum for the entire gap between the capture transaction's commit and
+ * `issueCredit`'s own commit — `refundAmount` isn't set until the credit note is linked,
+ * and (pre-fix) `heldAmount` was only set for an OVER-cap hold. Two parallel DRIVER captures
+ * could both read Σ during that gap, both pass the cap check, and together exceed it; the
+ * same blind spot made `orders.service.ts`'s `ORDER_BELOW_RETURN_CREDIT` guard read a stale
+ * (too-low) Σ too.
+ *
+ * Fixed by summing `creditSubtotal + creditTax + creditCategoryTax` instead — capture()
+ * writes all three on the SAME row create as the priced figures, before either
+ * `refundAmount` or `heldAmount` exists, so they are visible to a concurrent reader the
+ * instant the capture transaction commits, for every RECEIVED (held or not) and REFUNDED
+ * row alike. `status: {in: ["RECEIVED", "REFUNDED"]}` excludes PENDING (1d's not-yet-
+ * captured order-hook rows — nothing committed yet), REJECTED (credit was declined, never
+ * committed) and CANCELLED (m-5 — reversed) by construction. Read under the CALLER's own
+ * carrying-order lock (this never locks anything itself).
  */
 export async function sumInlineReturnCredit(
   tx: InlineReturnCreditTx,
   orderId: string,
 ): Promise<number> {
   const rows = await tx.return.findMany({
-    where: { orderId, kind: "INLINE", status: { not: "CANCELLED" } },
-    select: { refundAmount: true, heldAmount: true },
+    where: { orderId, kind: "INLINE", status: { in: ["RECEIVED", "REFUNDED"] } },
+    select: { creditSubtotal: true, creditTax: true, creditCategoryTax: true },
   });
   return roundMoney(
-    rows.reduce((sum: number, r: any) => sum + Number(r.refundAmount ?? r.heldAmount ?? 0), 0),
+    rows.reduce(
+      (sum: number, r: any) =>
+        sum +
+        Number(r.creditSubtotal ?? 0) +
+        Number(r.creditTax ?? 0) +
+        Number(r.creditCategoryTax ?? 0),
+      0,
+    ),
   );
 }

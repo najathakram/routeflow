@@ -4,10 +4,17 @@
  * a hand-derived `QuoteBreakdown` per test (pricing math lives in
  * `inline-returns-pricing.spec.ts` / `inline-returns-quote.service.spec.ts`) — these tests
  * exercise capture's locking/claim/restock/ledger/audit/issue wiring and the N-1/N-2/N-5/m-1/
- * m-2/m-5 mechanisms with concrete dollar oracles.
+ * m-2/m-5 mechanisms with concrete dollar oracles, plus the Opus review (BLOCK) fix round's
+ * HIGH-1/2/4, MED-5/6/7 mechanisms.
  */
 import { Test, TestingModule } from "@nestjs/testing";
-import { BadRequestException, ForbiddenException, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { InlineReturnsService } from "./inline-returns.service";
 import { InlineReturnsQuoteService } from "./inline-returns-quote.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -82,6 +89,8 @@ const CAPTURE_DTO = {
   returnKey: "nonce-1",
 };
 
+const DRIVER_CAPTURE_DTO = { ...CAPTURE_DTO, routeRunStopId: "stop-1", returnKey: "nonce-driver" };
+
 describe("InlineReturnsService", () => {
   let service: InlineReturnsService;
   let prisma: ReturnType<typeof createMockPrisma>;
@@ -101,12 +110,17 @@ describe("InlineReturnsService", () => {
     prisma = createMockPrisma();
     quoteService = { priceInlineReturn: jest.fn().mockResolvedValue(priced()) };
     creditNotes = {
-      mintStandaloneInTx: jest.fn().mockResolvedValue({
-        id: "cn-1",
-        creditNoteNumber: "CN-0001",
-        customerId: "cust-1",
-        amount: 30,
-      }),
+      // Echoes back the requested amount/customer so a test that mints a DIFFERENT amount
+      // (a reduced approval) sees the matching figure on the returned `minted` row too —
+      // that's what `emitCreditNoteCreated` reads (`Number(minted.amount)`).
+      mintStandaloneInTx: jest.fn((_tx: any, dto: any) =>
+        Promise.resolve({
+          id: "cn-1",
+          creditNoteNumber: "CN-0001",
+          customerId: dto.customerId,
+          amount: dto.amount,
+        }),
+      ),
       settleOrderCreditsInTx: jest.fn().mockResolvedValue({ applied: 0, unapplied: 0 }),
       cancelStandaloneInTx: jest.fn().mockResolvedValue({ restored: 30 }),
     };
@@ -128,7 +142,10 @@ describe("InlineReturnsService", () => {
       id: "ord-carrying",
       customerId: "cust-1",
       total: 1000,
+      status: "PENDING",
+      routeRunId: "run-1",
     });
+    prisma.routeRunStop.findFirst.mockResolvedValue({ routeRunId: "run-1" });
     // Default: every claim (the N-1 guarded link, approve's hold claim, reject's claim,
     // cancel's claim) wins. Tests that specifically drive a lost claim override this.
     prisma.return.updateMany.mockResolvedValue({ count: 1 });
@@ -157,10 +174,21 @@ describe("InlineReturnsService", () => {
           creditSubtotal: 28,
           creditTax: 2,
           creditCategoryTax: 0,
+          items: [{ productId: "prod-1", qty: 6, restock: true }],
         };
       }
       return null;
     });
+    // sumInlineReturnCredit's own query — empty by default (no prior committed credit).
+    prisma.return.findMany.mockResolvedValue([]);
+    // The final "read back the row" call at the end of capture()/approve() — a realistic
+    // stand-in so a test that doesn't care about the exact returned shape still gets a
+    // truthy object back instead of the mock's bare `null` default.
+    prisma.return.findUnique.mockImplementation(async ({ where }: any) => ({
+      id: where.id,
+      status: "REFUNDED",
+      creditNoteId: "cn-1",
+    }));
 
     const mod: TestingModule = await Test.createTestingModule({
       providers: [
@@ -260,8 +288,18 @@ describe("InlineReturnsService", () => {
 
   // ─── N-2 / m-3: returnKey replay ─────────────────────────────────────────────
 
-  it("m-3/N-2: a returnKey already captured is replayed — no second create, no second movement (revert ⇒ duplicate insert)", async () => {
-    const existing = { id: "ret-existing", returnKey: "nonce-1", kind: "INLINE", items: [] };
+  it("m-3/N-2: a returnKey already captured (and already issued) is replayed — no second create, no second movement (revert ⇒ duplicate insert)", async () => {
+    const existing = {
+      id: "ret-existing",
+      returnKey: "nonce-1",
+      kind: "INLINE",
+      customerId: "cust-1",
+      orderId: "ord-carrying",
+      status: "REFUNDED",
+      creditNoteId: "cn-existing",
+      holdReason: null,
+      items: [],
+    };
     prisma.return.findFirst.mockResolvedValueOnce(existing); // the pre-tx unlocked read
 
     const result = await service.capture(CAPTURE_DTO as any, OPERATOR);
@@ -272,55 +310,237 @@ describe("InlineReturnsService", () => {
     expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
   });
 
-  // ─── N-5: driver cap — second return over the carrying order's gross is held whole ──
-
-  it("N-5: a DRIVER capture that would push Σ over the order's gross is held whole — no CN minted", async () => {
-    prisma.order.findFirst.mockResolvedValue({
-      id: "ord-carrying",
+  it("HIGH-2: a returnKey replay of a STUCK row (RECEIVED, no CN, no hold — a prior issueCredit failed after capture committed) re-issues idempotently", async () => {
+    const stuck = {
+      id: "ret-stuck",
+      returnKey: "nonce-1",
+      kind: "INLINE",
       customerId: "cust-1",
-      total: 30,
+      orderId: "ord-carrying",
+      status: "RECEIVED",
+      creditNoteId: null,
+      holdReason: null,
+      returnNumber: "RET-STUCK",
+      creditSubtotal: 28,
+      creditTax: 2,
+      creditCategoryTax: 0,
+      items: [],
+    };
+    // Pre-tx replay read finds the stuck row; the shared findFirst impl below (id "ret-stuck")
+    // backs issueCredit's own two reads.
+    prisma.return.findFirst.mockImplementation(async ({ where }: any) => {
+      if (where?.returnKey === "nonce-1" || where?.id === "ret-stuck") return stuck;
+      return null;
     });
-    // Σ already on the order: $25.00 issued from a prior inline return.
-    prisma.return.findMany.mockResolvedValue([{ refundAmount: 25, heldAmount: null }]);
-    quoteService.priceInlineReturn.mockResolvedValue(priced(10, 10, 0, 0)); // $10 more ⇒ Σ would be $35 > $30 gross
 
-    const result = await service.capture(
-      { ...CAPTURE_DTO, returnKey: "nonce-driver" } as any,
-      DRIVER,
+    await service.capture(CAPTURE_DTO as any, OPERATOR);
+
+    expect(prisma.return.create).not.toHaveBeenCalled(); // never re-captures
+    expect(creditNotes.mintStandaloneInTx).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ customerId: "cust-1", amount: 30 }),
+      expect.any(String),
+      expect.anything(),
     );
-
-    expect(prisma.return.create).toHaveBeenCalledWith(
+    expect(prisma.return.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ holdReason: "DRIVER_CAP", heldAmount: 10 }),
+        data: expect.objectContaining({ status: "REFUNDED", creditNoteId: "cn-1" }),
       }),
     );
-    // Held whole: the goods ARE restocked/reversed (captured), but no credit is minted.
-    expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
-    expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
-    // §4: in-tx audit row for the hold.
-    expect(prisma.auditLog.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          action: "inline_return.driver_cap_hold",
-          entityId: "ret-1",
-        }),
-      }),
-    );
-    expect(result.holdReason).toBe("DRIVER_CAP");
   });
 
-  it("N-5: an OPERATOR capture is NEVER driver-capped, even over the same order's gross", async () => {
-    prisma.order.findFirst.mockResolvedValue({
-      id: "ord-carrying",
-      customerId: "cust-1",
-      total: 5,
+  it("a returnKey belonging to a DIFFERENT customer/order is never treated as a replay", async () => {
+    prisma.return.findFirst.mockResolvedValueOnce({
+      id: "ret-other",
+      returnKey: "nonce-1",
+      kind: "INLINE",
+      customerId: "cust-OTHER",
+      orderId: "ord-OTHER",
+      status: "REFUNDED",
+      items: [],
     });
-    prisma.return.findMany.mockResolvedValue([{ refundAmount: 25, heldAmount: null }]);
-    quoteService.priceInlineReturn.mockResolvedValue(priced(10, 10, 0, 0));
 
-    await service.capture({ ...CAPTURE_DTO, returnKey: "nonce-op" } as any, OPERATOR);
+    // Falls through to a real capture attempt (which succeeds here since the mocked create
+    // has no real uniqueness enforcement) rather than short-circuiting as a replay.
+    const result = await service.capture(CAPTURE_DTO as any, OPERATOR);
+    expect(prisma.return.create).toHaveBeenCalled();
+    expect(result.id).toBe("ret-1");
+  });
 
-    expect(creditNotes.mintStandaloneInTx).toHaveBeenCalled();
+  // ─── MED-7: P2002 returnKey collision outside the aborted transaction ───────
+
+  describe("MED-7: returnKey P2002 collision", () => {
+    it("catches the conflict OUTSIDE the aborted transaction and replays when the raced row matches this (customerId, orderId)", async () => {
+      prisma.tenantTransaction.mockImplementationOnce(async () => {
+        const err: any = new Error("Unique constraint failed");
+        err.code = "P2002";
+        err.meta = { target: ["tenantId", "returnKey"] };
+        throw err;
+      });
+      const raced = {
+        id: "ret-raced",
+        returnKey: "nonce-1",
+        kind: "INLINE",
+        customerId: "cust-1",
+        orderId: "ord-carrying",
+        status: "REFUNDED",
+        creditNoteId: "cn-raced",
+        holdReason: null,
+        items: [],
+      };
+      prisma.return.findFirst.mockResolvedValueOnce(null); // pre-tx check: no replay yet
+      // POST-catch lookup (a fresh, non-aborted read) finds the racer's committed row.
+      prisma.return.findFirst.mockResolvedValueOnce(raced);
+
+      const result = await service.capture(CAPTURE_DTO as any, OPERATOR);
+      expect(result).toBe(raced);
+    });
+
+    it("throws a 409 Conflict (never a raw P2002) when the raced row belongs to someone else", async () => {
+      prisma.tenantTransaction.mockImplementationOnce(async () => {
+        const err: any = new Error("Unique constraint failed");
+        err.code = "P2002";
+        err.meta = { target: ["tenantId", "returnKey"] };
+        throw err;
+      });
+      prisma.return.findFirst.mockResolvedValueOnce(null);
+      prisma.return.findFirst.mockResolvedValueOnce({
+        id: "ret-raced",
+        customerId: "cust-OTHER",
+        orderId: "ord-OTHER",
+        kind: "INLINE",
+        items: [],
+      });
+
+      await expect(service.capture(CAPTURE_DTO as any, OPERATOR)).rejects.toThrow(
+        ConflictException,
+      );
+    });
+
+    it("a P2002 on an UNRELATED constraint is never mistaken for a returnKey replay", async () => {
+      prisma.tenantTransaction.mockImplementationOnce(async () => {
+        const err: any = new Error("Unique constraint failed");
+        err.code = "P2002";
+        err.meta = { target: ["someOtherColumn"] };
+        throw err;
+      });
+      await expect(service.capture(CAPTURE_DTO as any, OPERATOR)).rejects.toMatchObject({
+        code: "P2002",
+      });
+    });
+  });
+
+  // ─── N-5: driver cap — second return over the carrying order's gross is held whole ──
+
+  describe("N-5: driver cap", () => {
+    it("HIGH-4: a DRIVER capture that would push Σ over the order's gross is held whole — NO restock/ledger reversal/CN yet", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-carrying",
+        customerId: "cust-1",
+        total: 30,
+        status: "PENDING",
+        routeRunId: "run-1",
+      });
+      // HIGH-1: Σ already committed on the order — $25.00 from a prior RECEIVED/REFUNDED
+      // inline return, visible via creditSubtotal/Tax/CategoryTax (never refundAmount/
+      // heldAmount, which is exactly the blind spot HIGH-1 fixed).
+      prisma.return.findMany.mockResolvedValue([
+        { creditSubtotal: 25, creditTax: 0, creditCategoryTax: 0 },
+      ]);
+      quoteService.priceInlineReturn.mockResolvedValue(priced(10, 10, 0, 0)); // $10 more ⇒ Σ would be $35 > $30 gross
+
+      const result = await service.capture(DRIVER_CAPTURE_DTO as any, DRIVER);
+
+      expect(prisma.return.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ holdReason: "DRIVER_CAP", heldAmount: 10 }),
+        }),
+      );
+      // HIGH-4: held whole means NOTHING is applied yet — no restock, no ledger reversal, no
+      // credit note — all deferred to approve().
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(prisma.product.update).not.toHaveBeenCalled();
+      expect(ledger.reverseReturnEntries).not.toHaveBeenCalled();
+      expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+      // §4: in-tx audit row for the hold.
+      expect(prisma.auditLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            action: "inline_return.driver_cap_hold",
+            entityId: "ret-1",
+          }),
+        }),
+      );
+      expect(result.holdReason).toBe("DRIVER_CAP");
+    });
+
+    it("N-5: an OPERATOR capture is NEVER driver-capped, even over the same order's gross", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-carrying",
+        customerId: "cust-1",
+        total: 5,
+        status: "PENDING",
+        routeRunId: "run-1",
+      });
+      prisma.return.findMany.mockResolvedValue([
+        { creditSubtotal: 25, creditTax: 0, creditCategoryTax: 0 },
+      ]);
+      quoteService.priceInlineReturn.mockResolvedValue(priced(10, 10, 0, 0));
+
+      await service.capture({ ...CAPTURE_DTO, returnKey: "nonce-op" } as any, OPERATOR);
+
+      expect(creditNotes.mintStandaloneInTx).toHaveBeenCalled();
+    });
+
+    it("HIGH-1: two parallel DRIVER captures both see the FIRST's committed credit via creditSubtotal (visible even before it's issued) — the second is held", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-carrying",
+        customerId: "cust-1",
+        total: 20,
+        status: "PENDING",
+        routeRunId: "run-1",
+      });
+      // The first capture committed RECEIVED with no hold and no CN yet (mid capture→issue
+      // gap) — HIGH-1's fix makes this visible to Σ via creditSubtotal alone.
+      prisma.return.findMany.mockResolvedValue([
+        { creditSubtotal: 15, creditTax: 0, creditCategoryTax: 0 },
+      ]);
+      quoteService.priceInlineReturn.mockResolvedValue(priced(10, 10, 0, 0)); // 15 + 10 = 25 > 20 gross
+
+      const result = await service.capture(DRIVER_CAPTURE_DTO as any, DRIVER);
+      expect(result.holdReason).toBe("DRIVER_CAP");
+    });
+  });
+
+  // ─── MED-5: a DRIVER may only capture on their own current route run ────────
+
+  describe("MED-5: driver/order ownership", () => {
+    it("refuses a DRIVER capture with no routeRunStopId", async () => {
+      await expect(service.capture(CAPTURE_DTO as any, DRIVER)).rejects.toThrow(ForbiddenException);
+      expect(prisma.return.create).not.toHaveBeenCalled();
+    });
+
+    it("refuses a DRIVER capture whose order is NOT on the stop's route run", async () => {
+      prisma.routeRunStop.findFirst.mockResolvedValue({ routeRunId: "run-OTHER" });
+      await expect(service.capture(DRIVER_CAPTURE_DTO as any, DRIVER)).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(prisma.return.create).not.toHaveBeenCalled();
+    });
+
+    it("refuses capturing against a CANCELLED order for any role", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-carrying",
+        customerId: "cust-1",
+        total: 1000,
+        status: "CANCELLED",
+        routeRunId: "run-1",
+      });
+      await expect(service.capture(CAPTURE_DTO as any, OPERATOR)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prisma.return.create).not.toHaveBeenCalled();
+    });
   });
 
   // ─── N-1: cancel racing between the re-read and the link ────────────────────
@@ -334,6 +554,7 @@ describe("InlineReturnsService", () => {
         id: "ret-1",
         status: "RECEIVED",
         creditNoteId: null,
+        holdReason: null,
         customerId: "cust-1",
         orderId: "ord-carrying",
         creditSubtotal: 28,
@@ -352,7 +573,7 @@ describe("InlineReturnsService", () => {
     );
   });
 
-  // ─── approve / reject (N-5, Q-C) ─────────────────────────────────────────────
+  // ─── approve / reject (N-5, Q-C, HIGH-2, HIGH-4) ─────────────────────────────
 
   describe("approve", () => {
     const HELD: any = {
@@ -368,19 +589,30 @@ describe("InlineReturnsService", () => {
       creditTax: 0,
       creditCategoryTax: 0,
       returnNumber: "RET-1",
+      items: [{ productId: "prod-1", qty: 6, restock: true, sourceOrderId: "src-order-1" }],
     };
 
-    it("approves the full held amount and mints exactly one credit note", async () => {
+    it("HIGH-4: approving restocks + reverses the ledger NOW (deferred from capture), then mints the full held amount", async () => {
       prisma.return.findFirst.mockResolvedValue(HELD);
       prisma.return.updateMany.mockResolvedValue({ count: 1 });
 
       await service.approve("ret-held", OPERATOR);
 
+      expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
+      expect(prisma.product.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { currentStock: { increment: expect.anything() } } }),
+      );
+      expect(ledger.reverseReturnEntries).toHaveBeenCalled();
       expect(creditNotes.mintStandaloneInTx).toHaveBeenCalledWith(
         expect.anything(),
         expect.objectContaining({ amount: 40 }),
         expect.any(String),
         "test-tenant",
+      );
+      expect(prisma.return.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ approvedById: OPERATOR.sub }),
+        }),
       );
     });
 
@@ -403,17 +635,23 @@ describe("InlineReturnsService", () => {
       await expect(service.approve("ret-held", OPERATOR, { amount: 999 })).rejects.toThrow(
         BadRequestException,
       );
-      expect(prisma.return.updateMany).not.toHaveBeenCalled();
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
     });
 
-    it("a retried/duplicate approve (claim matches 0 rows) mints NO second credit note — revert ⇒ two CNs", async () => {
-      prisma.return.findFirst.mockResolvedValue(HELD);
-      // The claim itself loses (a concurrent approve already won it).
-      prisma.return.updateMany.mockResolvedValue({ count: 0 });
+    it("HIGH-2: a retried/duplicate approve (the row lock re-read finds it already resolved) mints NO second credit note — revert ⇒ two CNs", async () => {
+      // The unlocked pre-check still sees the hold (a concurrent approve hasn't landed yet)…
+      prisma.return.findFirst.mockResolvedValueOnce(HELD);
+      // …but by the time THIS call gets the row lock, the row has already moved on.
+      prisma.return.findFirst.mockResolvedValueOnce({
+        ...HELD,
+        status: "REFUNDED",
+        creditNoteId: "cn-other",
+      });
 
       await service.approve("ret-held", OPERATOR);
 
       expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
     });
 
     it("refuses a return that isn't a driver-cap hold", async () => {
@@ -428,13 +666,22 @@ describe("InlineReturnsService", () => {
   });
 
   describe("reject", () => {
-    it("declines a driver-cap hold — REJECTED, no credit note ever minted", async () => {
+    it("declines a driver-cap hold — REJECTED, holdReason left AS-IS, no credit note ever minted, nothing restocked", async () => {
       prisma.return.updateMany.mockResolvedValue({ count: 1 });
       const result = await service.reject("ret-held", OPERATOR);
       expect(prisma.return.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ status: "REJECTED" }) }),
+        expect.objectContaining({
+          where: expect.objectContaining({ holdReason: "DRIVER_CAP" }),
+          data: expect.objectContaining({ status: "REJECTED" }),
+        }),
       );
+      // holdReason/heldAmount must NOT be nulled here — cancel()'s "was anything applied"
+      // check on a REJECTED row relies on holdReason staying "DRIVER_CAP".
+      const data = prisma.return.updateMany.mock.calls[0][0].data;
+      expect(data).not.toHaveProperty("holdReason");
+      expect(data).not.toHaveProperty("heldAmount");
       expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
       expect(result).toBeDefined();
     });
 
@@ -444,7 +691,7 @@ describe("InlineReturnsService", () => {
     });
   });
 
-  // ─── cancel (m-5) ─────────────────────────────────────────────────────────────
+  // ─── cancel (m-5, HIGH-4's "was anything applied" redefinition) ─────────────
 
   describe("cancel", () => {
     it("a PENDING (never-captured) return writes NO stock movement on cancel — revert ⇒ phantom restock", async () => {
@@ -461,26 +708,80 @@ describe("InlineReturnsService", () => {
       await service.cancel("ret-pending", OPERATOR);
 
       expect(prisma.product.update).not.toHaveBeenCalled();
-      expect(prisma.stockMovement.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
       expect(ledger.unreverseReturnEntries).not.toHaveBeenCalled();
     });
 
-    it("a RECEIVED (captured, not yet issued) return unrestocks + unreverses on cancel", async () => {
+    it("HIGH-4: a RECEIVED return STILL held (DRIVER_CAP, awaiting approval) writes NO stock on cancel — it was never applied", async () => {
       prisma.return.findFirst.mockResolvedValue({
-        id: "ret-received",
+        id: "ret-held",
         status: "RECEIVED",
+        holdReason: "DRIVER_CAP",
+        heldAmount: 40,
         items: [{ productId: "prod-1", qty: 6, restock: true }],
         orderId: "ord-carrying",
         creditNoteId: null,
       });
       prisma.return.updateMany.mockResolvedValue({ count: 1 });
 
+      await service.cancel("ret-held", OPERATOR);
+
+      expect(prisma.product.update).not.toHaveBeenCalled();
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(ledger.unreverseReturnEntries).not.toHaveBeenCalled();
+    });
+
+    it("HIGH-4: a REJECTED (declined-from-hold) return writes NO stock on cancel — it was never applied either", async () => {
+      prisma.return.findFirst.mockResolvedValue({
+        id: "ret-rejected",
+        status: "REJECTED",
+        holdReason: "DRIVER_CAP", // left as-is by reject() on purpose
+        heldAmount: 40,
+        items: [{ productId: "prod-1", qty: 6, restock: true }],
+        orderId: "ord-carrying",
+        creditNoteId: null,
+      });
+      prisma.return.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.cancel("ret-rejected", OPERATOR);
+
+      expect(prisma.product.update).not.toHaveBeenCalled();
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(ledger.unreverseReturnEntries).not.toHaveBeenCalled();
+    });
+
+    it("a RECEIVED (captured, not yet issued) return unrestocks + writes a COMPENSATING movement on cancel", async () => {
+      prisma.return.findFirst.mockResolvedValue({
+        id: "ret-received",
+        status: "RECEIVED",
+        holdReason: null,
+        items: [{ productId: "prod-1", qty: 6, restock: true }],
+        orderId: "ord-carrying",
+        creditNoteId: null,
+      });
+      prisma.return.updateMany.mockResolvedValue({ count: 1 });
+      // Real Prisma hands back a Decimal instance for a Decimal column — match that shape so
+      // the service's `.sub()`/`.neg()` Decimal arithmetic has a real method to call.
+      prisma.product.findFirst.mockResolvedValue({
+        currentStock: new Prisma.Decimal(20),
+        averageCost: new Prisma.Decimal(5),
+      });
+
       await service.cancel("ret-received", OPERATOR);
 
       expect(prisma.product.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { currentStock: { decrement: 6 } } }),
+        expect.objectContaining({ data: { currentStock: { decrement: expect.anything() } } }),
       );
-      expect(prisma.stockMovement.deleteMany).toHaveBeenCalled();
+      // LOW: a compensating (negative-qty) movement — never a delete of the original entry.
+      expect(prisma.stockMovement.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            productId: "prod-1",
+            reference: "RET-CANCEL-ret-rece",
+          }),
+        }),
+      );
+      expect(prisma.stockMovement.deleteMany).not.toHaveBeenCalled();
       expect(ledger.unreverseReturnEntries).toHaveBeenCalledWith(
         expect.objectContaining({ returnId: "ret-received" }),
       );
@@ -491,6 +792,7 @@ describe("InlineReturnsService", () => {
       prisma.return.findFirst.mockResolvedValue({
         id: "ret-refunded",
         status: "REFUNDED",
+        holdReason: null,
         items: [{ productId: "prod-1", qty: 6, restock: true }],
         orderId: "ord-carrying",
         creditNoteId: "cn-1",

@@ -228,12 +228,12 @@ describe("OrdersService.updateOrderItems — DRIVER edit-down vs. inline-return 
   it("REFUSES a DRIVER edit that drops the order's gross ($20.00) below the $50.00 already issued/held against its inline returns", async () => {
     // Edit down to 4 units ($20.00) — below the committed $50.00.
     primeOrder(EXISTING_LINE, [{ ...EXISTING_LINE, qty: 4, subtotal: 20 }]);
-    // Two non-cancelled INLINE returns on this order already committed $30 (issued) +
-    // $20 (driver-cap held) = $50.00 — sumInlineReturnCredit sums refundAmount ??
-    // heldAmount per row.
+    // Two non-cancelled INLINE returns on this order already committed $30 + $20 = $50.00 —
+    // sumInlineReturnCredit (HIGH-1 fix) sums creditSubtotal+creditTax+creditCategoryTax per
+    // row, visible whether or not the credit has been issued/held yet.
     prisma.return.findMany.mockResolvedValue([
-      { refundAmount: 30, heldAmount: null },
-      { refundAmount: null, heldAmount: 20 },
+      { creditSubtotal: 30, creditTax: 0, creditCategoryTax: 0 },
+      { creditSubtotal: 20, creditTax: 0, creditCategoryTax: 0 },
     ]);
 
     const attempt = service.updateOrderItems(
@@ -252,8 +252,8 @@ describe("OrdersService.updateOrderItems — DRIVER edit-down vs. inline-return 
   it("ALLOWS the identical DRIVER edit when the resulting gross ($50.00) still covers the committed credit ($50.00)", async () => {
     primeOrder(EXISTING_LINE); // no-op edit: postEditLines defaults to [EXISTING_LINE] ($50.00)
     prisma.return.findMany.mockResolvedValue([
-      { refundAmount: 30, heldAmount: null },
-      { refundAmount: null, heldAmount: 20 },
+      { creditSubtotal: 30, creditTax: 0, creditCategoryTax: 0 },
+      { creditSubtotal: 20, creditTax: 0, creditCategoryTax: 0 },
     ]);
 
     await expect(
@@ -268,7 +268,9 @@ describe("OrdersService.updateOrderItems — DRIVER edit-down vs. inline-return 
 
   it("does NOT gate an OPERATOR edit that drops the gross below the same committed credit — only DRIVER is capped", async () => {
     primeOrder(EXISTING_LINE, [{ ...EXISTING_LINE, qty: 1, subtotal: 5 }]);
-    prisma.return.findMany.mockResolvedValue([{ refundAmount: 50, heldAmount: null }]);
+    prisma.return.findMany.mockResolvedValue([
+      { creditSubtotal: 50, creditTax: 0, creditCategoryTax: 0 },
+    ]);
 
     await expect(
       service.updateOrderItems(

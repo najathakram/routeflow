@@ -16,6 +16,7 @@ import { ReceiveReturnDto } from "./dto/receive-return.dto";
 import { ProcessRefundDto } from "./dto/process-refund.dto";
 import { QuoteInlineReturnDto } from "./dto/quote-inline-return.dto";
 import { CaptureInlineReturnDto } from "./dto/capture-inline-return.dto";
+import { ApproveInlineReturnDto } from "./dto/approve-inline-return.dto";
 
 // This controller also serves CUSTOMER and DRIVER roles (not just OPERATOR), so
 // gating it must stay behind the kill switch until the v7-STARTER audit question
@@ -80,7 +81,7 @@ export class ReturnsController {
   approveInline(
     @Param("id") id: string,
     @CurrentUser() user: JwtPayload,
-    @Body() dto: { amount?: number },
+    @Body() dto: ApproveInlineReturnDto,
   ) {
     return this.inlineReturns.approve(id, user, dto);
   }

@@ -135,6 +135,22 @@ describe("CreditNotesService — PR-1c (m-1 mintStandaloneInTx, §6.3 met exclus
       expect(result.applied).toBe(0);
     });
 
+    it("MED-6: skips an INLINE-linked credit whose carrying order has NO invoice yet at all (the order-entry-time common case) — revert ⇒ no-op exclusion", async () => {
+      primeInvoice(50);
+      prisma.creditNote.findMany.mockResolvedValue([
+        { id: "cn-inline", amount: 50, amountUsed: 0, createdAt: new Date("2026-01-01") },
+      ]);
+      prisma.return.findFirst.mockResolvedValue({ orderId: "ord-carrying" });
+      prisma.order.findFirst.mockResolvedValue({ status: "PENDING" });
+      // No invoice at all yet for the carrying order — isOrderMetInTx's own no-op loop
+      // fallthrough (pre-fix) treated this as "met".
+      prisma.invoice.findMany.mockResolvedValue([]);
+
+      const result = await service.autoApplyOldestCreditsInTx(prisma, "inv-other", "cust-1");
+
+      expect(result.applied).toBe(0);
+    });
+
     it("applies an INLINE-linked credit once its OWN carrying order is met (fully paid)", async () => {
       primeInvoice(50);
       prisma.creditNote.findMany.mockResolvedValue([
