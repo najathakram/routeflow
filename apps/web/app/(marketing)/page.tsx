@@ -11,7 +11,23 @@ import {
   DifferenceSection,
   BuyingConfidence,
 } from "./components/conversion-sections";
-import { site } from "./lib/site";
+import { PLANS, site } from "./lib/site";
+
+// Layout ruling (owner, 2026-09-16, PR-3): reference order is hero ->
+// capability bar -> flow tabs -> platform grid -> audience cards (with
+// photos) -> pricing teaser -> FAQ -> CTA, with AISpotlight kept but moved
+// to right after the platform grid. "Flow tabs" is satisfied by the hero's
+// own embedded DeliveryDemo/OperationStory — the reference's separate 5-tab
+// widget has no other equivalent in production and OperationStory already
+// fills that role where it already sits, so the hero itself is unchanged.
+// ProblemSection/DifferenceSection/BuyingConfidence are kept in full (every
+// factual claim intact) but repositioned to read as part of the platform-
+// grid/FAQ narrative rather than as standalone blocks scattered elsewhere:
+// ProblemSection leads into the platform grid (unchanged position),
+// DifferenceSection follows it directly (its payoff), and BuyingConfidence
+// leads into FAQ (unchanged position, relative to FAQ). A new pricing
+// teaser (3 real plans, PLANS from lib/site.ts) is inserted between
+// AudienceCards and BuyingConfidence.
 
 // Copy verbatim from the redesign's app/page.tsx (M1 §1). This route is not
 // in the `routes[]` table (it's the index, not a slug), so its metadata is
@@ -70,7 +86,6 @@ export default function Home() {
       </section>
       <CapabilityStrip />
       <ProblemSection />
-      <AISpotlight />
       <section className="section proof-tour wrap" id="how-it-works">
         <div className="section-heading split-heading">
           <div>
@@ -89,9 +104,42 @@ export default function Home() {
         <FeatureCatalog />
       </section>
       <DifferenceSection />
+      <AISpotlight />
       <div className="surface">
         <AudienceCards />
       </div>
+      <section className="section wrap pricing-teaser">
+        <div className="section-heading split-heading">
+          <div>
+            <Eyebrow>PRICING</Eyebrow>
+            <h2>
+              Discuss the plan
+              <br />
+              for your operation.
+            </h2>
+          </div>
+          <p>
+            RouteFlow currently provides pricing by quote. Review the features, limits, and setup
+            support you need.
+          </p>
+        </div>
+        <div className="pricing-teaser-grid">
+          {PLANS.map((plan) => (
+            <article key={plan.name} className="pricing-teaser-card">
+              <plan.icon size={24} />
+              <p className="card-eyebrow">{plan.tag}</p>
+              <h3>{plan.name}</h3>
+              <p>{plan.text}</p>
+              <Link className="text-link" href="/pricing">
+                Discuss {plan.name} <ArrowRight size={17} />
+              </Link>
+            </article>
+          ))}
+        </div>
+        <Link className="text-link below-link" href="/pricing">
+          Review pricing details <ArrowRight size={17} />
+        </Link>
+      </section>
       <BuyingConfidence />
       <FAQ />
       <CTA />

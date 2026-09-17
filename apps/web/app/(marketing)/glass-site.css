@@ -835,6 +835,40 @@
   border-radius: var(--g-r-sm);
 }
 
+/* ── Home: pricing teaser (owner layout ruling, 2026-09-16, PR-3) ────────── */
+
+.glass-page .pricing-teaser-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+  margin-bottom: 20px;
+}
+
+.glass-page .pricing-teaser-card {
+  padding: 26px;
+  background: var(--g-glass);
+  border: 1px solid var(--g-glass-border);
+  border-radius: var(--g-r-md);
+  box-shadow: var(--g-shadow-glass);
+}
+
+.glass-page .pricing-teaser-card svg {
+  color: var(--g-link);
+}
+
+.glass-page .pricing-teaser-card h3 {
+  margin: 6px 0 8px;
+}
+
+.glass-page .pricing-teaser-card p {
+  color: var(--g-body);
+  margin-bottom: 14px;
+}
+
+.glass-page .below-link {
+  display: inline-flex;
+}
+
 .glass-page .split-hero p {
   color: var(--g-body);
 }
@@ -1542,7 +1576,8 @@
   }
   .glass-page .pricing-grid,
   .glass-page .benefit-grid,
-  .glass-page .problem-grid {
+  .glass-page .problem-grid,
+  .glass-page .pricing-teaser-grid {
     grid-template-columns: repeat(2, 1fr);
   }
   .glass-page .tour-panel,
@@ -1590,7 +1625,8 @@
   }
   .glass-page .pricing-grid,
   .glass-page .benefit-grid,
-  .glass-page .problem-grid {
+  .glass-page .problem-grid,
+  .glass-page .pricing-teaser-grid {
     grid-template-columns: 1fr;
   }
   .glass-page .tour-tabs {
