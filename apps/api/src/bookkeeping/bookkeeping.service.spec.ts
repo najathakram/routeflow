@@ -671,10 +671,13 @@ describe("BookkeepingService", () => {
   // below; there is no separate service-level `getDashboard` to test here.
   describe('REG-B11 — dashboard money reads use the CONFIRMED (PAID) basis, not "not: VOID"', () => {
     const NOW = new Date();
-    // Simulated DB rows for the one invoice's payments.
+    // Simulated DB rows for the one invoice's payments. `paidAt` (not
+    // `createdAt`) is the real collected-basis field the aggregates below
+    // filter on (check-payments PR-2b/M2: settledAt ?? paidAt); `settledAt`
+    // is omitted (legacy row) so the OR's paidAt branch is what matches.
     const FAKE_PAYMENTS = [
-      { amount: 200, status: "PAID", method: "CASH", createdAt: NOW },
-      { amount: 300, status: "DRAFT", method: "CASH", createdAt: NOW }, // must NOT count as collected
+      { amount: 200, status: "PAID", method: "CASH", paidAt: NOW },
+      { amount: 300, status: "DRAFT", method: "CASH", paidAt: NOW }, // must NOT count as collected
     ];
     // The unpaid invoice those payments sit on, and the balance it must still show.
     const INVOICE_TOTAL = 1000;
@@ -692,7 +695,27 @@ describe("BookkeepingService", () => {
       if (cond === undefined) return true;
       if (cond.gte !== undefined && value < cond.gte) return false;
       if (cond.lte !== undefined && value > cond.lte) return false;
+      if (cond.lt !== undefined && value >= cond.lt) return false;
       return true;
+    };
+    // check-payments PR-2b (M2): the service now filters receipts through
+    // `settledDateFilter` — `where: { OR: [{settledAt: <range>}, {settledAt:
+    // null, paidAt: <range>}] }` — instead of a bare `where.createdAt` range.
+    // A fixture row with no `settledAt` (the legacy-row convention every
+    // FAKE_PAYMENTS entry uses) matches through the second OR branch, tested
+    // against its `paidAt`.
+    const matchesSettledDate = (
+      payment: { paidAt: Date; settledAt?: Date | null },
+      where: any,
+    ): boolean => {
+      const cond = where?.OR;
+      if (cond === undefined) return true;
+      return (cond as any[]).some((branch) => {
+        if (branch.settledAt === null) {
+          return payment.settledAt == null && matchesCreatedAt(payment.paidAt, branch.paidAt);
+        }
+        return payment.settledAt != null && matchesCreatedAt(payment.settledAt, branch.settledAt);
+      });
     };
     // Simulates the real DB: sums FAKE_PAYMENTS honoring whatever `where` the
     // service actually passes, so the assertion pins the resulting NUMBER —
@@ -706,7 +729,7 @@ describe("BookkeepingService", () => {
           // B421: matchesStatus is really a generic Prisma string-filter
           // matcher (plain/equals/not/in) — reused here for `where.method`.
           matchesStatus(p.method, where.method) &&
-          matchesCreatedAt(p.createdAt, where.createdAt),
+          matchesSettledDate(p, where),
       ).reduce((s, p) => s + p.amount, 0);
       return { _sum: { amount: sum } };
     };
@@ -744,8 +767,8 @@ describe("BookkeepingService", () => {
     it("REG-B421: totalCollected/paymentsThisWeek/getFinanceDashboard receipts exclude a CREDIT_NOTE, keep an ADVANCE", async () => {
       const withCreditAndAdvance = [
         ...FAKE_PAYMENTS,
-        { amount: 638, status: "PAID", method: "CREDIT_NOTE", createdAt: NOW },
-        { amount: 50, status: "PAID", method: "ADVANCE", createdAt: NOW },
+        { amount: 638, status: "PAID", method: "CREDIT_NOTE", paidAt: NOW },
+        { amount: 50, status: "PAID", method: "ADVANCE", paidAt: NOW },
       ];
       prisma.invoicePayment.aggregate.mockImplementation(async (args: any) => {
         const where = args?.where ?? {};
@@ -754,7 +777,7 @@ describe("BookkeepingService", () => {
             (p) =>
               matchesStatus(p.status, where.status) &&
               matchesStatus(p.method, where.method) &&
-              matchesCreatedAt(p.createdAt, where.createdAt),
+              matchesSettledDate(p, where),
           )
           .reduce((s, p) => s + p.amount, 0);
         return { _sum: { amount: sum } };
@@ -804,6 +827,42 @@ describe("BookkeepingService", () => {
       const result = await service.getFinanceDashboard();
 
       expect(result.summaryTable.today.due).toBe(CONFIRMED_BALANCE);
+    });
+
+    // ── check-payments PR-2b (M2): collected basis is settledAt ?? paidAt ────
+    // Probe: revert any of the four receipts/totalCollected call sites back to
+    // a bare `where.createdAt`/`where.paidAt` range and this goes red — the
+    // settled-outside-window row would then be counted by its paidAt alone.
+
+    it("REG-M2-settled: a payment whose settledAt falls OUTSIDE the window is excluded from totalCollected even though its paidAt falls inside it", async () => {
+      const future = new Date(NOW);
+      future.setFullYear(future.getFullYear() + 1);
+      const settledNextYear = [
+        { amount: 200, status: "PAID", method: "CASH", paidAt: NOW, settledAt: future },
+      ];
+      prisma.invoicePayment.aggregate.mockImplementation(async (args: any) => {
+        const where = args?.where ?? {};
+        const sum = settledNextYear
+          .filter(
+            (p) =>
+              matchesStatus(p.status, where.status) &&
+              matchesStatus(p.method, where.method) &&
+              matchesSettledDate(p, where),
+          )
+          .reduce((s, p) => s + p.amount, 0);
+        return { _sum: { amount: sum } };
+      });
+
+      const dashboard = await service.getMobileDashboard();
+      expect(dashboard.totalCollected).toBe(0);
+    });
+
+    it("REG-M2-parity: a legacy payment with no settledAt is still counted off its paidAt (fixture parity)", async () => {
+      // FAKE_PAYMENTS' $200 PAID/CASH row carries paidAt: NOW and no settledAt
+      // (the beforeEach default) — this is the exact parity case M2 requires:
+      // identical output to the pre-PR-2b paidAt-only basis.
+      const dashboard = await service.getMobileDashboard();
+      expect(dashboard.totalCollected).toBe(200);
     });
 
     // ── the sibling endpoints in this same file ──────────────────────────────

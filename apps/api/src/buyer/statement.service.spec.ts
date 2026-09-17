@@ -235,6 +235,56 @@ describe("StatementService (P5-15 — monthly statement reconciliation)", () => 
       );
     });
 
+    it("REG-M2: a payment's settled date (not paidAt) determines when it reduces the receivable and its line-item date (check-payments PR-2b)", async () => {
+      // A $200 payment recorded (paidAt) in April but not settled until June
+      // 15 — a post-dated check paid in advance and cashed mid-month.
+      // Pre-M2 (paidAt-only) this would have already reduced the June-1
+      // opening balance; M2 says it hasn't collected until settledAt.
+      const INV_200 = {
+        id: "inv-200",
+        invoiceNumber: "INV-200",
+        total: 500,
+        status: "SENT",
+        issueDate: new Date("2026-04-01T00:00:00.000Z"),
+        payments: [
+          {
+            amount: 200,
+            paidAt: new Date("2026-04-20T00:00:00.000Z"),
+            settledAt: new Date("2026-06-15T00:00:00.000Z"),
+            status: "PAID",
+            method: "CASH",
+          },
+        ],
+      };
+      prisma.invoice.findMany.mockResolvedValue([INV_200]);
+      prisma.invoicePayment.findMany.mockResolvedValue([
+        {
+          id: "pay-pdc",
+          amount: 200,
+          method: "CASH",
+          status: "PAID",
+          reference: null,
+          paidAt: new Date("2026-04-20T00:00:00.000Z"),
+          settledAt: new Date("2026-06-15T00:00:00.000Z"),
+          invoice: { invoiceNumber: "INV-200" },
+        },
+      ]);
+      prisma.creditNote.findMany.mockResolvedValue([]);
+
+      const stmt = await service.buildMonthlyStatement("cust-1", "2026-06");
+
+      // Not yet settled as of June 1 -> the full $500 is still owed at opening.
+      expect(stmt.opening).toBe(500);
+      // Settled June 15, inside the month -> collected by closing (June 30).
+      expect(stmt.closing).toBe(300);
+      expect(stmt.payments).toBe(200);
+      const paymentLine = stmt.lineItems.find((li) => li.type === "PAYMENT");
+      expect(paymentLine?.date).toBe("2026-06-15T00:00:00.000Z");
+      expect(stmt.opening + stmt.charges - stmt.payments - stmt.credits + stmt.adjustments).toBe(
+        stmt.closing,
+      );
+    });
+
     it("availableCredit sums only non-VOID remainders (100/40 + VOID 15 -> 60)", async () => {
       prisma.creditNote.findMany.mockResolvedValue([
         { amount: 100, amountUsed: 40, status: "ISSUED", expiresAt: null },
