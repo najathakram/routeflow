@@ -120,6 +120,7 @@ describe("AuthService — password reset (RF-018)", () => {
         expect.objectContaining({
           to: "alice@example.com",
           subject: expect.stringContaining("Reset"),
+          senderClass: "platform",
         }),
       );
     });

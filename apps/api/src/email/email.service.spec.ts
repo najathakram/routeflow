@@ -1350,6 +1350,27 @@ describe("EmailService.sendPlatform — platform-only send, never tenant SMTP/br
   });
 });
 
+// Security review Phase 2 pinning: an account-merge verification link is security mail —
+// platform sender only, never a tenant's connected mailbox/SMTP.
+describe("EmailService.sendMergeVerificationEmail (security review pinning)", () => {
+  it("sends via the platform sender (senderClass: 'platform')", async () => {
+    const svc = makeService({ resendKey: "re_test" });
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "resend" } as any);
+
+    await svc.sendMergeVerificationEmail({
+      to: "secondary@example.com",
+      primaryEmail: "primary@example.com",
+      verifyUrl: "https://web.test/merge/verify?token=abc",
+    });
+
+    expect(sendSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ to: "secondary@example.com", senderClass: "platform" }),
+    );
+  });
+});
+
 /**
  * N4 — low-stock digest template. Deliberately built with `getTenantId: () => null` (no
  * ALS tenant context), matching how `LowStockDigestService`'s cron actually calls this —

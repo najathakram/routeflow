@@ -997,11 +997,13 @@ export class EmailService {
      *  HTML-only, same as before this field existed. */
     text?: string;
     /**
-     * email-connect-google PR-3: `"platform"` skips BOTH the connected-mailbox branch below
-     * AND the tenant-SMTP branch — security/platform mail (invites, password reset/set,
-     * verification, new-device) must never leave from a tenant's own mailbox or SMTP server.
-     * Every EXISTING caller omits this (defaults to tenant-eligible), so no prior behavior
-     * changes except for the specific call sites migrated to `"platform"` in this PR.
+     * email-connect-google PR-3 (security review Phase 2): `"platform"` DELEGATES the whole
+     * send to `sendPlatform()` — bare platform From, no tenant Reply-To, no tenant domain, no
+     * connected mailbox, no tenant SMTP. Security/platform mail (invites, password reset/set,
+     * verification, new-device, email/role-change notices) must never leave from a tenant's
+     * own mailbox or SMTP server, or carry a tenant's own branding. Every EXISTING caller
+     * omits this (defaults to tenant-eligible), so no prior behavior changes except for the
+     * specific call sites migrated to `"platform"`.
      */
     senderClass?: "tenant" | "platform";
   }): Promise<{
@@ -1023,20 +1025,34 @@ export class EmailService {
      */
     fromAddress?: string;
   }> {
-    const isPlatformSend = params.senderClass === "platform";
+    // Security review Phase 2: a platform-class send is a full DELEGATION to `sendPlatform()`
+    // — not a set of skipped branches inside this method. `sendPlatform` never resolves
+    // tenant SMTP, a tenant's own Reply-To, or a tenant's connected mailbox; it always uses
+    // the bare platform From. This also means it never reads `prisma.getTenantId()`, so an
+    // in-request platform send (e.g. an admin's own action triggering a security notice)
+    // cannot accidentally pick up THEIR tenant's own anything.
+    if (params.senderClass === "platform") {
+      return this.sendPlatform({
+        to: params.to,
+        subject: params.subject,
+        html: params.html,
+        text: params.text,
+        replyTo: params.replyTo,
+      });
+    }
 
     // Reply-To = the business's own email so customer replies reach the tenant, not the
     // (platform) sending address. Applies to every transport, including the mailbox.
     const replyTo = params.replyTo ?? (await this.getReplyTo());
 
     // 0. Leading branch (PR-3, no parallel path — every other branch is unchanged): a
-    // CONNECTED (or THROTTLED-but-past-its-window) tenant Google mailbox sends first, never
-    // for a platform-class send. `MailboxSendService.trySend` never throws and returns
-    // delivered:false for "not applicable" (no connection, REVOKED, still THROTTLED, a
-    // refresh failure, or a Gmail API error) — every one of those falls through to the
-    // existing tenant-SMTP → platform-SMTP → Resend chain below, unchanged.
+    // CONNECTED (or THROTTLED-but-past-its-window) tenant Google mailbox sends first.
+    // `MailboxSendService.trySend` never throws and returns delivered:false for "not
+    // applicable" (no connection, REVOKED, still THROTTLED, a refresh failure, or a Gmail API
+    // error) — every one of those falls through to the existing tenant-SMTP → platform-SMTP →
+    // Resend chain below, unchanged.
     const tenantId = this.prisma.getTenantId();
-    if (!isPlatformSend && tenantId) {
+    if (tenantId) {
       const businessName = this.sanitizeDisplayName(await this.getTenantBusinessName());
       const mailboxResult = await this.mailboxSend.trySend(tenantId, {
         to: params.to,
@@ -1058,11 +1074,7 @@ export class EmailService {
 
     // 1. Try per-tenant SMTP if configured. A config/SSRF error or send failure is
     // caught (not thrown) so we can fall back to Resend and stay honest-by-result.
-    // Skipped entirely for a platform-class send (ruling: security mail never uses tenant
-    // SMTP either) — `getTenantEmailConfig` reads `prisma.getTenantId()` internally, so an
-    // in-request platform send (e.g. an admin's own upgrade() triggering a notification)
-    // would otherwise still pick up THEIR tenant's own SMTP.
-    const emailCfg = isPlatformSend ? null : await this.getTenantEmailConfig();
+    const emailCfg = await this.getTenantEmailConfig();
     let smtpError: string | undefined;
     let smtpFallbackReason: string | undefined;
     if (emailCfg) {
@@ -1585,7 +1597,14 @@ export class EmailService {
 
     // Return the honest send result so the caller can avoid claiming the verification
     // email "has been sent" when it hasn't (R5).
-    return this.send({ to: params.to, subject: "Confirm account merge — RouteFlow", html });
+    // Security review Phase 2: account-merge verification is security mail — platform sender
+    // only, never a tenant's connected mailbox/SMTP.
+    return this.send({
+      to: params.to,
+      subject: "Confirm account merge — RouteFlow",
+      html,
+      senderClass: "platform",
+    });
   }
 
   // ─── Buyer account merge completion email ──────────────────────────────────

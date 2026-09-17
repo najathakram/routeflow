@@ -13,6 +13,7 @@ import { RolesGuard } from "../../auth/guards/roles.guard";
 import { AddonGuard } from "../../billing/addon.guard";
 import { AddonService } from "../../billing/addon.service";
 import { EntitlementsService } from "../../billing/entitlements.service";
+import { FeatureOverrideService } from "../../billing/feature-override.service";
 
 /**
  * HTTP-level, real-guard-chain tests for MailboxController (security review fix round —
@@ -95,6 +96,13 @@ describe("MailboxController — real guard chain over HTTP", () => {
         {
           provide: EntitlementsService,
           useValue: { isAlwaysEnforcedTenant: jest.fn().mockResolvedValue(false) },
+        },
+        // Feature grants PR-1 (already on master): AddonGuard gained a 4th constructor
+        // dependency. An empty override map = no active GRANT/DENY, same as the pre-PR-1
+        // behavior this fixture models.
+        {
+          provide: FeatureOverrideService,
+          useValue: { getMany: jest.fn().mockResolvedValue(new Map()) },
         },
         { provide: MailboxConnectionService, useValue: mailboxConnection },
       ],

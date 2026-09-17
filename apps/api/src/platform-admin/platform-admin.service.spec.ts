@@ -1376,6 +1376,11 @@ describe("PlatformAdminService — audit provenance", () => {
         }),
       );
       expect((prisma as any).driver.create).not.toHaveBeenCalled();
+
+      // B421 pinning: the admin-account welcome email carries a password — platform sender only.
+      expect(emailServiceMock.send).toHaveBeenCalledWith(
+        expect.objectContaining({ senderClass: "platform" }),
+      );
     });
   });
 
@@ -1556,6 +1561,8 @@ describe("PlatformAdminService — audit provenance", () => {
       const emailCall = (emailServiceMock.send as jest.Mock).mock.calls[0][0];
       expect(emailCall.html).toContain("Complete payment to activate your account.");
       expect(emailCall.html).not.toMatch(/trial expires in/i);
+      // B421 pinning: the welcome email carries a temp password — platform sender only.
+      expect(emailCall.senderClass).toBe("platform");
     });
   });
 
