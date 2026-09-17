@@ -6,6 +6,7 @@ import { CTA, Eyebrow } from "../components/marketing";
 import { FeatureCatalog } from "../components/feature-catalog";
 import { WorkflowTour } from "../components/workflow-tour";
 import { DeliveryDemo } from "../components/delivery-demo";
+import { FAQ } from "../components/faq";
 
 // Copy verbatim from the redesign's app/[page]/page.tsx `Wholesalers()` (M1 §2b).
 
@@ -23,21 +24,6 @@ export const metadata: Metadata = {
     type: "website",
   },
 };
-
-const GETTING_STARTED: Array<[string, string]> = [
-  [
-    "Bring your current workflow",
-    "Show how you take orders, plan routes, and answer customer questions.",
-  ],
-  [
-    "Walk through the key handoffs",
-    "Ask to see the points where your office, warehouse, and drivers share information.",
-  ],
-  [
-    "Agree on the fit",
-    "Confirm the plan, limits, import requirements, and available features before you commit.",
-  ],
-];
 
 export default function WholesalersPage() {
   return (
@@ -94,27 +80,7 @@ export default function WholesalersPage() {
           <WorkflowTour />
         </div>
       </section>
-      <section className="section wrap getting-started">
-        <div>
-          <Eyebrow>START WITH YOUR OPERATION</Eyebrow>
-          <h2>
-            Make the demo
-            <br />
-            useful to your team.
-          </h2>
-        </div>
-        <ol>
-          {GETTING_STARTED.map(([title, text], i) => (
-            <li key={title}>
-              <span>0{i + 1}</span>
-              <div>
-                <h3>{title}</h3>
-                <p>{text}</p>
-              </div>
-            </li>
-          ))}
-        </ol>
-      </section>
+      <FAQ />
       <CTA />
     </div>
   );
