@@ -1120,6 +1120,31 @@ export function gateVia(key: string): FeatureGateVia | undefined {
   return GATE_VIA_BY_KEY.get(key);
 }
 
+/**
+ * B524 fix round (Opus review of PR #913, finding F2): `TenantAddon.addonKey` (what
+ * `AddonService.enableAddon` receives) and `FeatureDef.key` (what the registry indexes
+ * `requires` by) are the SAME string for a bare `RequireAddon` row (`driver_payments`,
+ * `tobacco_dealer`, `ocr`, …) but DIVERGE for the two `LEGACY_ADDON_KEY_TO_SKU`-bridged legacy
+ * keys that map to a `RequirePlanFlag` row instead: addonKey `"msrp"` is registry key
+ * `"flag.msrp"`, addonKey `"sales_agents"` is `"flag.sales_agents"`. Looking `addonKey` up
+ * directly in `FEATURE_REGISTRY` (what the pre-fix code did) silently found nothing for those
+ * two and skipped the requires check outright — harmless today only because neither bridged
+ * row currently declares `requires`, not because the lookup was correct. This is the exact
+ * inverse of the web app's own `ADDON_ROW_KEY_BY_REGISTRY_KEY` (`FeatureConsole.tsx`, #899) —
+ * hand-kept in sync with it the same way `checkFeatureRequires` is kept in sync with its web
+ * twin, for the same reason (no shared module reaches both apps).
+ */
+export const ADDON_KEY_TO_REGISTRY_KEY: Readonly<Record<string, string>> = {
+  tobacco_dealer: "tobacco_dealer",
+  driver_payments: "driver_payments",
+  recurring_routes: "recurring_routes",
+  order_delivery: "order_delivery",
+  ocr: "ocr",
+  developer_mode: "developer_mode",
+  msrp: "flag.msrp",
+  sales_agents: "flag.sales_agents",
+};
+
 const FEATURE_DEF_BY_KEY = new Map(FEATURE_REGISTRY.map((f) => [f.key, f]));
 
 /** `key`'s full FeatureDef, or undefined when unregistered. */

@@ -1,38 +1,37 @@
 /**
- * B524 — `PlatformAdminController#createFeatureOverride`'s requires-enforcement guard
- * (`assertOverrideRequirementsMet`). See that method's own doc comment for why this check
- * lives in the controller rather than inside `FeatureOverrideService.create` (a real circular
- * DI edge — `feature-override-single-caller.spec.ts` in `apps/api/src/billing/` is the static
- * guard that keeps the "one caller" premise this relies on true).
+ * B524 — `PlatformAdminController#createFeatureOverride`/`#revokeFeatureOverride`'s
+ * requires-enforcement + resolver-cache-invalidation guards. See `createFeatureOverride`'s own
+ * doc comment for why the check calls `EntitlementAuthority.assertFeatureRequiresMet` (shared
+ * with `AddonService.enableAddon`) rather than living inside `FeatureOverrideService.create`
+ * itself (a real circular DI edge) — `feature-override-single-caller.spec.ts` in
+ * `apps/api/src/billing/` is the static guard that keeps the "one caller" premise this relies
+ * on true. The requires LOGIC itself (allOf/anyOf, fail-open, the ack short-circuit) is tested
+ * once, directly, in `entitlement-authority.requires.spec.ts` — this suite only proves the
+ * controller calls that shared check with the right args and reacts correctly to it.
  *
  * Deliberately does NOT instantiate the whole controller test suite (none exists for this file
  * — it has nine injected services and dozens of routes) — only the handful of dependencies this
- * one guard touches are given real jest.fn() behavior; everything else is a bare stub the code
+ * guard touches are given real jest.fn() behavior; everything else is a bare stub the code
  * path under test never calls.
  */
 import { BadRequestException } from "@nestjs/common";
 import { PlatformAdminController } from "./platform-admin.controller";
 
 function stub() {
-  return new Proxy(
-    {},
-    {
-      get: () => jest.fn(),
-    },
-  );
+  return new Proxy({}, { get: () => jest.fn() });
 }
 
-function make(opts: { effectiveKeys?: string[] | null; recordAdminAction?: jest.Mock } = {}) {
-  const resolvedValue =
-    opts.effectiveKeys === null
-      ? null
-      : { byKey: new Map((opts.effectiveKeys ?? []).map((k) => [k, { key: k, effective: true }])) };
-
-  const authority = { resolveAll: jest.fn().mockResolvedValue(resolvedValue) };
-  const featureOverrides = { create: jest.fn().mockResolvedValue({ kind: "COMP" }) };
-  const svc = {
-    recordAdminAction: opts.recordAdminAction ?? jest.fn().mockResolvedValue(undefined),
+function make(opts: { assertFeatureRequiresMet?: jest.Mock } = {}) {
+  const authority = {
+    assertFeatureRequiresMet:
+      opts.assertFeatureRequiresMet ?? jest.fn().mockResolvedValue(undefined),
+    invalidate: jest.fn(),
   };
+  const featureOverrides = {
+    create: jest.fn().mockResolvedValue({ kind: "COMP" }),
+    revoke: jest.fn().mockResolvedValue({ id: "ov-1" }),
+  };
+  const svc = { recordAdminAction: jest.fn().mockResolvedValue(undefined) };
 
   const controller = new PlatformAdminController(
     svc as any,
@@ -49,17 +48,28 @@ function make(opts: { effectiveKeys?: string[] | null; recordAdminAction?: jest.
 }
 
 const admin = { sub: "admin-1" } as any;
+const baseDto = { featureKey: "driver_payments", reason: "test", expiresAt: undefined };
 
 describe("B524 — PlatformAdminController#createFeatureOverride requires guard", () => {
-  it("400s a GRANT whose requires is unmet, writes nothing, and never calls recordAdminAction", async () => {
-    const { controller, featureOverrides, svc } = make({ effectiveKeys: [] });
-    const dto = {
-      featureKey: "driver_payments",
-      effect: "GRANT" as const,
-      reason: "test",
-      expiresAt: undefined,
-    };
+  it("calls authority.assertFeatureRequiresMet with (tenantId, featureKey, ack) for a GRANT", async () => {
+    const { controller, authority } = make();
+    const dto = { ...baseDto, effect: "GRANT" as const, acknowledgeUnmetRequires: true };
+    await controller.createFeatureOverride("t1", dto as any, admin);
+    expect(authority.assertFeatureRequiresMet).toHaveBeenCalledWith("t1", "driver_payments", true);
+  });
 
+  it("never calls the check for a DENY, even with an explicit ack value", async () => {
+    const { controller, authority, featureOverrides } = make();
+    const dto = { ...baseDto, effect: "DENY" as const };
+    await controller.createFeatureOverride("t1", dto as any, admin);
+    expect(authority.assertFeatureRequiresMet).not.toHaveBeenCalled();
+    expect(featureOverrides.create).toHaveBeenCalled();
+  });
+
+  it("propagates the shared check's rejection, writes nothing, and never audits", async () => {
+    const rejecting = jest.fn().mockRejectedValue(new BadRequestException("depends on X"));
+    const { controller, featureOverrides, svc } = make({ assertFeatureRequiresMet: rejecting });
+    const dto = { ...baseDto, effect: "GRANT" as const };
     await expect(controller.createFeatureOverride("t1", dto as any, admin)).rejects.toThrow(
       BadRequestException,
     );
@@ -67,88 +77,62 @@ describe("B524 — PlatformAdminController#createFeatureOverride requires guard"
     expect(svc.recordAdminAction).not.toHaveBeenCalled();
   });
 
-  it("proceeds when the GRANT's requires IS met", async () => {
-    const { controller, featureOverrides } = make({ effectiveKeys: ["recurring_routes"] });
-    const dto = {
-      featureKey: "driver_payments",
-      effect: "GRANT" as const,
-      reason: "test",
-      expiresAt: undefined,
-    };
-
+  it("proceeds and writes when the shared check resolves", async () => {
+    const { controller, featureOverrides } = make();
+    const dto = { ...baseDto, effect: "GRANT" as const };
     await controller.createFeatureOverride("t1", dto as any, admin);
     expect(featureOverrides.create).toHaveBeenCalledWith(
       expect.objectContaining({ featureKey: "driver_payments", effect: "GRANT" }),
     );
   });
 
-  it("proceeds on an unmet GRANT when acknowledgeUnmetRequires is true, and never resolves effective keys", async () => {
-    const { controller, featureOverrides, authority } = make({ effectiveKeys: [] });
-    const dto = {
-      featureKey: "driver_payments",
-      effect: "GRANT" as const,
-      reason: "test",
-      expiresAt: undefined,
-      acknowledgeUnmetRequires: true,
-    };
-
+  // F1 (Opus review): a GRANT must invalidate the resolver cache so it's visible to the very
+  // next requires check, not up to 30s later.
+  it("invalidates the resolver cache after a successful create", async () => {
+    const { controller, authority } = make();
+    const dto = { ...baseDto, effect: "GRANT" as const };
     await controller.createFeatureOverride("t1", dto as any, admin);
-    expect(featureOverrides.create).toHaveBeenCalled();
-    expect(authority.resolveAll).not.toHaveBeenCalled();
+    expect(authority.invalidate).toHaveBeenCalledWith("t1");
   });
 
-  it("a DENY is never checked against requires regardless of ack, even with an unmet prerequisite", async () => {
-    const { controller, featureOverrides, authority } = make({ effectiveKeys: [] });
-    const dto = {
-      featureKey: "driver_payments",
-      effect: "DENY" as const,
-      reason: "test",
-      expiresAt: undefined,
-    };
-
-    await controller.createFeatureOverride("t1", dto as any, admin);
-    expect(featureOverrides.create).toHaveBeenCalled();
-    expect(authority.resolveAll).not.toHaveBeenCalled();
+  it("does NOT invalidate the resolver cache when the check rejects (nothing was written)", async () => {
+    const rejecting = jest.fn().mockRejectedValue(new BadRequestException("depends on X"));
+    const { controller, authority } = make({ assertFeatureRequiresMet: rejecting });
+    const dto = { ...baseDto, effect: "GRANT" as const };
+    await expect(controller.createFeatureOverride("t1", dto as any, admin)).rejects.toThrow();
+    expect(authority.invalidate).not.toHaveBeenCalled();
   });
 
-  it("a featureKey with no registry entry is a no-op passthrough", async () => {
-    const { controller, featureOverrides, authority } = make({ effectiveKeys: [] });
-    const dto = {
-      featureKey: "not_a_real_registry_key",
-      effect: "GRANT" as const,
-      reason: "test",
-      expiresAt: undefined,
-    };
-
+  // F6 (Opus review): the audit trail must show whether an admin knowingly overrode the check.
+  it("audits acknowledgeUnmetRequires (true when the DTO sets it)", async () => {
+    const { controller, svc } = make();
+    const dto = { ...baseDto, effect: "GRANT" as const, acknowledgeUnmetRequires: true };
     await controller.createFeatureOverride("t1", dto as any, admin);
-    expect(featureOverrides.create).toHaveBeenCalled();
-    expect(authority.resolveAll).not.toHaveBeenCalled();
+    expect(svc.recordAdminAction).toHaveBeenCalledWith(
+      "t1",
+      "admin-1",
+      expect.anything(),
+      expect.objectContaining({ acknowledgeUnmetRequires: true }),
+    );
   });
 
-  it("a registered key with no requires is a no-op passthrough", async () => {
-    const { controller, featureOverrides, authority } = make({ effectiveKeys: [] });
-    const dto = {
-      featureKey: "msrp", // registered, no `requires`
-      effect: "GRANT" as const,
-      reason: "test",
-      expiresAt: undefined,
-    };
-
+  it("audits acknowledgeUnmetRequires as false when the DTO omits it", async () => {
+    const { controller, svc } = make();
+    const dto = { ...baseDto, effect: "GRANT" as const };
     await controller.createFeatureOverride("t1", dto as any, admin);
-    expect(featureOverrides.create).toHaveBeenCalled();
-    expect(authority.resolveAll).not.toHaveBeenCalled();
+    expect(svc.recordAdminAction).toHaveBeenCalledWith(
+      "t1",
+      "admin-1",
+      expect.anything(),
+      expect.objectContaining({ acknowledgeUnmetRequires: false }),
+    );
   });
+});
 
-  it("proceeds (fails open) when authority.resolveAll returns null — a separate, already-surfaced failure mode", async () => {
-    const { controller, featureOverrides } = make({ effectiveKeys: null });
-    const dto = {
-      featureKey: "driver_payments",
-      effect: "GRANT" as const,
-      reason: "test",
-      expiresAt: undefined,
-    };
-
-    await controller.createFeatureOverride("t1", dto as any, admin);
-    expect(featureOverrides.create).toHaveBeenCalled();
+describe("B524 — PlatformAdminController#revokeFeatureOverride resolver-cache invalidation", () => {
+  it("invalidates the resolver cache after a revoke (F1 — the same staleness in the other direction)", async () => {
+    const { controller, authority } = make();
+    await controller.revokeFeatureOverride("t1", "ov-1", admin);
+    expect(authority.invalidate).toHaveBeenCalledWith("t1");
   });
 });

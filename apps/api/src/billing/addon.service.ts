@@ -13,11 +13,8 @@ import { FeatureResolverService } from "./feature-resolver.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { LEGACY_ADDON_KEY_TO_SKU } from "./plan-catalog.constants";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
-import {
-  checkFeatureRequires,
-  describeUnmetFeatureRequirement,
-  featureDefByKey,
-} from "./feature-registry";
+import { ADDON_KEY_TO_REGISTRY_KEY } from "./feature-registry";
+import { EntitlementAuthority } from "./entitlement-authority.service";
 
 /**
  * A Stripe `resource_missing` / 404 error means the item we tried to act on is
@@ -54,6 +51,7 @@ export class AddonService {
     private readonly entitlements: EntitlementsService,
     private readonly catalog: PlanCatalogService,
     private readonly featureResolver: FeatureResolverService,
+    private readonly authority: EntitlementAuthority,
   ) {}
 
   // ─── Check access ─────────────────────────────────────────────────────────
@@ -108,8 +106,16 @@ export class AddonService {
    * B524: refuses to grant a key whose registry `requires` (allOf/anyOf) isn't satisfied
    * for this tenant, unless `acknowledgeUnmetRequires` is explicitly true — the server twin
    * of the console's own warn-and-confirm checkbox (#899), read straight off the SAME
-   * FEATURE_REGISTRY declaration so the two can't drift. A legacy addonKey with no registry
-   * row (or a registered row with no `requires`) is a no-op passthrough. This is a read-only
+   * FEATURE_REGISTRY declaration so the two can't drift. The actual check is
+   * `EntitlementAuthority.assertFeatureRequiresMet` — shared with
+   * `PlatformAdminController#createFeatureOverride`'s identical guard, see that method's doc
+   * for why it lives there and not here or in a service both would need to depend on. A
+   * legacy addonKey with no registry row (or a registered row with no `requires`) is a no-op
+   * passthrough. `ADDON_KEY_TO_REGISTRY_KEY` translates the addonKey namespace into the
+   * registry-key namespace first (B524 fix round, finding F2) — they diverge for the two
+   * `RequirePlanFlag`-bridged legacy keys (`msrp`→`flag.msrp`, `sales_agents`→
+   * `flag.sales_agents`); an addonKey with no entry there is passed through unchanged (every
+   * bare `RequireAddon` row's registry key already equals its addonKey). This is a read-only
    * check, done before the lock below — not part of the Stripe/upsert race (same reasoning as
    * the tenant-existence check above it: a human admin re-checking a prerequisite that changed
    * seconds ago is not worth serialising over).
@@ -142,26 +148,11 @@ export class AddonService {
     if (!tenant) throw new NotFoundException(`Tenant ${tenantId} not found`);
 
     // B524 — see the method doc above for the full rationale.
-    const def = featureDefByKey(addonKey);
-    if (def?.requires && !acknowledgeUnmetRequires) {
-      const resolved = await this.featureResolver.resolve(tenantId);
-      // `resolved === null` means resolution itself failed (DB down / unseeded catalog) — that
-      // is a different, ALREADY-surfaced failure mode elsewhere in the stack; do not compound it
-      // by also refusing a requires check it can't actually evaluate. Proceed as if unconstrained.
-      if (resolved) {
-        const effectiveKeys = new Set(
-          [...resolved.byKey.entries()].filter(([, v]) => v.effective).map(([k]) => k),
-        );
-        const status = checkFeatureRequires(def.requires, effectiveKeys);
-        if (!status.satisfied) {
-          throw new BadRequestException(
-            `Add-on "${addonKey}" depends on ${describeUnmetFeatureRequirement(status)}, which ` +
-              `tenant ${tenant.slug} does not currently have — pass acknowledgeUnmetRequires ` +
-              `to enable it anyway.`,
-          );
-        }
-      }
-    }
+    await this.authority.assertFeatureRequiresMet(
+      tenantId,
+      ADDON_KEY_TO_REGISTRY_KEY[addonKey] ?? addonKey,
+      acknowledgeUnmetRequires,
+    );
 
     // Dedicated "billing" lock family (`common/db-locks.ts`'s `LOCK_FAMILIES`) — its own
     // pool, sized for this call's own peak (max 4: a short, request-path critical section

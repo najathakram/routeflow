@@ -76,10 +76,11 @@ interface Opts {
   stripe?: any;
   /** Override tenantSubscription.findUnique's resolved value (default null — no Stripe sub). */
   subscription?: any;
-  /** B524: registry keys this tenant currently has effective, for featureResolver.resolve()'s
-   *  `byKey` map. Default `[]` (nothing effective). `null` simulates resolution FAILURE
-   *  (DB down / unseeded catalog) — the resolver returns `null`, not a map. */
-  effectiveKeys?: string[] | null;
+  /** B524 fix round: `authority.assertFeatureRequiresMet` is a jest.fn() resolving/rejecting
+   *  per this — the requires LOGIC itself now lives in
+   *  `entitlement-authority.requires.spec.ts`, so this suite only needs to prove AddonService
+   *  calls the shared check with the right (translated) key and surfaces its rejection. */
+  assertFeatureRequiresMet?: jest.Mock;
 }
 
 function make(opts: Opts = {}) {
@@ -97,18 +98,13 @@ function make(opts: Opts = {}) {
   const catalog = {
     getPublishedCatalog: jest.fn().mockResolvedValue(published(opts.publishedSkus ?? [])),
   } as any;
-  const resolvedValue =
-    opts.effectiveKeys === null
-      ? null
-      : {
-          byKey: new Map((opts.effectiveKeys ?? []).map((k) => [k, { key: k, effective: true }])),
-        };
-  const featureResolver = {
-    invalidate: jest.fn(),
-    resolve: jest.fn().mockResolvedValue(resolvedValue),
+  const featureResolver = { invalidate: jest.fn() } as any;
+  const authority = {
+    assertFeatureRequiresMet:
+      opts.assertFeatureRequiresMet ?? jest.fn().mockResolvedValue(undefined),
   } as any;
-  const svc = new AddonService(prisma, stripe, entitlements, catalog, featureResolver);
-  return { svc, prisma, entitlements, catalog, stripe, featureResolver };
+  const svc = new AddonService(prisma, stripe, entitlements, catalog, featureResolver, authority);
+  return { svc, prisma, entitlements, catalog, stripe, featureResolver, authority };
 }
 
 describe("AddonService.enableAddon", () => {
@@ -390,7 +386,8 @@ describe("AddonService.enableAddon — B342 concurrency lock", () => {
     // "ai_scanning" is not in LEGACY_ADDON_KEY_TO_SKU, so the catalog is never consulted.
     const catalog = { getPublishedCatalog: jest.fn() } as any;
     const featureResolver = { invalidate: jest.fn() } as any;
-    const svc = new AddonService(prisma, stripe, entitlements, catalog, featureResolver);
+    const authority = { assertFeatureRequiresMet: jest.fn().mockResolvedValue(undefined) } as any;
+    const svc = new AddonService(prisma, stripe, entitlements, catalog, featureResolver, authority);
 
     const [a, b] = await Promise.allSettled([
       svc.enableAddon("t1", "ai_scanning", "price_1"),
@@ -416,48 +413,36 @@ describe("AddonService.enableAddon — B342 concurrency lock", () => {
   });
 });
 
-describe("AddonService.enableAddon — B524 requires enforcement", () => {
-  it("a key with no registry entry is a no-op passthrough (never calls featureResolver.resolve)", async () => {
-    const { svc, prisma, featureResolver } = make();
-    await svc.enableAddon("t1", "some_legacy_key_not_in_registry");
-    expect(prisma.tenantAddon.upsert).toHaveBeenCalled();
-    expect(featureResolver.resolve).not.toHaveBeenCalled();
+describe("AddonService.enableAddon — B524 requires enforcement (delegates to EntitlementAuthority)", () => {
+  // The requires LOGIC (allOf/anyOf, fail-open, the ack short-circuit) is tested once, directly
+  // on `EntitlementAuthority.assertFeatureRequiresMet` (`entitlement-authority.requires.spec.ts`
+  // — see the B524 fix round comment there). This suite only proves AddonService calls that
+  // shared check with the right (namespace-translated) key/tenant/ack, and stops the write when
+  // it rejects.
+
+  it("calls authority.assertFeatureRequiresMet with the bare addonKey unchanged for an unbridged key", async () => {
+    const { svc, authority } = make();
+    await svc.enableAddon("t1", "driver_payments", undefined, true);
+    expect(authority.assertFeatureRequiresMet).toHaveBeenCalledWith("t1", "driver_payments", true);
   });
 
-  it("a registered key with no `requires` is a no-op passthrough", async () => {
-    // "recurring_routes" is a real FEATURE_REGISTRY row with no `requires` and, unlike "msrp",
-    // isn't SKU-bridged — no publishedSkus fixture needed to get past an unrelated check first.
-    const { svc, prisma, featureResolver } = make();
-    await svc.enableAddon("t1", "recurring_routes");
-    expect(prisma.tenantAddon.upsert).toHaveBeenCalled();
-    expect(featureResolver.resolve).not.toHaveBeenCalled();
+  // F2 (Opus review): the two RequirePlanFlag-bridged legacy addon keys must be translated to
+  // their REGISTRY key before the shared check runs, or it silently looks up nothing.
+  it("translates a bridged legacy addonKey (msrp) to its registry key (flag.msrp) via ADDON_KEY_TO_REGISTRY_KEY", async () => {
+    const { svc, authority } = make({ publishedSkus: ["MSRP"] });
+    await svc.enableAddon("t1", "msrp");
+    expect(authority.assertFeatureRequiresMet).toHaveBeenCalledWith("t1", "flag.msrp", undefined);
   });
 
-  it("400s driver_payments (requires anyOf recurring_routes/order_delivery) when neither is effective, writes nothing", async () => {
-    const { svc, prisma } = make({ effectiveKeys: [] });
+  it("propagates the shared check's rejection and writes nothing", async () => {
+    const rejecting = jest.fn().mockRejectedValue(new BadRequestException("depends on X"));
+    const { svc, prisma } = make({ assertFeatureRequiresMet: rejecting });
     await expect(svc.enableAddon("t1", "driver_payments")).rejects.toThrow(BadRequestException);
-    await expect(svc.enableAddon("t1", "driver_payments")).rejects.toThrow(
-      /depends on .*acme.*does not currently have/,
-    );
     expect(prisma.tenantAddon.upsert).not.toHaveBeenCalled();
   });
 
-  it("enables driver_payments when ONE of the anyOf prerequisites is effective", async () => {
-    const { svc, prisma } = make({ effectiveKeys: ["recurring_routes"] });
-    await svc.enableAddon("t1", "driver_payments");
-    expect(prisma.tenantAddon.upsert).toHaveBeenCalled();
-  });
-
-  it("enables driver_payments with neither prerequisite when acknowledgeUnmetRequires is true", async () => {
-    const { svc, prisma, featureResolver } = make({ effectiveKeys: [] });
-    await svc.enableAddon("t1", "driver_payments", undefined, true);
-    expect(prisma.tenantAddon.upsert).toHaveBeenCalled();
-    // Acknowledged — the check short-circuits before ever resolving effective keys.
-    expect(featureResolver.resolve).not.toHaveBeenCalled();
-  });
-
-  it("proceeds (fails open) when featureResolver.resolve itself fails (returns null) — a separate, already-surfaced failure mode", async () => {
-    const { svc, prisma } = make({ effectiveKeys: null });
+  it("proceeds to write when the shared check resolves (met, acknowledged, or fail-open — all indistinguishable to AddonService)", async () => {
+    const { svc, prisma } = make();
     await svc.enableAddon("t1", "driver_payments");
     expect(prisma.tenantAddon.upsert).toHaveBeenCalled();
   });
