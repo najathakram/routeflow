@@ -51,11 +51,7 @@ const BENEFITS: Array<[typeof Package, string, string]> = [
     "Put your order together",
     "Select the products you need and review the order before placing it.",
   ],
-  [
-    ReceiptText,
-    "See what you owe",
-    "Every invoice, itemized against exactly what was delivered — a short delivery is already reflected, not something you have to flag.",
-  ],
+  [ReceiptText, "See what you owe", "Every invoice, itemized against exactly what was delivered."],
   [
     MapPin,
     "Track your delivery",

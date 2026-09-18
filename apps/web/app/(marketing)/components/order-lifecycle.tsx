@@ -28,7 +28,7 @@ const STEPS: Array<[string, string]> = [
   ],
   [
     "Route",
-    "The order joins the day's route. Stop order is optimized for time or distance and checked against real delivery windows, and re-optimizes if something changes mid-route.",
+    "The order joins the day's route. Stop order is optimized for time or distance and checked against real delivery windows.",
   ],
   [
     "Proof of delivery",
