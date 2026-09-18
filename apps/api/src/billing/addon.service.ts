@@ -9,6 +9,7 @@ import {
 import { PrismaService } from "../prisma/prisma.service";
 import { StripeService } from "./stripe.service";
 import { EntitlementsService } from "./entitlements.service";
+import { FeatureResolverService } from "./feature-resolver.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { LEGACY_ADDON_KEY_TO_SKU } from "./plan-catalog.constants";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
@@ -47,6 +48,7 @@ export class AddonService {
     private readonly stripe: StripeService,
     private readonly entitlements: EntitlementsService,
     private readonly catalog: PlanCatalogService,
+    private readonly featureResolver: FeatureResolverService,
   ) {}
 
   // ─── Check access ─────────────────────────────────────────────────────────
@@ -226,6 +228,12 @@ export class AddonService {
           });
 
           this.entitlements.invalidate(tenantId);
+          // B509: the Feature Console's "effective" view reads FeatureResolverService's own
+          // 30s cache, which entitlements.invalidate() above does not touch — without this,
+          // the console could show the pre-toggle value for up to 30s after an admin enables
+          // an add-on. Real enforcement (AddonGuard/DriverPaymentsGuard) is unaffected — it
+          // reads TenantAddon via Prisma directly, uncached.
+          this.featureResolver.invalidate(tenantId);
           this.logger.log(`Add-on "${addonKey}" enabled for tenant ${tenant.slug}`);
           return addon;
         },
@@ -300,6 +308,9 @@ export class AddonService {
     });
 
     this.entitlements.invalidate(tenantId);
+    // B509: see the matching comment in enableAddon — the resolver cache needs its own
+    // invalidation, separate from entitlements.invalidate().
+    this.featureResolver.invalidate(tenantId);
     this.logger.log(`Add-on "${addonKey}" disabled for tenant ${tenantId}`);
     return updated;
   }
