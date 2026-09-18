@@ -451,7 +451,7 @@ describe("DemoBookingService.create", () => {
 
     const recipients = email.sent.map((m) => m.to);
     expect(recipients).toContain("alex@example.com");
-    expect(recipients).toContain("hello@routeflow.info");
+    expect(recipients).toContain("admin@routeflow.info");
     expect(email.sent).toHaveLength(2);
   });
 
@@ -477,13 +477,49 @@ describe("DemoBookingService.create", () => {
 
   it("REG-B518: a failed admin send is logged with the admin recipient kind, and never suppresses the booker's own delivered result", async () => {
     const { email, service } = build();
-    email.failFor.add("hello@routeflow.info");
+    email.failFor.add("admin@routeflow.info");
     const warnSpy = jest.spyOn((service as any).logger, "warn").mockImplementation(() => {});
 
     const { booking } = await service.create(input);
 
     expect(booking.emailDelivered).toBe(true); // the booker's own send still succeeded
     const warnLine = warnSpy.mock.calls.map((c) => String(c[0])).find((line) => line.includes(booking.id));
+    expect(warnLine).toBeDefined();
+    expect(warnLine).toContain("admin");
+  });
+
+  it("REG-B522: every address in demoBookingAdminEmails receives the notification", async () => {
+    const { email, service } = build({
+      demoBookingAdminEmails: ["admin@routeflow.info", "colleague@routeflow.info"],
+    });
+
+    await service.create(input);
+
+    const recipients = email.sent.map((m) => m.to);
+    expect(recipients).toContain("alex@example.com");
+    expect(recipients).toContain("admin@routeflow.info");
+    expect(recipients).toContain("colleague@routeflow.info");
+    expect(email.sent).toHaveLength(3);
+  });
+
+  it("REG-B522: a send failure to ONE admin recipient does not abort the others, or the booking", async () => {
+    const { email, service } = build({
+      demoBookingAdminEmails: ["admin@routeflow.info", "colleague@routeflow.info"],
+    });
+    email.failFor.add("admin@routeflow.info");
+    const warnSpy = jest.spyOn((service as any).logger, "warn").mockImplementation(() => {});
+
+    const { booking } = await service.create(input);
+
+    expect(booking.status).toBe(DemoBookingStatus.CONFIRMED);
+    expect(booking.emailDelivered).toBe(true); // booker's own send is unaffected
+    const recipients = email.sent.map((m) => m.to);
+    // Both admin sends were attempted (the failing one included) -- the loop never stops early.
+    expect(recipients).toContain("admin@routeflow.info");
+    expect(recipients).toContain("colleague@routeflow.info");
+    const warnLine = warnSpy.mock.calls
+      .map((c) => String(c[0]))
+      .find((line) => line.includes(booking.id) && line.includes("admin@routeflow.info"));
     expect(warnLine).toBeDefined();
     expect(warnLine).toContain("admin");
   });
@@ -655,7 +691,7 @@ describe("DemoBookingService manage-token lifecycle", () => {
     expect(email.sent).toHaveLength(4);
     const cancelledEmails = email.sent.filter((m) => m.subject.toLowerCase().includes("cancelled"));
     expect(cancelledEmails.map((m) => m.to)).toEqual(
-      expect.arrayContaining(["alex@example.com", "hello@routeflow.info"]),
+      expect.arrayContaining(["alex@example.com", "admin@routeflow.info"]),
     );
     expect(cancelled.emailDelivered).toBe(true);
   });

@@ -1,3 +1,5 @@
+import { Logger } from "@nestjs/common";
+
 /**
  * Environment-driven configuration for public demo booking.
  *
@@ -7,6 +9,12 @@
  * is refused — rather than inventing slots nobody is actually free for.
  * Setup runbook: docs/runbooks/google-calendar-demo-booking-setup.md
  */
+
+const configLogger = new Logger("DemoBookingConfig");
+
+/** A conservative "looks like an email" check — not full RFC 5322, just enough to catch a typo
+ *  or a stray non-address token in a comma-separated list before it reaches EmailService. */
+const PLAUSIBLE_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export interface DemoBookingConfig {
   /** Service-account credentials for domain-wide delegation. */
@@ -18,11 +26,12 @@ export interface DemoBookingConfig {
   /** HMAC key for the cancel/reschedule links in the confirmation email. */
   tokenSecret: string;
   /**
-   * Where the internal "someone booked/cancelled/rescheduled a demo" notification goes.
-   * Always set — a code-side default, never a silent skip (B518: the booker's confirmation
-   * shipped with no internal counterpart at all).
+   * Where the internal "someone booked/cancelled/rescheduled a demo" notification goes — one
+   * or more addresses. Always non-empty — a code-side default, never a silent skip (B518: the
+   * booker's confirmation shipped with no internal counterpart at all; B522: the owner wants
+   * a real default plus room for a second recipient, so this is a list, not a single string).
    */
-  demoBookingAdminEmail: string;
+  demoBookingAdminEmails: string[];
 
   /** IANA zone the business hours below are expressed in. */
   businessTimeZone: string;
@@ -65,6 +74,46 @@ function parseWeekdays(raw: string | undefined, fallback: number[]): number[] {
   return unique.length ? unique : fallback;
 }
 
+const DEMO_BOOKING_ADMIN_EMAIL_DEFAULT = "admin@routeflow.info";
+
+/**
+ * Comma-separated -> trimmed, empties dropped, de-duplicated (case-insensitive), each address
+ * validated -- an invalid one is dropped with a loud log rather than corrupting the whole list
+ * or throwing (B522: one bad address must never cost the others their notification). Falls back
+ * to the code-side default when the result is empty -- never returns an empty list, so a caller
+ * can never silently send nothing. The fallback itself is only logged at error level when the
+ * env var actually had content that failed to survive parsing (real misconfiguration); a plain
+ * unset var is the ordinary default-in-use state and stays quiet, matching B518's original
+ * fallback behaviour.
+ */
+function parseAdminEmails(raw: string | undefined): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const candidate of (raw ?? "").split(",")) {
+    const email = candidate.trim();
+    if (!email) continue;
+    if (!PLAUSIBLE_EMAIL.test(email)) {
+      configLogger.error(
+        `demo-booking: DEMO_BOOKING_ADMIN_EMAIL has an invalid address, skipping it: "${email}"`,
+      );
+      continue;
+    }
+    const key = email.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(email);
+  }
+  if (result.length === 0) {
+    if ((raw ?? "").trim()) {
+      configLogger.error(
+        `demo-booking: DEMO_BOOKING_ADMIN_EMAIL resolved to no valid addresses -- falling back to the default (${DEMO_BOOKING_ADMIN_EMAIL_DEFAULT})`,
+      );
+    }
+    return [DEMO_BOOKING_ADMIN_EMAIL_DEFAULT];
+  }
+  return result;
+}
+
 /**
  * Railway stores the service-account PEM as a single line with literal `\n`
  * two-character sequences (that is how it appears inside the downloaded JSON
@@ -89,7 +138,7 @@ export function loadDemoBookingConfig(env: NodeJS.ProcessEnv = process.env): Dem
     impersonate: (env.GOOGLE_CALENDAR_IMPERSONATE ?? "").trim(),
     calendarId: (env.GOOGLE_CALENDAR_ID ?? "primary").trim() || "primary",
     tokenSecret: (env.DEMO_BOOKING_TOKEN_SECRET ?? "").trim(),
-    demoBookingAdminEmail: (env.DEMO_BOOKING_ADMIN_EMAIL ?? "").trim() || "hello@routeflow.info",
+    demoBookingAdminEmails: parseAdminEmails(env.DEMO_BOOKING_ADMIN_EMAIL),
 
     businessTimeZone: (env.DEMO_BOOKING_TIMEZONE ?? "America/Chicago").trim(),
     openHour: open.hour,

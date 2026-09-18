@@ -70,6 +70,65 @@ describe("loadDemoBookingConfig — other config parsing", () => {
   });
 });
 
+// B522: the internal-notification recipient is a comma-separated list, not a single address.
+describe("loadDemoBookingConfig — demoBookingAdminEmails (B522)", () => {
+  it("falls back to the default (quietly) when unset", () => {
+    const config = loadDemoBookingConfig({} as NodeJS.ProcessEnv);
+    expect(config.demoBookingAdminEmails).toEqual(["admin@routeflow.info"]);
+  });
+
+  it("splits, trims, and returns every valid address", () => {
+    const config = loadDemoBookingConfig({
+      DEMO_BOOKING_ADMIN_EMAIL: " admin@routeflow.info , colleague@routeflow.info ",
+    } as unknown as NodeJS.ProcessEnv);
+    expect(config.demoBookingAdminEmails).toEqual([
+      "admin@routeflow.info",
+      "colleague@routeflow.info",
+    ]);
+  });
+
+  it("drops empty entries from a trailing/doubled comma", () => {
+    const config = loadDemoBookingConfig({
+      DEMO_BOOKING_ADMIN_EMAIL: "admin@routeflow.info,,colleague@routeflow.info,",
+    } as unknown as NodeJS.ProcessEnv);
+    expect(config.demoBookingAdminEmails).toEqual([
+      "admin@routeflow.info",
+      "colleague@routeflow.info",
+    ]);
+  });
+
+  it("de-duplicates case-insensitively, keeping the first-seen casing", () => {
+    const config = loadDemoBookingConfig({
+      DEMO_BOOKING_ADMIN_EMAIL: "Admin@routeflow.info,admin@ROUTEFLOW.info",
+    } as unknown as NodeJS.ProcessEnv);
+    expect(config.demoBookingAdminEmails).toEqual(["Admin@routeflow.info"]);
+  });
+
+  it("skips an invalid address but keeps the valid ones in the same list", () => {
+    const config = loadDemoBookingConfig({
+      DEMO_BOOKING_ADMIN_EMAIL: "admin@routeflow.info,not-an-email,colleague@routeflow.info",
+    } as unknown as NodeJS.ProcessEnv);
+    expect(config.demoBookingAdminEmails).toEqual([
+      "admin@routeflow.info",
+      "colleague@routeflow.info",
+    ]);
+  });
+
+  it("falls back to the default when every entry is invalid, rather than an empty list", () => {
+    const config = loadDemoBookingConfig({
+      DEMO_BOOKING_ADMIN_EMAIL: "not-an-email, also not one",
+    } as unknown as NodeJS.ProcessEnv);
+    expect(config.demoBookingAdminEmails).toEqual(["admin@routeflow.info"]);
+  });
+
+  it("falls back to the default when the value is only commas/whitespace", () => {
+    const config = loadDemoBookingConfig({
+      DEMO_BOOKING_ADMIN_EMAIL: " , , ",
+    } as unknown as NodeJS.ProcessEnv);
+    expect(config.demoBookingAdminEmails).toEqual(["admin@routeflow.info"]);
+  });
+});
+
 // Review round-2 finding C: neither the advisory lock (keyed on exact start)
 // nor the partial unique index (on startsAt alone) catches two DIFFERENT
 // starts whose [start, start+duration) ranges overlap — that can only happen
