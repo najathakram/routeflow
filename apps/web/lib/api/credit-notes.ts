@@ -103,7 +103,13 @@ export function useCreateCreditNote() {
   const qc = useQueryClient();
   return useMutation<CreditNote, Error, CreateCreditNoteDto>({
     mutationFn: (dto) => apiClient.post("/credit-notes", dto).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["credit-notes"] }),
+    // B343: the customer statement's outstanding/available-credit figures come from a
+    // separate query (useCustomerStatement) that this mutation never invalidated — a
+    // statement left open showed pre-credit-note numbers until an unrelated remount.
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["credit-notes"] });
+      qc.invalidateQueries({ queryKey: ["customers", data.customerId, "statement"] });
+    },
   });
 }
 
@@ -112,10 +118,11 @@ export function useApplyCreditNote() {
   return useMutation<CreditNote, Error, { id: string; invoiceId: string }>({
     mutationFn: ({ id, invoiceId }) =>
       apiClient.post(`/credit-notes/${id}/apply`, { invoiceId }).then((r) => r.data),
-    onSuccess: (_, { id }) => {
+    onSuccess: (data, { id }) => {
       qc.invalidateQueries({ queryKey: ["credit-notes"] });
       qc.invalidateQueries({ queryKey: ["credit-notes", id] });
       qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["customers", data.customerId, "statement"] });
     },
   });
 }
@@ -124,9 +131,10 @@ export function useVoidCreditNote() {
   const qc = useQueryClient();
   return useMutation<CreditNote, Error, string>({
     mutationFn: (id) => apiClient.post(`/credit-notes/${id}/void`).then((r) => r.data),
-    onSuccess: (_, id) => {
+    onSuccess: (data, id) => {
       qc.invalidateQueries({ queryKey: ["credit-notes"] });
       qc.invalidateQueries({ queryKey: ["credit-notes", id] });
+      qc.invalidateQueries({ queryKey: ["customers", data.customerId, "statement"] });
     },
   });
 }
@@ -142,11 +150,12 @@ export function useUnapplyCreditNote() {
   return useMutation<CreditNote, Error, { id: string; invoiceId: string }>({
     mutationFn: ({ id, invoiceId }) =>
       apiClient.post(`/credit-notes/${id}/unapply`, { invoiceId }).then((r) => r.data),
-    onSuccess: (_, { id, invoiceId }) => {
+    onSuccess: (data, { id, invoiceId }) => {
       qc.invalidateQueries({ queryKey: ["credit-notes"] });
       qc.invalidateQueries({ queryKey: ["credit-notes", id] });
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", invoiceId] });
+      qc.invalidateQueries({ queryKey: ["customers", data.customerId, "statement"] });
     },
   });
 }

@@ -916,7 +916,7 @@ export class CreditNotesService {
   }
 
   async voidCreditNote(id: string) {
-    return this.prisma.tenantTransaction(
+    const voided = await this.prisma.tenantTransaction(
       async (tx: any) => {
         const cn = await tx.creditNote.findFirst({
           where: { id },
@@ -950,6 +950,18 @@ export class CreditNotesService {
       },
       { isolationLevel: "Serializable" },
     );
+
+    // B343: emitted outside the tx, mirroring create()'s emitCreditNoteCreated — a
+    // void previously fired no event at all, so a customer statement or credit-notes
+    // view left open in another tab/session never learned the note was gone.
+    this.gateway.emitCreditNoteVoided(this.prisma.getTenantId(), {
+      creditNoteId: voided.id,
+      creditNoteNumber: voided.creditNoteNumber,
+      customerId: voided.customerId,
+      amount: Number(voided.amount),
+    });
+
+    return voided;
   }
 
   /**

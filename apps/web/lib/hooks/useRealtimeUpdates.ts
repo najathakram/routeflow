@@ -111,10 +111,29 @@ export function useRealtimeUpdates() {
       },
     );
 
-    socket.on("creditNote.created", (data: { creditNoteNumber: string; creditNoteId: string }) => {
-      void qc.invalidateQueries({ queryKey: ["credit-notes"] });
-      void qc.invalidateQueries({ queryKey: ["credit-notes", data.creditNoteId] });
-    });
+    // B343: this handler never invalidated the customer statement query, so a
+    // statement left open kept showing pre-credit-note outstanding/available-credit
+    // figures. `customerId` was always on the wire (CreditNoteCreatedPayload) — just
+    // never read here.
+    socket.on(
+      "creditNote.created",
+      (data: { creditNoteNumber: string; creditNoteId: string; customerId: string }) => {
+        void qc.invalidateQueries({ queryKey: ["credit-notes"] });
+        void qc.invalidateQueries({ queryKey: ["credit-notes", data.creditNoteId] });
+        void qc.invalidateQueries({ queryKey: ["customers", data.customerId, "statement"] });
+      },
+    );
+
+    // B343: voidCreditNote fired no socket event at all — a remote void never reached
+    // an open customer statement or credit-notes view.
+    socket.on(
+      "creditNote.voided",
+      (data: { creditNoteNumber: string; creditNoteId: string; customerId: string }) => {
+        void qc.invalidateQueries({ queryKey: ["credit-notes"] });
+        void qc.invalidateQueries({ queryKey: ["credit-notes", data.creditNoteId] });
+        void qc.invalidateQueries({ queryKey: ["customers", data.customerId, "statement"] });
+      },
+    );
 
     return () => {
       socket.off("connect_error");
@@ -128,6 +147,7 @@ export function useRealtimeUpdates() {
       socket.off("invoice.updated");
       socket.off("buyer.payment.requested");
       socket.off("creditNote.created");
+      socket.off("creditNote.voided");
       disconnectSocket();
     };
   }, [qc, toast]);

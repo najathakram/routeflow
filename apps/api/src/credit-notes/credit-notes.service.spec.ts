@@ -12,6 +12,7 @@ describe("CreditNotesService — W5c regulated reversal", () => {
   let service: CreditNotesService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let ledger: { reverseCreditNoteEntries: jest.Mock; unreverseCreditNoteEntries: jest.Mock };
+  let gateway: { emitCreditNoteCreated: jest.Mock; emitCreditNoteVoided: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
@@ -19,11 +20,12 @@ describe("CreditNotesService — W5c regulated reversal", () => {
       reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
       unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
     };
+    gateway = { emitCreditNoteCreated: jest.fn(), emitCreditNoteVoided: jest.fn() };
     const mod = await Test.createTestingModule({
       providers: [
         CreditNotesService,
         { provide: PrismaService, useValue: prisma },
-        { provide: RouteFlowGateway, useValue: { emitCreditNoteCreated: jest.fn() } },
+        { provide: RouteFlowGateway, useValue: gateway },
         { provide: RegulatedLedgerService, useValue: ledger },
         {
           provide: CommissionEngineService,
@@ -238,6 +240,12 @@ describe("CreditNotesService — W5c regulated reversal", () => {
   it("voidCreditNote un-reverses the ledger for an unused (ISSUED) credit", async () => {
     prisma.creditNote.findFirst.mockResolvedValue({ status: "ISSUED", amountUsed: 0 });
     prisma.creditNote.updateMany.mockResolvedValue({ count: 1 }); // race-free flip succeeds
+    prisma.creditNote.findUnique.mockResolvedValue({
+      id: "cn-1",
+      creditNoteNumber: "CN-2026-0001",
+      customerId: "c1",
+      amount: 50,
+    });
     await service.voidCreditNote("cn-1");
     expect(prisma.creditNote.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -248,6 +256,13 @@ describe("CreditNotesService — W5c regulated reversal", () => {
     expect(ledger.unreverseCreditNoteEntries).toHaveBeenCalledWith(
       expect.objectContaining({ creditNoteId: "cn-1" }),
     );
+    // B343: a void previously fired no socket event at all.
+    expect(gateway.emitCreditNoteVoided).toHaveBeenCalledWith(expect.anything(), {
+      creditNoteId: "cn-1",
+      creditNoteNumber: "CN-2026-0001",
+      customerId: "c1",
+      amount: 50,
+    });
   });
 
   it("refuses the void when a concurrent apply already consumed the credit (0 rows flipped)", async () => {
@@ -256,12 +271,14 @@ describe("CreditNotesService — W5c regulated reversal", () => {
     prisma.creditNote.updateMany.mockResolvedValue({ count: 0 });
     await expect(service.voidCreditNote("cn-1")).rejects.toThrow(/un-apply/i);
     expect(ledger.unreverseCreditNoteEntries).not.toHaveBeenCalled();
+    expect(gateway.emitCreditNoteVoided).not.toHaveBeenCalled();
   });
 
   it("blocks voiding an APPLIED credit note (must un-apply first) — no ledger touch", async () => {
     prisma.creditNote.findFirst.mockResolvedValue({ status: "APPLIED", amountUsed: 110 });
     await expect(service.voidCreditNote("cn-1")).rejects.toThrow(/un-apply/i);
     expect(ledger.unreverseCreditNoteEntries).not.toHaveBeenCalled();
+    expect(gateway.emitCreditNoteVoided).not.toHaveBeenCalled();
     expect(prisma.creditNote.updateMany).not.toHaveBeenCalled();
   });
 });
