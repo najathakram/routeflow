@@ -123,7 +123,11 @@
   `null` as "offer nothing", never "everything is free". `isSlotGridValid` (`demo-booking.config.ts`)
   additionally refuses when `slotIntervalMinutes < durationMinutes` (would let the grid offer
   overlapping starts neither race guard below catches) — same fail-closed shape, never fires with
-  the shipped 30/30 defaults.
+  the shipped 30/30 defaults. **B502 fix (#857, 0a365054):** the fail-closed `null` above and a
+  genuinely empty (fully-booked) day both rendered as `{days: []}` to the client, indistinguishable
+  from each other. Response now carries `AvailabilityStatus: "ok" | "unavailable"` alongside
+  `days` so `demo-scheduler.tsx` (see `web/routes-3.md`) can show a distinct message for each; the
+  not-configured warn log is now throttled on this public, unauthenticated endpoint.
 - **booking race guards (two independent layers)** — a `demo-booking` advisory-lock family
   (`common/db-locks.ts#LOCK_FAMILIES`, `max: 4`) keyed on the slot's UTC start instant serializes
   `create`/`reschedule`'s check-then-write window (same primitive `addon.service.ts`'s B342 fix

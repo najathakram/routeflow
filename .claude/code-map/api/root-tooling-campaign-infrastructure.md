@@ -43,3 +43,29 @@
 - **DB backups / restoring production** — [`apps/db-backup/`](../../apps/db-backup/) — Railway cron service, nightly `pg_dump` 02:00 UTC → Cloudflare R2 `db-backups/production_<ts>_railway.sql.gz` (gzipped plain SQL, 30-day prune). **Runbook: [`apps/db-backup/RESTORE.md`](../../apps/db-backup/RESTORE.md)**. Restore with **`psql`**, never a raw `pg` client — the dump's `COPY … FROM stdin;` / `\.` blocks are psql directives the wire protocol rejects (learned the hard way, 2026-08-17). Manual dump: `apps/api/scripts/backup-production.sh`.
 
 - **bugflow** — GitHub-native bug tracker + Claude-routine workers (planned)** — [`tools/bugflow/`](../../tools/bugflow/README.md) — status Proposed v0.1, docs-only (no source yet); index at `README.md`, decision at [`docs/adr/0003-bugflow-github-native-bug-tracking.md`](../../docs/adr/0003-bugflow-github-native-bug-tracking.md); separation rule: imports nothing from `apps/*`/`packages/*`, every RouteFlow-specific fact lives in `bugflow.config.json` (config-driven, extractable to its own repo)
+
+- **`scripts/janitor.mjs` (2026-09-17, #868) — disk-space reclamation for the local worktree fleet.**
+  Report-only by default; `--apply` reclaims for real, in a fixed order, re-checking free space
+  after each step and stopping once a `--target` (default 10 GB) is met: (1) `node_modules` in
+  worktrees whose branch is merged into `origin/master` (checkout kept), (2) whole worktrees that
+  are merged, clean, and fully pushed (`git worktree remove --force`, a `cmd /c rmdir /s /q`
+  fallback for Windows file-lock leftovers, then `git worktree prune`), (3) orphan dirs under
+  `.claude/worktrees/` `git worktree list` no longer recognizes, (4) Docker build cache only
+  (`docker builder prune -a -f` — never `docker system prune`, never volumes), (5) npm cache, (6)
+  `local-assets/proofs/`+`local-assets/handoff/` folders older than 7 days. Never touches the main
+  checkout, `PROTECTED_WORKTREE_NAMES` (`rf-migrate`, `rf-crm-cloud`), or a worktree with
+  uncommitted/unpushed work or a branch it can't prove merged — plain ancestry
+  (`git merge-base --is-ancestor`), so a squash-merged branch is a known, safe-direction blind
+  spot (won't be reclaimed, verify by hand). `--preflight <gb>` exits non-zero below the
+  threshold, for gating an `npm ci`; `--stale-branches` reports (never deletes) merged branches
+  still on origin. **Junction safety (L-180/L-193):** before any recursive delete, a read-only
+  `Get-ChildItem` enumerates Windows junctions under the target and each is unlinked with a bare
+  `cmd /c rmdir` (never `/s`, which is what can follow a reparse point into its target) before
+  `cmd /c rmdir /s /q` runs on what's left — never PowerShell's `Remove-Item -Recurse` or Node's
+  recursive `fs.rmSync`. Classification logic (merged/dirty/unpushed/protected/age-filter/orphan/
+  stale-branch) is pure and fixture-tested in `scripts/janitor.self-test.mjs` — nothing in that
+  suite touches a real repo, filesystem tree, Docker, or npm cache. No root eslint/tsc coverage
+  exists for `scripts/` (this file's own workspace-only lint note applies); syntax-checked with
+  `node --check` instead. Runbook: `docs/runbooks/disk-cleanup-janitor.md`. First `--apply` run
+  against the real host is intentionally supervised — nothing merged-and-idle existed to safely
+  prove the destructive path on on 2026-09-17.

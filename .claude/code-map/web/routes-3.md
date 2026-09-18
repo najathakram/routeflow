@@ -80,6 +80,13 @@
   public page. The booking-submit path (create/reschedule/cancel) is unaffected — its real
   message sources (class-validator field errors, the service's own 409/503 text) are safe to
   show. Spec: `demo-scheduler.test.tsx`.
+  **B502 fix (#857, 0a365054):** `getAvailability()` returned `{days: []}` identically whether
+  Google Calendar was unconfigured/unreachable or genuinely fully booked, so `DemoScheduler`
+  showed the same "no times this month" message either way. New `AvailabilityStatus` (`"ok" |
+  "unavailable"`) on the response; the client now shows a distinct "temporarily unavailable,
+  email us" message for the unconfigured/unreachable case. Also throttles the not-configured warn
+  log on this public, unauthenticated, 20/min-throttled endpoint. Specs:
+  `demo-booking.service.spec.ts`, `demo-scheduler.test.tsx`.
 - **`sign-in/page.tsx`** (2026-09-16) — the wholesaler/retailer account chooser (glass design),
   links straight to the unchanged `/login` and `/buyer/login` — collects nothing itself.
 - **Glass design system (2026-09-16, Codex study port)** — `glass.css` (tokens: `--g-*` custom
@@ -117,7 +124,21 @@ center; width: 100%; white-space: nowrap`, its own `:focus-visible` ring (`outli
   shared `IntersectionObserver` over a fixed selector list (section headings, cards, CTA blocks,
   …): adds `.editorial-reveal`, adds `.reveal-pending` only to nodes starting below the fold, then
   removes `.reveal-pending` on intersect. No-ops under `prefers-reduced-motion: reduce` (content
-  stays visible with no JS either way).
+  stays visible with no JS either way). **B504 fix (#861, e95af7e2) + landing incident (#862/#863):**
+  `marketing.css` never declared an explicit revealed-opacity rule for `.editorial-reveal` — only
+  `.reveal-pending` (opacity 0) existed, relying on an implicit cascade fallback that failed live
+  (9 capability cards, section headings, wholesale-extras stuck invisible on `/`, `/product`,
+  `/wholesalers`). #861 added the missing rule plus 4 AA contrast fixes. **#862 (legal pages,
+  53de9d3d) then silently reverted #861's rule** — its branch was cut before #861 merged and never
+  rebased, so landing it via a raw diff against current master read #861's own hunk as a removal
+  belonging to #862 (see [[L-195]]). Restored via #863 (3c97ca63, 7-line reinstatement) — that is
+  master's current, correct state. Registry: B504.
+- **`privacy/page.tsx` + `terms/page.tsx` (#862, 53de9d3d) — real legal copy**, replacing
+  placeholder stubs; plus a new top-level **`SECURITY.md`** (vulnerability-disclosure contact +
+  scope). `lib/site.ts`'s `routes` table gained both pages' entries, kept parity-tested against
+  `middleware.marketing.test.ts` as usual (see `lib/site.ts` bullet below). Docs-only content
+  change to `apps/web/app/(marketing)/marketing.css` in the same commit is what triggered the
+  B504 landing incident above — see that bullet and [[L-195]] for the mechanism, not this one.
 - **`contact/page.tsx`** — `DemoForm` (`components/demo-form.tsx`) builds a
   `mailto:hello@routeflow.info` draft client-side; no POST, nothing stored server-side (deliberate
   v1 scope cut per the pipeline spec's R8 — registry B250 tracks adding a real lead-capture
@@ -142,6 +163,14 @@ center; width: 100%; white-space: nowrap`, its own `:focus-visible` ring (`outli
   auth paths, and every marketing page EXCEPT `/` when the visitor is signed in
   (`rf-op-auth`/`rf-buyer-auth`) or already marked `rf-mobile-app` — those go to the mobile build
   too, since the marketing home isn't useful to a returning app user.
+  **B505 fix (#860, eec29265):** `/admin-login`, every `/admin/*` path, and `/verify-email` were
+  NOT on the exempt list and have no Expo screen at all — a real phone hitting any of them got
+  "Unmatched Route" from the mobile build instead of the platform-admin login/screens or the
+  email-verify page (the reason the owner couldn't use the backoffice on their phone). New
+  `isWebOnlyPath()` (`lib/marketing-routes.ts`, exported as `WEB_ONLY_EXACT_PATHS`) exempts these
+  — prefix match on `/admin` only (`/administration` still proxies, correctly). `/forgot-password`
+  and `/reset-password` deliberately still proxy — those DO have Expo screens. Specs:
+  `middleware.marketing.test.ts` (`R-B505`).
 - **`MOBILE_APP_COOKIE` (`rf-mobile-app`)** — httpOnly marker set on every proxied DOCUMENT request
   (never on subresource/API proxying, so the SPA's own asset fetches don't re-stamp it), 30-day
   ROLLING max-age (re-stamped on each proxied load). Marks "this browser has been served the
