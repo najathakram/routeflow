@@ -29,7 +29,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { useQuery } from "@tanstack/react-query";
-import { Badge, Button, Modal, cn } from "@routeflow/ui/web";
+import { Badge, Button, Modal, cn, TAP_TARGET } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import {
@@ -1195,7 +1195,10 @@ export default function ProductDetailPage() {
                                     toast({ title: "Delete failed", variant: "error" });
                                   }
                                 }}
-                                className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/50 text-white hover:bg-danger transition-colors"
+                                className={cn(
+                                  TAP_TARGET,
+                                  "absolute right-2 top-2 rounded-full bg-black/50 text-white hover:bg-danger transition-colors",
+                                )}
                                 title="Delete this image"
                               >
                                 <Trash2 className="h-3.5 w-3.5" />
@@ -1211,7 +1214,10 @@ export default function ProductDetailPage() {
                                       (i) => (i - 1 + images.length) % images.length,
                                     );
                                   }}
-                                  className="absolute left-1 top-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors"
+                                  className={cn(
+                                    TAP_TARGET,
+                                    "absolute left-1 top-1/2 -translate-y-1/2 rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors",
+                                  )}
                                 >
                                   <ChevronLeft className="h-4 w-4" />
                                 </button>
@@ -1220,7 +1226,10 @@ export default function ProductDetailPage() {
                                     e.stopPropagation();
                                     setActiveImageIdx((i) => (i + 1) % images.length);
                                   }}
-                                  className="absolute right-8 top-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors"
+                                  className={cn(
+                                    TAP_TARGET,
+                                    "absolute right-8 top-1/2 -translate-y-1/2 rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors",
+                                  )}
                                 >
                                   <ChevronRight className="h-4 w-4" />
                                 </button>
@@ -1298,7 +1307,10 @@ export default function ProductDetailPage() {
                             onClick={() => handleMoveImage(safeIdx, safeIdx - 1)}
                             disabled={safeIdx === 0 || updateProduct.isPending}
                             title="Move left"
-                            className="flex h-7 w-7 items-center justify-center rounded-lg border border-surface-border text-navy/70 hover:text-navy disabled:opacity-30 transition-colors"
+                            className={cn(
+                              TAP_TARGET,
+                              "rounded-lg border border-surface-border text-navy/70 hover:text-navy disabled:opacity-30 transition-colors",
+                            )}
                           >
                             <ChevronLeft className="h-3.5 w-3.5" />
                           </button>
@@ -1306,7 +1318,10 @@ export default function ProductDetailPage() {
                             onClick={() => handleMoveImage(safeIdx, safeIdx + 1)}
                             disabled={safeIdx === images.length - 1 || updateProduct.isPending}
                             title="Move right"
-                            className="flex h-7 w-7 items-center justify-center rounded-lg border border-surface-border text-navy/70 hover:text-navy disabled:opacity-30 transition-colors"
+                            className={cn(
+                              TAP_TARGET,
+                              "rounded-lg border border-surface-border text-navy/70 hover:text-navy disabled:opacity-30 transition-colors",
+                            )}
                           >
                             <ChevronRight className="h-3.5 w-3.5" />
                           </button>
@@ -1500,7 +1515,7 @@ export default function ProductDetailPage() {
                       <button
                         onClick={cancelEdit}
                         title="Cancel"
-                        className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
+                        className={cn(TAP_TARGET, "rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors")}
                       >
                         <X className="h-4 w-4" />
                       </button>
@@ -1518,7 +1533,7 @@ export default function ProductDetailPage() {
                       <button
                         onClick={startEdit}
                         title="Edit product"
-                        className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
+                        className={cn(TAP_TARGET, "rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors")}
                       >
                         <Pencil className="h-4 w-4" />
                       </button>
@@ -2483,7 +2498,7 @@ export default function ProductDetailPage() {
                               <button
                                 onClick={startEdit}
                                 title="Edit this product"
-                                className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
+                                className={cn(TAP_TARGET, "rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors")}
                               >
                                 <Pencil className="h-3.5 w-3.5" />
                               </button>
@@ -2524,7 +2539,7 @@ export default function ProductDetailPage() {
                                   <button
                                     onClick={() => openVariantModal(variant)}
                                     title="Edit variant"
-                                    className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
+                                    className={cn(TAP_TARGET, "rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors")}
                                   >
                                     <Pencil className="h-3.5 w-3.5" />
                                   </button>

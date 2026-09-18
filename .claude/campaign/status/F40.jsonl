@@ -1,4 +1,4 @@
 {"id":"B316","batch":"F40","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B317","batch":"F40","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B318","batch":"F40","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B318","batch":"F40","tier":"T1","state":"already-fixed","pr":876,"proof":null,"evidence":"REG-B318 in orders.service.spec.ts pins non-staff appliedCreditNotes never reaching validate/sync/settle; landed 21389a90 (#876), confirmed ancestor of origin/master"}
 {"id":"B319","batch":"F40","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}

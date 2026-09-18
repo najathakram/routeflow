@@ -168,6 +168,9 @@ describe("Tenant detail page — Feature Console 'Customise' action (brief D tes
     await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
 
     expect(callOrder).toEqual(["preview", "create"]);
+    // B524 prep — this form has no missing-requires warning UI, so there is nothing for an
+    // operator to acknowledge; `acknowledgeUnmetRequires` must be ABSENT, never sent as `false`
+    // (a hardcoded `false` would assert an acknowledgment that never happened).
     expect(mockPost).toHaveBeenCalledWith(
       `/platform-admin/tenants/${TENANT_ID}/feature-overrides`,
       {
@@ -178,5 +181,7 @@ describe("Tenant detail page — Feature Console 'Customise' action (brief D tes
         expiresAt: null,
       },
     );
+    const [, sentPayload] = mockPost.mock.calls[0];
+    expect(sentPayload).not.toHaveProperty("acknowledgeUnmetRequires");
   });
 });

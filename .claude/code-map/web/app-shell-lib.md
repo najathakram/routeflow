@@ -151,7 +151,7 @@
   its suggestion rows and the Substitute trigger. Proven post-deploy by e2e `24-order-edit-pricing`.
   Admin toggle: `(platform-admin)/admin/tenants/[id]/page.tsx` `AVAILABLE_ADDONS` += `msrp` (now
   removed — see below).
-- **`AVAILABLE_ADDONS` emptied (2026-09-18, #866 B508 + #890 B519):** `(platform-admin)/admin/tenants/[id]/page.tsx`'s
+- **`AVAILABLE_ADDONS` emptied (2026-09-18, B508, #866 + #890):** `(platform-admin)/admin/tenants/[id]/page.tsx`'s
   legacy `AVAILABLE_ADDONS` array (`tobacco_dealer`, `msrp`, `sales_agents`, `DRIVER_PAYMENTS_ADDON`,
   `RECURRING_ROUTES_ADDON`, `ORDER_DELIVERY_ADDON`, `OCR_ADDON`, `DEVELOPER_MODE_ADDON`) is now
   `const AVAILABLE_ADDONS: Array<{key,name,description}> = []` — all eight legacy provisioning
@@ -159,7 +159,19 @@
   points — landed #866 first, then #890 rebased onto it), superseded entirely by the Feature
   Console's per-feature grants (`fg-d-enable-addon`'s "Enable as add-on" modal). Zero remaining
   references to the removed constants; the matching `@routeflow/types` import line was trimmed to
-  just `FEATURE_OVERRIDE_KIND_VALUES`/`FeatureOverrideKind`.
+  just `FEATURE_OVERRIDE_KIND_VALUES`/`FeatureOverrideKind`. **Does NOT close B519** (driver_payments
+  has no client-side check for its `anyOf:[recurring_routes,order_delivery]` dependency) — that gap
+  lived in BOTH this legacy toggle AND `EnableAddonModal.tsx`'s "Enable as add-on" action; removing
+  the legacy toggle only retires one of the two unenforced paths, and `EnableAddonModal.tsx` still
+  POSTs `driver_payments` unconditionally. B519 stays open/uncampaigned.
+- **`products/[id]/CropModal.tsx` Pointer Events conversion (2026-09-18, #883/[[B514]]):** crop-box
+  drag, corner resize, and focal-point placement were wired only to `onMouseDown` +
+  `window.addEventListener("mousemove"/"mouseup")` — completely unusable on a touch device (no
+  mouse events fire at all). Converted the full interaction surface to Pointer Events
+  (`onPointerDown`/`pointermove`/`pointerup` via `setPointerCapture`, one code path for
+  mouse/touch/pen), added `touch-none` so the browser doesn't also try to scroll/zoom the image
+  under an active drag, and capped `maxWidth` so the modal fits a narrow viewport instead of
+  overflowing it.
 - **`lib/format.ts`** (new 2026-08-26, audit P0 batch) — display formatter: `formatMoney`
   (Intl USD, thousands separators), `formatQty` (bare integers, ≤2dp fractions), `formatDate`
   ("Aug 27, 2026", **LOCAL time — for UTC-midnight calendar dates use `lib/formatting.ts`

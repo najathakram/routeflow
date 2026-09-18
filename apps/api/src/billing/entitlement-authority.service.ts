@@ -1,11 +1,15 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, BadRequestException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "./entitlements.service";
 import { FeatureOverrideService } from "./feature-override.service";
 import { FeatureResolverService, ResolvedKey } from "./feature-resolver.service";
 import { EntitlementsModeService } from "./entitlements-mode.service";
 import { FeatureDiffService } from "./feature-diff.service";
-import { FEATURE_REGISTRY } from "./feature-registry";
+import {
+  FEATURE_REGISTRY,
+  checkFeatureRequires,
+  describeUnmetFeatureRequirement,
+} from "./feature-registry";
 import { addonGateState } from "./addon-gate-registry";
 import { isDarkFlag, allowsFlag, computeServedFlags } from "./plan-flag-policy";
 import type { FeatureModeState, FeatureSource } from "@routeflow/types";
@@ -204,6 +208,69 @@ export class EntitlementAuthority {
   /** For the explain trace / preview — every key's full resolved detail in one resolver call. */
   async resolveAll(tenantId: string) {
     return this.resolver.resolve(tenantId);
+  }
+
+  /** Drops `tenantId`'s cached resolution — callers must invoke this after a write that
+   *  changes what `resolveAll`/`can`/`config` would return for that tenant (an addon grant, an
+   *  override create/revoke, a plan change), or a request landing inside the 30s window reads
+   *  stale data. See `assertFeatureRequiresMet`'s own doc for the bug this specifically fixes. */
+  invalidate(tenantId: string): void {
+    this.resolver.invalidate(tenantId);
+  }
+
+  /**
+   * B524 (PR #913) — the ONE evaluation point for "is `key`'s registry-declared `requires`
+   * (allOf/anyOf) satisfied for this tenant", shared by every entitlement-granting write path
+   * (`AddonService.enableAddon`, `PlatformAdminController#createFeatureOverride`) so the check
+   * exists exactly once, not once per caller. Originally written twice, verbatim, inside those
+   * two call sites — Opus review of PR #913 flagged the duplication as the same kind of risk
+   * the PR's own `checkFeatureRequires` doc worries about (a web/server twin quietly diverging),
+   * just one layer closer to home; centralizing here removes that a second way.
+   *
+   * Lives on `EntitlementAuthority`, not inside `FeatureOverrideService` itself, for the
+   * documented DI reason: `FeatureResolverService -> EntitlementsService ->
+   * FeatureOverrideService` is an existing chain, so `FeatureOverrideService` injecting
+   * anything that resolves back through it would close a cycle. `EntitlementAuthority` sits
+   * ABOVE both (already injects `FeatureOverrideService` directly, `resolver` too) and is not
+   * itself injected into either, so it has no such constraint.
+   *
+   * `acknowledge: true` short-circuits before any resolution — the caller's own escape hatch
+   * (`acknowledgeUnmetRequires` on both DTOs), never re-validated here. A `null` resolution
+   * (DB down / unseeded catalog) fails OPEN (proceeds) rather than blocking an admin write on
+   * an unrelated outage — this is an advisory consistency check on top of real enforcement
+   * (`AddonGuard`/`DriverPaymentsGuard`, which read live, uncached), not the enforcement itself
+   * — but it is logged, so a silently-skipped check is at least discoverable after the fact.
+   */
+  async assertFeatureRequiresMet(
+    tenantId: string,
+    key: string,
+    acknowledge?: boolean,
+  ): Promise<void> {
+    if (acknowledge) return;
+    const def = FEATURE_BY_KEY.get(key);
+    if (!def?.requires) return;
+    const resolved = await this.resolver.resolve(tenantId);
+    if (!resolved) {
+      this.logger.warn(
+        `requires check for "${key}" skipped for tenant ${tenantId} — resolver returned null`,
+      );
+      return;
+    }
+    const effectiveKeys = new Set(
+      [...resolved.byKey.entries()].filter(([, v]) => v.effective).map(([k]) => k),
+    );
+    const status = checkFeatureRequires(def.requires, effectiveKeys);
+    if (!status.satisfied) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: "FEATURE_REQUIRES_UNMET",
+        key,
+        missing: describeUnmetFeatureRequirement(status),
+        message:
+          `"${key}" depends on ${describeUnmetFeatureRequirement(status)}, which this tenant ` +
+          `does not currently have — pass acknowledgeUnmetRequires to proceed anyway.`,
+      });
+    }
   }
 
   resolveOneFromBatch(

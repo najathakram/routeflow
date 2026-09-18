@@ -253,6 +253,18 @@ dto.customerId, mode: "wait", waitMs: 10_000 })` from `src/common/db-locks.ts` (
     `stopsAhead` unchanged) — the server invents no "skipped shape", the client branches on
     `stopStatus`. Spec `orders.service.tracking-contract{,.pins}.spec.ts`.
 
+- **B318 fix (2026-09-18, #876, tenancy/money):** `create()` had no role gate on
+  `dto.appliedCreditNotes` — `updateOrderItems`'s `isStaffCreditEdit` already strips it for
+  non-staff callers on the edit path, but a buyer or driver token could consume a customer's
+  credit notes on order CREATE with no staff involvement, an asymmetry with the edit path's own
+  rule. Fix: `appliedCreditNotes = isStaffRole ? dto.appliedCreditNotes : undefined` computed
+  right where `isStaffRole` already is, used everywhere `create()` reads the DTO field (up-front
+  validate, post-create sync/settle) — non-staff selections are now silently ignored (order still
+  creates), matching the edit path's "not applied, not rejected" behavior. `createSale()`
+  (van-sale) needed no separate gate — it forwards the same `user` into this same `create()`.
+  Spec: `REG-B318` (CUSTOMER, DRIVER) asserts a non-staff caller's `appliedCreditNotes` never
+  reaches `validateSelectionsForCustomer`/`syncOrderCreditSelections`/`settleOrderCreditsInTx`.
+
 - **F13 / REG-B48 — two buyer-pricing methods are now PUBLIC, shared with `OrderTemplatesService`.**
   `loadActivePromotions(role)` and `resolveBuyerLinePrice(product, tierForProduct, promos,
 qtyPieces, qtyUnits, lastPrice, boxCtx)` dropped `private`; bodies are byte-identical. A standing
