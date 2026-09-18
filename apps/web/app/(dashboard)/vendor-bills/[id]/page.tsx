@@ -18,7 +18,7 @@ import {
   Save,
   AlertTriangle,
 } from "lucide-react";
-import { Button, Card, Modal, cn, useToast, Badge } from "@routeflow/ui/web";
+import { Button, Card, Modal, cn, TAP_TARGET, useToast, Badge } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useVendorBill,
@@ -654,7 +654,11 @@ function EditLineItems({
             type="button"
             onClick={() => remove(i)}
             disabled={items.length === 1}
-            className="mt-1 h-9 justify-self-end rounded p-1 text-navy/30 transition-colors hover:text-danger disabled:opacity-20 sm:mt-6 sm:justify-self-auto"
+            title="Remove line"
+            className={cn(
+              TAP_TARGET,
+              "mt-1 justify-self-end rounded p-1 text-navy/30 transition-colors hover:text-danger disabled:opacity-20 sm:mt-6 sm:justify-self-auto",
+            )}
           >
             <Trash2 className="h-4 w-4" />
           </button>
