@@ -14,6 +14,7 @@ import {
 import { BADGE_COLORS, BADGE_LABELS, deriveBadge } from "./badge";
 import { blockedReason, isOptionBlocked, selectableOptions, MIXED_LABEL } from "./mode-utils";
 import { PreviewDrawer } from "./PreviewDrawer";
+import { EnableAddonModal } from "./EnableAddonModal";
 import type {
   EffectiveFeature,
   EntitlementsMode,
@@ -41,8 +42,40 @@ type PendingPreview =
   | { kind: "tier"; planKey: string; response: FeaturePreviewResponse }
   | { kind: "mode"; featureKey: string; newMode: string; response: FeaturePreviewResponse };
 
+/**
+ * Registry rows the console can provision as a real, billable `TenantAddon` row via
+ * `POST /addons/enable` (B2b) — the value is the legacy `addonKey` that endpoint expects,
+ * which is NOT always the registry row's own key. Six of these are `RequireAddon`/`guard`
+ * rows keyed identically to their addonKey. `flag.msrp`/`flag.sales_agents` are
+ * `RequirePlanFlag` rows whose SERVER gate a "Customise" override on the flag key would
+ * satisfy — but their web-side UI (the MSRP price field, the sales-agents nav item) reads
+ * `useHasAddon()`, which checks the literal `TenantAddon.addonKey` list and never sees a
+ * feature-override. Without this addon-row path those two keys have NO working "on" switch
+ * once the legacy AVAILABLE_ADDONS toggle cards are deleted (review catch, 2026-09-17) — an
+ * override would look like it worked (the route gate passes) while the UI stayed hidden.
+ *
+ * Mirrors `LEGACY_ADDON_KEY_TO_SKU` in `apps/api/src/billing/plan-catalog.constants.ts` (the
+ * server's addonKey -> Stripe SKU bridge for these same legacy keys) — update both together.
+ * This map is hardcoded, not derived from the registry (no "gate kind"/legacy-addonKey field
+ * exists there yet — a future SHARED ticket across packages/types + apps/api could add one),
+ * so a 9th flag-gated key needing this path will NOT light up here automatically; the pinned
+ * test below (`FeatureConsole.test.tsx`) fails loudly if this map's contents drift instead.
+ */
+export const ADDON_ROW_KEY_BY_REGISTRY_KEY: Readonly<Record<string, string>> = {
+  tobacco_dealer: "tobacco_dealer",
+  driver_payments: "driver_payments",
+  recurring_routes: "recurring_routes",
+  order_delivery: "order_delivery",
+  ocr: "ocr",
+  developer_mode: "developer_mode",
+  "flag.msrp": "msrp",
+  "flag.sales_agents": "sales_agents",
+};
+
 export interface FeatureConsoleProps {
   tenant: { id: string; plan: string };
+  /** Shown in the "Enable as add-on" modal's two-step confirm; falls back to `tenant.id`. */
+  tenantLabel?: string;
   /** Calls the page's EXISTING plan-change action (`handleAction("change-plan", { plan })`) —
    * never a second path. */
   onChangePlan: (plan: string) => Promise<void> | void;
@@ -53,10 +86,12 @@ export interface FeatureConsoleProps {
 
 export function FeatureConsole({
   tenant,
+  tenantLabel,
   onChangePlan,
   changePlanLoading,
   onCustomise,
 }: FeatureConsoleProps) {
+  const [enabling, setEnabling] = React.useState<{ addonKey: string; label: string } | null>(null);
   const [registry, setRegistry] = React.useState<FeatureRegistryRow[] | null>(null);
   const [effective, setEffective] = React.useState<EffectiveFeature[] | null>(null);
   const [entitlementsMode, setEntitlementsMode] = React.useState<EntitlementsMode | null>(null);
@@ -340,6 +375,20 @@ export function FeatureConsole({
                       >
                         Customise
                       </button>
+                      {ADDON_ROW_KEY_BY_REGISTRY_KEY[row.key] && (
+                        <button
+                          onClick={() =>
+                            setEnabling({
+                              addonKey: ADDON_ROW_KEY_BY_REGISTRY_KEY[row.key],
+                              label: row.label,
+                            })
+                          }
+                          className="rounded-lg bg-slate-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-500"
+                          aria-label={`Enable ${row.label} as an add-on`}
+                        >
+                          Enable as add-on
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -388,6 +437,16 @@ export function FeatureConsole({
           setPending(null);
           setPreviewError(null);
         }}
+      />
+
+      <EnableAddonModal
+        open={!!enabling}
+        onClose={() => setEnabling(null)}
+        tenantId={tenant.id}
+        tenantLabel={tenantLabel ?? tenant.id}
+        addonKey={enabling?.addonKey ?? ""}
+        addonLabel={enabling?.label ?? ""}
+        onEnabled={load}
       />
     </div>
   );

@@ -1267,6 +1267,7 @@ function AddonsTab({
 
       <FeatureConsole
         tenant={tenant}
+        tenantLabel={tenant.businessName ?? tenant.slug}
         onChangePlan={(plan) => onAction("change-plan", { plan })}
         changePlanLoading={actionLoading === "change-plan"}
         onCustomise={(featureKey) => overridesRef.current?.openFor(featureKey)}

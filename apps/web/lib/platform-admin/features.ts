@@ -74,3 +74,35 @@ export async function writeTenantFeatureConfig(
   );
   return res.data;
 }
+
+// ─── B2b: Feature Console "Enable as add-on" action ───────────────────────────
+//
+// The console's per-row "Customise" button only ever writes an unbilled COMP
+// feature-override (see FeatureOverridesSection in page.tsx). The legacy
+// AVAILABLE_ADDONS toggle cards (being deleted) were the only UI that could create a
+// real, Stripe-billed TenantAddon via POST .../addons/enable — these two functions give
+// the console's "Enable as add-on" action that same endpoint, unchanged.
+
+/** `GET /platform-admin/tenants/:id/billing` — used here only for its `stripeConfigured`
+ *  flag, so the enable-as-add-on modal knows whether to offer a Stripe price field or
+ *  state this will be a free grant. */
+export async function fetchTenantBillingInfo(tenantId: string): Promise<{
+  stripeConfigured: boolean;
+}> {
+  const res = await superAdminClient.get(`/platform-admin/tenants/${tenantId}/billing`);
+  return { stripeConfigured: !!res.data?.stripeConfigured };
+}
+
+/** `POST /platform-admin/tenants/:id/addons/enable` — same endpoint/DTO the legacy toggle
+ *  cards posted to; omit `stripePriceId` for an explicit free grant. */
+export async function enableTenantAddon(
+  tenantId: string,
+  addonKey: string,
+  stripePriceId?: string,
+): Promise<unknown> {
+  const res = await superAdminClient.post(`/platform-admin/tenants/${tenantId}/addons/enable`, {
+    addonKey,
+    ...(stripePriceId ? { stripePriceId } : {}),
+  });
+  return res.data;
+}
