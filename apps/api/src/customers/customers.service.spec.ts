@@ -3021,6 +3021,57 @@ describe("CustomersService", () => {
         data: { deletedAt: expect.any(Date) },
       });
     });
+
+    // B320: order/invoice/return counts are all 0 here (this describe block's own
+    // beforeEach), but the customer still holds a prepaid advance or an open credit
+    // note — neither showed up in those counts, so the hard-delete path used to run
+    // unconditionally and destroy them with no soft-delete, no statement, no audit row.
+    it("REG-B320: an outstanding advance balance blocks hardDeleteWhenRecordFree — soft-deletes instead", async () => {
+      prisma.advancePayment.aggregate.mockResolvedValueOnce({ _sum: { balance: 500 } });
+
+      await expect(
+        service.deleteCustomer(CUSTOMER.id, true, { hardDeleteWhenRecordFree: true }),
+      ).resolves.toEqual({ success: true, softDeleted: true });
+
+      expect(prisma.customer.update).toHaveBeenCalledWith({
+        where: { id: CUSTOMER.id },
+        data: { deletedAt: expect.any(Date) },
+      });
+      expect(prisma.customer.delete).not.toHaveBeenCalled();
+      expect(prisma.advancePayment.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it("REG-B320: an open (non-VOID, unconsumed) credit note blocks hardDeleteWhenRecordFree — soft-deletes instead", async () => {
+      prisma.creditNote.findMany.mockResolvedValueOnce([{ amount: 100, amountUsed: 40 }]);
+
+      await expect(
+        service.deleteCustomer(CUSTOMER.id, true, { hardDeleteWhenRecordFree: true }),
+      ).resolves.toEqual({ success: true, softDeleted: true });
+
+      expect(prisma.customer.update).toHaveBeenCalledWith({
+        where: { id: CUSTOMER.id },
+        data: { deletedAt: expect.any(Date) },
+      });
+      expect(prisma.customer.delete).not.toHaveBeenCalled();
+    });
+
+    it("REG-B320: a fully-consumed credit note does NOT block hardDeleteWhenRecordFree (nothing left to lose)", async () => {
+      prisma.creditNote.findMany.mockResolvedValueOnce([{ amount: 100, amountUsed: 100 }]);
+
+      await expect(
+        service.deleteCustomer(CUSTOMER.id, true, { hardDeleteWhenRecordFree: true }),
+      ).resolves.toEqual({ success: true });
+
+      expect(prisma.customer.delete).toHaveBeenCalledWith({ where: { id: CUSTOMER.id } });
+    });
+
+    it("REG-B320: an advance balance refuses a plain (non-force) delete with a 409 naming it", async () => {
+      prisma.advancePayment.aggregate.mockResolvedValueOnce({ _sum: { balance: 500 } });
+
+      await expect(service.deleteCustomer(CUSTOMER.id)).rejects.toThrow(
+        /outstanding advance balance/,
+      );
+    });
   });
 
   // ─── batchDelete: force pass-through for record-holding customers (F02b R5 / B130) ──
