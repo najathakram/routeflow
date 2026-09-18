@@ -397,6 +397,16 @@ export class PlatformAdminController {
       // (catalog metadata only) -- an override there can never have any effect.
       gate: { via: f.gate.via, state: f.gate.state },
       billing: { skus: [...f.billing.skus] },
+      // B519: the console needs this to warn before enabling a key whose prerequisites
+      // aren't met — verbatim from the registry, never a client-side mirror.
+      ...(f.requires
+        ? {
+            requires: {
+              ...(f.requires.allOf ? { allOf: [...f.requires.allOf] } : {}),
+              ...(f.requires.anyOf ? { anyOf: [...f.requires.anyOf] } : {}),
+            },
+          }
+        : {}),
       ...(f.config
         ? {
             config: {

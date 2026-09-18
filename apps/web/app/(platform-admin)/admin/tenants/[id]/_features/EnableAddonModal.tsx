@@ -18,6 +18,11 @@ export interface EnableAddonModalProps {
   tenantLabel: string;
   addonKey: string;
   addonLabel: string;
+  /** B519: set when this key's registry `requires` isn't satisfied for this tenant — a
+   *  ready-to-render phrase (e.g. "Recurring routes or Order delivery"), already resolved to
+   *  labels by the caller. Undefined/omitted = no unmet requirement (default; every other
+   *  addon-row key is unaffected). */
+  unmetRequirement?: string;
   /** Called after a successful enable so the console reloads effective state/badges. */
   onEnabled: () => void;
 }
@@ -32,6 +37,7 @@ export function EnableAddonModal({
   tenantLabel,
   addonKey,
   addonLabel,
+  unmetRequirement,
   onEnabled,
 }: EnableAddonModalProps) {
   const [billing, setBilling] = React.useState<BillingCheck>({ status: "loading" });
@@ -40,6 +46,9 @@ export function EnableAddonModal({
   const [priceId, setPriceId] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
   const [submitError, setSubmitError] = React.useState<string | null>(null);
+  // B519: same "explicit only, never a silent default" rule as the Stripe/free choice above —
+  // an unmet requirement needs its own deliberate acknowledgment, not an implied one.
+  const [ackUnmetRequirement, setAckUnmetRequirement] = React.useState(false);
 
   const loadBilling = React.useCallback(() => {
     setBilling({ status: "loading" });
@@ -55,6 +64,7 @@ export function EnableAddonModal({
     setPriceId("");
     setSubmitError(null);
     setSubmitting(false);
+    setAckUnmetRequirement(false);
     loadBilling();
   }, [open, loadBilling]);
 
@@ -167,6 +177,23 @@ export function EnableAddonModal({
             ? `A Stripe subscription item will be created (price ${priceId.trim()}).`
             : "No Stripe subscription item will be created — this is a free grant."}
         </p>
+        {unmetRequirement && (
+          <div className="rounded-lg bg-amber-900/30 px-4 py-3 text-sm text-amber-200 ring-1 ring-amber-600/30">
+            <p>
+              <strong>{addonLabel}</strong> depends on <strong>{unmetRequirement}</strong>, which
+              this tenant does not currently have. It will appear enabled while depending on
+              something that isn&apos;t there.
+            </p>
+            <label className="mt-2 flex items-center gap-2 text-xs text-amber-100">
+              <input
+                type="checkbox"
+                checked={ackUnmetRequirement}
+                onChange={(e) => setAckUnmetRequirement(e.target.checked)}
+              />
+              I understand and want to enable it anyway
+            </label>
+          </div>
+        )}
         {submitError && (
           <div className="rounded-lg bg-red-900/30 px-4 py-3 text-sm text-red-300 ring-1 ring-red-600/30">
             {submitError}
@@ -206,7 +233,7 @@ export function EnableAddonModal({
           Back
         </button>
         <button
-          disabled={submitting}
+          disabled={submitting || (!!unmetRequirement && !ackUnmetRequirement)}
           onClick={handleConfirm}
           className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
         >

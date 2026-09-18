@@ -72,6 +72,41 @@ export const ADDON_ROW_KEY_BY_REGISTRY_KEY: Readonly<Record<string, string>> = {
   "flag.sales_agents": "sales_agents",
 };
 
+interface RequirementStatus {
+  satisfied: boolean;
+  missingAllOf: string[];
+  unmetAnyOf: string[] | null;
+}
+
+/** B519: read straight off the registry row's `requires` — never a hardcoded key list. */
+function checkRequires(
+  requires: FeatureRegistryRow["requires"],
+  effectiveKeys: ReadonlySet<string>,
+): RequirementStatus {
+  const missingAllOf = (requires?.allOf ?? []).filter((k) => !effectiveKeys.has(k));
+  const anyOf = requires?.anyOf;
+  const anyOfSatisfied = !anyOf || anyOf.length === 0 || anyOf.some((k) => effectiveKeys.has(k));
+  return {
+    satisfied: missingAllOf.length === 0 && anyOfSatisfied,
+    missingAllOf,
+    unmetAnyOf: anyOfSatisfied ? null : [...anyOf],
+  };
+}
+
+/** Human-readable phrase for what's unmet, resolving registry keys to their labels.
+ *  `undefined` when satisfied — callers use that to decide whether to warn at all. */
+function describeUnmetRequirement(
+  status: RequirementStatus,
+  registryByKey: Record<string, FeatureRegistryRow>,
+): string | undefined {
+  if (status.satisfied) return undefined;
+  const label = (key: string) => registryByKey[key]?.label ?? key;
+  const parts: string[] = [];
+  if (status.missingAllOf.length > 0) parts.push(status.missingAllOf.map(label).join(" and "));
+  if (status.unmetAnyOf) parts.push(status.unmetAnyOf.map(label).join(" or "));
+  return parts.join(" and ");
+}
+
 export interface FeatureConsoleProps {
   tenant: { id: string; plan: string };
   /** Shown in the "Enable as add-on" modal's two-step confirm; falls back to `tenant.id`. */
@@ -91,7 +126,11 @@ export function FeatureConsole({
   changePlanLoading,
   onCustomise,
 }: FeatureConsoleProps) {
-  const [enabling, setEnabling] = React.useState<{ addonKey: string; label: string } | null>(null);
+  const [enabling, setEnabling] = React.useState<{
+    addonKey: string;
+    label: string;
+    unmetRequirement?: string;
+  } | null>(null);
   const [registry, setRegistry] = React.useState<FeatureRegistryRow[] | null>(null);
   const [effective, setEffective] = React.useState<EffectiveFeature[] | null>(null);
   const [entitlementsMode, setEntitlementsMode] = React.useState<EntitlementsMode | null>(null);
@@ -324,6 +363,10 @@ export function FeatureConsole({
             {rows.map((row) => {
               const feature = effectiveByKey[row.key];
               const badge = feature ? deriveBadge(feature) : "unknown";
+              const unmetRequirement = describeUnmetRequirement(
+                checkRequires(row.requires, effectiveKeys),
+                registryByKey,
+              );
               return (
                 <div
                   key={row.key}
@@ -381,6 +424,7 @@ export function FeatureConsole({
                             setEnabling({
                               addonKey: ADDON_ROW_KEY_BY_REGISTRY_KEY[row.key],
                               label: row.label,
+                              unmetRequirement,
                             })
                           }
                           className="rounded-lg bg-slate-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-500"
@@ -446,6 +490,7 @@ export function FeatureConsole({
         tenantLabel={tenantLabel ?? tenant.id}
         addonKey={enabling?.addonKey ?? ""}
         addonLabel={enabling?.label ?? ""}
+        unmetRequirement={enabling?.unmetRequirement}
         onEnabled={load}
       />
     </div>
