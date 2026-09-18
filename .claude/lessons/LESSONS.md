@@ -34,7 +34,7 @@
 ### L-192 · 2026-09-17 · tooling · jsdom offsetParent is always null (focus-trap RTL false negative)
 
 - **Symptom:** a focus trap's `getFocusable()` filtered candidates with `el.offsetParent !==
-  null`; three RTL tests failed as if the trap never moved focus at all, while the handler's own
+null`; three RTL tests failed as if the trap never moved focus at all, while the handler's own
   logic was correct.
 - **Root cause:** jsdom has no layout engine, so `offsetParent` (like `offsetWidth`/`offsetHeight`)
   is always `null` regardless of real visibility — the filter discarded every candidate element,
@@ -643,23 +643,6 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
 - **Guard:** filed B426 (bugs.mjs needs a lawful `proven`→`already-fixed` reclassify path,
   distinct from `reopen`'s regression semantics) so this doesn't recur as a manual escape hatch.
 
-### L-163 · 2026-09-15 · domain · Lite-L2 fix round: plan re-pin + frozen-catalog literal
-
-- **Symptom:** an admin plan change to LITE, applied later by the nightly cron, booked a -$249
-  ledger delta instead of the real -$150 and left the tenant on STARTER entitlements. Separately,
-  a "frozen" v11 catalog snapshot silently gained 5 flags it never actually had.
-- **Root cause:** two shapes of the same mistake. (1) A mutation validated a target plan against
-  the published catalog but never persisted WHICH version proved it valid (`planVersionId`) — a
-  later async step re-resolved against the tenant's stale pinned version, found nothing, and
-  silently priced the target as $0. (2) A supposedly-frozen historical definition derived itself
-  via `.filter()` over a live, growing shared constant, so every unrelated addition rewrote it.
-- **Lesson:** **Validating a value against a source of truth is not enough — persist the resolved
-  reference itself (the version id), so a LATER step reads the same evidence, not a stale one.
-  Anything meant to be a frozen/historical snapshot must be a literal, never a derivation from a
-  live source that can grow.**
-- **Guard:** `billing-cron.service.spec.ts` REG-1 (re-pin + real delta); `plan-catalog-v12.spec.ts`
-  pins v11 ENTERPRISE to its exact historical 13-flag literal.
-
 ### L-164 · 2026-09-15 · domain · Lite-L2 fix round: SubscriptionView.flags fail-open
 
 - **Symptom:** a deploy skew (old API, new web/mobile build) or rollback serving a response with
@@ -786,6 +769,31 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   this before it merges, not 26 hours after.**
 - **Guard:** none yet — propose the merge coordinator's landing checklist running that diff
   command as a hard gate, and/or folding a drift check into `post-deploy-check` itself.
+
+### L-195 · 2026-09-17 · deploy · landing a stale branch reverted #861's live fix (#862)
+
+- **Symptom:** landing PR #862 silently reverted the P1 opacity fix from #861 — nine capability
+  cards went back to invisible on the live marketing site.
+- **Root cause:** #862's branch was cut BEFORE #861 merged and never rebased; both PRs touched
+  `marketing.css` in different, non-overlapping regions. The landing computed a raw diff between
+  #862's stale branch and current master to isolate "#862's own changes" — but since #861's hunk
+  exists on master and NOT on #862's stale branch, that raw diff showed #861's own fix as a
+  REMOVAL belonging to #862, and applied it as one. A byte-identity check against the stale
+  branch's own content cannot catch this either, since the stale content IS what's wrong — it
+  matches the branch perfectly, just not reality.
+- **Lesson:** **A landing diff meant to isolate "this PR's own changes" must be taken against the
+  branch's OWN MERGE-BASE, never against current master directly — diffing a stale branch against
+  a master that has moved on makes every OTHER PR's intervening change look like part of the
+  branch being landed. Separately: whenever two in-flight PRs touch the same file, diff them
+  against EACH OTHER for overlapping regions before assuming either one's raw diff is clean in
+  isolation. And a post-deploy visual check is not a correctness check — verify the actual
+  computed state (`getComputedStyle`, an API response, a DB row), not a screenshot that can look
+  right for the wrong reason.**
+- **Guard:** the merge session's live post-deploy verification caught this one in practice — note
+  that as the standing guard until a mechanical one exists — plus the pre-existing e2e T13
+  opacity assertion. Propose: the landing tool computes each PR's diff against
+  `git merge-base <branch> master`, never against `master` directly, and warns when two open PRs'
+  diffs touch the same file.
 
 ### L-183 · 2026-09-16 · deploy · Railway dual-service deploy status race
 

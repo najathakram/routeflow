@@ -2462,6 +2462,60 @@
 .rf-marketing .legal-page > .text-link {
   margin-top: 35px;
 }
+.rf-marketing .legal-page h3 {
+  font-size: 1.1rem;
+  letter-spacing: -0.01em;
+  margin-top: 30px;
+}
+.rf-marketing .legal-page ul {
+  margin-top: 16px;
+  padding-left: 22px;
+  list-style: disc;
+}
+.rf-marketing .legal-page li {
+  font-size: 1rem;
+  line-height: 1.9;
+  color: #5f6f82;
+  margin-top: 10px;
+}
+.rf-marketing .legal-page li a {
+  text-decoration: underline;
+  color: #315f9d;
+}
+.rf-marketing .legal-page code {
+  font-size: 0.9em;
+  background: #f3f6fb;
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+.rf-marketing .legal-page .legal-caps {
+  font-size: 0.85rem;
+  letter-spacing: 0.01em;
+}
+.rf-marketing .legal-table-wrap {
+  margin-top: 20px;
+  overflow-x: auto;
+}
+.rf-marketing .legal-table-wrap table {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.rf-marketing .legal-table-wrap th,
+.rf-marketing .legal-table-wrap td {
+  text-align: left;
+  vertical-align: top;
+  padding: 10px 14px;
+  border-bottom: 1px solid #e5ecf5;
+  color: #5f6f82;
+  line-height: 1.6;
+}
+.rf-marketing .legal-table-wrap th {
+  color: #2c3a4f;
+  font-weight: 600;
+  white-space: nowrap;
+}
 .rf-marketing .not-found {
   padding-block: 100px 120px;
 }
@@ -9135,6 +9189,13 @@
 }
 @media (prefers-reduced-motion: no-preference) {
   .rf-marketing .editorial-reveal {
+    /* Explicit revealed state — B504: this used to rely on the cascade
+       falling back to opacity's initial value once .reveal-pending was
+       removed, which left content permanently at opacity:0 in production.
+       Declare the visible state outright so removing .reveal-pending has
+       an unambiguous target to transition to. */
+    opacity: 1;
+    transform: none;
     transition:
       opacity 0.7s cubic-bezier(0.2, 0.7, 0.2, 1),
       transform 0.8s cubic-bezier(0.2, 0.7, 0.2, 1);

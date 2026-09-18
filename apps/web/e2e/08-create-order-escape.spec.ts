@@ -268,3 +268,94 @@ test.describe("Operator — order date survives a parked draft (WP-4)", () => {
     await expect(page.getByRole("button", { name: /Create as separate/ })).toBeEnabled();
   });
 });
+
+// B499 — the product-search row's scan button, at a real phone width. No customer is picked
+// (the Products section renders unconditionally, and dismissing WITHOUT a selected customer
+// never auto-parks a draft — see ESC-02 above — so this needs no draft cleanup).
+test.describe("Operator — Create Order product search scan button, mobile (B499)", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test("MOBILE-01 the scan button renders beside the search input, ≥44px, no horizontal overflow", async ({
+    page,
+    context,
+  }) => {
+    await setTenantCookie(context, BASE);
+    await page.goto("/orders");
+    await page
+      .getByRole("button", { name: /new order/i })
+      .first()
+      .click();
+    await expect(page.getByRole("heading", { name: "Create Order" })).toBeVisible({
+      timeout: 10_000,
+    });
+
+    const search = page.getByPlaceholder("Search by name, SKU or scan barcode…");
+    const scanButton = page.getByRole("button", { name: "Scan barcode" });
+    await expect(search).toBeVisible();
+    await expect(scanButton).toBeVisible();
+
+    const scanBox = await scanButton.boundingBox();
+    expect(scanBox).not.toBeNull();
+    expect(scanBox!.width).toBeGreaterThanOrEqual(44);
+    expect(scanBox!.height).toBeGreaterThanOrEqual(44);
+
+    // Neither control extends past the 390px viewport — the classic "add a button, blow the
+    // row out to the right" mobile regression.
+    const searchBox = await search.boundingBox();
+    expect(searchBox).not.toBeNull();
+    expect(scanBox!.x + scanBox!.width).toBeLessThanOrEqual(390);
+    expect(searchBox!.x).toBeGreaterThanOrEqual(0);
+
+    const hasHorizontalOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    );
+    expect(hasHorizontalOverflow).toBe(false);
+
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  });
+});
+
+// B506 — the orders list's delivery date-range filter, at a real phone width.
+// Every other filter control on this row already wraps at 390px; the date
+// range was the one block that didn't wrap internally, so its "to" field ran
+// past the right edge.
+test.describe("Operator — Orders list delivery date-range filter, mobile (B506)", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test("MOBILE-02 both date inputs are visible, interactive, and stay inside the viewport", async ({
+    page,
+    context,
+  }) => {
+    await setTenantCookie(context, BASE);
+    await page.goto("/orders");
+    await expect(page.getByRole("heading", { name: "Orders" })).toBeVisible({ timeout: 10_000 });
+
+    const from = page.getByTitle("Delivery date from");
+    const to = page.getByTitle("Delivery date to");
+    await expect(from).toBeVisible();
+    await expect(to).toBeVisible();
+
+    const fromBox = await from.boundingBox();
+    const toBox = await to.boundingBox();
+    expect(fromBox).not.toBeNull();
+    expect(toBox).not.toBeNull();
+    // The regression this pins: the "to" field's right edge ran off past 390px
+    // (unreachable without an unhinted horizontal scroll) instead of wrapping
+    // to a second line the way every other filter control on this row does.
+    expect(fromBox!.x + fromBox!.width).toBeLessThanOrEqual(390);
+    expect(toBox!.x + toBox!.width).toBeLessThanOrEqual(390);
+    expect(fromBox!.x).toBeGreaterThanOrEqual(0);
+    expect(toBox!.x).toBeGreaterThanOrEqual(0);
+
+    const hasHorizontalOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    );
+    expect(hasHorizontalOverflow).toBe(false);
+
+    // Both fields actually take input, not just visually present.
+    await from.fill("2026-10-01");
+    await expect(from).toHaveValue("2026-10-01");
+    await to.fill("2026-10-15");
+    await expect(to).toHaveValue("2026-10-15");
+  });
+});

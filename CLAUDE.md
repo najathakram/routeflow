@@ -86,6 +86,12 @@ project as a report, not a gate). Hosted staging is still deferred, so E2E remai
 authoritative only post-deploy against prod; this lane catches a UI regression before that.
 See `apps/web/e2e/LOCAL-LANE.md`.
 
+**Disk running low?** `npm run janitor` (report-only) / `npm run janitor:apply` reclaims
+worktree `node_modules`, merged-and-clean worktrees, Docker build cache, npm cache, and old
+`local-assets/proofs`/`local-assets/handoff` folders, in that order, stopping once free space
+clears its target. `npm run janitor:preflight -- <gb>` gates an `npm ci` on a free-space
+threshold. See `docs/runbooks/disk-cleanup-janitor.md` for exactly what it never touches.
+
 ### Guardrails
 
 - `local:validate` runs **only** against the approved **`test`** tenant (`SMOKE_TENANT_SLUG=test`) —

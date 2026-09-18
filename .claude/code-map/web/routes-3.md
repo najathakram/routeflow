@@ -21,6 +21,16 @@
   `PLAN_LABELS` gain `GROWTH` (teal, "Growth") and `SCALE` (indigo, "Scale") entries alongside
   existing STARTER/PROFESSIONAL/ENTERPRISE — the two mid-tier plans the catalog-driven
   `tenants/new/page.tsx` picker (above) can now offer. Test: `AdminBadge.test.tsx` (new).
+- **`_components/AdminModal.tsx` — dialog a11y (2026-09-17, PR #836 review follow-up):** the
+  shared modal used across every platform-admin surface (tenant detail, feature console,
+  override drawers) gains `role="dialog"`/`aria-modal="true"` on the panel (`panelRef`,
+  `tabIndex={-1}` fallback focus target), a Tab/Shift-Tab focus trap scoped to
+  `FOCUSABLE_SELECTOR` matches inside the panel, initial focus to the panel's first focusable
+  element (its own close button, since header renders first) on open, and focus restoration to
+  the pre-open `document.activeElement` (`triggerRef`) on close/unmount — all inside the existing
+  `open`-gated `useEffect` alongside the prior Escape handler; `open`/`onClose`/`title`/`children`/
+  `footer` props and visuals unchanged. Test: `AdminModal.test.tsx` (new — role/aria-modal,
+  initial focus, Tab/Shift-Tab wrap, focus-restore-on-close).
 - `admin/buyers/page.tsx` + `[id]/page.tsx`; `admin/buyers/merge-requests/page.tsx` + `[id]/page.tsx`.
 - `admin/plans/page.tsx`, `admin/billing/page.tsx`, `admin/audit-logs/page.tsx`, `admin/{profile,settings}/page.tsx` — settings' AI usage panel (`AiUsage` type off `GET /platform-admin/ai-config/usage`) shows OCR scans / Forecast runs / **Route insights (`insightRuns`, 2026-08-28 — populated now that `recordAiUsage` is wired server-side)** / tokens / est. spend / error rate.
   - **`admin/billing/page.tsx`'s MRR card (REG-743-F1, review round #3, 2026-09-15)** — fetches `GET /billing/admin/mrr` (`MrrService.computeOverview()`, `mrr.service.ts`) as its ONE MRR source; on failure the card shows **"MRR unavailable"**, never a number. A prior client-side `PLAN_PRICES` fallback estimate (a second pricing engine) is DELETED — it could show a free pilot at full list price. Three warning chips (`unpricedActiveTenants`/`zeroPricedActiveTenants`/`activeWithoutSubscription`) render when nonzero; "Active Subscriptions" shows `payingTenants` as its subtext so the two figures are never side by side unexplained. Test: `page.test.tsx` (asserts no dollar figure renders on API error).

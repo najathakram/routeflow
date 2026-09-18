@@ -165,7 +165,9 @@
   background: linear-gradient(130deg, #ffffffad, #ffffff4d);
   border-color: var(--g-field-border);
   color: var(--g-ink);
-  box-shadow: inset 0 1px 0 #fff, 0 5px 14px #21436408;
+  box-shadow:
+    inset 0 1px 0 #fff,
+    0 5px 14px #21436408;
 }
 
 .glass-page .button-outline:hover,
@@ -483,7 +485,9 @@
 .glass-page .pricing-card.featured {
   background: linear-gradient(140deg, #eaf3ffd9, #eaf3ff85);
   border-color: #a4c4e5;
-  box-shadow: 0 18px 40px #264b7518, inset 0 1px 1px #fff;
+  box-shadow:
+    0 18px 40px #264b7518,
+    inset 0 1px 1px #fff;
 }
 
 .glass-page .plan-ribbon {
@@ -1004,6 +1008,28 @@
   background: transparent;
 }
 
+/* B504: the section's own background goes transparent above (the glass
+   .difference-table below carries the panel treatment instead), but its
+   heading/eyebrow/paragraph/link colors were never updated off the
+   white-on-dark-slab palette designed for the section's original opaque
+   #171d29 background — left at #fff/#c9c2d4/#c8cbd1 they render pale-on-the
+   page's own light background, measured as low as 1.63:1. Retoken them to
+   the glass design system's ink/body/eyebrow colors, which are correct for
+   the now-transparent, light context. Extra-class selectors keep these
+   deterministically ahead of the plain .difference-section rules below on
+   specificity regardless of stylesheet/chunk order. */
+.rf-marketing .glass-page .difference-section h2,
+.rf-marketing .glass-page .difference-section .text-link {
+  color: var(--g-ink);
+}
+.rf-marketing .glass-page .difference-section .eyebrow {
+  color: var(--g-eyebrow) !important;
+}
+.rf-marketing .glass-page .difference-section .split-heading > p,
+.rf-marketing .glass-page .difference-section .difference-footer > p {
+  color: var(--g-body);
+}
+
 .glass-page .difference-table {
   background: var(--g-glass);
   border: 1px solid var(--g-glass-border);
@@ -1183,6 +1209,20 @@
   color: #2b587d;
 }
 
+/* B504: `.glass-page .ai-review-steps p` above and the generic `.glass-page
+   h3` typography reset (glass.css) both tie in specificity with the
+   dark-card-specific white/light-lavender text meant for the purple
+   .ai-assisted-step card, and were winning in production — measured at
+   1.33-1.61:1 (dark text on the still-dark #623691 card). These extra-class
+   overrides always win outright on specificity, keeping the card's own
+   light text regardless of stylesheet/chunk order. */
+.rf-marketing .ai-review-steps > li.ai-assisted-step h3 {
+  color: #fff;
+}
+.rf-marketing .ai-review-steps > li.ai-assisted-step p {
+  color: #eee1fa;
+}
+
 .glass-page .ai-illustration-note {
   color: var(--g-soft);
   font-size: 10px;
@@ -1354,7 +1394,8 @@
    mockup already sits visually apart from its white surroundings. Only the
    OUTER frame gets the glass treatment, matching how the design study's own
    `.order-diagram` sat inside a `.glass` card. */
-.glass-page .operation-story {
+.glass-page .operation-story,
+.rf-marketing .glass-page .operation-story {
   padding: 30px;
   background: var(--g-glass);
   border: 1px solid var(--g-glass-border);
@@ -1370,7 +1411,15 @@
   color: var(--g-soft);
 }
 
-.glass-page .story-intro h3 {
+/* B504: the plain `.glass-page .story-intro h3` rule below ties in
+   specificity with marketing.css's unconditional dark-theme rules for
+   .operation-story/.story-intro h3, and which one wins was observed to be
+   unpredictable in production — measured as dark navy text on the still-dark
+   background (1.09-1.61:1). The `.rf-marketing .glass-page ...` form adds an
+   extra class to both the background and heading-color rules so they always
+   win outright on specificity, regardless of stylesheet/chunk order. */
+.glass-page .story-intro h3,
+.rf-marketing .glass-page .story-intro h3 {
   color: var(--g-ink);
 }
 

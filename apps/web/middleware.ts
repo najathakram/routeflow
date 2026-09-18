@@ -11,6 +11,7 @@ import {
   MARKETING_AUTH_PATHS,
   MARKETING_PAGE_PATHS,
   isMarketingAsset,
+  isWebOnlyPath,
 } from "@/lib/marketing-routes";
 
 // Platform-level subdomains and hosting-provider base domains live in
@@ -108,13 +109,16 @@ export function middleware(request: NextRequest) {
   //     neither of which the mobile-web build has a route for;
   //   - otherwise (a first-time visitor) → the public marketing home.
   // Every OTHER marketing page is carved out unconditionally, as are the
-  // assets those pages load and the auth CTAs their chrome links.
+  // assets those pages load, the auth CTAs their chrome links, and any
+  // web-only surface with no Expo counterpart at all (B505) — platform-admin
+  // and the email-link /verify-email flow, currently.
   const skipMobileRedirect =
     optedOutOfMobile ||
     pathname.startsWith("/api/") ||
     pathname.startsWith("/_next/") ||
     isMarketingAsset(pathname) ||
     MARKETING_AUTH_PATH_SET.has(pathname) ||
+    isWebOnlyPath(pathname) ||
     (isMarketingPath(pathname) && !(pathname === "/" && (signedIn || mobileAppSeen)));
 
   if (!skipMobileRedirect) {
