@@ -89,17 +89,7 @@ interface AuditLogEntry {
   actor?: AuditActor | null;
 }
 
-interface Addon {
-  id: string;
-  addonKey: string;
-  active: boolean;
-  stripePriceId: string | null;
-  createdAt: string;
-}
-
 const PLANS = ["STARTER", "PROFESSIONAL", "ENTERPRISE"] as const;
-
-const AVAILABLE_ADDONS: Array<{ key: string; name: string; description: string }> = [];
 
 const TABS = [
   { key: "overview", label: "Overview", icon: <LayoutDashboard className="h-4 w-4" /> },
@@ -1062,140 +1052,9 @@ function AddonsTab({
   actionLoading: string | null;
 }) {
   const overridesRef = React.useRef<FeatureOverridesSectionHandle>(null);
-  const [addons, setAddons] = React.useState<Addon[]>([]);
-  const [loading, setLoading] = React.useState(true);
-  const [toggling, setToggling] = React.useState<string | null>(null);
-  const [showEnableModal, setShowEnableModal] = React.useState<string | null>(null);
-
-  const fetchAddons = React.useCallback(() => {
-    setLoading(true);
-    superAdminClient
-      .get(`/platform-admin/tenants/${tenant.id}/addons`)
-      .then((res) => setAddons(res.data))
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [tenant.id]);
-
-  React.useEffect(() => {
-    fetchAddons();
-  }, [fetchAddons]);
-
-  const [toggleError, setToggleError] = React.useState<string | null>(null);
-
-  const toggleAddon = async (key: string, currentlyActive: boolean) => {
-    setToggling(key);
-    setToggleError(null);
-    try {
-      if (currentlyActive) {
-        await superAdminClient.post(`/platform-admin/tenants/${tenant.id}/addons/disable`, {
-          addonKey: key,
-        });
-      } else {
-        await superAdminClient.post(`/platform-admin/tenants/${tenant.id}/addons/enable`, {
-          addonKey: key,
-        });
-      }
-      fetchAddons();
-    } catch (e: unknown) {
-      // A silently-failed toggle looks like success (the switch just doesn't
-      // move) — surface the server's reason instead. Addon enables can
-      // legitimately fail, e.g. a bridged key whose SKU isn't in the published
-      // catalog (#433's validation).
-      const err = e as { response?: { data?: { message?: string } } };
-      setToggleError(
-        err?.response?.data?.message ??
-          `Could not ${currentlyActive ? "disable" : "enable"} that add-on. Try again.`,
-      );
-    }
-    setToggling(null);
-    setShowEnableModal(null);
-  };
-
-  const activeKeys = new Set(addons.filter((a) => a.active).map((a) => a.addonKey));
 
   return (
     <>
-      <AdminModal
-        open={!!showEnableModal}
-        onClose={() => setShowEnableModal(null)}
-        title={`Enable ${AVAILABLE_ADDONS.find((a) => a.key === showEnableModal)?.name ?? showEnableModal}`}
-        footer={
-          <>
-            <button
-              onClick={() => setShowEnableModal(null)}
-              className="rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-slate-700"
-            >
-              Cancel
-            </button>
-            <button
-              disabled={toggling === showEnableModal}
-              onClick={() => showEnableModal && toggleAddon(showEnableModal, false)}
-              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
-            >
-              {toggling === showEnableModal ? "Enabling..." : "Enable Addon"}
-            </button>
-          </>
-        }
-      >
-        <p className="text-sm text-slate-300">
-          This will enable{" "}
-          <strong>{AVAILABLE_ADDONS.find((a) => a.key === showEnableModal)?.name}</strong> for
-          tenant <strong>{tenant.businessName ?? tenant.slug}</strong>.
-        </p>
-        <p className="mt-2 text-xs text-slate-500">
-          If Stripe is configured, a subscription item will be created for billing.
-        </p>
-      </AdminModal>
-
-      {loading ? (
-        <div className="py-8 text-center text-slate-500">Loading addons...</div>
-      ) : (
-        <>
-          {toggleError && (
-            <div className="mb-4 rounded-lg bg-red-900/30 px-4 py-3 text-sm text-red-300 ring-1 ring-red-600/30">
-              {toggleError}
-            </div>
-          )}
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {AVAILABLE_ADDONS.map((addon) => {
-              const isActive = activeKeys.has(addon.key);
-              return (
-                <div
-                  key={addon.key}
-                  className={`rounded-xl p-4 ring-1 transition-colors ${
-                    isActive ? "bg-indigo-900/20 ring-indigo-600/30" : "bg-slate-800 ring-white/5"
-                  }`}
-                >
-                  <div className="flex items-start justify-between mb-2">
-                    <h3 className="text-sm font-semibold text-white">{addon.name}</h3>
-                    <button
-                      disabled={toggling === addon.key}
-                      onClick={() => {
-                        if (isActive) {
-                          toggleAddon(addon.key, true);
-                        } else {
-                          setShowEnableModal(addon.key);
-                        }
-                      }}
-                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors disabled:opacity-50 ${
-                        isActive ? "bg-indigo-600" : "bg-slate-600"
-                      }`}
-                    >
-                      <span
-                        className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
-                          isActive ? "translate-x-4" : "translate-x-0.5"
-                        }`}
-                      />
-                    </button>
-                  </div>
-                  <p className="text-xs text-slate-400">{addon.description}</p>
-                </div>
-              );
-            })}
-          </div>
-        </>
-      )}
-
       <FeatureConsole
         tenant={tenant}
         tenantLabel={tenant.businessName ?? tenant.slug}
