@@ -20,6 +20,12 @@
 .rf-marketing .booking-copy,
 .rf-marketing .booking-panel {
   padding: 34px;
+  /* B549: grid items default to min-width:auto — at the single-column breakpoint
+     below (max-width:950px), one of these two's own content pinned this
+     item ~6px wider than its .booking-layout track, causing a small
+     horizontal-scroll overflow on phone widths. min-width:0 lets it shrink
+     to the track instead of being pinned to its content's min-content. */
+  min-width: 0;
 }
 
 .rf-marketing .agenda-list {
