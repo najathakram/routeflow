@@ -196,7 +196,7 @@ function TabTrigger({ value, children }: { value: string; children: React.ReactN
     <Tabs.Trigger
       value={value}
       className={cn(
-        "-mb-px border-b-2 px-4 py-3 text-sm font-medium transition-colors",
+        "-mb-px shrink-0 whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition-colors",
         "border-transparent text-navy/70 hover:text-navy",
         "data-[state=active]:border-brand-500 data-[state=active]:text-navy",
       )}
@@ -2065,6 +2065,16 @@ function CustomerDetailPageInner({ id }: { id: string }) {
     if (tab) setActiveTab(tab);
   }, [searchParams]);
 
+  // B512 (C2 390px audit): the tab strip scrolls horizontally on mobile instead
+  // of wrapping, so a deep link (`?tab=documents`) landing on a tab past the
+  // fold must scroll it into view — otherwise the strip looks like it starts on
+  // a random tab with no indication anything is off-screen to the left.
+  const tabsListRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    const activeEl = tabsListRef.current?.querySelector<HTMLElement>('[data-state="active"]');
+    activeEl?.scrollIntoView({ inline: "center", block: "nearest" });
+  }, [activeTab]);
+
   // Delivery time window
   const [windowStart, setWindowStart] = React.useState(customer?.deliveryWindowStart ?? "");
   const [windowEnd, setWindowEnd] = React.useState(customer?.deliveryWindowEnd ?? "");
@@ -2376,7 +2386,10 @@ function CustomerDetailPageInner({ id }: { id: string }) {
 
       {/* Tabs */}
       <Tabs.Root value={activeTab} onValueChange={setActiveTab} className="flex flex-col">
-        <Tabs.List className="flex border-b border-surface-border">
+        <Tabs.List
+          ref={tabsListRef}
+          className="flex overflow-x-auto border-b border-surface-border"
+        >
           <TabTrigger value="profile">Profile</TabTrigger>
           <TabTrigger value="orders">Orders{orderCount > 0 ? ` (${orderCount})` : ""}</TabTrigger>
           <TabTrigger value="addresses">Addresses ({addresses.length})</TabTrigger>
