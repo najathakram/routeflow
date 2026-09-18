@@ -1064,15 +1064,19 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(stats.planBreakdown).toEqual({ STARTER: 2, GROWTH: 1 });
     });
 
-    it("scopes every tenant-count query in getStats() by class: PRODUCTION", async () => {
+    it("scopes every tenant-count query in getStats() by class: PRODUCTION and deletedAt: null", async () => {
       prisma.tenant.findMany.mockResolvedValue([]);
 
       await service.getStats();
 
       // tenant.count is called for total/active/trial/suspended/newThisMonth — every call
-      // except the (tenantless) SUPER_ADMIN user count must carry class: "PRODUCTION".
+      // except the (tenantless) SUPER_ADMIN user count must carry class: "PRODUCTION" AND
+      // deletedAt: null (B543 — a soft-deleted PRODUCTION tenant was
+      // still counted into these five totals; every sibling tenant query in this file
+      // already excludes deletedAt, these five didn't).
       for (const call of (prisma.tenant.count as jest.Mock).mock.calls) {
         expect(call[0].where.class).toBe("PRODUCTION");
+        expect(call[0].where.deletedAt).toBeNull();
       }
       const planScanCall = (prisma.tenant.findMany as jest.Mock).mock.calls.find(
         (c: any[]) => c[0]?.where?.status?.not === "CANCELLED",
