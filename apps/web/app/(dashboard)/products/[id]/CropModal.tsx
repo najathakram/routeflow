@@ -128,19 +128,24 @@ export function CropModal({ file, fileIndex, fileTotal, onConfirm, onCancel }: C
   );
 
   const startDrag = React.useCallback(
-    (e: React.MouseEvent, handleId: HandleId) => {
+    (e: React.PointerEvent<HTMLDivElement>, handleId: HandleId) => {
       e.preventDefault();
       e.stopPropagation();
+      // Pointer Events cover mouse, touch and stylus through one code path —
+      // capture keeps every move/up for this pointer routed here even if it
+      // leaves the handle's bounds mid-drag (a finger drifting off a 14px
+      // corner handle is common on a real screen).
+      e.currentTarget.setPointerCapture(e.pointerId);
       setDrag({ handleId, startMouseX: e.clientX, startMouseY: e.clientY, startBox: { ...box } });
     },
     [box],
   );
 
-  // Global mouse-move / mouse-up listeners while dragging the crop box
+  // Global pointer-move / pointer-up listeners while dragging the crop box
   React.useEffect(() => {
     if (!drag) return;
 
-    const onMove = (e: MouseEvent) => {
+    const onMove = (e: PointerEvent) => {
       const dx = e.clientX - drag.startMouseX;
       const dy = e.clientY - drag.startMouseY;
       const sb = drag.startBox;
@@ -181,11 +186,13 @@ export function CropModal({ file, fileIndex, fileTotal, onConfirm, onCancel }: C
     };
 
     const onUp = () => setDrag(null);
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
     return () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
     };
   }, [drag, clamp]);
 
@@ -245,13 +252,15 @@ export function CropModal({ file, fileIndex, fileTotal, onConfirm, onCancel }: C
 
   React.useEffect(() => {
     if (!focalDragging) return;
-    const onMove = (e: MouseEvent) => setFocalFromEvent(e.clientX, e.clientY);
+    const onMove = (e: PointerEvent) => setFocalFromEvent(e.clientX, e.clientY);
     const onUp = () => setFocalDragging(false);
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
     return () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
     };
   }, [focalDragging, setFocalFromEvent]);
 
@@ -324,6 +333,7 @@ export function CropModal({ file, fileIndex, fileTotal, onConfirm, onCancel }: C
 
                     {/* The active crop box */}
                     <div
+                      className="touch-none"
                       style={{
                         position: "absolute",
                         top: box.y,
@@ -334,7 +344,7 @@ export function CropModal({ file, fileIndex, fileTotal, onConfirm, onCancel }: C
                         boxSizing: "border-box",
                         cursor: drag?.handleId === "body" ? "grabbing" : "grab",
                       }}
-                      onMouseDown={(e) => startDrag(e, "body")}
+                      onPointerDown={(e) => startDrag(e, "body")}
                     >
                       {/* Rule-of-thirds guide lines */}
                       <div className="pointer-events-none absolute inset-0">
@@ -360,7 +370,8 @@ export function CropModal({ file, fileIndex, fileTotal, onConfirm, onCancel }: C
                       {(["nw", "ne", "sw", "se"] as const).map((h) => (
                         <div
                           key={h}
-                          onMouseDown={(e) => startDrag(e, h)}
+                          className="touch-none"
+                          onPointerDown={(e) => startDrag(e, h)}
                           style={{
                             position: "absolute",
                             width: 14,
@@ -390,10 +401,11 @@ export function CropModal({ file, fileIndex, fileTotal, onConfirm, onCancel }: C
                   when the image is shown at other aspect ratios.
                 </p>
                 <div
-                  className="relative inline-block cursor-crosshair"
+                  className="relative inline-block cursor-crosshair touch-none"
                   style={{ lineHeight: 0, userSelect: "none" }}
-                  onMouseDown={(e) => {
+                  onPointerDown={(e) => {
                     e.preventDefault();
+                    e.currentTarget.setPointerCapture(e.pointerId);
                     setFocalFromEvent(e.clientX, e.clientY);
                     setFocalDragging(true);
                   }}
