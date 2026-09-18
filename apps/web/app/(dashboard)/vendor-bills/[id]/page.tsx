@@ -1146,7 +1146,7 @@ export default function VendorBillDetailPage() {
             {/* Supplier info & dates — view or edit mode */}
             {isEditing ? (
               <div className="mb-6 space-y-4">
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
                     <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-navy/70">
                       Supplier
@@ -1159,7 +1159,7 @@ export default function VendorBillDetailPage() {
                       className="h-10"
                     />
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                     <div>
                       <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-navy/70">
                         Bill Date
@@ -1198,7 +1198,7 @@ export default function VendorBillDetailPage() {
                 </div>
               </div>
             ) : (
-              <div className="mb-6 grid grid-cols-2 gap-6">
+              <div className="mb-6 grid grid-cols-1 gap-6 sm:grid-cols-2">
                 <div>
                   <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
                     Supplier

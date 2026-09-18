@@ -1061,7 +1061,7 @@ function EditTermsModal({
       }
     >
       <form id="edit-terms-form" onSubmit={handleSubmit} className="space-y-3">
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="mb-1.5 block text-sm font-medium text-navy/80">Due Date</label>
             <input
@@ -2450,7 +2450,7 @@ export default function InvoiceDetailPage() {
             </div>
 
             {/* Billing + dates */}
-            <div className="mb-6 grid grid-cols-2 gap-6 border-t border-surface-border pt-4">
+            <div className="mb-6 grid grid-cols-1 gap-6 border-t border-surface-border pt-4 sm:grid-cols-2">
               <div>
                 <p className="overline mb-1.5">Bill To</p>
                 <p className="text-sm font-semibold text-navy">

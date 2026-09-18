@@ -438,7 +438,7 @@ function AddressFormModal({
     >
       <form id="address-form" onSubmit={handleSubmit} noValidate>
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <label className="mb-1 block text-sm font-medium text-navy">Address Type</label>
               <select
@@ -467,8 +467,8 @@ function AddressFormModal({
               setForm((prev) => ({ ...prev, line1: street, city, state, zip }))
             }
           />
-          <div className="grid grid-cols-3 gap-3">
-            <div className="col-span-2">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="sm:col-span-2">
               <Input
                 label="City"
                 placeholder="Austin"
@@ -847,7 +847,7 @@ function ContactPersonModal({
     >
       <form id="contact-person-form" onSubmit={handleSubmit} noValidate>
         <div className="space-y-3">
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div>
               <label className="mb-1 block text-sm font-medium text-navy">Salutation</label>
               <select
@@ -875,7 +875,7 @@ function ContactPersonModal({
               onChange={handleChange("lastName") as any}
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Input
               label="Email"
               type="email"
@@ -891,7 +891,7 @@ function ContactPersonModal({
               onChange={handleChange("phone") as any}
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Input
               label="Mobile"
               type="tel"
@@ -2886,7 +2886,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                       </span>
                     </label>
                     <div
-                      className={`grid grid-cols-2 gap-4 transition-opacity ${anyTime ? "pointer-events-none opacity-40" : ""}`}
+                      className={`grid grid-cols-1 gap-4 transition-opacity sm:grid-cols-2 ${anyTime ? "pointer-events-none opacity-40" : ""}`}
                     >
                       <div className="space-y-1">
                         <label className="flex items-center gap-1.5 text-xs font-medium text-navy/70">

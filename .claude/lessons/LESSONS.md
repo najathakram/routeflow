@@ -29,7 +29,7 @@
 - **Lesson:** **Before citing a bookkeeping/registry closure as landed or unlanded, resolve the
   SPECIFIC commit that is supposed to carry the fix on master first — via `git log --grep` for
   the PR's own `(#N)` tag, or the GH API's `mergeCommit.oid` — then run `merge-base
-  --is-ancestor <that sha> origin/master`. Never check the source branch's tip commit or infer
+--is-ancestor <that sha> origin/master`. Never check the source branch's tip commit or infer
   merge state from GitHub's PR view alone: a squash or cherry-pick can leave a branch's own
   commits genuinely off master while its content is fully live under a different sha.**
 - **Guard:** none yet — propose the batch/landing checklist require pairing every
@@ -41,6 +41,32 @@
   evidence that it landed.
 
 ## tooling
+
+### L-199 · 2026-09-18 · tooling · "dead CSS" needs a structural proof, not a route spot-check
+
+- **Symptom:** investigating B538 (an unreachable `.glass-page .desktop-nav [aria-current="page"]`
+  rule in glass-site.css), live DOM checks on 2 of the marketing site's 11 routes (`/pricing`,
+  `/wholesalers`) confirmed `.desktop-nav` is never a descendant of `.glass-page` via
+  `glassPage.contains(desktopNav) === false`. A peer correctly flagged that this only proves the
+  claim for the two routes actually visited — a rule dead on the routes checked can still be
+  load-bearing on one that wasn't.
+- **Root cause:** a live DOM spot-check is inherently per-instance and cannot cover routes never
+  visited (or routes that don't exist yet). The marketing app has ONE shared
+  `apps/web/app/(marketing)/layout.tsx` for all 11 routes with no nested layout overrides, and
+  every one of the 11 `page.tsx` files applies `.glass-page` to its own root wrapper _inside_
+  `{children}` while the layout renders `<SiteHeader/>` (containing `.desktop-nav`) as a sibling
+  of `<main>{children}</main>` — so the non-containment is provable for every route at once by
+  reading the layout + grepping each page's wrapper usage, not by sampling the DOM.
+- **Lesson:** **When justifying a CSS-dead-code removal ("this selector can never match"), prefer
+  a structural proof from the shared layout/routing code over live DOM spot-checks on a handful of
+  routes. A spot-check only proves the routes actually visited; grep every route's wrapper usage
+  (or read the one shared layout, when there's only one) to cover routes you didn't visit —
+  including ones added later.**
+- **Guard:** `apps/web/app/(marketing)/nav-consistency.test.tsx` pins this exact invariant going
+  forward — it renders the real `MarketingLayout` with a `.glass-page` child and asserts
+  `.desktop-nav` is never inside it, with explicit non-vacuity checks (both elements must actually
+  exist) so a future nested layout or page restructure that breaks the invariant fails a test
+  instead of surfacing only via another spot-check.
 
 ### L-198 · 2026-09-18 · tooling · `gh run rerun` replays the original checkout, not a fresh merge-ref
 
@@ -56,7 +82,7 @@
 - **Lesson:** **To re-test a PR against the CURRENT base branch — after a base-branch fix lands,
   or any base change the PR doesn't itself carry — push a genuinely NEW commit, never
   `gh run rerun`. An empty commit works when there's no real content to add: `git commit
-  --allow-empty -m "..."`, or `git commit-tree <tree> -p <parent> -m "..."` plumbing when the
+--allow-empty -m "..."`, or `git commit-tree <tree> -p <parent> -m "..."` plumbing when the
   branch can't be checked out locally. Reserve `gh run rerun` for a genuinely flaky failure on an
   otherwise-current merge ref.**
 - **Guard:** none yet — propose a landing-tool helper that pushes an empty commit instead of
