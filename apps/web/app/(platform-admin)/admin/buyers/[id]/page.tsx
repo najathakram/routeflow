@@ -404,13 +404,15 @@ export default function BuyerDetailPage() {
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="mb-6 flex border-b border-slate-700">
+      {/* Tabs — B559: same unwrapped-flex-row defect class as (platform-admin)/_components/
+          AdminTabs.tsx; scroll the strip itself instead of letting it force the shared
+          `<main className="flex-1 overflow-y-auto">` shell wider than the viewport. */}
+      <div className="mb-6 flex overflow-x-auto border-b border-slate-700">
         {(["profile", "sellers"] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors border-b-2 ${
+            className={`flex shrink-0 items-center gap-2 whitespace-nowrap px-4 py-2.5 text-sm font-medium transition-colors border-b-2 ${
               tab === t
                 ? "border-indigo-500 text-white"
                 : "border-transparent text-slate-400 hover:text-slate-200"
