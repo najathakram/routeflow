@@ -77,7 +77,11 @@ export function classifyWorktree(info) {
     return { nodeModules: "skip", worktree: "skip", reason: "protected branch" };
   }
   if (!isMerged) {
-    return { nodeModules: "skip", worktree: "skip", reason: "branch not merged into origin/master" };
+    return {
+      nodeModules: "skip",
+      worktree: "skip",
+      reason: "branch not merged into origin/master",
+    };
   }
   // Merged: node_modules is always safe to clear (the checkout survives).
   if (isDirty) return { nodeModules: "clear", worktree: "skip", reason: "uncommitted changes" };
@@ -100,10 +104,12 @@ export function findOrphanWorktreeDirs(listedPaths, dirNames, worktreesRoot) {
 }
 
 /** localBranches merged into origin/master, filtered to ones origin still carries. */
-export function findStaleBranches(remoteBranches, mergedBranchNames, protectedBranches = PROTECTED_BRANCHES) {
-  return remoteBranches.filter(
-    (b) => mergedBranchNames.has(b) && !protectedBranches.has(b),
-  );
+export function findStaleBranches(
+  remoteBranches,
+  mergedBranchNames,
+  protectedBranches = PROTECTED_BRANCHES,
+) {
+  return remoteBranches.filter((b) => mergedBranchNames.has(b) && !protectedBranches.has(b));
 }
 
 // ---------------------------------------------------------------------------
@@ -155,7 +161,12 @@ function findJunctions(dir) {
     "-Command",
     `Get-ChildItem -LiteralPath '${dir}' -Recurse -Force -ErrorAction SilentlyContinue | Where-Object { $_.LinkType } | Select-Object -ExpandProperty FullName`,
   ]);
-  return out ? out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean) : [];
+  return out
+    ? out
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : [];
 }
 
 /**
@@ -347,9 +358,13 @@ function runStaleBranches(repoRoot) {
     .split("\n")
     .map((l) => l.trim().replace(/^origin\//, ""))
     .filter((b) => b && !b.startsWith("HEAD"));
-  const mergedOut = trySh("git", ["-C", repoRoot, "branch", "-r", "--merged", "origin/master"]) ?? "";
+  const mergedOut =
+    trySh("git", ["-C", repoRoot, "branch", "-r", "--merged", "origin/master"]) ?? "";
   const merged = new Set(
-    mergedOut.split("\n").map((l) => l.trim().replace(/^origin\//, "")).filter(Boolean),
+    mergedOut
+      .split("\n")
+      .map((l) => l.trim().replace(/^origin\//, ""))
+      .filter(Boolean),
   );
   const stale = findStaleBranches(remoteBranches, merged);
   console.log(`Branches merged into origin/master but still on origin (${stale.length}):`);
@@ -386,7 +401,8 @@ function main() {
   for (const a of actions) console.log(`  ${describeAction(a)}`);
   if (skipped.length) {
     console.log(`\nProtected / not eligible (${skipped.length}) — never touched:`);
-    for (const s of skipped) console.log(`  - ${s.worktree} (${s.branch ?? "detached"}): ${s.reason}`);
+    for (const s of skipped)
+      console.log(`  - ${s.worktree} (${s.branch ?? "detached"}): ${s.reason}`);
   }
 
   if (!apply) {

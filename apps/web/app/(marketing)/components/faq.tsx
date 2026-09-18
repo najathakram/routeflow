@@ -40,6 +40,10 @@ const RETAILER: Array<[string, string]> = [
     "Yes. Your supplier connection determines the catalogs, prices, and ordering options available to your account. Ask your distributor how to connect.",
   ],
   [
+    "How do I pay an invoice?",
+    "You can pay by card directly in the portal when your seller has card payments turned on for their account. Otherwise, arrange payment with them the way you always have — cash, check, or on account — and the portal keeps your balance and history up to date either way.",
+  ],
+  [
     "Can I use the portal on my phone?",
     "Use the retailer web portal from a supported browser. You do not need to wait for a native mobile app to access the web portal.",
   ],

@@ -9926,3 +9926,16 @@
   width: 40px;
   height: 40px;
 }
+
+/* Real product screenshots (PR #871) — replaced the ScreenshotPlaceholder
+   dashed stand-ins (owner ruling 2026-09-17) once the real captures landed. */
+.rf-marketing .lifecycle-screenshot,
+.rf-marketing .invoice-screenshot {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1400 / 933;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}

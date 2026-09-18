@@ -1,6 +1,16 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowRight, ArrowUpRight, Globe, Package, FileText, ShoppingBag } from "lucide-react";
+import {
+  ArrowRight,
+  ArrowUpRight,
+  Globe,
+  Package,
+  ShoppingBag,
+  Users,
+  ReceiptText,
+  MapPin,
+  CreditCard,
+} from "lucide-react";
 import { routes, site } from "../lib/site";
 import { CTA, Eyebrow } from "../components/marketing";
 import { FAQ } from "../components/faq";
@@ -31,14 +41,25 @@ const BENEFITS: Array<[typeof Package, string, string]> = [
     "Find the catalogs and prices available through your supplier connections.",
   ],
   [
+    Users,
+    "One login, every supplier",
+    "Order from every distributor you buy from on RouteFlow with a single account — switch between sellers from the same portal.",
+  ],
+  [
     Package,
     "Put your order together",
     "Select the products you need and review the order before placing it.",
   ],
+  [ReceiptText, "See what you owe", "Every invoice, itemized against exactly what was delivered."],
   [
-    FileText,
-    "Find your order history",
-    "Look back at previous purchases when you plan your next restock.",
+    MapPin,
+    "Track your delivery",
+    "Know your order's status, driver, and how many stops are ahead, plus your scheduled delivery window.",
+  ],
+  [
+    CreditCard,
+    "Pay your way",
+    "Pay by card right in the portal when your seller has that turned on, or settle up with them directly the way you always have.",
   ],
 ];
 
@@ -57,8 +78,8 @@ export default function RetailersPage() {
               </em>
             </h1>
             <p className="lead">
-              Browse your connected suppliers, place orders, and find your purchase history in one
-              retailer portal.
+              Order from every supplier you buy from with one login, see what you owe, and track
+              your deliveries — without a single call to their order desk.
             </p>
             <div className="hero-actions">
               <Link className="button button-green" href={authLinks.retailerSignUp}>
@@ -93,6 +114,18 @@ export default function RetailersPage() {
             </article>
           ))}
         </div>
+        {/* Plain <img>, not next/image (ruling B1, matching warehouse.webp usage
+            elsewhere in the marketing port); below the fold, so lazy. */}
+        {/* eslint-disable-next-line @next/next/no-img-element -- see above */}
+        <img
+          src="/marketing/invoice-detail.webp"
+          alt="RouteFlow buyer-portal invoice detail showing itemized line items, balance due, and a Pay this invoice card-payment button."
+          width={1400}
+          height={933}
+          loading="lazy"
+          decoding="async"
+          className="invoice-screenshot"
+        />
       </section>
       <section className="retailer-start wrap">
         <div>
