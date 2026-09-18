@@ -156,7 +156,8 @@ export default function BuyerOrdersPage() {
         <>
           {/* Table */}
           <div className="overflow-hidden rounded-xl border border-surface-border bg-white shadow-sm">
-            <table className="w-full">
+            <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px]">
               <thead>
                 <tr className="border-b border-surface-border bg-surface-raised">
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70">
@@ -206,6 +207,7 @@ export default function BuyerOrdersPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
 
           {/* Pagination */}

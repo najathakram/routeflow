@@ -626,7 +626,7 @@ export default function ReturnDetailPage() {
         <div className="space-y-5 lg:col-span-2">
           {/* Detail card */}
           <Card>
-            <div className="mb-6 grid grid-cols-2 gap-6">
+            <div className="mb-6 grid grid-cols-1 gap-6 sm:grid-cols-2">
               <div>
                 <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
                   Customer
