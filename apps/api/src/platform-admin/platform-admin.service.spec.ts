@@ -66,6 +66,8 @@ describe("PlatformAdminService — audit provenance", () => {
       // SubscriptionMutationService.downgrade(), which also uses a plain update — the row
       // must already exist to carry a periodEnd to schedule against).
       update: jest.fn().mockResolvedValue({}),
+      // B556: createTenant()/register() now create a subscription row alongside the tenant.
+      create: jest.fn().mockResolvedValue({}),
     };
     (prisma as any).auditLog = {
       findMany: jest.fn().mockResolvedValue([]),
@@ -320,6 +322,106 @@ describe("PlatformAdminService — audit provenance", () => {
         where: { id: TENANT_ID, status: { not: "ACTIVE" } },
         data: { status: "ACTIVE" },
       });
+    });
+  });
+
+  // B556: updateStatus() (the tenant detail page's plain Suspend/Reactivate control) used to
+  // write ONLY Tenant.status — a tenant that reaches ACTIVE this way with no
+  // TenantSubscription row (or one with a null planKey) is the exact "shown as paying,
+  // contributes $0 forever" shape B556 reports, and per the DB-verified evidence this IS the
+  // real onboarding path's failure mode (create as TRIAL with no subscription → flip to
+  // ACTIVE here → nothing ever creates one).
+  describe("updateStatus — B556 fills a missing planKey on activation", () => {
+    it("B556 backfills TenantSubscription.planKey (resolved from Tenant.plan) when a TRIAL tenant is activated with no subscription row at all", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+        plan: "PROFESSIONAL",
+      } as any);
+      // The "before" read this fix adds — no subscription row exists yet.
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        status: "TRIAL",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: null,
+      } as any);
+
+      await service.updateStatus(TENANT_ID, { status: "ACTIVE" } as any, ADMIN_ID);
+
+      // PROFESSIONAL normalizes to SCALE via planKeyFromEnum — the same total mapping every
+      // other consumer already falls back to.
+      expect((prisma as any).tenantSubscription.upsert).toHaveBeenCalledWith({
+        where: { tenantId: TENANT_ID },
+        create: { tenantId: TENANT_ID, currentPlan: "PROFESSIONAL", planKey: "SCALE" },
+        update: { planKey: "SCALE" },
+      });
+    });
+
+    it("B556 backfills planKey when a subscription row exists but its planKey is null", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+        plan: "STARTER",
+      } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        status: "TRIAL",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: { planKey: null, basePriceSnapshot: null, discount: null },
+      } as any);
+
+      await service.updateStatus(TENANT_ID, { status: "ACTIVE" } as any, ADMIN_ID);
+
+      expect((prisma as any).tenantSubscription.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ update: { planKey: "STARTER" } }),
+      );
+    });
+
+    it("never overwrites an already-resolved planKey (guard against clobbering a real, priced subscription)", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+        plan: "PROFESSIONAL",
+      } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        status: "SUSPENDED",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: { planKey: "SCALE", basePriceSnapshot: 499, discount: null },
+      } as any);
+
+      await service.updateStatus(TENANT_ID, { status: "ACTIVE" } as any, ADMIN_ID);
+
+      expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+    });
+
+    it("never fills planKey when the target status is not ACTIVE", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "SUSPENDED",
+        plan: "PROFESSIONAL",
+      } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        status: "ACTIVE",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: null,
+      } as any);
+
+      await service.updateStatus(TENANT_ID, { status: "SUSPENDED" } as any, ADMIN_ID);
+
+      expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
     });
   });
 
@@ -1429,6 +1531,19 @@ describe("PlatformAdminService — audit provenance", () => {
       const expectedMs = 30 * 24 * 60 * 60 * 1000;
       const actualMs = (result.trialEndsAt as Date).getTime() - Date.now();
       expect(Math.abs(actualMs - expectedMs)).toBeLessThan(5000);
+    });
+
+    // B556: createTenant() used to write ONLY the Tenant row — MrrService gates MRR on
+    // TenantSubscription.planKey, not Tenant.plan, so a tenant created here and later
+    // activated without ever passing through "Change Plan" would show a real plan badge
+    // while contributing $0 to MRR forever. Repro-first: fails against the pre-fix
+    // createTenant(), which never touches tx.tenantSubscription.
+    it("B556 creates a TenantSubscription row with planKey resolved from the requested plan, alongside the tenant", async () => {
+      await service.createTenant(validCreateDto);
+
+      expect((prisma as any).tenantSubscription.create).toHaveBeenCalledWith({
+        data: { tenantId: TENANT_ID, currentPlan: "STARTER", planKey: "STARTER" },
+      });
     });
   });
 

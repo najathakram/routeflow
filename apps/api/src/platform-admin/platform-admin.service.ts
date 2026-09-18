@@ -306,6 +306,19 @@ export class PlatformAdminService {
         },
       });
 
+      // B556: see TenantsService.register() for the full rationale — keep
+      // TenantSubscription.planKey in lockstep with Tenant.plan from the moment of creation,
+      // via the same total planKeyFromEnum() mapping, so this tenant can never become the
+      // "real Tenant.plan, no resolved planKey" shape MrrService prices at $0 forever. No
+      // basePriceSnapshot here — this tenant starts TRIAL and payingWhere already excludes it.
+      await tx.tenantSubscription.create({
+        data: {
+          tenantId: tenant.id,
+          currentPlan: tenantPlan,
+          planKey: planKeyFromEnum(tenantPlan),
+        },
+      });
+
       await tx.tenantConfig.create({ data: { tenantId: tenant.id, businessName } });
 
       await tx.expenseCategory.createMany({
@@ -455,6 +468,18 @@ ${
     // this call reports could be one a concurrent downgrade() armed a moment later. One
     // transaction means the audit line describes the row as it stood at the transition.
     const { tenant, armedDowngrade } = await this.prisma.$transaction(async (tx) => {
+      // B556: read the tenant's subscription BEFORE this call writes anything, so a still-null
+      // planKey can be detected and filled at the moment of activation.
+      const before = await tx.tenant.findUniqueOrThrow({
+        where: { id },
+        select: {
+          status: true,
+          class: true,
+          deletedAt: true,
+          subscription: { select: { planKey: true, basePriceSnapshot: true, discount: true } },
+        },
+      });
+
       let wasRealReactivation = false;
       if (dto.status === "ACTIVE") {
         const { count } = await tx.tenant.updateMany({
@@ -471,6 +496,26 @@ ${
         where: { id },
         data: { status: dto.status },
       });
+
+      // B556: a tenant that reaches ACTIVE with no resolved planKey is the exact "shown as
+      // paying, contributes $0 forever" shape B556 reports — the historically confirmed
+      // mechanism is precisely this control (create as TRIAL with no subscription row → flip
+      // to ACTIVE here → nothing ever creates one). Fill ONLY planKey, resolved via the same
+      // total planKeyFromEnum() mapping every other consumer already falls back to — never
+      // basePriceSnapshot, which stays the deliberate job of updatePlan()/
+      // activateManualSubscription() so a tenant never starts showing revenue from a bare
+      // status flip alone (protects the free-pilot population — see mrr.service.ts F2/F3).
+      // Never overwrites an existing planKey.
+      const priorPlanKey = before.subscription?.planKey ?? null;
+      let finalPlanKey = priorPlanKey;
+      if (dto.status === "ACTIVE" && priorPlanKey == null) {
+        finalPlanKey = planKeyFromEnum(updated.plan);
+        await tx.tenantSubscription.upsert({
+          where: { tenantId: id },
+          create: { tenantId: id, currentPlan: updated.plan, planKey: finalPlanKey },
+          update: { planKey: finalPlanKey },
+        });
+      }
 
       // FINDING-4 RULING (2026-09-14, lead): an admin reactivation does NOT clear the tenant's
       // armed downgrade. Only two paths ever arm downgradeToPlanKey — the tenant's own
