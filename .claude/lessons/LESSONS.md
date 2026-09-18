@@ -5,7 +5,8 @@
 > approach. **After every bug fix, append an entry** — Symptom / Root cause / **Lesson** / Guard —
 > and bump [`_meta.json`](_meta.json); Gate 3 of [`../hooks/stop.mjs`](../hooks/stop.mjs) blocks
 > fix-shaped turns that don't (a lesson-free fix bumps `_meta.json.updatedAt` to acknowledge).
-> Caps: ≤ 40 active entries / ~25 KB — compact to [`ARCHIVE.md`](ARCHIVE.md). Maintained by the
+> Caps: ≤ 52 active entries / 64 KB (set in [`_meta.json`](_meta.json), the values
+> `scripts/validate-lessons.mjs` actually enforces) — compact to [`ARCHIVE.md`](ARCHIVE.md). Maintained by the
 > `lessons-learned` skill. Blameless; **never client names/slugs/document numbers** — the repo
 > goes public briefly for CI.
 
@@ -108,6 +109,23 @@ null`; three RTL tests failed as if the trap never moved focus at all, while the
 - **Guard:** none automatic yet — a landing coordinator diffs `origin/master...HEAD` on the
   rebuilt branch and confirms zero changes under the schema-owning PR's files (e.g. `prisma/`)
   before pushing, proving only the stacked PR's own commits landed.
+
+### L-196 · 2026-09-17 · tooling · a config file silently overriding a code default drifts from its docs
+
+- **Symptom:** CLAUDE.md and `LESSONS.md`'s own header both stated the lessons register caps at
+  40 entries / ~25–40 KB; the register had been running at 52 entries / 64 KB all along with zero
+  validator complaints, since `_meta.json`'s own `maxEntries`/`maxBytes` fields silently override
+  `validate-lessons.mjs`'s hardcoded defaults whenever present.
+- **Root cause:** the validator's fallback defaults exist for a repo with no `_meta.json` yet,
+  but nothing ever re-derives or checks the DOCS against whichever value is actually live — a
+  limit that lives in a data file, not a source-code constant, can drift from every doc
+  describing it with no error, no warning, and no diff to review.
+- **Lesson:** **When a limit lives in a config/data file with a code-level fallback default, the
+  code's default is not the source of truth once the config file sets a real value — read the
+  validator's own resolved value, never infer it from source or from a doc, and update every doc
+  that states the limit in the SAME commit whenever the config changes it.**
+- **Guard:** none yet — the validator already prints its resolved values in its self-consistency
+  line; propose a periodic doc-vs-validator cross-check so drift is caught before it ages.
 
 ### L-186 · 2026-09-17 · tooling · web code-map catch-up (layout.tsx named re-export)
 
@@ -642,21 +660,6 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   single-field ledger edit (owner-approved, out of band) rather than fabricate a regression.
 - **Guard:** filed B426 (bugs.mjs needs a lawful `proven`→`already-fixed` reclassify path,
   distinct from `reopen`'s regression semantics) so this doesn't recur as a manual escape hatch.
-
-### L-164 · 2026-09-15 · domain · Lite-L2 fix round: SubscriptionView.flags fail-open
-
-- **Symptom:** a deploy skew (old API, new web/mobile build) or rollback serving a response with
-  no `flags` key locked every plan-gated route and hid every plan-gated nav item, for every
-  tenant on every plan — not just the one plan the field was added for.
-- **Root cause:** `subscription?.flags ?? []` (and the equivalent `?.includes(key) ?? false`
-  hooks, on both web and mobile) treated "the field is absent" identically to "present and
-  empty" — but the request had already resolved, so a reader downstream saw "resolved, zero
-  grants" and gated for real.
-- **Lesson:** **A shared response field a rollback/version-skew can omit must be typed optional,
-  and every reader must distinguish `undefined` ("unresolved, fail open") from `[]` ("resolved,
-  no grants — gate for real"). Never let `?? []` erase that distinction.**
-- **Guard:** `plan-flags.test.tsx` (web) and `plan-flags.test.ts` (mobile) both pin the
-  undefined-vs-`[]` pair.
 
 ### L-143 · 2026-09-15 · domain · B421 (credit-applied vs paid, full fix)
 
