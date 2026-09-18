@@ -2567,6 +2567,35 @@ citations, closed-out with its own post-init assertion guard).
 - **Guard:** none yet — propose `--passWithNoTests` on the Baseline invocation and a close-out
   check that greps the run's JSON for the expected test titles.
 
+## Archived 2026-09-18 — headroom for the #909 L-199 merge collision (bookkeeping-batch window-6)
+
+### L-186 · 2026-09-17 · tooling · web code-map catch-up (layout.tsx named re-export)
+
+- **Symptom:** an App Router `layout.tsx` re-exported a named client component. It compiled
+  clean in prod (`ignoreBuildErrors` masked it) but broke only under `next dev`'s typed-routes
+  checking.
+- **Root cause:** neither CI nor `check-types` runs the pass that catches this — a named export
+  from a Next.js App Router special file is invisible to both the type checker and the
+  production build's relaxed error mode.
+- **Lesson:** **`layout.tsx` may export only `default`, `metadata`, `viewport`, and Next's own
+  segment-config exports — never a named re-export of shared logic. Put shared logic in its own
+  file, imported by the layout.**
+- **Guard:** `apps/web/app/layout-exports.test.ts` walks every layout in the app tree and
+  asserts its export set stays within the allowed list (currently covers ≥ 6 layout files).
+
+### L-166 · 2026-09-16 · testing · #779 (B352)
+
+- **Symptom:** `next-version.spec.ts` stopped enforcing a minimum patched Next.js version after
+  an unrelated fix round touched the same file — a security-advisory floor silently dropped.
+- **Root cause:** the fix round's own diff review didn't check which assertions the file already
+  carried before editing it; a generically-named test ("pins the version") gave no signal that
+  editing it deleted a security floor specifically.
+- **Lesson:** **A spec file that pins a security floor (a CVE-patched minimum version, an
+  advisory allowlist) needs its own named assertion — the next unrelated edit to that file can't
+  silently delete it without a visible red diff.**
+- **Guard:** name the assertion after the floor it enforces (e.g. `it("enforces the CVE-2026-xxxx
+  floor", ...)`), not after the generic thing being tested — restored in `next-version.spec.ts`.
+
 ## Archived 2026-09-18 — headroom for source-text-assertion lesson (bookkeeping-batch window-6)
 
 ### L-172 · 2026-09-16 · tooling · #779 (nested timeout mismatch)

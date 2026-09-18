@@ -771,7 +771,8 @@ export default function BuyerOrderDetailPage() {
           )}
         </div>
 
-        <table className="w-full">
+        <div className="overflow-x-auto">
+        <table className="w-full min-w-[640px]">
           <thead>
             <tr className="border-b border-surface-border text-xs text-navy/70 uppercase tracking-wider">
               <th className="px-4 py-2.5 text-left">Product</th>
@@ -943,6 +944,7 @@ export default function BuyerOrderDetailPage() {
                 ))}
           </tbody>
         </table>
+        </div>
 
         {/* Inline product search (edit mode only) */}
         {editMode && (

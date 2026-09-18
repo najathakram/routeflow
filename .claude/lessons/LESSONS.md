@@ -29,7 +29,7 @@
 - **Lesson:** **Before citing a bookkeeping/registry closure as landed or unlanded, resolve the
   SPECIFIC commit that is supposed to carry the fix on master first — via `git log --grep` for
   the PR's own `(#N)` tag, or the GH API's `mergeCommit.oid` — then run `merge-base
-  --is-ancestor <that sha> origin/master`. Never check the source branch's tip commit or infer
+--is-ancestor <that sha> origin/master`. Never check the source branch's tip commit or infer
   merge state from GitHub's PR view alone: a squash or cherry-pick can leave a branch's own
   commits genuinely off master while its content is fully live under a different sha.**
 - **Guard:** none yet — propose the batch/landing checklist require pairing every
@@ -40,13 +40,15 @@
   since a shallow clone's grafted boundary can misreport ancestry. A PR number in a list is not
   evidence that it landed.
 
-### L-201 · 2026-09-18 · process · four registry-id collisions in one session, all from allocating off an incomplete view
+### L-201 · 2026-09-18 · process · five registry-id collisions in one session, all from allocating off an incomplete view
 
-- **Symptom:** four id collisions in one fleet window — a lead's "next free" read of merged
+- **Symptom:** five id collisions in one fleet window — a lead's "next free" read of merged
   master missing an unmerged PR's reservations; a lane self-resolving to "the next real id" per
   the B499-style protocol, blind to a second branch independently claiming the same id; two
   allocations racing an unconfirmed in-flight request; a fix commit's own id reference going
-  stale when its registry record got renumbered during filing.
+  stale when its registry record got renumbered during filing; and — after this entry was
+  already written — this entry's OWN registry hit a fifth: an unrelated lesson landed on master
+  at the same id this entry's branch had already used.
 - **Root cause:** each was a *correct* read of an *incomplete* view — merged master, one
   worktree's local scan, or memory of a conversation. Nobody can see an id reserved in an
   unmerged branch until it's fetched, and nothing forces that fetch before allocating. The
@@ -56,13 +58,11 @@
 - **Lesson:** **A shared, monotonically-allocated id cannot be safely allocated from memory,
   merged-mainline state, or one worktree's local scan — only from a fresh `fetch --all --prune`
   then `git log --all -- <path-for-that-id>` across every local AND remote ref, unmerged branches
-  included. Treat any id handed to you as unverified until you independently confirm it's free
-  the same way — even from the nominal allocation owner, whose view can be stale the moment a
-  concurrent branch reserves something they haven't fetched yet.**
-- **Guard:** none yet — scoping a `bugs.mjs next-id` proposal (fetch-all-refs scan as one
-  command, plus a companion "which open entries touch these file paths" query) so allocation
-  routes through a command, not memory. See [[L-197]] — same "don't trust local state" problem,
-  landed/unlanded side.
+  included. Treat any handed-to-you id as unverified until confirmed the same way — even from
+  the allocation owner, whose view can go stale the moment a concurrent branch reserves one.**
+- **Guard:** none yet — scoped a `bugs.mjs next-id` proposal (fetch-all-refs scan + a companion
+  neighbor query) so allocation routes through a command, not memory. See [[L-197]], same
+  problem, landed/unlanded side.
 
 ### L-203 · 2026-09-18 · process · the fleet lead's own mistake — investigated master from a 59-commit-stale checkout
 
@@ -104,7 +104,7 @@
 
 ## tooling
 
-### L-199 · 2026-09-18 · tooling · a test that pins a literal from another workspace's prose is an invisible cross-workspace coupling
+### L-206 · 2026-09-18 · tooling · a test that pins a literal from another workspace's prose is an invisible cross-workspace coupling
 
 - **Symptom:** `docs-truth.spec.ts` (in `apps/api`) hardcoded the lessons-register byte cap as a
   second literal, mirroring `.claude/lessons/_meta.json`'s value. Editing that JSON file (a
@@ -127,6 +127,33 @@
   grep-for-pinned-literals check exists yet — propose one as part of the docs-only-push exemption
   logic itself, so a future docs change to a value with cross-workspace test pins can't silently
   skip the chain that would have caught it.
+- Renumbered from L-199: an unrelated "dead CSS" lesson landed on master at that id via #909.
+
+### L-199 · 2026-09-18 · tooling · "dead CSS" needs a structural proof, not a route spot-check
+
+- **Symptom:** investigating B538 (an unreachable `.glass-page .desktop-nav [aria-current="page"]`
+  rule in glass-site.css), live DOM checks on 2 of the marketing site's 11 routes (`/pricing`,
+  `/wholesalers`) confirmed `.desktop-nav` is never a descendant of `.glass-page` via
+  `glassPage.contains(desktopNav) === false`. A peer correctly flagged that this only proves the
+  claim for the two routes actually visited — a rule dead on the routes checked can still be
+  load-bearing on one that wasn't.
+- **Root cause:** a live DOM spot-check is inherently per-instance and cannot cover routes never
+  visited (or routes that don't exist yet). The marketing app has ONE shared
+  `apps/web/app/(marketing)/layout.tsx` for all 11 routes with no nested layout overrides, and
+  every one of the 11 `page.tsx` files applies `.glass-page` to its own root wrapper _inside_
+  `{children}` while the layout renders `<SiteHeader/>` (containing `.desktop-nav`) as a sibling
+  of `<main>{children}</main>` — so the non-containment is provable for every route at once by
+  reading the layout + grepping each page's wrapper usage, not by sampling the DOM.
+- **Lesson:** **When justifying a CSS-dead-code removal ("this selector can never match"), prefer
+  a structural proof from the shared layout/routing code over live DOM spot-checks on a handful of
+  routes. A spot-check only proves the routes actually visited; grep every route's wrapper usage
+  (or read the one shared layout, when there's only one) to cover routes you didn't visit —
+  including ones added later.**
+- **Guard:** `apps/web/app/(marketing)/nav-consistency.test.tsx` pins this exact invariant going
+  forward — it renders the real `MarketingLayout` with a `.glass-page` child and asserts
+  `.desktop-nav` is never inside it, with explicit non-vacuity checks (both elements must actually
+  exist) so a future nested layout or page restructure that breaks the invariant fails a test
+  instead of surfacing only via another spot-check.
 
 ### L-198 · 2026-09-18 · tooling · `gh run rerun` replays the original checkout, not a fresh merge-ref
 
@@ -142,7 +169,7 @@
 - **Lesson:** **To re-test a PR against the CURRENT base branch — after a base-branch fix lands,
   or any base change the PR doesn't itself carry — push a genuinely NEW commit, never
   `gh run rerun`. An empty commit works when there's no real content to add: `git commit
-  --allow-empty -m "..."`, or `git commit-tree <tree> -p <parent> -m "..."` plumbing when the
+--allow-empty -m "..."`, or `git commit-tree <tree> -p <parent> -m "..."` plumbing when the
   branch can't be checked out locally. Reserve `gh run rerun` for a genuinely flaky failure on an
   otherwise-current merge ref.**
 - **Guard:** none yet — propose a landing-tool helper that pushes an empty commit instead of
@@ -260,20 +287,6 @@ null`; three RTL tests failed as if the trap never moved focus at all, while the
   that states the limit in the SAME commit whenever the config changes it.**
 - **Guard:** none yet — the validator already prints its resolved values in its self-consistency
   line; propose a periodic doc-vs-validator cross-check so drift is caught before it ages.
-
-### L-186 · 2026-09-17 · tooling · web code-map catch-up (layout.tsx named re-export)
-
-- **Symptom:** an App Router `layout.tsx` re-exported a named client component. It compiled
-  clean in prod (`ignoreBuildErrors` masked it) but broke only under `next dev`'s typed-routes
-  checking.
-- **Root cause:** neither CI nor `check-types` runs the pass that catches this — a named export
-  from a Next.js App Router special file is invisible to both the type checker and the
-  production build's relaxed error mode.
-- **Lesson:** **`layout.tsx` may export only `default`, `metadata`, `viewport`, and Next's own
-  segment-config exports — never a named re-export of shared logic. Put shared logic in its own
-  file, imported by the layout.**
-- **Guard:** `apps/web/app/layout-exports.test.ts` walks every layout in the app tree and
-  asserts its export set stays within the allowed list (currently covers ≥ 6 layout files).
 
 ### L-182 · 2026-09-16 · tooling · #799 self-test wall-clock regression (host vs CI)
 
@@ -417,19 +430,6 @@ null`; three RTL tests failed as if the trap never moved focus at all, while the
   other parallel worker touching the same path.
 - **Guard:** code review should flag any `Date.now()`-delta or directory-listing-count assertion
   in a spec touching a spawned process or shared tmp path — no automated lint yet.
-
-### L-166 · 2026-09-16 · testing · #779 (B352)
-
-- **Symptom:** `next-version.spec.ts` stopped enforcing a minimum patched Next.js version after
-  an unrelated fix round touched the same file — a security-advisory floor silently dropped.
-- **Root cause:** the fix round's own diff review didn't check which assertions the file already
-  carried before editing it; a generically-named test ("pins the version") gave no signal that
-  editing it deleted a security floor specifically.
-- **Lesson:** **A spec file that pins a security floor (a CVE-patched minimum version, an
-  advisory allowlist) needs its own named assertion — the next unrelated edit to that file can't
-  silently delete it without a visible red diff.**
-- **Guard:** name the assertion after the floor it enforces (e.g. `it("enforces the CVE-2026-xxxx
-floor", ...)`), not after the generic thing being tested — restored in `next-version.spec.ts`.
 
 ### L-050 · 2026-09-02 · testing · #598
 

@@ -54,16 +54,6 @@
   color: var(--g-ink);
 }
 
-.glass-page .desktop-nav a {
-  color: var(--g-body);
-}
-
-.glass-page .desktop-nav a:hover,
-.glass-page .desktop-nav [aria-current="page"] {
-  background: #ffffffa0;
-  color: var(--g-ink);
-}
-
 .glass-page .header-actions .button {
   border-radius: var(--g-r-md);
   background: var(--g-primary);

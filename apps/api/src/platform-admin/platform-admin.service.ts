@@ -916,6 +916,14 @@ ${
     // (routeflow-demo, qa-*/e2e-*/ux-audit-* slugs, routeflow-hq) must be invisible to the
     // dashboard's counts, not only to MRR. superAdminCount is deliberately NOT tenant-scoped
     // (it counts platform staff, who have no tenantId).
+    //
+    // B543: the five tenant-count queries below also need
+    // `deletedAt: null` — every sibling tenant query in this same file/Promise.all
+    // (planScanRows just below, getBillingOverview(), listTenants()) already excludes
+    // soft-deleted rows; these five were the only ones that didn't, so a soft-deleted
+    // PRODUCTION tenant was still counted into TOTAL TENANTS / ACTIVE / TRIAL / SUSPENDED
+    // and into "+N this month". Fixing this DROPS the visible numbers — that is correct,
+    // not a regression.
     const [
       totalTenants,
       activeTenants,
@@ -930,18 +938,22 @@ ${
       atRiskTenants,
       mrrOverview,
     ] = await Promise.all([
-      this.prisma.tenant.count({ where: { class: "PRODUCTION" } }),
-      this.prisma.tenant.count({ where: { status: TenantStatus.ACTIVE, class: "PRODUCTION" } }),
-      this.prisma.tenant.count({ where: { status: TenantStatus.TRIAL, class: "PRODUCTION" } }),
+      this.prisma.tenant.count({ where: { deletedAt: null, class: "PRODUCTION" } }),
       this.prisma.tenant.count({
-        where: { status: TenantStatus.SUSPENDED, class: "PRODUCTION" },
+        where: { deletedAt: null, status: TenantStatus.ACTIVE, class: "PRODUCTION" },
+      }),
+      this.prisma.tenant.count({
+        where: { deletedAt: null, status: TenantStatus.TRIAL, class: "PRODUCTION" },
+      }),
+      this.prisma.tenant.count({
+        where: { deletedAt: null, status: TenantStatus.SUSPENDED, class: "PRODUCTION" },
       }),
       this.prisma.user.count({
         where: { tenantId: { not: null }, tenant: { class: "PRODUCTION" } },
       }),
       this.prisma.user.count({ where: { role: "SUPER_ADMIN" } }),
       this.prisma.tenant.count({
-        where: { createdAt: { gte: startOfMonth }, class: "PRODUCTION" },
+        where: { deletedAt: null, createdAt: { gte: startOfMonth }, class: "PRODUCTION" },
       }),
       // Plan distribution (counts only, no longer prices — MrrService is the one MRR
       // engine below). Excludes cancelled/soft-deleted tenants (hidden everywhere else).

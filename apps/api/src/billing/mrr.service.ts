@@ -21,9 +21,26 @@ export interface MrrOverview {
   /**
    * Reconciliation: Σ of the append-only BillingEvent.amountDelta ledger. Tracks `mrr` for
    * tenants managed through the plans-as-data lifecycle (subscribe / change / add-on / scheduled
-   * cancellation all emit signed deltas). NOTE: legacy Stripe-only churn
-   * (billing.service onSubscriptionDeleted / suspendOverdueTenants) does not yet emit a
-   * compensating delta, so ledgerMrr can drift above `mrr` for Stripe-cancelled tenants.
+   * cancellation all emit signed deltas). Legacy Stripe-only churn (billing.service
+   * onSubscriptionDeleted / suspendOverdueTenants) DOES emit a compensating delta too, via the
+   * shared transitionAndEmit() helper — this comment used to say otherwise; that was stale and
+   * pointed investigators at the wrong mechanism (B544).
+   *
+   * The gaps that DO exist today, and can drift `ledgerMrr` away from `mrr`:
+   *   - PlatformAdminService.updateStatus() (the tenant detail page's plain Suspend/Reactivate
+   *     button) flips tenant.status with a raw write and never emits a delta, in either
+   *     direction.
+   *   - PlatformAdminService.activateManualSubscription() can move a tenant into the paying set
+   *     (status/planKey) without emitting one either.
+   *   - BillingService.reconcilePriceLedger() only mirrors this file's `planKey != null`
+   *     condition, not the full four-part payingWhere (status/deletedAt/class too) — a price
+   *     edit on a non-ACTIVE-but-still-PRODUCTION tenant can book a delta live `mrr` never sees.
+   *   - PlatformAdminService.updateTenantClass() retroactively imports a tenant's ENTIRE
+   *     historical delta stream into this SUM the moment it flips a tenant into PRODUCTION
+   *     (this query re-scopes by CURRENT class, not class-at-event-time), with no compensating
+   *     entry for that import.
+   * See apps/api/scripts/report-mrr-ledger-drift.mjs for a read-only tool that finds which
+   * tenant(s) and which of the above account for a given drift.
    */
   ledgerMrr: number;
   /** Net MRR change over the last 30 days (Σ amountDelta in that window). */

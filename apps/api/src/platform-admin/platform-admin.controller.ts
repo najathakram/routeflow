@@ -357,9 +357,16 @@ export class PlatformAdminController {
     @Body() dto: EnableAddonDto,
     @CurrentUser() admin: JwtPayload,
   ) {
-    const result = await this.addonService.enableAddon(id, dto.addonKey, dto.stripePriceId);
+    const result = await this.addonService.enableAddon(
+      id,
+      dto.addonKey,
+      dto.stripePriceId,
+      dto.acknowledgeUnmetRequires,
+    );
     await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.ADDON_ENABLED, {
       addonKey: dto.addonKey,
+      // B524: see the matching note on createFeatureOverride's audit payload.
+      acknowledgeUnmetRequires: dto.acknowledgeUnmetRequires ?? false,
     });
     return result;
   }
@@ -564,6 +571,20 @@ export class PlatformAdminController {
     @Body() dto: CreateFeatureOverrideDto,
     @CurrentUser() admin: JwtPayload,
   ) {
+    // B524: enforces the registry key's `requires` (allOf/anyOf) for a GRANT — DENY is never
+    // checked (denying something has no prerequisite to satisfy). The actual check is
+    // `EntitlementAuthority.assertFeatureRequiresMet`, shared with `AddonService.enableAddon`'s
+    // identical guard — see that method's own doc for why it isn't inside
+    // `FeatureOverrideService.create` itself (a real DI cycle) and why calling it from here
+    // instead is safe only as long as this controller stays the ONE caller of `.create()` —
+    // `feature-override-single-caller.spec.ts` (billing/) is the static guard for that.
+    if (dto.effect === "GRANT") {
+      await this.authority.assertFeatureRequiresMet(
+        id,
+        dto.featureKey,
+        dto.acknowledgeUnmetRequires,
+      );
+    }
     const result = await this.featureOverrides.create({
       tenantId: id,
       featureKey: dto.featureKey,
@@ -573,6 +594,13 @@ export class PlatformAdminController {
       expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
       createdById: admin.sub,
     });
+    // B524 fix round (Opus review finding F1): `FeatureOverrideService.create` only
+    // invalidates its OWN 30s override cache (`allActive()`), never the resolver's separate
+    // 30s cache layered on top — so a GRANT here that unblocks a `requires` check on a
+    // SUBSEQUENT call (e.g. enabling `driver_payments` right after granting its prerequisite)
+    // could read the pre-grant snapshot and 400 for up to 30s. Mirrors the B509 fix
+    // `AddonService.enableAddon`/`disableAddon` already apply to themselves.
+    this.authority.invalidate(id);
     await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.FEATURE_OVERRIDE_SET, {
       featureKey: dto.featureKey,
       effect: dto.effect,
@@ -581,6 +609,10 @@ export class PlatformAdminController {
       kind: result.kind,
       reason: dto.reason,
       expiresAt: dto.expiresAt ?? null,
+      // B524: the audit trail must show whether this write is one B524 would otherwise have
+      // blocked — "who granted an inconsistent entitlement and did they knowingly override
+      // the check" is exactly the question this field answers.
+      acknowledgeUnmetRequires: dto.acknowledgeUnmetRequires ?? false,
     });
     return result;
   }
@@ -594,6 +626,10 @@ export class PlatformAdminController {
     @CurrentUser() admin: JwtPayload,
   ) {
     const result = await this.featureOverrides.revoke(id, overrideId);
+    // B524 fix round (F1) — same resolver-cache staleness as createFeatureOverride above,
+    // in the other direction: a revoke that removes a `requires` prerequisite must be visible
+    // to the NEXT grant attempt immediately, not up to 30s later.
+    this.authority.invalidate(id);
     await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.FEATURE_OVERRIDE_REVOKED, {
       overrideId,
     });
