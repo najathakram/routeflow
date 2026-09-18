@@ -1,4 +1,4 @@
-import { IsString, IsOptional, MinLength, MaxLength, Matches } from "class-validator";
+import { IsString, IsOptional, IsBoolean, MinLength, MaxLength, Matches } from "class-validator";
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 
 export class EnableAddonDto {
@@ -21,6 +21,17 @@ export class EnableAddonDto {
   @IsOptional()
   @IsString()
   stripePriceId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      "B524: explicit acknowledgment that this addon's registry `requires` prerequisite is " +
+      "unmet for this tenant — required to proceed when it is, ignored otherwise. Defaults to " +
+      "false (enforce) when omitted; mirrors the console's own checkbox (PR #899).",
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  acknowledgeUnmetRequires?: boolean;
 }
 
 export class DisableAddonDto {

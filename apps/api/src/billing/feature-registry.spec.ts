@@ -3,6 +3,9 @@ import * as path from "node:path";
 import {
   ADDON_GATE_REGISTRY,
   addonGateState,
+  checkFeatureRequires,
+  describeUnmetFeatureRequirement,
+  featureDefByKey,
   FEATURE_REGISTRY,
   type FeatureDef,
 } from "./feature-registry";
@@ -404,6 +407,18 @@ describe("FEATURE_REGISTRY (feature grants PR-1)", () => {
     expect(cycles).toEqual([]);
   });
 
+  // B524 (landing-time note on #899): an empty `anyOf: []` is treated as "satisfied" by both
+  // this file's `checkFeatureRequires` and the web app's parallel `checkRequires` copy — that's
+  // surprising for anyone reading a `requires` block, so a genuine "no anyOf constraint" must
+  // omit the key entirely, not declare an empty array. Closes the ambiguous input from the data
+  // side instead of leaving two hand-kept implementations to agree on it by accident.
+  it("requires.anyOf is never declared as an empty array — omit the key instead", () => {
+    const offenders = FEATURE_REGISTRY.filter((f) => f.requires?.anyOf?.length === 0).map(
+      (f) => f.key,
+    );
+    expect(offenders).toEqual([]);
+  });
+
   it("config.fallbackMode is always a real key in config.modes", () => {
     const bad = FEATURE_REGISTRY.filter(
       (f) => f.config && !(f.config.fallbackMode in f.config.modes),
@@ -435,6 +450,96 @@ describe("FEATURE_REGISTRY (feature grants PR-1)", () => {
     // never a silent omission.
     expect(row?.gate.reviewBy).toBeUndefined();
     expect(row?.gate.routes).toContain("POST /returns/inline/quote");
+  });
+});
+
+describe("B524 — checkFeatureRequires / describeUnmetFeatureRequirement / featureDefByKey", () => {
+  it("featureDefByKey returns the row for a registered key and undefined for an unknown one", () => {
+    expect(featureDefByKey("driver_payments")?.label).toBe("At-door payment collection");
+    expect(featureDefByKey("not-a-real-key")).toBeUndefined();
+  });
+
+  it("no requires block is always satisfied", () => {
+    expect(checkFeatureRequires(undefined, new Set())).toEqual({
+      satisfied: true,
+      missingAllOf: [],
+      unmetAnyOf: null,
+    });
+  });
+
+  it("allOf: every listed key must be present", () => {
+    const requires = { allOf: ["a", "b"] };
+    expect(checkFeatureRequires(requires, new Set(["a", "b"]))).toMatchObject({
+      satisfied: true,
+      missingAllOf: [],
+    });
+    expect(checkFeatureRequires(requires, new Set(["a"]))).toMatchObject({
+      satisfied: false,
+      missingAllOf: ["b"],
+    });
+  });
+
+  it("anyOf: at least one listed key must be present", () => {
+    const requires = { anyOf: ["a", "b"] };
+    expect(checkFeatureRequires(requires, new Set(["b"]))).toMatchObject({
+      satisfied: true,
+      unmetAnyOf: null,
+    });
+    expect(checkFeatureRequires(requires, new Set())).toMatchObject({
+      satisfied: false,
+      unmetAnyOf: ["a", "b"],
+    });
+  });
+
+  // Pinned deliberately — see the "requires.anyOf is never declared as an empty array" spec
+  // above for why this input never actually occurs in the real registry, and the function's
+  // own doc comment for why the behavior still matches the web app's parallel copy exactly.
+  it("an empty anyOf array is treated as satisfied (matches the web copy's quirk)", () => {
+    expect(checkFeatureRequires({ anyOf: [] }, new Set())).toMatchObject({ satisfied: true });
+  });
+
+  it("allOf and anyOf combine — both must hold", () => {
+    const requires = { allOf: ["a"], anyOf: ["b", "c"] };
+    expect(checkFeatureRequires(requires, new Set(["a", "b"]))).toMatchObject({ satisfied: true });
+    expect(checkFeatureRequires(requires, new Set(["b"]))).toMatchObject({
+      satisfied: false,
+      missingAllOf: ["a"],
+      unmetAnyOf: null,
+    });
+    expect(checkFeatureRequires(requires, new Set(["a"]))).toMatchObject({
+      satisfied: false,
+      missingAllOf: [],
+      unmetAnyOf: ["b", "c"],
+    });
+  });
+
+  it("describeUnmetFeatureRequirement resolves keys to labels and joins allOf/anyOf phrases", () => {
+    expect(
+      describeUnmetFeatureRequirement(
+        checkFeatureRequires({ anyOf: ["recurring_routes", "order_delivery"] }, new Set()),
+      ),
+    ).toBe(
+      featureDefByKey("recurring_routes")!.label +
+        " or " +
+        featureDefByKey("order_delivery")!.label,
+    );
+  });
+
+  it("describeUnmetFeatureRequirement returns undefined when satisfied", () => {
+    expect(
+      describeUnmetFeatureRequirement(checkFeatureRequires(undefined, new Set())),
+    ).toBeUndefined();
+  });
+
+  it("driver_payments (a real registry row) is unmet against an empty tenant and met with either prerequisite", () => {
+    const driverPayments = featureDefByKey("driver_payments")!;
+    expect(checkFeatureRequires(driverPayments.requires, new Set()).satisfied).toBe(false);
+    expect(
+      checkFeatureRequires(driverPayments.requires, new Set(["recurring_routes"])).satisfied,
+    ).toBe(true);
+    expect(
+      checkFeatureRequires(driverPayments.requires, new Set(["order_delivery"])).satisfied,
+    ).toBe(true);
   });
 });
 
