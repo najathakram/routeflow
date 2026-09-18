@@ -775,5 +775,25 @@ export default defineConfig({
         storageState: path.join(AUTH_DIR, "operator.json"),
       },
     },
+
+    // Platform-admin mobile overflow (B559, spec 52) — proves no element on any
+    // platform-admin screen exceeds the 390/768/1440 viewport width, across every
+    // tab (tabs are React state, not distinct URLs, so a URL-only sweep never
+    // renders them). Mirrors "super-admin" (01)'s shape exactly (same setup
+    // dependency, same storageState). WITHOUT THIS ENTRY THE SPEC NEVER RUNS —
+    // see 08-create-order-escape's header for the precedent.
+    {
+      name: "platform-admin-mobile",
+      testMatch: /52-platform-admin-mobile-overflow\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "super-admin.json"),
+        // This spec walks ~14 screens per viewport in one test — a slower dev
+        // box needs more headroom than the config default or a real overflow
+        // failure gets masked by a navigation timeout instead.
+        navigationTimeout: 60_000,
+      },
+    },
   ],
 });
