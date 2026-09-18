@@ -677,8 +677,8 @@ export default function ReturnDetailPage() {
             )}
 
             {/* Items table */}
-            <div className="-mx-6 overflow-hidden border-t border-surface-border">
-              <table className="w-full text-sm">
+            <div className="-mx-6 overflow-x-auto border-t border-surface-border">
+              <table className="w-full min-w-[520px] text-sm">
                 <thead className="border-b border-surface-border bg-surface-raised">
                   <tr>
                     <th className="px-6 py-2.5 text-left text-xs font-medium text-navy/70">
