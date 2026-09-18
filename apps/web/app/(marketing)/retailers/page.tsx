@@ -1,11 +1,22 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowRight, ArrowUpRight, Globe, Package, FileText, ShoppingBag } from "lucide-react";
+import {
+  ArrowRight,
+  ArrowUpRight,
+  Globe,
+  Package,
+  ShoppingBag,
+  Users,
+  ReceiptText,
+  MapPin,
+  CreditCard,
+} from "lucide-react";
 import { routes, site } from "../lib/site";
 import { CTA, Eyebrow } from "../components/marketing";
 import { FAQ } from "../components/faq";
 import { RetailerArt, RetailerDetail } from "../components/technology-art";
 import { authLinks } from "../components/auth-links";
+import { ScreenshotPlaceholder } from "../components/screenshot-placeholder";
 
 // Copy verbatim from the redesign's app/[page]/page.tsx `Retailers()` (M1 §2c).
 
@@ -31,14 +42,29 @@ const BENEFITS: Array<[typeof Package, string, string]> = [
     "Find the catalogs and prices available through your supplier connections.",
   ],
   [
+    Users,
+    "One login, every supplier",
+    "Order from every distributor you buy from on RouteFlow with a single account — switch between sellers from the same portal.",
+  ],
+  [
     Package,
     "Put your order together",
     "Select the products you need and review the order before placing it.",
   ],
   [
-    FileText,
-    "Find your order history",
-    "Look back at previous purchases when you plan your next restock.",
+    ReceiptText,
+    "See what you owe",
+    "Every invoice, itemized against exactly what was delivered — a short delivery is already reflected, not something you have to flag.",
+  ],
+  [
+    MapPin,
+    "Track your delivery",
+    "Know your order's status, driver, and how many stops are ahead, plus your scheduled delivery window.",
+  ],
+  [
+    CreditCard,
+    "Pay your way",
+    "Pay by card right in the portal when your seller has that turned on, or settle up with them directly the way you always have.",
   ],
 ];
 
@@ -57,8 +83,8 @@ export default function RetailersPage() {
               </em>
             </h1>
             <p className="lead">
-              Browse your connected suppliers, place orders, and find your purchase history in one
-              retailer portal.
+              Order from every supplier you buy from with one login, see what you owe, and track
+              your deliveries — without a single call to their order desk.
             </p>
             <div className="hero-actions">
               <Link className="button button-green" href={authLinks.retailerSignUp}>
@@ -93,6 +119,7 @@ export default function RetailersPage() {
             </article>
           ))}
         </div>
+        <ScreenshotPlaceholder label="Invoice detail — itemized, with the pay-by-card option" />
       </section>
       <section className="retailer-start wrap">
         <div>

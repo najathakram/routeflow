@@ -3,7 +3,7 @@ import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 import { routes, site } from "../lib/site";
 import { CTA, Eyebrow } from "../components/marketing";
-import { FeatureCatalog } from "../components/feature-catalog";
+import { OrderLifecycle, WholesalerCapabilities } from "../components/order-lifecycle";
 import { WorkflowTour } from "../components/workflow-tour";
 import { DeliveryDemo } from "../components/delivery-demo";
 import { FAQ } from "../components/faq";
@@ -33,12 +33,12 @@ export default function WholesalersPage() {
           <div>
             <Eyebrow>FOR WHOLESALERS & DISTRIBUTORS</Eyebrow>
             <h1>
-              Get your team out of <br />
-              the daily <em>delivery scramble.</em>
+              One order, priced right, <br />
+              on the right <em>truck, invoiced automatically.</em>
             </h1>
             <p className="lead">
-              Scattered order messages and separate driver lists create extra handoffs. Keep orders,
-              dispatch, delivery records, and customer accounts in one place.
+              RouteFlow runs your order lifecycle in one system, so nothing gets re-typed,
+              re-priced, or re-checked by hand between the phone call and the invoice.
             </p>
             <div className="hero-actions">
               <Link href="/book-a-demo" className="button button-lime">
@@ -50,22 +50,23 @@ export default function WholesalersPage() {
           <DeliveryDemo compact />
         </div>
       </section>
+      <OrderLifecycle />
       <section className="section wrap">
         <div className="section-heading split-heading">
           <div>
-            <Eyebrow>LESS CHASING, MORE CONTEXT</Eyebrow>
+            <Eyebrow>THE PART SPREADSHEETS GET WRONG</Eyebrow>
             <h2>
-              Keep the details
+              Pricing and payment,
               <br />
-              with the job.
+              handled the way you actually work.
             </h2>
           </div>
           <p>
-            Your team should be able to answer a customer’s question without retracing the entire
-            order.
+            Boxed pricing, customer-tier rates, standing orders, and driver settlement — the details
+            that make or lose money on a wholesale order.
           </p>
         </div>
-        <FeatureCatalog />
+        <WholesalerCapabilities />
       </section>
       <section className="section surface">
         <div className="wrap">

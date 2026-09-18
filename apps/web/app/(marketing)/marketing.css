@@ -9923,3 +9923,35 @@
   width: 40px;
   height: 40px;
 }
+
+/* Honest stand-in for a real product screenshot not yet captured (owner
+   ruling 2026-09-17: never ship a stock photo in its place). Colors reuse
+   already-verified AA-safe tokens (--muted-foreground on --muted, and
+   --foreground on --muted both clear 4.5:1). */
+.rf-marketing .screenshot-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  border: 1.5px dashed var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--muted);
+  color: var(--muted-foreground);
+  text-align: center;
+  padding: 32px;
+}
+.rf-marketing .screenshot-placeholder svg {
+  color: var(--muted-foreground);
+}
+.rf-marketing .screenshot-placeholder p {
+  font-weight: 600;
+  color: var(--foreground);
+  margin: 0;
+  font-size: 0.95rem;
+}
+.rf-marketing .screenshot-placeholder span {
+  font-size: 0.78rem;
+  color: var(--muted-foreground);
+}
