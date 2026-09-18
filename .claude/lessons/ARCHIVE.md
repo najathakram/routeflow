@@ -2566,3 +2566,159 @@ citations, closed-out with its own post-init assertion guard).
   result line), never infer it from exit code alone.**
 - **Guard:** none yet — propose `--passWithNoTests` on the Baseline invocation and a close-out
   check that greps the run's JSON for the expected test titles.
+
+## Archived 2026-09-18 — headroom for the #909 L-199 merge collision (bookkeeping-batch window-6)
+
+### L-186 · 2026-09-17 · tooling · web code-map catch-up (layout.tsx named re-export)
+
+- **Symptom:** an App Router `layout.tsx` re-exported a named client component. It compiled
+  clean in prod (`ignoreBuildErrors` masked it) but broke only under `next dev`'s typed-routes
+  checking.
+- **Root cause:** neither CI nor `check-types` runs the pass that catches this — a named export
+  from a Next.js App Router special file is invisible to both the type checker and the
+  production build's relaxed error mode.
+- **Lesson:** **`layout.tsx` may export only `default`, `metadata`, `viewport`, and Next's own
+  segment-config exports — never a named re-export of shared logic. Put shared logic in its own
+  file, imported by the layout.**
+- **Guard:** `apps/web/app/layout-exports.test.ts` walks every layout in the app tree and
+  asserts its export set stays within the allowed list (currently covers ≥ 6 layout files).
+
+### L-166 · 2026-09-16 · testing · #779 (B352)
+
+- **Symptom:** `next-version.spec.ts` stopped enforcing a minimum patched Next.js version after
+  an unrelated fix round touched the same file — a security-advisory floor silently dropped.
+- **Root cause:** the fix round's own diff review didn't check which assertions the file already
+  carried before editing it; a generically-named test ("pins the version") gave no signal that
+  editing it deleted a security floor specifically.
+- **Lesson:** **A spec file that pins a security floor (a CVE-patched minimum version, an
+  advisory allowlist) needs its own named assertion — the next unrelated edit to that file can't
+  silently delete it without a visible red diff.**
+- **Guard:** name the assertion after the floor it enforces (e.g. `it("enforces the CVE-2026-xxxx
+  floor", ...)`), not after the generic thing being tested — restored in `next-version.spec.ts`.
+
+## Archived 2026-09-18 — headroom for source-text-assertion lesson (bookkeeping-batch window-6)
+
+### L-172 · 2026-09-16 · tooling · #779 (nested timeout mismatch)
+
+- **Symptom:** raising a Jest test's own timeout to fix one flake introduced a new, harder-to-
+  diagnose flake in the same test.
+- **Root cause:** the test's Jest-level timeout was raised without raising the timeout on the
+  `spawnSync` call running _inside_ it, so the inner call now times out and throws before Jest's
+  own outer timeout would ever fire — moving the failure mode to a confusing error shape instead
+  of fixing it.
+- **Lesson:** **When a test wraps a call with its own timeout (spawnSync, an HTTP client, a DB
+  pool), raising the test's outer timeout without raising the inner one moves the failure mode,
+  it doesn't fix it — always raise both together, inner first.**
+- **Guard:** none named in the PR body — propose a lint/review checklist item pairing any Jest
+  `testTimeout`/`jest.setTimeout` edit with a check for an inner call's own timeout in the same
+  test.
+
+## Archived 2026-09-18 — headroom for Lane D's L-199 fold-in (bookkeeping-batch window-5)
+
+### L-168 · 2026-09-16 · tooling · B421 CASH_METHOD_FILTER as-const gap
+
+- **Symptom:** `CASH_METHOD_FILTER`, a Prisma `notIn` filter constant, shipped with no real call
+  site yet. Its sibling `RECEIVED_METHOD_FILTER` was wired into a live `where` clause first and
+  immediately failed `tsc` — its array had widened to `string[]` for want of `as const`, which
+  Prisma's generated enum filter rejects. Checking the still-unused sibling found the same gap.
+- **Root cause:** a constant with no consumer can't fail a type check that only runs where it's
+  used — "compiles clean" meant nothing until a real call site exercised the type, so two
+  identically-built constants drifted: one was caught by chance, the other was not.
+- **Lesson:** **A typed constant with no call site yet is unproven, not correct — the moment one
+  sibling constant (same file, same shape, same commit) fails a type check for something subtle
+  like a missing `as const`, grep for every other constant built the same way.**
+- **Guard:** both constants now carry `as const` with an inline comment
+  (`packages/pricing/src/payment-confirmation.ts`); `payment-confirmation.spec.ts` pins both
+  filters' exact shape.
+
+## Archived 2026-09-18 — headroom for Lane F's two lessons (bookkeeping-batch window-4)
+
+### L-149 · 2026-09-15 · tooling · #743 fix-round T8 lesson-id staleness
+
+- **Symptom:** an engine task's brief hardcoded specific lesson ids (L-140/L-141) and a `nextId`
+  bump (143) to write at close-out. By the time the task ran, three intervening merges had moved
+  the real registry floor to `nextId` 146 — the hardcoded ids were already claimed elsewhere.
+- **Root cause:** the brief was authored against the registry's state at planning time. The task
+  itself ran LAST, after seven others and however long wall-clock that took — in a shared,
+  actively-written registry, "current state" at planning time and at execution time differ, and
+  nothing in the brief distinguished the two.
+- **Lesson:** **A task brief must never embed a point-in-time value from a shared, actively
+  written resource (a registry id, a counter, a "latest" anything) as a literal constant when the
+  task runs later than the brief was written — especially the LAST task in a run. Read the live
+  value at write time instead, and verify (grep for existing use, re-run the validator) first.**
+- **Guard:** none yet — a build-plan lint flagging a literal `L-\d+`/`nextId: \d+` inside any
+  non-first-wave task's `brief` would catch this class before launch.
+- **Superseded by:** L-201 generalizes this exact root cause (stale point-in-time read of a
+  shared, actively-written registry) beyond lesson-ids to bug-registry ids and any similar
+  counter — archived here as redundant with it, not for lack of value.
+
+### L-162 · 2026-09-15 · tooling · post-dated check payments PR-1 (schema-only, additive)
+
+- **Symptom:** adding `CHECK_RETURNED` to the Prisma `NotificationEvent` enum — a schema-only,
+  "no behavior change" migration with no new call site — broke `apps/api` `check-types`: two
+  pre-existing `Record<NotificationEvent, ...>` maps in `messaging-config.service.ts`
+  (`EVENT_CHANNELS`, `DEFAULT_TEMPLATES`) stopped compiling because they no longer covered every
+  member of the enum.
+- **Root cause:** an "additive-only" schema PR was scoped by grepping the Prisma schema and the
+  shared-type mirrors (`@routeflow/types`), never by grepping for `Record<TheEnum,` across the
+  consumers of that enum — an exhaustive map is a compile-time contract on the enum's FULL
+  member set, so a new value is a breaking change to every such map even though nothing in the
+  new PR reads or writes the new value.
+- **Lesson:** **Before adding a value to an existing Prisma enum, grep the whole tree for
+  `Record<TheEnumName,` (and any hand-written `switch`/object-literal that enumerates every
+  member) — an "additive, no behavior change" schema PR still breaks compilation wherever an
+  exhaustive map exists, and needs a minimal exhaustiveness-only entry there (never a real
+  trigger/behavior change) to stay green.**
+- **Guard:** `messaging-config.service.ts`'s `EVENT_CHANNELS`/`DEFAULT_TEMPLATES` gained a
+  `CHECK_RETURNED` entry (`[INTERNAL]` / a template string) and `NO_TRIGGER_EVENTS` gained the
+  key too, in the SAME commit as the schema change; `apps/api/src/common/enum-parity.spec.ts`'s
+  `PINNED_PRISMA_ENUM_COUNT` tripwire (L-072) catches a genuinely new enum, but not a new VALUE
+  on an existing one — only `tsc --noEmit` catches that, which is why this must be run, not
+  assumed, on any enum-value addition.
+
+## Archived 2026-09-18 — headroom for id-collision lesson (bookkeeping-batch window-4)
+
+### L-156 · 2026-09-15 · tooling · B420 mistiered proof, no lawful reclassify path
+
+- **Symptom:** B420 was correctly fixed and proven (T1), but its proof cited a standalone node
+  self-test (`validate-code-map.stamp.self-test.mjs`, run directly by `npm run verify`) as if it
+  were a jest suite. `campaign-check.mjs`'s T1 path scans jest report titles only, so the row could
+  never discharge — a fleet-wide push blocker, not a B420-specific defect.
+- **Root cause:** the correct target state, `already-fixed`, checks only that `evidence` is
+  non-empty (its `EVIDENCE_ONLY_STATES` path bypasses the jest lookup entirely) — but no command
+  transitions a `proven` row there. `already-fixed` refuses anything but `queued`/`in-flight`; the
+  only exit from `proven` (`reopen`) forces state to `regressed` and requires citing an actual
+  failing token or regression run — a false claim for a row that never regressed, just mistiered.
+- **Lesson:** **A state machine's error-recovery path must not force a claim that isn't true. When
+  the only documented exit from a wrong state requires asserting something false to use it, that is
+  a missing transition, not a workaround to take.** Fixed here via a direct, lock-checked,
+  single-field ledger edit (owner-approved, out of band) rather than fabricate a regression.
+- **Guard:** filed B426 (bugs.mjs needs a lawful `proven`→`already-fixed` reclassify path,
+  distinct from `reopen`'s regression semantics) so this doesn't recur as a manual escape hatch.
+
+## Archived 2026-09-18 — headroom for L-199/L-200 (bookkeeping-batch window-3)
+
+### L-105 · 2026-09-11 · tooling · train-4 engine gate
+
+- **Symptom:** two engine runs lost their whole Jest gate to one flag position — a spec path
+  placed after `--reporters=default` was consumed as a second reporter MODULE NAME, not a test
+  target, so the run "passed" with zero real tests executed.
+- **Root cause:** Jest's CLI keeps swallowing bare tokens after `--reporters` (a list flag) until
+  the next `--`-prefixed option — a positional placed after it belongs to the flag, not the run.
+- **Lesson:** **`--reporters=default` (or any multi-value Jest flag) must be the LAST token on
+  the command line — every positional (spec path, pattern) goes BEFORE it.**
+- **Guard:** none yet — propose an engine arg lint rejecting tokens after `--reporters=...`, plus
+  a RESUME-card review line.
+
+### L-103 · 2026-09-10 · tooling · chore/next-15
+
+- **Symptom:** `npm run local:up` built fine, then `docker compose … up -d` failed on a
+  container-name conflict — piped through `| tail`, it read exit 0.
+- **Root cause:** `docker-compose.yml` hard-codes `container_name: routeflow_*` with no
+  top-level `name:` and no `-p`; from a worktree the project name defaults to the worktree
+  DIRECTORY, colliding on the SAME fixed names the main checkout's stack holds.
+- **Lesson:** **A compose file with hard-coded `container_name` needs an explicit `-p <project>`
+  (or top-level `name:`), never the cwd-derived default. Never pipe a compose/gate command
+  through `| tail`; it discards the real exit code.**
+- **Guard:** none yet — propose `-p routeflow` in `local:up`/`local:down`/`local:reset`, or a
+  top-level `name: routeflow`.

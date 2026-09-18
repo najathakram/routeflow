@@ -40,7 +40,94 @@
   since a shallow clone's grafted boundary can misreport ancestry. A PR number in a list is not
   evidence that it landed.
 
+### L-201 · 2026-09-18 · process · five registry-id collisions in one session, all from allocating off an incomplete view
+
+- **Symptom:** five id collisions in one fleet window — a lead's "next free" read of merged
+  master missing an unmerged PR's reservations; a lane self-resolving to "the next real id" per
+  the B499-style protocol, blind to a second branch independently claiming the same id; two
+  allocations racing an unconfirmed in-flight request; a fix commit's own id reference going
+  stale when its registry record got renumbered during filing; and — after this entry was
+  already written — this entry's OWN registry hit a fifth: an unrelated lesson landed on master
+  at the same id this entry's branch had already used.
+- **Root cause:** each was a *correct* read of an *incomplete* view — merged master, one
+  worktree's local scan, or memory of a conversation. Nobody can see an id reserved in an
+  unmerged branch until it's fetched, and nothing forces that fetch before allocating. The
+  self-resolve protocol makes this WORSE: a tree resolving blind to a concurrent claim produces
+  two full entries at the same id, each with a plausible justification — harder to catch than a
+  naive duplicate, since neither looks wrong alone.
+- **Lesson:** **A shared, monotonically-allocated id cannot be safely allocated from memory,
+  merged-mainline state, or one worktree's local scan — only from a fresh `fetch --all --prune`
+  then `git log --all -- <path-for-that-id>` across every local AND remote ref, unmerged branches
+  included. Treat any handed-to-you id as unverified until confirmed the same way — even from
+  the allocation owner, whose view can go stale the moment a concurrent branch reserves one.**
+- **Guard:** none yet — scoped a `bugs.mjs next-id` proposal (fetch-all-refs scan + a companion
+  neighbor query) so allocation routes through a command, not memory. See [[L-197]], same
+  problem, landed/unlanded side.
+
+### L-203 · 2026-09-18 · process · the fleet lead's own mistake — investigated master from a 59-commit-stale checkout
+
+- **Symptom:** the fleet lead investigated whether a landed fix was present on master by reading
+  `C:\ClaudeCode\routeflow`'s working checkout — which was 59 commits behind `origin/master` at
+  session start — and confidently concluded the fix was missing. That conclusion was wrong, and
+  was broadcast to two lanes before the registry owner caught it against a fresh fetch.
+- **Root cause:** the main checkout is chronically stale in a fast-moving multi-session fleet —
+  nothing refreshes it between sessions, and its `HEAD` looks like a legitimate reference to
+  "master" while silently lagging `origin/master` by however long since the last pull.
+- **Lesson:** **Any claim about what is or isn't on master must come from a fresh `git fetch`
+  and `origin/master`, never from a working checkout's `HEAD` — and an ancestry claim must name
+  the exact sha it was computed against, not just "master."** Adjacent to [[L-197]] (resolve the
+  actual landing commit, not the branch tip) — same root cause, reasoning about master from a
+  stale local reference, one level up: fetch before you resolve anything.
+- **Guard:** none yet — propose any ancestry/landing-status check open with `git fetch origin
+  <branch>` and report the `origin/<branch>` sha it ran against, never bare `master`.
+- Attribution: this is the lead's own mistake, logged by the lead's own request — a register
+  that only records other people's mistakes is a register nobody trusts.
+
+### L-200 · 2026-09-18 · process · removing a UI control is a different risk class than removing dead code (#866, B519)
+
+- **Symptom:** removing the legacy `AVAILABLE_ADDONS` toggle cards (superseded by the Feature
+  Console) nearly shipped as if it fully retired the `driver_payments` dependency-enforcement gap
+  (B519) — the legacy toggle was ONE of two unenforced paths to enable `driver_payments`, but the
+  Feature Console's own `EnableAddonModal.tsx` "Enable as add-on" action has the exact same
+  missing check and was untouched by the removal.
+- **Root cause:** treating "delete this UI control" like "delete this dead code" — dead code has
+  no side effect once removed, but a UI control can be the only CLIENT-SIDE path that provisions
+  or gates something server-side reads from a DIFFERENT table/flag. Removing it can make "no
+  guard reads this key" true and simultaneously irrelevant, because a sibling control still
+  reaches the same server capability unguarded.
+- **Lesson:** **Before removing a UI control (a toggle, a button, a form field), grep for every
+  OTHER client entry point that reaches the same server capability/endpoint — not just whether
+  server-side code still references the control's own key. A control can be safely deletable as
+  UI while the gap it exposed is still wide open through a sibling surface.**
+- **Guard:** none yet — propose a removal checklist item: "list every client call site of the
+  endpoint(s) this control posts to, not just this control's own references."
+
 ## tooling
+
+### L-206 · 2026-09-18 · tooling · a test that pins a literal from another workspace's prose is an invisible cross-workspace coupling
+
+- **Symptom:** `docs-truth.spec.ts` (in `apps/api`) hardcoded the lessons-register byte cap as a
+  second literal, mirroring `.claude/lessons/_meta.json`'s value. Editing that JSON file (a
+  docs-only change, in a completely different part of the repo) broke this API-workspace spec
+  and took CI down repo-wide — nothing about editing a lessons-register config file signalled
+  that an unrelated API test would fail. Fixed in #889 by reading `_meta.json.maxBytes` at test
+  time instead of hardcoding it a second time.
+- **Root cause:** a test asserting "doc X says N" by hardcoding N itself creates a coupling
+  invisible from either side — the doc's own author has no reason to grep `apps/api` before
+  editing a `.claude/` config file, and the test's author, writing it once, has no reason to
+  expect the doc to ever change. Because the coupling crosses a workspace boundary (docs vs.
+  API) it also crosses whichever team/session boundary usually tracks "what does this change
+  affect."
+- **Lesson:** **A test that pins a literal sourced from a prose document or config file elsewhere
+  in the repo must read that value at test time, never re-type it as a second hardcoded literal —
+  and because of this, a "docs-only" change is NOT exempt from the full verify chain whenever it
+  touches a value some other workspace's test might have pinned. Grep for the literal itself
+  (not just the file) across every workspace before treating a docs edit as safe to skip CI on.**
+- **Guard:** `docs-truth.spec.ts` now reads `_meta.json.maxBytes` dynamically (#889); no repo-wide
+  grep-for-pinned-literals check exists yet — propose one as part of the docs-only-push exemption
+  logic itself, so a future docs change to a value with cross-workspace test pins can't silently
+  skip the chain that would have caught it.
+- Renumbered from L-199: an unrelated "dead CSS" lesson landed on master at that id via #909.
 
 ### L-199 · 2026-09-18 · tooling · "dead CSS" needs a structural proof, not a route spot-check
 
@@ -201,20 +288,6 @@ null`; three RTL tests failed as if the trap never moved focus at all, while the
 - **Guard:** none yet — the validator already prints its resolved values in its self-consistency
   line; propose a periodic doc-vs-validator cross-check so drift is caught before it ages.
 
-### L-186 · 2026-09-17 · tooling · web code-map catch-up (layout.tsx named re-export)
-
-- **Symptom:** an App Router `layout.tsx` re-exported a named client component. It compiled
-  clean in prod (`ignoreBuildErrors` masked it) but broke only under `next dev`'s typed-routes
-  checking.
-- **Root cause:** neither CI nor `check-types` runs the pass that catches this — a named export
-  from a Next.js App Router special file is invisible to both the type checker and the
-  production build's relaxed error mode.
-- **Lesson:** **`layout.tsx` may export only `default`, `metadata`, `viewport`, and Next's own
-  segment-config exports — never a named re-export of shared logic. Put shared logic in its own
-  file, imported by the layout.**
-- **Guard:** `apps/web/app/layout-exports.test.ts` walks every layout in the app tree and
-  asserts its export set stays within the allowed list (currently covers ≥ 6 layout files).
-
 ### L-182 · 2026-09-16 · tooling · #799 self-test wall-clock regression (host vs CI)
 
 - **Symptom:** #799 added spawn-heavy self-test cases; the self-test's wall-clock went from
@@ -296,21 +369,6 @@ null`; three RTL tests failed as if the trap never moved focus at all, while the
   below a threshold before launching more work, not after operations start failing.**
 - **Guard:** none yet — propose a session-start hook warning at < 30 GB free.
 
-### L-172 · 2026-09-16 · tooling · #779 (nested timeout mismatch)
-
-- **Symptom:** raising a Jest test's own timeout to fix one flake introduced a new, harder-to-
-  diagnose flake in the same test.
-- **Root cause:** the test's Jest-level timeout was raised without raising the timeout on the
-  `spawnSync` call running _inside_ it, so the inner call now times out and throws before Jest's
-  own outer timeout would ever fire — moving the failure mode to a confusing error shape instead
-  of fixing it.
-- **Lesson:** **When a test wraps a call with its own timeout (spawnSync, an HTTP client, a DB
-  pool), raising the test's outer timeout without raising the inner one moves the failure mode,
-  it doesn't fix it — always raise both together, inner first.**
-- **Guard:** none named in the PR body — propose a lint/review checklist item pairing any Jest
-  `testTimeout`/`jest.setTimeout` edit with a check for an inner call's own timeout in the same
-  test.
-
 ### L-174 · 2026-09-16 · tooling · demo-booking lane (raw NUL byte from an escape literal)
 
 - **Symptom:** a source file kept "working" after an agent tool chain wrote a `\uXXXX`-shaped
@@ -324,64 +382,40 @@ null`; three RTL tests failed as if the trap never moved focus at all, while the
 - **Guard:** `file <path>` (must say "text") or `grep -cP '\x00' <path>` (must be 0) before
   trusting the write; a pre-commit NUL-byte check on text sources is the durable fix.
 
-### L-168 · 2026-09-16 · tooling · B421 CASH_METHOD_FILTER as-const gap
-
-- **Symptom:** `CASH_METHOD_FILTER`, a Prisma `notIn` filter constant, shipped with no real call
-  site yet. Its sibling `RECEIVED_METHOD_FILTER` was wired into a live `where` clause first and
-  immediately failed `tsc` — its array had widened to `string[]` for want of `as const`, which
-  Prisma's generated enum filter rejects. Checking the still-unused sibling found the same gap.
-- **Root cause:** a constant with no consumer can't fail a type check that only runs where it's
-  used — "compiles clean" meant nothing until a real call site exercised the type, so two
-  identically-built constants drifted: one was caught by chance, the other was not.
-- **Lesson:** **A typed constant with no call site yet is unproven, not correct — the moment one
-  sibling constant (same file, same shape, same commit) fails a type check for something subtle
-  like a missing `as const`, grep for every other constant built the same way.**
-- **Guard:** both constants now carry `as const` with an inline comment
-  (`packages/pricing/src/payment-confirmation.ts`); `payment-confirmation.spec.ts` pins both
-  filters' exact shape.
-
-### L-105 · 2026-09-11 · tooling · train-4 engine gate
-
-- **Symptom:** two engine runs lost their whole Jest gate to one flag position — a spec path
-  placed after `--reporters=default` was consumed as a second reporter MODULE NAME, not a test
-  target, so the run "passed" with zero real tests executed.
-- **Root cause:** Jest's CLI keeps swallowing bare tokens after `--reporters` (a list flag) until
-  the next `--`-prefixed option — a positional placed after it belongs to the flag, not the run.
-- **Lesson:** **`--reporters=default` (or any multi-value Jest flag) must be the LAST token on
-  the command line — every positional (spec path, pattern) goes BEFORE it.**
-- **Guard:** none yet — propose an engine arg lint rejecting tokens after `--reporters=...`, plus
-  a RESUME-card review line.
-
-### L-103 · 2026-09-10 · tooling · chore/next-15
-
-- **Symptom:** `npm run local:up` built fine, then `docker compose … up -d` failed on a
-  container-name conflict — piped through `| tail`, it read exit 0.
-- **Root cause:** `docker-compose.yml` hard-codes `container_name: routeflow_*` with no
-  top-level `name:` and no `-p`; from a worktree the project name defaults to the worktree
-  DIRECTORY, colliding on the SAME fixed names the main checkout's stack holds.
-- **Lesson:** **A compose file with hard-coded `container_name` needs an explicit `-p <project>`
-  (or top-level `name:`), never the cwd-derived default. Never pipe a compose/gate command
-  through `| tail`; it discards the real exit code.**
-- **Guard:** none yet — propose `-p routeflow` in `local:up`/`local:down`/`local:reset`, or a
-  top-level `name: routeflow`.
-
-### L-149 · 2026-09-15 · tooling · #743 fix-round T8 lesson-id staleness
-
-- **Symptom:** an engine task's brief hardcoded specific lesson ids (L-140/L-141) and a `nextId`
-  bump (143) to write at close-out. By the time the task ran, three intervening merges had moved
-  the real registry floor to `nextId` 146 — the hardcoded ids were already claimed elsewhere.
-- **Root cause:** the brief was authored against the registry's state at planning time. The task
-  itself ran LAST, after seven others and however long wall-clock that took — in a shared,
-  actively-written registry, "current state" at planning time and at execution time differ, and
-  nothing in the brief distinguished the two.
-- **Lesson:** **A task brief must never embed a point-in-time value from a shared, actively
-  written resource (a registry id, a counter, a "latest" anything) as a literal constant when the
-  task runs later than the brief was written — especially the LAST task in a run. Read the live
-  value at write time instead, and verify (grep for existing use, re-run the validator) first.**
-- **Guard:** none yet — a build-plan lint flagging a literal `L-\d+`/`nextId: \d+` inside any
-  non-first-wave task's `brief` would catch this class before launch.
-
 ## testing
+
+### L-205 · 2026-09-18 · testing · regression tests pinned literal source text, not behavior
+
+- **Symptom:** `touch-reveal-b511.test.ts` and `edit-line-item-row-b513.test.ts` both asserted
+  `expect(fileSource).toContain('className="<exact literal string>"')`. #897's purely additive
+  `cn(TAP_TARGET, "...")` wrapper (same classes present, behavior still correct) broke both,
+  because the source text was no longer that exact literal string.
+- **Root cause:** the assertion pinned SOURCE TEXT, not the behavior B511/B513 actually fixed
+  (a control staying reachable/correctly sized). A literal-string match breaks on any additive
+  or refactored source change regardless of behavior, and — the more dangerous direction —
+  would just as easily PASS a real regression that happens to preserve the substring.
+- **Lesson:** **A regression test must assert the underlying behavior (DOM state, computed
+  style, an element's actual reachable size) never a scrape of the source file's literal text.
+  Source-text matching is coincidence-based in both directions: it breaks on harmless changes
+  and can miss real ones.**
+- **Guard:** fix (rewriting both to DOM-behavior assertions) is being built into #910, not this
+  session.
+
+### L-202 · 2026-09-18 · testing · 390px sweep script matched zero targets, reported clean
+
+- **Symptom:** the 390px mobile-overflow sweep located screens via `a[href^='/x/']`, but this
+  codebase navigates list tables by row-level `onClick` + `router.push`, never anchors — true
+  across customers, invoices, orders, returns, vendor-bills, products. The locator matched
+  nothing, every run recorded "skipped: no data," and looked clean while testing nothing. Fleet
+  decisions were made on those results.
+- **Root cause:** the harness treated "found zero candidate targets" and "checked every
+  candidate and found nothing wrong" as the same outcome — a green run gives no signal for which
+  one happened.
+- **Lesson:** **Any verification step that yields zero candidate targets must raise an error,
+  never a skip or a pass — "found nothing to check" and "checked and found nothing wrong" must
+  never render identically.**
+- **Guard:** none yet — propose the sweep script assert a non-zero target count before
+  evaluating, failing loudly (not skipping) when a locator matches nothing.
 
 ### L-165 · 2026-09-16 · testing · #779 (B225/B244/B411)
 
@@ -396,19 +430,6 @@ null`; three RTL tests failed as if the trap never moved focus at all, while the
   other parallel worker touching the same path.
 - **Guard:** code review should flag any `Date.now()`-delta or directory-listing-count assertion
   in a spec touching a spawned process or shared tmp path — no automated lint yet.
-
-### L-166 · 2026-09-16 · testing · #779 (B352)
-
-- **Symptom:** `next-version.spec.ts` stopped enforcing a minimum patched Next.js version after
-  an unrelated fix round touched the same file — a security-advisory floor silently dropped.
-- **Root cause:** the fix round's own diff review didn't check which assertions the file already
-  carried before editing it; a generically-named test ("pins the version") gave no signal that
-  editing it deleted a security floor specifically.
-- **Lesson:** **A spec file that pins a security floor (a CVE-patched minimum version, an
-  advisory allowlist) needs its own named assertion — the next unrelated edit to that file can't
-  silently delete it without a visible red diff.**
-- **Guard:** name the assertion after the floor it enforces (e.g. `it("enforces the CVE-2026-xxxx
-floor", ...)`), not after the generic thing being tested — restored in `next-version.spec.ts`.
 
 ### L-050 · 2026-09-02 · testing · #598
 
@@ -440,6 +461,24 @@ floor", ...)`), not after the generic thing being tested — restored in `next-v
 - **Guard:** none — judgment. Grep `isWeb`/`Platform.OS` in any file a fix touches.
 
 ## domain
+
+### L-204 · 2026-09-18 · domain · B524 fix round — a new write path didn't inherit a sibling's cache-invalidation fix
+
+- **Symptom:** review of PR #913 (B524, server-side `requires` enforcement) found: granting a
+  prerequisite via `FeatureOverrideService.create()`/`.revoke()` then acting on the new requires
+  check could read a stale snapshot and false-400 for up to 30s — those methods invalidated only
+  their own override cache, never `FeatureResolverService`'s separate cache the new check reads.
+- **Root cause:** `AddonService` already had this exact bug fixed (B509). B524 added the same
+  requires check to a SECOND write path reading the same cache; a fix on one writer doesn't
+  propagate to a sibling by analogy, only by someone applying it there too.
+- **Lesson:** **When a new check reads a cache another writer is allowed to leave briefly
+  stale, audit EVERY writer of that value for whether it already invalidates the SAME cache —
+  fixing one writer doesn't fix a sibling reading the same data.**
+- **Guard:** `createFeatureOverride`/`revokeFeatureOverride` now call
+  `EntitlementAuthority.invalidate(tenantId)`, mirroring B509;
+  `platform-admin.controller.override-requires.spec.ts` pins both calls directly.
+- Attribution: candidate from Lane D (PR #913), originally filed as "L-199" from a stale local
+  view of the register (already taken here); renumbered on fold-in.
 
 ### L-187 · 2026-09-17 · domain · demo-booking slot TOCTOU (check-then-insert race)
 
@@ -704,24 +743,6 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   `clearStorageByPrefix` — grep for it before trusting this reasoning again on the same file.
   `apps/mobile/lib/edit-items-draft.ts` carries the design-rationale comment inline.
 
-### L-156 · 2026-09-15 · tooling · B420 mistiered proof, no lawful reclassify path
-
-- **Symptom:** B420 was correctly fixed and proven (T1), but its proof cited a standalone node
-  self-test (`validate-code-map.stamp.self-test.mjs`, run directly by `npm run verify`) as if it
-  were a jest suite. `campaign-check.mjs`'s T1 path scans jest report titles only, so the row could
-  never discharge — a fleet-wide push blocker, not a B420-specific defect.
-- **Root cause:** the correct target state, `already-fixed`, checks only that `evidence` is
-  non-empty (its `EVIDENCE_ONLY_STATES` path bypasses the jest lookup entirely) — but no command
-  transitions a `proven` row there. `already-fixed` refuses anything but `queued`/`in-flight`; the
-  only exit from `proven` (`reopen`) forces state to `regressed` and requires citing an actual
-  failing token or regression run — a false claim for a row that never regressed, just mistiered.
-- **Lesson:** **A state machine's error-recovery path must not force a claim that isn't true. When
-  the only documented exit from a wrong state requires asserting something false to use it, that is
-  a missing transition, not a workaround to take.** Fixed here via a direct, lock-checked,
-  single-field ledger edit (owner-approved, out of band) rather than fabricate a regression.
-- **Guard:** filed B426 (bugs.mjs needs a lawful `proven`→`already-fixed` reclassify path,
-  distinct from `reopen`'s regression semantics) so this doesn't recur as a manual escape hatch.
-
 ### L-143 · 2026-09-15 · domain · B421 (credit-applied vs paid, full fix)
 
 - **Symptom:** a CREDIT_NOTE-method `InvoicePayment` row (`status: PAID`) rendered/counted as
@@ -759,30 +780,6 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
 - **Guard:** `payment-predicates.ts`'s `resolveConfirmedAmounts(precomputed, payments)` (API) and
   the hand-rolled web mirror in `invoices/[id]/page.tsx` both gate on one field's presence; each
   has a red-first regression test pinning the double-subtraction case.
-
-### L-162 · 2026-09-15 · tooling · post-dated check payments PR-1 (schema-only, additive)
-
-- **Symptom:** adding `CHECK_RETURNED` to the Prisma `NotificationEvent` enum — a schema-only,
-  "no behavior change" migration with no new call site — broke `apps/api` `check-types`: two
-  pre-existing `Record<NotificationEvent, ...>` maps in `messaging-config.service.ts`
-  (`EVENT_CHANNELS`, `DEFAULT_TEMPLATES`) stopped compiling because they no longer covered every
-  member of the enum.
-- **Root cause:** an "additive-only" schema PR was scoped by grepping the Prisma schema and the
-  shared-type mirrors (`@routeflow/types`), never by grepping for `Record<TheEnum,` across the
-  consumers of that enum — an exhaustive map is a compile-time contract on the enum's FULL
-  member set, so a new value is a breaking change to every such map even though nothing in the
-  new PR reads or writes the new value.
-- **Lesson:** **Before adding a value to an existing Prisma enum, grep the whole tree for
-  `Record<TheEnumName,` (and any hand-written `switch`/object-literal that enumerates every
-  member) — an "additive, no behavior change" schema PR still breaks compilation wherever an
-  exhaustive map exists, and needs a minimal exhaustiveness-only entry there (never a real
-  trigger/behavior change) to stay green.**
-- **Guard:** `messaging-config.service.ts`'s `EVENT_CHANNELS`/`DEFAULT_TEMPLATES` gained a
-  `CHECK_RETURNED` entry (`[INTERNAL]` / a template string) and `NO_TRIGGER_EVENTS` gained the
-  key too, in the SAME commit as the schema change; `apps/api/src/common/enum-parity.spec.ts`'s
-  `PINNED_PRISMA_ENUM_COUNT` tripwire (L-072) catches a genuinely new enum, but not a new VALUE
-  on an existing one — only `tsc --noEmit` catches that, which is why this must be run, not
-  assumed, on any enum-value addition.
 
 ## security
 

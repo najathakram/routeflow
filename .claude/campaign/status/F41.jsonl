@@ -1,3 +1,3 @@
-{"id":"B320","batch":"F41","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B320","batch":"F41","tier":"T1","state":"already-fixed","pr":885,"proof":null,"evidence":"customers.service.ts deleteCustomer hard-delete guard widened to advancePayment balance + open creditNote; landed 6bb76ab0 (#885), confirmed ancestor of origin/master"}
 {"id":"B321","batch":"F41","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B322","batch":"F41","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
