@@ -16,6 +16,28 @@
     `page.test.tsx` (new). E2E: `e2e/47-house-tenant-mrr-verify.spec.ts` (new, post-deploy —
     verifies the house/demo tenant's MRR reconciles against the ledger in prod).
 - `admin/tenants/page.tsx`, `new/page.tsx`, `[id]/page.tsx` (edit plan, trial, suspend, impersonate, audit). Its `AVAILABLE_ADDONS` array is the **only** toggle surface for unbridged addon keys — `tobacco_dealer`, `msrp`, `sales_agents`, `DRIVER_PAYMENTS_ADDON` ("Driver payments (at-door collection)", server-enforced via DriverPaymentsGuard, added 2026-08-25 #437), `RECURRING_ROUTES_ADDON`/`ORDER_DELIVERY_ADDON` ("Recurring routes"/"Order delivery" — split 2026-08-25, gate Dispatch+`/routes` vs Deliveries+`/deliveries` respectively, **server-enforced via AddonGuard since 2026-08-28**) and `DEVELOPER_MODE_ADDON` ("Developer Mode" — 2026-08-28 copy rewrite: unlocks the mobile driver-app preview + dispatch API access for end-to-end testing, and explicitly NO LONGER unlocks Recurring routes / Order delivery, which must be enabled individually); no API change needed since the enable/disable endpoints take free-text addon keys and an unset `stripePriceId` creates no Stripe item. `toggleAddon` failures now surface in a `toggleError` banner (was a silent catch — a failed toggle looked like success).
+  - **`_features/EnableAddonModal.tsx` — Feature Console "Enable as add-on" action (B2b, 2026-09-17):**
+    the console's per-row "Customise" button (`FeatureConsole.tsx`, opens `FeatureOverridesSection`)
+    only ever writes an unbilled COMP `TenantFeatureOverride` — the `AVAILABLE_ADDONS` toggle cards
+    above (being deleted, ticket 4) were the only UI that could create a real, Stripe-billed
+    `TenantAddon` row via `POST .../addons/enable`. A new "Enable as add-on" button appears beside
+    "Customise" on rows in `FeatureConsole.tsx`'s exported `ADDON_ROW_KEY_BY_REGISTRY_KEY` map
+    (registry key -> the legacy `addonKey` the endpoint expects — NOT always the same string):
+    `tobacco_dealer`/`driver_payments`/`recurring_routes`/`order_delivery`/`ocr`/`developer_mode`
+    (identity mapping) plus `flag.msrp` -> `msrp` and `flag.sales_agents` -> `sales_agents` (review
+    catch: those two `RequirePlanFlag` rows' SERVER gate would be satisfied by a feature-override,
+    but their web UI reads `useHasAddon()` — `apps/web/lib/api/tobacco.ts`, backed by
+    `TenantAddon.addonKey` rows only — so an override alone leaves the MSRP price field / sales-agents
+    nav hidden). Mirrors `LEGACY_ADDON_KEY_TO_SKU` in `apps/api/src/billing/plan-catalog.constants.ts`
+    — update both together; pinned exact-contents test in `FeatureConsole.test.tsx`. The modal
+    (`EnableAddonModal.tsx`) always posts to `/addons/enable`, never `/feature-overrides`: it reads
+    `GET .../billing`'s `stripeConfigured` flag (`fetchTenantBillingInfo`, `lib/platform-admin/
+features.ts`) to offer a Stripe-price-or-free-grant choice (no silent default — Continue stays
+    disabled until one is picked) when configured, or states a free grant when not; two-step
+    confirm names the tenant and states whether a Stripe subscription item will be created.
+    `enableTenantAddon` (`lib/platform-admin/features.ts`) is the same `EnableAddonDto` shape the
+    legacy toggle posted. No new endpoint/model. Tests: `EnableAddonModal.test.tsx`,
+    `FeatureConsole.test.tsx`, `features.test.ts`.
   - **`new/page.tsx`'s Plan `<select>` is catalog-driven, filtered to `PLAN_KEYS` (Phase 0 T14, REG-743-F1, 2026-09-15)** — options come from `fetchPlanCatalog()` (sorted by `sortOrder`, labeled via `planLabel`), but only rows whose `planKey` is a `PLAN_KEYS` member (`@routeflow/types`) are offered: the server's `create-tenant.dto.ts` validates `@IsIn(PLAN_KEYS)`, so an unfiltered legacy/off-catalog row (e.g. a future `TEAM`/`BUSINESS`) would 400 on submit. A failed fetch or a catalog with zero `PLAN_KEYS`-eligible rows falls back to rendering all of `PLAN_KEYS` (not a single option) so every plan the server accepts stays reachable; `form.plan` resets to the first eligible catalog row when the default (`STARTER`) isn't in it. Spec: `page.test.tsx`'s T14 describe + its `REG-743-F1` cases (extra non-`PLAN_KEYS` catalog row excluded; catalog with no eligible row falls back to exactly `PLAN_KEYS`).
 - **`_components/AdminBadge.tsx` — GROWTH/SCALE plan colors (2026-09-16):** `PLAN_COLORS`/
   `PLAN_LABELS` gain `GROWTH` (teal, "Growth") and `SCALE` (indigo, "Scale") entries alongside

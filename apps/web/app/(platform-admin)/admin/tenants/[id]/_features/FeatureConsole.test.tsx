@@ -1,6 +1,6 @@
 import * as React from "react";
 import { render, screen, waitFor, within, fireEvent } from "@testing-library/react";
-import { FeatureConsole } from "./FeatureConsole";
+import { ADDON_ROW_KEY_BY_REGISTRY_KEY, FeatureConsole } from "./FeatureConsole";
 import { REGISTRY_FIXTURE } from "./__fixtures__/registry.fixtures";
 import { EFFECTIVE_FIXTURE } from "./__fixtures__/effective.fixtures";
 import { diffsFixture } from "./__fixtures__/diffs.fixtures";
@@ -12,6 +12,8 @@ const mockFetchDiffs = jest.fn();
 const mockFetchMode = jest.fn();
 const mockPreview = jest.fn();
 const mockWriteConfig = jest.fn();
+const mockFetchBilling = jest.fn();
+const mockEnableAddon = jest.fn();
 
 jest.mock("@/lib/platform-admin/features", () => ({
   fetchFeatureRegistry: () => mockFetchRegistry(),
@@ -21,6 +23,9 @@ jest.mock("@/lib/platform-admin/features", () => ({
   previewTenantFeatures: (tenantId: string, req: unknown) => mockPreview(tenantId, req),
   writeTenantFeatureConfig: (tenantId: string, key: string, req: unknown) =>
     mockWriteConfig(tenantId, key, req),
+  fetchTenantBillingInfo: (tenantId: string) => mockFetchBilling(tenantId),
+  enableTenantAddon: (tenantId: string, addonKey: string, stripePriceId?: string) =>
+    mockEnableAddon(tenantId, addonKey, stripePriceId),
 }));
 
 const TENANT_ID = "tenant-1";
@@ -35,6 +40,7 @@ function defaultMocks() {
   mockFetchEffective.mockResolvedValue(EFFECTIVE_FIXTURE);
   mockFetchDiffs.mockResolvedValue(diffsFixture(TENANT_ID));
   mockFetchMode.mockResolvedValue({ mode: "shadow" });
+  mockFetchBilling.mockResolvedValue({ stripeConfigured: false });
 }
 
 beforeEach(() => {
@@ -328,5 +334,128 @@ describe("FeatureConsole — mode change preview → confirm → apply (test 5)"
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByText("Preview mode change", { selector: "h3" })).not.toBeInTheDocument();
     expect(mockWriteConfig).not.toHaveBeenCalled();
+  });
+});
+
+describe("FeatureConsole — 'Enable as add-on' action (B2b)", () => {
+  // Pinned exact contents (owner/lead ruling 2026-09-17): a hardcoded registry-key ->
+  // legacy-addonKey map is a drift trap — this must fail loudly, and show up as a reviewed
+  // diff, the moment anyone adds/removes/renames an entry rather than silently doing nothing
+  // for a 9th flag-gated key. Mirrors LEGACY_ADDON_KEY_TO_SKU in
+  // apps/api/src/billing/plan-catalog.constants.ts — update both together.
+  it("pins ADDON_ROW_KEY_BY_REGISTRY_KEY's exact contents", () => {
+    expect(ADDON_ROW_KEY_BY_REGISTRY_KEY).toEqual({
+      tobacco_dealer: "tobacco_dealer",
+      driver_payments: "driver_payments",
+      recurring_routes: "recurring_routes",
+      order_delivery: "order_delivery",
+      ocr: "ocr",
+      developer_mode: "developer_mode",
+      "flag.msrp": "msrp",
+      "flag.sales_agents": "sales_agents",
+    });
+  });
+
+  it("shows the button only on addon-keyed rows, never on a plan-flag/service/guard row that isn't addon-provisioned", async () => {
+    render(
+      <FeatureConsole
+        tenant={{ id: TENANT_ID, plan: "GROWTH" }}
+        tenantLabel="Acme Wholesale"
+        onChangePlan={jest.fn()}
+        onCustomise={jest.fn()}
+      />,
+    );
+    await screen.findByText("compliance");
+
+    // tobacco_dealer (RequireAddon) and recurring_routes (RequireAddon) get the button.
+    expect(
+      within(
+        document.querySelector('[data-feature-key="tobacco_dealer"]') as HTMLElement,
+      ).getByRole("button", { name: "Enable Regulated items (tobacco) as an add-on" }),
+    ).toBeInTheDocument();
+    expect(
+      within(
+        document.querySelector('[data-feature-key="recurring_routes"]') as HTMLElement,
+      ).getByRole("button", { name: "Enable Recurring routes as an add-on" }),
+    ).toBeInTheDocument();
+
+    // msrp (via "service") and route_optimization (via "RequirePlanFlag") do not.
+    const msrpRow = document.querySelector('[data-feature-key="msrp"]') as HTMLElement;
+    expect(within(msrpRow).queryByRole("button", { name: /Enable .* as an add-on/ })).toBeNull();
+    const routeOptRow = document.querySelector(
+      '[data-feature-key="route_optimization"]',
+    ) as HTMLElement;
+    expect(
+      within(routeOptRow).queryByRole("button", { name: /Enable .* as an add-on/ }),
+    ).toBeNull();
+
+    // boxes_pieces_mode is gate.via "guard" but is NOT one of the six named addon-backed keys —
+    // via alone must never be sufficient (it would also wrongly light up this display setting).
+    const boxesRow = document.querySelector(
+      '[data-feature-key="boxes_pieces_mode"]',
+    ) as HTMLElement;
+    expect(within(boxesRow).queryByRole("button", { name: /Enable .* as an add-on/ })).toBeNull();
+  });
+
+  it("clicking 'Enable as add-on' never calls onCustomise — the override path stays untouched", async () => {
+    const onCustomise = jest.fn();
+    render(
+      <FeatureConsole
+        tenant={{ id: TENANT_ID, plan: "GROWTH" }}
+        tenantLabel="Acme Wholesale"
+        onChangePlan={jest.fn()}
+        onCustomise={onCustomise}
+      />,
+    );
+    await screen.findByText("compliance");
+
+    const row = document.querySelector('[data-feature-key="tobacco_dealer"]') as HTMLElement;
+    fireEvent.click(
+      within(row).getByRole("button", { name: "Enable Regulated items (tobacco) as an add-on" }),
+    );
+
+    expect(await screen.findByText(/this will be a free grant, not billed/)).toBeInTheDocument();
+    expect(onCustomise).not.toHaveBeenCalled();
+  });
+
+  it("a plan-flag row whose registry key needs translating to a legacy addonKey (flag.msrp -> msrp) still gets the button and enables the right key", async () => {
+    mockFetchRegistry.mockResolvedValueOnce([
+      ...REGISTRY_FIXTURE,
+      {
+        key: "flag.msrp",
+        kind: "boolean",
+        area: "catalog",
+        label: "MSRP pricing",
+        description: "Manufacturer-suggested retail price fields on products and bulk edit.",
+        lifecycle: "ga",
+        internal: false,
+        gate: { via: "RequirePlanFlag", state: "enforced" },
+        billing: { skus: ["MSRP"] },
+      },
+    ]);
+
+    render(
+      <FeatureConsole
+        tenant={{ id: TENANT_ID, plan: "GROWTH" }}
+        tenantLabel="Acme Wholesale"
+        onChangePlan={jest.fn()}
+        onCustomise={jest.fn()}
+      />,
+    );
+    await screen.findByText("compliance");
+
+    const row = document.querySelector('[data-feature-key="flag.msrp"]') as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: "Enable MSRP pricing as an add-on" }));
+
+    await screen.findByText(/this will be a free grant, not billed/);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByText(/No Stripe subscription item will be created/);
+
+    mockEnableAddon.mockResolvedValueOnce({});
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    // The addon-row write uses the legacy "msrp" addonKey the resolver reads via
+    // useHasAddon(), NOT the registry row's own "flag.msrp" key.
+    await waitFor(() => expect(mockEnableAddon).toHaveBeenCalledWith(TENANT_ID, "msrp", undefined));
   });
 });
