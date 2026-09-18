@@ -2798,14 +2798,14 @@ export default function InvoiceDetailPage() {
                               <>
                                 <button
                                   onClick={() => setEditingPayment(pmt)}
-                                  className="rounded p-1 text-navy/30 opacity-0 group-hover:opacity-100 hover:text-brand-500 transition-all"
+                                  className="touch-reveal rounded p-1 text-navy/30 opacity-0 transition-all group-hover:opacity-100 hover:text-brand-500"
                                   title="Edit payment"
                                 >
                                   <Pencil className="h-3.5 w-3.5" />
                                 </button>
                                 <button
                                   onClick={() => setDeletingPayment(pmt)}
-                                  className="rounded p-1 text-navy/30 opacity-0 group-hover:opacity-100 hover:text-danger transition-all"
+                                  className="touch-reveal rounded p-1 text-navy/30 opacity-0 transition-all group-hover:opacity-100 hover:text-danger"
                                   title="Delete payment"
                                 >
                                   <Trash2 className="h-3.5 w-3.5" />

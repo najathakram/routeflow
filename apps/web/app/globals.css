@@ -208,6 +208,19 @@ body {
   }
 }
 
+/* B511 (C2 390px audit) — row actions gated on `opacity-0 group-hover:opacity-100`
+   never reveal on touch, since `:hover` never fires there; the control reads as
+   missing entirely. Pair that Tailwind pair with `touch-reveal` to force full
+   opacity whenever the device reports no hover capability, leaving the desktop
+   hover-reveal behavior untouched. Declared outside any `@layer` so it always
+   wins over the layered `opacity-0`/`group-hover:opacity-100` utilities,
+   regardless of generation order. */
+@media (hover: none) {
+  .touch-reveal {
+    opacity: 1;
+  }
+}
+
 /* Print (WP4, R6.10) — hide the dashboard chrome so a printed invoice/PDF
    isn't framed by the sidebar/topbar. */
 @media print {
