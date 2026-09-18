@@ -1987,7 +1987,7 @@ export default function ProductDetailPage() {
                       </button>
                     )}
                   </div>
-                  <div className="grid grid-cols-4 gap-2">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
                     {(
                       [
                         [tierLabel(tierLabels, 2), "priceTier2", product.priceTier2],
@@ -2623,7 +2623,7 @@ export default function ProductDetailPage() {
 
           <div>
             <label className="mb-1 block text-xs font-medium text-navy/70">Pricing Tiers</label>
-            <div className="grid grid-cols-5 gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-5">
               {(
                 [
                   ["price", 1, "T1 (List)"],
