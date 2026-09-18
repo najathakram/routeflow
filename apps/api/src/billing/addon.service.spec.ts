@@ -111,7 +111,7 @@ describe("AddonService.enableAddon", () => {
   });
 
   it("enables a bridged key whose SKU IS published, writes the row, and invalidates entitlements", async () => {
-    const { svc, prisma, entitlements } = make({ publishedSkus: ["MSRP"] });
+    const { svc, prisma, entitlements, featureResolver } = make({ publishedSkus: ["MSRP"] });
 
     await svc.enableAddon("t1", "msrp");
 
