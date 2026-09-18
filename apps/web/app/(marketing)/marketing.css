@@ -959,9 +959,6 @@
 .rf-marketing .brand-period {
   color: var(--primary);
 }
-.rf-marketing .desktop-nav [aria-current="page"] {
-  color: var(--primary);
-}
 .rf-marketing .login-trigger {
   display: flex;
   gap: 6px;
@@ -4463,11 +4460,6 @@
   padding: 8px 13px;
   border-radius: 100px;
   font-size: 0.875rem;
-}
-.rf-marketing .desktop-nav a:hover,
-.rf-marketing .desktop-nav [aria-current="page"] {
-  background: #edf2fc;
-  color: #2d5cca;
 }
 .rf-marketing .header-actions {
   gap: 15px;
@@ -8492,11 +8484,6 @@
     0 8px 30px #14171e0b,
     inset 0 1px 0 white;
   backdrop-filter: blur(24px) saturate(115%);
-}
-.rf-marketing .desktop-nav a:hover,
-.rf-marketing .desktop-nav [aria-current="page"] {
-  background: #eeeef1;
-  color: #202124;
 }
 .rf-marketing .signin-menu [role="menuitem"]:hover,
 .rf-marketing .signin-menu [role="menuitem"]:focus-visible {
