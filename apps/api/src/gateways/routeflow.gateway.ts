@@ -93,6 +93,15 @@ export interface CreditNoteCreatedPayload {
   amount: number;
 }
 
+/** B343: voidCreditNote had no socket event at all — a remote void never reached an
+ *  open customer statement/credit-notes view. Same shape as the create payload. */
+export interface CreditNoteVoidedPayload {
+  creditNoteId: string;
+  creditNoteNumber: string;
+  customerId: string;
+  amount: number;
+}
+
 export interface RouteDispatchedPayload {
   runId: string;
   routeId: string;
@@ -273,6 +282,14 @@ export class RouteFlowGateway implements OnGatewayConnection, OnGatewayDisconnec
     this.server
       .to(this.tenantRoom(tenantId, `customer:${payload.customerId}`))
       .emit("creditNote.created", payload);
+  }
+
+  /** B343: mirrors emitCreditNoteCreated — a void is exactly as visible-elsewhere as a create. */
+  emitCreditNoteVoided(tenantId: string | null, payload: CreditNoteVoidedPayload) {
+    this.server.to(this.tenantRoom(tenantId, "operators")).emit("creditNote.voided", payload);
+    this.server
+      .to(this.tenantRoom(tenantId, `customer:${payload.customerId}`))
+      .emit("creditNote.voided", payload);
   }
 
   /** RF-015: Notify a specific driver that a run has been dispatched to them. */
