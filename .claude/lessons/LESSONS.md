@@ -42,6 +42,26 @@
 
 ## tooling
 
+### L-198 · 2026-09-18 · tooling · `gh run rerun` replays the original checkout, not a fresh merge-ref
+
+- **Symptom:** across ~12 PRs in one landing window, the first "fresh" `gh run rerun` after a
+  root-cause fix landed on master (or after any other base-branch change a PR didn't itself
+  carry) kept failing on the SAME already-fixed assertion — costing 5+ burned branches before
+  the mechanism was understood.
+- **Root cause:** `gh run rerun <run-id>` re-executes the workflow using the exact commit/merge
+  ref GitHub resolved at that run's ORIGINAL trigger time — it does not recompute the PR's merge
+  ref against the current base branch. Only a genuine new `pull_request: synchronize` event (a
+  new commit pushed to the branch) makes GitHub recompute the merge ref and pick up whatever
+  changed on the base since the PR opened.
+- **Lesson:** **To re-test a PR against the CURRENT base branch — after a base-branch fix lands,
+  or any base change the PR doesn't itself carry — push a genuinely NEW commit, never
+  `gh run rerun`. An empty commit works when there's no real content to add: `git commit
+  --allow-empty -m "..."`, or `git commit-tree <tree> -p <parent> -m "..."` plumbing when the
+  branch can't be checked out locally. Reserve `gh run rerun` for a genuinely flaky failure on an
+  otherwise-current merge ref.**
+- **Guard:** none yet — propose a landing-tool helper that pushes an empty commit instead of
+  calling `gh run rerun` whenever the PR was opened before a relevant base-branch fix landed.
+
 ### L-191 · 2026-09-17 · tooling · MailboxCard.tsx JSX apostrophes only caught by a full web lint
 
 - **Symptom:** `MailboxCard.tsx` (email-connect-google/#824, email-connect-microsoft/#830/#841)

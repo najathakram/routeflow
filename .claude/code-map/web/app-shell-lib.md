@@ -149,7 +149,17 @@
   no `customerId`; an ERRORED fetch counts as ready = today's tier-1 degraded mode, so a failure can
   never wedge the editor shut) threaded into `EditableLineItems`, gating the add-product input,
   its suggestion rows and the Substitute trigger. Proven post-deploy by e2e `24-order-edit-pricing`.
-  Admin toggle: `(platform-admin)/admin/tenants/[id]/page.tsx` `AVAILABLE_ADDONS` += `msrp`.
+  Admin toggle: `(platform-admin)/admin/tenants/[id]/page.tsx` `AVAILABLE_ADDONS` += `msrp` (now
+  removed — see below).
+- **`AVAILABLE_ADDONS` emptied (2026-09-18, #866 B508 + #890 B519):** `(platform-admin)/admin/tenants/[id]/page.tsx`'s
+  legacy `AVAILABLE_ADDONS` array (`tobacco_dealer`, `msrp`, `sales_agents`, `DRIVER_PAYMENTS_ADDON`,
+  `RECURRING_ROUTES_ADDON`, `ORDER_DELIVERY_ADDON`, `OCR_ADDON`, `DEVELOPER_MODE_ADDON`) is now
+  `const AVAILABLE_ADDONS: Array<{key,name,description}> = []` — all eight legacy provisioning
+  toggle cards removed in two sequenced PRs (same array, deliberately conflicting insertion
+  points — landed #866 first, then #890 rebased onto it), superseded entirely by the Feature
+  Console's per-feature grants (`fg-d-enable-addon`'s "Enable as add-on" modal). Zero remaining
+  references to the removed constants; the matching `@routeflow/types` import line was trimmed to
+  just `FEATURE_OVERRIDE_KIND_VALUES`/`FeatureOverrideKind`.
 - **`lib/format.ts`** (new 2026-08-26, audit P0 batch) — display formatter: `formatMoney`
   (Intl USD, thousands separators), `formatQty` (bare integers, ≤2dp fractions), `formatDate`
   ("Aug 27, 2026", **LOCAL time — for UTC-midnight calendar dates use `lib/formatting.ts`
