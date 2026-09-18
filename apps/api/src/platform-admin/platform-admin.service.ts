@@ -468,8 +468,14 @@ ${
     // this call reports could be one a concurrent downgrade() armed a moment later. One
     // transaction means the audit line describes the row as it stood at the transition.
     const { tenant, armedDowngrade } = await this.prisma.$transaction(async (tx) => {
-      // B556: read the tenant's subscription BEFORE this call writes anything, so a still-null
-      // planKey can be detected and filled at the moment of activation.
+      // B556/B557: read the tenant's PRIOR paying-set inputs — status, class, deletedAt, and
+      // its subscription's planKey/basePriceSnapshot/discount — before this call writes
+      // anything. B556 uses this to detect (and fill) a missing planKey on activation; B557
+      // uses the same snapshot to detect whether this status write crosses MrrService's
+      // paying-set boundary (payingWhere: planKey!=null && status=ACTIVE && deletedAt=null &&
+      // class=PRODUCTION) so a compensating BillingEvent can be booked in either direction —
+      // this plain status write used to touch neither, the documented root cause of ledgerMrr
+      // drifting away from live mrr (mrr.service.ts's own doc comment, B557).
       const before = await tx.tenant.findUniqueOrThrow({
         where: { id },
         select: {
@@ -536,6 +542,47 @@ ${
         if (sub?.downgradeToPlanKey) {
           armed = { planKey: sub.downgradeToPlanKey, effectiveAt: sub.downgradeEffectiveAt };
         }
+      }
+
+      // B557: emit a compensating BillingEvent whenever this status write crosses
+      // MrrService's paying-set boundary — the gap mrr.service.ts's own doc comment names
+      // ("PlatformAdminService.updateStatus() ... flips tenant.status with a raw write and
+      // never emits a delta, in either direction"). A tenant billed once then suspended here
+      // leaves a permanent +residue in ledgerMrr while live mrr correctly drops it (or, on
+      // reactivation, the mirror: live counts it again while the ledger never catches up).
+      // class and deletedAt are untouched by this call, so only status (and, via the B556
+      // fill-in just above, possibly planKey) can move payingBase between before/after.
+      const payingBase = before.class === "PRODUCTION" && before.deletedAt === null;
+      const wasPaying = payingBase && before.status === "ACTIVE" && priorPlanKey != null;
+      const isPaying = payingBase && updated.status === "ACTIVE" && finalPlanKey != null;
+      if (wasPaying !== isPaying) {
+        const addons = await tx.tenantAddon.findMany({
+          where: { tenantId: id, active: true },
+          select: { priceSnapshot: true, quantity: true },
+        });
+        // basePriceSnapshot/discount are never touched by a bare status write, so the same
+        // snapshot values price both the "was" and "is" side — only which side is $0 differs.
+        const contribution = this.mrrService.priceSubscription(
+          {
+            basePriceSnapshot: before.subscription?.basePriceSnapshot ?? null,
+            discount: before.subscription?.discount ?? null,
+          },
+          addons,
+        );
+        await this.billingEventService.emit(
+          id,
+          isPaying
+            ? BILLING_EVENTS.SUBSCRIPTION_RESUMED
+            : dto.status === "CANCELLED"
+              ? BILLING_EVENTS.SUBSCRIPTION_CANCELED
+              : BILLING_EVENTS.SUBSCRIPTION_SUSPENDED,
+          { fromStatus: before.status, toStatus: updated.status, platformAdmin: true },
+          {
+            amountDelta: roundMoney(isPaying ? contribution : -contribution),
+            actorId: adminId,
+            tx,
+          },
+        );
       }
 
       return { tenant: updated, armedDowngrade: armed };
@@ -832,46 +879,105 @@ ${
     const now = new Date();
     const periodEnd = new Date(now.getTime() + dto.billingPeriodDays * 24 * 60 * 60 * 1000);
 
-    const [tenant] = await Promise.all([
-      this.prisma.tenant.update({
+    const tenant = await this.prisma.$transaction(async (tx) => {
+      // B557 (B551's mirror-image gap): capture the tenant's paying-set inputs BEFORE this
+      // call writes anything. This activation can move a tenant into MrrService's paying set
+      // (status→ACTIVE + a resolved planKey) with no compensating BillingEvent today — the
+      // write and the event must land or roll back together, exactly like updatePlan()'s own
+      // upsert+emit elsewhere in this file.
+      const before = await tx.tenant.findUniqueOrThrow({
         where: { id },
-        data: { status: "ACTIVE", plan: dto.plan },
-        select: { id: true, slug: true, status: true, plan: true },
-      }),
-      this.prisma.tenantSubscription.upsert({
-        where: { tenantId: id },
-        create: {
-          tenantId: id,
-          currentPlan: dto.plan,
-          planKey: definition.planKey,
-          planVersionId: version.id,
-          periodStart: now,
-          periodEnd,
-          externalPayment: true,
-          externalPaymentMethod: dto.paymentMethod,
-          externalPaymentRef: dto.paymentRef ?? null,
-          externalPaymentNotes: dto.notes ?? null,
+        select: {
+          status: true,
+          class: true,
+          deletedAt: true,
+          subscription: { select: { planKey: true, basePriceSnapshot: true, discount: true } },
         },
-        update: {
-          currentPlan: dto.plan,
-          planKey: definition.planKey,
-          planVersionId: version.id,
-          periodStart: now,
-          periodEnd,
-          // Rolling the period forward disarms every pending transition. A downgrade left armed
-          // now points at the OLD (already past) period end, so the very next 02:00 sweep would
-          // fire it against the subscription this admin just activated.
-          cancelAtPeriodEnd: false,
-          downgradeToPlanKey: null,
-          downgradeEffectiveAt: null,
-          retainedUserIds: [],
-          externalPayment: true,
-          externalPaymentMethod: dto.paymentMethod,
-          externalPaymentRef: dto.paymentRef ?? null,
-          externalPaymentNotes: dto.notes ?? null,
-        },
-      }),
-    ]);
+      });
+
+      const [updated] = await Promise.all([
+        tx.tenant.update({
+          where: { id },
+          data: { status: "ACTIVE", plan: dto.plan },
+          select: { id: true, slug: true, status: true, plan: true },
+        }),
+        tx.tenantSubscription.upsert({
+          where: { tenantId: id },
+          create: {
+            tenantId: id,
+            currentPlan: dto.plan,
+            planKey: definition.planKey,
+            planVersionId: version.id,
+            periodStart: now,
+            periodEnd,
+            externalPayment: true,
+            externalPaymentMethod: dto.paymentMethod,
+            externalPaymentRef: dto.paymentRef ?? null,
+            externalPaymentNotes: dto.notes ?? null,
+          },
+          update: {
+            currentPlan: dto.plan,
+            planKey: definition.planKey,
+            planVersionId: version.id,
+            periodStart: now,
+            periodEnd,
+            // Rolling the period forward disarms every pending transition. A downgrade left
+            // armed now points at the OLD (already past) period end, so the very next 02:00
+            // sweep would fire it against the subscription this admin just activated.
+            cancelAtPeriodEnd: false,
+            downgradeToPlanKey: null,
+            downgradeEffectiveAt: null,
+            retainedUserIds: [],
+            externalPayment: true,
+            externalPaymentMethod: dto.paymentMethod,
+            externalPaymentRef: dto.paymentRef ?? null,
+            externalPaymentNotes: dto.notes ?? null,
+          },
+        }),
+      ]);
+
+      // B557: status is unconditionally ACTIVE and planKey unconditionally resolved by the
+      // write above, so only class/deletedAt (untouched here) gate whether this activation
+      // actually crosses into MrrService's payingWhere.
+      const payingBase = before.class === "PRODUCTION" && before.deletedAt === null;
+      const wasPaying =
+        payingBase && before.status === "ACTIVE" && before.subscription?.planKey != null;
+      const isPaying = payingBase;
+      if (wasPaying !== isPaying) {
+        const addons = await tx.tenantAddon.findMany({
+          where: { tenantId: id, active: true },
+          select: { priceSnapshot: true, quantity: true },
+        });
+        // basePriceSnapshot/discount are untouched by this write (external/manual activations
+        // are priced outside the catalog run-rate — see the REG-743-N5/F2 note in
+        // mrr.service.ts), so the "after" contribution reuses the exact fields the write
+        // leaves in place — never a catalog-price guess.
+        const contribution = this.mrrService.priceSubscription(
+          {
+            basePriceSnapshot: before.subscription?.basePriceSnapshot ?? null,
+            discount: before.subscription?.discount ?? null,
+          },
+          addons,
+        );
+        await this.billingEventService.emit(
+          id,
+          BILLING_EVENTS.PLAN_CHANGED,
+          {
+            fromPlan: before.subscription?.planKey ?? null,
+            toPlan: definition.planKey,
+            platformAdmin: true,
+            externalActivation: true,
+          },
+          {
+            amountDelta: roundMoney(isPaying ? contribution : -contribution),
+            actorId: adminId,
+            tx,
+          },
+        );
+      }
+
+      return updated;
+    });
 
     // Invalidate cached tenant status so the guard picks up ACTIVE immediately
     this.tenantStatusGuard.invalidate(id);

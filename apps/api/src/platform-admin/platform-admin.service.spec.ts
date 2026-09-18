@@ -18,6 +18,7 @@ import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { TenantMirrorService } from "./tenant-mirror.service";
 import { AdminAuditAction } from "./audit-actions.constant";
+import { roundMoney } from "@routeflow/pricing";
 
 /**
  * P1 regression: platform-admin lifecycle mutations MUST emit a purpose-built
@@ -38,7 +39,11 @@ describe("PlatformAdminService — audit provenance", () => {
   let meterService: { readAll: jest.Mock };
   let featureOverrides: { allActive: jest.Mock };
   let platformPricingService: { resolveTenantPricing: jest.Mock };
-  let mrrService: { computeOverview: jest.Mock; priceTenant: jest.Mock };
+  let mrrService: {
+    computeOverview: jest.Mock;
+    priceTenant: jest.Mock;
+    priceSubscription: jest.Mock;
+  };
   // WP3b: named so the createTenant — LITE plan describe block can assert on the checkout
   // options passed through and on the welcome email body, instead of re-deriving them via
   // module.get() (every other collaborator mock here is already reachable this way).
@@ -109,6 +114,23 @@ describe("PlatformAdminService — audit provenance", () => {
         momDelta: 0,
       }),
       priceTenant: jest.fn().mockResolvedValue(0),
+      // B557: real per-row pricing (mirrors MrrService.priceSubscription() exactly) so the
+      // updateStatus()/activateManualSubscription() compensating-delta tests can assert on the
+      // actual computed amount rather than a stubbed constant.
+      priceSubscription: jest.fn(
+        (
+          sub: { basePriceSnapshot: unknown; discount?: unknown },
+          addons: { priceSnapshot: unknown; quantity: number }[],
+        ) => {
+          const base = sub.basePriceSnapshot != null ? Number(sub.basePriceSnapshot) : 0;
+          const discount = Number(sub.discount ?? 0);
+          const addonSum = addons.reduce(
+            (sum, a) => sum + (a.priceSnapshot != null ? Number(a.priceSnapshot) : 0) * a.quantity,
+            0,
+          );
+          return roundMoney(base - discount + addonSum);
+        },
+      ),
     };
     emailServiceMock = { send: jest.fn().mockResolvedValue(undefined) };
     billingServiceMock = {
@@ -422,6 +444,141 @@ describe("PlatformAdminService — audit provenance", () => {
       await service.updateStatus(TENANT_ID, { status: "SUSPENDED" } as any, ADMIN_ID);
 
       expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+    });
+  });
+
+  // B557: computeOverview()'s two queries filter differently — live mrr requires (planKey
+  // non-null, status ACTIVE, deletedAt null, class PRODUCTION) but the ledger sum
+  // (BillingEvent.amountDelta) requires only tenant.class = PRODUCTION. A tenant billed once
+  // then suspended via this plain status control leaves a permanent +residue in ledgerMrr
+  // while live mrr correctly drops it — this fix books a compensating delta so the two stay
+  // reconciled, WITHOUT narrowing the ledger query (which would silence the reconciliation
+  // check instead of fixing the underlying data).
+  describe("updateStatus — B557 compensates the ledger when a status flip crosses the paying-set boundary", () => {
+    it("B557 emits a NEGATIVE compensating delta when an ACTIVE paying tenant is suspended", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "SUSPENDED",
+        plan: "PROFESSIONAL",
+      } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        status: "ACTIVE",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: { planKey: "SCALE", basePriceSnapshot: 499, discount: 0 },
+      } as any);
+
+      await service.updateStatus(TENANT_ID, { status: "SUSPENDED" } as any, ADMIN_ID);
+
+      expect(billingEventService.emit).toHaveBeenCalledWith(
+        TENANT_ID,
+        "subscription.suspended",
+        expect.objectContaining({
+          fromStatus: "ACTIVE",
+          toStatus: "SUSPENDED",
+          platformAdmin: true,
+        }),
+        expect.objectContaining({ amountDelta: -499, actorId: ADMIN_ID }),
+      );
+    });
+
+    it("B557 emits a POSITIVE compensating delta when a suspended paying tenant is reactivated (the mirror direction)", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+        plan: "PROFESSIONAL",
+      } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        status: "SUSPENDED",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: { planKey: "SCALE", basePriceSnapshot: 499, discount: 0 },
+      } as any);
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        downgradeToPlanKey: null,
+        downgradeEffectiveAt: null,
+      });
+
+      await service.updateStatus(TENANT_ID, { status: "ACTIVE" } as any, ADMIN_ID);
+
+      expect(billingEventService.emit).toHaveBeenCalledWith(
+        TENANT_ID,
+        "subscription.resumed",
+        expect.objectContaining({
+          fromStatus: "SUSPENDED",
+          toStatus: "ACTIVE",
+          platformAdmin: true,
+        }),
+        expect.objectContaining({ amountDelta: 499, actorId: ADMIN_ID }),
+      );
+      // B556's fill-in must not fire — this tenant already has a resolved planKey.
+      expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+    });
+
+    it("emits nothing when the tenant was never in the paying set (TRIAL → SUSPENDED)", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "SUSPENDED",
+        plan: "STARTER",
+      } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        status: "TRIAL",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: null,
+      } as any);
+
+      await service.updateStatus(TENANT_ID, { status: "SUSPENDED" } as any, ADMIN_ID);
+
+      expect(billingEventService.emit).not.toHaveBeenCalled();
+    });
+
+    it("emits nothing for a non-PRODUCTION tenant even though status/planKey say 'paying' (class already excludes it from both live and ledger)", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "qa-1" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "qa-1",
+        status: "SUSPENDED",
+        plan: "PROFESSIONAL",
+      } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        status: "ACTIVE",
+        class: "TEST",
+        deletedAt: null,
+        subscription: { planKey: "SCALE", basePriceSnapshot: 499, discount: 0 },
+      } as any);
+
+      await service.updateStatus(TENANT_ID, { status: "SUSPENDED" } as any, ADMIN_ID);
+
+      expect(billingEventService.emit).not.toHaveBeenCalled();
+    });
+
+    it("emits nothing when suspending and reactivating an already-ACTIVE tenant redundantly (idempotent, no double-count)", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.updateMany.mockResolvedValue({ count: 0 }); // lost CAS: already ACTIVE
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+        plan: "PROFESSIONAL",
+      } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        status: "ACTIVE",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: { planKey: "SCALE", basePriceSnapshot: 499, discount: 0 },
+      } as any);
+
+      await service.updateStatus(TENANT_ID, { status: "ACTIVE" } as any, ADMIN_ID);
+
+      expect(billingEventService.emit).not.toHaveBeenCalled();
     });
   });
 
@@ -1725,6 +1882,100 @@ describe("PlatformAdminService — audit provenance", () => {
       const upsertArg = (prisma as any).tenantSubscription.upsert.mock.calls[0][0];
       expect(upsertArg.create).toMatchObject({ planKey: "LITE", planVersionId: "v-12" });
       expect(upsertArg.update).toMatchObject({ planKey: "LITE", planVersionId: "v-12" });
+    });
+  });
+
+  // B557 (B551's mirror-image gap): activateManualSubscription() can move a tenant INTO
+  // MrrService's paying set (status→ACTIVE + a resolved planKey) with no compensating
+  // BillingEvent — the opposite direction of updateStatus()'s suspend-with-no-event gap, so
+  // ledgerMrr under-counts relative to live mrr forever unless this books a matching +delta.
+  describe("activateManualSubscription — B557 books a compensating delta on activation", () => {
+    const activateDto = {
+      plan: "PROFESSIONAL",
+      billingPeriodDays: 30,
+      paymentMethod: "BANK_TRANSFER",
+    } as any;
+
+    beforeEach(() => {
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-9",
+        definitions: [{ planKey: "SCALE", monthlyPrice: 499, isCustom: false }],
+      } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+        plan: "PROFESSIONAL",
+      } as any);
+    });
+
+    it("B557 emits PLAN_CHANGED with a positive amountDelta when this moves a formerly-TRIAL tenant into the paying set", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        status: "TRIAL",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: null,
+      } as any);
+
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      // basePriceSnapshot is untouched by this write (external activations are priced outside
+      // the catalog run-rate) — the row's existing (null) snapshot prices at $0 both sides,
+      // so the delta reflects that faithfully rather than guessing the catalog price.
+      expect(billingEventService.emit).toHaveBeenCalledWith(
+        TENANT_ID,
+        "plan.changed",
+        expect.objectContaining({ fromPlan: null, toPlan: "SCALE", externalActivation: true }),
+        expect.objectContaining({ amountDelta: 0, actorId: ADMIN_ID }),
+      );
+    });
+
+    it("B557 books the tenant's actual (pre-existing) basePriceSnapshot in the compensating delta, not a catalog guess", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        status: "SUSPENDED",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: { planKey: null, basePriceSnapshot: 349, discount: 0 },
+      } as any);
+
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      expect(billingEventService.emit).toHaveBeenCalledWith(
+        TENANT_ID,
+        "plan.changed",
+        expect.objectContaining({ fromPlan: null, toPlan: "SCALE" }),
+        expect.objectContaining({ amountDelta: 349 }),
+      );
+    });
+
+    it("emits nothing when the tenant was already ACTIVE with a resolved planKey (no paying-set crossing)", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        status: "ACTIVE",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: { planKey: "GROWTH", basePriceSnapshot: 249, discount: 0 },
+      } as any);
+
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      expect(billingEventService.emit).not.toHaveBeenCalled();
+    });
+
+    it("emits nothing for a non-PRODUCTION tenant (class already excludes it from live and ledger)", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "qa-1" } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        status: "TRIAL",
+        class: "TEST",
+        deletedAt: null,
+        subscription: null,
+      } as any);
+
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      expect(billingEventService.emit).not.toHaveBeenCalled();
     });
   });
 
