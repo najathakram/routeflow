@@ -100,6 +100,23 @@
   2026-09-12, [[L-113]]). Specs: `demo-booking.service.spec.ts`, `google-calendar.service.spec.ts`,
   `public-demo-booking.controller.spec.ts`, `demo-booking.config.spec.ts`, `zoned-time.spec.ts`,
   `demo-booking.db.spec.ts` (below).
+- **internal admin notification (2026-09-18, B518 then B522)** — `sendConfirmation` (in
+  `demo-booking.service.ts`) sends BOTH the booker's own confirmation and a separate internal
+  "someone booked/cancelled/rescheduled" notice to `config.demoBookingAdminEmails: string[]`
+  (`demo-booking.config.ts`); the booker's own `bookerDelivered` result is computed first and
+  returned unconditionally — the admin sends can never affect it. One `sendBookingEmail` call
+  per admin address via `Promise.allSettled` (not a loop of sequential awaits), so a slow or
+  failing address never delays or costs the others their notification; `sendBookingEmail` itself
+  never throws (try/catch, always resolves), so `Promise.allSettled` here is defense-in-depth
+  rather than the only safety net. `parseAdminEmails()` (`demo-booking.config.ts`): comma-split
+  `DEMO_BOOKING_ADMIN_EMAIL` → trimmed, empties dropped, case-insensitively de-duplicated, each
+  address regex-validated (an invalid one is dropped with a logged error, never corrupting the
+  rest of the list); falls back to `["admin@routeflow.info"]` when the parsed result would be
+  empty — the fallback is only logged when the raw env var had content that failed to survive
+  parsing, so a plain unset var stays quiet. B518 shipped the mechanism with a single hardcoded
+  `hello@routeflow.info`; B522 (owner feedback after using it) changed the default to
+  `admin@routeflow.info` and widened it to a real list so a second (colleague) recipient can be
+  added via the env var alone, no code change.
 - **model** — `DemoBooking` (`prisma/schema/platform.prisma`, NOT tenant-scoped: a prospect
   booking a walkthrough has no workspace yet) + `DemoBookingStatus` enum
   (`CONFIRMED|CANCELLED|COMPLETED`). Two additive migrations: `20260916030000_demo_booking`

@@ -673,10 +673,11 @@ export class DemoBookingService {
 
   /**
    * Best-effort — a mail failure never fails the booking the visitor made. Sends BOTH the
-   * booker's own confirmation and an internal notification to `config.demoBookingAdminEmail`
-   * (B518: the internal half never existed before this). Returns whether the booker's own
-   * email was delivered — that is the only outcome the client response reports on; the admin
-   * send's result is logged but not returned.
+   * booker's own confirmation and an internal notification to every address in
+   * `config.demoBookingAdminEmails` (B518: the internal half never existed before this; B522:
+   * it's a list — one send per address, so one bad recipient's failure never costs the others
+   * theirs). Returns whether the booker's own email was delivered — that is the only outcome
+   * the client response reports on; the admin sends' results are logged but not returned.
    */
   private async sendConfirmation(
     booking: DemoBooking,
@@ -695,13 +696,13 @@ export class DemoBookingService {
     );
 
     const admin = buildAdminNotificationEmail(booking, kind, webUrl());
-    await this.sendBookingEmail(
-      booking.id,
-      kind,
-      "admin",
-      config.demoBookingAdminEmail,
-      admin.subject,
-      admin.html,
+    // One send per recipient (Promise.allSettled, not a loop of awaits) so a slow or hung
+    // send to one admin address never delays the others, and sendBookingEmail's own
+    // try/catch already isolates a failure to that one recipient's result alone.
+    await Promise.allSettled(
+      config.demoBookingAdminEmails.map((to) =>
+        this.sendBookingEmail(booking.id, kind, "admin", to, admin.subject, admin.html),
+      ),
     );
 
     return bookerDelivered;
@@ -710,7 +711,8 @@ export class DemoBookingService {
   /**
    * One send + one loud, identifiable failure path — shared by the booker and admin sends so
    * neither can silently do nothing on failure. Never throws: a mail failure must never fail
-   * the booking action that triggered it.
+   * the booking action that triggered it, and (B522) a failure to one admin recipient must
+   * never abort the sends to the others.
    */
   private async sendBookingEmail(
     bookingId: string,
@@ -724,14 +726,14 @@ export class DemoBookingService {
       const result = await this.email.send({ to, subject, html });
       if (!result.delivered) {
         this.logger.warn(
-          `demo-booking: ${kind} email to ${recipientKind} for booking ${bookingId} was not delivered (${result.error ?? "no transport"})`,
+          `demo-booking: ${kind} email to ${recipientKind} (${to}) for booking ${bookingId} was not delivered (${result.error ?? "no transport"})`,
         );
         return false;
       }
       return true;
     } catch (error) {
       this.logger.error(
-        `demo-booking: ${kind} email to ${recipientKind} for booking ${bookingId} threw — ${String(error)}`,
+        `demo-booking: ${kind} email to ${recipientKind} (${to}) for booking ${bookingId} threw — ${String(error)}`,
       );
       return false;
     }
