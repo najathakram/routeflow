@@ -2567,6 +2567,51 @@ citations, closed-out with its own post-init assertion guard).
 - **Guard:** none yet — propose `--passWithNoTests` on the Baseline invocation and a close-out
   check that greps the run's JSON for the expected test titles.
 
+## Archived 2026-09-18 — headroom for Lane F's two lessons (bookkeeping-batch window-4)
+
+### L-149 · 2026-09-15 · tooling · #743 fix-round T8 lesson-id staleness
+
+- **Symptom:** an engine task's brief hardcoded specific lesson ids (L-140/L-141) and a `nextId`
+  bump (143) to write at close-out. By the time the task ran, three intervening merges had moved
+  the real registry floor to `nextId` 146 — the hardcoded ids were already claimed elsewhere.
+- **Root cause:** the brief was authored against the registry's state at planning time. The task
+  itself ran LAST, after seven others and however long wall-clock that took — in a shared,
+  actively-written registry, "current state" at planning time and at execution time differ, and
+  nothing in the brief distinguished the two.
+- **Lesson:** **A task brief must never embed a point-in-time value from a shared, actively
+  written resource (a registry id, a counter, a "latest" anything) as a literal constant when the
+  task runs later than the brief was written — especially the LAST task in a run. Read the live
+  value at write time instead, and verify (grep for existing use, re-run the validator) first.**
+- **Guard:** none yet — a build-plan lint flagging a literal `L-\d+`/`nextId: \d+` inside any
+  non-first-wave task's `brief` would catch this class before launch.
+- **Superseded by:** L-201 generalizes this exact root cause (stale point-in-time read of a
+  shared, actively-written registry) beyond lesson-ids to bug-registry ids and any similar
+  counter — archived here as redundant with it, not for lack of value.
+
+### L-162 · 2026-09-15 · tooling · post-dated check payments PR-1 (schema-only, additive)
+
+- **Symptom:** adding `CHECK_RETURNED` to the Prisma `NotificationEvent` enum — a schema-only,
+  "no behavior change" migration with no new call site — broke `apps/api` `check-types`: two
+  pre-existing `Record<NotificationEvent, ...>` maps in `messaging-config.service.ts`
+  (`EVENT_CHANNELS`, `DEFAULT_TEMPLATES`) stopped compiling because they no longer covered every
+  member of the enum.
+- **Root cause:** an "additive-only" schema PR was scoped by grepping the Prisma schema and the
+  shared-type mirrors (`@routeflow/types`), never by grepping for `Record<TheEnum,` across the
+  consumers of that enum — an exhaustive map is a compile-time contract on the enum's FULL
+  member set, so a new value is a breaking change to every such map even though nothing in the
+  new PR reads or writes the new value.
+- **Lesson:** **Before adding a value to an existing Prisma enum, grep the whole tree for
+  `Record<TheEnumName,` (and any hand-written `switch`/object-literal that enumerates every
+  member) — an "additive, no behavior change" schema PR still breaks compilation wherever an
+  exhaustive map exists, and needs a minimal exhaustiveness-only entry there (never a real
+  trigger/behavior change) to stay green.**
+- **Guard:** `messaging-config.service.ts`'s `EVENT_CHANNELS`/`DEFAULT_TEMPLATES` gained a
+  `CHECK_RETURNED` entry (`[INTERNAL]` / a template string) and `NO_TRIGGER_EVENTS` gained the
+  key too, in the SAME commit as the schema change; `apps/api/src/common/enum-parity.spec.ts`'s
+  `PINNED_PRISMA_ENUM_COUNT` tripwire (L-072) catches a genuinely new enum, but not a new VALUE
+  on an existing one — only `tsc --noEmit` catches that, which is why this must be run, not
+  assumed, on any enum-value addition.
+
 ## Archived 2026-09-18 — headroom for id-collision lesson (bookkeeping-batch window-4)
 
 ### L-156 · 2026-09-15 · tooling · B420 mistiered proof, no lawful reclassify path

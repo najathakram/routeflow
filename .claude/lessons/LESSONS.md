@@ -64,6 +64,25 @@
   routes through a command, not memory. See [[L-197]] — same "don't trust local state" problem,
   landed/unlanded side.
 
+### L-203 · 2026-09-18 · process · the fleet lead's own mistake — investigated master from a 59-commit-stale checkout
+
+- **Symptom:** the fleet lead investigated whether a landed fix was present on master by reading
+  `C:\ClaudeCode\routeflow`'s working checkout — which was 59 commits behind `origin/master` at
+  session start — and confidently concluded the fix was missing. That conclusion was wrong, and
+  was broadcast to two lanes before the registry owner caught it against a fresh fetch.
+- **Root cause:** the main checkout is chronically stale in a fast-moving multi-session fleet —
+  nothing refreshes it between sessions, and its `HEAD` looks like a legitimate reference to
+  "master" while silently lagging `origin/master` by however long since the last pull.
+- **Lesson:** **Any claim about what is or isn't on master must come from a fresh `git fetch`
+  and `origin/master`, never from a working checkout's `HEAD` — and an ancestry claim must name
+  the exact sha it was computed against, not just "master."** Adjacent to [[L-197]] (resolve the
+  actual landing commit, not the branch tip) — same root cause, reasoning about master from a
+  stale local reference, one level up: fetch before you resolve anything.
+- **Guard:** none yet — propose any ancestry/landing-status check open with `git fetch origin
+  <branch>` and report the `origin/<branch>` sha it ran against, never bare `master`.
+- Attribution: this is the lead's own mistake, logged by the lead's own request — a register
+  that only records other people's mistakes is a register nobody trusts.
+
 ### L-200 · 2026-09-18 · process · removing a UI control is a different risk class than removing dead code (#866, B519)
 
 - **Symptom:** removing the legacy `AVAILABLE_ADDONS` toggle cards (superseded by the Feature
@@ -381,23 +400,23 @@ null`; three RTL tests failed as if the trap never moved focus at all, while the
   (`packages/pricing/src/payment-confirmation.ts`); `payment-confirmation.spec.ts` pins both
   filters' exact shape.
 
-### L-149 · 2026-09-15 · tooling · #743 fix-round T8 lesson-id staleness
-
-- **Symptom:** an engine task's brief hardcoded specific lesson ids (L-140/L-141) and a `nextId`
-  bump (143) to write at close-out. By the time the task ran, three intervening merges had moved
-  the real registry floor to `nextId` 146 — the hardcoded ids were already claimed elsewhere.
-- **Root cause:** the brief was authored against the registry's state at planning time. The task
-  itself ran LAST, after seven others and however long wall-clock that took — in a shared,
-  actively-written registry, "current state" at planning time and at execution time differ, and
-  nothing in the brief distinguished the two.
-- **Lesson:** **A task brief must never embed a point-in-time value from a shared, actively
-  written resource (a registry id, a counter, a "latest" anything) as a literal constant when the
-  task runs later than the brief was written — especially the LAST task in a run. Read the live
-  value at write time instead, and verify (grep for existing use, re-run the validator) first.**
-- **Guard:** none yet — a build-plan lint flagging a literal `L-\d+`/`nextId: \d+` inside any
-  non-first-wave task's `brief` would catch this class before launch.
-
 ## testing
+
+### L-202 · 2026-09-18 · testing · 390px sweep script matched zero targets, reported clean
+
+- **Symptom:** the 390px mobile-overflow sweep located screens via `a[href^='/x/']`, but this
+  codebase navigates list tables by row-level `onClick` + `router.push`, never anchors — true
+  across customers, invoices, orders, returns, vendor-bills, products. The locator matched
+  nothing, every run recorded "skipped: no data," and looked clean while testing nothing. Fleet
+  decisions were made on those results.
+- **Root cause:** the harness treated "found zero candidate targets" and "checked every
+  candidate and found nothing wrong" as the same outcome — a green run gives no signal for which
+  one happened.
+- **Lesson:** **Any verification step that yields zero candidate targets must raise an error,
+  never a skip or a pass — "found nothing to check" and "checked and found nothing wrong" must
+  never render identically.**
+- **Guard:** none yet — propose the sweep script assert a non-zero target count before
+  evaluating, failing loudly (not skipping) when a locator matches nothing.
 
 ### L-165 · 2026-09-16 · testing · #779 (B225/B244/B411)
 
@@ -757,30 +776,6 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
 - **Guard:** `payment-predicates.ts`'s `resolveConfirmedAmounts(precomputed, payments)` (API) and
   the hand-rolled web mirror in `invoices/[id]/page.tsx` both gate on one field's presence; each
   has a red-first regression test pinning the double-subtraction case.
-
-### L-162 · 2026-09-15 · tooling · post-dated check payments PR-1 (schema-only, additive)
-
-- **Symptom:** adding `CHECK_RETURNED` to the Prisma `NotificationEvent` enum — a schema-only,
-  "no behavior change" migration with no new call site — broke `apps/api` `check-types`: two
-  pre-existing `Record<NotificationEvent, ...>` maps in `messaging-config.service.ts`
-  (`EVENT_CHANNELS`, `DEFAULT_TEMPLATES`) stopped compiling because they no longer covered every
-  member of the enum.
-- **Root cause:** an "additive-only" schema PR was scoped by grepping the Prisma schema and the
-  shared-type mirrors (`@routeflow/types`), never by grepping for `Record<TheEnum,` across the
-  consumers of that enum — an exhaustive map is a compile-time contract on the enum's FULL
-  member set, so a new value is a breaking change to every such map even though nothing in the
-  new PR reads or writes the new value.
-- **Lesson:** **Before adding a value to an existing Prisma enum, grep the whole tree for
-  `Record<TheEnumName,` (and any hand-written `switch`/object-literal that enumerates every
-  member) — an "additive, no behavior change" schema PR still breaks compilation wherever an
-  exhaustive map exists, and needs a minimal exhaustiveness-only entry there (never a real
-  trigger/behavior change) to stay green.**
-- **Guard:** `messaging-config.service.ts`'s `EVENT_CHANNELS`/`DEFAULT_TEMPLATES` gained a
-  `CHECK_RETURNED` entry (`[INTERNAL]` / a template string) and `NO_TRIGGER_EVENTS` gained the
-  key too, in the SAME commit as the schema change; `apps/api/src/common/enum-parity.spec.ts`'s
-  `PINNED_PRISMA_ENUM_COUNT` tripwire (L-072) catches a genuinely new enum, but not a new VALUE
-  on an existing one — only `tsc --noEmit` catches that, which is why this must be run, not
-  assumed, on any enum-value addition.
 
 ## security
 
