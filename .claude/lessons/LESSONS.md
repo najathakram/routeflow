@@ -33,9 +33,12 @@
   merge state from GitHub's PR view alone: a squash or cherry-pick can leave a branch's own
   commits genuinely off master while its content is fully live under a different sha.**
 - **Guard:** none yet — propose the batch/landing checklist require pairing every
-  `already-fixed --pr <n>` citation with a recorded `merge-base --is-ancestor <landing-sha>
-  origin/master` (or `gh pr view <n> --json mergedAt,mergeCommit`) check in the same commit/PR
-  body, not just a PR number in a list.
+  `already-fixed --pr <n>` citation with a recorded check that satisfies BOTH halves, either
+  one alone still lets the wrong verdict through: (1) resolve the actual **landing commit**
+  from `gh pr view <n> --json mergeCommit` — never the source branch's tip — and (2) run
+  `merge-base --is-ancestor <that landing sha> origin/master` on **full, unshallowed history**,
+  since a shallow clone's grafted boundary can misreport ancestry. A PR number in a list is not
+  evidence that it landed.
 
 ## tooling
 
