@@ -425,6 +425,44 @@ describe("BookkeepingService", () => {
 
       expect(invoiceRow?.balance).toBe(100);
     });
+
+    // B443: a credit note applied to an invoice shows up as its own CREDIT_NOTE row
+    // AND as the InvoicePayment it created (method CREDIT_NOTE) — same money, two
+    // rows, with nothing on the payment row saying they're the same event.
+    it("REG-B443 a CREDIT_NOTE-method payment row carries the credit note it applied", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValueOnce([
+        {
+          id: "pay-cn",
+          paymentNumber: "PAY-1",
+          amount: 40,
+          status: "PAID",
+          createdAt: new Date("2025-06-01"),
+          creditNoteId: "cn-1",
+          creditNote: { creditNoteNumber: "CN-2025-0001" },
+          invoice: { invoiceNumber: "INV-1", customer: { id: "cust-1", businessName: "Acme" } },
+        },
+        {
+          id: "pay-cash",
+          paymentNumber: "PAY-2",
+          amount: 25,
+          status: "PAID",
+          createdAt: new Date("2025-06-02"),
+          creditNoteId: null,
+          creditNote: null,
+          invoice: { invoiceNumber: "INV-2", customer: { id: "cust-1", businessName: "Acme" } },
+        },
+      ]);
+
+      const result = await service.getReceivableSummary("2025-01-01", "2025-12-31");
+      const paymentRows = result.data.filter((r) => r.type === "PAYMENT");
+
+      expect(paymentRows.find((r) => r.transactionNumber === "PAY-1")?.linkedCreditNoteNumber).toBe(
+        "CN-2025-0001",
+      );
+      expect(
+        paymentRows.find((r) => r.transactionNumber === "PAY-2")?.linkedCreditNoteNumber,
+      ).toBeUndefined();
+    });
   });
 
   // ─── B312: this ledger writer had NO status guard at all — unlike invoices.service's

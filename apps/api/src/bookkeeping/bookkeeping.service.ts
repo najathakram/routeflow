@@ -2274,6 +2274,12 @@ export class BookkeepingService implements OnModuleInit {
               customer: { select: { id: true, businessName: true } },
             },
           },
+          // B443: a CREDIT_NOTE-method payment is the invoice-side application of a
+          // credit note that ALSO gets its own CREDIT_NOTE row below — same money,
+          // two rows. This is only enough to LABEL the payment row as linked; it
+          // never joins outside the requested date window, so it's still a
+          // display-only lookup, not a second collected-money total.
+          creditNote: { select: { creditNoteNumber: true } },
         },
       }),
     ]);
@@ -2286,6 +2292,10 @@ export class BookkeepingService implements OnModuleInit {
       status: string;
       total: number;
       balance: number;
+      // B443: set only on a PAYMENT row for a CREDIT_NOTE-method payment — the
+      // credit note this row applied, so it reads as "this payment IS that credit
+      // note being used" rather than a second, unrelated receipt for the same money.
+      linkedCreditNoteNumber?: string;
     }> = [];
 
     for (const inv of invoices) {
@@ -2322,6 +2332,7 @@ export class BookkeepingService implements OnModuleInit {
         status: p.status,
         total: Number(p.amount),
         balance: 0,
+        linkedCreditNoteNumber: p.creditNote?.creditNoteNumber,
       });
     }
 
