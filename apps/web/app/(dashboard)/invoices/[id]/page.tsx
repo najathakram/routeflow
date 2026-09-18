@@ -32,8 +32,7 @@ import {
   Clock,
   Wallet,
 } from "lucide-react";
-import { Badge, Button, Card, Modal, cn,
-  TAP_TARGET, useToast } from "@routeflow/ui/web";
+import { Badge, Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useInvoice,
@@ -2348,13 +2347,7 @@ export default function InvoiceDetailPage() {
           {/* More actions (...) */}
           <DropdownMenu
             trigger={
-              <button
-                title="More actions"
-                className={cn(
-                  TAP_TARGET,
-                  "rounded-lg border border-surface-border bg-white shadow-card transition-colors hover:bg-surface-raised",
-                )}
-              >
+              <button className="flex items-center justify-center rounded-lg border border-surface-border bg-white p-1.5 shadow-card transition-colors hover:bg-surface-raised">
                 <MoreHorizontal className="h-4 w-4 text-navy/70" />
               </button>
             }
@@ -2805,14 +2798,14 @@ export default function InvoiceDetailPage() {
                               <>
                                 <button
                                   onClick={() => setEditingPayment(pmt)}
-                                  className={cn(TAP_TARGET, "touch-reveal rounded p-1 text-navy/30 opacity-0 transition-all group-hover:opacity-100 hover:text-brand-500")}
+                                  className="touch-reveal rounded p-1 text-navy/30 opacity-0 transition-all group-hover:opacity-100 hover:text-brand-500"
                                   title="Edit payment"
                                 >
                                   <Pencil className="h-3.5 w-3.5" />
                                 </button>
                                 <button
                                   onClick={() => setDeletingPayment(pmt)}
-                                  className={cn(TAP_TARGET, "touch-reveal rounded p-1 text-navy/30 opacity-0 transition-all group-hover:opacity-100 hover:text-danger")}
+                                  className="touch-reveal rounded p-1 text-navy/30 opacity-0 transition-all group-hover:opacity-100 hover:text-danger"
                                   title="Delete payment"
                                 >
                                   <Trash2 className="h-3.5 w-3.5" />

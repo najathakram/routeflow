@@ -29,7 +29,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { useQuery } from "@tanstack/react-query";
-import { Badge, Button, Modal, cn, TAP_TARGET } from "@routeflow/ui/web";
+import { Badge, Button, Modal, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import {
@@ -1500,7 +1500,7 @@ export default function ProductDetailPage() {
                       <button
                         onClick={cancelEdit}
                         title="Cancel"
-                        className={cn(TAP_TARGET, "rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors")}
+                        className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
                       >
                         <X className="h-4 w-4" />
                       </button>
@@ -1518,7 +1518,7 @@ export default function ProductDetailPage() {
                       <button
                         onClick={startEdit}
                         title="Edit product"
-                        className={cn(TAP_TARGET, "rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors")}
+                        className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
                       >
                         <Pencil className="h-4 w-4" />
                       </button>
@@ -2483,7 +2483,7 @@ export default function ProductDetailPage() {
                               <button
                                 onClick={startEdit}
                                 title="Edit this product"
-                                className={cn(TAP_TARGET, "rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors")}
+                                className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
                               >
                                 <Pencil className="h-3.5 w-3.5" />
                               </button>
@@ -2524,7 +2524,7 @@ export default function ProductDetailPage() {
                                   <button
                                     onClick={() => openVariantModal(variant)}
                                     title="Edit variant"
-                                    className={cn(TAP_TARGET, "rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors")}
+                                    className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
                                   >
                                     <Pencil className="h-3.5 w-3.5" />
                                   </button>
