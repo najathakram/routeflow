@@ -1119,3 +1119,54 @@ export function isRegisteredFeatureKey(key: string): boolean {
 export function gateVia(key: string): FeatureGateVia | undefined {
   return GATE_VIA_BY_KEY.get(key);
 }
+
+const FEATURE_DEF_BY_KEY = new Map(FEATURE_REGISTRY.map((f) => [f.key, f]));
+
+/** `key`'s full FeatureDef, or undefined when unregistered. */
+export function featureDefByKey(key: string): FeatureDef | undefined {
+  return FEATURE_DEF_BY_KEY.get(key);
+}
+
+export interface FeatureRequirementStatus {
+  satisfied: boolean;
+  missingAllOf: string[];
+  unmetAnyOf: string[] | null;
+}
+
+/**
+ * B524: the server-side twin of `checkRequires` in
+ * `apps/web/app/(platform-admin)/admin/tenants/[id]/_features/FeatureConsole.tsx` (#899) —
+ * SAME semantics, deliberately, including the empty-`requires.anyOf: []`-is-satisfied quirk
+ * (`anyOf.length === 0` short-circuits `anyOfSatisfied` to true, same as the web copy). This
+ * is a hand-kept parallel implementation, not a shared module: the web app has no build step
+ * that reaches server TS, so a real shared import isn't available. `feature-registry.spec.ts`
+ * closes the quirk from the other end instead of leaving the two copies to agree on it by
+ * accident — it rejects any registry row whose `requires.anyOf` is `[]` outright, so the
+ * ambiguous input can never actually reach either copy of this function.
+ */
+export function checkFeatureRequires(
+  requires: FeatureDef["requires"],
+  effectiveKeys: ReadonlySet<string>,
+): FeatureRequirementStatus {
+  const missingAllOf = (requires?.allOf ?? []).filter((k) => !effectiveKeys.has(k));
+  const anyOf = requires?.anyOf;
+  const anyOfSatisfied = !anyOf || anyOf.length === 0 || anyOf.some((k) => effectiveKeys.has(k));
+  return {
+    satisfied: missingAllOf.length === 0 && anyOfSatisfied,
+    missingAllOf,
+    unmetAnyOf: anyOfSatisfied ? null : [...anyOf],
+  };
+}
+
+/** Human-readable phrase for what's unmet — mirrors `describeUnmetRequirement` in
+ *  FeatureConsole.tsx, resolving registry keys to their `label`s. `undefined` when satisfied. */
+export function describeUnmetFeatureRequirement(
+  status: FeatureRequirementStatus,
+): string | undefined {
+  if (status.satisfied) return undefined;
+  const label = (key: string) => featureDefByKey(key)?.label ?? key;
+  const parts: string[] = [];
+  if (status.missingAllOf.length > 0) parts.push(status.missingAllOf.map(label).join(" and "));
+  if (status.unmetAnyOf) parts.push(status.unmetAnyOf.map(label).join(" or "));
+  return parts.join(" and ");
+}

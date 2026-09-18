@@ -2,6 +2,7 @@ import {
   IsEnum,
   IsIn,
   IsOptional,
+  IsBoolean,
   IsDateString,
   IsString,
   MinLength,
@@ -57,4 +58,15 @@ export class CreateFeatureOverrideDto {
   @IsOptional()
   @IsDateString()
   expiresAt?: string;
+
+  @ApiPropertyOptional({
+    description:
+      "B524: explicit acknowledgment that this key's registry `requires` prerequisite is " +
+      "unmet for this tenant — required to proceed when it is (GRANT only; ignored for DENY). " +
+      "Defaults to false (enforce) when omitted; mirrors the addon-enable DTO's own field.",
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  acknowledgeUnmetRequires?: boolean;
 }

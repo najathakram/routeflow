@@ -11,6 +11,7 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  BadRequestException,
   ConflictException,
   NotFoundException,
 } from "@nestjs/common";
@@ -37,7 +38,12 @@ import { EnableAddonDto, DisableAddonDto } from "../billing/dto/manage-addon.dto
 import { CreateFeatureOverrideDto } from "./dto/manage-feature-override.dto";
 import { SetEntitlementsModeDto } from "./dto/set-entitlements-mode.dto";
 import { ExplainFeatureDiffDto } from "./dto/explain-feature-diff.dto";
-import { FEATURE_REGISTRY } from "../billing/feature-registry";
+import {
+  FEATURE_REGISTRY,
+  checkFeatureRequires,
+  describeUnmetFeatureRequirement,
+  featureDefByKey,
+} from "../billing/feature-registry";
 import { EntitlementsModeService } from "../billing/entitlements-mode.service";
 import { FeatureDiffService } from "../billing/feature-diff.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
@@ -357,7 +363,12 @@ export class PlatformAdminController {
     @Body() dto: EnableAddonDto,
     @CurrentUser() admin: JwtPayload,
   ) {
-    const result = await this.addonService.enableAddon(id, dto.addonKey, dto.stripePriceId);
+    const result = await this.addonService.enableAddon(
+      id,
+      dto.addonKey,
+      dto.stripePriceId,
+      dto.acknowledgeUnmetRequires,
+    );
     await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.ADDON_ENABLED, {
       addonKey: dto.addonKey,
     });
@@ -554,6 +565,41 @@ export class PlatformAdminController {
     return this.featureOverrides.list(id);
   }
 
+  /**
+   * B524: enforces the registry key's `requires` (allOf/anyOf) for a GRANT — the server twin of
+   * the console's own warn-and-confirm checkbox (#899), same as AddonService.enableAddon's
+   * identical guard. Lives HERE, in the controller, rather than inside
+   * `FeatureOverrideService.create` itself: `FeatureOverrideService` is the base of an existing
+   * DI chain (`FeatureResolverService` -> `EntitlementsService` -> `FeatureOverrideService`), so
+   * injecting the resolver into it would be circular, and duplicating the full
+   * preset+addons+denies resolution inside `FeatureOverrideService` just to avoid that cycle
+   * would be worse than the cycle itself. Safe only because `PlatformAdminController` is
+   * confirmed the ONE caller of `FeatureOverrideService.create` in the whole codebase —
+   * `feature-override-single-caller.spec.ts` fails the build the moment a second caller
+   * appears anywhere under `apps/api/src`, which is the signal to move this check instead of
+   * trusting this comment to still be true.
+   */
+  private async assertOverrideRequirementsMet(
+    tenantId: string,
+    dto: CreateFeatureOverrideDto,
+  ): Promise<void> {
+    if (dto.effect !== "GRANT" || dto.acknowledgeUnmetRequires) return;
+    const def = featureDefByKey(dto.featureKey);
+    if (!def?.requires) return;
+    const resolved = await this.authority.resolveAll(tenantId);
+    if (!resolved) return; // resolution itself failed elsewhere — see AddonService's identical note
+    const effectiveKeys = new Set(
+      [...resolved.byKey.entries()].filter(([, v]) => v.effective).map(([k]) => k),
+    );
+    const status = checkFeatureRequires(def.requires, effectiveKeys);
+    if (!status.satisfied) {
+      throw new BadRequestException(
+        `"${dto.featureKey}" depends on ${describeUnmetFeatureRequirement(status)}, which this ` +
+          `tenant does not currently have — pass acknowledgeUnmetRequires to grant it anyway.`,
+      );
+    }
+  }
+
   @Post("tenants/:id/feature-overrides")
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
@@ -564,6 +610,7 @@ export class PlatformAdminController {
     @Body() dto: CreateFeatureOverrideDto,
     @CurrentUser() admin: JwtPayload,
   ) {
+    await this.assertOverrideRequirementsMet(id, dto);
     const result = await this.featureOverrides.create({
       tenantId: id,
       featureKey: dto.featureKey,

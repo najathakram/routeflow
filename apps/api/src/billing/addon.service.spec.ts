@@ -76,6 +76,10 @@ interface Opts {
   stripe?: any;
   /** Override tenantSubscription.findUnique's resolved value (default null — no Stripe sub). */
   subscription?: any;
+  /** B524: registry keys this tenant currently has effective, for featureResolver.resolve()'s
+   *  `byKey` map. Default `[]` (nothing effective). `null` simulates resolution FAILURE
+   *  (DB down / unseeded catalog) — the resolver returns `null`, not a map. */
+  effectiveKeys?: string[] | null;
 }
 
 function make(opts: Opts = {}) {
@@ -93,7 +97,16 @@ function make(opts: Opts = {}) {
   const catalog = {
     getPublishedCatalog: jest.fn().mockResolvedValue(published(opts.publishedSkus ?? [])),
   } as any;
-  const featureResolver = { invalidate: jest.fn() } as any;
+  const resolvedValue =
+    opts.effectiveKeys === null
+      ? null
+      : {
+          byKey: new Map((opts.effectiveKeys ?? []).map((k) => [k, { key: k, effective: true }])),
+        };
+  const featureResolver = {
+    invalidate: jest.fn(),
+    resolve: jest.fn().mockResolvedValue(resolvedValue),
+  } as any;
   const svc = new AddonService(prisma, stripe, entitlements, catalog, featureResolver);
   return { svc, prisma, entitlements, catalog, stripe, featureResolver };
 }
@@ -400,5 +413,52 @@ describe("AddonService.enableAddon — B342 concurrency lock", () => {
       expect.objectContaining({ key: "addon:t1:ai_scanning", mode: "wait" }),
       expect.any(Function),
     );
+  });
+});
+
+describe("AddonService.enableAddon — B524 requires enforcement", () => {
+  it("a key with no registry entry is a no-op passthrough (never calls featureResolver.resolve)", async () => {
+    const { svc, prisma, featureResolver } = make();
+    await svc.enableAddon("t1", "some_legacy_key_not_in_registry");
+    expect(prisma.tenantAddon.upsert).toHaveBeenCalled();
+    expect(featureResolver.resolve).not.toHaveBeenCalled();
+  });
+
+  it("a registered key with no `requires` is a no-op passthrough", async () => {
+    // "recurring_routes" is a real FEATURE_REGISTRY row with no `requires` and, unlike "msrp",
+    // isn't SKU-bridged — no publishedSkus fixture needed to get past an unrelated check first.
+    const { svc, prisma, featureResolver } = make();
+    await svc.enableAddon("t1", "recurring_routes");
+    expect(prisma.tenantAddon.upsert).toHaveBeenCalled();
+    expect(featureResolver.resolve).not.toHaveBeenCalled();
+  });
+
+  it("400s driver_payments (requires anyOf recurring_routes/order_delivery) when neither is effective, writes nothing", async () => {
+    const { svc, prisma } = make({ effectiveKeys: [] });
+    await expect(svc.enableAddon("t1", "driver_payments")).rejects.toThrow(BadRequestException);
+    await expect(svc.enableAddon("t1", "driver_payments")).rejects.toThrow(
+      /depends on .*acme.*does not currently have/,
+    );
+    expect(prisma.tenantAddon.upsert).not.toHaveBeenCalled();
+  });
+
+  it("enables driver_payments when ONE of the anyOf prerequisites is effective", async () => {
+    const { svc, prisma } = make({ effectiveKeys: ["recurring_routes"] });
+    await svc.enableAddon("t1", "driver_payments");
+    expect(prisma.tenantAddon.upsert).toHaveBeenCalled();
+  });
+
+  it("enables driver_payments with neither prerequisite when acknowledgeUnmetRequires is true", async () => {
+    const { svc, prisma, featureResolver } = make({ effectiveKeys: [] });
+    await svc.enableAddon("t1", "driver_payments", undefined, true);
+    expect(prisma.tenantAddon.upsert).toHaveBeenCalled();
+    // Acknowledged — the check short-circuits before ever resolving effective keys.
+    expect(featureResolver.resolve).not.toHaveBeenCalled();
+  });
+
+  it("proceeds (fails open) when featureResolver.resolve itself fails (returns null) — a separate, already-surfaced failure mode", async () => {
+    const { svc, prisma } = make({ effectiveKeys: null });
+    await svc.enableAddon("t1", "driver_payments");
+    expect(prisma.tenantAddon.upsert).toHaveBeenCalled();
   });
 });
