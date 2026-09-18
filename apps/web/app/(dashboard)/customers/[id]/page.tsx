@@ -45,6 +45,7 @@ import {
   Input,
   StatCard,
   cn,
+  TAP_TARGET,
   useToast,
   type BadgeStatus,
 } from "@routeflow/ui/web";
@@ -1300,14 +1301,14 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                         <div className="flex items-center justify-end gap-1">
                           <button
                             title="Edit override"
-                            className="rounded p-1.5 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy"
+                            className={cn(TAP_TARGET, "rounded p-1.5 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy")}
                             onClick={() => openEdit(cp)}
                           >
                             <Pencil className="h-4 w-4" />
                           </button>
                           <button
                             title="Delete override"
-                            className="rounded p-1.5 text-navy/70 transition-colors hover:bg-danger-bg hover:text-danger"
+                            className={cn(TAP_TARGET, "rounded p-1.5 text-navy/70 transition-colors hover:bg-danger-bg hover:text-danger")}
                             onClick={() => setDeletingPriceId(cp.id)}
                           >
                             <Trash2 className="h-4 w-4" />
@@ -1543,7 +1544,7 @@ function CommentsTab({ customerId }: { customerId: string }) {
                   </div>
                   <button
                     title="Delete comment"
-                    className="rounded p-1 text-navy/30 transition-colors hover:bg-danger-bg hover:text-danger"
+                    className={cn(TAP_TARGET, "rounded p-1 text-navy/30 transition-colors hover:bg-danger-bg hover:text-danger")}
                     onClick={() =>
                       deleteComment.mutate({
                         customerId,
@@ -1811,7 +1812,10 @@ function DocumentsTab({ customerId }: { customerId: string }) {
                 <button
                   onClick={() => handleDelete(d.id)}
                   title="Delete document"
-                  className="touch-reveal absolute right-2 top-2 rounded-full bg-white/90 p-1.5 text-navy/70 opacity-0 shadow transition hover:text-danger group-hover:opacity-100"
+                  className={cn(
+                    TAP_TARGET,
+                    "touch-reveal absolute right-2 top-2 rounded-full bg-white/90 text-navy/70 opacity-0 shadow transition hover:text-danger group-hover:opacity-100",
+                  )}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
@@ -2540,7 +2544,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                               <div className="touch-reveal absolute inset-0 flex items-center justify-center gap-1.5 bg-black/50 opacity-0 transition-opacity group-hover:opacity-100">
                                 <button
                                   onClick={() => setTaxDocLightbox(taxDocToViewerDoc(doc))}
-                                  className="rounded-full bg-white/90 p-1.5 text-navy hover:bg-white"
+                                  className={cn(TAP_TARGET, "rounded-full bg-white/90 text-navy hover:bg-white")}
                                   title="View full size"
                                 >
                                   <ZoomIn className="h-3.5 w-3.5" />
@@ -2548,7 +2552,10 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                                 {isOperator && (
                                   <button
                                     onClick={() => deleteTaxDoc.mutate(doc.key)}
-                                    className="rounded-full bg-white/90 p-1.5 text-red-600 hover:bg-white"
+                                    className={cn(
+                                      TAP_TARGET,
+                                      "rounded-full bg-white/90 text-red-600 hover:bg-white",
+                                    )}
                                     title="Delete"
                                   >
                                     <Trash2 className="h-3.5 w-3.5" />
@@ -2646,7 +2653,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                         {tag.name}
                         <button
                           title={`Remove tag "${tag.name}"`}
-                          className="touch-reveal rounded-full p-0.5 opacity-0 transition-opacity hover:bg-black/10 group-hover:opacity-100"
+                          className={cn(TAP_TARGET, "touch-reveal rounded-full p-0.5 opacity-0 transition-opacity hover:bg-black/10 group-hover:opacity-100")}
                           onClick={() =>
                             removeTag.mutate({
                               customerId: id,
@@ -2814,7 +2821,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                         <div className="flex shrink-0 items-center gap-0.5">
                           <button
                             title="Edit contact"
-                            className="rounded p-1.5 text-navy/70 transition-colors hover:bg-white hover:text-navy"
+                            className={cn(TAP_TARGET, "rounded p-1.5 text-navy/70 transition-colors hover:bg-white hover:text-navy")}
                             onClick={() => {
                               setEditingContact(contact);
                               setIsContactModalOpen(true);
@@ -2824,7 +2831,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                           </button>
                           <button
                             title="Delete contact"
-                            className="rounded p-1.5 text-navy/70 transition-colors hover:bg-danger-bg hover:text-danger"
+                            className={cn(TAP_TARGET, "rounded p-1.5 text-navy/70 transition-colors hover:bg-danger-bg hover:text-danger")}
                             onClick={() => setDeletingContactId(contact.id)}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
@@ -3426,7 +3433,10 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                                         onClick={() => handleSetPrimaryAddress(addr.id)}
                                         disabled={updateAddress.isPending}
                                         title="Set as primary"
-                                        className="rounded p-1 text-navy/30 transition-colors hover:bg-warning/10 hover:text-warning disabled:opacity-40"
+                                        className={cn(
+                                          TAP_TARGET,
+                                          "rounded p-1 text-navy/30 transition-colors hover:bg-warning/10 hover:text-warning disabled:opacity-40",
+                                        )}
                                       >
                                         <Star className="h-3.5 w-3.5" />
                                       </button>
@@ -3438,7 +3448,10 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                                         setIsAddAddressOpen(true);
                                       }}
                                       title="Edit"
-                                      className="rounded p-1 text-navy/30 transition-colors hover:bg-surface-raised hover:text-navy"
+                                      className={cn(
+                                        TAP_TARGET,
+                                        "rounded p-1 text-navy/30 transition-colors hover:bg-surface-raised hover:text-navy",
+                                      )}
                                     >
                                       <Pencil className="h-3.5 w-3.5" />
                                     </button>
@@ -3446,7 +3459,10 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                                       type="button"
                                       onClick={() => setDeleteAddressConfirmId(addr.id)}
                                       title="Delete"
-                                      className="rounded p-1 text-navy/30 transition-colors hover:bg-danger/10 hover:text-danger"
+                                      className={cn(
+                                        TAP_TARGET,
+                                        "rounded p-1 text-navy/30 transition-colors hover:bg-danger/10 hover:text-danger",
+                                      )}
                                     >
                                       <Trash2 className="h-3.5 w-3.5" />
                                     </button>
@@ -3541,7 +3557,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                       <div className="flex shrink-0 items-center gap-1">
                         <button
                           title={tmpl.isActive ? "Pause template" : "Activate template"}
-                          className="rounded p-1.5 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy"
+                          className={cn(TAP_TARGET, "rounded p-1.5 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy")}
                           onClick={() =>
                             updateTemplate.mutate({
                               id: tmpl.id,
@@ -3560,7 +3576,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                         </button>
                         <button
                           title="Generate order now"
-                          className="rounded p-1.5 text-navy/70 transition-colors hover:bg-brand-50 hover:text-brand-600"
+                          className={cn(TAP_TARGET, "rounded p-1.5 text-navy/70 transition-colors hover:bg-brand-50 hover:text-brand-600")}
                           onClick={() =>
                             generateOrder.mutate(tmpl.id, {
                               onSuccess: () => window.alert(`Order generated for "${tmpl.name}"!`),
@@ -3571,7 +3587,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                         </button>
                         <button
                           title="Edit template"
-                          className="rounded p-1.5 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy"
+                          className={cn(TAP_TARGET, "rounded p-1.5 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy")}
                           onClick={() => {
                             setEditingTemplate(tmpl);
                             setIsStandingOrderOpen(true);
@@ -3581,7 +3597,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                         </button>
                         <button
                           title="Delete template"
-                          className="rounded p-1.5 text-navy/70 transition-colors hover:bg-danger-bg hover:text-danger"
+                          className={cn(TAP_TARGET, "rounded p-1.5 text-navy/70 transition-colors hover:bg-danger-bg hover:text-danger")}
                           onClick={() => setDeletingTemplateId(tmpl.id)}
                         >
                           <Trash2 className="h-4 w-4" />
