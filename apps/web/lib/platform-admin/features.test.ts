@@ -90,4 +90,25 @@ describe("enableTenantAddon", () => {
       addonKey: "ocr",
     });
   });
+
+  it("sends acknowledgeUnmetRequires only when true (B524 prep)", async () => {
+    mockPost.mockResolvedValueOnce({ data: { id: "addon-1" } });
+
+    await enableTenantAddon("tenant-1", "driver_payments", undefined, true);
+
+    expect(mockPost).toHaveBeenCalledWith("/platform-admin/tenants/tenant-1/addons/enable", {
+      addonKey: "driver_payments",
+      acknowledgeUnmetRequires: true,
+    });
+  });
+
+  it("omits acknowledgeUnmetRequires when false or absent — absent/false must mean 'enforce'", async () => {
+    mockPost.mockResolvedValueOnce({ data: { id: "addon-1" } });
+
+    await enableTenantAddon("tenant-1", "driver_payments", undefined, false);
+
+    expect(mockPost).toHaveBeenCalledWith("/platform-admin/tenants/tenant-1/addons/enable", {
+      addonKey: "driver_payments",
+    });
+  });
 });

@@ -1238,10 +1238,15 @@ export const FeatureOverridesSection = React.forwardRef<
     setSubmitting(true);
     setPreviewError(null);
     try {
-      await superAdminClient.post(
-        `/platform-admin/tenants/${tenant.id}/feature-overrides`,
-        pendingCreate,
-      );
+      await superAdminClient.post(`/platform-admin/tenants/${tenant.id}/feature-overrides`, {
+        ...pendingCreate,
+        // B524 prep: this form has no missing-requires warning UI yet (unlike
+        // EnableAddonModal's amber-box + checkbox), so there is nothing for an operator to
+        // acknowledge here — always false. Wired now so the wire shape exists ahead of B524's
+        // server-side enforcement landing; the full parity UI (effectiveKeys fetch +
+        // missingRequires computation + warning box) is tracked as its own follow-up.
+        acknowledgeUnmetRequires: false,
+      });
       setPreviewResponse(null);
       setPendingCreate(null);
       setShowForm(false);

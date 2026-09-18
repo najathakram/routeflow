@@ -84,6 +84,10 @@ export function EnableAddonModal({
         tenantId,
         addonKey,
         effectiveChoice === "stripe" ? priceId.trim() : undefined,
+        // Only meaningful (and only ever true) when the amber warning below is actually shown —
+        // ackUnmetRequirement starts false and there's no unmet requirement to acknowledge
+        // otherwise, so this never sends `true` for a row with no warning.
+        unmetRequirement ? ackUnmetRequirement : undefined,
       );
       onEnabled();
       onClose();

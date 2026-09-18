@@ -176,6 +176,8 @@ describe("Tenant detail page — Feature Console 'Customise' action (brief D tes
         kind: "COMP",
         reason: "Pilot waiver",
         expiresAt: null,
+        // B524 prep — always false until this form grows its own missing-requires warning UI.
+        acknowledgeUnmetRequires: false,
       },
     );
   });
