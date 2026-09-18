@@ -93,8 +93,9 @@ function make(opts: Opts = {}) {
   const catalog = {
     getPublishedCatalog: jest.fn().mockResolvedValue(published(opts.publishedSkus ?? [])),
   } as any;
-  const svc = new AddonService(prisma, stripe, entitlements, catalog);
-  return { svc, prisma, entitlements, catalog, stripe };
+  const featureResolver = { invalidate: jest.fn() } as any;
+  const svc = new AddonService(prisma, stripe, entitlements, catalog, featureResolver);
+  return { svc, prisma, entitlements, catalog, stripe, featureResolver };
 }
 
 describe("AddonService.enableAddon", () => {
@@ -120,15 +121,19 @@ describe("AddonService.enableAddon", () => {
       }),
     );
     expect(entitlements.invalidate).toHaveBeenCalledWith("t1");
+    // REG-B509: the resolver cache backing the Feature Console needs its own invalidation —
+    // entitlements.invalidate() alone leaves it stale for up to 30s.
+    expect(featureResolver.invalidate).toHaveBeenCalledWith("t1");
   });
 
   it("allows an unbridged legacy key (developer_mode) unchanged, and still invalidates", async () => {
-    const { svc, prisma, entitlements, catalog } = make({ publishedSkus: [] });
+    const { svc, prisma, entitlements, catalog, featureResolver } = make({ publishedSkus: [] });
 
     await svc.enableAddon("t1", "developer_mode");
 
     expect(prisma.tenantAddon.upsert).toHaveBeenCalled();
     expect(entitlements.invalidate).toHaveBeenCalledWith("t1");
+    expect(featureResolver.invalidate).toHaveBeenCalledWith("t1");
     // No SKU to validate → the published catalog is never even fetched.
     expect(catalog.getPublishedCatalog).not.toHaveBeenCalled();
   });
@@ -136,7 +141,7 @@ describe("AddonService.enableAddon", () => {
 
 describe("AddonService.disableAddon", () => {
   it("invalidates entitlements after disabling", async () => {
-    const { svc, prisma, entitlements } = make({
+    const { svc, prisma, entitlements, featureResolver } = make({
       existingAddon: { id: "addon1", addonKey: "msrp", active: true },
     });
 
@@ -148,6 +153,8 @@ describe("AddonService.disableAddon", () => {
       }),
     );
     expect(entitlements.invalidate).toHaveBeenCalledWith("t1");
+    // REG-B509: see the matching note in enableAddon's test above.
+    expect(featureResolver.invalidate).toHaveBeenCalledWith("t1");
   });
 
   it("REG-B107 T7 refuses when the Stripe delete fails (non-missing error)", async () => {
@@ -369,7 +376,8 @@ describe("AddonService.enableAddon — B342 concurrency lock", () => {
     const entitlements = { invalidate: jest.fn() } as any;
     // "ai_scanning" is not in LEGACY_ADDON_KEY_TO_SKU, so the catalog is never consulted.
     const catalog = { getPublishedCatalog: jest.fn() } as any;
-    const svc = new AddonService(prisma, stripe, entitlements, catalog);
+    const featureResolver = { invalidate: jest.fn() } as any;
+    const svc = new AddonService(prisma, stripe, entitlements, catalog, featureResolver);
 
     const [a, b] = await Promise.allSettled([
       svc.enableAddon("t1", "ai_scanning", "price_1"),
