@@ -577,7 +577,10 @@ function EditLineItems({
   return (
     <div className="space-y-2">
       {items.map((row, i) => (
-        <div key={i} className="grid grid-cols-[1fr_72px_72px_100px_32px] gap-2 items-start">
+        <div
+          key={i}
+          className="grid grid-cols-1 items-start gap-2 sm:grid-cols-[1fr_72px_72px_100px_32px]"
+        >
           <div>
             <SearchableProductPicker
               async
@@ -651,7 +654,7 @@ function EditLineItems({
             type="button"
             onClick={() => remove(i)}
             disabled={items.length === 1}
-            className="mt-6 h-9 rounded p-1 text-navy/30 hover:text-danger transition-colors disabled:opacity-20"
+            className="mt-1 h-9 justify-self-end rounded p-1 text-navy/30 transition-colors hover:text-danger disabled:opacity-20 sm:mt-6 sm:justify-self-auto"
           >
             <Trash2 className="h-4 w-4" />
           </button>
