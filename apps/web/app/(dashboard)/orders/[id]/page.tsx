@@ -1244,7 +1244,10 @@ function EditableLineItems({
         >
           <div
             className={cn(
-              "flex items-center gap-3 rounded-lg border px-3 py-2.5 transition-colors",
+              // REG-B521: flex-wrap so Qty/price/actions overflow to a second line under
+              // pressure instead of starving the name column to its min-w-0 floor (390px,
+              // a long custom item name) — the name column below gets a real minimum instead.
+              "flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border px-3 py-2.5 transition-colors",
               item.cancelled
                 ? "border-surface-border bg-surface-raised opacity-60"
                 : "border-surface-border bg-white",
@@ -1256,7 +1259,7 @@ function EditableLineItems({
             </div>
 
             {/* Product name */}
-            <div className="flex-1 min-w-0">
+            <div className="min-w-[140px] flex-1">
               {item.substituteProductId ? (
                 <div>
                   <span className="line-through text-xs text-navy/70 mr-1">
