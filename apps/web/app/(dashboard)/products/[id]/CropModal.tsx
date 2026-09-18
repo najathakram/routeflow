@@ -308,7 +308,7 @@ export function CropModal({ file, fileIndex, fileTotal, onConfirm, onCancel }: C
                   draggable={false}
                   style={{
                     display: "block",
-                    maxWidth: "640px",
+                    maxWidth: "min(640px, 90vw)",
                     maxHeight: "calc(90vh - 180px)",
                   }}
                 />
