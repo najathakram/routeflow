@@ -12,6 +12,31 @@
 
 ## process
 
+### L-197 · 2026-09-17 · process · #857 flagged "unmerged" by checking the wrong commit's ancestry
+
+- **Symptom:** a peer flagged bookkeeping-batch PR #873 for citing B502/#857 as landed, based on
+  checking that #857's original PR-branch tip commit is not an ancestor of `origin/master` —
+  and asked to reopen B502 and drop the code-map entry. `merge-base --is-ancestor` against the
+  actual landing commit (`0a365054`, found via `git log --grep`/the PR's own `mergeCommit.oid`),
+  plus a direct read of that commit's content in `origin/master`'s current tree, both confirmed
+  the fix is genuinely live — the correction would have reopened an already-fixed bug.
+- **Root cause:** #857 landed via a cherry-pick onto master under a NEW sha ("Cherry-picked from
+  the original 45+-commit-behind branch, verified byte-identical to its content") rather than a
+  merge of the branch tip — so the original branch's own commits are genuinely, correctly absent
+  from master's history, even though the fix itself is fully present under a different sha.
+  Checking ancestry (or eyeballing branch state) against the wrong candidate commit produces a
+  confident, wrong "unlanded" verdict for a bug that is actually fixed.
+- **Lesson:** **Before citing a bookkeeping/registry closure as landed or unlanded, resolve the
+  SPECIFIC commit that is supposed to carry the fix on master first — via `git log --grep` for
+  the PR's own `(#N)` tag, or the GH API's `mergeCommit.oid` — then run `merge-base
+  --is-ancestor <that sha> origin/master`. Never check the source branch's tip commit or infer
+  merge state from GitHub's PR view alone: a squash or cherry-pick can leave a branch's own
+  commits genuinely off master while its content is fully live under a different sha.**
+- **Guard:** none yet — propose the batch/landing checklist require pairing every
+  `already-fixed --pr <n>` citation with a recorded `merge-base --is-ancestor <landing-sha>
+  origin/master` (or `gh pr view <n> --json mergedAt,mergeCommit`) check in the same commit/PR
+  body, not just a PR number in a list.
+
 ## tooling
 
 ### L-191 · 2026-09-17 · tooling · MailboxCard.tsx JSX apostrophes only caught by a full web lint
@@ -277,19 +302,6 @@ null`; three RTL tests failed as if the trap never moved focus at all, while the
   the command line — every positional (spec path, pattern) goes BEFORE it.**
 - **Guard:** none yet — propose an engine arg lint rejecting tokens after `--reporters=...`, plus
   a RESUME-card review line.
-
-### L-106 · 2026-09-11 · tooling · train-4 close-out
-
-- **Symptom:** a final Jest command whose only targets were brand-new spec files exited 1 at
-  Baseline and was silently EXCLUDED from the verdict — close-out read "no regression" from a
-  command that produced no real pass/fail signal.
-- **Root cause:** Jest exits non-zero when a pattern matches zero existing tests (true at
-  Baseline, before the new spec exists); nothing distinguished that from "ran and failed."
-- **Lesson:** **A Jest invocation whose targets can legitimately not exist yet needs
-  `--passWithNoTests`; close-out must confirm the T#/REG tests actually EXECUTED (a per-test
-  result line), never infer it from exit code alone.**
-- **Guard:** none yet — propose `--passWithNoTests` on the Baseline invocation and a close-out
-  check that greps the run's JSON for the expected test titles.
 
 ### L-103 · 2026-09-10 · tooling · chore/next-15
 

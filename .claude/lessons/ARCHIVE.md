@@ -2551,3 +2551,18 @@ citations, closed-out with its own post-init assertion guard).
   no grants — gate for real"). Never let `?? []` erase that distinction.**
 - **Guard:** `plan-flags.test.tsx` (web) and `plan-flags.test.ts` (mobile) both pin the
   undefined-vs-`[]` pair.
+
+## Archived 2026-09-17 — headroom for L-197 (bookkeeping ancestry-check guard)
+
+### L-106 · 2026-09-11 · tooling · train-4 close-out
+
+- **Symptom:** a final Jest command whose only targets were brand-new spec files exited 1 at
+  Baseline and was silently EXCLUDED from the verdict — close-out read "no regression" from a
+  command that produced no real pass/fail signal.
+- **Root cause:** Jest exits non-zero when a pattern matches zero existing tests (true at
+  Baseline, before the new spec exists); nothing distinguished that from "ran and failed."
+- **Lesson:** **A Jest invocation whose targets can legitimately not exist yet needs
+  `--passWithNoTests`; close-out must confirm the T#/REG tests actually EXECUTED (a per-test
+  result line), never infer it from exit code alone.**
+- **Guard:** none yet — propose `--passWithNoTests` on the Baseline invocation and a close-out
+  check that greps the run's JSON for the expected test titles.
