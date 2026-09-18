@@ -2515,3 +2515,22 @@ citations, closed-out with its own post-init assertion guard).
 - **Guard:** `page.test.tsx`'s REG-743-F1 cases — an extra non-`PLAN_KEYS` catalog row is excluded
   from rendered options; a catalog with zero `PLAN_KEYS`-eligible rows falls back to exactly
   `PLAN_KEYS`.
+
+## Archived 2026-09-17 — headroom for L-195 (#862 revert near-miss lesson)
+
+### L-163 · 2026-09-15 · domain · Lite-L2 fix round: plan re-pin + frozen-catalog literal
+
+- **Symptom:** an admin plan change to LITE, applied later by the nightly cron, booked a -$249
+  ledger delta instead of the real -$150 and left the tenant on STARTER entitlements. Separately,
+  a "frozen" v11 catalog snapshot silently gained 5 flags it never actually had.
+- **Root cause:** two shapes of the same mistake. (1) A mutation validated a target plan against
+  the published catalog but never persisted WHICH version proved it valid (`planVersionId`) — a
+  later async step re-resolved against the tenant's stale pinned version, found nothing, and
+  silently priced the target as $0. (2) A supposedly-frozen historical definition derived itself
+  via `.filter()` over a live, growing shared constant, so every unrelated addition rewrote it.
+- **Lesson:** **Validating a value against a source of truth is not enough — persist the resolved
+  reference itself (the version id), so a LATER step reads the same evidence, not a stale one.
+  Anything meant to be a frozen/historical snapshot must be a literal, never a derivation from a
+  live source that can grow.**
+- **Guard:** `billing-cron.service.spec.ts` REG-1 (re-pin + real delta); `plan-catalog-v12.spec.ts`
+  pins v11 ENTERPRISE to its exact historical 13-flag literal.
