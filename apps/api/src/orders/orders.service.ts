@@ -1982,6 +1982,11 @@ export class OrdersService implements OnApplicationBootstrap {
     const commissionRatePct = this.parseCommissionRatePct(dto.commissionRatePct, user.role);
 
     const isStaffRole = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
+    // B318: the edit path (updateOrderItems' isStaffCreditEdit) already strips
+    // appliedCreditNotes for non-staff callers — a buyer or driver token could
+    // otherwise spend a customer's credit notes on create, a right the edit path
+    // denies them. Same gate here so the two paths agree.
+    const appliedCreditNotes = isStaffRole ? dto.appliedCreditNotes : undefined;
     if (isStaffRole) {
       // Operator/TENANT_ADMIN creates on behalf of a customer — customerId comes from the DTO
       if (!dto.customerId) throw new BadRequestException("customerId is required");
@@ -2134,11 +2139,11 @@ export class OrdersService implements OnApplicationBootstrap {
     // Credit-note selections: validate up-front (bad/expired/cross-customer/VOID
     // selections reject before any stock mutation). Fully-consumed re-submissions
     // are deliberately accepted (idempotent resubmit).
-    if (dto.appliedCreditNotes?.length) {
+    if (appliedCreditNotes?.length) {
       await this.creditNotes.validateSelectionsForCustomer(
         this.prisma.forTenant(),
         customerId,
-        dto.appliedCreditNotes,
+        appliedCreditNotes,
       );
     }
 
@@ -2683,14 +2688,14 @@ export class OrdersService implements OnApplicationBootstrap {
     // id, then settle (a harmless no-op until an invoice exists — settle bails
     // early when the order has no invoices yet). Short, dedicated Serializable tx
     // — NOT inside the stock/create transaction above.
-    if (dto.appliedCreditNotes !== undefined) {
+    if (appliedCreditNotes !== undefined) {
       await this.prisma.tenantTransaction(
         async (tx) => {
           await this.creditNotes.syncOrderCreditSelections(
             tx,
             order.id,
             customerId,
-            dto.appliedCreditNotes,
+            appliedCreditNotes,
           );
           await this.creditNotes.settleOrderCreditsInTx(tx, order.id);
         },
