@@ -9,7 +9,6 @@ import {
   HandCoins,
 } from "lucide-react";
 import { Eyebrow } from "./marketing";
-import { ScreenshotPlaceholder } from "./screenshot-placeholder";
 
 // Wholesalers-only content — deliberately does NOT reuse `FeatureCatalog`'s
 // capability grid or `FAQ` from the product page (owner ruling 2026-09-17):
@@ -28,7 +27,7 @@ const STEPS: Array<[string, string]> = [
   ],
   [
     "Route",
-    "The order joins the day's route. Stop order is optimized for time or distance and checked against real delivery windows, and re-optimizes if something changes mid-route.",
+    "The order joins the day's route. Stop order is optimized for time or distance and checked against real delivery windows.",
   ],
   [
     "Proof of delivery",
@@ -58,7 +57,18 @@ export function OrderLifecycle() {
           Every one of these steps is the same order record — nothing gets re-typed or re-priced
           between the phone call and the invoice.
         </p>
-        <ScreenshotPlaceholder label="Order builder — a real order being priced" />
+        {/* Plain <img>, not next/image (ruling B1, matching warehouse.webp usage
+            elsewhere in the marketing port); below the fold, so lazy. */}
+        {/* eslint-disable-next-line @next/next/no-img-element -- see above */}
+        <img
+          src="/marketing/order-builder.webp"
+          alt="RouteFlow order builder showing a wholesale order being priced line by line, with live subtotal and total."
+          width={1400}
+          height={933}
+          loading="lazy"
+          decoding="async"
+          className="lifecycle-screenshot"
+        />
       </div>
       <ol>
         {STEPS.map(([title, text], i) => (
