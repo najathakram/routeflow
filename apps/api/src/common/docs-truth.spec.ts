@@ -52,7 +52,7 @@ describe("CLAUDE.md truth (T1)", () => {
   });
 
   it("states the lessons-register byte cap enforced by validate-lessons.mjs", () => {
-    expect(claudeMd.includes("40,960") || claudeMd.includes("40960")).toBe(true);
+    expect(claudeMd.includes("65,536") || claudeMd.includes("65536")).toBe(true);
   });
 
   it("documents Jest for web in the web stack line (web has Jest + RTL, not Playwright-only)", () => {
