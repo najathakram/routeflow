@@ -1,0 +1,10 @@
+{"id":"B406","batch":"F55","tier":"T1","state":"already-fixed","pr":876,"proof":null,"evidence":"REG-B406 pins the raw UPDATE query text + bound tenantId; landed 21389a90 (#876), confirmed ancestor of origin/master"}
+{"id":"B521","batch":"F55","tier":"T1","state":"already-fixed","pr":891,"proof":null,"evidence":"orders/[id]/page.tsx line-item row gained flex-wrap + min-w name column; landed 3ac32e78 (#891), confirmed ancestor of origin/master"}
+{"id":"B522","batch":"F55","tier":"T1","state":"already-fixed","pr":895,"proof":null,"evidence":"landed 56c01d2b (#895), confirmed ancestor of origin/master; admin notification recipients now a real list"}
+{"id":"B526","batch":"F55","tier":"T1","state":"already-fixed","pr":874,"proof":null,"evidence":"landed 768617ab (#874), confirmed ancestor of origin/master"}
+{"id":"B527","batch":"F55","tier":"T1","state":"already-fixed","pr":877,"proof":null,"evidence":"landed bfb37e59 (#877), confirmed ancestor of origin/master"}
+{"id":"B528","batch":"F55","tier":"T1","state":"already-fixed","pr":878,"proof":null,"evidence":"landed 359e31c3 (#878), confirmed ancestor of origin/master"}
+{"id":"B529","batch":"F55","tier":"T1","state":"already-fixed","pr":881,"proof":null,"evidence":"landed 63ca7e92 (#881), confirmed ancestor of origin/master"}
+{"id":"B530","batch":"F55","tier":"T1","state":"already-fixed","pr":883,"proof":null,"evidence":"landed c120f846 (#883), confirmed ancestor of origin/master"}
+{"id":"B531","batch":"F55","tier":"T1","state":"already-fixed","pr":890,"proof":null,"evidence":"landed in two sequenced PRs: 3fb04b6a (#866, msrp/sales_agents) then 5297a736 (#890, remaining six) -- both confirmed ancestors of origin/master; all eight legacy toggles now removed, AVAILABLE_ADDONS=[]"}
+{"id":"B532","batch":"F55","tier":"T1","state":"already-fixed","pr":884,"proof":null,"evidence":"landed 67fe2e60 (#884), confirmed ancestor of origin/master"}

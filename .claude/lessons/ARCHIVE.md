@@ -2566,3 +2566,30 @@ citations, closed-out with its own post-init assertion guard).
   result line), never infer it from exit code alone.**
 - **Guard:** none yet — propose `--passWithNoTests` on the Baseline invocation and a close-out
   check that greps the run's JSON for the expected test titles.
+
+## Archived 2026-09-18 — headroom for L-199/L-200 (bookkeeping-batch window-3)
+
+### L-105 · 2026-09-11 · tooling · train-4 engine gate
+
+- **Symptom:** two engine runs lost their whole Jest gate to one flag position — a spec path
+  placed after `--reporters=default` was consumed as a second reporter MODULE NAME, not a test
+  target, so the run "passed" with zero real tests executed.
+- **Root cause:** Jest's CLI keeps swallowing bare tokens after `--reporters` (a list flag) until
+  the next `--`-prefixed option — a positional placed after it belongs to the flag, not the run.
+- **Lesson:** **`--reporters=default` (or any multi-value Jest flag) must be the LAST token on
+  the command line — every positional (spec path, pattern) goes BEFORE it.**
+- **Guard:** none yet — propose an engine arg lint rejecting tokens after `--reporters=...`, plus
+  a RESUME-card review line.
+
+### L-103 · 2026-09-10 · tooling · chore/next-15
+
+- **Symptom:** `npm run local:up` built fine, then `docker compose … up -d` failed on a
+  container-name conflict — piped through `| tail`, it read exit 0.
+- **Root cause:** `docker-compose.yml` hard-codes `container_name: routeflow_*` with no
+  top-level `name:` and no `-p`; from a worktree the project name defaults to the worktree
+  DIRECTORY, colliding on the SAME fixed names the main checkout's stack holds.
+- **Lesson:** **A compose file with hard-coded `container_name` needs an explicit `-p <project>`
+  (or top-level `name:`), never the cwd-derived default. Never pipe a compose/gate command
+  through `| tail`; it discards the real exit code.**
+- **Guard:** none yet — propose `-p routeflow` in `local:up`/`local:down`/`local:reset`, or a
+  top-level `name: routeflow`.

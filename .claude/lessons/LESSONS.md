@@ -40,7 +40,50 @@
   since a shallow clone's grafted boundary can misreport ancestry. A PR number in a list is not
   evidence that it landed.
 
+### L-200 · 2026-09-18 · process · removing a UI control is a different risk class than removing dead code (#866, B519)
+
+- **Symptom:** removing the legacy `AVAILABLE_ADDONS` toggle cards (superseded by the Feature
+  Console) nearly shipped as if it fully retired the `driver_payments` dependency-enforcement gap
+  (B519) — the legacy toggle was ONE of two unenforced paths to enable `driver_payments`, but the
+  Feature Console's own `EnableAddonModal.tsx` "Enable as add-on" action has the exact same
+  missing check and was untouched by the removal.
+- **Root cause:** treating "delete this UI control" like "delete this dead code" — dead code has
+  no side effect once removed, but a UI control can be the only CLIENT-SIDE path that provisions
+  or gates something server-side reads from a DIFFERENT table/flag. Removing it can make "no
+  guard reads this key" true and simultaneously irrelevant, because a sibling control still
+  reaches the same server capability unguarded.
+- **Lesson:** **Before removing a UI control (a toggle, a button, a form field), grep for every
+  OTHER client entry point that reaches the same server capability/endpoint — not just whether
+  server-side code still references the control's own key. A control can be safely deletable as
+  UI while the gap it exposed is still wide open through a sibling surface.**
+- **Guard:** none yet — propose a removal checklist item: "list every client call site of the
+  endpoint(s) this control posts to, not just this control's own references."
+
 ## tooling
+
+### L-199 · 2026-09-18 · tooling · a test that pins a literal from another workspace's prose is an invisible cross-workspace coupling
+
+- **Symptom:** `docs-truth.spec.ts` (in `apps/api`) hardcoded the lessons-register byte cap as a
+  second literal, mirroring `.claude/lessons/_meta.json`'s value. Editing that JSON file (a
+  docs-only change, in a completely different part of the repo) broke this API-workspace spec
+  and took CI down repo-wide — nothing about editing a lessons-register config file signalled
+  that an unrelated API test would fail. Fixed in #889 by reading `_meta.json.maxBytes` at test
+  time instead of hardcoding it a second time.
+- **Root cause:** a test asserting "doc X says N" by hardcoding N itself creates a coupling
+  invisible from either side — the doc's own author has no reason to grep `apps/api` before
+  editing a `.claude/` config file, and the test's author, writing it once, has no reason to
+  expect the doc to ever change. Because the coupling crosses a workspace boundary (docs vs.
+  API) it also crosses whichever team/session boundary usually tracks "what does this change
+  affect."
+- **Lesson:** **A test that pins a literal sourced from a prose document or config file elsewhere
+  in the repo must read that value at test time, never re-type it as a second hardcoded literal —
+  and because of this, a "docs-only" change is NOT exempt from the full verify chain whenever it
+  touches a value some other workspace's test might have pinned. Grep for the literal itself
+  (not just the file) across every workspace before treating a docs edit as safe to skip CI on.**
+- **Guard:** `docs-truth.spec.ts` now reads `_meta.json.maxBytes` dynamically (#889); no repo-wide
+  grep-for-pinned-literals check exists yet — propose one as part of the docs-only-push exemption
+  logic itself, so a future docs change to a value with cross-workspace test pins can't silently
+  skip the chain that would have caught it.
 
 ### L-198 · 2026-09-18 · tooling · `gh run rerun` replays the original checkout, not a fresh merge-ref
 
@@ -313,31 +356,6 @@ null`; three RTL tests failed as if the trap never moved focus at all, while the
 - **Guard:** both constants now carry `as const` with an inline comment
   (`packages/pricing/src/payment-confirmation.ts`); `payment-confirmation.spec.ts` pins both
   filters' exact shape.
-
-### L-105 · 2026-09-11 · tooling · train-4 engine gate
-
-- **Symptom:** two engine runs lost their whole Jest gate to one flag position — a spec path
-  placed after `--reporters=default` was consumed as a second reporter MODULE NAME, not a test
-  target, so the run "passed" with zero real tests executed.
-- **Root cause:** Jest's CLI keeps swallowing bare tokens after `--reporters` (a list flag) until
-  the next `--`-prefixed option — a positional placed after it belongs to the flag, not the run.
-- **Lesson:** **`--reporters=default` (or any multi-value Jest flag) must be the LAST token on
-  the command line — every positional (spec path, pattern) goes BEFORE it.**
-- **Guard:** none yet — propose an engine arg lint rejecting tokens after `--reporters=...`, plus
-  a RESUME-card review line.
-
-### L-103 · 2026-09-10 · tooling · chore/next-15
-
-- **Symptom:** `npm run local:up` built fine, then `docker compose … up -d` failed on a
-  container-name conflict — piped through `| tail`, it read exit 0.
-- **Root cause:** `docker-compose.yml` hard-codes `container_name: routeflow_*` with no
-  top-level `name:` and no `-p`; from a worktree the project name defaults to the worktree
-  DIRECTORY, colliding on the SAME fixed names the main checkout's stack holds.
-- **Lesson:** **A compose file with hard-coded `container_name` needs an explicit `-p <project>`
-  (or top-level `name:`), never the cwd-derived default. Never pipe a compose/gate command
-  through `| tail`; it discards the real exit code.**
-- **Guard:** none yet — propose `-p routeflow` in `local:up`/`local:down`/`local:reset`, or a
-  top-level `name: routeflow`.
 
 ### L-149 · 2026-09-15 · tooling · #743 fix-round T8 lesson-id staleness
 
