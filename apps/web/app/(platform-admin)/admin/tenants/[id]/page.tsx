@@ -3,15 +3,7 @@
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import {
-  DEVELOPER_MODE_ADDON,
-  DRIVER_PAYMENTS_ADDON,
-  RECURRING_ROUTES_ADDON,
-  ORDER_DELIVERY_ADDON,
-  OCR_ADDON,
-  FEATURE_OVERRIDE_KIND_VALUES,
-  type FeatureOverrideKind,
-} from "@routeflow/types";
+import { FEATURE_OVERRIDE_KIND_VALUES, type FeatureOverrideKind } from "@routeflow/types";
 import type { FeatureRegistryRow } from "@routeflow/types";
 import { superAdminClient } from "@/lib/admin-api";
 import { setTenantCookie } from "@/lib/tenant-cookie";
@@ -109,12 +101,6 @@ const PLANS = ["STARTER", "PROFESSIONAL", "ENTERPRISE"] as const;
 
 const AVAILABLE_ADDONS = [
   {
-    key: "tobacco_dealer",
-    name: "Regulated compliance pack",
-    description:
-      "Regulated Items compliance pack — license-column ledgers, monthly tobacco reports, regulated filings & range reports, and the analytics-exclusion option inside the Regulated Items hub (legacy key: tobacco_dealer)",
-  },
-  {
     key: "msrp",
     name: "MSRP on invoices",
     description:
@@ -125,48 +111,6 @@ const AVAILABLE_ADDONS = [
     name: "Sales agents & commissions",
     description:
       "Agent records, customer attribution, commission accrual on invoices, statements and payouts",
-  },
-  {
-    key: DRIVER_PAYMENTS_ADDON,
-    name: "Driver payments (at-door collection)",
-    description:
-      "Let drivers collect money at the door when completing a stop (cash, card, cheque, Zelle). " +
-      "Server-enforced: while OFF, collection is blocked (403) and drivers complete stops on " +
-      "account — deliveries, proof-of-delivery, and invoicing continue unchanged; the office " +
-      "records payments instead. Turn ON only for tenants whose drivers handle money.",
-  },
-  {
-    key: RECURRING_ROUTES_ADDON,
-    name: "Recurring routes",
-    description:
-      "Standing route templates and scheduled dispatch — fixed customer rounds the tenant " +
-      "re-runs (Dispatch → Routes). Independent of Order delivery; enable either or both.",
-  },
-  {
-    key: ORDER_DELIVERY_ADDON,
-    name: "Order delivery (ad-hoc trips)",
-    description:
-      "Plan one-shot delivery trips from selected orders: optimize the stop order, dispatch " +
-      "to a driver, and keep the full delivery history. Trips are never reused. Independent " +
-      "of Recurring routes; enable either or both.",
-  },
-  {
-    key: OCR_ADDON,
-    name: "AI document scanning (OCR)",
-    description:
-      "AI reading of supplier documents — vendor-bill invoice scan, batch invoice scans, " +
-      "supplier-statement scan, and expense-receipt line extraction. Server-enforced: while " +
-      "OFF those four endpoints return 403 and documents are entered manually; everything " +
-      "else (review grids, applying past scans) keeps working. Per-tenant AI usage is " +
-      "metered either way. Turn ON for tenants who scan documents.",
-  },
-  {
-    key: DEVELOPER_MODE_ADDON,
-    name: "Developer Mode",
-    description:
-      "Unlock in-development surfaces for this tenant — currently the mobile driver-app " +
-      "preview (and dispatch API access for end-to-end testing). No longer unlocks Recurring " +
-      "routes or Order delivery: enable those add-ons individually.",
   },
 ];
 
