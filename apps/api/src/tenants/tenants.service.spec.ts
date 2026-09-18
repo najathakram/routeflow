@@ -56,6 +56,15 @@ describe("TenantsService", () => {
       id: `user-${++userSeq}`,
       ...data,
     }));
+    // B556: register() now creates a TenantSubscription row (with a resolved planKey)
+    // alongside the tenant — createMockPrisma() doesn't model this table by default, and its
+    // default $transaction mock closes over the model set from BEFORE this ad-hoc addition, so
+    // the transaction callback's `tx` needs its own override to see it (same pattern as
+    // platform-admin.service.spec.ts).
+    (prisma as any).tenantSubscription = { create: jest.fn().mockResolvedValue({}) };
+    (prisma.$transaction as jest.Mock).mockImplementation((fn: any) =>
+      fn({ ...prisma, tenantSubscription: (prisma as any).tenantSubscription }),
+    );
 
     email = { send: jest.fn() };
 
@@ -131,6 +140,27 @@ describe("TenantsService", () => {
       (prisma.tenant.findUnique as jest.Mock).mockResolvedValue({ id: "existing" });
       await expect(service.register(REGISTER_DTO)).rejects.toBeInstanceOf(ConflictException);
       expect(email.send).not.toHaveBeenCalled();
+    });
+
+    // B556: this used to create ONLY the Tenant row (plan: "STARTER") with no matching
+    // TenantSubscription — MrrService.computeOverview() gates MRR on
+    // TenantSubscription.planKey, not Tenant.plan, so a tenant that later gets activated
+    // without ever passing through the "Change Plan" admin action would show a real plan on
+    // its Tenant.plan badge while contributing exactly $0 to MRR forever. Repro-first: this
+    // assertion fails against the pre-fix register(), which never touches
+    // tx.tenantSubscription at all.
+    it("B556 creates a TenantSubscription row with planKey resolved from the STARTER default, alongside the tenant", async () => {
+      email.send.mockResolvedValue({ delivered: true, transport: "resend" });
+
+      await service.register(REGISTER_DTO);
+
+      expect((prisma as any).tenantSubscription.create).toHaveBeenCalledWith({
+        data: {
+          tenantId: expect.stringMatching(/^tenant-/),
+          currentPlan: "STARTER",
+          planKey: "STARTER",
+        },
+      });
     });
 
     it("creates the admin user as INACTIVE regardless of email outcome (gates login until verified)", async () => {

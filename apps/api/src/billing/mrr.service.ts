@@ -26,12 +26,17 @@ export interface MrrOverview {
    * shared transitionAndEmit() helper — this comment used to say otherwise; that was stale and
    * pointed investigators at the wrong mechanism (B544).
    *
-   * The gaps that DO exist today, and can drift `ledgerMrr` away from `mrr`:
-   *   - PlatformAdminService.updateStatus() (the tenant detail page's plain Suspend/Reactivate
-   *     button) flips tenant.status with a raw write and never emits a delta, in either
-   *     direction.
-   *   - PlatformAdminService.activateManualSubscription() can move a tenant into the paying set
-   *     (status/planKey) without emitting one either.
+   * B557 (fixed): PlatformAdminService.updateStatus() (the tenant detail page's plain
+   * Suspend/Reactivate button) used to flip tenant.status with a raw write and never emit a
+   * delta, in either direction — it now emits a compensating SUBSCRIPTION_SUSPENDED/
+   * SUBSCRIPTION_CANCELED/SUBSCRIPTION_RESUMED delta whenever the write crosses this file's
+   * payingWhere boundary. activateManualSubscription() (B551's mirror-image gap — could move a
+   * tenant into the paying set with no emit at all) is fixed the same way, booking a
+   * PLAN_CHANGED delta. Deliberately NOT fixed by narrowing this query to match payingWhere —
+   * that would make `mrr`/`ledgerMrr` agree by construction and permanently disable the
+   * reconciliation check the divergence between them exists to provide.
+   *
+   * The gaps that DO still exist today, and can drift `ledgerMrr` away from `mrr`:
    *   - BillingService.reconcilePriceLedger() only mirrors this file's `planKey != null`
    *     condition, not the full four-part payingWhere (status/deletedAt/class too) — a price
    *     edit on a non-ACTIVE-but-still-PRODUCTION tenant can book a delta live `mrr` never sees.
