@@ -328,7 +328,12 @@ test.describe("Operator — Orders list delivery date-range filter, mobile (B506
   }) => {
     await setTenantCookie(context, BASE);
     await page.goto("/orders");
-    await expect(page.getByRole("heading", { name: "Orders" })).toBeVisible({ timeout: 10_000 });
+    // level: 2 — at 390px the mobile top bar's own "Orders" chrome (an h1) also
+    // matches this name, which made the bare locator ambiguous (strict-mode
+    // violation). The page's own heading is the h2.
+    await expect(page.getByRole("heading", { name: "Orders", level: 2 })).toBeVisible({
+      timeout: 10_000,
+    });
 
     const from = page.getByTitle("Delivery date from");
     const to = page.getByTitle("Delivery date to");
