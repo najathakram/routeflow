@@ -17,7 +17,6 @@ import {
   Search,
   SlidersHorizontal,
   DollarSign,
-  RefreshCcw,
 } from "lucide-react";
 import { Badge, Button, Modal, PageHeader, cn, useToast } from "@routeflow/ui/web";
 import { SearchableProductPicker } from "@/components/SearchableProductPicker";
@@ -2450,6 +2449,13 @@ function BulkSetCostModal({
 }
 
 // ─── Recompute Costs Modal (dry-run preview → apply) ──────────────────────────
+//
+// B562 (interim mitigation, owner-approved): every button that opened this modal
+// was removed below — recompute-costs is blind to raw order decrements and can
+// silently rewrite a tenant's whole inventory valuation while destroying the
+// `stockAfter` evidence needed to detect it (see the comment on
+// InventoryController.recomputeCosts). The component and its state are left in
+// place, unreachable from the UI, until B562's root cause is fixed.
 
 function RecomputeModal({ onClose }: { onClose: () => void }) {
   const recompute = useRecomputeCosts();
@@ -3052,30 +3058,25 @@ export default function InventoryPage() {
               })()}
             </p>
             <div className="flex gap-2">
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<DollarSign className="h-4 w-4" />}
-                onClick={() =>
-                  missingCostCount > 0 ? setShowBulkCostModal(true) : setShowRecomputeModal(true)
-                }
-                title={
-                  missingCostCount > 0
-                    ? `Set a cost basis for the ${missingCostCount} product(s) without one`
-                    : "Rebuild average costs from purchase history"
-                }
-              >
-                {missingCostCount > 0 ? `Set Costs (${missingCostCount})` : "Costs"}
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<RefreshCcw className="h-4 w-4" />}
-                onClick={() => setShowRecomputeModal(true)}
-                title="Replay purchase history to rebuild average costs (dry-run preview first)"
-              >
-                Recompute
-              </Button>
+              {/* B562 (interim mitigation): the dedicated "Recompute" button and the
+                  "Costs" button's recompute fallback (used when there were no missing
+                  costs) were removed here. recompute-costs is blind to raw order
+                  decrements and can silently rewrite a tenant's whole inventory
+                  valuation — see the controller comment on
+                  InventoryController.recomputeCosts. Only the "Set Costs" path (for
+                  products genuinely missing a cost basis) remains reachable. Do not
+                  re-add either entry point until B562's root cause is fixed. */}
+              {missingCostCount > 0 && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  leftIcon={<DollarSign className="h-4 w-4" />}
+                  onClick={() => setShowBulkCostModal(true)}
+                  title={`Set a cost basis for the ${missingCostCount} product(s) without one`}
+                >
+                  {`Set Costs (${missingCostCount})`}
+                </Button>
+              )}
               <Button
                 size="sm"
                 variant="secondary"

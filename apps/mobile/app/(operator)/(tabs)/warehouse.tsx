@@ -196,10 +196,13 @@ export default function WarehouseScreen() {
                           },
                         ]
                       : []),
-                    {
-                      label: "Recompute costs",
-                      onPress: () => router.push("/(operator)/products/recompute-costs" as any),
-                    },
+                    // B562 (interim mitigation): the "Recompute costs" action was removed
+                    // here — recompute-costs is blind to raw order decrements and can
+                    // silently rewrite a tenant's whole inventory valuation (see the
+                    // controller comment on InventoryController.recomputeCosts). The
+                    // route at /(operator)/products/recompute-costs is left in place but
+                    // is no longer reachable from this menu. Do not re-add until B562's
+                    // root cause is fixed.
                   ])
                 }
               >
