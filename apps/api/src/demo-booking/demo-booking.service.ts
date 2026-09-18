@@ -73,6 +73,13 @@ export interface PublicBooking {
   status: DemoBookingStatus;
   meetUrl: string | null;
   durationMinutes: number;
+  /**
+   * Whether the booker's own confirmation email was actually delivered for the action that
+   * produced this response (B518). `true` for a plain read (`getByToken`) — no send was
+   * attempted, so there is nothing to report false. The booking itself is always real
+   * regardless of this flag; a failed send never fails the booking.
+   */
+  emailDelivered: boolean;
 }
 
 const MAX_WINDOW_DAYS = 62;
@@ -359,15 +366,15 @@ export class DemoBookingService {
       );
     }
 
-    await this.sendConfirmation(withEvent, manageToken, "booked");
-    return { booking: this.toPublic(withEvent, config), manageToken };
+    const emailDelivered = await this.sendConfirmation(withEvent, manageToken, "booked", config);
+    return { booking: this.toPublic(withEvent, config, emailDelivered), manageToken };
   }
 
   async cancel(token: string, reason?: string): Promise<PublicBooking> {
     const config = this.config();
     const booking = await this.requireByToken(token);
     if (booking.status === DemoBookingStatus.CANCELLED) {
-      return this.toPublic(booking, config);
+      return this.toPublic(booking, config, true);
     }
 
     if (booking.googleEventId) {
@@ -390,8 +397,8 @@ export class DemoBookingService {
         cancelReason: reason?.trim().slice(0, 500) || null,
       },
     });
-    await this.sendConfirmation(cancelled, token, "cancelled");
-    return this.toPublic(cancelled, config);
+    const emailDelivered = await this.sendConfirmation(cancelled, token, "cancelled", config);
+    return this.toPublic(cancelled, config, emailDelivered);
   }
 
   async reschedule(token: string, newStartISO: string): Promise<PublicBooking> {
@@ -406,7 +413,7 @@ export class DemoBookingService {
     if (!startsAt) throw new BadRequestException("A valid start time is required.");
     const endsAt = new Date(startsAt.getTime() + config.durationMinutes * 60_000);
     if (startsAt.getTime() === booking.startsAt.getTime()) {
-      return this.toPublic(booking, config);
+      return this.toPublic(booking, config, true);
     }
 
     // Same lock family, keyed on the TARGET slot — a reschedule landing on a
@@ -442,12 +449,14 @@ export class DemoBookingService {
       }
     }
 
-    await this.sendConfirmation(moved, token, "rescheduled");
-    return this.toPublic(moved, config);
+    const emailDelivered = await this.sendConfirmation(moved, token, "rescheduled", config);
+    return this.toPublic(moved, config, emailDelivered);
   }
 
   async getByToken(token: string): Promise<PublicBooking> {
-    return this.toPublic(await this.requireByToken(token), this.config());
+    // A read, not an action — nothing was sent this call, so there is nothing to report as
+    // undelivered.
+    return this.toPublic(await this.requireByToken(token), this.config(), true);
   }
 
   // ─────────────────────────────────────────────────────────────── internals
@@ -642,7 +651,11 @@ export class DemoBookingService {
     };
   }
 
-  private toPublic(booking: DemoBooking, config: DemoBookingConfig): PublicBooking {
+  private toPublic(
+    booking: DemoBooking,
+    config: DemoBookingConfig,
+    emailDelivered: boolean,
+  ): PublicBooking {
     return {
       id: booking.id,
       name: booking.name,
@@ -654,25 +667,73 @@ export class DemoBookingService {
       status: booking.status,
       meetUrl: booking.meetUrl,
       durationMinutes: config.durationMinutes,
+      emailDelivered,
     };
   }
 
-  /** Best-effort — a mail failure never fails the booking the visitor made. */
+  /**
+   * Best-effort — a mail failure never fails the booking the visitor made. Sends BOTH the
+   * booker's own confirmation and an internal notification to `config.demoBookingAdminEmail`
+   * (B518: the internal half never existed before this). Returns whether the booker's own
+   * email was delivered — that is the only outcome the client response reports on; the admin
+   * send's result is logged but not returned.
+   */
   private async sendConfirmation(
     booking: DemoBooking,
     manageToken: string,
     kind: "booked" | "rescheduled" | "cancelled",
-  ): Promise<void> {
+    config: DemoBookingConfig,
+  ): Promise<boolean> {
+    const { subject, html } = buildBookingEmail(booking, manageToken, kind, webUrl());
+    const bookerDelivered = await this.sendBookingEmail(
+      booking.id,
+      kind,
+      "booker",
+      booking.email,
+      subject,
+      html,
+    );
+
+    const admin = buildAdminNotificationEmail(booking, kind, webUrl());
+    await this.sendBookingEmail(
+      booking.id,
+      kind,
+      "admin",
+      config.demoBookingAdminEmail,
+      admin.subject,
+      admin.html,
+    );
+
+    return bookerDelivered;
+  }
+
+  /**
+   * One send + one loud, identifiable failure path — shared by the booker and admin sends so
+   * neither can silently do nothing on failure. Never throws: a mail failure must never fail
+   * the booking action that triggered it.
+   */
+  private async sendBookingEmail(
+    bookingId: string,
+    kind: "booked" | "rescheduled" | "cancelled",
+    recipientKind: "booker" | "admin",
+    to: string,
+    subject: string,
+    html: string,
+  ): Promise<boolean> {
     try {
-      const { subject, html } = buildBookingEmail(booking, manageToken, kind, webUrl());
-      const result = await this.email.send({ to: booking.email, subject, html });
+      const result = await this.email.send({ to, subject, html });
       if (!result.delivered) {
         this.logger.warn(
-          `demo-booking: ${kind} email for ${booking.id} was not delivered (${result.error ?? "no transport"})`,
+          `demo-booking: ${kind} email to ${recipientKind} for booking ${bookingId} was not delivered (${result.error ?? "no transport"})`,
         );
+        return false;
       }
+      return true;
     } catch (error) {
-      this.logger.error(`demo-booking: ${kind} email for ${booking.id} threw — ${String(error)}`);
+      this.logger.error(
+        `demo-booking: ${kind} email to ${recipientKind} for booking ${bookingId} threw — ${String(error)}`,
+      );
+      return false;
     }
   }
 }
@@ -788,4 +849,52 @@ export function buildBookingEmail(
 </body></html>`;
 
   return { subject: `${heading} — ${when}`, html };
+}
+
+/**
+ * The internal "someone booked/cancelled/rescheduled a demo" notification (B518) — plain,
+ * information-dense, unlike the booker-facing email above. Every field is attacker-controlled
+ * (a public, unauthenticated form), so it goes through the same `escapeHtml` every other
+ * value from `booking` gets before landing in HTML.
+ */
+export function buildAdminNotificationEmail(
+  booking: DemoBooking,
+  kind: "booked" | "rescheduled" | "cancelled",
+  baseUrl: string,
+): { subject: string; html: string } {
+  const when = formatSlot(booking);
+  const heading =
+    kind === "cancelled"
+      ? "Demo booking cancelled"
+      : kind === "rescheduled"
+        ? "Demo booking rescheduled"
+        : "New demo booking";
+  const rows: Array<[string, string]> = [
+    ["When", when],
+    ["Name", booking.name],
+    ["Company", booking.company],
+    ["Email", booking.email],
+    ...(booking.phone ? ([["Phone", booking.phone]] as Array<[string, string]>) : []),
+    ...(booking.notes ? ([["Notes", booking.notes]] as Array<[string, string]>) : []),
+    ["Booking id", booking.id],
+    ["Source page", booking.sourcePage ?? "(unknown)"],
+  ];
+  const rowsHtml = rows
+    .map(
+      ([label, value]) =>
+        `<tr><td style="padding:4px 12px 4px 0;color:#4c607a;white-space:nowrap;vertical-align:top;">${escapeHtml(label)}</td><td style="padding:4px 0;">${escapeHtml(value)}</td></tr>`,
+    )
+    .join("");
+
+  const html = `<!doctype html><html><body style="margin:0;padding:24px;background:#eef3fb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;color:#152d51;">
+  <div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:18px;padding:32px;">
+    <h1 style="margin:0 0 12px;font-size:20px;line-height:1.3;">${escapeHtml(heading)}</h1>
+    <table style="width:100%;border-collapse:collapse;font-size:14px;">
+      ${rowsHtml}
+    </table>
+    <p style="margin:22px 0 0;font-size:12px;line-height:1.7;color:#738aa0;">${escapeHtml(baseUrl)}</p>
+  </div>
+</body></html>`;
+
+  return { subject: `${heading} — ${booking.company}`, html };
 }

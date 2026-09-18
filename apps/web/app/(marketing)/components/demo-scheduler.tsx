@@ -213,10 +213,18 @@ export function DemoScheduler() {
           <h2 id="booking-title" tabIndex={-1} ref={headingRef}>
             You are booked in.
           </h2>
-          <p>
-            We have sent a confirmation to <strong>{booking.email}</strong>, and a calendar
-            invitation is on its way from Google.
-          </p>
+          {booking.emailDelivered ? (
+            <p>
+              We have sent a confirmation to <strong>{booking.email}</strong>, and a calendar
+              invitation is on its way from Google.
+            </p>
+          ) : (
+            <p>
+              Your spot is booked — but we could not confirm your email delivered. Save the
+              details below, and reach out to <strong>{site.email}</strong> if you do not hear
+              from us before your walkthrough.
+            </p>
+          )}
         </div>
         <dl className="booking-summary">
           <dt>When</dt>

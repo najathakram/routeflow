@@ -48,6 +48,8 @@ export interface Booking {
   status: DemoBookingStatus;
   meetUrl: string | null;
   durationMinutes: number;
+  /** Whether the confirmation email for this action was actually delivered (B518). */
+  emailDelivered: boolean;
 }
 
 export interface BookingDetails {

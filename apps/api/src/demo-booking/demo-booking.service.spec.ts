@@ -198,8 +198,13 @@ function fakeP2002(): Prisma.PrismaClientKnownRequestError {
 
 class TestEmail {
   sent: Array<{ to: string; subject: string; html: string }> = [];
+  /** When set, `send` reports this outcome for a matching `to` instead of always delivering. */
+  failFor: Set<string> = new Set();
   async send(params: { to: string; subject: string; html: string }) {
     this.sent.push(params);
+    if (this.failFor.has(params.to)) {
+      return { delivered: false, transport: "none" as const, error: "simulated failure" };
+    }
     return { delivered: true, transport: "resend" as const };
   }
 }
@@ -432,7 +437,55 @@ describe("DemoBookingService.create", () => {
     expect(prisma.rows).toHaveLength(1);
     expect(booking.id).toBeTruthy();
     expect(booking.meetUrl).toBeNull();
-    expect(email.sent).toHaveLength(1);
+    // REG-B518: one to the booker, one to the internal admin address.
+    expect(email.sent).toHaveLength(2);
+  });
+
+  // REG-B518: the admin notification used to not exist at all — a plain "was an email sent"
+  // check would have passed even with only the booker's copy going out. Assert BOTH recipients
+  // by address, not by count alone, so this can't pass on an accidental double-send to the
+  // booker either.
+  it("REG-B518: emails both the booker and the internal admin address", async () => {
+    const { email, service } = build();
+    await service.create(input);
+
+    const recipients = email.sent.map((m) => m.to);
+    expect(recipients).toContain("alex@example.com");
+    expect(recipients).toContain("hello@routeflow.info");
+    expect(email.sent).toHaveLength(2);
+  });
+
+  it("REG-B518: booking.emailDelivered is true when the booker's send succeeds, and the client response carries it", async () => {
+    const { service } = build();
+    const { booking } = await service.create(input);
+    expect(booking.emailDelivered).toBe(true);
+  });
+
+  it("REG-B518: a failed booker send is reported honestly on the response, and logged loudly with the booking id and recipient kind — without failing the booking", async () => {
+    const { email, service } = build();
+    email.failFor.add("alex@example.com");
+    const warnSpy = jest.spyOn((service as any).logger, "warn").mockImplementation(() => {});
+
+    const { booking } = await service.create(input);
+
+    expect(booking.status).toBe(DemoBookingStatus.CONFIRMED); // the booking itself still succeeds
+    expect(booking.emailDelivered).toBe(false);
+    const warnLine = warnSpy.mock.calls.map((c) => String(c[0])).find((line) => line.includes(booking.id));
+    expect(warnLine).toBeDefined();
+    expect(warnLine).toContain("booker");
+  });
+
+  it("REG-B518: a failed admin send is logged with the admin recipient kind, and never suppresses the booker's own delivered result", async () => {
+    const { email, service } = build();
+    email.failFor.add("hello@routeflow.info");
+    const warnSpy = jest.spyOn((service as any).logger, "warn").mockImplementation(() => {});
+
+    const { booking } = await service.create(input);
+
+    expect(booking.emailDelivered).toBe(true); // the booker's own send still succeeded
+    const warnLine = warnSpy.mock.calls.map((c) => String(c[0])).find((line) => line.includes(booking.id));
+    expect(warnLine).toBeDefined();
+    expect(warnLine).toContain("admin");
   });
 
   it("refuses a slot another booking already holds", async () => {
@@ -598,8 +651,13 @@ describe("DemoBookingService manage-token lifecycle", () => {
 
     expect(cancelled.status).toBe(DemoBookingStatus.CANCELLED);
     expect(calendar.deleted).toEqual(["evt-1"]);
-    expect(email.sent).toHaveLength(2);
-    expect(email.sent[1].subject).toContain("cancelled");
+    // create() sends booker+admin, cancel() sends booker+admin again — 4 total.
+    expect(email.sent).toHaveLength(4);
+    const cancelledEmails = email.sent.filter((m) => m.subject.toLowerCase().includes("cancelled"));
+    expect(cancelledEmails.map((m) => m.to)).toEqual(
+      expect.arrayContaining(["alex@example.com", "hello@routeflow.info"]),
+    );
+    expect(cancelled.emailDelivered).toBe(true);
   });
 
   it("cancels the row even when the calendar delete fails", async () => {
