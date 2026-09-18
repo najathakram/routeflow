@@ -16,7 +16,6 @@ import { CTA, Eyebrow } from "../components/marketing";
 import { FAQ } from "../components/faq";
 import { RetailerArt, RetailerDetail } from "../components/technology-art";
 import { authLinks } from "../components/auth-links";
-import { ScreenshotPlaceholder } from "../components/screenshot-placeholder";
 
 // Copy verbatim from the redesign's app/[page]/page.tsx `Retailers()` (M1 §2c).
 
@@ -115,7 +114,18 @@ export default function RetailersPage() {
             </article>
           ))}
         </div>
-        <ScreenshotPlaceholder label="Invoice detail — itemized, with the pay-by-card option" />
+        {/* Plain <img>, not next/image (ruling B1, matching warehouse.webp usage
+            elsewhere in the marketing port); below the fold, so lazy. */}
+        {/* eslint-disable-next-line @next/next/no-img-element -- see above */}
+        <img
+          src="/marketing/invoice-detail.webp"
+          alt="RouteFlow buyer-portal invoice detail showing itemized line items, balance due, and a Pay this invoice card-payment button."
+          width={1400}
+          height={933}
+          loading="lazy"
+          decoding="async"
+          className="invoice-screenshot"
+        />
       </section>
       <section className="retailer-start wrap">
         <div>

@@ -112,6 +112,8 @@ const NEW_ASSET_FILES = [
   "public/marketing/warehouse.webp",
   "public/marketing/retailer-technology.webp",
   "public/marketing/stock-cutout-v3.webp",
+  "public/marketing/order-builder.webp",
+  "public/marketing/invoice-detail.webp",
   "fonts/Geist-Variable.woff2",
   "fonts/GeistMono-Variable.woff2",
 ];
