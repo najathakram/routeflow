@@ -17,6 +17,7 @@ import {
   MARKETING_ASSET_PREFIXES,
   MARKETING_AUTH_PATHS,
   MARKETING_PAGE_PATHS,
+  WEB_ONLY_EXACT_PATHS,
 } from "@/lib/marketing-routes";
 import { BUYER_PRESENCE_COOKIE, OP_PRESENCE_COOKIE } from "@/lib/presence-cookies";
 import { routes } from "./lib/site";
@@ -198,6 +199,63 @@ describe("middleware mobile-UA proxy, auth CTAs — R-MKT T11", () => {
 
   it("does not exempt /login (R-MKT T11)", () => {
     expect([...MARKETING_AUTH_PATHS]).not.toContain("/login");
+  });
+});
+
+// B505: /admin-login and every /admin/* path have no Expo counterpart at all
+// — proxying them dropped a phone on "Unmatched Route" in the mobile-web
+// build instead of the platform-admin login/screens.
+describe("middleware mobile-UA proxy, platform-admin — R-B505", () => {
+  it("does not rewrite /admin-login for a mobile UA (R-B505)", () => {
+    const response = middleware(requestFor("/admin-login", IPHONE_UA));
+    expect(rewriteTarget(response)).toBeNull();
+  });
+
+  it.each(["/admin", "/admin/dashboard", "/admin/tenants", "/admin/tenants/abc-123"])(
+    "does not rewrite %s for a mobile UA (R-B505)",
+    (pathname) => {
+      const response = middleware(requestFor(pathname, IPHONE_UA));
+      expect(rewriteTarget(response)).toBeNull();
+    },
+  );
+
+  // Prefix match only — a page that merely starts with "admin" but isn't
+  // under the /admin path stays subject to the proxy like any other route.
+  it("still rewrites /administration for a mobile UA (B505-PIN)", () => {
+    const response = middleware(requestFor("/administration", IPHONE_UA));
+    expect(rewriteTarget(response)).toBe(`${MOBILE_WEB_URL}/administration`);
+  });
+});
+
+// B505: /verify-email is an email-link flow with no Expo screen — unlike
+// /forgot-password and /reset-password, which DO have Expo screens and so
+// are correctly left proxying (pinned below).
+describe("middleware mobile-UA proxy, verify-email — R-B505", () => {
+  it("does not rewrite /verify-email for a mobile UA (R-B505)", () => {
+    const response = middleware(requestFor("/verify-email", IPHONE_UA));
+    expect(rewriteTarget(response)).toBeNull();
+  });
+
+  it.each(["/forgot-password", "/reset-password"])(
+    "still rewrites %s for a mobile UA, unchanged — has an Expo screen (B505-PIN)",
+    (pathname) => {
+      const response = middleware(requestFor(pathname, IPHONE_UA));
+      expect(rewriteTarget(response)).toBe(`${MOBILE_WEB_URL}${pathname}`);
+    },
+  );
+
+  // Checked as part of B505 and confirmed to already have a real Expo
+  // counterpart — must keep proxying, not be added to the exempt set.
+  it.each(["/buyer/portal", "/change-password"])(
+    "still rewrites %s for a mobile UA, unchanged — has an Expo screen (B505-PIN)",
+    (pathname) => {
+      const response = middleware(requestFor(pathname, IPHONE_UA));
+      expect(rewriteTarget(response)).toBe(`${MOBILE_WEB_URL}${pathname}`);
+    },
+  );
+
+  it("WEB_ONLY_EXACT_PATHS is exactly /admin-login and /verify-email (B505-PIN)", () => {
+    expect([...WEB_ONLY_EXACT_PATHS].sort()).toEqual(["/admin-login", "/verify-email"].sort());
   });
 });
 

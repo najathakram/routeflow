@@ -46,6 +46,41 @@ export const MARKETING_PAGE_PATHS = [
 export const MARKETING_AUTH_PATHS = ["/signup", "/buyer/login", "/buyer/register"] as const;
 
 /**
+ * Web-only surfaces with NO Expo mobile-web equivalent, so a phone must never
+ * be proxied there (B505) — unlike the operator/buyer surfaces, which
+ * intentionally proxy to their own Expo screens, a phone hitting one of these
+ * would land on "Unmatched Route" in a completely different app.
+ *
+ * - `/admin-login` + everything under `/admin` — the platform-admin surface
+ *   has no Expo counterpart at all.
+ * - `/verify-email` — a signup-confirmation email link; `apps/mobile` has no
+ *   verify-email screen (unlike `/forgot-password` and `/reset-password`,
+ *   which DO have Expo screens at `apps/mobile/app/(auth)/{forgot,reset}-
+ *   password.tsx` and so are correctly left to proxy).
+ *
+ * Checked and confirmed to already have a real Expo counterpart, so
+ * deliberately NOT here: `/buyer/portal` (mobile `(customer)` group — sellers,
+ * cart, shelf), `/dashboard` and the other operator paths (mobile
+ * `(operator)`/`(tenant)` groups — see `OPERATOR_PATH_PREFIXES` in
+ * `lib/portal-routing.ts`), and `/change-password` (gated on already being
+ * authenticated, so a mobile visitor reaching it is already inside the Expo
+ * app, never this page).
+ */
+export const WEB_ONLY_EXACT_PATHS = ["/admin-login", "/verify-email"] as const;
+
+/** Prefix-matched web-only surface — every route under `/admin`. */
+export const WEB_ONLY_PATH_PREFIX = "/admin" as const;
+
+/** True when `pathname` is a web-only surface the mobile-UA proxy must skip (B505). */
+export function isWebOnlyPath(pathname: string): boolean {
+  return (
+    (WEB_ONLY_EXACT_PATHS as readonly string[]).includes(pathname) ||
+    pathname === WEB_ONLY_PATH_PREFIX ||
+    pathname.startsWith(`${WEB_ONLY_PATH_PREFIX}/`)
+  );
+}
+
+/**
  * Same-origin static asset prefixes the public pages reference.
  *
  * `/brand/` (icons, apple-touch-icon, OG image) and `/marketing/` (hero
