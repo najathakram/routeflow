@@ -2567,6 +2567,26 @@ citations, closed-out with its own post-init assertion guard).
 - **Guard:** none yet — propose `--passWithNoTests` on the Baseline invocation and a close-out
   check that greps the run's JSON for the expected test titles.
 
+## Archived 2026-09-18 — headroom for id-collision lesson (bookkeeping-batch window-4)
+
+### L-156 · 2026-09-15 · tooling · B420 mistiered proof, no lawful reclassify path
+
+- **Symptom:** B420 was correctly fixed and proven (T1), but its proof cited a standalone node
+  self-test (`validate-code-map.stamp.self-test.mjs`, run directly by `npm run verify`) as if it
+  were a jest suite. `campaign-check.mjs`'s T1 path scans jest report titles only, so the row could
+  never discharge — a fleet-wide push blocker, not a B420-specific defect.
+- **Root cause:** the correct target state, `already-fixed`, checks only that `evidence` is
+  non-empty (its `EVIDENCE_ONLY_STATES` path bypasses the jest lookup entirely) — but no command
+  transitions a `proven` row there. `already-fixed` refuses anything but `queued`/`in-flight`; the
+  only exit from `proven` (`reopen`) forces state to `regressed` and requires citing an actual
+  failing token or regression run — a false claim for a row that never regressed, just mistiered.
+- **Lesson:** **A state machine's error-recovery path must not force a claim that isn't true. When
+  the only documented exit from a wrong state requires asserting something false to use it, that is
+  a missing transition, not a workaround to take.** Fixed here via a direct, lock-checked,
+  single-field ledger edit (owner-approved, out of band) rather than fabricate a regression.
+- **Guard:** filed B426 (bugs.mjs needs a lawful `proven`→`already-fixed` reclassify path,
+  distinct from `reopen`'s regression semantics) so this doesn't recur as a manual escape hatch.
+
 ## Archived 2026-09-18 — headroom for L-199/L-200 (bookkeeping-batch window-3)
 
 ### L-105 · 2026-09-11 · tooling · train-4 engine gate

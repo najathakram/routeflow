@@ -40,6 +40,30 @@
   since a shallow clone's grafted boundary can misreport ancestry. A PR number in a list is not
   evidence that it landed.
 
+### L-201 · 2026-09-18 · process · four registry-id collisions in one session, all from allocating off an incomplete view
+
+- **Symptom:** four id collisions in one fleet window — a lead's "next free" read of merged
+  master missing an unmerged PR's reservations; a lane self-resolving to "the next real id" per
+  the B499-style protocol, blind to a second branch independently claiming the same id; two
+  allocations racing an unconfirmed in-flight request; a fix commit's own id reference going
+  stale when its registry record got renumbered during filing.
+- **Root cause:** each was a *correct* read of an *incomplete* view — merged master, one
+  worktree's local scan, or memory of a conversation. Nobody can see an id reserved in an
+  unmerged branch until it's fetched, and nothing forces that fetch before allocating. The
+  self-resolve protocol makes this WORSE: a tree resolving blind to a concurrent claim produces
+  two full entries at the same id, each with a plausible justification — harder to catch than a
+  naive duplicate, since neither looks wrong alone.
+- **Lesson:** **A shared, monotonically-allocated id cannot be safely allocated from memory,
+  merged-mainline state, or one worktree's local scan — only from a fresh `fetch --all --prune`
+  then `git log --all -- <path-for-that-id>` across every local AND remote ref, unmerged branches
+  included. Treat any id handed to you as unverified until you independently confirm it's free
+  the same way — even from the nominal allocation owner, whose view can be stale the moment a
+  concurrent branch reserves something they haven't fetched yet.**
+- **Guard:** none yet — scoping a `bugs.mjs next-id` proposal (fetch-all-refs scan as one
+  command, plus a companion "which open entries touch these file paths" query) so allocation
+  routes through a command, not memory. See [[L-197]] — same "don't trust local state" problem,
+  landed/unlanded side.
+
 ### L-200 · 2026-09-18 · process · removing a UI control is a different risk class than removing dead code (#866, B519)
 
 - **Symptom:** removing the legacy `AVAILABLE_ADDONS` toggle cards (superseded by the Feature
@@ -695,24 +719,6 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
 - **Guard:** `session-teardown.ts` imports and calls `editItemsSnapshotUserPrefix` +
   `clearStorageByPrefix` — grep for it before trusting this reasoning again on the same file.
   `apps/mobile/lib/edit-items-draft.ts` carries the design-rationale comment inline.
-
-### L-156 · 2026-09-15 · tooling · B420 mistiered proof, no lawful reclassify path
-
-- **Symptom:** B420 was correctly fixed and proven (T1), but its proof cited a standalone node
-  self-test (`validate-code-map.stamp.self-test.mjs`, run directly by `npm run verify`) as if it
-  were a jest suite. `campaign-check.mjs`'s T1 path scans jest report titles only, so the row could
-  never discharge — a fleet-wide push blocker, not a B420-specific defect.
-- **Root cause:** the correct target state, `already-fixed`, checks only that `evidence` is
-  non-empty (its `EVIDENCE_ONLY_STATES` path bypasses the jest lookup entirely) — but no command
-  transitions a `proven` row there. `already-fixed` refuses anything but `queued`/`in-flight`; the
-  only exit from `proven` (`reopen`) forces state to `regressed` and requires citing an actual
-  failing token or regression run — a false claim for a row that never regressed, just mistiered.
-- **Lesson:** **A state machine's error-recovery path must not force a claim that isn't true. When
-  the only documented exit from a wrong state requires asserting something false to use it, that is
-  a missing transition, not a workaround to take.** Fixed here via a direct, lock-checked,
-  single-field ledger edit (owner-approved, out of band) rather than fabricate a regression.
-- **Guard:** filed B426 (bugs.mjs needs a lawful `proven`→`already-fixed` reclassify path,
-  distinct from `reopen`'s regression semantics) so this doesn't recur as a manual escape hatch.
 
 ### L-143 · 2026-09-15 · domain · B421 (credit-applied vs paid, full fix)
 
