@@ -11,7 +11,14 @@
   longer names the dead `najathakram1` remote or the deleted `deploy-staging.yml`, doesn't claim a
   `develop` branch or "main is production-ready", and documents the `deployment_status`-triggered
   E2E flow; CLAUDE.md no longer lists Zustand in the web stack and states the lessons-register
-  40,960-byte cap `validate-lessons.mjs` enforces. `no-dead-deps.spec.ts` proves four packages
+  byte cap `validate-lessons.mjs` enforces. **(2026-09-18, #889)** that assertion no longer
+  hardcodes the literal — it reads `.claude/lessons/_meta.json`'s `maxBytes` at test time and
+  checks CLAUDE.md states that value (grouped or plain), so the two can never drift again; caught
+  itself failing CI-wide within minutes of #879 changing the prose to 65,536 without updating this
+  spec's own then-hardcoded `40,960` — the generalizable rule (a repo-truth spec pinning a
+  documented literal is NOT exempt from the full verify chain on a docs-only change, because the
+  docs ARE the thing under test) is the reason `docs-truth.spec.ts` changes always run full CI.
+  `no-dead-deps.spec.ts` proves four packages
   removed as verified zero-reference dead weight stay removed, on BOTH halves (manifest no longer
   declares it AND no source file under the app's tree imports it): `zustand` from `apps/web`
   (web state is TanStack Query + context — see [`web`](web.md) `app/providers.tsx`) and

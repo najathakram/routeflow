@@ -122,6 +122,10 @@ now contributes alongside api/mobile).
   `app/(marketing)/marketing-port.static.test.ts` (MKT-PIN: dead asset/dependency scans,
   `globals.css`/`tailwind.config.ts` byte-identical to the branch baseline, one tokenised
   `--ring` focus rule — the two-colours-hardcoded finding from review is fixed and pinned here;
+  **T7's `GLOBALS_CSS_SHA256` re-pinned 2026-09-18 (#877)** after B511's `touch-reveal` addition
+  legitimately changed `globals.css` — this pin is a ONE-TIME containment check that the
+  marketing port didn't leak into shared files, not a permanent freeze; a legitimate future
+  `globals.css` change updates the hash the same way, like any snapshot test;
   plus a `.signin-menu [role="menuitem"]` CSS-rule-parser pin, R-MKT signin-menu, PR #673
   [[L-098]]: structural `display: flex` + `white-space: nowrap`, the anchor's own `:focus-visible`
   ring, no inner-child outline),
