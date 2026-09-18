@@ -682,8 +682,12 @@ export default function OrdersPage() {
           </div>
         )}
 
-        {/* Delivery date range filter */}
-        <div className="flex items-center gap-1.5">
+        {/* Delivery date range filter. flex-wrap here (not just on the outer
+            filter bar) matters: this whole block is a single flex item in
+            that row, so without its own wrap the "to [date]" half ran past
+            the viewport edge at 390px instead of dropping to a second line
+            the way every other filter control already does (B506). */}
+        <div className="flex flex-wrap items-center gap-1.5">
           <Calendar className="h-4 w-4 text-navy/70" />
           <span className="text-xs text-navy/70 font-medium">Delivery:</span>
           <input
