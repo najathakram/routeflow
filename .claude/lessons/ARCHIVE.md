@@ -2567,6 +2567,23 @@ citations, closed-out with its own post-init assertion guard).
 - **Guard:** none yet — propose `--passWithNoTests` on the Baseline invocation and a close-out
   check that greps the run's JSON for the expected test titles.
 
+## Archived 2026-09-18 — headroom for source-text-assertion lesson (bookkeeping-batch window-6)
+
+### L-172 · 2026-09-16 · tooling · #779 (nested timeout mismatch)
+
+- **Symptom:** raising a Jest test's own timeout to fix one flake introduced a new, harder-to-
+  diagnose flake in the same test.
+- **Root cause:** the test's Jest-level timeout was raised without raising the timeout on the
+  `spawnSync` call running _inside_ it, so the inner call now times out and throws before Jest's
+  own outer timeout would ever fire — moving the failure mode to a confusing error shape instead
+  of fixing it.
+- **Lesson:** **When a test wraps a call with its own timeout (spawnSync, an HTTP client, a DB
+  pool), raising the test's outer timeout without raising the inner one moves the failure mode,
+  it doesn't fix it — always raise both together, inner first.**
+- **Guard:** none named in the PR body — propose a lint/review checklist item pairing any Jest
+  `testTimeout`/`jest.setTimeout` edit with a check for an inner call's own timeout in the same
+  test.
+
 ## Archived 2026-09-18 — headroom for Lane D's L-199 fold-in (bookkeeping-batch window-5)
 
 ### L-168 · 2026-09-16 · tooling · B421 CASH_METHOD_FILTER as-const gap

@@ -356,21 +356,6 @@ null`; three RTL tests failed as if the trap never moved focus at all, while the
   below a threshold before launching more work, not after operations start failing.**
 - **Guard:** none yet — propose a session-start hook warning at < 30 GB free.
 
-### L-172 · 2026-09-16 · tooling · #779 (nested timeout mismatch)
-
-- **Symptom:** raising a Jest test's own timeout to fix one flake introduced a new, harder-to-
-  diagnose flake in the same test.
-- **Root cause:** the test's Jest-level timeout was raised without raising the timeout on the
-  `spawnSync` call running _inside_ it, so the inner call now times out and throws before Jest's
-  own outer timeout would ever fire — moving the failure mode to a confusing error shape instead
-  of fixing it.
-- **Lesson:** **When a test wraps a call with its own timeout (spawnSync, an HTTP client, a DB
-  pool), raising the test's outer timeout without raising the inner one moves the failure mode,
-  it doesn't fix it — always raise both together, inner first.**
-- **Guard:** none named in the PR body — propose a lint/review checklist item pairing any Jest
-  `testTimeout`/`jest.setTimeout` edit with a check for an inner call's own timeout in the same
-  test.
-
 ### L-174 · 2026-09-16 · tooling · demo-booking lane (raw NUL byte from an escape literal)
 
 - **Symptom:** a source file kept "working" after an agent tool chain wrote a `\uXXXX`-shaped
@@ -385,6 +370,23 @@ null`; three RTL tests failed as if the trap never moved focus at all, while the
   trusting the write; a pre-commit NUL-byte check on text sources is the durable fix.
 
 ## testing
+
+### L-205 · 2026-09-18 · testing · regression tests pinned literal source text, not behavior
+
+- **Symptom:** `touch-reveal-b511.test.ts` and `edit-line-item-row-b513.test.ts` both asserted
+  `expect(fileSource).toContain('className="<exact literal string>"')`. #897's purely additive
+  `cn(TAP_TARGET, "...")` wrapper (same classes present, behavior still correct) broke both,
+  because the source text was no longer that exact literal string.
+- **Root cause:** the assertion pinned SOURCE TEXT, not the behavior B511/B513 actually fixed
+  (a control staying reachable/correctly sized). A literal-string match breaks on any additive
+  or refactored source change regardless of behavior, and — the more dangerous direction —
+  would just as easily PASS a real regression that happens to preserve the substring.
+- **Lesson:** **A regression test must assert the underlying behavior (DOM state, computed
+  style, an element's actual reachable size) never a scrape of the source file's literal text.
+  Source-text matching is coincidence-based in both directions: it breaks on harmless changes
+  and can miss real ones.**
+- **Guard:** fix (rewriting both to DOM-behavior assertions) is being built into #910, not this
+  session.
 
 ### L-202 · 2026-09-18 · testing · 390px sweep script matched zero targets, reported clean
 
