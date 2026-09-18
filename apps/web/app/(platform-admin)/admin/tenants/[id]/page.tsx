@@ -115,18 +115,6 @@ const AVAILABLE_ADDONS = [
       "Regulated Items compliance pack — license-column ledgers, monthly tobacco reports, regulated filings & range reports, and the analytics-exclusion option inside the Regulated Items hub (legacy key: tobacco_dealer)",
   },
   {
-    key: "msrp",
-    name: "MSRP on invoices",
-    description:
-      "Suggested retail price (per piece) on products, customers, and invoice pricing — display-only. Nothing appears until MSRP values are entered, and only invoices created afterwards show them.",
-  },
-  {
-    key: "sales_agents",
-    name: "Sales agents & commissions",
-    description:
-      "Agent records, customer attribution, commission accrual on invoices, statements and payouts",
-  },
-  {
     key: DRIVER_PAYMENTS_ADDON,
     name: "Driver payments (at-door collection)",
     description:
