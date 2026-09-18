@@ -2237,18 +2237,49 @@ export class CustomersService {
     // every Return regardless of kind — there is no INLINE-specific record here to
     // miss (its CreditNote/OrderCreditNote rows are already covered by the credit
     // note cleanup below, same as a STANDARD return's).
-    const [orderCount, invoiceCount, returnCount] = await Promise.all([
-      this.prisma.forTenant().order.count({ where: { customerId: id } }),
-      this.prisma.forTenant().invoice.count({ where: { customerId: id } }),
-      this.prisma.forTenant().return.count({ where: { customerId: id } }),
-    ]);
+    //
+    // B320: a "record-free" customer (zero orders/invoices/returns) can still hold a
+    // prepaid AdvancePayment balance (a deposit taken before any order existed) or a
+    // surviving CreditNote (B214: deleting an invoice leaves the credit notes it
+    // sourced fully spendable — so invoiceCount can be 0 while a credit note from a
+    // since-deleted invoice is still open). Neither showed up in the counts above, so
+    // the hard-delete path below ran unconditionally and destroyed real liabilities
+    // with no soft-delete, no statement, no audit row.
+    const [orderCount, invoiceCount, returnCount, advanceBalance, openCreditNotes] =
+      await Promise.all([
+        this.prisma.forTenant().order.count({ where: { customerId: id } }),
+        this.prisma.forTenant().invoice.count({ where: { customerId: id } }),
+        this.prisma.forTenant().return.count({ where: { customerId: id } }),
+        this.prisma.forTenant().advancePayment.aggregate({
+          where: { customerId: id },
+          _sum: { balance: true },
+        }),
+        this.prisma.forTenant().creditNote.findMany({
+          where: { customerId: id, status: { not: "VOID" } },
+          select: { amount: true, amountUsed: true },
+        }),
+      ]);
 
-    const hasFinancialRecords = orderCount + invoiceCount + returnCount > 0;
+    const hasAdvanceBalance = Number(advanceBalance._sum.balance ?? 0) > 0.001;
+    // "Open" mirrors the suggested test name: a fully-consumed (or VOID, already
+    // excluded above) credit note has nothing left to lose by a hard delete.
+    const hasOpenCreditNote = openCreditNotes.some(
+      (cn) => Number(cn.amount) - Number(cn.amountUsed) > 0.001,
+    );
+    const hasFinancialRecords =
+      orderCount + invoiceCount + returnCount > 0 || hasAdvanceBalance || hasOpenCreditNote;
 
     if (hasFinancialRecords && !force) {
+      const parts = [
+        `${orderCount} order(s)`,
+        `${invoiceCount} invoice(s)`,
+        `${returnCount} return(s)`,
+      ];
+      if (hasAdvanceBalance) parts.push("an outstanding advance balance");
+      if (hasOpenCreditNote) parts.push("an open credit note");
       throw new ConflictException(
         `Cannot delete customer with existing financial records. ` +
-          `Affected: ${orderCount} order(s), ${invoiceCount} invoice(s), ${returnCount} return(s). ` +
+          `Affected: ${parts.join(", ")}. ` +
           `Use force=true to soft-delete the customer account while preserving all records.`,
       );
     }
