@@ -50,6 +50,8 @@ import { RouteVariantsPanel } from "@/components/RouteVariantsPanel";
 import { TripStopList } from "../_components/TripStopList";
 import { TripSkippedPanel, type TripSkippedRow } from "../_components/TripSkippedPanel";
 import { OrderPickerPanel } from "../_components/OrderPickerPanel";
+import { DeliveryMobileLayout } from "../_components/DeliveryMobileLayout";
+import type { DeliverySheetOverflowAction } from "../_components/DeliveryBottomSheet";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -99,9 +101,24 @@ export default function NewTripPage() {
   // empty picker before a real draft has had a chance to load.
   const [hydrated, setHydrated] = React.useState(false);
   const [orderIds, setOrderIds] = React.useState<string[]>([]);
+  // Below `lg` (1024px, matches Tailwind's `lg:` breakpoint used everywhere
+  // else on this page), the map-canvas + bottom-sheet layout replaces the
+  // desktop two-column body — see DeliveryMobileLayout's doc comment for why
+  // this is a JS boolean (deciding which ONE TemplateRouteMap mounts) rather
+  // than a second `lg:hidden` CSS tree: a Google Maps instance is real and
+  // billable, so exactly one may ever be live. Resolved in the same
+  // client-only effect as `hydrated`, so there is no SSR/hydration flash —
+  // both start out gated behind the `!hydrated` loading spinner below.
+  const [isMobile, setIsMobile] = React.useState(false);
   React.useEffect(() => {
     setOrderIds(loadTripDraft()?.orderIds ?? []);
     setHydrated(true);
+    function updateIsMobile() {
+      setIsMobile(window.innerWidth < 1024);
+    }
+    updateIsMobile();
+    window.addEventListener("resize", updateIsMobile);
+    return () => window.removeEventListener("resize", updateIsMobile);
   }, []);
 
   function persistOrderIds(next: string[]) {
@@ -588,6 +605,119 @@ export default function NewTripPage() {
     );
   }
 
+  // ── Mobile (< lg) sheet content — built here, not inside the desktop JSX
+  //    below, so the desktop branch stays byte-for-byte what it was before
+  //    this batch (owner spec item 8). A little markup duplication (the
+  //    driver/date grid, the built-phase summary box) is the trade for that
+  //    guarantee — see DeliveryMobileLayout's doc comment for the map-mount
+  //    half of the same guarantee. ──
+  const mobilePlanningSlot = (
+    <>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="mb-1 block text-sm font-medium text-navy">Driver</label>
+          <Select
+            value={driverId}
+            onChange={(e) => setDriverId(e.target.value)}
+            options={[
+              { value: "", label: "Unassigned" },
+              ...drivers.map((d) => ({ value: d.id, label: d.contactName })),
+            ]}
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium text-navy">Run date</label>
+          <input
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+            className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+        </div>
+      </div>
+      <div className="mt-4">
+        <RoutePlanningControls
+          value={planningValue}
+          onChange={handlePlanningChange}
+          drivers={endDriverOptions}
+        />
+      </div>
+    </>
+  );
+
+  const mobileBuiltSummarySlot = (
+    <div className="space-y-1 rounded-lg border border-surface-border bg-surface-raised p-3 text-sm">
+      <p className="text-navy">
+        <span className="font-medium">Start:</span> {originKindLabel(frozenOriginKind)}
+        {builtRoute?.depotAddress ? ` — ${builtRoute.depotAddress}` : ""}
+      </p>
+      <p className="text-navy">
+        <span className="font-medium">Driver:</span> {selectedDriver?.contactName ?? "Unassigned"}
+      </p>
+      <p className="text-navy">
+        <span className="font-medium">Date:</span> {new Date(date).toLocaleDateString()}
+      </p>
+    </div>
+  );
+
+  const mobileSummary =
+    phase === "BUILT"
+      ? summaryLabel(frozenGroups.length, frozenOrderIds.length)
+      : summaryLabel(pickingGroups.length, remainingIds.length);
+
+  const mobilePrimary =
+    phase === "PICKING"
+      ? {
+          label: createTrip.isPending
+            ? "Building…"
+            : `Build ${summaryLabel(pickingGroups.length, remainingIds.length)}`,
+          onClick: handleBuild,
+          disabled: !canBuild,
+          loading: createTrip.isPending,
+        }
+      : {
+          label: createRun.isPending
+            ? "Sending…"
+            : `Send${selectedDriver ? ` to ${selectedDriver.contactName}` : ""}`,
+          onClick: handleSend,
+          disabled: createRun.isPending,
+          loading: createRun.isPending,
+        };
+
+  const mobileOverflow: DeliverySheetOverflowAction[] | undefined =
+    phase === "BUILT"
+      ? confirmDiscard
+        ? [
+            {
+              key: "discard-confirm",
+              label: deleteRoute.isPending ? "Discarding…" : "Yes, discard delivery",
+              onClick: handleDiscard,
+              disabled: deleteRoute.isPending,
+              destructive: true,
+            },
+            {
+              key: "discard-cancel",
+              label: "Cancel",
+              onClick: () => setConfirmDiscard(false),
+            },
+          ]
+        : [
+            {
+              key: "reoptimize",
+              label: optimizeTemplate.isPending ? "Optimizing…" : "Re-optimize",
+              onClick: handleReoptimize,
+              disabled: optimizeTemplate.isPending || (builtRoute?.stops?.length ?? 0) < 2,
+            },
+            {
+              key: "discard",
+              label: "Discard delivery",
+              onClick: () => setConfirmDiscard(true),
+              destructive: true,
+              keepOpen: true,
+            },
+          ]
+      : undefined;
+
   // ── Loading (Design directive 4 — no dead ends): direct navigation with no
   //    (or an expired) draft no longer dead-ends into a separate empty-state
   //    screen — it falls straight into the same builder below with orderIds
@@ -648,7 +778,11 @@ export default function NewTripPage() {
           }
         />
 
-        <div className="ml-auto flex items-center gap-2">
+        {/* Below `lg` the primary action + Re-optimize/Discard move into the
+            bottom sheet's own header (DeliveryMobileLayout) — see owner spec
+            item 5. `hidden lg:flex` keeps this row's lg+ rendering identical
+            to before; it's simply invisible (and inert) under 1024px. */}
+        <div className="ml-auto hidden items-center gap-2 lg:flex">
           {phase === "PICKING" && (
             <Button
               loading={createTrip.isPending}
@@ -734,147 +868,203 @@ export default function NewTripPage() {
       </div>
 
       {/* ── Body ── */}
-      <div className="flex min-h-0 flex-1">
-        {/* Left panel — form + stop list + skipped panel */}
-        <div className="flex w-2/5 min-w-[360px] flex-col gap-4 overflow-y-auto border-r border-surface-border p-4">
-          {phase === "PICKING" ? (
-            <>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-navy">Driver</label>
-                  <Select
-                    value={driverId}
-                    onChange={(e) => setDriverId(e.target.value)}
-                    options={[
-                      { value: "", label: "Unassigned" },
-                      ...drivers.map((d) => ({ value: d.id, label: d.contactName })),
-                    ]}
-                  />
+      {isMobile ? (
+        <DeliveryMobileLayout
+          phase={phase}
+          mapStops={phase === "BUILT" ? (builtRoute?.stops ?? []) : []}
+          depotLat={
+            phase === "BUILT" ? (builtRoute?.depotLat ?? undefined) : routeSettings?.depotLat
+          }
+          depotLng={
+            phase === "BUILT" ? (builtRoute?.depotLng ?? undefined) : routeSettings?.depotLng
+          }
+          depotAddress={
+            phase === "BUILT"
+              ? (builtRoute?.depotAddress ?? undefined)
+              : routeSettings?.depotAddress
+          }
+          plannedPolyline={phase === "BUILT" ? builtRoute?.plannedPolyline : undefined}
+          variantOverlays={
+            phase === "BUILT" && variantOverlays.length > 0 ? variantOverlays : undefined
+          }
+          groups={displayGroups}
+          orderLookup={orderLookup}
+          skipped={displaySkipped}
+          onRemoveCustomer={handleRemoveCustomer}
+          onRemoveOrder={handleRemoveOrder}
+          stopsLoading={eligLoading}
+          stopsError={eligError}
+          onRetryStops={() => refetchEligibility()}
+          orderIds={orderIds}
+          onAddOrder={handleAddOrder}
+          orderPickerHint={
+            orderIds.length === 0
+              ? 'You can also select orders on the Orders list and choose "Plan delivery trip".'
+              : undefined
+          }
+          variants={variants}
+          selectedVariantKey={selectedVariantKey}
+          onSelectVariant={(v) => setSelectedVariantKey(v.key)}
+          variantsLoading={routeVariants.isPending}
+          onUseVariant={handleUseVariant}
+          useVariantDisabled={!selectedVariant}
+          useVariantPending={applyVariant.isPending}
+          summary={mobileSummary}
+          primary={mobilePrimary}
+          overflow={mobileOverflow}
+          planningSlot={mobilePlanningSlot}
+          builtSummarySlot={mobileBuiltSummarySlot}
+        />
+      ) : (
+        <div className="flex min-h-0 flex-1" data-testid="delivery-desktop-layout">
+          {/* Left panel — form + stop list + skipped panel */}
+          <div className="flex w-2/5 min-w-[360px] flex-col gap-4 overflow-y-auto border-r border-surface-border p-4">
+            {phase === "PICKING" ? (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-navy">Driver</label>
+                    <Select
+                      value={driverId}
+                      onChange={(e) => setDriverId(e.target.value)}
+                      options={[
+                        { value: "", label: "Unassigned" },
+                        ...drivers.map((d) => ({ value: d.id, label: d.contactName })),
+                      ]}
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-navy">Run date</label>
+                    <input
+                      type="date"
+                      value={date}
+                      onChange={(e) => setDate(e.target.value)}
+                      className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    />
+                  </div>
                 </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-navy">Run date</label>
-                  <input
-                    type="date"
-                    value={date}
-                    onChange={(e) => setDate(e.target.value)}
-                    className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                </div>
-              </div>
 
-              <RoutePlanningControls
-                value={planningValue}
-                onChange={handlePlanningChange}
-                drivers={endDriverOptions}
-              />
-            </>
-          ) : (
-            <div className="space-y-1 rounded-lg border border-surface-border bg-surface-raised p-3 text-sm">
-              <p className="text-navy">
-                <span className="font-medium">Start:</span> {originKindLabel(frozenOriginKind)}
-                {builtRoute?.depotAddress ? ` — ${builtRoute.depotAddress}` : ""}
-              </p>
-              <p className="text-navy">
-                <span className="font-medium">Driver:</span>{" "}
-                {selectedDriver?.contactName ?? "Unassigned"}
-              </p>
-              <p className="text-navy">
-                <span className="font-medium">Date:</span> {new Date(date).toLocaleDateString()}
-              </p>
-            </div>
-          )}
-
-          {phase === "PICKING" && (
-            <OrderPickerPanel
-              excludeIds={orderIds}
-              onAdd={handleAddOrder}
-              defaultOpen={orderIds.length === 0}
-              hint={
-                orderIds.length === 0
-                  ? 'You can also select orders on the Orders list and choose "Plan delivery trip".'
-                  : undefined
-              }
-            />
-          )}
-
-          <div>
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-navy/70">
-              Stops ({displayGroups.length})
-            </h3>
-            {eligLoading ? (
-              <div className="h-24 animate-pulse rounded-lg border border-surface-border bg-surface-raised" />
-            ) : eligError ? (
-              <div className="flex items-center justify-between gap-2 rounded-lg border border-danger/30 bg-danger-bg px-3 py-2">
-                <span className="text-xs text-danger">Failed to check eligibility.</span>
-                <button
-                  onClick={() => refetchEligibility()}
-                  className="text-xs font-medium text-danger underline"
-                >
-                  Retry
-                </button>
-              </div>
+                <RoutePlanningControls
+                  value={planningValue}
+                  onChange={handlePlanningChange}
+                  drivers={endDriverOptions}
+                />
+              </>
             ) : (
-              <TripStopList
-                groups={displayGroups}
-                orderLookup={orderLookup}
-                onRemoveCustomer={phase === "PICKING" ? handleRemoveCustomer : undefined}
-                onRemoveOrder={phase === "PICKING" ? handleRemoveOrder : undefined}
-                emptyMessage="No eligible stops selected."
+              <div className="space-y-1 rounded-lg border border-surface-border bg-surface-raised p-3 text-sm">
+                <p className="text-navy">
+                  <span className="font-medium">Start:</span> {originKindLabel(frozenOriginKind)}
+                  {builtRoute?.depotAddress ? ` — ${builtRoute.depotAddress}` : ""}
+                </p>
+                <p className="text-navy">
+                  <span className="font-medium">Driver:</span>{" "}
+                  {selectedDriver?.contactName ?? "Unassigned"}
+                </p>
+                <p className="text-navy">
+                  <span className="font-medium">Date:</span> {new Date(date).toLocaleDateString()}
+                </p>
+              </div>
+            )}
+
+            {phase === "PICKING" && (
+              <OrderPickerPanel
+                excludeIds={orderIds}
+                onAdd={handleAddOrder}
+                defaultOpen={orderIds.length === 0}
+                hint={
+                  orderIds.length === 0
+                    ? 'You can also select orders on the Orders list and choose "Plan delivery trip".'
+                    : undefined
+                }
               />
             )}
+
+            <div>
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-navy/70">
+                Stops ({displayGroups.length})
+              </h3>
+              {eligLoading ? (
+                <div className="h-24 animate-pulse rounded-lg border border-surface-border bg-surface-raised" />
+              ) : eligError ? (
+                <div className="flex items-center justify-between gap-2 rounded-lg border border-danger/30 bg-danger-bg px-3 py-2">
+                  <span className="text-xs text-danger">Failed to check eligibility.</span>
+                  <button
+                    onClick={() => refetchEligibility()}
+                    className="text-xs font-medium text-danger underline"
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : (
+                <TripStopList
+                  groups={displayGroups}
+                  orderLookup={orderLookup}
+                  onRemoveCustomer={phase === "PICKING" ? handleRemoveCustomer : undefined}
+                  onRemoveOrder={phase === "PICKING" ? handleRemoveOrder : undefined}
+                  emptyMessage="No eligible stops selected."
+                />
+              )}
+            </div>
+
+            <TripSkippedPanel rows={displaySkipped} />
           </div>
 
-          <TripSkippedPanel rows={displaySkipped} />
-        </div>
-
-        {/* Right panel — variants + map */}
-        <div className="flex flex-1 flex-col overflow-hidden">
-          {phase === "BUILT" ? (
-            <>
-              {(routeVariants.isPending || variants.length > 0) && (
-                <div className="shrink-0 space-y-2 border-b border-surface-border bg-white p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <h3 className="text-xs font-semibold uppercase tracking-wider text-navy/70">
-                      Compare routes
-                    </h3>
-                    {variants.length > 0 && (
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={handleUseVariant}
-                        disabled={!selectedVariant || applyVariant.isPending}
-                      >
-                        {applyVariant.isPending ? "Applying…" : "Use this route"}
-                      </Button>
-                    )}
+          {/* Right panel — variants + map */}
+          <div className="flex flex-1 flex-col overflow-hidden">
+            {phase === "BUILT" ? (
+              <>
+                {(routeVariants.isPending || variants.length > 0) && (
+                  <div className="shrink-0 space-y-2 border-b border-surface-border bg-white p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="text-xs font-semibold uppercase tracking-wider text-navy/70">
+                        Compare routes
+                      </h3>
+                      {variants.length > 0 && (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={handleUseVariant}
+                          disabled={!selectedVariant || applyVariant.isPending}
+                        >
+                          {applyVariant.isPending ? "Applying…" : "Use this route"}
+                        </Button>
+                      )}
+                    </div>
+                    <RouteVariantsPanel
+                      variants={variants}
+                      selectedKey={selectedVariantKey}
+                      onSelect={(v) => setSelectedVariantKey(v.key)}
+                      loading={routeVariants.isPending}
+                    />
                   </div>
-                  <RouteVariantsPanel
-                    variants={variants}
-                    selectedKey={selectedVariantKey}
-                    onSelect={(v) => setSelectedVariantKey(v.key)}
-                    loading={routeVariants.isPending}
-                  />
+                )}
+                <div className="flex-1 overflow-hidden">
+                  {/* `!isMobile` never changes this render at `lg`+ (isMobile is
+                    always false there) — see DeliveryMobileLayout's doc
+                    comment for why it guards this mount: only one live,
+                    billable TemplateRouteMap/Google-Maps instance may exist
+                    at a time, and DeliveryMobileLayout owns the other one. */}
+                  {!isMobile && (
+                    <TemplateRouteMap
+                      stops={builtRoute?.stops ?? []}
+                      depotLat={builtRoute?.depotLat ?? undefined}
+                      depotLng={builtRoute?.depotLng ?? undefined}
+                      depotAddress={builtRoute?.depotAddress ?? undefined}
+                      plannedPolyline={builtRoute?.plannedPolyline}
+                      variantOverlays={variantOverlays.length > 0 ? variantOverlays : undefined}
+                    />
+                  )}
                 </div>
-              )}
-              <div className="flex-1 overflow-hidden">
-                <TemplateRouteMap
-                  stops={builtRoute?.stops ?? []}
-                  depotLat={builtRoute?.depotLat ?? undefined}
-                  depotLng={builtRoute?.depotLng ?? undefined}
-                  depotAddress={builtRoute?.depotAddress ?? undefined}
-                  plannedPolyline={builtRoute?.plannedPolyline}
-                  variantOverlays={variantOverlays.length > 0 ? variantOverlays : undefined}
-                />
+              </>
+            ) : (
+              <div className="flex h-full flex-col items-center justify-center gap-3 bg-surface-raised text-navy/70">
+                <MapPin className="h-10 w-10" />
+                <p className="text-sm">The route map appears here once the delivery is built.</p>
               </div>
-            </>
-          ) : (
-            <div className="flex h-full flex-col items-center justify-center gap-3 bg-surface-raised text-navy/70">
-              <MapPin className="h-10 w-10" />
-              <p className="text-sm">The route map appears here once the delivery is built.</p>
-            </div>
-          )}
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
