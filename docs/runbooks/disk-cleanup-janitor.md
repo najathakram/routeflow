@@ -60,9 +60,9 @@ under the target (read-only `Get-ChildItem`) and unlinks each one individually w
 `--preflight <gb>` is a generic "is free space >= this number" check; a lane decides what number
 to pass. Suggested tiers for this host:
 
-| Free space | Meaning |
-| --- | --- |
-| > 10 GB | Normal — proceed with anything, including `npm ci`. |
-| 6–10 GB | Reclaim first (`npm run janitor:apply`) before an `npm ci`. |
-| < 6 GB | Refuse installs until `janitor:apply` has run. |
-| < 3 GB | Stop everything and alert a human — do not attempt to reclaim unattended at this level. |
+| Free space | Meaning                                                                                 |
+| ---------- | --------------------------------------------------------------------------------------- |
+| > 10 GB    | Normal — proceed with anything, including `npm ci`.                                     |
+| 6–10 GB    | Reclaim first (`npm run janitor:apply`) before an `npm ci`.                             |
+| < 6 GB     | Refuse installs until `janitor:apply` has run.                                          |
+| < 3 GB     | Stop everything and alert a human — do not attempt to reclaim unattended at this level. |

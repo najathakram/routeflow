@@ -136,7 +136,11 @@ t("meetsThreshold: >= is a pass, just under is not", () => {
 t("findOrphanWorktreeDirs: a dir git doesn't list is an orphan", () => {
   const listed = ["C:/ClaudeCode/routeflow/.claude/worktrees/rf-a"];
   const dirNames = ["rf-a", "rf-b-orphan"];
-  const orphans = findOrphanWorktreeDirs(listed, dirNames, "C:/ClaudeCode/routeflow/.claude/worktrees");
+  const orphans = findOrphanWorktreeDirs(
+    listed,
+    dirNames,
+    "C:/ClaudeCode/routeflow/.claude/worktrees",
+  );
   assert.deepEqual(orphans, ["rf-b-orphan"]);
 });
 

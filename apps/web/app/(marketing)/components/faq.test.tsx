@@ -40,10 +40,10 @@ describe("FAQ — R-MKT T8b", () => {
     expect(openItems[0]).toBe(items[2]);
   });
 
-  it("renders the 4 retailer questions when `retail` is set, starting with the supplier-connection question (R-MKT T8b)", () => {
+  it("renders the 5 retailer questions when `retail` is set, starting with the supplier-connection question (R-MKT T8b)", () => {
     const { container } = render(<FAQ retail />);
     const items = container.querySelectorAll("details");
-    expect(items).toHaveLength(4);
+    expect(items).toHaveLength(5);
     const firstSummary = items[0]?.querySelector("summary");
     expect(firstSummary).toHaveTextContent("Do I need a supplier connection?");
   });

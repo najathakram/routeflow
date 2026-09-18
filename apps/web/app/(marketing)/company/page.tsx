@@ -1,7 +1,16 @@
 import type { Metadata } from "next";
-import { ArrowUpRight, BookOpen, Link2, Mail, Target } from "lucide-react";
+import {
+  ArrowUpRight,
+  BookOpen,
+  Link2,
+  Mail,
+  Target,
+  MessageCircle,
+  Rocket,
+  Users2,
+} from "lucide-react";
 import { routes, site } from "../lib/site";
-import { CTA, Eyebrow } from "../components/marketing";
+import { CTA, Eyebrow, CheckList } from "../components/marketing";
 
 // Copy verbatim from the redesign's app/[page]/page.tsx `Company()` (M1 §2e).
 //
@@ -42,6 +51,24 @@ const PRINCIPLES: Array<[typeof BookOpen, string, string]> = [
     Target,
     "Clear expectations",
     "Start a buying conversation with the workflow, the available features, and the scope of the plan.",
+  ],
+];
+
+const HOW_WE_BUILD: Array<[typeof MessageCircle, string, string]> = [
+  [
+    MessageCircle,
+    "Direct access",
+    "We talk to the businesses using RouteFlow directly — no support queue that disappears into a ticket system.",
+  ],
+  [
+    Rocket,
+    "Ships fast",
+    "We fix what's wrong in days, not quarters, because the team that hears about a problem is the team that can change the code.",
+  ],
+  [
+    Users2,
+    "Small by design",
+    "We're a small team on purpose — it's what makes the first two true.",
   ],
 ];
 
@@ -115,6 +142,65 @@ export default function CompanyPage() {
               <p>{text}</p>
             </article>
           ))}
+        </div>
+      </section>
+      <section className="section wrap company-principles">
+        <div>
+          <Eyebrow>HOW WE BUILD</Eyebrow>
+          <h2>
+            Small, direct,
+            <br />
+            and fast.
+          </h2>
+        </div>
+        <div className="feature-grid three">
+          {HOW_WE_BUILD.map(([Icon, title, text]) => (
+            <article key={title}>
+              <Icon size={26} />
+              <h3>{title}</h3>
+              <p>{text}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+      <section className="section wrap">
+        <div>
+          <Eyebrow>THE FACTS</Eyebrow>
+          <h2>
+            Who’s actually
+            <br />
+            behind this.
+          </h2>
+        </div>
+        <CheckList
+          items={[
+            "Founded 2026",
+            "Legal entity: Routeflow Solutions LLC, registered in Wyoming",
+            "Offices in Stafford, TX",
+          ]}
+        />
+      </section>
+      <section className="section wrap">
+        <div>
+          <Eyebrow>DATA & SECURITY</Eyebrow>
+          <h2>
+            Your data
+            <br />
+            stays yours.
+          </h2>
+          <p>
+            Your orders, pricing, and customer data belong to you. RouteFlow keeps every business’s
+            data isolated from every other tenant on the platform, and we don’t sell or share it.
+            Full detail is in our{" "}
+            <a className="text-link" href="/privacy">
+              Privacy Policy
+            </a>{" "}
+            and{" "}
+            <a className="text-link" href="/terms">
+              Terms of Service
+            </a>
+            .
+          </p>
         </div>
       </section>
       <section className="company-contact wrap">
