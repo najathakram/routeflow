@@ -9,6 +9,7 @@ import { PlanFlagGuard } from "../billing/plan-flag.guard";
 import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { CreditNotesService } from "./credit-notes.service";
 import { CreateCreditNoteDto } from "./dto/create-credit-note.dto";
+import { KpiSummaryDto } from "./dto/kpi-summary.dto";
 
 // WP5b (R3b.3, R3b.5): flag.credit_notes ships dark (DARK_PLAN_FLAGS in
 // plan-flag-policy.ts) — this class-level guard is a courtesy allow until the
@@ -25,6 +26,16 @@ export class CreditNotesController {
   @Roles(UserRole.OPERATOR)
   create(@Body() dto: CreateCreditNoteDto) {
     return this.creditNotesService.create(dto);
+  }
+
+  // B238: registered BEFORE ":id" — a literal "kpi-summary" segment matched against
+  // that route first would be swallowed as an id value (same ordering note as
+  // invoices.controller.ts's own kpi-summary route).
+  @Get("kpi-summary")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  getKpiSummary(@Query() query: KpiSummaryDto) {
+    return this.creditNotesService.getKpiSummary(query.today);
   }
 
   @Get()

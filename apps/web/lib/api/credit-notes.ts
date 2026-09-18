@@ -72,6 +72,33 @@ export function useCreditNote(id: string) {
   });
 }
 
+export interface CreditNoteKpiSummary {
+  total: number;
+  issued: number;
+  applied: number;
+  void: number;
+  openCredit: number;
+  openCount: number;
+  issued30Value: number;
+  issued30Count: number;
+  topReason: string;
+  topReasonPct: number;
+}
+
+/**
+ * B238: replaces the credit-notes page's `useCreditNotes({ limit: 999 })` fetch-all
+ * + client reduce — the same silent-truncation class B12 fixed on invoices — with
+ * a server-computed summary that never truncates (see credit-notes.service.ts's
+ * getKpiSummary, no `take`). `today` is the viewer's own calendar day.
+ */
+export function useCreditNoteKpiSummary(today: string) {
+  return useQuery<CreditNoteKpiSummary>({
+    queryKey: ["credit-notes", "kpi-summary", today],
+    queryFn: () =>
+      apiClient.get("/credit-notes/kpi-summary", { params: { today } }).then((r) => r.data),
+  });
+}
+
 // ─── Mutations ────────────────────────────────────────────────────────────────
 
 export interface CreateCreditNoteDto {

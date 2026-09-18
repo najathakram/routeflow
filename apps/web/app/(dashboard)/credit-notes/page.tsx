@@ -8,26 +8,26 @@ import { usePageTitle } from "@/lib/page-title-context";
 import {
   useCreditNotes,
   useCreateCreditNote,
+  useCreditNoteKpiSummary,
   openCreditBalance,
   type CreditNote,
 } from "@/lib/api/credit-notes";
 import { useCustomers } from "@/lib/api/customers";
 import { useInvoices, useInvoice } from "@/lib/api/invoices";
 import { fmt } from "@/lib/formatting";
-import { roundMoney } from "@routeflow/pricing";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 
-// P5-13: canonical open-credit predicate — not VOID, has a positive remaining
-// balance (amount - amountUsed), and is not expired. Mirrors the API's
-// `Σ roundMoney(amount − amountUsed)` — a partially-applied note must never be
-// counted at its full original amount.
-function isOpenCredit(cn: CreditNote): boolean {
-  if (cn.status === "VOID") return false;
-  const remaining = roundMoney(Number(cn.amount) - Number(cn.amountUsed ?? 0));
-  if (!(remaining > 0.001)) return false;
-  if (cn.expiresAt && new Date(cn.expiresAt).getTime() <= Date.now()) return false;
-  return true;
+/**
+ * The VIEWER's own calendar day, not the server's clock (L-047) — matches
+ * invoices/page.tsx's identically-named helper (B12 precedent).
+ */
+function todayLocalIso(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
 }
 
 // ─── Status filter chips (real statuses) ──────────────────────────────────────
@@ -553,68 +553,19 @@ export default function CreditNotesPage() {
   const meta = data?.meta;
   useClampPage(setPage, page, meta?.totalPages);
 
-  const { data: allData } = useCreditNotes({ limit: 999 });
-  const all = allData?.data ?? [];
-
-  const kpiCounts = React.useMemo(() => {
-    const counts = { total: all.length, issued: 0, applied: 0, void: 0 };
-    for (const cn of all) {
-      if (cn.status === "ISSUED") counts.issued++;
-      if (cn.status === "APPLIED") counts.applied++;
-      if (cn.status === "VOID") counts.void++;
-    }
-    return counts;
-  }, [all]);
-
-  // Stat tiles — derived from real data only (no fabricated revenue %).
-  const stats = React.useMemo(() => {
-    // Open credit: canonical predicate (not VOID, remaining > 0, not expired) —
-    // summed by REMAINING balance so a partially-applied note is never double-counted.
-    const openNotes = all.filter(isOpenCredit);
-    const openCredit = openNotes.reduce(
-      (s, cn) => roundMoney(s + roundMoney(Number(cn.amount) - Number(cn.amountUsed ?? 0))),
-      0,
-    );
-
-    // Issued in the last 30 days (by issue date).
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - 30);
-    const issued30 = all.filter((cn) => {
-      if (cn.status === "VOID") return false;
-      const d = new Date((cn as any).issueDate ?? cn.createdAt);
-      return !isNaN(d.getTime()) && d >= cutoff;
-    });
-    const issued30Value = issued30.reduce((s, cn) => s + Number(cn.amount), 0);
-
-    // Top reason by credited value (non-void).
-    const byReason = new Map<string, number>();
-    let creditedTotal = 0;
-    for (const cn of all) {
-      if (cn.status === "VOID") continue;
-      const reason = (cn.reason || "—").trim() || "—";
-      const amt = Number(cn.amount);
-      byReason.set(reason, (byReason.get(reason) ?? 0) + amt);
-      creditedTotal += amt;
-    }
-    let topReason = "—";
-    let topReasonValue = 0;
-    byReason.forEach((amt, reason) => {
-      if (amt > topReasonValue) {
-        topReason = reason;
-        topReasonValue = amt;
-      }
-    });
-    const topReasonPct = creditedTotal > 0 ? Math.round((topReasonValue / creditedTotal) * 100) : 0;
-
-    return {
-      openCredit,
-      openCount: openNotes.length,
-      issued30Value,
-      issued30Count: issued30.length,
-      topReason,
-      topReasonPct,
-    };
-  }, [all]);
+  // B238: server-computed (getKpiSummary) — replaces the old `useCreditNotes({
+  // limit: 999 })` fetch-all + client reduce, which silently undercounted the
+  // tiles for any tenant past 999 credit notes (same class as B12 on invoices).
+  const { data: kpiSummary } = useCreditNoteKpiSummary(todayLocalIso());
+  const kpiCounts = kpiSummary ?? { total: 0, issued: 0, applied: 0, void: 0 };
+  const stats = kpiSummary ?? {
+    openCredit: 0,
+    openCount: 0,
+    issued30Value: 0,
+    issued30Count: 0,
+    topReason: "—",
+    topReasonPct: 0,
+  };
 
   const totalPages = meta?.totalPages ?? 1;
   const hasActiveFilters = !!(search || statusFilter || dateFrom || dateTo);

@@ -21,6 +21,21 @@ import {
   CREDIT_SOURCE_EXCLUDED,
 } from "../invoices/invoice-status-sets";
 
+/** B238: server-computed replacement for the credit-notes page's client-side
+ *  `useCreditNotes({ limit: 999 })` + reduce — see getKpiSummary. */
+export interface CreditNoteKpiSummary {
+  total: number;
+  issued: number;
+  applied: number;
+  void: number;
+  openCredit: number;
+  openCount: number;
+  issued30Value: number;
+  issued30Count: number;
+  topReason: string;
+  topReasonPct: number;
+}
+
 @Injectable()
 export class CreditNotesService {
   constructor(
@@ -639,6 +654,96 @@ export class CreditNotesService {
       if (!customer || cn.customerId !== customer.id) throw new ForbiddenException();
     }
     return cn;
+  }
+
+  /**
+   * B238: the credit-notes page fed its stat tiles from `useCreditNotes({ limit: 999
+   * })` + a client-side reduce — the same silent-truncation class B12 fixed on the
+   * invoices page. Mirrors B12's fix shape exactly: one uncapped, lean-projected
+   * read of every credit note (no `take`, unlike a rendering page), same math the
+   * client used to do, just computed server-side so it never truncates.
+   *
+   * `today` is the VIEWER's own calendar day (never the server's clock — L-047),
+   * matching KpiSummaryDto's invoices precedent.
+   */
+  async getKpiSummary(today: string): Promise<CreditNoteKpiSummary> {
+    const todayInstant = new Date(`${today}T00:00:00.000Z`);
+    if (Number.isNaN(todayInstant.getTime()) || todayInstant.toISOString().slice(0, 10) !== today) {
+      throw new BadRequestException("today must be a real calendar date (YYYY-MM-DD)");
+    }
+    const cutoff = new Date(todayInstant.getTime() - 30 * 86_400_000);
+
+    // No `issueDate` column on CreditNote (only createdAt) — the web code's
+    // `(cn as any).issueDate ?? cn.createdAt` always fell through to createdAt in
+    // practice; this mirrors that reality directly instead of the optional-chain fiction.
+    const notes = await this.prisma.forTenant().creditNote.findMany({
+      select: {
+        status: true,
+        amount: true,
+        amountUsed: true,
+        expiresAt: true,
+        reason: true,
+        createdAt: true,
+      },
+    });
+
+    const counts = { total: notes.length, issued: 0, applied: 0, void: 0 };
+    let openCredit = 0;
+    let openCount = 0;
+    let issued30Value = 0;
+    let issued30Count = 0;
+    const byReason = new Map<string, number>();
+    let creditedTotal = 0;
+
+    for (const cn of notes) {
+      if (cn.status === "ISSUED") counts.issued++;
+      if (cn.status === "APPLIED") counts.applied++;
+      if (cn.status === "VOID") counts.void++;
+
+      const amount = Number(cn.amount);
+      const remaining = roundMoney(amount - Number(cn.amountUsed ?? 0));
+      const isOpen =
+        cn.status !== "VOID" &&
+        remaining > 0.001 &&
+        !(cn.expiresAt && cn.expiresAt.getTime() <= todayInstant.getTime());
+      if (isOpen) {
+        openCredit = roundMoney(openCredit + remaining);
+        openCount++;
+      }
+
+      if (cn.status !== "VOID") {
+        if (cn.createdAt >= cutoff) {
+          issued30Value += amount;
+          issued30Count++;
+        }
+        const reason = (cn.reason || "—").trim() || "—";
+        byReason.set(reason, (byReason.get(reason) ?? 0) + amount);
+        creditedTotal += amount;
+      }
+    }
+
+    let topReason = "—";
+    let topReasonValue = 0;
+    byReason.forEach((amt, reason) => {
+      if (amt > topReasonValue) {
+        topReason = reason;
+        topReasonValue = amt;
+      }
+    });
+    const topReasonPct = creditedTotal > 0 ? Math.round((topReasonValue / creditedTotal) * 100) : 0;
+
+    return {
+      total: counts.total,
+      issued: counts.issued,
+      applied: counts.applied,
+      void: counts.void,
+      openCredit: roundMoney(openCredit),
+      openCount,
+      issued30Value: roundMoney(issued30Value),
+      issued30Count,
+      topReason,
+      topReasonPct,
+    };
   }
 
   /**
