@@ -1811,7 +1811,7 @@ function DocumentsTab({ customerId }: { customerId: string }) {
                 <button
                   onClick={() => handleDelete(d.id)}
                   title="Delete document"
-                  className="absolute right-2 top-2 rounded-full bg-white/90 p-1.5 text-navy/70 opacity-0 shadow transition hover:text-danger group-hover:opacity-100"
+                  className="touch-reveal absolute right-2 top-2 rounded-full bg-white/90 p-1.5 text-navy/70 opacity-0 shadow transition hover:text-danger group-hover:opacity-100"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
@@ -2524,7 +2524,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                                 alt="Tax exempt doc"
                                 className="h-full w-full object-cover"
                               />
-                              <div className="absolute inset-0 flex items-center justify-center gap-1.5 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <div className="touch-reveal absolute inset-0 flex items-center justify-center gap-1.5 bg-black/50 opacity-0 transition-opacity group-hover:opacity-100">
                                 <button
                                   onClick={() => setTaxDocLightbox(taxDocToViewerDoc(doc))}
                                   className="rounded-full bg-white/90 p-1.5 text-navy hover:bg-white"
@@ -2633,7 +2633,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                         {tag.name}
                         <button
                           title={`Remove tag "${tag.name}"`}
-                          className="rounded-full p-0.5 opacity-0 transition-opacity hover:bg-black/10 group-hover:opacity-100"
+                          className="touch-reveal rounded-full p-0.5 opacity-0 transition-opacity hover:bg-black/10 group-hover:opacity-100"
                           onClick={() =>
                             removeTag.mutate({
                               customerId: id,
