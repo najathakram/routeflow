@@ -1238,15 +1238,20 @@ export const FeatureOverridesSection = React.forwardRef<
     setSubmitting(true);
     setPreviewError(null);
     try {
-      await superAdminClient.post(`/platform-admin/tenants/${tenant.id}/feature-overrides`, {
-        ...pendingCreate,
-        // B524 prep: this form has no missing-requires warning UI yet (unlike
-        // EnableAddonModal's amber-box + checkbox), so there is nothing for an operator to
-        // acknowledge here — always false. Wired now so the wire shape exists ahead of B524's
-        // server-side enforcement landing; the full parity UI (effectiveKeys fetch +
-        // missingRequires computation + warning box) is tracked as its own follow-up.
-        acknowledgeUnmetRequires: false,
-      });
+      // B524 prep: this form has no missing-requires warning UI yet (unlike EnableAddonModal's
+      // amber-box + checkbox), so there is nothing here for an operator to ever acknowledge —
+      // omit `acknowledgeUnmetRequires` entirely rather than hardcoding `false`, which would
+      // audit-log "the operator acknowledged nothing" on every single override create and assert
+      // a user action that never happened. Mirrors how EnableAddonModal/enableTenantAddon only
+      // ever include the field when an operator actually ticked the warning's checkbox (see
+      // `features.ts`'s `...(acknowledgeUnmetRequires ? { acknowledgeUnmetRequires } : {})`).
+      // The full parity UI (effectiveKeys fetch + missingRequires computation + warning box +
+      // real acknowledgment state) is tracked as its own follow-up; only then does this form gain
+      // something to conditionally include.
+      await superAdminClient.post(
+        `/platform-admin/tenants/${tenant.id}/feature-overrides`,
+        pendingCreate,
+      );
       setPreviewResponse(null);
       setPendingCreate(null);
       setShowForm(false);
