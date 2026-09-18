@@ -22,8 +22,8 @@
   --g-ink: #152d51;
   --g-body: #4c607a;
   --g-muted: #637992;
-  --g-soft: #587289; /* B504: was #738aa0 (3.58:1 on white, fails AA); 5.02:1 */
-  --g-eyebrow: #466e94;
+  --g-soft: #51697e; /* B507: was #587289 (4.04:1 on #eee2fa, fails AA); 4.60:1 on #eee2fa, 5.72:1 on white */
+  --g-eyebrow: #43698e; /* B507: was #466e94 (4.31:1 on #eee2fa, fails AA); 4.63:1 on #eee2fa, 5.75:1 on white */
 
   /* Accent */
   --g-link: #234f7e;
