@@ -518,6 +518,11 @@ FlagKey>` maps a subset of OPERATOR_NAV hrefs (`/returns`, `/suppliers`, `/vendo
   `addons.ts`: resolved ⇒ go by the flag; unresolved ⇒ hidden (no flash); fetch failed ⇒ shown
   (client fails OPEN, server guard fails CLOSED). `matchPlanGatedRoute(pathname)` — exact-or-
   prefix match against `PLAN_GATED_NAV`, `null` if none. Test: `plan-gated-nav.test.ts`.
+  **B501 fix (#853, 2438e6b9):** `PLAN_GATED_NAV` had no entry for `/invoices/recurring` even
+  though that route carries its own server-side `@RequirePlanFlag("flag.recurring_invoices")`
+  gate — a denied tenant deep-linking or navigating there got an unhandled 403 instead of the
+  graceful lock every other plan-gated route shows via this mirror map. Entry added; test
+  coverage in `plan-gated-nav.test.ts` and `PlanGateBoundary.test.tsx`.
 - **`(dashboard)/layout.tsx` — plan-gated nav filtering + route lock (Lite-L2 WP8, 2026-09-15):**
   `filterPlanGatedNav(entries, planState)` drops every nav leaf `matchPlanGatedRoute` denies
   (a group left with zero children after filtering is dropped entirely, same precedent as the
