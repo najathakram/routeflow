@@ -109,7 +109,8 @@ function TemplateRow({
         <div className="bg-surface-raised/50 px-4 pb-4 pl-[4.75rem]">
           {template.notes && <p className="mb-3 text-xs text-navy/70 italic">{template.notes}</p>}
           <div className="rounded-lg border border-surface-border bg-white overflow-hidden">
-            <table className="w-full">
+            <div className="overflow-x-auto">
+            <table className="w-full min-w-[560px]">
               <thead>
                 <tr className="border-b border-surface-border text-[11px] text-navy/70 uppercase tracking-wider">
                   <th className="px-3 py-2 text-left">Product</th>
@@ -129,6 +130,7 @@ function TemplateRow({
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         </div>
       )}
