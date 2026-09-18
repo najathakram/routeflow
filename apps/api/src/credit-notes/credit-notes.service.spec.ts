@@ -1326,6 +1326,56 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
       expect(prisma.advancePayment.update).not.toHaveBeenCalled();
     });
 
+    // B406: the raw AdvancePayment UPDATE (Opus review F39's atomic LEAST(), above) had no
+    // tenantId predicate — a latent hazard, not a live cross-tenant write (payment.advancePaymentId
+    // only ever reaches it via a tenant-scoped tx.invoice.findMany read), but worth closing as
+    // defense-in-depth for a future caller that feeds this an unscoped id. Pins that the query
+    // text and the bound tenantId are both actually present, not just that a string appears
+    // somewhere in the SQL.
+    it("REG-B406 the AdvancePayment balance-restore UPDATE scopes by tenantId, not id alone", async () => {
+      prisma.orderCreditNote.findMany.mockResolvedValueOnce([]);
+      prisma.invoice.findMany.mockResolvedValueOnce([
+        {
+          id: "inv-adv-2",
+          invoiceNumber: "INV-ADV-2",
+          total: 60,
+          dueDate: null,
+          status: "PARTIAL",
+          payments: [
+            {
+              id: "pay-advance-2",
+              amount: 100,
+              status: "PAID",
+              method: "ADVANCE",
+              advancePaymentId: "ap-2",
+              creditNoteId: null,
+              createdAt: new Date("2026-01-02"),
+            },
+          ],
+        },
+      ]);
+      prisma.invoice.findUnique.mockResolvedValueOnce({
+        id: "inv-adv-2",
+        total: 60,
+        dueDate: null,
+        status: "PARTIAL",
+        payments: [{ amount: 60, status: "PAID" }],
+      });
+
+      await service.settleOrderCreditsInTx(prisma as any, "order-adv-2");
+
+      const rawCall = prisma.$executeRaw.mock.calls.find((args: any) =>
+        args[0].join("?").includes("AdvancePayment"),
+      );
+      expect(rawCall).toBeDefined();
+      const [strings, , idArg, tenantIdArg] = rawCall!;
+      expect(strings.join("?")).toContain('AND "tenantId" = ');
+      expect(idArg).toBe("ap-2");
+      // The mock prisma's getTenantId() default ("test-tenant") is what settleOrderCreditsInTx
+      // resolves and threads through when the caller passes none explicitly.
+      expect(tenantIdArg).toBe("test-tenant");
+    });
+
     it("explicit-amount intent applies exactly min(requested amount, credit remaining, invoice balance)", async () => {
       prisma.orderCreditNote.findMany.mockResolvedValueOnce([
         {
