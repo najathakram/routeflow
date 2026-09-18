@@ -15,6 +15,13 @@ function money(n: number | null): string {
 /**
  * Recompute average costs by replaying stock movements. Runs a dry-run on mount
  * (preview only), then the operator can Apply. Mirrors web's RecomputeModal.
+ *
+ * B562 (interim mitigation, owner-approved): the warehouse tab no longer links to
+ * this screen — the recompute is blind to raw order decrements and can silently
+ * rewrite a tenant's whole inventory valuation while destroying the `stockAfter`
+ * evidence needed to detect it (see the comment on
+ * InventoryController.recomputeCosts). This screen and its route are left in
+ * place, unreachable from the UI, until B562's root cause is fixed.
  */
 export default function RecomputeCostsScreen() {
   const router = useRouter();
