@@ -3876,7 +3876,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                   )}
                 </div>
 
-                <div className="mb-6 grid grid-cols-4 gap-px overflow-hidden rounded-lg border border-surface-border bg-surface-border">
+                <div className="mb-6 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-surface-border bg-surface-border sm:grid-cols-4">
                   {[
                     {
                       label: "Opening Balance",
@@ -3923,8 +3923,8 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                 {!statement || statement.transactions.length === 0 ? (
                   <p className="text-sm text-navy/70">No transactions on record.</p>
                 ) : (
-                  <div className="-mx-8 overflow-hidden">
-                    <table className="w-full text-sm">
+                  <div className="-mx-8 overflow-x-auto">
+                    <table className="w-full min-w-[640px] text-sm">
                       <thead>
                         <tr className="bg-[#1B3A5C]">
                           <th className="px-8 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-white/80">

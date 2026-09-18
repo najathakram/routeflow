@@ -165,8 +165,8 @@ export function SplitInvoiceModal({
             All items on this order have already been invoiced.
           </p>
         ) : (
-          <div className="overflow-hidden rounded-md border border-surface-border">
-            <table className="w-full text-sm">
+          <div className="overflow-x-auto rounded-md border border-surface-border">
+            <table className="w-full min-w-[420px] text-sm">
               <thead className="bg-surface-raised text-xs uppercase text-navy/70">
                 <tr>
                   <th className="px-3 py-2 text-left">Product</th>
