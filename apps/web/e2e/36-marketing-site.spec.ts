@@ -476,7 +476,7 @@ test.describe("T14 — WCAG AA contrast for the B504-fixed roles (R7)", () => {
         expect(checked, "at least one operation-story heading was checked").toBeGreaterThan(0);
       });
 
-      test('T14 — the purple AI-scan card ("Let AI scan the invoice." + its paragraph) clears AA on /, /product', async ({
+      test('T14 — the purple AI-scan card ("Let AI scan the invoice." + its paragraph + its small label) clears AA on /, /product', async ({
         page,
       }) => {
         let checked = 0;
@@ -486,9 +486,14 @@ test.describe("T14 — WCAG AA contrast for the B504-fixed roles (R7)", () => {
           if ((await step.count()) === 0) continue;
           const heading = step.locator("h3");
           const paragraph = step.locator("p");
-          checked += (await heading.count()) + (await paragraph.count());
+          // B507: the card's `small` label was left uncovered by B504's fix
+          // for its h3/p siblings — same card, same tie, same fix, just
+          // never extended to it (round-2 measured 1.59-1.60:1).
+          const small = step.locator("small");
+          checked += (await heading.count()) + (await paragraph.count()) + (await small.count());
           const headingContrast = await minContrast(heading);
           const paragraphContrast = await minContrast(paragraph);
+          const smallContrast = await minContrast(small);
           expect(headingContrast, `${route} .ai-assisted-step h3 contrast`).not.toBeNull();
           expect(headingContrast!, `${route} .ai-assisted-step h3 contrast`).toBeGreaterThanOrEqual(
             AA_NORMAL,
@@ -497,6 +502,11 @@ test.describe("T14 — WCAG AA contrast for the B504-fixed roles (R7)", () => {
           expect(
             paragraphContrast!,
             `${route} .ai-assisted-step p contrast`,
+          ).toBeGreaterThanOrEqual(AA_NORMAL);
+          expect(smallContrast, `${route} .ai-assisted-step small contrast`).not.toBeNull();
+          expect(
+            smallContrast!,
+            `${route} .ai-assisted-step small contrast`,
           ).toBeGreaterThanOrEqual(AA_NORMAL);
         }
         expect(checked, "at least one AI-scan card was checked").toBeGreaterThan(0);
@@ -529,6 +539,102 @@ test.describe("T14 — WCAG AA contrast for the B504-fixed roles (R7)", () => {
         const count = await paragraphs.count();
         expect(count, "difference-section paragraphs present on /").toBeGreaterThan(0);
         const contrast = await minContrast(paragraphs);
+        expect(contrast).not.toBeNull();
+        expect(contrast!).toBeGreaterThanOrEqual(AA_NORMAL);
+      });
+    });
+  }
+});
+
+// ─── T15 — WCAG AA contrast for the B507-fixed roles (round-2 sweep) ────────
+//
+// The B507 round-2 recheck found 8 unique failures (12 total across the
+// pages it hit) that survived B504: some the same specificity-tie mechanism
+// on a sibling element B504 never covered, some plain token/rule-level
+// undertones one shade too light for a particular background. See
+// glass.css/glass-site.css/marketing.css for the per-selector root-cause
+// notes next to each fix.
+
+test.describe("T15 — WCAG AA contrast for the B507-fixed roles", () => {
+  for (const width of [1440, 390]) {
+    test.describe(`at ${width}px`, () => {
+      test.use({ viewport: { width, height: 900 } });
+
+      test("T15 — the operation-story scrubber's explanation text clears AA on /, /wholesalers", async ({
+        page,
+      }) => {
+        let checked = 0;
+        for (const route of ["/", "/wholesalers"]) {
+          await page.goto(route);
+          const paragraph = page.locator(".story-controls .story-explanation > p");
+          const count = await paragraph.count();
+          if (count === 0) continue;
+          checked += count;
+          const contrast = await minContrast(paragraph);
+          expect(
+            contrast,
+            `${route} .story-controls .story-explanation > p contrast`,
+          ).not.toBeNull();
+          expect(
+            contrast!,
+            `${route} .story-controls .story-explanation > p contrast`,
+          ).toBeGreaterThanOrEqual(AA_NORMAL);
+        }
+        expect(checked, "at least one story-controls explanation was checked").toBeGreaterThan(0);
+      });
+
+      test("T15 — the workflow-tour record-note's label (--g-eyebrow) clears AA on /wholesalers", async ({
+        page,
+      }) => {
+        await page.goto("/wholesalers");
+        const span = page.locator(".record-note > span");
+        const count = await span.count();
+        expect(count, "record-note span present on /wholesalers").toBeGreaterThan(0);
+        const contrast = await minContrast(span);
+        expect(contrast).not.toBeNull();
+        expect(contrast!).toBeGreaterThanOrEqual(AA_NORMAL);
+      });
+
+      test("T15 — the audience-card links (distributors + retailers) clear AA on /", async ({
+        page,
+      }) => {
+        await page.goto("/");
+        const links = page.locator(
+          ".audience-card.distributors .text-link, .audience-card.retailers .text-link",
+        );
+        const count = await links.count();
+        expect(count, "audience-card links present on /").toBeGreaterThan(0);
+        const contrast = await minContrast(links);
+        expect(contrast).not.toBeNull();
+        expect(contrast!).toBeGreaterThanOrEqual(AA_NORMAL);
+      });
+
+      test("T15 — the product-passport bar's trailing label clears AA on /, /product, /wholesalers", async ({
+        page,
+      }) => {
+        let checked = 0;
+        for (const route of ["/", "/product", "/wholesalers"]) {
+          await page.goto(route);
+          const span = page.locator(".passport-bottom > span:last-child");
+          const count = await span.count();
+          if (count === 0) continue;
+          checked += count;
+          const contrast = await minContrast(span);
+          expect(contrast, `${route} .passport-bottom > span:last-child contrast`).not.toBeNull();
+          expect(
+            contrast!,
+            `${route} .passport-bottom > span:last-child contrast`,
+          ).toBeGreaterThanOrEqual(AA_NORMAL);
+        }
+        expect(checked, "at least one passport-bottom label was checked").toBeGreaterThan(0);
+      });
+
+      test("T15 — the retailer photo's caption clears AA on /retailers", async ({ page }) => {
+        await page.goto("/retailers");
+        const caption = page.locator(".retailer-art figcaption");
+        const count = await caption.count();
+        expect(count, "retailer-art figcaption present on /retailers").toBeGreaterThan(0);
+        const contrast = await minContrast(caption);
         expect(contrast).not.toBeNull();
         expect(contrast!).toBeGreaterThanOrEqual(AA_NORMAL);
       });
