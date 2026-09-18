@@ -29,7 +29,7 @@
 - **Lesson:** **Before citing a bookkeeping/registry closure as landed or unlanded, resolve the
   SPECIFIC commit that is supposed to carry the fix on master first — via `git log --grep` for
   the PR's own `(#N)` tag, or the GH API's `mergeCommit.oid` — then run `merge-base
-  --is-ancestor <that sha> origin/master`. Never check the source branch's tip commit or infer
+--is-ancestor <that sha> origin/master`. Never check the source branch's tip commit or infer
   merge state from GitHub's PR view alone: a squash or cherry-pick can leave a branch's own
   commits genuinely off master while its content is fully live under a different sha.**
 - **Guard:** none yet — propose the batch/landing checklist require pairing every
@@ -56,7 +56,7 @@
 - **Lesson:** **To re-test a PR against the CURRENT base branch — after a base-branch fix lands,
   or any base change the PR doesn't itself carry — push a genuinely NEW commit, never
   `gh run rerun`. An empty commit works when there's no real content to add: `git commit
-  --allow-empty -m "..."`, or `git commit-tree <tree> -p <parent> -m "..."` plumbing when the
+--allow-empty -m "..."`, or `git commit-tree <tree> -p <parent> -m "..."` plumbing when the
   branch can't be checked out locally. Reserve `gh run rerun` for a genuinely flaky failure on an
   otherwise-current merge ref.**
 - **Guard:** none yet — propose a landing-tool helper that pushes an empty commit instead of
@@ -757,6 +757,32 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   `PINNED_PRISMA_ENUM_COUNT` tripwire (L-072) catches a genuinely new enum, but not a new VALUE
   on an existing one — only `tsc --noEmit` catches that, which is why this must be run, not
   assumed, on any enum-value addition.
+
+### L-199 · 2026-09-18 · domain · B524 fix round — a new write path didn't inherit a sibling's cache-invalidation fix
+
+- **Symptom:** independent Opus review of PR #913 (B524, server-side `requires` enforcement)
+  found a real regression: granting a prerequisite via `FeatureOverrideService.create()` (or
+  removing one via `.revoke()`) then immediately performing an action gated on the new requires
+  check (e.g. enabling a dependent addon) could read a stale pre-write snapshot and false-400
+  for up to 30 seconds — `create()`/`revoke()` invalidated only their OWN 30s override cache,
+  never `FeatureResolverService`'s separate 30s cache the new check reads.
+- **Root cause:** `AddonService.enableAddon`/`disableAddon` already had this exact bug fixed
+  (B509 — invalidating `FeatureResolverService` after their own writes), but B524 added the
+  requires check to a SECOND write path (`FeatureOverrideService.create`/`revoke`, called from
+  `PlatformAdminController`) that reads the SAME cached resolution and had never needed to care
+  about its staleness before — because nothing downstream previously depended on that cache
+  being fresh immediately after an override write. Adding a new reader that's sensitive to
+  staleness doesn't retroactively fix the writer that was never invalidating for it; the fix on
+  one path doesn't propagate to a sibling path by analogy, only by someone applying it there too.
+- **Lesson:** **When a new check reads a cached value that's normally allowed to be up-to-30s
+  stale, audit EVERY write path that can change that value — not just the one the current task
+  is touching — for whether it already invalidates the SAME cache. A caching bug class fixed on
+  one write path (B509 on `AddonService`) is not fixed on a sibling write path (`FeatureOverrideService`)
+  just because they read the same underlying data; each writer needs its own invalidation call.**
+- **Guard:** `PlatformAdminController#createFeatureOverride`/`#revokeFeatureOverride` now call
+  `EntitlementAuthority.invalidate(tenantId)` after their writes, mirroring `AddonService`'s own
+  B509 fix; `platform-admin.controller.override-requires.spec.ts` pins both calls directly
+  (`authority.invalidate` asserted, not inferred from absence of a stale-read symptom).
 
 ## security
 
