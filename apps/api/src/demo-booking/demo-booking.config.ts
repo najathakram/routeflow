@@ -17,6 +17,12 @@ export interface DemoBookingConfig {
   calendarId: string;
   /** HMAC key for the cancel/reschedule links in the confirmation email. */
   tokenSecret: string;
+  /**
+   * Where the internal "someone booked/cancelled/rescheduled a demo" notification goes.
+   * Always set — a code-side default, never a silent skip (B518: the booker's confirmation
+   * shipped with no internal counterpart at all).
+   */
+  demoBookingAdminEmail: string;
 
   /** IANA zone the business hours below are expressed in. */
   businessTimeZone: string;
@@ -83,6 +89,7 @@ export function loadDemoBookingConfig(env: NodeJS.ProcessEnv = process.env): Dem
     impersonate: (env.GOOGLE_CALENDAR_IMPERSONATE ?? "").trim(),
     calendarId: (env.GOOGLE_CALENDAR_ID ?? "primary").trim() || "primary",
     tokenSecret: (env.DEMO_BOOKING_TOKEN_SECRET ?? "").trim(),
+    demoBookingAdminEmail: (env.DEMO_BOOKING_ADMIN_EMAIL ?? "").trim() || "hello@routeflow.info",
 
     businessTimeZone: (env.DEMO_BOOKING_TIMEZONE ?? "America/Chicago").trim(),
     openHour: open.hour,
