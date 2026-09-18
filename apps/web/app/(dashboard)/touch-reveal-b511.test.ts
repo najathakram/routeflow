@@ -11,6 +11,16 @@ import path from "path";
  * (so it always wins the cascade over the layered Tailwind utilities
  * regardless of generation order), and every hover-reveal call site now
  * carries it.
+ *
+ * B535 note: the per-call-site assertions below used to pin the FULL
+ * `className` source string. B535 (44x44 tap-target work, additive) wraps
+ * each of these in `cn(TAP_TARGET, "...")` and, in one case, drops a now-
+ * redundant explicit `p-1.5` in favor of TAP_TARGET's own min-h/min-w
+ * sizing — neither of which touches touch-reveal's fix. A full-string match
+ * breaks on any such additive className change, so these now extract each
+ * button's whole opening JSX tag (anchored on its unique, non-styling
+ * `title` attribute, independent of attribute order) and assert that the
+ * specific tokens the B511 fix depends on are present in it.
  */
 function read(relPath: string): string {
   return fs.readFileSync(path.join(__dirname, relPath), "utf8");
@@ -30,6 +40,38 @@ function braceBlockBody(css: string, startIndex: number): string {
   throw new Error("unbalanced braces");
 }
 
+/**
+ * Index of the `>` that closes a JSX opening tag, scanning forward from
+ * `fromIndex`. Skips `=>` (arrow functions inside prop expressions) so it
+ * doesn't stop early on an onClick/onChange handler.
+ */
+function closingAngleIndex(src: string, fromIndex: number): number {
+  let i = fromIndex;
+  while (i < src.length) {
+    const idx = src.indexOf(">", i);
+    if (idx === -1) throw new Error("no closing '>' found");
+    if (src[idx - 1] !== "=") return idx;
+    i = idx + 1;
+  }
+  throw new Error("no closing '>' found");
+}
+
+/**
+ * Extracts a `<button ...>` element's full opening tag text, located by a
+ * unique marker string inside it (e.g. `title="Edit payment"`). Anchoring on
+ * the tag boundaries rather than a full className string means the
+ * assertion survives attribute reordering or additive wrapper calls
+ * (`cn(TAP_TARGET, ...)`) — it only cares what ends up in the rendered tag.
+ */
+function extractButtonOpenTag(src: string, marker: string): string {
+  const markerIndex = src.indexOf(marker);
+  if (markerIndex === -1) throw new Error(`marker not found: ${marker}`);
+  const tagStart = src.lastIndexOf("<button", markerIndex);
+  if (tagStart === -1) throw new Error(`no <button before marker: ${marker}`);
+  const tagEnd = closingAngleIndex(src, markerIndex + marker.length);
+  return src.slice(tagStart, tagEnd + 1);
+}
+
 describe("B511 — hover-reveal row actions stay visible on touch", () => {
   it("globals.css declares .touch-reveal unlayered, forcing opacity 1 under (hover: none)", () => {
     const css = read("../globals.css");
@@ -46,24 +88,38 @@ describe("B511 — hover-reveal row actions stay visible on touch", () => {
 
   it("invoices payment-history Edit/Delete carry touch-reveal", () => {
     const src = read("invoices/[id]/page.tsx");
-    expect(src).toContain(
-      'className="touch-reveal rounded p-1 text-navy/30 opacity-0 transition-all group-hover:opacity-100 hover:text-brand-500"',
-    );
-    expect(src).toContain(
-      'className="touch-reveal rounded p-1 text-navy/30 opacity-0 transition-all group-hover:opacity-100 hover:text-danger"',
-    );
+    const editTag = extractButtonOpenTag(src, 'title="Edit payment"');
+    const deleteTag = extractButtonOpenTag(src, 'title="Delete payment"');
+    for (const tag of [editTag, deleteTag]) {
+      // touch-reveal is the fix itself; opacity-0 + group-hover:opacity-100
+      // is the hover-reveal pattern touch-reveal exists to override on touch
+      // devices — asserting all three together confirms this is genuinely a
+      // hover-reveal control that has opted into the fix, not an unrelated
+      // element that merely happens to carry the class name.
+      expect(tag).toMatch(/\btouch-reveal\b/);
+      expect(tag).toMatch(/\bopacity-0\b/);
+      expect(tag).toMatch(/\bgroup-hover:opacity-100\b/);
+    }
   });
 
   it("customers document delete, tax-doc overlay, and tag-remove carry touch-reveal", () => {
     const src = read("customers/[id]/page.tsx");
-    expect(src).toContain(
-      'className="touch-reveal absolute right-2 top-2 rounded-full bg-white/90 p-1.5 text-navy/70 opacity-0 shadow transition hover:text-danger group-hover:opacity-100"',
-    );
+
+    const deleteDocTag = extractButtonOpenTag(src, 'title="Delete document"');
+    expect(deleteDocTag).toMatch(/\btouch-reveal\b/);
+    expect(deleteDocTag).toMatch(/\bopacity-0\b/);
+    expect(deleteDocTag).toMatch(/\bgroup-hover:opacity-100\b/);
+
+    // The tax-doc overlay wrapper is a plain <div>, not a tap target, so
+    // B535 never touches it — it is still an exact, unbroken literal match
+    // and is left as one.
     expect(src).toContain(
       'className="touch-reveal absolute inset-0 flex items-center justify-center gap-1.5 bg-black/50 opacity-0 transition-opacity group-hover:opacity-100"',
     );
-    expect(src).toContain(
-      'className="touch-reveal rounded-full p-0.5 opacity-0 transition-opacity hover:bg-black/10 group-hover:opacity-100"',
-    );
+
+    const tagRemoveTag = extractButtonOpenTag(src, 'title={`Remove tag "${tag.name}"`}');
+    expect(tagRemoveTag).toMatch(/\btouch-reveal\b/);
+    expect(tagRemoveTag).toMatch(/\bopacity-0\b/);
+    expect(tagRemoveTag).toMatch(/\bgroup-hover:opacity-100\b/);
   });
 });
