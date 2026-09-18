@@ -1036,6 +1036,7 @@ export class CreditNotesService {
   private async restoreAdvanceFromPaymentInTx(
     tx: any,
     payment: { id: string; invoiceId: string; advancePaymentId: string | null; amount: unknown },
+    tenantId: string | null,
     reduceBy?: number,
   ): Promise<number> {
     if (!payment.advancePaymentId) return 0;
@@ -1061,7 +1062,23 @@ export class CreditNotesService {
     // here risks a cross-connection deadlock the 10s timeout would only mask). One atomic SQL
     // statement closes it instead: the cap-at-`amount` becomes `LEAST`, so there is no
     // read-modify-write window at all.
-    await tx.$executeRaw`UPDATE "AdvancePayment" SET balance = LEAST(amount, balance + ${restore}) WHERE id = ${payment.advancePaymentId}`;
+    //
+    // B406: `id` alone is already sufficient to scope this write correctly —
+    // `payment.advancePaymentId` only ever reaches this call via a tenant-scoped read
+    // (this function's one caller, settleOrderCreditsInTx, resolves `payment` from
+    // `tx.invoice.findMany({ where: { orderId, ... } })` under the tenant-scoped `tx`
+    // proxy, so a cross-tenant orderId returns zero rows before this ever runs). The
+    // `tenantId` predicate below is deliberate defense-in-depth against a FUTURE caller
+    // that feeds this an id from somewhere unscoped, not a fix for a live cross-tenant
+    // write — do not remove it as "redundant" without re-tracing that call path.
+    // Skipped only when tenantId is unknown (the documented unwrapped-tx / fire-and-forget
+    // case in settleOrderCreditsInTx's own tenantId param), so that narrow legitimate case
+    // keeps its pre-existing (id-only) behaviour rather than silently updating zero rows.
+    if (tenantId) {
+      await tx.$executeRaw`UPDATE "AdvancePayment" SET balance = LEAST(amount, balance + ${restore}) WHERE id = ${payment.advancePaymentId} AND "tenantId" = ${tenantId}`;
+    } else {
+      await tx.$executeRaw`UPDATE "AdvancePayment" SET balance = LEAST(amount, balance + ${restore}) WHERE id = ${payment.advancePaymentId}`;
+    }
 
     const inv = await tx.invoice.findUnique({
       where: { id: payment.invoiceId },
@@ -1406,7 +1423,7 @@ export class CreditNotesService {
           );
         for (const p of advancePays) {
           if (!(excess > 0.001)) break;
-          const restored = await this.restoreAdvanceFromPaymentInTx(tx, p, excess);
+          const restored = await this.restoreAdvanceFromPaymentInTx(tx, p, tenantId, excess);
           excess = roundMoney(excess - restored);
           result.unapplied = roundMoney(result.unapplied + restored);
         }

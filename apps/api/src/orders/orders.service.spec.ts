@@ -1617,8 +1617,15 @@ describe("OrdersService", () => {
     // ─── WP3: order-scoped credit-note application ──────────────────────────
 
     describe("appliedCreditNotes (WP3 — order-scoped credit-note application)", () => {
+      // B318 flipped these three from customerPayload to operatorPayload: they exercise the
+      // validate/sync/settle MECHANISM, which the fix below now gates to staff callers only —
+      // see the REG-B318 tests further down for the non-staff denial these three used to miss.
       it("validates selections up-front — a rejected selection throws before the order is created", async () => {
-        prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+        prisma.customer.findUnique.mockResolvedValue({
+          id: "cust-1",
+          deletedAt: null,
+          user: { status: "ACTIVE" },
+        });
         prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
         (service as any).systemConfig.get.mockResolvedValue("0");
         creditNotesService.validateSelectionsForCustomer.mockRejectedValueOnce(
@@ -1628,10 +1635,11 @@ describe("OrdersService", () => {
         await expect(
           service.create(
             {
+              customerId: "cust-1",
               items: [{ productId: "prod-1", qty: 1 }],
               appliedCreditNotes: [{ creditNoteId: "cn-1" }],
             } as any,
-            customerPayload,
+            operatorPayload,
           ),
         ).rejects.toThrow(BadRequestException);
 
@@ -1646,7 +1654,11 @@ describe("OrdersService", () => {
       });
 
       it("stores + settles the caller's credit-note selection against the created order id", async () => {
-        prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+        prisma.customer.findUnique.mockResolvedValue({
+          id: "cust-1",
+          deletedAt: null,
+          user: { status: "ACTIVE" },
+        });
         prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
         prisma.order.create.mockResolvedValue(MOCK_ORDER); // id: "ord-1", customerId: "cust-1"
         (service as any).systemConfig.get.mockResolvedValue("0");
@@ -1654,10 +1666,11 @@ describe("OrdersService", () => {
         const selections = [{ creditNoteId: "cn-1", amount: 20 }];
         await service.create(
           {
+            customerId: "cust-1",
             items: [{ productId: "prod-1", qty: 1 }],
             appliedCreditNotes: selections,
           } as any,
-          customerPayload,
+          operatorPayload,
         );
 
         expect(creditNotesService.syncOrderCreditSelections).toHaveBeenCalledWith(
@@ -1673,16 +1686,60 @@ describe("OrdersService", () => {
       });
 
       it("omitting appliedCreditNotes leaves credit selections untouched (no sync/settle call)", async () => {
-        prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+        prisma.customer.findUnique.mockResolvedValue({
+          id: "cust-1",
+          deletedAt: null,
+          user: { status: "ACTIVE" },
+        });
         prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
         prisma.order.create.mockResolvedValue(MOCK_ORDER);
         (service as any).systemConfig.get.mockResolvedValue("0");
 
-        await service.create({ items: [{ productId: "prod-1", qty: 1 }] } as any, customerPayload);
+        await service.create(
+          { customerId: "cust-1", items: [{ productId: "prod-1", qty: 1 }] } as any,
+          operatorPayload,
+        );
 
         expect(creditNotesService.syncOrderCreditSelections).not.toHaveBeenCalled();
         expect(creditNotesService.settleOrderCreditsInTx).not.toHaveBeenCalled();
       });
+
+      // B318: the edit path (updateOrderItems' isStaffCreditEdit) already strips
+      // appliedCreditNotes for non-staff callers. Create had no matching gate — a buyer or
+      // driver token could consume a customer's credit notes on create without any staff
+      // involvement, the exact asymmetry the edit path was built to prevent.
+      it.each([
+        ["CUSTOMER", customerPayload],
+        ["DRIVER", { ...operatorPayload, role: "DRIVER" as const }],
+      ])(
+        "REG-B318 appliedCreditNotes on order create is ignored unless the caller is OPERATOR or TENANT_ADMIN (%s)",
+        async (_role, user) => {
+          // Satisfies both branches: CUSTOMER resolves its own record via findFirst
+          // (customerId in the dto is ignored there), DRIVER requires dto.customerId
+          // and resolves it via findUnique.
+          prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+          prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", deletedAt: null });
+          prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
+          prisma.order.create.mockResolvedValue(MOCK_ORDER);
+          (service as any).systemConfig.get.mockResolvedValue("0");
+
+          await service.create(
+            {
+              customerId: "cust-1",
+              items: [{ productId: "prod-1", qty: 1 }],
+              appliedCreditNotes: [{ creditNoteId: "cn-1" }],
+            } as any,
+            user as any,
+          );
+
+          // Silently ignored, not rejected — the order still gets created, just without
+          // ever touching the customer's credit notes.
+          expect(prisma.order.create).toHaveBeenCalled();
+          expect(creditNotesService.validateSelectionsForCustomer).not.toHaveBeenCalled();
+          expect(creditNotesService.syncOrderCreditSelections).not.toHaveBeenCalled();
+          expect(creditNotesService.settleOrderCreditsInTx).not.toHaveBeenCalled();
+        },
+      );
     });
 
     // ── Ad-hoc trips + fulfillment mode: fulfillPath default chain ──────────
