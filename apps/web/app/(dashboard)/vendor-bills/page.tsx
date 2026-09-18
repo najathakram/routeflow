@@ -70,6 +70,7 @@ import Link from "next/link";
 import { fmt, fmtCalendarDate, fmtDate, todayIso } from "@/lib/formatting";
 import { apiClient } from "@/lib/api-client";
 import { SELECTABLE_PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "@/lib/payment-methods";
+import { roundMoney } from "@routeflow/pricing";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -601,9 +602,11 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
     setLineItems((prev) => prev.filter((_, idx) => idx !== i));
   }
 
-  const lineTotal = lineItems.reduce(
-    (sum, row) => sum + (parseFloat(row.qty) || 0) * (parseFloat(row.unitCost) || 0),
-    0,
+  const lineTotal = roundMoney(
+    lineItems.reduce(
+      (sum, row) => sum + (parseFloat(row.qty) || 0) * (parseFloat(row.unitCost) || 0),
+      0,
+    ),
   );
 
   function validate() {
@@ -615,7 +618,13 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
     lineItems.forEach((row, i) => {
       if (!row.description.trim()) errs[`desc_${i}`] = "Description required.";
       if (!row.qty || parseFloat(row.qty) <= 0) errs[`qty_${i}`] = "Qty > 0.";
-      if (!row.unitCost || parseFloat(row.unitCost) <= 0) errs[`cost_${i}`] = "Cost > 0.";
+      // B469: cost may be NEGATIVE (a discount/deposit line, mirroring mobile
+      // scan-to-bill since #791) — only require that a number was entered.
+      // The server enforces the real invariant (the bill must not NET
+      // negative) via MONEY_INVARIANT on save.
+      if (row.unitCost === "" || Number.isNaN(parseFloat(row.unitCost))) {
+        errs[`cost_${i}`] = "Cost is required.";
+      }
     });
     return errs;
   }
@@ -652,8 +661,22 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
             setDuplicate(dup.duplicate);
             return;
           }
-          const raw = (err as { response?: { data?: { message?: string | string[] } } })?.response
-            ?.data?.message;
+          const data = (
+            err as { response?: { data?: { code?: string; message?: string | string[] } } }
+          )?.response?.data;
+          // B469: a negative-cost (discount/deposit) line is allowed, but the
+          // bill as a whole still can't net negative — surface that specific
+          // server refusal in plain language instead of its raw message.
+          if (data?.code === "MONEY_INVARIANT") {
+            toast({
+              title: "Failed to create vendor bill",
+              description:
+                "These lines net to a negative amount — if this is a credit memo, record it as a supplier credit.",
+              variant: "error",
+            });
+            return;
+          }
+          const raw = data?.message;
           toast({
             title: "Failed to create vendor bill",
             description: (Array.isArray(raw) ? raw.join(" ") : raw) || "Please try again.",
@@ -855,7 +878,9 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
                       <input
                         type="number"
                         placeholder="0.00"
-                        min="0.0001"
+                        // B469: no `min` — a negative cost is a legitimate discount/deposit
+                        // line (mirrors mobile scan-to-bill since #791); the server-side
+                        // MONEY_INVARIANT check catches a bill that nets negative overall.
                         step="0.0001"
                         value={row.unitCost}
                         onChange={(e) => updateLineItem(i, { unitCost: e.target.value })}
@@ -874,11 +899,16 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
                       <Trash2 className="h-4 w-4" />
                     </button>
                   </div>
-                  {parseFloat(row.qty) > 0 && parseFloat(row.unitCost) > 0 && (
-                    <div className="text-right text-xs text-navy/70">
-                      Subtotal: {fmt((parseFloat(row.qty) || 0) * (parseFloat(row.unitCost) || 0))}
-                    </div>
-                  )}
+                  {parseFloat(row.qty) > 0 &&
+                    row.unitCost !== "" &&
+                    !Number.isNaN(parseFloat(row.unitCost)) && (
+                      <div className="text-right text-xs text-navy/70">
+                        Subtotal:{" "}
+                        {fmt(
+                          roundMoney((parseFloat(row.qty) || 0) * (parseFloat(row.unitCost) || 0)),
+                        )}
+                      </div>
+                    )}
                 </div>
               ))}
             </div>
