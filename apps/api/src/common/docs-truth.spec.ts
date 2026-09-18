@@ -16,6 +16,9 @@ const REPO_ROOT = join(__dirname, "..", "..", "..", "..");
 
 const readme = readFileSync(join(REPO_ROOT, "README.md"), "utf8");
 const claudeMd = readFileSync(join(REPO_ROOT, "CLAUDE.md"), "utf8");
+const lessonsMeta = JSON.parse(
+  readFileSync(join(REPO_ROOT, ".claude", "lessons", "_meta.json"), "utf8"),
+);
 
 describe("README.md truth (T1)", () => {
   it("points at the real origin, not the stale najathakram1 remote", () => {
@@ -52,7 +55,12 @@ describe("CLAUDE.md truth (T1)", () => {
   });
 
   it("states the lessons-register byte cap enforced by validate-lessons.mjs", () => {
-    expect(claudeMd.includes("40,960") || claudeMd.includes("40960")).toBe(true);
+    // Asserted against _meta.json's own maxBytes, not a second hardcoded literal — a config
+    // file silently overriding a code default is exactly what drifted this test from CLAUDE.md
+    // in the first place (see L-196). Accepts either digit grouping CLAUDE.md's prose might use.
+    const maxBytes: number = lessonsMeta.maxBytes;
+    const grouped = maxBytes.toLocaleString("en-US");
+    expect(claudeMd.includes(grouped) || claudeMd.includes(String(maxBytes))).toBe(true);
   });
 
   it("documents Jest for web in the web stack line (web has Jest + RTL, not Playwright-only)", () => {
