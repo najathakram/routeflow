@@ -18,7 +18,7 @@ import { UpdateEmailConfigDto } from "./dto/update-email-config.dto";
 import { UpdateGoogleOAuthConfigDto } from "./dto/update-google-oauth-config.dto";
 import { UpdateBrandingDto } from "./dto/update-branding.dto";
 import { compressImage } from "../storage/compress.util";
-import { TRIAL_LENGTH_DAYS } from "../billing/plan-catalog.constants";
+import { TRIAL_LENGTH_DAYS, planKeyFromEnum } from "../billing/plan-catalog.constants";
 
 const RESERVED_SLUGS = new Set([
   "api",
@@ -105,6 +105,19 @@ export class TenantsService {
     const result = await this.prisma.$transaction(async (tx) => {
       const tenant = await tx.tenant.create({
         data: { slug, name: businessName, status: "TRIAL", plan: "STARTER", trialEndsAt },
+      });
+
+      // B556: Tenant.plan is a legacy display shadow — MrrService actually gates MRR on
+      // TenantSubscription.planKey (mrr.service.ts payingWhere). A tenant created here with no
+      // subscription row drifts the two apart forever unless it later happens to pass through
+      // the Change Plan / Activate Subscription admin actions, which is exactly the "shown as
+      // paying, contributes $0 forever" shape B556 reports. Create the row now with planKey
+      // resolved via the same total planKeyFromEnum() mapping every other consumer already
+      // falls back to, so the two fields never start out of sync. No pricing is set here —
+      // this tenant is a TRIAL and MrrService's payingWhere excludes non-ACTIVE tenants
+      // regardless of planKey; only an explicit activation/plan action ever makes one paying.
+      await tx.tenantSubscription.create({
+        data: { tenantId: tenant.id, currentPlan: "STARTER", planKey: planKeyFromEnum("STARTER") },
       });
 
       await tx.tenantConfig.create({ data: { tenantId: tenant.id, businessName } });
