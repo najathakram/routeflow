@@ -43,6 +43,10 @@ export interface FeatureRegistryRow {
   };
   billing: { skus: string[] };
   config?: { fallbackMode: string; modes: FeatureModeOption[] };
+  /** Other registry keys this one depends on (B519) — mirrors `FeatureDef.requires` in
+   *  apps/api/src/billing/feature-registry.ts verbatim; not to be confused with
+   *  `FeatureModeOption.requires` above, a different per-config-mode concept. */
+  requires?: { allOf?: string[]; anyOf?: string[] };
 }
 
 export interface FeatureModeState {
