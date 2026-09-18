@@ -5031,7 +5031,10 @@
 }
 .rf-marketing .audience-card.distributors .text-link,
 .rf-marketing .audience-card.retailers .text-link {
-  color: #4874bb;
+  /* B507: was #4874bb — 3.93:1 on the distributors card's #e3ecfa panel and
+     4.01:1 on the retailers card's #daf3eb panel, both below AA. Same blue
+     hue (217deg) one step darker: 4.74:1 and 4.83:1. */
+  color: #3f67a9;
 }
 .rf-marketing .story-section img {
   border-radius: 32px;
@@ -6304,19 +6307,30 @@
 .rf-marketing .tour-example-label,
 .rf-marketing .form-kicker,
 .rf-marketing .photo-credit,
-.rf-marketing .retailer-art figcaption,
 .rf-marketing .story-section figcaption,
 .rf-marketing .scene-fallback > p,
 .rf-marketing .footer-app-note {
   /* Judged against every ground these selectors are actually painted on. A
      later !important rule wins for most of them; the ones this value really
      paints are .card-eyebrow (#ffffff and #edf2fa on /pricing),
-     .photo-credit (#ffffff on /company), .retailer-art figcaption (#def5ee)
-     and .tour-example-label (#e7ecfa on /wholesalers + /distributors).
+     .photo-credit (#ffffff on /company), and .tour-example-label (#e7ecfa on
+     /wholesalers + /distributors).
      Round-6's #657994 was 4.45:1 on white and only 3.77:1 on #e7ecfa.
      #5a6b83 keeps the same blue-gray hue (214.5deg) and saturation (18.9%) at
-     5.43:1 on white, 4.83:1 on #edf2fa, 4.76:1 on #def5ee and 4.60:1 on
-     #e7ecfa — see fix-round-7 ruling S2. */
+     5.43:1 on white, 4.83:1 on #edf2fa and 4.60:1 on #e7ecfa — see
+     fix-round-7 ruling S2.
+     B507: `.retailer-art figcaption` was dropped from this list. It has its
+     own bespoke treatment — a semi-opaque dark scrim with white text
+     (glass-site.css, `.glass-page .retailer-art figcaption`), designed for
+     an overlay on a real photo (technology-art.tsx's RetailerArt) where a
+     fixed light-glass-surface color can't work regardless of the photo's own
+     colors. This `!important` rule was clobbering that white text down to
+     #5a6b83, measured at 1.49:1 in the B507 round-2 recheck on /retailers.
+     The `(#def5ee)` ground this comment used to cite for it was
+     NetworkArt's, a sibling component in the same file that is dead code
+     (never imported by a live route, per technology-art.tsx's own header
+     comment) — nothing live still needs this rule to cover
+     `.retailer-art figcaption`. */
   color: #5a6b83 !important;
 }
 @media (prefers-reduced-motion: no-preference) {
@@ -7108,7 +7122,9 @@
 .rf-marketing .passport-bottom > span:last-child {
   margin-left: auto;
   letter-spacing: 0.07em;
-  color: #737890;
+  /* B507: was #737890 — 4.08:1 on the bar's #f7f7fb background, below AA.
+     Same blue-gray hue (230deg) one step darker: 4.71:1. */
+  color: #696e85;
   font-size: 8px;
 }
 .rf-marketing .stock-scene-top {

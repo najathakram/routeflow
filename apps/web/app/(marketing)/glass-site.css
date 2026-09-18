@@ -1209,18 +1209,23 @@
   color: #2b587d;
 }
 
-/* B504: `.glass-page .ai-review-steps p` above and the generic `.glass-page
-   h3` typography reset (glass.css) both tie in specificity with the
-   dark-card-specific white/light-lavender text meant for the purple
+/* B504/B507: `.glass-page .ai-review-steps p`/`small` above and the generic
+   `.glass-page h3` typography reset (glass.css) all tie in specificity with
+   the dark-card-specific white/light-lavender text meant for the purple
    .ai-assisted-step card, and were winning in production — measured at
-   1.33-1.61:1 (dark text on the still-dark #623691 card). These extra-class
-   overrides always win outright on specificity, keeping the card's own
-   light text regardless of stylesheet/chunk order. */
+   1.33-1.61:1 (dark text on the still-dark #623691 card). B504 covered h3/p
+   but missed this card's `small` label (measured 1.59-1.60:1 in the B507
+   round-2 recheck — the same tie, same fix, just never extended to it).
+   These extra-class overrides always win outright on specificity, keeping
+   the card's own light text regardless of stylesheet/chunk order. */
 .rf-marketing .ai-review-steps > li.ai-assisted-step h3 {
   color: #fff;
 }
 .rf-marketing .ai-review-steps > li.ai-assisted-step p {
   color: #eee1fa;
+}
+.rf-marketing .ai-review-steps > li.ai-assisted-step small {
+  color: #f0dfff;
 }
 
 .glass-page .ai-illustration-note {
@@ -1421,6 +1426,19 @@
 .glass-page .story-intro h3,
 .rf-marketing .glass-page .story-intro h3 {
   color: var(--g-ink);
+}
+
+/* B507: the same tie, one widget over — `.rf-marketing .glass-page p`'s
+   generic paragraph reset (glass.css) ties in specificity with the
+   `.story-controls .story-explanation > p` rule marketing.css sets
+   specifically for this scrubber's still-dark `#1a355e` control bar
+   (marketing.css's own light-on-navy value, #d5e1f2, was already correct —
+   it just never won), measured at 1.90:1 in the B507 round-2 recheck. Scope
+   the override to `.story-controls` specifically so it can't also catch the
+   unrelated `.platform-live-story`/light-background `.story-explanation`
+   variants elsewhere in marketing.css, which are not part of this defect. */
+.rf-marketing .glass-page .story-controls .story-explanation > p {
+  color: #d5e1f2;
 }
 
 .glass-page .story-disclaimer {

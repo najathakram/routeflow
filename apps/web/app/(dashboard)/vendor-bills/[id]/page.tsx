@@ -638,7 +638,9 @@ function EditLineItems({
             </label>
             <input
               type="number"
-              min="0"
+              // B469: no `min` — a negative cost is a legitimate discount/deposit
+              // line (mirrors mobile scan-to-bill since #791); the server-side
+              // MONEY_INVARIANT check catches a bill that nets negative overall.
               step="0.0001"
               value={row.unitCost}
               onChange={(e) => update(i, { unitCost: e.target.value })}
@@ -926,11 +928,14 @@ export default function VendorBillDetailPage() {
           toast({ title: "Bill updated", variant: "success" });
         },
         onError: (err: any) => {
-          toast({
-            title: "Failed to update bill",
-            description: err?.response?.data?.message ?? "Please try again.",
-            variant: "error",
-          });
+          // B469: a negative-cost (discount/deposit) line is allowed, but the
+          // bill as a whole still can't net negative — surface that specific
+          // server refusal in plain language instead of its raw message.
+          const description =
+            err?.response?.data?.code === "MONEY_INVARIANT"
+              ? "These lines net to a negative amount — if this is a credit memo, record it as a supplier credit."
+              : (err?.response?.data?.message ?? "Please try again.");
+          toast({ title: "Failed to update bill", description, variant: "error" });
         },
       },
     );
@@ -967,9 +972,11 @@ export default function VendorBillDetailPage() {
   };
 
   // ── Computed edit total ───────────────────────────────────────────────────────
-  const editTotal = editItems.reduce(
-    (s, row) => s + (parseFloat(row.qty) || 0) * (parseFloat(row.unitCost) || 0),
-    0,
+  const editTotal = roundMoney(
+    editItems.reduce(
+      (s, row) => s + (parseFloat(row.qty) || 0) * (parseFloat(row.unitCost) || 0),
+      0,
+    ),
   );
 
   return (
