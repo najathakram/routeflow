@@ -2567,6 +2567,24 @@ citations, closed-out with its own post-init assertion guard).
 - **Guard:** none yet — propose `--passWithNoTests` on the Baseline invocation and a close-out
   check that greps the run's JSON for the expected test titles.
 
+## Archived 2026-09-18 — headroom for Lane D's L-199 fold-in (bookkeeping-batch window-5)
+
+### L-168 · 2026-09-16 · tooling · B421 CASH_METHOD_FILTER as-const gap
+
+- **Symptom:** `CASH_METHOD_FILTER`, a Prisma `notIn` filter constant, shipped with no real call
+  site yet. Its sibling `RECEIVED_METHOD_FILTER` was wired into a live `where` clause first and
+  immediately failed `tsc` — its array had widened to `string[]` for want of `as const`, which
+  Prisma's generated enum filter rejects. Checking the still-unused sibling found the same gap.
+- **Root cause:** a constant with no consumer can't fail a type check that only runs where it's
+  used — "compiles clean" meant nothing until a real call site exercised the type, so two
+  identically-built constants drifted: one was caught by chance, the other was not.
+- **Lesson:** **A typed constant with no call site yet is unproven, not correct — the moment one
+  sibling constant (same file, same shape, same commit) fails a type check for something subtle
+  like a missing `as const`, grep for every other constant built the same way.**
+- **Guard:** both constants now carry `as const` with an inline comment
+  (`packages/pricing/src/payment-confirmation.ts`); `payment-confirmation.spec.ts` pins both
+  filters' exact shape.
+
 ## Archived 2026-09-18 — headroom for Lane F's two lessons (bookkeeping-batch window-4)
 
 ### L-149 · 2026-09-15 · tooling · #743 fix-round T8 lesson-id staleness

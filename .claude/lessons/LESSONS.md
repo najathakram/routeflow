@@ -384,22 +384,6 @@ null`; three RTL tests failed as if the trap never moved focus at all, while the
 - **Guard:** `file <path>` (must say "text") or `grep -cP '\x00' <path>` (must be 0) before
   trusting the write; a pre-commit NUL-byte check on text sources is the durable fix.
 
-### L-168 · 2026-09-16 · tooling · B421 CASH_METHOD_FILTER as-const gap
-
-- **Symptom:** `CASH_METHOD_FILTER`, a Prisma `notIn` filter constant, shipped with no real call
-  site yet. Its sibling `RECEIVED_METHOD_FILTER` was wired into a live `where` clause first and
-  immediately failed `tsc` — its array had widened to `string[]` for want of `as const`, which
-  Prisma's generated enum filter rejects. Checking the still-unused sibling found the same gap.
-- **Root cause:** a constant with no consumer can't fail a type check that only runs where it's
-  used — "compiles clean" meant nothing until a real call site exercised the type, so two
-  identically-built constants drifted: one was caught by chance, the other was not.
-- **Lesson:** **A typed constant with no call site yet is unproven, not correct — the moment one
-  sibling constant (same file, same shape, same commit) fails a type check for something subtle
-  like a missing `as const`, grep for every other constant built the same way.**
-- **Guard:** both constants now carry `as const` with an inline comment
-  (`packages/pricing/src/payment-confirmation.ts`); `payment-confirmation.spec.ts` pins both
-  filters' exact shape.
-
 ## testing
 
 ### L-202 · 2026-09-18 · testing · 390px sweep script matched zero targets, reported clean
@@ -475,6 +459,24 @@ floor", ...)`), not after the generic thing being tested — restored in `next-v
 - **Guard:** none — judgment. Grep `isWeb`/`Platform.OS` in any file a fix touches.
 
 ## domain
+
+### L-204 · 2026-09-18 · domain · B524 fix round — a new write path didn't inherit a sibling's cache-invalidation fix
+
+- **Symptom:** review of PR #913 (B524, server-side `requires` enforcement) found: granting a
+  prerequisite via `FeatureOverrideService.create()`/`.revoke()` then acting on the new requires
+  check could read a stale snapshot and false-400 for up to 30s — those methods invalidated only
+  their own override cache, never `FeatureResolverService`'s separate cache the new check reads.
+- **Root cause:** `AddonService` already had this exact bug fixed (B509). B524 added the same
+  requires check to a SECOND write path reading the same cache; a fix on one writer doesn't
+  propagate to a sibling by analogy, only by someone applying it there too.
+- **Lesson:** **When a new check reads a cache another writer is allowed to leave briefly
+  stale, audit EVERY writer of that value for whether it already invalidates the SAME cache —
+  fixing one writer doesn't fix a sibling reading the same data.**
+- **Guard:** `createFeatureOverride`/`revokeFeatureOverride` now call
+  `EntitlementAuthority.invalidate(tenantId)`, mirroring B509;
+  `platform-admin.controller.override-requires.spec.ts` pins both calls directly.
+- Attribution: candidate from Lane D (PR #913), originally filed as "L-199" from a stale local
+  view of the register (already taken here); renumbered on fold-in.
 
 ### L-187 · 2026-09-17 · domain · demo-booking slot TOCTOU (check-then-insert race)
 
