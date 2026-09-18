@@ -143,9 +143,11 @@ The rules this project has already paid for live at
   register last changed, unless the code PR's HEAD commit carries a `Bookkeeping-Follow-Up:
 pending` trailer, which Gate 3 accepts in place of an updated entry. A fix with no transferable
   lesson bumps `_meta.json.updatedAt` alone — never invent a junk entry.
-- Caps: ≤ 40 active entries / 40,960 bytes (enforced by `scripts/validate-lessons.mjs`), overflow
-  to `ARCHIVE.md`. Entries are generalizable rules, not incident diaries, and carry **no client
-  identifiers** (this repo goes public for CI).
+- Caps: ≤ 52 active entries / 65,536 bytes (the values `.claude/lessons/_meta.json` sets and
+  `scripts/validate-lessons.mjs` actually enforces — it reads `maxEntries`/`maxBytes` from
+  `_meta.json` when present, falling back to its own 40/25,600 defaults only if that file is
+  missing the fields), overflow to `ARCHIVE.md`. Entries are generalizable rules, not incident
+  diaries, and carry **no client identifiers** (this repo goes public for CI).
 
 ## Money discipline
 

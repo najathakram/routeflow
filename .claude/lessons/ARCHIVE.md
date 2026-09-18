@@ -2534,3 +2534,35 @@ citations, closed-out with its own post-init assertion guard).
   live source that can grow.**
 - **Guard:** `billing-cron.service.spec.ts` REG-1 (re-pin + real delta); `plan-catalog-v12.spec.ts`
   pins v11 ENTERPRISE to its exact historical 13-flag literal.
+
+## Archived 2026-09-17 — headroom for L-196 (cap-mismatch bookkeeping)
+
+### L-164 · 2026-09-15 · domain · Lite-L2 fix round: SubscriptionView.flags fail-open
+
+- **Symptom:** a deploy skew (old API, new web/mobile build) or rollback serving a response with
+  no `flags` key locked every plan-gated route and hid every plan-gated nav item, for every
+  tenant on every plan — not just the one plan the field was added for.
+- **Root cause:** `subscription?.flags ?? []` (and the equivalent `?.includes(key) ?? false`
+  hooks, on both web and mobile) treated "the field is absent" identically to "present and
+  empty" — but the request had already resolved, so a reader downstream saw "resolved, zero
+  grants" and gated for real.
+- **Lesson:** **A shared response field a rollback/version-skew can omit must be typed optional,
+  and every reader must distinguish `undefined` ("unresolved, fail open") from `[]` ("resolved,
+  no grants — gate for real"). Never let `?? []` erase that distinction.**
+- **Guard:** `plan-flags.test.tsx` (web) and `plan-flags.test.ts` (mobile) both pin the
+  undefined-vs-`[]` pair.
+
+## Archived 2026-09-17 — headroom for L-197 (bookkeeping ancestry-check guard)
+
+### L-106 · 2026-09-11 · tooling · train-4 close-out
+
+- **Symptom:** a final Jest command whose only targets were brand-new spec files exited 1 at
+  Baseline and was silently EXCLUDED from the verdict — close-out read "no regression" from a
+  command that produced no real pass/fail signal.
+- **Root cause:** Jest exits non-zero when a pattern matches zero existing tests (true at
+  Baseline, before the new spec exists); nothing distinguished that from "ran and failed."
+- **Lesson:** **A Jest invocation whose targets can legitimately not exist yet needs
+  `--passWithNoTests`; close-out must confirm the T#/REG tests actually EXECUTED (a per-test
+  result line), never infer it from exit code alone.**
+- **Guard:** none yet — propose `--passWithNoTests` on the Baseline invocation and a close-out
+  check that greps the run's JSON for the expected test titles.

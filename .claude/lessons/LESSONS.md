@@ -5,11 +5,40 @@
 > approach. **After every bug fix, append an entry** — Symptom / Root cause / **Lesson** / Guard —
 > and bump [`_meta.json`](_meta.json); Gate 3 of [`../hooks/stop.mjs`](../hooks/stop.mjs) blocks
 > fix-shaped turns that don't (a lesson-free fix bumps `_meta.json.updatedAt` to acknowledge).
-> Caps: ≤ 40 active entries / ~25 KB — compact to [`ARCHIVE.md`](ARCHIVE.md). Maintained by the
+> Caps: ≤ 52 active entries / 64 KB (set in [`_meta.json`](_meta.json), the values
+> `scripts/validate-lessons.mjs` actually enforces) — compact to [`ARCHIVE.md`](ARCHIVE.md). Maintained by the
 > `lessons-learned` skill. Blameless; **never client names/slugs/document numbers** — the repo
 > goes public briefly for CI.
 
 ## process
+
+### L-197 · 2026-09-17 · process · #857 flagged "unmerged" by checking the wrong commit's ancestry
+
+- **Symptom:** a peer flagged bookkeeping-batch PR #873 for citing B502/#857 as landed, based on
+  checking that #857's original PR-branch tip commit is not an ancestor of `origin/master` —
+  and asked to reopen B502 and drop the code-map entry. `merge-base --is-ancestor` against the
+  actual landing commit (`0a365054`, found via `git log --grep`/the PR's own `mergeCommit.oid`),
+  plus a direct read of that commit's content in `origin/master`'s current tree, both confirmed
+  the fix is genuinely live — the correction would have reopened an already-fixed bug.
+- **Root cause:** #857 landed via a cherry-pick onto master under a NEW sha ("Cherry-picked from
+  the original 45+-commit-behind branch, verified byte-identical to its content") rather than a
+  merge of the branch tip — so the original branch's own commits are genuinely, correctly absent
+  from master's history, even though the fix itself is fully present under a different sha.
+  Checking ancestry (or eyeballing branch state) against the wrong candidate commit produces a
+  confident, wrong "unlanded" verdict for a bug that is actually fixed.
+- **Lesson:** **Before citing a bookkeeping/registry closure as landed or unlanded, resolve the
+  SPECIFIC commit that is supposed to carry the fix on master first — via `git log --grep` for
+  the PR's own `(#N)` tag, or the GH API's `mergeCommit.oid` — then run `merge-base
+  --is-ancestor <that sha> origin/master`. Never check the source branch's tip commit or infer
+  merge state from GitHub's PR view alone: a squash or cherry-pick can leave a branch's own
+  commits genuinely off master while its content is fully live under a different sha.**
+- **Guard:** none yet — propose the batch/landing checklist require pairing every
+  `already-fixed --pr <n>` citation with a recorded check that satisfies BOTH halves, either
+  one alone still lets the wrong verdict through: (1) resolve the actual **landing commit**
+  from `gh pr view <n> --json mergeCommit` — never the source branch's tip — and (2) run
+  `merge-base --is-ancestor <that landing sha> origin/master` on **full, unshallowed history**,
+  since a shallow clone's grafted boundary can misreport ancestry. A PR number in a list is not
+  evidence that it landed.
 
 ## tooling
 
@@ -108,6 +137,23 @@ null`; three RTL tests failed as if the trap never moved focus at all, while the
 - **Guard:** none automatic yet — a landing coordinator diffs `origin/master...HEAD` on the
   rebuilt branch and confirms zero changes under the schema-owning PR's files (e.g. `prisma/`)
   before pushing, proving only the stacked PR's own commits landed.
+
+### L-196 · 2026-09-17 · tooling · a config file silently overriding a code default drifts from its docs
+
+- **Symptom:** CLAUDE.md and `LESSONS.md`'s own header both stated the lessons register caps at
+  40 entries / ~25–40 KB; the register had been running at 52 entries / 64 KB all along with zero
+  validator complaints, since `_meta.json`'s own `maxEntries`/`maxBytes` fields silently override
+  `validate-lessons.mjs`'s hardcoded defaults whenever present.
+- **Root cause:** the validator's fallback defaults exist for a repo with no `_meta.json` yet,
+  but nothing ever re-derives or checks the DOCS against whichever value is actually live — a
+  limit that lives in a data file, not a source-code constant, can drift from every doc
+  describing it with no error, no warning, and no diff to review.
+- **Lesson:** **When a limit lives in a config/data file with a code-level fallback default, the
+  code's default is not the source of truth once the config file sets a real value — read the
+  validator's own resolved value, never infer it from source or from a doc, and update every doc
+  that states the limit in the SAME commit whenever the config changes it.**
+- **Guard:** none yet — the validator already prints its resolved values in its self-consistency
+  line; propose a periodic doc-vs-validator cross-check so drift is caught before it ages.
 
 ### L-186 · 2026-09-17 · tooling · web code-map catch-up (layout.tsx named re-export)
 
@@ -259,19 +305,6 @@ null`; three RTL tests failed as if the trap never moved focus at all, while the
   the command line — every positional (spec path, pattern) goes BEFORE it.**
 - **Guard:** none yet — propose an engine arg lint rejecting tokens after `--reporters=...`, plus
   a RESUME-card review line.
-
-### L-106 · 2026-09-11 · tooling · train-4 close-out
-
-- **Symptom:** a final Jest command whose only targets were brand-new spec files exited 1 at
-  Baseline and was silently EXCLUDED from the verdict — close-out read "no regression" from a
-  command that produced no real pass/fail signal.
-- **Root cause:** Jest exits non-zero when a pattern matches zero existing tests (true at
-  Baseline, before the new spec exists); nothing distinguished that from "ran and failed."
-- **Lesson:** **A Jest invocation whose targets can legitimately not exist yet needs
-  `--passWithNoTests`; close-out must confirm the T#/REG tests actually EXECUTED (a per-test
-  result line), never infer it from exit code alone.**
-- **Guard:** none yet — propose `--passWithNoTests` on the Baseline invocation and a close-out
-  check that greps the run's JSON for the expected test titles.
 
 ### L-103 · 2026-09-10 · tooling · chore/next-15
 
@@ -642,21 +675,6 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   single-field ledger edit (owner-approved, out of band) rather than fabricate a regression.
 - **Guard:** filed B426 (bugs.mjs needs a lawful `proven`→`already-fixed` reclassify path,
   distinct from `reopen`'s regression semantics) so this doesn't recur as a manual escape hatch.
-
-### L-164 · 2026-09-15 · domain · Lite-L2 fix round: SubscriptionView.flags fail-open
-
-- **Symptom:** a deploy skew (old API, new web/mobile build) or rollback serving a response with
-  no `flags` key locked every plan-gated route and hid every plan-gated nav item, for every
-  tenant on every plan — not just the one plan the field was added for.
-- **Root cause:** `subscription?.flags ?? []` (and the equivalent `?.includes(key) ?? false`
-  hooks, on both web and mobile) treated "the field is absent" identically to "present and
-  empty" — but the request had already resolved, so a reader downstream saw "resolved, zero
-  grants" and gated for real.
-- **Lesson:** **A shared response field a rollback/version-skew can omit must be typed optional,
-  and every reader must distinguish `undefined` ("unresolved, fail open") from `[]` ("resolved,
-  no grants — gate for real"). Never let `?? []` erase that distinction.**
-- **Guard:** `plan-flags.test.tsx` (web) and `plan-flags.test.ts` (mobile) both pin the
-  undefined-vs-`[]` pair.
 
 ### L-143 · 2026-09-15 · domain · B421 (credit-applied vs paid, full fix)
 
