@@ -34,6 +34,7 @@ import {
   Modal,
   Select,
   cn,
+  TAP_TARGET,
   useToast,
   type BadgeStatus,
 } from "@routeflow/ui/web";
@@ -212,7 +213,8 @@ function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: 
           </div>
           <button
             onClick={onClose}
-            className="rounded p-1 text-navy/70 hover:text-navy transition-colors"
+            title="Close"
+            className={cn(TAP_TARGET, "rounded text-navy/70 hover:text-navy transition-colors")}
           >
             <X className="h-4 w-4" />
           </button>
@@ -1396,7 +1398,7 @@ function EditableLineItems({
                     Not available
                   </button>
                   <button
-                    className="rounded p-1 text-navy/30 hover:text-danger hover:bg-danger-bg transition-colors"
+                    className={cn(TAP_TARGET, "rounded p-1 text-navy/30 hover:text-danger hover:bg-danger-bg transition-colors")}
                     title="Delete item"
                     onClick={() => onDelete(item.id)}
                   >
@@ -1577,7 +1579,7 @@ function EditableLineItems({
                 setCustomFormOpen(false);
                 setCustomError("");
               }}
-              className="rounded p-1 text-navy/40 hover:text-danger transition-colors"
+              className={cn(TAP_TARGET, "rounded p-1 text-navy/40 hover:text-danger transition-colors")}
               title="Cancel"
             >
               <X className="h-3.5 w-3.5" />

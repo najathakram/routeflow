@@ -94,15 +94,23 @@ export async function fetchTenantBillingInfo(tenantId: string): Promise<{
 }
 
 /** `POST /platform-admin/tenants/:id/addons/enable` — same endpoint/DTO the legacy toggle
- *  cards posted to; omit `stripePriceId` for an explicit free grant. */
+ *  cards posted to; omit `stripePriceId` for an explicit free grant.
+ *
+ *  `acknowledgeUnmetRequires` (B524 prep): the operator's explicit "I understand and want to
+ *  enable it anyway" checkbox when `EnableAddonModal` shows an unmet-requires warning. Purely
+ *  additive — the server ignores this field until B524's requires enforcement ships; absent or
+ *  false means "enforce", true means "operator acknowledged". Same field name is used on the
+ *  override-create DTO (`CreateFeatureOverrideDto`) so the two write paths never drift. */
 export async function enableTenantAddon(
   tenantId: string,
   addonKey: string,
   stripePriceId?: string,
+  acknowledgeUnmetRequires?: boolean,
 ): Promise<unknown> {
   const res = await superAdminClient.post(`/platform-admin/tenants/${tenantId}/addons/enable`, {
     addonKey,
     ...(stripePriceId ? { stripePriceId } : {}),
+    ...(acknowledgeUnmetRequires ? { acknowledgeUnmetRequires } : {}),
   });
   return res.data;
 }

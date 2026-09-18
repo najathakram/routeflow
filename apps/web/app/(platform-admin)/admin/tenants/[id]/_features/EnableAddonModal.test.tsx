@@ -7,8 +7,12 @@ const mockEnableAddon = jest.fn();
 
 jest.mock("@/lib/platform-admin/features", () => ({
   fetchTenantBillingInfo: (tenantId: string) => mockFetchBilling(tenantId),
-  enableTenantAddon: (tenantId: string, addonKey: string, stripePriceId?: string) =>
-    mockEnableAddon(tenantId, addonKey, stripePriceId),
+  enableTenantAddon: (
+    tenantId: string,
+    addonKey: string,
+    stripePriceId?: string,
+    acknowledgeUnmetRequires?: boolean,
+  ) => mockEnableAddon(tenantId, addonKey, stripePriceId, acknowledgeUnmetRequires),
 }));
 
 const TENANT_ID = "tenant-1";
@@ -70,7 +74,7 @@ describe("EnableAddonModal — Stripe configured", () => {
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
 
     await waitFor(() =>
-      expect(mockEnableAddon).toHaveBeenCalledWith(TENANT_ID, "ocr", "price_123"),
+      expect(mockEnableAddon).toHaveBeenCalledWith(TENANT_ID, "ocr", "price_123", undefined),
     );
     await waitFor(() => expect(onEnabled).toHaveBeenCalledTimes(1));
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -90,7 +94,9 @@ describe("EnableAddonModal — Stripe configured", () => {
     mockEnableAddon.mockResolvedValueOnce({});
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
 
-    await waitFor(() => expect(mockEnableAddon).toHaveBeenCalledWith(TENANT_ID, "ocr", undefined));
+    await waitFor(() =>
+      expect(mockEnableAddon).toHaveBeenCalledWith(TENANT_ID, "ocr", undefined, undefined),
+    );
   });
 
   it("a failed enable surfaces the server message and keeps the confirm step open", async () => {
@@ -126,6 +132,45 @@ describe("EnableAddonModal — Stripe NOT configured", () => {
 
     mockEnableAddon.mockResolvedValueOnce({});
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
-    await waitFor(() => expect(mockEnableAddon).toHaveBeenCalledWith(TENANT_ID, "ocr", undefined));
+    await waitFor(() =>
+      expect(mockEnableAddon).toHaveBeenCalledWith(TENANT_ID, "ocr", undefined, undefined),
+    );
+  });
+});
+
+describe("EnableAddonModal — unmet requirement (B519 warning, B524 ack prep)", () => {
+  beforeEach(() => mockFetchBilling.mockResolvedValue({ stripeConfigured: false }));
+
+  it("Confirm stays disabled until the amber warning's checkbox is ticked, then sends acknowledgeUnmetRequires: true", async () => {
+    renderModal({ unmetRequirement: "Recurring routes or Order delivery" });
+    fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
+
+    const warning = await screen.findByText(/does not currently have/);
+    expect(warning).toBeInTheDocument();
+    const confirmButton = screen.getByRole("button", { name: "Confirm" });
+    expect(confirmButton).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /I understand/ }));
+    expect(confirmButton).not.toBeDisabled();
+
+    mockEnableAddon.mockResolvedValueOnce({});
+    fireEvent.click(confirmButton);
+
+    await waitFor(() =>
+      expect(mockEnableAddon).toHaveBeenCalledWith(TENANT_ID, "ocr", undefined, true),
+    );
+  });
+
+  it("never sends acknowledgeUnmetRequires when there is no unmet requirement to acknowledge", async () => {
+    renderModal();
+    fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+
+    mockEnableAddon.mockResolvedValueOnce({});
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() =>
+      expect(mockEnableAddon).toHaveBeenCalledWith(TENANT_ID, "ocr", undefined, undefined),
+    );
   });
 });
