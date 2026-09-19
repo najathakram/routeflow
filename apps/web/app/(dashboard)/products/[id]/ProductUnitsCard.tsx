@@ -17,7 +17,7 @@ import {
   useUnitsEnabled,
   useUpdateProductUnit,
 } from "@/lib/api/product-units";
-import { proposeCascade, type CascadeProposal } from "@/lib/unit-cascade";
+import { cascadePatch, proposeCascade, type CascadeProposal } from "@/lib/unit-cascade";
 
 /**
  * "Units & prices" (units_v1, ask 1-3): define Case / Pallet / Piece levels on a product, give
@@ -241,20 +241,21 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
     toast({ title, description: errText(e), variant: "error" });
 
   const save = (unit: ProductUnitLevel, d: Draft) => {
-    const oldPrice = num(unit.price);
+    const oldPrices = draftOf(unit).prices;
+    const newPrices = d.prices.map(priceOrNull);
     const body = {
       id: unit.id,
       label: d.label.trim(),
       factorToBase: d.factor ?? unit.factorToBase,
-      price: priceOrNull(d.prices[0]),
-      priceTier2: priceOrNull(d.prices[1]),
-      priceTier3: priceOrNull(d.prices[2]),
-      priceTier4: priceOrNull(d.prices[3]),
-      priceTier5: priceOrNull(d.prices[4]),
+      price: newPrices[0],
+      priceTier2: newPrices[1],
+      priceTier3: newPrices[2],
+      priceTier4: newPrices[3],
+      priceTier5: newPrices[4],
     };
     update.mutate(body, {
-      onSuccess: () =>
-        setProposals(proposeCascade(units, unit.id, oldPrice, priceOrNull(d.prices[0]))),
+      // EVERY tier cascades, each independently (a tier-2 edit offers tier 2 to the others).
+      onSuccess: () => setProposals(proposeCascade(units, unit.id, oldPrices, newPrices)),
       onError: fail("Couldn't save the unit"),
     });
   };
@@ -263,7 +264,7 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
     const todo = proposals;
     setProposals([]);
     const results = await Promise.allSettled(
-      todo.map((p) => update.mutateAsync({ id: p.unitId, price: p.to })),
+      todo.map((p) => update.mutateAsync({ id: p.unitId, ...cascadePatch(p) })),
     );
     const failed = todo.filter((_, i) => results[i].status === "rejected");
     if (failed.length === 0) {
@@ -458,10 +459,17 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
         <ul className="space-y-1 text-sm text-navy">
           {proposals.map((p) => (
             <li key={p.unitId}>
-              {p.label}:{" "}
-              <span className="font-mono tabular-nums">
-                {fmt(p.from)} → {fmt(p.to)}
-              </span>
+              <span className="font-medium">{p.label}</span>
+              <ul className="ml-3">
+                {p.changes.map((c) => (
+                  <li key={c.field}>
+                    {tierLabel(tierNames, c.tier)}:{" "}
+                    <span className="font-mono tabular-nums">
+                      {fmt(c.from)} → {fmt(c.to)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
             </li>
           ))}
         </ul>

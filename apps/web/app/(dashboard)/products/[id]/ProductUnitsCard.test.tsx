@@ -217,6 +217,21 @@ describe("ProductUnitsCard", () => {
       );
     });
 
+    it("a tier-2 edit cascades tier 2 to the other levels (not just tier 1)", async () => {
+      mockUnits = [
+        { ...caseUnit, priceTier2: "440.00" },
+        { ...palletUnit, priceTier2: "5280.00" },
+      ];
+      renderCard();
+      // open the Case row's tier disclosure input by its aria-label
+      fireEvent.change(screen.getByLabelText("Case Tier 2 price"), { target: { value: "396" } }); // 440 -> 396 (x 0.9)
+      fireEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
+      fireEvent.click(await screen.findByRole("button", { name: "Yes, update" }));
+      await waitFor(() =>
+        expect(updateMutateAsync).toHaveBeenCalledWith({ id: "u-pallet", priceTier2: 4752 }),
+      );
+    });
+
     it("No writes nothing", async () => {
       renderCard();
       editCasePrice();
