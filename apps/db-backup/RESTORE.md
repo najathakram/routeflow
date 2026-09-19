@@ -64,4 +64,4 @@ psql "<scratch-database-url>" -c 'SELECT
   no `pg_restore` needed.
 - `backup.sh` refuses to upload dumps under 100 lines (empty-dump guard) and fails loudly if
   the server's Postgres major ever exceeds the image's `pg_dump` (bump the `Dockerfile` base).
-- Manual ad-hoc backup from a workstation still works: `apps/api/scripts/backup-production.sh`.
+- Manual ad-hoc backup from a workstation still works: `railway run --service postgres node apps/api/scripts/backup-production.mjs <label>` (owner-run; verifies the dump before blessing it).
