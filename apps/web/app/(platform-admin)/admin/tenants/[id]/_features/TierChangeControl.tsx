@@ -9,7 +9,7 @@ import type { FeaturePreviewResponse } from "./types";
 /**
  * The tenant header's plan select + "Change Plan" button (B539). It used to call the change-plan
  * action directly — no preview at all. It now runs the same non-mutating preview the Feature
- * Console's tier control uses, shows the Gained / Lost / Limits-changed diff in the shared
+ * Console's tier control uses, shows the Gained / Lost diff in the shared
  * `PreviewDrawer`, and only applies on Confirm. `onChangePlan` is the page's existing
  * `change-plan` action; it rejects on failure so the drawer stays open with the error.
  */
@@ -61,6 +61,7 @@ export function TierChangeControl({
 
   async function confirm() {
     if (!pending) return;
+    setError(null);
     setApplying(true);
     try {
       await onChangePlan(pending.planKey);
@@ -110,6 +111,9 @@ export function TierChangeControl({
         open={!!pending}
         title="Preview tier change"
         subtitle={pending ? `${planLabel(currentPlan)} → ${planLabel(pending.planKey)}` : undefined}
+        allowEmptyConfirm
+        emptyMessage="No feature differences — this plan change does not turn any feature on or off. The plan itself (and its price and allowances) still changes when you confirm."
+        note="Seat, route, customer and monthly-price allowances are not part of this preview."
         response={pending?.response ?? null}
         registryByKey={registryByKey}
         confirming={applying}

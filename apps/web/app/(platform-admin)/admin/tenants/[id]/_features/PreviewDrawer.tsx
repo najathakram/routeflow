@@ -19,7 +19,7 @@ const PANELS: {
   {
     id: "limits",
     tone: "limit",
-    title: "Limits changed",
+    title: "Configuration changed",
     hint: "Stays on, configured differently",
   },
   { id: "other", tone: "other", title: "Other changes", hint: "Source or billing differs" },
@@ -38,14 +38,22 @@ const TONE_CLASSES: Record<PanelTone, { ring: string; dot: string; heading: stri
  * is the caller's actual write (existing plan-change action / #795's override endpoints / brief
  * C's mode endpoint); `onClose` (Cancel or the X) calls nothing.
  *
- * The diff is grouped into Gained / Lost / Limits changed (B539) so an operator sees at a glance
- * what a tier change adds and drops before confirming; a change that alters nothing shows the
- * "no difference" state and cannot be confirmed.
+ * The diff is grouped into Gained / Lost / Configuration changed (B539) so an operator sees at a
+ * glance what a change adds and drops before confirming. A change that alters nothing shows the
+ * "no difference" state and — by default — cannot be confirmed; a caller whose write is
+ * meaningful without a feature diff (a plan swap still changes price and allowances) opts in with
+ * `allowEmptyConfirm`.
+ *
+ * While `confirming`, Cancel / Escape / backdrop do nothing: the write is already in flight and
+ * "Cancel" would only hide it.
  */
 export function PreviewDrawer({
   open,
   title,
   subtitle,
+  note,
+  emptyMessage,
+  allowEmptyConfirm,
   response,
   registryByKey,
   confirming,
@@ -57,6 +65,12 @@ export function PreviewDrawer({
   title: string;
   /** e.g. "Starter → Professional" — shown under the title inside the body. */
   subtitle?: string;
+  /** Extra context under the diff, e.g. what the preview cannot show. */
+  note?: string;
+  /** Replaces the default "no difference" sentence. */
+  emptyMessage?: string;
+  /** Let Confirm apply even when no feature differs. */
+  allowEmptyConfirm?: boolean;
   response: FeaturePreviewResponse | null;
   registryByKey: RegistryLabelLookup;
   confirming: boolean;
@@ -69,23 +83,25 @@ export function PreviewDrawer({
   // Union with `response.changed`, never trust it alone — a mode-only diff (serving unchanged)
   // must still enable Confirm even if the server's `changed[]` only tracks serving/source flips.
   const groups = groupPreview(response, registryByKey);
+  const handleClose = confirming ? () => {} : onClose;
 
   return (
     <AdminModal
       open={open}
-      onClose={onClose}
+      onClose={handleClose}
       title={title}
       footer={
         <>
           <button
-            onClick={onClose}
-            className="rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-slate-700"
+            onClick={handleClose}
+            disabled={confirming}
+            className="rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-slate-700 disabled:opacity-50"
           >
             Cancel
           </button>
           <button
             onClick={onConfirm}
-            disabled={confirming || groups.total === 0}
+            disabled={confirming || (groups.total === 0 && !allowEmptyConfirm)}
             className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
           >
             {confirming ? "Applying..." : "Confirm"}
@@ -103,14 +119,21 @@ export function PreviewDrawer({
         </div>
       )}
       {groups.total === 0 ? (
-        <p className="text-sm text-slate-400">This change makes no difference for this tenant.</p>
+        <p className="text-sm text-slate-400" data-testid="preview-empty">
+          {emptyMessage ?? "This change makes no difference for this tenant."}
+        </p>
       ) : (
-        <div data-testid="preview-diff" className="flex flex-col gap-4">
+        <div
+          data-testid="preview-diff"
+          // Scrolls inside the modal so Confirm never ends up below a tall (e.g. STARTER →
+          // PROFESSIONAL, ~9 features) diff on a short viewport.
+          className="flex max-h-[60vh] flex-col gap-4 overflow-y-auto pr-1"
+        >
           <p className="text-xs text-slate-400" data-testid="preview-summary">
             {[
               groups.gained.length > 0 && `${groups.gained.length} gained`,
               groups.lost.length > 0 && `${groups.lost.length} lost`,
-              groups.limits.length > 0 && `${groups.limits.length} limit change`,
+              groups.limits.length > 0 && `${groups.limits.length} configuration`,
               groups.other.length > 0 && `${groups.other.length} other`,
             ]
               .filter(Boolean)
@@ -146,6 +169,7 @@ export function PreviewDrawer({
           })}
         </div>
       )}
+      {note && <p className="mt-3 text-xs text-slate-500">{note}</p>}
     </AdminModal>
   );
 }

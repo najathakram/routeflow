@@ -29,35 +29,17 @@ function feature(key: string, over: Partial<EffectiveFeature> = {}): EffectiveFe
   };
 }
 
-/** PROFESSIONAL → STARTER: recurring routes lost, MSRP gained, route optimization mode changes. */
+/** PROFESSIONAL → STARTER: recurring routes lost, MSRP gained. A `{planKey}` preview never carries
+ *  `modes`, so before/after modes are identical — exactly what the real endpoint returns. */
 const DOWNGRADE: FeaturePreviewResponse = {
-  before: [
-    feature("recurring_routes"),
-    feature("msrp", { serving: false }),
-    feature("route_optimization", {
-      mode: {
-        value: "scheduled",
-        effective: "scheduled",
-        source: "TENANT",
-        allowed: [],
-        blocked: [],
-      },
-    }),
-  ],
-  after: [
-    feature("recurring_routes", { serving: false }),
-    feature("msrp"),
-    feature("route_optimization", {
-      mode: { value: "manual", effective: "manual", source: "TENANT", allowed: [], blocked: [] },
-    }),
-  ],
+  before: [feature("recurring_routes"), feature("msrp", { serving: false })],
+  after: [feature("recurring_routes", { serving: false }), feature("msrp")],
   changed: ["recurring_routes", "msrp"],
 };
 
 const REGISTRY = [
   { key: "recurring_routes", label: "Recurring routes" },
   { key: "msrp", label: "MSRP" },
-  { key: "route_optimization", label: "Route optimization mode" },
 ];
 
 function renderControl(over: Partial<React.ComponentProps<typeof TierChangeControl>> = {}) {
@@ -102,7 +84,7 @@ describe("TierChangeControl — preview before apply (B539)", () => {
     expect(onChangePlan).not.toHaveBeenCalled();
   });
 
-  it("shows what is gained, lost and which limits change, with registry labels", async () => {
+  it("shows what is gained and lost with registry labels, and says what it cannot show", async () => {
     mockPreview.mockResolvedValueOnce(DOWNGRADE);
     renderControl();
 
@@ -117,12 +99,11 @@ describe("TierChangeControl — preview before apply (B539)", () => {
     expect(
       within(screen.getByTestId("preview-panel-lost")).getByText("Recurring routes"),
     ).toBeInTheDocument();
-    const limits = within(screen.getByTestId("preview-panel-limits"));
-    expect(limits.getByText("Route optimization mode")).toBeInTheDocument();
-    expect(limits.getByText("mode: scheduled → manual")).toBeInTheDocument();
-    expect(screen.getByTestId("preview-summary")).toHaveTextContent(
-      "1 gained · 1 lost · 1 limit change",
-    );
+    expect(screen.queryByTestId("preview-panel-limits")).toBeNull(); // a plan swap carries no modes
+    expect(screen.getByTestId("preview-summary")).toHaveTextContent("1 gained · 1 lost");
+    expect(
+      screen.getByText(/Seat, route, customer and monthly-price allowances are not part/),
+    ).toBeInTheDocument();
   });
 
   it("Confirm applies the previewed plan and closes the drawer", async () => {
@@ -153,7 +134,9 @@ describe("TierChangeControl — preview before apply (B539)", () => {
     expect(onChangePlan).not.toHaveBeenCalled();
   });
 
-  it("a change that alters nothing shows the no-change state and cannot be confirmed", async () => {
+  it("a plan change with no feature diff shows the no-change state but CAN still be applied", async () => {
+    // e.g. an alias swap, or an override masking the one flag that differs: the plan (and its
+    // price/allowances) still changes, so Confirm must not be a dead end.
     const same = feature("msrp");
     mockPreview.mockResolvedValueOnce({ before: [same], after: [same], changed: [] });
     const { onChangePlan } = renderControl();
@@ -161,11 +144,51 @@ describe("TierChangeControl — preview before apply (B539)", () => {
     pickPlan("ENTERPRISE");
     fireEvent.click(screen.getByRole("button", { name: "Change Plan" }));
 
-    expect(
-      await screen.findByText("This change makes no difference for this tenant."),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Confirm" })).toBeDisabled();
-    expect(onChangePlan).not.toHaveBeenCalled();
+    expect(await screen.findByTestId("preview-empty")).toHaveTextContent("No feature differences");
+    expect(screen.queryByTestId("preview-diff")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(onChangePlan).toHaveBeenCalledWith("ENTERPRISE"));
+  });
+
+  it("Confirm sends the PREVIEWED plan even if the select changes while the drawer is open", async () => {
+    mockPreview.mockResolvedValueOnce(DOWNGRADE);
+    const { onChangePlan } = renderControl();
+
+    pickPlan("STARTER");
+    fireEvent.click(screen.getByRole("button", { name: "Change Plan" }));
+    await screen.findByTestId("preview-diff");
+    pickPlan("ENTERPRISE"); // the select is still in the DOM behind the drawer
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() => expect(onChangePlan).toHaveBeenCalledTimes(1));
+    expect(onChangePlan).toHaveBeenCalledWith("STARTER");
+  });
+
+  it("while the change is being applied, Cancel and Escape cannot dismiss the drawer", async () => {
+    mockPreview.mockResolvedValueOnce(DOWNGRADE);
+    let finish!: () => void;
+    const onChangePlan = jest.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    renderControl({ onChangePlan });
+
+    pickPlan("STARTER");
+    fireEvent.click(screen.getByRole("button", { name: "Change Plan" }));
+    await screen.findByTestId("preview-diff");
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    expect(await screen.findByRole("button", { name: "Applying..." })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.getByText("Preview tier change", { selector: "h3" })).toBeInTheDocument();
+
+    finish();
+    await waitFor(() =>
+      expect(screen.queryByText("Preview tier change", { selector: "h3" })).not.toBeInTheDocument(),
+    );
   });
 });
 

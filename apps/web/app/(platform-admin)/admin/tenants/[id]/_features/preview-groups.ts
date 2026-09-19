@@ -16,7 +16,8 @@ export interface PreviewGroups {
   gained: PreviewRow[];
   /** Serving ON → OFF: the tenant loses this feature. */
   lost: PreviewRow[];
-  /** Serving unchanged but the configured mode / limit differs. */
+  /** Serving unchanged but the configured mode differs (mode previews; a tier preview never
+   *  carries modes, so this stays empty for a plan swap). */
   limits: PreviewRow[];
   /** Anything else that differs (source or billing changed, serving did not) — never dropped. */
   other: PreviewRow[];
@@ -25,7 +26,7 @@ export interface PreviewGroups {
 
 /**
  * Buckets a `POST /platform-admin/tenants/:id/features/preview` response into what an operator
- * needs before confirming a tier change: what is GAINED, what is LOST, what LIMITS change.
+ * needs before confirming a change: what is GAINED, what is LOST, what CONFIGURATION changes.
  *
  * `response.changed` is only trusted as a floor — the diff is re-derived from before/after so a
  * mode-only change still counts even if the server's `changed[]` tracks only serving/source flips
