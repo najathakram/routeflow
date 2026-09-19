@@ -253,10 +253,20 @@ export interface ReceiveVendorBillLine {
   qty: number;
 }
 
+/** B562: a received line whose product's stock ledger has a gap (order sales/
+ *  edits write no StockMovement) — the line's quantity was still received,
+ *  but its cost-replay was skipped rather than risk a sales-blind average.
+ *  Same per-line shape as RecomputeCostsResult's `gapsDetected`. */
+export interface VendorBillReceiveGap {
+  productId: string;
+  name: string;
+  stockDrift: number;
+}
+
 export function useReceiveVendorBill() {
   const qc = useQueryClient();
   return useMutation<
-    VendorBill,
+    VendorBill & { gapsDetected: VendorBillReceiveGap[] },
     Error,
     { id: string; acknowledgeUnlinked?: boolean; items?: ReceiveVendorBillLine[] }
   >({

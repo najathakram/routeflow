@@ -847,6 +847,17 @@ export default function VendorBillDetailPage() {
               : `Bill ${bill.billNumber} is now in Received status.`,
             variant: "success",
           });
+          // B562: quantity was still received for every line — this only
+          // flags products whose cost history couldn't be safely recomputed
+          // (a gap in their stock ledger, usually past sales).
+          if (updated?.gapsDetected && updated.gapsDetected.length > 0) {
+            const names = updated.gapsDetected.map((g) => g.name).join(", ");
+            toast({
+              title: "Received without updating average cost",
+              description: `${names} — stock was received, but this product's cost history needs an admin to look into it first.`,
+              variant: "warning",
+            });
+          }
         },
         onError: (err: any) => {
           // Unmapped lines → show the confirm dialog listing what gets skipped

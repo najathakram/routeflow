@@ -823,6 +823,15 @@ export class VendorBillsService {
       // its per-PIECE contract (margins previously inflated by unitsPerBox²).
       const effectiveDate = bill.billDate ?? new Date();
       const restockedIds: string[] = [];
+      // B562 follow-up: a bill is received in ONE transaction across every
+      // line. If one product's ledger has a gap (see recomputeProductInTx),
+      // that must not abort lines that are perfectly fine — receiving stock
+      // is never the dangerous part, only recomputing the average is. Each
+      // gapped line still gets its quantity + immediate weighted-average
+      // update below (same as recordPurchase); only the backdated ledger
+      // replay/backfill is skipped for it, and it's reported here — same
+      // shape as recomputeCosts's `gapsDetected` — so the caller can flag it.
+      const gapsDetected: { productId: string; name: string; stockDrift: number }[] = [];
       for (const { item, receiveQty } of plan) {
         if (!item.productId || !item.product) continue;
 
@@ -892,10 +901,23 @@ export class VendorBillsService {
 
         // Backdated bill: later movements' snapshots (and possibly the
         // average) are now stale — replay the product, like recordPurchase.
+        // `throwOnGap: false` — a gap here must flag this ONE line, never
+        // abort the whole bill (see the comment above the loop).
         const newer = await tx.stockMovement.count({
           where: { productId: item.productId, createdAt: { gt: effectiveDate } },
         });
-        if (newer > 0) await this.inventory.recomputeProductInTx(tx, item.productId);
+        if (newer > 0) {
+          const replay = await this.inventory.recomputeProductInTx(tx, item.productId, {
+            throwOnGap: false,
+          });
+          if (replay?.gapDetected) {
+            gapsDetected.push({
+              productId: item.productId,
+              name: item.product.name,
+              stockDrift: replay.stockDrift,
+            });
+          }
+        }
 
         restockedIds.push(item.productId);
       }
@@ -926,7 +948,7 @@ export class VendorBillsService {
         },
       });
 
-      return { updatedBill, restockedIds };
+      return { updatedBill, restockedIds, gapsDetected };
     });
 
     // Bill receive is the main restock path — fire the same low-stock-cleared
@@ -935,7 +957,9 @@ export class VendorBillsService {
       this.inventory.fireStockAlerts([...new Set(updated.restockedIds)]);
     }
 
-    return updated.updatedBill;
+    // gapsDetected is additive — every line was still received; these are
+    // just the ones whose cost history couldn't be safely recomputed (B562).
+    return { ...updated.updatedBill, gapsDetected: updated.gapsDetected };
   }
 
   async revertToDraft(id: string) {

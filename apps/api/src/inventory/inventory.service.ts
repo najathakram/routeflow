@@ -1946,18 +1946,31 @@ export class InventoryService {
   // now vendor-bill receive stamping at billDate) must replay the product so
   // later snapshots stay true.
   //
-  // B562: throwOnGap is true here because this call sits mid-transaction
-  // inside a live write (recordPurchase/recordAdjustment/vendor-bill receive)
-  // — if the replay can't be trusted, the whole backdated write must fail
-  // loudly and roll back rather than leave later movements' snapshots stale
-  // OR (the actual bug) silently stamp them with a sales-blind average.
-  async recomputeProductInTx(tx: Prisma.TransactionClient, productId: string) {
+  // B562: throwOnGap defaults to true because this call sits mid-transaction
+  // inside a live write (recordPurchase/recordAdjustment) — if the replay
+  // can't be trusted, the whole backdated write must fail loudly and roll
+  // back rather than leave later movements' snapshots stale OR (the actual
+  // bug) silently stamp them with a sales-blind average. recordPurchase and
+  // recordAdjustment both call this with no third argument, so they keep
+  // that refusal unconditionally — do not weaken it for them.
+  //
+  // B562 follow-up: vendor-bill receive processes every line of a bill in
+  // ONE transaction, so a single gapped product must not abort lines that
+  // have nothing wrong with them. It passes `{ throwOnGap: false }` and
+  // reads `.gapDetected` off the return value instead, skipping just that
+  // line's replay while still keeping the quantity it already received (see
+  // vendor-bills.service.ts `receive()`).
+  async recomputeProductInTx(
+    tx: Prisma.TransactionClient,
+    productId: string,
+    opts: { throwOnGap?: boolean } = {},
+  ) {
     const product = await tx.product.findFirst({
       where: { id: productId },
       select: { id: true, name: true, currentStock: true, averageCost: true, costingMethod: true },
     });
-    if (!product) return;
-    await this.replayProduct(product, tx, { throwOnGap: true });
+    if (!product) return null;
+    return this.replayProduct(product, tx, { throwOnGap: opts.throwOnGap ?? true });
   }
 
   /**
@@ -2075,14 +2088,21 @@ export class InventoryService {
 
     if (gapDetected) {
       if (opts.throwOnGap) {
-        throw new ConflictException(
-          `Cannot recompute cost history for "${product.name}" (${product.id}): its ` +
-            `StockMovement ledger is missing ${stockDrift.neg().toString()} unit(s) of stock ` +
-            "movement (most likely order sales/edits, which write no StockMovement row — B562). " +
-            "A replay built from this ledger would compute a sales-blind average cost and " +
-            "overwrite the product's real cost plus every later movement's snapshot, destroying " +
-            "the evidence needed to catch it. Refusing rather than writing an untrustworthy number.",
-        );
+        // Operator-readable message (no internals — bug id, table names, file
+        // paths); `code` carries the machine/log-readable detail, matching the
+        // UNLINKED_ITEMS/DUPLICATE_VENDOR_BILL structured-conflict shape used
+        // elsewhere in this codebase.
+        throw new ConflictException({
+          code: "INVENTORY_LEDGER_GAP",
+          message:
+            `"${product.name}" can't be updated right now — its stock records don't fully ` +
+            "explain the quantity currently on hand (this usually happens after past sales). " +
+            "Ask an admin to look into this product before backdating a purchase or adjustment " +
+            "for it.",
+          productId: product.id,
+          name: product.name,
+          stockDrift: Number(stockDrift),
+        });
       }
       // Bulk recomputeCosts path: report the gap, write nothing for this
       // product (dry-run or not — a gap makes hasCostfulHistory/newAvgCost

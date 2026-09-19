@@ -7,7 +7,7 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
-import { CostingMethod, StockAlertStatus } from "@prisma/client";
+import { CostingMethod, MovementType, Prisma, StockAlertStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { compressImage } from "../storage/compress.util";
@@ -1384,24 +1384,51 @@ export class ProductsService {
           }
         }
 
-        await this.prisma.forTenant().product.create({
-          data: {
-            name: item.name,
-            sku: item.sku ?? null,
-            barcode: item.barcode ?? null,
-            unit: item.unit,
-            pricePerUnit: item.pricePerUnit,
-            priceTier2: item.pricePerUnit,
-            priceTier3: item.pricePerUnit,
-            priceTier4: item.pricePerUnit,
-            priceTier5: item.pricePerUnit,
-            category: item.category ?? null,
-            description: item.description ?? null,
-            isActive: item.isActive ?? true,
-            currentStock: item.currentStock ?? "0",
-            averageCost: item.averageCost ?? null,
-            reorderPoint: item.reorderPoint ?? null,
-          },
+        // B562 follow-up: an opening balance written straight onto
+        // currentStock with no StockMovement permanently "gaps" this
+        // product's ledger — replayProduct (inventory.service.ts) would
+        // never see where that quantity came from, so it refuses EVERY
+        // future backdated purchase/adjustment on it forever. Model the
+        // opening stock as a PURCHASE movement instead, exactly like a real
+        // recordPurchase would, so the replay treats it as a legitimate
+        // ledger baseline rather than a gap. Wrapped in a transaction so the
+        // product and its opening movement land atomically.
+        const openingStock = new Prisma.Decimal(item.currentStock ?? "0");
+        const openingCost = item.averageCost != null ? new Prisma.Decimal(item.averageCost) : null;
+        await this.prisma.tenantTransaction(async (tx) => {
+          const created = await tx.product.create({
+            data: {
+              name: item.name,
+              sku: item.sku ?? null,
+              barcode: item.barcode ?? null,
+              unit: item.unit,
+              pricePerUnit: item.pricePerUnit,
+              priceTier2: item.pricePerUnit,
+              priceTier3: item.pricePerUnit,
+              priceTier4: item.pricePerUnit,
+              priceTier5: item.pricePerUnit,
+              category: item.category ?? null,
+              description: item.description ?? null,
+              isActive: item.isActive ?? true,
+              currentStock: openingStock,
+              averageCost: openingCost,
+              reorderPoint: item.reorderPoint ?? null,
+            },
+          });
+          if (!openingStock.isZero()) {
+            await tx.stockMovement.create({
+              data: {
+                productId: created.id,
+                type: MovementType.PURCHASE,
+                quantity: openingStock,
+                unitCost: openingCost,
+                avgCostAfter: openingCost,
+                stockAfter: openingStock,
+                notes: "Opening stock (bulk import)",
+              },
+            });
+          }
+          return created;
         });
 
         created++;

@@ -8,7 +8,7 @@ import { roundMoney } from "@routeflow/pricing";
 import { sumConfirmed } from "../invoices/payment-predicates";
 import { parseImportMoney, parseImportNumber } from "./parse-import-number";
 import { parse } from "csv-parse/sync";
-import { ImportEntityType, InvoiceStatus, UserRole } from "@prisma/client";
+import { ImportEntityType, InvoiceStatus, MovementType, UserRole } from "@prisma/client";
 import * as bcrypt from "bcrypt";
 import * as crypto from "crypto";
 
@@ -1784,17 +1784,39 @@ export class ImportService {
           }
           updated++;
         } else {
-          // Create new product with this stock level
-          await this.prisma.forTenant().product.create({
-            data: {
-              name,
-              barcode: rawSku || null,
-              sku: rawSku || null,
-              currentStock: closingStock,
-              pricePerUnit: 0,
-              unit: "unit",
-              isActive: true,
-            },
+          // Create new product with this stock level. B562 follow-up: writing
+          // the opening balance straight onto currentStock with no
+          // StockMovement would permanently "gap" this product's ledger —
+          // inventory.service.ts's replayProduct has no record of where the
+          // stock came from, so it would refuse EVERY future backdated
+          // purchase/adjustment on it. Model the opening stock as a PURCHASE
+          // movement instead (like a real recordPurchase would), atomically
+          // with the product create, so the replay treats it as a legitimate
+          // baseline rather than a gap. No cost column exists in this CSV, so
+          // the movement carries no unitCost — it fixes the quantity gap only.
+          await this.prisma.tenantTransaction(async (tx) => {
+            const createdProduct = await tx.product.create({
+              data: {
+                name,
+                barcode: rawSku || null,
+                sku: rawSku || null,
+                currentStock: closingStock,
+                pricePerUnit: 0,
+                unit: "unit",
+                isActive: true,
+              },
+            });
+            if (closingStock !== 0) {
+              await tx.stockMovement.create({
+                data: {
+                  productId: createdProduct.id,
+                  type: MovementType.PURCHASE,
+                  quantity: closingStock,
+                  notes: "Opening stock (Zoho import)",
+                  performedById: userId,
+                },
+              });
+            }
           });
           created++;
         }

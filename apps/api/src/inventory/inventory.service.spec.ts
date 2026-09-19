@@ -1,5 +1,5 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { InventoryService } from "./inventory.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -257,7 +257,16 @@ describe("InventoryService", () => {
           } as any,
           "user-1",
         ),
-      ).rejects.toThrow(/stock movement|ledger|B562/i);
+      ).rejects.toMatchObject({
+        constructor: ConflictException,
+        // Operator-readable message, no internals (bug id/table/file names) —
+        // the engineering detail lives in `code` for logs instead.
+        response: expect.objectContaining({
+          code: "INVENTORY_LEDGER_GAP",
+          productId: "prod-1",
+          stockDrift: -15,
+        }),
+      });
 
       // The corrupting repair must never have run: averageCost was never
       // rewritten to the sales-blind $4, and m1/m2's snapshots were never
@@ -267,6 +276,33 @@ describe("InventoryService", () => {
           data: expect.objectContaining({ averageCost: expect.anything() }),
         }),
       );
+      expect(prisma.stockMovement.update).not.toHaveBeenCalled();
+    });
+
+    // B562 follow-up: vendor-bill receive must flag a gapped line instead of
+    // aborting the whole bill (a single ONE-transaction receipt covers every
+    // line — see vendor-bills.service.ts `receive()`). It calls this same
+    // primitive with `{ throwOnGap: false }` and reads `.gapDetected` off the
+    // return value instead of catching a thrown exception.
+    it("B562: recomputeProductInTx({throwOnGap:false}) reports the gap instead of throwing, and writes nothing", async () => {
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        name: "Flour 25lb",
+        currentStock: D(15),
+        averageCost: D(7),
+        costingMethod: "AVCO",
+      });
+      prisma.stockMovement.findMany.mockResolvedValue([
+        { id: "m1", type: "PURCHASE", quantity: D(20), unitCost: D(1) },
+        { id: "m2", type: "PURCHASE", quantity: D(10), unitCost: D(10) },
+      ]);
+
+      const result = await service.recomputeProductInTx(prisma.forTenant() as any, "prod-1", {
+        throwOnGap: false,
+      });
+
+      expect(result).toMatchObject({ gapDetected: true, stockDrift: -15 });
+      expect(prisma.product.update).not.toHaveBeenCalled();
       expect(prisma.stockMovement.update).not.toHaveBeenCalled();
     });
   });
