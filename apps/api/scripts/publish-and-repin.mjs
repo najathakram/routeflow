@@ -46,6 +46,18 @@
  *       FeatureOverrideService.create()), and the INSERT itself is `ON CONFLICT (tenantId,
  *       featureKey) WHERE revokedAt IS NULL DO NOTHING`, so a second `--apply --live` writes
  *       nothing even under a concurrent write.
+ *   --include-addon-keys <comma list>   Like `--include-addon-gates`, but scoped to specific
+ *       keys instead of every addon-gate-courtesy loss (owner ruling: OCR + connected mailbox for
+ *       all production tenants — `--include-addon-keys ocr,email.connected_mailbox` grants only
+ *       those, leaving `crm_gohighlevel` and any other addon-gate key excluded, same as today).
+ *       Mutually exclusive with `--include-addon-gates` (exit 2, before connecting — pick one).
+ *       Every listed key must be a FEATURE_REGISTRY key with gate.via "RequireAddon" (an
+ *       addon-gate key), checked against the static registry mirror before any connection is
+ *       opened; an unknown or non-addon-gate key is refused the same way (exit 2). The preview
+ *       prints which addon keys were included vs. which remain excluded. The typed-confirmation
+ *       count and the billable-key 90-day expiry both fall out of the SAME `applicableLosses`/
+ *       `applyGrants` path `--include-addon-gates` already uses — this flag only changes which
+ *       rows land in that set, not how they are written.
  *
  * PLAN_FLAG_ENFORCEMENT — READ THIS BEFORE TRUSTING A "LOSSES: 0" RESULT. The old-path
  *   computation needs to know whether the API service's PLAN_FLAG_ENFORCEMENT kill switch is
@@ -128,7 +140,8 @@ const { isTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 const HELP = `publish-and-repin.mjs — PR-0b zero-loss report / grandfather-grant apply
 
 Usage: node apps/api/scripts/publish-and-repin.mjs
-         [--report | --apply] [--live] [--backup-attested "<text>"] [--include-addon-gates]
+         [--report | --apply] [--live] [--backup-attested "<text>"]
+         [--include-addon-gates | --include-addon-keys <comma list>]
          [--only-test-tenants [--confirm "<phrase>"]] [--plan-flag-enforcement on|off]
          [--json] [--help]
 
@@ -143,6 +156,9 @@ Modes (default --report; --report and --apply are mutually exclusive):
                          dark pending ITS OWN rollout — pricing, a pilot, a verification step).
                          Excluded by default: a blanket grant would permanently give the addon
                          away and defeat that separate rollout. See the report's TOTALS breakdown.
+  --include-addon-keys <comma list>   Grant addon-gate-courtesy losses for ONLY the listed keys
+                         (each must be a FEATURE_REGISTRY addon-gate key, checked before
+                         connecting). Mutually exclusive with --include-addon-gates.
   --plan-flag-enforcement on|off   the API service's CURRENT PLAN_FLAG_ENFORCEMENT value — this
                          script cannot read it live (see the header doc). Defaults to "off" (the
                          current known value — reverted the same morning as the 2026-09-17 P0
@@ -168,6 +184,7 @@ function parseArgs(argv) {
     apply: false,
     live: false,
     includeAddonGates: false,
+    includeAddonKeysRaw: null,
     json: false,
     backupAttested: null,
     onlyTestTenants: false,
@@ -189,6 +206,9 @@ function parseArgs(argv) {
     else if (arg === "--apply") opts.apply = true;
     else if (arg === "--live") opts.live = true;
     else if (arg === "--include-addon-gates") opts.includeAddonGates = true;
+    else if (arg === "--include-addon-keys") opts.includeAddonKeysRaw = argv[++i] ?? "";
+    else if (arg.startsWith("--include-addon-keys="))
+      opts.includeAddonKeysRaw = arg.slice("--include-addon-keys=".length);
     else if (arg === "--json") opts.json = true;
     else if (arg === "--backup-attested") opts.backupAttested = argv[++i] ?? "";
     else if (arg.startsWith("--backup-attested="))
@@ -211,6 +231,33 @@ function parseArgs(argv) {
   }
   if (opts.includeAddonGates && !opts.apply) {
     opts.errors.push("--include-addon-gates has no effect without --apply");
+  }
+  if (opts.includeAddonKeysRaw !== null && !opts.apply) {
+    opts.errors.push("--include-addon-keys has no effect without --apply");
+  }
+  if (opts.includeAddonGates && opts.includeAddonKeysRaw !== null) {
+    opts.errors.push(
+      "--include-addon-gates and --include-addon-keys are mutually exclusive — pick one",
+    );
+  }
+  opts.includeAddonKeys = null;
+  if (opts.includeAddonKeysRaw !== null) {
+    const keys = opts.includeAddonKeysRaw
+      .split(",")
+      .map((k) => k.trim())
+      .filter((k) => k.length > 0);
+    if (keys.length === 0) {
+      opts.errors.push("--include-addon-keys requires a non-empty comma-separated list");
+    }
+    for (const key of keys) {
+      const feature = FEATURE_REGISTRY_MIRROR.find((f) => f.key === key);
+      if (!feature || feature.via !== "RequireAddon") {
+        opts.errors.push(
+          `--include-addon-keys: "${key}" is not a FEATURE_REGISTRY addon-gate key (gate.via "RequireAddon")`,
+        );
+      }
+    }
+    opts.includeAddonKeys = new Set(keys);
   }
   // N6: match the other "has no effect without --apply" refusals — --report is read-only and
   // never writes, so these write-path-only flags being silently accepted (and silently ignored)
@@ -781,23 +828,34 @@ async function runApply() {
   // step) are EXCLUDED from what --apply writes by default. A blanket, non-expiring GRANT to
   // every tenant would permanently defeat that separate rollout process — design.md: "addon-gate
   // dark|enforced is a per-route rollout property, not an entitlement source; left alone". Pass
-  // --include-addon-gates to include them anyway (e.g. once a specific key's own rollout is done
-  // and its blast-radius report is clean — apps/api/scripts/report-addon-gate-blast-radius.mjs).
-  const excludedLosses = opts.includeAddonGates
-    ? []
-    : diff.losses.filter((r) => r.mechanism === "addon-gate-courtesy");
-  const applicableLosses = opts.includeAddonGates
-    ? diff.losses
-    : diff.losses.filter((r) => r.mechanism !== "addon-gate-courtesy");
+  // --include-addon-gates to include ALL of them, or --include-addon-keys <comma list> to include
+  // only specific ones (e.g. once a key's own rollout is done and its blast-radius report is
+  // clean — apps/api/scripts/report-addon-gate-blast-radius.mjs) — same code path either way, just
+  // a narrower membership test.
+  const isIncludedAddonGate = (row) =>
+    opts.includeAddonGates || (opts.includeAddonKeys?.has(row.key) ?? false);
+  const excludedLosses = diff.losses.filter(
+    (r) => r.mechanism === "addon-gate-courtesy" && !isIncludedAddonGate(r),
+  );
+  const applicableLosses = diff.losses.filter(
+    (r) => r.mechanism !== "addon-gate-courtesy" || isIncludedAddonGate(r),
+  );
 
   printDiffTable(
     "=== WOULD GRANT (preview) — one GRANT/GRANDFATHER override per row ===",
     applicableLosses,
   );
+  if (opts.includeAddonKeys) {
+    const stillExcludedKeys = [...new Set(excludedLosses.map((r) => r.key))].sort();
+    say(
+      `\n=== --include-addon-keys — included: ${[...opts.includeAddonKeys].sort().join(", ")}; ` +
+        `still excluded: ${stillExcludedKeys.join(", ") || "(none)"} ===`,
+    );
+  }
   if (excludedLosses.length > 0) {
     say(
       `\n=== EXCLUDED FROM --apply (${excludedLosses.length}) — addon-gate-courtesy losses; ` +
-        "pass --include-addon-gates to include them ===",
+        "pass --include-addon-gates (all) or --include-addon-keys <comma list> (some) to include them ===",
     );
     for (const row of excludedLosses) say(`  ${row.tag}  ${row.key}`);
   }
