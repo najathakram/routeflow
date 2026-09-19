@@ -42,6 +42,7 @@ Shared DTO/enum definitions. Entry: `index.ts` (no `src/`), re-exports `./api/*`
   of `PARTIAL`, `PromotionType` (`BuyerPromotion.type`) omitted `"BUY_N_GET_M"`; plus a sibling-sweep
   find, a phantom `"EXPIRED"` on `EstimateStatus` in both apps.
 - **F27 (2026-09-13, aa47ee9e)** — `api/misc.ts` `Estimate` gains `issueDate?: string | null` (operator-picked issue date; null on legacy rows — consumers fall back to `createdAt`). `EstimateItem`/`EstimateStatus` unchanged.
+- **2026-09-19:** `api/products.ts` `RecomputeCostsResult` gains `gapsDetected: {productId,name,stockDrift}[]` (B562 — a sales-blind replay is refused, not corrected, for these products; see `feature-modules-4/inventory.md`). `api/features.ts` `FeatureRegistryRow` gains `requires?: {allOf?, anyOf?}` (B519 — feeds web's local unmet-requirement warning, mirrors `apps/api/src/billing/feature-registry.ts`'s server shape).
 - **`api/{orders,customers,products,finance,returns,regulated,routes,buyer,misc}.ts` (2026-09-03,
   wave E / imp-10b)** — the 95 identical/near-identical request/response DTOs the sweep
   (`.claude/pipeline/wave-E-structure/2026-09-03-imp-10b-shared-dtos/sweep.md`) found duplicated
@@ -311,7 +312,7 @@ Cross-platform components. Entry `index.tsx`; subpaths `./web`, `./mobile`, `./t
   `Card`, `Badge` (uppercase 11px pill; BadgeStatus covers 30+ statuses), `PageHeader`, `EmptyState`
   (Instrument-Serif title), `Toast` (ToastProvider; `useToast()` → `{toast→id, dismiss(id)}`; white
   card + colored icon tile; optional `action` slot — drives web `useUndo()` 8s Undo),
-  `StatCard` (accent icon tile, tabular value), `Skeleton` +`SkeletonRows` (`.skeleton` shimmer), `Tabs`; utils `cn()`, `mergeRefs()`; illustration set.
+  `StatCard` (accent icon tile, tabular value), `Skeleton` +`SkeletonRows` (`.skeleton` shimmer), `Tabs`; utils `cn()`, `mergeRefs()`, **`TAP_TARGET` (B535, #910, 2026-09-19)** — `"min-h-[44px] min-w-[44px] inline-flex items-center justify-center"`, the WCAG 2.5.5/iOS-HIG 44×44 CSS-px minimum hit area for icon-only controls; compose via `cn(TAP_TARGET, "h-5 w-5 ...")` so the icon's own size is unaffected, grown via padding instead. Applied across dashboard icon-only buttons (`orders/[id]`, `vendor-bills/[id]` `EditLineItems`, others) via mobile-sweep call sites, not exhaustively re-listed per file here; illustration set.
   **All web primitives consume the Ledger tokens (below), so re-pointing tokens reskins them.**
 - **Mobile** (`src/mobile/index.ts`): `MobileButton`, `MobileInput`, `StatusBadge`,
   `ScreenHeader`, `SectionHeader`, `EmptyState`.

@@ -131,6 +131,7 @@
   catalog-publish step — rather than failing the whole seed run;
   `apps/web/e2e/48-lite-locked-route-ux.spec.ts` is the consumer and fails loudly on its own if
   `qa-lite` is genuinely absent.
+- **`apps/api/scripts/seed-marketing-screenshot-products.js` (#871, 2026-09-19, new)** — seeds the `test` tenant with a small "Health & Wellness" convenience-store category (GENERIC descriptive names only, never a real trademark) so the marketing site's real product screenshots (wholesalers order builder, retailers invoice detail — `apps/web/public/marketing/{order-builder,invoice-detail}.webp`) have believable, public-safe products. Additive + idempotent like `seed-test-catalog.js` — `assertTestTenant("test")`, re-run refreshes only definitional fields (never `currentStock`/`averageCost` once a product exists). Also wires a buyer-portal login on an existing `test`-tenant customer ("Hill Country Market") — `BuyerAccount` + ACTIVE `CustomerLink` — plus one SENT demo invoice, so the retailers screenshot has a real itemized payable invoice in the buyer portal. Resolves its DB connection the same `prod-migrate.mjs`-style parts-first way (`RAILWAY_TCP_PROXY_*`/`POSTGRES_*` win over a set `DATABASE_URL`).
 - **`scripts/demo-seed.js` + `demo-seed-images.js` + `demo-verify.js` + `lib/demo-ids.js`**
   (2026-08-20) — the standing sales-demo tenant `routeflow-demo` (on the test-tenant allow-list;
   operator `routeflow_demo`/`routeflow_demo`). `demo-seed.js` copies a catalog from the tenant
