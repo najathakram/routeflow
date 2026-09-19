@@ -95,16 +95,23 @@ test.describe("Critical Paths — Money Math & Core Integrity", () => {
       .first()
       .waitFor({ timeout: 15_000 });
 
-    // Collect all cells that start with "$"
-    const dollarCells = page.locator("td, [class*='amount'], [class*='total']").filter({
-      hasText: /^\s*\$/,
+    // Collect the table's amount cells that start with "$". Scoped to `table tbody td` on
+    // purpose: the unscoped `[class*='amount'|'total']` selector also matched the empty-state
+    // block, whose copy starts with a "$" glyph, so an empty list was read as a malformatted
+    // amount instead of reaching the empty branch (F2, B566).
+    // `\$\d`, not a bare `$`: the empty state renders inside a `<td colSpan>` and its
+    // illustration carries a literal "$" glyph, so a bare `^\s*\$` still matched it.
+    const dollarCells = page.locator("table tbody td").filter({
+      hasText: /^\s*\$\d/,
     });
     const count = await dollarCells.count();
 
-    if (count === 0) {
-      // Empty invoice list — nothing to check; skip gracefully
-      return;
-    }
+    // An empty list proves nothing about amount formatting — fail, never return green
+    // (B566: `e2e-seed.js` seeds an invoice for e2e-routeflow).
+    expect(
+      count,
+      "No invoice amount cells on /invoices — run `node apps/api/scripts/e2e-seed.js` (B566)",
+    ).toBeGreaterThan(0);
 
     const texts = await dollarCells.allTextContents();
     const badAmounts: string[] = [];
@@ -153,8 +160,8 @@ test.describe("Critical Paths — Money Math & Core Integrity", () => {
     try {
       await firstRow.waitFor({ timeout: 20_000 });
     } catch {
-      test.skip(true, "No invoices to inspect");
-      return;
+      // Fail, never skip (B566): e2e-seed.js seeds an invoice for e2e-routeflow.
+      throw new Error("No invoices to inspect — run `node apps/api/scripts/e2e-seed.js` (B566)");
     }
 
     await firstRow.click();
@@ -381,7 +388,12 @@ test.describe("Critical Paths — Money Math & Core Integrity", () => {
       .locator("td, [class*='price'], [class*='unit-price']")
       .filter({ hasText: /^\s*\$/ });
     const count = await priceCells.count();
-    if (count === 0) return;
+    // A catalog with no priced rows proves nothing about price formatting — fail, never
+    // return green (B566: `e2e-seed.js` seeds priced products).
+    expect(
+      count,
+      "No priced product rows on /products — run `node apps/api/scripts/e2e-seed.js` (B566)",
+    ).toBeGreaterThan(0);
 
     const texts = await priceCells.allTextContents();
     const badPrices = texts.map((t) => t.trim()).filter((t) => t && !MONEY_RE.test(t));
