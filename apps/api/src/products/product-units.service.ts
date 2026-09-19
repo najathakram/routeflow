@@ -136,6 +136,11 @@ export class ProductUnitsService {
 
   /** One transaction + a per-product advisory xact lock; unique-index races become a 409. */
   private async locked<T>(productId: string, fn: (tx: any) => Promise<T>): Promise<T> {
+    // A write needs a tenant: without one `tenantTransaction` hands back the raw client and the
+    // insert would carry no tenantId (a 500 on the NOT NULL column). SUPER_ADMIN must act inside a tenant.
+    if (!this.prisma.getTenantId()) {
+      throw new BadRequestException("Select a tenant before editing a product's units.");
+    }
     try {
       return await this.prisma.tenantTransaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('product-units'), hashtext(${productId}))`;

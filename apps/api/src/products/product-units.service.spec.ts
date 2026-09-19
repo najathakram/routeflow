@@ -18,6 +18,7 @@ function build(opts: {
   orderLineHit?: boolean;
   invoiceLineHit?: boolean;
   createError?: unknown;
+  noTenant?: boolean;
 }) {
   const product =
     opts.product === undefined
@@ -50,6 +51,7 @@ function build(opts: {
     },
   };
   const prisma = {
+    getTenantId: jest.fn().mockReturnValue(opts.noTenant ? null : "t1"),
     forTenant: () => db,
     tenantTransaction: jest.fn().mockImplementation(async (fn) => fn(db)),
   };
@@ -401,5 +403,38 @@ describe("DTO nulls on NOT NULL columns (Opus review of step 2a)", () => {
       plainToInstance(UpdateProductUnitDto, { price: null, priceTier3: null }),
     );
     expect(errs).toHaveLength(0);
+  });
+});
+
+describe("no-tenant callers and factor-1 aliases (fleet-lead carry items)", () => {
+  it("a write with no tenant context (SUPER_ADMIN) is a 400, never a 500, and touches nothing", async () => {
+    const { service, prisma, db } = build({ noTenant: true });
+    await expect(service.create("p1", { label: "Case", factorToBase: 288 })).rejects.toThrow(
+      BadRequestException,
+    );
+    await expect(service.update("p1", "u", { price: 1 })).rejects.toThrow(BadRequestException);
+    await expect(service.remove("p1", "u")).rejects.toThrow(BadRequestException);
+    expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+    expect(db.productUnit.create).not.toHaveBeenCalled();
+  });
+
+  it("one physical piece never gets two prices: 'Each' is refused as a factor-1 name, and a second factor-1 row is a 409", async () => {
+    const pieceRow: Row = { id: "u-piece", label: "Piece", factorToBase: 1 };
+    const a = build({ rows: [pieceRow] });
+    await expect(a.service.create("p1", { label: "Each", factorToBase: 1 })).rejects.toThrow(
+      BadRequestException,
+    );
+    await expect(a.service.create("p1", { label: "Piece", factorToBase: 1 })).rejects.toThrow(
+      ConflictException,
+    );
+  });
+
+  it("an unboxed product whose pack is named Each cannot also get a Piece row (the piece IS the pack)", async () => {
+    const { service } = build({
+      product: { unit: "Each", unitsPerBox: null, trackedCategoryId: null },
+    });
+    await expect(service.create("p1", { label: "Piece", factorToBase: 1 })).rejects.toThrow(
+      BadRequestException,
+    );
   });
 });
