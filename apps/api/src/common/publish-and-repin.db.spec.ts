@@ -9,20 +9,27 @@
  *
  * Two fixture tenants, both pinned directly to a throwaway PlanVersion this spec seeds (no
  * TenantSubscription row needed — Tenant.plan alone resolves via planKeyFromEnum, which
- * identity-maps SCALE/LITE):
+ * identity-maps SCALE/LITE). Every case runs under the SCRIPT'S DEFAULT (--plan-flag-enforcement
+ * defaults to "off" — the real, current production value per
+ * project_entitlements_one_rule_2026-09-17.md: the 2026-09-17 P0 was the ON flip, reverted the
+ * same morning and never re-enabled), matching what a real prod run actually computes:
  *   - the "loss" tenant: SCALE, whose plan definition matches feature-fixtures.ts's
  *     V11_PIN_FIXTURE (flag.msrp/flag.sales_agents/flag.reports/flag.returns only), no addons.
- *     EXPECTED_LOSS_KEYS (9): the 5 PREPIN_DARK_FLAGS keys (legacy flag courtesy-allow), the 3
- *     RequireAddon-dark keys with no active addon — ocr/crm_gohighlevel/email.connected_mailbox
- *     (legacy addon-gate courtesy-allow, an unconditional "dark" state with no env kill switch,
- *     same mechanism as the flag one but never PLAN_FLAG_ENFORCEMENT-gated) — and
- *     flag.credit_limits (see below).
+ *     EXPECTED_LOSS_KEYS (15, shown by --report): while enforcement is off, the legacy dark-flag
+ *     courtesy allow is NOT limited to PREPIN_DARK_FLAGS — it covers all 13 DARK_PLAN_FLAGS keys,
+ *     11 of which this tenant's plan doesn't already hold; the 3 RequireAddon-dark keys with no
+ *     active addon — ocr/crm_gohighlevel/email.connected_mailbox (a SEPARATE courtesy mechanism,
+ *     addon-gate state, which has no env kill switch at all and is unaffected by
+ *     PLAN_FLAG_ENFORCEMENT); and flag.credit_limits (see below). EXPECTED_APPLICABLE_LOSS_KEYS
+ *     (12 = 15 − 3): what --apply actually WRITES by default — it excludes the 3
+ *     addon-gate-courtesy keys, because a permanent blanket GRANT would defeat those add-ons' own,
+ *     separate, still-in-progress rollout process (design.md: "addon-gate-registry ... left
+ *     alone, not an entitlement source").
  *   - the "zero" tenant: LITE (always-enforced — feature-fixtures.ts's LITE_FIXTURE), plus
  *     flag.credit_limits ADDED to its plan definition. LITE alone would still show exactly one
- *     loss: design.md (§"Credit-limit check") states plainly that today's credit-limit guard
- *     "always runs" — is "currently effective" for "everyone" — regardless of plan, because
- *     orders.service.ts does not consult the entitlement system for it at all yet; that is
- *     NOT a courtesy-allow LITE's always-enforced status exempts it from (see
+ *     loss while enforcement is off: orders.service.ts's real isCreditLimitCheckEnabled() returns
+ *     true unconditionally whenever PLAN_FLAG_ENFORCEMENT is not "on" — a fact about that one
+ *     service call, not a courtesy allow LITE's always-enforced status exempts it from (see
  *     feature-registry-mirror.cjs's ALWAYS_EFFECTIVE_TODAY). Giving this tenant's plan the flag
  *     explicitly closes that one exception too, so it is a genuine zero-loss tenant — "a fixture
  *     tenant whose access is fully explained by preset/grants" in the literal, no-exceptions sense.
@@ -76,17 +83,27 @@ const VERSION_NUM = 900000 + Math.floor(Math.random() * 90000);
 
 const SCALE_FLAGS = ["flag.msrp", "flag.sales_agents", "flag.reports", "flag.returns"];
 const LITE_ZERO_LOSS_FLAGS = ["flag.credit_limits"];
+const ADDON_GATE_COURTESY_KEYS = ["ocr", "crm_gohighlevel", "email.connected_mailbox"];
+// All 15 — what --report shows for the loss tenant (enforcement=off, the script's default).
 const EXPECTED_LOSS_KEYS = [
+  "flag.analytics",
+  "flag.ap_bills",
+  "flag.import_integrations",
+  "flag.forecasting",
+  "flag.pricing_tiers",
   "flag.estimates",
   "flag.recurring_invoices",
   "flag.credit_notes",
   "flag.suppliers",
   "flag.messaging",
-  "ocr",
-  "crm_gohighlevel",
-  "email.connected_mailbox",
+  "addon.buyer_portal",
+  ...ADDON_GATE_COURTESY_KEYS,
   "flag.credit_limits",
 ].sort();
+// 12 — what --apply actually WRITES by default (excludes the 3 addon-gate-courtesy keys).
+const EXPECTED_APPLICABLE_LOSS_KEYS = EXPECTED_LOSS_KEYS.filter(
+  (k) => !ADDON_GATE_COURTESY_KEYS.includes(k),
+).sort();
 
 function tag(tenantId: string) {
   return createHash("sha256").update(tenantId).digest("hex").slice(0, 8);
@@ -98,10 +115,11 @@ interface Diff {
   mode: string;
   planFlagEnforcementAssumed: string;
   gains: { tenant: string; key: string }[];
-  losses: { tenant: string; key: string }[];
+  losses: { tenant: string; key: string; mechanism: string }[];
   applied: { batchId: string; inserted: number; candidates: number } | null;
   applyRefused?: string;
   testTenantError?: string[];
+  excludedAddonGateLosses?: number;
 }
 
 describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals / no-PII)", () => {
@@ -201,21 +219,28 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
     await db.end();
   }, 120_000);
 
-  it("D1 --report: the loss tenant shows all 9 EXPECTED_LOSS_KEYS as LOSSES; the zero tenant shows none", () => {
+  it("D1 --report: the loss tenant shows all 15 EXPECTED_LOSS_KEYS as LOSSES; the zero tenant shows none", () => {
     const report = runReportJson();
-    expect(report.planFlagEnforcementAssumed).toBe("on"); // the default — matches known prod state
+    // the default — matches the real, current production value (see the file header)
+    expect(report.planFlagEnforcementAssumed).toBe("off");
 
     const ourLosses = report.losses
       .filter((l) => l.tenant.includes(HASH_LOSS))
       .map((l) => l.key)
       .sort();
     expect(ourLosses).toEqual(EXPECTED_LOSS_KEYS);
+    // every addon-gate-courtesy loss is labeled as such (report shows the FULL set — the
+    // apply-time exclusion is a write-path decision, not a report-time one)
+    const addonGateLosses = report.losses.filter(
+      (l) => l.tenant.includes(HASH_LOSS) && ADDON_GATE_COURTESY_KEYS.includes(l.key),
+    );
+    expect(addonGateLosses.every((l) => l.mechanism === "addon-gate-courtesy")).toBe(true);
 
     const zeroLosses = report.losses.filter((l) => l.tenant.includes(HASH_ZERO));
     expect(zeroLosses).toEqual([]);
   });
 
-  it("D2 --apply preview (no --live): shows the same losses, writes nothing", async () => {
+  it("D2 --apply preview (no --live): shows the same 15 losses (unfiltered), writes nothing", async () => {
     const preview = runJson(["--apply"]);
     const ourLosses = preview.losses
       .filter((l) => l.tenant.includes(HASH_LOSS))
@@ -228,11 +253,10 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
   });
 
   it("D2b no PII: neither tenant's slug or name reaches stdout, in prose or --json, for report or apply preview", () => {
-    // Runs here, BEFORE D6 applies our grants — our tenant still has losses to show at this
-    // point, which is what makes the "the redacted tag IS expected to appear" check below
-    // meaningful for the --apply preview calls too (apply's preview only ever lists LOSSES,
-    // never GAINS, so once D6 grants everything away there would be nothing of ours left to
-    // print there at all).
+    // Runs here, BEFORE D6 applies our grants — our tenant has its full 15 losses at this point,
+    // 12 of which appear in --apply's "WOULD GRANT" section and 3 (addon-gate-courtesy) in its
+    // separate "EXCLUDED" section, which is what makes the "the redacted tag IS expected to
+    // appear" check below meaningful for the --apply preview calls too.
     const proseReport = runCli(["--report"]);
     const jsonReport = runCli(["--report", "--json"]);
     const prosePreview = runCli(["--apply"]);
@@ -282,13 +306,15 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
     expect(await activeOverrides(TENANT_LOSS_ID)).toEqual([]);
   });
 
-  it("D6 --apply --live with the correct phrase: writes exactly one GRANT/GRANDFATHER override per loss", async () => {
+  it("D6 --apply --live with the correct phrase: writes one GRANT/GRANDFATHER override per APPLICABLE loss, excluding addon-gate-courtesy ones", async () => {
     // Read the exact whole-database count from a fresh preview first — mirrors
     // backfill-legacy-tenant-ids.db.spec.ts's own "read n from the tool's own output" pattern;
     // this spec does not assume it owns every PRODUCTION-class row in a shared compose database.
+    // n is the APPLICABLE count (excludedAddonGateLosses subtracted) — that's what --apply --live
+    // actually writes and what the typed confirmation phrase is computed from.
     const preview = runJson(["--apply"]);
-    const n = preview.losses.length;
-    expect(n).toBeGreaterThanOrEqual(EXPECTED_LOSS_KEYS.length); // at least our own 9
+    const n = preview.losses.length - (preview.excludedAddonGateLosses ?? 0);
+    expect(n).toBeGreaterThanOrEqual(EXPECTED_APPLICABLE_LOSS_KEYS.length); // at least our own 12
 
     const res = runCli([
       "--apply",
@@ -305,7 +331,11 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
     expect(result.applied?.inserted).toBe(n);
 
     const rows = await activeOverrides(TENANT_LOSS_ID);
-    expect(rows.map((r) => r.featureKey).sort()).toEqual(EXPECTED_LOSS_KEYS);
+    expect(rows.map((r) => r.featureKey).sort()).toEqual(EXPECTED_APPLICABLE_LOSS_KEYS);
+    // the 3 addon-gate-courtesy keys were NOT granted — that's the whole point of the exclusion
+    for (const key of ADDON_GATE_COURTESY_KEYS) {
+      expect(rows.map((r) => r.featureKey)).not.toContain(key);
+    }
     for (const row of rows) {
       expect(row.effect).toBe("GRANT");
       expect(row.kind).toBe("GRANDFATHER");
@@ -317,20 +347,23 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
     expect(await activeOverrides(TENANT_ZERO_ID)).toEqual([]);
   });
 
-  it("D7 --report after D6: the loss tenant now shows zero losses (grants explain the one rule too)", () => {
+  it("D7 --report after D6: the loss tenant shows ONLY the 3 excluded addon-gate-courtesy keys — --apply's grants explain everything else, but those were deliberately never granted", () => {
     const report = runReportJson();
-    const ourLosses = report.losses.filter((l) => l.tenant.includes(HASH_LOSS));
-    expect(ourLosses).toEqual([]);
+    const ourLosses = report.losses
+      .filter((l) => l.tenant.includes(HASH_LOSS))
+      .map((l) => l.key)
+      .sort();
+    expect(ourLosses).toEqual([...ADDON_GATE_COURTESY_KEYS].sort());
     const zeroLosses = report.losses.filter((l) => l.tenant.includes(HASH_ZERO));
     expect(zeroLosses).toEqual([]);
   });
 
-  it("D8 --apply --live again: idempotent — inserts nothing new, our tenant's 9 rows are untouched", async () => {
+  it("D8 --apply --live again: idempotent — inserts nothing new, our tenant's 12 rows are untouched", async () => {
     const before = await activeOverrides(TENANT_LOSS_ID);
-    expect(before).toHaveLength(9);
+    expect(before).toHaveLength(12);
 
     const preview = runJson(["--apply"]);
-    const n = preview.losses.length;
+    const n = preview.losses.length - (preview.excludedAddonGateLosses ?? 0);
 
     if (n === 0) {
       // Nobody else in the shared database has a loss either — "nothing to grant" path.

@@ -198,27 +198,46 @@ function addonSkuCode(row) {
 
 // ─── the one deliberate deviation from a byte-for-byte mirror ─────────────────────────────────
 //
-// design.md (local-assets/handoff/2026-09-16/feature-grants-v2/design.md:80-83, "Credit-limit
-// check"): "today it always runs ... 'Currently effective' is everyone". `flag.credit_limits` is
-// gate.via "service" and is NOT a member of DARK_PLAN_FLAGS or PREPIN_DARK_FLAGS, so
-// EntitlementAuthority.computeOldPathAll's generic branch for it reduces to plain
-// `entFlags.includes("flag.credit_limits")` — identical to what the NEW/one-rule path ALSO
-// computes for this key (same underlying `flags` array, no courtesy branch on either side). Run
-// through the generic algorithm unmodified, this key would NEVER show a diff, in either direction,
-// regardless of catalog state — which would silently defeat the one thing design.md is explicit
-// this report must protect: the credit-limit guard is real production behaviour TODAY, running
-// unconditionally, because orders.service.ts's assertWithinCreditLimit does not consult the
-// entitlement system at all yet (that wiring is later, gated on `can(flag.credit_limits)` only
-// once `entitlements.mode=live`). So its CURRENT real-world effective value is unconditionally
-// true — a fact about production code today, not something FEATURE_REGISTRY's data encodes — and
-// treating it as literally "whatever the generic branch says" would understate today's true
-// baseline exactly where the money guard is concerned.
+// CORRECTED after independent review (2026-09-19): the first version of this comment cited only
+// design.md's prose and got the mechanism wrong. The REAL code —
+// apps/api/src/orders/orders.service.ts's private isCreditLimitCheckEnabled() — is:
+//   if ((process.env.PLAN_FLAG_ENFORCEMENT ?? "off") !== "on") return true;   // ALWAYS runs
+//   ...
+//   return await this.entitlements.hasFlag(tenantId, "flag.credit_limits");  // gated when "on"
+// So `flag.credit_limits` is NOT unconditionally true — it is true unconditionally ONLY while
+// PLAN_FLAG_ENFORCEMENT is off (today's real, current value — see
+// project_entitlements_one_rule_2026-09-17.md: "Mitigated 06:11Z by deleting the env var... stays
+// OFF (not re-enabled)"). While off, `entFlags.includes(key)`/`isDarkFlag(key)` never matter,
+// because isCreditLimitCheckEnabled() returns before consulting entitlements at all — it is
+// EXACTLY the case that needs a deviation, since `flag.credit_limits` is gate.via "service", is
+// NOT a member of DARK_PLAN_FLAGS or PREPIN_DARK_FLAGS, and the generic branch
+// (`allowsFlag`/`isDarkFlag`) would otherwise reduce to plain `entFlags.includes(key)` — identical
+// to what the NEW/one-rule path also computes, so a diff would never surface for this key at all,
+// silently defeating the one thing design.md is explicit this report must protect ("zero tenants
+// lose the money guard"). While PLAN_FLAG_ENFORCEMENT is on, this key is NOT special — it behaves
+// exactly like the generic branch (which is why `isDarkFlagFn`/env are threaded through here too).
 //
-// Scope of the deviation: applied ONLY when no active override exists for the key (an explicit
-// admin GRANT/DENY on this key — however unlikely today, since nothing enforces it yet — still
-// takes absolute priority, matching every real code path). This is the single highest-uncertainty
-// judgment call in this whole mirror; flagged for independent review.
+// Scope: applied ONLY when no active override exists for the key (an explicit admin GRANT/DENY —
+// however unlikely today, since production traffic never reaches the override-consulting branch
+// while enforcement is off — still takes absolute priority, matching every other key). This
+// remains the single highest-uncertainty judgment call in this mirror; flagged for review.
 const ALWAYS_EFFECTIVE_TODAY = new Set(["flag.credit_limits"]);
+
+/** For a LOSS row (old=true, new=false), the mechanism that explains WHY the legacy path is
+ *  true — computed structurally from `feature`, not re-derived per-tenant, because a loss can
+ *  only arise from exactly one of these three shapes given computeOldPathEffective's own
+ *  branching (an addon-keyed row can only diverge via the addon-gate courtesy allow; a flag/none/
+ *  service-keyed row only via the plan-flag courtesy allow or the credit-limit toggle above).
+ *  Consumed by publish-and-repin.mjs to keep "addon-gate-courtesy" losses (dark, not-yet-billed
+ *  or not-yet-launched add-ons — design.md: "addon-gate-registry ... left alone, not an
+ *  entitlement source") out of --apply's default write set: granting those to every tenant would
+ *  permanently defeat their own, separate, still-in-progress rollout process. */
+function lossMechanism(feature) {
+  const isAddonKeyed = feature.via === "RequireAddon" || feature.via === "guard";
+  if (isAddonKeyed) return "addon-gate-courtesy";
+  if (ALWAYS_EFFECTIVE_TODAY.has(feature.key)) return "credit-limit-service-toggle";
+  return "plan-flag-courtesy";
+}
 
 // ─── old-path / new-path per-key resolvers ─────────────────────────────────────────────────────
 //
@@ -237,7 +256,9 @@ function computeOldPathEffective(feature, ctx, env = process.env) {
   if (override === "GRANT") return true;
   if (override === "DENY") return false;
 
-  if (ALWAYS_EFFECTIVE_TODAY.has(feature.key)) return true;
+  // See ALWAYS_EFFECTIVE_TODAY's own doc comment: matches orders.service.ts's
+  // isCreditLimitCheckEnabled() exactly — unconditionally true ONLY while enforcement is off.
+  if (ALWAYS_EFFECTIVE_TODAY.has(feature.key) && !isPlanFlagEnforcementOn(env)) return true;
 
   const isAddonKeyed = feature.via === "RequireAddon" || feature.via === "guard";
   if (isAddonKeyed) {
@@ -285,4 +306,5 @@ module.exports = {
   addonSkuCode,
   computeOldPathEffective,
   computeNewPathEffective,
+  lossMechanism,
 };
