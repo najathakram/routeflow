@@ -425,6 +425,15 @@ describe("ScanOrderScreen", () => {
       expect(props.onClose).toHaveBeenCalledTimes(1);
     });
 
+    it("pauses the camera while the editor is open, and resumes when it closes", () => {
+      setup({ lines: two });
+      expect(cameraEnabled).toBe(true);
+      fireEvent.click(screen.getByTestId("price-p1"));
+      expect(cameraEnabled).toBe(false);
+      fireEvent.click(screen.getByRole("button", { name: "close-editor" }));
+      expect(cameraEnabled).toBe(true);
+    });
+
     it("closes itself when the line disappears underneath it (undo / removal)", () => {
       const { rerender, props } = setup({ lines: two });
       fireEvent.click(screen.getByTestId("price-p1"));

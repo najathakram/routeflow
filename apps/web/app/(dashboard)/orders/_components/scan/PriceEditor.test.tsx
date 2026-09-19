@@ -92,6 +92,12 @@ describe("PriceEditor", () => {
       expect(screen.getByText("Case price")).toBeInTheDocument();
     });
 
+    it("but a pack of 1 is just 'Price', as in the row", () => {
+      setup(boxed({ unitsPerBox: 1, boxes: 2, qty: 2 }));
+      expect(screen.getByText("Price")).toBeInTheDocument();
+      expect(screen.queryByText("Case price")).not.toBeInTheDocument();
+    });
+
     it("shows the customer's last price when it differs from list", () => {
       setup(line(), { priceHistoryEntry: { lastPrice: 9.25 } });
       expect(screen.getByText("Last: $9.25")).toBeInTheDocument();
@@ -198,6 +204,11 @@ describe("PriceEditor", () => {
       });
     });
 
+    it("passes unitsPerBox so a CASE price is compared to a CASE cost (dropping it would hide the warning)", () => {
+      setup(boxed({ unitCost: 1, unitPrice: 5 }));
+      expect(marginHintProps.unitsPerBox).toBe(6);
+    });
+
     it("'Set to floor' and 'Sell anyway' call the SAME handlers the row uses", () => {
       const props = setup(line());
       marginHintProps.onSetToFloor(9.5);
@@ -211,6 +222,23 @@ describe("PriceEditor", () => {
     it("keeps the cost concealed until revealed", () => {
       setup(line(), { costRevealed: false });
       expect(marginHintProps.concealed).toBe(true);
+    });
+  });
+
+  describe("focus", () => {
+    it("moves focus into the sheet on open and marks it modal", () => {
+      setup(line());
+      const dialog = screen.getByRole("dialog", { name: "Edit Widget" });
+      expect(dialog).toHaveFocus();
+      expect(dialog).toHaveAttribute("aria-modal", "true");
+    });
+
+    it("keeps the backdrop out of the tab order so Shift+Tab cannot land on a close-on-Enter button", () => {
+      setup(line());
+      expect(screen.getByRole("button", { name: "Close price editor" })).toHaveAttribute(
+        "tabindex",
+        "-1",
+      );
     });
   });
 
