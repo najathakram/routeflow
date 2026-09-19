@@ -1,6 +1,7 @@
 import { normalizeBoxesPieces } from "./pricing";
 import { getTierPrice } from "./tier-pricing";
 import {
+  InvalidTierError,
   UnknownUnitError,
   fromBaseQty,
   resolveLadderLevel,
@@ -148,9 +149,13 @@ describe("resolveUnitPrice (ladder)", () => {
     expect(resolveUnitPrice(product, units, "Pallet", 3)).toBe(42 * 240);
   });
 
-  it("an out-of-range tier index is tier 1", () => {
-    expect(resolveUnitPrice(product, units, "Case", 9)).toBe(480);
-    expect(resolveUnitPrice(product, units, "Case", 0)).toBe(480);
+  it("a tier is Number()-ed at the boundary: a numeric string works, a non-numeric or out-of-range tier THROWS (never priced as tier 1)", () => {
+    expect(resolveUnitPrice(product, units, "Case", "2")).toBe(440);
+    for (const bad of [0, 6, 9, -1, 1.5, Number.NaN, "", "  ", "abc", "1x", null, undefined, {}]) {
+      expect(() => resolveUnitPrice(product, units, "Case", bad as never)).toThrow(
+        InvalidTierError,
+      );
+    }
   });
 
   it("matches labels exactly first, then case-insensitively", () => {
