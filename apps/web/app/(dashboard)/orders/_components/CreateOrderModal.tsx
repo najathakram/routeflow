@@ -27,7 +27,6 @@ import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { LineItemRow } from "@/components/LineItemRow";
 import { useScanCodeHandler } from "./scan/useScanCodeHandler";
 import { ScanOrderScreen } from "./scan/ScanOrderScreen";
-import { useScanV2Enabled } from "./scan/useScanV2Enabled";
 import type { ScanHistoryEntry } from "./scan/scan-summary";
 import { LicenseGuardModal } from "./LicenseGuardModal";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
@@ -35,7 +34,7 @@ import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { CreditNotePicker, type CreditSelection } from "./CreditNotePicker";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
-import { SALES_AGENTS_ADDON } from "@/lib/api/addons";
+import { SALES_AGENTS_ADDON, useScanV2 } from "@/lib/api/addons";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -187,7 +186,7 @@ export function CreateOrderModal({
   // single-shot camera overlay. While it is open the Dialog below is closed (its content is
   // transformed and focus-trapped, so a full-screen overlay cannot live inside it); every piece of
   // order state stays in this component, so nothing is lost across the swap.
-  const scanV2 = useScanV2Enabled();
+  const scanV2 = useScanV2();
   const [scanScreenOpen, setScanScreenOpen] = React.useState(false);
   // A closed order builder never reopens straight into the scan screen.
   React.useEffect(() => {

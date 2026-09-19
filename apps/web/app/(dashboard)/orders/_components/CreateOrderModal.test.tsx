@@ -107,9 +107,9 @@ jest.mock("@/components/InlineCreateProductModal", () => ({
 // scan_v2: the flag and the camera are the two seams. The flag is a mutable stub; the camera hook
 // hands the test the screen's onDetect so a barcode can be injected without getUserMedia.
 let mockScanV2 = false;
-jest.mock("./scan/useScanV2Enabled", () => ({
-  SCAN_V2_FLAG: "flag.scan_v2",
-  useScanV2Enabled: () => mockScanV2,
+jest.mock("@/lib/api/addons", () => ({
+  ...jest.requireActual("@/lib/api/addons"),
+  useScanV2: () => mockScanV2,
 }));
 let cameraDetect: ((code: string) => void) | undefined;
 let cameraEnabled: boolean | undefined;
