@@ -67,8 +67,8 @@ export const emptyPOLine = (): POLineItem => ({
  * and a per-piece `unitCost`. Boxed lines are typed as Boxes+Pieces and a
  * Cost-per-Box — converted here so `qty * unitCost` (both display and what
  * `createPurchaseOrder` stores as `totalCost`) is correct, and so `qtyOrdered`
- * lands in PIECES to match `qtyReceived` after a receive (ReceivePOModal,
- * below, keeps that same piece contract). Non-boxed lines pass through as-is.
+ * lands in PIECES to match `qtyReceived` after a receive (ReceivePOModal in
+ * PurchaseOrdersReceiveModal.tsx keeps that same piece contract). Non-boxed lines pass through as-is.
  */
 export function resolvePOLine(
   line: POLineItem,

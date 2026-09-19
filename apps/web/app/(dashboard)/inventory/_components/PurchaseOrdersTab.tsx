@@ -39,7 +39,7 @@ function PODetailRow({
   onReceive,
 }: {
   poId: string;
-  /** Same catalog list threaded through from the page — see ReceivePOModal. */
+  /** Same catalog list threaded through from the page — see ReceivePOModal (PurchaseOrdersReceiveModal.tsx). */
   products: { id: string; name?: string; unitsPerBox?: number | null }[];
   onReceive: (po: PurchaseOrder) => void;
 }) {

@@ -10,6 +10,9 @@ import { render, screen, fireEvent, within } from "@testing-library/react";
 import { PurchaseOrdersTab } from "./PurchaseOrdersTab";
 import { CreatePOModal } from "./PurchaseOrdersCreateModal";
 import { ReceivePOModal } from "./PurchaseOrdersReceiveModal";
+import { formatMoney } from "@/lib/format";
+import { fmtCalendarDate } from "@/lib/formatting";
+import { unitsLabel } from "@/lib/stock-label";
 import { emptyPOLine, resolvePOLine, type PurchaseOrder } from "./purchase-orders-shared";
 
 const toast = jest.fn();
@@ -18,16 +21,19 @@ jest.mock("@routeflow/ui/web", () => {
   return { ...actual, useToast: () => ({ toast }) };
 });
 
-const mutate = jest.fn();
+const sendMutate = jest.fn();
+const closeMutate = jest.fn();
+const createMutate = jest.fn();
+const receiveMutate = jest.fn();
 const detailById: Record<string, unknown> = {};
 let listData: unknown = { data: [] };
 jest.mock("@/lib/api/inventory", () => ({
   usePurchaseOrders: () => ({ data: listData, isLoading: false }),
   usePurchaseOrder: (id: string) => ({ data: detailById[id], isLoading: false }),
-  useSendPurchaseOrder: () => ({ mutate, isPending: false }),
-  useClosePurchaseOrder: () => ({ mutate, isPending: false }),
-  useCreatePurchaseOrder: () => ({ mutate, isPending: false }),
-  useReceivePurchaseOrder: () => ({ mutate, isPending: false }),
+  useSendPurchaseOrder: () => ({ mutate: sendMutate, isPending: false }),
+  useClosePurchaseOrder: () => ({ mutate: closeMutate, isPending: false }),
+  useCreatePurchaseOrder: () => ({ mutate: createMutate, isPending: false }),
+  useReceivePurchaseOrder: () => ({ mutate: receiveMutate, isPending: false }),
 }));
 
 const supplier = { id: "s1", name: "Acme Supply", isActive: true };
@@ -109,11 +115,21 @@ describe("PurchaseOrdersTab", () => {
     expect(within(row("PO-D")).getByText("Closed")).toBeInTheDocument();
   });
 
+  it("renders the row total and expected date through the shared formatters", () => {
+    listData = { data: [po({ id: "a", poNumber: "PO-A", status: "SENT", total: 120 })] };
+    render(<PurchaseOrdersTab suppliers={[supplier]} products={products} />);
+    const row = screen.getByText("PO-A").closest("tr") as HTMLElement;
+    expect(within(row).getByText(formatMoney(120))).toBeInTheDocument();
+    expect(within(row).getByText(fmtCalendarDate("2026-10-01"))).toBeInTheDocument();
+    expect(within(row).getByText("Acme Supply")).toBeInTheDocument();
+  });
+
   it("send button fires the send mutation for that PO", () => {
     listData = { data: [po({ id: "a", poNumber: "PO-A", status: "DRAFT" })] };
     render(<PurchaseOrdersTab suppliers={[supplier]} products={products} />);
     fireEvent.click(screen.getByTitle("Send"));
-    expect(mutate).toHaveBeenCalledWith("a", expect.any(Object));
+    expect(sendMutate).toHaveBeenCalledWith("a", expect.any(Object));
+    expect(closeMutate).not.toHaveBeenCalled();
   });
 
   it("expands a row into the detail with boxed quantities and Close on SENT", () => {
@@ -138,6 +154,14 @@ describe("PurchaseOrdersTab", () => {
     expect(screen.getByText("Boxed Gadget")).toBeInTheDocument();
     expect(screen.getByText(/Dock 3/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Close/ })).toBeInTheDocument();
+    // boxed line: piece total with its box split, per-piece cost at 4dp, /pc suffix
+    expect(screen.getByText(unitsLabel(27, 12))).toBeInTheDocument();
+    expect(screen.getByText("$2.0000")).toBeInTheDocument();
+    expect(screen.getByText("/pc")).toBeInTheDocument();
+    expect(screen.getByText(formatMoney(27 * 2))).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Close/ }));
+    expect(closeMutate).toHaveBeenCalledWith("b", expect.any(Object));
+    expect(sendMutate).not.toHaveBeenCalled();
   });
 });
 
@@ -153,7 +177,7 @@ describe("CreatePOModal", () => {
     fireEvent.change(screen.getByTitle("Extra pieces"), { target: { value: "3" } });
     fireEvent.change(screen.getByTitle("Cost per box"), { target: { value: "24" } });
     fireEvent.click(screen.getByRole("button", { name: "Create PO" }));
-    expect(mutate).toHaveBeenCalledWith(
+    expect(createMutate).toHaveBeenCalledWith(
       {
         supplierId: undefined,
         expectedDate: undefined,
@@ -167,7 +191,7 @@ describe("CreatePOModal", () => {
   it("warns and does not submit with no valid line", () => {
     render(<CreatePOModal suppliers={[supplier]} products={products} onClose={jest.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Create PO" }));
-    expect(mutate).not.toHaveBeenCalled();
+    expect(createMutate).not.toHaveBeenCalled();
     expect(toast).toHaveBeenCalledWith(expect.objectContaining({ title: "Validation" }));
   });
 });
@@ -191,7 +215,7 @@ describe("ReceivePOModal", () => {
     render(<ReceivePOModal po={order} products={products} onClose={jest.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Confirm Receipt" }));
     // outstanding 24 pcs = 2 boxes of 12; unboxed line outstanding 10
-    expect(mutate).toHaveBeenCalledWith(
+    expect(receiveMutate).toHaveBeenCalledWith(
       {
         id: "b",
         items: [

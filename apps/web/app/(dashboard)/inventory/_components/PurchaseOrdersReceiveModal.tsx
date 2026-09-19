@@ -42,7 +42,7 @@ export function ReceivePOModal({
     Object.fromEntries(po.items.map((item) => [item.id, String(outstandingOf(item))])),
   );
   // Boxed items: Boxes + Pieces, defaulting to the outstanding qty's own
-  // breakdown (qtyOrdered is a piece total — see resolvePOLine in CreatePOModal).
+  // breakdown (qtyOrdered is a piece total — see resolvePOLine in purchase-orders-shared.ts).
   const [receivedSplits, setReceivedSplits] = React.useState<
     Record<string, { boxes: string; pieces: string }>
   >(
