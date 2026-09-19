@@ -29,6 +29,15 @@ enum PurchaseOrderStatus {
   CLOSED
 }
 
+// Multi-category labels (2026-09-19): a product-category ASSIGNMENT's polarity.
+// INCLUDE = the product/variant carries this label. EXCLUDE = a variant's signed
+// opt-out of a label its parent carries (never valid on a standalone product —
+// enforced app-side in ProductLabelsService). See ProductCategoryLabel below.
+enum LabelMode {
+  INCLUDE
+  EXCLUDE
+}
+
 model Product {
   id                   String        @id @default(uuid())
   name                 String
@@ -118,6 +127,10 @@ model Product {
   variants              Product[]              @relation("ProductVariants")
   trackedCategory       TrackedCategory?       @relation(fields: [trackedCategoryId], references: [id], onDelete: SetNull)
   trackedSubcategory    TrackedSubcategory?    @relation(fields: [trackedSubcategoryId], references: [id], onDelete: SetNull)
+  units                 ProductUnit[]
+  supplierProducts      SupplierProduct[]
+  categoryLabels        ProductCategoryLabel[]
+  sellingRestrictions   SellingRestriction[]
 
   @@unique([tenantId, sku])
   @@unique([tenantId, barcode])
@@ -183,6 +196,7 @@ model Supplier {
   expenses               Expense[]
   supplierCredits        SupplierCredit[]
   supplierStatementScans SupplierStatementScan[]
+  supplierProducts       SupplierProduct[]
 
   @@index([isActive])
   @@index([tenantId])
@@ -251,9 +265,10 @@ model PurchaseOrder {
   updatedAt    DateTime            @updatedAt
   tenantId     String?
 
-  supplier Supplier            @relation(fields: [supplierId], references: [id])
-  tenant   Tenant?             @relation(fields: [tenantId], references: [id])
-  items    PurchaseOrderItem[]
+  supplier   Supplier            @relation(fields: [supplierId], references: [id])
+  tenant     Tenant?             @relation(fields: [tenantId], references: [id])
+  items      PurchaseOrderItem[]
+  vendorBill VendorBill?
 
   @@unique([tenantId, poNumber])
   @@index([supplierId])
@@ -270,6 +285,14 @@ model PurchaseOrderItem {
   qtyReceived Decimal @default(0) @db.Decimal(10, 3)
   unitCost    Decimal @db.Decimal(10, 4)
   totalCost   Decimal @db.Decimal(10, 2)
+  // Units/PO minimal (2026-09-19): the supplier's own SKU for this line and the
+  // pieces-per-supplier-unit pack size, mirroring VendorBillItem so a scan's
+  // reviewed lines copy across unchanged. Null on every line created before this
+  // shipped and on any line the supplier's document didn't carry a SKU for.
+  // qtyOrdered/unitCost stay per PIECE (receive is untouched); supplier-unit
+  // display is derived (qtyOrdered ÷ packSize, unitCost × packSize).
+  sku         String?
+  packSize    Int?
   tenantId    String?
 
   po      PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
@@ -279,6 +302,117 @@ model PurchaseOrderItem {
   @@index([poId])
   @@index([productId])
   @@index([tenantId])
+}
+
+// ─── Multi-level units + purchase-order supplier mapping (2026-09-19) ─────────
+// See local-assets/handoff/2026-09-18/PLAN-units-po-MINIMAL.md §1. Additive only:
+// a product with no ProductUnit rows behaves exactly as it does today
+// (Product.unitsPerBox/pricePerUnit + tiers remain the pack). Rows exist only
+// for levels OTHER than the pack (Case, Pallet, Container, … and an optional
+// explicit "Piece" price row with factorToBase = 1).
+model ProductUnit {
+  id               String   @id @default(uuid())
+  tenantId         String
+  productId        String
+  // Free-text level name ("Case", "Pallet", "Piece", …); unique per product only
+  // — "Case" vs "case" across products is cosmetic, not deduplicated tenant-wide.
+  label            String
+  // Pieces per one of this unit (the server's ladder — a line's price/stock math
+  // always resolves the factor from here, never from client-supplied input).
+  factorToBase     Int
+  // Explicit price at this level (tier 1). NULL = derived — see
+  // @routeflow/pricing resolveUnitPrice.
+  price            Decimal? @db.Decimal(10, 2)
+  priceTier2       Decimal? @db.Decimal(10, 2)
+  priceTier3       Decimal? @db.Decimal(10, 2)
+  priceTier4       Decimal? @db.Decimal(10, 2)
+  priceTier5       Decimal? @db.Decimal(10, 2)
+  isDefaultSelling Boolean  @default(false)
+  sortOrder        Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  tenant  Tenant? @relation(fields: [tenantId], references: [id])
+
+  @@unique([productId, label])
+  @@unique([productId, factorToBase])
+  @@index([tenantId])
+}
+
+// Learned (supplier, product) purchasing facts — their SKU, their pack size,
+// and the last unit cost paid at that pack. Upserted on scan confirm, consulted
+// first on the next scan from that supplier (units/PO plan §1, ask 5).
+model SupplierProduct {
+  id           String   @id @default(uuid())
+  tenantId     String
+  supplierId   String
+  productId    String
+  supplierSku  String?
+  // Pieces per one supplier unit (e.g. a case of 24).
+  packSize     Int?
+  // Per supplier unit, 4dp — the twin of StockLot.unitCost's precision.
+  lastUnitCost Decimal? @db.Decimal(10, 4)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  supplier Supplier @relation(fields: [supplierId], references: [id])
+  product  Product  @relation(fields: [productId], references: [id])
+  tenant   Tenant?  @relation(fields: [tenantId], references: [id])
+
+  // Partial unique index (tenantId, supplierId, supplierSku) WHERE supplierSku
+  // IS NOT NULL is added via raw SQL in the migration — Prisma can't express a
+  // partial unique index (same precedent as the product-name partial indexes,
+  // catalog.prisma Product model comment above).
+  @@unique([tenantId, supplierId, productId])
+  @@index([tenantId])
+  @@index([supplierId])
+}
+
+// ─── Multi-category product labels (2026-09-19) ───────────────────────────────
+// See local-assets/handoff/2026-09-18/PLAN-categories-jurisdiction-bans.md §1.
+// Deliberately separate from TrackedCategory (tax/licence/report semantics,
+// one-per-product FK) — a label carries no semantics of its own; a
+// SellingRestriction rule (compliance.prisma) gives it force. `Product.category`
+// (free text) is untouched.
+model ProductCategory {
+  id         String    @id @default(uuid())
+  tenantId   String
+  name       String
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  tenant              Tenant?                @relation(fields: [tenantId], references: [id])
+  labels              ProductCategoryLabel[]
+  sellingRestrictions SellingRestriction[]
+
+  @@unique([tenantId, name])
+}
+
+// The product↔label assignment. EXCLUDE is a variant's opt-out of a label its
+// PARENT carries — rejected at write when the product has no parentProductId,
+// and `reason` is REQUIRED for EXCLUDE (an opt-out is a ban-bypass vector).
+// The effective label set is computed dynamically at read time
+// (ProductLabelsService.effectiveLabels) — never snapshotted, so nothing here
+// goes stale when a parent's labels change later.
+model ProductCategoryLabel {
+  id            String    @id @default(uuid())
+  tenantId      String
+  productId     String
+  categoryId    String
+  mode          LabelMode
+  reason        String?
+  createdById   String?
+  createdByName String?
+  createdAt     DateTime  @default(now())
+
+  product  Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  category ProductCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  tenant   Tenant?         @relation(fields: [tenantId], references: [id])
+
+  @@unique([productId, categoryId])
+  @@index([tenantId, categoryId])
 }
 
 // ─── AI Product Mapping Memory ────────────────────────────────────────────────

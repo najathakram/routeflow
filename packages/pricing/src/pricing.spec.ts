@@ -1202,4 +1202,15 @@ describe("formatQtySplit", () => {
     expect(formatQtySplit({ qty: 7, boxes: 2.9, pieces: -1 })).toBe("2 boxes");
     expect(formatQtySplit({ qty: "abc" })).toBe("abc");
   });
+
+  // Units/PO minimal (2026-09-19): boxLabel is additive — every case above
+  // (no boxLabel) is unchanged.
+  it("supports a custom box-level label (units/PO minimal)", () => {
+    expect(formatQtySplit({ qty: 60, boxes: 2, pieces: 12, boxLabel: "case" })).toBe(
+      "2 cases + 12 pcs",
+    );
+    expect(formatQtySplit({ qty: 288, boxes: 1, pieces: 0, boxLabel: "pallet" })).toBe("1 pallet");
+    // A label already ending in "s" is not double-pluralised.
+    expect(formatQtySplit({ qty: 4, boxes: 4, pieces: 0, boxLabel: "chassis" })).toBe("4 chassis");
+  });
 });

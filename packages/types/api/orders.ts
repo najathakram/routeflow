@@ -32,3 +32,13 @@ export interface CustomerPriceHistory {
     listPriceAtTime: number;
   };
 }
+
+// ─── Multi-level units (2026-09-19) ─────────────────────────────────────────────
+// See local-assets/handoff/2026-09-18/PLAN-units-po-MINIMAL.md §1-2.
+
+/** The pack's own label when a line carries no explicit `unitLabel` (today's line). */
+export const UNIT_LABEL_PIECE = "Piece" as const;
+
+export interface UnitAwareLineInput {
+  unitLabel?: string | null;
+}

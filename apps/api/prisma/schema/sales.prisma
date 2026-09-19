@@ -141,7 +141,7 @@ model Customer {
   // row represents. Null for every ordinary tenant's own customers. Written by
   // TenantMirrorService (see tenant-mirror.service.ts); no writer exists before Phase 0's
   // HQ bootstrap task runs.
-  representsTenantId   String?     @unique
+  representsTenantId    String?     @unique
   fulfillPath           FulfillPath @default(ROUTE)
   deliveryWindowStart   String?
   deliveryWindowEnd     String?
@@ -264,21 +264,30 @@ model CustomerDocument {
 }
 
 model CustomerAddress {
-  id          String   @id @default(uuid())
-  customerId  String
-  label       String   @default("default")
-  line1       String
-  line2       String?
-  city        String
-  state       String
-  zip         String
-  lat         Float?
-  lng         Float?
-  isDefault   Boolean  @default(false)
-  addressType String   @default("BILLING")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  tenantId    String?
+  id               String   @id @default(uuid())
+  customerId       String
+  label            String   @default("default")
+  line1            String
+  line2            String?
+  city             String
+  state            String
+  zip              String
+  lat              Float?
+  lng              Float?
+  isDefault        Boolean  @default(false)
+  addressType      String   @default("BILLING")
+  // Selling restrictions (2026-09-19, R2): normalised 2-letter USPS state code
+  // derived from the free-text `state` column at the write boundary
+  // (normalizeUsState in packages/types/api/us-states.ts). Null on every row
+  // written before this shipped and on any value the normalizer could not
+  // resolve — `stateNeedsReview` flags those for `apps/api/scripts/
+  // normalize-address-states.mjs` / the "State needs review" UI chip. The
+  // restrictions resolver reads ONLY this column, never the free-text `state`.
+  stateCode        String?  @db.Char(2)
+  stateNeedsReview Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  tenantId         String?
 
   customer      Customer       @relation(fields: [customerId], references: [id])
   tenant        Tenant?        @relation(fields: [tenantId], references: [id])
@@ -629,19 +638,19 @@ model Order {
   updatedAt              DateTime    @updatedAt
   tenantId               String?
 
-  customer          Customer           @relation(fields: [customerId], references: [id])
-  tenant            Tenant?            @relation(fields: [tenantId], references: [id])
-  routeRun          RouteRun?          @relation(fields: [routeRunId], references: [id])
-  routeRunStop      RouteRunStop?      @relation(fields: [routeRunStopId], references: [id])
-  orderTemplate     OrderTemplate?     @relation(fields: [templateId], references: [id])
-  lineItems         OrderItem[]
-  deliveryMutations DeliveryMutation[]
-  transaction       Transaction?
-  invoices          Invoice[]
-  returns           Return[]
-  revisions         OrderRevision[]
-  changeRequests    ChangeRequest[]
-  orderCreditNotes  OrderCreditNote[]
+  customer             Customer              @relation(fields: [customerId], references: [id])
+  tenant               Tenant?               @relation(fields: [tenantId], references: [id])
+  routeRun             RouteRun?             @relation(fields: [routeRunId], references: [id])
+  routeRunStop         RouteRunStop?         @relation(fields: [routeRunStopId], references: [id])
+  orderTemplate        OrderTemplate?        @relation(fields: [templateId], references: [id])
+  lineItems            OrderItem[]
+  deliveryMutations    DeliveryMutation[]
+  transaction          Transaction?
+  invoices             Invoice[]
+  returns              Return[]
+  revisions            OrderRevision[]
+  changeRequests       ChangeRequest[]
+  orderCreditNotes     OrderCreditNote[]
   mergeIdempotencyKeys OrderIdempotencyKey[]
 
   // RF-014: prevent duplicate order numbers within the same tenant.
@@ -803,6 +812,13 @@ model OrderItem {
   trackedCategoryId    String?
   trackedSubcategoryId String?
   categoryTaxAmount    Decimal    @default(0) @db.Decimal(10, 2)
+  // Units/PO minimal (2026-09-19): the line's own unit name ("Case"). Doubles as
+  // the unit-aware-line marker — null means today's behaviour byte-for-byte.
+  // unitsPerBox on this line already stores the factor, unitPrice the price per
+  // that unit, boxes/pieces/qty the split; the existing triple already IS
+  // (quantity, unit, factor). The factor always comes from the server's ladder
+  // at write time, never re-derived from a live product later.
+  unitLabel            String?
   // Scan/insertion order within the order (0-based). Set from the client's item
   // array index at create and preserved/appended on edit, so line display matches
   // the order items were scanned/added (the invoice already reads in insertion
@@ -1029,32 +1045,32 @@ model Return {
   // ReturnItem.sourceOrderId). INLINE's own capture/issue/approve endpoints and state
   // machine land in PR-1c/1d — this migration adds only the columns, defaulted so every
   // existing row reads as STANDARD with every new field null/zero.
-  kind ReturnKind @default(STANDARD)
+  kind              ReturnKind @default(STANDARD)
   // Client nonce per capture tray — replay/dedup key for the (future) inline-returns POST.
-  returnKey String?
+  returnKey         String?
   // Raw inline-capture input, written in the order/fold tx; cleared once captured (PR-1c/1d).
-  capturePayload Json?
+  capturePayload    Json?
   // Scope snapshot at insert time (N-4) — the sweep re-checks against this, not live state.
-  capturedById   String?
-  capturedRole   String?
-  routeRunStopId String?
+  capturedById      String?
+  capturedRole      String?
+  routeRunStopId    String?
   // RETURN_HOLD_REASON_VALUES (packages/types/api/enums.ts): CAPTURE_PENDING | CAPTURE_FAILED
   // | OVER_RETURN | DRIVER_CAP | UNREFERENCED. String, not an enum (same CREATE-TYPE-avoidance
   // reason as refundMethod above); validated at the DTO/service edge.
-  holdReason      String?
-  captureAttempts Int     @default(0)
-  captureError    String?
+  holdReason        String?
+  captureAttempts   Int        @default(0)
+  captureError      String?
   // Whole credit held above the driver cap, awaiting operator approval (N-5).
-  heldAmount   Decimal?  @db.Decimal(10, 2)
-  approvedById String?
-  approvedAt   DateTime?
+  heldAmount        Decimal?   @db.Decimal(10, 2)
+  approvedById      String?
+  approvedAt        DateTime?
   // {perProduct:[{productId, soldPieces, priorPieces, returnedPieces, overBy}], regulatedUnmatched:[...]}
-  mismatch  Json?
-  alertedAt DateTime?
+  mismatch          Json?
+  alertedAt         DateTime?
   // Priced total, split (§3.3): amount = creditSubtotal + creditTax + creditCategoryTax.
-  creditSubtotal    Decimal? @db.Decimal(10, 2)
-  creditTax         Decimal? @db.Decimal(10, 2)
-  creditCategoryTax Decimal? @db.Decimal(10, 2)
+  creditSubtotal    Decimal?   @db.Decimal(10, 2)
+  creditTax         Decimal?   @db.Decimal(10, 2)
+  creditCategoryTax Decimal?   @db.Decimal(10, 2)
 
   order    Order        @relation(fields: [orderId], references: [id])
   tenant   Tenant?      @relation(fields: [tenantId], references: [id])
@@ -1092,19 +1108,19 @@ model ReturnItem {
   // be voided/edited later); never joined for money math after capture.
   sourceInvoiceItemId String?
   sourceOrderItemId   String?
-  unitPrice     Decimal? @db.Decimal(10, 2)
-  subtotal      Decimal? @db.Decimal(10, 2)
-  taxAmount     Decimal? @db.Decimal(10, 2)
-  categoryTax   Decimal? @db.Decimal(10, 2)
-  boxes         Int?
-  pieces        Int?
-  unitsPerBox   Int?
+  unitPrice           Decimal? @db.Decimal(10, 2)
+  subtotal            Decimal? @db.Decimal(10, 2)
+  taxAmount           Decimal? @db.Decimal(10, 2)
+  categoryTax         Decimal? @db.Decimal(10, 2)
+  boxes               Int?
+  pieces              Int?
+  unitsPerBox         Int?
   // RETURN_PRICE_SOURCE_VALUES: SOURCE_INVOICE | CUSTOMER_PRICE | TIER | BASE | MANUAL.
   // String, not an enum — same reasoning as Return.holdReason above.
-  priceSource    String?
-  originalPrice  Decimal? @db.Decimal(10, 2)
-  overrideReason String?
-  overriddenBy   String?
+  priceSource         String?
+  originalPrice       Decimal? @db.Decimal(10, 2)
+  overrideReason      String?
+  overriddenBy        String?
 
   return  Return  @relation(fields: [returnId], references: [id], onDelete: Cascade)
   tenant  Tenant? @relation(fields: [tenantId], references: [id])

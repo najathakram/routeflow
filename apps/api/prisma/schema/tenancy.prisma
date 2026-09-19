@@ -95,19 +95,19 @@ model Tenant {
   updatedAt      DateTime     @updatedAt
   deletedAt      DateTime?
 
-  users         User[]
-  config        TenantConfig?
-  googleOAuth   TenantGoogleOAuth?
-  subscription  TenantSubscription?
-  addons        TenantAddon[]
-  featureOverrides TenantFeatureOverride[]
-  featureResolverDiffs FeatureResolverDiff[]
-  featureConfigs TenantFeatureConfig[]
-  planVersion   PlanVersion?        @relation(fields: [planVersionId], references: [id])
-  meterUsages   MeterUsage[]
-  billingEvents BillingEvent[]
+  users                   User[]
+  config                  TenantConfig?
+  googleOAuth             TenantGoogleOAuth?
+  subscription            TenantSubscription?
+  addons                  TenantAddon[]
+  featureOverrides        TenantFeatureOverride[]
+  featureResolverDiffs    FeatureResolverDiff[]
+  featureConfigs          TenantFeatureConfig[]
+  planVersion             PlanVersion?             @relation(fields: [planVersionId], references: [id])
+  meterUsages             MeterUsage[]
+  billingEvents           BillingEvent[]
   billingNotificationLogs BillingNotificationLog[]
-  rfInvoices    RfInvoice[]
+  rfInvoices              RfInvoice[]
 
   userPreferences          UserPreference[]
   customers                Customer[]
@@ -195,6 +195,13 @@ model Tenant {
   stockCountSessions       StockCountSession[]
   stockCountLines          StockCountLine[]
   supplierStatementScans   SupplierStatementScan[]
+  // ─── Units/PO minimal + multi-category labels (2026-09-19) ───
+  productUnits             ProductUnit[]
+  supplierProducts         SupplierProduct[]
+  productCategories        ProductCategory[]
+  productCategoryLabels    ProductCategoryLabel[]
+  // ─── Selling restrictions (2026-09-19) ───
+  sellingRestrictions      SellingRestriction[]
   // ─── Sales agents & commissions (flag.sales_agents) ───
   salesAgents              SalesAgent[]
   salesAgentRates          SalesAgentRate[]

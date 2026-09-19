@@ -976,12 +976,12 @@ enum DemoBookingStatus {
 /// lock (`common/db-locks.ts`) keyed on the slot's start instant — the index
 /// is the second, database-level line of defence for the same invariant.
 model DemoBooking {
-  id       String  @id @default(uuid())
-  name     String
-  email    String
-  company  String
-  phone    String?
-  notes    String?
+  id      String  @id @default(uuid())
+  name    String
+  email   String
+  company String
+  phone   String?
+  notes   String?
 
   /// Slot boundaries, always stored in UTC. `timeZone` is the IANA zone the
   /// visitor booked in — kept so confirmation emails and the manage page can
