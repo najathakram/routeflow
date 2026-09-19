@@ -43,10 +43,12 @@ function build(opts: {
       update: jest.fn().mockImplementation(async ({ where, data }) => ({ id: where.id, ...data })),
       delete: jest.fn().mockResolvedValue({}),
     },
-    orderItem: {
+    // Parents only: the immutability check must read lines through the order/invoice relation
+    // (a top-level orderItem/invoiceItem read would miss a NULL-tenant line).
+    order: {
       findFirst: jest.fn().mockResolvedValue(opts.orderLineHit ? { id: "oi" } : null),
     },
-    invoiceItem: {
+    invoice: {
       findFirst: jest.fn().mockResolvedValue(opts.invoiceLineHit ? { id: "ii" } : null),
     },
   };
@@ -180,11 +182,15 @@ describe("ProductUnitsService.create", () => {
     await expect(
       invoice.service.create("p1", { label: "Case", factorToBase: 300 }),
     ).rejects.toThrow(ConflictException);
-    expect(order.db.orderItem.findFirst).toHaveBeenCalledWith({
+    expect(order.db.order.findFirst).toHaveBeenCalledWith({
       where: {
-        productId: "p1",
-        unitLabel: { equals: "Case", mode: "insensitive" },
-        OR: [{ unitsPerBox: null }, { unitsPerBox: { not: 300 } }],
+        lineItems: {
+          some: {
+            productId: "p1",
+            unitLabel: { equals: "Case", mode: "insensitive" },
+            OR: [{ unitsPerBox: null }, { unitsPerBox: { not: 300 } }],
+          },
+        },
       },
       select: { id: true },
     });
@@ -195,7 +201,7 @@ describe("ProductUnitsService.update", () => {
   it("a price-only edit never consults the lines (prices are not immutable)", async () => {
     const { service, db, tx } = build({ rows: [caseRow], orderLineHit: true });
     await service.update("p1", "u-case", { price: 500 });
-    expect(db.orderItem.findFirst).not.toHaveBeenCalled();
+    expect(db.order.findFirst).not.toHaveBeenCalled();
     expect(tx.productUnit.update).toHaveBeenCalledWith({
       select: expect.objectContaining({ id: true }),
       where: { id: "u-case" },
@@ -214,15 +220,17 @@ describe("ProductUnitsService.update", () => {
   it("a factor edit is allowed while no line uses the level, with ONE line check per table", async () => {
     const { service, db, tx } = build({ rows: [caseRow] });
     await service.update("p1", "u-case", { factorToBase: 300 });
-    expect(db.orderItem.findFirst).toHaveBeenCalledTimes(1);
-    expect(db.invoiceItem.findFirst).toHaveBeenCalledTimes(1);
+    expect(db.order.findFirst).toHaveBeenCalledTimes(1);
+    expect(db.invoice.findFirst).toHaveBeenCalledTimes(1);
     expect(tx.productUnit.update).toHaveBeenCalled();
   });
 
   it("a rename + factor change also checks the OLD label's lines", async () => {
     const { service, db } = build({ rows: [caseRow] });
     await service.update("p1", "u-case", { label: "Crate", factorToBase: 300 });
-    const labels = db.orderItem.findFirst.mock.calls.map((c) => c[0].where.unitLabel.equals);
+    const labels = db.order.findFirst.mock.calls.map(
+      (c) => c[0].where.lineItems.some.unitLabel.equals,
+    );
     expect(labels).toEqual(["Case", "Crate"]);
   });
 
@@ -259,7 +267,7 @@ describe("ProductUnitsService.remove / list", () => {
     const { service, db } = build({ rows: [caseRow] });
     await expect(service.remove("p1", "u-case")).resolves.toEqual({ deleted: true });
     expect(db.productUnit.delete).toHaveBeenCalledWith({ where: { id: "u-case" } });
-    expect(db.orderItem.findFirst).not.toHaveBeenCalled();
+    expect(db.order.findFirst).not.toHaveBeenCalled();
   });
 
   it("lists in sortOrder then factor order", async () => {

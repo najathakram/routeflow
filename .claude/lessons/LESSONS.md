@@ -65,7 +65,7 @@
   exact freshly-fetched sha in any ancestry claim; (2) resolve the SPECIFIC commit meant to carry
   the fix — via `git log --grep` for the PR's `(#N)` tag, or `gh pr view <n> --json mergeCommit`
   — never the source branch's tip or GitHub's PR view alone; (3) then run `merge-base
-  --is-ancestor <that sha> origin/master` on full, unshallowed history (a shallow clone's
+--is-ancestor <that sha> origin/master` on full, unshallowed history (a shallow clone's
   grafted boundary can misreport).**
 - **Guard:** none yet — propose the landing checklist require both halves together: fetch
   fresh, then check the actual landing commit, never either alone.
@@ -81,7 +81,7 @@
   stale when its registry record got renumbered during filing; and — after this entry was
   already written — this entry's OWN registry hit a fifth: an unrelated lesson landed on master
   at the same id this entry's branch had already used.
-- **Root cause:** each was a *correct* read of an *incomplete* view — merged master, one
+- **Root cause:** each was a _correct_ read of an _incomplete_ view — merged master, one
   worktree's local scan, or memory of a conversation. Nobody can see an id reserved in an
   unmerged branch until it's fetched, and nothing forces that fetch before allocating. The
   self-resolve protocol makes this WORSE: a tree resolving blind to a concurrent claim produces

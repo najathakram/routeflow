@@ -102,7 +102,12 @@ describeDb("PO edit + re-apply — real Postgres (LANE-U step 6)", () => {
   }
 
   /** A tenant with one AVCO product carrying `stock` pieces @ `avg` from before any PO. */
-  async function seedWorld(label: string, stock: number, avg: number): Promise<World> {
+  async function seedWorld(
+    label: string,
+    stock: number,
+    avg: number,
+    costingMethod: "AVCO" | "FIFO" | "LIFO" = "AVCO",
+  ): Promise<World> {
     const slug = freshTenantSlug(label);
     const tenant = await prisma.tenant.create({ data: { slug, name: `PO edit ${slug}` } });
     createdTenantIds.push(tenant.id);
@@ -124,7 +129,7 @@ describeDb("PO edit + re-apply — real Postgres (LANE-U step 6)", () => {
         pricePerUnit: 10,
         currentStock: stock,
         averageCost: avg,
-        costingMethod: "AVCO",
+        costingMethod,
         tenantId: tenant.id,
       },
     });
@@ -181,8 +186,8 @@ describeDb("PO edit + re-apply — real Postgres (LANE-U step 6)", () => {
     expect(a.averageCost!.toString()).toBe(b.averageCost!.toString()); // (20×2+20×6)/40 = 4
   });
 
-  // ── 2. the ledger shows exactly the edited receipt ───────────────────────────────────────
-  it("case 2: after re-apply exactly ONE purchase movement and ONE lot remain, same qty at the edited cost", async () => {
+  // ── 2. the ledger is append-only: original + compensation + re-post ─────────────────────
+  it("case 2: re-apply keeps the original receipt, adds a costed compensation and the re-post; ONE lot remains", async () => {
     const w = await seedWorld("c2", 20, 2);
     const po = await receivedPo(w, 20, 4);
     await inTenant(w, () =>
@@ -196,13 +201,26 @@ describeDb("PO edit + re-apply — real Postgres (LANE-U step 6)", () => {
       ),
     );
 
-    const movements = await prisma.stockMovement.findMany({
-      where: { tenantId: w.tenantId, reference: po.poNumber, type: "PURCHASE" },
+    const all = await prisma.stockMovement.findMany({
+      where: { tenantId: w.tenantId, reference: po.poNumber },
+      orderBy: { createdAt: "asc" },
     });
-    expect(movements).toHaveLength(1);
-    expect(movements[0].quantity.toString()).toBe("20");
-    expect(movements[0].unitCost!.toString()).toBe("6");
-    expect(movements[0].performedById).toBe(w.userId);
+    const purchases = all.filter((m) => m.type === "PURCHASE");
+    const compensations = all.filter((m) => m.type === "ADJUSTMENT");
+    expect(purchases).toHaveLength(2); // the original 20@4 is KEPT, plus the re-post 20@6
+    expect(compensations).toHaveLength(1);
+    const original = purchases.find((m) => m.unitCost!.toString() === "4")!;
+    const repost = purchases.find((m) => m.unitCost!.toString() === "6")!;
+    expect(original.quantity.toString()).toBe("20");
+    expect(repost.quantity.toString()).toBe("20");
+    expect(repost.performedById).toBe(w.userId);
+    // the compensation is the exact inverse of the original: negative, same cost, tied to it
+    expect(compensations[0].quantity.toString()).toBe("-20");
+    expect(compensations[0].unitCost!.toString()).toBe("4");
+    expect(compensations[0].notes).toBe("PO edit reversal — reverses " + original.id);
+    // the ledger nets to exactly the edited receipt
+    const net = all.reduce((sum, m) => sum + Number(m.quantity), 0);
+    expect(net).toBe(20);
 
     const lots = await prisma.stockLot.findMany({
       where: { tenantId: w.tenantId, reference: po.poNumber },
@@ -351,8 +369,8 @@ describeDb("PO edit + re-apply — real Postgres (LANE-U step 6)", () => {
     expect(Number((await productOf(w)).currentStock)).toBe(6);
   });
 
-  // ── 8. the receipt keeps its original date ─────────────────────────────────────────────
-  it("case 8: a re-apply keeps the receipt's ORIGINAL date on the movement and the lot (dated reports don't shift)", async () => {
+  // ── 8. history stays put; the lot keeps its FIFO position ───────────────────────────────
+  it("case 8: the original receipt stays in its own period, the correction is dated now, and the lot keeps its original purchase date", async () => {
     const w = await seedWorld("c8", 20, 2);
     const po = await receivedPo(w, 20, 4);
     const original = new Date("2026-08-20T10:00:00.000Z");
@@ -370,21 +388,23 @@ describeDb("PO edit + re-apply — real Postgres (LANE-U step 6)", () => {
         po.id,
         {
           reapplyInventory: true,
-          items: [{ id: po.items[0].id, productId: w.productId, qtyOrdered: 20, unitCost: 4 }],
+          items: [{ id: po.items[0].id, productId: w.productId, qtyOrdered: 20, unitCost: 5 }],
         },
         w.userId,
       ),
     );
 
-    const [movement] = await prisma.stockMovement.findMany({
+    const purchases = await prisma.stockMovement.findMany({
       where: { tenantId: w.tenantId, reference: po.poNumber, type: "PURCHASE" },
     });
+    const kept = purchases.find((m) => m.unitCost!.toString() === "4")!;
+    const repost = purchases.find((m) => m.unitCost!.toString() === "5")!;
+    expect(kept.createdAt.toISOString()).toBe(original.toISOString()); // August is untouched
+    expect(repost.createdAt.getTime()).toBeGreaterThan(original.getTime()); // the correction is dated now
     const [lot] = await prisma.stockLot.findMany({
       where: { tenantId: w.tenantId, reference: po.poNumber },
     });
-    expect(movement.quantity.toString()).toBe("20");
-    expect(movement.createdAt.toISOString()).toBe(original.toISOString());
-    expect(lot.purchaseDate.toISOString()).toBe(original.toISOString());
+    expect(lot.purchaseDate.toISOString()).toBe(original.toISOString()); // FIFO position kept
   });
 
   // ── 9. another product's lot that happens to share the reference is left alone ─────────
@@ -518,5 +538,135 @@ describeDb("PO edit + re-apply — real Postgres (LANE-U step 6)", () => {
     expect(Number((await productOf(w)).currentStock)).toBe(40);
     const after = await inTenant(w, () => service.getPurchaseOrder(po.id));
     expect(after.items[0].qtyOrdered.toString()).toBe("20");
+  });
+
+  // ── 13/14. B583: a partly-consumed lot refuses the re-apply (FIFO and LIFO) ──────────────
+  describe.each(["FIFO", "LIFO"] as const)("B583 — %s: a partly-consumed lot", (method) => {
+    it("refuses the re-apply (409) and changes NOTHING — the lot pool is never inflated", async () => {
+      const w = await seedWorld("b583" + method.toLowerCase(), 0, 0, method);
+      const po = await receivedPo(w, 10, 4); // one lot of 10
+      // a sale consumed 4 of the lot (and took 4 off the shelf)
+      await prisma.stockLot.updateMany({
+        where: { tenantId: w.tenantId, reference: po.poNumber },
+        data: { remainingQty: 6 },
+      });
+      await prisma.product.update({ where: { id: w.productId }, data: { currentStock: 6 } });
+      const movementsBefore = await prisma.stockMovement.count({
+        where: { tenantId: w.tenantId, reference: po.poNumber },
+      });
+
+      await expect(
+        inTenant(w, () =>
+          service.updatePurchaseOrder(
+            po.id,
+            {
+              reapplyInventory: true,
+              items: [{ id: po.items[0].id, productId: w.productId, qtyOrdered: 10, unitCost: 5 }],
+            },
+            w.userId,
+          ),
+        ),
+      ).rejects.toMatchObject({ response: { code: "PO_LOT_PARTIALLY_CONSUMED" } });
+
+      // nothing moved: one lot, still 6 remaining; stock still 6; no movement written
+      const lots = await prisma.stockLot.findMany({
+        where: { tenantId: w.tenantId, reference: po.poNumber },
+      });
+      expect(lots).toHaveLength(1);
+      expect(lots[0].remainingQty.toString()).toBe("6");
+      expect(Number((await productOf(w)).currentStock)).toBe(6);
+      expect(
+        await prisma.stockMovement.count({
+          where: { tenantId: w.tenantId, reference: po.poNumber },
+        }),
+      ).toBe(movementsBefore);
+      const unchanged = await inTenant(w, () => service.getPurchaseOrder(po.id));
+      expect(unchanged.items[0].unitCost.toString()).toBe("4"); // the edit rolled back / never applied
+
+      // the lot pool equals what is really on hand: 6 == 6 (the old code left 0 + 10 = 10)
+      const pool = lots.reduce((sum, l) => sum + Number(l.remainingQty), 0);
+      expect(pool).toBe(6);
+    });
+
+    it("document-only is still allowed on the same PO", async () => {
+      const w = await seedWorld("b583doc" + method.toLowerCase(), 0, 0, method);
+      const po = await receivedPo(w, 10, 4);
+      await prisma.stockLot.updateMany({
+        where: { tenantId: w.tenantId, reference: po.poNumber },
+        data: { remainingQty: 6 },
+      });
+      await prisma.product.update({ where: { id: w.productId }, data: { currentStock: 6 } });
+      await inTenant(w, () =>
+        service.updatePurchaseOrder(
+          po.id,
+          {
+            reapplyInventory: false,
+            items: [{ id: po.items[0].id, productId: w.productId, qtyOrdered: 10, unitCost: 5 }],
+          },
+          w.userId,
+        ),
+      );
+      const after = await inTenant(w, () => service.getPurchaseOrder(po.id));
+      expect(after.items[0].unitCost.toString()).toBe("5");
+      expect(Number((await productOf(w)).currentStock)).toBe(6);
+    });
+  });
+
+  // ── 15. an untouched FIFO lot re-applies cleanly and the pool still equals stock ────────
+  it("case 15: an untouched FIFO lot re-applies cleanly — the lot pool equals the stock on hand", async () => {
+    const w = await seedWorld("c15", 0, 0, "FIFO");
+    const po = await receivedPo(w, 10, 4);
+    await inTenant(w, () =>
+      service.updatePurchaseOrder(
+        po.id,
+        {
+          reapplyInventory: true,
+          items: [{ id: po.items[0].id, productId: w.productId, qtyOrdered: 10, unitCost: 5 }],
+        },
+        w.userId,
+      ),
+    );
+    const lots = await prisma.stockLot.findMany({
+      where: { tenantId: w.tenantId, productId: w.productId },
+    });
+    const pool = lots.reduce((sum, l) => sum + Number(l.remainingQty), 0);
+    expect(lots).toHaveLength(1);
+    expect(pool).toBe(10);
+    expect(Number((await productOf(w)).currentStock)).toBe(10);
+    expect((await productOf(w)).averageCost!.toString()).toBe("5");
+  });
+
+  // ── 16. re-applying twice: the second reverses only the live receipt ────────────────────
+  it("case 16: re-applying twice — the second re-apply reverses only the live receipt and stock/average stay right", async () => {
+    const w = await seedWorld("c16", 20, 2);
+    const po = await receivedPo(w, 20, 4);
+    for (const cost of [6, 8]) {
+      await inTenant(w, () =>
+        service.updatePurchaseOrder(
+          po.id,
+          {
+            reapplyInventory: true,
+            items: [{ id: po.items[0].id, productId: w.productId, qtyOrdered: 20, unitCost: cost }],
+          },
+          w.userId,
+        ),
+      );
+    }
+    const fresh = await seedWorld("c16b", 20, 2);
+    await receivedPo(fresh, 20, 8);
+    const a = await productOf(w);
+    const b = await productOf(fresh);
+    expect(a.currentStock.toString()).toBe(b.currentStock.toString()); // 40
+    expect(a.averageCost!.toString()).toBe(b.averageCost!.toString()); // (20×2+20×8)/40 = 5
+
+    const all = await prisma.stockMovement.findMany({
+      where: { tenantId: w.tenantId, reference: po.poNumber },
+    });
+    expect(all.filter((m) => m.type === "PURCHASE")).toHaveLength(3); // 20@4, 20@6, 20@8
+    expect(all.filter((m) => m.type === "ADJUSTMENT")).toHaveLength(2); // reverses 20@4, reverses 20@6
+    expect(all.reduce((sum, m) => sum + Number(m.quantity), 0)).toBe(20);
+    expect(
+      await prisma.stockLot.count({ where: { tenantId: w.tenantId, reference: po.poNumber } }),
+    ).toBe(1);
   });
 });
