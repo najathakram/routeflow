@@ -93,7 +93,11 @@ export function PurchaseOrdersEditModal({
         onError: (err) => {
           const message = explainEditError(err) ?? "Failed to update purchase order.";
           setError(message);
-          toast({ title: "Couldn't update the purchase order.", description: message, variant: "error" });
+          toast({
+            title: "Couldn't update the purchase order.",
+            description: message,
+            variant: "error",
+          });
         },
       },
     );
@@ -147,12 +151,12 @@ export function PurchaseOrdersEditModal({
             <p className="text-sm text-navy/80">
               {po.poNumber} has already been received. <strong>Re-apply</strong> restates the cost
               (and supplier) of what was received in your stock and average cost.{" "}
-              <strong>Keep stock as is</strong> changes the purchase order only — stock and cost stay
-              exactly as they are.
+              <strong>Keep stock as is</strong> changes the purchase order only — stock and cost
+              stay exactly as they are.
             </p>
             <p className="text-xs text-navy/60">
-              Either way, the quantity that was received doesn&apos;t change. Extra quantity or a new
-              line stays outstanding until you receive it.
+              Either way, the quantity that was received doesn&apos;t change. Extra quantity or a
+              new line stays outstanding until you receive it.
             </p>
             {supplierChanged && (
               <p className="text-xs text-amber-700">
@@ -195,13 +199,16 @@ export function PurchaseOrdersEditModal({
         ) : (
           <form
             onSubmit={handleSubmit}
+            // The browser's own min/step checks would swallow our messages (e.g. why a received
+            // quantity can't drop) — validateEditLines explains it instead.
+            noValidate
             className="space-y-5 overflow-y-auto px-6 py-5"
             style={{ maxHeight: "80vh" }}
           >
             {received && (
               <p className="rounded bg-surface-raised px-3 py-2 text-xs text-navy/80">
-                Already received: a received line can&apos;t go below what arrived, change product or be
-                removed. Extra quantity and new lines stay outstanding.
+                Already received: a received line can&apos;t go below what arrived, change product
+                or be removed. Extra quantity and new lines stay outstanding.
               </p>
             )}
             <div className="grid grid-cols-2 gap-4">
@@ -293,8 +300,7 @@ export function PurchaseOrdersEditModal({
                             </select>
                             {locked && (
                               <p className="mt-0.5 text-[10px] text-navy/50">
-                                Received:{" "}
-                                {isBoxed ? unitsLabel(line.received, upb) : line.received}
+                                Received: {isBoxed ? unitsLabel(line.received, upb) : line.received}
                               </p>
                             )}
                           </td>
@@ -376,7 +382,10 @@ export function PurchaseOrdersEditModal({
                   </tbody>
                   <tfoot className="border-t border-surface-border bg-surface-raised/50">
                     <tr>
-                      <td colSpan={3} className="px-3 py-2 text-right text-xs font-medium text-navy/70">
+                      <td
+                        colSpan={3}
+                        className="px-3 py-2 text-right text-xs font-medium text-navy/70"
+                      >
                         Total
                       </td>
                       <td className="px-3 py-2 text-right text-sm font-semibold text-navy">

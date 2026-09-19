@@ -56,16 +56,28 @@ const draft = () =>
   po({
     status: "DRAFT",
     items: [
-      { id: "i1", productId: "p1", qtyOrdered: "10", qtyReceived: "0", unitCost: "3", sku: null, packSize: null },
+      {
+        id: "i1",
+        productId: "p1",
+        qtyOrdered: "10",
+        qtyReceived: "0",
+        unitCost: "3",
+        sku: null,
+        packSize: null,
+      },
     ],
   });
 
 const renderModal = (p: PurchaseOrder, onClose = jest.fn()) => {
-  render(<PurchaseOrdersEditModal po={p} suppliers={suppliers} products={products} onClose={onClose} />);
+  render(
+    <PurchaseOrdersEditModal po={p} suppliers={suppliers} products={products} onClose={onClose} />,
+  );
   return onClose;
 };
-const setCost = (v: string) => fireEvent.change(screen.getByLabelText("Unit cost"), { target: { value: v } });
-const setQty = (v: string) => fireEvent.change(screen.getByLabelText("Quantity"), { target: { value: v } });
+const setCost = (v: string) =>
+  fireEvent.change(screen.getByLabelText("Unit cost"), { target: { value: v } });
+const setQty = (v: string) =>
+  fireEvent.change(screen.getByLabelText("Quantity"), { target: { value: v } });
 const save = () => fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
 beforeEach(() => {
@@ -106,7 +118,9 @@ describe("DRAFT / SENT — edits freely, no inventory question", () => {
     expect(mutate).toHaveBeenCalledTimes(1);
     expect(mutate.mock.calls[0][0]).toEqual({
       id: "po1",
-      items: [{ id: "i1", productId: "p1", qtyOrdered: 10, unitCost: 4, sku: null, packSize: null }],
+      items: [
+        { id: "i1", productId: "p1", qtyOrdered: 10, unitCost: 4, sku: null, packSize: null },
+      ],
     });
     expect(mutate.mock.calls[0][0]).not.toHaveProperty("reapplyInventory");
     expect(onClose).toHaveBeenCalled();
@@ -150,7 +164,9 @@ describe("RECEIVED — protected lines and the re-apply question", () => {
     setQty("8");
     save();
     expect(mutate).not.toHaveBeenCalled();
-    expect(screen.getByRole("alert")).toHaveTextContent(/can't go below what was already received \(10\)/);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /can't go below what was already received \(10\)/,
+    );
     expect(screen.getByRole("alert")).toHaveTextContent(/recording a return/);
   });
 
@@ -173,7 +189,9 @@ describe("RECEIVED — protected lines and the re-apply question", () => {
     expect(mutate.mock.calls[0][0]).toEqual({
       id: "po1",
       reapplyInventory: true,
-      items: [{ id: "i1", productId: "p1", qtyOrdered: 10, unitCost: 4, sku: "W-1", packSize: null }],
+      items: [
+        { id: "i1", productId: "p1", qtyOrdered: 10, unitCost: 4, sku: "W-1", packSize: null },
+      ],
     });
     expect(onClose).toHaveBeenCalled();
   });
@@ -232,7 +250,9 @@ describe("RECEIVED — protected lines and the re-apply question", () => {
 
   it("shows the API's partly-consumed-lot refusal in words and leaves 'Keep stock as is' available", () => {
     mutate.mockImplementation((_vars, opts) =>
-      opts?.onError?.({ response: { data: { code: "PO_LOT_PARTIALLY_CONSUMED", message: "raw" } } }),
+      opts?.onError?.({
+        response: { data: { code: "PO_LOT_PARTIALLY_CONSUMED", message: "raw" } },
+      }),
     );
     renderModal(po());
     setCost("4");

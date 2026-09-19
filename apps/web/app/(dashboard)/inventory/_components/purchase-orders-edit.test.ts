@@ -96,8 +96,13 @@ describe("validateEditLines", () => {
 
   it("compares a boxed line in PIECES (boxes × per-box + pieces)", () => {
     // received 27 pcs; 2 boxes + 2 pcs = 26 pcs is below it
-    const line = { ...toEditLine(item({ qtyOrdered: "27", qtyReceived: "27", unitCost: "2" }), 12), pieces: "2" };
-    expect(validateEditLines([{ ...line, productId: "p2" }], p)).toMatch(/below what was already received/);
+    const line = {
+      ...toEditLine(item({ qtyOrdered: "27", qtyReceived: "27", unitCost: "2" }), 12),
+      pieces: "2",
+    };
+    expect(validateEditLines([{ ...line, productId: "p2" }], p)).toMatch(
+      /below what was already received/,
+    );
     // and the untouched boxed line (27 pcs) is fine
     expect(validateEditLines([{ ...line, productId: "p2", pieces: "3" }], p)).toBeNull();
   });
@@ -118,7 +123,12 @@ describe("buildUpdateItems", () => {
 });
 
 describe("linesChanged", () => {
-  const po = { items: [item({ qtyOrdered: "10", unitCost: "3" }), item({ id: "i2", productId: "p2", qtyOrdered: "5", unitCost: "2" })] };
+  const po = {
+    items: [
+      item({ qtyOrdered: "10", unitCost: "3" }),
+      item({ id: "i2", productId: "p2", qtyOrdered: "5", unitCost: "2" }),
+    ],
+  };
   const same = () => [
     { id: "i1", productId: "p1", qtyOrdered: 10, unitCost: 3 },
     { id: "i2", productId: "p2", qtyOrdered: 5, unitCost: 2 },
@@ -136,7 +146,9 @@ describe("linesChanged", () => {
     expect(linesChanged(po, x)).toBe(true);
   });
   it("true on an added line, a removed line, or a re-pointed product", () => {
-    expect(linesChanged(po, [...same(), { productId: "p1", qtyOrdered: 1, unitCost: 1 }])).toBe(true);
+    expect(linesChanged(po, [...same(), { productId: "p1", qtyOrdered: 1, unitCost: 1 }])).toBe(
+      true,
+    );
     expect(linesChanged(po, same().slice(0, 1))).toBe(true);
     const x = same();
     x[0].productId = "p2";
@@ -146,35 +158,33 @@ describe("linesChanged", () => {
 
 describe("status helpers", () => {
   it("isReceived is PARTIAL/RECEIVED only", () => {
-    expect(["DRAFT", "SENT", "PARTIAL", "RECEIVED", "CLOSED"].map((s) => isReceived({ status: s as never }))).toEqual([
-      false,
-      false,
-      true,
-      true,
-      false,
-    ]);
+    expect(
+      ["DRAFT", "SENT", "PARTIAL", "RECEIVED", "CLOSED"].map((s) =>
+        isReceived({ status: s as never }),
+      ),
+    ).toEqual([false, false, true, true, false]);
   });
   it("isEditable is everything but CLOSED", () => {
-    expect(["DRAFT", "SENT", "PARTIAL", "RECEIVED", "CLOSED"].map((s) => isEditable({ status: s as never }))).toEqual([
-      true,
-      true,
-      true,
-      true,
-      false,
-    ]);
+    expect(
+      ["DRAFT", "SENT", "PARTIAL", "RECEIVED", "CLOSED"].map((s) =>
+        isEditable({ status: s as never }),
+      ),
+    ).toEqual([true, true, true, true, false]);
   });
 });
 
 describe("explainEditError", () => {
   it("turns PO_LOT_PARTIALLY_CONSUMED into operator words that point at 'Keep stock as is'", () => {
-    const msg = explainEditError({ response: { data: { code: "PO_LOT_PARTIALLY_CONSUMED", message: "x" } } });
+    const msg = explainEditError({
+      response: { data: { code: "PO_LOT_PARTIALLY_CONSUMED", message: "x" } },
+    });
     expect(msg).toMatch(/already been sold or used/);
     expect(msg).toMatch(/Keep stock as is/);
   });
   it("otherwise shows the server's own message, and null when there is none", () => {
-    expect(explainEditError({ response: { data: { message: "Cannot edit a closed purchase order" } } })).toBe(
-      "Cannot edit a closed purchase order",
-    );
+    expect(
+      explainEditError({ response: { data: { message: "Cannot edit a closed purchase order" } } }),
+    ).toBe("Cannot edit a closed purchase order");
     expect(explainEditError(new Error("boom"))).toBeNull();
   });
 });

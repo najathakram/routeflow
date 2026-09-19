@@ -116,7 +116,10 @@ export function buildUpdateItems(
 }
 
 /** Did the operator actually change the lines (vs. only the header)? Tolerant of decimal round-trips. */
-export function linesChanged(po: Pick<PurchaseOrder, "items">, items: UpdatePurchaseOrderItemInput[]): boolean {
+export function linesChanged(
+  po: Pick<PurchaseOrder, "items">,
+  items: UpdatePurchaseOrderItemInput[],
+): boolean {
   const original = po.items ?? [];
   if (original.length !== items.length) return true;
   const byId = new Map(original.map((i) => [i.id, i]));

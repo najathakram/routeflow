@@ -34,6 +34,7 @@ jest.mock("@/lib/api/inventory", () => ({
   useClosePurchaseOrder: () => ({ mutate: closeMutate, isPending: false }),
   useCreatePurchaseOrder: () => ({ mutate: createMutate, isPending: false }),
   useReceivePurchaseOrder: () => ({ mutate: receiveMutate, isPending: false }),
+  useUpdatePurchaseOrder: () => ({ mutate: jest.fn(), isPending: false }),
 }));
 
 const supplier = { id: "s1", name: "Acme Supply", isActive: true };
@@ -113,6 +114,27 @@ describe("PurchaseOrdersTab", () => {
     expect(within(row("PO-D")).queryByTitle("Send")).toBeNull();
     expect(within(row("PO-D")).queryByTitle("Receive")).toBeNull();
     expect(within(row("PO-D")).getByText("Closed")).toBeInTheDocument();
+  });
+
+  it("offers Edit on every status except CLOSED, and it opens the edit modal", () => {
+    listData = {
+      data: [
+        po({ id: "a", poNumber: "PO-A", status: "DRAFT" }),
+        po({ id: "b", poNumber: "PO-B", status: "SENT" }),
+        po({ id: "c", poNumber: "PO-C", status: "PARTIAL" }),
+        po({ id: "r", poNumber: "PO-R", status: "RECEIVED" }),
+        po({ id: "d", poNumber: "PO-D", status: "CLOSED" }),
+      ],
+    };
+    render(<PurchaseOrdersTab suppliers={[supplier]} products={products} />);
+    const row = (n: string) => screen.getByText(n).closest("tr") as HTMLElement;
+    for (const n of ["PO-A", "PO-B", "PO-C", "PO-R"]) {
+      expect(within(row(n)).getByTitle("Edit")).toBeInTheDocument();
+    }
+    expect(within(row("PO-D")).queryByTitle("Edit")).toBeNull();
+
+    fireEvent.click(within(row("PO-C")).getByTitle("Edit"));
+    expect(screen.getByText("Edit PO-C")).toBeInTheDocument();
   });
 
   it("renders the row total and expected date through the shared formatters", () => {
