@@ -1048,6 +1048,7 @@ export default function OrdersPage() {
         }}
         resumeDraftId={resumeDraftId}
         initialScanCode={initialScanCode}
+        onViewOrder={(orderId) => router.push(`/orders/${orderId}`)}
       />
     </div>
   );

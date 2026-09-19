@@ -38,6 +38,7 @@ import {
   useToast,
   type BadgeStatus,
 } from "@routeflow/ui/web";
+import { orderLineName } from "@/lib/product-display";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useOrder,
@@ -1398,7 +1399,10 @@ function EditableLineItems({
                     Not available
                   </button>
                   <button
-                    className={cn(TAP_TARGET, "rounded p-1 text-navy/30 hover:text-danger hover:bg-danger-bg transition-colors")}
+                    className={cn(
+                      TAP_TARGET,
+                      "rounded p-1 text-navy/30 hover:text-danger hover:bg-danger-bg transition-colors",
+                    )}
                     title="Delete item"
                     onClick={() => onDelete(item.id)}
                   >
@@ -1579,7 +1583,10 @@ function EditableLineItems({
                 setCustomFormOpen(false);
                 setCustomError("");
               }}
-              className={cn(TAP_TARGET, "rounded p-1 text-navy/40 hover:text-danger transition-colors")}
+              className={cn(
+                TAP_TARGET,
+                "rounded p-1 text-navy/40 hover:text-danger transition-colors",
+              )}
               title="Cancel"
             >
               <X className="h-3.5 w-3.5" />
@@ -1865,7 +1872,7 @@ export default function OrderDetailPage() {
             .filter((li) => li.status !== "CANCELLED")
             .map((li) => {
               const isUnlisted = !li.productId;
-              const label = li.product?.name ?? li.name ?? li.productId ?? "Custom item";
+              const label = orderLineName(li) ?? li.productId ?? "Custom item";
               return {
                 id: li.id,
                 isUnlisted,
@@ -2020,7 +2027,7 @@ export default function OrderDetailPage() {
         .filter((li) => li.status !== "CANCELLED")
         .map((li) => {
           const isUnlisted = !li.productId;
-          const label = li.product?.name ?? li.name ?? li.productId ?? "Custom item";
+          const label = orderLineName(li) ?? li.productId ?? "Custom item";
           return {
             id: li.id,
             isUnlisted,
@@ -3038,7 +3045,7 @@ export default function OrderDetailPage() {
                                   li.status === "CANCELLED" && "line-through",
                                 )}
                               >
-                                {li.product?.name ?? li.name ?? "Custom item"}
+                                {orderLineName(li) ?? "Custom item"}
                               </span>
                               {li.notes && (
                                 <p className="mt-0.5 text-xs italic text-navy/60">{li.notes}</p>
@@ -3646,7 +3653,7 @@ export default function OrderDetailPage() {
         orderNumber={order.orderNumber ?? null}
         items={(order.lineItems ?? []).map((li: any) => ({
           id: li.id,
-          productName: li.product?.name ?? li.name ?? "Custom item",
+          productName: orderLineName(li) ?? "Custom item",
           qty: Number(li.qty),
           invoicedQty: Number((li as any).invoicedQty ?? 0),
           unitPrice: Number(li.unitPrice),
