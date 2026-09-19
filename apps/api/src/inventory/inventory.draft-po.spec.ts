@@ -1,5 +1,5 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { InventoryService } from "./inventory.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -30,6 +30,8 @@ describe("InventoryService.createDraftPurchaseOrderInTx", () => {
     }).compile();
     service = module.get(InventoryService);
     prisma.purchaseOrder.create.mockResolvedValue({ id: "po-1", poNumber: "x", status: "DRAFT" });
+    prisma.supplier.findUnique.mockResolvedValue({ id: "sup-1" });
+    prisma.product.findMany.mockResolvedValue([{ id: "p1" }, { id: "p2" }]);
   });
 
   const lines = [
@@ -75,6 +77,38 @@ describe("InventoryService.createDraftPurchaseOrderInTx", () => {
     await expect(
       service.createDraftPurchaseOrderInTx(prisma as never, { supplierId: "sup-1", lines: [] }),
     ).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.purchaseOrder.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses an unknown supplier and writes nothing", async () => {
+    prisma.supplier.findUnique.mockResolvedValue(null);
+    await expect(
+      service.createDraftPurchaseOrderInTx(prisma as never, { supplierId: "ghost", lines }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.purchaseOrder.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses a product that isn't in the tenant (no tenant-stamped line pointing at a foreign product)", async () => {
+    prisma.product.findMany.mockResolvedValue([{ id: "p1" }]); // p2 unknown
+    await expect(
+      service.createDraftPurchaseOrderInTx(prisma as never, { supplierId: "sup-1", lines }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.purchaseOrder.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses zero/negative quantity and a negative price (a bill's discount or deposit line)", async () => {
+    for (const bad of [
+      { productId: "p1", qtyOrdered: D(0), unitCost: D(1) },
+      { productId: "p1", qtyOrdered: D(-2), unitCost: D(5) },
+      { productId: "p1", qtyOrdered: D(2), unitCost: D(-5) },
+    ]) {
+      await expect(
+        service.createDraftPurchaseOrderInTx(prisma as never, {
+          supplierId: "sup-1",
+          lines: [lines[0], bad],
+        }),
+      ).rejects.toThrow(/zero or negative quantity or a negative price/);
+    }
     expect(prisma.purchaseOrder.create).not.toHaveBeenCalled();
   });
 });

@@ -1057,6 +1057,29 @@ export class InventoryService {
     },
   ) {
     if (input.lines.length === 0) throw new BadRequestException("At least one item is required");
+
+    // The same checks createPurchaseOrder makes — this path is reachable from a bill
+    // whose lines are deliberately loose (a bill legitimately carries negative
+    // discount/deposit lines), and a PO line must be a real, positive purchase.
+    const supplier = await tx.supplier.findUnique({ where: { id: input.supplierId } });
+    if (!supplier) throw new NotFoundException("Supplier not found");
+    for (const l of input.lines) {
+      if (!(Number(l.qtyOrdered) > 0) || Number(l.unitCost) < 0) {
+        throw new BadRequestException(
+          "A purchase order can't carry a zero or negative quantity or a negative price — " +
+            "take discount and deposit lines off the bill before raising a purchase order from it.",
+        );
+      }
+    }
+    const products = await tx.product.findMany({
+      where: { id: { in: [...new Set(input.lines.map((l) => l.productId))] } },
+      select: { id: true },
+    });
+    const known = new Set(products.map((p) => p.id));
+    for (const l of input.lines) {
+      if (!known.has(l.productId)) throw new NotFoundException(`Product ${l.productId} not found`);
+    }
+
     // B571: explicit tenantId on the nested lines — the tenant proxy only stamps the top-level create.
     const tenantId = this.prisma.getTenantId();
     const items = input.lines.map((l) => ({

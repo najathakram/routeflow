@@ -5,23 +5,31 @@ import { Prisma } from "@prisma/client";
  * The bill-vs-PO HARD gate (units/PO step 7).
  *
  * A vendor bill linked to a purchase order may not bill more than the PO
- * authorised: per product, the billed PIECES may not exceed the PO's ordered
- * pieces, and no billed per-piece cost may exceed the PO's per-piece cost. The
- * industry default (Odoo) only warns and lets the bill through; RouteFlow blocks
- * it, because the linked bill is money-only (the PO moves the stock) — an
- * over-billed line would be paid for goods the PO never asked for.
+ * authorised. The industry default (Odoo) only warns and lets the bill through;
+ * RouteFlow blocks it, because the linked bill is money-only (the PO moves the
+ * stock) — an over-billed line would be paid for goods the PO never asked for.
+ * Checked, per bill:
+ *   - every line is a product on the PO (an unmapped line — freight, a deposit, a
+ *     mistyped item — carries money the PO never authorised, so a linked bill
+ *     can't have one; charges like that belong on their own bill);
+ *   - per product, billed PIECES <= ordered pieces;
+ *   - per line, the billed value <= the pieces at the PO's per-piece cost, give or
+ *     take a cent of entry rounding (a PO hand-raised at 3.33 a piece still
+ *     accepts a 3-pack billed at 10.00);
+ *   - overall, the billed value <= the PO's value (so a mixed-cost PO can't have
+ *     its cheap lines billed at its dear price).
  *
  * One bill per PO (`VendorBill.purchaseOrderId` is unique), so "remaining" is the
  * whole ordered quantity. Three-way match against goods receipts is deferred.
+ * Tax is not compared here: the PO carries no tax to compare against.
  *
  * Bill lines arrive already converted to the PO's denomination — pieces and a
  * per-piece cost, via VendorBillsService.lineInventoryDelta — so a case-priced
- * line (packSize > 1) compares like for like. Unmapped lines (no productId) move
- * no stock and can't be matched to a PO line; they are not gated here.
+ * line (packSize > 1) compares like for like.
  */
 
-/** Per-piece costs are stored to 4dp; anything within rounding of the PO cost is not an overrun. */
-export const PO_PRICE_EPSILON = new Prisma.Decimal("0.0001");
+/** Tolerance for entry rounding, per bill line, in money. */
+export const PO_LINE_TOLERANCE = new Prisma.Decimal("0.01");
 
 export interface PoLineLike {
   productId: string;
@@ -38,15 +46,17 @@ export interface BillLinePieces {
   unitCost: Prisma.Decimal | number | string;
 }
 
-export type PoMatchReason = "NOT_ON_PO" | "QTY_EXCEEDS_PO" | "PRICE_EXCEEDS_PO";
+export type PoMatchReason =
+  "UNMAPPED_LINE" | "NOT_ON_PO" | "QTY_EXCEEDS_PO" | "PRICE_EXCEEDS_PO" | "TOTAL_EXCEEDS_PO";
 
 export interface PoMatchViolation {
   reason: PoMatchReason;
+  /** Empty for UNMAPPED_LINE and TOTAL_EXCEEDS_PO. */
   productId: string;
   description: string;
-  /** What the bill carries (pieces for QTY, per-piece cost for PRICE). */
+  /** What the bill carries: pieces (QTY), per-piece cost (PRICE), money (TOTAL). */
   billed: string;
-  /** What the PO allows. Empty for NOT_ON_PO. */
+  /** What the PO allows. Empty for UNMAPPED_LINE / NOT_ON_PO. */
   allowed: string;
 }
 
@@ -59,19 +69,32 @@ export function findPoMatchViolations(
 ): PoMatchViolation[] {
   const ordered = new Map<string, Prisma.Decimal>();
   const maxCost = new Map<string, Prisma.Decimal>();
+  let poValue = D(0);
   for (const i of poItems) {
     ordered.set(i.productId, (ordered.get(i.productId) ?? D(0)).add(D(i.qtyOrdered)));
     const cost = D(i.unitCost);
     const seen = maxCost.get(i.productId);
     if (!seen || cost.gt(seen)) maxCost.set(i.productId, cost);
+    poValue = poValue.add(D(i.qtyOrdered).mul(cost));
   }
 
   const violations: PoMatchViolation[] = [];
   const billedQty = new Map<string, Prisma.Decimal>();
   const firstDescription = new Map<string, string>();
+  let billedValue = D(0);
+  let tolerance = D(0);
 
   for (const line of billLines) {
-    if (!line.productId) continue; // unmapped: nothing to match against
+    if (!line.productId) {
+      violations.push({
+        reason: "UNMAPPED_LINE",
+        productId: "",
+        description: line.description,
+        billed: D(line.qty).mul(D(line.unitCost)).toString(),
+        allowed: "",
+      });
+      continue;
+    }
     if (!ordered.has(line.productId)) {
       violations.push({
         reason: "NOT_ON_PO",
@@ -82,12 +105,16 @@ export function findPoMatchViolations(
       });
       continue;
     }
-    billedQty.set(line.productId, (billedQty.get(line.productId) ?? D(0)).add(D(line.qty)));
+    const qty = D(line.qty);
+    const lineValue = qty.mul(D(line.unitCost));
+    billedValue = billedValue.add(lineValue);
+    tolerance = tolerance.add(PO_LINE_TOLERANCE);
+    billedQty.set(line.productId, (billedQty.get(line.productId) ?? D(0)).add(qty));
     if (!firstDescription.has(line.productId))
       firstDescription.set(line.productId, line.description);
 
     const allowedCost = maxCost.get(line.productId)!;
-    if (D(line.unitCost).gt(allowedCost.add(PO_PRICE_EPSILON))) {
+    if (lineValue.gt(qty.mul(allowedCost).add(PO_LINE_TOLERANCE))) {
       violations.push({
         reason: "PRICE_EXCEEDS_PO",
         productId: line.productId,
@@ -110,6 +137,16 @@ export function findPoMatchViolations(
       });
     }
   }
+
+  if (billedValue.gt(poValue.add(tolerance))) {
+    violations.push({
+      reason: "TOTAL_EXCEEDS_PO",
+      productId: "",
+      description: "the whole bill",
+      billed: billedValue.toDecimalPlaces(2).toString(),
+      allowed: poValue.toDecimalPlaces(2).toString(),
+    });
+  }
   return violations;
 }
 
@@ -123,10 +160,18 @@ export function assertBillWithinPo(
   if (violations.length === 0) return;
   const detail = violations
     .map((v) => {
-      if (v.reason === "NOT_ON_PO") return `"${v.description}" is not on ${poNumber}`;
-      if (v.reason === "QTY_EXCEEDS_PO")
-        return `"${v.description}": billed ${v.billed} pcs, ${poNumber} allows ${v.allowed}`;
-      return `"${v.description}": billed at ${v.billed} per piece, ${poNumber} allows ${v.allowed}`;
+      switch (v.reason) {
+        case "UNMAPPED_LINE":
+          return `"${v.description}" isn't linked to a product on ${poNumber} (freight and other charges belong on their own bill)`;
+        case "NOT_ON_PO":
+          return `"${v.description}" is not on ${poNumber}`;
+        case "QTY_EXCEEDS_PO":
+          return `"${v.description}": billed ${v.billed} pcs, ${poNumber} allows ${v.allowed}`;
+        case "PRICE_EXCEEDS_PO":
+          return `"${v.description}": billed at ${v.billed} per piece, ${poNumber} allows ${v.allowed}`;
+        default:
+          return `the bill totals ${v.billed}, ${poNumber} authorised ${v.allowed}`;
+      }
     })
     .join("; ");
   throw new ConflictException({

@@ -392,6 +392,8 @@ describe("VendorBillsService — PO-linked bills (units/PO step 7)", () => {
         }),
       );
       prisma.vendorBill.update.mockResolvedValue({ id: "bill-1", status: "VOID" });
+      // real stock to reverse — so removing the guard makes this test FAIL rather than no-op
+      prisma.product.findFirst.mockResolvedValue({ currentStock: D(24), averageCost: D(1.25) });
       await service.voidBill("bill-1", "user-1");
       expectNoStockWrites();
       expect(prisma.vendorBill.update.mock.calls[0][0].data.status).toBe("VOID");
@@ -409,6 +411,125 @@ describe("VendorBillsService — PO-linked bills (units/PO step 7)", () => {
       prisma.vendorBill.update.mockResolvedValue({ id: "bill-1", status: "VOID" });
       await service.voidBill("bill-1", "user-1");
       expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ─── review hardening (Opus refute-first round 1) ──────────────────────────
+
+  describe("review hardening", () => {
+    it("create: an UNMAPPED line on a linked bill is refused — money the PO never authorised", async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue(po());
+      await expect(
+        service.create({
+          supplierId: "sup-1",
+          purchaseOrderId: "po-1",
+          items: [
+            billLine(),
+            billLine({ productId: undefined, description: "Widget", qty: 100, unitCost: 50 }),
+          ],
+        }),
+      ).rejects.toMatchObject({ response: { code: "BILL_EXCEEDS_PO" } });
+      expect(prisma.vendorBill.create).not.toHaveBeenCalled();
+    });
+
+    it("create: linking a PO needs a supplier — a supplier-less bill can't skip the PO/supplier match", async () => {
+      await expect(
+        service.create({
+          purchaseOrderId: "po-1",
+          requireSupplier: false,
+          items: [billLine()],
+        }),
+      ).rejects.toThrow(/Select the supplier before linking/);
+      expect(prisma.purchaseOrder.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("create: a linked bill with no lines is refused (it would consume the PO's single bill slot)", async () => {
+      await expect(
+        service.create({ supplierId: "sup-1", purchaseOrderId: "po-1", items: [] }),
+      ).rejects.toThrow(/at least one line/);
+      expect(prisma.purchaseOrder.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("create: a unique-constraint race on the PO link becomes a retryable 409, not a 500", async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue(po());
+      prisma.vendorBill.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+          code: "P2002",
+          clientVersion: "test",
+        }),
+      );
+      await expect(
+        service.create({ supplierId: "sup-1", purchaseOrderId: "po-1", items: [billLine()] }),
+      ).rejects.toMatchObject({ response: { code: "PO_LINK_CONFLICT" } });
+    });
+
+    it("create: the same P2002 on an UNLINKED bill is not disguised", async () => {
+      const boom = new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+        code: "P2002",
+        clientVersion: "test",
+      });
+      prisma.vendorBill.create.mockRejectedValue(boom);
+      await expect(service.create({ supplierId: "sup-1", items: [billLine()] })).rejects.toBe(boom);
+    });
+
+    it("update: a linked bill's supplier can't be re-pointed", async () => {
+      prisma.vendorBill.findUnique.mockResolvedValue(bill({ purchaseOrderId: "po-1" }));
+      await expect(service.update("bill-1", { supplierId: "sup-other" })).rejects.toThrow(
+        /supplier can't be changed/,
+      );
+      expect(prisma.vendorBill.update).not.toHaveBeenCalled();
+    });
+
+    it("update: re-sending the SAME supplier on a linked bill is fine", async () => {
+      prisma.vendorBill.findUnique.mockResolvedValue(bill({ purchaseOrderId: "po-1" }));
+      prisma.vendorBill.update.mockResolvedValue({ id: "bill-1", supplierId: null });
+      await service.update("bill-1", { supplierId: "sup-1", notes: "x" });
+      expect(prisma.vendorBill.update).toHaveBeenCalled();
+    });
+
+    it("update: emptying a linked bill's lines is refused", async () => {
+      prisma.vendorBill.findUnique.mockResolvedValue(bill({ purchaseOrderId: "po-1" }));
+      await expect(service.update("bill-1", { items: [] })).rejects.toThrow(/at least one line/);
+      expect(prisma.vendorBillItem.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it("update: FAILS CLOSED when the linked PO can no longer be found", async () => {
+      prisma.vendorBill.findUnique.mockResolvedValue(bill({ purchaseOrderId: "po-gone" }));
+      prisma.purchaseOrder.findUnique.mockResolvedValue(null);
+      await expect(service.update("bill-1", { items: [billLine()] })).rejects.toMatchObject({
+        response: { code: "PO_LINK_BROKEN" },
+      });
+      expect(prisma.vendorBillItem.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it("update: packSize is stored TRUNCATED, exactly as create() and the gate read it", async () => {
+      prisma.vendorBill.findUnique.mockResolvedValue(bill());
+      prisma.vendorBill.update.mockResolvedValue({ id: "bill-1", supplierId: null });
+      await service.update("bill-1", { items: [billLine({ packSize: 2.5 })] });
+      const rows = prisma.vendorBill.update.mock.calls[0][0].data.items.createMany.data;
+      expect(rows[0].packSize).toBe(2);
+    });
+
+    it("receive: a PO-linked bill with an unmapped line is NOT asked to 'acknowledge unlinked items' — it moves no stock at all", async () => {
+      prisma.vendorBill.findUnique.mockResolvedValueOnce(
+        bill({
+          purchaseOrderId: "po-1",
+          items: [linkedItem(), linkedItem({ id: "item-2", productId: null, product: null })],
+        }),
+      );
+      prisma.vendorBill.update.mockResolvedValue({ id: "bill-1", status: "RECEIVED", items: [] });
+      await expect(service.receive("bill-1", undefined, "user-1")).resolves.toBeDefined();
+    });
+
+    it("CONTROL — the same unmapped line on an UNLINKED bill still asks for acknowledgement", async () => {
+      prisma.vendorBill.findUnique.mockResolvedValueOnce(
+        bill({
+          items: [linkedItem(), linkedItem({ id: "item-2", productId: null, product: null })],
+        }),
+      );
+      await expect(service.receive("bill-1", undefined, "user-1")).rejects.toMatchObject({
+        response: { code: "UNLINKED_ITEMS" },
+      });
     });
   });
 });
