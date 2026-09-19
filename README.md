@@ -16,7 +16,7 @@ Expo (React Native) multi-role mobile app, in one npm + Turbo monorepo, deployed
 
 ## Stack
 
-- **Monorepo**: npm workspaces orchestrated by **Turbo**. Package manager npm 10.8 (Node ≥ 18, CI pins 20).
+- **Monorepo**: npm workspaces orchestrated by **Turbo**. Package manager npm 10.8 (Node ≥ 24, CI and the images pin 24).
 - **API**: NestJS 11, Prisma 7 + PostgreSQL, Redis (Socket.io), Passport JWT auth. Tests: Jest (`*.spec.ts`).
 - **Web**: Next.js 14 App Router, Radix + Tailwind, TanStack Query, react-hook-form + zod. Tests: Jest + RTL (`*.test.tsx`, `npm test -w apps/web`) + Playwright E2E (`e2e/*.spec.ts`).
 - **Mobile**: Expo 55 / RN 0.83, expo-router, multi-role. Tests: Jest (pure-logic only).
