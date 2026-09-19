@@ -1,0 +1,21 @@
+{
+  "name": "@routeflow/scanning",
+  "version": "0.0.1",
+  "private": true,
+  "description": "RouteFlow continuous-scan engine (dedupe gate, pending buffer, accept/reject cue mapping) shared by apps/web and apps/mobile — pure TypeScript, no platform imports",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "test": "jest",
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "check-types": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@routeflow/typescript-config": "*",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^20.19.43",
+    "jest": "^30.0.0",
+    "ts-jest": "^29.4.12",
+    "typescript": "^5.9.3"
+  }
+}

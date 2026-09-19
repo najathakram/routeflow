@@ -26,6 +26,7 @@ import { ImportProductsDto } from "./dto/import-products.dto";
 import { isValidItemType, isValidUom, templateByKey } from "../regulated/template-registry";
 import { normalizeScanCode, pickBestScanMatch } from "../common/barcode-normalize";
 import { buildScanSearchOr } from "./scan-search";
+import { assertPackKeepsLevelsValid } from "./unit-pack-rules";
 import { isMsrpBelowWholesale, wholesalePerPiece } from "../common/msrp";
 import { TOBACCO_CATEGORY_NAME, isTobaccoCategoryName } from "../common/tobacco-category";
 
@@ -858,6 +859,25 @@ export class ProductsService {
       (field) => dto[field] !== undefined && (dto[field] ?? null) !== (existing[field] ?? null),
     );
     const sectionChanged = (effectiveCategoryId ?? null) !== (existing.trackedCategoryId ?? null);
+    // units_v1: a pack edit (name, size, or moving into a regulated section) must not
+    // invalidate the unit levels already defined on this product.
+    const nextUnit = dto.unit !== undefined ? dto.unit : existing.unit;
+    const nextUnitsPerBox = dto.unitsPerBox !== undefined ? dto.unitsPerBox : existing.unitsPerBox;
+    const packTouched =
+      nextUnit !== existing.unit ||
+      (nextUnitsPerBox ?? null) !== (existing.unitsPerBox ?? null) ||
+      (sectionChanged && effectiveCategoryId != null);
+    if (packTouched) {
+      const levels = await this.prisma.forTenant().productUnit.findMany({
+        where: { productId: id },
+        select: { label: true, factorToBase: true },
+      });
+      assertPackKeepsLevelsValid(levels, {
+        unit: nextUnit,
+        unitsPerBox: nextUnitsPerBox,
+        regulated: effectiveCategoryId != null,
+      });
+    }
     // `!clearingSection` is load-bearing: a legitimate section clear is a move too,
     // and validating it would 400 on "requires a regulated type" before the
     // auto-clear below ever runs.

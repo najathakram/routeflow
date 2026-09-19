@@ -144,22 +144,37 @@ export interface ProductSalesHistory {
 // no levels behaves exactly as it does today — Product.unitsPerBox/pricePerUnit
 // + tiers stay the pack.
 
+/** A `ProductUnit` row as the API returns it. Prices are Prisma `Decimal`s — decimal STRINGS on the wire. */
 export interface ProductUnitLevel {
   id: string;
   label: string;
+  /** Pieces per ONE of this unit. */
   factorToBase: number;
-  price: number | null;
-  priceTier2: number | null;
-  priceTier3: number | null;
-  priceTier4: number | null;
-  priceTier5: number | null;
+  /** Explicit tier-1 price; null = derived from the pack (see `resolveUnitPrice`). */
+  price: string | null;
+  priceTier2: string | null;
+  priceTier3: string | null;
+  priceTier4: string | null;
+  priceTier5: string | null;
   isDefaultSelling: boolean;
   sortOrder: number;
 }
 
-export interface PutProductUnitsPayload {
-  units: Array<Omit<ProductUnitLevel, "id"> & { id?: string }>;
+/** POST /products/:id/units — prices are numbers ≤ 2 dp; null/omitted = derived. */
+export interface CreateProductUnitPayload {
+  label: string;
+  factorToBase: number;
+  price?: number | null;
+  priceTier2?: number | null;
+  priceTier3?: number | null;
+  priceTier4?: number | null;
+  priceTier5?: number | null;
+  isDefaultSelling?: boolean;
+  sortOrder?: number;
 }
+
+/** PATCH /products/:id/units/:unitId — `factorToBase` is refused once a line carries the level. */
+export type UpdateProductUnitPayload = Partial<CreateProductUnitPayload>;
 
 // ─── Multi-category labels (2026-09-19) ─────────────────────────────────────────
 // See local-assets/handoff/2026-09-18/PLAN-categories-jurisdiction-bans.md §1.

@@ -64,6 +64,7 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
   };
   let prisma: ReturnType<typeof createMockPrisma>;
   let systemConfigService: { getRemittanceConfig: jest.Mock };
+  let customersService: { getStatementForOperator: jest.Mock };
 
   beforeEach(async () => {
     ordersService = {
@@ -94,6 +95,9 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
     systemConfigService = {
       getRemittanceConfig: jest.fn().mockResolvedValue({ payToName: "Acme Wholesale" }),
     };
+    customersService = {
+      getStatementForOperator: jest.fn().mockResolvedValue({ outstandingAmount: 0 }),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [BuyerController],
@@ -111,7 +115,7 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
         { provide: InvoicePdfService, useValue: {} },
         { provide: StatementService, useValue: {} },
         { provide: StatementPdfService, useValue: {} },
-        { provide: CustomersService, useValue: {} },
+        { provide: CustomersService, useValue: customersService },
         { provide: OrderTemplatesService, useValue: templatesService },
         { provide: AuthorizationsService, useValue: authorizationsService },
         { provide: PrismaService, useValue: prisma },
@@ -152,6 +156,18 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
     if (query.statuses) {
       expect(query.statuses).not.toContain("DRAFT");
     }
+  });
+
+  // D6 / B462: the buyer portal reuses getStatementForOperator. It must NOT ask for the
+  // operator-only exposure figures — a buyer is never shown the seller's unissued-draft
+  // totals. The call carries the customerId ONLY (no options argument at all).
+  it("getStatement: asks for the customer's statement WITHOUT the operator-only exposure flag", async () => {
+    await controller.getStatement(MOCK_CTX as any);
+
+    expect(customersService.getStatementForOperator).toHaveBeenCalledTimes(1);
+    const args = customersService.getStatementForOperator.mock.calls[0];
+    expect(args).toEqual(["cust-abc"]);
+    expect(args).toHaveLength(1);
   });
 
   it("getStandingOrders: passes customerId directly — no userId lookup", async () => {

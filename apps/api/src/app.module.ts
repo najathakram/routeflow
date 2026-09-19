@@ -56,6 +56,7 @@ import { DraftsModule } from "./drafts/drafts.module";
 import { TrackedCategoriesModule } from "./tracked-categories/tracked-categories.module";
 import { RegulatedModule } from "./regulated/regulated.module";
 import { AuthorizationsModule } from "./authorizations/authorizations.module";
+import { SellingRestrictionsModule } from "./selling-restrictions/selling-restrictions.module";
 import { CommissionsModule } from "./sales-agents/commissions.module";
 import { CrmModule } from "./crm/crm.module";
 import { DemoBookingModule } from "./demo-booking/demo-booking.module";
@@ -173,6 +174,7 @@ import { AppService } from "./app.service";
     TrackedCategoriesModule,
     RegulatedModule,
     AuthorizationsModule,
+    SellingRestrictionsModule,
     // ─── Sales agents & commissions (flag.sales_agents) ───────────────────────
     CommissionsModule,
     CrmModule,

@@ -13,9 +13,10 @@
  * Discovery: the tenant's boxed product is found by probing the product
  * search with a few common terms and adding the first candidate whose row
  * exposes the cases/pieces inputs, removing every non-boxed candidate tried
- * along the way. `feature-smoke.mjs` provisions a boxed product on every run,
- * but this spec must not depend on suite ordering — it skips with a clear
- * message when none turns up.
+ * along the way. `apps/api/scripts/e2e-seed.js` seeds a boxed product (B566) and
+ * `feature-smoke.mjs` provisions one on every run; this spec must not depend on suite
+ * ordering, and a missing fixture is a FAILURE (B566), never a skip — a skipped run
+ * reports green having proven nothing about boxed proration.
  */
 
 import { test, expect, type Page, type Locator } from "@playwright/test";
@@ -26,9 +27,9 @@ import { apiBase, operatorAccessToken } from "./helpers/api";
 const BASE = process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
 
 const PRODUCT_SEARCH_PLACEHOLDER = "Search by name, SKU or scan barcode…";
-const SKIP_REASON =
-  "No boxed product (cases/pieces) found on this tenant — feature-smoke.mjs provisions one; " +
-  "run it, or seed a boxed product, then re-run.";
+const MISSING_FIXTURE =
+  "No boxed product (cases/pieces) found on this tenant — `node apps/api/scripts/e2e-seed.js` " +
+  "seeds one (B566); run it, then re-run.";
 
 test.describe("Operator — Boxed order entry (WP2-13)", () => {
   // Escaping a started order (customer selected) auto-parks a real draft on
@@ -256,10 +257,9 @@ test.describe("Operator — Boxed order entry (WP2-13)", () => {
     const title = await openBuilderWithCustomer(page);
 
     const row = await findBoxedLine(page);
-    if (row === null) {
-      test.skip(true, SKIP_REASON);
-      return;
-    }
+    // Hard failure, never a skip (B566): the seed provisions the boxed product.
+    expect(row, MISSING_FIXTURE).not.toBeNull();
+    if (row === null) return; // narrows the type; unreachable after the expect above
 
     // Let the builder's post-add re-focus land before typing into the row.
     await waitForPostAddRefocus(page);

@@ -383,3 +383,9 @@ export type RestrictionJurisdictionValue = (typeof RESTRICTION_JURISDICTION_VALU
 
 export const RESTRICTION_SURFACE_VALUES = ["ALL", "BUYER_PORTAL"] as const;
 export type RestrictionSurfaceValue = (typeof RESTRICTION_SURFACE_VALUES)[number];
+
+// Selling restrictions tenant policy (2026-09-19): NOT a Prisma enum — the value of the tenant's
+// `SystemConfig` row `selling_restrictions.governing_address`. Which customer address TYPE governs a
+// STATE rule first when the customer has DEFAULT addresses of both types (owner ruling D4).
+export const RESTRICTION_ADDRESS_PRECEDENCE_VALUES = ["BILLING_FIRST", "SHIPPING_FIRST"] as const;
+export type RestrictionAddressPrecedence = (typeof RESTRICTION_ADDRESS_PRECEDENCE_VALUES)[number];

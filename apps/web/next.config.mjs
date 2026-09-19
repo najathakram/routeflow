@@ -18,7 +18,7 @@ const nextConfig = {
   },
 
   // Transpile monorepo packages so Next.js can compile their TypeScript/JSX
-  transpilePackages: ["@routeflow/ui", "@routeflow/types"],
+  transpilePackages: ["@routeflow/ui", "@routeflow/types", "@routeflow/scanning"],
 
   // Skip ESLint + TypeScript checks during production builds — both run
   // separately in CI. Without this, stale type mismatches and missing ESLint

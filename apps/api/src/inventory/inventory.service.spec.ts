@@ -369,7 +369,10 @@ describe("InventoryService", () => {
 
       const productArgs = prisma.product.update.mock.calls[0][0].data;
       expect(productArgs.averageCost).toBeUndefined();
-      expect(productArgs.currentStock.toString()).toBe("15");
+      // Guard (d): the stock write is an atomic increment by exactly the received
+      // quantity (10 on hand + 5 = 15 in the movement snapshot below), never an
+      // absolute value derived from the earlier read.
+      expect(productArgs.currentStock.increment.toString()).toBe("5");
       // Movement snapshot carries the UNCHANGED average forward, not the
       // would-be weighted average.
       const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
@@ -433,7 +436,7 @@ describe("InventoryService", () => {
       expect(movementArgs.avgCostAfter.toString()).toBe("2");
 
       const productArgs = prisma.product.update.mock.calls[0][0].data;
-      expect(productArgs.currentStock.toString()).toBe("120");
+      expect(productArgs.currentStock.increment.toString()).toBe("120");
       expect(productArgs.averageCost.toString()).toBe("2");
 
       const poItemArgs = prisma.purchaseOrderItem.update.mock.calls[0][0].data;

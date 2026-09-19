@@ -192,7 +192,9 @@ export class CustomersController {
   @Get(":id/statement")
   @Roles(UserRole.OPERATOR)
   getStatement(@Param("id") id: string) {
-    return this.customersService.getStatementForOperator(id);
+    // Operator-only: adds creditExposure/pendingExposure (D6 / B462). The buyer
+    // route (buyer.controller.ts) deliberately does NOT pass this flag.
+    return this.customersService.getStatementForOperator(id, { includeExposure: true });
   }
 
   // Operator twins of the buyer statement-PDF endpoints (P5-15) — same

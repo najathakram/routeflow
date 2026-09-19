@@ -1,0 +1,14 @@
+{
+  "extends": "@routeflow/typescript-config/base.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": true,
+    // The moved engine bodies were written and compiled under apps/mobile, which does not enable
+    // `noUncheckedIndexedAccess`; keep the base.json opt-in off here rather than editing an
+    // engine body to satisfy a stricter flag (same call packages/pricing made).
+    "noUncheckedIndexedAccess": false,
+    "types": ["jest", "node"]
+  },
+  "include": ["src"]
+}
