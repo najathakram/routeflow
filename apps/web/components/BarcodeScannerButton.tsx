@@ -1,8 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { Camera, X } from "lucide-react";
+import { Camera, X, Zap, ZapOff } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
+import { hasTorch, nudgeFocus, openCamera, setTorch } from "@/lib/scan-camera";
+import { playScanCue, unlockScanCue } from "@/lib/scan-cue";
 
 interface BarcodeScannerButtonProps {
   onScan: (code: string) => void;
@@ -44,7 +46,9 @@ function classifyScannerError(err: unknown): string {
  *
  * 2. Webcam — the camera icon button opens a fullscreen overlay that uses the browser's
  *    MediaDevices API + @zxing/browser BrowserMultiFormatReader to decode barcodes.
- *    On successful decode `onScan` is called and the overlay closes.
+ *    On successful decode `onScan` is called (once) and the overlay closes. The camera is
+ *    opened through `openCamera()` (rear camera, 1080p, continuous-focus hint) and the
+ *    resulting stream is handed to zxing — see `lib/scan-camera.ts` for why.
  */
 export function BarcodeScannerButton({
   onScan,
@@ -54,8 +58,17 @@ export function BarcodeScannerButton({
   onError,
 }: BarcodeScannerButtonProps) {
   const [scannerOpen, setScannerOpen] = React.useState(false);
+  const [torchAvailable, setTorchAvailable] = React.useState(false);
+  const [torchOn, setTorchOn] = React.useState(false);
   const videoRef = React.useRef<HTMLVideoElement>(null);
-  const readerRef = React.useRef<any>(null);
+  const controlsRef = React.useRef<{ stop: () => void } | null>(null);
+  const trackRef = React.useRef<MediaStreamTrack | null>(null);
+  // Parents recreate these callbacks every render; routing them through refs keeps the camera
+  // effect from tearing the stream down and reopening it whenever the parent re-renders.
+  const onScanRef = React.useRef(onScan);
+  onScanRef.current = onScan;
+  const onErrorRef = React.useRef(onError);
+  onErrorRef.current = onError;
 
   // ── USB / physical scanner auto-submit ──────────────────────────────────
   React.useEffect(() => {
@@ -104,6 +117,11 @@ export function BarcodeScannerButton({
       );
       return;
     }
+    // The tap that opens the scanner is the user gesture browsers require before audio can play,
+    // so unlock the cue's AudioContext now rather than on the first (silent) scan.
+    unlockScanCue();
+    setTorchOn(false);
+    setTorchAvailable(false);
     setScannerOpen(true);
   };
 
@@ -111,31 +129,35 @@ export function BarcodeScannerButton({
     if (!scannerOpen || !videoRef.current) return;
 
     let active = true;
+    // zxing can deliver a second decode before `stop()` takes effect; only the first counts.
+    let settled = false;
 
     async function init() {
+      let stream: MediaStream | null = null;
       try {
         const { BrowserMultiFormatReader } = await import("@zxing/browser");
+        stream = await openCamera();
+        if (!active) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        const track = stream.getVideoTracks()[0] ?? null;
+        trackRef.current = track;
+        setTorchAvailable(hasTorch(track));
+
         const reader = new BrowserMultiFormatReader();
-        readerRef.current = reader;
-
-        const devices = await BrowserMultiFormatReader.listVideoInputDevices();
-        const deviceId = devices.length > 0 ? devices[devices.length - 1].deviceId : undefined;
-
-        await reader.decodeFromVideoDevice(
-          deviceId,
-          videoRef.current!,
-          (result, _err, controls) => {
-            if (!active) return;
-            if (result) {
-              onScan(result.getText());
-              controls.stop();
-              setScannerOpen(false);
-            }
-          },
-        );
+        controlsRef.current = await reader.decodeFromStream(stream, videoRef.current!, (result) => {
+          if (!active || settled || !result) return;
+          settled = true;
+          playScanCue("accepted");
+          controlsRef.current?.stop();
+          setScannerOpen(false);
+          onScanRef.current(result.getText());
+        });
       } catch (err) {
+        stream?.getTracks().forEach((t) => t.stop());
         console.error("Barcode scanner error:", err);
-        if (active) onError?.(classifyScannerError(err));
+        if (active) onErrorRef.current?.(classifyScannerError(err));
         setScannerOpen(false);
       }
     }
@@ -145,16 +167,26 @@ export function BarcodeScannerButton({
     return () => {
       active = false;
       try {
-        readerRef.current?.reset?.();
+        controlsRef.current?.stop();
       } catch {}
+      controlsRef.current = null;
+      trackRef.current = null;
     };
-  }, [scannerOpen, onScan, onError]);
+  }, [scannerOpen]);
 
   const closeScanner = () => {
     try {
-      readerRef.current?.reset?.();
+      controlsRef.current?.stop();
     } catch {}
     setScannerOpen(false);
+  };
+
+  const toggleTorch = async () => {
+    const track = trackRef.current;
+    if (!track) return;
+    const next = !torchOn;
+    if (await setTorch(track, next)) setTorchOn(next);
+    else setTorchAvailable(false); // the capability lied — drop the control, no error toast
   };
 
   return (
@@ -172,23 +204,48 @@ export function BarcodeScannerButton({
       </button>
 
       {scannerOpen && (
-        <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-black/90">
-          <div className="relative w-full max-w-sm">
-            <video ref={videoRef} className="w-full rounded-lg" autoPlay muted playsInline />
+        <div className="fixed inset-0 z-[9999] flex flex-col items-center bg-black/90 px-4 pt-[max(1rem,env(safe-area-inset-top))]">
+          <div className="flex w-full max-w-md items-center justify-between">
+            <button
+              type="button"
+              onClick={closeScanner}
+              className="flex items-center gap-2 rounded-full bg-white/20 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/30"
+            >
+              <X size={16} />
+              Cancel
+            </button>
+            {torchAvailable && (
+              <button
+                type="button"
+                onClick={toggleTorch}
+                aria-pressed={torchOn}
+                aria-label={torchOn ? "Turn flashlight off" : "Turn flashlight on"}
+                className={cn(
+                  "flex h-10 w-10 items-center justify-center rounded-full text-white transition",
+                  torchOn ? "bg-brand-500" : "bg-white/20 hover:bg-white/30",
+                )}
+              >
+                {torchOn ? <Zap size={18} /> : <ZapOff size={18} />}
+              </button>
+            )}
+          </div>
+          {/* Compact landscape viewfinder: a barcode is held wide-and-short, so the preview is a
+              strip (object-cover crops the frame for display only — zxing still reads all of it). */}
+          <div className="relative mt-4 h-40 w-full max-w-md overflow-hidden rounded-lg sm:h-52">
+            <video
+              ref={videoRef}
+              className="h-full w-full cursor-pointer object-cover"
+              autoPlay
+              muted
+              playsInline
+              onClick={() => void nudgeFocus(trackRef.current)}
+            />
             {/* Scan guide overlay */}
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-              <div className="h-32 w-64 rounded border-2 border-brand-400 opacity-80" />
+              <div className="h-3/5 w-5/6 rounded border-2 border-brand-400 opacity-80" />
             </div>
-            <p className="mt-3 text-center text-sm text-white/70">Align barcode within the box</p>
           </div>
-          <button
-            type="button"
-            onClick={closeScanner}
-            className="mt-6 flex items-center gap-2 rounded-full bg-white/20 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-white/30"
-          >
-            <X size={16} />
-            Cancel
-          </button>
+          <p className="mt-3 text-center text-sm text-white/70">Align barcode within the box</p>
         </div>
       )}
     </>
