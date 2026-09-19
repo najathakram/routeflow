@@ -85,11 +85,18 @@ describe("lineRowProps — order line → read-only row", () => {
     );
   });
 
-  it("delivery progress is only shown once the order is out for delivery or delivered", () => {
+  it("flags an ad-hoc line as custom, and a catalog line as not", () => {
+    expect(
+      lineRowProps(line({ productId: null, product: undefined, name: "Fee" }), "X").custom,
+    ).toBe(true);
+    expect(lineRowProps(line(), "X").custom).toBe(false);
+  });
+
+  it("delivery progress is only shown once the order is out, part-delivered or delivered", () => {
     for (const s of ["DRAFT", "PENDING", "CONFIRMED", "CANCELLED"]) {
       expect(lineRowProps(line(), s).showDeliveryProgress).toBe(false);
     }
-    for (const s of ["OUT_FOR_DELIVERY", "DELIVERED"]) {
+    for (const s of ["OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED", "DELIVERED"]) {
       expect(lineRowProps(line(), s).showDeliveryProgress).toBe(true);
     }
   });
@@ -154,6 +161,28 @@ describe("OrderLineItemCards", () => {
     );
     expect(screen.getByText("3 of 8 delivered")).toBeInTheDocument();
     expect(screen.getByText("Partial")).toBeInTheDocument();
+  });
+
+  it("a PARTIALLY_DELIVERED order still shows how many of a short line were delivered", () => {
+    render(
+      <OrderLineItemCards
+        lineItems={[line({ deliveredQty: 3, qty: 8 })]}
+        orderStatus="PARTIALLY_DELIVERED"
+        total={520}
+      />,
+    );
+    expect(screen.getByText("3 of 8 delivered")).toBeInTheDocument();
+  });
+
+  it("marks an ad-hoc line with the Custom pill, like the table", () => {
+    render(
+      <OrderLineItemCards
+        lineItems={[line({ productId: null, product: undefined, name: "Delivery surcharge" })]}
+        orderStatus="CONFIRMED"
+        total={520}
+      />,
+    );
+    expect(screen.getByText("Custom")).toBeInTheDocument();
   });
 
   it("does not print '0 of 8 delivered' on an order that has not gone out", () => {

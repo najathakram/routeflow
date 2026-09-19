@@ -63,7 +63,7 @@ export function useOrderDelivery(): { enabled: boolean; isLoading: boolean; reso
 
 /** Order-delivery surface visibility — the feature addon alone (owner decision 2026-08-28:
  *  developer_mode no longer unlocks GA delivery features; it remains only for genuinely
- *  in-development surfaces, none of which exist on web today). */
+ *  in-development surfaces — today that is the order-detail card list, see `useOrderUiV2`). */
 export function useDeliveryAccess(): { enabled: boolean; resolved: boolean } {
   const od = useOrderDelivery();
   return { enabled: od.enabled, resolved: od.resolved };

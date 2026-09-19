@@ -53,6 +53,8 @@ export interface LineItemRowReadOnlyProps {
    *  past DRAFT/PENDING — `deliveredQty` is 0 (not null) on every undelivered line. */
   showDeliveryProgress?: boolean;
   note?: string | null;
+  /** An ad-hoc (unlisted, non-catalog) line — shows the "Custom" pill the table shows. */
+  custom?: boolean;
   className?: string;
 }
 
@@ -83,6 +85,7 @@ export function LineItemRowReadOnly({
   deliveredQty,
   showDeliveryProgress,
   note,
+  custom,
   className,
 }: LineItemRowReadOnlyProps) {
   const [imageFailed, setImageFailed] = React.useState(false);
@@ -109,13 +112,17 @@ export function LineItemRowReadOnly({
     ? `${formatQtySplit({ qty, boxes, pieces, unitLabel, boxLabel })} · ${formatMoney(unitPrice)} / ${
         boxLabel?.trim() || "box"
       } of ${unitsPerBox}`
-    : `${formatQtySplit({ qty })} × ${formatMoney(unitPrice)}`;
+    : hasSplit
+      ? // A stored boxes/pieces split but no known pack size: keep the split the operator entered
+        // (priced per piece by `computeLineSubtotal`, so the price reads per unit).
+        `${formatQtySplit({ qty, boxes, pieces, unitLabel, boxLabel })} × ${formatMoney(unitPrice)}`
+      : `${formatQtySplit({ qty })} × ${formatMoney(unitPrice)}`;
   const delivered = deliveredQty == null ? null : Number(deliveredQty);
   const priceTag = linePriceTag({ priceType, originalPrice, unitPrice });
   const freeCount = Math.max(0, Math.trunc(Number(freeUnits ?? 0) || 0));
 
   return (
-    <li className={cn("flex items-start gap-3 px-3 py-3", className)}>
+    <li className={cn("flex items-start gap-3 px-3 py-3", cancelled && "opacity-50", className)}>
       {/* Reserved 40x40 in every case so a missing/failed image never shifts the row. */}
       <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md bg-surface-raised">
         {thumbnailUrl && !imageFailed ? (
@@ -134,11 +141,14 @@ export function LineItemRowReadOnly({
         )}
       </div>
 
-      <div className={cn("min-w-0 flex-1", cancelled && "text-navy/50 line-through")}>
+      <div className="min-w-0 flex-1">
         {/* Stem (family) clamps hard; the anchor (flavor / pack) only has a generous backstop so a
             brand-prefixed name can never bring back the unbounded-wrap row. */}
         {stem && (
-          <p data-testid="line-name-stem" className="line-clamp-2 text-xs text-navy/70">
+          <p
+            data-testid="line-name-stem"
+            className={cn("line-clamp-2 text-xs text-navy/70", cancelled && "line-through")}
+          >
             {stem}
           </p>
         )}
@@ -146,6 +156,7 @@ export function LineItemRowReadOnly({
           data-testid="line-name-anchor"
           className={cn(
             "text-sm font-medium text-navy [overflow-wrap:anywhere]",
+            cancelled && "line-through",
             // No separator → nothing to split: a plain 3-line clamp beats both an unbounded wrap
             // and a 1-line tail truncation.
             stem ? "line-clamp-4" : "line-clamp-3",
@@ -154,7 +165,14 @@ export function LineItemRowReadOnly({
           {anchor}
         </p>
         {sku && <p className="mt-0.5 font-mono text-xs text-navy/60">SKU {sku}</p>}
-        <p className="mt-1 text-xs text-navy/70">{qtyPriceLine}</p>
+        {custom && (
+          <span className="mt-1 inline-flex rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-700 ring-1 ring-brand-200">
+            Custom
+          </span>
+        )}
+        <p className="mt-1 text-xs text-navy/70" title={hasSplit ? `${qty} pcs total` : undefined}>
+          {qtyPriceLine}
+        </p>
         {priceTag && (
           <p
             className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs"
@@ -165,14 +183,8 @@ export function LineItemRowReadOnly({
                 {formatMoney(Number(originalPrice))}
               </span>
             )}
-            <span
-              className={cn(
-                "font-medium",
-                priceTag.tone === "emerald" ? "text-emerald-600" : "text-amber-600",
-              )}
-            >
-              {formatMoney(unitPrice)}
-            </span>
+            {/* The current price is already on the qty line above — repeating it here read as
+                a second, different price on boxed lines. */}
             <span
               className={cn(
                 "rounded-full px-1.5 py-0.5 text-[10px] font-medium ring-1",

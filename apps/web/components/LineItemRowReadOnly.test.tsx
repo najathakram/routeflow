@@ -251,3 +251,48 @@ describe("LineItemRowReadOnly — nothing editable, no cost data", () => {
     expect(container.textContent).not.toMatch(/margin|cost|floor|sell anyway/i);
   });
 });
+
+describe("LineItemRowReadOnly — table parity details", () => {
+  it("a cancelled row is dimmed as a whole but only the NAME is struck through", () => {
+    renderRow({ lineStatus: "CANCELLED", sku: "100200300" });
+    expect(screen.getByRole("listitem")).toHaveClass("opacity-50");
+    expect(screen.getByTestId("line-name-anchor")).toHaveClass("line-through");
+    expect(screen.getByText("SKU 100200300")).not.toHaveClass("line-through");
+    expect(screen.getByText("8 × $65.00")).not.toHaveClass("line-through");
+    expect(screen.getByText("Cancelled").className).not.toMatch(/line-through/);
+  });
+
+  it("an active row is not dimmed", () => {
+    renderRow();
+    expect(screen.getByRole("listitem")).not.toHaveClass("opacity-50");
+  });
+
+  it("shows the Custom pill only for an ad-hoc line", () => {
+    const on = renderRow({ custom: true });
+    expect(screen.getByText("Custom")).toBeInTheDocument();
+    on.unmount();
+    renderRow({ custom: false });
+    expect(screen.queryByText("Custom")).toBeNull();
+  });
+
+  it("a stored boxes/pieces split with NO known pack size keeps the split, priced per unit", () => {
+    renderRow({ boxes: 2, pieces: 3, unitsPerBox: null, qty: 27, unitPrice: 30 });
+    expect(screen.getByText("2 boxes + 3 pcs × $30.00")).toBeInTheDocument();
+    expect(screen.queryByText(/box of/)).toBeNull();
+  });
+
+  it("a split line gets a total-pieces tooltip; a plain line does not", () => {
+    const split = renderRow({ boxes: 2, pieces: 3, unitsPerBox: 12, qty: 27, unitPrice: 30 });
+    expect(screen.getByText(/2 boxes \+ 3 pcs/)).toHaveAttribute("title", "27 pcs total");
+    split.unmount();
+    renderRow();
+    expect(screen.getByText("8 × $65.00")).not.toHaveAttribute("title");
+  });
+
+  it("the price tag line does not repeat the unit price already on the qty line", () => {
+    renderRow({ unitPrice: 65, priceType: "DISCOUNTED", originalPrice: 80 });
+    // the price lives in the qty line only; there is no stand-alone "$65.00" element
+    expect(screen.getByText("8 × $65.00")).toBeInTheDocument();
+    expect(screen.queryByText("$65.00")).toBeNull();
+  });
+});

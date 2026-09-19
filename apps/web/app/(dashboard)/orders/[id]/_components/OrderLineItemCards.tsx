@@ -1,7 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { LineItemRowReadOnly } from "@/components/LineItemRowReadOnly";
+import {
+  LineItemRowReadOnly,
+  type LineItemRowReadOnlyProps,
+} from "@/components/LineItemRowReadOnly";
 import { formatMoney } from "@/lib/format";
 import type { OrderItem } from "@/lib/api/orders";
 import { orderLineName } from "@/lib/product-display";
@@ -10,12 +13,16 @@ import { displayLineStatus } from "./line-status";
 /** Orders with more lines than this collapse behind "Show N more items" (spec §5.1). */
 export const COLLAPSE_AFTER = 6;
 
-/** "N of M delivered" is only meaningful once the order is out or done — `deliveredQty` is 0
- *  (not null) on every undelivered line. */
-const DELIVERY_PROGRESS_STATUSES = new Set(["OUT_FOR_DELIVERY", "DELIVERED"]);
+/** "N of M delivered" is only meaningful once the order is out, part-delivered or done —
+ *  `deliveredQty` is 0 (not null) on every undelivered line. Same set the buyer portal uses. */
+const DELIVERY_PROGRESS_STATUSES = new Set([
+  "OUT_FOR_DELIVERY",
+  "PARTIALLY_DELIVERED",
+  "DELIVERED",
+]);
 
 /** The read-only row's props for one order line — exported so the mapping is testable. */
-export function lineRowProps(li: OrderItem, orderStatus: string) {
+export function lineRowProps(li: OrderItem, orderStatus: string): LineItemRowReadOnlyProps {
   return {
     displayName: orderLineName(li) ?? "Custom item",
     sku: li.product?.sku ?? null,
@@ -33,6 +40,7 @@ export function lineRowProps(li: OrderItem, orderStatus: string) {
     deliveredQty: li.deliveredQty ?? null,
     showDeliveryProgress: DELIVERY_PROGRESS_STATUSES.has(orderStatus),
     note: li.notes ?? null,
+    custom: !li.productId,
   };
 }
 
