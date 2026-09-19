@@ -759,10 +759,16 @@ export interface QtySplitInput {
   pieces?: number | null;
   /** Label for loose pieces; defaults to "pcs". */
   unitLabel?: string | null;
+  /**
+   * Label for the box-level unit (units/PO minimal, 2026-09-19); defaults to
+   * "box"/"boxes". A custom label pluralises with "s" unless it already ends
+   * in "s". Additive — every existing call (no `boxLabel`) is unchanged.
+   */
+  boxLabel?: string | null;
 }
 
 /** "2 boxes + 3 pcs" | "1 box" | "4 pcs" | plain trimmed qty (non-boxed line). */
-export function formatQtySplit({ qty, boxes, pieces, unitLabel }: QtySplitInput): string {
+export function formatQtySplit({ qty, boxes, pieces, unitLabel, boxLabel }: QtySplitInput): string {
   if (boxes == null && pieces == null) {
     const n = Number(qty);
     if (!Number.isFinite(n)) return String(qty);
@@ -772,8 +778,11 @@ export function formatQtySplit({ qty, boxes, pieces, unitLabel }: QtySplitInput)
   const b = Math.max(0, Math.trunc(Number(boxes ?? 0)));
   const p = Math.max(0, Math.trunc(Number(pieces ?? 0)));
   const label = (unitLabel ?? "").trim() || "pcs";
+  const boxSingular = (boxLabel ?? "").trim() || "box";
+  const boxPlural =
+    boxSingular === "box" ? "boxes" : boxSingular.endsWith("s") ? boxSingular : `${boxSingular}s`;
   const parts: string[] = [];
-  if (b > 0) parts.push(`${b} ${b === 1 ? "box" : "boxes"}`);
+  if (b > 0) parts.push(`${b} ${b === 1 ? boxSingular : boxPlural}`);
   if (p > 0) parts.push(`${p} ${label}`);
   return parts.length > 0 ? parts.join(" + ") : "0";
 }

@@ -94,6 +94,11 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["MAILBOX_CONNECTION_STATUS_VALUES", "MailboxConnectionStatus"],
   ["CRM_HANDOFF_STATUS_VALUES", "CrmHandoffStatus"],
   ["TENANT_CLASS_VALUES", "TenantClass"],
+  // Multi-category labels + selling restrictions (2026-09-19): all three are
+  // brand-new Prisma enums.
+  ["LABEL_MODE_VALUES", "LabelMode"],
+  ["RESTRICTION_JURISDICTION_VALUES", "RestrictionJurisdiction"],
+  ["RESTRICTION_SURFACE_VALUES", "RestrictionSurface"],
   // Post-dated check payments PR-1 (2026-09-15): CheckReturnReason is a brand-new Prisma enum
   // (not a value added to an existing one) — see the triage tripwire below.
   ["CHECK_RETURN_REASON_VALUES", "CheckReturnReason"],
@@ -172,7 +177,12 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // (MailboxProvider, MailboxConnectionStatus) merged together — the true count is verified
 // directly via `node apps/api/scripts/split-prisma-schema.mjs --check` (92) against the merged
 // schema folder, never summed by hand.
-const PINNED_PRISMA_ENUM_COUNT = 92;
+// Triage for LabelMode + RestrictionJurisdiction + RestrictionSurface (schema spine PR-S1,
+// 2026-09-19): three brand-new Prisma enums in the SAME migration batch (units/PO minimal,
+// multi-category labels, selling restrictions) — mirrored immediately as `LABEL_MODE_VALUES`/
+// `RESTRICTION_JURISDICTION_VALUES`/`RESTRICTION_SURFACE_VALUES` + their `ENUM_TABLE` rows
+// above; verified via `node apps/api/scripts/split-prisma-schema.mjs --check` (92 → 95).
+const PINNED_PRISMA_ENUM_COUNT = 95;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {

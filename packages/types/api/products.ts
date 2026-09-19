@@ -138,3 +138,51 @@ export interface ProductSalesHistory {
   lines: ProductSaleLine[];
   summary: ProductSalesSummary;
 }
+
+// ─── Multi-level units (2026-09-19) ─────────────────────────────────────────────
+// See local-assets/handoff/2026-09-18/PLAN-units-po-MINIMAL.md §1. A product with
+// no levels behaves exactly as it does today — Product.unitsPerBox/pricePerUnit
+// + tiers stay the pack.
+
+export interface ProductUnitLevel {
+  id: string;
+  label: string;
+  factorToBase: number;
+  price: number | null;
+  priceTier2: number | null;
+  priceTier3: number | null;
+  priceTier4: number | null;
+  priceTier5: number | null;
+  isDefaultSelling: boolean;
+  sortOrder: number;
+}
+
+export interface PutProductUnitsPayload {
+  units: Array<Omit<ProductUnitLevel, "id"> & { id?: string }>;
+}
+
+// ─── Multi-category labels (2026-09-19) ─────────────────────────────────────────
+// See local-assets/handoff/2026-09-18/PLAN-categories-jurisdiction-bans.md §1.
+
+export interface ProductLabelRef {
+  id: string;
+  name: string;
+}
+
+export interface ProductLabelsView {
+  own: ProductLabelRef[];
+  inherited: ProductLabelRef[];
+  excluded: Array<ProductLabelRef & { reason: string; inert: boolean }>;
+  effective: ProductLabelRef[];
+}
+
+export interface PutProductLabelsPayload {
+  include: string[];
+  exclude: Array<{ categoryId: string; reason: string }>;
+}
+
+export interface ProductCategoryDto {
+  id: string;
+  name: string;
+  archivedAt: string | null;
+}

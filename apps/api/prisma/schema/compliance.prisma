@@ -209,6 +209,12 @@ model CustomerAuthorization {
   // null on renew()/create() so a re-verified→re-expired row notifies again.
   expiryNotifiedAt           DateTime?
   expiringSoonNotifiedBucket Int?
+  // Selling restrictions (2026-09-19, owner ruling R1): the licensed-premises
+  // address on this authorization is one of the governing-address precedence
+  // sources ("registered address" as tenant-configurable). Both null unless the
+  // tenant records a licence with a premises address.
+  premisesAddress            String?
+  premisesState              String?             @db.Char(2)
   createdAt                  DateTime            @default(now())
   updatedAt                  DateTime            @updatedAt
 
@@ -334,4 +340,56 @@ model RegulatedFiling {
   @@index([tenantId])
   @@index([tenantId, trackedCategoryId])
   @@index([trackedCategoryId])
+}
+
+// ─── Selling restrictions (2026-09-19) ─────────────────────────────────────────
+// See local-assets/handoff/2026-09-18/PLAN-categories-jurisdiction-bans.md §1.4
+// + §2. Deny-only jurisdiction rules keyed to a label OR a product. Rows are
+// NEVER deleted — lifting sets effectiveTo/lifted*; point-in-time + audit come
+// from this table alone plus AuditLog rows on create/lift.
+enum RestrictionJurisdiction {
+  FEDERAL
+  STATE
+}
+
+// ALL = every path incl. cron/system. BUYER_PORTAL = self-serve only; staff may
+// still sell (the "stop making available only on the buyer portal" case).
+enum RestrictionSurface {
+  ALL
+  BUYER_PORTAL
+}
+
+model SellingRestriction {
+  id            String                  @id @default(uuid())
+  tenantId      String
+  // Exactly one of categoryId / productId is set — enforced by a raw-SQL CHECK
+  // constraint (SellingRestriction_scope_xor) in the migration; Prisma can't
+  // express a column-level XOR.
+  categoryId    String?
+  productId     String?
+  jurisdiction  RestrictionJurisdiction
+  // 2-letter USPS codes; empty iff jurisdiction = FEDERAL (everyone, no address
+  // consulted). An empty array on a STATE row is rejected at write and, if it
+  // ever exists, blocks everywhere (fail closed, never ignored — plan §2.3).
+  states        String[]
+  surface       RestrictionSurface      @default(ALL)
+  effectiveFrom DateTime                @default(now())
+  // Null = open-ended (still active).
+  effectiveTo   DateTime?
+  reason        String
+  createdById   String?
+  createdByName String?
+  createdAt     DateTime                @default(now())
+  liftedById    String?
+  liftedByName  String?
+  liftedAt      DateTime?
+  liftReason    String?
+
+  tenant   Tenant?          @relation(fields: [tenantId], references: [id])
+  category ProductCategory? @relation(fields: [categoryId], references: [id])
+  product  Product?         @relation(fields: [productId], references: [id])
+
+  @@index([tenantId, effectiveTo])
+  @@index([categoryId])
+  @@index([productId])
 }

@@ -139,6 +139,10 @@ const MODEL_DOMAIN = {
   StockCountLine: "catalog",
   PurchaseOrder: "catalog",
   PurchaseOrderItem: "catalog",
+  ProductUnit: "catalog",
+  SupplierProduct: "catalog",
+  ProductCategory: "catalog",
+  ProductCategoryLabel: "catalog",
 
   // ─── sales ─────────────────────────────────────────────────────────────────
   Customer: "sales",
@@ -255,6 +259,7 @@ const MODEL_DOMAIN = {
   AuthorizationOverride: "compliance",
   RegulatedSalesLedger: "compliance",
   RegulatedFiling: "compliance",
+  SellingRestriction: "compliance",
 };
 
 const HEADER_RE =

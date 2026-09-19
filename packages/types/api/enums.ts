@@ -368,3 +368,18 @@ export type FeatureOverrideKind = (typeof FEATURE_OVERRIDE_KIND_VALUES)[number];
 // real bugs shipped).
 export const DEMO_BOOKING_STATUS_VALUES = ["CONFIRMED", "CANCELLED", "COMPLETED"] as const;
 export type DemoBookingStatus = (typeof DEMO_BOOKING_STATUS_VALUES)[number];
+
+// Multi-category labels (2026-09-19): pinned set-equal to the generated Prisma
+// `LabelMode` enum (see `enum-parity.spec.ts`'s `ENUM_TABLE` row). L-072: a
+// hand-typed local mirror is how three real bugs shipped.
+export const LABEL_MODE_VALUES = ["INCLUDE", "EXCLUDE"] as const;
+export type LabelMode = (typeof LABEL_MODE_VALUES)[number];
+
+// Selling restrictions (2026-09-19): pinned set-equal to the generated Prisma
+// `RestrictionJurisdiction` / `RestrictionSurface` enums (see
+// `enum-parity.spec.ts`'s `ENUM_TABLE` rows).
+export const RESTRICTION_JURISDICTION_VALUES = ["FEDERAL", "STATE"] as const;
+export type RestrictionJurisdictionValue = (typeof RESTRICTION_JURISDICTION_VALUES)[number];
+
+export const RESTRICTION_SURFACE_VALUES = ["ALL", "BUYER_PORTAL"] as const;
+export type RestrictionSurfaceValue = (typeof RESTRICTION_SURFACE_VALUES)[number];
