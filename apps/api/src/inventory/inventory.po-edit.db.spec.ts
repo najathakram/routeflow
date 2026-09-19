@@ -1,7 +1,10 @@
 /**
  * LANE-U step 6 — DB-lane proof for `InventoryService.updatePurchaseOrder` re-apply:
- * receive → edit qty + cost → re-apply must leave stock and `averageCost` equal to a FRESH
- * receive of the edited lines, with the movement/lot ledger showing exactly the edited receipt.
+ * receive → edit cost → re-apply must leave stock and `averageCost` equal to a FRESH receive
+ * at the edited cost, with the movement/lot ledger showing exactly that receipt. Re-apply
+ * restates COST, never quantity (lead ruling, three-document rule): a raised qtyOrdered or an
+ * added line is outstanding and arrives through the normal receive; lowering below received is
+ * refused.
  * The state table and operation order are locked without a database in
  * `inventory.po-edit.spec.ts`; only a real Postgres can prove the reversal arithmetic, the
  * `FOR UPDATE` lock statement and the nested item writes.
@@ -151,8 +154,8 @@ describeDb("PO edit + re-apply — real Postgres (LANE-U step 6)", () => {
 
   const productOf = (w: World) => prisma.product.findUniqueOrThrow({ where: { id: w.productId } });
 
-  // ── 1. edit qty + cost → re-apply == a fresh receive of the edited line ─────────────────
-  it("case 1: receive 20@4, edit to 10@6, re-apply → stock and average equal a fresh 10@6 receive", async () => {
+  // ── 1. edit cost → re-apply == a fresh receive at the edited cost ───────────────────────
+  it("case 1: receive 20@4, edit the cost to 6, re-apply → stock and average equal a fresh 20@6 receive", async () => {
     const edited = await seedWorld("c1a", 20, 2);
     const po = await receivedPo(edited, 20, 4);
     expect(Number((await productOf(edited)).currentStock)).toBe(40);
@@ -163,23 +166,23 @@ describeDb("PO edit + re-apply — real Postgres (LANE-U step 6)", () => {
         po.id,
         {
           reapplyInventory: true,
-          items: [{ id: po.items[0].id, productId: edited.productId, qtyOrdered: 10, unitCost: 6 }],
+          items: [{ id: po.items[0].id, productId: edited.productId, qtyOrdered: 20, unitCost: 6 }],
         },
         edited.userId,
       ),
     );
 
     const fresh = await seedWorld("c1b", 20, 2);
-    await receivedPo(fresh, 10, 6);
+    await receivedPo(fresh, 20, 6);
 
     const a = await productOf(edited);
     const b = await productOf(fresh);
-    expect(a.currentStock.toString()).toBe(b.currentStock.toString()); // 30
-    expect(a.averageCost!.toString()).toBe(b.averageCost!.toString()); // (20×2+10×6)/30 = 3.3333
+    expect(a.currentStock.toString()).toBe(b.currentStock.toString()); // 40
+    expect(a.averageCost!.toString()).toBe(b.averageCost!.toString()); // (20×2+20×6)/40 = 4
   });
 
   // ── 2. the ledger shows exactly the edited receipt ───────────────────────────────────────
-  it("case 2: after re-apply exactly ONE purchase movement and ONE lot remain, at the edited qty/cost", async () => {
+  it("case 2: after re-apply exactly ONE purchase movement and ONE lot remain, same qty at the edited cost", async () => {
     const w = await seedWorld("c2", 20, 2);
     const po = await receivedPo(w, 20, 4);
     await inTenant(w, () =>
@@ -187,7 +190,7 @@ describeDb("PO edit + re-apply — real Postgres (LANE-U step 6)", () => {
         po.id,
         {
           reapplyInventory: true,
-          items: [{ id: po.items[0].id, productId: w.productId, qtyOrdered: 10, unitCost: 6 }],
+          items: [{ id: po.items[0].id, productId: w.productId, qtyOrdered: 20, unitCost: 6 }],
         },
         w.userId,
       ),
@@ -197,7 +200,7 @@ describeDb("PO edit + re-apply — real Postgres (LANE-U step 6)", () => {
       where: { tenantId: w.tenantId, reference: po.poNumber, type: "PURCHASE" },
     });
     expect(movements).toHaveLength(1);
-    expect(movements[0].quantity.toString()).toBe("10");
+    expect(movements[0].quantity.toString()).toBe("20");
     expect(movements[0].unitCost!.toString()).toBe("6");
     expect(movements[0].performedById).toBe(w.userId);
 
@@ -205,19 +208,19 @@ describeDb("PO edit + re-apply — real Postgres (LANE-U step 6)", () => {
       where: { tenantId: w.tenantId, reference: po.poNumber },
     });
     expect(lots).toHaveLength(1);
-    expect(lots[0].qty.toString()).toBe("10");
-    expect(lots[0].remainingQty.toString()).toBe("10");
+    expect(lots[0].qty.toString()).toBe("20");
+    expect(lots[0].remainingQty.toString()).toBe("20");
     expect(lots[0].unitCost.toString()).toBe("6");
 
     const after = await inTenant(w, () => service.getPurchaseOrder(po.id));
     expect(after.status).toBe("RECEIVED");
-    expect(after.items[0].qtyReceived.toString()).toBe("10");
+    expect(after.items[0].qtyReceived.toString()).toBe("20");
     expect(after.items[0].unitCost.toString()).toBe("6");
-    expect(after.totalAmount.toString()).toBe("60");
+    expect(after.totalAmount.toString()).toBe("120");
   });
 
   // ── 3. a sale between receipt and edit is not lost ───────────────────────────────────────
-  it("case 3: stock sold since the receipt survives the re-apply (net stock = before − old + new)", async () => {
+  it("case 3: stock sold since the receipt survives the re-apply (net stock unchanged — same qty re-posted)", async () => {
     const w = await seedWorld("c3", 20, 2);
     const po = await receivedPo(w, 20, 4); // 40 on hand
     await prisma.product.update({ where: { id: w.productId }, data: { currentStock: 35 } }); // 5 sold
@@ -226,12 +229,12 @@ describeDb("PO edit + re-apply — real Postgres (LANE-U step 6)", () => {
         po.id,
         {
           reapplyInventory: true,
-          items: [{ id: po.items[0].id, productId: w.productId, qtyOrdered: 10, unitCost: 6 }],
+          items: [{ id: po.items[0].id, productId: w.productId, qtyOrdered: 20, unitCost: 6 }],
         },
         w.userId,
       ),
     );
-    expect(Number((await productOf(w)).currentStock)).toBe(25); // 35 − 20 + 10
+    expect(Number((await productOf(w)).currentStock)).toBe(35); // 35 − 20 + 20
   });
 
   // ── 4. the 4dp rounding bound ────────────────────────────────────────────────────────────
@@ -243,17 +246,17 @@ describeDb("PO edit + re-apply — real Postgres (LANE-U step 6)", () => {
         po.id,
         {
           reapplyInventory: true,
-          items: [{ id: po.items[0].id, productId: edited.productId, qtyOrdered: 8, unitCost: 5 }],
+          items: [{ id: po.items[0].id, productId: edited.productId, qtyOrdered: 10, unitCost: 5 }],
         },
         edited.userId,
       ),
     );
     const fresh = await seedWorld("c4b", 20, 2);
-    await receivedPo(fresh, 8, 5);
+    await receivedPo(fresh, 10, 5);
 
     const a = await productOf(edited);
     const b = await productOf(fresh);
-    expect(a.currentStock.toString()).toBe(b.currentStock.toString()); // exact: 28
+    expect(a.currentStock.toString()).toBe(b.currentStock.toString()); // exact: 30
     expect(a.averageCost!.sub(b.averageCost!).abs().lte(D("0.0001"))).toBe(true);
   });
 
@@ -301,7 +304,7 @@ describeDb("PO edit + re-apply — real Postgres (LANE-U step 6)", () => {
           po.id,
           {
             reapplyInventory: true,
-            items: [{ id: po.items[0].id, productId: w.productId, qtyOrdered: 10, unitCost: 6 }],
+            items: [{ id: po.items[0].id, productId: w.productId, qtyOrdered: 20, unitCost: 6 }],
           },
           w.userId,
         ),
@@ -367,7 +370,7 @@ describeDb("PO edit + re-apply — real Postgres (LANE-U step 6)", () => {
         po.id,
         {
           reapplyInventory: true,
-          items: [{ id: po.items[0].id, productId: w.productId, qtyOrdered: 12, unitCost: 4 }],
+          items: [{ id: po.items[0].id, productId: w.productId, qtyOrdered: 20, unitCost: 4 }],
         },
         w.userId,
       ),
@@ -379,7 +382,7 @@ describeDb("PO edit + re-apply — real Postgres (LANE-U step 6)", () => {
     const [lot] = await prisma.stockLot.findMany({
       where: { tenantId: w.tenantId, reference: po.poNumber },
     });
-    expect(movement.quantity.toString()).toBe("12");
+    expect(movement.quantity.toString()).toBe("20");
     expect(movement.createdAt.toISOString()).toBe(original.toISOString());
     expect(lot.purchaseDate.toISOString()).toBe(original.toISOString());
   });
@@ -415,7 +418,7 @@ describeDb("PO edit + re-apply — real Postgres (LANE-U step 6)", () => {
         po.id,
         {
           reapplyInventory: true,
-          items: [{ id: po.items[0].id, productId: w.productId, qtyOrdered: 10, unitCost: 6 }],
+          items: [{ id: po.items[0].id, productId: w.productId, qtyOrdered: 20, unitCost: 6 }],
         },
         w.userId,
       ),
@@ -448,5 +451,72 @@ describeDb("PO edit + re-apply — real Postgres (LANE-U step 6)", () => {
     const lines = await prisma.purchaseOrderItem.findMany({ where: { poId: created.id } });
     expect(lines).toHaveLength(2);
     expect(lines.every((l) => l.tenantId === w.tenantId)).toBe(true);
+  });
+
+  // ── 11. a raised qty is outstanding — no phantom stock, normal receive completes it ───────
+  it("case 11: raising qtyOrdered on a RECEIVED PO with re-apply posts NO extra stock; the outstanding qty arrives through the normal receive (and can't be over-received)", async () => {
+    const w = await seedWorld("c11", 20, 2);
+    const po = await receivedPo(w, 20, 4);
+    expect(po.status).toBe("RECEIVED");
+
+    await inTenant(w, () =>
+      service.updatePurchaseOrder(
+        po.id,
+        {
+          reapplyInventory: true,
+          items: [{ id: po.items[0].id, productId: w.productId, qtyOrdered: 30, unitCost: 4 }],
+        },
+        w.userId,
+      ),
+    );
+    const mid = await inTenant(w, () => service.getPurchaseOrder(po.id));
+    expect(mid.status).toBe("PARTIAL"); // RECEIVED with outstanding qty
+    expect(mid.items[0].qtyReceived.toString()).toBe("20");
+    expect(Number((await productOf(w)).currentStock)).toBe(40); // unchanged — nothing new arrived
+
+    // the over-receipt gate holds: only 10 is outstanding
+    await expect(
+      inTenant(w, () =>
+        service.receivePurchaseOrder(
+          po.id,
+          { items: [{ itemId: po.items[0].id, receivedQty: 11 }] },
+          w.userId,
+        ),
+      ),
+    ).rejects.toThrow(/outstanding/);
+
+    await inTenant(w, () =>
+      service.receivePurchaseOrder(
+        po.id,
+        { items: [{ itemId: po.items[0].id, receivedQty: 10 }] },
+        w.userId,
+      ),
+    );
+    const done = await inTenant(w, () => service.getPurchaseOrder(po.id));
+    expect(done.status).toBe("RECEIVED");
+    expect(Number((await productOf(w)).currentStock)).toBe(50);
+  });
+
+  // ── 12. lowering below received is refused in both modes ─────────────────────────────────
+  it("case 12: lowering a received line below what arrived is refused (400) and changes nothing", async () => {
+    const w = await seedWorld("c12", 20, 2);
+    const po = await receivedPo(w, 20, 4);
+    for (const reapplyInventory of [false, true]) {
+      await expect(
+        inTenant(w, () =>
+          service.updatePurchaseOrder(
+            po.id,
+            {
+              reapplyInventory,
+              items: [{ id: po.items[0].id, productId: w.productId, qtyOrdered: 15, unitCost: 4 }],
+            },
+            w.userId,
+          ),
+        ),
+      ).rejects.toThrow(/recording a return/);
+    }
+    expect(Number((await productOf(w)).currentStock)).toBe(40);
+    const after = await inTenant(w, () => service.getPurchaseOrder(po.id));
+    expect(after.items[0].qtyOrdered.toString()).toBe("20");
   });
 });

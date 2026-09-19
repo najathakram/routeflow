@@ -245,10 +245,56 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
     expectNoStockWrites();
   });
 
+  // ─── PARTIAL / RECEIVED: rules that hold for BOTH modes ────────────────────
+
+  describe.each([false, true])(
+    "received-line guards (reapplyInventory: %s)",
+    (reapplyInventory) => {
+      it("refuses lowering a line below what was received — a return is the only way out", async () => {
+        prisma.purchaseOrder.findUnique.mockResolvedValue(po());
+        await expect(
+          service.updatePurchaseOrder(
+            "po-1",
+            {
+              reapplyInventory,
+              items: [{ id: "poi-1", productId: "prod-1", qtyOrdered: 8, unitCost: 3 }],
+            },
+            "u",
+          ),
+        ).rejects.toThrow(/already received.*recording a return/);
+        expect(prisma.purchaseOrder.update).not.toHaveBeenCalled();
+        expectNoStockWrites();
+      });
+
+      it("refuses re-pointing a received line at another product, and removing it", async () => {
+        prisma.purchaseOrder.findUnique.mockResolvedValue(po());
+        await expect(
+          service.updatePurchaseOrder(
+            "po-1",
+            {
+              reapplyInventory,
+              items: [{ id: "poi-1", productId: "prod-2", qtyOrdered: 10, unitCost: 3 }],
+            },
+            "u",
+          ),
+        ).rejects.toThrow(/change product/);
+        await expect(
+          service.updatePurchaseOrder(
+            "po-1",
+            { reapplyInventory, items: [{ productId: "prod-2", qtyOrdered: 4, unitCost: 2 }] },
+            "u",
+          ),
+        ).rejects.toThrow(/can't be removed/);
+        expect(prisma.purchaseOrder.update).not.toHaveBeenCalled();
+        expectNoStockWrites();
+      });
+    },
+  );
+
   // ─── PARTIAL / RECEIVED, document-only ─────────────────────────────────────
 
   describe("reapplyInventory: false (document-only)", () => {
-    it("changes cost/qty at or above what was received without touching stock", async () => {
+    it("changes cost and raises qty without touching stock — the extra qty is outstanding", async () => {
       prisma.purchaseOrder.findUnique.mockResolvedValue(po());
       await service.updatePurchaseOrder(
         "po-1",
@@ -266,46 +312,6 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
       expectNoStockWrites();
     });
 
-    it("rejects lowering a line below what was received", async () => {
-      prisma.purchaseOrder.findUnique.mockResolvedValue(po());
-      await expect(
-        service.updatePurchaseOrder(
-          "po-1",
-          {
-            reapplyInventory: false,
-            items: [{ id: "poi-1", productId: "prod-1", qtyOrdered: 8, unitCost: 3 }],
-          },
-          "u",
-        ),
-      ).rejects.toThrow(/already received/);
-      expect(prisma.purchaseOrder.update).not.toHaveBeenCalled();
-    });
-
-    it("rejects re-pointing a received line at another product, and removing it", async () => {
-      prisma.purchaseOrder.findUnique.mockResolvedValue(po());
-      await expect(
-        service.updatePurchaseOrder(
-          "po-1",
-          {
-            reapplyInventory: false,
-            items: [{ id: "poi-1", productId: "prod-2", qtyOrdered: 10, unitCost: 3 }],
-          },
-          "u",
-        ),
-      ).rejects.toThrow(/change product/);
-      await expect(
-        service.updatePurchaseOrder(
-          "po-1",
-          {
-            reapplyInventory: false,
-            items: [{ productId: "prod-2", qtyOrdered: 4, unitCost: 2 }],
-          },
-          "u",
-        ),
-      ).rejects.toThrow(/can't be removed/);
-      expect(prisma.purchaseOrder.update).not.toHaveBeenCalled();
-    });
-
     it("refuses a supplier change without re-applying", async () => {
       prisma.purchaseOrder.findUnique.mockResolvedValue(po());
       prisma.supplier.findUnique.mockResolvedValue({ id: "sup-2" });
@@ -318,13 +324,13 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
   // ─── PARTIAL / RECEIVED, re-apply ──────────────────────────────────────────
 
   describe("reapplyInventory: true", () => {
-    it("RECEIVED: reverses movements + lots + stock, then re-receives the edit in full — in that order", async () => {
+    it("RECEIVED: reverses movements + lots + stock, then re-posts the SAME quantity at the edited cost — in that order", async () => {
       prisma.purchaseOrder.findUnique.mockResolvedValue(po());
       await service.updatePurchaseOrder(
         "po-1",
         {
           reapplyInventory: true,
-          items: [{ id: "poi-1", productId: "prod-1", qtyOrdered: 8, unitCost: 4 }],
+          items: [{ id: "poi-1", productId: "prod-1", qtyOrdered: 10, unitCost: 4 }],
         },
         "user-9",
       );
@@ -339,13 +345,13 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
       // reversing the only receipt empties stock → the average is KEPT, not zeroed
       expect(reversal.averageCost).toBeUndefined();
 
-      // edit: received target = the new ordered qty; status stays RECEIVED
+      // edit: received quantity is exactly what was received; status stays RECEIVED
       const data = prisma.purchaseOrder.update.mock.calls[0][0].data;
-      expect(data.items.update[0].data.qtyReceived.toString()).toBe("8");
-      expect(data.totalAmount).toBe(32);
+      expect(data.items.update[0].data.qtyReceived.toString()).toBe("10");
+      expect(data.totalAmount).toBe(40);
       expect(data.status).toBe("RECEIVED");
 
-      // re-post: 8 pieces @ the EDITED cost, same reference, the caller's id
+      // re-post: the SAME 10 pieces @ the EDITED cost, same reference, the caller's id
       const created = prisma.stockMovement.create.mock.calls[0][0].data;
       expect(created).toMatchObject({
         productId: "prod-1",
@@ -354,11 +360,11 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
         supplierId: "sup-1",
         performedById: "user-9",
       });
-      expect(created.quantity.toString()).toBe("8");
+      expect(created.quantity.toString()).toBe("10");
       expect(created.unitCost.toString()).toBe("4");
-      expect(prisma.stockLot.create.mock.calls[0][0].data.qty.toString()).toBe("8");
+      expect(prisma.stockLot.create.mock.calls[0][0].data.qty.toString()).toBe("10");
       const repost = prisma.product.update.mock.calls[1][0].data;
-      expect(repost.currentStock.increment.toString()).toBe("8");
+      expect(repost.currentStock.increment.toString()).toBe("10");
 
       // order: reverse → edit → re-post
       const at = (fn: jest.Mock, n = 0) => fn.mock.invocationCallOrder[n];
@@ -368,6 +374,60 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
       expect(at(prisma.purchaseOrder.update as jest.Mock)).toBeLessThan(
         at(prisma.stockMovement.create as jest.Mock),
       );
+    });
+
+    it("a raised qtyOrdered and an added line are OUTSTANDING — no stock the old movements don't prove", async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue(po());
+      await service.updatePurchaseOrder(
+        "po-1",
+        {
+          reapplyInventory: true,
+          items: [
+            { id: "poi-1", productId: "prod-1", qtyOrdered: 15, unitCost: 3 },
+            { productId: "prod-2", qtyOrdered: 5, unitCost: 2 },
+          ],
+        },
+        "u",
+      );
+      const data = prisma.purchaseOrder.update.mock.calls[0][0].data;
+      expect(data.items.update[0].data.qtyReceived.toString()).toBe("10"); // NOT 15
+      expect(data.items.create[0].qtyReceived.toString()).toBe("0"); // the added line: nothing arrived
+      expect(data.status).toBe("PARTIAL"); // a RECEIVED PO with outstanding qty is PARTIAL
+      // exactly one re-post — the 10 that were proven received; nothing for prod-2
+      expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
+      const posted = prisma.stockMovement.create.mock.calls[0][0].data;
+      expect(posted.productId).toBe("prod-1");
+      expect(posted.quantity.toString()).toBe("10");
+      expect(prisma.stockLot.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("PARTIAL: re-posts exactly what was received (4), whatever the new ordered qty", async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue(
+        po({ status: "PARTIAL", items: [poLine({ qtyOrdered: D(10), qtyReceived: D(4) })] }),
+      );
+      prisma.stockMovement.findMany.mockResolvedValue([movement({ quantity: D(4) })]);
+      prisma.stockLot.findMany.mockResolvedValue([
+        { id: "lot-1", qty: D(4), remainingQty: D(4), notes: null },
+      ]);
+      await service.updatePurchaseOrder(
+        "po-1",
+        {
+          reapplyInventory: true,
+          items: [
+            { id: "poi-1", productId: "prod-1", qtyOrdered: 12, unitCost: 5 },
+            { productId: "prod-2", qtyOrdered: 5, unitCost: 2 },
+          ],
+        },
+        "u",
+      );
+      const data = prisma.purchaseOrder.update.mock.calls[0][0].data;
+      expect(data.items.update[0].data.qtyReceived.toString()).toBe("4");
+      expect(data.items.create[0].qtyReceived.toString()).toBe("0");
+      expect(data.status).toBe("PARTIAL");
+      expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
+      const posted = prisma.stockMovement.create.mock.calls[0][0].data;
+      expect(posted.quantity.toString()).toBe("4");
+      expect(posted.unitCost.toString()).toBe("5");
     });
 
     it("a STANDARD product's average is never moved by the reversal", async () => {
@@ -408,33 +468,6 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
       const reversal = prisma.product.update.mock.calls[0][0].data;
       expect(reversal.currentStock.decrement.toString()).toBe("10");
       expect(reversal.averageCost.toString()).toBe("2");
-    });
-
-    it("PARTIAL: re-posts only what each surviving line had received, capped at its new ordered qty", async () => {
-      prisma.purchaseOrder.findUnique.mockResolvedValue(
-        po({ status: "PARTIAL", items: [poLine({ qtyOrdered: D(10), qtyReceived: D(4) })] }),
-      );
-      prisma.stockMovement.findMany.mockResolvedValue([movement({ quantity: D(4) })]);
-      prisma.stockLot.findMany.mockResolvedValue([
-        { id: "lot-1", qty: D(4), remainingQty: D(4), notes: null },
-      ]);
-      await service.updatePurchaseOrder(
-        "po-1",
-        {
-          reapplyInventory: true,
-          items: [
-            { id: "poi-1", productId: "prod-1", qtyOrdered: 3, unitCost: 3 },
-            { productId: "prod-2", qtyOrdered: 5, unitCost: 2 },
-          ],
-        },
-        "u",
-      );
-      const data = prisma.purchaseOrder.update.mock.calls[0][0].data;
-      expect(data.items.update[0].data.qtyReceived.toString()).toBe("3"); // min(4, 3)
-      expect(data.items.create[0].qtyReceived.toString()).toBe("0"); // new line: nothing received
-      expect(data.status).toBe("PARTIAL"); // the new line is still outstanding
-      expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
-      expect(prisma.stockMovement.create.mock.calls[0][0].data.quantity.toString()).toBe("3");
     });
 
     it("a consumed lot surrenders what remains instead of being deleted", async () => {
@@ -484,32 +517,12 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
         "po-1",
         {
           reapplyInventory: true,
-          items: [{ id: "poi-1", productId: "prod-1", qtyOrdered: 12, unitCost: 4 }],
+          items: [{ id: "poi-1", productId: "prod-1", qtyOrdered: 10, unitCost: 4 }],
         },
         "u",
       );
       expect(prisma.stockMovement.create.mock.calls[0][0].data.createdAt).toEqual(original);
       expect(prisma.stockLot.create.mock.calls[0][0].data.purchaseDate).toEqual(original);
-    });
-
-    it("a line with no original receipt (added on the edit) is dated now", async () => {
-      prisma.purchaseOrder.findUnique.mockResolvedValue(po());
-      await service.updatePurchaseOrder(
-        "po-1",
-        {
-          reapplyInventory: true,
-          items: [
-            { id: "poi-1", productId: "prod-1", qtyOrdered: 10, unitCost: 3 },
-            { productId: "prod-2", qtyOrdered: 2, unitCost: 1 },
-          ],
-        },
-        "u",
-      );
-      const byProduct = new Map(
-        prisma.stockMovement.create.mock.calls.map((c: any) => [c[0].data.productId, c[0].data]),
-      );
-      expect(byProduct.get("prod-1")).toHaveProperty("createdAt");
-      expect(byProduct.get("prod-2")).not.toHaveProperty("createdAt");
     });
 
     it("only surrenders THIS PO's product lots - the lot query is filtered by product, not just reference", async () => {

@@ -1069,7 +1069,7 @@ export class InventoryService {
         expectedDate: dto.expectedDate ? new Date(dto.expectedDate) : null,
         notes: dto.notes,
         totalAmount,
-        // Explicit tenantId on the nested lines - the tenant proxy only stamps the
+        // B571: explicit tenantId on the nested lines - the tenant proxy only stamps the
         // top-level create, and a tenant-less PurchaseOrderItem is invisible to the
         // tenant-scoped item update receivePurchaseOrder performs.
         items: {
@@ -1497,25 +1497,23 @@ export class InventoryService {
    *  - PARTIAL / RECEIVED with `items` (or a supplier change) — the caller MUST
    *    say what happens to stock via `reapplyInventory`:
    *      • `true`  — ONE transaction: reverse every stock effect of this PO
-   *        ({@link reversePoReceipts}), apply the edit, re-post the receipts
-   *        through {@link postPoReceipt}. A RECEIVED PO is re-received in full
-   *        at the edited quantities/costs; a PARTIAL PO re-posts what each
-   *        surviving line had received, capped at its new ordered quantity.
-   *      • `false` — document-only: `qtyOrdered ≥ qtyReceived` is enforced, a
-   *        received line can't change product or be removed, stock and cost are
-   *        untouched (the PO cost may then diverge from valuation — by the
-   *        operator's explicit choice).
+   *        ({@link reversePoReceipts}), apply the edit, and re-post EXACTLY the
+   *        quantities that were previously received, at the edited cost and
+   *        original receipt date, through {@link postPoReceipt}.
+   *      • `false` — document-only: stock and cost are untouched (the PO cost
+   *        may then diverge from valuation — by the operator's explicit choice).
+   *    Either way (owner/lead ruling, three-document rule): a received line can't
+   *    drop below what was received, change product or be removed — a received
+   *    quantity only comes back out through a recorded return — and a raised
+   *    `qtyOrdered` or an added line is OUTSTANDING, received later through the
+   *    normal receive and its over-receipt gate. A RECEIVED PO with outstanding
+   *    quantity therefore becomes PARTIAL.
    *  - CLOSED: rejected.
    *
    * The PO row (and the products it touches) are locked for the transaction, and
    * so is every receive, so an edit can't interleave with a receipt of the same PO.
    *
    * Accepted by the plan (risks 1 and 5), stated here so nobody rediscovers them:
-   *  - A re-apply is the operator's statement of what arrived — a RECEIVED PO's
-   *    edited lines are all treated as received in full at the new qty/cost (a
-   *    raised `qtyOrdered`, or an added line, posts that stock).
-   *  - A PARTIAL PO re-post is capped at each line's new ordered qty; a shrink
-   *    below what was received drops the surplus from stock.
    *  - The reversal DELETES the old movements/lots rather than posting offsetting
    *    ones (like a bill's revertToDraft), so no reversing entry or audit record
    *    is written and later movements' `stockAfter` snapshots go stale. The
@@ -1591,27 +1589,34 @@ export class InventoryService {
       }
       const removed = po.items.filter((i) => !keptIds.has(i.id));
 
-      // ── Document-only guards on a received PO ──
-      if (wasReceived && !reapply) {
+      // ── Guards on a received PO (re-apply AND document-only) ──
+      // What the old movements prove arrived can never be edited away here: a
+      // received quantity only comes back out through a recorded return, and a
+      // re-apply may not invent stock the movements don't prove. So a received
+      // line can't drop below what was received, change product, or be removed.
+      if (wasReceived) {
+        const nameOf = (productId: string) =>
+          products.find((p) => p.id === productId)?.name ?? productId;
         for (const line of items) {
           const ex = line.id ? existingById.get(line.id) : undefined;
           if (!ex) continue;
           if (new Prisma.Decimal(line.qtyOrdered).lt(ex.qtyReceived)) {
             throw new BadRequestException(
-              `Cannot lower "${line.productId}" to ${line.qtyOrdered} — ${Number(ex.qtyReceived)} ` +
-                `already received on ${po.poNumber}. Re-apply inventory to correct the receipt.`,
+              `Cannot lower "${nameOf(line.productId)}" to ${line.qtyOrdered} — ${Number(ex.qtyReceived)} ` +
+                `already received on ${po.poNumber}. A received quantity can only come back out by ` +
+                `recording a return.`,
             );
           }
           if (ex.qtyReceived.gt(0) && line.productId !== ex.productId) {
             throw new BadRequestException(
-              "A received line can't change product without re-applying inventory.",
+              "A line that has been received can't change product — record a return and add a new line.",
             );
           }
         }
         for (const r of removed) {
           if (r.qtyReceived.gt(0)) {
             throw new BadRequestException(
-              "A line that has been received can't be removed without re-applying inventory.",
+              "A line that has been received can't be removed — record a return instead.",
             );
           }
         }
@@ -1628,14 +1633,14 @@ export class InventoryService {
       }
       const tenantId = this.prisma.getTenantId();
 
-      // ── Target receipt per line ──
+      // ── Received quantity per line ──
+      // Exactly what was received before — re-apply restates its COST (and
+      // supplier), never its quantity. A raised qtyOrdered or an added line is
+      // OUTSTANDING: it arrives later through the normal receive (and its
+      // over-receipt gate), which is why a RECEIVED PO can become PARTIAL here.
       const targetReceived = (line: (typeof items)[number]): Prisma.Decimal => {
-        if (!wasReceived) return new Prisma.Decimal(0);
         const ex = line.id ? existingById.get(line.id) : undefined;
-        if (!reapply) return ex ? ex.qtyReceived : new Prisma.Decimal(0);
-        const ordered = new Prisma.Decimal(line.qtyOrdered);
-        if (po.status === "RECEIVED") return ordered; // re-received in full
-        return ex ? Prisma.Decimal.min(ex.qtyReceived, ordered) : new Prisma.Decimal(0);
+        return wasReceived && ex ? ex.qtyReceived : new Prisma.Decimal(0);
       };
 
       const lineData = items.map((line) => {
@@ -1680,7 +1685,7 @@ export class InventoryService {
             create: lineData
               .filter((l) => l.line.id === undefined)
               .map((l) => ({
-                // Explicit tenantId: nested creates get none from the tenant proxy,
+                // B571: explicit tenantId - nested creates get none from the tenant proxy,
                 // and a tenant-less line is invisible to tenant-scoped item writes.
                 tenantId,
                 productId: l.line.productId,

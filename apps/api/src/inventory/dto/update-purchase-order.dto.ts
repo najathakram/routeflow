@@ -60,12 +60,14 @@ export class UpdatePurchaseOrderDto {
    * Required when `items` changes a PARTIAL/RECEIVED order — the operator must
    * say what happens to stock. `true` = reverse this PO's stock movements, lots
    * and average cost, apply the edit and re-post the receipts in ONE
-   * transaction; `false` = document-only (`qtyOrdered ≥ qtyReceived` enforced,
-   * stock and cost untouched). Ignored on DRAFT/SENT (nothing was received).
+   * transaction; `false` = document-only (stock and cost untouched). Ignored on
+   * DRAFT/SENT (nothing was received).
    *
-   * Re-applying is the operator's statement of what actually arrived: on a
-   * RECEIVED order every edited line is treated as received in full at its new
-   * quantity and cost.
+   * Either way a re-apply restates the COST (and supplier) of what was already
+   * received — never its quantity. A received line can't drop below what was
+   * received, change product or be removed (record a return instead), and a
+   * raised `qtyOrdered` or an added line is outstanding: it is received later
+   * through the normal receive, so a RECEIVED order can become PARTIAL.
    */
   @IsOptional() @IsBoolean() reapplyInventory?: boolean;
 }
