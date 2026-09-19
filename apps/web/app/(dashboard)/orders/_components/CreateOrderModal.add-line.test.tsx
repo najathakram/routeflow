@@ -166,7 +166,7 @@ describe("adding a product — typed Qty and merging (LANE-S step 10)", () => {
     ).toBe("0");
     expect(lineFor("Sample Chips").textContent).toContain("36 pcs total"); // 3 x 12
     expect(mockToast).toHaveBeenCalledWith(
-      expect.objectContaining({ description: "Sample Chips — now 3 boxes" }),
+      expect.objectContaining({ description: "Sample Chips — now 3 cases" }),
     );
   });
 
@@ -217,6 +217,8 @@ describe("typed Qty and the scan paths", () => {
     });
     await waitFor(() => expect(lineFor("Sample Cola")).toBeTruthy());
     expect(lineFor("Sample Cola").textContent).not.toContain("9");
+    // ...and the scan did not consume or wipe what the operator typed
+    expect(qtyField().value).toBe("9");
   });
 
   it("a repeated scan of the same code merges +1 and toasts", async () => {
@@ -241,5 +243,50 @@ describe("typed Qty and the scan paths", () => {
         }),
       ),
     );
+  });
+});
+
+describe("typed Qty does not outlive the builder session", () => {
+  const archivedThenPlain = () =>
+    mockResolveProductByCode
+      .mockResolvedValueOnce({ notFound: false, archived: true, product: PLAIN })
+      .mockResolvedValue({ notFound: false, archived: false, product: PLAIN });
+
+  it("REG: a qty typed for an Enter that added nothing is gone after close -> reopen", async () => {
+    archivedThenPlain();
+    const { rerender } = renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    fireEvent.change(qtyField(), { target: { value: "7" } });
+    fireEvent.change(search(), { target: { value: "100200300" } });
+    fireEvent.keyDown(search(), { key: "Enter" });
+    await waitFor(() => expect(mockResolveProductByCode).toHaveBeenCalledTimes(1));
+    expect(qtyField().value).toBe("7"); // nothing added, nothing consumed
+
+    rerender(<CreateOrderModal isOpen={false} onClose={jest.fn()} />);
+    rerender(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    expect(qtyField().value).toBe("1");
+  });
+
+  it("REG: a stale Enter qty cannot leak into the deep-link scan that reopens the builder", async () => {
+    archivedThenPlain();
+    const { rerender } = renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    fireEvent.change(qtyField(), { target: { value: "7" } });
+    fireEvent.change(search(), { target: { value: "100200300" } });
+    fireEvent.keyDown(search(), { key: "Enter" });
+    await waitFor(() => expect(mockResolveProductByCode).toHaveBeenCalledTimes(1));
+
+    rerender(<CreateOrderModal isOpen={false} onClose={jest.fn()} />);
+    rerender(<CreateOrderModal isOpen onClose={jest.fn()} initialScanCode="100200300" />);
+
+    await waitFor(() => expect(lineFor("Sample Cola")).toBeTruthy());
+    expect(lineFor("Sample Cola").textContent).not.toContain("7");
+  });
+
+  it("Enter inside the Qty field commits it and returns to the product search", () => {
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    qtyField().focus();
+    fireEvent.change(qtyField(), { target: { value: "5" } });
+    fireEvent.keyDown(qtyField(), { key: "Enter" });
+    expect(document.activeElement).toBe(search());
+    expect(qtyField().value).toBe("5");
   });
 });

@@ -51,10 +51,15 @@ export function mergeQtyIntoLine<T extends QtyLine>(line: T, n: number): T {
   return { ...line, qty: line.qty + n };
 }
 
-/** The toast body after a merge, e.g. "Sample Cola — now 3" / "Sample Cola — now 2 boxes + 3 pcs". */
+/** The toast body after a merge, e.g. "Sample Cola — now 3" / "Sample Cola — now 2 cases + 3 pcs". */
 export function mergedLineMessage(name: string, merged: QtyLine): string {
   const label = merged.unitsPerBox
-    ? formatQtySplit({ qty: merged.qty, boxes: merged.boxes, pieces: merged.pieces })
+    ? formatQtySplit({
+        qty: merged.qty,
+        boxes: merged.boxes,
+        pieces: merged.pieces,
+        boxLabel: "case", // the line row says "cases"
+      })
     : String(merged.qty);
   return `${name} — now ${label}`;
 }

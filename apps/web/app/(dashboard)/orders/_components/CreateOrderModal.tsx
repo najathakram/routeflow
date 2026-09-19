@@ -179,6 +179,11 @@ export function CreateOrderModal({
   // `addLineItem` thunk), so the typed qty rides a short-lived ref; a camera scan never sets it
   // and therefore stays +1 per scan.
   const typedQtyRef = React.useRef<{ qty: number; at: number } | null>(null);
+  /** Back to a clean quick-add: the field to 1 and no pending Enter qty. */
+  const resetAddQty = () => {
+    setAddQtyRaw("1");
+    typedQtyRef.current = null;
+  };
   // Scroll the just-scanned line into view so rapid scanning stays visible.
   const rowRefs = React.useRef<Map<string, HTMLLIElement>>(new Map());
   const [scrollToId, setScrollToId] = React.useState<string | null>(null);
@@ -289,7 +294,9 @@ export function CreateOrderModal({
     addLineItem: (product) => {
       const typed = typedQtyRef.current;
       typedQtyRef.current = null;
-      addLineItem(product, typed && Date.now() - typed.at < 5000 ? typed.qty : 1);
+      const fresh = !!typed && Date.now() - typed.at < 5000;
+      addLineItem(product, fresh ? typed!.qty : 1);
+      if (fresh) setAddQtyRaw("1"); // the typed qty was used — a scan that ignored it leaves it alone
     },
     onUnknownCode: (code) => {
       setCreateProductInitialName("");
@@ -337,6 +344,7 @@ export function CreateOrderModal({
     setCustomName("");
     setCustomPrice("");
     setCustomQty("1");
+    resetAddQty();
     setCustomError("");
     setRequestedDeliveryDate("");
     setOrderDate("");
@@ -427,7 +435,6 @@ export function CreateOrderModal({
 
   const addLineItem = (product: any, addQty = 1) => {
     const n = parseAddQty(addQty);
-    setAddQtyRaw("1");
     // Already in the list: MERGE (sum) into that line instead of adding a duplicate — +1 for a
     // scan / plain pick, +N for a typed qty. Box-aware: a case-packed line gains N cases and its
     // qty is re-derived from boxes/pieces (pricing reads the split, not `qty`).
@@ -502,6 +509,12 @@ export function CreateOrderModal({
     setTimeout(() => productSearchRef.current?.focus(), 50);
   };
 
+  /** A pick from the search dropdown: applies the typed Qty, then clears it. */
+  const addPicked = (product: any) => {
+    addLineItem(product, parseAddQty(addQtyRaw));
+    setAddQtyRaw("1");
+  };
+
   const removeLineItem = (tempId: string) => {
     setLineItems((prev) => prev.filter((li) => li.tempId !== tempId));
   };
@@ -545,6 +558,7 @@ export function CreateOrderModal({
     setCustomName("");
     setCustomPrice("");
     setCustomQty("1");
+    resetAddQty();
     setCustomError("");
   };
 
@@ -777,6 +791,7 @@ export function CreateOrderModal({
       setCustomName("");
       setCustomPrice("");
       setCustomQty("1");
+      resetAddQty();
       setCustomError("");
     }
     setTimeout(() => productSearchRef.current?.focus(), 0);
@@ -1224,9 +1239,15 @@ export function CreateOrderModal({
                 value={addQtyRaw}
                 onChange={(e) => setAddQtyRaw(e.target.value)}
                 onFocus={(e) => e.target.select()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    productSearchRef.current?.focus(); // commit the qty, move on to the search
+                  }
+                }}
                 aria-label="Quantity to add"
                 title="Quantity to add (cases for case-packed products)"
-                className="h-10 w-14 shrink-0 rounded border border-surface-border bg-white px-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                className="h-10 w-14 shrink-0 rounded border border-surface-border bg-white px-1 text-center text-sm font-semibold text-navy [appearance:textfield] focus:outline-none focus:ring-2 focus:ring-brand-500 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
               />
               <BarcodeScannerButton
                 inputRef={productSearchRef}
@@ -1264,7 +1285,7 @@ export function CreateOrderModal({
                                   // clean up by hand, reading as "choosing does
                                   // nothing". Scan of the same code has always
                                   // incremented; clicking now matches it.
-                                  addLineItem(p, parseAddQty(addQtyRaw));
+                                  addPicked(p);
                                 }
                               }}
                               className={cn(
@@ -1312,7 +1333,7 @@ export function CreateOrderModal({
                                 <li key={v.id} className="bg-surface-raised/50">
                                   <button
                                     type="button"
-                                    onClick={() => addLineItem(v, parseAddQty(addQtyRaw))}
+                                    onClick={() => addPicked(v)}
                                     className={cn(
                                       "flex w-full items-center justify-between pl-8 pr-3 py-2 text-left text-sm text-navy hover:bg-surface-raised",
                                       variantAdded && "opacity-40",
