@@ -68,6 +68,7 @@ import { MSRP_ADDON } from "@/lib/api/addons";
 import { CropModal } from "./CropModal";
 import { DemandCard } from "./DemandCard";
 import { SalesHistoryCard } from "./SalesHistoryCard";
+import { ProductUnitsCard } from "./ProductUnitsCard";
 import { ImageLightbox } from "./ImageLightbox";
 import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
 
@@ -1515,7 +1516,10 @@ export default function ProductDetailPage() {
                       <button
                         onClick={cancelEdit}
                         title="Cancel"
-                        className={cn(TAP_TARGET, "rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors")}
+                        className={cn(
+                          TAP_TARGET,
+                          "rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors",
+                        )}
                       >
                         <X className="h-4 w-4" />
                       </button>
@@ -1533,7 +1537,10 @@ export default function ProductDetailPage() {
                       <button
                         onClick={startEdit}
                         title="Edit product"
-                        className={cn(TAP_TARGET, "rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors")}
+                        className={cn(
+                          TAP_TARGET,
+                          "rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors",
+                        )}
                       >
                         <Pencil className="h-4 w-4" />
                       </button>
@@ -2386,6 +2393,10 @@ export default function ProductDetailPage() {
               </div>
             )}
 
+            {/* Multi-level units (units_v1) — renders nothing unless the tenant is granted
+                flag.units_v1. Own file: this page is already ~2.9k lines. */}
+            <ProductUnitsCard product={product} />
+
             {/* Sales demand — real data from invoiced sales. In its own file (unlike
                 CostHistoryCard below) because it owns range/metric state and five
                 render states; this file is already ~2.7k lines. */}
@@ -2498,7 +2509,10 @@ export default function ProductDetailPage() {
                               <button
                                 onClick={startEdit}
                                 title="Edit this product"
-                                className={cn(TAP_TARGET, "rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors")}
+                                className={cn(
+                                  TAP_TARGET,
+                                  "rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors",
+                                )}
                               >
                                 <Pencil className="h-3.5 w-3.5" />
                               </button>
@@ -2539,7 +2553,10 @@ export default function ProductDetailPage() {
                                   <button
                                     onClick={() => openVariantModal(variant)}
                                     title="Edit variant"
-                                    className={cn(TAP_TARGET, "rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors")}
+                                    className={cn(
+                                      TAP_TARGET,
+                                      "rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors",
+                                    )}
                                   >
                                     <Pencil className="h-3.5 w-3.5" />
                                   </button>
