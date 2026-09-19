@@ -51,8 +51,9 @@ interface PoTotalInput {
 
 /**
  * The total to show on a PO row. Prefers the server-stored total (the agreed money); when it is
- * missing or zero, falls back to the rounded sum of the lines — the same rule the detail screen
- * uses (`Number(po.totalAmount) || computedTotal`). The stored total is coerced with `Number()`:
+ * missing or not positive, falls back to the rounded sum of the lines — the detail screen's
+ * `Number(po.totalAmount) || computedTotal` rule, except that a negative stored total also falls
+ * back here (unreachable today: costs are validated >= 0). The stored total is coerced with `Number()`:
  * the list used to guard with `Number.isFinite(<string>)`, which is false for "123.45", so every
  * PO with a server total rendered $0.00.
  */
