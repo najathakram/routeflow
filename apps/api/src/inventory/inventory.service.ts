@@ -1276,13 +1276,13 @@ export class InventoryService {
     qty: number | Prisma.Decimal,
     userId: string,
     /**
-     * When the goods were originally received. A re-apply passes the ORIGINAL
-     * receipt date so the movement/lot keep their place in dated reports (the
-     * tobacco report sums PURCHASE movements by createdAt; FIFO/LIFO orders lots
-     * by purchaseDate) - re-posting at now() would move an already-reported
-     * receipt into the current period. Defaults to now (a fresh receive).
+     * The purchase date of the LOT — a re-apply passes the original lot's date so
+     * the re-created lot keeps its place in FIFO/LIFO order. The movement itself is
+     * always dated now: the original PURCHASE stays in its own period (the reversal
+     * compensates it rather than deleting it), and the correction lands today.
+     * Defaults to now (a fresh receive).
      */
-    receivedAt?: Date,
+    lotPurchaseDate?: Date,
   ) {
     const qtyReceived = new Prisma.Decimal(qty);
     // The PO line's cost basis is a property of the STORED row, never of the
@@ -1314,7 +1314,6 @@ export class InventoryService {
         supplierId: po.supplierId,
         reference: po.poNumber,
         performedById: userId,
-        ...(receivedAt ? { createdAt: receivedAt } : {}),
       },
     });
 
@@ -1322,7 +1321,7 @@ export class InventoryService {
     await tx.stockLot.create({
       data: {
         productId: item.productId,
-        purchaseDate: receivedAt ?? new Date(),
+        purchaseDate: lotPurchaseDate ?? new Date(),
         qty: qtyReceived,
         remainingQty: qtyReceived,
         unitCost: itemUnitCost,
@@ -1342,21 +1341,41 @@ export class InventoryService {
   }
 
   /**
+   * Notes prefix on the compensating movement a re-apply writes for each receipt it
+   * reverses — the rest of the note is the id of the PURCHASE movement it reverses,
+   * which is how a LATER re-apply tells reversed receipts from live ones.
+   */
+  private static readonly PO_REVERSAL_NOTE = "PO edit reversal — reverses ";
+
+  /**
    * Undo every stock effect of a purchase order's receipts — the whole-document
-   * reverse the re-apply leg of {@link updatePurchaseOrder} starts from. Mirrors
-   * `VendorBillsService.revertToDraft` (+ `reverseBillLots`): the PURCHASE
-   * movements carrying `reference = poNumber` are the truth of what was posted,
-   * so they are reversed newest-first through {@link reverseAverageCost} and
-   * deleted, and the lots are surrendered.
+   * reverse the re-apply leg of {@link updatePurchaseOrder} starts from.
    *
-   * Refuses (BadRequest) when the movements do not add up to the lines'
-   * `qtyReceived` per product — a legacy or hand-edited PO whose stock effect
-   * cannot be reconstructed must be edited document-only, never re-applied on
-   * top of an unknown baseline (that would double- or under-count stock).
+   * The ledger is never edited: each live PURCHASE movement (`reference = poNumber`)
+   * is compensated by a costed NEGATIVE ADJUSTMENT — the same shape
+   * `VendorBillsService.voidBill` writes, which the cost-recompute replay already
+   * understands as the exact inverse of a purchase — so the original receipt stays
+   * in its own period and there is an audit trail of the correction. The average is
+   * reversed newest-first through {@link reverseAverageCost}.
    *
-   * Accepted approximation (plan risk 1): if sales happened since the receipt
-   * the restated average is approximate and stock may pass through a lower value
-   * inside the transaction — exactly what a bill's revertToDraft does today.
+   * REFUSES, before anything is written, when:
+   *  - a product is regulated (`trackedCategoryId`) — regulated purchase reports sum
+   *    PURCHASE movements, so a compensated-and-reposted receipt would be counted
+   *    twice; edit it document-only;
+   *  - any of the PO's lots is partly consumed (FIFO/LIFO) — B583: surrendering only
+   *    what remains and then re-creating a full-size lot would INFLATE the lot pool
+   *    by what was already sold; the consumed part can't be un-sold, so the caller
+   *    gets a 409 and the document-only edit;
+   *  - the live movements don't add up to the lines' `qtyReceived` per product — a
+   *    legacy or hand-edited PO whose stock effect cannot be reconstructed must not
+   *    be re-applied on top of an unknown baseline.
+   *
+   * Accepted approximation (plan risk 1): if sales happened since the receipt the
+   * restated average is approximate and stock may pass through a lower value inside
+   * the transaction — exactly what a bill's revertToDraft does today.
+   *
+   * Returns the original purchase date of each product's lot, so the re-posted lot
+   * keeps its place in FIFO/LIFO order.
    */
   private async reversePoReceipts(
     tx: Prisma.TransactionClient,
@@ -1364,12 +1383,41 @@ export class InventoryService {
       poNumber: string;
       items: { productId: string; qtyReceived: Prisma.Decimal }[];
     },
-  ) {
+    userId: string,
+  ): Promise<Map<string, Date>> {
     const productIds = [...new Set(po.items.map((i) => i.productId))];
+
+    // ── Refuse first: nothing below runs unless every check passes ──
+    const regulated = await tx.product.findFirst({
+      where: { id: { in: productIds }, trackedCategoryId: { not: null } },
+      select: { name: true },
+    });
+    if (regulated) {
+      throw new BadRequestException(
+        `"${regulated.name}" is a regulated product, so ${po.poNumber}'s inventory can't be re-applied — ` +
+          "regulated purchase reports read the original receipt. Save the edit as document-only instead.",
+      );
+    }
+
+    const lots = await tx.stockLot.findMany({
+      where: { reference: po.poNumber, productId: { in: productIds } },
+    });
+    const consumedLots = lots.filter((l) => new Prisma.Decimal(l.remainingQty).lt(l.qty));
+    if (consumedLots.length > 0) {
+      throw new ConflictException({
+        code: "PO_LOT_PARTIALLY_CONSUMED",
+        message:
+          `Part of what was received on ${po.poNumber} has already been sold or used (FIFO/LIFO lot ` +
+          "partially consumed), so its inventory can't be re-applied — that would invent stock. " +
+          "Save the edit as document-only (keep stock as is), or record a return.",
+        lotIds: consumedLots.map((l) => l.id),
+      });
+    }
+
     const movements = await tx.stockMovement.findMany({
       where: {
         reference: po.poNumber,
-        type: MovementType.PURCHASE,
+        type: { in: [MovementType.PURCHASE, MovementType.ADJUSTMENT] },
         productId: { in: productIds },
       },
       // id as the tiebreak: two movements of one receive share a transaction-time
@@ -1377,9 +1425,20 @@ export class InventoryService {
       // order-sensitive.
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     });
+    const prefix = InventoryService.PO_REVERSAL_NOTE;
+    const reversedIds = new Set<string>();
+    for (const m of movements) {
+      if (m.type === MovementType.ADJUSTMENT && m.notes?.startsWith(prefix)) {
+        reversedIds.add(m.notes.slice(prefix.length).trim());
+      }
+    }
+    // Live receipts: PURCHASE movements a previous re-apply hasn't already compensated.
+    const live = movements.filter(
+      (m) => m.type === MovementType.PURCHASE && !reversedIds.has(m.id),
+    );
 
     const posted = new Map<string, Prisma.Decimal>();
-    for (const m of movements) {
+    for (const m of live) {
       posted.set(m.productId, (posted.get(m.productId) ?? new Prisma.Decimal(0)).add(m.quantity));
     }
     const lineTotals = new Map<string, Prisma.Decimal>();
@@ -1400,8 +1459,9 @@ export class InventoryService {
       }
     }
 
-    const byProduct = new Map<string, typeof movements>();
-    for (const m of movements) {
+    // ── Compensate, newest receipt first ──
+    const byProduct = new Map<string, typeof live>();
+    for (const m of live) {
       const list = byProduct.get(m.productId) ?? [];
       list.push(m);
       byProduct.set(m.productId, list);
@@ -1427,6 +1487,20 @@ export class InventoryService {
         }
         stock = stock.sub(m.quantity);
         totalQty = totalQty.add(m.quantity);
+        await tx.stockMovement.create({
+          data: {
+            productId,
+            type: MovementType.ADJUSTMENT,
+            quantity: new Prisma.Decimal(m.quantity).negated(),
+            unitCost: m.unitCost,
+            avgCostAfter: tracksAverage ? avg : (product.averageCost ?? null),
+            stockAfter: stock,
+            supplierId: m.supplierId,
+            reference: po.poNumber,
+            notes: `${prefix}${m.id}`,
+            performedById: userId,
+          },
+        });
       }
       // Write the average only when the reversal actually moved it — writing the
       // unchanged value back would clobber a concurrent cost update for nothing.
@@ -1441,52 +1515,17 @@ export class InventoryService {
       });
     }
 
-    if (movements.length > 0) {
-      await tx.stockMovement.deleteMany({ where: { id: { in: movements.map((m) => m.id) } } });
+    // ── Lots: every one is untouched (checked above), so each is reversed by its
+    // full original qty — deleted — and re-created by the re-post. ──
+    if (lots.length > 0) {
+      await tx.stockLot.deleteMany({ where: { id: { in: lots.map((l) => l.id) } } });
     }
-    await this.reversePoLots(tx, po.poNumber, productIds);
-
-    // The original receipt date per product (earliest movement) - handed back so
-    // the re-post keeps the receipt in the period it was first reported in.
-    const receiptDates = new Map<string, Date>();
-    for (const m of movements) {
-      const seen = receiptDates.get(m.productId);
-      if (!seen || m.createdAt < seen) receiptDates.set(m.productId, m.createdAt);
+    const lotDates = new Map<string, Date>();
+    for (const l of lots) {
+      const seen = lotDates.get(l.productId);
+      if (!seen || l.purchaseDate < seen) lotDates.set(l.productId, l.purchaseDate);
     }
-    return receiptDates;
-  }
-
-  /**
-   * Remove the StockLots a PO's receipts created (reference = poNumber).
-   * Untouched lots are deleted outright; partially-consumed lots can only
-   * surrender what remains, so they are zeroed and annotated — the same rule
-   * `VendorBillsService.reverseBillLots` applies to a bill's lots.
-   */
-  private async reversePoLots(
-    tx: Prisma.TransactionClient,
-    poNumber: string,
-    productIds: string[],
-  ) {
-    // Filtered by product as well as reference: reference is free text a manual
-    // purchase can also set, and another product's lot must never be surrendered.
-    const lots = await tx.stockLot.findMany({
-      where: { reference: poNumber, productId: { in: productIds } },
-    });
-    for (const lot of lots) {
-      const remaining = new Prisma.Decimal(lot.remainingQty);
-      if (remaining.gte(new Prisma.Decimal(lot.qty))) {
-        await tx.stockLot.delete({ where: { id: lot.id } });
-      } else {
-        const consumed = new Prisma.Decimal(lot.qty).sub(remaining);
-        await tx.stockLot.update({
-          where: { id: lot.id },
-          data: {
-            remainingQty: 0,
-            notes: `${lot.notes ? `${lot.notes} ` : ""}(PO edited; ${consumed.toString()} already consumed)`,
-          },
-        });
-      }
-    }
+    return lotDates;
   }
 
   /**
@@ -1514,10 +1553,13 @@ export class InventoryService {
    * so is every receive, so an edit can't interleave with a receipt of the same PO.
    *
    * Accepted by the plan (risks 1 and 5), stated here so nobody rediscovers them:
-   *  - The reversal DELETES the old movements/lots rather than posting offsetting
-   *    ones (like a bill's revertToDraft), so no reversing entry or audit record
-   *    is written and later movements' `stockAfter` snapshots go stale. The
-   *    re-post keeps the ORIGINAL receipt date so dated reports don't shift.
+   *  - The reversal COMPENSATES rather than deletes: each live PURCHASE movement gets
+   *    a costed negative ADJUSTMENT (as a bill void does), so the ledger keeps the
+   *    audit trail and the original receipt stays in its own period; the re-post is
+   *    dated now, and the re-created lot keeps its original purchase date.
+   *  - REFUSED (nothing written): a regulated product, a partly-consumed FIFO/LIFO
+   *    lot (409 PO_LOT_PARTIALLY_CONSUMED — re-applying would invent the stock that
+   *    was already sold, B583), or movements that don't add up to the lines.
    *  - `items` is a full replacement: a line left out of the payload is removed.
    */
   async updatePurchaseOrder(id: string, dto: UpdatePurchaseOrderDto, userId: string) {
@@ -1623,13 +1665,13 @@ export class InventoryService {
       }
 
       // ── Reverse (re-apply only) ──
-      let receiptDates = new Map<string, Date>();
+      let lotDates = new Map<string, Date>();
       if (reapply) {
         await this.lockProducts(tx, [
           ...po.items.map((i) => i.productId),
           ...items.map((l) => l.productId),
         ]);
-        receiptDates = await this.reversePoReceipts(tx, po);
+        lotDates = await this.reversePoReceipts(tx, po, userId);
       }
       const tenantId = this.prisma.getTenantId();
 
@@ -1713,7 +1755,7 @@ export class InventoryService {
             prod,
             l.qtyReceived,
             userId,
-            receiptDates.get(l.line.productId),
+            lotDates.get(l.line.productId),
           );
           restockedProductIds.push(l.line.productId);
         }
