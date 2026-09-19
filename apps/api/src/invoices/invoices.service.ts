@@ -3409,9 +3409,13 @@ export class InvoicesService {
       throw new BadRequestException("Only DRAFT invoices can be edited");
     await this.assertOrderInvoiceUnlocked(inv);
 
-    if (dto.items) {
-      // units_v1: replaces every line re-split against the LIVE pack — refuse on a unit-aware one.
+    // units_v1: BOTH rewrite paths — the item replace (re-split at the LIVE pack) and the
+    // discount/shipping recompute, whose order back-sync writes onto the linked order's lines.
+    if (dto.items || dto.discount !== undefined || dto.shippingFee !== undefined) {
       await unitAware.assertInvoiceRewriteAllowed(this.prisma.forTenant(), inv);
+    }
+
+    if (dto.items) {
       // Pre-fetch products for boxes/pieces resolution AND the regulated-category
       // snapshot (so an edited DRAFT re-attributes its regulated lines).
       const productIds = [
@@ -6194,6 +6198,11 @@ export class InvoicesService {
         `Cannot adjust prices on a ${invoice.status} invoice. Issue a credit note instead.`,
       );
     }
+    // units_v1: a bulk price is keyed by productId (a Case price would land on pack lines). The
+    // SINGLE scope only re-prices this invoice's own lines in place, off each line's own numbers.
+    if (dto.scope !== "SINGLE") {
+      unitAware.assertNoUnitAwareLines(invoice.items, "re-priced across invoices");
+    }
 
     // F03/R3: category (excise) tax follows the customer's exemption exactly like
     // the regular sales tax — foldCategoryTax zeroes every line's snapshot at creation
@@ -6377,8 +6386,6 @@ export class InvoicesService {
       if (!dto.sinceDate) throw new BadRequestException("sinceDate is required for bulk scope");
 
       // Build productId → newUnitPrice map from this invoice (to apply same price to same product elsewhere)
-      // units_v1: a bulk price is keyed by productId (a Case price would land on pack lines).
-      unitAware.assertNoUnitAwareLines(invoice.items, "re-priced across invoices");
       const productPriceMap = new Map<string, number>();
       for (const [itemId, newPrice] of priceMap.entries()) {
         const productId = productIdMap.get(itemId);

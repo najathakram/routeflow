@@ -15,48 +15,24 @@ import { FilterChipRow, NavAction, NavBackButton, NavBar, Pill } from "@routeflo
 import {
   useOpenPurchaseOrders,
   usePurchaseOrders,
-  type POStatus,
   type PurchaseOrder,
 } from "../../../lib/api/purchase-orders";
 import { fmtCalendarDate } from "../../../lib/format-date";
-
-const FILTERS = [
-  { id: "ALL", label: "All" },
-  { id: "OPEN", label: "Open" },
-  { id: "RECEIVED", label: "Received" },
-] as const;
-
-type FilterId = (typeof FILTERS)[number]["id"];
-
-function statusPill(status: POStatus): {
-  variant: "brand" | "green" | "orange" | "red" | "gray";
-  label: string;
-} {
-  switch (status) {
-    case "DRAFT":
-      return { variant: "gray", label: "Draft" };
-    case "SENT":
-      return { variant: "orange", label: "Sent" };
-    case "PARTIAL":
-      return { variant: "brand", label: "Partial" };
-    case "RECEIVED":
-      return { variant: "green", label: "Received" };
-    case "CLOSED":
-      return { variant: "gray", label: "Closed" };
-    default:
-      return { variant: "gray", label: status };
-  }
-}
-
-function fmtCurrency(n: number | undefined): string {
-  return `$${(Number.isFinite(n ?? 0) ? (n ?? 0) : 0).toFixed(2)}`;
-}
+import {
+  PO_FILTERS,
+  formatPoMoney,
+  poDisplayTotal,
+  poFilterFromLabel,
+  poListStatusParam,
+  poStatusPill,
+  type PoFilterId,
+} from "../../../lib/po-list-logic";
 
 export default function PurchaseOrdersListScreen() {
   const router = useRouter();
-  const [filter, setFilter] = useState<FilterId>("ALL");
+  const [filter, setFilter] = useState<PoFilterId>("ALL");
 
-  const allQuery = usePurchaseOrders(filter === "RECEIVED" ? "RECEIVED" : undefined);
+  const allQuery = usePurchaseOrders(poListStatusParam(filter));
   const openQuery = useOpenPurchaseOrders();
 
   const activeQuery = filter === "OPEN" ? openQuery : allQuery;
@@ -77,11 +53,9 @@ export default function PurchaseOrdersListScreen() {
         }
       />
       <FilterChipRow
-        chips={FILTERS.map((f) => ({ label: f.label }))}
-        value={FILTERS.find((f) => f.id === filter)?.label ?? "All"}
-        onChange={(label) =>
-          setFilter((FILTERS.find((f) => f.label === label)?.id as FilterId) ?? "ALL")
-        }
+        chips={PO_FILTERS.map((f) => ({ label: f.label }))}
+        value={PO_FILTERS.find((f) => f.id === filter)?.label ?? "All"}
+        onChange={(label) => setFilter(poFilterFromLabel(label))}
       />
       <ScrollView
         showsVerticalScrollIndicator={false}
@@ -114,7 +88,7 @@ export default function PurchaseOrdersListScreen() {
 }
 
 function PORow({ po, onPress }: { po: PurchaseOrder; onPress: () => void }) {
-  const s = statusPill(po.status);
+  const s = poStatusPill(po.status);
   const expectedLabel = po.expectedDate ? `Expected ${fmtCalendarDate(po.expectedDate)}` : null;
 
   return (
@@ -134,12 +108,7 @@ function PORow({ po, onPress }: { po: PurchaseOrder; onPress: () => void }) {
         </Pill>
       </View>
       <View style={styles.rowFoot}>
-        <Text style={styles.total}>
-          {fmtCurrency(
-            po.totalAmount ??
-              po.items.reduce((s, i) => s + Number(i.qtyOrdered) * Number(i.unitCost), 0),
-          )}
-        </Text>
+        <Text style={styles.total}>{formatPoMoney(poDisplayTotal(po))}</Text>
         <Text style={styles.itemCount}>
           {po.items.length} item{po.items.length !== 1 ? "s" : ""}
         </Text>
