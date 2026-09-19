@@ -53,6 +53,7 @@ import {
   RouteRunStopStatus,
 } from "@prisma/client";
 import { ListOrdersDto } from "./dto/list-orders.dto";
+import { nextOrderNumberFor } from "./order-number";
 import * as unitAware from "./unit-aware-guard";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
 import {
@@ -2548,6 +2549,12 @@ export class OrdersService implements OnApplicationBootstrap {
       try {
         order = await this.prisma.tenantTransaction(
           async (tx) => {
+            // RF-014: generate the order number inside the transaction so a P2002 on
+            // @@unique([tenantId, orderNumber]) is retried with a fresh value. B587: the NUMERIC
+            // maximum over conforming `ORD-<digits>` numbers only (see order-number.ts). Minted BEFORE the
+            // product-row locks below: the scan is O(tenant orders), so it must not run under them.
+            const orderNumber = await nextOrderNumberFor(tx, this.prisma.getTenantId());
+
             // RF-017: stock validation — only for non-draft orders that have items.
             // Lock product rows first so concurrent requests serialise here.
             // Operators (and TENANT_ADMINs) are explicitly allowed to oversell — they may
@@ -2564,19 +2571,6 @@ export class OrdersService implements OnApplicationBootstrap {
               // second implementation of the lock/oversell-check/decrement).
               await this.decrementStockForSale(tx, stockLines, isStaffRole);
             }
-
-            // RF-014: generate order number inside the transaction so a P2002 on
-            // the @@unique([tenantId, orderNumber]) constraint can be caught and
-            // retried with a fresh sequence value.
-            const lastOrder = await tx.order.findFirst({
-              where: { orderNumber: { startsWith: "ORD-" } },
-              orderBy: { orderNumber: "desc" },
-              select: { orderNumber: true },
-            });
-            const seq = lastOrder?.orderNumber
-              ? parseInt(lastOrder.orderNumber.replace("ORD-", ""), 10) + 1
-              : 1;
-            const orderNumber = `ORD-${String(Number.isFinite(seq) ? seq : 1).padStart(5, "0")}`;
 
             return tx.order.create({
               data: {
