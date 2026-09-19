@@ -53,6 +53,7 @@ import {
   RouteRunStopStatus,
 } from "@prisma/client";
 import { ListOrdersDto } from "./dto/list-orders.dto";
+import { nextOrderNumberFor } from "./order-number";
 import * as unitAware from "./unit-aware-guard";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
 import {
@@ -2565,18 +2566,10 @@ export class OrdersService implements OnApplicationBootstrap {
               await this.decrementStockForSale(tx, stockLines, isStaffRole);
             }
 
-            // RF-014: generate order number inside the transaction so a P2002 on
-            // the @@unique([tenantId, orderNumber]) constraint can be caught and
-            // retried with a fresh sequence value.
-            const lastOrder = await tx.order.findFirst({
-              where: { orderNumber: { startsWith: "ORD-" } },
-              orderBy: { orderNumber: "desc" },
-              select: { orderNumber: true },
-            });
-            const seq = lastOrder?.orderNumber
-              ? parseInt(lastOrder.orderNumber.replace("ORD-", ""), 10) + 1
-              : 1;
-            const orderNumber = `ORD-${String(Number.isFinite(seq) ? seq : 1).padStart(5, "0")}`;
+            // RF-014: generate the order number inside the transaction so a P2002 on
+            // @@unique([tenantId, orderNumber]) is retried with a fresh value. B587: the NUMERIC
+            // maximum over conforming `ORD-<digits>` numbers only (see order-number.ts).
+            const orderNumber = await nextOrderNumberFor(tx, this.prisma.getTenantId());
 
             return tx.order.create({
               data: {
