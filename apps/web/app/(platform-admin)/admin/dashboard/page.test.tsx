@@ -50,6 +50,20 @@ describe("AdminDashboardPage — MRR card (T14-5/6/7, R27)", () => {
     expect(screen.queryByText(/est\. mrr/i)).not.toBeInTheDocument();
   });
 
+  // B536: the card's subtitle must state what totalUsers counts (staff only, not
+  // every buyer-portal customer login) — the owner's core complaint was a number
+  // with no stated meaning. Pins the label so it can't silently regress to the old,
+  // ambiguous "Across all workspaces" text.
+  it("B536: Total Users card states it counts staff accounts", async () => {
+    mockStatsAndGrowth(baseStats({ totalUsers: 7 }));
+
+    render(<AdminDashboardPage />);
+
+    expect(await screen.findByText("Total Users")).toBeInTheDocument();
+    expect(screen.getByText("Staff accounts across all workspaces")).toBeInTheDocument();
+    expect(screen.queryByText("Across all workspaces")).not.toBeInTheDocument();
+  });
+
   it("T14-6: renders no diff badge when mrr and ledgerMrr are equal", async () => {
     mockStatsAndGrowth(baseStats({ mrr: 499, ledgerMrr: 499 }));
 
