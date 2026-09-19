@@ -63,3 +63,35 @@ describe("computeEffectiveCategoryIds", () => {
     });
   });
 });
+
+describe("grandchild opt-out on a 3-level chain [GP carries a ← P has no labels ← G] (review MAJOR 2)", () => {
+  // Engine behaviour is pinned here, not changed: the write side must validate/pin (see the
+  // OPT-OUT CONTRACT in effective-labels.ts); the engine honours only what the pin says.
+  const GP = link("GP", inc("a"));
+  const P = link("P");
+
+  it("(i) pinned to the IMMEDIATE parent P: removes the label G inherits through P from GP", () => {
+    expect(ids([GP, P, link("G", exc("a", "P"))])).toEqual([]);
+  });
+
+  it("(ii) pinned to GP (a NON-immediate ancestor): INERT — the label stays", () => {
+    expect(ids([GP, P, link("G", exc("a", "GP"))])).toEqual(["a"]);
+  });
+
+  it("(iii) unpinned (null and absent): INERT", () => {
+    expect(ids([GP, P, link("G", exc("a", null))])).toEqual(["a"]);
+    expect(ids([GP, P, link("G", exc("a"))])).toEqual(["a"]);
+  });
+
+  it("(iv) reparented under P2, which ALSO inherits a: the pin (P) no longer matches → INERT", () => {
+    expect(ids([GP, link("P2"), link("G", exc("a", "P"))])).toEqual(["a"]);
+  });
+
+  it("an opt-out only removes ITS label: another inherited label survives a matching pin", () => {
+    expect(ids([link("GP", inc("a"), inc("b")), P, link("G", exc("a", "P"))])).toEqual(["b"]);
+  });
+
+  it("the engine does not validate: a matching-pin opt-out of a label the parent never carried is a harmless no-op", () => {
+    expect(ids([link("GP", inc("b")), P, link("G", exc("a", "P"))])).toEqual(["b"]);
+  });
+});
