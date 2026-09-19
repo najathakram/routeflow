@@ -259,10 +259,16 @@ export class FeatureOverrideService {
    * Row-by-row with the tenant in the write's `where` for the same cross-tenant reason as
    * `revoke()`; a P2025 (a human revoked it between select and write) is a skip, not an error.
    * Capped per call, oldest `expiresAt` first, so a backlog drains FIFO across nightly ticks.
+   * `graceMs` (default 0) only takes rows expired at least that long ago — the sweep job uses it
+   * to leave every row for the review job to flag first (see EXPIRY_GRACE_MS).
    */
-  async revokeExpired(now: Date = new Date(), limit = 500): Promise<RevokedExpiredRow[]> {
+  async revokeExpired(
+    now: Date = new Date(),
+    { limit = 500, graceMs = 0 }: { limit?: number; graceMs?: number } = {},
+  ): Promise<RevokedExpiredRow[]> {
+    const cutoff = new Date(now.getTime() - graceMs);
     const due = await this.prisma.tenantFeatureOverride.findMany({
-      where: { revokedAt: null, expiresAt: { not: null, lte: now } },
+      where: { revokedAt: null, expiresAt: { not: null, lte: cutoff } },
       orderBy: { expiresAt: "asc" },
       take: limit,
       select: {

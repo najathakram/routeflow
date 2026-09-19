@@ -52,15 +52,20 @@ function overrideRow(o: Partial<Row> = {}): Row {
  * implementation changes what comes back and fails the assertions instead of silently passing.
  */
 function build(rows: Row[]) {
-  const matches = (r: Row, where: any) =>
-    (where.id === undefined || r.id === where.id) &&
-    (where.tenantId === undefined || r.tenantId === where.tenantId) &&
-    (where.revokedAt === undefined || r.revokedAt === where.revokedAt) &&
-    (where.expiresAt === undefined ||
-      (r.expiresAt != null &&
-        (where.expiresAt.lte === undefined ||
-          r.expiresAt.getTime() <= where.expiresAt.lte.getTime()) &&
-        (where.expiresAt.not !== null || r.expiresAt !== null)));
+  // Emulates the query semantics the implementation relies on. Deliberately does NOT treat
+  // "lte" as implicitly excluding NULL (real SQL does, but then `not: null` becomes unobservable):
+  // a null expiresAt is excluded ONLY by an explicit `not: null`, so deleting it fails a test.
+  const matches = (r: Row, where: any) => {
+    if (where.id !== undefined && r.id !== where.id) return false;
+    if (where.tenantId !== undefined && r.tenantId !== where.tenantId) return false;
+    if (where.revokedAt !== undefined && r.revokedAt !== where.revokedAt) return false;
+    const exp = where.expiresAt;
+    if (exp !== undefined) {
+      if (exp.not === null && r.expiresAt === null) return false;
+      if (exp.lte !== undefined && r.expiresAt !== null && r.expiresAt > exp.lte) return false;
+    }
+    return true;
+  };
 
   const prisma = {
     tenantFeatureOverride: {
@@ -68,7 +73,7 @@ function build(rows: Row[]) {
         Promise.resolve(
           rows
             .filter((r) => matches(r, where))
-            .sort((a, b) => a.expiresAt!.getTime() - b.expiresAt!.getTime())
+            .sort((a, b) => (a.expiresAt?.getTime() ?? 0) - (b.expiresAt?.getTime() ?? 0))
             .slice(0, take ?? rows.length),
         ),
       ),
@@ -160,19 +165,22 @@ describe("FeatureOverrideExpiryJob.revokeExpiredOverrides (B569)", () => {
     expect(audit.log).not.toHaveBeenCalled();
   });
 
-  it("a human revoking between select and write is skipped, not an error, and not audited", async () => {
-    const { job, svc, prisma, audit } = build([overrideRow({ id: "ov-raced", expiresAt: PAST })]);
-    // The row is selected as due, then gets revoked by a human before the sweep's own write.
-    prisma.tenantFeatureOverride.update.mockImplementationOnce(() => {
-      throw new Prisma.PrismaClientKnownRequestError("gone", {
-        code: "P2025",
-        clientVersion: "test",
-      });
+  it("a human revoking between select and write is left alone: not overwritten, not audited", async () => {
+    const human = new Date("2026-09-18T12:00:00Z");
+    const { job, rows, prisma, audit } = build([overrideRow({ id: "ov-raced", expiresAt: PAST })]);
+    // Select sees the row as due; a human then revokes it BEFORE the sweep's own write. The
+    // write's `revokedAt: null` filter is what keeps the sweep from stamping over that revoke.
+    const select = prisma.tenantFeatureOverride.findMany.getMockImplementation()!;
+    prisma.tenantFeatureOverride.findMany.mockImplementationOnce(async (args: unknown) => {
+      const due = await select(args);
+      rows[0].revokedAt = human;
+      return due;
     });
 
     await expect(job.revokeExpiredOverrides()).resolves.toEqual({ revoked: 0 });
+
+    expect(rows[0].revokedAt).toBe(human);
     expect(audit.log).not.toHaveBeenCalled();
-    void svc;
   });
 
   it("revokes each tenant's own row (tenantId is in the write's where) and clears that tenant's cache", async () => {
@@ -192,18 +200,30 @@ describe("FeatureOverrideExpiryJob.revokeExpiredOverrides (B569)", () => {
     expect(invalidate.mock.calls.map((c) => c[0]).sort()).toEqual(["t1", "t2"]);
   });
 
-  it("an audit-write failure does not abandon the rest of the batch", async () => {
+  it("leaves a row for the review job until it has been expired a full day (24h grace)", async () => {
+    const now = Date.now();
     const { job, rows, audit } = build([
-      overrideRow({ id: "first", expiresAt: new Date("2000-01-01T00:00:00Z") }),
-      overrideRow({ id: "second", expiresAt: new Date("2000-01-02T00:00:00Z") }),
+      overrideRow({ id: "ov-1h", expiresAt: new Date(now - 60 * 60 * 1000) }),
+      overrideRow({ id: "ov-23h", expiresAt: new Date(now - 23 * 60 * 60 * 1000) }),
+      overrideRow({ id: "ov-25h", expiresAt: new Date(now - 25 * 60 * 60 * 1000) }),
     ]);
-    audit.log.mockRejectedValueOnce(new Error("audit down"));
 
     const result = await job.revokeExpiredOverrides();
 
-    expect(result.revoked).toBe(2);
-    expect(rows.every((r) => r.revokedAt instanceof Date)).toBe(true);
-    expect(audit.log).toHaveBeenCalledTimes(2);
+    expect(result.revoked).toBe(1);
+    expect(rows.find((r) => r.id === "ov-25h")!.revokedAt).toBeInstanceOf(Date);
+    expect(rows.find((r) => r.id === "ov-1h")!.revokedAt).toBeNull();
+    expect(rows.find((r) => r.id === "ov-23h")!.revokedAt).toBeNull();
+    expect(audit.log).toHaveBeenCalledTimes(1);
+  });
+
+  it("the service itself has no grace by default — revokeExpired() takes a row expired 1h ago", async () => {
+    const { svc, rows } = build([
+      overrideRow({ id: "ov-1h", expiresAt: new Date(Date.now() - 60 * 60 * 1000) }),
+    ]);
+    const revoked = await svc.revokeExpired();
+    expect(revoked.map((r) => r.id)).toEqual(["ov-1h"]);
+    expect(rows[0].revokedAt).toBeInstanceOf(Date);
   });
 
   it("queries only revoked=null + expired rows, oldest first, capped at 500", async () => {

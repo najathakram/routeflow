@@ -31,7 +31,10 @@ const AUDIT_LOOKUP_BOUND = 5000;
  * an unchanged, still-not-reviewed row nightly is pure noise, not a stronger signal), so the
  * audit trail carries exactly one row per override, however many nights it stays unrevoked.
  *
- * NEVER auto-revokes: only a human calling `FeatureOverrideService.revoke()` ends an override.
+ * THIS job never revokes — it only flags. Closing an expired row is the separate B569 sweep
+ * (`FeatureOverrideExpiryJob`, 06:30), which waits 24h after expiry so this job has always
+ * flagged the row first. A human calling `FeatureOverrideService.revoke()` still ends an
+ * override at any time.
  * `FeatureOverrideService.create()`'s own auto-close of an expired row is a side-effect of
  * allowing a same-key re-grant, not a policy decision that the override should end — this job
  * makes the same distinction and only ever reads the row.
