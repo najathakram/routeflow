@@ -53,6 +53,7 @@ import {
   RouteRunStopStatus,
 } from "@prisma/client";
 import { ListOrdersDto } from "./dto/list-orders.dto";
+import * as unitAware from "./unit-aware-guard";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
 import {
   IDEMPOTENCY_KEY_CONFLICT,
@@ -639,7 +640,7 @@ export class OrdersService implements OnApplicationBootstrap {
    * Find the most recent active (DRAFT/PENDING) order for a customer.
    * Used by the buyer portal to merge new items into an existing order.
    */
-  async findActiveOrder(customerId: string) {
+  async findActiveOrder(customerId: string, opts: { forMerge?: boolean } = {}) {
     // Orders flagged skipAutoMerge are intentionally kept separate by an operator —
     // do NOT propose them as a merge target. The next operator-initiated create for
     // the same customer should still see no "active" order to merge into.
@@ -648,6 +649,8 @@ export class OrdersService implements OnApplicationBootstrap {
         customerId,
         status: { in: [OrderStatus.DRAFT, OrderStatus.PENDING] },
         skipAutoMerge: false,
+        // units_v1: a unit-aware order is never a MERGE target; display reads keep it visible.
+        ...(opts.forMerge ? unitAware.ORDER_HAS_NO_UNIT_AWARE_LINE : {}),
       },
       include: {
         lineItems: {
@@ -932,6 +935,8 @@ export class OrdersService implements OnApplicationBootstrap {
           if (pendingOrders.length <= 1) {
             return pendingOrders[0] ?? null;
           }
+          // units_v1: fold nothing and return NO order (a survivor would be someone else's order).
+          if (pendingOrders.some((o) => o.lineItems.some(unitAware.isUnitAwareLine))) return null;
 
           const [winner, ...losers] = pendingOrders;
           const winnerProductIds = new Set(winner.lineItems.map((li) => li.productId));
@@ -1270,6 +1275,10 @@ export class OrdersService implements OnApplicationBootstrap {
             orderBy: { updatedAt: "desc" },
           });
           if (orders.length <= 1) return orders[0] ?? null;
+          unitAware.assertNoUnitAwareLines(
+            orders.flatMap((o) => o.lineItems),
+            "consolidated",
+          );
 
           const [winner, ...losers] = orders;
 
@@ -2135,7 +2144,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // date stays authoritative, so a supplied orderDate would be silently dropped.
     // Refuse instead — the operator can re-submit as a separate order.
     if (orderDate && !options.skipAutoMerge) {
-      const mergeTarget = await this.findActiveOrder(customerId);
+      const mergeTarget = await this.findActiveOrder(customerId, { forMerge: true });
       if (mergeTarget) {
         throw new BadRequestException(
           "This customer has an open order. Enter a backdated order as a separate order.",
@@ -3496,6 +3505,10 @@ export class OrdersService implements OnApplicationBootstrap {
     if (order.status === "CANCELLED") {
       throw new BadRequestException("Items can't be edited on a cancelled order");
     }
+    // units_v1: every branch below re-derives factor + price from the LIVE product (see the guard).
+    await unitAware.assertOrderEditAllowed(order, dto, user, () =>
+      this.prisma.forTenant().customer.findFirst({ where: { userId: user?.sub, deletedAt: null } }),
+    );
 
     // B63 (REG-B63): buyers self-edit only pre-dispatch orders — the post-dispatch
     // relaxation in the comment above is operator + driver only. Thrown BEFORE any
@@ -5870,6 +5883,9 @@ export class OrdersService implements OnApplicationBootstrap {
       const tax = Number(order.tax);
       return { merged: true, subtotal, tax, total: Number(order.total) };
     }
+
+    // units_v1: refuse only when the request TARGETS a unit-aware line.
+    unitAware.assertChangeTargetAllowed(order.lineItems, cr, payload);
 
     // Regulated license guard re-runs on approval for the incoming product
     // (mirrors updateOrderItems :1642-1658; ORDER-scoped §8 overrides apply).

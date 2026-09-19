@@ -2655,6 +2655,24 @@ describe("InvoicesService", () => {
       expect(line.orderItemId).toBe("oi-1");
     });
 
+    it("carries the order line's unitLabel to the invoice line (units_v1) — and null for a pack line", () => {
+      const li = {
+        id: "oi-case",
+        productId: "p-1",
+        qty: 288,
+        boxes: 1,
+        pieces: 0,
+        unitsPerBox: 288,
+        unitLabel: "Case",
+        unitPrice: 480,
+        subtotal: 480,
+        product: { name: "Boxed", unitsPerBox: 24 },
+      };
+      expect(build(li, 288).unitLabel).toBe("Case");
+      expect(build(li, 288).unitsPerBox).toBe(288);
+      expect(build({ ...li, unitLabel: undefined }, 288).unitLabel).toBeNull();
+    });
+
     it("copies a box-split line verbatim and carries its split + snapshot upb", () => {
       // 2 boxes of 6 @ $43.75/box = $87.50, stored as boxes=2/pieces=0/qty=12.
       const li = {

@@ -560,7 +560,9 @@ export class BuyerController {
           // and only the sweep/force paths (no client attached) take the service's 20s wait.
           { family: "order-merge", key: ctx.customerId, mode: "wait", waitMs: 10_000 },
           async () => {
-            const activeOrder = await this.ordersService.findActiveOrder(ctx.customerId);
+            const activeOrder = await this.ordersService.findActiveOrder(ctx.customerId, {
+              forMerge: true,
+            });
             if (!activeOrder) return null;
             // REG-B47: denomination-aware fold (F30's staff exemplar, shared module) over
             // LIVE-normalized snapshots — a box-unaware line of a boxed product counts
