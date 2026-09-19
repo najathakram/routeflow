@@ -30,7 +30,8 @@ export interface PurchaseOrder {
   items: POItem[];
   expectedDate?: string;
   notes?: string;
-  totalAmount?: number;
+  /** Prisma `Decimal(10,2)` — serializes as a numeric string; coerce with `Number()`. */
+  totalAmount?: number | string | null;
   createdAt: string;
 }
 
