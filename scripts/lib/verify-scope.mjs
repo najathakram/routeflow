@@ -153,11 +153,14 @@ export function changedFilesSince(root, base = "origin/master") {
 export function decideScope(root, env = process.env, probe = {}) {
   if (env.FULL_VERIFY === "1") return { mode: "full", reason: "FULL_VERIFY=1" };
   if (env.CI) return { mode: "full", reason: "CI" };
-  const branch = probe.branch ?? git(root, ["rev-parse", "--abbrev-ref", "HEAD"])?.trim();
+  // `in`, not `??`: an explicit probe value of null/undefined MEANS "uncomputable" (the S6e case) —
+  // `??` treated it as "not supplied" and fell through to the real repo's diff.
+  const branch =
+    "branch" in probe ? probe.branch : git(root, ["rev-parse", "--abbrev-ref", "HEAD"])?.trim();
   if (!branch || branch === "master" || branch === "main" || branch === "HEAD") {
     return { mode: "full", reason: `branch ${branch || "unknown"}` };
   }
-  const files = probe.files ?? changedFilesSince(root);
+  const files = "files" in probe ? probe.files : changedFilesSince(root);
   if (files === null) return { mode: "full", reason: "cannot diff against origin/master" };
   return computeScope(files, loadWorkspaces(root));
 }

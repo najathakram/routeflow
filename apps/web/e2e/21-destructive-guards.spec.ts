@@ -109,15 +109,18 @@ test.describe("Destructive-write guards (F02b / P4)", () => {
       .flatMap((o) => o.lineItems ?? [])
       .find((li) => li.productId && li.status !== "DELIVERED" && li.status !== "CANCELLED");
     const guardedProductId = guardedItem?.productId ?? null;
-    test.skip(
-      !guardedProductId,
-      "No order item with an active (non-DELIVERED/CANCELLED) status against a catalog product found on this tenant — nothing to prove the skip-guard against",
-    );
+    // Fail, never skip (B566 follow-up): e2e-seed.js seeds a PENDING order with a line on a
+    // catalog product — without one there is nothing to prove the skip-guard against, and a skip
+    // reported REG-B24 green having run none of its assertions.
+    expect(
+      guardedProductId,
+      "No order item with an active (non-DELIVERED/CANCELLED) status against a catalog product — run `node apps/api/scripts/e2e-seed.js` (B566)",
+    ).toBeTruthy();
 
     const productRes = await request.get(`${api}/api/v1/products/${guardedProductId}`, {
       headers: headers!,
     });
-    test.skip(!productRes.ok(), "Guarded product no longer resolves");
+    expect(productRes.ok(), `Guarded product ${guardedProductId} no longer resolves`).toBe(true);
     const guardedProduct: ApiProduct = await productRes.json();
 
     // Isolate it via search so the selection is unambiguous regardless of
