@@ -2067,10 +2067,10 @@ export function CreateOrderModal({
           lines={lineItems}
           renderLine={renderLine}
           renderPriceEditor={renderPriceEditor}
-          resolveCode={(code) => {
+          resolveCode={(code, opts) => {
             // A qty typed for an Enter that added nothing must never ride into a camera scan.
             typedQtyRef.current = null;
-            return barcodeScanHandlerRef.current(code);
+            return barcodeScanHandlerRef.current(code, opts);
           }}
           onUndo={undoScan}
           hasCustomer={!!selectedCustomer}

@@ -15,6 +15,15 @@ import {
   type ScanOutcome,
 } from "@routeflow/scanning";
 import { playScanCue, unlockScanCue } from "@/lib/scan-cue";
+import {
+  dueScans,
+  enqueue,
+  PENDING_MAX_ATTEMPTS,
+  recordFailure,
+  removePending,
+  retryAllNow,
+  type PendingScan,
+} from "./pending-scan-queue";
 import type { ScanResolution } from "./useScanCodeHandler";
 import { useContinuousScanCamera } from "./useContinuousScanCamera";
 import {
@@ -29,6 +38,8 @@ import {
 /** How long the just-scanned row keeps its ring, and how long the result pill stays up. */
 const HIGHLIGHT_MS = 2000;
 const FEEDBACK_MS = 2500;
+/** How often the poor-signal queue checks for scans that are due a retry. */
+const RETRY_TICK_MS = 1500;
 
 export interface ScanOrderScreenProps<T extends SummaryLine & { tempId: string }> {
   open: boolean;
@@ -50,7 +61,7 @@ export interface ScanOrderScreenProps<T extends SummaryLine & { tempId: string }
    */
   renderPriceEditor?: (line: T, close: () => void) => React.ReactNode;
   /** Resolves one accepted code (the modal's `useScanCodeHandler`). */
-  resolveCode: (code: string) => Promise<ScanResolution>;
+  resolveCode: (code: string, opts?: { quiet?: boolean }) => Promise<ScanResolution>;
   /** Inverts one scan (remove the line it created, or take back one unit). */
   onUndo: (entry: ScanHistoryEntry) => void;
   /** A customer is chosen, so scanned lines are priced for them immediately (owner ruling D1). */
@@ -84,9 +95,20 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
   const [resolving, setResolving] = React.useState(false);
   const [history, setHistory] = React.useState<ScanHistoryEntry[]>([]);
   const [highlightId, setHighlightId] = React.useState<string | null>(null);
-  const [feedback, setFeedback] = React.useState<{ kind: "added" | "error"; text: string } | null>(
-    null,
-  );
+  const [feedback, setFeedback] = React.useState<{
+    kind: "added" | "error" | "queued";
+    text: string;
+  } | null>(null);
+  // Scans waiting for signal (poor-signal queue). The ref is the source of truth (timers read it);
+  // the state mirrors it for rendering.
+  const [pending, setPending] = React.useState<PendingScan[]>([]);
+  const pendingRef = React.useRef<PendingScan[]>([]);
+  const setPendingBoth = React.useCallback((next: PendingScan[]) => {
+    pendingRef.current = next;
+    setPending(next);
+  }, []);
+  const pendingSeq = React.useRef(0);
+  const retryInFlight = React.useRef(new Set<string>());
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [manualOpen, setManualOpen] = React.useState(false);
   const [manualValue, setManualValue] = React.useState("");
@@ -107,6 +129,10 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
     setManualOpen(false);
     setManualValue("");
     setEditingId(null);
+    // A queued scan belongs to the session that made it — it never lands on a later order.
+    pendingRef.current = [];
+    setPending([]);
+    retryInFlight.current.clear();
     unlockScanCue();
   }, [open]);
 
@@ -118,17 +144,75 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
     [],
   );
 
-  const showFeedback = React.useCallback((kind: "added" | "error", text: string) => {
+  const showFeedback = React.useCallback((kind: "added" | "error" | "queued", text: string) => {
     setFeedback({ kind, text });
     if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
     feedbackTimer.current = setTimeout(() => setFeedback(null), FEEDBACK_MS);
   }, []);
 
   /**
-   * Resolves one accepted code, then drains whatever the engine buffered while it was in flight —
+   * Shows the outcome of one resolved code: the cue, the status pill and - for an accepted scan -
+   * the undo entry and the row highlight. Returns "offline" and does NOTHING else when the lookup
+   * failed for connectivity, so the caller can queue it instead of reporting a failure.
+   */
+  const applyResolution = React.useCallback(
+    (code: string, res: ScanResolution): "done" | "offline" => {
+      if (res.kind === "error" && res.offline) return "offline";
+      let outcome: ScanOutcome;
+      if (res.kind === "added") {
+        const name = String(res.product?.name ?? "Item");
+        outcome = { feedback: { kind: "added", text: `Added ${name}` } };
+        setHistory((h) =>
+          pushHistory(h, { productId: String(res.product.id), created: res.created }),
+        );
+        setHighlightId(String(res.product.id));
+        if (highlightTimer.current) clearTimeout(highlightTimer.current);
+        highlightTimer.current = setTimeout(() => setHighlightId(null), HIGHLIGHT_MS);
+      } else {
+        const text =
+          res.kind === "archived"
+            ? `${res.name} is archived`
+            : res.kind === "unknown"
+              ? `Not in the catalog: ${code}`
+              : "Couldn't look up that code";
+        outcome = { feedback: { kind: "error", text } };
+      }
+      // The cue comes straight from the shared decision (`cueForOutcome`) and BEFORE any
+      // rendering, so the beep/vibration is immediate; it never throws (see scan-cue.ts).
+      playScanCue(cueForOutcome(outcome));
+      const fb = outcome?.feedback;
+      if (fb) showFeedback(fb.kind, fb.text);
+      return "done";
+    },
+    [showFeedback],
+  );
+
+  /** A scan that could not be looked up for lack of signal waits in the queue and is retried. */
+  const queueOffline = React.useCallback(
+    (code: string) => {
+      const { queue, accepted } = enqueue(
+        pendingRef.current,
+        code,
+        Date.now(),
+        `q${++pendingSeq.current}`,
+      );
+      playScanCue("rejected");
+      if (accepted) {
+        setPendingBoth(queue);
+        showFeedback("queued", `No signal - ${code} queued, will retry`);
+      } else {
+        showFeedback("error", "Too many scans are waiting for signal - reconnect, then rescan");
+      }
+    },
+    [setPendingBoth, showFeedback],
+  );
+
+  /**
+   * Resolves one accepted code, then drains whatever the engine buffered while it was in flight -
    * recursing (not looping) so each queued code gets its own cue/feedback cycle, exactly like
    * `ScanCamera.web.tsx` on mobile. The engine advances in `finally`, so a throwing resolver can
-   * never strand a buffered code.
+   * never strand a buffered code. Lookups are QUIET (no toast): this screen reports every outcome
+   * itself, and a queued scan is retried without re-toasting each failure.
    */
   const resolveOne = React.useCallback(
     async (code: string) => {
@@ -138,34 +222,11 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
         // caller is fire-and-forget) with no cue, so it is folded into the same error path.
         let res: ScanResolution;
         try {
-          res = await resolveCodeRef.current(code);
+          res = await resolveCodeRef.current(code, { quiet: true });
         } catch (err) {
           res = { kind: "error", message: (err as Error)?.message ?? "lookup failed" };
         }
-        let outcome: ScanOutcome;
-        if (res.kind === "added") {
-          const name = String(res.product?.name ?? "Item");
-          outcome = { feedback: { kind: "added", text: `Added ${name}` } };
-          setHistory((h) =>
-            pushHistory(h, { productId: String(res.product.id), created: res.created }),
-          );
-          setHighlightId(String(res.product.id));
-          if (highlightTimer.current) clearTimeout(highlightTimer.current);
-          highlightTimer.current = setTimeout(() => setHighlightId(null), HIGHLIGHT_MS);
-        } else {
-          const text =
-            res.kind === "archived"
-              ? `${res.name} is archived`
-              : res.kind === "unknown"
-                ? `Not in the catalog: ${code}`
-                : "Couldn't look up that code";
-          outcome = { feedback: { kind: "error", text } };
-        }
-        // The cue comes straight from the shared decision (`cueForOutcome`) and BEFORE any
-        // rendering, so the beep/vibration is immediate; it never throws (see scan-cue.ts).
-        playScanCue(cueForOutcome(outcome));
-        const fb = outcome?.feedback;
-        if (fb) showFeedback(fb.kind, fb.text);
+        if (applyResolution(code, res) === "offline") queueOffline(code);
       } finally {
         const step = scanSettled(engineRef.current);
         applyStep(step);
@@ -173,7 +234,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
     },
     // applyStep is declared below and only reads refs/setters, so it is safe to omit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [showFeedback],
+    [applyResolution, queueOffline],
   );
 
   const applyStep = React.useCallback(
@@ -200,6 +261,42 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
     applyStep(manualScanned(engineRef.current, code));
   };
 
+  // ── Poor-signal queue: retry what is due ──────────────────────────────────────────────────────
+  const retryOne = React.useCallback(
+    async (item: PendingScan) => {
+      if (retryInFlight.current.has(item.id)) return;
+      retryInFlight.current.add(item.id);
+      try {
+        let res: ScanResolution;
+        try {
+          res = await resolveCodeRef.current(item.code, { quiet: true });
+        } catch {
+          // An unexpected throw is treated as transient; the attempt cap bounds it.
+          res = { kind: "error", message: "lookup failed", offline: true };
+        }
+        // Discarded (or the session ended) while the lookup was in flight: the answer is moot.
+        if (!pendingRef.current.some((p) => p.id === item.id)) return;
+        if (res.kind === "error" && res.offline) {
+          const { queue, dropped } = recordFailure(pendingRef.current, item.id, Date.now());
+          setPendingBoth(queue);
+          if (dropped) {
+            playScanCue("rejected");
+            showFeedback(
+              "error",
+              `Gave up on ${dropped.code} after ${PENDING_MAX_ATTEMPTS} tries - rescan it`,
+            );
+          }
+        } else {
+          setPendingBoth(removePending(pendingRef.current, item.id));
+          applyResolution(item.code, res);
+        }
+      } finally {
+        retryInFlight.current.delete(item.id);
+      }
+    },
+    [applyResolution, setPendingBoth, showFeedback],
+  );
+
   // The line being edited, looked up LIVE so the editor always shows the current values. If the
   // line disappears underneath it (undo, removal) the editor simply closes.
   const editingLine = editingId ? (lines.find((l) => l.tempId === editingId) ?? null) : null;
@@ -210,6 +307,28 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
   // would increment the very line being edited (the focused field jumping under the operator's
   // cursor) with its cue and feedback hidden. Scanning resumes when the sheet closes.
   const camera = useContinuousScanCamera({ enabled: live && !editorOpen, onDetect: handleFrame });
+
+  // Retry due scans every tick while the screen is live. Nothing retries under the price sheet (a
+  // line landing under the operator's cursor) or under the create-product dialog, and nothing while
+  // the browser reports it is offline; the browser's `online` event makes everything due at once.
+  const canRetry = live && !editorOpen;
+  React.useEffect(() => {
+    if (!canRetry) return;
+    const tick = () => {
+      if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+      for (const item of dueScans(pendingRef.current, Date.now())) void retryOne(item);
+    };
+    const onOnline = () => {
+      setPendingBoth(retryAllNow(pendingRef.current, Date.now()));
+      tick();
+    };
+    const id = setInterval(tick, RETRY_TICK_MS);
+    window.addEventListener("online", onOnline);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener("online", onOnline);
+    };
+  }, [canRetry, retryOne, setPendingBoth]);
 
   const undo = () => {
     const { entry, rest } = popHistory(history);
@@ -311,7 +430,9 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
                 "min-w-0 truncate rounded px-2 py-1 text-xs font-medium",
                 feedback.kind === "added"
                   ? "bg-emerald-50 text-emerald-800"
-                  : "bg-red-50 text-red-700",
+                  : feedback.kind === "queued"
+                    ? "bg-amber-50 text-amber-800"
+                    : "bg-red-50 text-red-700",
               )}
             >
               {feedback.text}
@@ -382,6 +503,39 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
+        {pending.length > 0 && (
+          <div
+            role="status"
+            aria-label="Waiting for signal"
+            className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <p className="font-medium">Waiting for signal ({pending.length})</p>
+              <button
+                type="button"
+                onClick={() => setPendingBoth(retryAllNow(pendingRef.current, Date.now()))}
+                className="font-medium text-brand-600 hover:text-brand-700"
+              >
+                Retry now
+              </button>
+            </div>
+            <ul className="mt-1 space-y-0.5">
+              {pending.map((p) => (
+                <li key={p.id} className="flex items-center justify-between gap-2">
+                  <span className="min-w-0 truncate font-mono">{p.code}</span>
+                  <button
+                    type="button"
+                    onClick={() => setPendingBoth(removePending(pendingRef.current, p.id))}
+                    aria-label={`Discard ${p.code}`}
+                    className="shrink-0 rounded p-0.5 text-amber-800/70 hover:bg-amber-100 hover:text-amber-950"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {lines.length > 0 ? (
           <ul className="divide-y divide-surface-border overflow-hidden rounded-lg border border-surface-border">
             {lines.map((line) =>
