@@ -53,11 +53,7 @@ import {
   RouteRunStopStatus,
 } from "@prisma/client";
 import { ListOrdersDto } from "./dto/list-orders.dto";
-import {
-  ORDER_HAS_NO_UNIT_AWARE_LINE,
-  assertNoUnitAwareLines,
-  isUnitAwareLine,
-} from "./unit-aware-guard";
+import * as unitAware from "./unit-aware-guard";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
 import {
   IDEMPOTENCY_KEY_CONFLICT,
@@ -646,10 +642,8 @@ export class OrdersService implements OnApplicationBootstrap {
         customerId,
         status: { in: [OrderStatus.DRAFT, OrderStatus.PENDING] },
         skipAutoMerge: false,
-        // units_v1: an order with a unit-aware line is never a MERGE target (the fold keys by
-        // productId alone and would corrupt it) — treated like an operator-separated order. Display
-        // reads (buyer "my open order", shelf) leave `forMerge` off and still see it.
-        ...(opts.forMerge ? ORDER_HAS_NO_UNIT_AWARE_LINE : {}),
+        // units_v1: a unit-aware order is never a MERGE target; display reads keep it visible.
+        ...(opts.forMerge ? unitAware.ORDER_HAS_NO_UNIT_AWARE_LINE : {}),
       },
       include: {
         lineItems: {
@@ -934,10 +928,8 @@ export class OrdersService implements OnApplicationBootstrap {
           if (pendingOrders.length <= 1) {
             return pendingOrders[0] ?? null;
           }
-          // units_v1: never fold an order that holds a unit-aware line (the fold keys by productId).
-          // Nothing is merged and NO order is returned — returning an arbitrary survivor would hand a
-          // caller (buyer create, template generate) somebody else's order as "the merged order".
-          if (pendingOrders.some((o) => o.lineItems.some(isUnitAwareLine))) return null;
+          // units_v1: fold nothing and return NO order (a survivor would be someone else's order).
+          if (pendingOrders.some((o) => o.lineItems.some(unitAware.isUnitAwareLine))) return null;
 
           const [winner, ...losers] = pendingOrders;
           const winnerProductIds = new Set(winner.lineItems.map((li) => li.productId));
@@ -1276,11 +1268,9 @@ export class OrdersService implements OnApplicationBootstrap {
             orderBy: { updatedAt: "desc" },
           });
           if (orders.length <= 1) return orders[0] ?? null;
-          // units_v1: an explicit operator merge must not silently corrupt (or silently skip) a
-          // unit-aware order — refuse with a readable message.
-          assertNoUnitAwareLines(
+          unitAware.assertNoUnitAwareLines(
             orders.flatMap((o) => o.lineItems),
-            "consolidated into another order",
+            "consolidated",
           );
 
           const [winner, ...losers] = orders;
@@ -3508,28 +3498,10 @@ export class OrdersService implements OnApplicationBootstrap {
     if (order.status === "CANCELLED") {
       throw new BadRequestException("Items can't be edited on a cancelled order");
     }
-    // units_v1: every branch below (buyer/driver/staff replace-all, diff add, substitute, qty/price
-    // edit) re-derives the factor + price from the LIVE product — refuse on a unit-aware line.
-    // EXCEPT a diff of ONLY CANCEL/DELETE entries: that branch just strikes lines off (it never
-    // re-derives a factor or a price), and it is the operator's only way to remove a Case line
-    // that was added by mistake.
-    const strikeOffOnly =
-      dto.replaceAll === false &&
-      (dto.items ?? []).length > 0 &&
-      (dto.items ?? []).every(
-        (i) => i.id != null && (i.action === "CANCEL" || i.action === "DELETE"),
-      );
-    if (!strikeOffOnly && order.lineItems.some(isUnitAwareLine)) {
-      // Ownership is settled first for a buyer: the refusal names a unit on THIS order, which a
-      // non-owner must never learn (same posture as the dispatch-state check above).
-      if (user?.role === UserRole.CUSTOMER) {
-        const owner = await this.prisma
-          .forTenant()
-          .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
-        if (!owner || order.customerId !== owner.id) throw new ForbiddenException();
-      }
-      assertNoUnitAwareLines(order.lineItems, "edited");
-    }
+    // units_v1: every branch below re-derives factor + price from the LIVE product (see the guard).
+    await unitAware.assertOrderEditAllowed(order, dto, user, () =>
+      this.prisma.forTenant().customer.findFirst({ where: { userId: user?.sub, deletedAt: null } }),
+    );
 
     // B63 (REG-B63): buyers self-edit only pre-dispatch orders — the post-dispatch
     // relaxation in the comment above is operator + driver only. Thrown BEFORE any
@@ -5905,21 +5877,8 @@ export class OrdersService implements OnApplicationBootstrap {
       return { merged: true, subtotal, tax, total: Number(order.total) };
     }
 
-    // units_v1: CHANGE_QTY / ADD_ITEM re-derive from the live pack. Guard only the line(s) the
-    // request TARGETS (its own line, or every line of the product an ADD_ITEM folds into) — an
-    // unrelated pack line on the same order must stay editable at the door.
-    if (cr.type !== ChangeRequestType.REMOVE_ITEM) {
-      const targetLineId = cr.orderItemId ?? payload?.orderItemId ?? null;
-      const targetProductId = cr.productId ?? payload?.productId ?? null;
-      assertNoUnitAwareLines(
-        order.lineItems.filter((li) =>
-          cr.type === ChangeRequestType.CHANGE_QTY
-            ? li.id === targetLineId
-            : targetProductId != null && li.productId === targetProductId,
-        ),
-        "changed at the stop",
-      );
-    }
+    // units_v1: refuse only when the request TARGETS a unit-aware line.
+    unitAware.assertChangeTargetAllowed(order.lineItems, cr, payload);
 
     // Regulated license guard re-runs on approval for the incoming product
     // (mirrors updateOrderItems :1642-1658; ORDER-scoped §8 overrides apply).

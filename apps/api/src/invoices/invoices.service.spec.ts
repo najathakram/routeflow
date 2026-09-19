@@ -610,32 +610,6 @@ describe("InvoicesService", () => {
       expect(created.qty).toBe(27);
     });
 
-    describe("units_v1: refuses to rewrite a unit-aware invoice (409 UNIT_AWARE_LINE)", () => {
-      const edit = { items: [{ productId: "prod-box", description: "x", qty: 1, unitPrice: 1 }] };
-
-      it("when the invoice's own lines carry a unitLabel", async () => {
-        prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
-        prisma.invoiceItem.findMany.mockResolvedValue([{ unitLabel: "Case" }]);
-        const err = await service.update("inv-box", edit).catch((e) => e);
-        expect(err.getResponse()).toMatchObject({ code: "UNIT_AWARE_LINE" });
-        expect(prisma.invoice.update).not.toHaveBeenCalled();
-      });
-
-      it("when the invoice carries NO label but its LINKED ORDER holds a unit-aware line (the back-sync would write onto it)", async () => {
-        prisma.invoice.findUnique.mockResolvedValue({ ...draftInvoice, orderId: "ord-1" });
-        prisma.invoiceItem.findMany.mockResolvedValue([]);
-        prisma.orderItem.findMany.mockResolvedValue([{ unitLabel: "Pallet", status: "PENDING" }]);
-        const err = await service.update("inv-box", edit).catch((e) => e);
-        expect(err.getResponse()).toMatchObject({ code: "UNIT_AWARE_LINE" });
-        expect(prisma.orderItem.findMany).toHaveBeenCalledWith(
-          expect.objectContaining({
-            where: expect.objectContaining({ orderId: "ord-1", unitLabel: { not: null } }),
-          }),
-        );
-        expect(prisma.invoice.update).not.toHaveBeenCalled();
-      });
-    });
-
     it("charges unitPrice*qty for a non-boxed line (no boxes/pieces sent)", async () => {
       prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
       prisma.product.findMany.mockResolvedValue([]);

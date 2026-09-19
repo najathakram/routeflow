@@ -6,7 +6,7 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
-import { assertNoUnitAwareLines } from "../orders/unit-aware-guard";
+import * as unitAware from "../orders/unit-aware-guard";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
@@ -1006,8 +1006,7 @@ export class InvoicesService {
       productId: li.productId,
       // Provenance back to the source order line (null for freeform lines).
       orderItemId: li.id ?? null,
-      // units_v1: the line's unit travels to the invoice (schema promises "carried verbatim").
-      unitLabel: li.unitLabel ?? null,
+      unitLabel: li.unitLabel ?? null, // units_v1: the unit travels with the line
       qty: split.qty,
       boxes: split.boxes,
       pieces: split.pieces,
@@ -3411,29 +3410,8 @@ export class InvoicesService {
     await this.assertOrderInvoiceUnlocked(inv);
 
     if (dto.items) {
-      // units_v1: this replaces every line re-split against the LIVE pack (and drops unitLabel).
-      // Also the LINKED ORDER's lines: an invoice built before the label was copied (or by any path
-      // that drops it) carries no unitLabel, but its order line does — and the back-sync
-      // (recomputeOrderFromInvoices) writes this edit straight onto that order line.
-      assertNoUnitAwareLines(
-        [
-          ...(await this.prisma.forTenant().invoiceItem.findMany({
-            where: { invoiceId: id, unitLabel: { not: null } },
-            select: { unitLabel: true },
-          })),
-          ...(inv.orderId
-            ? await this.prisma.forTenant().orderItem.findMany({
-                where: {
-                  orderId: inv.orderId,
-                  unitLabel: { not: null },
-                  status: { not: "CANCELLED" },
-                },
-                select: { unitLabel: true, status: true },
-              })
-            : []),
-        ],
-        "edited",
-      );
+      // units_v1: replaces every line re-split against the LIVE pack — refuse on a unit-aware one.
+      await unitAware.assertInvoiceRewriteAllowed(this.prisma.forTenant(), inv);
       // Pre-fetch products for boxes/pieces resolution AND the regulated-category
       // snapshot (so an edited DRAFT re-attributes its regulated lines).
       const productIds = [
@@ -4664,8 +4642,7 @@ export class InvoicesService {
         "Cannot duplicate an order-linked invoice. Create a new invoice or issue a credit note instead.",
       );
     }
-    // units_v1: the copy below drops unitLabel/unitsPerBox — refuse rather than lose the unit.
-    assertNoUnitAwareLines(inv.items, "duplicated");
+    unitAware.assertNoUnitAwareLines(inv.items, "duplicated"); // the copy drops the unit
 
     const customer = await this.prisma
       .forTenant()
@@ -6400,9 +6377,8 @@ export class InvoicesService {
       if (!dto.sinceDate) throw new BadRequestException("sinceDate is required for bulk scope");
 
       // Build productId → newUnitPrice map from this invoice (to apply same price to same product elsewhere)
-      // units_v1: a bulk price is keyed by productId — a unit-aware source line's price would land
-      // on other invoices' pack lines (and vice versa, skipped below).
-      assertNoUnitAwareLines(invoice.items, "re-priced across invoices");
+      // units_v1: a bulk price is keyed by productId (a Case price would land on pack lines).
+      unitAware.assertNoUnitAwareLines(invoice.items, "re-priced across invoices");
       const productPriceMap = new Map<string, number>();
       for (const [itemId, newPrice] of priceMap.entries()) {
         const productId = productIdMap.get(itemId);

@@ -6,7 +6,7 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
-import { assertNoUnitAwareLines } from "./unit-aware-guard";
+import * as unitAware from "./unit-aware-guard";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { OrdersService } from "./orders.service";
@@ -308,7 +308,7 @@ export class ChangeRequestsService {
       if (!li?.productId) throw new BadRequestException("Order line not found");
       // units_v1: the delta is in the line's own unit axis but is re-created through create() as
       // pack selling units at the live price — wrong for a unit-aware line.
-      assertNoUnitAwareLines([li], "rolled to the next delivery");
+      unitAware.assertNoUnitAwareLines([li], "rolled to the next delivery");
       const delta = Number(payload.newQty) - Number(li.qty);
       if (delta <= 0) {
         throw new BadRequestException({

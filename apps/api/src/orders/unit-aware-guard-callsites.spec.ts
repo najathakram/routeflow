@@ -12,39 +12,47 @@ const GUARDED: Array<{ file: string; method: string; token: string }> = [
   {
     file: "orders/orders.service.ts",
     method: "updateOrderItems",
-    token: "assertNoUnitAwareLines(",
+    token: "unitAware.assertOrderEditAllowed(",
   },
   {
     file: "orders/orders.service.ts",
     method: "approveChangeRequestAtStop",
-    token: "assertNoUnitAwareLines(",
+    token: "unitAware.assertChangeTargetAllowed(",
   },
   {
     file: "orders/orders.service.ts",
     method: "forceConsolidateCustomer",
-    token: "assertNoUnitAwareLines(",
+    token: "unitAware.assertNoUnitAwareLines(",
   },
   {
     file: "orders/orders.service.ts",
     method: "mergeAllPendingForCustomer",
-    token: "isUnitAwareLine",
+    token: "unitAware.isUnitAwareLine",
   },
   {
     file: "orders/orders.service.ts",
     method: "findActiveOrder",
-    token: "ORDER_HAS_NO_UNIT_AWARE_LINE",
+    token: "unitAware.ORDER_HAS_NO_UNIT_AWARE_LINE",
   },
   {
     file: "orders/change-requests.service.ts",
     method: "approveNextDelivery",
-    token: "assertNoUnitAwareLines(",
+    token: "unitAware.assertNoUnitAwareLines(",
   },
-  { file: "invoices/invoices.service.ts", method: "update", token: "assertNoUnitAwareLines(" },
-  { file: "invoices/invoices.service.ts", method: "duplicate", token: "assertNoUnitAwareLines(" },
+  {
+    file: "invoices/invoices.service.ts",
+    method: "update",
+    token: "unitAware.assertInvoiceRewriteAllowed(",
+  },
+  {
+    file: "invoices/invoices.service.ts",
+    method: "duplicate",
+    token: "unitAware.assertNoUnitAwareLines(",
+  },
   {
     file: "invoices/invoices.service.ts",
     method: "applyPriceAdjustment",
-    token: "assertNoUnitAwareLines(",
+    token: "unitAware.assertNoUnitAwareLines(",
   },
 ];
 

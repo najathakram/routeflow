@@ -1,8 +1,11 @@
-import { ConflictException } from "@nestjs/common";
+import { ConflictException, ForbiddenException } from "@nestjs/common";
 import {
   ORDER_HAS_NO_UNIT_AWARE_LINE,
   UNIT_AWARE_LINE,
+  assertChangeTargetAllowed,
+  assertInvoiceRewriteAllowed,
   assertNoUnitAwareLines,
+  assertOrderEditAllowed,
   isUnitAwareLine,
 } from "./unit-aware-guard";
 
@@ -48,5 +51,157 @@ describe("ORDER_HAS_NO_UNIT_AWARE_LINE", () => {
     expect(ORDER_HAS_NO_UNIT_AWARE_LINE).toEqual({
       lineItems: { none: { unitLabel: { not: null }, status: { not: "CANCELLED" } } },
     });
+  });
+});
+
+const caseLine = { id: "li-case", productId: "p1", unitLabel: "Case", status: "PENDING" };
+const packLine = { id: "li-pack", productId: "p2", unitLabel: null, status: "PENDING" };
+
+describe("assertInvoiceRewriteAllowed", () => {
+  const db = (own: unknown[], linked: unknown[]) => ({
+    invoiceItem: { findMany: jest.fn().mockResolvedValue(own) },
+    orderItem: { findMany: jest.fn().mockResolvedValue(linked) },
+  });
+
+  it("refuses when the invoice's own lines carry a unitLabel", async () => {
+    const d = db([{ unitLabel: "Case" }], []);
+    await expect(assertInvoiceRewriteAllowed(d as never, { id: "inv" })).rejects.toMatchObject({
+      response: { code: UNIT_AWARE_LINE },
+    });
+    expect(d.orderItem.findMany).not.toHaveBeenCalled(); // no order link, no order read
+  });
+
+  it("refuses when the invoice carries NO label but its LINKED ORDER holds a unit-aware line (the back-sync would write onto it)", async () => {
+    const d = db([], [{ unitLabel: "Pallet", status: "PENDING" }]);
+    await expect(
+      assertInvoiceRewriteAllowed(d as never, { id: "inv", orderId: "ord-1" }),
+    ).rejects.toMatchObject({ response: { code: UNIT_AWARE_LINE } });
+    expect(d.orderItem.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          orderId: "ord-1",
+          unitLabel: { not: null },
+          status: { not: "CANCELLED" },
+        },
+      }),
+    );
+  });
+
+  it("passes a pack-only invoice, linked or not", async () => {
+    await expect(
+      assertInvoiceRewriteAllowed(db([], []) as never, { id: "i" }),
+    ).resolves.toBeUndefined();
+    await expect(
+      assertInvoiceRewriteAllowed(db([], []) as never, { id: "i", orderId: "o" }),
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe("assertOrderEditAllowed", () => {
+  const order = { customerId: "c1", lineItems: [caseLine, packLine] };
+  const owner = (id: string | null) => jest.fn().mockResolvedValue(id ? { id } : null);
+
+  it("passes an order with no unit-aware line without any owner lookup", async () => {
+    const f = owner("c1");
+    await assertOrderEditAllowed(
+      { customerId: "c1", lineItems: [packLine] },
+      { replaceAll: true },
+      { role: "CUSTOMER" },
+      f,
+    );
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it("refuses staff on a unit-aware order", async () => {
+    await expect(
+      assertOrderEditAllowed(
+        order,
+        { replaceAll: true, items: [] },
+        { role: "OPERATOR" },
+        owner(null),
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it("allows a diff of ONLY CANCEL/DELETE entries, but not a mixed one, nor a replace-all", async () => {
+    const strike = {
+      replaceAll: false,
+      items: [
+        { id: "a", action: "CANCEL" },
+        { id: "b", action: "DELETE" },
+      ],
+    };
+    await expect(
+      assertOrderEditAllowed(order, strike, { role: "OPERATOR" }, owner(null)),
+    ).resolves.toBeUndefined();
+    const mixed = {
+      replaceAll: false,
+      items: [
+        { id: "a", action: "CANCEL" },
+        { id: "b", action: "UPDATE" },
+      ],
+    };
+    await expect(
+      assertOrderEditAllowed(order, mixed, { role: "OPERATOR" }, owner(null)),
+    ).rejects.toBeInstanceOf(ConflictException);
+    await expect(
+      assertOrderEditAllowed(
+        order,
+        { replaceAll: true, items: [{ id: "a", action: "CANCEL" }] },
+        { role: "OPERATOR" },
+        owner(null),
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
+    await expect(
+      assertOrderEditAllowed(
+        order,
+        { replaceAll: false, items: [] },
+        { role: "OPERATOR" },
+        owner(null),
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it("a buyer's ownership is settled FIRST: non-owner -> bare 403, owner -> readable 409", async () => {
+    await expect(
+      assertOrderEditAllowed(order, { items: [] }, { role: "CUSTOMER" }, owner("someone-else")),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      assertOrderEditAllowed(order, { items: [] }, { role: "CUSTOMER" }, owner(null)),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      assertOrderEditAllowed(order, { items: [] }, { role: "CUSTOMER" }, owner("c1")),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+});
+
+describe("assertChangeTargetAllowed — only the line the request targets", () => {
+  const lines = [caseLine, packLine];
+  it("CHANGE_QTY on the unit-aware line is refused; on an unrelated pack line it passes", () => {
+    expect(() =>
+      assertChangeTargetAllowed(lines, { type: "CHANGE_QTY", orderItemId: "li-case" }, null),
+    ).toThrow(ConflictException);
+    expect(() =>
+      assertChangeTargetAllowed(lines, { type: "CHANGE_QTY", orderItemId: "li-pack" }, null),
+    ).not.toThrow();
+    expect(() =>
+      assertChangeTargetAllowed(lines, { type: "CHANGE_QTY" }, { orderItemId: "li-pack" }),
+    ).not.toThrow();
+  });
+
+  it("ADD_ITEM into a product that has a unit-aware line is refused; a different product passes", () => {
+    expect(() =>
+      assertChangeTargetAllowed(lines, { type: "ADD_ITEM", productId: "p1" }, null),
+    ).toThrow(ConflictException);
+    expect(() =>
+      assertChangeTargetAllowed(lines, { type: "ADD_ITEM" }, { productId: "p2" }),
+    ).not.toThrow();
+    expect(() => assertChangeTargetAllowed(lines, { type: "ADD_ITEM" }, {})).not.toThrow();
+  });
+
+  it("REMOVE_ITEM only strikes a line off — never refused", () => {
+    expect(() =>
+      assertChangeTargetAllowed(lines, { type: "REMOVE_ITEM", orderItemId: "li-case" }, null),
+    ).not.toThrow();
   });
 });
