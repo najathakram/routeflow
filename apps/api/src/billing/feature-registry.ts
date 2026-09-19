@@ -469,6 +469,26 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
     defaultGranted: false,
   },
   {
+    key: "flag.units_v1",
+    kind: "boolean",
+    area: "catalog",
+    label: "Multi-level units",
+    description:
+      "Sell a product by Case/Pallet/Piece levels with their own prices; per-line unit picker.",
+    gate: {
+      via: "RequirePlanFlag",
+      // Brand-new key nobody uses, so it ships ENFORCED-BUT-UNGRANTED (invisible until an
+      // owner override GRANT), not `dark` — a dark flag is courtesy-allowed to every tenant.
+      state: "enforced",
+      added: "2026-09-19",
+      routes: ["ALL /products/:productId/units (class-level)"],
+      grantPath: "Owner override GRANT per tenant (feature grants) — no plan bundles it yet",
+      backfill: "New key: no tenant has used it, so there is nothing to backfill.",
+    },
+    billing: { skus: [], selfService: false },
+    defaultGranted: false,
+  },
+  {
     key: "flag.analytics",
     kind: "boolean",
     area: "sales",
