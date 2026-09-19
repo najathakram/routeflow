@@ -8,7 +8,11 @@ import {
   type LabelChainLink,
 } from "./effective-labels";
 
-/** Variants nest one level in practice; the cap only bounds a malformed cycle. */
+/**
+ * Variants nest one level in practice; the cap only bounds a malformed cycle. It is a per-ROOT hop
+ * limit (a product may have at most this many ancestors), applied by `effectiveLabels` when it
+ * walks each product's chain — and it also bounds how many batched loader rounds are issued.
+ */
 const MAX_ANCESTOR_DEPTH = 5;
 
 /**
@@ -38,6 +42,8 @@ export interface EffectiveLabels {
   productId: string;
   /** The product's name, or its id when it could not be resolved. */
   name: string;
+  /** true only when the product's OWN row was found (so `name` is a real name, never the raw id). */
+  nameKnown: boolean;
   /** Own INCLUDEs ∪ ancestors' INCLUDEs − own EXCLUDEs (see `computeEffectiveCategoryIds`). */
   effectiveCategoryIds: ReadonlySet<string>;
   /** The product's own id plus every ancestor id that was reached (variant → parent → …). */
@@ -100,11 +106,18 @@ export class ProductLabelsService {
       const lineage = new Set<string>([id]);
       let resolvable = byId.has(id);
       let cursor = byId.get(id);
+      // The depth cap is decided HERE, per root, by counting hops — never by how far the batch
+      // loader happened to reach. The loader above shares its rounds across every requested id, so
+      // an ancestor that is ALSO a requested line is loaded earlier and its own ancestors land
+      // deeper in `byId`; without this counter the same product would flip between resolvable and
+      // not depending on what else was in the cart.
+      let hops = 0;
       while (cursor) {
         chain.unshift({ productId: cursor.id, assignments: cursor.categoryLabels });
         lineage.add(cursor.id);
         if (!cursor.parentProductId) break;
-        const parent = byId.get(cursor.parentProductId);
+        hops++;
+        const parent = hops > MAX_ANCESTOR_DEPTH ? undefined : byId.get(cursor.parentProductId);
         if (!parent || lineage.has(parent.id)) {
           resolvable = false; // missing / foreign / too-deep ancestor, or a cycle
           lineage.add(cursor.parentProductId);
@@ -115,6 +128,7 @@ export class ProductLabelsService {
       out.set(id, {
         productId: id,
         name: byId.get(id)?.name ?? id,
+        nameKnown: byId.has(id),
         effectiveCategoryIds: computeEffectiveCategoryIds(chain),
         lineageIds: lineage,
         resolvable,

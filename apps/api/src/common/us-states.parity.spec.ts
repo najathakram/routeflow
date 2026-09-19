@@ -48,4 +48,16 @@ describe("us-states API mirror parity", () => {
       expect(normalizeUsState(name)).toBe(code);
     }
   });
+
+  it.each(["AA", "AE", "AP", "FM", "MH", "PW", "UM"])(
+    "military / freely-associated code %s is OUT OF SCOPE by design: it normalizes to null (fail closed, listed for review) in both copies",
+    (code) => {
+      for (const input of [code, code.toLowerCase(), ` ${code} `]) {
+        expect(normalizeUsState(input)).toBeNull();
+        expect(sharedNormalize(input)).toBeNull();
+      }
+      expect(US_STATES.some((s) => s.code === code)).toBe(false);
+      expect(SHARED_STATES.some((s) => s.code === code)).toBe(false);
+    },
+  );
 });

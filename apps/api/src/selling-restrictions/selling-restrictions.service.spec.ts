@@ -1,9 +1,15 @@
-import { InternalServerErrorException, Logger } from "@nestjs/common";
+import { ConflictException, InternalServerErrorException, Logger } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { PrismaService } from "../prisma/prisma.service";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { activeRuleWhere } from "./selling-restrictions.core";
 import {
+  ENABLE_READINESS_MAX_PAGES,
+  ENABLE_READINESS_PAGE_SIZE,
+  SELLING_RESTRICTIONS_DISABLED_VALUE,
+  SELLING_RESTRICTIONS_ENABLED_VALUE,
+  SELLING_RESTRICTIONS_NOT_READY,
   SellingRestrictionsService,
   SYSTEM_CONFIG_ENABLED,
   SYSTEM_CONFIG_GOVERNING_ADDRESS,
@@ -573,5 +579,346 @@ describe("SellingRestrictionsService.evaluate", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+
+  describe("review MAJOR 1: deterministic rule citation through the service", () => {
+    const fed = (id: string, effectiveFrom: string) =>
+      dbRule({ id, effectiveFrom: new Date(effectiveFrom), jurisdiction: "FEDERAL", states: [] });
+
+    it("asks the DB for a total order (effectiveFrom desc, id asc)", async () => {
+      enable(true);
+      withProduct();
+      await service.evaluate(T, "c1", [{ productId: "p1" }], { at: NOW });
+      expect(prisma.sellingRestriction.findMany.mock.calls[0][0].orderBy).toEqual([
+        { effectiveFrom: "desc" },
+        { id: "asc" },
+      ]);
+    });
+
+    it("cites the same rule whatever order the DB returns the rows in (tie on effectiveFrom broken by id)", async () => {
+      enable(true);
+      withProduct();
+      const rules = [
+        fed("r-old", "2026-01-01T00:00:00Z"),
+        fed("r-b", "2026-06-01T00:00:00Z"),
+        fed("r-a", "2026-06-01T00:00:00Z"),
+      ];
+      const orders = [
+        rules,
+        [...rules].reverse(),
+        [rules[1], rules[0], rules[2]],
+        [rules[2], rules[1], rules[0]],
+      ];
+      const citations: Array<Array<string | null>> = [];
+      for (const order of orders) {
+        prisma.sellingRestriction.findMany.mockResolvedValue(order);
+        const res = await service.evaluate(T, null, [{ productId: "p1" }], { at: NOW });
+        citations.push(res.reasons.map((r) => r.ruleId));
+      }
+      expect(citations).toEqual(orders.map(() => ["r-a"]));
+    });
+  });
+
+  describe("review MINOR 2: the rule query filters to active rules in SQL too", () => {
+    it("ANDs activeRuleWhere(at) with the tenant/scope OR", async () => {
+      enable(true);
+      withProduct();
+      await service.evaluate(T, "c1", [{ productId: "p1" }], { at: NOW });
+      const where = prisma.sellingRestriction.findMany.mock.calls[0][0].where;
+      expect(where.tenantId).toBe(T);
+      expect(where.OR).toEqual([
+        { productId: { in: ["p1"] } },
+        { categoryId: { in: ["cat-thc"] } },
+      ]);
+      expect(where.AND).toEqual([activeRuleWhere(NOW)]);
+    });
+
+    it("still ignores an inactive rule the DB hands back (the in-JS check is a defensive second gate)", async () => {
+      enable(true);
+      withProduct();
+      prisma.sellingRestriction.findMany.mockResolvedValue([
+        dbRule({ jurisdiction: "FEDERAL", states: [], liftedAt: new Date("2026-09-01T00:00:00Z") }),
+      ]);
+      const res = await service.evaluate(T, null, [{ productId: "p1" }], { at: NOW });
+      expect(res.outcome).toBe("ALLOW");
+    });
+  });
+
+  describe("review MINOR 5: the stored switch literals", () => {
+    it('are exactly "true" / "false"', () => {
+      expect(SELLING_RESTRICTIONS_ENABLED_VALUE).toBe("true");
+      expect(SELLING_RESTRICTIONS_DISABLED_VALUE).toBe("false");
+    });
+
+    it("the ENABLED literal parses ON, the DISABLED literal parses OFF, anything else fails closed to ON", async () => {
+      policyRows([[ENABLED_KEY, SELLING_RESTRICTIONS_ENABLED_VALUE]]);
+      expect((await service.getPolicy(T)).enabled).toBe(true);
+      policyRows([[ENABLED_KEY, SELLING_RESTRICTIONS_DISABLED_VALUE]]);
+      expect((await service.getPolicy(T)).enabled).toBe(false);
+      for (const other of ["0", "off", "no", "disabled", "", "fasle"]) {
+        policyRows([[ENABLED_KEY, other]]);
+        expect((await service.getPolicy(T)).enabled).toBe(true);
+      }
+    });
+  });
+
+  describe("review MINOR 6: UNKNOWN_PRODUCT shows no raw id", () => {
+    it.each(["ghost", "3f2b8c1e-9d4a-4e7b-8a15-6c0d2f9e7a41"])(
+      "an unknown product %s: generic productName, message without the id, productId keeps it",
+      async (id) => {
+        enable(true);
+        prisma.product.findMany.mockResolvedValue([]);
+        const res = await service.evaluate(T, "c1", [{ productId: id }], { at: NOW });
+        expect(res.outcome).toBe("INDETERMINATE");
+        expect(res.reasons[0]).toMatchObject({
+          reason: "UNKNOWN_PRODUCT",
+          productId: id,
+          productName: "Unknown product",
+        });
+        expect(res.reasons[0].message).not.toContain(id);
+      },
+    );
+  });
+
+  describe("round 1 (Opus): a KNOWN name survives when only an ancestor is missing", () => {
+    it("a variant whose parent is gone reports the variant's own name (no id) so the operator can find the line", async () => {
+      enable(true);
+      prisma.product.findMany
+        .mockResolvedValueOnce([
+          { id: "v-uuid-1", name: "Bourbon 750ml", parentProductId: "gone", categoryLabels: [] },
+        ])
+        .mockResolvedValue([]);
+      const res = await service.evaluate(T, "c1", [{ productId: "v-uuid-1" }], { at: NOW });
+      expect(res.outcome).toBe("INDETERMINATE");
+      expect(res.reasons[0]).toMatchObject({
+        reason: "UNKNOWN_PRODUCT",
+        productName: "Bourbon 750ml",
+      });
+      expect(res.reasons[0].message).toContain("Bourbon 750ml");
+      expect(res.reasons[0].message).not.toContain("v-uuid-1");
+    });
+  });
+
+  describe("round 1 (Opus): the readiness sweep is bounded and never reads green when partial", () => {
+    it("stops at ENABLE_READINESS_MAX_PAGES with truncated: true and ready: false", async () => {
+      const page = Array.from({ length: ENABLE_READINESS_PAGE_SIZE }, (_v, i) => ({
+        id: `c${i}`,
+        addresses: [
+          { isDefault: true, addressType: "BILLING", stateCode: "TX", stateNeedsReview: false },
+        ],
+      }));
+      prisma.customer.findMany.mockResolvedValue(page);
+      policyRows([]);
+      const r = await service.getEnableReadiness(T);
+      expect(prisma.customer.findMany).toHaveBeenCalledTimes(ENABLE_READINESS_MAX_PAGES);
+      expect(r.truncated).toBe(true);
+      expect(r.ready).toBe(false); // every customer resolved, yet a partial sweep is NOT ready
+      expect(r.indeterminateCustomerCount).toBe(0);
+      await expect(service.assertReadyToEnable(T)).rejects.toMatchObject({
+        response: { code: "SELLING_RESTRICTIONS_NOT_READY" },
+      });
+    });
+  });
+
+  describe("review MAJOR 3: getEnableReadiness / assertReadyToEnable", () => {
+    const addr = (over: Record<string, unknown> = {}) => ({
+      isDefault: true,
+      addressType: "BILLING",
+      stateCode: "TX",
+      stateNeedsReview: false,
+      ...over,
+    });
+    const cid = (i: number) => `c${String(i).padStart(5, "0")}`;
+    const customer = (id: string, addresses: unknown[]) => ({ id, addresses });
+
+    /** A `customer.findMany` that honours orderBy id / cursor / skip / take over a fixed table. */
+    const serveCustomers = (rows: Array<{ id: string; addresses: unknown[] }>) =>
+      prisma.customer.findMany.mockImplementation(async (args: any) => {
+        const sorted = [...rows].sort((a, b) => (a.id < b.id ? -1 : 1));
+        const start = args.cursor
+          ? sorted.findIndex((r) => r.id === args.cursor.id) + (args.skip ?? 0)
+          : 0;
+        return sorted.slice(start, start + args.take);
+      });
+
+    it("counts every bucket, with the switch still OFF (readiness is asked BEFORE enabling)", async () => {
+      enable(false);
+      serveCustomers([
+        customer("ok-default", [addr()]),
+        customer("ok-sole-nondefault", [addr({ isDefault: false })]),
+        customer("no-address", []),
+        customer("ambiguous", [
+          addr({ isDefault: false, stateCode: "TX" }),
+          addr({ isDefault: false, addressType: "SHIPPING", stateCode: "FL" }),
+        ]),
+        customer("null-state", [addr({ stateCode: null })]),
+        customer("bogus-state", [addr({ stateCode: "ZZ" })]),
+        customer("needs-review", [addr({ stateNeedsReview: true })]),
+        // resolvable-looking rows that DISAGREE: counted only by resolveGoverningState
+        customer("conflicting-defaults", [addr({ stateCode: "TX" }), addr({ stateCode: "FL" })]),
+      ]);
+      expect(await service.getEnableReadiness(T)).toEqual({
+        ready: false,
+        truncated: false,
+        customerCount: 8,
+        customersWithoutAddress: 1,
+        customersAmbiguousNoDefault: 1,
+        addressesMissingStateCode: 2, // null-state + bogus-state (no USABLE code)
+        addressesNeedingReview: 1,
+        indeterminateCustomerCount: 6, // everyone except the two resolvable customers
+      });
+    });
+
+    it("ready: every customer resolves → ready true, indeterminate 0", async () => {
+      enable(true);
+      serveCustomers([
+        customer("a", [addr()]),
+        customer("b", [addr({ stateCode: "fl" }), addr({ isDefault: false, stateCode: "TX" })]),
+        customer("c", [addr({ isDefault: false })]),
+      ]);
+      expect(await service.getEnableReadiness(T)).toEqual({
+        ready: true,
+        truncated: false,
+        customerCount: 3,
+        customersWithoutAddress: 0,
+        customersAmbiguousNoDefault: 0,
+        addressesMissingStateCode: 0,
+        addressesNeedingReview: 0,
+        indeterminateCustomerCount: 0,
+      });
+    });
+
+    it("a tenant with no customers is ready", async () => {
+      policyRows([]);
+      serveCustomers([]);
+      const r = await service.getEnableReadiness(T);
+      expect(r.ready).toBe(true);
+      expect(r.customerCount).toBe(0);
+    });
+
+    it("counts with the SAME resolver and the tenant's CURRENT precedence policy", async () => {
+      // default BILLING has no usable state; default SHIPPING is TX.
+      serveCustomers([
+        customer("split", [
+          addr({ addressType: "BILLING", stateCode: null }),
+          addr({ addressType: "SHIPPING", stateCode: "TX" }),
+        ]),
+      ]);
+      policyRows([[GOVERNING_KEY, "BILLING_FIRST"]]);
+      expect((await service.getEnableReadiness(T)).indeterminateCustomerCount).toBe(1);
+      policyRows([[GOVERNING_KEY, "SHIPPING_FIRST"]]);
+      const shippingFirst = await service.getEnableReadiness(T);
+      expect(shippingFirst.indeterminateCustomerCount).toBe(0);
+      expect(shippingFirst.ready).toBe(true);
+    });
+
+    it("reads customers in cursor PAGES (>1 page), tenant-scoped, ignoring soft-deleted", async () => {
+      const total = ENABLE_READINESS_PAGE_SIZE * 2 + 201; // 1201 → 3 pages
+      const rows = Array.from({ length: total }, (_, i) =>
+        // every 100th customer has no address; the rest resolve
+        customer(cid(i), i % 100 === 0 ? [] : [addr()]),
+      );
+      serveCustomers(rows);
+      enable(true);
+      const r = await service.getEnableReadiness(T);
+
+      expect(r).toMatchObject({
+        customerCount: total,
+        customersWithoutAddress: Math.ceil(total / 100),
+        indeterminateCustomerCount: Math.ceil(total / 100),
+        ready: false,
+      });
+      const calls = prisma.customer.findMany.mock.calls.map((c: any[]) => c[0]);
+      expect(calls).toHaveLength(3);
+      for (const c of calls) {
+        expect(c.where).toEqual({ tenantId: T, deletedAt: null });
+        expect(c.orderBy).toEqual({ id: "asc" });
+        expect(c.take).toBe(ENABLE_READINESS_PAGE_SIZE);
+      }
+      expect(calls[0].cursor).toBeUndefined();
+      expect(calls[1]).toMatchObject({
+        cursor: { id: cid(ENABLE_READINESS_PAGE_SIZE - 1) },
+        skip: 1,
+      });
+      expect(calls[2]).toMatchObject({
+        cursor: { id: cid(ENABLE_READINESS_PAGE_SIZE * 2 - 1) },
+        skip: 1,
+      });
+    });
+
+    it("an exact multiple of the page size costs one extra (empty) page, then stops", async () => {
+      serveCustomers(
+        Array.from({ length: ENABLE_READINESS_PAGE_SIZE }, (_, i) => customer(cid(i), [addr()])),
+      );
+      enable(true);
+      const r = await service.getEnableReadiness(T);
+      expect(r.customerCount).toBe(ENABLE_READINESS_PAGE_SIZE);
+      expect(prisma.customer.findMany).toHaveBeenCalledTimes(2);
+    });
+
+    it("refuses a tenant other than the ambient one, reading nothing", async () => {
+      mockAmbient("tenant-2");
+      await expect(service.getEnableReadiness(T)).rejects.toThrow(InternalServerErrorException);
+      expect(prisma.systemConfig.findMany).not.toHaveBeenCalled();
+      expect(prisma.customer.findMany).not.toHaveBeenCalled();
+    });
+
+    it("a DB error propagates — readiness is never silently 'ready'", async () => {
+      enable(true);
+      prisma.customer.findMany.mockRejectedValue(new Error("db down"));
+      await expect(service.getEnableReadiness(T)).rejects.toThrow("db down");
+    });
+
+    it("is read-only", async () => {
+      enable(true);
+      serveCustomers([customer("a", [addr()])]);
+      await service.getEnableReadiness(T);
+      for (const m of ["create", "update", "upsert", "delete", "updateMany", "deleteMany"]) {
+        expect(prisma.customer[m]).not.toHaveBeenCalled();
+        expect(prisma.systemConfig[m]).not.toHaveBeenCalled();
+      }
+    });
+
+    it("assertReadyToEnable returns the readiness when ready", async () => {
+      enable(true);
+      serveCustomers([customer("a", [addr()])]);
+      expect(await service.assertReadyToEnable(T)).toMatchObject({ ready: true, customerCount: 1 });
+    });
+
+    it("assertReadyToEnable throws a 409 SELLING_RESTRICTIONS_NOT_READY carrying the readiness", async () => {
+      enable(true);
+      serveCustomers([customer("a", [addr()]), customer("b", [])]);
+      const err = await service.assertReadyToEnable(T).catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getStatus()).toBe(409);
+      expect(SELLING_RESTRICTIONS_NOT_READY).toBe("SELLING_RESTRICTIONS_NOT_READY");
+      expect(err.getResponse()).toEqual({
+        code: "SELLING_RESTRICTIONS_NOT_READY",
+        readiness: {
+          ready: false,
+          truncated: false,
+          customerCount: 2,
+          customersWithoutAddress: 1,
+          customersAmbiguousNoDefault: 0,
+          addressesMissingStateCode: 0,
+          addressesNeedingReview: 0,
+          indeterminateCustomerCount: 1,
+        },
+      });
+    });
+
+    it("evaluate() NEVER consults readiness: an un-backfilled tenant is INDETERMINATE, not blocked by a readiness error", async () => {
+      const probe = jest.spyOn(service, "getEnableReadiness");
+      const assertProbe = jest.spyOn(service, "assertReadyToEnable");
+      enable(true);
+      withProduct();
+      prisma.sellingRestriction.findMany.mockResolvedValue([dbRule()]);
+      withAddresses([addr({ stateCode: null })]); // state not backfilled yet
+      const res = await service.evaluate(T, "c1", [{ productId: "p1" }], { at: NOW });
+      expect(res.outcome).toBe("INDETERMINATE");
+      expect(probe).not.toHaveBeenCalled();
+      expect(assertProbe).not.toHaveBeenCalled();
+      expect(prisma.customer.findMany).not.toHaveBeenCalled();
+    });
   });
 });

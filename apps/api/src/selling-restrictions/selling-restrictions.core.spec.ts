@@ -1,9 +1,13 @@
 import {
+  activeRuleWhere,
+  compareRules,
   evaluateRestrictions,
   matchingRules,
   offEvaluation,
   resolveGoverningState,
+  ruleBindsChannel,
   ruleIsActive,
+  UNKNOWN_PRODUCT_NAME,
   UNRESOLVED_STATE,
   type CustomerAddressFacts,
   type EvaluateInput,
@@ -572,5 +576,267 @@ describe("round 4", () => {
     );
     expect(res.reasons).toHaveLength(1);
     expect(res.reasons[0]).toMatchObject({ ruleId: "fed", reason: "FEDERAL_BAN" });
+  });
+});
+
+/** Every ordering of `items` (small inputs only). */
+const permutations = <T>(items: readonly T[]): T[][] =>
+  items.length <= 1
+    ? [[...items]]
+    : items.flatMap((item, i) =>
+        permutations([...items.slice(0, i), ...items.slice(i + 1)]).map((rest) => [item, ...rest]),
+      );
+
+describe("review MAJOR 1: the cited rule is deterministic (effectiveFrom desc, id asc)", () => {
+  const cited = (rules: RestrictionRuleFacts[], over: Partial<EvaluateInput> = {}) =>
+    evaluateRestrictions(input({ rules, ...over })).reasons.map((r) => ({
+      ruleId: r.ruleId,
+      reason: r.reason,
+      message: r.message,
+    }));
+
+  // Three rules per pick: an OLD one, and two NEWER ones sharing an effectiveFrom (tie → id).
+  const trio = (over: Partial<RestrictionRuleFacts>) => [
+    rule({ id: "r-old", effectiveFrom: day(-30), ...over }),
+    rule({ id: "r-b", effectiveFrom: day(-5), ...over }),
+    rule({ id: "r-a", effectiveFrom: day(-5), ...over }),
+  ];
+
+  it.each([
+    ["FEDERAL rule", trio({ jurisdiction: "FEDERAL", states: [] }), {}],
+    [
+      "unrecognised-jurisdiction rule",
+      trio({ jurisdiction: "PROVINCE" as unknown as "STATE" }),
+      {},
+    ],
+    ["empty-states STATE rule (blocks everywhere)", trio({ states: [] }), {}],
+    ["STATE rule that names the customer's state", trio({ states: ["TX"] }), {}],
+    [
+      "STATE rule cited by INDETERMINATE_ADDRESS",
+      trio({ states: ["TX"] }),
+      { governingState: UNRESOLVED_STATE },
+    ],
+  ])(
+    "%s: identical citation in EVERY input order; newest first, tie broken by id",
+    (_n, rules, over) => {
+      const expected = cited(rules, over);
+      expect(expected).toHaveLength(1);
+      expect(expected[0].ruleId).toBe("r-a");
+      for (const order of permutations(rules)) {
+        expect(cited(order, over)).toEqual(expected);
+      }
+    },
+  );
+
+  it("a NEWER effectiveFrom beats an older rule regardless of id or input order", () => {
+    const rules = [
+      rule({ id: "a-old", effectiveFrom: day(-30) }),
+      rule({ id: "z-new", effectiveFrom: day(-1) }),
+    ];
+    for (const order of permutations(rules)) {
+      expect(cited(order).map((c) => c.ruleId)).toEqual(["z-new"]);
+    }
+  });
+
+  it("a FEDERAL rule still outranks a newer STATE rule (the pick order is unchanged)", () => {
+    const rules = [
+      rule({ id: "state-new", effectiveFrom: day(-1) }),
+      rule({ id: "fed-old", effectiveFrom: day(-30), jurisdiction: "FEDERAL", states: [] }),
+    ];
+    for (const order of permutations(rules)) {
+      expect(cited(order).map((c) => c.ruleId)).toEqual(["fed-old"]);
+    }
+  });
+
+  it("compareRules is a total order: newest effectiveFrom first, then id ascending", () => {
+    const rules = [
+      rule({ id: "c", effectiveFrom: day(-1) }),
+      rule({ id: "b", effectiveFrom: day(-5) }),
+      rule({ id: "a", effectiveFrom: day(-5) }),
+    ];
+    expect([...rules].sort(compareRules).map((r) => r.id)).toEqual(["c", "a", "b"]);
+    expect(compareRules(rules[0], rules[0])).toBe(0);
+  });
+
+  it("matchingRules returns the same sorted list for any input order and does not mutate its input", () => {
+    const rules = [
+      rule({ id: "b", effectiveFrom: day(-5) }),
+      rule({ id: "c", effectiveFrom: day(-1) }),
+      rule({ id: "a", effectiveFrom: day(-5) }),
+    ];
+    const snapshot = rules.map((r) => r.id);
+    for (const order of permutations(rules)) {
+      expect(matchingRules(order, product(), "STAFF", AT).map((r) => r.id)).toEqual([
+        "c",
+        "a",
+        "b",
+      ]);
+    }
+    expect(rules.map((r) => r.id)).toEqual(snapshot);
+  });
+});
+
+describe("review MINOR 1: ruleBindsChannel fails CLOSED on an unknown surface", () => {
+  const surfaceRule = (surface: string) => rule({ surface: surface as unknown as "ALL" });
+
+  it.each([
+    ["ALL", "STAFF", true],
+    ["ALL", "BUYER_PORTAL", true],
+    ["BUYER_PORTAL", "STAFF", false],
+    ["BUYER_PORTAL", "BUYER_PORTAL", true],
+    ["MOBILE_ONLY (a value this file has not learned)", "STAFF", true],
+    ["MOBILE_ONLY (a value this file has not learned)", "BUYER_PORTAL", true],
+    ["", "STAFF", true],
+  ] as const)("surface %s on the %s channel binds: %s", (surface, channel, binds) => {
+    expect(ruleBindsChannel(surfaceRule(surface), channel)).toBe(binds);
+  });
+
+  it("an unknown-surface rule blocks STAFF (not exempted) and reports the plain ban reason", () => {
+    const res = evaluateRestrictions(
+      input({ channel: "STAFF", rules: [rule({ surface: "FUTURE" as unknown as "ALL" })] }),
+    );
+    expect(res.outcome).toBe("BLOCK");
+    expect(res.reasons[0].reason).toBe("STATE_BAN");
+  });
+
+  it("matchingRules binds an unknown surface on both channels, a BUYER_PORTAL surface only on the portal", () => {
+    const unknown = rule({ surface: "FUTURE" as unknown as "ALL" });
+    expect(matchingRules([unknown], product(), "STAFF", AT)).toHaveLength(1);
+    expect(matchingRules([unknown], product(), "BUYER_PORTAL", AT)).toHaveLength(1);
+    const portal = rule({ surface: "BUYER_PORTAL" });
+    expect(matchingRules([portal], product(), "STAFF", AT)).toHaveLength(0);
+    expect(matchingRules([portal], product(), "BUYER_PORTAL", AT)).toHaveLength(1);
+  });
+});
+
+describe("review MINOR 2: ruleIsActive (JS) and activeRuleWhere (SQL twin) agree", () => {
+  type Window = { effectiveFrom: Date; effectiveTo: Date | null; liftedAt: Date | null };
+
+  /** A tiny interpreter for exactly the operators `activeRuleWhere` uses — anything else throws. */
+  const matches = (row: Record<string, Date | null>, where: Record<string, unknown>): boolean =>
+    Object.entries(where).every(([key, cond]) => {
+      if (key === "AND") return (cond as Record<string, unknown>[]).every((w) => matches(row, w));
+      if (key === "OR") return (cond as Record<string, unknown>[]).some((w) => matches(row, w));
+      const value = row[key];
+      if (cond === null) return value === null;
+      const c = cond as { lte?: Date; gt?: Date };
+      if (c.lte !== undefined) return value !== null && value.getTime() <= c.lte.getTime();
+      if (c.gt !== undefined) return value !== null && value.getTime() > c.gt.getTime();
+      throw new Error(`activeRuleWhere uses an operator this spec cannot interpret on "${key}"`);
+    });
+  const sqlActive = (w: Window) => matches({ ...w }, activeRuleWhere(AT));
+
+  const win = (over: Partial<Window> = {}): Window => ({
+    effectiveFrom: day(-30),
+    effectiveTo: null,
+    liftedAt: null,
+    ...over,
+  });
+
+  it("ruleIsActive accepts just the three window fields (reusable by other lanes)", () => {
+    expect(ruleIsActive({ effectiveFrom: day(-1), effectiveTo: null, liftedAt: null }, AT)).toBe(
+      true,
+    );
+  });
+
+  it.each([
+    ["effectiveFrom == at is included", win({ effectiveFrom: AT }), true],
+    ["effectiveFrom after at is excluded", win({ effectiveFrom: day(1) }), false],
+    ["effectiveTo == at is excluded", win({ effectiveTo: AT }), false],
+    ["effectiveTo after at is included", win({ effectiveTo: day(1) }), true],
+    ["effectiveTo before at is excluded", win({ effectiveTo: day(-1) }), false],
+    ["liftedAt == at is excluded", win({ liftedAt: AT }), false],
+    ["liftedAt before at is excluded", win({ liftedAt: day(-1) }), false],
+    ["liftedAt after at is included", win({ liftedAt: day(1) }), true],
+    ["open-ended, never lifted is included", win(), true],
+    [
+      "lifted in the future but already ended is excluded",
+      win({ effectiveTo: day(-1), liftedAt: day(1) }),
+      false,
+    ],
+  ])("%s — fragment and ruleIsActive agree", (_n, w, expected) => {
+    expect(ruleIsActive(w, AT)).toBe(expected);
+    expect(sqlActive(w)).toBe(expected);
+  });
+
+  it("agree on EVERY combination of from / to / lifted around the boundary (48 cases)", () => {
+    const from = [day(-1), AT, day(1)];
+    const to = [null, day(-1), AT, day(1)];
+    const lifted = [null, day(-1), AT, day(1)];
+    let n = 0;
+    for (const effectiveFrom of from) {
+      for (const effectiveTo of to) {
+        for (const liftedAt of lifted) {
+          const w = { effectiveFrom, effectiveTo, liftedAt };
+          expect({ w, sql: sqlActive(w) }).toEqual({ w, sql: ruleIsActive(w, AT) });
+          n++;
+        }
+      }
+    }
+    expect(n).toBe(48);
+  });
+
+  it("the fragment's exact structure (a change here must be a deliberate one)", () => {
+    expect(activeRuleWhere(AT)).toEqual({
+      effectiveFrom: { lte: AT },
+      AND: [
+        { OR: [{ effectiveTo: null }, { effectiveTo: { gt: AT } }] },
+        { OR: [{ liftedAt: null }, { liftedAt: { gt: AT } }] },
+      ],
+    });
+  });
+});
+
+describe("review MINOR 6: UNKNOWN_PRODUCT never shows a raw id to the buyer", () => {
+  const ID = "3f2b8c1e-9d4a-4e7b-8a15-6c0d2f9e7a41";
+
+  it.each([
+    ["the loader's id fallback as the name", product({ id: ID, name: ID, unresolvable: true })],
+    ["a known name whose parent is missing", product({ id: ID, name: "Sour", unresolvable: true })],
+  ])(
+    "%s: productName is generic, the message carries no id or name, productId keeps the id",
+    (_n, p) => {
+      const res = evaluateRestrictions(input({ products: [p], rules: [] }));
+      expect(res.outcome).toBe("INDETERMINATE");
+      const reason = res.reasons[0];
+      expect(reason.reason).toBe("UNKNOWN_PRODUCT");
+      expect(reason.productId).toBe(ID);
+      expect(reason.productName).toBe(UNKNOWN_PRODUCT_NAME);
+      expect(reason.productName).toBe("Unknown product");
+      expect(reason.message).not.toContain(ID);
+      expect(reason.message).not.toContain(p.name);
+      expect(reason.message).toMatch(/can't be checked/);
+    },
+  );
+
+  describe("round 1 (Opus): nameKnown", () => {
+    it("an unresolvable product whose OWN name is known shows that name, never the id", () => {
+      const res = evaluateRestrictions(
+        input({
+          products: [
+            product({ id: "uuid-9", name: "Bourbon 750ml", unresolvable: true, nameKnown: true }),
+          ],
+          rules: [],
+        }),
+      );
+      expect(res.reasons[0]).toMatchObject({
+        reason: "UNKNOWN_PRODUCT",
+        productId: "uuid-9",
+        productName: "Bourbon 750ml",
+      });
+      expect(res.reasons[0].message).toContain("Bourbon 750ml");
+      expect(res.reasons[0].message).not.toContain("uuid-9");
+    });
+
+    it("without nameKnown the name (which is the raw id) is never echoed", () => {
+      const res = evaluateRestrictions(
+        input({
+          products: [product({ id: "uuid-9", name: "uuid-9", unresolvable: true })],
+          rules: [],
+        }),
+      );
+      expect(res.reasons[0].productName).toBe(UNKNOWN_PRODUCT_NAME);
+      expect(res.reasons[0].message).not.toContain("uuid-9");
+    });
   });
 });
