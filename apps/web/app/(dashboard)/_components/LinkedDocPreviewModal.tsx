@@ -6,6 +6,7 @@ import { Modal, Button } from "@routeflow/ui/web";
 import { AlertTriangle, ArrowUpRight, Loader2 } from "lucide-react";
 import { fmt } from "@/lib/formatting";
 import { useOrder } from "@/lib/api/orders";
+import { orderLineName } from "@/lib/product-display";
 import { useInvoice } from "@/lib/api/invoices";
 
 /**
@@ -115,7 +116,7 @@ export function OrderPreviewModal({
     .filter((li) => li.status !== "CANCELLED")
     .map((li) => ({
       id: li.id,
-      label: li.product?.name ?? li.name ?? "Custom item",
+      label: orderLineName(li) ?? "Custom item",
       qtyLabel: qtyLabel(li),
       unitPrice: Number(li.unitPrice),
       subtotal: li.subtotal != null ? Number(li.subtotal) : Number(li.unitPrice) * Number(li.qty),

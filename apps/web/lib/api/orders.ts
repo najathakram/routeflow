@@ -132,6 +132,12 @@ export interface OrderItem {
     unitsPerBox?: number | null;
     averageCost?: string | number | null;
     category?: string | null;
+    /** SKU line + read-time name composition (`displayProductName`) — `GET /orders/:id` only. */
+    sku?: string | null;
+    unitSku?: string | null;
+    variantName?: string | null;
+    parentProductId?: string | null;
+    parent?: { name: string } | null;
   };
   /** Free-text label for an unlisted line (productId null, priceType "MANUAL"). */
   name?: string | null;

@@ -12,6 +12,40 @@
 
 ## process
 
+### L-209 · 2026-09-19 · process · read the shared review channel immediately before every merge
+
+- **Symptom:** three PRs were squash-merged on green CI plus an in-session review while an
+  independent reviewer had already posted a ship-after-fixes verdict with blockers on the shared
+  coordination issue minutes earlier. The blockers (a prod E2E gate that goes red on unseeded
+  fixtures, a script that sent live-tenant addresses to a third party before its test-tenant
+  gate, a vendor verdict accepted without checking its inferred components) landed on master and
+  needed fix-forward PRs plus a manual prod re-seed.
+- **Root cause:** the merge decision was gated on CI plus one review the merger commissioned, not
+  on the channel where independent reviews are posted. A green CI cannot see a blocker that
+  lives in prose.
+- **Lesson:** **A merge gate must include a fresh read of the shared review channel for that
+  specific PR — re-fetch it and filter for REVIEW / BLOCKED / HOLD lines naming the PR,
+  immediately before `gh pr merge`, not once at window open. Any unresolved blocker line, or a
+  REVIEW line newer than the last commit reviewed, holds the merge.**
+- **Guard:** landing-coordinator routine step "read the coordination issue for REVIEW lines on
+  this PR" before each merge (no code guard); the three findings shipped as fix-forward PRs.
+
+### L-208 · 2026-09-19 · process · stacked PRs and `--delete-branch`
+
+- **Symptom:** squash-merging a stack parent with `gh pr merge --delete-branch` deleted its head
+  branch, which auto-CLOSED the child PR whose base was that branch; the child could not be
+  retargeted until the base branch was restored and the PR reopened. Separately, after the
+  parent's squash the child's branch still carried the parent's pre-squash commits, so it showed
+  DIRTY/CONFLICTING against master.
+- **Root cause:** GitHub closes (does not retarget) an open PR when its base branch is deleted,
+  and a squash rewrites the parent's commits so the child's history no longer matches master.
+- **Lesson:** **Merge stack parents WITHOUT `--delete-branch`. Retarget each child to master
+  (`gh pr edit N --base master`) BEFORE deleting anything, then have the child's owner merge
+  master in (taking master's side for the parent's files) and re-run CI on the fresh head.
+  Delete branches only after every child is retargeted.**
+- **Guard:** landing-coordinator checklist (no code guard); see [[L-190]] for the sibling
+  rebuild-after-squash trap.
+
 ### L-197 · 2026-09-17/18 · process · verifying landed/unlanded needs a fresh fetch AND the right commit (merged: L-203)
 
 - **Symptom:** two related false "unlanded" verdicts, same underlying mistake. (1) PR #857/B502
@@ -31,7 +65,7 @@
   exact freshly-fetched sha in any ancestry claim; (2) resolve the SPECIFIC commit meant to carry
   the fix — via `git log --grep` for the PR's `(#N)` tag, or `gh pr view <n> --json mergeCommit`
   — never the source branch's tip or GitHub's PR view alone; (3) then run `merge-base
-  --is-ancestor <that sha> origin/master` on full, unshallowed history (a shallow clone's
+--is-ancestor <that sha> origin/master` on full, unshallowed history (a shallow clone's
   grafted boundary can misreport).**
 - **Guard:** none yet — propose the landing checklist require both halves together: fetch
   fresh, then check the actual landing commit, never either alone.
@@ -47,7 +81,7 @@
   stale when its registry record got renumbered during filing; and — after this entry was
   already written — this entry's OWN registry hit a fifth: an unrelated lesson landed on master
   at the same id this entry's branch had already used.
-- **Root cause:** each was a *correct* read of an *incomplete* view — merged master, one
+- **Root cause:** each was a _correct_ read of an _incomplete_ view — merged master, one
   worktree's local scan, or memory of a conversation. Nobody can see an id reserved in an
   unmerged branch until it's fetched, and nothing forces that fetch before allocating. The
   self-resolve protocol makes this WORSE: a tree resolving blind to a concurrent claim produces

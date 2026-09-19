@@ -49,7 +49,7 @@ concurrency:
   cancel-in-progress: true # a newer manual run supersedes an in-flight check
 
 env:
-  NODE_VERSION: "20"
+  NODE_VERSION: "24"
   # Dispatch inputs, then the secrets ci.yml uses, then the public defaults. The
   # `github.event.client_payload.*` fallbacks that used to sit in the middle were
   # dropped with the repository_dispatch trigger — nothing can populate them now,

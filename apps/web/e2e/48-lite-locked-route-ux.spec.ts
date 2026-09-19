@@ -97,8 +97,12 @@ test.describe("Lite locked-route UX (B449)", () => {
         // the sidebar nav stays mounted (present at every viewport; CSS-hidden, not
         // DOM-removed, below the lg breakpoint by responsive design) so the user can
         // still navigate away from the locked route.
+        // `locator("nav")`, not getByRole("navigation"): Playwright's role queries skip
+        // elements that are display:none, so below lg the CSS-hidden sidebar has NO navigation
+        // role in the accessibility tree and the role locator never resolved at 768/390 (B572).
+        // `.first()` — a page can carry more than one <nav> (sidebar + drawer).
         await expect(
-          page.getByRole("navigation").getByText("Dashboard", { exact: true }),
+          page.locator("nav").getByText("Dashboard", { exact: true }).first(),
         ).toBeAttached();
 
         const dir = path.join(SCREENSHOT_DIR, vp.name);

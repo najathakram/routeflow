@@ -241,6 +241,15 @@ export interface CustomerStatement {
   availableCredit: number;
   advanceBalance: number;
   pendingOrdersAmount?: number;
+  /** Operator statement only (absent on the buyer portal): the exposure the hard
+   *  credit limit is checked against — issued open-invoice balances, drafts backed by
+   *  an open/delivered order, and the unbilled value of open orders. Same derivation
+   *  the credit block uses (D6 / B462). */
+  creditExposure?: number;
+  /** Operator statement only: unissued DRAFT invoice balances with NO open or
+   *  delivered order behind them (standalone, cancelled/draft order, quote) —
+   *  shown beside, never inside, `creditExposure`. */
+  pendingExposure?: number;
   /** Lifetime billed total, summed by the DATABASE over the whole history —
    *  never a reduce over the capped `transactions` ledger below. */
   lifetimeInvoiced: number;
