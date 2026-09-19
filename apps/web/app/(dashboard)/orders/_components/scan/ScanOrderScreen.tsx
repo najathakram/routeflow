@@ -200,7 +200,16 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
     applyStep(manualScanned(engineRef.current, code));
   };
 
-  const camera = useContinuousScanCamera({ enabled: live, onDetect: handleFrame });
+  // The line being edited, looked up LIVE so the editor always shows the current values. If the
+  // line disappears underneath it (undo, removal) the editor simply closes.
+  const editingLine = editingId ? (lines.find((l) => l.tempId === editingId) ?? null) : null;
+  const closeEditor = React.useCallback(() => setEditingId(null), []);
+  const editorOpen = !!editingLine && !!renderPriceEditor;
+
+  // The camera is OFF while the editor sheet is open: a decode landing behind the opaque sheet
+  // would increment the very line being edited (the focused field jumping under the operator's
+  // cursor) with its cue and feedback hidden. Scanning resumes when the sheet closes.
+  const camera = useContinuousScanCamera({ enabled: live && !editorOpen, onDetect: handleFrame });
 
   const undo = () => {
     const { entry, rest } = popHistory(history);
@@ -209,14 +218,10 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
     onUndo(entry);
   };
 
-  // The line being edited, looked up LIVE so the editor always shows the current values. If the
-  // line disappears underneath it (undo, removal) the editor simply closes.
-  const editingLine = editingId ? (lines.find((l) => l.tempId === editingId) ?? null) : null;
-  const closeEditor = React.useCallback(() => setEditingId(null), []);
-
-  // Escape closes the TOPMOST layer only — the price editor if one is open, else this screen —
-  // capture phase + stopPropagation so it can never also dismiss the order builder underneath.
-  const editorOpen = !!editingLine && !!renderPriceEditor;
+  // Escape closes the price editor if one is open, else this screen — capture phase +
+  // stopPropagation so it can never also dismiss the order builder underneath. (A third layer,
+  // MarginHint's cost-history popover, listens on window-capture too and registers AFTER this, so
+  // Escape with that popover open closes the sheet as well; nothing is lost, edits apply live.)
   React.useEffect(() => {
     if (!live) return;
     const onKey = (e: KeyboardEvent) => {

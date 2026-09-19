@@ -58,6 +58,14 @@ export function PriceEditor({
   onClose,
 }: PriceEditorProps) {
   const boxed = !!li.unitsPerBox;
+  // The row labels the price "Case price" only for a real pack (> 1), though it shows the case
+  // qty controls for any unitsPerBox — mirror both.
+  const packed = (li.unitsPerBox ?? 0) > 1;
+  const dialogRef = React.useRef<HTMLDivElement>(null);
+  // Move focus into the sheet on open so Tab/Shift+Tab start inside it, not on the screen behind.
+  React.useEffect(() => {
+    dialogRef.current?.focus();
+  }, []);
   const lineTotal = computeLineSubtotal({
     unitPrice: li.unitPrice,
     qty: li.qty,
@@ -76,10 +84,14 @@ export function PriceEditor({
         type="button"
         aria-label="Close price editor"
         onClick={onClose}
+        tabIndex={-1}
         className="absolute inset-0 bg-black/40"
       />
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
+        aria-modal="true"
         aria-label={`Edit ${li.productName}`}
         className="relative z-10 max-h-[85vh] w-full max-w-md space-y-4 overflow-y-auto rounded-t-2xl bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-xl sm:rounded-2xl"
       >
@@ -198,7 +210,7 @@ export function PriceEditor({
         {li.priceType !== "SPECIAL" ? (
           <section className="space-y-1">
             <label className="block text-xs font-medium text-navy/70">
-              {boxed ? "Case price" : "Price"}
+              {packed ? "Case price" : "Price"}
             </label>
             <div className="flex flex-wrap items-center gap-2">
               <span className="flex items-center rounded border border-surface-border bg-white px-2 focus-within:ring-2 focus-within:ring-brand-500">
