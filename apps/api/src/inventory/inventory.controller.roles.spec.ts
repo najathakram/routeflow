@@ -23,6 +23,7 @@ describe("InventoryController effective @Roles (B168)", () => {
     "recordPurchase",
     "recordAdjustment",
     "createPO",
+    "updatePO",
     "receivePO",
     "commitStockCount",
     "sendPO",
