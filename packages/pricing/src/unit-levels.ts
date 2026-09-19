@@ -7,13 +7,28 @@ import { getTierPrice } from "./tier-pricing";
 // or derived — proportional to the pack's own tier ladder when tier 1 is
 // explicit, else a straight factor ratio off the pack. One rounding, at the end.
 
+/** A money/qty value as it arrives from Prisma: number, string, or a `Decimal` (valueOf → string). */
+export type Numeric = number | string | { valueOf(): number | string };
+
 export interface ResolveUnitPriceLevel {
   factorToBase: number;
-  price: number | null;
-  priceTier2: number | null;
-  priceTier3: number | null;
-  priceTier4: number | null;
-  priceTier5: number | null;
+  price: Numeric | null;
+  priceTier2: Numeric | null;
+  priceTier3: Numeric | null;
+  priceTier4: Numeric | null;
+  priceTier5: Numeric | null;
+}
+
+/**
+ * A level price counts as EXPLICIT only when it is a positive number — the same convention as
+ * `getTierPrice`'s `|| fallback` (and `cascadeTierPrices`, which writes "0.00" to mean "inherit
+ * again"). NULL, 0, NaN and negatives are all "derive". Coerces Decimal/string so an operator's
+ * typed price can never silently round to 0.00.
+ */
+function explicitPrice(v: Numeric | null | undefined): number | null {
+  if (v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 export interface ResolveLevelPriceInput {
@@ -30,18 +45,18 @@ export interface ResolveLevelPriceInput {
 /** Price for ONE resolved level at a given customer tier (the low-level rule). */
 export function resolveLevelPrice(input: ResolveLevelPriceInput): number {
   const { packPrice, packFactor, tierPackPrice, level, tier } = input;
-  const explicit =
-    tier === 1
-      ? level.price
-      : tier === 2
-        ? level.priceTier2
-        : tier === 3
-          ? level.priceTier3
-          : tier === 4
-            ? level.priceTier4
-            : level.priceTier5;
+  const tierPrices = [
+    level.price,
+    level.priceTier2,
+    level.priceTier3,
+    level.priceTier4,
+    level.priceTier5,
+  ];
+  const explicit = explicitPrice(tierPrices[tier - 1]);
   if (explicit != null) return roundMoney(explicit);
-  if (level.price != null) return roundMoney((level.price * tierPackPrice) / packPrice);
+  const base = explicitPrice(level.price);
+  // A zero pack price gives no ladder to scale by — the level's own price stands unscaled.
+  if (base != null) return roundMoney(packPrice > 0 ? (base * tierPackPrice) / packPrice : base);
   return roundMoney((tierPackPrice * level.factorToBase) / packFactor);
 }
 
@@ -102,15 +117,20 @@ function packLabelOf(product: LadderProduct): string {
   return (product.unit ?? "").trim() || "Box";
 }
 
+/** Only rows with a positive integer factor can be sold — a corrupt row is invisible, never priced. */
+const validRows = (units: readonly LadderUnit[]) =>
+  units.filter((u) => Number.isInteger(u.factorToBase) && u.factorToBase >= 1);
+
 /** Exact label first, then case-insensitive — "Case" and "case" may both exist on one product. */
 function findUnitRow(units: readonly LadderUnit[], label: string): LadderUnit | undefined {
-  const exact = units.find((u) => u.label === label);
-  return exact ?? units.find((u) => norm(u.label) === norm(label));
+  const rows = validRows(units);
+  return rows.find((u) => u.label === label) ?? rows.find((u) => norm(u.label) === norm(label));
 }
 
 /**
  * Resolve `unitLabel` against the ladder. Absent/blank ⇒ the pack (today's behaviour, byte for
- * byte). Order: a `ProductUnit` row → the pack's own label → "Piece" → UnknownUnitError.
+ * byte). Order: "Piece" (always factor 1, even if the pack itself is labelled "Piece") → the
+ * pack's own label (the pack wins over a colliding row) → a `ProductUnit` row → UnknownUnitError.
  */
 export function resolveLadderLevel(
   product: LadderProduct,
@@ -118,19 +138,27 @@ export function resolveLadderLevel(
   unitLabel?: string | null,
 ): ResolvedLadderLevel & { row: LadderUnit | null } {
   const label = (unitLabel ?? "").trim();
-  const packFactor = packFactorOf(product);
-  const pack = { label: packLabelOf(product), factorToBase: packFactor, kind: "pack" as const };
+  const pack = {
+    label: packLabelOf(product),
+    factorToBase: packFactorOf(product),
+    kind: "pack" as const,
+  };
   if (!label) return { ...pack, row: null };
-  const row = findUnitRow(units, label);
-  if (row) {
-    const kind = row.factorToBase === 1 ? "piece" : "level";
-    return { label: row.label, factorToBase: row.factorToBase, kind, row };
+  if (norm(label) === norm(PIECE_LABEL)) {
+    const row = validRows(units).find(
+      (u) => u.factorToBase === 1 && norm(u.label) === norm(PIECE_LABEL),
+    );
+    return { label: PIECE_LABEL, factorToBase: 1, kind: "piece", row: row ?? null };
   }
   if (norm(label) === norm(pack.label)) return { ...pack, row: null };
-  if (norm(label) === norm(PIECE_LABEL)) {
-    return { label: PIECE_LABEL, factorToBase: 1, kind: "piece", row: null };
-  }
-  throw new UnknownUnitError(label);
+  const row = findUnitRow(units, label);
+  if (!row) throw new UnknownUnitError(label);
+  return {
+    label: row.label,
+    factorToBase: row.factorToBase,
+    kind: row.factorToBase === 1 ? "piece" : "level",
+    row,
+  };
 }
 
 /**
@@ -180,10 +208,13 @@ export function fromBaseQty(
   product: LadderProduct,
   units: readonly LadderUnit[],
 ): BaseQtyPart[] {
-  let rest = Math.max(0, Math.trunc(Number(baseQty)) || 0);
+  const n = Math.trunc(Number(baseQty));
+  let rest = Number.isFinite(n) ? Math.max(0, n) : 0;
+  // Pack first so it survives the by-factor dedupe over a row sharing its factor; rows before
+  // the implicit Piece so an explicit Piece row keeps its label.
   const levels: Array<{ label: string; factorToBase: number }> = [
-    ...units.map((u) => ({ label: u.label, factorToBase: u.factorToBase })),
     { label: packLabelOf(product), factorToBase: packFactorOf(product) },
+    ...validRows(units).map((u) => ({ label: u.label, factorToBase: u.factorToBase })),
     { label: PIECE_LABEL, factorToBase: 1 },
   ]
     .filter(
