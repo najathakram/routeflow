@@ -196,7 +196,7 @@ describe("ScanOrderScreen", () => {
       const { props } = setup();
       await scan("012345678905");
       expect(props.resolveCode).toHaveBeenCalledTimes(1);
-      expect(props.resolveCode).toHaveBeenCalledWith("012345678905");
+      expect(props.resolveCode).toHaveBeenCalledWith("012345678905", { quiet: true });
       expect(playScanCue).toHaveBeenCalledWith("accepted");
       expect(await screen.findByRole("status")).toHaveTextContent("Added Widget");
     });
@@ -307,7 +307,7 @@ describe("ScanOrderScreen", () => {
       await act(async () => {
         fireEvent.keyDown(input, { key: "Enter" });
       });
-      expect(props.resolveCode).toHaveBeenCalledWith("12345678");
+      expect(props.resolveCode).toHaveBeenCalledWith("12345678", { quiet: true });
       expect(input).toHaveValue("");
     });
 
@@ -385,6 +385,234 @@ describe("ScanOrderScreen", () => {
       rerender(<ScanOrderScreen {...props} open={false} />);
       rerender(<ScanOrderScreen {...props} open />);
       expect(screen.getByRole("button", { name: /undo last scan/i })).toBeDisabled();
+    });
+  });
+
+  describe("poor-signal queue (step 7)", () => {
+    const offline = (): ScanResolution => ({
+      kind: "error",
+      message: "Network Error",
+      offline: true,
+    });
+    const RETRY_WINDOW = 6_600; // first retry is due 5s after the failure; the tick is 1.5s
+
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+
+    const advance = async (ms: number) => {
+      // The ASYNC variant flushes promise microtasks between timers, so a retry's failure is
+      // recorded at the clock reading it happened at, not at the end of the whole advance.
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(ms);
+      });
+    };
+
+    it("a lookup that failed for lack of signal is QUEUED, not reported as a failure or added", async () => {
+      const { props } = setup({}, async () => offline());
+      await scan("111");
+
+      expect(screen.getByLabelText("Waiting for signal")).toHaveTextContent(
+        "Waiting for signal (1)",
+      );
+      expect(screen.getByLabelText("Waiting for signal")).toHaveTextContent("111");
+      expect(screen.getByRole("status", { name: "" })).toBeDefined();
+      expect(playScanCue).toHaveBeenCalledWith("rejected");
+      expect(props.onUndo).not.toHaveBeenCalled();
+      // A queued scan is not an added scan, so there is nothing to undo.
+      expect(screen.getByRole("button", { name: /undo last scan/i })).toBeDisabled();
+    });
+
+    it("tells the operator it is queued", async () => {
+      setup({}, async () => offline());
+      await scan("111");
+      expect(screen.getByText(/No signal - 111 queued, will retry/)).toBeInTheDocument();
+    });
+
+    it("retries after 5s, and on success adds it exactly like a live scan (cue, pill, undo entry)", async () => {
+      const resolve = jest
+        .fn<Promise<ScanResolution>, [string, { quiet?: boolean }?]>()
+        .mockResolvedValueOnce(offline())
+        .mockResolvedValueOnce(added("p1", "Widget"));
+      setup({}, resolve);
+      await scan("111");
+      expect(resolve).toHaveBeenCalledTimes(1);
+
+      await advance(RETRY_WINDOW);
+
+      expect(resolve).toHaveBeenCalledTimes(2);
+      expect(resolve).toHaveBeenLastCalledWith("111", { quiet: true });
+      expect(screen.queryByLabelText("Waiting for signal")).not.toBeInTheDocument();
+      expect(playScanCue).toHaveBeenLastCalledWith("accepted");
+      expect(screen.getByText("Added Widget")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /undo last scan/i })).toBeEnabled();
+    });
+
+    it("does NOT retry before it is due", async () => {
+      const resolve = jest.fn<Promise<ScanResolution>, [string]>().mockResolvedValue(offline());
+      setup({}, resolve);
+      await scan("111");
+      await advance(3_000);
+      expect(resolve).toHaveBeenCalledTimes(1);
+    });
+
+    it("backs off exponentially while still offline (5s, 10s, ...)", async () => {
+      const resolve = jest.fn<Promise<ScanResolution>, [string]>().mockResolvedValue(offline());
+      setup({}, resolve);
+      await scan("111");
+
+      await advance(RETRY_WINDOW); // retry #1 fails -> next in 10s
+      expect(resolve).toHaveBeenCalledTimes(2);
+      await advance(6_000);
+      expect(resolve).toHaveBeenCalledTimes(2); // not yet
+      await advance(5_000); // 11s after retry #1
+      expect(resolve).toHaveBeenCalledTimes(3);
+    });
+
+    it("gives up after 10 tries, says so, and empties the queue", async () => {
+      const resolve = jest.fn<Promise<ScanResolution>, [string]>().mockResolvedValue(offline());
+      setup({}, resolve);
+      await scan("111");
+
+      // Step tick by tick and stop AT the give-up: its status pill only lives 2.5s.
+      for (let i = 0; i < 1000 && resolve.mock.calls.length < 10; i++) await advance(1_500);
+      await advance(1_500);
+
+      expect(resolve).toHaveBeenCalledTimes(10); // the original + 9 retries
+      expect(screen.queryByLabelText("Waiting for signal")).not.toBeInTheDocument();
+      expect(screen.getByText(/Gave up on 111 after 10 tries/)).toBeInTheDocument();
+    });
+
+    it("'Retry now' makes everything due immediately", async () => {
+      const resolve = jest
+        .fn<Promise<ScanResolution>, [string]>()
+        .mockResolvedValueOnce(offline())
+        .mockResolvedValueOnce(added("p1", "Widget"));
+      setup({}, resolve);
+      await scan("111");
+
+      fireEvent.click(screen.getByRole("button", { name: "Retry now" }));
+      await advance(1_600);
+
+      expect(resolve).toHaveBeenCalledTimes(2);
+    });
+
+    it("the browser coming back online retries at once", async () => {
+      const resolve = jest
+        .fn<Promise<ScanResolution>, [string]>()
+        .mockResolvedValueOnce(offline())
+        .mockResolvedValueOnce(added("p1", "Widget"));
+      setup({}, resolve);
+      await scan("111");
+
+      await act(async () => {
+        window.dispatchEvent(new Event("online"));
+      });
+
+      expect(resolve).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not retry while the browser reports it is offline", async () => {
+      const resolve = jest.fn<Promise<ScanResolution>, [string]>().mockResolvedValue(offline());
+      setup({}, resolve);
+      await scan("111");
+      const online = jest.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+
+      await advance(30_000);
+
+      expect(resolve).toHaveBeenCalledTimes(1);
+      online.mockRestore();
+    });
+
+    it("the operator can discard a queued scan", async () => {
+      const resolve = jest.fn<Promise<ScanResolution>, [string]>().mockResolvedValue(offline());
+      setup({}, resolve);
+      await scan("111");
+
+      fireEvent.click(screen.getByRole("button", { name: "Discard 111" }));
+      await advance(30_000);
+
+      expect(screen.queryByLabelText("Waiting for signal")).not.toBeInTheDocument();
+      expect(resolve).toHaveBeenCalledTimes(1); // never retried
+    });
+
+    it("an answer that arrives AFTER the operator discarded the scan is ignored (no line appears)", async () => {
+      let release!: (r: ScanResolution) => void;
+      const late = new Promise<ScanResolution>((r) => (release = r));
+      const resolve = jest
+        .fn<Promise<ScanResolution>, [string]>()
+        .mockResolvedValueOnce(offline())
+        .mockReturnValueOnce(late);
+      setup({}, resolve);
+      await scan("111");
+      await advance(RETRY_WINDOW); // retry in flight
+      fireEvent.click(screen.getByRole("button", { name: "Discard 111" }));
+
+      await act(async () => release(added("p1", "Widget")));
+
+      expect(screen.queryByText("Added Widget")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /undo last scan/i })).toBeDisabled();
+    });
+
+    it("an HTTP failure (the server answered) is reported, NOT queued", async () => {
+      setup({}, async () => ({ kind: "error", message: "Server Error" }));
+      await scan("111");
+      expect(screen.getByText("Couldn't look up that code")).toBeInTheDocument();
+      expect(screen.queryByLabelText("Waiting for signal")).not.toBeInTheDocument();
+    });
+
+    it("retries are quiet: the resolver is always asked not to toast", async () => {
+      const resolve = jest
+        .fn<Promise<ScanResolution>, [string, { quiet?: boolean }?]>()
+        .mockResolvedValue(offline());
+      setup({}, resolve);
+      await scan("111");
+      await advance(60_000);
+      for (const call of resolve.mock.calls) expect(call[1]).toEqual({ quiet: true });
+    });
+
+    it("waits at most 20 scans, then tells the operator to reconnect", async () => {
+      setup({}, async () => offline());
+      for (let i = 0; i < 20; i++) await scan(`code-${i}`);
+      expect(screen.getByLabelText("Waiting for signal")).toHaveTextContent("(20)");
+
+      await scan("code-20");
+
+      expect(screen.getByLabelText("Waiting for signal")).toHaveTextContent("(20)");
+      expect(screen.getByText(/Too many scans are waiting for signal/)).toBeInTheDocument();
+    });
+
+    it("does not retry under the price sheet or while paused", async () => {
+      const resolve = jest.fn<Promise<ScanResolution>, [string]>().mockResolvedValue(offline());
+      const lines = [L()];
+      const { rerender, props } = setup({ lines }, resolve);
+      await scan("111");
+
+      fireEvent.click(screen.getByTestId("price-p1")); // editor open
+      await advance(30_000);
+      expect(resolve).toHaveBeenCalledTimes(1);
+
+      fireEvent.click(screen.getByRole("button", { name: "close-editor" }));
+      rerender(<ScanOrderScreen {...props} paused />);
+      await advance(30_000);
+      expect(resolve).toHaveBeenCalledTimes(1);
+
+      rerender(<ScanOrderScreen {...props} paused={false} />);
+      await advance(RETRY_WINDOW);
+      expect(resolve.mock.calls.length).toBeGreaterThan(1); // resumes when live again
+    });
+
+    it("a queued scan belongs to its session - a new session starts with an empty queue", async () => {
+      const resolve = jest.fn<Promise<ScanResolution>, [string]>().mockResolvedValue(offline());
+      const { rerender, props } = setup({}, resolve);
+      await scan("111");
+      expect(screen.getByLabelText("Waiting for signal")).toBeInTheDocument();
+
+      rerender(<ScanOrderScreen {...props} open={false} />);
+      rerender(<ScanOrderScreen {...props} open />);
+      await advance(60_000);
+
+      expect(screen.queryByLabelText("Waiting for signal")).not.toBeInTheDocument();
+      expect(resolve).toHaveBeenCalledTimes(1); // the old scan never resurfaces
     });
   });
 

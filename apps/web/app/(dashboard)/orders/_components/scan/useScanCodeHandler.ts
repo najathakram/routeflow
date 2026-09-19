@@ -11,7 +11,30 @@ export type ScanResolution =
   | { kind: "added"; product: any; created: boolean }
   | { kind: "archived"; name: string }
   | { kind: "unknown" }
-  | { kind: "error"; message: string };
+  | {
+      kind: "error";
+      message: string;
+      /** The lookup failed for CONNECTIVITY (no response at all) — worth retrying, unlike a 4xx/5xx. */
+      offline?: boolean;
+    };
+
+/**
+ * Did this lookup fail because the request never got an answer (no signal, DNS, timeout, browser
+ * offline)? An HTTP response — even a 500 — means the server was reached, so it is NOT a signal
+ * problem and must not be retried as one.
+ */
+export function isConnectivityError(err: unknown): boolean {
+  const e = err as { response?: unknown; code?: string; message?: string } | null | undefined;
+  if (e?.response) return false;
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return true;
+  return (
+    e?.code === "ERR_NETWORK" ||
+    e?.code === "ECONNABORTED" ||
+    e?.code === "ETIMEDOUT" ||
+    e?.message === "Network Error" ||
+    /timeout/i.test(e?.message ?? "")
+  );
+}
 
 export interface ScanCodeHandlerDeps {
   /**
@@ -43,10 +66,15 @@ export interface ScanCodeHandlerDeps {
  * first row wins (the modal's scan flow has always auto-added; the edit page offers a picker).
  */
 export function useScanCodeHandler(deps: ScanCodeHandlerDeps) {
-  const handlerRef = React.useRef<(code: string) => Promise<ScanResolution>>(async () => ({
-    kind: "unknown",
-  }));
-  handlerRef.current = async (code: string): Promise<ScanResolution> => {
+  const handlerRef = React.useRef<
+    (code: string, opts?: { quiet?: boolean }) => Promise<ScanResolution>
+  >(async () => ({ kind: "unknown" }));
+  // `quiet` suppresses ONLY the lookup-failure toast: the scan screen shows its own status and
+  // retries a queued scan every few seconds, which must not toast on every failed retry.
+  handlerRef.current = async (
+    code: string,
+    opts?: { quiet?: boolean },
+  ): Promise<ScanResolution> => {
     try {
       const result = await resolveProductByCode(code);
       if (result.archived) {
@@ -70,12 +98,14 @@ export function useScanCodeHandler(deps: ScanCodeHandlerDeps) {
       // don't open the create-product modal over it.
       const message =
         err?.response?.data?.message ?? err?.message ?? "Check the connection and rescan.";
-      deps.toast({
-        variant: "error",
-        title: "Couldn't look up the code",
-        description: message,
-      });
-      return { kind: "error", message };
+      if (!opts?.quiet) {
+        deps.toast({
+          variant: "error",
+          title: "Couldn't look up the code",
+          description: message,
+        });
+      }
+      return { kind: "error", message, offline: isConnectivityError(err) };
     }
     // Nothing found — let the caller open create-product with the scanned barcode as SKU
     deps.onUnknownCode(code);
