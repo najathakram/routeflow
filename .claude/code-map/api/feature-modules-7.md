@@ -88,6 +88,7 @@
 
 - **module** — global. `broadcast{RouteUpdate,LocationUpdate,OrderUpdate}`, `notifyUser`. Redis adapter pub/sub to connected clients.
 - **buyer-connect emitters (2026-08-20)** — `emitBuyerConnectRequest(tenantId, {customerId, customerName, buyerName, buyerEmail, requestedAt})` → `buyer.connect.requested` and `emitBuyerAutoLinked(tenantId, {customerId, customerName, buyerName, buyerEmail})` → `buyer.connect.autolinked`, both to `tenantRoom(tenantId,"operators")` only (same shape as `emitUrgentOrder`). Called fire-and-forget from `buyer.service.requestSeller`; consumed by web `lib/hooks/useNotifications.ts` (requested also invalidates the pending-approvals query).
+- **`emitCreditNoteCreated(tenantId, CreditNoteCreatedPayload)`** → `creditNote.created`, to both `tenantRoom(tenantId,"operators")` and `tenantRoom(tenantId,\`customer:${customerId}\`)`. **`emitCreditNoteVoided` (B343, #898, 2026-09-19)** — new sibling, identical payload shape (`CreditNoteVoidedPayload`) → `creditNote.voided`, same two rooms; `credit-notes.service.ts voidCreditNote()` previously fired no event at all, so a customer statement or credit-notes view left open elsewhere never learned the note was gone.
 
 ### `demo-booking/` (public, tenant-less — 2026-09-16, PR-1)
 
