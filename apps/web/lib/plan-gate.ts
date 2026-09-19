@@ -22,8 +22,7 @@ export interface PlanGateBody {
 /** Extract a PLAN_GATE body from an axios error, or null if it isn't a plan gate. */
 export function parsePlanGate(err: unknown): PlanGateBody | null {
   const data = (err as { response?: { data?: unknown } })?.response?.data as
-    | PlanGateBody
-    | undefined;
+    PlanGateBody | undefined;
   if (data && (data.code === "PLAN_GATE" || data.code === "PLAN_GATE_UNAVAILABLE")) return data;
   return null;
 }

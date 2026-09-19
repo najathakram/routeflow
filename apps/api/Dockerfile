@@ -14,6 +14,7 @@ COPY packages/eslint-config/package.json     packages/eslint-config/
 # runs its tsc build during the `npm ci` below, so its sources + tsconfigs must
 # already be here — a manifest-only copy makes that build fail with no inputs.
 COPY packages/pricing/                       packages/pricing/
+COPY packages/scanning/package.json          packages/scanning/
 COPY packages/types/package.json             packages/types/
 # Whole directory, not just the manifest: packages/pricing/tsconfig.json extends
 # `@routeflow/typescript-config/base.json`, which the postinstall build above

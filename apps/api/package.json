@@ -151,7 +151,8 @@
       "no-react-skew-hacks\\.spec\\.ts$",
       "next-version\\.spec\\.ts$",
       "audit-allowlist-retired\\.spec\\.ts$",
-      "bugs-self-test-script\\.spec\\.ts$"
+      "bugs-self-test-script\\.spec\\.ts$",
+      "size-ratchet\\.spec\\.ts$"
     ],
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"

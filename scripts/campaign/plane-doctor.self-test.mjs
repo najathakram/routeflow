@@ -29,7 +29,12 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir as osTmpdir } from "node:os";
+import { realpathSync as realpathForTmp } from "node:fs";
+
+// realpath (B573): on macOS os.tmpdir() is under /var, a symlink to /private/var, while git and
+// process.cwd() report the resolved path — fixture paths compared against either were never equal.
+const tmpdir = () => realpathForTmp(osTmpdir());
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";

@@ -14,8 +14,7 @@ export class SentryExceptionFilter extends BaseExceptionFilter {
     if (status >= 500) {
       const req = host.switchToHttp().getRequest();
       const user = req?.user as
-        | { tenantSlug?: string; tenantId?: string; sub?: string; username?: string }
-        | undefined;
+        { tenantSlug?: string; tenantId?: string; sub?: string; username?: string } | undefined;
       Sentry.withScope((scope) => {
         if (user?.tenantSlug ?? user?.tenantId) {
           scope.setTag("tenant", user.tenantSlug ?? user.tenantId!);

@@ -74,6 +74,15 @@ const TENANT_ZERO_SLUG = assertTestTenant(
   `e2e-pr0b-${RUN_SUFFIX}-zero`,
   "publish-and-repin.db.spec.ts",
 );
+// A THIRD, independent tenant for --include-addon-keys — kept separate from TENANT_LOSS so its
+// exact-override-count assertions (D6/D8/D9) are never disturbed by a key-scoped grant landing
+// mid-sequence. Same SCALE fixture plan def as TENANT_LOSS, so it starts with the identical 3
+// addon-gate-courtesy losses (ocr/crm_gohighlevel/email.connected_mailbox).
+const TENANT_KEYS_ID = `${ID_PREFIX}tenant-keys`;
+const TENANT_KEYS_SLUG = assertTestTenant(
+  `e2e-pr0b-${RUN_SUFFIX}-keys`,
+  "publish-and-repin.db.spec.ts",
+);
 const PLAN_VERSION_ID = `${ID_PREFIX}planversion`;
 const PLAN_DEF_SCALE_ID = `${ID_PREFIX}plandef-scale`;
 const PLAN_DEF_LITE_ID = `${ID_PREFIX}plandef-lite`;
@@ -119,6 +128,7 @@ function tag(tenantId: string) {
 }
 const HASH_LOSS = tag(TENANT_LOSS_ID);
 const HASH_ZERO = tag(TENANT_ZERO_ID);
+const HASH_KEYS = tag(TENANT_KEYS_ID);
 
 interface Diff {
   mode: string;
@@ -499,4 +509,72 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
     const ourFinalLosses = report.losses.filter((l) => l.tenant.includes(HASH_LOSS));
     expect(ourFinalLosses).toEqual([]);
   }, 60_000); // applyLiveWithRetry may spawn up to 8 CLI round-trips under real drift
+
+  describe("--include-addon-keys", () => {
+    // TENANT_KEYS is created HERE, after D6/D8/D9 already ran their WHOLE-DATABASE `--apply
+    // --live` writes — those grant every applicable loss for every PRODUCTION tenant, not just
+    // TENANT_LOSS, so a tenant seeded any earlier would already be fully explained (zero losses)
+    // by the time these tests run. Creating it in its own nested beforeAll, scheduled after D9's
+    // `it`, is what keeps it a genuine 15-loss fixture for K3.
+    beforeAll(async () => {
+      await db.query(
+        `INSERT INTO "Tenant"
+           ("id", "slug", "name", "status", "plan", "class", "planVersionId", "createdAt", "updatedAt")
+         VALUES ($1, $2, $3, 'ACTIVE', 'SCALE'::"TenantPlan", 'PRODUCTION', $4, now(), now())`,
+        [TENANT_KEYS_ID, TENANT_KEYS_SLUG, `PR-0b spec keys tenant ${RUN_SUFFIX}`, PLAN_VERSION_ID],
+      );
+    }, 120_000);
+
+    afterAll(async () => {
+      await db.query('DELETE FROM "TenantFeatureOverride" WHERE "tenantId" = $1', [TENANT_KEYS_ID]);
+      await db.query('DELETE FROM "Tenant" WHERE "id" = $1', [TENANT_KEYS_ID]);
+    }, 120_000);
+
+    it("K1 conflicts with --include-addon-gates: exit 2, refused before connecting", () => {
+      const res = runCli(["--apply", "--include-addon-gates", "--include-addon-keys", "ocr"]);
+      expect(res.status).toBe(2);
+      expect(res.stderr).toContain("mutually exclusive");
+    });
+
+    it("K2 with an unknown/non-addon-gate key: exit 2, refused before connecting", () => {
+      const res = runCli(["--apply", "--include-addon-keys", "flag.msrp,not_a_real_key"]);
+      expect(res.status).toBe(2);
+      expect(res.stderr).toContain('"flag.msrp" is not a FEATURE_REGISTRY addon-gate key');
+      expect(res.stderr).toContain('"not_a_real_key" is not a FEATURE_REGISTRY addon-gate key');
+    });
+
+    it("K3 --apply --include-addon-keys ocr,email.connected_mailbox: preview names included vs. still-excluded addon keys; --live grants only those two (ocr gets a 90-day expiry, email.connected_mailbox does not), crm_gohighlevel stays excluded", async () => {
+      const prose = runCli(["--apply", "--include-addon-keys", "ocr,email.connected_mailbox"]);
+      expect(prose.status).toBe(0);
+      expect(prose.stdout).toContain("included: email.connected_mailbox, ocr");
+      expect(prose.stdout).toContain("still excluded: crm_gohighlevel");
+
+      const { res, n } = await applyLiveWithRetry([
+        "--include-addon-keys",
+        "ocr,email.connected_mailbox",
+      ]);
+      expect(res.status).toBe(0);
+      const result = JSON.parse(res.stdout) as Diff;
+      expect(result.applied?.inserted).toBe(n);
+
+      // the default (unfiltered) 12 plan-flag-courtesy losses land too — --include-addon-keys
+      // only narrows which addon-gate-courtesy rows join that same applicable set, the same code
+      // path --include-addon-gates already uses — plus the two listed addon-gate keys;
+      // crm_gohighlevel is the only one held back.
+      const rows = await activeOverrides(TENANT_KEYS_ID);
+      expect(rows.map((r) => r.featureKey).sort()).toEqual(
+        [...EXPECTED_APPLICABLE_LOSS_KEYS, "email.connected_mailbox", "ocr"].sort(),
+      );
+      const ocrRow = rows.find((r) => r.featureKey === "ocr")!;
+      const mailboxRow = rows.find((r) => r.featureKey === "email.connected_mailbox")!;
+      expect(ocrRow.expiresAt).not.toBeNull(); // billable (OCR_PACK_250), same 90-day rule as N1
+      expect(mailboxRow.expiresAt).toBeNull(); // not billable
+
+      const report = runReportJson();
+      const keysLosses = report.losses
+        .filter((l) => l.tenant.includes(HASH_KEYS))
+        .map((l) => l.key);
+      expect(keysLosses).toEqual(["crm_gohighlevel"]);
+    }, 60_000); // applyLiveWithRetry may spawn up to 8 CLI round-trips under real drift
+  });
 });

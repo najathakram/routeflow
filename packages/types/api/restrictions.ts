@@ -2,26 +2,44 @@
 // local-assets/handoff/2026-09-18/PLAN-categories-jurisdiction-bans.md §1-3 and
 // MASTER-EXECUTION-PLAN.md §6 contracts 7-8.
 
-/**
- * Ordered precedence over which customer address governs a STATE restriction
- * check (owner ruling R1 — tenant-configurable, not a hardcoded assumption).
- */
-export type GoverningAddressSource = "DELIVERY" | "BILLING" | "DEFAULT" | "LICENSED_PREMISES";
+import type { RestrictionAddressPrecedence } from "./enums";
 
+/**
+ * Tenant policy. `addressPrecedence` = which customer address TYPE governs a STATE rule first
+ * (owner ruling D4: the customer's DEFAULT address; see `RESTRICTION_ADDRESS_PRECEDENCE_VALUES`).
+ * A licensed-premises address source (`CustomerAuthorization.premisesState`) is deliberately
+ * deferred — owner: "no licensed-premises field now"; reintroduce it as a third source when ruled in.
+ */
 export interface RestrictionsPolicy {
   enabled: boolean;
-  governingAddress: GoverningAddressSource[];
+  addressPrecedence: RestrictionAddressPrecedence;
+}
+
+/** OFF = feature disabled · ALLOW = enabled, nothing blocks · BLOCK · INDETERMINATE = enabled but the state can't be resolved (fail closed). */
+export type RestrictionOutcome = "OFF" | "ALLOW" | "BLOCK" | "INDETERMINATE";
+
+/** BUYER_PORTAL = self-serve; STAFF = every other path (staff UI, cron, system). */
+export type RestrictionChannel = "BUYER_PORTAL" | "STAFF";
+
+export interface RestrictionsEvaluation {
+  outcome: RestrictionOutcome;
+  /**
+   * One entry per blocked / indeterminate PRODUCT (duplicate lines of one product collapse to a
+   * single entry); empty for OFF and ALLOW.
+   */
+  reasons: BlockedLine[];
 }
 
 /** Why a line was blocked — mirrors the engine's three-state result (plan §2.6). */
 export type RestrictionReason =
-  "FEDERAL_BAN" | "STATE_BAN" | "BUYER_PORTAL_ONLY" | "INDETERMINATE_ADDRESS";
+  "FEDERAL_BAN" | "STATE_BAN" | "BUYER_PORTAL_ONLY" | "INDETERMINATE_ADDRESS" | "UNKNOWN_PRODUCT";
 
 export interface BlockedLine {
   productId: string;
   productName: string;
   categoryName?: string;
-  ruleId: string;
+  /** Null only for UNKNOWN_PRODUCT (no rule was matched — the product couldn't be resolved). */
+  ruleId: string | null;
   reason: RestrictionReason;
   state?: string;
   message: string;

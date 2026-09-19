@@ -1,6 +1,6 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen } from "@/test-utils/render";
+import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import { CreateOrderModal } from "./CreateOrderModal";
 
 // JSDOM has no scrollIntoView implementation at all (not a stub — genuinely absent), and
@@ -89,6 +89,18 @@ jest.mock("@/components/BarcodeScannerButton", () => ({
   },
 }));
 
+// NOTE: this stubs InlineCreateProductModal for EVERY test in this file (none rendered the real
+// one). A test that needs the real create-product form must un-mock it locally.
+// The unknown-barcode fallback: capture the props so a test can assert the modal opens with the
+// scanned code as its SKU without rendering the real product form.
+let capturedInlineCreate: { isOpen: boolean; initialSku?: string } | undefined;
+jest.mock("@/components/InlineCreateProductModal", () => ({
+  InlineCreateProductModal: (props: { isOpen: boolean; initialSku?: string }) => {
+    capturedInlineCreate = props;
+    return null;
+  },
+}));
+
 const mockResolveProductByCode = jest.fn();
 jest.mock("@/lib/barcode-resolve", () => ({
   resolveProductByCode: (code: string) => mockResolveProductByCode(code),
@@ -105,6 +117,7 @@ describe("CreateOrderModal", () => {
     jest.clearAllMocks();
     capturedOnScan = undefined;
     capturedOnError = undefined;
+    capturedInlineCreate = undefined;
   });
 
   it("blocks submit with 'Please select a customer' and never calls the create mutation", async () => {
@@ -135,6 +148,75 @@ describe("CreateOrderModal", () => {
       capturedOnScan!("012345678905");
 
       expect(await screen.findByText("Widget")).toBeInTheDocument();
+      expect(mockResolveProductByCode).toHaveBeenCalledWith("012345678905");
+    });
+
+    // Characterization of the scan-resolve ladder, written BEFORE it moved to ./scan/ (LANE-S
+    // step 4 prefactor): pins the four outcomes so the extraction provably changed nothing.
+    it("an ARCHIVED product is never added and never routes to create-product — it toasts instead", async () => {
+      mockResolveProductByCode.mockResolvedValue({
+        notFound: false,
+        archived: true,
+        product: { id: "prod-9", name: "Retired Widget", pricePerUnit: "1", unit: "each" },
+      });
+      renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+
+      capturedOnScan!("012345678905");
+
+      await waitFor(() =>
+        expect(mockToast).toHaveBeenCalledWith({
+          variant: "error",
+          title: "Retired Widget is archived — reactivate to sell",
+        }),
+      );
+      expect(screen.queryByText("Retired Widget")).not.toBeInTheDocument();
+      expect(capturedInlineCreate?.isOpen).toBe(false);
+    });
+
+    it("an UNKNOWN code opens create-product with the scanned code as the SKU", async () => {
+      mockResolveProductByCode.mockResolvedValue({ notFound: true, archived: false });
+      renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+
+      capturedOnScan!("999000111222");
+
+      await waitFor(() => expect(capturedInlineCreate?.isOpen).toBe(true));
+      expect(capturedInlineCreate?.initialSku).toBe("999000111222");
+    });
+
+    it("a network/5xx failure toasts and does NOT open create-product (a transient error is not 'not found')", async () => {
+      mockResolveProductByCode.mockRejectedValue(new Error("Network Error"));
+      renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+
+      capturedOnScan!("012345678905");
+
+      await waitFor(() =>
+        expect(mockToast).toHaveBeenCalledWith({
+          variant: "error",
+          title: "Couldn't look up the code",
+          description: "Network Error",
+        }),
+      );
+      expect(capturedInlineCreate?.isOpen).toBe(false);
+    });
+
+    // Pins that the incoming code is resolved on open. It does NOT prove the consume-once guard:
+    // with the draft hooks mocked to no-ops none of the effect's deps change on a re-render, so the
+    // effect would not re-run even without `scanConsumedRef` — that ordering-sensitive guard is
+    // why the effect stays in the modal rather than moving into ./scan/.
+    it("scan-to-draft: initialScanCode is resolved on open and re-rendering with it unchanged does not re-resolve", async () => {
+      mockResolveProductByCode.mockResolvedValue({
+        notFound: false,
+        archived: false,
+        product: { id: "prod-1", name: "Widget", pricePerUnit: "9.99", unit: "each" },
+      });
+      const { rerender } = renderWithProviders(
+        <CreateOrderModal isOpen onClose={jest.fn()} initialScanCode="012345678905" />,
+      );
+
+      expect(await screen.findByText("Widget")).toBeInTheDocument();
+      rerender(<CreateOrderModal isOpen onClose={jest.fn()} initialScanCode="012345678905" />);
+
+      expect(mockResolveProductByCode).toHaveBeenCalledTimes(1);
       expect(mockResolveProductByCode).toHaveBeenCalledWith("012345678905");
     });
 

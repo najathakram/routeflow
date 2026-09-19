@@ -1,5 +1,10 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { NotFoundException, BadRequestException, ForbiddenException } from "@nestjs/common";
+import {
+  NotFoundException,
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+} from "@nestjs/common";
 import { ProductsService } from "./products.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
@@ -699,6 +704,40 @@ describe("ProductsService", () => {
     it("should throw NotFoundException when product does not exist", async () => {
       prisma.product.findUnique.mockResolvedValue(null);
       await expect(service.update("nonexistent", {} as any)).rejects.toThrow(NotFoundException);
+    });
+
+    describe("units_v1 pack edits vs existing unit levels", () => {
+      const withUnit = { ...MOCK_PRODUCT, unit: "Box", unitsPerBox: 24 };
+
+      beforeEach(() => {
+        prisma.product.findUnique.mockResolvedValue(withUnit);
+        prisma.product.findFirst.mockResolvedValue(null);
+        prisma.product.update.mockResolvedValue(withUnit);
+        prisma.productUnit.findMany.mockResolvedValue([{ label: "Case", factorToBase: 288 }]);
+      });
+
+      it("refuses renaming the pack onto an existing level label (409) and writes nothing", async () => {
+        await expect(service.update("prod-1", { unit: "Case" } as any)).rejects.toThrow(
+          ConflictException,
+        );
+        expect(prisma.product.update).not.toHaveBeenCalled();
+      });
+
+      it("refuses resizing the pack onto an existing level factor (409)", async () => {
+        await expect(service.update("prod-1", { unitsPerBox: 288 } as any)).rejects.toThrow(
+          ConflictException,
+        );
+      });
+
+      it("does not even look at the levels for an edit that leaves the pack alone", async () => {
+        await service.update("prod-1", { name: "Renamed" } as any);
+        expect(prisma.productUnit.findMany).not.toHaveBeenCalled();
+      });
+
+      it("an unrelated pack resize that collides with nothing still goes through", async () => {
+        await service.update("prod-1", { unitsPerBox: 12 } as any);
+        expect(prisma.product.update).toHaveBeenCalled();
+      });
     });
 
     it("should throw BadRequestException on SKU conflict with another product", async () => {

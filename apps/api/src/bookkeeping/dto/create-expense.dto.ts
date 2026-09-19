@@ -58,10 +58,7 @@ export class UpdateExpenseDto {
   @IsOptional() @IsString() employeeName?: string;
   @IsOptional() @IsUUID() categoryId?: string;
   @IsOptional() @IsIn(["PENDING", "RECEIVED", "PAID", "VOID"]) status?:
-    | "PENDING"
-    | "RECEIVED"
-    | "PAID"
-    | "VOID";
+    "PENDING" | "RECEIVED" | "PAID" | "VOID";
   @IsOptional() @IsDateString() receivedAt?: string;
   @IsOptional() @IsDateString() paidAt?: string;
 }
