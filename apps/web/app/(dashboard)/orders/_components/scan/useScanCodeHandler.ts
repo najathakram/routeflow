@@ -17,8 +17,8 @@ export interface ScanCodeHandlerDeps {
 /**
  * The create-order barcode handler, moved verbatim out of CreateOrderModal (LANE-S step 4
  * prefactor — behaviour identical, pinned by CreateOrderModal.test.tsx's scan characterization).
- * It is the seam the redesigned scan screen (ScanOrderScreen) reuses so both surfaces resolve a
- * code the same way.
+ * It is the seam the redesigned scan screen (LANE-S step 5) is meant to reuse so both surfaces
+ * resolve a code the same way.
  *
  * Returned as a ref, re-pointed at the latest render's deps every render, so a keydown listener or
  * a camera callback that captured it once never goes stale — the same pattern the modal used

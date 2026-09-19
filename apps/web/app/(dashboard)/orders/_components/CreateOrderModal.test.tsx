@@ -89,6 +89,8 @@ jest.mock("@/components/BarcodeScannerButton", () => ({
   },
 }));
 
+// NOTE: this stubs InlineCreateProductModal for EVERY test in this file (none rendered the real
+// one). A test that needs the real create-product form must un-mock it locally.
 // The unknown-barcode fallback: capture the props so a test can assert the modal opens with the
 // scanned code as its SKU without rendering the real product form.
 let capturedInlineCreate: { isOpen: boolean; initialSku?: string } | undefined;
@@ -197,7 +199,11 @@ describe("CreateOrderModal", () => {
       expect(capturedInlineCreate?.isOpen).toBe(false);
     });
 
-    it("scan-to-draft: initialScanCode is resolved exactly once per open, even across re-renders", async () => {
+    // Pins that the incoming code is resolved on open. It does NOT prove the consume-once guard:
+    // with the draft hooks mocked to no-ops none of the effect's deps change on a re-render, so the
+    // effect would not re-run even without `scanConsumedRef` — that ordering-sensitive guard is
+    // why the effect stays in the modal rather than moving into ./scan/.
+    it("scan-to-draft: initialScanCode is resolved on open and re-rendering with it unchanged does not re-resolve", async () => {
       mockResolveProductByCode.mockResolvedValue({
         notFound: false,
         archived: false,
