@@ -7,7 +7,7 @@ import {
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
-import { TenantStatus, TenantPlan, Prisma } from "@prisma/client";
+import { TenantStatus, TenantPlan, Prisma, UserRole } from "@prisma/client";
 import * as bcrypt from "bcrypt";
 import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
@@ -1099,8 +1099,20 @@ ${
       this.prisma.tenant.count({
         where: { deletedAt: null, status: TenantStatus.SUSPENDED, class: "PRODUCTION" },
       }),
+      // B536: "Total Users" is a staff-only KPI — it must mirror users.service.ts
+      // findAll()'s `role: { not: UserRole.CUSTOMER }` predicate (the per-tenant Users
+      // list already excludes buyer-portal customer logins), plus `deletedAt: null`.
+      // Before this it counted every User row — staff AND every CUSTOMER login,
+      // including soft-deleted ones — producing an implausible total (2138 across 26
+      // tenants) with no stated definition. Fixing this DROPS the visible number
+      // sharply — that is correct, not a regression.
       this.prisma.user.count({
-        where: { tenantId: { not: null }, tenant: { class: "PRODUCTION" } },
+        where: {
+          tenantId: { not: null },
+          tenant: { class: "PRODUCTION" },
+          role: { not: UserRole.CUSTOMER },
+          deletedAt: null,
+        },
       }),
       this.prisma.user.count({ where: { role: "SUPER_ADMIN" } }),
       this.prisma.tenant.count({

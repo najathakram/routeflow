@@ -19,6 +19,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { TenantMirrorService } from "./tenant-mirror.service";
 import { AdminAuditAction } from "./audit-actions.constant";
 import { roundMoney } from "@routeflow/pricing";
+import { UserRole } from "@prisma/client";
 
 /**
  * P1 regression: platform-admin lifecycle mutations MUST emit a purpose-built
@@ -1341,6 +1342,30 @@ describe("PlatformAdminService — audit provenance", () => {
         (c: any[]) => c[0]?.where?.status?.not === "CANCELLED",
       );
       expect(planScanCall[0].where.class).toBe("PRODUCTION");
+    });
+
+    // B536: the dashboard's "Total Users" KPI counted every User row — staff AND every
+    // buyer-portal CUSTOMER login, including soft-deleted ones — which produced an
+    // implausible total (2138 across 26 tenants) with no stated definition. The card
+    // must count staff only, mirroring users.service.ts findAll()'s
+    // `role: { not: UserRole.CUSTOMER }` predicate so the KPI agrees with the admin
+    // Users list, plus `deletedAt: null` (every sibling query in this file already
+    // excludes soft-deleted rows). The tenant-scoped user.count call is distinguished
+    // from the tenantless SUPER_ADMIN count by its `tenant` relation filter.
+    it("B536: totalUsers excludes CUSTOMER role and soft-deleted users", async () => {
+      prisma.tenant.findMany.mockResolvedValue([]);
+
+      await service.getStats();
+
+      const totalUsersCall = (prisma.user.count as jest.Mock).mock.calls.find(
+        (c: any[]) => c[0]?.where?.tenant?.class === "PRODUCTION",
+      );
+      expect(totalUsersCall).toBeDefined();
+      expect(totalUsersCall[0].where.role).toEqual({ not: UserRole.CUSTOMER });
+      expect(totalUsersCall[0].where.deletedAt).toBeNull();
+      // Existing predicate (tenant-scoped, PRODUCTION-class only) must survive the fix.
+      expect(totalUsersCall[0].where.tenantId).toEqual({ not: null });
+      expect(totalUsersCall[0].where.tenant).toEqual({ class: "PRODUCTION" });
     });
 
     it("attaches userCount to trials and a human riskReason to at-risk tenants", async () => {

@@ -176,7 +176,7 @@ export default function AdminDashboardPage() {
         <AdminStatCard
           label="Total Users"
           value={stats.totalUsers}
-          sub="Across all workspaces"
+          sub="Staff accounts across all workspaces"
           icon={<Users className="h-5 w-5" />}
         />
         <MrrCard mrr={stats.mrr} ledgerMrr={stats.ledgerMrr} />
