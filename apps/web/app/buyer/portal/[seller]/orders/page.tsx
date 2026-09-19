@@ -172,9 +172,10 @@ export default function BuyerOrdersPage() {
                     <span className="min-w-0 truncate text-sm font-semibold text-navy">
                       {orderLabel(order)}
                     </span>
-                    <Badge variant={getStatusVariant(order.status)}>
-                      {formatStatus(order.status)}
-                    </Badge>
+                    <Badge
+                      variant={getStatusVariant(order.status)}
+                      label={formatStatus(order.status)}
+                    />
                   </div>
                   <div className="mt-2 flex items-end justify-between gap-3">
                     <p className="text-xs text-navy/70">
@@ -237,9 +238,10 @@ export default function BuyerOrdersPage() {
                           : "—"}
                       </td>
                       <td className="px-4 py-3">
-                        <Badge variant={getStatusVariant(order.status)}>
-                          {formatStatus(order.status)}
-                        </Badge>
+                        <Badge
+                          variant={getStatusVariant(order.status)}
+                          label={formatStatus(order.status)}
+                        />
                       </td>
                       <td className="px-4 py-3 text-right text-sm text-navy">
                         {formatCurrency(Number(order.totalAmount ?? order.total))}

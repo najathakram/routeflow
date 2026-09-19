@@ -92,6 +92,10 @@ describe("BuyerOrdersPage — responsive list", () => {
     expect(header).toHaveClass("sticky", "left-0");
     const firstCell = within(wrapper).getByText("ORD-00001");
     expect(firstCell).toHaveClass("sticky", "left-0", "bg-white");
+    // Badge ignores JSX children, so the status must go through `label` — a blank pill here is
+    // the pre-existing bug this page used to ship.
+    expect(within(wrapper).getByText("Out For Delivery")).toBeInTheDocument();
+    expect(within(wrapper).getByText("Delivered")).toBeInTheDocument();
   });
 
   it("row click still navigates to the order", () => {
