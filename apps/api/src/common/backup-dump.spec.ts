@@ -1,4 +1,6 @@
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -36,31 +38,39 @@ function dump({
   header = "COPY public._prisma_migrations (id, checksum, finished_at) FROM stdin;",
   eol = "\n",
   withMigrations = true,
+  truncate = false,
+  tenantRows = ["t1\tacme", "t2\tglobex"],
 }: {
   tables?: number;
   migrations?: string[];
   header?: string;
   eol?: string;
   withMigrations?: boolean;
+  /** Simulate pg_dump killed mid-write: the file stops INSIDE the migrations COPY block. */
+  truncate?: boolean;
+  tenantRows?: string[];
 } = {}) {
   const lines = [
     "-- PostgreSQL database dump",
     ...tableLines(tables),
     'COPY public."Tenant" (id, name) FROM stdin;',
-    "t1\tacme",
-    "t2\tglobex",
+    ...tenantRows,
     "\\.",
-    ...(withMigrations ? [header, ...migrations, "\\."] : []),
-    "-- done",
+    ...(withMigrations ? [header, ...migrations, ...(truncate ? [] : ["\\."])] : []),
+    ...(truncate ? [] : ["-- PostgreSQL database dump complete"]),
   ];
   return lines.join(eol) + eol;
 }
 
 const scan = (text: string) =>
-  run<{ lines: number; tables: number; copyBlocks: number; migrationRows: number }>(
-    "return lib.scanDump(input.split('\\n'))",
-    text,
-  );
+  run<{
+    lines: number;
+    tables: number;
+    copyBlocks: number;
+    migrationRows: number;
+    complete: boolean;
+    unterminated: boolean;
+  }>("return lib.scanDump(input.split('\\n'))", text);
 
 describe("scanDump", () => {
   it("counts the DATA rows in the unquoted _prisma_migrations block (the old prototype reported -1)", async () => {
@@ -104,29 +114,63 @@ describe("scanDump", () => {
     const s = scan(dump({ migrations: ["m1"] }));
     expect(s.migrationRows).toBe(1); // Tenant's two rows are not migrations
   });
+
+  it("never mistakes DATA for structure: a row that reads like CREATE TABLE / COPY is not counted", () => {
+    const s = scan(
+      dump({
+        tables: 5,
+        tenantRows: ["CREATE TABLE public.fake (id int);", "COPY public.x FROM stdin;"],
+      }),
+    );
+    expect(s.tables).toBe(5);
+    expect(s.copyBlocks).toBe(2); // Tenant + _prisma_migrations, not the fake ones
+  });
+
+  it("a complete dump is complete and terminated", () => {
+    const s = scan(dump());
+    expect(s.complete).toBe(true);
+    expect(s.unterminated).toBe(false);
+  });
+
+  it("a dump cut off INSIDE the migrations block is unterminated, not 'more rows'", () => {
+    const s = scan(dump({ truncate: true }));
+    expect(s.unterminated).toBe(true);
+    expect(s.complete).toBe(false);
+  });
 });
 
 describe("dumpProblems", () => {
   const problems = (stats: object) => run<string[]>("return lib.dumpProblems(input)", stats);
 
+  const ok = { complete: true, unterminated: false };
+
   it("accepts a full-looking prod dump", () => {
-    expect(problems({ tables: 125, migrationRows: 240 })).toEqual([]);
+    expect(problems({ ...ok, tables: 125, migrationRows: 240 })).toEqual([]);
   });
 
   it("refuses 99 tables but accepts exactly 100", () => {
-    expect(problems({ tables: 99, migrationRows: 5 })).toHaveLength(1);
-    expect(problems({ tables: 100, migrationRows: 5 })).toEqual([]);
+    expect(problems({ ...ok, tables: 99, migrationRows: 5 })).toHaveLength(1);
+    expect(problems({ ...ok, tables: 100, migrationRows: 5 })).toEqual([]);
+  });
+
+  it("refuses a truncated dump even when tables and migration rows look fine", () => {
+    expect(
+      problems({ tables: 125, migrationRows: 240, complete: false, unterminated: true })[0],
+    ).toMatch(/truncated/);
+    expect(
+      problems({ tables: 125, migrationRows: 240, complete: false, unterminated: false })[0],
+    ).toMatch(/trailer/);
   });
 
   it("refuses a dump with no migrations block", () => {
-    expect(problems({ tables: 125, migrationRows: -1 })[0]).toMatch(
+    expect(problems({ ...ok, tables: 125, migrationRows: -1 })[0]).toMatch(
       /no COPY public\._prisma_migrations/,
     );
   });
 
   it("refuses an empty migrations block, and reports every reason at once", () => {
-    expect(problems({ tables: 125, migrationRows: 0 })[0]).toMatch(/0 rows/);
-    expect(problems({ tables: 3, migrationRows: -1 })).toHaveLength(2);
+    expect(problems({ ...ok, tables: 125, migrationRows: 0 })[0]).toMatch(/0 rows/);
+    expect(problems({ ...ok, tables: 3, migrationRows: -1 })).toHaveLength(2);
   });
 });
 
@@ -241,6 +285,86 @@ describe("findPgDump", () => {
   it("returns null when nothing is installed or the PostgreSQL dir does not exist", () => {
     expect(find([], false, [])).toBeNull();
     expect(find([], false, "throw")).toBeNull();
+  });
+});
+
+describe("runBackup — the safety paths, with a FAKE pg_dump (no database, no network)", () => {
+  const env = {
+    POSTGRES_USER: "postgres",
+    POSTGRES_PASSWORD: "s3cr3t",
+    POSTGRES_DB: "railway",
+    RAILWAY_TCP_PROXY_DOMAIN: "proxy.example.net",
+    RAILWAY_TCP_PROXY_PORT: "12345",
+  };
+  let dir: string;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "rf-backup-spec-"));
+  });
+  afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  /** mode: what the fake pg_dump does — writes `dumpText` (ok) / a partial then exits 3 / fails to launch. */
+  const go = (dumpText: string, mode: "ok" | "fail" | "error" = "ok") =>
+    run<{ code: number; files: string[]; logs: string[] }>(
+      `
+      const fs = await import("node:fs");
+      const { dumpText, mode, dir, env } = input;
+      const spawn = (_cmd, args) => {
+        const f = args[args.indexOf("-f") + 1];
+        if (mode === "error") return { error: new Error("spawn ENOENT") };
+        if (mode === "fail") { fs.writeFileSync(f, "partial"); return { status: 3 }; }
+        fs.writeFileSync(f, dumpText);
+        return { status: 0 };
+      };
+      const logs = [];
+      const code = await lib.runBackup({
+        env, label: "unit", pgDump: "fake-pg_dump", repoRoot: dir, spawn,
+        log: (m) => logs.push(m), err: (m) => logs.push(m), now: new Date(2026, 8, 19, 7, 5, 9),
+      });
+      return { code, files: fs.existsSync(dir + "/backups") ? fs.readdirSync(dir + "/backups") : [], logs };`,
+      { dumpText, mode, dir, env },
+    );
+
+  it("a verified dump exits 0 and stays as production_<ts>_<label>.sql", () => {
+    const r = go(dump());
+    expect(r.code).toBe(0);
+    expect(r.files).toEqual(["production_20260919_070509_unit.sql"]);
+  });
+
+  it("a dump with too few tables exits 2 and is renamed .INVALID — never left as a restorable .sql", () => {
+    const r = go(dump({ tables: 40 }));
+    expect(r.code).toBe(2);
+    expect(r.files).toEqual(["production_20260919_070509_unit.sql.INVALID"]);
+    expect(r.logs.join("\n")).toMatch(/only 40 CREATE TABLE/);
+  });
+
+  it("a dump with no _prisma_migrations block exits 2 and is renamed .INVALID", () => {
+    const r = go(dump({ withMigrations: false }));
+    expect(r.code).toBe(2);
+    expect(r.files[0]).toMatch(/\.INVALID$/);
+  });
+
+  it("a TRUNCATED dump (killed mid-write, ends inside a COPY block) is rejected even with 120 tables", () => {
+    const r = go(dump({ truncate: true }));
+    expect(r.code).toBe(2);
+    expect(r.files[0]).toMatch(/\.INVALID$/);
+    expect(r.logs.join("\n")).toMatch(/truncated/);
+  });
+
+  it("pg_dump exiting non-zero returns its code and deletes the partial file", () => {
+    const r = go("", "fail");
+    expect(r.code).toBe(3);
+    expect(r.files).toEqual([]);
+  });
+
+  it("pg_dump failing to launch returns 1 and leaves nothing behind", () => {
+    const r = go("", "error");
+    expect(r.code).toBe(1);
+    expect(r.files).toEqual([]);
+  });
+
+  it("never prints the password", () => {
+    const r = go(dump({ tables: 40 }));
+    expect(r.logs.join("\n")).not.toContain("s3cr3t");
   });
 });
 
