@@ -43,6 +43,7 @@ Shared DTO/enum definitions. Entry: `index.ts` (no `src/`), re-exports `./api/*`
   find, a phantom `"EXPIRED"` on `EstimateStatus` in both apps.
 - **F27 (2026-09-13, aa47ee9e)** — `api/misc.ts` `Estimate` gains `issueDate?: string | null` (operator-picked issue date; null on legacy rows — consumers fall back to `createdAt`). `EstimateItem`/`EstimateStatus` unchanged.
 - **2026-09-19:** `api/products.ts` `RecomputeCostsResult` gains `gapsDetected: {productId,name,stockDrift}[]` (B562 — a sales-blind replay is refused, not corrected, for these products; see `feature-modules-4/inventory.md`). `api/features.ts` `FeatureRegistryRow` gains `requires?: {allOf?, anyOf?}` (B519 — feeds web's local unmet-requirement warning, mirrors `apps/api/src/billing/feature-registry.ts`'s server shape).
+- **#936 schema-spine shared contracts (2026-09-19)** — `api/products.ts` gains `ProductUnitLevel`, `PutProductUnitsPayload`, `ProductLabelRef`/`ProductLabelsView` (`own`/`inherited`/`excluded`/`effective`), `PutProductLabelsPayload`, `ProductCategoryDto`. `api/orders.ts` gains `UNIT_LABEL_PIECE` + `UnitAwareLineInput`. New `api/restrictions.ts` (re-exported from `index.ts`) — `GoverningAddressSource`, `RestrictionsPolicy`, `RestrictionReason`, `BlockedLine`, `SellingRestrictedError`, `SellingRestrictionDto`, `RestrictedProductChip`. New `api/us-states.ts` (also re-exported) — `US_STATES` (50+DC+4 territories) + `normalizeUsState()`. `api/enums.ts` gains `LABEL_MODE_VALUES`/`RESTRICTION_JURISDICTION_VALUES`/`RESTRICTION_SURFACE_VALUES`, pinned set-equal to the new Prisma enums by `enum-parity.spec.ts`. Schema detail: `api/bootstrap-cross-cutting/prisma-schema-and-seeds.md`'s #936 entry.
 - **`api/{orders,customers,products,finance,returns,regulated,routes,buyer,misc}.ts` (2026-09-03,
   wave E / imp-10b)** — the 95 identical/near-identical request/response DTOs the sweep
   (`.claude/pipeline/wave-E-structure/2026-09-03-imp-10b-shared-dtos/sweep.md`) found duplicated
@@ -204,7 +205,14 @@ string` (B20 — free-form intake note, e.g. "DAMAGED_BOX") and its `restock?` d
 `pricing.ts` copies (api `src/common` + `src/utils`, web `lib`, mobile `lib`). Entry `src/index.ts`
 → `pricing.ts` (`computeLineSubtotal`, `normalizeBoxesPieces`, `roundMoney`, `prorateLineSubtotal`,
 `applyBestPromotion`/`promotionMatchesProduct`, the zero-price guard, BUY_N_GET_M helpers,
-`computeCategoryTax`, `roundUnitCost`, `effectiveQty`) + `tier-pricing.ts` (`getTierPrice`) +
+`computeCategoryTax`, `roundUnitCost`, `effectiveQty`, **`formatQtySplit` gains optional
+`boxLabel?: string | null` (#936, 2026-09-19) — custom box-unit label, pluralises with a
+trailing "s" unless already plural; default "box"/"boxes" unchanged, additive**) + new
+**`unit-levels.ts` (#936)** — `resolveUnitPrice({packPrice, packFactor, tierPackPrice, level,
+tier})`: an explicit `ProductUnit` tier price wins, else proportional off the pack's own tier-1
+ratio, else a straight `factorToBase` ratio — one `roundMoney` at the end (schema for `level`
+is `ProductUnit`, see `api/bootstrap-cross-cutting/prisma-schema-and-seeds.md`'s #936 entry;
+no API consumes this yet — units API is a stacked follow-on) + `tier-pricing.ts` (`getTierPrice`) +
 **`payment-confirmation.ts`** (B421, 2026-09-15 — moved here from an api-local
 `invoices/payment-predicates.ts` after independent review flagged the money-discipline
 violation of creating new payment-confirmation logic outside this package): `CONFIRMED_STATUS`/
