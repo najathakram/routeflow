@@ -500,6 +500,21 @@ describe("OrdersService", () => {
       );
     });
 
+    it("selects what a reader needs to compose a variant's name and show its SKU (order-ui T1/T5)", async () => {
+      prisma.order.findUnique.mockResolvedValue(MOCK_ORDER);
+      await service.findOne("ord-1", operatorPayload);
+      const args = prisma.order.findUnique.mock.calls.at(-1)![0];
+      expect(args.include.lineItems.include.product.select).toEqual(
+        expect.objectContaining({
+          sku: true,
+          unitSku: true,
+          variantName: true,
+          parentProductId: true,
+          parent: { select: { name: true } },
+        }),
+      );
+    });
+
     it("should throw ForbiddenException when customer does not own the order", async () => {
       prisma.order.findUnique.mockResolvedValue(MOCK_ORDER);
       prisma.customer.findFirst.mockResolvedValue({ id: "cust-other" });

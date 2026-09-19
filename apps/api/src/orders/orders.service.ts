@@ -458,6 +458,13 @@ export class OrdersService implements OnApplicationBootstrap {
                 pricePerUnit: true,
                 averageCost: true,
                 category: true,
+                // Read-site name composition + SKU line (order-ui-redesign-spec §2/§4): a catalog
+                // variant stores only its own flavor in `name`, so the reader needs the parent.
+                sku: true,
+                unitSku: true,
+                variantName: true,
+                parentProductId: true,
+                parent: { select: { name: true } },
               },
             },
           },

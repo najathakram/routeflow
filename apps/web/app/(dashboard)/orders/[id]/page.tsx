@@ -38,6 +38,7 @@ import {
   useToast,
   type BadgeStatus,
 } from "@routeflow/ui/web";
+import { orderLineName } from "@/lib/product-display";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useOrder,
@@ -1848,7 +1849,7 @@ export default function OrderDetailPage() {
             .filter((li) => li.status !== "CANCELLED")
             .map((li) => {
               const isUnlisted = !li.productId;
-              const label = li.product?.name ?? li.name ?? li.productId ?? "Custom item";
+              const label = orderLineName(li) ?? li.productId ?? "Custom item";
               return {
                 id: li.id,
                 isUnlisted,
@@ -2003,7 +2004,7 @@ export default function OrderDetailPage() {
         .filter((li) => li.status !== "CANCELLED")
         .map((li) => {
           const isUnlisted = !li.productId;
-          const label = li.product?.name ?? li.name ?? li.productId ?? "Custom item";
+          const label = orderLineName(li) ?? li.productId ?? "Custom item";
           return {
             id: li.id,
             isUnlisted,
@@ -3464,7 +3465,7 @@ export default function OrderDetailPage() {
         orderNumber={order.orderNumber ?? null}
         items={(order.lineItems ?? []).map((li: any) => ({
           id: li.id,
-          productName: li.product?.name ?? li.name ?? "Custom item",
+          productName: orderLineName(li) ?? "Custom item",
           qty: Number(li.qty),
           invoicedQty: Number((li as any).invoicedQty ?? 0),
           unitPrice: Number(li.unitPrice),
