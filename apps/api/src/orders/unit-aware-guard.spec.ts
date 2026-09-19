@@ -58,17 +58,24 @@ const caseLine = { id: "li-case", productId: "p1", unitLabel: "Case", status: "P
 const packLine = { id: "li-pack", productId: "p2", unitLabel: null, status: "PENDING" };
 
 describe("assertInvoiceRewriteAllowed", () => {
-  const db = (own: unknown[], linked: unknown[]) => ({
-    invoiceItem: { findMany: jest.fn().mockResolvedValue(own) },
-    orderItem: { findMany: jest.fn().mockResolvedValue(linked) },
+  // Parents ONLY (no invoiceItem/orderItem on the mock): a top-level line read would throw here.
+  const db = (ownItems: unknown[], linkedItems: unknown[] | null) => ({
+    invoice: { findFirst: jest.fn().mockResolvedValue({ items: ownItems }) },
+    order: {
+      findFirst: jest.fn().mockResolvedValue(linkedItems ? { lineItems: linkedItems } : null),
+    },
   });
 
-  it("refuses when the invoice's own lines carry a unitLabel", async () => {
+  it("refuses when the invoice's own lines carry a unitLabel (read through the invoice relation)", async () => {
     const d = db([{ unitLabel: "Case" }], []);
     await expect(assertInvoiceRewriteAllowed(d as never, { id: "inv" })).rejects.toMatchObject({
       response: { code: UNIT_AWARE_LINE },
     });
-    expect(d.orderItem.findMany).not.toHaveBeenCalled(); // no order link, no order read
+    expect(d.invoice.findFirst).toHaveBeenCalledWith({
+      where: { id: "inv" },
+      select: { items: expect.objectContaining({ where: { unitLabel: { not: null } } }) },
+    });
+    expect(d.order.findFirst).not.toHaveBeenCalled(); // no order link, no order read
   });
 
   it("refuses when the invoice carries NO label but its LINKED ORDER holds a unit-aware line (the back-sync would write onto it)", async () => {
@@ -76,24 +83,37 @@ describe("assertInvoiceRewriteAllowed", () => {
     await expect(
       assertInvoiceRewriteAllowed(d as never, { id: "inv", orderId: "ord-1" }),
     ).rejects.toMatchObject({ response: { code: UNIT_AWARE_LINE } });
-    expect(d.orderItem.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: {
-          orderId: "ord-1",
-          unitLabel: { not: null },
-          status: { not: "CANCELLED" },
-        },
-      }),
-    );
+    expect(d.order.findFirst).toHaveBeenCalledWith({
+      where: { id: "ord-1" },
+      select: {
+        lineItems: expect.objectContaining({
+          where: { unitLabel: { not: null }, status: { not: "CANCELLED" } },
+        }),
+      },
+    });
   });
 
   it("passes a pack-only invoice, linked or not", async () => {
     await expect(
-      assertInvoiceRewriteAllowed(db([], []) as never, { id: "i" }),
+      assertInvoiceRewriteAllowed(db([], null) as never, { id: "i" }),
     ).resolves.toBeUndefined();
     await expect(
       assertInvoiceRewriteAllowed(db([], []) as never, { id: "i", orderId: "o" }),
     ).resolves.toBeUndefined();
+  });
+
+  it("FAILS CLOSED when a parent cannot be read (NULL-tenant / vanished): 409 UNIT_AWARE_LINE_UNVERIFIABLE", async () => {
+    const noInvoice = {
+      invoice: { findFirst: jest.fn().mockResolvedValue(null) },
+      order: { findFirst: jest.fn().mockResolvedValue(null) },
+    };
+    await expect(
+      assertInvoiceRewriteAllowed(noInvoice as never, { id: "i" }),
+    ).rejects.toMatchObject({ response: { code: "UNIT_AWARE_LINE_UNVERIFIABLE" } });
+    // the invoice is readable but its LINKED order is not (e.g. NULL-tenant order)
+    await expect(
+      assertInvoiceRewriteAllowed(db([], null) as never, { id: "i", orderId: "o" }),
+    ).rejects.toMatchObject({ response: { code: "UNIT_AWARE_LINE_UNVERIFIABLE" } });
   });
 });
 
