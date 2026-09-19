@@ -89,6 +89,33 @@ describe("gateScan — default matcher is raw string equality", () => {
     expect(run([...distinct, ["A", T0 + 60]])).toEqual([true, true, true, true, true, true]);
   });
 
+  it(`keeps at least ${SCAN_SLOTS} codes tracked at once (spec R1's floor): none of four alternating items re-adds`, () => {
+    const four = ["A", "B", "C", "D"];
+    const first: Array<[string, number]> = four.map((c, i) => [c, T0 + i * 10]);
+    const repeats: Array<[string, number]> = four.map((c, i) => [c, T0 + 100 + i * 10]);
+    expect(run([...first, ...repeats])).toEqual([
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+    ]);
+  });
+
+  it("cooldown alone (absence gap already clear) still rejects a repeat, and clears at SCAN_COOLDOWN_MS", () => {
+    // 400ms apart: out of frame long enough (>= ABSENCE_GAP_MS 300) but inside the 600ms cooldown.
+    expect(
+      run([
+        ["A", T0],
+        ["A", T0 + 400],
+        ["A", T0 + 400 + SCAN_COOLDOWN_MS],
+      ]),
+    ).toEqual([true, false, true]);
+  });
+
   it("ignores a blank decode without disturbing state", () => {
     const first = gateScan("A", null, T0);
     const blank = gateScan("   ", first.state, T0 + 5);

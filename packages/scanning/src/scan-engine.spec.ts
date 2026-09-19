@@ -20,6 +20,13 @@ describe("scan engine", () => {
     expect(second.next.buffer).toBe(first.next.buffer);
   });
 
+  it("the engine gates with the DEFAULT cooldown: a repeat 400ms later (absence clear, cooldown not) is rejected", () => {
+    const first = frameScanned(createScanEngine(), "A", T0);
+    const settled = scanSettled(first.next); // resolve done, so only the gate can reject
+    expect(frameScanned(settled.next, "A", T0 + 400).startResolving).toBeNull();
+    expect(frameScanned(settled.next, "A", T0 + 700).startResolving).toBe("A");
+  });
+
   it("a detection mid-resolve is buffered, then drained on settle (never lost)", () => {
     const a = frameScanned(createScanEngine(), "A", T0);
     const b = frameScanned(a.next, "B", T0 + 10); // different item: accepted, buffered
