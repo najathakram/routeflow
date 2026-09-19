@@ -534,6 +534,15 @@ A balanced review should say what not to touch:
   `tenantId IS NULL AND role <> 'SUPER_ADMIN'` and writes nothing else, leaving the row, its
   foreign keys and its audit trail intact.
 
+  **Status update 2026-09-19 (both items RESOLVED, owner-run live, one transaction each, fresh
+  backup taken first):** (a) the three NULL-tenant non-`SUPER_ADMIN` `User` rows were set
+  `INACTIVE` via `--deactivate-orphan-users --live` at 05:06Z (ok=3, refused=0) — the standing
+  "orphan admins" item is closed. (b) 8 legacy NULL-tenant orphan rows were DELETED at 05:32Z by
+  the guarded owner-run deletion script: `RecurringInvoiceItem` 1, `ReturnItem` 1,
+  `PurchaseOrderItem` 3, `Expense` 1, `RecurringInvoice` 1, `Return` 1. Per the fleet board,
+  legacy orphan rows are now zero; the open item in this program is the structural `NOT NULL`
+  tenancy-model decision described above.
+
 - **The DB backup pipeline** (`apps/db-backup`) is well-designed: 2-hourly `pg_dump` → Cloudflare R2
   (S3-compatible, zero egress fees), 30-day prune, **monthly restore-verify**, and a healthchecks.io
   dead-man's switch. R2 is object storage, not a backup tool — this is a sound, cheap choice.
