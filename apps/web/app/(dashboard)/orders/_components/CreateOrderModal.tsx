@@ -4,7 +4,7 @@ import * as React from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { X, AlertTriangle, ChevronRight, Plus, Minus, StickyNote } from "lucide-react";
+import { X, AlertTriangle, ChevronRight, Plus, Minus } from "lucide-react";
 import { Modal, Textarea, Button, cn, useToast } from "@routeflow/ui/web";
 import { useQuery } from "@tanstack/react-query";
 import { useCustomers, useCustomerPrices, useCustomer } from "@/lib/api/customers";
@@ -18,18 +18,13 @@ import {
 import { useCreateDraft, useUpdateDraft, useDeleteDraft, useDraft } from "@/lib/api/drafts";
 import { draftDeviceLabel, type OrderDraftPayload } from "@/lib/drafts";
 import { apiClient } from "@/lib/api-client";
-import {
-  getTierPrice,
-  computeLineSubtotal,
-  normalizeBoxesPieces,
-  perUnitPrice,
-} from "@routeflow/pricing";
+import { getTierPrice, computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
-import { MarginHint } from "@/components/MarginHint";
 import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
 import { displayProductName } from "@/lib/product-display";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
+import { LineItemRow } from "@/components/LineItemRow";
 import { resolveProductByCode } from "@/lib/barcode-resolve";
 import { LicenseGuardModal } from "./LicenseGuardModal";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
@@ -1454,296 +1449,33 @@ export function CreateOrderModal({
             {lineItems.length > 0 ? (
               <ul className="divide-y divide-surface-border overflow-hidden rounded-lg border border-surface-border">
                 {lineItems.map((li) => (
-                  <li
+                  <LineItemRow
                     key={li.tempId}
-                    ref={(el) => {
+                    item={li}
+                    category={lineCategory(li) ?? null}
+                    marginFloor={floorForCategory(marginConfig, li.category)}
+                    floorAcked={floorAcked.has(li.tempId)}
+                    costRevealed={costRevealed.has(li.tempId)}
+                    priceHistoryEntry={priceHistory?.[li.productId]}
+                    rowRef={(el) => {
                       if (el) rowRefs.current.set(li.tempId, el);
                       else rowRefs.current.delete(li.tempId);
                     }}
-                    className={`flex items-start gap-3 px-3 py-2.5${
-                      lineCategory(li) ? " border-l-2 border-l-amber-300 bg-amber-50/30" : ""
-                    }`}
-                  >
-                    {li.isUnlisted ? (
-                      // ── Unlisted (custom) line — editable name + price, no catalog data ──
-                      <div className="min-w-0 flex-1 space-y-1">
-                        <div className="flex items-center gap-1.5">
-                          <input
-                            type="text"
-                            value={li.productName}
-                            onChange={(e) => updateUnlistedName(li.tempId, e.target.value)}
-                            placeholder="Item name"
-                            className="min-w-0 flex-1 rounded border border-surface-border bg-white px-2 py-1 text-sm font-medium text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                          />
-                          <span className="shrink-0 rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-700 ring-1 ring-brand-200">
-                            Custom
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <span className="text-[10px] text-navy/70">Price:</span>
-                          <span className="flex items-center rounded border border-surface-border bg-white px-1.5 focus-within:ring-1 focus-within:ring-brand-500">
-                            <span className="text-navy/40 text-xs">$</span>
-                            <MoneyInput
-                              value={li.unitPrice}
-                              onChange={(v) => updateUnlistedPrice(li.tempId, v)}
-                              className="w-16 rounded-none border-0 bg-transparent px-0 py-0.5 text-right text-xs focus:ring-0"
-                            />
-                          </span>
-                          <span className="text-[10px] text-navy/70">/ {li.unit}</span>
-                        </div>
-                        {(li.noteOpen || li.note?.trim()) && (
-                          <input
-                            type="text"
-                            maxLength={500}
-                            value={li.note ?? ""}
-                            onChange={(e) => setLineNote(li.tempId, e.target.value)}
-                            placeholder="Flavor or note for this item (prints on invoice)"
-                            className="mt-1 w-full rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                          />
-                        )}
-                      </div>
-                    ) : (
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-navy">{li.productName}</p>
-                        {/* Price display with special/discount indicators */}
-                        <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                          {li.priceType === "SPECIAL" ? (
-                            <>
-                              <span className="text-xs text-navy/70 line-through">
-                                ${li.listPrice.toFixed(2)}
-                              </span>
-                              <span className="text-xs font-medium text-emerald-600">
-                                ${li.unitPrice.toFixed(2)} / {li.unit}
-                              </span>
-                              <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
-                                Special price
-                              </span>
-                            </>
-                          ) : li.priceType === "DISCOUNTED" ? (
-                            <>
-                              <span className="text-xs text-navy/70 line-through">
-                                ${li.listPrice.toFixed(2)}
-                              </span>
-                              <span className="text-xs font-medium text-amber-600">
-                                ${li.unitPrice.toFixed(2)} / {li.unit}
-                              </span>
-                              <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">
-                                Discounted
-                              </span>
-                            </>
-                          ) : li.priceType === "MANUAL" ? (
-                            <>
-                              {/* Upsell (sold above list). Operator-only green badge;
-                                  no strikethrough — the base is never shown to the buyer. */}
-                              <span className="text-xs font-medium text-emerald-600">
-                                ${li.unitPrice.toFixed(2)} / {li.unit}
-                              </span>
-                              <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
-                                Upsell
-                              </span>
-                            </>
-                          ) : (
-                            <span className="text-xs text-navy/70">
-                              ${li.unitPrice.toFixed(2)} / {li.unit}
-                            </span>
-                          )}
-                        </div>
-                        {/* Price per piece (when product has box packaging) */}
-                        {li.unitsPerBox && li.unitsPerBox > 1 && (
-                          <div className="mt-0.5 text-[10px] text-navy/70">
-                            ${perUnitPrice(li.unitPrice, li.unitsPerBox)?.toFixed(2)} / piece
-                          </div>
-                        )}
-                        {/* Regulated tag (regulated-items-spec: "{Category} · regulated"). */}
-                        {lineCategory(li) && (
-                          <span className="mt-1 inline-flex items-center rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">
-                            {lineCategory(li)!.name} · regulated
-                          </span>
-                        )}
-                        {/* One-time discount input (only when no special price already applied) */}
-                        {li.priceType !== "SPECIAL" && (
-                          <div className="mt-1 flex items-center gap-1 flex-wrap">
-                            <span className="text-[10px] text-navy/70">
-                              {li.unitsPerBox && li.unitsPerBox > 1 ? "Case price:" : "Price:"}
-                            </span>
-                            <MoneyInput
-                              min={0}
-                              placeholder={li.listPrice.toFixed(2)}
-                              value={li.discountedPrice ?? null}
-                              onChange={(v) => setDiscountedPrice(li.tempId, v)}
-                              className="w-20 rounded border border-surface-border bg-white px-1.5 py-0.5 text-xs text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                            />
-                            {priceHistory?.[li.productId] &&
-                              priceHistory[li.productId].lastPrice !== li.listPrice && (
-                                <span className="text-[10px] text-navy/50">
-                                  Last: ${priceHistory[li.productId].lastPrice.toFixed(2)}
-                                </span>
-                              )}
-                          </div>
-                        )}
-                        {/* Live cost & margin — the negotiation floor (shared
-                            component; tapping the cost opens cost history) */}
-                        <div className="mt-0.5">
-                          <MarginHint
-                            unitPrice={li.unitPrice}
-                            unitCost={li.unitCost}
-                            unitsPerBox={li.unitsPerBox}
-                            productId={li.productId || undefined}
-                            floor={floorForCategory(marginConfig, li.category)}
-                            acked={floorAcked.has(li.tempId)}
-                            onSetToFloor={(fp) => setDiscountedPrice(li.tempId, fp)}
-                            onSellAnyway={() => ackFloor(li.tempId)}
-                            concealed={!costRevealed.has(li.tempId)}
-                            onToggleConcealed={() => toggleCostRevealed(li.tempId)}
-                          />
-                        </div>
-                        {(li.noteOpen || li.note?.trim()) && (
-                          <input
-                            type="text"
-                            maxLength={500}
-                            value={li.note ?? ""}
-                            onChange={(e) => setLineNote(li.tempId, e.target.value)}
-                            placeholder="Flavor or note for this item (prints on invoice)"
-                            className="mt-1 w-full rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                          />
-                        )}
-                      </div>
-                    )}
-                    {/* Qty controls */}
-                    {li.unitsPerBox ? (
-                      <div className="flex flex-col gap-0.5 min-w-[190px]">
-                        {/* Case | Unit sell-by toggle — UI-only; the payload always
-                            carries {qty, boxes, pieces} regardless of the mode. */}
-                        <div className="inline-flex self-start overflow-hidden rounded border border-surface-border text-[10px] font-medium">
-                          <button
-                            type="button"
-                            onClick={() => setSellBy(li.tempId, "case")}
-                            className={cn(
-                              "px-1.5 py-0.5 transition-colors",
-                              (li.sellBy ?? "case") === "case"
-                                ? "bg-brand-500 text-white"
-                                : "bg-white text-navy/70 hover:bg-surface-raised",
-                            )}
-                          >
-                            Case
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setSellBy(li.tempId, "unit")}
-                            className={cn(
-                              "border-l border-surface-border px-1.5 py-0.5 transition-colors",
-                              li.sellBy === "unit"
-                                ? "bg-brand-500 text-white"
-                                : "bg-white text-navy/70 hover:bg-surface-raised",
-                            )}
-                          >
-                            Unit
-                          </button>
-                        </div>
-                        {li.sellBy === "unit" ? (
-                          <div className="flex items-center gap-1.5">
-                            <input
-                              type="number"
-                              min={0}
-                              value={li.qty}
-                              onChange={(e) =>
-                                setUnitQty(li.tempId, parseInt(e.target.value, 10) || 0)
-                              }
-                              onFocus={(e) => e.target.select()}
-                              className="w-16 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                              title="Total units"
-                            />
-                            <span className="text-xs text-navy/70">units</span>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-1.5">
-                            <input
-                              type="number"
-                              min={0}
-                              value={li.boxes ?? 0}
-                              onChange={(e) => setBoxes(li.tempId, parseInt(e.target.value, 10))}
-                              onFocus={(e) => e.target.select()}
-                              className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                              title="Number of whole cases"
-                            />
-                            <span className="text-xs text-navy/70">cases</span>
-                            <span className="text-xs text-navy/30">+</span>
-                            <input
-                              type="number"
-                              min={0}
-                              max={li.unitsPerBox - 1}
-                              value={li.pieces ?? 0}
-                              onChange={(e) => setPieces(li.tempId, parseInt(e.target.value, 10))}
-                              onFocus={(e) => e.target.select()}
-                              className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                              title="Extra loose units (less than a full case)"
-                            />
-                            <span className="text-xs text-navy/70">units</span>
-                          </div>
-                        )}
-                        <span className="text-[10px] text-navy/30">
-                          1 case = {li.unitsPerBox} units
-                          {li.qty > 0 && (
-                            <>
-                              {" "}
-                              · <span className="font-medium text-navy/70">{li.qty} pcs total</span>
-                            </>
-                          )}
-                        </span>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => updateQty(li.tempId, -1)}
-                          disabled={li.qty <= 1}
-                          className="flex h-6 w-6 items-center justify-center rounded border border-surface-border text-sm text-navy/70 hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-30 transition-colors"
-                        >
-                          −
-                        </button>
-                        <span className="w-8 text-center text-sm font-semibold text-navy">
-                          {li.qty}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => updateQty(li.tempId, 1)}
-                          className="flex h-6 w-6 items-center justify-center rounded border border-surface-border text-sm text-navy/70 hover:bg-surface-raised transition-colors"
-                        >
-                          +
-                        </button>
-                      </div>
-                    )}
-                    {/* Line total */}
-                    <span className="w-16 text-right text-sm font-semibold text-navy">
-                      $
-                      {computeLineSubtotal({
-                        unitPrice: li.unitPrice,
-                        qty: li.qty,
-                        boxes: li.boxes ?? null,
-                        pieces: li.pieces ?? null,
-                        unitsPerBox: li.unitsPerBox ?? null,
-                      }).toFixed(2)}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => toggleNoteOpen(li.tempId)}
-                      className={cn(
-                        "shrink-0 rounded p-1 transition-colors hover:bg-surface-raised",
-                        li.note?.trim() ? "text-brand-500" : "text-navy/30 hover:text-navy",
-                      )}
-                      title="Add flavor / note"
-                    >
-                      <StickyNote className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => removeLineItem(li.tempId)}
-                      className="shrink-0 rounded p-1 text-navy/30 hover:bg-surface-raised hover:text-danger transition-colors"
-                      title="Remove"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  </li>
+                    onQtyDelta={(delta) => updateQty(li.tempId, delta)}
+                    onSetBoxes={(value) => setBoxes(li.tempId, value)}
+                    onSetPieces={(value) => setPieces(li.tempId, value)}
+                    onSetUnitQty={(value) => setUnitQty(li.tempId, value)}
+                    onSetSellBy={(mode) => setSellBy(li.tempId, mode)}
+                    onSetDiscountedPrice={(value) => setDiscountedPrice(li.tempId, value)}
+                    onSetToFloor={(floorPrice) => setDiscountedPrice(li.tempId, floorPrice)}
+                    onAckFloor={() => ackFloor(li.tempId)}
+                    onToggleCostRevealed={() => toggleCostRevealed(li.tempId)}
+                    onToggleNoteOpen={() => toggleNoteOpen(li.tempId)}
+                    onSetNote={(note) => setLineNote(li.tempId, note)}
+                    onUpdateUnlistedName={(name) => updateUnlistedName(li.tempId, name)}
+                    onUpdateUnlistedPrice={(value) => updateUnlistedPrice(li.tempId, value)}
+                    onRemove={() => removeLineItem(li.tempId)}
+                  />
                 ))}
               </ul>
             ) : (
