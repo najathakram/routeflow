@@ -219,6 +219,10 @@ describe("ImportService — import robustness (F17)", () => {
       expect(data.type).toBe("PURCHASE");
       expect(data.quantity).toBe(25);
       expect(data.performedById).toBe("user-1");
+      // Pre-merge review gate Q1: this CSV import carries no cost column at
+      // all, so the movement must carry no unitCost (undefined) — never a
+      // real 0, which would poison the first weighted-average replay.
+      expect(data.unitCost).toBeUndefined();
     });
 
     it("writes no opening movement for a new product with zero stock (unchanged prior behavior)", async () => {

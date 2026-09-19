@@ -1964,6 +1964,27 @@ describe("ProductsService", () => {
       expect(result.created).toBe(1);
       expect(prisma.stockMovement.create).not.toHaveBeenCalled();
     });
+
+    // Pre-merge review gate Q1: a fresh import with opening stock but NO cost
+    // must leave the PURCHASE movement's unitCost null (never 0 — 0 is a real,
+    // costed value that would poison the very first weighted-average replay),
+    // and the product itself must be created with averageCost null.
+    it("writes a null unitCost (not 0) and creates the product with averageCost null when the import has no cost", async () => {
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.create.mockResolvedValue({ id: "new-prod-3" });
+
+      const result = await service.importFromZoho({
+        items: [{ name: "Widget", unit: "each", pricePerUnit: 5, currentStock: "40" }],
+      } as any);
+
+      expect(result.created).toBe(1);
+      const createArgs = prisma.product.create.mock.calls[0][0].data;
+      expect(createArgs.averageCost).toBeNull();
+
+      expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
+      const data = prisma.stockMovement.create.mock.calls[0][0].data;
+      expect(data.unitCost).toBeNull();
+    });
   });
 });
 

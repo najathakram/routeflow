@@ -305,6 +305,34 @@ describe("InventoryService", () => {
       expect(prisma.product.update).not.toHaveBeenCalled();
       expect(prisma.stockMovement.update).not.toHaveBeenCalled();
     });
+
+    // Pre-merge review gate Q1: a product imported with opening stock and NO
+    // cost (products.service.ts/import.service.ts model that as a PURCHASE
+    // movement with unitCost null/undefined — see their specs). The replay
+    // must see that as "no costful history yet" and leave averageCost alone
+    // — never write it to 0 — per the persist guard `if (!isStandard &&
+    // hasCostfulHistory && avg != null)` in replayProduct.
+    it("B562: a null-cost opening PURCHASE leaves averageCost untouched (never written to 0)", async () => {
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        name: "Widget",
+        currentStock: D(10),
+        averageCost: null,
+        costingMethod: "AVCO",
+      });
+      prisma.stockMovement.findMany.mockResolvedValue([
+        { id: "m1", type: "PURCHASE", quantity: D(10), unitCost: null },
+      ]);
+
+      const result = await service.recomputeProductInTx(prisma.forTenant() as any, "prod-1");
+
+      expect(result).toMatchObject({
+        gapDetected: false,
+        hasCostfulHistory: false,
+        newAvgCost: null,
+      });
+      expect(prisma.product.update).not.toHaveBeenCalled();
+    });
   });
 
   // ─── receivePurchaseOrder — B11: STANDARD cost guard ───────────────────────

@@ -210,7 +210,7 @@ describe("VendorBillsService", () => {
       prisma.vendorBill.findUnique.mockResolvedValueOnce(bill());
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(10), averageCost: D(2) });
 
-      await service.receive("bill-1", undefined, "user-1");
+      const result = await service.receive("bill-1", undefined, "user-1");
 
       // (10×2 + 5×3.5) / 15 = 2.5
       const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
@@ -227,6 +227,10 @@ describe("VendorBillsService", () => {
 
       const productArgs = prisma.product.update.mock.calls[0][0].data;
       expect(productArgs.averageCost.toString()).toBe("2.5");
+
+      // Pre-merge review gate Q3 substance: a clean receive (no ledger gap)
+      // reports an empty gapsDetected, not undefined/missing.
+      expect((result as any).gapsDetected).toEqual([]);
     });
 
     it("still rejects double-receive (RF-084)", async () => {
@@ -403,6 +407,15 @@ describe("VendorBillsService", () => {
         expect(prisma.stockMovement.create).toHaveBeenCalledTimes(2);
         expect(prisma.stockLot.create).toHaveBeenCalledTimes(2);
         expect(prisma.product.update).toHaveBeenCalledTimes(2);
+
+        // Q3's substance: the gapped line's own immediate weighted-average
+        // bump (real currentStock=15, averageCost=7, +3 @ $9 -> 7.3333) still
+        // lands on product.update — only the backdated ledger REPLAY is
+        // skipped for it, never the cost update from receiving itself.
+        const gappedProductCall = prisma.product.update.mock.calls.find(
+          (call: any) => call[0].where.id === "prod-gapped",
+        );
+        expect(gappedProductCall[0].data.averageCost.toString()).toBe("7.3333");
 
         // The clean product's replay ran and reported no gap — its cost
         // history WAS safely recomputed.
