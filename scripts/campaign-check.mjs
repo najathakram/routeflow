@@ -429,6 +429,35 @@ function main() {
     },
   ];
 
+  // B523 fix-round 2: every OTHER campaign script (bugs.mjs, plane-client.mjs, this file's own
+  // spec) scrubs GIT_* env vars before spawning git, because git EXPORTS repo-scoped variables
+  // (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, GIT_COMMON_DIR, …) into every child process of a
+  // hook — and this script's pre-push invocation is a hook. This file's own `git` spawns never
+  // scrubbed them, so `git log`/`rev-parse` here could silently resolve against whatever
+  // repo/index husky's ambient env pointed at instead of `statusDir`/`gitRoot` — observed live: a
+  // push attributed "the ledger shards changed" to the commit BEING PUSHED itself (never true;
+  // confirmed by re-running the identical `git log` immediately after outside the hook and
+  // getting the correct, older commit both times). Scrubbing this closes that class the same way
+  // B420 closed it for validate-code-map.stamp.self-test.mjs.
+  function scrubGitEnv(extra = {}) {
+    const env = { ...process.env };
+    for (const key of [
+      "GIT_DIR",
+      "GIT_WORK_TREE",
+      "GIT_INDEX_FILE",
+      "GIT_COMMON_DIR",
+      "GIT_OBJECT_DIRECTORY",
+      "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+      "GIT_QUARANTINE_PATH",
+      "GIT_PREFIX",
+      "GIT_NAMESPACE",
+      "GIT_CEILING_DIRECTORIES",
+    ]) {
+      delete env[key];
+    }
+    return { ...env, ...extra };
+  }
+
   // Git root for freshness lookups is derived from statusDir, not REPO_ROOT — REPO_ROOT is
   // this SCRIPT's own on-disk location (always the real monorepo), while statusDir may be a
   // throwaway fixture repo (CAMPAIGN_CHECK_STATUS_DIR); its commits are what freshness must
@@ -440,6 +469,7 @@ function main() {
       const res = spawnSync("git", ["-C", statusDir, "rev-parse", "--show-toplevel"], {
         encoding: "utf8",
         shell: false,
+        env: scrubGitEnv(),
       });
       gitRootCache = res.status === 0 && res.stdout ? res.stdout.trim() : null;
     } catch {
@@ -469,6 +499,7 @@ function main() {
           cwd: gitRoot,
           encoding: "utf8",
           shell: false,
+          env: scrubGitEnv(),
         },
       );
       if (res.status !== 0 || !res.stdout || !res.stdout.trim()) return null;
@@ -610,6 +641,54 @@ function main() {
     return { status: task.cache.status, pkg };
   }
 
+  // B523 fix-round 2 (owner review): a HIT means turbo will never invoke jest, so a report that
+  // is missing/stale/partial because of one would otherwise stay that way FOREVER while the
+  // cache stays warm — which is the NORMAL state, not an edge case (verified live: all four
+  // workspaces predicted HIT on this exact tree). Refusing outright on every HIT, as the first
+  // cut of this fix did, would flip a gate that wrongly PASSED into one that wrongly BLOCKS every
+  // push whenever nothing relevant changed — strictly worse. So before refusing, force a REAL run
+  // of just this package's #test task, bypassing whatever the cache says (`turbo run test
+  // --filter=<pkg> --force`, not a hand-rolled jest invocation, so each workspace's own test
+  // script — and its own jest config differences — runs exactly as it normally would). Only an
+  // ACTUAL test failure (or no usable turbo binary to force with) still fails loudly; a real run
+  // that passes leaves fresh, genuine evidence on disk and this verify continues.
+  //
+  // CAMPAIGN_CHECK_FORCE_RUN is a test-only seam (same shape/gating as CAMPAIGN_CHECK_TURBO_DRY_RUN
+  // above): "PASS" or "FAIL", honoured ONLY inside a Jest worker that also sets it, so a spec can
+  // pin the control-flow around a forced run without actually spawning a multi-minute jest suite.
+  function forceRealTestRun(gitRoot, pkg) {
+    const override = process.env.CAMPAIGN_CHECK_FORCE_RUN;
+    if (override && process.env.JEST_WORKER_ID) {
+      console.warn("WARNING: CAMPAIGN_CHECK_FORCE_RUN honoured inside a Jest worker");
+      return override === "PASS"
+        ? { ok: true }
+        : { ok: false, reason: `stub result ${JSON.stringify(override)}` };
+    }
+    if (override) {
+      console.log("campaign-check: CAMPAIGN_CHECK_FORCE_RUN ignored outside a Jest worker");
+    }
+    const bin = resolveTurboBin(gitRoot);
+    if (!bin)
+      return { ok: false, reason: "no turbo binary at node_modules/.bin — can't force a run" };
+    console.log(`campaign-check: forcing a real run — ${bin} run test --filter=${pkg} --force`);
+    try {
+      const res = spawnSync(bin, ["run", "test", `--filter=${pkg}`, "--force"], {
+        cwd: gitRoot,
+        stdio: "inherit",
+        shell: process.platform === "win32",
+        timeout: 15 * 60 * 1000, // apps/api's full suite alone measures ~7 min on this box
+      });
+      if (res.error) return { ok: false, reason: res.error.message };
+      if (res.signal) return { ok: false, reason: `killed by signal ${res.signal} (timed out?)` };
+      return {
+        ok: res.status === 0,
+        reason: res.status === 0 ? null : `turbo exited ${res.status}`,
+      };
+    } catch (e) {
+      return { ok: false, reason: e.message };
+    }
+  }
+
   // R1/R2 (full mode) + R4 (--freshness-only). Runs BEFORE any token indexing — a stale
   // report must never let a claim be discharged (or refused with "no test titled") against
   // proof the report doesn't actually carry any more.
@@ -634,9 +713,27 @@ function main() {
       const exists = fs.existsSync(wsInfo.jsonPath);
       if (!exists) {
         if (mode === "full") {
-          // full mode runs AFTER the real test pass — leave a still-missing report to the
-          // existing artifact-missing check below, which fails loudly and distinctly there
-          // (B523) instead of silently treating "missing" as "zero hits".
+          // full mode runs AFTER the real test pass, so a report still missing here means turbo
+          // never actually produced it this run (a cache HIT it replayed instead, or campaign-
+          // check invoked standalone with no test pass at all). This is the last chance to get a
+          // real answer before the artifact-missing check below fails outright — force one
+          // directly rather than immediately giving up; whether it works or not, the check below
+          // re-reads the file from disk, so it fails loudly and by name only if the forced run
+          // itself did not leave real evidence behind (a genuine failure, not a caching artifact).
+          const pkg = resolvePkgName(gitRoot, wsInfo);
+          console.error(
+            `campaign-check: ${wsInfo.jsonPath} is MISSING — forcing a real run before failing outright.`,
+          );
+          const forced = forceRealTestRun(gitRoot, pkg);
+          if (forced.ok) {
+            console.log(`campaign-check: ${wsInfo.ws}.json created by a forced real run`);
+          } else {
+            console.error(
+              `campaign-check: forcing a real run for ${pkg} did not produce it` +
+                (forced.reason ? ` (${forced.reason})` : "") +
+                ` — falling through to the artifact-missing check.`,
+            );
+          }
           continue;
         }
         // B523 root cause: --freshness-only runs BEFORE turbo's real test pass, and this branch
@@ -656,9 +753,22 @@ function main() {
           console.error(
             `campaign-check: ${wsInfo.jsonPath} is MISSING and turbo predicts a cache HIT for ` +
               `${dryRun.pkg}#test — a cache replay would leave it missing forever (it is not a ` +
-              `declared turbo output). Force a real run: cd ${wsInfo.dir} && npx jest --maxWorkers=2`,
+              `declared turbo output).`,
           );
-          anyHitRefusal = true;
+          const forced = forceRealTestRun(gitRoot, dryRun.pkg);
+          if (forced.ok) {
+            console.log(
+              `campaign-check: ${wsInfo.ws}.json created by a forced real run — continuing`,
+            );
+          } else {
+            console.error(
+              `campaign-check: forcing a real run for ${dryRun.pkg} did not produce it` +
+                (forced.reason ? ` (${forced.reason})` : "") +
+                ` — this is a genuine failure, not a caching artifact. Run it yourself for the ` +
+                `full output: cd ${wsInfo.dir} && npx jest --maxWorkers=2`,
+            );
+            anyHitRefusal = true;
+          }
         } else if (dryRun.status === "MISS") {
           console.log(
             `campaign-check: ${wsInfo.ws}.json missing but turbo predicts a cache miss (will run for real) — continuing`,
@@ -746,7 +856,20 @@ function main() {
         console.error(
           `  turbo would replay ${dryRun.pkg}#test from cache, so this verify cannot refresh the report`,
         );
-        anyHitRefusal = true;
+        const forced = forceRealTestRun(gitRoot, dryRun.pkg);
+        if (forced.ok) {
+          console.log(
+            `campaign-check: ${wsInfo.ws}.json regenerated by a forced real run — continuing`,
+          );
+        } else {
+          console.error(
+            `campaign-check: forcing a real run for ${dryRun.pkg} did not succeed` +
+              (forced.reason ? ` (${forced.reason})` : "") +
+              ` — this is a genuine failure, not a caching artifact. Run it yourself for the ` +
+              `full output: cd ${wsInfo.dir} && npx jest --maxWorkers=2`,
+          );
+          anyHitRefusal = true;
+        }
       } else if (dryRun.status === "MISS") {
         console.log(
           `campaign-check: ${wsInfo.ws}.json is ${reason} but turbo will regenerate it (cache miss) — continuing`,
