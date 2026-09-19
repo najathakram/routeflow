@@ -79,9 +79,10 @@
     "v8-to-istanbul": "^9.0.1"
   },
   "engines": {
-    "node": ">=24"
+    "node": ">=24",
+    "npm": ">=11"
   },
-  "packageManager": "npm@10.8.0",
+  "packageManager": "npm@11.9.0",
   "workspaces": [
     "apps/*",
     "packages/*"
