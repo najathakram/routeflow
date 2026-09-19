@@ -1020,15 +1020,66 @@ export class InventoryService {
   }
 
   // ── Purchase Orders ──
-  private async nextPoNumber(): Promise<string> {
+  private async nextPoNumber(
+    client: Pick<Prisma.TransactionClient, "purchaseOrder"> = this.prisma.forTenant() as never,
+  ): Promise<string> {
     const year = new Date().getFullYear();
     const prefix = `PO-${year}-`;
-    const last = await this.prisma.forTenant().purchaseOrder.findFirst({
+    const last = await client.purchaseOrder.findFirst({
       where: { poNumber: { startsWith: prefix } },
       orderBy: { poNumber: "desc" },
     });
     const seq = last ? parseInt(last.poNumber.split("-")[2], 10) + 1 : 1;
     return `${prefix}${String(seq).padStart(4, "0")}`;
+  }
+
+  /**
+   * Create a DRAFT purchase order inside a caller's tenant transaction — the
+   * "raise a PO from a scanned bill" path (units/PO step 7). Two documents, ruled:
+   * the PO is what moves stock (send → receive, unchanged); the bill linked to it
+   * is money only. Lines arrive in the PO's denomination — PIECES and a per-PIECE
+   * cost — with the supplier's own SKU / pack size carried through for display.
+   * Running in the caller's transaction means the bill and its PO are created, or
+   * not created, together.
+   */
+  async createDraftPurchaseOrderInTx(
+    tx: Prisma.TransactionClient,
+    input: {
+      supplierId: string;
+      notes?: string | null;
+      lines: {
+        productId: string;
+        qtyOrdered: Prisma.Decimal;
+        unitCost: Prisma.Decimal;
+        sku?: string | null;
+        packSize?: number | null;
+      }[];
+    },
+  ) {
+    if (input.lines.length === 0) throw new BadRequestException("At least one item is required");
+    // B571: explicit tenantId on the nested lines — the tenant proxy only stamps the top-level create.
+    const tenantId = this.prisma.getTenantId();
+    const items = input.lines.map((l) => ({
+      tenantId,
+      productId: l.productId,
+      qtyOrdered: l.qtyOrdered,
+      qtyReceived: 0,
+      unitCost: l.unitCost,
+      totalCost: roundMoney(Number(l.qtyOrdered) * Number(l.unitCost)),
+      sku: l.sku ?? null,
+      packSize: l.packSize ?? null,
+    }));
+    return tx.purchaseOrder.create({
+      data: {
+        poNumber: await this.nextPoNumber(tx),
+        supplierId: input.supplierId,
+        status: "DRAFT",
+        notes: input.notes ?? null,
+        totalAmount: roundMoney(items.reduce((sum, i) => sum + i.totalCost, 0)),
+        items: { create: items },
+      },
+      select: { id: true, poNumber: true, status: true },
+    });
   }
 
   async createPurchaseOrder(dto: any, userId: string) {

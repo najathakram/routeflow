@@ -854,16 +854,21 @@ export default function VendorBillDetailPage() {
           // ledger has a gap (usually past sales). The copy must not imply
           // the cost wasn't updated — that reads as an invitation to hand-fix
           // a value that is already correct.
+          // Same advice as the API's INVENTORY_LEDGER_GAP conflict ("Ask an admin to
+          // look into this product") — the two used to disagree (this toast said
+          // "No action needed"): it is one ledger gap, told one way.
           if (updated?.gapsDetected && updated.gapsDetected.length > 0) {
             const names = [...new Set(updated.gapsDetected.map((g) => g.name))];
             const isPlural = names.length > 1;
             toast({
               title: "Received — cost history not recomputed",
-              description: `${names.join(", ")} — received and costed normally; ${
+              description: `${names.join(", ")} — received and costed normally, but ${
                 isPlural ? "their" : "its"
-              } historical cost snapshots weren't recalculated because the ledger has a gap for ${
-                isPlural ? "those products" : "that product"
-              }. No action needed.`,
+              } stock records don't fully explain the quantity on hand (this usually happens after past sales), so ${
+                isPlural ? "their" : "its"
+              } historical cost snapshots weren't recalculated. Ask an admin to look into ${
+                isPlural ? "these products" : "this product"
+              }.`,
               variant: "warning",
             });
           }
