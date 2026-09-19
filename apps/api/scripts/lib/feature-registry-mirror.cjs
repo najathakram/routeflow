@@ -5,10 +5,14 @@
 // standalone under plain `node` (invoked via `railway run`) and cannot import the compiled Nest
 // app. Any behavioural change to the files below belongs there FIRST, ported here in the SAME PR:
 //   - apps/api/src/billing/feature-registry.ts           (FEATURE_REGISTRY — key/gate.via/gate.state/
-//                                                          defaultGranted only; requires/conflicts/
-//                                                          config/billing.skus are NOT mirrored —
-//                                                          they don't change the effective boolean,
-//                                                          see the doc comment on EFFECTIVE_KEYS below)
+//                                                          defaultGranted/billing.skus only;
+//                                                          requires/conflicts/config are NOT
+//                                                          mirrored — nothing here consults them.
+//                                                          billing.skus IS mirrored (added 2026-09-19,
+//                                                          N1) but ONLY for the apply-time expiry/
+//                                                          reporting decision — see FEATURE_REGISTRY_MIRROR's
+//                                                          own doc comment below; it never affects
+//                                                          the old/new effective boolean itself)
 //   - apps/api/src/billing/plan-flag-policy.ts            (DARK_PLAN_FLAGS/PREPIN_DARK_FLAGS/
 //                                                          isPlanFlagEnforcementOn/isDarkFlag/allowsFlag)
 //   - apps/api/src/billing/plan-catalog.constants.ts       (ALWAYS_ENFORCED_PLAN_KEYS/isAlwaysEnforcedPlan,
@@ -33,7 +37,7 @@
 
 // ─── feature-registry.ts mirror ────────────────────────────────────────────────────────────────
 //
-// Per key: [key, via, state, defaultGranted].
+// Per key: [key, via, state, defaultGranted, billingSkus].
 //   via   — FeatureGateVia: "RequireAddon" | "RequirePlanFlag" | "guard" | "service" | "none"
 //   state — the registry row's OWN gate.state ("dark"|"enforced"|"none"), kept verbatim for every
 //           row for fidelity/debugging even though only a "RequireAddon" row's state is ever
@@ -43,45 +47,64 @@
 //           says, because it was never in that projection to begin with).
 //   defaultGranted — FeatureDef.defaultGranted; consulted ONLY by the new/one-rule path
 //           (computeOldPathAll has no defaultGranted fallback at all — see its own source).
+//   billingSkus — FeatureDef.billing.skus, verbatim. Added 2026-09-19 (N1): the ORIGINAL version
+//           of this file deliberately did NOT mirror billing.skus ("they don't change the
+//           effective boolean") — true for the pure old/new comparison, but no longer true once
+//           the APPLY-time WRITE decision needs it: a non-expiring grandfather grant on a key that
+//           carries a real, self-service billing SKU (flag.analytics/flag.forecasting →
+//           FORECASTING; addon.buyer_portal → BUYER_PORTAL) permanently gives away billed
+//           functionality with no operator signal — the same class of harm the
+//           addon-gate-courtesy exclusion exists to prevent, just through a different gate shape
+//           (RequirePlanFlag+dark rather than RequireAddon+dark). Owner ruling 2026-09-19: such
+//           grants are NOT excluded from --apply (unlike addon-gate-courtesy) but are time-boxed
+//           to 90 days instead of permanent — see applyGrants() in publish-and-repin.mjs. Never
+//           consulted by computeOldPathEffective/computeNewPathEffective — only by the apply-time
+//           expiry/reporting logic in publish-and-repin.mjs.
 //
 // 35 entries, transcribed 2026-09-19 from FEATURE_REGISTRY at origin/master 27d80c21.
 const FEATURE_REGISTRY_MIRROR = [
-  ["ocr", "RequireAddon", "dark", false],
-  ["tobacco_dealer", "RequireAddon", "enforced", false],
-  ["recurring_routes", "RequireAddon", "enforced", false],
-  ["order_delivery", "RequireAddon", "enforced", false],
-  ["crm_gohighlevel", "RequireAddon", "dark", false],
-  ["email.connected_mailbox", "RequireAddon", "dark", false],
-  ["developer_mode", "RequireAddon", "enforced", false],
-  ["driver_payments", "guard", "enforced", false],
-  ["orders_inline_returns", "RequireAddon", "enforced", false],
-  ["flag.msrp", "RequirePlanFlag", "enforced", false],
-  ["flag.sales_agents", "RequirePlanFlag", "enforced", false],
-  ["flag.analytics", "RequirePlanFlag", "dark", false],
-  ["flag.forecasting", "RequirePlanFlag", "dark", false],
-  ["flag.reports", "RequirePlanFlag", "dark", false],
-  ["flag.returns", "RequirePlanFlag", "dark", false],
-  ["flag.ap_bills", "RequirePlanFlag", "dark", false],
-  ["flag.pricing_tiers", "RequirePlanFlag", "dark", false],
-  ["flag.import_integrations", "RequirePlanFlag", "dark", false],
-  ["flag.estimates", "RequirePlanFlag", "dark", false],
-  ["flag.recurring_invoices", "RequirePlanFlag", "dark", false],
-  ["flag.credit_notes", "RequirePlanFlag", "dark", false],
-  ["flag.suppliers", "RequirePlanFlag", "dark", false],
-  ["flag.messaging", "RequirePlanFlag", "dark", false],
-  ["addon.buyer_portal", "RequirePlanFlag", "dark", false],
-  ["flag.credit_limits", "service", "dark", false],
-  ["flag.dispatch_live", "none", "none", false],
-  ["flag.settlement", "none", "none", false],
-  ["flag.api_sso", "none", "none", false],
-  ["limit_seats", "none", "none", false],
-  ["limit_routes", "none", "none", false],
-  ["limit_customers", "none", "none", false],
-  ["metered_scans", "none", "none", false],
-  ["metered_msgs", "none", "none", false],
-  ["catalog_varieties", "none", "none", true],
-  ["routes_dispatch", "none", "none", true],
-].map(([key, via, state, defaultGranted]) => ({ key, via, state, defaultGranted }));
+  ["ocr", "RequireAddon", "dark", false, ["OCR_PACK_250"]],
+  ["tobacco_dealer", "RequireAddon", "enforced", false, ["REGULATED_ITEMS"]],
+  ["recurring_routes", "RequireAddon", "enforced", false, []],
+  ["order_delivery", "RequireAddon", "enforced", false, []],
+  ["crm_gohighlevel", "RequireAddon", "dark", false, []],
+  ["email.connected_mailbox", "RequireAddon", "dark", false, []],
+  ["developer_mode", "RequireAddon", "enforced", false, []],
+  ["driver_payments", "guard", "enforced", false, []],
+  ["orders_inline_returns", "RequireAddon", "enforced", false, []],
+  ["flag.msrp", "RequirePlanFlag", "enforced", false, ["MSRP"]],
+  ["flag.sales_agents", "RequirePlanFlag", "enforced", false, ["SALES_AGENTS"]],
+  ["flag.analytics", "RequirePlanFlag", "dark", false, ["FORECASTING"]],
+  ["flag.forecasting", "RequirePlanFlag", "dark", false, ["FORECASTING"]],
+  ["flag.reports", "RequirePlanFlag", "dark", false, []],
+  ["flag.returns", "RequirePlanFlag", "dark", false, []],
+  ["flag.ap_bills", "RequirePlanFlag", "dark", false, []],
+  ["flag.pricing_tiers", "RequirePlanFlag", "dark", false, []],
+  ["flag.import_integrations", "RequirePlanFlag", "dark", false, []],
+  ["flag.estimates", "RequirePlanFlag", "dark", false, []],
+  ["flag.recurring_invoices", "RequirePlanFlag", "dark", false, []],
+  ["flag.credit_notes", "RequirePlanFlag", "dark", false, []],
+  ["flag.suppliers", "RequirePlanFlag", "dark", false, []],
+  ["flag.messaging", "RequirePlanFlag", "dark", false, []],
+  ["addon.buyer_portal", "RequirePlanFlag", "dark", false, ["BUYER_PORTAL"]],
+  ["flag.credit_limits", "service", "dark", false, []],
+  ["flag.dispatch_live", "none", "none", false, []],
+  ["flag.settlement", "none", "none", false, []],
+  ["flag.api_sso", "none", "none", false, []],
+  ["limit_seats", "none", "none", false, ["SEAT_EXTRA"]],
+  ["limit_routes", "none", "none", false, ["ROUTE_EXTRA"]],
+  ["limit_customers", "none", "none", false, ["CUSTOMER_PACK_100"]],
+  ["metered_scans", "none", "none", false, []],
+  ["metered_msgs", "none", "none", false, ["MSG_BUNDLE_500"]],
+  ["catalog_varieties", "none", "none", true, []],
+  ["routes_dispatch", "none", "none", true, []],
+].map(([key, via, state, defaultGranted, billingSkus]) => ({
+  key,
+  via,
+  state,
+  defaultGranted,
+  billingSkus,
+}));
 
 // ─── plan-flag-policy.ts mirror ────────────────────────────────────────────────────────────────
 
@@ -215,12 +238,16 @@ function addonSkuCode(row) {
 // to what the NEW/one-rule path also computes, so a diff would never surface for this key at all,
 // silently defeating the one thing design.md is explicit this report must protect ("zero tenants
 // lose the money guard"). While PLAN_FLAG_ENFORCEMENT is on, this key is NOT special — it behaves
-// exactly like the generic branch (which is why `isDarkFlagFn`/env are threaded through here too).
+// exactly like the generic branch (which is why `isDarkFlag`/env are threaded through here too).
 //
-// Scope: applied ONLY when no active override exists for the key (an explicit admin GRANT/DENY —
-// however unlikely today, since production traffic never reaches the override-consulting branch
-// while enforcement is off — still takes absolute priority, matching every other key). This
-// remains the single highest-uncertainty judgment call in this mirror; flagged for review.
+// Scope, CORRECTED AGAIN after independent re-review (N3, 2026-09-19): the first fix pass had this
+// checked AFTER the override lookup, on the theory that "an explicit admin override should always
+// win". That is backwards for this ONE key: the real isCreditLimitCheckEnabled() (above) returns
+// BEFORE ever consulting entitlements/overrides at all while enforcement is off — so a DENY
+// override on flag.credit_limits has ZERO EFFECT on production today, and old-path is still
+// unconditionally true regardless of it. Checked before the override lookup now (see
+// computeOldPathEffective), so a DENY on this one key can never silently hide a real, unreported
+// loss of the money guard again. Every OTHER key is unaffected — this Set has exactly one member.
 const ALWAYS_EFFECTIVE_TODAY = new Set(["flag.credit_limits"]);
 
 /** For a LOSS row (old=true, new=false), the mechanism that explains WHY the legacy path is
@@ -252,13 +279,15 @@ function lossMechanism(feature) {
  * plus the ALWAYS_EFFECTIVE_TODAY deviation documented above.
  */
 function computeOldPathEffective(feature, ctx, env = process.env) {
+  // Checked BEFORE the override lookup (N3 fix, 2026-09-19) — see ALWAYS_EFFECTIVE_TODAY's own
+  // doc comment: the real isCreditLimitCheckEnabled() returns unconditionally true, without ever
+  // consulting overrides, while enforcement is off. Every other key is unaffected (the Set has
+  // exactly one member), so overrides still decide everything else first, as before.
+  if (ALWAYS_EFFECTIVE_TODAY.has(feature.key) && !isPlanFlagEnforcementOn(env)) return true;
+
   const override = ctx.overrides.get(feature.key);
   if (override === "GRANT") return true;
   if (override === "DENY") return false;
-
-  // See ALWAYS_EFFECTIVE_TODAY's own doc comment: matches orders.service.ts's
-  // isCreditLimitCheckEnabled() exactly — unconditionally true ONLY while enforcement is off.
-  if (ALWAYS_EFFECTIVE_TODAY.has(feature.key) && !isPlanFlagEnforcementOn(env)) return true;
 
   const isAddonKeyed = feature.via === "RequireAddon" || feature.via === "guard";
   if (isAddonKeyed) {

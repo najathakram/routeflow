@@ -38,6 +38,7 @@ const mirror = require("../../scripts/lib/feature-registry-mirror.cjs") as {
     via: string;
     state: string;
     defaultGranted: boolean;
+    billingSkus: string[];
   }>;
   DARK_PLAN_FLAGS: Set<string>;
   ALWAYS_ENFORCED_PLAN_KEYS: Set<string>;
@@ -85,6 +86,38 @@ describe("feature-registry-mirror.cjs parity with the real TypeScript source", (
     }
   });
 
+  it(
+    "mirrors billing.skus for every key (N1, 2026-09-19) — only consulted by publish-and-repin.mjs's " +
+      "apply-time billable-key expiry/reporting decision, never by the effective-boolean computation",
+    () => {
+      const byKey = new Map(mirror.FEATURE_REGISTRY_MIRROR.map((f) => [f.key, f]));
+      for (const real of FEATURE_REGISTRY) {
+        expect(byKey.get(real.key)!.billingSkus).toEqual([...real.billing.skus]);
+      }
+      // Pins the exact set N1 is about: dark AND billable AND NOT already excluded from --apply's
+      // default write set by the F3 addon-gate-courtesy mechanism (ocr is dark + billable too, but
+      // it's RequireAddon-via, so it never reaches applicableLosses by default in the first
+      // place — N1 is specifically about the gap F3's exclusion does NOT cover: a
+      // RequirePlanFlag-keyed dark row with a real SKU sailing through unexcluded). A registry
+      // change silently adding/removing a billing SKU from one of these three fails this test
+      // rather than surfacing only as a wording mismatch in a PR description.
+      const billableKeys = mirror.FEATURE_REGISTRY_MIRROR.filter(
+        (f) => f.billingSkus.length > 0,
+      ).map((f) => f.key);
+      const darkBillablePlanFlagKeys = mirror.FEATURE_REGISTRY_MIRROR.filter(
+        (f) => f.billingSkus.length > 0 && f.state === "dark" && f.via === "RequirePlanFlag",
+      )
+        .map((f) => f.key)
+        .sort();
+      expect(billableKeys.length).toBeGreaterThan(0);
+      expect(darkBillablePlanFlagKeys).toEqual([
+        "addon.buyer_portal",
+        "flag.analytics",
+        "flag.forecasting",
+      ]);
+    },
+  );
+
   it("mirrors gate.state for every RequireAddon row (the only state addonGateState reads)", () => {
     const byKey = new Map(mirror.FEATURE_REGISTRY_MIRROR.map((f) => [f.key, f]));
     for (const real of FEATURE_REGISTRY.filter((f) => f.gate.via === "RequireAddon")) {
@@ -128,9 +161,11 @@ describe("feature-registry-mirror.cjs parity with the real TypeScript source", (
             isDarkFlag(real.key, env as NodeJS.ProcessEnv),
           );
         }
-        // isPlanFlagEnforcementOn itself, for completeness of the env-parsing behaviour.
-        expect(mirror.isDarkFlag("flag.returns", env as NodeJS.ProcessEnv)).toBe(
-          isDarkFlag("flag.returns", env as NodeJS.ProcessEnv),
+        // N4 fix: isPlanFlagEnforcementOn itself, actually called and asserted (the previous
+        // version of this test claimed to cover it here but only repeated the isDarkFlag
+        // comparison from the loop above — the function was imported and cast but never invoked).
+        expect(mirror.isPlanFlagEnforcementOn(env as NodeJS.ProcessEnv)).toBe(
+          isPlanFlagEnforcementOn(env as NodeJS.ProcessEnv),
         );
       }
     },
@@ -290,18 +325,42 @@ describe("publish-and-repin report logic against the shared feature-grants-v2 fi
   });
 
   it(
-    "flag.credit_limits: old path is unconditionally true without an override ONLY while " +
-      "enforcement is off (matching orders.service.ts's isCreditLimitCheckEnabled() exactly); " +
-      "under enforcement=on it falls to the generic branch and is NOT unconditional; an explicit " +
-      "override still wins over the deviation either way",
+    "flag.credit_limits: old path is unconditionally true while enforcement is off, EVEN OVER an " +
+      "explicit DENY override (N3 fix, 2026-09-19) — matching orders.service.ts's " +
+      "isCreditLimitCheckEnabled() exactly, which returns before ever consulting overrides in " +
+      "that state; while enforcement is on, the deviation is inactive and overrides decide " +
+      "normally, same as every other key",
     () => {
       const ctx = ctxFor(LITE_FIXTURE); // LITE's flags = [] — does not include flag.credit_limits
       const feature = mirror.FEATURE_REGISTRY_MIRROR.find((f) => f.key === "flag.credit_limits")!;
       expect(mirror.computeOldPathEffective(feature, ctx, OFF_ENV)).toBe(true);
       expect(mirror.computeOldPathEffective(feature, ctx, ON_ENV)).toBe(false);
+
+      // A GRANT is redundant with the deviation while off (both true), but proves the ordering
+      // doesn't break the ordinary case either.
+      ctx.overrides.set("flag.credit_limits", "GRANT");
+      expect(mirror.computeOldPathEffective(feature, ctx, OFF_ENV)).toBe(true);
+      expect(mirror.computeOldPathEffective(feature, ctx, ON_ENV)).toBe(true);
+
+      // The N3 case: an explicit DENY does NOT win while enforcement is off — production ignores
+      // it entirely in that state — but DOES win once enforcement is on, when the real service
+      // actually reaches the override-consulting branch.
       ctx.overrides.set("flag.credit_limits", "DENY");
-      expect(mirror.computeOldPathEffective(feature, ctx, OFF_ENV)).toBe(false);
+      expect(mirror.computeOldPathEffective(feature, ctx, OFF_ENV)).toBe(true);
       expect(mirror.computeOldPathEffective(feature, ctx, ON_ENV)).toBe(false);
+    },
+  );
+
+  it(
+    "N3: a DENY override on flag.credit_limits while enforcement is off produces a real, " +
+      "reportable LOSS (old=true via the deviation, new=false via the override) rather than " +
+      "silently agreeing at (false, false) the way the pre-N3 ordering did",
+    () => {
+      const ctx = ctxFor(LITE_FIXTURE);
+      ctx.overrides.set("flag.credit_limits", "DENY");
+      const feature = mirror.FEATURE_REGISTRY_MIRROR.find((f) => f.key === "flag.credit_limits")!;
+      expect(mirror.computeOldPathEffective(feature, ctx, OFF_ENV)).toBe(true);
+      expect(mirror.computeNewPathEffective(feature, ctx)).toBe(false);
     },
   );
 

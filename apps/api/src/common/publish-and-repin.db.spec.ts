@@ -104,6 +104,15 @@ const EXPECTED_LOSS_KEYS = [
 const EXPECTED_APPLICABLE_LOSS_KEYS = EXPECTED_LOSS_KEYS.filter(
   (k) => !ADDON_GATE_COURTESY_KEYS.includes(k),
 ).sort();
+// N1, owner ruling 2026-09-19: of the 12 applicable keys, these three carry a real billing SKU
+// (flag.analytics AND flag.forecasting both -> FORECASTING, addon.buyer_portal -> BUYER_PORTAL)
+// and get a 90-day expiresAt instead of a permanent grant; every other applicable key stays
+// non-expiring. Matches feature-registry-mirror.parity.spec.ts's darkBillablePlanFlagKeys pin.
+const BILLABLE_APPLICABLE_KEYS = [
+  "addon.buyer_portal",
+  "flag.analytics",
+  "flag.forecasting",
+].sort();
 
 function tag(tenantId: string) {
   return createHash("sha256").update(tenantId).digest("hex").slice(0, 8);
@@ -165,6 +174,18 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
       [tenantId],
     );
     return rows;
+  }
+
+  /** `expiresAt`/`createdAt`/`revokedAt` are all Postgres "timestamp without time zone" columns
+   *  (matches Prisma's DateTime on this table). node-postgres parses a naive timestamp value back
+   *  into a JS Date using the CURRENT PROCESS's local timezone (not UTC, and not the DB session's
+   *  timezone, which this compose DB confirms is already UTC) — so comparing a value read this way
+   *  against `Date.now()` directly is wrong by a fixed offset for the whole test run, NOT a bug in
+   *  the stored data itself (psql or Prisma would read the identical row back correctly). Reading
+   *  a reference "now" through the exact same cast + driver path makes the offset cancel out. */
+  async function dbNaiveNowMs(): Promise<number> {
+    const { rows } = await db.query(`SELECT (now())::timestamp AS ref`);
+    return new Date(rows[0].ref as string).getTime();
   }
 
   beforeAll(async () => {
@@ -336,12 +357,24 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
     for (const key of ADDON_GATE_COURTESY_KEYS) {
       expect(rows.map((r) => r.featureKey)).not.toContain(key);
     }
+    const dbNowMs = await dbNaiveNowMs();
+    const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
     for (const row of rows) {
       expect(row.effect).toBe("GRANT");
       expect(row.kind).toBe("GRANDFATHER");
-      expect(row.expiresAt).toBeNull();
       expect(row.createdById).toBeNull();
       expect(String(row.reason)).toContain("PR-0b");
+      if (BILLABLE_APPLICABLE_KEYS.includes(row.featureKey)) {
+        // N1: billable keys get a 90-day expiry, not a permanent grant.
+        expect(row.expiresAt).not.toBeNull();
+        const expiresAtMs = new Date(row.expiresAt as unknown as string).getTime();
+        // generous ±1 hour window around exactly-90-days-from-the-db's-own-now to absorb test
+        // run time (both sides read through the same naive-timestamp path — see dbNaiveNowMs).
+        expect(Math.abs(expiresAtMs - (dbNowMs + ninetyDaysMs))).toBeLessThan(60 * 60 * 1000);
+        expect(String(row.reason)).toContain("billable SKU, 90-day");
+      } else {
+        expect(row.expiresAt).toBeNull();
+      }
     }
     // the zero tenant received nothing
     expect(await activeOverrides(TENANT_ZERO_ID)).toEqual([]);
@@ -389,5 +422,55 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
 
     const after = await activeOverrides(TENANT_LOSS_ID);
     expect(after).toEqual(before);
+  });
+
+  it("D9 --apply --live --include-addon-gates: the 3 previously-excluded addon-gate-courtesy keys are now granted too (ocr gets a 90-day expiry too — it carries a real billing SKU independent of the exclusion mechanism)", async () => {
+    const preview = runJson(["--apply", "--include-addon-gates"]);
+    const ourLosses = preview.losses
+      .filter((l) => l.tenant.includes(HASH_LOSS))
+      .map((l) => l.key)
+      .sort();
+    // with --include-addon-gates, nothing is excluded — our tenant now shows exactly the 3
+    // remaining addon-gate keys (the other 12 already have active overrides from D6, so no
+    // diff remains for them regardless of the flag).
+    expect(ourLosses).toEqual([...ADDON_GATE_COURTESY_KEYS].sort());
+    expect(preview.excludedAddonGateLosses ?? 0).toBe(0);
+
+    const n = preview.losses.length; // nothing excluded this run
+    const res = runCli([
+      "--apply",
+      "--live",
+      "--include-addon-gates",
+      "--only-test-tenants",
+      "--confirm",
+      `GRANT ${n} OVERRIDES`,
+      "--backup-attested",
+      "spec",
+      "--json",
+    ]);
+    expect(res.status).toBe(0);
+    const result = JSON.parse(res.stdout) as Diff;
+    expect(result.applied?.inserted).toBe(n);
+
+    const rows = await activeOverrides(TENANT_LOSS_ID);
+    expect(rows).toHaveLength(15); // the original 12 (D6) + these 3
+    for (const key of ADDON_GATE_COURTESY_KEYS) {
+      const row = rows.find((r) => r.featureKey === key);
+      expect(row).toBeDefined();
+      expect(row!.effect).toBe("GRANT");
+      expect(row!.kind).toBe("GRANDFATHER");
+      if (key === "ocr") {
+        // ocr carries a real billing SKU (OCR_PACK_250) despite being addon-gate-courtesy —
+        // billable-ness and the addon-gate exclusion are independent, orthogonal checks.
+        expect(row!.expiresAt).not.toBeNull();
+      } else {
+        expect(row!.expiresAt).toBeNull();
+      }
+    }
+
+    // and --report now shows zero losses for our tenant — every key is explained
+    const report = runReportJson();
+    const ourFinalLosses = report.losses.filter((l) => l.tenant.includes(HASH_LOSS));
+    expect(ourFinalLosses).toEqual([]);
   });
 });

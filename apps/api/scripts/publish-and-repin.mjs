@@ -118,6 +118,7 @@ const {
   computeOldPathEffective,
   computeNewPathEffective,
   lossMechanism,
+  isPlanFlagEnforcementOn,
   planKeyFromEnum,
   findPlanDefinition,
   addonSkuCode,
@@ -210,6 +211,15 @@ function parseArgs(argv) {
   }
   if (opts.includeAddonGates && !opts.apply) {
     opts.errors.push("--include-addon-gates has no effect without --apply");
+  }
+  // N6: match the other "has no effect without --apply" refusals — --report is read-only and
+  // never writes, so these write-path-only flags being silently accepted (and silently ignored)
+  // in --report mode is a real inconsistency, not just a style nit.
+  if (opts.onlyTestTenants && !opts.apply) {
+    opts.errors.push("--only-test-tenants has no effect without --apply");
+  }
+  if (opts.backupAttested !== null && !opts.apply) {
+    opts.errors.push("--backup-attested has no effect without --apply");
   }
   if (opts.planFlagEnforcement !== "on" && opts.planFlagEnforcement !== "off") {
     opts.errors.push('--plan-flag-enforcement must be exactly "on" or "off"');
@@ -472,6 +482,15 @@ async function computeDiff() {
   const gains = [];
   const losses = [];
   const errors = [];
+  // N3: a tenant with an ACTIVE DENY override on flag.credit_limits while enforcement is off is
+  // not just another courtesy loss — production is unconditionally ignoring an admin's explicit
+  // decision on the money guard right now (orders.service.ts's isCreditLimitCheckEnabled()
+  // returns before ever consulting overrides in this state). Surfaced separately, loudly, because
+  // --apply cannot silently "fix" it either: the DENY row already occupies the one active-override
+  // slot the ON CONFLICT target keys on, so a grandfather GRANT attempt there is a guaranteed
+  // no-op — this needs an operator decision (revoke the DENY, or accept the one-rule outcome),
+  // not a script write.
+  const moneyGuardDivergences = [];
   let ordinal = 0;
   for (const tenant of tenants) {
     ordinal++;
@@ -490,6 +509,12 @@ async function computeDiff() {
       planKey: ent.planKey,
       entFlags: ent.flags,
     };
+    if (
+      ctx.overrides.get("flag.credit_limits") === "DENY" &&
+      !isPlanFlagEnforcementOn(oldPathEnv)
+    ) {
+      moneyGuardDivergences.push(tag);
+    }
     for (const feature of FEATURE_REGISTRY_MIRROR) {
       const oldEff = computeOldPathEffective(feature, ctx, oldPathEnv);
       const newEff = computeNewPathEffective(feature, ctx);
@@ -503,6 +528,7 @@ async function computeDiff() {
           slug: tenant.slug,
           key: feature.key,
           mechanism: lossMechanism(feature),
+          billable: feature.billingSkus.length > 0,
         });
       }
     }
@@ -512,6 +538,7 @@ async function computeDiff() {
     tenantCount: tenants.length,
     keyCount: FEATURE_REGISTRY_MIRROR.length,
     planFlagEnforcementAssumed: opts.planFlagEnforcement,
+    moneyGuardDivergences,
     gains,
     losses,
     errors,
@@ -540,8 +567,14 @@ function emitJsonDiff(diff, extra = {}) {
         registryKeys: diff.keyCount,
         planFlagEnforcementAssumed: diff.planFlagEnforcementAssumed,
         gains: diff.gains.map((r) => ({ tenant: r.tag, key: r.key })),
-        losses: diff.losses.map((r) => ({ tenant: r.tag, key: r.key, mechanism: r.mechanism })),
+        losses: diff.losses.map((r) => ({
+          tenant: r.tag,
+          key: r.key,
+          mechanism: r.mechanism,
+          billable: r.billable,
+        })),
         resolutionErrors: diff.errors,
+        moneyGuardDivergences: diff.moneyGuardDivergences,
         summary: { gains: diff.gains.length, losses: diff.losses.length },
         ...extra,
       },
@@ -549,6 +582,39 @@ function emitJsonDiff(diff, extra = {}) {
       2,
     ),
   );
+}
+
+/** N1: keys carrying a real billing SKU (flag.analytics/flag.forecasting -> FORECASTING,
+ *  addon.buyer_portal -> BUYER_PORTAL today — derived from the registry, never hard-coded) that
+ *  appear in `rows`, with the tenant count per key. Owner ruling 2026-09-19: these are still
+ *  granted by --apply (unlike addon-gate-courtesy), but time-boxed to 90 days rather than
+ *  permanent — this section is what makes that visible before it happens. */
+function printBillableKeysSection(rows, expiryNote) {
+  const byKey = new Map();
+  for (const r of rows) {
+    if (!r.billable) continue;
+    byKey.set(r.key, (byKey.get(r.key) ?? 0) + 1);
+  }
+  if (byKey.size === 0) return;
+  say(`\n=== BILLABLE KEYS IN THE WRITE SET (${expiryNote}) ===`);
+  for (const [key, count] of byKey) say(`  ${key}  tenants=${count}`);
+}
+
+/** N3: an active DENY override on flag.credit_limits while enforcement is off — see
+ *  computeDiff's own doc comment on moneyGuardDivergences for why this can't be a normal loss row
+ *  alone and why --apply cannot silently resolve it. */
+function printMoneyGuardDivergences(diff) {
+  if (diff.moneyGuardDivergences.length === 0) return;
+  say(
+    `\n⚠ MONEY-GUARD DIVERGENCE (${diff.moneyGuardDivergences.length}) — real path ignores ` +
+      "overrides while enforcement is off: these tenant(s) have an ACTIVE DENY override on " +
+      "flag.credit_limits, but production runs the credit-limit check for them anyway right now " +
+      "(orders.service.ts never consults overrides while PLAN_FLAG_ENFORCEMENT is off). --apply " +
+      "cannot fix this — the DENY row already occupies the one active-override slot, so a " +
+      "grandfather GRANT attempt there is a guaranteed no-op. Needs an operator decision (revoke " +
+      "the DENY, or accept that the one rule will honor it):",
+  );
+  for (const tag of diff.moneyGuardDivergences) say(`  ${tag}`);
 }
 
 async function runReport() {
@@ -574,6 +640,11 @@ async function runReport() {
     "=== LOSSES — today's four-layer resolver grants, one rule denies ===",
     diff.losses,
   );
+  printBillableKeysSection(
+    diff.losses,
+    "N1 ruled 2026-09-19: 90-day grants for billable keys — would NOT be permanent if --apply --live runs",
+  );
+  printMoneyGuardDivergences(diff);
 
   const byMechanism = (m) => diff.losses.filter((r) => r.mechanism === m).length;
   say("\n=== TOTALS ===");
@@ -609,10 +680,20 @@ async function applyGrants(losses, batchId) {
     byTenant.set(row.tenantId, list);
   }
 
-  const reason =
+  const courtesyReason =
     `PR-0b zero-loss grandfather grant (batch ${batchId}): today's four-layer resolver grants ` +
     `this key; the one rule (preset ∪ grants − denies) would deny it. Auto-generated by ` +
     `publish-and-repin.mjs --apply — see local-assets/handoff/2026-09-16/feature-grants-v2/design.md PR-0b.`;
+  // N1, owner ruling 2026-09-19: a key carrying a real billing SKU is grandfathered too (same as
+  // any other courtesy loss), but time-boxed rather than permanent — unlike a plain courtesy
+  // grant, leaving this one non-expiring would quietly convert a reversible "dark" gate into a
+  // standing, revenue-affecting exception with no forcing function to ever revisit it.
+  const BILLABLE_GRANT_DAYS = 90;
+  const billableReason =
+    `PR-0b grandfather (billable SKU, 90-day) — batch ${batchId}: today's four-layer resolver ` +
+    `grants this key via a real billing SKU; the one rule would deny it. Expires in ` +
+    `${BILLABLE_GRANT_DAYS} days rather than standing permanently — re-evaluate before then ` +
+    `(re-pin the catalog, sell the SKU, or renew). Auto-generated by publish-and-repin.mjs --apply.`;
 
   say("\n  session read-only flag lifted for this apply; opening one transaction per tenant");
   await client.query("SET default_transaction_read_only = off");
@@ -636,10 +717,14 @@ async function applyGrants(losses, batchId) {
               AND "expiresAt" IS NOT NULL AND "expiresAt" <= now()`,
           [tenantId, row.key],
         );
+        const reason = row.billable ? billableReason : courtesyReason;
+        const expiresAtSql = row.billable
+          ? `now() + interval '${BILLABLE_GRANT_DAYS} days'`
+          : "NULL";
         const res = await client.query(
           `INSERT INTO "TenantFeatureOverride"
              ("id", "tenantId", "featureKey", "effect", "kind", "reason", "expiresAt", "createdById", "createdAt")
-           VALUES ($1, $2, $3, 'GRANT', 'GRANDFATHER', $4, NULL, NULL, now())
+           VALUES ($1, $2, $3, 'GRANT', 'GRANDFATHER', $4, ${expiresAtSql}, NULL, now())
            ON CONFLICT ("tenantId", "featureKey") WHERE "revokedAt" IS NULL DO NOTHING
            RETURNING id`,
           [randomUUID(), tenantId, row.key, reason],
@@ -671,6 +756,25 @@ async function runApply() {
 
   const diff = await computeDiff();
   say(`Tenants scanned: ${diff.tenantCount}   Registry keys checked: ${diff.keyCount}`);
+  // N2: --report was hardened to fail on an unresolvable tenant; --apply was not, which let it
+  // silently skip that tenant (no prose, no grandfather grant) while --live proceeded to write for
+  // everyone else and printed "TOTAL inserted=n/n" as if nothing were missing. Same treatment now.
+  if (diff.errors.length > 0) {
+    say(
+      `\n⚠ RESOLUTION ERRORS (${diff.errors.length} tenant(s) could NOT be checked — excluded ` +
+        "from both the preview and any write below):",
+    );
+    for (const e of diff.errors) say(`  ${e.tag}: ${e.error}`);
+    if (opts.live) {
+      say(
+        "\n=== REFUSED — unresolved tenant(s) present ===\n" +
+          "--apply --live refuses to run while any tenant could not be checked — investigate the " +
+          "resolution error(s) above first; NOTHING was written.\n",
+      );
+      emitJsonDiff(diff, { applyRefused: "resolution-errors", applied: null });
+      return 4;
+    }
+  }
 
   // addon-gate-courtesy losses (ocr / crm_gohighlevel / email.connected_mailbox-style rows: a
   // RequireAddon key shipped "dark" pending its OWN rollout — pricing, a pilot, a verification
@@ -697,6 +801,14 @@ async function runApply() {
     );
     for (const row of excludedLosses) say(`  ${row.tag}  ${row.key}`);
   }
+  const billableExpiryDate = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+  printBillableKeysSection(
+    applicableLosses,
+    `N1 ruled 2026-09-19: will expire ${billableExpiryDate}, not permanent`,
+  );
+  printMoneyGuardDivergences(diff);
 
   if (applicableLosses.length === 0) {
     say(
