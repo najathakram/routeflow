@@ -101,6 +101,9 @@
         "$TURBO_ROOT$/apps/web/components/**",
         "$TURBO_ROOT$/apps/web/hooks/**",
         "$TURBO_ROOT$/apps/web/lib/**",
+        // size-ratchet.spec.ts reads the mobile giants (edit-items.tsx, NewOrderScreen.tsx).
+        "$TURBO_ROOT$/apps/mobile/app/**",
+        "$TURBO_ROOT$/apps/mobile/components/**",
         "$TURBO_ROOT$/apps/mobile/package.json",
         // no-single-schema-path.spec.ts (moved here from apps/api's plain `test` task)
         // walks all of these outside apps/api/src — same reasoning as the docs-truth /

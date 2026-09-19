@@ -6,12 +6,7 @@ import { apiClient } from "../api-client";
 export type PaymentRequestKind = "CARD" | "CASH";
 
 export type PaymentRequestStatus =
-  | "PENDING"
-  | "APPROVED"
-  | "REJECTED"
-  | "FAILED"
-  | "EXPIRED"
-  | "CANCELLED";
+  "PENDING" | "APPROVED" | "REJECTED" | "FAILED" | "EXPIRED" | "CANCELLED";
 
 export interface AllocationPreviewLine {
   invoiceId: string;

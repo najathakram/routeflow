@@ -77,15 +77,23 @@ fi
 # is precisely the residual risk CI's single Linux job exists to cover.
 marker="$(git rev-parse --git-dir)/rf-verified"
 tree="$(git rev-parse HEAD^{tree} 2>/dev/null || echo none)"
+# A scoped pass proves less than a full one — keep the two markers distinct so a FULL_VERIFY=1
+# landing run never skips on the strength of an affected-scope pass.
+if [ "$FULL_VERIFY" != "1" ] && [ "$tree" != "none" ]; then tree_key="$tree:affected"; else tree_key="$tree"; fi
 dirty="$(git status --porcelain 2>/dev/null | head -1)"
 
-if [ -z "$dirty" ] && [ -f "$marker" ] && [ "$(cat "$marker" 2>/dev/null)" = "$tree" ]; then
+if [ -z "$dirty" ] && [ -f "$marker" ] && [ "$(cat "$marker" 2>/dev/null)" = "$tree_key" ]; then
   echo "✓ tree $tree already passed 'npm run verify' locally — skipping (clean tree, unchanged content)."
   exit 0
 fi
 
+# Affected-scope verify (owner ruling 2026-09-19) is the DEFAULT on a feature branch: only the
+# workspaces the diff reaches (plus dependents and the always-run pricing/repo-truth tripwires) are
+# type-checked, linted and tested — scripts/verify-turbo.mjs prints "AFFECTED SCOPE: ...".
+# FULL_VERIFY=1 (the coordinator's landing run) is the ONLY override and runs the whole chain, as
+# does CI. No environment variable narrows the run.
 npm run verify || exit 1
 
 if [ -z "$dirty" ] && [ "$tree" != "none" ]; then
-  printf '%s' "$tree" > "$marker"
+  printf '%s' "$tree_key" > "$marker"
 fi
