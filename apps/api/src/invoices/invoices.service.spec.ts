@@ -108,6 +108,7 @@ describe("InvoicesService", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    prisma.invoice.findFirst.mockResolvedValue({ items: [] }); // units_v1 guard reads the parent invoice
     mockNumbering.reserveNext.mockClear();
     mockNumbering.reserveNext.mockResolvedValue("INV-2026-0001");
     mockEntitlements.hasFlag.mockReset();
