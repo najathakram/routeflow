@@ -51,7 +51,7 @@ describeDb("e2e-seed.js commerce fixtures (B566) — real Postgres", () => {
 
   const counts = async () => {
     const tenant = await prisma.tenant.findUniqueOrThrow({ where: { slug: TENANT_SLUG } });
-    const [customers, products, boxed, invoices] = await Promise.all([
+    const [customers, products, boxed, invoices, orders] = await Promise.all([
       prisma.customer.count({
         where: {
           tenantId: tenant.id,
@@ -66,8 +66,17 @@ describeDb("e2e-seed.js commerce fixtures (B566) — real Postgres", () => {
       prisma.invoice.count({
         where: { tenantId: tenant.id, invoiceNumber: "E2E-FIX-INV-001", status: "SENT" },
       }),
+      // 06 CP-02/CP-06 + 21 REG-B24 need an ORDER with an active line on a catalog product.
+      prisma.order.count({
+        where: {
+          tenantId: tenant.id,
+          idempotencyKey: "e2e-fixture-order",
+          status: "PENDING",
+          lineItems: { some: { status: "PENDING", productId: { not: null } } },
+        },
+      }),
     ]);
-    return { customers, products, boxed, invoices };
+    return { customers, products, boxed, invoices, orders };
   };
 
   beforeAll(() => {
@@ -95,11 +104,52 @@ describeDb("e2e-seed.js commerce fixtures (B566) — real Postgres", () => {
 
     // 06 CP-01 scans real invoice amount cells only when the tenant has an invoice.
     expect(first.invoices).toBe(1);
+    expect(first.orders).toBe(1);
 
     runSeed(dbUrl);
     const second = await counts();
     expect(second.invoices).toBe(1);
+    expect(second.orders).toBe(1);
     expect(second.customers).toBe(first.customers);
     expect(second.products).toBe(first.products);
+  }, 300_000);
+
+  it("a customer SOFT-DELETED through the API is restored on re-seed — no duplicate user/customer (B566 follow-up)", async () => {
+    runSeed(dbUrl);
+    const tenant = await prisma.tenant.findUniqueOrThrow({ where: { slug: TENANT_SLUG } });
+    const username = "e2e_fixture_cust_1";
+    const user = await prisma.user.findFirstOrThrow({
+      where: { tenantId: tenant.id, username },
+    });
+    const customer = await prisma.customer.findFirstOrThrow({ where: { userId: user.id } });
+
+    // Exactly what customers.service.ts's soft-delete does (REG-B159): the customer is marked
+    // deleted and the User's identity is RELEASED — renamed to a tombstone.
+    await prisma.customer.update({ where: { id: customer.id }, data: { deletedAt: new Date() } });
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        deletedAt: new Date(),
+        username: `${username}~removed~${customer.id.slice(0, 8)}`,
+        email: `removed+${customer.id}@placeholder.local`,
+      },
+    });
+
+    runSeed(dbUrl);
+
+    const users = await prisma.user.findMany({
+      where: { tenantId: tenant.id, username: { startsWith: username } },
+    });
+    // The tombstone was restored, NOT duplicated. (Other leftover tombstones from an older
+    // history are ignored — only NON-tombstone rows count.)
+    const live = users.filter((u) => !u.username.includes("~removed~"));
+    expect(live).toHaveLength(1);
+    expect(live[0]).toMatchObject({ id: user.id, username, deletedAt: null });
+    expect(live[0].email).toBe(`${username}@e2e-routeflow.test`);
+    const allCustomers = await prisma.customer.count({
+      where: { tenantId: tenant.id, user: { username: { startsWith: "e2e_fixture_cust_" } } },
+    });
+    expect(allCustomers).toBe(3); // no fourth (duplicate) customer
+    expect((await counts()).customers).toBe(3); // and all three are active again
   }, 300_000);
 });

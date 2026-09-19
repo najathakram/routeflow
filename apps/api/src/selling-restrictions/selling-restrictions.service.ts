@@ -1,4 +1,4 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { ConflictException, Injectable, Logger } from "@nestjs/common";
 import type {
   RestrictionAddressPrecedence,
   RestrictionChannel,
@@ -6,9 +6,11 @@ import type {
   RestrictionsPolicy,
 } from "@routeflow/types";
 import { assertAmbientTenant } from "../common/ambient-tenant";
+import { normalizeUsState } from "../common/us-states";
 import { PrismaService } from "../prisma/prisma.service";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
 import {
+  activeRuleWhere,
   anyRuleNeedsState,
   evaluateRestrictions,
   matchingRules,
@@ -23,6 +25,57 @@ import {
 export interface EvaluateLine {
   productId: string;
 }
+
+/**
+ * The two values the `selling_restrictions.enabled` switch stores — the settings step must write
+ * EXACTLY these. `getPolicy` reads "false" (trimmed, any case) as OFF and every other stored value,
+ * a typo included, as ON: an unreadable switch fails closed and never silently disables a ban.
+ */
+export const SELLING_RESTRICTIONS_ENABLED_VALUE = "true";
+export const SELLING_RESTRICTIONS_DISABLED_VALUE = "false";
+
+/** `ConflictException` code `assertReadyToEnable` throws while the tenant's data is not ready. */
+export const SELLING_RESTRICTIONS_NOT_READY = "SELLING_RESTRICTIONS_NOT_READY";
+
+/** Customers the enable-readiness probe reads per query (keeps a large tenant off one giant read). */
+export const ENABLE_READINESS_PAGE_SIZE = 500;
+
+/**
+ * Upper bound on the probe's sweep (pages). A tenant bigger than PAGE_SIZE × MAX_PAGES customers
+ * gets `truncated: true` and `ready: false` — a partial sweep must never read as green.
+ */
+export const ENABLE_READINESS_MAX_PAGES = 400;
+
+/**
+ * What flipping `selling_restrictions.enabled` ON would meet in this tenant's live (non-deleted)
+ * customers. Buckets are independent tallies, not a partition — one customer can be counted in
+ * several. `ready` is true only when NO customer's governing state would resolve UNRESOLVED (which
+ * would make every order that meets a STATE rule INDETERMINATE, with no warning).
+ */
+export interface EnableReadiness {
+  ready: boolean;
+  /** true when the sweep hit ENABLE_READINESS_MAX_PAGES — the counts are partial and `ready` is false. */
+  truncated: boolean;
+  customerCount: number;
+  /** Customers with zero addresses. */
+  customersWithoutAddress: number;
+  /** Customers with 2+ addresses and none flagged `isDefault` (no way to pick one). */
+  customersAmbiguousNoDefault: number;
+  /** Addresses with no USABLE state code — NULL, blank, or not a USPS code (`normalizeUsState` → null). */
+  addressesMissingStateCode: number;
+  /** Addresses flagged `stateNeedsReview`. */
+  addressesNeedingReview: number;
+  /** Customers `resolveGoverningState` (the engine's own) leaves UNRESOLVED under the tenant's precedence. */
+  indeterminateCustomerCount: number;
+}
+
+/** The address columns the governing-state resolver reads. */
+const ADDRESS_SELECT = {
+  isDefault: true,
+  addressType: true,
+  stateCode: true,
+  stateNeedsReview: true,
+} as const;
 
 export interface EvaluateOptions {
   /** Defaults to STAFF (every path except the self-serve buyer portal). */
@@ -76,6 +129,8 @@ export class SellingRestrictionsService {
    *   `selling_restrictions.enabled`           — absent or "false" = OFF (owner ruling: OFF by
    *                                               default); any other stored value = ON (an
    *                                               unrecognised value fails closed, never OFF).
+   *                                               Write `SELLING_RESTRICTIONS_ENABLED_VALUE` /
+   *                                               `SELLING_RESTRICTIONS_DISABLED_VALUE`.
    *   `selling_restrictions.governing_address` — "BILLING_FIRST" (default) | "SHIPPING_FIRST"; an
    *                                               unknown value parses to BILLING_FIRST with a warn.
    * A DB error propagates: an unreadable switch is never silently treated as OFF.
@@ -91,7 +146,9 @@ export class SellingRestrictionsService {
     const value = (key: string) => rows.find((r) => r.key === key)?.value;
     const enabled = value(SYSTEM_CONFIG_ENABLED);
     return {
-      enabled: enabled !== undefined && enabled.trim().toLowerCase() !== "false",
+      enabled:
+        enabled !== undefined &&
+        enabled.trim().toLowerCase() !== SELLING_RESTRICTIONS_DISABLED_VALUE,
       addressPrecedence: this.parsePrecedence(tenantId, value(SYSTEM_CONFIG_GOVERNING_ADDRESS)),
     };
   }
@@ -105,6 +162,83 @@ export class SellingRestrictionsService {
       `${SYSTEM_CONFIG_GOVERNING_ADDRESS} has an unknown value for tenant ${tenantId}; using BILLING_FIRST`,
     );
     return "BILLING_FIRST";
+  }
+
+  /**
+   * Enable-readiness probe: what turning `selling_restrictions.enabled` ON would meet in this
+   * tenant's data. A governing state needs `CustomerAddress.stateCode`, which is NULL everywhere
+   * until the owner-run normalize script has run — flipping the switch on an un-backfilled tenant
+   * would make nearly every order that meets a STATE rule INDETERMINATE, with no warning.
+   *
+   * Counts with the SAME `resolveGoverningState` the engine uses, under the tenant's CURRENT
+   * precedence policy (the switch itself is irrelevant here — this is asked before it flips).
+   * Customers are read in cursor pages of `ENABLE_READINESS_PAGE_SIZE`, never in one query.
+   * READ-ONLY, and never called from `evaluate()`: readiness is advice for the settings step, it
+   * must not block an order.
+   */
+  async getEnableReadiness(tenantId: string): Promise<EnableReadiness> {
+    assertAmbientTenant(this.prisma, tenantId, "SellingRestrictionsService");
+    const { addressPrecedence } = await this.getPolicy(tenantId);
+    const db = this.prisma.forTenant();
+
+    const tally = {
+      customerCount: 0,
+      customersWithoutAddress: 0,
+      customersAmbiguousNoDefault: 0,
+      addressesMissingStateCode: 0,
+      addressesNeedingReview: 0,
+      indeterminateCustomerCount: 0,
+    };
+    let cursor: string | undefined;
+    let pages = 0;
+    let truncated = false;
+    for (;;) {
+      if (pages >= ENABLE_READINESS_MAX_PAGES) {
+        truncated = true;
+        break;
+      }
+      pages++;
+      // Same shape as `evaluate`'s address read: the nested select is not rewritten by the tenant
+      // extension, so a legacy address row with a NULL tenantId still counts as the customer's.
+      const page = await db.customer.findMany({
+        where: { tenantId, deletedAt: null },
+        orderBy: { id: "asc" },
+        take: ENABLE_READINESS_PAGE_SIZE,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+        select: { id: true, addresses: { select: ADDRESS_SELECT } },
+      });
+      for (const customer of page) {
+        const addresses = customer.addresses;
+        tally.customerCount++;
+        if (addresses.length === 0) tally.customersWithoutAddress++;
+        else if (addresses.length >= 2 && !addresses.some((a) => a.isDefault)) {
+          tally.customersAmbiguousNoDefault++;
+        }
+        for (const a of addresses) {
+          if (normalizeUsState(a.stateCode) === null) tally.addressesMissingStateCode++;
+          if (a.stateNeedsReview) tally.addressesNeedingReview++;
+        }
+        if (!resolveGoverningState(addresses, addressPrecedence).resolved) {
+          tally.indeterminateCustomerCount++;
+        }
+      }
+      if (page.length < ENABLE_READINESS_PAGE_SIZE) break;
+      cursor = page[page.length - 1].id;
+    }
+    return { ready: !truncated && tally.indeterminateCustomerCount === 0, truncated, ...tally };
+  }
+
+  /**
+   * For the settings/enable endpoint (another lane's step): returns the readiness when the tenant
+   * is ready, otherwise throws a 409 `{ code: "SELLING_RESTRICTIONS_NOT_READY", readiness }` so the
+   * UI can show what to fix. Never called from `evaluate()` — orders never block on readiness.
+   */
+  async assertReadyToEnable(tenantId: string): Promise<EnableReadiness> {
+    const readiness = await this.getEnableReadiness(tenantId);
+    if (!readiness.ready) {
+      throw new ConflictException({ code: SELLING_RESTRICTIONS_NOT_READY, readiness });
+    }
+    return readiness;
   }
 
   async evaluate(
@@ -131,6 +265,7 @@ export class SellingRestrictionsService {
         name: l?.name ?? id,
         effectiveCategoryIds: l?.effectiveCategoryIds ?? new Set<string>(),
         lineageIds: l?.lineageIds ?? new Set([id]),
+        ...(l?.nameKnown ? { nameKnown: true } : {}),
         ...(l?.resolvable === false || !l ? { unresolvable: true } : {}),
       };
     });
@@ -148,7 +283,13 @@ export class SellingRestrictionsService {
           { productId: { in: [...lineageIds] } },
           ...(categoryIds.size > 0 ? [{ categoryId: { in: [...categoryIds] } }] : []),
         ],
+        // Only rules active at `at` (the SQL twin of `ruleIsActive`; `matchingRules` re-checks in JS).
+        AND: [activeRuleWhere(at)],
       },
+      // Belt-and-braces: the JS `compareRules` sort in `matchingRules` is what makes the cited rule
+      // deterministic (a database collation's `id` order need not equal JS string order) — do NOT
+      // drop that sort because this ordering exists.
+      orderBy: [{ effectiveFrom: "desc" }, { id: "asc" }],
       select: {
         id: true,
         categoryId: true,
@@ -189,9 +330,7 @@ export class SellingRestrictionsService {
       const customer = await db.customer.findFirst({
         where: { id: customerId, tenantId },
         select: {
-          addresses: {
-            select: { isDefault: true, addressType: true, stateCode: true, stateNeedsReview: true },
-          },
+          addresses: { select: ADDRESS_SELECT },
         },
       });
       governingState = customer
