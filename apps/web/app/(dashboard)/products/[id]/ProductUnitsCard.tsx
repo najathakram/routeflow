@@ -4,7 +4,9 @@ import * as React from "react";
 import type { ProductUnitLevel } from "@routeflow/types";
 import { resolveUnitPrice, type LadderProduct } from "@routeflow/pricing";
 import { Button, Modal, Skeleton, useToast } from "@routeflow/ui/web";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DecimalInput } from "@/components/MoneyInput";
+import { useAuth } from "@/lib/auth-context";
 import { fmt } from "@/lib/formatting";
 import { useTierLabels } from "@/lib/api/tier-labels";
 import { tierLabel } from "@/lib/tier-label";
@@ -33,6 +35,9 @@ export interface UnitsCardProduct extends LadderProduct {
 
 const num = (v: string | number | null | undefined): number | null =>
   v == null || v === "" ? null : Number.isFinite(Number(v)) ? Number(v) : null;
+
+/** 0 means "derive" to the ladder (getTierPrice convention) — never store it as an explicit price. */
+const priceOrNull = (v: number | null): number | null => (v != null && v > 0 ? v : null);
 
 const errText = (e: unknown): string =>
   String(
@@ -76,15 +81,33 @@ function UnitRow({
   onMakeDefault: (unit: ProductUnitLevel) => void;
 }) {
   const [draft, setDraft] = React.useState<Draft>(() => draftOf(unit));
-  React.useEffect(() => setDraft(draftOf(unit)), [unit]);
   const base = draftOf(unit);
+  // Reset only when the SERVER values of this row change — a refetch that returns equal data
+  // (or another row's save) must never wipe an in-progress edit.
+  const baseKey = JSON.stringify(base);
+  React.useEffect(() => setDraft(JSON.parse(baseKey) as Draft), [baseKey]);
   const dirty =
     draft.label !== base.label ||
     draft.factor !== base.factor ||
     draft.prices.some((p, i) => p !== base.prices[i]);
+  const valid = draft.label.trim() !== "" && draft.factor != null && draft.factor >= 1;
+  // What tier `t` would price at if THIS field were left blank: the row as currently drafted,
+  // with only that tier cleared (so "derived" never previews the explicit price being replaced).
   const derived = (tier: number) => {
     try {
-      return resolveUnitPrice(product, units, unit.label, tier);
+      const preview = units.map((u) =>
+        u.id !== unit.id
+          ? u
+          : {
+              ...u,
+              price: draft.prices[0] == null || tier === 1 ? null : String(draft.prices[0]),
+              priceTier2: tier === 2 || draft.prices[1] == null ? null : String(draft.prices[1]),
+              priceTier3: tier === 3 || draft.prices[2] == null ? null : String(draft.prices[2]),
+              priceTier4: tier === 4 || draft.prices[3] == null ? null : String(draft.prices[3]),
+              priceTier5: tier === 5 || draft.prices[4] == null ? null : String(draft.prices[4]),
+            },
+      );
+      return resolveUnitPrice(product, preview, unit.label, tier);
     } catch {
       return null;
     }
@@ -101,6 +124,7 @@ function UnitRow({
           </label>
           <input
             id={`${idp}-label`}
+            aria-label={`${unit.label} name`}
             className={FIELD}
             value={draft.label}
             disabled={isPiece}
@@ -114,6 +138,7 @@ function UnitRow({
           </label>
           <DecimalInput
             id={`${idp}-factor`}
+            aria-label={`Pieces per ${unit.label}`}
             className={FIELD}
             decimals={0}
             min={1}
@@ -128,6 +153,7 @@ function UnitRow({
           </label>
           <DecimalInput
             id={`${idp}-price`}
+            aria-label={`${unit.label} price`}
             className={FIELD}
             value={draft.prices[0]}
             placeholder={derived(1) != null ? `${fmt(derived(1) as number)} (derived)` : ""}
@@ -147,6 +173,7 @@ function UnitRow({
               </label>
               <DecimalInput
                 id={`${idp}-t${t}`}
+                aria-label={`${unit.label} ${tierLabel(tierNames, t)} price`}
                 className={FIELD}
                 value={draft.prices[t - 1]}
                 placeholder={derived(t) != null ? `${fmt(derived(t) as number)} (derived)` : ""}
@@ -175,7 +202,7 @@ function UnitRow({
               <Button size="sm" variant="secondary" onClick={() => setDraft(base)} disabled={busy}>
                 Cancel
               </Button>
-              <Button size="sm" onClick={() => onSave(unit, draft)} disabled={busy}>
+              <Button size="sm" onClick={() => onSave(unit, draft)} disabled={busy || !valid}>
                 Save
               </Button>
             </>
@@ -190,7 +217,10 @@ function UnitRow({
 }
 
 export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
-  const enabled = useUnitsEnabled();
+  const { user } = useAuth();
+  // GET /billing/subscription is OPERATOR-only — never fire it (and 403) for other roles.
+  const canManage = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
+  const enabled = useUnitsEnabled({ enabled: canManage });
   const { toast } = useToast();
   const { data: tiers } = useTierLabels();
   const list = useProductUnits(product.id, enabled);
@@ -201,6 +231,7 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
   const [factor, setFactor] = React.useState<number | null>(null);
   const [price, setPrice] = React.useState<number | null>(null);
   const [proposals, setProposals] = React.useState<CascadeProposal[]>([]);
+  const [removing, setRemoving] = React.useState<ProductUnitLevel | null>(null);
 
   if (!enabled) return null;
   const units = list.data ?? [];
@@ -215,14 +246,15 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
       id: unit.id,
       label: d.label.trim(),
       factorToBase: d.factor ?? unit.factorToBase,
-      price: d.prices[0],
-      priceTier2: d.prices[1],
-      priceTier3: d.prices[2],
-      priceTier4: d.prices[3],
-      priceTier5: d.prices[4],
+      price: priceOrNull(d.prices[0]),
+      priceTier2: priceOrNull(d.prices[1]),
+      priceTier3: priceOrNull(d.prices[2]),
+      priceTier4: priceOrNull(d.prices[3]),
+      priceTier5: priceOrNull(d.prices[4]),
     };
     update.mutate(body, {
-      onSuccess: () => setProposals(proposeCascade(units, unit.id, oldPrice, d.prices[0])),
+      onSuccess: () =>
+        setProposals(proposeCascade(units, unit.id, oldPrice, priceOrNull(d.prices[0]))),
       onError: fail("Couldn't save the unit"),
     });
   };
@@ -230,18 +262,25 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
   const applyCascade = async () => {
     const todo = proposals;
     setProposals([]);
-    try {
-      for (const p of todo) await update.mutateAsync({ id: p.unitId, price: p.to });
+    const results = await Promise.allSettled(
+      todo.map((p) => update.mutateAsync({ id: p.unitId, price: p.to })),
+    );
+    const failed = todo.filter((_, i) => results[i].status === "rejected");
+    if (failed.length === 0) {
       toast({ title: "Other unit prices updated", variant: "success" });
-    } catch (e) {
-      fail("Couldn't update the other units")(e);
+    } else {
+      toast({
+        title: `Updated ${todo.length - failed.length} of ${todo.length} other units`,
+        description: `Not updated: ${failed.map((p) => p.label).join(", ")}. Edit them directly.`,
+        variant: "error",
+      });
     }
   };
 
   const add = () => {
     if (!name.trim() || !factor) return;
     create.mutate(
-      { label: name.trim(), factorToBase: factor, price },
+      { label: name.trim(), factorToBase: factor, price: priceOrNull(price) },
       {
         onSuccess: () => {
           setName("");
@@ -326,7 +365,7 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
                 tierNames={tierNames}
                 busy={busy}
                 onSave={save}
-                onDelete={(x) => remove.mutate(x.id, { onError: fail("Couldn't remove the unit") })}
+                onDelete={setRemoving}
                 onMakeDefault={(x) =>
                   update.mutate(
                     { id: x.id, isDefaultSelling: true },
@@ -360,7 +399,7 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
           </div>
           <div>
             <label className={LABEL} htmlFor="new-unit-factor">
-              Pieces per unit
+              Pieces per new unit
             </label>
             <DecimalInput
               id="new-unit-factor"
@@ -382,6 +421,25 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
           </Button>
         </form>
       </div>
+
+      <ConfirmDialog
+        open={removing != null}
+        onClose={() => setRemoving(null)}
+        title={`Remove ${removing?.label ?? "unit"}?`}
+        description="Its prices are deleted. Existing orders and invoices keep what they charged."
+        confirmLabel="Remove"
+        loading={remove.isPending}
+        onConfirm={() => {
+          if (!removing) return;
+          remove.mutate(removing.id, {
+            onSuccess: () => setRemoving(null),
+            onError: (e) => {
+              setRemoving(null);
+              fail("Couldn't remove the unit")(e);
+            },
+          });
+        }}
+      />
 
       <Modal
         open={proposals.length > 0}

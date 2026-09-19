@@ -15,9 +15,9 @@ export const UNITS_FLAG = "flag.units_v1";
  * `usePlanFlag`, which fails open for route guards): an unknown answer must never reveal an
  * editor whose every call would 403, so the surface stays hidden until the flag is confirmed.
  */
-export function useUnitsEnabled(): boolean {
-  const q = useSubscription({ staleTime: 60_000 });
-  return q.data?.flags?.includes(UNITS_FLAG as never) === true;
+export function useUnitsEnabled(opts?: { enabled?: boolean }): boolean {
+  const q = useSubscription({ staleTime: 60_000, ...opts });
+  return (q.data?.flags ?? []).includes(UNITS_FLAG);
 }
 
 const key = (productId: string) => ["products", productId, "units"] as const;
