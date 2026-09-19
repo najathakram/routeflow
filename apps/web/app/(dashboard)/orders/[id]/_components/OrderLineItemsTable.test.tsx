@@ -132,6 +132,47 @@ describe("OrderLineItemsTable — line total and status", () => {
     expect(screen.getByText("$60.00")).toBeInTheDocument(); // (3 - 1 free) boxes x $30
   });
 
+  it("falls back to the live product's pack size when the line has no snapshot", () => {
+    renderTable([
+      line({
+        subtotal: null,
+        qty: 27,
+        boxes: 2,
+        pieces: 3,
+        unitsPerBox: undefined,
+        unitPrice: 30,
+        product: { id: "p-1", name: "Sample Cola 12oz", unit: "case", unitsPerBox: 12 },
+      }),
+    ]);
+    expect(screen.getByText("$67.50")).toBeInTheDocument(); // 2 boxes + 3/12 of a box at $30
+  });
+
+  it("keeps the price emphasis: struck original, emerald special, amber discount", () => {
+    const special = renderTable([line({ priceType: "SPECIAL", originalPrice: 80, unitPrice: 65 })]);
+    let row = within(rowFor("Sample Cola 12oz"));
+    expect(row.getByText("$80.00")).toHaveClass("strike");
+    expect(row.getAllByText("$65.00")[0]).toHaveClass("text-emerald-600");
+    special.unmount();
+
+    renderTable([line({ priceType: "DISCOUNTED", originalPrice: 80, unitPrice: 65 })]);
+    row = within(rowFor("Sample Cola 12oz"));
+    expect(row.getByText("$80.00")).toHaveClass("strike");
+    expect(row.getAllByText("$65.00")[0]).toHaveClass("text-amber-600");
+  });
+
+  it("MANUAL with no original price is just the plain price (no badge)", () => {
+    renderTable([line({ priceType: "MANUAL", originalPrice: null })]);
+    const row = within(rowFor("Sample Cola 12oz"));
+    expect(row.queryByText("Adjusted")).toBeNull();
+    expect(row.queryByText("Upsell")).toBeNull();
+  });
+
+  it("an order with no lines renders the header and footer only", () => {
+    renderTable([], "CONFIRMED", 0);
+    expect(screen.getByText("Order Total")).toBeInTheDocument();
+    expect(screen.queryByText("Custom item")).toBeNull();
+  });
+
   it("a cancelled line: struck-through name, dimmed row, an em dash instead of a total", () => {
     renderTable([line({ status: "CANCELLED" })]);
     const row = rowFor("Sample Cola 12oz");
