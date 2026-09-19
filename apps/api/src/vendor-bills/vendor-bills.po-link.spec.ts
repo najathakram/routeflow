@@ -532,4 +532,60 @@ describe("VendorBillsService — PO-linked bills (units/PO step 7)", () => {
       });
     });
   });
+
+  // ─── the lead's blocker: a VOID bill must release its PO ───────────────────
+
+  describe("void releases the purchase order", () => {
+    const received = (o: Record<string, unknown> = {}) =>
+      bill({
+        purchaseOrderId: "po-1",
+        notes: "Dock 3",
+        status: "RECEIVED",
+        receivedDate: new Date("2026-06-02"),
+        items: [linkedItem({ qtyReceived: D(1) })],
+        ...o,
+      });
+
+    it("voiding a received PO-linked bill nulls purchaseOrderId and keeps the old link in the notes", async () => {
+      prisma.vendorBill.findUnique.mockResolvedValue(received());
+      prisma.purchaseOrder.findUnique.mockResolvedValue({ poNumber: "PO-2026-0001" });
+      prisma.vendorBill.update.mockResolvedValue({ id: "bill-1", status: "VOID" });
+      await service.voidBill("bill-1", "user-1");
+      const data = prisma.vendorBill.update.mock.calls[0][0].data;
+      expect(data.status).toBe("VOID");
+      expect(data.purchaseOrderId).toBeNull();
+      expect(data.notes).toBe("Dock 3\nVoided — unlinked from purchase order PO-2026-0001.");
+    });
+
+    it("voiding a DRAFT linked bill (the no-reversal branch) releases the PO too", async () => {
+      prisma.vendorBill.findUnique.mockResolvedValue(
+        bill({ purchaseOrderId: "po-1", notes: null }),
+      );
+      prisma.purchaseOrder.findUnique.mockResolvedValue({ poNumber: "PO-2026-0001" });
+      prisma.vendorBill.update.mockResolvedValue({ id: "bill-1", status: "VOID" });
+      await service.voidBill("bill-1", "user-1");
+      const data = prisma.vendorBill.update.mock.calls[0][0].data;
+      expect(data.purchaseOrderId).toBeNull();
+      expect(data.notes).toBe("Voided — unlinked from purchase order PO-2026-0001.");
+    });
+
+    it("an unlinked bill's void touches neither the link nor the notes", async () => {
+      prisma.vendorBill.findUnique.mockResolvedValue(bill());
+      prisma.vendorBill.update.mockResolvedValue({ id: "bill-1", status: "VOID" });
+      await service.voidBill("bill-1", "user-1");
+      const data = prisma.vendorBill.update.mock.calls[0][0].data;
+      expect(data).not.toHaveProperty("purchaseOrderId");
+      expect(data).not.toHaveProperty("notes");
+      expect(prisma.purchaseOrder.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("the one-bill-per-PO check ignores VOID bills", async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue(po());
+      await service.create({ supplierId: "sup-1", purchaseOrderId: "po-1", items: [billLine()] });
+      const call = prisma.vendorBill.findFirst.mock.calls.find(
+        (c: any) => c[0]?.where?.purchaseOrderId === "po-1",
+      );
+      expect(call?.[0].where).toEqual({ purchaseOrderId: "po-1", status: { not: "VOID" } });
+    });
+  });
 });

@@ -425,4 +425,132 @@ describeDb("vendor bill ↔ purchase order — real Postgres (LANE-U step 7)", (
       inTenant(w, () => bills.update(bill.id, { supplierId: other.id })),
     ).rejects.toThrow(/supplier can't be changed/);
   });
+
+  // ── 10. void → re-bill: a voided bill releases its PO and nothing is double-posted ───────
+  it("case 10: voiding a linked bill releases the PO — the same delivery can be billed again, and stock is never counted twice", async () => {
+    const w = await seedWorld("c10");
+    const po = await inTenant(w, () =>
+      inventory.createPurchaseOrder(
+        { supplierId: w.supplierId, items: [{ productId: w.productId, qty: 24, unitCost: 1.25 }] },
+        w.userId,
+      ),
+    );
+    const bill1: any = await inTenant(w, () =>
+      bills.create(billDto(w, { purchaseOrderId: po.id })),
+    );
+    await inTenant(w, () => inventory.sendPurchaseOrder(po.id));
+    await inTenant(w, () =>
+      inventory.receivePurchaseOrder(
+        po.id,
+        { items: [{ itemId: po.items[0].id, receivedQty: 24 }] },
+        w.userId,
+      ),
+    );
+    await inTenant(w, () => bills.receive(bill1.id, undefined, w.userId));
+    const movementsAfterReceive = await movementCount(w);
+    expect(Number((await productOf(w)).currentStock)).toBe(24);
+
+    await inTenant(w, () => bills.voidBill(bill1.id, w.userId));
+    const voided = await prisma.vendorBill.findUniqueOrThrow({ where: { id: bill1.id } });
+    expect(voided.status).toBe("VOID");
+    expect(voided.purchaseOrderId).toBeNull(); // released — the link is unique
+    expect(voided.notes).toMatch(/Voided — unlinked from purchase order PO-/); // audit trail kept
+
+    // the void reversed nothing (the PO owns the stock) …
+    expect(Number((await productOf(w)).currentStock)).toBe(24);
+    expect(await movementCount(w)).toBe(movementsAfterReceive);
+
+    // … and the delivery can be billed again against the SAME PO
+    const bill2: any = await inTenant(w, () =>
+      bills.create(billDto(w, { purchaseOrderId: po.id, supplierInvoiceNumber: "INV-REBILL" })),
+    );
+    expect(bill2.purchaseOrder.id).toBe(po.id);
+    await inTenant(w, () => bills.receive(bill2.id, undefined, w.userId));
+    expect(Number((await productOf(w)).currentStock)).toBe(24); // still 24 — never 48
+    expect(await movementCount(w)).toBe(movementsAfterReceive);
+  });
+
+  // ── 11. a billed PO can't change what the bill was checked against ───────────────────────
+  it("case 11: a PO with a live bill refuses line and supplier edits (409), still takes header edits, and reopens once the bill is voided", async () => {
+    const w = await seedWorld("c11");
+    const po = await inTenant(w, () =>
+      inventory.createPurchaseOrder(
+        { supplierId: w.supplierId, items: [{ productId: w.productId, qty: 24, unitCost: 1.25 }] },
+        w.userId,
+      ),
+    );
+    const bill: any = await inTenant(w, () => bills.create(billDto(w, { purchaseOrderId: po.id })));
+    const lineEdit = (qty: number) => ({
+      items: [{ id: po.items[0].id, productId: w.productId, qtyOrdered: qty, unitCost: 1.25 }],
+    });
+
+    await expect(
+      inTenant(w, () => inventory.updatePurchaseOrder(po.id, lineEdit(30), w.userId)),
+    ).rejects.toMatchObject({ response: { code: "PO_HAS_LINKED_BILL" } });
+    const other = await prisma.supplier.create({ data: { name: "Other", tenantId: w.tenantId } });
+    await expect(
+      inTenant(w, () =>
+        inventory.updatePurchaseOrder(
+          po.id,
+          { supplierId: other.id, reapplyInventory: true },
+          w.userId,
+        ),
+      ),
+    ).rejects.toMatchObject({ response: { code: "PO_HAS_LINKED_BILL" } });
+    // untouched
+    const still = await prisma.purchaseOrderItem.findUniqueOrThrow({
+      where: { id: po.items[0].id },
+    });
+    expect(still.qtyOrdered.toString()).toBe("24");
+
+    // header edits stay open
+    await inTenant(w, () => inventory.updatePurchaseOrder(po.id, { notes: "Dock 5" }, w.userId));
+    expect((await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: po.id } })).notes).toBe(
+      "Dock 5",
+    );
+
+    // voiding the bill releases the lock
+    await inTenant(w, () => bills.voidBill(bill.id, w.userId));
+    await inTenant(w, () => inventory.updatePurchaseOrder(po.id, lineEdit(30), w.userId));
+    expect(
+      (
+        await prisma.purchaseOrderItem.findUniqueOrThrow({ where: { id: po.items[0].id } })
+      ).qtyOrdered.toString(),
+    ).toBe("30");
+  });
+
+  // ── 12. one bill per PO, even for a partial first invoice ────────────────────────────────
+  it("case 12: a partial first invoice consumes the PO's single bill slot — a second bill for the rest is refused", async () => {
+    const w = await seedWorld("c12");
+    const po = await inTenant(w, () =>
+      inventory.createPurchaseOrder(
+        { supplierId: w.supplierId, items: [{ productId: w.productId, qty: 24, unitCost: 1.25 }] },
+        w.userId,
+      ),
+    );
+    const pieces = (qty: number) => ({
+      items: [{ productId: w.productId, description: "Widget", qty, unitCost: 1.25 }],
+    });
+    // bill #1 covers only 10 of the 24 pieces — within the PO, so it links
+    const first: any = await inTenant(w, () =>
+      bills.create(billDto(w, { purchaseOrderId: po.id, ...pieces(10) })),
+    );
+    expect(first.purchaseOrder.id).toBe(po.id);
+    // bill #2 for the remaining 14 is refused: one bill per PO (three-way match is deferred)
+    await expect(
+      inTenant(w, () =>
+        bills.create(
+          billDto(w, { purchaseOrderId: po.id, supplierInvoiceNumber: "INV-2", ...pieces(14) }),
+        ),
+      ),
+    ).rejects.toMatchObject({ response: { code: "PO_ALREADY_BILLED" } });
+    // the way through: void the partial bill and bill the whole delivery once
+    await inTenant(w, () => bills.voidBill(first.id, w.userId));
+    const whole: any = await inTenant(w, () =>
+      bills.create(
+        billDto(w, { purchaseOrderId: po.id, supplierInvoiceNumber: "INV-3", ...pieces(24) }),
+      ),
+    );
+    expect(whole.purchaseOrder.id).toBe(po.id);
+  });
 });

@@ -224,7 +224,7 @@ export class VendorBillsService {
       );
     }
     const already = await tx.vendorBill.findFirst({
-      where: { purchaseOrderId: po.id },
+      where: { purchaseOrderId: po.id, status: { not: "VOID" as any } },
       select: { billNumber: true },
     });
     if (already) {
@@ -1360,7 +1360,11 @@ export class VendorBillsService {
         const refunded = await this.refundDrawnSupplierCredits(tx, id);
         return tx.vendorBill.update({
           where: { id },
-          data: { status: "VOID" as any, ...this.totalPaidAfterRefund(bill, refunded) },
+          data: {
+            status: "VOID" as any,
+            ...this.totalPaidAfterRefund(bill, refunded),
+            ...(await this.unlinkPurchaseOrderOnVoid(tx, bill)),
+          },
         });
       });
     }
@@ -1372,9 +1376,33 @@ export class VendorBillsService {
       const refunded = await this.refundDrawnSupplierCredits(tx, id);
       return tx.vendorBill.update({
         where: { id },
-        data: { status: "VOID" as any, ...this.totalPaidAfterRefund(bill, refunded) },
+        data: {
+          status: "VOID" as any,
+          ...this.totalPaidAfterRefund(bill, refunded),
+          ...(await this.unlinkPurchaseOrderOnVoid(tx, bill)),
+        },
       });
     });
+  }
+
+  /**
+   * A voided bill lets go of its purchase order. The link is unique (one bill per PO),
+   * so a VOID bill that kept it would leave the PO permanently unbillable — and the
+   * operator's only way to bill the delivery again would be an UNLINKED bill, which
+   * posts stock of its own on top of what the PO already received (a double count).
+   * The old link is kept in the bill's notes so the audit trail isn't lost.
+   */
+  private async unlinkPurchaseOrderOnVoid(
+    tx: Prisma.TransactionClient,
+    bill: { purchaseOrderId: string | null; notes: string | null },
+  ): Promise<{ purchaseOrderId?: null; notes?: string }> {
+    if (!bill.purchaseOrderId) return {};
+    const po = await tx.purchaseOrder.findUnique({
+      where: { id: bill.purchaseOrderId },
+      select: { poNumber: true },
+    });
+    const note = `Voided — unlinked from purchase order ${po?.poNumber ?? bill.purchaseOrderId}.`;
+    return { purchaseOrderId: null, notes: bill.notes ? `${bill.notes}\n${note}` : note };
   }
 
   /** Keep the denormalised `totalPaid` in step with draws handed back to credit. */

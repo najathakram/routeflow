@@ -842,9 +842,14 @@ export default function VendorBillDetailPage() {
           const partial = updated?.status === "PARTIAL";
           toast({
             title: partial ? "Partial delivery received" : "Bill marked as received",
-            description: partial
-              ? `Stock updated for what arrived — the rest of bill ${bill.billNumber} stays outstanding.`
-              : `Bill ${bill.billNumber} is now in Received status.`,
+            description: bill.purchaseOrder
+              ? // A PO-linked bill is money only — the purchase order moves the stock (guard e).
+                `Recorded on the bill only — stock is moved by purchase order ${bill.purchaseOrder.poNumber}, not by this bill.${
+                  partial ? ` The rest of bill ${bill.billNumber} stays outstanding.` : ""
+                }`
+              : partial
+                ? `Stock updated for what arrived — the rest of bill ${bill.billNumber} stays outstanding.`
+                : `Bill ${bill.billNumber} is now in Received status.`,
             variant: "success",
           });
           // B562: quantity was still received for every line and costed

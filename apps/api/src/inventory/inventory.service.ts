@@ -1651,6 +1651,27 @@ export class InventoryService {
       if (editsLines && dto.items!.length === 0)
         throw new BadRequestException("At least one item is required");
       const supplierChanged = dto.supplierId !== undefined && dto.supplierId !== po.supplierId;
+
+      // A PO with a LIVE linked bill can't change what it authorised: the bill was gated
+      // against these lines and this supplier, and letting either move would let the two
+      // documents drift apart (an over-billed PO, a bill for another supplier's order).
+      // Header edits (notes, expected date) stay open. Void the bill to release the PO.
+      if (editsLines || supplierChanged) {
+        const liveBill = await tx.vendorBill.findFirst({
+          where: { purchaseOrderId: id, status: { not: "VOID" as never } },
+          select: { billNumber: true },
+        });
+        if (liveBill) {
+          throw new ConflictException({
+            code: "PO_HAS_LINKED_BILL",
+            message:
+              `${po.poNumber} has already been billed (${liveBill.billNumber}), so its lines and supplier ` +
+              "are locked — the bill was checked against them. Void the bill to change them, or edit " +
+              "only the notes or expected date.",
+            billNumber: liveBill.billNumber,
+          });
+        }
+      }
       const touchesStock = wasReceived && (editsLines || supplierChanged);
       if (touchesStock && dto.reapplyInventory === undefined) {
         throw new BadRequestException(
