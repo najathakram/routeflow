@@ -25,7 +25,7 @@ import { displayProductName } from "@/lib/product-display";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { LineItemRow } from "@/components/LineItemRow";
-import { resolveProductByCode } from "@/lib/barcode-resolve";
+import { useScanCodeHandler } from "./scan/useScanCodeHandler";
 import { LicenseGuardModal } from "./LicenseGuardModal";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
@@ -269,46 +269,19 @@ export function CreateOrderModal({
       .slice(0, 10);
   }, [productsData, debouncedProductSearch]);
 
-  // Barcode scan handler — kept in a ref so the keydown listener never goes stale.
-  // Uses the shared lib ladder (barcode endpoint → candidate-aware scanCode
-  // search) instead of the old inline copy, which swallowed 5xx/network errors
-  // as "not found" and skipped unitSku on the exact-match check. This surface
-  // keeps its historical multi-match behaviour: first row wins (the modal's
-  // scan flow has always auto-added; the edit page offers a picker instead).
-  const barcodeScanHandlerRef = React.useRef<(code: string) => void>(() => {});
-  barcodeScanHandlerRef.current = async (code: string) => {
-    try {
-      const result = await resolveProductByCode(code);
-      if (result.archived) {
-        // F30 / R5: the product exists but is retired — never put it on an
-        // order silently, and never fall through to "create a new product"
-        // for something the catalog already has.
-        toast({
-          variant: "error",
-          title: `${result.product?.name || "Item"} is archived — reactivate to sell`,
-        });
-        return;
-      }
-      if (!result.notFound && result.product) {
-        addLineItem(result.product); // addLineItem clears search + refocuses
-        return;
-      }
-    } catch (err: any) {
-      // Network / 5xx — a transient failure is NOT "product doesn't exist";
-      // don't open the create-product modal over it.
-      toast({
-        variant: "error",
-        title: "Couldn't look up the code",
-        description:
-          err?.response?.data?.message ?? err?.message ?? "Check the connection and rescan.",
-      });
-      return;
-    }
-    // Nothing found — open create-product modal with scanned barcode as SKU
-    setCreateProductInitialName("");
-    setCreateProductInitialSku(code);
-    setCreateProductOpen(true);
-  };
+  // Barcode scan handler — kept in a ref so the keydown listener never goes stale. The
+  // resolve ladder (archived / hit / network error / unknown code) lives in
+  // ./scan/useScanCodeHandler so the redesigned scan screen can reuse it.
+  const barcodeScanHandlerRef = useScanCodeHandler({
+    // A thunk: addLineItem is declared further down and is read only when a code is scanned.
+    addLineItem: (product) => addLineItem(product),
+    onUnknownCode: (code) => {
+      setCreateProductInitialName("");
+      setCreateProductInitialSku(code);
+      setCreateProductOpen(true);
+    },
+    toast,
+  });
 
   // handleProductSearchEnter — called when Enter is pressed in the product search input.
   // Works for keyboard-emulation scanners AND paste-mode scanners (where no individual
