@@ -1,5 +1,5 @@
 import * as React from "react";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { splitProductName } from "@/lib/product-display";
 import { LineItemRowReadOnly, type LineItemRowReadOnlyProps } from "./LineItemRowReadOnly";
 
@@ -47,17 +47,17 @@ describe("splitProductName", () => {
 });
 
 describe("LineItemRowReadOnly — name anatomy (the two reported screenshots)", () => {
-  it("two names that differ only in their tail stay distinguishable: the anchor is never clamped", () => {
+  it("two names that differ only in their tail stay distinguishable: the anchor shows in full", () => {
     const a = renderRow({ displayName: "Sample Pod - Strawberry Banana - 5ct" });
     const anchorA = screen.getByTestId("line-name-anchor");
     expect(anchorA).toHaveTextContent("Strawberry Banana - 5ct");
-    expect(anchorA.className).not.toMatch(/line-clamp/);
+    expect(anchorA).toHaveClass("line-clamp-4"); // a backstop, never the 2-line stem clamp
     a.unmount();
 
     renderRow({ displayName: "Sample Pod - Strawberry B-Burst - 5ct" });
     const anchorB = screen.getByTestId("line-name-anchor");
     expect(anchorB).toHaveTextContent("Strawberry B-Burst - 5ct");
-    expect(anchorB.className).not.toMatch(/line-clamp/);
+    expect(anchorB).toHaveClass("line-clamp-4");
   });
 
   it("a very long family stem is clamped to 2 lines (bounded row), the anchor still shows in full", () => {
@@ -65,6 +65,13 @@ describe("LineItemRowReadOnly — name anatomy (the two reported screenshots)", 
     renderRow({ displayName: `${family} - Berry Blast Sativa - 20CT` });
     expect(screen.getByTestId("line-name-stem")).toHaveClass("line-clamp-2");
     expect(screen.getByTestId("line-name-anchor")).toHaveTextContent("Berry Blast Sativa - 20CT");
+  });
+
+  it("a brand-prefixed name (short stem, very long tail) stays bounded by the anchor backstop", () => {
+    const tail = "Classic King Size Slim Rolling Papers 32 Leaves Per Pack ".repeat(6);
+    renderRow({ displayName: `RAW - ${tail}50ct` });
+    expect(screen.getByTestId("line-name-stem")).toHaveTextContent("RAW");
+    expect(screen.getByTestId("line-name-anchor")).toHaveClass("line-clamp-4");
   });
 
   it("a flat name with no separator falls back to a plain 3-line clamp", () => {
@@ -90,6 +97,45 @@ describe("LineItemRowReadOnly — qty, price, total", () => {
   });
 });
 
+describe("LineItemRowReadOnly — money contract (matches what the order bills)", () => {
+  it("the server-stored subtotal wins over any recompute (BOGO line: $60 billed, not $90)", () => {
+    renderRow({ unitPrice: 30, unitsPerBox: 12, boxes: 3, pieces: 0, qty: 36, subtotal: "60.00" });
+    expect(screen.getByText("$60.00")).toBeInTheDocument();
+    expect(screen.queryByText("$90.00")).toBeNull();
+  });
+
+  it("without a stored subtotal the fallback subtracts BUY_N_GET_M free units", () => {
+    renderRow({ unitPrice: 30, unitsPerBox: 12, boxes: 3, pieces: 0, qty: 36, freeUnits: 1 });
+    expect(screen.getByText("$60.00")).toBeInTheDocument();
+  });
+
+  it("a boxed product with NO stored split prices per piece and reads 'qty × price', not 'box of N'", () => {
+    renderRow({ unitPrice: 30, unitsPerBox: 12, boxes: null, pieces: null, qty: 27 });
+    expect(screen.getByText("27 × $30.00")).toBeInTheDocument();
+    expect(screen.queryByText(/box of/)).toBeNull();
+    expect(screen.getByText("$810.00")).toBeInTheDocument(); // computeLineSubtotal: per-piece
+  });
+
+  it("accepts Prisma Decimal strings without throwing and formats with the shared money formatter", () => {
+    renderRow({ unitPrice: "65.0000", qty: "8.000", subtotal: "8450.00" });
+    expect(screen.getByText("8 × $65.00")).toBeInTheDocument();
+    expect(screen.getByText("$8,450.00")).toBeInTheDocument();
+  });
+
+  it("uses the custom box label from the units ladder", () => {
+    renderRow({ unitPrice: 30, unitsPerBox: 12, boxes: 2, pieces: 3, qty: 27, boxLabel: "case" });
+    expect(screen.getByText("2 cases + 3 pcs · $30.00 / case of 12")).toBeInTheDocument();
+  });
+
+  it("a cancelled line strikes the name and shows no dollar total", () => {
+    const { container } = renderRow({ lineStatus: "CANCELLED", subtotal: "520.00" });
+    expect(container.querySelector(".line-through")).not.toBeNull();
+    expect(screen.getByLabelText("No charge — line cancelled")).toBeInTheDocument();
+    expect(screen.queryByText("$520.00")).toBeNull();
+    expect(screen.getByText("Cancelled")).toBeInTheDocument();
+  });
+});
+
 describe("LineItemRowReadOnly — SKU, thumbnail, status, delivery, note", () => {
   it("shows the SKU line, and omits it when there is none", () => {
     const r = renderRow();
@@ -103,14 +149,19 @@ describe("LineItemRowReadOnly — SKU, thumbnail, status, delivery, note", () =>
     const withImg = renderRow({ thumbnailUrl: "https://files.test/p.jpg" });
     const img = withImg.container.querySelector("img")!;
     expect(img).toHaveAttribute("src", "https://files.test/p.jpg");
-    const box = img.parentElement!;
-    expect(box).toHaveClass("h-10", "w-10");
+    expect(img.parentElement).toHaveClass("h-10", "w-10");
     withImg.unmount();
 
     const without = renderRow({ thumbnailUrl: null });
     expect(without.container.querySelector("img")).toBeNull();
-    const svg = without.container.querySelector("svg")!;
-    expect(svg.parentElement).toHaveClass("h-10", "w-10");
+    expect(without.container.querySelector("svg")!.parentElement).toHaveClass("h-10", "w-10");
+  });
+
+  it("an image that fails to load (expired URL) falls back to the icon tile in the same box", () => {
+    const { container } = renderRow({ thumbnailUrl: "https://files.test/expired.jpg" });
+    fireEvent.error(container.querySelector("img")!);
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelector("svg")!.parentElement).toHaveClass("h-10", "w-10");
   });
 
   it("renders the caller-derived status as text, not colour alone", () => {
@@ -118,15 +169,32 @@ describe("LineItemRowReadOnly — SKU, thumbnail, status, delivery, note", () =>
     expect(screen.getByText("Partial")).toBeInTheDocument();
   });
 
-  it("'N of M delivered' only for a line that is short-picked", () => {
-    const r = renderRow({ deliveredQty: 6, qty: 8 });
+  it("'N of M delivered' only when the caller opts in AND the line is short-picked", () => {
+    const r = renderRow({ deliveredQty: 6, qty: 8, showDeliveryProgress: true });
     expect(screen.getByText("6 of 8 delivered")).toBeInTheDocument();
     r.unmount();
-    const full = renderRow({ deliveredQty: 8, qty: 8 });
+    const full = renderRow({ deliveredQty: 8, qty: 8, showDeliveryProgress: true });
     expect(full.container.textContent).not.toMatch(/delivered/);
     full.unmount();
-    const none = renderRow({ deliveredQty: null });
+    const none = renderRow({ deliveredQty: null, showDeliveryProgress: true });
     expect(none.container.textContent).not.toMatch(/delivered/);
+  });
+
+  it("deliveredQty is 0 (not null) on an undelivered line: silent until the caller opts in", () => {
+    const off = renderRow({ deliveredQty: "0.000", qty: "8.000" });
+    expect(off.container.textContent).not.toMatch(/delivered/);
+    off.unmount();
+    renderRow({ deliveredQty: "0.000", qty: "8.000", showDeliveryProgress: true });
+    expect(screen.getByText("0 of 8 delivered")).toBeInTheDocument();
+  });
+
+  it("compares Decimal strings numerically, never lexicographically (10.000 is not < 8.000)", () => {
+    const { container } = renderRow({
+      deliveredQty: "10.000",
+      qty: "8.000",
+      showDeliveryProgress: true,
+    });
+    expect(container.textContent).not.toMatch(/delivered/);
   });
 
   it("shows the per-line note", () => {
@@ -144,6 +212,7 @@ describe("LineItemRowReadOnly — nothing editable, no cost data", () => {
       pieces: 0,
       qty: 12,
     });
+    expect(screen.getByTestId("line-name-anchor")).toBeInTheDocument(); // it rendered at all
     expect(container.querySelector("button, input, select, textarea")).toBeNull();
     expect(container.textContent).not.toMatch(/margin|cost|floor|sell anyway/i);
   });
