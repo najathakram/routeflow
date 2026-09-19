@@ -88,10 +88,10 @@ export interface LineItemRowProps {
   rowRef?: (el: HTMLLIElement | null) => void;
 
   // ── Read-only / order-detail variant (order-ui-redesign-spec.md §6.1) ──
-  // Additive prop surface only — no consumer sets these yet, and this extraction
-  // does not implement the read-only rendering path (that is order-ui-redesign-
-  // spec.md's own T4/T6). Declared now so that work is a diff to this file's
-  // rendering, not another rewrite of its props.
+  // Reserved, unused: the read-only row shipped as the sibling `LineItemRowReadOnly`
+  // (this row takes 14 required edit callbacks, so a prop variant would force no-ops on
+  // every read-only caller). Use that component for order-detail; these props stay only so
+  // existing type imports keep compiling.
   /** When true, a future pass renders qty/price as plain text, hides the
    *  remove/note affordances and `MarginHint`, and ignores every callback above. */
   readOnly?: boolean;
