@@ -65,10 +65,21 @@ function setup(
     open: true,
     onClose: jest.fn(),
     lines: [] as Line[],
-    renderLine: (l: Line, ctx: { highlighted: boolean }) => (
+    renderLine: (l: Line, ctx: { highlighted: boolean; onTapPrice: () => void }) => (
       <li key={l.tempId} data-testid={`row-${l.productId}`} data-highlighted={ctx.highlighted}>
         {l.name} ×{l.qty}
+        <button type="button" data-testid={`price-${l.productId}`} onClick={ctx.onTapPrice}>
+          price
+        </button>
       </li>
+    ),
+    renderPriceEditor: (l: Line, close: () => void) => (
+      <div data-testid="editor">
+        editing {l.name} ×{l.qty}
+        <button type="button" onClick={close}>
+          close-editor
+        </button>
+      </div>
     ),
     resolveCode: jest.fn(resolve),
     onUndo: jest.fn(),
@@ -374,6 +385,67 @@ describe("ScanOrderScreen", () => {
       rerender(<ScanOrderScreen {...props} open={false} />);
       rerender(<ScanOrderScreen {...props} open />);
       expect(screen.getByRole("button", { name: /undo last scan/i })).toBeDisabled();
+    });
+  });
+
+  describe("price editor (step 6)", () => {
+    const two = [L(), L({ tempId: "t2", productId: "p2", name: "Gadget" })];
+
+    it("tapping a row's price opens the editor for THAT line", () => {
+      setup({ lines: two });
+      expect(screen.queryByTestId("editor")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByTestId("price-p2"));
+      expect(screen.getByTestId("editor")).toHaveTextContent("editing Gadget ×1");
+    });
+
+    it("the editor sees the LIVE line, so an edit shows immediately", () => {
+      const { rerender, props } = setup({ lines: two });
+      fireEvent.click(screen.getByTestId("price-p1"));
+      rerender(<ScanOrderScreen {...props} lines={[L({ qty: 5 }), two[1]]} />);
+      expect(screen.getByTestId("editor")).toHaveTextContent("editing Widget ×5");
+    });
+
+    it("its own close control dismisses only the editor", () => {
+      const { props } = setup({ lines: two });
+      fireEvent.click(screen.getByTestId("price-p1"));
+      fireEvent.click(screen.getByRole("button", { name: "close-editor" }));
+      expect(screen.queryByTestId("editor")).not.toBeInTheDocument();
+      expect(props.onClose).not.toHaveBeenCalled();
+    });
+
+    it("Escape closes the EDITOR first, and only a second Escape closes the screen", () => {
+      const { props } = setup({ lines: two });
+      fireEvent.click(screen.getByTestId("price-p1"));
+
+      fireEvent.keyDown(document.body, { key: "Escape" });
+      expect(screen.queryByTestId("editor")).not.toBeInTheDocument();
+      expect(props.onClose).not.toHaveBeenCalled();
+
+      fireEvent.keyDown(document.body, { key: "Escape" });
+      expect(props.onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it("closes itself when the line disappears underneath it (undo / removal)", () => {
+      const { rerender, props } = setup({ lines: two });
+      fireEvent.click(screen.getByTestId("price-p1"));
+      rerender(<ScanOrderScreen {...props} lines={[two[1]]} />);
+      expect(screen.queryByTestId("editor")).not.toBeInTheDocument();
+    });
+
+    it("without renderPriceEditor, tapping the price opens nothing and Escape closes the screen", () => {
+      const { props } = setup({ lines: two, renderPriceEditor: undefined });
+      fireEvent.click(screen.getByTestId("price-p1"));
+      expect(screen.queryByTestId("editor")).not.toBeInTheDocument();
+      fireEvent.keyDown(document.body, { key: "Escape" });
+      expect(props.onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it("a new session never reopens a stale editor", () => {
+      const { rerender, props } = setup({ lines: two });
+      fireEvent.click(screen.getByTestId("price-p1"));
+      rerender(<ScanOrderScreen {...props} open={false} />);
+      rerender(<ScanOrderScreen {...props} open />);
+      expect(screen.queryByTestId("editor")).not.toBeInTheDocument();
     });
   });
 

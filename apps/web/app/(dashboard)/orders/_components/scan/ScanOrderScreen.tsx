@@ -42,7 +42,13 @@ export interface ScanOrderScreenProps<T extends SummaryLine & { tempId: string }
   /** The order's lines — the SAME state CreateOrderModal owns; this screen never keeps its own cart. */
   lines: readonly T[];
   /** One row per line. `highlighted` marks the line the last scan touched. */
-  renderLine: (line: T, ctx: { highlighted: boolean }) => React.ReactNode;
+  renderLine: (line: T, ctx: { highlighted: boolean; onTapPrice: () => void }) => React.ReactNode;
+  /**
+   * The price/quantity editor for one line (LANE-S step 6). When given, tapping a row's price opens
+   * it as a sheet over this screen; `close` dismisses it. It receives the LIVE line each render, so
+   * edits show immediately. Omit it and rows keep their inline price input only.
+   */
+  renderPriceEditor?: (line: T, close: () => void) => React.ReactNode;
   /** Resolves one accepted code (the modal's `useScanCodeHandler`). */
   resolveCode: (code: string) => Promise<ScanResolution>;
   /** Inverts one scan (remove the line it created, or take back one unit). */
@@ -67,6 +73,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
   onClose,
   lines,
   renderLine,
+  renderPriceEditor,
   resolveCode,
   onUndo,
   hasCustomer,
@@ -80,6 +87,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
   const [feedback, setFeedback] = React.useState<{ kind: "added" | "error"; text: string } | null>(
     null,
   );
+  const [editingId, setEditingId] = React.useState<string | null>(null);
   const [manualOpen, setManualOpen] = React.useState(false);
   const [manualValue, setManualValue] = React.useState("");
   const highlightTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -98,6 +106,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
     setFeedback(null);
     setManualOpen(false);
     setManualValue("");
+    setEditingId(null);
     unlockScanCue();
   }, [open]);
 
@@ -200,18 +209,25 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
     onUndo(entry);
   };
 
-  // Escape closes THIS screen only — capture phase + stopPropagation so it can never also dismiss
-  // an order builder underneath.
+  // The line being edited, looked up LIVE so the editor always shows the current values. If the
+  // line disappears underneath it (undo, removal) the editor simply closes.
+  const editingLine = editingId ? (lines.find((l) => l.tempId === editingId) ?? null) : null;
+  const closeEditor = React.useCallback(() => setEditingId(null), []);
+
+  // Escape closes the TOPMOST layer only — the price editor if one is open, else this screen —
+  // capture phase + stopPropagation so it can never also dismiss the order builder underneath.
+  const editorOpen = !!editingLine && !!renderPriceEditor;
   React.useEffect(() => {
     if (!live) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       e.stopPropagation();
-      onClose();
+      if (editorOpen) setEditingId(null);
+      else onClose();
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [live, onClose]);
+  }, [live, onClose, editorOpen]);
 
   if (!open || typeof document === "undefined") return null;
 
@@ -364,7 +380,10 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
         {lines.length > 0 ? (
           <ul className="divide-y divide-surface-border overflow-hidden rounded-lg border border-surface-border">
             {lines.map((line) =>
-              renderLine(line, { highlighted: !!line.productId && line.productId === highlightId }),
+              renderLine(line, {
+                highlighted: !!line.productId && line.productId === highlightId,
+                onTapPrice: () => setEditingId(line.tempId),
+              }),
             )}
           </ul>
         ) : (
@@ -380,6 +399,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
           Done
         </Button>
       </footer>
+      {editorOpen && renderPriceEditor(editingLine!, closeEditor)}
     </div>,
     document.body,
   );

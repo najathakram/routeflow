@@ -436,6 +436,66 @@ describe("CreateOrderModal", () => {
       expect(screen.getByText("Case Soda")).toBeInTheDocument();
     });
 
+    describe("price editor (step 6)", () => {
+      const openEditor = async () => {
+        mockResolveProductByCode.mockResolvedValue(widget);
+        await openScreen();
+        await scanCode("012345678905");
+        await screen.findByText("Widget");
+        fireEvent.click(screen.getByText("$9.99 / each"));
+        return screen.findByRole("dialog", { name: "Edit Widget" });
+      };
+
+      it("tapping a scanned row's price opens the sheet for that line", async () => {
+        const editor = await openEditor();
+        expect(editor).toBeInTheDocument();
+      });
+
+      it("setting a one-time price re-prices the line and the pinned total, through the row's own handler", async () => {
+        await openEditor();
+
+        fireEvent.change(screen.getByLabelText("Price"), { target: { value: "8.50" } });
+
+        await waitFor(() => expect(screen.getByText("1 item · $8.50")).toBeInTheDocument());
+      });
+
+      it("stepping the quantity from the sheet updates the same line", async () => {
+        await openEditor();
+
+        fireEvent.click(screen.getByLabelText("One more"));
+
+        await waitFor(() => expect(screen.getByText("1 item · $19.98")).toBeInTheDocument());
+      });
+
+      it("Escape closes the sheet but leaves the scan screen (and the order) open", async () => {
+        await openEditor();
+
+        fireEvent.keyDown(document.body, { key: "Escape" });
+
+        await waitFor(() =>
+          expect(screen.queryByRole("dialog", { name: "Edit Widget" })).not.toBeInTheDocument(),
+        );
+        expect(screen.getByRole("dialog", { name: "Scan items" })).toBeInTheDocument();
+        expect(screen.getByText("Widget")).toBeInTheDocument();
+      });
+
+      it("Done in the sheet returns to the scan screen with the edit applied", async () => {
+        await openEditor();
+        fireEvent.change(screen.getByLabelText("Price"), { target: { value: "8.50" } });
+
+        fireEvent.click(
+          within(screen.getByRole("dialog", { name: "Edit Widget" })).getByRole("button", {
+            name: "Done",
+          }),
+        );
+
+        await waitFor(() =>
+          expect(screen.queryByRole("dialog", { name: "Edit Widget" })).not.toBeInTheDocument(),
+        );
+        expect(screen.getByText("1 item · $8.50")).toBeInTheDocument();
+      });
+    });
+
     it("an UNKNOWN code opens create-product with the code as SKU and pauses the screen beneath it", async () => {
       mockResolveProductByCode.mockResolvedValue({ notFound: true, archived: false });
       await openScreen();
