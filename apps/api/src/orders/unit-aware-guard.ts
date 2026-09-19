@@ -102,9 +102,22 @@ export function assertChangeTargetAllowed(
   );
 }
 
-interface InvoiceDb {
-  invoiceItem: { findMany(args: unknown): Promise<LineLike[]> };
-  orderItem: { findMany(args: unknown): Promise<LineLike[]> };
+/**
+ * NULL-TENANT BLIND SPOT: `forTenant()` scopes a TOP-LEVEL `orderItem`/`invoiceItem` read by the
+ * ITEM's own `tenantId` (both columns are nullable), so a line whose tenantId is NULL — a legacy
+ * orphan, or a row written by a tenant-less caller — is invisible to it and would slip past the
+ * guard. So the guards below read the PARENT (`invoice` / `order`) and select the lines through
+ * the relation, which Prisma does not tenant-filter.
+ *
+ * That moves the blind spot up one level, it does not erase it: `Order.tenantId` and
+ * `Invoice.tenantId` are ALSO nullable (the owner-ruled NOT NULL migration is the real close-out).
+ * Until then a parent that cannot be read FAILS CLOSED here (409) rather than passing.
+ * `unit-line-writers.ast.spec.ts` fails if THIS module reads a line table top-level again.
+ */
+interface ParentDb {
+  // `any` results: the Prisma delegates return their full row type; only `items`/`lineItems` are read.
+  invoice: { findFirst(args: unknown): Promise<any> };
+  order: { findFirst(args: unknown): Promise<any> };
 }
 
 /**
@@ -113,18 +126,35 @@ interface InvoiceDb {
  * (recomputeOrderFromInvoices) writes this edit straight onto the order line that does.
  */
 export async function assertInvoiceRewriteAllowed(
-  db: InvoiceDb,
+  db: ParentDb,
   invoice: { id: string; orderId?: string | null },
 ): Promise<void> {
-  const own = await db.invoiceItem.findMany({
-    where: { invoiceId: invoice.id, unitLabel: { not: null } },
-    select: { unitLabel: true },
+  const own = await db.invoice.findFirst({
+    where: { id: invoice.id },
+    select: {
+      items: { where: { unitLabel: { not: null } }, select: { unitLabel: true }, take: 1 },
+    },
   });
   const linked = invoice.orderId
-    ? await db.orderItem.findMany({
-        where: { orderId: invoice.orderId, unitLabel: { not: null }, status: { not: "CANCELLED" } },
-        select: { unitLabel: true, status: true },
+    ? await db.order.findFirst({
+        where: { id: invoice.orderId },
+        select: {
+          lineItems: {
+            where: { unitLabel: { not: null }, status: { not: "CANCELLED" } },
+            select: { unitLabel: true, status: true },
+          },
+        },
       })
-    : [];
-  assertNoUnitAwareLines([...own, ...linked], "edited");
+    : null;
+  // Fail CLOSED: a parent we cannot read (NULL-tenant / cross-tenant / vanished) proves nothing.
+  if (!own || (invoice.orderId && !linked)) {
+    throw new ConflictException({
+      code: "UNIT_AWARE_LINE_UNVERIFIABLE",
+      message: "This invoice's lines could not be verified, so it can't be edited. Ask an admin.",
+    });
+  }
+  assertNoUnitAwareLines(
+    [...((own.items ?? []) as LineLike[]), ...((linked?.lineItems ?? []) as LineLike[])],
+    "edited",
+  );
 }
