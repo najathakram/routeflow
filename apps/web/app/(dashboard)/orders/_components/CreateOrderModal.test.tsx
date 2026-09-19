@@ -1,6 +1,6 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
+import { renderWithProviders, screen, waitFor, act, fireEvent } from "@/test-utils/render";
 import { CreateOrderModal } from "./CreateOrderModal";
 
 // JSDOM has no scrollIntoView implementation at all (not a stub — genuinely absent), and
@@ -73,14 +73,17 @@ jest.mock("@/lib/api-client", () => ({
 // live onScan/onError props so a test can trigger them directly, same as a real scan would.
 let capturedOnScan: ((code: string) => void) | undefined;
 let capturedOnError: ((message: string) => void) | undefined;
+let capturedOnOpenContinuous: (() => void) | undefined;
 jest.mock("@/components/BarcodeScannerButton", () => ({
   BarcodeScannerButton: (props: {
     onScan: (code: string) => void;
     onError?: (message: string) => void;
+    onOpenContinuous?: () => void;
     title?: string;
   }) => {
     capturedOnScan = props.onScan;
     capturedOnError = props.onError;
+    capturedOnOpenContinuous = props.onOpenContinuous;
     return (
       <button type="button" title={props.title} aria-label={props.title}>
         {props.title}
@@ -101,6 +104,37 @@ jest.mock("@/components/InlineCreateProductModal", () => ({
   },
 }));
 
+// scan_v2: the flag and the camera are the two seams. The flag is a mutable stub; the camera hook
+// hands the test the screen's onDetect so a barcode can be injected without getUserMedia.
+let mockScanV2 = false;
+jest.mock("./scan/useScanV2Enabled", () => ({
+  SCAN_V2_FLAG: "flag.scan_v2",
+  useScanV2Enabled: () => mockScanV2,
+}));
+let cameraDetect: ((code: string) => void) | undefined;
+let cameraEnabled: boolean | undefined;
+jest.mock("./scan/useContinuousScanCamera", () => ({
+  useContinuousScanCamera: ({
+    enabled,
+    onDetect,
+  }: {
+    enabled: boolean;
+    onDetect: (c: string) => void;
+  }) => {
+    cameraDetect = onDetect;
+    cameraEnabled = enabled;
+    return {
+      videoRef: { current: null },
+      torchAvailable: false,
+      torchOn: false,
+      toggleTorch: jest.fn(),
+      refocus: jest.fn(),
+      error: null,
+    };
+  },
+}));
+jest.mock("@/lib/scan-cue", () => ({ playScanCue: jest.fn(), unlockScanCue: jest.fn() }));
+
 const mockResolveProductByCode = jest.fn();
 jest.mock("@/lib/barcode-resolve", () => ({
   resolveProductByCode: (code: string) => mockResolveProductByCode(code),
@@ -118,6 +152,10 @@ describe("CreateOrderModal", () => {
     capturedOnScan = undefined;
     capturedOnError = undefined;
     capturedInlineCreate = undefined;
+    capturedOnOpenContinuous = undefined;
+    cameraDetect = undefined;
+    cameraEnabled = undefined;
+    mockScanV2 = false;
   });
 
   it("blocks submit with 'Please select a customer' and never calls the create mutation", async () => {
@@ -233,6 +271,134 @@ describe("CreateOrderModal", () => {
         title:
           "Camera access was denied. Allow camera access in your browser's site settings, then try again.",
       });
+    });
+  });
+
+  describe("scan_v2 - the accumulating scan screen", () => {
+    const widget = {
+      notFound: false,
+      archived: false,
+      product: { id: "prod-1", name: "Widget", pricePerUnit: "9.99", unit: "each" },
+    };
+    const openScreen = async () => {
+      mockScanV2 = true;
+      const utils = renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+      act(() => capturedOnOpenContinuous!());
+      await screen.findByRole("dialog", { name: "Scan items" });
+      return utils;
+    };
+    const scanCode = async (code: string) => {
+      await act(async () => {
+        cameraDetect!(code);
+      });
+    };
+
+    it("flag OFF (the default): the scan button gets no continuous handler - behaviour unchanged", () => {
+      renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+      expect(capturedOnOpenContinuous).toBeUndefined();
+    });
+
+    it("flag ON: the scan button opens the screen INSTEAD of the single-shot overlay, and the Dialog closes", async () => {
+      mockScanV2 = true;
+      renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+      expect(screen.getByRole("dialog", { name: "Create Order" })).toBeInTheDocument();
+      expect(capturedOnOpenContinuous).toBeDefined();
+
+      act(() => capturedOnOpenContinuous!());
+
+      expect(await screen.findByRole("dialog", { name: "Scan items" })).toBeInTheDocument();
+      expect(screen.queryByRole("dialog", { name: "Create Order" })).not.toBeInTheDocument();
+      expect(cameraEnabled).toBe(true);
+    });
+
+    it("a scan adds the line through the SAME resolver - shown in the screen with a running total", async () => {
+      mockResolveProductByCode.mockResolvedValue(widget);
+      await openScreen();
+
+      await scanCode("012345678905");
+
+      expect(await screen.findByText("Widget")).toBeInTheDocument();
+      expect(screen.getByText("1 item · $9.99")).toBeInTheDocument();
+      expect(mockResolveProductByCode).toHaveBeenCalledWith("012345678905");
+    });
+
+    it("a repeat scan of the same product increments its quantity, never duplicates the row", async () => {
+      mockResolveProductByCode.mockResolvedValue(widget);
+      await openScreen();
+
+      await scanCode("111");
+      await screen.findByText("Widget");
+      await scanCode("222"); // a different barcode for the same product (past the gate)
+
+      await waitFor(() => expect(screen.getByText("1 item · $19.98")).toBeInTheDocument());
+      expect(screen.getAllByText("Widget")).toHaveLength(1);
+    });
+
+    it("Done returns to the order builder with the scanned lines intact", async () => {
+      mockResolveProductByCode.mockResolvedValue(widget);
+      await openScreen();
+      await scanCode("012345678905");
+      await screen.findByText("Widget");
+
+      fireEvent.click(screen.getByRole("button", { name: "Done" }));
+
+      expect(await screen.findByRole("dialog", { name: "Create Order" })).toBeInTheDocument();
+      expect(screen.queryByRole("dialog", { name: "Scan items" })).not.toBeInTheDocument();
+      expect(screen.getByText("Widget")).toBeInTheDocument();
+    });
+
+    it("Undo removes a line the scan CREATED", async () => {
+      mockResolveProductByCode.mockResolvedValue(widget);
+      await openScreen();
+      await scanCode("012345678905");
+      await screen.findByText("Widget");
+
+      fireEvent.click(screen.getByRole("button", { name: /undo last scan/i }));
+
+      await waitFor(() => expect(screen.queryByText("Widget")).not.toBeInTheDocument());
+      expect(screen.getByText("0 items · $0.00")).toBeInTheDocument();
+    });
+
+    it("Undo of a repeat scan takes ONE unit back and keeps the line", async () => {
+      mockResolveProductByCode.mockResolvedValue(widget);
+      await openScreen();
+      await scanCode("111");
+      await screen.findByText("Widget");
+      await scanCode("222");
+      await waitFor(() => expect(screen.getByText("1 item · $19.98")).toBeInTheDocument());
+
+      fireEvent.click(screen.getByRole("button", { name: /undo last scan/i }));
+
+      await waitFor(() => expect(screen.getByText("1 item · $9.99")).toBeInTheDocument());
+      expect(screen.getByText("Widget")).toBeInTheDocument();
+    });
+
+    it("an UNKNOWN code opens create-product with the code as SKU and pauses the screen beneath it", async () => {
+      mockResolveProductByCode.mockResolvedValue({ notFound: true, archived: false });
+      await openScreen();
+
+      await scanCode("999000111222");
+
+      await waitFor(() => expect(capturedInlineCreate?.isOpen).toBe(true));
+      expect(capturedInlineCreate?.initialSku).toBe("999000111222");
+      expect(cameraEnabled).toBe(false); // camera off while the dialog is up
+      expect(screen.getByLabelText("Scan items")).toHaveAttribute("aria-hidden", "true");
+    });
+
+    it("no customer chosen: warns that scanned items are at list price", async () => {
+      await openScreen();
+      expect(screen.getByText(/No customer selected/)).toBeInTheDocument();
+    });
+
+    it("closing the order builder tears the screen down; reopening does not land straight in it", async () => {
+      const { rerender } = await openScreen();
+
+      rerender(<CreateOrderModal isOpen={false} onClose={jest.fn()} />);
+      expect(screen.queryByRole("dialog", { name: "Scan items" })).not.toBeInTheDocument();
+
+      rerender(<CreateOrderModal isOpen onClose={jest.fn()} />);
+      expect(await screen.findByRole("dialog", { name: "Create Order" })).toBeInTheDocument();
+      expect(screen.queryByRole("dialog", { name: "Scan items" })).not.toBeInTheDocument();
     });
   });
 });

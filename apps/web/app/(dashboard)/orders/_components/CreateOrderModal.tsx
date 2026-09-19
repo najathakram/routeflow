@@ -26,6 +26,9 @@ import { InlineCreateProductModal } from "@/components/InlineCreateProductModal"
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { LineItemRow } from "@/components/LineItemRow";
 import { useScanCodeHandler } from "./scan/useScanCodeHandler";
+import { ScanOrderScreen } from "./scan/ScanOrderScreen";
+import { useScanV2Enabled } from "./scan/useScanV2Enabled";
+import type { ScanHistoryEntry } from "./scan/scan-summary";
 import { LicenseGuardModal } from "./LicenseGuardModal";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
@@ -180,6 +183,16 @@ export function CreateOrderModal({
   const [createProductOpen, setCreateProductOpen] = React.useState(false);
   const [createProductInitialName, setCreateProductInitialName] = React.useState("");
   const [createProductInitialSku, setCreateProductInitialSku] = React.useState("");
+  // scan_v2 (dark, owner-granted per tenant): the accumulating scan screen replaces the
+  // single-shot camera overlay. While it is open the Dialog below is closed (its content is
+  // transformed and focus-trapped, so a full-screen overlay cannot live inside it); every piece of
+  // order state stays in this component, so nothing is lost across the swap.
+  const scanV2 = useScanV2Enabled();
+  const [scanScreenOpen, setScanScreenOpen] = React.useState(false);
+  // A closed order builder never reopens straight into the scan screen.
+  React.useEffect(() => {
+    if (!isOpen) setScanScreenOpen(false);
+  }, [isOpen]);
 
   // Merge-vs-separate prompt state. Set when the operator submits and the API
   // (or our pre-check) reports an existing active order for the same customer.
@@ -274,7 +287,13 @@ export function CreateOrderModal({
   // ./scan/useScanCodeHandler so the redesigned scan screen can reuse it.
   const barcodeScanHandlerRef = useScanCodeHandler({
     // A thunk: addLineItem is declared further down and is read only when a code is scanned.
-    addLineItem: (product) => addLineItem(product),
+    addLineItem: (product) => {
+      // `created` is read in the same closure that performs the add, so it is exact even
+      // though setLineItems has not flushed yet (the scan screen uses it to undo).
+      const created = !lineItems.some((li) => li.productId === product.id);
+      addLineItem(product);
+      return { created };
+    },
     onUnknownCode: (code) => {
       setCreateProductInitialName("");
       setCreateProductInitialSku(code);
@@ -1019,9 +1038,65 @@ export function CreateOrderModal({
     return err.response?.data?.message || err.message || "Something went wrong. Please try again.";
   })();
 
-  return (
+  // The same LineItemRow for the create-order list and the scan screen, so the two can never drift.
+  const renderLine = (li: LineItem, ctx?: { highlighted?: boolean }) => (
+    <LineItemRow
+      key={li.tempId}
+      item={li}
+      category={lineCategory(li) ?? null}
+      marginFloor={floorForCategory(marginConfig, li.category)}
+      floorAcked={floorAcked.has(li.tempId)}
+      costRevealed={costRevealed.has(li.tempId)}
+      priceHistoryEntry={priceHistory?.[li.productId]}
+      highlighted={ctx?.highlighted}
+      rowRef={(el) => {
+        if (el) rowRefs.current.set(li.tempId, el);
+        else rowRefs.current.delete(li.tempId);
+      }}
+      onQtyDelta={(delta) => updateQty(li.tempId, delta)}
+      onSetBoxes={(value) => setBoxes(li.tempId, value)}
+      onSetPieces={(value) => setPieces(li.tempId, value)}
+      onSetUnitQty={(value) => setUnitQty(li.tempId, value)}
+      onSetSellBy={(mode) => setSellBy(li.tempId, mode)}
+      onSetDiscountedPrice={(value) => setDiscountedPrice(li.tempId, value)}
+      onSetToFloor={(floorPrice) => setDiscountedPrice(li.tempId, floorPrice)}
+      onAckFloor={() => ackFloor(li.tempId)}
+      onToggleCostRevealed={() => toggleCostRevealed(li.tempId)}
+      onToggleNoteOpen={() => toggleNoteOpen(li.tempId)}
+      onSetNote={(note) => setLineNote(li.tempId, note)}
+      onUpdateUnlistedName={(name) => updateUnlistedName(li.tempId, name)}
+      onUpdateUnlistedPrice={(value) => updateUnlistedPrice(li.tempId, value)}
+      onRemove={() => removeLineItem(li.tempId)}
+    />
+  );
+
+  // Inverts one scan: drop the line it created, or take one unit back off the line it incremented.
+  const undoScan = ({ productId, created }: ScanHistoryEntry) => {
+    const line = lineItems.find((li) => li.productId === productId);
+    if (!line) return; // the operator already removed it by hand
+    if (created) removeLineItem(line.tempId);
+    else updateQty(line.tempId, -1);
+  };
+
+  // A product created from the unknown-barcode fallback lands on the order like a picked one.
+  const handleProductCreated = (product: any) => {
+    addLineItem({
+      id: product.id,
+      // A just-created variant's `name` is the bare flavor — compose
+      // "Parent - Flavor" so the line label matches picked products.
+      name: displayProductName(product),
+      sku: product.sku,
+      unit: product.unit,
+      pricePerUnit: product.pricePerUnit,
+      // Real box size so boxed products get the Boxes+Pcs editor.
+      unitsPerBox: product.unitsPerBox ?? undefined,
+    });
+    setCreateProductOpen(false);
+  };
+
+  const dialog = (
     <Modal
-      open={isOpen}
+      open={isOpen && !scanScreenOpen}
       onClose={handleDismiss}
       onEscapeKeyDown={handleEscape}
       title={resumeDraftId ? "Resume draft" : "Create Order"}
@@ -1199,6 +1274,7 @@ export function CreateOrderModal({
                 inputRef={productSearchRef}
                 onScan={(code) => barcodeScanHandlerRef.current(code)}
                 onError={(message) => toast({ variant: "error", title: message })}
+                onOpenContinuous={scanV2 ? () => setScanScreenOpen(true) : undefined}
                 className="h-10 min-h-[44px] w-10 min-w-[44px] shrink-0"
                 title="Scan barcode"
               />
@@ -1421,35 +1497,7 @@ export function CreateOrderModal({
             {/* Line items list */}
             {lineItems.length > 0 ? (
               <ul className="divide-y divide-surface-border overflow-hidden rounded-lg border border-surface-border">
-                {lineItems.map((li) => (
-                  <LineItemRow
-                    key={li.tempId}
-                    item={li}
-                    category={lineCategory(li) ?? null}
-                    marginFloor={floorForCategory(marginConfig, li.category)}
-                    floorAcked={floorAcked.has(li.tempId)}
-                    costRevealed={costRevealed.has(li.tempId)}
-                    priceHistoryEntry={priceHistory?.[li.productId]}
-                    rowRef={(el) => {
-                      if (el) rowRefs.current.set(li.tempId, el);
-                      else rowRefs.current.delete(li.tempId);
-                    }}
-                    onQtyDelta={(delta) => updateQty(li.tempId, delta)}
-                    onSetBoxes={(value) => setBoxes(li.tempId, value)}
-                    onSetPieces={(value) => setPieces(li.tempId, value)}
-                    onSetUnitQty={(value) => setUnitQty(li.tempId, value)}
-                    onSetSellBy={(mode) => setSellBy(li.tempId, mode)}
-                    onSetDiscountedPrice={(value) => setDiscountedPrice(li.tempId, value)}
-                    onSetToFloor={(floorPrice) => setDiscountedPrice(li.tempId, floorPrice)}
-                    onAckFloor={() => ackFloor(li.tempId)}
-                    onToggleCostRevealed={() => toggleCostRevealed(li.tempId)}
-                    onToggleNoteOpen={() => toggleNoteOpen(li.tempId)}
-                    onSetNote={(note) => setLineNote(li.tempId, note)}
-                    onUpdateUnlistedName={(name) => updateUnlistedName(li.tempId, name)}
-                    onUpdateUnlistedPrice={(value) => updateUnlistedPrice(li.tempId, value)}
-                    onRemove={() => removeLineItem(li.tempId)}
-                  />
-                ))}
+                {lineItems.map((li) => renderLine(li))}
               </ul>
             ) : (
               <div className="rounded-lg border border-dashed border-surface-border bg-surface-raised py-6 text-center">
@@ -1658,20 +1706,7 @@ export function CreateOrderModal({
       <InlineCreateProductModal
         isOpen={createProductOpen}
         onClose={() => setCreateProductOpen(false)}
-        onCreated={(product) => {
-          addLineItem({
-            id: product.id,
-            // A just-created variant's `name` is the bare flavor — compose
-            // "Parent - Flavor" so the line label matches picked products.
-            name: displayProductName(product),
-            sku: product.sku,
-            unit: product.unit,
-            pricePerUnit: product.pricePerUnit,
-            // Real box size so boxed products get the Boxes+Pcs editor.
-            unitsPerBox: product.unitsPerBox ?? undefined,
-          });
-          setCreateProductOpen(false);
-        }}
+        onCreated={handleProductCreated}
         initialName={createProductInitialName}
         initialSku={createProductInitialSku}
       />
@@ -1768,5 +1803,34 @@ export function CreateOrderModal({
         />
       )}
     </Modal>
+  );
+
+  return (
+    <>
+      {dialog}
+      {scanV2 && (
+        <ScanOrderScreen
+          open={isOpen && scanScreenOpen}
+          // The create-product dialog for an unknown barcode lives in the (closed) Dialog above, so
+          // while the scan screen is up it is rendered here — and the screen pauses beneath it.
+          paused={createProductOpen}
+          onClose={() => setScanScreenOpen(false)}
+          lines={lineItems}
+          renderLine={renderLine}
+          resolveCode={(code) => barcodeScanHandlerRef.current(code)}
+          onUndo={undoScan}
+          hasCustomer={!!selectedCustomer}
+        />
+      )}
+      {scanScreenOpen && (
+        <InlineCreateProductModal
+          isOpen={createProductOpen}
+          onClose={() => setCreateProductOpen(false)}
+          onCreated={handleProductCreated}
+          initialName={createProductInitialName}
+          initialSku={createProductInitialSku}
+        />
+      )}
+    </>
   );
 }
