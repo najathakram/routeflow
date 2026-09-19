@@ -1,0 +1,913 @@
+#!/usr/bin/env node
+/**
+ * PR-0b "zero-loss report" — pre-flight gate for retiring the legacy entitlement layers
+ * (`DARK_PLAN_FLAGS`, `PREPIN_DARK_FLAGS`, `PLAN_FLAG_ENFORCEMENT`) under the owner's 2026-09-17
+ * "one rule: preset + grants − denies" ruling (`project_entitlements_one_rule_2026-09-17.md`).
+ *
+ * Full design: local-assets/handoff/2026-09-16/feature-grants-v2/design.md §3 "PR-0b". This
+ * script builds the narrower slice design.md's PR-0b bullet describes plus the "owner-run report"
+ * item from `local-assets/handoff/2026-09-19/decisions-prep.md` §1 (Decision A): the report, and
+ * an apply step that closes a loss with an explicit per-tenant GRANT override — the SAME
+ * mechanism the platform-admin console already uses (`FeatureOverrideService`/
+ * `TenantFeatureOverride`). It deliberately does NOT implement design.md's fuller PR-0b (catalog
+ * v12 re-pin, `previousPlanVersionId`/`repinnedAt`, `--rollback`, `entitlements.mode=live` switch,
+ * or registry `usage` probes for usage-based grandfathering) — catalog v12 already has its own
+ * publisher (`apps/api/prisma/publish-plan-catalog-v12.ts`), and the rest is out of scope for this
+ * PR; see the PR description for the full scoping note. This script never touches
+ * `plan-flag-policy.ts` / `plan-flag.guard.ts` — deleting those is PR-0, a separate change that
+ * lands only after `--report` shows zero losses on prod.
+ *
+ * MODES (mutually exclusive; `--report` is the default)
+ *   --report (default, READ-ONLY)   For every PRODUCTION tenant (Tenant.class = 'PRODUCTION',
+ *       not soft-deleted — status is deliberately NOT filtered; a SUSPENDED tenant can resume,
+ *       and nothing in the resolver consults Tenant.status at all) and every FEATURE_REGISTRY
+ *       key, compute (a) today's effective entitlement under the current four-layer resolver
+ *       (mirrors EntitlementAuthority.computeOldPathAll) and (b) the entitlement under the one
+ *       rule ((preset ∪ purchasedAddons ∪ grants) − denies; mirrors resolveOneKey). Refuses
+ *       up front (exit 1) unless `entitlements.mode` (PlatformConfig) is "shadow" — once it is
+ *       "live" this report's whole premise (today's real answer = the legacy resolver) is
+ *       backwards. Prints GAINS (one rule grants, today denies) and LOSSES (today grants, one
+ *       rule denies) — each loss labeled with its `mechanism` (`plan-flag-courtesy` /
+ *       `addon-gate-courtesy` / `credit-limit-service-toggle`) — then totals. Any tenant that
+ *       fails to resolve is listed separately and ALSO fails the gate (exit 4), even with zero
+ *       losses: an unresolved tenant was never actually checked. The exit code is the gate.
+ *   --apply    For each APPLICABLE loss, writes an explicit per-tenant GRANT override
+ *       (kind=GRANDFATHER) so the one rule reproduces today's access — the same "grandfather"
+ *       idea design.md's fuller PR-0b describes, applied directly as overrides rather than via a
+ *       catalog re-pin. "Applicable" EXCLUDES `addon-gate-courtesy` losses by default (pass
+ *       `--include-addon-gates` to include them) — see that flag's own doc below. Without
+ *       `--live` this ONLY prints the preview (what would be granted, and what was excluded) and
+ *       writes nothing — run `--report`, then `--apply` (preview), then `--apply --live ...` in
+ *       that order. `--live` requires `--backup-attested "<backup name>"` and a typed
+ *       confirmation (`GRANT <n> OVERRIDES`, n computed from THIS run's own applicable count).
+ *       Idempotent: a key with an active override (from a prior run or a pre-existing manual
+ *       one) can never show as a loss again — both paths check overrides FIRST and agree once
+ *       one exists — an expired-but-unrevoked row is auto-revoked first (mirrors
+ *       FeatureOverrideService.create()), and the INSERT itself is `ON CONFLICT (tenantId,
+ *       featureKey) WHERE revokedAt IS NULL DO NOTHING`, so a second `--apply --live` writes
+ *       nothing even under a concurrent write.
+ *
+ * PLAN_FLAG_ENFORCEMENT — READ THIS BEFORE TRUSTING A "LOSSES: 0" RESULT. The old-path
+ *   computation needs to know whether the API service's PLAN_FLAG_ENFORCEMENT kill switch is
+ *   currently "on" or "off" (it changes which flags the legacy dark-flag courtesy allow covers —
+ *   see plan-flag-policy.ts — AND whether flag.credit_limits's own service-level check runs
+ *   unconditionally, see orders.service.ts's isCreditLimitCheckEnabled()). This script does NOT
+ *   read that live — `railway run --service postgres <cmd>` injects only the POSTGRES service's
+ *   variables, never the API service's, so `process.env.PLAN_FLAG_ENFORCEMENT` would silently
+ *   read as unset (i.e. "off") regardless of the API service's real setting.
+ *   `--plan-flag-enforcement=on|off` makes the assumption an explicit, printed argument instead:
+ *   it defaults to "off" — the CURRENT known value (project_entitlements_one_rule_2026-09-17.md:
+ *   "Mitigated 06:11Z by deleting the env var... PLAN_FLAG_ENFORCEMENT stays OFF (not
+ *   re-enabled)" — the 2026-09-17 P0 was the ON flip; it was reverted the same morning) — and the
+ *   report always prints which value it used. Before running for real, confirm today's actual
+ *   value (Railway dashboard → api service → variables) and pass `--plan-flag-enforcement=on` if
+ *   it has been re-enabled since.
+ *
+ * UNATTENDED WRITES — ONLY INTO APPROVED TEST TENANTS (mirrors backfill-legacy-tenant-ids.mjs)
+ *   --only-test-tenants   Before any write, every tenant that would receive a grant must resolve
+ *       to an approved test tenant (isTestTenant, scripts/lib/test-tenants.cjs) — ONE offending
+ *       tenant refuses the WHOLE batch, exit 3, zero writes. Enforced in the preview too, so the
+ *       preview an operator reads is the exact preflight of what `--live` would do.
+ *   --confirm "<phrase>"  Supplies the typed confirmation as a value instead of a TTY prompt.
+ *       Accepted ONLY alongside `--only-test-tenants` (exit 2 otherwise, before connecting), and
+ *       the phrase must equal exactly what the prompt would have asked for.
+ *
+ * TEST-ONLY HOOK
+ *   PUBLISH_REPIN_CONFIRM_TOKEN — supplies the typed confirmation as a value instead of reading a
+ *   TTY, so apps/api/src/common/publish-and-repin.db.spec.ts can execute --apply --live against
+ *   the compose database. Honoured ONLY inside a jest worker (JEST_WORKER_ID set), with a WARNING
+ *   line; ignored — loudly — anywhere else. Does NOT relax --backup-attested.
+ *
+ * NO PII — the report and apply preview print tenants as `#<ordinal> (<8-hex id hash>)`, NEVER a
+ * slug, name, or email. (The `--only-test-tenants` REFUSAL diagnostic is the one deliberate
+ * exception, matching backfill-legacy-tenant-ids.mjs precedent: it names the offending tenant's
+ * slug so the operator can see exactly what tripped the guard — this only ever fires against a
+ * non-production database, since a real prod `--apply` does not pass `--only-test-tenants`.)
+ *
+ * PRODUCTION-SAFETY RULES
+ *   - `default_transaction_read_only = on` for the whole session in `--report` and for the
+ *     preview half of `--apply`; lifted only after the typed confirmation, immediately before
+ *     opening each tenant's write transaction (one transaction PER TENANT, not one for the whole
+ *     run — a failure on tenant N never rolls back grants already committed for tenants 1..N-1).
+ *   - `statement_timeout` caps every query.
+ *   - Never prints a connection string — only host+database (see redactUrl in lib/railway-db-url.mjs).
+ *   - OWNER-RUN ONLY, from any cwd (this file lives in apps/api/scripts, resolves its sibling
+ *     lib/ files by its own location, and needs no other cwd-relative path):
+ *       railway run --service postgres node apps/api/scripts/publish-and-repin.mjs --report
+ *
+ * EXIT CODES
+ *   0  --report: LOSSES = 0 AND every tenant resolved (safe to apply). --apply: preview printed,
+ *      or --live applied everything (including "nothing to grant").
+ *   1  error — no database URL, connection or query failure, transaction error, or
+ *      entitlements.mode is not "shadow" (this report's premise no longer holds).
+ *   2  argument refusal, raised BEFORE any connection is opened.
+ *   3  --live confirmation refused (non-TTY with no token, mismatched phrase, missing
+ *      --backup-attested) or the --only-test-tenants guard refused the batch.
+ *   4  --report only: LOSSES > 0, and/or one or more tenants could not be resolved — repin
+ *      required (or investigate the resolution errors first). THIS IS THE GATE.
+ */
+import { createRequire } from "node:module";
+import { randomUUID, createHash } from "node:crypto";
+import readline from "node:readline";
+import { resolveDatabaseUrl, redactUrl } from "./lib/railway-db-url.mjs";
+
+const require = createRequire(import.meta.url);
+const { Client } = require("pg");
+const {
+  FEATURE_REGISTRY_MIRROR,
+  computeOldPathEffective,
+  computeNewPathEffective,
+  lossMechanism,
+  isPlanFlagEnforcementOn,
+  planKeyFromEnum,
+  findPlanDefinition,
+  addonSkuCode,
+} = require("./lib/feature-registry-mirror.cjs");
+const { isTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
+
+const HELP = `publish-and-repin.mjs — PR-0b zero-loss report / grandfather-grant apply
+
+Usage: node apps/api/scripts/publish-and-repin.mjs
+         [--report | --apply] [--live] [--backup-attested "<text>"] [--include-addon-gates]
+         [--only-test-tenants [--confirm "<phrase>"]] [--plan-flag-enforcement on|off]
+         [--json] [--help]
+
+Modes (default --report; --report and --apply are mutually exclusive):
+  --report    read-only: per-tenant GAINS/LOSSES vs. the one-rule resolver. Exit 4 if LOSSES > 0
+              OR if any tenant could not be resolved (never a false "safe" on an incomplete scan).
+  --apply     without --live: preview only, writes nothing.
+              with --live: writes one GRANT (kind=GRANDFATHER) override per APPLICABLE loss.
+              Requires --backup-attested AND a typed confirmation ("GRANT <n> OVERRIDES").
+
+  --include-addon-gates   ALSO grant "addon-gate-courtesy" losses (a RequireAddon key shipped
+                         dark pending ITS OWN rollout — pricing, a pilot, a verification step).
+                         Excluded by default: a blanket grant would permanently give the addon
+                         away and defeat that separate rollout. See the report's TOTALS breakdown.
+  --plan-flag-enforcement on|off   the API service's CURRENT PLAN_FLAG_ENFORCEMENT value — this
+                         script cannot read it live (see the header doc). Defaults to "off" (the
+                         current known value — reverted the same morning as the 2026-09-17 P0
+                         that briefly flipped it on). Confirm the real value before a production
+                         run; the report always prints which one it used.
+
+Unattended --apply --live (approved TEST tenants only):
+  --only-test-tenants    every tenant that would receive a grant must be an approved test tenant
+                         (scripts/lib/test-tenants.cjs) — one offender refuses the whole batch.
+  --confirm "<phrase>"   supply the typed confirmation as a value (requires --only-test-tenants).
+
+  --json      emit the report/preview as JSON instead of prose.
+  --help      print this help and exit 0.
+
+Exit codes: 0 ok · 1 error · 2 argument refusal · 3 confirmation/guard refused
+            · 4 (--report only) LOSSES > 0 — repin required
+`;
+
+function parseArgs(argv) {
+  const opts = {
+    help: false,
+    reportExplicit: false,
+    apply: false,
+    live: false,
+    includeAddonGates: false,
+    json: false,
+    backupAttested: null,
+    onlyTestTenants: false,
+    confirm: null,
+    // See the header doc and the const below this function: this does NOT read the live API
+    // service's actual env var. Defaults to "off" — the KNOWN current production value: the
+    // 2026-09-17 P0 was MITIGATED THE SAME MORNING by deleting/reverting this env var
+    // (project_entitlements_one_rule_2026-09-17.md: "Mitigated 06:11Z by deleting the env var...
+    // PLAN_FLAG_ENFORCEMENT stays OFF (not re-enabled)") — because `railway run --service
+    // postgres <cmd>` injects only the POSTGRES service's variables, never the API service's
+    // PLAN_FLAG_ENFORCEMENT, so this can never be read live from here.
+    planFlagEnforcement: "off",
+    errors: [],
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--help" || arg === "-h") opts.help = true;
+    else if (arg === "--report") opts.reportExplicit = true;
+    else if (arg === "--apply") opts.apply = true;
+    else if (arg === "--live") opts.live = true;
+    else if (arg === "--include-addon-gates") opts.includeAddonGates = true;
+    else if (arg === "--json") opts.json = true;
+    else if (arg === "--backup-attested") opts.backupAttested = argv[++i] ?? "";
+    else if (arg.startsWith("--backup-attested="))
+      opts.backupAttested = arg.slice("--backup-attested=".length);
+    else if (arg === "--only-test-tenants") opts.onlyTestTenants = true;
+    else if (arg === "--confirm") opts.confirm = argv[++i] ?? "";
+    else if (arg.startsWith("--confirm=")) opts.confirm = arg.slice("--confirm=".length);
+    else if (arg === "--plan-flag-enforcement") opts.planFlagEnforcement = argv[++i] ?? "";
+    else if (arg.startsWith("--plan-flag-enforcement="))
+      opts.planFlagEnforcement = arg.slice("--plan-flag-enforcement=".length);
+    else opts.errors.push(`unknown argument "${arg}"`);
+  }
+  if (opts.reportExplicit && opts.apply) {
+    opts.errors.push(
+      "--report and --apply are mutually exclusive — this tool runs exactly one mode per invocation",
+    );
+  }
+  if (opts.live && !opts.apply) {
+    opts.errors.push("--live has no effect without --apply");
+  }
+  if (opts.includeAddonGates && !opts.apply) {
+    opts.errors.push("--include-addon-gates has no effect without --apply");
+  }
+  // N6: match the other "has no effect without --apply" refusals — --report is read-only and
+  // never writes, so these write-path-only flags being silently accepted (and silently ignored)
+  // in --report mode is a real inconsistency, not just a style nit.
+  if (opts.onlyTestTenants && !opts.apply) {
+    opts.errors.push("--only-test-tenants has no effect without --apply");
+  }
+  if (opts.backupAttested !== null && !opts.apply) {
+    opts.errors.push("--backup-attested has no effect without --apply");
+  }
+  if (opts.planFlagEnforcement !== "on" && opts.planFlagEnforcement !== "off") {
+    opts.errors.push('--plan-flag-enforcement must be exactly "on" or "off"');
+  }
+  if (opts.confirm !== null && !opts.onlyTestTenants) {
+    opts.errors.push(
+      '--confirm "<phrase>" requires --only-test-tenants — an unattended confirmation is allowed ' +
+        "only when every tenant that would receive a grant resolves to an approved test tenant; " +
+        "any other target keeps the interactive TTY confirmation as its only path",
+    );
+  }
+  if (opts.live && !String(opts.backupAttested ?? "").trim()) {
+    opts.errors.push(
+      '--live requires --backup-attested "<free text naming the fresh backup>" — take the ' +
+        "backup first, then say which one it is",
+    );
+  }
+  return opts;
+}
+
+const opts = parseArgs(process.argv.slice(2));
+if (opts.help) {
+  console.log(HELP);
+  process.exit(0);
+}
+if (opts.errors.length > 0) {
+  for (const error of opts.errors) console.error(`publish-and-repin: ${error}`);
+  console.error("publish-and-repin: refused before opening any connection");
+  process.exit(2);
+}
+
+const mode = opts.apply ? "apply" : "report";
+const say = opts.json ? () => {} : (...args) => console.log(...args);
+
+// No `{ requireProxy: true }` here even for --live: unlike prod-migrate.mjs (a SCHEMA writer,
+// which always requires it), the established precedent for a DATA writer of comparable risk —
+// backfill-legacy-tenant-ids.mjs — resolves the SAME way in every mode, --live included, so a
+// local compose DATABASE_URL keeps working for this file's own db.spec.ts. Matching that sibling
+// script's own choice here rather than introducing an inconsistency between them.
+let databaseUrl;
+try {
+  databaseUrl = resolveDatabaseUrl(process.env);
+} catch (e) {
+  console.error(`publish-and-repin: ${e.message}`);
+  process.exit(1);
+}
+const target = redactUrl(databaseUrl);
+
+// ─── no-PII tenant display ──────────────────────────────────────────────────────────────────
+// sha256, not for cryptographic secrecy (a tenant id is not a secret) but so the report never
+// carries the raw id either — only a short, non-reversible-in-practice tag an operator can use to
+// tell "the same tenant" apart across GAINS/LOSSES lines within one run.
+function tenantTag(ordinal, tenantId) {
+  const hash = createHash("sha256").update(tenantId).digest("hex").slice(0, 8);
+  return `#${ordinal} (${hash})`;
+}
+
+// ─── catalog loading (mirrors PlanCatalogService, plain SQL — see audit-tenant-entitlements.mjs
+// for the identical established pattern) ──────────────────────────────────────────────────────
+
+function makeCatalogLoader(query) {
+  const versionCache = new Map();
+  let publishedVersion = null;
+
+  async function loadCatalogVersion(id) {
+    const [version] = await query(`SELECT id, version, status FROM "PlanVersion" WHERE id = $1`, [
+      id,
+    ]);
+    if (!version) return null;
+    const definitions = await query(
+      `SELECT "planKey", "featureFlags" FROM "PlanDefinition" WHERE "planVersionId" = $1 ORDER BY "sortOrder" ASC`,
+      [id],
+    );
+    const addonSkus = await query(
+      `SELECT sku, "grantsFlags" FROM "AddonSku" WHERE "planVersionId" = $1 ORDER BY "sortOrder" ASC`,
+      [id],
+    );
+    return { ...version, definitions, addonSkus };
+  }
+
+  async function loadPublishedVersion() {
+    const [row] = await query(
+      `SELECT id FROM "PlanVersion" WHERE status = 'PUBLISHED' ORDER BY version DESC LIMIT 1`,
+    );
+    if (!row) return null;
+    return loadCatalogVersion(row.id);
+  }
+
+  async function getVersionById(id) {
+    if (versionCache.has(id)) return versionCache.get(id);
+    const v = await loadCatalogVersion(id);
+    versionCache.set(id, v);
+    return v;
+  }
+
+  async function init() {
+    publishedVersion = await loadPublishedVersion();
+    return publishedVersion;
+  }
+
+  async function getVersionForTenant(planVersionId) {
+    const version = planVersionId
+      ? ((await getVersionById(planVersionId)) ?? publishedVersion)
+      : publishedVersion;
+    if (!version) throw new Error("No published plan catalog exists.");
+    return version;
+  }
+
+  return { init, getVersionForTenant, getPublished: () => publishedVersion };
+}
+
+// ─── EntitlementsService.compute() mirror (plain JS; see feature-registry-mirror.cjs's header for
+// why this lives here rather than in a shared module, and audit-tenant-entitlements.mjs for the
+// sibling copy this is kept in lock-step with) ─────────────────────────────────────────────────
+
+async function computeEntitlements(tenant, activeAddons, catalog) {
+  const planKey = tenant.subPlanKey ?? planKeyFromEnum(tenant.plan);
+  const version = await catalog.getVersionForTenant(tenant.planVersionId);
+
+  const exactDef = findPlanDefinition(version.definitions, planKey);
+  const def =
+    exactDef ?? version.definitions.find((d) => d.planKey === "STARTER") ?? version.definitions[0];
+  if (!def) throw new Error(`Plan catalog version ${version.id} has no plan definitions`);
+  const effectivePlanKey = def.planKey;
+
+  const skuByCode = new Map(version.addonSkus.map((s) => [s.sku, s]));
+  const flags = new Set(def.featureFlags);
+
+  let publishedSkuByCode = null;
+  for (const addon of activeAddons) {
+    const code = addonSkuCode(addon);
+    if (!code) continue;
+    let meta = skuByCode.get(code);
+    if (!meta) {
+      if (!publishedSkuByCode) {
+        const published = catalog.getPublished();
+        publishedSkuByCode =
+          published.id === version.id
+            ? new Map()
+            : new Map(published.addonSkus.map((s) => [s.sku, s]));
+      }
+      meta = publishedSkuByCode.get(code);
+    }
+    if (!meta) continue;
+    for (const flag of meta.grantsFlags) flags.add(flag);
+  }
+
+  return { planKey: effectivePlanKey, flags: [...flags] };
+}
+
+// ─── main ─────────────────────────────────────────────────────────────────────────────────────
+
+let client = null;
+
+function connect(connectionString) {
+  return new Client({ connectionString });
+}
+
+function confirmTokenOverride() {
+  const raw = process.env.PUBLISH_REPIN_CONFIRM_TOKEN;
+  if (!raw) return undefined;
+  if (!process.env.JEST_WORKER_ID) {
+    console.error(
+      "publish-and-repin: PUBLISH_REPIN_CONFIRM_TOKEN is ignored outside test " +
+        "(JEST_WORKER_ID unset); the confirmation must be typed on a TTY",
+    );
+    return undefined;
+  }
+  console.error(
+    "publish-and-repin: WARNING: test override PUBLISH_REPIN_CONFIRM_TOKEN active — this is NOT " +
+      "an owner-typed confirmation",
+  );
+  return raw;
+}
+
+function ask(question) {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer);
+    });
+  });
+}
+
+/** entitlements.mode (PlatformConfig, default "shadow" — mirrors EntitlementsModeService.getMode).
+ *  This report's whole premise is "today's real answer = the legacy four-layer resolver"; once
+ *  the switch is "live", that premise is backwards (the one-rule resolver is what production
+ *  actually serves) and this tool must refuse rather than print a misleading comparison. Unlike
+ *  PLAN_FLAG_ENFORCEMENT, this IS readable from the Postgres session this script already holds. */
+async function assertShadowMode() {
+  const { rows } = await client.query(
+    `SELECT value FROM "PlatformConfig" WHERE key = 'entitlements.mode' LIMIT 1`,
+  );
+  const mode = rows[0]?.value ?? "shadow";
+  if (mode !== "shadow") {
+    throw new Error(
+      `entitlements.mode is "${mode}", not "shadow" — this report's premise (today's real answer ` +
+        `is the legacy four-layer resolver) no longer holds once the one-rule resolver is live; ` +
+        `refusing rather than printing a comparison against the wrong baseline`,
+    );
+  }
+}
+
+/** Loads every PRODUCTION tenant plus everything needed to resolve entitlements for each,
+ *  and returns the per-tenant GAINS/LOSSES diff against FEATURE_REGISTRY_MIRROR. Read-only. */
+async function computeDiff() {
+  await assertShadowMode();
+
+  // class = 'PRODUCTION' is the task's own scope ("every PRODUCTION tenant"); status is
+  // deliberately NOT filtered beyond soft-delete — a SUSPENDED tenant can resume, and nothing in
+  // computeOldPathEffective/computeNewPathEffective consults Tenant.status at all, so excluding
+  // it would just create a blind spot for a tenant that later resumes with no grandfather grant
+  // ever computed for it (a real gap an earlier version of this script had).
+  const tenants = await client
+    .query(
+      `SELECT t.id, t.slug, t.plan, t."planVersionId", s."planKey" AS "subPlanKey"
+         FROM "Tenant" t
+         LEFT JOIN "TenantSubscription" s ON s."tenantId" = t.id
+        WHERE t.class = 'PRODUCTION'
+          AND t."deletedAt" IS NULL
+        ORDER BY t.id ASC`,
+    )
+    .then((r) => r.rows);
+
+  const addonRows = await client
+    .query(`SELECT "tenantId", "addonKey", sku FROM "TenantAddon" WHERE active = true`)
+    .then((r) => r.rows);
+  const addonsByTenant = new Map();
+  for (const row of addonRows) {
+    const list = addonsByTenant.get(row.tenantId) ?? [];
+    list.push(row);
+    addonsByTenant.set(row.tenantId, list);
+  }
+
+  const overrideRows = await client
+    .query(
+      `SELECT "tenantId", "featureKey", effect, "expiresAt"
+         FROM "TenantFeatureOverride"
+        WHERE "revokedAt" IS NULL`,
+    )
+    .then((r) => r.rows);
+  const overridesByTenant = new Map();
+  const now = Date.now();
+  for (const row of overrideRows) {
+    if (row.expiresAt && new Date(row.expiresAt).getTime() <= now) continue; // expired, not active
+    const map = overridesByTenant.get(row.tenantId) ?? new Map();
+    map.set(row.featureKey, row.effect);
+    overridesByTenant.set(row.tenantId, map);
+  }
+
+  const catalog = makeCatalogLoader((sql, params) => client.query(sql, params).then((r) => r.rows));
+  const published = await catalog.init();
+  if (!published) throw new Error("No PUBLISHED plan catalog version found — nothing to compute.");
+
+  // Explicit, never ambient — see the header doc's "PLAN_FLAG_ENFORCEMENT" section for why this
+  // is NOT read from process.env.PLAN_FLAG_ENFORCEMENT.
+  const oldPathEnv = { PLAN_FLAG_ENFORCEMENT: opts.planFlagEnforcement };
+
+  const gains = [];
+  const losses = [];
+  const errors = [];
+  // N3: a tenant with an ACTIVE DENY override on flag.credit_limits while enforcement is off is
+  // not just another courtesy loss — production is unconditionally ignoring an admin's explicit
+  // decision on the money guard right now (orders.service.ts's isCreditLimitCheckEnabled()
+  // returns before ever consulting overrides in this state). Surfaced separately, loudly, because
+  // --apply cannot silently "fix" it either: the DENY row already occupies the one active-override
+  // slot the ON CONFLICT target keys on, so a grandfather GRANT attempt there is a guaranteed
+  // no-op — this needs an operator decision (revoke the DENY, or accept the one-rule outcome),
+  // not a script write.
+  const moneyGuardDivergences = [];
+  let ordinal = 0;
+  for (const tenant of tenants) {
+    ordinal++;
+    const tag = tenantTag(ordinal, tenant.id);
+    let ent;
+    try {
+      ent = await computeEntitlements(tenant, addonsByTenant.get(tenant.id) ?? [], catalog);
+    } catch (e) {
+      // tag only — never the raw tenantId (no-PII contract applies to the error listing too).
+      errors.push({ tag, error: e.message });
+      continue;
+    }
+    const ctx = {
+      overrides: overridesByTenant.get(tenant.id) ?? new Map(),
+      activeAddonSet: new Set((addonsByTenant.get(tenant.id) ?? []).map((a) => a.addonKey)),
+      planKey: ent.planKey,
+      entFlags: ent.flags,
+    };
+    if (
+      ctx.overrides.get("flag.credit_limits") === "DENY" &&
+      !isPlanFlagEnforcementOn(oldPathEnv)
+    ) {
+      moneyGuardDivergences.push(tag);
+    }
+    for (const feature of FEATURE_REGISTRY_MIRROR) {
+      const oldEff = computeOldPathEffective(feature, ctx, oldPathEnv);
+      const newEff = computeNewPathEffective(feature, ctx);
+      if (oldEff === newEff) continue;
+      if (newEff && !oldEff) {
+        gains.push({ tag, tenantId: tenant.id, slug: tenant.slug, key: feature.key });
+      } else {
+        losses.push({
+          tag,
+          tenantId: tenant.id,
+          slug: tenant.slug,
+          key: feature.key,
+          mechanism: lossMechanism(feature),
+          billable: feature.billingSkus.length > 0,
+        });
+      }
+    }
+  }
+
+  return {
+    tenantCount: tenants.length,
+    keyCount: FEATURE_REGISTRY_MIRROR.length,
+    planFlagEnforcementAssumed: opts.planFlagEnforcement,
+    moneyGuardDivergences,
+    gains,
+    losses,
+    errors,
+  };
+}
+
+function printDiffTable(title, rows) {
+  say(`\n${title} (${rows.length})`);
+  if (rows.length === 0) {
+    say("  (none)");
+    return;
+  }
+  for (const row of rows)
+    say(`  ${row.tag}  ${row.key}${row.mechanism ? `  [${row.mechanism}]` : ""}`);
+}
+
+function emitJsonDiff(diff, extra = {}) {
+  if (!opts.json) return;
+  console.log(
+    JSON.stringify(
+      {
+        mode,
+        target,
+        generatedAt: new Date().toISOString(),
+        tenantsScanned: diff.tenantCount,
+        registryKeys: diff.keyCount,
+        planFlagEnforcementAssumed: diff.planFlagEnforcementAssumed,
+        gains: diff.gains.map((r) => ({ tenant: r.tag, key: r.key })),
+        losses: diff.losses.map((r) => ({
+          tenant: r.tag,
+          key: r.key,
+          mechanism: r.mechanism,
+          billable: r.billable,
+        })),
+        resolutionErrors: diff.errors,
+        moneyGuardDivergences: diff.moneyGuardDivergences,
+        summary: { gains: diff.gains.length, losses: diff.losses.length },
+        ...extra,
+      },
+      null,
+      2,
+    ),
+  );
+}
+
+/** N1: keys carrying a real billing SKU (flag.analytics/flag.forecasting -> FORECASTING,
+ *  addon.buyer_portal -> BUYER_PORTAL today — derived from the registry, never hard-coded) that
+ *  appear in `rows`, with the tenant count per key. Owner ruling 2026-09-19: these are still
+ *  granted by --apply (unlike addon-gate-courtesy), but time-boxed to 90 days rather than
+ *  permanent — this section is what makes that visible before it happens. */
+function printBillableKeysSection(rows, expiryNote) {
+  const byKey = new Map();
+  for (const r of rows) {
+    if (!r.billable) continue;
+    byKey.set(r.key, (byKey.get(r.key) ?? 0) + 1);
+  }
+  if (byKey.size === 0) return;
+  say(`\n=== BILLABLE KEYS IN THE WRITE SET (${expiryNote}) ===`);
+  for (const [key, count] of byKey) say(`  ${key}  tenants=${count}`);
+}
+
+/** N3: an active DENY override on flag.credit_limits while enforcement is off — see
+ *  computeDiff's own doc comment on moneyGuardDivergences for why this can't be a normal loss row
+ *  alone and why --apply cannot silently resolve it. */
+function printMoneyGuardDivergences(diff) {
+  if (diff.moneyGuardDivergences.length === 0) return;
+  say(
+    `\n⚠ MONEY-GUARD DIVERGENCE (${diff.moneyGuardDivergences.length}) — real path ignores ` +
+      "overrides while enforcement is off: these tenant(s) have an ACTIVE DENY override on " +
+      "flag.credit_limits, but production runs the credit-limit check for them anyway right now " +
+      "(orders.service.ts never consults overrides while PLAN_FLAG_ENFORCEMENT is off). --apply " +
+      "cannot fix this — the DENY row already occupies the one active-override slot, so a " +
+      "grandfather GRANT attempt there is a guaranteed no-op. Needs an operator decision (revoke " +
+      "the DENY, or accept that the one rule will honor it):",
+  );
+  for (const tag of diff.moneyGuardDivergences) say(`  ${tag}`);
+}
+
+async function runReport() {
+  say(`\n=== PR-0b ZERO-LOSS REPORT — ${target} ===`);
+  say("    session is READ ONLY; no writes are possible\n");
+  say(
+    `⚠ PLAN_FLAG_ENFORCEMENT assumed: "${opts.planFlagEnforcement}" (NOT read from the live API ` +
+      `service — pass --plan-flag-enforcement=on if that disagrees with today's real value; see ` +
+      "this script's header doc)\n",
+  );
+
+  const diff = await computeDiff();
+  say(`Tenants scanned: ${diff.tenantCount}   Registry keys checked: ${diff.keyCount}`);
+  if (diff.errors.length > 0) {
+    say(
+      `\n⚠ RESOLUTION ERRORS (${diff.errors.length} tenant(s) could NOT be checked — this is NOT ` +
+        `a clean bill of health regardless of the LOSSES count below):`,
+    );
+    for (const e of diff.errors) say(`  ${e.tag}: ${e.error}`);
+  }
+  printDiffTable("=== GAINS — one rule grants, today's four-layer resolver denies ===", diff.gains);
+  printDiffTable(
+    "=== LOSSES — today's four-layer resolver grants, one rule denies ===",
+    diff.losses,
+  );
+  printBillableKeysSection(
+    diff.losses,
+    "N1 ruled 2026-09-19: 90-day grants for billable keys — would NOT be permanent if --apply --live runs",
+  );
+  printMoneyGuardDivergences(diff);
+
+  const byMechanism = (m) => diff.losses.filter((r) => r.mechanism === m).length;
+  say("\n=== TOTALS ===");
+  say(`  GAINS:  ${diff.gains.length}`);
+  say(`  LOSSES: ${diff.losses.length}`);
+  say(`    plan-flag-courtesy:         ${byMechanism("plan-flag-courtesy")}`);
+  say(
+    `    addon-gate-courtesy:        ${byMechanism("addon-gate-courtesy")}  (--apply excludes these by default — see --include-addon-gates)`,
+  );
+  say(`    credit-limit-service-toggle: ${byMechanism("credit-limit-service-toggle")}`);
+
+  const clean = diff.losses.length === 0 && diff.errors.length === 0;
+  const verdict = clean
+    ? "LOSSES: 0 — safe to apply"
+    : diff.losses.length === 0
+      ? `LOSSES: 0, but ${diff.errors.length} tenant(s) unresolved — NOT safe to apply until investigated`
+      : `LOSSES: ${diff.losses.length} — repin required`;
+  say(`\n${verdict}`);
+  say("\n=== END — session was read-only; nothing was modified ===\n");
+
+  emitJsonDiff(diff, { verdict });
+  return clean ? 0 : 4;
+}
+
+/** Writes one GRANT/GRANDFATHER override per loss row. One transaction PER TENANT. Returns the
+ *  number of rows actually inserted (ON CONFLICT DO NOTHING may insert fewer than losses.length
+ *  if a concurrent writer or a prior partial run already created some of them). */
+async function applyGrants(losses, batchId) {
+  const byTenant = new Map();
+  for (const row of losses) {
+    const list = byTenant.get(row.tenantId) ?? [];
+    list.push(row);
+    byTenant.set(row.tenantId, list);
+  }
+
+  const courtesyReason =
+    `PR-0b zero-loss grandfather grant (batch ${batchId}): today's four-layer resolver grants ` +
+    `this key; the one rule (preset ∪ grants − denies) would deny it. Auto-generated by ` +
+    `publish-and-repin.mjs --apply — see local-assets/handoff/2026-09-16/feature-grants-v2/design.md PR-0b.`;
+  // N1, owner ruling 2026-09-19: a key carrying a real billing SKU is grandfathered too (same as
+  // any other courtesy loss), but time-boxed rather than permanent — unlike a plain courtesy
+  // grant, leaving this one non-expiring would quietly convert a reversible "dark" gate into a
+  // standing, revenue-affecting exception with no forcing function to ever revisit it.
+  const BILLABLE_GRANT_DAYS = 90;
+  const billableReason =
+    `PR-0b grandfather (billable SKU, 90-day) — batch ${batchId}: today's four-layer resolver ` +
+    `grants this key via a real billing SKU; the one rule would deny it. Expires in ` +
+    `${BILLABLE_GRANT_DAYS} days rather than standing permanently — re-evaluate before then ` +
+    `(re-pin the catalog, sell the SKU, or renew). Auto-generated by publish-and-repin.mjs --apply.`;
+
+  say("\n  session read-only flag lifted for this apply; opening one transaction per tenant");
+  await client.query("SET default_transaction_read_only = off");
+
+  let inserted = 0;
+  const perTenant = [];
+  for (const [tenantId, rows] of byTenant) {
+    await client.query("BEGIN");
+    try {
+      let tenantInserted = 0;
+      for (const row of rows) {
+        // Mirrors FeatureOverrideService.create()'s own defensive step: the partial unique index
+        // is `WHERE revokedAt IS NULL`, so an expired-but-never-revoked row still occupies that
+        // slot and would make the INSERT below silently conflict-and-skip forever, understating
+        // `inserted` and leaving the loss permanently "unexplainable" by a concurrent-write
+        // story that isn't what actually happened. No-ops when nothing has expired.
+        await client.query(
+          `UPDATE "TenantFeatureOverride"
+              SET "revokedAt" = now()
+            WHERE "tenantId" = $1 AND "featureKey" = $2 AND "revokedAt" IS NULL
+              AND "expiresAt" IS NOT NULL AND "expiresAt" <= now()`,
+          [tenantId, row.key],
+        );
+        const reason = row.billable ? billableReason : courtesyReason;
+        const expiresAtSql = row.billable
+          ? `now() + interval '${BILLABLE_GRANT_DAYS} days'`
+          : "NULL";
+        const res = await client.query(
+          `INSERT INTO "TenantFeatureOverride"
+             ("id", "tenantId", "featureKey", "effect", "kind", "reason", "expiresAt", "createdById", "createdAt")
+           VALUES ($1, $2, $3, 'GRANT', 'GRANDFATHER', $4, ${expiresAtSql}, NULL, now())
+           ON CONFLICT ("tenantId", "featureKey") WHERE "revokedAt" IS NULL DO NOTHING
+           RETURNING id`,
+          [randomUUID(), tenantId, row.key, reason],
+        );
+        if (res.rows.length === 1) tenantInserted++;
+      }
+      await client.query("COMMIT");
+      inserted += tenantInserted;
+      perTenant.push({ tag: rows[0].tag, inserted: tenantInserted, candidates: rows.length });
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      // Per-tenant transactions are independent by design (a failure on tenant N never rolls
+      // back tenants 1..N-1, already committed) — but that means the operator needs to SEE what
+      // already landed before this one failed, not just the one error message main()'s catch
+      // would otherwise print alone.
+      e.pr0bPartialProgress = perTenant;
+      throw e;
+    }
+  }
+  return { inserted, perTenant };
+}
+
+async function runApply() {
+  say(`\n=== PR-0b APPLY (grandfather grants) — ${target} ===`);
+  say(
+    `⚠ PLAN_FLAG_ENFORCEMENT assumed: "${opts.planFlagEnforcement}" (NOT read from the live API ` +
+      `service — pass --plan-flag-enforcement=on if that disagrees with today's real value)`,
+  );
+
+  const diff = await computeDiff();
+  say(`Tenants scanned: ${diff.tenantCount}   Registry keys checked: ${diff.keyCount}`);
+  // N2: --report was hardened to fail on an unresolvable tenant; --apply was not, which let it
+  // silently skip that tenant (no prose, no grandfather grant) while --live proceeded to write for
+  // everyone else and printed "TOTAL inserted=n/n" as if nothing were missing. Same treatment now.
+  if (diff.errors.length > 0) {
+    say(
+      `\n⚠ RESOLUTION ERRORS (${diff.errors.length} tenant(s) could NOT be checked — excluded ` +
+        "from both the preview and any write below):",
+    );
+    for (const e of diff.errors) say(`  ${e.tag}: ${e.error}`);
+    if (opts.live) {
+      say(
+        "\n=== REFUSED — unresolved tenant(s) present ===\n" +
+          "--apply --live refuses to run while any tenant could not be checked — investigate the " +
+          "resolution error(s) above first; NOTHING was written.\n",
+      );
+      emitJsonDiff(diff, { applyRefused: "resolution-errors", applied: null });
+      return 4;
+    }
+  }
+
+  // addon-gate-courtesy losses (ocr / crm_gohighlevel / email.connected_mailbox-style rows: a
+  // RequireAddon key shipped "dark" pending its OWN rollout — pricing, a pilot, a verification
+  // step) are EXCLUDED from what --apply writes by default. A blanket, non-expiring GRANT to
+  // every tenant would permanently defeat that separate rollout process — design.md: "addon-gate
+  // dark|enforced is a per-route rollout property, not an entitlement source; left alone". Pass
+  // --include-addon-gates to include them anyway (e.g. once a specific key's own rollout is done
+  // and its blast-radius report is clean — apps/api/scripts/report-addon-gate-blast-radius.mjs).
+  const excludedLosses = opts.includeAddonGates
+    ? []
+    : diff.losses.filter((r) => r.mechanism === "addon-gate-courtesy");
+  const applicableLosses = opts.includeAddonGates
+    ? diff.losses
+    : diff.losses.filter((r) => r.mechanism !== "addon-gate-courtesy");
+
+  printDiffTable(
+    "=== WOULD GRANT (preview) — one GRANT/GRANDFATHER override per row ===",
+    applicableLosses,
+  );
+  if (excludedLosses.length > 0) {
+    say(
+      `\n=== EXCLUDED FROM --apply (${excludedLosses.length}) — addon-gate-courtesy losses; ` +
+        "pass --include-addon-gates to include them ===",
+    );
+    for (const row of excludedLosses) say(`  ${row.tag}  ${row.key}`);
+  }
+  const billableExpiryDate = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+  printBillableKeysSection(
+    applicableLosses,
+    `N1 ruled 2026-09-19: will expire ${billableExpiryDate}, not permanent`,
+  );
+  printMoneyGuardDivergences(diff);
+
+  if (applicableLosses.length === 0) {
+    say(
+      "\n=== NOTHING TO GRANT — every applicable key is already explained by preset/grants ===\n",
+    );
+    emitJsonDiff(diff, { applied: null, excludedAddonGateLosses: excludedLosses.length });
+    return 0;
+  }
+
+  if (opts.onlyTestTenants) {
+    const offenders = applicableLosses.filter((r) => !isTestTenant(r.slug));
+    if (offenders.length > 0) {
+      const distinctSlugs = [...new Set(offenders.map((r) => r.slug))];
+      say("\n=== REFUSED — --only-test-tenants ===");
+      say(
+        `${offenders.length} candidate grant(s) target a tenant that is not an approved test ` +
+          `tenant: ${distinctSlugs.join(", ")}`,
+      );
+      say("=== END — NOTHING was written ===\n");
+      emitJsonDiff(diff, { testTenantError: distinctSlugs, applied: null });
+      return 3;
+    }
+  }
+
+  if (!opts.live) {
+    say(
+      `\n${applicableLosses.length} override(s) across ` +
+        `${new Set(applicableLosses.map((r) => r.tenantId)).size} tenant(s) would be GRANTED. ` +
+        'Nothing was written — pass --apply --live --backup-attested "<backup name>" to apply.',
+    );
+    say("\n=== END — nothing was modified ===\n");
+    emitJsonDiff(diff, { applied: null, excludedAddonGateLosses: excludedLosses.length });
+    return 0;
+  }
+
+  const n = applicableLosses.length;
+  const phrase = `GRANT ${n} OVERRIDES`;
+  const injected = opts.confirm !== null ? opts.confirm : confirmTokenOverride();
+  if (injected === undefined && !process.stdin.isTTY) {
+    console.error(
+      "publish-and-repin: refused — --live needs an interactive TTY for the typed confirmation, " +
+        "and stdin is not one",
+    );
+    emitJsonDiff(diff, { applyRefused: "no-tty", applied: null });
+    return 3;
+  }
+  const answer = injected ?? (await ask(`Type "${phrase}" to proceed: `));
+  if (answer.trim() !== phrase) {
+    console.error("publish-and-repin: refused — confirmation text did not match");
+    emitJsonDiff(diff, { applyRefused: "phrase-mismatch", applied: null });
+    return 3;
+  }
+
+  const batchId = `pr0b-${new Date().toISOString().slice(0, 10)}-${randomUUID().slice(0, 8)}`;
+  const { inserted, perTenant } = await applyGrants(applicableLosses, batchId);
+
+  say(`\n=== APPLIED (batch ${batchId}) ===`);
+  for (const t of perTenant) say(`  ${t.tag}  inserted=${t.inserted}/${t.candidates}`);
+  say(`  TOTAL inserted=${inserted}/${n}`);
+  if (inserted < n) {
+    say(
+      "  (fewer rows inserted than candidates — the remainder already had an active override, " +
+        "written by a concurrent run or a prior partial apply; this run is idempotent by design)",
+    );
+  }
+  say("");
+
+  emitJsonDiff(diff, {
+    applied: { batchId, inserted, candidates: n },
+    excludedAddonGateLosses: excludedLosses.length,
+  });
+  return 0;
+}
+
+async function main() {
+  client = connect(databaseUrl);
+  await client.connect();
+
+  await client.query("SET default_transaction_read_only = on");
+  await client.query("SET statement_timeout = '60s'");
+
+  return mode === "apply" ? runApply() : runReport();
+}
+
+main()
+  .then((code) => {
+    process.exitCode = code;
+  })
+  .catch((e) => {
+    console.error(`publish-and-repin: failed — ${e.message}`);
+    if (Array.isArray(e.pr0bPartialProgress) && e.pr0bPartialProgress.length > 0) {
+      console.error(
+        `publish-and-repin: ${e.pr0bPartialProgress.length} tenant(s) already COMMITTED before ` +
+          "this failure (per-tenant transactions are independent — nothing above was rolled back):",
+      );
+      for (const t of e.pr0bPartialProgress) {
+        console.error(`  ${t.tag}  inserted=${t.inserted}/${t.candidates}`);
+      }
+    }
+    process.exitCode = 1;
+  })
+  .finally(() => client?.end?.());

@@ -413,6 +413,9 @@ function main() {
         ":(glob)apps/mobile/__tests__/**",
         ":(glob)apps/mobile/**/*.test.ts",
         ":(glob)apps/mobile/**/*.test.tsx",
+        // The scan gate/engine the mobile REG-B190/B191/B192/B202 tests prove now lives in
+        // @routeflow/scanning; edits there must still invalidate a stale mobile.json.
+        ":(glob)packages/scanning/**",
       ],
     },
     {
