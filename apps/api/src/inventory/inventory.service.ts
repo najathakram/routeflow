@@ -22,6 +22,7 @@ import {
 } from "./dto/stock-count-session.dto";
 import { ListMovementsDto } from "./dto/list-movements.dto";
 import { ListPurchaseOrdersDto } from "./dto/list-purchase-orders.dto";
+import { UpdatePurchaseOrderDto } from "./dto/update-purchase-order.dto";
 import { CreateSupplierDto } from "./dto/create-supplier.dto";
 import { UpdateSupplierDto } from "./dto/update-supplier.dto";
 import { SetCostBasisDto } from "./dto/set-cost-basis.dto";
@@ -1126,6 +1127,9 @@ export class InventoryService {
     const restockedProductIds: string[] = [];
 
     const result = await this.prisma.tenantTransaction(async (tx) => {
+      // Serialize against a concurrent receive / edit-and-re-apply of the SAME
+      // PO: without the row lock both read the same qtyReceived and post twice.
+      await tx.$executeRaw`SELECT id FROM "PurchaseOrder" WHERE id = ${id} FOR UPDATE`;
       const po = await tx.purchaseOrder.findUnique({ where: { id }, include: { items: true } });
       if (!po) throw new NotFoundException("PO not found");
       if (po.status === "CLOSED")
@@ -1183,60 +1187,7 @@ export class InventoryService {
           data: { qtyReceived: newQtyReceived },
         });
 
-        const qtyReceived = new Prisma.Decimal(actualQty);
-        // The PO line's cost basis is a property of the STORED row, never of the
-        // receive payload: `item.unitCost` is written once at PO creation and is
-        // always per PIECE (createPurchaseOrder stores it raw, and the Create-PO
-        // form converts a Cost-per-Box entry to per-piece before posting — see
-        // PurchaseOrderItemDto). So boxes/pieces here convert the QUANTITY only;
-        // dividing the cost again would value the same goods at 1/unitsPerBox.
-        const itemUnitCost = costDecimal(item.unitCost);
-
-        const newAvgCost = prod
-          ? nextAverageCost(prod.currentStock, prod.averageCost, qtyReceived, itemUnitCost)
-          : itemUnitCost;
-        const stockAfter = (prod?.currentStock ?? new Prisma.Decimal(0)).add(qtyReceived);
-        // STANDARD products are valued from their operator-set cost, so a receipt
-        // must not move averageCost. Mirrors recordPurchase and the vendor-bill
-        // receive path, which already guard this (the bill path was fixed for this
-        // exact bug class; PO receive was missed).
-        const updatesAverage = prod ? prod.costingMethod !== CostingMethod.STANDARD : true;
-
-        await tx.stockMovement.create({
-          data: {
-            productId: item.productId,
-            type: "PURCHASE",
-            quantity: qtyReceived,
-            unitCost: itemUnitCost,
-            avgCostAfter: updatesAverage ? newAvgCost : (prod?.averageCost ?? null),
-            stockAfter,
-            supplierId: po.supplierId,
-            reference: po.poNumber,
-            performedById: userId,
-          },
-        });
-
-        // Create StockLot for FIFO/LIFO tracking
-        await tx.stockLot.create({
-          data: {
-            productId: item.productId,
-            purchaseDate: new Date(),
-            qty: qtyReceived,
-            remainingQty: qtyReceived,
-            unitCost: itemUnitCost,
-            reference: po.poNumber,
-          },
-        });
-
-        if (prod) {
-          await tx.product.update({
-            where: { id: item.productId },
-            data: {
-              currentStock: stockAfter,
-              ...(updatesAverage ? { averageCost: newAvgCost } : {}),
-            },
-          });
-        }
+        await this.postPoReceipt(tx, po, item, prod, actualQty, userId);
       }
 
       const updatedPo = await tx.purchaseOrder.findUnique({
@@ -1264,6 +1215,433 @@ export class InventoryService {
 
     this.fireStockAlerts(restockedProductIds);
     return result;
+  }
+
+  /**
+   * Post ONE receipt line of a purchase order: the PURCHASE movement, the
+   * StockLot and the product's stock/average. The single writer shared by
+   * {@link receivePurchaseOrder} and the re-apply leg of
+   * {@link updatePurchaseOrder}, so a re-applied PO is valued exactly like a
+   * fresh receive of the same lines. `qty` is PIECES.
+   *
+   * `currentStock` is written as an `increment`, never as a value derived from
+   * the earlier read: a concurrent order's stock decrement between that read and
+   * this write would otherwise be silently overwritten.
+   */
+  private async postPoReceipt(
+    tx: Prisma.TransactionClient,
+    po: { poNumber: string; supplierId: string },
+    item: { productId: string; unitCost: Prisma.Decimal | number | string },
+    prod: {
+      currentStock: Prisma.Decimal;
+      averageCost: Prisma.Decimal | null;
+      costingMethod: CostingMethod;
+    } | null,
+    qty: number | Prisma.Decimal,
+    userId: string,
+  ) {
+    const qtyReceived = new Prisma.Decimal(qty);
+    // The PO line's cost basis is a property of the STORED row, never of the
+    // receive payload: `item.unitCost` is written once at PO creation and is
+    // always per PIECE (createPurchaseOrder stores it raw, and the Create-PO
+    // form converts a Cost-per-Box entry to per-piece before posting — see
+    // PurchaseOrderItemDto). So boxes/pieces here convert the QUANTITY only;
+    // dividing the cost again would value the same goods at 1/unitsPerBox.
+    const itemUnitCost = costDecimal(item.unitCost);
+
+    const newAvgCost = prod
+      ? nextAverageCost(prod.currentStock, prod.averageCost, qtyReceived, itemUnitCost)
+      : itemUnitCost;
+    const stockAfter = (prod?.currentStock ?? new Prisma.Decimal(0)).add(qtyReceived);
+    // STANDARD products are valued from their operator-set cost, so a receipt
+    // must not move averageCost. Mirrors recordPurchase and the vendor-bill
+    // receive path, which already guard this (the bill path was fixed for this
+    // exact bug class; PO receive was missed).
+    const updatesAverage = prod ? prod.costingMethod !== CostingMethod.STANDARD : true;
+
+    await tx.stockMovement.create({
+      data: {
+        productId: item.productId,
+        type: "PURCHASE",
+        quantity: qtyReceived,
+        unitCost: itemUnitCost,
+        avgCostAfter: updatesAverage ? newAvgCost : (prod?.averageCost ?? null),
+        stockAfter,
+        supplierId: po.supplierId,
+        reference: po.poNumber,
+        performedById: userId,
+      },
+    });
+
+    // Create StockLot for FIFO/LIFO tracking
+    await tx.stockLot.create({
+      data: {
+        productId: item.productId,
+        purchaseDate: new Date(),
+        qty: qtyReceived,
+        remainingQty: qtyReceived,
+        unitCost: itemUnitCost,
+        reference: po.poNumber,
+      },
+    });
+
+    if (prod) {
+      await tx.product.update({
+        where: { id: item.productId },
+        data: {
+          currentStock: { increment: qtyReceived },
+          ...(updatesAverage ? { averageCost: newAvgCost } : {}),
+        },
+      });
+    }
+  }
+
+  /**
+   * Undo every stock effect of a purchase order's receipts — the whole-document
+   * reverse the re-apply leg of {@link updatePurchaseOrder} starts from. Mirrors
+   * `VendorBillsService.revertToDraft` (+ `reverseBillLots`): the PURCHASE
+   * movements carrying `reference = poNumber` are the truth of what was posted,
+   * so they are reversed newest-first through {@link reverseAverageCost} and
+   * deleted, and the lots are surrendered.
+   *
+   * Refuses (BadRequest) when the movements do not add up to the lines'
+   * `qtyReceived` per product — a legacy or hand-edited PO whose stock effect
+   * cannot be reconstructed must be edited document-only, never re-applied on
+   * top of an unknown baseline (that would double- or under-count stock).
+   *
+   * Accepted approximation (plan risk 1): if sales happened since the receipt
+   * the restated average is approximate and stock may pass through a lower value
+   * inside the transaction — exactly what a bill's revertToDraft does today.
+   */
+  private async reversePoReceipts(
+    tx: Prisma.TransactionClient,
+    po: {
+      poNumber: string;
+      items: { productId: string; qtyReceived: Prisma.Decimal }[];
+    },
+  ) {
+    const productIds = [...new Set(po.items.map((i) => i.productId))];
+    const movements = await tx.stockMovement.findMany({
+      where: {
+        reference: po.poNumber,
+        type: MovementType.PURCHASE,
+        productId: { in: productIds },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    const posted = new Map<string, Prisma.Decimal>();
+    for (const m of movements) {
+      posted.set(m.productId, (posted.get(m.productId) ?? new Prisma.Decimal(0)).add(m.quantity));
+    }
+    const lineTotals = new Map<string, Prisma.Decimal>();
+    for (const i of po.items) {
+      lineTotals.set(
+        i.productId,
+        (lineTotals.get(i.productId) ?? new Prisma.Decimal(0)).add(i.qtyReceived),
+      );
+    }
+    for (const [productId, lineQty] of lineTotals) {
+      const postedQty = posted.get(productId) ?? new Prisma.Decimal(0);
+      if (!postedQty.eq(lineQty)) {
+        throw new BadRequestException(
+          `${po.poNumber}: the stock movements on record (${postedQty.toString()}) do not match what its lines ` +
+            `say was received (${lineQty.toString()}), so its inventory cannot be re-applied safely. ` +
+            `Save the edit as document-only (keep stock as is) instead.`,
+        );
+      }
+    }
+
+    const byProduct = new Map<string, typeof movements>();
+    for (const m of movements) {
+      const list = byProduct.get(m.productId) ?? [];
+      list.push(m);
+      byProduct.set(m.productId, list);
+    }
+    for (const [productId, list] of byProduct) {
+      const product = await tx.product.findUnique({
+        where: { id: productId },
+        select: { currentStock: true, averageCost: true, costingMethod: true },
+      });
+      if (!product) continue;
+      // STANDARD products never had their average moved by the receipt, so the
+      // reversal must not move it either.
+      const tracksAverage = product.costingMethod !== CostingMethod.STANDARD;
+      let stock = product.currentStock;
+      let avg = product.averageCost;
+      let totalQty = new Prisma.Decimal(0);
+      for (const m of list) {
+        if (tracksAverage && avg != null && m.unitCost != null) {
+          // null ⇒ the reversal empties stock: KEEP the previous average so the
+          // product's cost basis survives (same contract as revertToDraft).
+          const before = reverseAverageCost(stock, avg, m.quantity, m.unitCost);
+          if (before !== null) avg = before;
+        }
+        stock = stock.sub(m.quantity);
+        totalQty = totalQty.add(m.quantity);
+      }
+      // Write the average only when the reversal actually moved it — writing the
+      // unchanged value back would clobber a concurrent cost update for nothing.
+      const avgMoved =
+        tracksAverage && avg != null && product.averageCost != null && !avg.eq(product.averageCost);
+      await tx.product.update({
+        where: { id: productId },
+        data: {
+          currentStock: { decrement: totalQty },
+          ...(avgMoved ? { averageCost: avg! } : {}),
+        },
+      });
+    }
+
+    if (movements.length > 0) {
+      await tx.stockMovement.deleteMany({ where: { id: { in: movements.map((m) => m.id) } } });
+    }
+    await this.reversePoLots(tx, po.poNumber);
+  }
+
+  /**
+   * Remove the StockLots a PO's receipts created (reference = poNumber).
+   * Untouched lots are deleted outright; partially-consumed lots can only
+   * surrender what remains, so they are zeroed and annotated — the same rule
+   * `VendorBillsService.reverseBillLots` applies to a bill's lots.
+   */
+  private async reversePoLots(tx: Prisma.TransactionClient, poNumber: string) {
+    const lots = await tx.stockLot.findMany({ where: { reference: poNumber } });
+    for (const lot of lots) {
+      const remaining = new Prisma.Decimal(lot.remainingQty);
+      if (remaining.gte(new Prisma.Decimal(lot.qty))) {
+        await tx.stockLot.delete({ where: { id: lot.id } });
+      } else {
+        const consumed = new Prisma.Decimal(lot.qty).sub(remaining);
+        await tx.stockLot.update({
+          where: { id: lot.id },
+          data: {
+            remainingQty: 0,
+            notes: `${lot.notes ? `${lot.notes} ` : ""}(PO edited; ${consumed.toString()} already consumed)`,
+          },
+        });
+      }
+    }
+  }
+
+  /**
+   * Edit a purchase order — `PATCH /inventory/purchase-orders/:id`.
+   *
+   *  - DRAFT / SENT: nothing was received, so lines and header edit freely.
+   *  - PARTIAL / RECEIVED, header only (notes, expected date): always allowed.
+   *  - PARTIAL / RECEIVED with `items` (or a supplier change) — the caller MUST
+   *    say what happens to stock via `reapplyInventory`:
+   *      • `true`  — ONE transaction: reverse every stock effect of this PO
+   *        ({@link reversePoReceipts}), apply the edit, re-post the receipts
+   *        through {@link postPoReceipt}. A RECEIVED PO is re-received in full
+   *        at the edited quantities/costs; a PARTIAL PO re-posts what each
+   *        surviving line had received, capped at its new ordered quantity.
+   *      • `false` — document-only: `qtyOrdered ≥ qtyReceived` is enforced, a
+   *        received line can't change product or be removed, stock and cost are
+   *        untouched (the PO cost may then diverge from valuation — by the
+   *        operator's explicit choice).
+   *  - CLOSED: rejected.
+   *
+   * The PO row is locked for the transaction, and so is every receive, so an
+   * edit can't interleave with a receipt of the same PO.
+   */
+  async updatePurchaseOrder(id: string, dto: UpdatePurchaseOrderDto, userId: string) {
+    const restockedProductIds: string[] = [];
+
+    const result = await this.prisma.tenantTransaction(async (tx) => {
+      await tx.$executeRaw`SELECT id FROM "PurchaseOrder" WHERE id = ${id} FOR UPDATE`;
+      const po = await tx.purchaseOrder.findUnique({ where: { id }, include: { items: true } });
+      if (!po) throw new NotFoundException("Purchase order not found");
+      if (po.status === "CLOSED")
+        throw new BadRequestException("Cannot edit a closed purchase order");
+
+      const wasReceived = po.status === "PARTIAL" || po.status === "RECEIVED";
+      const editsLines = dto.items !== undefined;
+      if (editsLines && dto.items!.length === 0)
+        throw new BadRequestException("At least one item is required");
+      const supplierChanged = dto.supplierId !== undefined && dto.supplierId !== po.supplierId;
+      const touchesStock = wasReceived && (editsLines || supplierChanged);
+      if (touchesStock && dto.reapplyInventory === undefined) {
+        throw new BadRequestException(
+          "This purchase order has already been received — say whether to re-apply the edit to " +
+            "inventory (reapplyInventory: true) or keep stock as is (reapplyInventory: false).",
+        );
+      }
+      if (wasReceived && supplierChanged && dto.reapplyInventory === false) {
+        throw new BadRequestException(
+          "The supplier of a received purchase order can only change together with re-applying inventory.",
+        );
+      }
+      const reapply = touchesStock && dto.reapplyInventory === true;
+
+      const header: Prisma.PurchaseOrderUncheckedUpdateInput = {};
+      if (supplierChanged) {
+        const supplier = await tx.supplier.findUnique({ where: { id: dto.supplierId! } });
+        if (!supplier) throw new NotFoundException("Supplier not found");
+        header.supplierId = dto.supplierId!;
+      }
+      if (dto.expectedDate !== undefined)
+        header.expectedDate = dto.expectedDate ? new Date(dto.expectedDate) : null;
+      if (dto.notes !== undefined) header.notes = dto.notes;
+
+      if (!editsLines) {
+        if (Object.keys(header).length === 0) return this.loadPoForResponse(tx, id);
+        await tx.purchaseOrder.update({ where: { id }, data: header });
+        return this.loadPoForResponse(tx, id);
+      }
+
+      // ── Resolve the edited line set ──
+      const items = dto.items!;
+      const existingById = new Map<string, (typeof po.items)[number]>(
+        po.items.map((i) => [i.id, i] as const),
+      );
+      const keptIds = new Set<string>();
+      for (const line of items) {
+        if (line.id === undefined) continue;
+        if (!existingById.has(line.id))
+          throw new BadRequestException(`Line ${line.id} does not belong to ${po.poNumber}`);
+        if (keptIds.has(line.id))
+          throw new BadRequestException(`Line ${line.id} appears more than once`);
+        keptIds.add(line.id);
+      }
+      const products = await tx.product.findMany({
+        where: { id: { in: [...new Set(items.map((l) => l.productId))] } },
+      });
+      const productIds = new Set(products.map((p) => p.id));
+      for (const line of items) {
+        if (!productIds.has(line.productId))
+          throw new NotFoundException(`Product ${line.productId} not found`);
+      }
+      const removed = po.items.filter((i) => !keptIds.has(i.id));
+
+      // ── Document-only guards on a received PO ──
+      if (wasReceived && !reapply) {
+        for (const line of items) {
+          const ex = line.id ? existingById.get(line.id) : undefined;
+          if (!ex) continue;
+          if (new Prisma.Decimal(line.qtyOrdered).lt(ex.qtyReceived)) {
+            throw new BadRequestException(
+              `Cannot lower "${line.productId}" to ${line.qtyOrdered} — ${Number(ex.qtyReceived)} ` +
+                `already received on ${po.poNumber}. Re-apply inventory to correct the receipt.`,
+            );
+          }
+          if (ex.qtyReceived.gt(0) && line.productId !== ex.productId) {
+            throw new BadRequestException(
+              "A received line can't change product without re-applying inventory.",
+            );
+          }
+        }
+        for (const r of removed) {
+          if (r.qtyReceived.gt(0)) {
+            throw new BadRequestException(
+              "A line that has been received can't be removed without re-applying inventory.",
+            );
+          }
+        }
+      }
+
+      // ── Reverse (re-apply only) ──
+      if (reapply) await this.reversePoReceipts(tx, po);
+
+      // ── Target receipt per line ──
+      const targetReceived = (line: (typeof items)[number]): Prisma.Decimal => {
+        if (!wasReceived) return new Prisma.Decimal(0);
+        const ex = line.id ? existingById.get(line.id) : undefined;
+        if (!reapply) return ex ? ex.qtyReceived : new Prisma.Decimal(0);
+        const ordered = new Prisma.Decimal(line.qtyOrdered);
+        if (po.status === "RECEIVED") return ordered; // re-received in full
+        return ex ? Prisma.Decimal.min(ex.qtyReceived, ordered) : new Prisma.Decimal(0);
+      };
+
+      const lineData = items.map((line) => {
+        const totalCost = roundMoney(line.qtyOrdered * line.unitCost);
+        return {
+          line,
+          totalCost,
+          qtyReceived: targetReceived(line),
+        };
+      });
+      const totalAmount = roundMoney(lineData.reduce((s, l) => s + l.totalCost, 0));
+
+      const nextStatus = (() => {
+        if (!wasReceived) return po.status;
+        const all = lineData.every((l) => l.qtyReceived.gte(l.line.qtyOrdered));
+        const any = lineData.some((l) => l.qtyReceived.gt(0));
+        return all ? "RECEIVED" : any ? "PARTIAL" : "SENT";
+      })();
+
+      await tx.purchaseOrder.update({
+        where: { id },
+        data: {
+          ...header,
+          totalAmount,
+          status: nextStatus,
+          items: {
+            ...(removed.length > 0 ? { deleteMany: { id: { in: removed.map((r) => r.id) } } } : {}),
+            update: lineData
+              .filter((l) => l.line.id !== undefined)
+              .map((l) => ({
+                where: { id: l.line.id! },
+                data: {
+                  productId: l.line.productId,
+                  qtyOrdered: l.line.qtyOrdered,
+                  qtyReceived: l.qtyReceived,
+                  unitCost: l.line.unitCost,
+                  totalCost: l.totalCost,
+                  ...(l.line.sku !== undefined ? { sku: l.line.sku } : {}),
+                  ...(l.line.packSize !== undefined ? { packSize: l.line.packSize } : {}),
+                },
+              })),
+            create: lineData
+              .filter((l) => l.line.id === undefined)
+              .map((l) => ({
+                productId: l.line.productId,
+                qtyOrdered: l.line.qtyOrdered,
+                qtyReceived: l.qtyReceived,
+                unitCost: l.line.unitCost,
+                totalCost: l.totalCost,
+                sku: l.line.sku ?? null,
+                packSize: l.line.packSize ?? null,
+              })),
+          },
+        },
+      });
+
+      // ── Re-post (re-apply only) ──
+      if (reapply) {
+        const supplierId = supplierChanged ? dto.supplierId! : po.supplierId;
+        for (const l of lineData) {
+          if (l.qtyReceived.lte(0)) continue;
+          const prod = await tx.product.findUnique({ where: { id: l.line.productId } });
+          await this.postPoReceipt(
+            tx,
+            { poNumber: po.poNumber, supplierId },
+            { productId: l.line.productId, unitCost: l.line.unitCost },
+            prod,
+            l.qtyReceived,
+            userId,
+          );
+          restockedProductIds.push(l.line.productId);
+        }
+      }
+
+      return this.loadPoForResponse(tx, id);
+    });
+
+    this.fireStockAlerts(restockedProductIds);
+    return result;
+  }
+
+  private loadPoForResponse(tx: Prisma.TransactionClient, id: string) {
+    return tx.purchaseOrder.findUniqueOrThrow({
+      where: { id },
+      include: {
+        supplier: { select: { id: true, name: true } },
+        items: {
+          include: { product: { select: { id: true, name: true, unit: true, unitsPerBox: true } } },
+        },
+      },
+    });
   }
 
   async closePurchaseOrder(id: string) {
