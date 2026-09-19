@@ -23,6 +23,7 @@ import { RecordAdjustmentDto } from "./dto/record-adjustment.dto";
 import { CommitStockCountDto } from "./dto/commit-stock-count.dto";
 import { ListMovementsDto } from "./dto/list-movements.dto";
 import { ListPurchaseOrdersDto } from "./dto/list-purchase-orders.dto";
+import { UpdatePurchaseOrderDto } from "./dto/update-purchase-order.dto";
 import { CreateSupplierDto } from "./dto/create-supplier.dto";
 import { UpdateSupplierDto } from "./dto/update-supplier.dto";
 import { SetCostBasisDto } from "./dto/set-cost-basis.dto";
@@ -195,6 +196,20 @@ export class InventoryController {
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   getPO(@Param("id") id: string) {
     return this.inventoryService.getPurchaseOrder(id);
+  }
+
+  /**
+   * Edit a purchase order. A PARTIAL/RECEIVED order's line edits must carry
+   * `reapplyInventory` (true = reverse + re-post stock, false = document-only);
+   * see InventoryService.updatePurchaseOrder. Operator-only like the other PO writes.
+   */
+  @Patch("purchase-orders/:id")
+  updatePO(
+    @Param("id") id: string,
+    @Body() dto: UpdatePurchaseOrderDto,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.inventoryService.updatePurchaseOrder(id, dto, user.id);
   }
 
   @Post("purchase-orders/:id/send")
