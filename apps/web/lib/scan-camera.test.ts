@@ -77,7 +77,11 @@ describe("torch + focus helpers", () => {
   it("setTorch applies the constraint and reports success", async () => {
     const apply = jest.fn().mockResolvedValue(undefined);
     await expect(setTorch(trackWith({ torch: true }, apply), true)).resolves.toBe(true);
-    expect(apply).toHaveBeenCalledWith({ advanced: [{ torch: true }] });
+    // The base constraints ride along: applyConstraints replaces the set, so dropping them would
+    // let the UA fall back to 640x480 the moment the torch turns on.
+    expect(apply).toHaveBeenCalledWith(
+      expect.objectContaining({ width: { ideal: 1920 }, advanced: [{ torch: true }] }),
+    );
   });
 
   it("setTorch resolves false instead of throwing when the capability lied", async () => {
@@ -88,7 +92,9 @@ describe("torch + focus helpers", () => {
   it("nudgeFocus re-sends the continuous-focus hint and swallows a rejection", async () => {
     const apply = jest.fn().mockRejectedValue(new Error("no focus control"));
     await expect(nudgeFocus(trackWith({}, apply))).resolves.toBeUndefined();
-    expect(apply).toHaveBeenCalledWith({ advanced: [{ focusMode: "continuous" }] });
+    expect(apply).toHaveBeenCalledWith(
+      expect.objectContaining({ width: { ideal: 1920 }, advanced: [{ focusMode: "continuous" }] }),
+    );
     await expect(nudgeFocus(null)).resolves.toBeUndefined();
   });
 });

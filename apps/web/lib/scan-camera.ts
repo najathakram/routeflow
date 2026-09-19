@@ -55,13 +55,22 @@ export function hasTorch(track: MediaStreamTrack | null | undefined): boolean {
   return !!caps && "torch" in caps;
 }
 
+/*
+ * applyConstraints REPLACES the track's constraint set, so both helpers below re-send IDEAL_VIDEO
+ * alongside their `advanced` entry — otherwise toggling the torch or tapping to refocus would let
+ * the UA renegotiate to its 640x480 default, the exact condition this module exists to avoid.
+ */
+
 /**
  * Turns the torch on/off. Resolves false — never throws — when the capability object lied (a known
  * browser quirk), so the caller can quietly hide the control instead of surfacing an error.
  */
 export async function setTorch(track: MediaStreamTrack, on: boolean): Promise<boolean> {
   try {
-    await track.applyConstraints({ advanced: [{ torch: on }] } as unknown as MediaTrackConstraints);
+    await track.applyConstraints({
+      ...IDEAL_VIDEO,
+      advanced: [{ torch: on }],
+    } as unknown as MediaTrackConstraints);
     return true;
   } catch {
     return false;
@@ -76,7 +85,10 @@ export async function setTorch(track: MediaStreamTrack, on: boolean): Promise<bo
 export async function nudgeFocus(track: MediaStreamTrack | null | undefined): Promise<void> {
   if (!track) return;
   try {
-    await track.applyConstraints({ advanced: ADVANCED_FOCUS } as unknown as MediaTrackConstraints);
+    await track.applyConstraints({
+      ...IDEAL_VIDEO,
+      advanced: ADVANCED_FOCUS,
+    } as unknown as MediaTrackConstraints);
   } catch {
     // No focus control on this camera — nothing to do.
   }

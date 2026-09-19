@@ -66,10 +66,13 @@ describe("BarcodeScannerButton", () => {
         configurable: true,
       });
       decodeFromStream.mockReset();
-      decodeFromStream.mockImplementation(async (_s: unknown, _v: unknown, cb: typeof onDecode) => {
-        onDecode = cb;
-        return { stop };
-      });
+      decodeFromStream.mockImplementation(
+        async (_s: unknown, _v: unknown, cb: (r: unknown, e: unknown, c: unknown) => void) => {
+          // Mirrors zxing: every delivery carries its own live controls as the 3rd argument.
+          onDecode = (r) => cb(r, undefined, { stop });
+          return { stop };
+        },
+      );
     });
     afterEach(() => {
       // @ts-expect-error — test-only cleanup of a stubbed browser property
@@ -128,7 +131,9 @@ describe("BarcodeScannerButton", () => {
       fireEvent.click(btn);
 
       await waitFor(() =>
-        expect(track.applyConstraints).toHaveBeenCalledWith({ advanced: [{ torch: true }] }),
+        expect(track.applyConstraints).toHaveBeenCalledWith(
+          expect.objectContaining({ advanced: [{ torch: true }] }),
+        ),
       );
       expect(await screen.findByLabelText("Turn flashlight off")).toBeInTheDocument();
     });
@@ -141,6 +146,69 @@ describe("BarcodeScannerButton", () => {
       fireEvent.click(await screen.findByLabelText("Turn flashlight on"));
 
       await waitFor(() => expect(screen.queryByLabelText(/flashlight/i)).not.toBeInTheDocument());
+    });
+
+    it("stops the controls when Cancel lands while decodeFromStream is still awaiting the preview", async () => {
+      // zxing waits up to 5s for the video to play; without the post-await `active` check the
+      // controls resolve into a ref nothing will ever stop and the camera stays live.
+      let resolveDecode!: (c: { stop: () => void }) => void;
+      decodeFromStream.mockImplementation(
+        () => new Promise((resolve) => (resolveDecode = resolve as typeof resolveDecode)),
+      );
+      render(<BarcodeScannerButton onScan={jest.fn()} title="Scan barcode" />);
+      fireEvent.click(screen.getByTitle("Scan barcode"));
+      await waitFor(() => expect(decodeFromStream).toHaveBeenCalled());
+
+      fireEvent.click(screen.getByText("Cancel"));
+      expect(stop).not.toHaveBeenCalled(); // controls not delivered yet — nothing to stop
+      await act(async () => resolveDecode({ stop }));
+
+      expect(stop).toHaveBeenCalled();
+    });
+
+    it("releases the stream when Cancel lands while getUserMedia is still pending", async () => {
+      let resolveStream!: (s: unknown) => void;
+      getUserMedia.mockImplementation(() => new Promise((resolve) => (resolveStream = resolve)));
+      render(<BarcodeScannerButton onScan={jest.fn()} title="Scan barcode" />);
+      fireEvent.click(screen.getByTitle("Scan barcode"));
+      await waitFor(() => expect(getUserMedia).toHaveBeenCalled());
+
+      fireEvent.click(screen.getByText("Cancel"));
+      await act(async () => resolveStream(stream));
+
+      expect(trackStop).toHaveBeenCalled(); // the granted-too-late stream is stopped
+      expect(decodeFromStream).not.toHaveBeenCalled();
+    });
+
+    it("stops via the callback's own controls when a decode lands before decodeFromStream resolves", async () => {
+      const cbStop = jest.fn();
+      decodeFromStream.mockImplementation(
+        async (_s: unknown, _v: unknown, cb: (r: unknown, e: unknown, c: unknown) => void) => {
+          // zxing's scan loop starts synchronously, so a hit can arrive before the promise
+          // resolves and the component has any `controls` of its own.
+          cb({ getText: () => "012345678905" }, undefined, { stop: cbStop });
+          return { stop };
+        },
+      );
+      const onScan = jest.fn();
+      render(<BarcodeScannerButton onScan={onScan} title="Scan barcode" />);
+      fireEvent.click(screen.getByTitle("Scan barcode"));
+
+      await waitFor(() => expect(onScan).toHaveBeenCalledWith("012345678905"));
+      expect(cbStop).toHaveBeenCalled();
+      expect(onScan).toHaveBeenCalledTimes(1);
+    });
+
+    it("stops the granted camera tracks when zxing fails to start", async () => {
+      decodeFromStream.mockRejectedValue(new Error("video never played"));
+      const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
+      const onError = jest.fn();
+      render(<BarcodeScannerButton onScan={jest.fn()} onError={onError} title="Scan barcode" />);
+      fireEvent.click(screen.getByTitle("Scan barcode"));
+
+      await waitFor(() => expect(onError).toHaveBeenCalled());
+      expect(trackStop).toHaveBeenCalled();
+      consoleError.mockRestore();
     });
 
     it("stops the camera stream when the operator cancels", async () => {

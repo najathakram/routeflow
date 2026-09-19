@@ -146,14 +146,26 @@ export function BarcodeScannerButton({
         setTorchAvailable(hasTorch(track));
 
         const reader = new BrowserMultiFormatReader();
-        controlsRef.current = await reader.decodeFromStream(stream, videoRef.current!, (result) => {
-          if (!active || settled || !result) return;
-          settled = true;
-          playScanCue("accepted");
-          controlsRef.current?.stop();
-          setScannerOpen(false);
-          onScanRef.current(result.getText());
-        });
+        const controls = await reader.decodeFromStream(
+          stream,
+          videoRef.current!,
+          (result, _err, cbControls) => {
+            if (!active || settled || !result) return;
+            settled = true;
+            playScanCue("accepted");
+            // zxing's scan loop starts synchronously inside decodeFromStream, so a hit can land
+            // BEFORE that promise resolves and `controls` exists. The callback's own controls
+            // argument is always live; using it means the camera stops on this path too.
+            cbControls.stop();
+            setScannerOpen(false);
+            onScanRef.current(result.getText());
+          },
+        );
+        // Cancel / unmount / route change can land while decodeFromStream is still awaiting the
+        // preview (zxing waits up to 5s for the video to play). Nothing would ever stop these
+        // controls, so stop them here rather than leave the camera live behind a closed overlay.
+        if (!active) controls.stop();
+        else controlsRef.current = controls;
       } catch (err) {
         stream?.getTracks().forEach((t) => t.stop());
         console.error("Barcode scanner error:", err);

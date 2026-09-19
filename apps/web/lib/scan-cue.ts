@@ -67,15 +67,18 @@ export function unlockScanCue(): void {
 /** Plays the cue. `"none"` does nothing at all. */
 export function playScanCue(cue: ScanCue): void {
   if (cue === "none") return;
+  const accepted = cue === "accepted";
+  // Independent tries: an AudioContext that throws (autoplay-blocked, constructor refused) must
+  // not also cost the operator the haptic, which is the cue that would still have worked.
   try {
-    if (cue === "accepted") {
-      beep(1000, 80);
-      navigator.vibrate?.(50);
-    } else {
-      beep(300, 180);
-      navigator.vibrate?.([40, 60, 40]);
-    }
+    if (accepted) beep(1000, 80);
+    else beep(300, 180);
   } catch {
     // A cue failure must never reach the caller.
+  }
+  try {
+    navigator.vibrate?.(accepted ? 50 : [40, 60, 40]);
+  } catch {
+    // Same contract as above.
   }
 }

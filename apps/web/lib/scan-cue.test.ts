@@ -38,6 +38,21 @@ describe("scan cue", () => {
     expect(() => unlockScanCue()).not.toThrow();
   });
 
+  it("still vibrates when the AudioContext throws — the haptic is independent of the beep", () => {
+    w.AudioContext = function () {
+      throw new Error("autoplay blocked");
+    };
+    playScanCue("accepted");
+    expect(vibrate).toHaveBeenCalledWith(50);
+  });
+
+  it("never throws when vibrate itself throws", () => {
+    vibrate.mockImplementation(() => {
+      throw new Error("not allowed");
+    });
+    expect(() => playScanCue("rejected")).not.toThrow();
+  });
+
   it("never throws when vibrate is missing (iOS Safari)", () => {
     // @ts-expect-error — simulating a browser without the Vibration API
     delete navigator.vibrate;
