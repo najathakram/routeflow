@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight, ShoppingCart, Loader2, AlertTriangle } from "lucide-react";
 import { Badge } from "@routeflow/ui/web";
@@ -50,6 +51,10 @@ function formatDate(dateStr: string): string {
 function formatCurrency(amount?: number): string {
   if (amount === undefined || amount === null) return "N/A";
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amount);
+}
+
+function orderLabel(order: { orderNumber?: string | null; id: string }): string {
+  return order.orderNumber ?? order.id.slice(0, 8).toUpperCase();
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -154,59 +159,95 @@ export default function BuyerOrdersPage() {
         </div>
       ) : orders.length > 0 ? (
         <>
-          {/* Table */}
-          <div className="overflow-hidden rounded-xl border border-surface-border bg-white shadow-sm">
-            <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px]">
-              <thead>
-                <tr className="border-b border-surface-border bg-surface-raised">
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70">
-                    Order #
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70">
-                    Date
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70">
-                    Items
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70">
-                    Status
-                  </th>
-                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/70">
-                    Total
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-surface-border">
-                {orders.map((order: any) => (
-                  <tr
-                    key={order.id}
-                    onClick={() => router.push(`/buyer/portal/${sellerSlug}/orders/${order.id}`)}
-                    className="hover:bg-surface-raised transition-colors cursor-pointer"
-                  >
-                    <td className="px-4 py-3 text-sm font-medium text-navy">
-                      {order.orderNumber ?? order.id.slice(0, 8).toUpperCase()}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-navy/70">
+          {/* Card list — under 640px the 5-column table only scrolled sideways, so phones
+              get one tappable card per order instead. */}
+          <ul data-testid="buyer-orders-cards" className="space-y-3 sm:hidden">
+            {orders.map((order: any) => (
+              <li key={order.id}>
+                <Link
+                  href={`/buyer/portal/${sellerSlug}/orders/${order.id}`}
+                  className="block rounded-xl border border-surface-border bg-white p-4 shadow-sm transition-colors hover:bg-surface-raised"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="min-w-0 truncate text-sm font-semibold text-navy">
+                      {orderLabel(order)}
+                    </span>
+                    <Badge variant={getStatusVariant(order.status)}>
+                      {formatStatus(order.status)}
+                    </Badge>
+                  </div>
+                  <div className="mt-2 flex items-end justify-between gap-3">
+                    <p className="text-xs text-navy/70">
                       {formatDate(order.createdAt)}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-navy/70">
-                      {order.itemCount != null
-                        ? `${order.itemCount} item${order.itemCount !== 1 ? "s" : ""}`
-                        : "—"}
-                    </td>
-                    <td className="px-4 py-3">
-                      <Badge variant={getStatusVariant(order.status)}>
-                        {formatStatus(order.status)}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-3 text-right text-sm text-navy">
+                      {order.itemCount != null &&
+                        ` · ${order.itemCount} item${order.itemCount !== 1 ? "s" : ""}`}
+                    </p>
+                    <span className="text-sm font-semibold text-navy">
                       {formatCurrency(Number(order.totalAmount ?? order.total))}
-                    </td>
+                    </span>
+                  </div>
+                </Link>
+              </li>
+            ))}
+          </ul>
+
+          {/* Table — from 640px up. The wrapper scrolls horizontally if a narrow tablet
+              still cannot fit it; the Order # column stays pinned while it does. */}
+          <div
+            data-testid="buyer-orders-table"
+            className="hidden overflow-hidden rounded-xl border border-surface-border bg-white shadow-sm sm:block"
+          >
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[640px]">
+                <thead>
+                  <tr className="border-b border-surface-border bg-surface-raised">
+                    <th className="sticky left-0 z-10 bg-surface-raised px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70">
+                      Order #
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70">
+                      Date
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70">
+                      Items
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70">
+                      Status
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/70">
+                      Total
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-surface-border">
+                  {orders.map((order: any) => (
+                    <tr
+                      key={order.id}
+                      onClick={() => router.push(`/buyer/portal/${sellerSlug}/orders/${order.id}`)}
+                      className="group cursor-pointer transition-colors hover:bg-surface-raised"
+                    >
+                      <td className="sticky left-0 z-10 bg-white px-4 py-3 text-sm font-medium text-navy transition-colors group-hover:bg-surface-raised">
+                        {orderLabel(order)}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-navy/70">
+                        {formatDate(order.createdAt)}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-navy/70">
+                        {order.itemCount != null
+                          ? `${order.itemCount} item${order.itemCount !== 1 ? "s" : ""}`
+                          : "—"}
+                      </td>
+                      <td className="px-4 py-3">
+                        <Badge variant={getStatusVariant(order.status)}>
+                          {formatStatus(order.status)}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-3 text-right text-sm text-navy">
+                        {formatCurrency(Number(order.totalAmount ?? order.total))}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
 
