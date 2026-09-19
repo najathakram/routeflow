@@ -668,6 +668,29 @@
   web mirror both gate on one field's presence; each has a red-first regression test pinning
   the double-subtraction case.
 
+### L-207 · 2026-09-19 · domain · B562 (averageCost recomputed by replaying an incomplete StockMovement ledger)
+
+- **Symptom:** recomputing a product's `averageCost` by replaying its `StockMovement` ledger
+  silently overwrote a correct `averageCost` and rewrote every `stockAfter`/`avgCostAfter`
+  snapshot, destroying the evidence needed to notice.
+- **Root cause:** order create/edit decrements `Product.currentStock` with NO `StockMovement` row
+  (`orders.service` `decrementStockForSale` / `settleStockForEdit`), so the ledger was an
+  incomplete event log; the replay started from stock=0 and never read orders, so it computed cost
+  from a sales-blind history.
+- **Lesson:** **Never recompute derived state (a cost, a balance) by replaying an event log unless
+  the log is provably complete — assert completeness (ledger-implied stock vs the live counter)
+  and REFUSE or REPORT on divergence rather than write a plausible-looking wrong number. When the
+  refusal sits inside a shared transaction (a bill/batch with many lines), degrade per item (skip
+  the replay for the gapped item and report it) rather than failing the whole batch — a
+  fail-closed guard that blocks accounts-payable is its own outage.**
+- **Guard:** behavioral specs in `apps/api/src/inventory/inventory.service.spec.ts`
+  (`replayProduct` two-pass refuse-on-gap; null-cost import leaves `averageCost` untouched),
+  `apps/api/src/vendor-bills/vendor-bills.service.spec.ts` (two-line bill: gapped line still
+  received and reported under `gapsDetected`, clean line unaffected),
+  `apps/api/src/products/products.service.spec.ts` and
+  `apps/api/src/import/import-robustness.spec.ts` (no phantom `unitCost` 0). PR #934; follow-ups
+  B567/B568 filed.
+
 ## security
 
 ### L-188 · 2026-09-17 · security · demo-booking OAuth/booking tokens in URL query strings
