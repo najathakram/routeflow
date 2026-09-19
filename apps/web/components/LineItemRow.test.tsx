@@ -91,6 +91,8 @@ describe("LineItemRow layout contract (B565)", () => {
 
     const remove = within(li).getByTitle("Remove");
     expect(remove.parentElement).toHaveClass("col-start-2", "row-start-1");
+    // The note/remove pair must not touch under sm (remove has no confirm step).
+    expect(remove.parentElement).toHaveClass("gap-2", "sm:gap-3");
   });
 
   it("keeps the same placement for a non-boxed line's stepper", () => {

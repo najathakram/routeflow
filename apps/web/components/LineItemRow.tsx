@@ -412,7 +412,7 @@ export function LineItemRow({
           unitsPerBox: li.unitsPerBox ?? null,
         }).toFixed(2)}
       </span>
-      <div className="col-start-2 row-start-1 flex shrink-0 items-start sm:gap-3">
+      <div className="col-start-2 row-start-1 flex shrink-0 items-start gap-2 sm:gap-3">
         <button
           type="button"
           onClick={onToggleNoteOpen}

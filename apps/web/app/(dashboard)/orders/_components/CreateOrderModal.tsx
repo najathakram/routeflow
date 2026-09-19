@@ -1076,7 +1076,7 @@ export function CreateOrderModal({
           {/* Three-tier hierarchy: ghost (dismiss) < secondary (alt save) <
               primary (main action). Save-as-Draft was an amber button that
               competed with the primary blue and misused a warning colour. */}
-          <div className="flex items-center justify-end gap-2 sm:gap-3">
+          <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
             <Button variant="ghost" type="button" onClick={handleDismiss}>
               Cancel
             </Button>

@@ -72,5 +72,7 @@ describe("CreateOrderModal footer layout (B564)", () => {
     expect(actions).toContainElement(screen.getByRole("button", { name: /save as draft/i }));
     expect(actions).toContainElement(screen.getByRole("button", { name: /^create order$/i }));
     expect(actions).not.toContainElement(screen.getByRole("button", { name: /minimize/i }));
+    // Wrap, don't overflow: the spinners `loading` adds to two buttons widen this row at 390px.
+    expect(actions).toHaveClass("flex-wrap", "justify-end");
   });
 });
