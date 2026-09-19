@@ -19,6 +19,7 @@ import { useCreateDraft, useUpdateDraft, useDeleteDraft, useDraft } from "@/lib/
 import { draftDeviceLabel, type OrderDraftPayload } from "@/lib/drafts";
 import { apiClient } from "@/lib/api-client";
 import { orderCreatedToast } from "./order-created-toast";
+import { mergeQtyIntoLine, mergedLineMessage, newLineQty, parseAddQty } from "./add-line-merge";
 import { getTierPrice, computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
@@ -171,6 +172,13 @@ export function CreateOrderModal({
   const [customQty, setCustomQty] = React.useState("1");
   const [customError, setCustomError] = React.useState("");
   const productSearchRef = React.useRef<HTMLInputElement>(null);
+  // Quick-order "Qty" field next to the product search: how many of the NEXT picked product to
+  // add (cases for a case-packed product). Resets to 1 after every add.
+  const [addQtyRaw, setAddQtyRaw] = React.useState("1");
+  // Enter resolves the typed code through the scan handler (async, and it calls back through the
+  // `addLineItem` thunk), so the typed qty rides a short-lived ref; a camera scan never sets it
+  // and therefore stays +1 per scan.
+  const typedQtyRef = React.useRef<{ qty: number; at: number } | null>(null);
   // Scroll the just-scanned line into view so rapid scanning stays visible.
   const rowRefs = React.useRef<Map<string, HTMLLIElement>>(new Map());
   const [scrollToId, setScrollToId] = React.useState<string | null>(null);
@@ -278,7 +286,11 @@ export function CreateOrderModal({
   // ./scan/useScanCodeHandler so the redesigned scan screen can reuse it.
   const barcodeScanHandlerRef = useScanCodeHandler({
     // A thunk: addLineItem is declared further down and is read only when a code is scanned.
-    addLineItem: (product) => addLineItem(product),
+    addLineItem: (product) => {
+      const typed = typedQtyRef.current;
+      typedQtyRef.current = null;
+      addLineItem(product, typed && Date.now() - typed.at < 5000 ? typed.qty : 1);
+    },
     onUnknownCode: (code) => {
       setCreateProductInitialName("");
       setCreateProductInitialSku(code);
@@ -295,6 +307,7 @@ export function CreateOrderModal({
     if (!code) return;
     setProductSearch("");
     setDebouncedProductSearch("");
+    typedQtyRef.current = { qty: parseAddQty(addQtyRaw), at: Date.now() };
     barcodeScanHandlerRef.current(code);
   };
 
@@ -412,13 +425,22 @@ export function CreateOrderModal({
 
   // ── Stop management ───────────────────────────────────────────────────────
 
-  const addLineItem = (product: any) => {
-    // If already in the list, increment qty by 1 (supports repeated scans of the same item)
+  const addLineItem = (product: any, addQty = 1) => {
+    const n = parseAddQty(addQty);
+    setAddQtyRaw("1");
+    // Already in the list: MERGE (sum) into that line instead of adding a duplicate — +1 for a
+    // scan / plain pick, +N for a typed qty. Box-aware: a case-packed line gains N cases and its
+    // qty is re-derived from boxes/pieces (pricing reads the split, not `qty`).
     const existing = lineItems.find((li) => li.productId === product.id);
     if (existing) {
       setLineItems((prev) =>
-        prev.map((li) => (li.productId === product.id ? { ...li, qty: li.qty + 1 } : li)),
+        prev.map((li) => (li.productId === product.id ? mergeQtyIntoLine(li, n) : li)),
       );
+      toast({
+        title: "Added to existing line",
+        description: mergedLineMessage(existing.productName, mergeQtyIntoLine(existing, n)),
+        variant: "info",
+      });
       setScrollToId(existing.tempId);
       setProductSearch("");
       setDebouncedProductSearch("");
@@ -465,10 +487,8 @@ export function CreateOrderModal({
           : hasHistDiscount
             ? ("DISCOUNTED" as const)
             : priceType,
-        qty: upb ? upb : 1,
+        ...newLineQty(upb, n),
         unitsPerBox: upb,
-        boxes: upb ? 1 : undefined,
-        pieces: upb ? 0 : undefined,
         unitCost: product.averageCost != null ? Number(product.averageCost) : undefined,
         category: product.category ?? undefined,
         trackedCategoryId: product.trackedCategoryId ?? null,
@@ -1196,9 +1216,25 @@ export function CreateOrderModal({
                     : "border-surface-border focus:border-transparent",
                 )}
               />
+              <input
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={9999}
+                value={addQtyRaw}
+                onChange={(e) => setAddQtyRaw(e.target.value)}
+                onFocus={(e) => e.target.select()}
+                aria-label="Quantity to add"
+                title="Quantity to add (cases for case-packed products)"
+                className="h-10 w-14 shrink-0 rounded border border-surface-border bg-white px-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
               <BarcodeScannerButton
                 inputRef={productSearchRef}
-                onScan={(code) => barcodeScanHandlerRef.current(code)}
+                onScan={(code) => {
+                  // A camera scan is always +1 — never inherit a typed qty from a failed Enter.
+                  typedQtyRef.current = null;
+                  barcodeScanHandlerRef.current(code);
+                }}
                 onError={(message) => toast({ variant: "error", title: message })}
                 className="h-10 min-h-[44px] w-10 min-w-[44px] shrink-0"
                 title="Scan barcode"
@@ -1228,7 +1264,7 @@ export function CreateOrderModal({
                                   // clean up by hand, reading as "choosing does
                                   // nothing". Scan of the same code has always
                                   // incremented; clicking now matches it.
-                                  addLineItem(p);
+                                  addLineItem(p, parseAddQty(addQtyRaw));
                                 }
                               }}
                               className={cn(
@@ -1276,7 +1312,7 @@ export function CreateOrderModal({
                                 <li key={v.id} className="bg-surface-raised/50">
                                   <button
                                     type="button"
-                                    onClick={() => addLineItem(v)}
+                                    onClick={() => addLineItem(v, parseAddQty(addQtyRaw))}
                                     className={cn(
                                       "flex w-full items-center justify-between pl-8 pr-3 py-2 text-left text-sm text-navy hover:bg-surface-raised",
                                       variantAdded && "opacity-40",

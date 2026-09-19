@@ -1,0 +1,245 @@
+import * as React from "react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { renderWithProviders } from "@/test-utils/render";
+import { CreateOrderModal } from "./CreateOrderModal";
+
+/**
+ * Quick-order extras (LANE-S step 10): adding a product that is already on the order MERGES into
+ * that line (never a duplicate), announces it with a toast, and honours a typed "Qty". A camera
+ * scan stays +1. Kept in its own file — Lane S-scan owns CreateOrderModal.test.tsx's scan coverage.
+ */
+
+window.HTMLElement.prototype.scrollIntoView = jest.fn();
+
+const PLAIN = {
+  id: "p-plain",
+  name: "Sample Cola",
+  sku: "100200300",
+  unit: "each",
+  pricePerUnit: "2.50",
+  isActive: true,
+};
+const BOXED = {
+  id: "p-boxed",
+  name: "Sample Chips",
+  sku: "400500600",
+  unit: "case",
+  pricePerUnit: "30.00",
+  unitsPerBox: 12,
+  isActive: true,
+};
+
+jest.mock("@/lib/api/customers", () => ({
+  useCustomers: () => ({ data: { data: [] } }),
+  useCustomerPrices: () => ({ data: [] }),
+  useCustomer: () => ({ data: undefined }),
+}));
+jest.mock("@/lib/api/products", () => ({
+  ...jest.requireActual("@/lib/api/products"),
+  useProducts: () => ({ data: { data: [PLAIN, BOXED] } }),
+  useCreateProduct: () => ({ mutate: jest.fn(), mutateAsync: jest.fn(), isPending: false }),
+}));
+jest.mock("@/lib/api/orders", () => ({
+  useCreateOrder: () => ({ mutate: jest.fn(), isPending: false, error: null, reset: jest.fn() }),
+  useActiveOrderForCustomer: () => ({ data: undefined }),
+  useCustomerPriceHistory: () => ({ data: undefined }),
+}));
+jest.mock("@/lib/api/drafts", () => ({
+  useCreateDraft: () => ({ mutate: jest.fn(), mutateAsync: jest.fn(), isPending: false }),
+  useUpdateDraft: () => ({ mutate: jest.fn(), mutateAsync: jest.fn(), isPending: false }),
+  useDeleteDraft: () => ({ mutate: jest.fn() }),
+  useDraft: () => ({ data: undefined, isFetching: false }),
+}));
+jest.mock("@/lib/api/margin", () => ({
+  useMarginConfig: () => ({ data: undefined }),
+  floorForCategory: () => null,
+}));
+jest.mock("@/lib/api/tracked-categories", () => ({ useTrackedCategories: () => ({ data: [] }) }));
+jest.mock("@/lib/api/tobacco", () => ({ useHasAddon: () => false }));
+jest.mock("@/lib/api-client", () => ({
+  apiClient: {
+    get: jest.fn().mockResolvedValue({ data: { taxRate: 0 } }),
+    post: jest.fn(),
+    patch: jest.fn(),
+    delete: jest.fn(),
+  },
+}));
+
+let capturedOnScan: ((code: string) => void) | undefined;
+jest.mock("@/components/BarcodeScannerButton", () => ({
+  BarcodeScannerButton: (props: { onScan: (code: string) => void; title?: string }) => {
+    capturedOnScan = props.onScan;
+    return (
+      <button type="button" title={props.title}>
+        scan
+      </button>
+    );
+  },
+}));
+
+const mockResolveProductByCode = jest.fn();
+jest.mock("@/lib/barcode-resolve", () => ({
+  resolveProductByCode: (code: string) => mockResolveProductByCode(code),
+}));
+
+const mockToast = jest.fn();
+jest.mock("@routeflow/ui/web", () => ({
+  ...jest.requireActual("@routeflow/ui/web"),
+  useToast: () => ({ toast: mockToast }),
+}));
+
+const search = () => screen.getByPlaceholderText(/search by name, sku or scan barcode/i);
+const qtyField = () => screen.getByLabelText("Quantity to add") as HTMLInputElement;
+
+async function pick(name: string, qty?: string) {
+  if (qty !== undefined) fireEvent.change(qtyField(), { target: { value: qty } });
+  fireEvent.change(search(), { target: { value: name.split(" ")[1].toLowerCase() } });
+  const row = await screen.findByRole("button", { name: new RegExp(name, "i") });
+  fireEvent.click(row);
+}
+
+/** The line item's <li> in the order (not a dropdown row). */
+const lineFor = (name: string) =>
+  screen
+    .getAllByText(name)
+    .map((el) => el.closest("li"))
+    .find((li) => li?.querySelector('[title="Remove"]')) as HTMLElement;
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  capturedOnScan = undefined;
+});
+
+describe("adding a product — typed Qty and merging (LANE-S step 10)", () => {
+  it("a new plain product starts at the typed qty, then the field resets to 1", async () => {
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await pick("Sample Cola", "3");
+    await waitFor(() => expect(lineFor("Sample Cola")).toBeTruthy());
+    expect(lineFor("Sample Cola").textContent).toContain("3");
+    expect(qtyField().value).toBe("1");
+    expect(mockToast).not.toHaveBeenCalled(); // a first add is not a merge
+  });
+
+  it("adding the same product again MERGES into one line (sum) and says so", async () => {
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await pick("Sample Cola", "3");
+    await waitFor(() => expect(lineFor("Sample Cola")).toBeTruthy());
+    await pick("Sample Cola", "2");
+
+    await waitFor(() =>
+      expect(mockToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "Added to existing line",
+          description: "Sample Cola — now 5",
+        }),
+      ),
+    );
+    // still exactly one line for the product
+    expect(screen.getAllByTitle("Remove")).toHaveLength(1);
+    expect(lineFor("Sample Cola").textContent).toContain("5");
+  });
+
+  it("a plain repeat pick (Qty left at 1) is +1", async () => {
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await pick("Sample Cola");
+    await waitFor(() => expect(lineFor("Sample Cola")).toBeTruthy());
+    await pick("Sample Cola");
+    await waitFor(() =>
+      expect(mockToast).toHaveBeenCalledWith(
+        expect.objectContaining({ description: "Sample Cola — now 2" }),
+      ),
+    );
+  });
+
+  it("REG: merging into a case-packed line adds CASES and keeps boxes / pieces / qty consistent", async () => {
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await pick("Sample Chips", "2");
+    await waitFor(() => expect(lineFor("Sample Chips")).toBeTruthy());
+    expect((screen.getByTitle("Number of whole cases") as HTMLInputElement).value).toBe("2");
+
+    await pick("Sample Chips"); // +1 case
+    await waitFor(() =>
+      expect((screen.getByTitle("Number of whole cases") as HTMLInputElement).value).toBe("3"),
+    );
+    expect(
+      (screen.getByTitle("Extra loose units (less than a full case)") as HTMLInputElement).value,
+    ).toBe("0");
+    expect(lineFor("Sample Chips").textContent).toContain("36 pcs total"); // 3 x 12
+    expect(mockToast).toHaveBeenCalledWith(
+      expect.objectContaining({ description: "Sample Chips — now 3 boxes" }),
+    );
+  });
+
+  it("junk in the Qty field adds one, never zero or a negative", async () => {
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await pick("Sample Cola", "");
+    await waitFor(() => expect(lineFor("Sample Cola")).toBeTruthy());
+    await pick("Sample Cola", "-5");
+    await waitFor(() =>
+      expect(mockToast).toHaveBeenCalledWith(
+        expect.objectContaining({ description: "Sample Cola — now 2" }),
+      ),
+    );
+  });
+});
+
+describe("typed Qty and the scan paths", () => {
+  it("Enter on a typed code applies the typed qty", async () => {
+    mockResolveProductByCode.mockResolvedValue({
+      notFound: false,
+      archived: false,
+      product: PLAIN,
+    });
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    fireEvent.change(qtyField(), { target: { value: "4" } });
+    fireEvent.change(search(), { target: { value: "100200300" } });
+    fireEvent.keyDown(search(), { key: "Enter" });
+
+    await waitFor(() => expect(lineFor("Sample Cola")).toBeTruthy());
+    expect(mockResolveProductByCode).toHaveBeenCalledWith("100200300");
+    expect(lineFor("Sample Cola").textContent).toContain("4");
+  });
+
+  it("a camera scan is always +1 — it never inherits a qty typed for an Enter that added nothing", async () => {
+    mockResolveProductByCode
+      // Enter resolves to an ARCHIVED product: error toast, nothing added — the typed qty is left
+      // behind unless the camera path clears it.
+      .mockResolvedValueOnce({ notFound: false, archived: true, product: PLAIN })
+      .mockResolvedValueOnce({ notFound: false, archived: false, product: PLAIN }); // then a scan hits
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    fireEvent.change(qtyField(), { target: { value: "9" } });
+    fireEvent.change(search(), { target: { value: "999999999999" } });
+    fireEvent.keyDown(search(), { key: "Enter" });
+    await waitFor(() => expect(mockResolveProductByCode).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      capturedOnScan!("100200300");
+    });
+    await waitFor(() => expect(lineFor("Sample Cola")).toBeTruthy());
+    expect(lineFor("Sample Cola").textContent).not.toContain("9");
+  });
+
+  it("a repeated scan of the same code merges +1 and toasts", async () => {
+    mockResolveProductByCode.mockResolvedValue({
+      notFound: false,
+      archived: false,
+      product: PLAIN,
+    });
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await act(async () => {
+      capturedOnScan!("100200300");
+    });
+    await waitFor(() => expect(lineFor("Sample Cola")).toBeTruthy());
+    await act(async () => {
+      capturedOnScan!("100200300");
+    });
+    await waitFor(() =>
+      expect(mockToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "Added to existing line",
+          description: "Sample Cola — now 2",
+        }),
+      ),
+    );
+  });
+});
