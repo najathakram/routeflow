@@ -16,6 +16,7 @@ import { BillingEventService } from "./billing-event.service";
 import { BillingCronService } from "./billing-cron.service";
 import { MrrService } from "./mrr.service";
 import { FeatureOverrideReviewJob } from "./feature-override-review.job";
+import { FeatureOverrideExpiryJob } from "./feature-override-expiry.job";
 import { BillingNotificationService } from "./billing-notification.service";
 import { EmailModule } from "../email/email.module";
 import { EntitlementsModule } from "./entitlements.module";
@@ -47,6 +48,8 @@ import { EntitlementsModule } from "./entitlements.module";
     // Feature grants v2 PR-3 (brief B): nightly review sweep for expired-unrevoked overrides.
     // PrismaService/AuditService are both @Global() modules -- no new import needed here.
     FeatureOverrideReviewJob,
+    // B569: nightly sweep that revokes expired overrides (runs after the review job above).
+    FeatureOverrideExpiryJob,
   ],
   exports: [
     StripeService,

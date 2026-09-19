@@ -30,6 +30,16 @@ export interface CreateFeatureOverrideParams {
 
 const CACHE_TTL_MS = 30_000;
 
+/** What `revokeExpired()` reports for each row it actually closed. */
+export interface RevokedExpiredRow {
+  id: string;
+  tenantId: string;
+  featureKey: string;
+  kind: string;
+  effect: string;
+  expiresAt: Date | null;
+}
+
 interface CachedRow {
   featureKey: string;
   effect: FeatureOverrideEffect;
@@ -236,6 +246,55 @@ export class FeatureOverrideService {
       }
       throw e;
     }
+  }
+
+  /**
+   * B569 expiry sweep — revokes every row whose `expiresAt` has passed, freeing the partial
+   * unique index slot (`WHERE revokedAt IS NULL`) an expired-but-never-revoked row would keep.
+   * Returns the rows it ACTUALLY revoked so the caller can audit exactly those.
+   *
+   * Never touches a row without an `expiresAt` (`not: null`, explicit rather than relying on
+   * SQL's NULL <= x being false) and never re-touches a revoked one (`revokedAt: null` in both
+   * the select and the write), so a second run is a no-op that keeps the first `revokedAt`.
+   * Row-by-row with the tenant in the write's `where` for the same cross-tenant reason as
+   * `revoke()`; a P2025 (a human revoked it between select and write) is a skip, not an error.
+   * Capped per call, oldest `expiresAt` first, so a backlog drains FIFO across nightly ticks.
+   * `graceMs` (default 0) only takes rows expired at least that long ago — the sweep job uses it
+   * to leave every row for the review job to flag first (see EXPIRY_GRACE_MS).
+   */
+  async revokeExpired(
+    now: Date = new Date(),
+    { limit = 500, graceMs = 0 }: { limit?: number; graceMs?: number } = {},
+  ): Promise<RevokedExpiredRow[]> {
+    const cutoff = new Date(now.getTime() - graceMs);
+    const due = await this.prisma.tenantFeatureOverride.findMany({
+      where: { revokedAt: null, expiresAt: { not: null, lte: cutoff } },
+      orderBy: { expiresAt: "asc" },
+      take: limit,
+      select: {
+        id: true,
+        tenantId: true,
+        featureKey: true,
+        kind: true,
+        effect: true,
+        expiresAt: true,
+      },
+    });
+    const revoked: RevokedExpiredRow[] = [];
+    for (const row of due) {
+      try {
+        await this.prisma.tenantFeatureOverride.update({
+          where: { id: row.id, tenantId: row.tenantId, revokedAt: null },
+          data: { revokedAt: now },
+        });
+      } catch (e) {
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2025") continue;
+        throw e;
+      }
+      this.invalidate(row.tenantId);
+      revoked.push(row);
+    }
+    return revoked;
   }
 
   invalidate(tenantId: string): void {
