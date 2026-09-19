@@ -28,18 +28,41 @@
  *      not a state: `Tejas`, `Texs`, `N/A`, a city name...). No edit distance, no city or zip
  *      inference, no soundex — a near-miss is a decision for the owner, not for this script.
  *   5. GOOGLE — opt-in (`google` option), for `UNPARSEABLE` rows only (`GOOGLE_ELIGIBLE_LOCAL_REASONS`)
- *      that carry enough address to send (`googleSendable`, computed in SQL). Accepted ONLY when
- *      `result.verdict.addressComplete === true` AND `result.address.postalAddress.administrativeArea`
- *      maps through `normalizeUsState` (and, when present, `regionCode` is "US"). Everything else is
- *      unresolved, and a transport failure never throws out of the run.
+ *      that carry a street line AND a usable 5-digit zip (`googleSendable`, computed in SQL and
+ *      re-checked here: a blank zip is `NEEDS_ZIP`, listed and never sent — without a zip Google
+ *      INFERS the state, e.g. a "Kansas City" row can come back KS instead of MO). An answer is
+ *      accepted ONLY when ALL hold (`interpretGoogleResponse`): `verdict.addressComplete === true`,
+ *      `postalAddress.regionCode === "US"`, `postalAddress.administrativeArea` maps through
+ *      `normalizeUsState`, `address.addressComponents` is an array, its
+ *      `administrative_area_level_1` component is `CONFIRMED` and neither `inferred`, `replaced`
+ *      nor `spellCorrected`, no `locality` / `postal_code` component is `inferred` or `replaced`,
+ *      and neither `verdict.hasReplacedComponents` nor `verdict.hasInferredComponents` is true; the
+ *      one `administrative_area_level_1` component must also NAME the same state as
+ *      `postalAddress.administrativeArea`. Anything else is unresolved (`GOOGLE_INFERRED` for a
+ *      component-level rejection), and a transport failure never throws out of the run.
+ *   6. ZIP CROSS-CHECK — after ANY resolution (rules 1-3 or Google): when the row has a parseable
+ *      5-digit zip (in the zip column, or written inside the state text: "Washington 20001") AND
+ *      `zip3States` (lib/us-zip3.mjs) has an answer for its prefix AND the resolved code is not in
+ *      that set, the row is `UNRESOLVED:ZIP_CONFLICT` — listed, never written with a code
+ *      ("Washington" + a DC zip; "L.A." folding to Louisiana for a California zip). Either zip
+ *      contradicting is a conflict. A blank or unparseable zip, or a prefix with no reliable state,
+ *      skips the check.
  *
  * REASON CODES (`UNRESOLVED:<reason>`): EMPTY, UNPARSEABLE, NEEDS_GOOGLE (would need Google and
- * `--google` was not given), GOOGLE_NO_MATCH, GOOGLE_INCOMPLETE, GOOGLE_ERROR (HTTP / timeout /
- * network / unreadable body — kept apart from NO_MATCH so a transient failure is not read as
- * "Google has no data"), NULL_TENANT (never written, never sent anywhere).
+ * `--google` was not given), NEEDS_ZIP (would need Google but has no usable 5-digit zip),
+ * GOOGLE_NO_MATCH, GOOGLE_INCOMPLETE, GOOGLE_INFERRED (Google inferred / replaced / could not
+ * confirm a component), GOOGLE_ERROR (HTTP / timeout / network / unreadable body — kept apart from
+ * NO_MATCH so a transient failure is not read as "Google has no data"), ZIP_CONFLICT (a resolved
+ * state that contradicts the row's own zip), NULL_TENANT (never written, never sent anywhere).
  *
- * The ONE import besides the state mirror is the test-tenant policy (`scripts/lib/test-tenants.cjs`),
- * used by `assertTestTenantTargets` — the guard behind the CLI's `--only-test-tenants`.
+ * RUN ORCHESTRATION (`planRun`): the ordering the CLI relies on lives here so it is tested rather
+ * than read: (1) `--only-test-tenants` is judged on the CANDIDATE LISTING, (2) the `--max-rows`
+ * ceiling, (3) classification — and only then can a Google request exist. A refusal in (1) or (2)
+ * therefore happens with ZERO requests sent and ZERO writes.
+ *
+ * The ONE import besides the state mirror and the zip table is the test-tenant policy
+ * (`scripts/lib/test-tenants.cjs`), used by the listing / write-list guards behind the CLI's
+ * `--only-test-tenants`.
  */
 import {
   isTestTenant,
@@ -47,6 +70,9 @@ import {
   TEST_TENANT_SLUGS,
 } from "../../../../scripts/lib/test-tenants.cjs";
 import { US_STATES, normalizeUsState } from "./us-states.mjs";
+import { ZIP3_RANGES, zip3Prefix, zip3States } from "./us-zip3.mjs";
+
+export { zip3States, ZIP3_RANGES };
 
 /** The only table this tool may ever write. `buildUpdates` interpolates nothing from a row. */
 export const TABLE = "CustomerAddress";
@@ -65,18 +91,24 @@ export const RESOLVED_VERDICTS = new Set([
 export const REASON_EMPTY = "EMPTY";
 export const REASON_UNPARSEABLE = "UNPARSEABLE";
 export const REASON_NEEDS_GOOGLE = "NEEDS_GOOGLE";
+export const REASON_NEEDS_ZIP = "NEEDS_ZIP";
 export const REASON_GOOGLE_NO_MATCH = "GOOGLE_NO_MATCH";
 export const REASON_GOOGLE_INCOMPLETE = "GOOGLE_INCOMPLETE";
+export const REASON_GOOGLE_INFERRED = "GOOGLE_INFERRED";
 export const REASON_GOOGLE_ERROR = "GOOGLE_ERROR";
+export const REASON_ZIP_CONFLICT = "ZIP_CONFLICT";
 export const REASON_NULL_TENANT = "NULL_TENANT";
 
 export const REASONS = [
   REASON_EMPTY,
   REASON_UNPARSEABLE,
   REASON_NEEDS_GOOGLE,
+  REASON_NEEDS_ZIP,
   REASON_GOOGLE_NO_MATCH,
   REASON_GOOGLE_INCOMPLETE,
+  REASON_GOOGLE_INFERRED,
   REASON_GOOGLE_ERROR,
+  REASON_ZIP_CONFLICT,
   REASON_NULL_TENANT,
 ];
 
@@ -184,16 +216,19 @@ const COUNTRY_PHRASES = [
 ];
 
 /** Removes ONE trailing zip and/or ONE trailing country token (either order) from a FOLDED
- *  string. Returns the remainder, or `null` when nothing was removed or nothing is left. */
-export function stripTrailingZipCountry(folded) {
+ *  string. Returns `{ remainder, zip }` — `remainder` is `null` when nothing was removed or nothing
+ *  is left, `zip` is the removed zip token (or `null`). The zip is KEPT, not discarded: it is
+ *  evidence about the state the text names, and `settle` cross-checks it (rule 6). */
+export function splitTrailingZipCountry(folded) {
   const tokens = folded === "" ? [] : folded.split(" ");
   let zipDone = false;
   let countryDone = false;
   let removed = false;
+  let zip = null;
   for (let guard = 0; guard < 2 && tokens.length > 0; guard++) {
     const last = tokens[tokens.length - 1];
     if (!zipDone && ZIP_TOKEN.test(last)) {
-      tokens.pop();
+      zip = tokens.pop();
       zipDone = true;
       removed = true;
       continue;
@@ -213,7 +248,12 @@ export function stripTrailingZipCountry(folded) {
     }
     break;
   }
-  return removed && tokens.length > 0 ? tokens.join(" ") : null;
+  return { remainder: removed && tokens.length > 0 ? tokens.join(" ") : null, zip };
+}
+
+/** The remainder of `splitTrailingZipCountry` alone (`null` when nothing was removed). */
+export function stripTrailingZipCountry(folded) {
+  return splitTrailingZipCountry(folded).remainder;
 }
 
 // ─── local classification ─────────────────────────────────────────────────────────────────────
@@ -250,7 +290,7 @@ export function classifyLocal(raw) {
     };
   }
 
-  const remainder = stripTrailingZipCountry(folded);
+  const { remainder, zip: embeddedZip } = splitTrailingZipCountry(folded);
   if (remainder !== null) {
     const viaStrip = lookupFolded(remainder);
     if (viaStrip) {
@@ -259,6 +299,8 @@ export function classifyLocal(raw) {
         stateCode: viaStrip.code,
         verdict: VERDICT_RESOLVED_LOCAL_ALIAS,
         rule: "stripped",
+        // A zip written INSIDE the state text ("Washington 20001") is checked like the zip column.
+        embeddedZip,
       };
     }
   }
@@ -344,7 +386,21 @@ export function buildGoogleRequestBody(row) {
   return { address: { regionCode: "US", addressLines: [trimmed(row?.line1), line2] } };
 }
 
-/** A Google response body -> `{ stateCode }` or `{ reason }`. Strict: see the header. */
+const COMPONENT_ADMIN_AREA = "administrative_area_level_1";
+const COMPONENT_LOCALITY = "locality";
+const COMPONENT_POSTAL_CODE = "postal_code";
+
+/** True when Google says it changed or guessed this component rather than confirming it. */
+const guessed = (component) => component?.inferred === true || component?.replaced === true;
+
+/**
+ * A Google response body -> `{ stateCode }` or `{ reason }`. Strict: see the header (rule 5). The
+ * `addressComplete` verdict alone is NOT enough — Google reports a complete address after it has
+ * INFERRED or REPLACED a component, which is exactly a wrong state written with confidence. The
+ * state must come back as a CONFIRMED, un-inferred, un-replaced, un-spell-corrected
+ * `administrative_area_level_1` component, and a component list that is absent cannot be verified,
+ * so it is refused too.
+ */
 export function interpretGoogleResponse(json) {
   const result = json && typeof json === "object" ? json.result : null;
   if (!result || typeof result !== "object") return { reason: REASON_GOOGLE_NO_MATCH };
@@ -359,7 +415,37 @@ export function interpretGoogleResponse(json) {
   }
   const area = postal?.administrativeArea;
   const stateCode = typeof area === "string" ? normalizeUsState(area) : null;
-  return stateCode ? { stateCode } : { reason: REASON_GOOGLE_NO_MATCH };
+  if (!stateCode) return { reason: REASON_GOOGLE_NO_MATCH };
+
+  const components = result.address?.addressComponents;
+  if (!Array.isArray(components)) return { reason: REASON_GOOGLE_INFERRED };
+  if (
+    result.verdict.hasReplacedComponents === true ||
+    result.verdict.hasInferredComponents === true
+  ) {
+    return { reason: REASON_GOOGLE_INFERRED };
+  }
+  const adminAreas = components.filter((c) => c?.componentType === COMPONENT_ADMIN_AREA);
+  const adminArea = adminAreas[0];
+  if (
+    adminAreas.length !== 1 ||
+    adminArea.confirmationLevel !== "CONFIRMED" ||
+    guessed(adminArea) ||
+    adminArea.spellCorrected === true
+  ) {
+    return { reason: REASON_GOOGLE_INFERRED };
+  }
+  // The code accepted above came from `postalAddress.administrativeArea`; the component that was
+  // CONFIRMED must name the same state, or the confirmation is about something else.
+  const componentText = adminArea.componentName?.text;
+  if (typeof componentText !== "string" || normalizeUsState(componentText) !== stateCode) {
+    return { reason: REASON_GOOGLE_INFERRED };
+  }
+  const rest = components.filter(
+    (c) => c?.componentType === COMPONENT_LOCALITY || c?.componentType === COMPONENT_POSTAL_CODE,
+  );
+  if (rest.some(guessed)) return { reason: REASON_GOOGLE_INFERRED };
+  return { stateCode };
 }
 
 const failure = (error) => ({ reason: REASON_GOOGLE_ERROR, error });
@@ -438,19 +524,61 @@ function resolve(report, stateCode, verdict, rule) {
   Object.assign(report, { verdict, stateCode, reason: null, rule });
 }
 
-/** Marks a report unresolved. The raw `state` is attached HERE and only here — the single place
- *  output discipline allows it. */
-function unresolve(report, row, reason, extra = {}) {
-  const { rawState, truncated } = displayRawState(row.state);
+/** Marks a report unresolved. The raw `state` is attached HERE and only here, and ONLY when the
+ *  owner opted in (`--show-unresolved-text`): by default a report is verdict + reason code only. */
+function unresolve(report, row, reason, extra = {}, showText = false) {
+  const shown = showText ? displayRawState(row.state) : null;
   Object.assign(report, {
     verdict: `${UNRESOLVED_PREFIX}${reason}`,
     stateCode: null,
     reason,
     rule: null,
-    rawState,
-    ...(truncated ? { rawStateTruncated: true } : {}),
+    ...(shown ? { rawState: shown.rawState } : {}),
+    ...(shown?.truncated ? { rawStateTruncated: true } : {}),
     ...extra,
   });
+}
+
+/** The 3-digit ZIP prefix a row carries: from a parseable full zip (Google mode loads it) or from
+ *  the SQL's `zip3` column (every mode; a prefix only, and never printed). `null` = no usable zip. */
+export function rowZipPrefix(row) {
+  const fromZip = zip3Prefix(row?.zip);
+  if (fromZip) return fromZip;
+  const z3 = typeof row?.zip3 === "string" ? row.zip3.trim() : "";
+  return /^\d{3}$/.test(z3) ? z3 : null;
+}
+
+/**
+ * The ZIP cross-check (rule 6). `{ conflict: false }` when the row has no usable zip, the prefix has
+ * no reliable state, or the resolved code is one the prefix allows; otherwise
+ * `{ conflict: true, allowed }` with the state codes the zip implies (codes only, never digits).
+ */
+export function checkZipAgreement(stateCode, row, embeddedZip = null) {
+  // Both the row's zip column and a zip embedded in the state text are evidence; either one
+  // contradicting the resolved code is a conflict (a blank zip column must not hide the other).
+  const prefixes = [rowZipPrefix(row), zip3Prefix(embeddedZip)];
+  for (const prefix of prefixes) {
+    const allowed = prefix ? zip3States(prefix) : null;
+    if (allowed && !allowed.includes(stateCode)) return { conflict: true, allowed: [...allowed] };
+  }
+  return { conflict: false };
+}
+
+/** Applies a resolution unless the row's own zip contradicts it (then ZIP_CONFLICT, never a code). */
+function settle(report, row, stateCode, verdict, rule, showText, embeddedZip = null) {
+  const zip = checkZipAgreement(stateCode, row, embeddedZip);
+  if (!zip.conflict) {
+    resolve(report, stateCode, verdict, rule);
+    return true;
+  }
+  unresolve(
+    report,
+    row,
+    REASON_ZIP_CONFLICT,
+    { conflictCode: stateCode, zipStates: zip.allowed },
+    showText,
+  );
+  return false;
 }
 
 /**
@@ -459,32 +587,50 @@ function unresolve(report, row, reason, extra = {}) {
  * `rows` are the CLI's listing rows: `{ id, tenantId, tenantSlug, state, stateNeedsReview,
  * googleSendable, line1?, city?, zip? }` (the last three only when `google` is on).
  * `google` is `null` (default: rows that would need it become `NEEDS_GOOGLE`, nothing is sent) or
- * `{ apiKey, max, fetchImpl?, timeoutMs?, onStart? }`.
+ * `{ apiKey, max, fetchImpl?, timeoutMs?, onStart? }`. `showUnresolvedText` (default false) attaches
+ * the truncated raw `state` to UNRESOLVED reports — off unless the owner passed
+ * `--show-unresolved-text`. Rows may also carry `zip3` (the SQL's 3-digit prefix, every mode) and,
+ * in Google mode, the full `zip`; both feed the ZIP cross-check and neither is ever put in a report.
  *
  * A NULL-tenant row is `NULL_TENANT` before anything else, is never sent to Google and is never
  * written. Throws `GoogleCapExceededError` — before the first request — when more rows need Google
- * than `google.max`; every other Google failure is a `GOOGLE_ERROR` row, not a throw.
+ * than `google.max`; every other Google failure is a `GOOGLE_ERROR` row, not a throw. Callers that
+ * must gate on the tenant BEFORE classification use `planRun`, which does exactly that.
  */
-export async function classifyBatch(rows, { google = null } = {}) {
+export async function classifyBatch(rows, { google = null, showUnresolvedText = false } = {}) {
   const reports = [];
   const pending = [];
   for (const row of rows ?? []) {
     const report = baseReport(row);
     reports.push(report);
     if (!row.tenantId) {
-      unresolve(report, row, REASON_NULL_TENANT);
+      unresolve(report, row, REASON_NULL_TENANT, {}, showUnresolvedText);
       continue;
     }
     const local = classifyLocal(row.state);
     if (local.resolved) {
-      resolve(report, local.stateCode, local.verdict, local.rule);
+      settle(
+        report,
+        row,
+        local.stateCode,
+        local.verdict,
+        local.rule,
+        showUnresolvedText,
+        local.embeddedZip ?? null,
+      );
       continue;
     }
     report.localReason = local.reason;
-    if (GOOGLE_ELIGIBLE_LOCAL_REASONS.has(local.reason) && row.googleSendable === true) {
+    if (!GOOGLE_ELIGIBLE_LOCAL_REASONS.has(local.reason)) {
+      unresolve(report, row, local.reason, {}, showUnresolvedText);
+    } else if (rowZipPrefix(row) === null) {
+      // Without a usable zip Google would INFER the state (a "Kansas City" row can come back KS
+      // instead of MO), so the row is listed and never sent.
+      unresolve(report, row, REASON_NEEDS_ZIP, {}, showUnresolvedText);
+    } else if (row.googleSendable === true) {
       pending.push({ report, row });
     } else {
-      unresolve(report, row, local.reason);
+      unresolve(report, row, local.reason, {}, showUnresolvedText);
     }
   }
 
@@ -497,7 +643,9 @@ export async function classifyBatch(rows, { google = null } = {}) {
   };
 
   if (!google) {
-    for (const { report, row } of pending) unresolve(report, row, REASON_NEEDS_GOOGLE);
+    for (const { report, row } of pending) {
+      unresolve(report, row, REASON_NEEDS_GOOGLE, {}, showUnresolvedText);
+    }
     return { reports, google: stats };
   }
 
@@ -510,11 +658,28 @@ export async function classifyBatch(rows, { google = null } = {}) {
     stats.attempted++;
     const outcome = await validateWithGoogle(row, google);
     if (outcome.stateCode) {
-      resolve(report, outcome.stateCode, VERDICT_RESOLVED_GOOGLE, "google");
-      stats.resolved++;
+      // A Google answer is cross-checked against the row's own zip like any other resolution.
+      if (
+        settle(
+          report,
+          row,
+          outcome.stateCode,
+          VERDICT_RESOLVED_GOOGLE,
+          "google",
+          showUnresolvedText,
+        )
+      ) {
+        stats.resolved++;
+      }
     } else {
       if (outcome.error) stats.errors[outcome.error] = (stats.errors[outcome.error] ?? 0) + 1;
-      unresolve(report, row, outcome.reason, outcome.error ? { googleError: outcome.error } : {});
+      unresolve(
+        report,
+        row,
+        outcome.reason,
+        outcome.error ? { googleError: outcome.error } : {},
+        showUnresolvedText,
+      );
     }
   }
   return { reports, google: stats };
@@ -522,16 +687,23 @@ export async function classifyBatch(rows, { google = null } = {}) {
 
 // ─── the listing SQL ──────────────────────────────────────────────────────────────────────────
 
+// A usable zip: 5 digits, optionally ZIP+4. Mirrors lib/us-zip3.mjs's parser (which also trims any
+// whitespace; SQL btrim trims spaces only, so an exotic-whitespace zip is conservatively unusable).
+const SQL_ZIP_OK = `btrim(a."zip") ~ '^[0-9]{5}(-[0-9]{4})?$'`;
+
 /**
  * The candidate listing. `line1` / `city` / `zip` are SELECTed ONLY when Google needs them to build
  * a request (`withAddress`); the report path never even loads them, so nothing it prints can carry
- * one — output discipline by the SELECT list. `googleSendable` is computed in SQL from those
- * columns for the same reason. `$1` is the tenant slug when `tenantScoped`.
+ * one — output discipline by the SELECT list. `googleSendable` (a street line AND a usable 5-digit
+ * zip — a blank zip makes Google INFER the state) and `zip3` (the 3-digit prefix of a usable zip,
+ * for the ZIP cross-check in EVERY mode; a coarse prefix, never printed) are computed in SQL from
+ * those columns for the same reason. `$1` is the tenant slug when `tenantScoped`.
  */
 export function candidateSql({ withAddress = false, tenantScoped = false } = {}) {
   return (
     `SELECT a."id", a."tenantId", t."slug" AS "tenantSlug", a."state", a."stateNeedsReview",` +
-    ` (btrim(a."line1") <> '' AND (btrim(a."city") <> '' OR btrim(a."zip") <> '')) AS "googleSendable"` +
+    ` (btrim(a."line1") <> '' AND ${SQL_ZIP_OK}) AS "googleSendable",` +
+    ` (CASE WHEN ${SQL_ZIP_OK} THEN left(btrim(a."zip"), 3) END) AS "zip3"` +
     (withAddress ? `, a."line1" AS "line1", a."city" AS "city", a."zip" AS "zip"` : "") +
     ` FROM "${TABLE}" a LEFT JOIN "Tenant" t ON t."id" = a."tenantId"` +
     ` WHERE a."stateCode" IS NULL` +
@@ -542,25 +714,29 @@ export function candidateSql({ withAddress = false, tenantScoped = false } = {})
 
 // ─── the write list ───────────────────────────────────────────────────────────────────────────
 
-/** Resolved: id-pinned, still-NULL-only. The `AND "stateCode" IS NULL` is what makes a re-run and
- *  a concurrent writer safe: a row normalised under us returns zero rows and aborts the batch. */
+/** Resolved: id-pinned, tenant-pinned, still-NULL-only. The `AND "stateCode" IS NULL` is what makes
+ *  a re-run and a concurrent writer safe: a row normalised under us returns zero rows and aborts the
+ *  batch. The `"tenantId"` pin re-states the tenant the listing (and the `--only-test-tenants` gate)
+ *  approved, so a row whose tenant moved in between is never written outside that approval. */
 export const SET_STATE_SQL =
   `UPDATE "${TABLE}" SET "stateCode" = $1, "stateNeedsReview" = false, "updatedAt" = now()` +
-  ` WHERE "id" = $2 AND "stateCode" IS NULL RETURNING "id"`;
+  ` WHERE "id" = $2 AND "tenantId" = $3 AND "stateCode" IS NULL RETURNING "id"`;
 
-/** Unresolved: ONLY the review annotation, never a state code. Re-states both preconditions the
- *  report showed (still NULL, not yet flagged), so a row that changed in between rolls back. */
+/** Unresolved: ONLY the review annotation, never a state code. Re-states the preconditions the
+ *  report showed (same tenant, still NULL, not yet flagged), so a row that changed in between rolls
+ *  back. */
 export const FLAG_REVIEW_SQL =
   `UPDATE "${TABLE}" SET "stateNeedsReview" = true, "updatedAt" = now()` +
-  ` WHERE "id" = $1 AND "stateCode" IS NULL AND "stateNeedsReview" = false RETURNING "id"`;
+  ` WHERE "id" = $1 AND "tenantId" = $2 AND "stateCode" IS NULL AND "stateNeedsReview" = false` +
+  ` RETURNING "id"`;
 
 /**
  * The explicit, ordered write list — one guarded UPDATE per row that needs a write, nothing for a
  * row that does not. Report order is preserved. There is deliberately no blanket
  * `WHERE "stateCode" IS NULL` form: every statement pins one id that appeared in the report the
  * owner just read.
- *   - resolved            -> SET_STATE_SQL  [stateCode, id]
- *   - unresolved          -> FLAG_REVIEW_SQL [id] (skipped when the row is already flagged, which
+ *   - resolved            -> SET_STATE_SQL  [stateCode, id, tenantId]
+ *   - unresolved          -> FLAG_REVIEW_SQL [id, tenantId] (skipped when the row is already flagged, which
  *                            is what makes a second run a no-op)
  *   - NULL_TENANT         -> never written
  * Throws rather than returning a half-safe list when a report is malformed (wrong table, unknown
@@ -614,7 +790,7 @@ export function buildUpdates(reports) {
         action: "set-state",
         stateCode: report.stateCode,
         sql: SET_STATE_SQL,
-        params: [report.stateCode, report.id],
+        params: [report.stateCode, report.id, report.tenantId],
       });
     } else {
       if (report.stateCode !== null && report.stateCode !== undefined) {
@@ -628,7 +804,7 @@ export function buildUpdates(reports) {
         action: "flag-review",
         stateCode: null,
         sql: FLAG_REVIEW_SQL,
-        params: [report.id],
+        params: [report.id, report.tenantId],
       });
     }
   }
@@ -688,12 +864,180 @@ export function assertTestTenantTargets(rows, slugById) {
   return checked;
 }
 
+/** Raised by `assertTestTenantListing` — the CLI maps it to exit 3. Names tenants, never rows. */
+export class TestTenantListingRefusedError extends Error {
+  constructor(message, offenders) {
+    super(message);
+    this.name = "TestTenantListingRefusedError";
+    this.offenders = offenders;
+  }
+}
+
+/**
+ * The `--only-test-tenants` gate, judged on the CANDIDATE LISTING — before classification and so
+ * before any Google request can exist. Every candidate row that HAS a tenant must resolve to an
+ * approved test-tenant slug (`isTestTenant`, the single source of the policy); ONE tenant that does
+ * not — or whose slug cannot be resolved — refuses the WHOLE batch. NULL-tenant rows are never
+ * written and never sent anywhere, so they cannot trip it.
+ *
+ * The refusal names TENANT ids and slugs (with a candidate-row count each) and nothing else: no
+ * address row id, no state text, no address.
+ *
+ * @param {Array<{ tenantId?: string|null, tenantSlug?: string|null }>} rows the candidate listing
+ * @returns {{ tenants: number, rows: number }} what was checked
+ * @throws {TestTenantListingRefusedError}
+ */
+export function assertTestTenantListing(rows) {
+  const byTenant = new Map();
+  let checkedRows = 0;
+  for (const row of rows ?? []) {
+    if (typeof row?.tenantId !== "string" || row.tenantId === "") continue;
+    checkedRows++;
+    const entry = byTenant.get(row.tenantId) ?? {
+      tenantId: row.tenantId,
+      slug: typeof row.tenantSlug === "string" ? row.tenantSlug : null,
+      rows: 0,
+    };
+    entry.rows++;
+    byTenant.set(row.tenantId, entry);
+  }
+  const offenders = [...byTenant.values()].filter(
+    (t) => !(typeof t.slug === "string" && isTestTenant(t.slug)),
+  );
+  if (offenders.length > 0) {
+    const lines = offenders.map(
+      (t) =>
+        `  tenantId=${idToken(t.tenantId)} tenantSlug=${t.slug === null ? "<unresolvable>" : idToken(t.slug)}` +
+        ` (${t.rows} candidate row(s))`,
+    );
+    throw new TestTenantListingRefusedError(
+      `normalize-address-states: --only-test-tenants refuses this run — ${offenders.length} of ` +
+        `${byTenant.size} tenant(s) in the candidate listing are not approved test tenants:\n` +
+        `${lines.join("\n")}\n` +
+        `  approved: ${[...TEST_TENANT_SLUGS].join(", ")} or a slug matching ` +
+        `${TEST_TENANT_PATTERN} (scripts/lib/test-tenants.cjs). NOTHING was sent to Google and ` +
+        `NOTHING was written — a client-tenant row keeps the interactive TTY confirmation as its ` +
+        `only path.`,
+      offenders.map((t) => ({ tenantId: t.tenantId, slug: t.slug })),
+    );
+  }
+  return { tenants: byTenant.size, rows: checkedRows };
+}
+
+// ─── the row ceiling ──────────────────────────────────────────────────────────────────────────
+
+export const DEFAULT_MAX_ROWS = 500;
+
+/** Raised BEFORE any Google request or write when the candidate count exceeds `--max-rows` — a
+ *  refusal, never a silent truncation. The CLI maps it to exit 2. */
+export class MaxRowsExceededError extends Error {
+  constructor(candidates, max) {
+    super(
+      `normalize-address-states: ${candidates} candidate row(s) but --max-rows is ${max} — nothing ` +
+        `was sent and nothing was written. Raise it deliberately (--max-rows ${candidates} or more) ` +
+        "after reading the report, or scope the run with --tenant-slug.",
+    );
+    this.name = "MaxRowsExceededError";
+    this.candidates = candidates;
+    this.max = max;
+  }
+}
+
+/** @throws {MaxRowsExceededError} when `candidates > max` (equal is fine). */
+export function assertMaxRows(candidates, max = DEFAULT_MAX_ROWS) {
+  if (candidates > max) throw new MaxRowsExceededError(candidates, max);
+}
+
+// ─── the run orchestration ────────────────────────────────────────────────────────────────────
+
+/**
+ * The ORDER the CLI relies on, in one tested place: (1) `--only-test-tenants` on the listing,
+ * (2) the `--max-rows` ceiling, (3) classification — the only step that can call Google. A refusal
+ * in (1) or (2) throws before `classifyBatch` runs, so `google.fetchImpl` is never invoked.
+ *
+ * @param {Array<object>} listingRows the candidate listing
+ * @param {{ onlyTestTenants?: boolean, maxRows?: number, google?: object|null,
+ *           showUnresolvedText?: boolean }} options
+ * @returns {Promise<{ reports: object[], google: object }>}
+ * @throws {TestTenantListingRefusedError | MaxRowsExceededError | GoogleCapExceededError}
+ */
+export async function planRun(
+  listingRows,
+  {
+    onlyTestTenants = false,
+    maxRows = DEFAULT_MAX_ROWS,
+    google = null,
+    showUnresolvedText = false,
+  } = {},
+) {
+  if (onlyTestTenants) assertTestTenantListing(listingRows);
+  assertMaxRows((listingRows ?? []).length, maxRows);
+  return classifyBatch(listingRows, { google, showUnresolvedText });
+}
+
+// ─── the live confirmation and the write transaction ──────────────────────────────────────────
+
+/** The typed phrase for a batch that will write `count` rows. */
+export const confirmationPhrase = (count) => `NORMALIZE ${count} ADDRESSES`;
+
+/** Whether the typed (or supplied) answer is the phrase — trimmed, otherwise EXACT. */
+export const confirmationMatches = (answer, phrase) =>
+  typeof answer === "string" && answer.trim() === phrase;
+
+/**
+ * `--expect-rows <n>` — the count the owner read on their own `--dry-run` — against what THIS
+ * invocation computed. `null` (not supplied) is never a mismatch here; whether it is REQUIRED is the
+ * CLI's argument rule. Returns `null` when fine, else the refusal message (the CLI maps it to exit 3
+ * with zero writes).
+ */
+export function checkExpectRows(expectRows, writeCount) {
+  if (expectRows === null || expectRows === undefined) return null;
+  if (expectRows === writeCount) return null;
+  return (
+    `normalize-address-states: refused — --expect-rows ${expectRows} does not match the ` +
+    `${writeCount} row(s) this run would write; the data changed since your dry-run, or the wrong ` +
+    "scope was used. Nothing was written. Re-run the report/--dry-run and read it again."
+  );
+}
+
+/**
+ * The ONE write path: lift the session's read-only flag, then a single transaction of guarded
+ * statements whose RETURNING is checked row by row. `client` is anything with a pg-shaped
+ * `query(sql, params?)` — the CLI passes a real client, the no-DB spec a recording fake. Returns
+ * `{ code: 0, applied }` when committed, or `{ code: 4, applied: {}, changed: { table, id } }` after
+ * a ROLLBACK because a row no longer matched its guarded WHERE (it changed under us). A thrown
+ * query error rolls back and rethrows.
+ */
+export async function applyUpdates(client, updates) {
+  const applied = {};
+  await client.query("SET default_transaction_read_only = off");
+  await client.query("BEGIN");
+  try {
+    // Report order, inside this ONE transaction — so a row that changed under us rolls back
+    // everything written beside it.
+    for (const update of updates) {
+      const res = await client.query(update.sql, update.params);
+      if (res.rows.length !== 1) {
+        await client.query("ROLLBACK");
+        return { code: 4, applied: {}, changed: { table: update.table, id: update.id } };
+      }
+      applied[update.action] = (applied[update.action] ?? 0) + 1;
+    }
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw e;
+  }
+  return { code: 0, applied };
+}
+
 // ─── formatting ───────────────────────────────────────────────────────────────────────────────
 
 /**
- * One report line. Ids, tenant ids, the verdict and the proposed code — and, for an UNRESOLVED row
- * ONLY, the raw `state` text, JSON-escaped and cut to 40 code points. It reads no other field of
- * the report, and the report never held an address line, city, zip, coordinate or name.
+ * One report line. Ids, tenant ids, the verdict and the proposed code — and, only when the owner
+ * opted in (`--show-unresolved-text`, which is what puts `rawState` on an UNRESOLVED report), the
+ * raw `state` text, JSON-escaped and cut to 40 code points. It reads no other field of the report,
+ * and the report never held an address line, city, zip, coordinate or name.
  */
 export function reportLine(report) {
   const unresolved =
@@ -706,6 +1050,9 @@ export function reportLine(report) {
       ? `  state=${jsonToken(report.rawState)}${report.rawStateTruncated ? " (truncated)" : ""}`
       : "") +
     (report.googleError ? `  google=${idToken(report.googleError)}` : "") +
+    (report.reason === REASON_ZIP_CONFLICT && report.conflictCode && Array.isArray(report.zipStates)
+      ? `  conflict=${idToken(report.conflictCode)} zipStates=${report.zipStates.map(idToken).join("|")}`
+      : "") +
     (unresolved && report.reason !== REASON_NULL_TENANT
       ? report.alreadyFlagged
         ? "  (already flagged for review)"
