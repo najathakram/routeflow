@@ -1,7 +1,7 @@
 /**
- * Selling restrictions (lane R step 1) — the PURE decision core. No Prisma, no Nest, no clock:
- * `SellingRestrictionsService` loads the facts and hands them in, so every outcome below is
- * unit-testable without a database.
+ * Selling restrictions (lane R step 1) — the PURE decision core. No Prisma client, no Nest, no
+ * clock (the one Prisma import is type-only, shaping `activeRuleWhere`): `SellingRestrictionsService`
+ * loads the facts and hands them in, so every outcome below is unit-testable without a database.
  *
  * Three outcomes never share a code path (owner ruling):
  *   OFF            — the tenant switch is off. Nothing is read or evaluated (see `offEvaluation`).
@@ -13,6 +13,7 @@
  * the address at all.
  */
 
+import type { Prisma } from "@prisma/client";
 import type {
   BlockedLine,
   RestrictionAddressPrecedence,
@@ -58,11 +59,19 @@ export interface ProductFacts {
    * unknown. Fail closed: INDETERMINATE, never a silent "no labels ⇒ allowed".
    */
   unresolvable?: boolean;
+  /**
+   * The product's OWN row was found, so `name` is a real product name (only an ancestor could not
+   * be resolved). False/absent ⇒ `name` is the raw id and must never reach a buyer.
+   */
+  nameKnown?: boolean;
 }
 
 export type GoverningState = { resolved: true; state: string } | { resolved: false };
 
 export const UNRESOLVED_STATE: GoverningState = { resolved: false };
+
+/** `productName` of an UNKNOWN_PRODUCT reason — buyer-visible, so never a raw id. */
+export const UNKNOWN_PRODUCT_NAME = "Unknown product";
 
 /** The OFF outcome: a first-class result, produced without reading anything else. */
 export function offEvaluation(): RestrictionsEvaluation {
@@ -73,17 +82,47 @@ export function offEvaluation(): RestrictionsEvaluation {
  * A rule is active at `at` when inside its [effectiveFrom, effectiveTo) window and not lifted.
  * Lifting stamps `liftedAt` (and closes `effectiveTo`); a lift dated after `at` doesn't
  * retroactively deactivate the rule for a point-in-time check.
+ *
+ * Takes only the three window fields so any lane (the write side, the product-list chip, reports)
+ * can reuse it on its own row type. `activeRuleWhere` is its SQL twin — keep the two in lock step
+ * (pinned against each other by `selling-restrictions.core.spec.ts`).
  */
-export function ruleIsActive(rule: RestrictionRuleFacts, at: Date): boolean {
+export function ruleIsActive(
+  rule: Pick<RestrictionRuleFacts, "effectiveFrom" | "effectiveTo" | "liftedAt">,
+  at: Date,
+): boolean {
   if (rule.effectiveFrom.getTime() > at.getTime()) return false;
   if (rule.effectiveTo && rule.effectiveTo.getTime() <= at.getTime()) return false;
   if (rule.liftedAt && rule.liftedAt.getTime() <= at.getTime()) return false;
   return true;
 }
 
-/** `ALL` rules bind every channel; `BUYER_PORTAL` rules bind only the self-serve portal. */
-export function ruleBindsChannel(rule: RestrictionRuleFacts, channel: RestrictionChannel): boolean {
-  return rule.surface === "ALL" || channel === "BUYER_PORTAL";
+/**
+ * The SQL twin of `ruleIsActive`: a Prisma `SellingRestriction` `where` fragment selecting exactly
+ * the rows active at `at` — effectiveFrom <= at AND (effectiveTo IS NULL OR effectiveTo > at) AND
+ * (liftedAt IS NULL OR liftedAt > at). Compose it with `AND: [activeRuleWhere(at), …]` — it uses
+ * the top-level `effectiveFrom` and `AND` keys, so never spread it next to your own `AND`.
+ */
+export function activeRuleWhere(at: Date) {
+  return {
+    effectiveFrom: { lte: at },
+    AND: [
+      { OR: [{ effectiveTo: null }, { effectiveTo: { gt: at } }] },
+      { OR: [{ liftedAt: null }, { liftedAt: { gt: at } }] },
+    ],
+  } satisfies Prisma.SellingRestrictionWhereInput;
+}
+
+/**
+ * Only an explicit `BUYER_PORTAL` surface is limited to the self-serve portal; ANY other value
+ * (`ALL`, or one a newer schema adds before this file learns it) binds every channel. Fail closed:
+ * an unknown surface must never quietly exempt the staff channel.
+ */
+export function ruleBindsChannel(
+  rule: Pick<RestrictionRuleFacts, "surface">,
+  channel: RestrictionChannel,
+): boolean {
+  return (rule.surface as string) !== "BUYER_PORTAL" || channel === "BUYER_PORTAL";
 }
 
 /** Rule matches a product directly (`productId`) or through any effective label (`categoryId`). */
@@ -93,16 +132,37 @@ export function ruleMatchesProduct(rule: RestrictionRuleFacts, product: ProductF
   return false; // XOR CHECK in the DB makes this unreachable; never match on a malformed row.
 }
 
-/** The active, channel-binding rules that touch a product. */
+/**
+ * The TOTAL order every rule pick uses: newest `effectiveFrom` first, ties broken by `id`
+ * ascending. The service's `findMany` asks the DB for the same order (`orderBy`), and
+ * `matchingRules` re-applies it, so the rule a reason CITES never depends on the order rows came
+ * back in.
+ */
+export function compareRules(
+  a: Pick<RestrictionRuleFacts, "effectiveFrom" | "id">,
+  b: Pick<RestrictionRuleFacts, "effectiveFrom" | "id">,
+): number {
+  const byFrom = b.effectiveFrom.getTime() - a.effectiveFrom.getTime();
+  if (byFrom !== 0) return byFrom;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+/**
+ * The active, channel-binding rules that touch a product, in `compareRules` order — so the
+ * `.find(...)` picks in `evaluateRestrictions` (federal / unrecognised / empty-states / state-hit)
+ * cite the same rule for the same rule set, whatever order the caller loaded it in.
+ */
 export function matchingRules(
   rules: readonly RestrictionRuleFacts[],
   product: ProductFacts,
   channel: RestrictionChannel,
   at: Date,
 ): RestrictionRuleFacts[] {
-  return rules.filter(
-    (r) => ruleIsActive(r, at) && ruleBindsChannel(r, channel) && ruleMatchesProduct(r, product),
-  );
+  return rules
+    .filter(
+      (r) => ruleIsActive(r, at) && ruleBindsChannel(r, channel) && ruleMatchesProduct(r, product),
+    )
+    .sort(compareRules);
 }
 
 /**
@@ -187,13 +247,27 @@ export function evaluateRestrictions(input: EvaluateInput): RestrictionsEvaluati
   for (const product of input.products) {
     if (product.unresolvable) {
       indeterminate = true;
-      reasons.push({
-        productId: product.id,
-        productName: product.name,
-        ruleId: null,
-        reason: "UNKNOWN_PRODUCT",
-        message: `"${product.name}" can't be checked against selling restrictions — the product or its parent could not be found.`,
-      });
+      // The buyer sees this text. When the product's own row was not found its only "name" is the
+      // raw id, so never echo `product.name` (or the id) — `productId` carries it. When only an
+      // ANCESTOR is missing the real name is safe and lets the operator find the line.
+      reasons.push(
+        product.nameKnown
+          ? {
+              productId: product.id,
+              productName: product.name,
+              ruleId: null,
+              reason: "UNKNOWN_PRODUCT",
+              message: `"${product.name}" can't be checked against selling restrictions — one of its parent products could not be found.`,
+            }
+          : {
+              productId: product.id,
+              productName: UNKNOWN_PRODUCT_NAME,
+              ruleId: null,
+              reason: "UNKNOWN_PRODUCT",
+              message:
+                "A product on this order can't be checked against selling restrictions — the product or its parent could not be found.",
+            },
+      );
       continue;
     }
     const matched = matchingRules(input.rules, product, input.channel, input.at);

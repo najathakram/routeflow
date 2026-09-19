@@ -104,6 +104,12 @@ test.describe("Critical Paths — Money Math & Core Integrity", () => {
     const dollarCells = page.locator("table tbody td").filter({
       hasText: /^\s*\$\d/,
     });
+    // Auto-retrying wait first: `table tbody tr` above also matches the loading skeleton row, so
+    // a bare count() can run before the data lands and fail for the wrong reason.
+    await expect(
+      dollarCells.first(),
+      "No invoice amount cells on /invoices — run `node apps/api/scripts/e2e-seed.js` (B566)",
+    ).toBeVisible({ timeout: 15_000 });
     const count = await dollarCells.count();
 
     // An empty list proves nothing about amount formatting — fail, never return green
@@ -134,11 +140,19 @@ test.describe("Critical Paths — Money Math & Core Integrity", () => {
       .first()
       .waitFor({ timeout: 15_000 });
 
-    const dollarCells = page.locator("td, [class*='amount'], [class*='total']").filter({
-      hasText: /^\s*\$/,
-    });
+    // Scoped to `table tbody td` with `\$\d` (same reasoning as CP-01: the empty state's
+    // illustration carries a literal "$"), and an empty list FAILS — never a green no-op (B566
+    // follow-up: `e2e-seed.js` seeds a PENDING order).
+    const dollarCells = page.locator("table tbody td").filter({ hasText: /^\s*\$\d/ });
+    await expect(
+      dollarCells.first(),
+      "No order amount cells on /orders — run `node apps/api/scripts/e2e-seed.js` (B566)",
+    ).toBeVisible({ timeout: 15_000 });
     const count = await dollarCells.count();
-    if (count === 0) return;
+    expect(
+      count,
+      "No order amount cells on /orders — run `node apps/api/scripts/e2e-seed.js` (B566)",
+    ).toBeGreaterThan(0);
 
     const texts = await dollarCells.allTextContents();
     const badAmounts = texts.map((t) => t.trim()).filter((t) => t && !MONEY_RE.test(t));
@@ -306,8 +320,8 @@ test.describe("Critical Paths — Money Math & Core Integrity", () => {
     try {
       await firstRow.waitFor({ timeout: 15_000 });
     } catch {
-      test.skip(true, "No orders to inspect");
-      return;
+      // Fail, never skip (B566 follow-up): e2e-seed.js seeds an order.
+      throw new Error("No orders to inspect — run `node apps/api/scripts/e2e-seed.js` (B566)");
     }
 
     await firstRow.click();
@@ -319,7 +333,7 @@ test.describe("Critical Paths — Money Math & Core Integrity", () => {
       .filter({ hasText: /^\s*\$/ });
 
     const count = await dollarEls.count();
-    if (count === 0) return;
+    expect(count, "The order detail page rendered no dollar amounts (B566)").toBeGreaterThan(0);
 
     const texts = await dollarEls.allTextContents();
     const badAmounts = texts.map((t) => t.trim()).filter((t) => t && !MONEY_RE.test(t));
@@ -423,18 +437,22 @@ test.describe("Critical Paths — Money Math & Core Integrity", () => {
     const listRes = await request.get(`${api}/api/v1/invoices?limit=3`, {
       headers: { authorization: `Bearer ${token}`, "x-tenant-slug": TENANT_SLUG },
     });
-    if (!listRes.ok()) return;
+    expect(listRes.ok(), `GET /invoices returned ${listRes.status()}`).toBe(true);
 
     const list = await listRes.json();
     const invoices = Array.isArray(list) ? list : (list.items ?? list.data ?? []);
-    if (invoices.length === 0) return;
+    // Fail, never return green on an empty list (B566 follow-up: e2e-seed.js seeds an invoice).
+    expect(
+      invoices.length,
+      "No invoices to check — run `node apps/api/scripts/e2e-seed.js` (B566)",
+    ).toBeGreaterThan(0);
 
     // Spot-check the first invoice detail
     const inv = invoices[0];
     const detailRes = await request.get(`${api}/api/v1/invoices/${inv.id}`, {
       headers: { authorization: `Bearer ${token}`, "x-tenant-slug": TENANT_SLUG },
     });
-    if (!detailRes.ok()) return;
+    expect(detailRes.ok(), `GET /invoices/${inv.id} returned ${detailRes.status()}`).toBe(true);
 
     const detail = await detailRes.json();
     // Decimal columns (shippingFee/discount included) may arrive as strings — coerce all.

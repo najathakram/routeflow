@@ -74,6 +74,13 @@ const NAME_TO_CODE = new Map(US_STATES.map((s) => [s.name.toLowerCase(), s.code]
  * ⇒ the caller treats it as INDETERMINATE, never a silently-assumed state).
  * Trims + case-folds; matches a bare code ("tx", " TX ") or a full name
  * ("Texas", "TEXAS"). `""`, `"Unknown"`, and anything else (e.g. "Tejas") ⇒ null.
+ *
+ * OUT OF SCOPE BY DESIGN (decision 2026-09-19): the military postal codes AA / AE / AP and the
+ * FM / MH / PW / UM codes are deliberately NOT in `US_STATES`, so an APO/FPO (or Micronesia,
+ * Marshall Islands, Palau, U.S. minor outlying islands) address normalizes to `null` and its
+ * governing state stays UNRESOLVED ⇒ INDETERMINATE. That is fail-closed on purpose: the address is
+ * listed for review, never silently assigned a state. Do not add these codes without a ruling on
+ * which jurisdiction's ban governs them; `us-states.parity.spec.ts` pins the current behaviour.
  */
 export function normalizeUsState(input: string | null | undefined): string | null {
   if (input == null) return null;

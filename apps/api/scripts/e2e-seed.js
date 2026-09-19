@@ -156,99 +156,193 @@ const FIXTURE_CUSTOMERS = [
 // One boxed product (13 BOXED-01 discovers it by probing the product search — its name carries
 // "case" — and reads box price / pack size off the row) plus two plain ones, so the products
 // table has >= 3 selectable rows (21 REG-B154 selects up to 3, then 2) and CP-09 has price cells.
+// Money as integer cents -> "d.cc" strings: the product prices AND the invoice/order figures are
+// all derived from these, never re-typed as independent literals that could drift apart.
+const cents = (n) => (n / 100).toFixed(2);
+const BOX_PRICE_CENTS = 2400;
+const WIDGET_A_CENTS = 450;
+const WIDGET_B_CENTS = 725;
+const ORDER_QTY = 2;
+
 const FIXTURE_PRODUCTS = [
-  { sku: "E2E-FIX-001", name: "E2E Fixture Widget A", unit: "each", pricePerUnit: "4.50" },
-  { sku: "E2E-FIX-002", name: "E2E Fixture Widget B", unit: "each", pricePerUnit: "7.25" },
+  {
+    sku: "E2E-FIX-001",
+    name: "E2E Fixture Widget A",
+    unit: "each",
+    pricePerUnit: cents(WIDGET_A_CENTS),
+  },
+  {
+    sku: "E2E-FIX-002",
+    name: "E2E Fixture Widget B",
+    unit: "each",
+    pricePerUnit: cents(WIDGET_B_CENTS),
+  },
   {
     sku: "E2E-FIX-BOX",
     name: "E2E Fixture Boxed Case",
     unit: "box",
-    pricePerUnit: "24.00",
+    pricePerUnit: cents(BOX_PRICE_CENTS),
     unitsPerBox: 12,
   },
 ];
 
 const FIXTURE_INVOICE_NUMBER = "E2E-FIX-INV-001";
+// One PENDING order with one line on the first plain fixture product: 06 CP-02/CP-06 read real
+// order rows off a fresh DB, and 21 REG-B24 needs an ACTIVE order item against a catalog product
+// to prove the bulk-delete skip-guard. Found by a stable idempotencyKey — NOT by number: the app
+// generates the next order number as (lexicographically-highest "ORD-…") + 1
+// (orders.service.ts), so a fixed high literal like ORD-900001 would skew that tenant's sequence
+// forever. The fixture takes the NEXT number in sequence exactly as a real order would, and
+// "ORD-<digits>" is also the shape 06 CP-06 finds the row by.
+const FIXTURE_ORDER_KEY = "e2e-fixture-order";
+
+// The API's customer soft-delete (customers.service.ts, REG-B159) RELEASES the User's identity:
+// username -> "<username>~removed~<id8>", email -> "removed+<id>@placeholder.local", deletedAt set.
+// So a fixture user that was soft-deleted no longer matches its exact username — match the
+// tombstone prefix too, and put the identity back.
+const TOMBSTONE = "~removed~";
+
+async function ensureFixtureUser(tenantId, c) {
+  const email = `${c.username}@e2e-routeflow.test`;
+  let user = await prisma.user.findFirst({ where: { tenantId, username: c.username } });
+  if (!user) {
+    const tomb = await prisma.user.findFirst({
+      where: { tenantId, username: { startsWith: `${c.username}${TOMBSTONE}` } },
+      orderBy: { createdAt: "asc" },
+    });
+    if (tomb) {
+      user = await prisma.user.update({
+        where: { id: tomb.id },
+        data: { username: c.username, email, deletedAt: null },
+      });
+    }
+  }
+  if (!user) {
+    // Composite-unique upsert (not find-then-create): the DB lane runs specs in parallel.
+    user = await prisma.user.upsert({
+      where: { tenantId_username: { tenantId, username: c.username } },
+      create: {
+        email,
+        username: c.username,
+        // Never a login identity — a random hash nobody holds.
+        password: await bcrypt.hash(require("crypto").randomBytes(16).toString("hex"), 10),
+        role: "CUSTOMER",
+        status: "ACTIVE",
+        forcePasswordChange: false,
+        tenantId,
+      },
+      update: {},
+    });
+  } else if (user.deletedAt) {
+    user = await prisma.user.update({ where: { id: user.id }, data: { deletedAt: null } });
+  }
+  return user;
+}
 
 async function ensureCommerceFixtures(tenantId) {
-  let invoiceCustomerId = null;
+  const customers = [];
   for (const c of FIXTURE_CUSTOMERS) {
-    let user = await prisma.user.findFirst({ where: { tenantId, username: c.username } });
-    if (!user) {
-      user = await prisma.user.create({
-        data: {
-          email: `${c.username}@e2e-routeflow.test`,
-          username: c.username,
-          // Never a login identity — a random hash nobody holds.
-          password: await bcrypt.hash(require("crypto").randomBytes(16).toString("hex"), 10),
-          role: "CUSTOMER",
-          status: "ACTIVE",
-          forcePasswordChange: false,
-          tenantId,
-        },
-      });
-    }
-    let customer = await prisma.customer.findFirst({ where: { tenantId, userId: user.id } });
-    if (!customer) {
-      customer = await prisma.customer.create({
-        data: {
-          userId: user.id,
-          businessName: c.businessName,
-          contactName: "E2E Fixture",
-          tenantId,
-        },
-      });
-    } else if (customer.deletedAt) {
-      // A spec's bulk delete soft-deletes a customer that holds records (REG-B130 territory);
-      // restore it, or a re-seed would report "present" while /customers shows fewer rows.
-      customer = await prisma.customer.update({
-        where: { id: customer.id },
-        data: { deletedAt: null },
-      });
-    }
-    if (c.username === FIXTURE_CUSTOMERS[0].username) invoiceCustomerId = customer.id;
+    const user = await ensureFixtureUser(tenantId, c);
+    // userId is @unique -> a safe upsert; `update` un-deletes a soft-deleted customer (a spec's
+    // bulk delete soft-deletes one that holds records) so a re-seed repairs it.
+    const customer = await prisma.customer.upsert({
+      where: { userId: user.id },
+      create: {
+        userId: user.id,
+        businessName: c.businessName,
+        contactName: "E2E Fixture",
+        tenantId,
+      },
+      update: { deletedAt: null },
+    });
+    customers.push(customer);
   }
+
+  const products = new Map();
+  for (const p of FIXTURE_PRODUCTS) {
+    const product = await prisma.product.upsert({
+      where: { tenantId_sku: { tenantId, sku: p.sku } },
+      create: { tenantId, currentStock: 500, isActive: true, ...p },
+      update: { isActive: true },
+    });
+    products.set(p.sku, product);
+  }
+
   // One SENT invoice so 06 CP-01 scans real amount cells on a fresh DB (its "$" scan otherwise
   // reads the empty-state block as a malformatted amount).
-  const invoiceExists = await prisma.invoice.findFirst({
-    where: { tenantId, invoiceNumber: FIXTURE_INVOICE_NUMBER },
-  });
-  if (!invoiceExists) {
-    await prisma.invoice.create({
-      data: {
-        tenantId,
-        customerId: invoiceCustomerId,
-        invoiceNumber: FIXTURE_INVOICE_NUMBER,
-        status: "SENT",
-        sentAt: new Date(),
-        subtotal: "24.00",
-        total: "24.00",
-        items: {
-          create: [
-            {
-              tenantId, // a nested create is not tenant-scoped for us — set it explicitly (B571 class)
-              description: "E2E Fixture Boxed Case",
-              qty: 1,
-              unitPrice: "24.00",
-              subtotal: "24.00",
-            },
-          ],
-        },
+  await prisma.invoice.upsert({
+    where: { tenantId_invoiceNumber: { tenantId, invoiceNumber: FIXTURE_INVOICE_NUMBER } },
+    create: {
+      tenantId,
+      customerId: customers[0].id,
+      invoiceNumber: FIXTURE_INVOICE_NUMBER,
+      status: "SENT",
+      sentAt: new Date(),
+      subtotal: cents(BOX_PRICE_CENTS),
+      total: cents(BOX_PRICE_CENTS),
+      items: {
+        create: [
+          {
+            tenantId, // a nested create is not tenant-scoped for us — set it explicitly (B571 class)
+            description: "E2E Fixture Boxed Case",
+            qty: 1,
+            unitPrice: cents(BOX_PRICE_CENTS),
+            subtotal: cents(BOX_PRICE_CENTS),
+          },
+        ],
       },
-    });
-  }
-  for (const p of FIXTURE_PRODUCTS) {
-    const found = await prisma.product.findFirst({ where: { tenantId, sku: p.sku } });
-    if (!found) {
-      await prisma.product.create({
-        data: { tenantId, currentStock: 500, isActive: true, ...p },
-      });
-    } else if (!found.isActive) {
-      await prisma.product.update({ where: { id: found.id }, data: { isActive: true } });
-    }
-  }
+    },
+    update: {},
+  });
+
+  // One PENDING order + one line (see FIXTURE_ORDER_KEY). Same numbering rule as the app.
+  const widget = products.get("E2E-FIX-001");
+  const lastOrder = await prisma.order.findFirst({
+    where: { tenantId, orderNumber: { startsWith: "ORD-" } },
+    orderBy: { orderNumber: "desc" },
+    select: { orderNumber: true },
+  });
+  const seq = lastOrder?.orderNumber
+    ? parseInt(lastOrder.orderNumber.replace("ORD-", ""), 10) + 1
+    : 1;
+  const orderNumber = `ORD-${String(Number.isFinite(seq) ? seq : 1).padStart(5, "0")}`;
+  await prisma.order.upsert({
+    where: { tenantId_idempotencyKey: { tenantId, idempotencyKey: FIXTURE_ORDER_KEY } },
+    create: {
+      tenantId,
+      customerId: customers[1].id,
+      orderNumber,
+      idempotencyKey: FIXTURE_ORDER_KEY,
+      // A staff create for this customer must never hit MERGE_CHOICE_REQUIRED (409) because of
+      // the fixture order: specs 08/13 create orders for the first picker customer.
+      skipAutoMerge: true,
+      status: "PENDING",
+      subtotal: cents(ORDER_QTY * WIDGET_A_CENTS),
+      total: cents(ORDER_QTY * WIDGET_A_CENTS),
+      lineItems: {
+        create: [
+          {
+            tenantId,
+            productId: widget.id,
+            status: "PENDING",
+            qty: ORDER_QTY,
+            unitPrice: cents(WIDGET_A_CENTS),
+            subtotal: cents(ORDER_QTY * WIDGET_A_CENTS),
+          },
+        ],
+      },
+    },
+    // Self-healing like the customer/product upserts: a spec or operator that cancelled/moved the
+    // fixture order would otherwise leave REG-B24 (needs an ACTIVE line) red forever.
+    update: {
+      status: "PENDING",
+      skipAutoMerge: true,
+      lineItems: { updateMany: { where: {}, data: { status: "PENDING" } } },
+    },
+  });
+
   console.log(
-    `  ✓ Commerce fixtures present: ${FIXTURE_CUSTOMERS.length} customers, ${FIXTURE_PRODUCTS.length} products (1 boxed), 1 invoice`,
+    `  ✓ Commerce fixtures present: ${FIXTURE_CUSTOMERS.length} customers, ${FIXTURE_PRODUCTS.length} products (1 boxed), 1 invoice, 1 order`,
   );
 }
 

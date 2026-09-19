@@ -67,7 +67,7 @@ PRODUCTION SAFETY CONTEXT — READ BEFORE DOING ANYTHING:
 
 - [ ] `cat apps/api/.env \| grep DATABASE_URL` — confirm it shows `localhost`, not `rlwy.net`
 - [ ] Am I on a feature branch, not `master` directly?
-- [ ] If this session touches schema: run `./apps/api/scripts/backup-production.sh` first
+- [ ] If this session touches schema: take a fresh prod backup first — owner-run, never a builder session: `railway run --service postgres node apps/api/scripts/backup-production.mjs <label>` (refuses a dump with < 100 tables or no `_prisma_migrations` data)
 
 ## When you need test data — say this instead
 

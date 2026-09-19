@@ -33,6 +33,19 @@ export interface LabelChainLink {
  * root is ignored — a standalone product has nothing to opt out of. Within ONE level an EXCLUDE
  * beats an INCLUDE of the same category; that cannot happen today (`@@unique([productId,
  * categoryId])` on `ProductCategoryLabel` — one row per pair), so revisit this if that key widens.
+ *
+ * OPT-OUT CONTRACT (engine ⇄ write side). Labels are inherited through up to five ancestors, but an
+ * opt-out is honoured ONLY through the pin rule above: it takes effect solely when the EXCLUDE's
+ * `parentProductIdAtWrite` is the product's IMMEDIATE parent. On a chain [grandparent GP carries a;
+ * parent P; grandchild G], G's EXCLUDE of `a` removes the label G inherits through P only when it is
+ * pinned to P — pinned to GP (a non-immediate ancestor), unpinned, or pinned to a parent G no longer
+ * has, it is INERT (fail closed). The engine only honours what the pin says; it never validates an
+ * opt-out. So the WRITE side (`product-categories/`, owned by another lane) must:
+ *   1. validate a new opt-out against the EFFECTIVE labels of the IMMEDIATE parent (the label must
+ *      actually reach the variant through that parent) and pin it to that parent's id; and
+ *   2. when an ancestor's INCLUDE is deleted (or otherwise stops reaching a subtree), clean up the
+ *      opt-outs of the descendant subtree that only existed to cancel it — the engine will neither
+ *      notice nor clear a dead opt-out.
  */
 export function computeEffectiveCategoryIds(chain: LabelChainLink[]): Set<string> {
   const effective = new Set<string>();
