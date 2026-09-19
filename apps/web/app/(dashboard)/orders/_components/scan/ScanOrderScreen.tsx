@@ -92,6 +92,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
   React.useEffect(() => {
     if (!open) return;
     engineRef.current = createScanEngine();
+    setResolving(false);
     setHistory([]);
     setHighlightId(null);
     setFeedback(null);

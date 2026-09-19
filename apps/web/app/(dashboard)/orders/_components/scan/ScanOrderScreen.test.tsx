@@ -355,6 +355,18 @@ describe("ScanOrderScreen", () => {
       expect(screen.getByRole("button", { name: /undo last scan/i })).toBeDisabled();
     });
 
+    it("a new session does not inherit a stuck Resolving indicator from the last one", async () => {
+      const hung = new Promise<ScanResolution>(() => undefined);
+      const { rerender, props } = setup({}, () => hung);
+      await scan("111");
+      expect(await screen.findByText(/Resolving/)).toBeInTheDocument();
+
+      rerender(<ScanOrderScreen {...props} open={false} />);
+      rerender(<ScanOrderScreen {...props} open />);
+
+      expect(screen.queryByText(/Resolving/)).not.toBeInTheDocument();
+    });
+
     it("a new session starts with an empty undo stack", async () => {
       const { rerender, props } = setup();
       await scan("111");

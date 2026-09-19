@@ -1,7 +1,7 @@
 "use client";
 
 import type { FlagKey } from "@routeflow/types";
-import { usePlanFlag } from "@/lib/api/plan-flags";
+import { useSubscription } from "@/lib/api/billing";
 
 /**
  * The plan-flag key for the redesigned accumulating scan screen. It is a RequirePlanFlag-gated key
@@ -12,12 +12,16 @@ import { usePlanFlag } from "@/lib/api/plan-flags";
 export const SCAN_V2_FLAG = "flag.scan_v2" as FlagKey;
 
 /**
- * Is the new scan screen on for this tenant? DARK by default: `usePlanFlag` reports `enabled: true`
- * while the subscription is still loading (it fails open, correct for a route guard that must not
- * strand a user), which is exactly wrong for an opt-in UI — so this requires the answer to be
- * `resolved` as well. Loading, an error, or a flag not in the list all read as OFF.
+ * Is the new scan screen on for this tenant? DARK by default, and deliberately NOT built on
+ * `usePlanFlag`: that hook fails OPEN (`enabled: true`) both while the subscription loads AND when a
+ * successful response simply omits `flags` (the field is optional in the shared DTO — a web build
+ * deployed ahead of the API, say). Right for a route guard that must never strand a user; exactly
+ * wrong for an opt-in UI. So this is ON only for a resolved subscription whose `flags` is a real
+ * array that contains the key. Loading, an error, a missing/odd `flags`, or a tenant that was never
+ * granted all read as OFF.
  */
 export function useScanV2Enabled(): boolean {
-  const flag = usePlanFlag(SCAN_V2_FLAG);
-  return flag.resolved && flag.enabled;
+  const sub = useSubscription({ staleTime: 60_000 });
+  const flags: unknown = sub.data?.flags;
+  return sub.isSuccess && Array.isArray(flags) && flags.includes(SCAN_V2_FLAG);
 }

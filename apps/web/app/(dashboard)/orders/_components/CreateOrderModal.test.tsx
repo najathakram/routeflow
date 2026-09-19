@@ -373,6 +373,61 @@ describe("CreateOrderModal", () => {
       expect(screen.getByText("Widget")).toBeInTheDocument();
     });
 
+    const caseSoda = {
+      notFound: false,
+      archived: false,
+      // A case-packed product: the line is priced PER CASE (unitPrice x boxes), qty is derived.
+      product: {
+        id: "prod-b",
+        name: "Case Soda",
+        pricePerUnit: "24",
+        unit: "case",
+        unitsPerBox: 6,
+      },
+    };
+
+    it("a repeat scan of a CASE-PACKED product adds a case and the total moves (it used to bump qty, which pricing ignores for boxed lines)", async () => {
+      mockResolveProductByCode.mockResolvedValue(caseSoda);
+      await openScreen();
+
+      await scanCode("111");
+      await screen.findByText("Case Soda");
+      expect(screen.getByText("1 item · $24.00")).toBeInTheDocument();
+      await scanCode("222");
+
+      await waitFor(() => expect(screen.getByText("1 item · $48.00")).toBeInTheDocument());
+      expect(screen.getAllByText("Case Soda")).toHaveLength(1);
+    });
+
+    it("Undo of a repeat scan on a case-packed line takes ONE case back and keeps the line", async () => {
+      mockResolveProductByCode.mockResolvedValue(caseSoda);
+      await openScreen();
+      await scanCode("111");
+      await screen.findByText("Case Soda");
+      await scanCode("222");
+      await waitFor(() => expect(screen.getByText("1 item · $48.00")).toBeInTheDocument());
+
+      fireEvent.click(screen.getByRole("button", { name: /undo last scan/i }));
+
+      await waitFor(() => expect(screen.getByText("1 item · $24.00")).toBeInTheDocument());
+      expect(screen.getByText("Case Soda")).toBeInTheDocument();
+    });
+
+    it("Undo never deletes a line the operator has since raised - it takes one case back", async () => {
+      mockResolveProductByCode.mockResolvedValue(caseSoda);
+      await openScreen();
+      await scanCode("111"); // this scan CREATED the line
+      await screen.findByText("Case Soda");
+      // The operator raises it to 3 cases by hand.
+      fireEvent.change(screen.getByTitle("Number of whole cases"), { target: { value: "3" } });
+      await waitFor(() => expect(screen.getByText("1 item · $72.00")).toBeInTheDocument());
+
+      fireEvent.click(screen.getByRole("button", { name: /undo last scan/i }));
+
+      await waitFor(() => expect(screen.getByText("1 item · $48.00")).toBeInTheDocument());
+      expect(screen.getByText("Case Soda")).toBeInTheDocument();
+    });
+
     it("an UNKNOWN code opens create-product with the code as SKU and pauses the screen beneath it", async () => {
       mockResolveProductByCode.mockResolvedValue({ notFound: true, archived: false });
       await openScreen();

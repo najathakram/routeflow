@@ -427,12 +427,28 @@ export function CreateOrderModal({
 
   // ── Stop management ───────────────────────────────────────────────────────
 
+  /**
+   * One scanned/picked unit on a line: a whole case for a case-packed line (a new line starts as
+   * one case, so a repeat must add a case too), one piece otherwise. For a boxed line the pricing
+   * package IGNORES `qty` once boxes/pieces are set, so bumping `qty` alone changes nothing the
+   * customer is charged for or sent — the repeat scan was silently a no-op.
+   */
+  const stepLineUnit = (li: LineItem, dir: 1 | -1): LineItem => {
+    if (li.unitsPerBox) {
+      const pieces = li.pieces ?? 0;
+      // Never step a case-packed line below one case (or its loose pieces) — undo must not zero it.
+      const boxes = Math.max(pieces > 0 ? 0 : 1, (li.boxes ?? 0) + dir);
+      return { ...li, boxes, qty: boxes * li.unitsPerBox + pieces };
+    }
+    return { ...li, qty: Math.max(1, li.qty + dir) };
+  };
+
   const addLineItem = (product: any) => {
-    // If already in the list, increment qty by 1 (supports repeated scans of the same item)
+    // If already in the list, add one more unit (supports repeated scans of the same item)
     const existing = lineItems.find((li) => li.productId === product.id);
     if (existing) {
       setLineItems((prev) =>
-        prev.map((li) => (li.productId === product.id ? { ...li, qty: li.qty + 1 } : li)),
+        prev.map((li) => (li.productId === product.id ? stepLineUnit(li, 1) : li)),
       );
       setScrollToId(existing.tempId);
       setProductSearch("");
@@ -1070,12 +1086,22 @@ export function CreateOrderModal({
     />
   );
 
-  // Inverts one scan: drop the line it created, or take one unit back off the line it incremented.
+  // Inverts one scan by taking ONE unit back. The line is dropped only when the scan created it AND
+  // it is still that single unit — so an operator who has since edited the quantity (or two rapid
+  // scans that both recorded "created") never loses the whole line to one Undo.
   const undoScan = ({ productId, created }: ScanHistoryEntry) => {
     const line = lineItems.find((li) => li.productId === productId);
     if (!line) return; // the operator already removed it by hand
-    if (created) removeLineItem(line.tempId);
-    else updateQty(line.tempId, -1);
+    const singleUnit = line.unitsPerBox
+      ? (line.boxes ?? 0) <= 1 && (line.pieces ?? 0) === 0
+      : line.qty <= 1;
+    if (created && singleUnit) {
+      removeLineItem(line.tempId);
+      return;
+    }
+    setLineItems((prev) =>
+      prev.map((li) => (li.tempId === line.tempId ? stepLineUnit(li, -1) : li)),
+    );
   };
 
   // A product created from the unknown-barcode fallback lands on the order like a picked one.
