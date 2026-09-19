@@ -372,8 +372,11 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
       });
       expect(repost.quantity.toString()).toBe("10");
       expect(repost.unitCost.toString()).toBe("4");
-      // the re-post is dated now — the original receipt stays in its own period
-      expect(repost).not.toHaveProperty("createdAt");
+      // the re-post is dated now — the original receipt stays in its own period — and strictly
+      // AFTER its compensation (the cost replay orders by createdAt, then a random id)
+      expect(repost.createdAt).toBeInstanceOf(Date);
+      expect(repost.createdAt.getTime()).toBeGreaterThan(comp.createdAt.getTime());
+      expect(Math.abs(repost.createdAt.getTime() - Date.now())).toBeLessThan(60_000);
 
       // stock + lot
       const reversal = prisma.product.update.mock.calls[0][0].data;
@@ -617,7 +620,7 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
         "u",
       );
       expect(prisma.stockLot.create.mock.calls[0][0].data.purchaseDate).toEqual(original);
-      expect(movementCalls()[1]).not.toHaveProperty("createdAt");
+      expect(movementCalls()[1].createdAt.getTime()).toBeGreaterThan(original.getTime());
     });
 
     it("only reverses THIS PO's product lots - the lot query is filtered by product, not just reference", async () => {
@@ -671,6 +674,96 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
       expect(prisma.purchaseOrder.update).not.toHaveBeenCalled();
       expectNoStockWrites();
       expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── B583 follow-ups (lead): deterministic replay order + legacy-lot remediation ─────────
+
+  describe("B583 follow-ups", () => {
+    const calls = () => prisma.stockMovement.create.mock.calls.map((c: any) => c[0].data);
+    const edit = () =>
+      service.updatePurchaseOrder(
+        "po-1",
+        {
+          reapplyInventory: true,
+          items: [{ id: "poi-1", productId: "prod-1", qtyOrdered: 10, unitCost: 4 }],
+        },
+        "u",
+      );
+
+    it("every movement a re-apply writes has its own, strictly increasing createdAt — compensations first, then the re-post", async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue(po());
+      // two live receipts of one PO (6 + 4) → two compensations, then one re-post
+      prisma.stockMovement.findMany.mockResolvedValue([
+        movement({ id: "mv-b", quantity: D(4), createdAt: new Date("2026-08-02T00:00:00Z") }),
+        movement({ id: "mv-a", quantity: D(6), createdAt: new Date("2026-08-01T00:00:00Z") }),
+      ]);
+      await edit();
+      const times = calls().map((m: any) => m.createdAt.getTime());
+      expect(calls().map((m: any) => m.type)).toEqual(["ADJUSTMENT", "ADJUSTMENT", "PURCHASE"]);
+      expect(times).toHaveLength(3);
+      // strictly increasing: no two rows tie, so the replay's id tie-break can never decide the order
+      expect(times[0]).toBeLessThan(times[1]);
+      expect(times[1]).toBeLessThan(times[2]);
+    });
+
+    it("a PO re-applied under #966 (a zeroed, annotated lot + the re-created full lot) is remediated, not refused forever", async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue(po());
+      prisma.stockLot.findMany.mockResolvedValue([
+        lot({ id: "lot-old", remainingQty: D(0), notes: "(PO edited; 4 already consumed)" }),
+        lot({ id: "lot-new" }),
+      ]);
+      await edit();
+      // both lots are removed and ONE is rebuilt from the receipt …
+      expect(prisma.stockLot.deleteMany).toHaveBeenCalledWith({
+        where: { id: { in: ["lot-old", "lot-new"] } },
+      });
+      expect(prisma.stockLot.create).toHaveBeenCalledTimes(1);
+      const rebuilt = prisma.stockLot.create.mock.calls[0][0].data;
+      expect(rebuilt.qty.toString()).toBe("10");
+      // … carrying the 4 units the old lot recorded as sold: the true pool, not an inflated one
+      expect(rebuilt.remainingQty.toString()).toBe("6");
+    });
+
+    it("sums the consumption of several legacy lots of one product", async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue(po());
+      prisma.stockLot.findMany.mockResolvedValue([
+        lot({ id: "old-1", remainingQty: D(0), notes: "(PO edited; 4 already consumed)" }),
+        lot({ id: "old-2", remainingQty: D(0), notes: "(PO edited; 1.5 already consumed)" }),
+        lot({ id: "lot-new" }),
+      ]);
+      await edit();
+      expect(prisma.stockLot.create.mock.calls[0][0].data.remainingQty.toString()).toBe("4.5");
+    });
+
+    it("the carried consumption never drives the rebuilt lot below zero", async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue(po());
+      prisma.stockLot.findMany.mockResolvedValue([
+        lot({ id: "old", remainingQty: D(0), notes: "(PO edited; 99 already consumed)" }),
+        lot({ id: "lot-new" }),
+      ]);
+      await edit();
+      expect(prisma.stockLot.create.mock.calls[0][0].data.remainingQty.toString()).toBe("0");
+    });
+
+    it("a legacy lot does NOT excuse a genuinely consumed one — a partly-consumed live lot still refuses", async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue(po());
+      prisma.stockLot.findMany.mockResolvedValue([
+        lot({ id: "old", remainingQty: D(0), notes: "(PO edited; 4 already consumed)" }),
+        lot({ id: "lot-new", remainingQty: D(7) }),
+      ]);
+      await expect(edit()).rejects.toMatchObject({
+        response: { code: "PO_LOT_PARTIALLY_CONSUMED" },
+      });
+      expectNoStockWrites();
+    });
+
+    it("a zeroed lot WITHOUT the #966 annotation is a real fully-consumed lot and still refuses", async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue(po());
+      prisma.stockLot.findMany.mockResolvedValue([lot({ remainingQty: D(0), notes: "sold out" })]);
+      await expect(edit()).rejects.toMatchObject({
+        response: { code: "PO_LOT_PARTIALLY_CONSUMED" },
+      });
     });
   });
 });

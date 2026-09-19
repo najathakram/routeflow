@@ -1283,6 +1283,15 @@ export class InventoryService {
      * Defaults to now (a fresh receive).
      */
     lotPurchaseDate?: Date,
+    /**
+     * Explicit timestamp for the movement. A re-apply passes strictly increasing ones
+     * (compensation, then re-post) because the cost replay orders by createdAt and then
+     * by a RANDOM id — two rows of one transaction share `now()`, so without this their
+     * replay order (and the average it yields) would be a coin flip.
+     */
+    movementAt?: Date,
+    /** Pieces of the re-created lot already sold under a #966-era lot (see reversePoReceipts). */
+    lotConsumed?: Prisma.Decimal,
   ) {
     const qtyReceived = new Prisma.Decimal(qty);
     // The PO line's cost basis is a property of the STORED row, never of the
@@ -1314,6 +1323,7 @@ export class InventoryService {
         supplierId: po.supplierId,
         reference: po.poNumber,
         performedById: userId,
+        ...(movementAt ? { createdAt: movementAt } : {}),
       },
     });
 
@@ -1323,7 +1333,9 @@ export class InventoryService {
         productId: item.productId,
         purchaseDate: lotPurchaseDate ?? new Date(),
         qty: qtyReceived,
-        remainingQty: qtyReceived,
+        remainingQty: lotConsumed
+          ? Prisma.Decimal.max(qtyReceived.sub(lotConsumed), 0)
+          : qtyReceived,
         unitCost: itemUnitCost,
         reference: po.poNumber,
       },
@@ -1374,8 +1386,16 @@ export class InventoryService {
    * restated average is approximate and stock may pass through a lower value inside
    * the transaction — exactly what a bill's revertToDraft does today.
    *
+   * LEGACY LOTS (POs re-applied under #966, before B583): that release surrendered a
+   * partly-consumed lot by zeroing it and annotating "(PO edited; N already consumed)",
+   * then re-created a full-size lot. Refusing such a PO forever would strand it, so a lot
+   * that is zeroed AND carries that annotation is treated as already reversed: it is
+   * removed with the rest, and the N units it records as sold are carried onto the
+   * re-created lot (remaining = received − N), which restores the true pool. Any OTHER
+   * lot with remaining < qty still refuses.
+   *
    * Returns the original purchase date of each product's lot, so the re-posted lot
-   * keeps its place in FIFO/LIFO order.
+   * keeps its place in FIFO/LIFO order, and the prior consumption to carry per product.
    */
   private async reversePoReceipts(
     tx: Prisma.TransactionClient,
@@ -1384,7 +1404,9 @@ export class InventoryService {
       items: { productId: string; qtyReceived: Prisma.Decimal }[];
     },
     userId: string,
-  ): Promise<Map<string, Date>> {
+    /** Strictly increasing timestamps for the compensating movements (see postPoReceipt). */
+    nextAt: () => Date,
+  ): Promise<{ lotDates: Map<string, Date>; carriedConsumption: Map<string, Prisma.Decimal> }> {
     const productIds = [...new Set(po.items.map((i) => i.productId))];
 
     // ── Refuse first: nothing below runs unless every check passes ──
@@ -1402,7 +1424,13 @@ export class InventoryService {
     const lots = await tx.stockLot.findMany({
       where: { reference: po.poNumber, productId: { in: productIds } },
     });
-    const consumedLots = lots.filter((l) => new Prisma.Decimal(l.remainingQty).lt(l.qty));
+    const legacyRe = /\(PO edited; ([0-9.]+) already consumed\)/;
+    const isLegacyZeroed = (l: (typeof lots)[number]) =>
+      new Prisma.Decimal(l.remainingQty).eq(0) && legacyRe.test(l.notes ?? "");
+    const staleLots = lots.filter(isLegacyZeroed);
+    const consumedLots = lots.filter(
+      (l) => !isLegacyZeroed(l) && new Prisma.Decimal(l.remainingQty).lt(l.qty),
+    );
     if (consumedLots.length > 0) {
       throw new ConflictException({
         code: "PO_LOT_PARTIALLY_CONSUMED",
@@ -1499,6 +1527,7 @@ export class InventoryService {
             reference: po.poNumber,
             notes: `${prefix}${m.id}`,
             performedById: userId,
+            createdAt: nextAt(),
           },
         });
       }
@@ -1525,7 +1554,17 @@ export class InventoryService {
       const seen = lotDates.get(l.productId);
       if (!seen || l.purchaseDate < seen) lotDates.set(l.productId, l.purchaseDate);
     }
-    return lotDates;
+    const carriedConsumption = new Map<string, Prisma.Decimal>();
+    for (const l of staleLots) {
+      const n = legacyRe.exec(l.notes ?? "");
+      if (n) {
+        carriedConsumption.set(
+          l.productId,
+          (carriedConsumption.get(l.productId) ?? new Prisma.Decimal(0)).add(n[1]),
+        );
+      }
+    }
+    return { lotDates, carriedConsumption };
   }
 
   /**
@@ -1666,12 +1705,17 @@ export class InventoryService {
 
       // ── Reverse (re-apply only) ──
       let lotDates = new Map<string, Date>();
+      let carriedConsumption = new Map<string, Prisma.Decimal>();
+      // Strictly increasing movement timestamps: compensation(s) first, then the re-post.
+      const clockBase = Date.now();
+      let tick = 0;
+      const nextAt = () => new Date(clockBase + tick++);
       if (reapply) {
         await this.lockProducts(tx, [
           ...po.items.map((i) => i.productId),
           ...items.map((l) => l.productId),
         ]);
-        lotDates = await this.reversePoReceipts(tx, po, userId);
+        ({ lotDates, carriedConsumption } = await this.reversePoReceipts(tx, po, userId, nextAt));
       }
       const tenantId = this.prisma.getTenantId();
 
@@ -1742,6 +1786,13 @@ export class InventoryService {
         },
       });
 
+      // Prior consumption is carried onto the FIRST re-created lot of a product only.
+      const takeConsumed = (productId: string) => {
+        const n = carriedConsumption.get(productId);
+        carriedConsumption.delete(productId);
+        return n;
+      };
+
       // ── Re-post (re-apply only) ──
       if (reapply) {
         const supplierId = supplierChanged ? dto.supplierId! : po.supplierId;
@@ -1756,6 +1807,8 @@ export class InventoryService {
             l.qtyReceived,
             userId,
             lotDates.get(l.line.productId),
+            nextAt(),
+            takeConsumed(l.line.productId),
           );
           restockedProductIds.push(l.line.productId);
         }
