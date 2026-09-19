@@ -138,15 +138,19 @@ function writeUnrelatedCommit(dir: string, epochSeconds: number): void {
   commitAt(dir, epochSeconds, "docs: touch unrelated file");
 }
 
-function writeTurboDryRunFile(dir: string, cacheStatus: string): string {
+function writeTurboDryRunFile(
+  dir: string,
+  cacheStatus: string,
+  pkg: string = "@routeflow/api",
+): string {
   const p = path.join(dir, "turbo-dry-run.json");
   fs.writeFileSync(
     p,
     JSON.stringify({
       tasks: [
         {
-          taskId: "@routeflow/api#test",
-          package: "@routeflow/api",
+          taskId: `${pkg}#test`,
+          package: pkg,
           cache: { status: cacheStatus },
         },
       ],
@@ -258,6 +262,10 @@ describe("campaign-check freshness guard (spec T1–T17)", () => {
       writeReport(runsDir, "api", { generatedAt: iso(T0 + 600) });
       writeReport(runsDir, "mobile", { generatedAt: iso(T0 + 600), tokens: [] });
       writeReport(runsDir, "pricing", { generatedAt: iso(T0 + 600), tokens: [] });
+      // B523: all four T1 sources must be present for a genuinely "checked, all fresh" case —
+      // an omitted web.json here used to pass by accident (the pre-fix code silently treated a
+      // missing workspace as contributing zero hits); now it would correctly refuse.
+      writeReport(runsDir, "web", { generatedAt: iso(T0 + 600), tokens: [] });
 
       const res = runCampaignCheck({ fixtureDir: dir, runsDir });
       const out = combined(res);
@@ -804,6 +812,7 @@ describe("campaign-check freshness guard (spec T1–T17)", () => {
       writeReport(runsDir, "api", { generatedAt: iso(T0) });
       writeReport(runsDir, "mobile", { generatedAt: iso(T0), tokens: [] });
       writeReport(runsDir, "pricing", { generatedAt: iso(T0), tokens: [] });
+      writeReport(runsDir, "web", { generatedAt: iso(T0), tokens: [] }); // B523: all four required
       // Newer than the report, HEAD after this — but touches neither apps/api/**/*.spec.ts nor
       // .claude/campaign/status, so it must impose no bound.
       writeUnrelatedCommit(dir, T0 + 900);
@@ -835,6 +844,7 @@ describe("campaign-check freshness guard (spec T1–T17)", () => {
       writeReport(runsDir, "api", { generatedAt: iso(nowSec + 60) });
       writeReport(runsDir, "mobile", { generatedAt: iso(nowSec + 60), tokens: [] });
       writeReport(runsDir, "pricing", { generatedAt: iso(nowSec + 60), tokens: [] });
+      writeReport(runsDir, "web", { generatedAt: iso(nowSec + 60), tokens: [] }); // B523: all four
 
       const res = runCampaignCheck({ fixtureDir: dir, runsDir });
       const out = combined(res);
@@ -843,6 +853,78 @@ describe("campaign-check freshness guard (spec T1–T17)", () => {
       expect(out).not.toContain("STALE");
       expect(out).toContain("api.json fresh");
       expect(res.status).toBe(0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // B523: a workspace's report can be entirely MISSING (not merely stale) because turbo's
+  // shared-worktree cache replayed a HIT for its #test task without ever invoking jest — a cache
+  // replay restores only declared `outputs` (coverage/**), never this gitignored campaign
+  // artifact. The pre-fix code assumed "turbo will generate it" for ANY missing report in
+  // --freshness-only and never asked turbo whether that was actually true. T18/T19 pin the two
+  // guards that close this: --freshness-only must ask the same HIT/MISS question of a missing
+  // report that it already asks of a stale one, and full mode must never let a missing
+  // workspace's absence collapse into "checked, no matching test" for the ids it could have
+  // proven.
+  it("T18 (B523, R4): --freshness-only refuses when a MISSING report's turbo dry-run predicts a HIT — a cache replay would leave it missing forever", () => {
+    const dir = mkFixtureDir();
+    try {
+      initFixtureRepo(dir);
+      writeApiSpecCommit(dir, T0);
+      writeLedgerCommit(dir, T0 + 600, [B1_DONE_ROW]);
+      const runsDir = path.join(dir, ".campaign", "runs");
+      // api.json exists and is fresh (exercises the pre-existing "exists" path unchanged);
+      // mobile.json is never written at all — B523's actual shape: apps/mobile's jest task never
+      // ran because turbo replayed a cached HIT for it.
+      writeReport(runsDir, "api", { generatedAt: iso(T0 + 1000), tokens: [] });
+      const dryRunFile = writeTurboDryRunFile(dir, "HIT", "@routeflow/mobile");
+
+      const res = runCampaignCheck({
+        fixtureDir: dir,
+        runsDir,
+        args: ["--freshness-only"],
+        env: { CAMPAIGN_CHECK_TURBO_DRY_RUN: dryRunFile, JEST_WORKER_ID: "1" },
+      });
+      const out = combined(res);
+
+      expect(out).toContain("mobile.json");
+      expect(out).toContain("MISSING");
+      expect(out).toContain("cache HIT");
+      expect(out).toContain("cd apps/mobile && npx jest --maxWorkers=2");
+      expect(res.status).toBe(1);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("T19 (B523): full mode fails loudly and by name on a MISSING single workspace report — never silently scores its ids as zero hits", () => {
+    const dir = mkFixtureDir();
+    try {
+      initFixtureRepo(dir);
+      writeApiSpecCommit(dir, T0 - 600);
+      writeLedgerCommit(dir, T0 - 500, [
+        { id: "B34", batch: "F01", tier: "T1", state: "proven", proof: "REG-B34 …" },
+      ]);
+      const runsDir = path.join(dir, ".campaign", "runs");
+      // api/pricing/web all exist, are fresh, and correctly mention nothing about REG-B34 — its
+      // real proof lives only in apps/mobile, whose report is entirely absent (missing, not
+      // stale).
+      writeReport(runsDir, "api", { generatedAt: iso(T0) });
+      writeReport(runsDir, "pricing", { generatedAt: iso(T0), tokens: [] });
+      writeReport(runsDir, "web", { generatedAt: iso(T0), tokens: [] });
+      // mobile.json intentionally never written.
+
+      const res = runCampaignCheck({ fixtureDir: dir, runsDir });
+      const out = combined(res);
+
+      expect(out).toContain("COULD NOT CHECK");
+      expect(out).toContain("mobile.json");
+      expect(out).toContain("cd apps/mobile && npx jest --maxWorkers=2");
+      // The conflated wording must never appear for a report we never read — that phrasing means
+      // "checked, not found", which a missing report is not.
+      expect(out).not.toContain("no test titled with REG-B34 found");
+      expect(res.status).toBe(1);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
