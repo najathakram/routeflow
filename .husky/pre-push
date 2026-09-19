@@ -87,14 +87,11 @@ if [ -z "$dirty" ] && [ -f "$marker" ] && [ "$(cat "$marker" 2>/dev/null)" = "$t
   exit 0
 fi
 
-# Affected-scope verify (owner ruling 2026-09-19): on a feature branch only the workspaces the diff
-# reaches (plus dependents and the always-run pricing/repo-truth tripwires) are type-checked,
-# linted and tested — scripts/verify-turbo.mjs prints "AFFECTED SCOPE: ...". FULL_VERIFY=1 (the
-# coordinator's landing run) and pushes from master run the whole chain, and CI always does.
-if [ "$FULL_VERIFY" != "1" ]; then
-  export VERIFY_SCOPE=affected
-fi
-
+# Affected-scope verify (owner ruling 2026-09-19) is the DEFAULT on a feature branch: only the
+# workspaces the diff reaches (plus dependents and the always-run pricing/repo-truth tripwires) are
+# type-checked, linted and tested — scripts/verify-turbo.mjs prints "AFFECTED SCOPE: ...".
+# FULL_VERIFY=1 (the coordinator's landing run) is the ONLY override and runs the whole chain, as
+# does CI. No environment variable narrows the run.
 npm run verify || exit 1
 
 if [ -z "$dirty" ] && [ "$tree" != "none" ]; then

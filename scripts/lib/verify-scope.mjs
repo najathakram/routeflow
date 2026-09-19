@@ -144,19 +144,20 @@ export function changedFilesSince(root, base = "origin/master") {
 }
 
 /**
- * The scope decision for an actual verify run. Scoped ONLY when the pre-push hook opted in
- * (VERIFY_SCOPE=affected) — a hand-run `npm run verify` and CI stay full — and never on master
- * or under FULL_VERIFY=1.
+ * The scope decision for an actual verify run. Affected scope is the DEFAULT on any non-master
+ * branch (owner ruling 2026-09-19); the ONLY override is FULL_VERIFY=1 (the coordinator's landing
+ * run). CI, master/main and a detached HEAD are always full, and so is any diff that cannot be
+ * computed. `probe` ({ branch, files }) is a test seam for those two git reads — plain
+ * parameters, never environment, so there is no ambient switch that can quietly narrow a run.
  */
-export function decideScope(root, env = process.env) {
-  if (env.VERIFY_SCOPE !== "affected") return { mode: "full", reason: "VERIFY_SCOPE not set" };
+export function decideScope(root, env = process.env, probe = {}) {
   if (env.FULL_VERIFY === "1") return { mode: "full", reason: "FULL_VERIFY=1" };
   if (env.CI) return { mode: "full", reason: "CI" };
-  const branch = git(root, ["rev-parse", "--abbrev-ref", "HEAD"])?.trim();
+  const branch = probe.branch ?? git(root, ["rev-parse", "--abbrev-ref", "HEAD"])?.trim();
   if (!branch || branch === "master" || branch === "main" || branch === "HEAD") {
     return { mode: "full", reason: `branch ${branch || "unknown"}` };
   }
-  const files = changedFilesSince(root);
+  const files = probe.files ?? changedFilesSince(root);
   if (files === null) return { mode: "full", reason: "cannot diff against origin/master" };
   return computeScope(files, loadWorkspaces(root));
 }

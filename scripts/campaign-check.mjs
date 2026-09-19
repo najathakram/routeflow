@@ -104,7 +104,6 @@ import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { normalizeEvidence } from "./campaign/normalize-evidence.mjs";
-import { decideScope, shortName } from "./lib/verify-scope.mjs";
 import {
   REG_TOKEN_RE,
   BUG_ID_RE,
@@ -696,16 +695,6 @@ function main() {
   // R1/R2 (full mode) + R4 (--freshness-only). Runs BEFORE any token indexing — a stale
   // report must never let a claim be discharged (or refused with "no test titled") against
   // proof the report doesn't actually carry any more.
-  let scopeCache = null;
-  function scopedOut(ws) {
-    if (process.env.VERIFY_SCOPE !== "affected") return false;
-    // A fixture run (a Jest spec spawning this script against a throwaway repo, which inherits the
-    // hook's VERIFY_SCOPE) must judge its OWN fixture strictly, never the real repo's diff.
-    if (process.env.CAMPAIGN_CHECK_STATUS_DIR || process.env.JEST_WORKER_ID) return false;
-    scopeCache ??= decideScope(REPO_ROOT);
-    return scopeCache.mode === "scoped" && !scopeCache.workspaces.map(shortName).includes(ws);
-  }
-
   function checkFreshness(mode) {
     if (!t1Needed) {
       if (mode === "freshness-only") process.exit(0);
@@ -845,19 +834,6 @@ function main() {
           block = staleBlock(wsInfo, reportTimeMs, viaMtime, newestCause);
           reason = "stale";
         }
-      }
-
-      // Affected-scope pre-push (VERIFY_SCOPE=affected, set only by .husky/pre-push on a non-master
-      // branch): a workspace the diff does not reach is not run, so its report cannot refresh and
-      // would otherwise read STALE just because master moved its tests since the last run. The
-      // tests are master's own, CI's full chain is the authority, and FULL_VERIFY=1 keeps this
-      // rule strict. Partial and MISSING reports are still refused/forced above and below.
-      if (block && reason === "stale" && scopedOut(wsInfo.ws)) {
-        console.log(
-          `campaign-check: ${wsInfo.ws}.json is stale but ${wsInfo.dir} is outside this push's ` +
-            `affected scope — tolerated (FULL_VERIFY=1 / CI enforce it)`,
-        );
-        continue;
       }
 
       if (!block) {

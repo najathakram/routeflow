@@ -12,15 +12,17 @@
  *     workspace manifest, the hooks, the CI workflows, the campaign ledger.
  * S4c/S8: root scripts/hooks select api; a cross-workspace move reports both paths.
  * S9: the S8 fixture is inert against a hijacking GIT_DIR (B420) — proven on a decoy repo.
- * S6: decideScope stays FULL unless the hook opted in, and under FULL_VERIFY=1 / CI / master.
- * S7: the hook wiring — pre-push sets VERIFY_SCOPE=affected off FULL_VERIFY, keeps separate
- *     verified-tree markers, and package.json's verify chain goes through verify-turbo.mjs.
+ * S6: affected scope is the DEFAULT on a feature branch; FULL under FULL_VERIFY=1 (the only
+ *     override) / CI / master / main / detached HEAD / an uncomputable diff.
+ * S7: the hook wiring — no env var narrows the run, separate verified-tree markers, and
+ *     package.json's verify chain goes through verify-turbo.mjs.
+ * S10: the tmp-root containment check is portable (POSIX and Windows path shapes, via path.win32).
  */
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import path, { dirname, join } from "node:path";
 import {
   changedFilesSince,
   cleanGitEnv,
@@ -108,6 +110,16 @@ check(
 // real .git/config). So: every git spawn below gets a GIT_*-free env, the fixture identity is
 // passed as `-c` flags (no `git config` writes at all), and no write happens until
 // `git rev-parse --show-toplevel` proves the repo git resolves IS the fixture dir.
+/**
+ * Is `p` strictly inside `root`? Portable: `path.relative` handles either separator and drive
+ * letters, unlike a `startsWith(`${root}/`)` string test (POSIX-only — it threw on every Windows
+ * push). `pathImpl` lets the S10 cases below exercise the win32 rules on any host.
+ */
+function isUnder(root, p, pathImpl = path) {
+  const rel = pathImpl.relative(root, p);
+  return rel !== "" && !rel.startsWith("..") && !pathImpl.isAbsolute(rel);
+}
+
 const fixtureEnv = () => ({
   ...cleanGitEnv(),
   GIT_CONFIG_GLOBAL: "/dev/null",
@@ -122,7 +134,7 @@ function runMoveFixture() {
     spawnSync("git", args, { cwd: dir, encoding: "utf8", env: fixtureEnv() });
   const out = { moved: null, unresolvable: undefined, guard: null };
   try {
-    if (!dir.startsWith(`${tmpRoot}/`)) throw new Error(`fixture ${dir} is not under ${tmpRoot}`);
+    if (!isUnder(tmpRoot, dir)) throw new Error(`fixture ${dir} is not under ${tmpRoot}`);
     run("init", "-q", "-b", "master");
     const top = realpathSync(run("rev-parse", "--show-toplevel").stdout.trim());
     out.guard = top === dir;
@@ -209,24 +221,43 @@ function runMoveFixture() {
 }
 
 const gitRoot = ROOT;
-check("S6a VERIFY_SCOPE unset -> full", decideScope(gitRoot, {}).mode, "full");
+const someFiles = ["apps/web/lib/a.ts"];
 check(
-  "S6b FULL_VERIFY=1 -> full",
-  decideScope(gitRoot, { VERIFY_SCOPE: "affected", FULL_VERIFY: "1" }).reason,
+  "S6a FULL_VERIFY=1 is the only override -> full",
+  decideScope(gitRoot, { FULL_VERIFY: "1" }, { branch: "feat/x", files: someFiles }).reason,
   "FULL_VERIFY=1",
 );
 check(
-  "S6c CI -> full",
-  decideScope(gitRoot, { VERIFY_SCOPE: "affected", CI: "true" }).reason,
+  "S6b CI -> full",
+  decideScope(gitRoot, { CI: "true" }, { branch: "feat/x", files: someFiles }).reason,
   "CI",
+);
+for (const b of ["master", "main", "HEAD"]) {
+  check(
+    `S6c branch ${b} -> full`,
+    decideScope(gitRoot, {}, { branch: b, files: someFiles }).mode,
+    "full",
+  );
+}
+const dflt = decideScope(gitRoot, {}, { branch: "feat/x", files: someFiles });
+check(
+  "S6d a feature branch with no env at all is SCOPED (the default)",
+  [dflt.mode, dflt.workspaces?.map(shortName)],
+  ["scoped", ["pricing", "web"]],
+);
+check(
+  "S6e an uncomputable diff (files=null) -> full",
+  decideScope(gitRoot, {}, { branch: "feat/x", files: null }).mode,
+  "full",
+);
+check(
+  "S6f a legacy VERIFY_SCOPE variable changes nothing (there is no ambient switch)",
+  decideScope(gitRoot, { VERIFY_SCOPE: "full" }, { branch: "feat/x", files: someFiles }).mode,
+  "scoped",
 );
 
 const hook = readFileSync(join(ROOT, ".husky", "pre-push"), "utf8");
-check(
-  "S7a pre-push opts in to VERIFY_SCOPE=affected unless FULL_VERIFY=1",
-  /FULL_VERIFY" != "1" \]; then\s+export VERIFY_SCOPE=affected/.test(hook),
-  true,
-);
+check("S7a the pre-push hook exports no scope variable", hook.includes("VERIFY_SCOPE"), false);
 check(
   "S7b pre-push keeps a distinct verified-tree marker for scoped passes",
   hook.includes('tree_key="$tree:affected"'),
@@ -244,4 +275,33 @@ check(
   false,
 );
 
+// S10: portable containment — the POSIX-only startsWith(`${root}/`) threw on every Windows push.
+const W = path.win32;
+const winTmp = "C:\\Users\\dev\\AppData\\Local\\Temp";
+check(
+  "S10a win32: a backslash path inside the tmp root is under it",
+  isUnder(winTmp, `${winTmp}\\verify-scope-abc123`, W),
+  true,
+);
+check("S10b win32: the root itself is not 'under' itself", isUnder(winTmp, winTmp, W), false);
+check(
+  "S10c win32: a sibling sharing the prefix (Temp2) is NOT under Temp",
+  isUnder(winTmp, "C:\\Users\\dev\\AppData\\Local\\Temp2\\x", W),
+  false,
+);
+check("S10d win32: another drive is not under it", isUnder(winTmp, "D:\\Temp\\x", W), false);
+check(
+  "S10e win32: a .. escape is not under it",
+  isUnder(winTmp, `${winTmp}\\..\\elsewhere`, W),
+  false,
+);
+check(
+  "S10f posix: inside / itself / sibling prefix",
+  [
+    isUnder("/tmp", "/tmp/verify-scope-abc", path.posix),
+    isUnder("/tmp", "/tmp", path.posix),
+    isUnder("/tmp", "/tmp2/x", path.posix),
+  ],
+  [true, false, false],
+);
 process.exit(failures ? 1 : 0);
