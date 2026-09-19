@@ -181,10 +181,46 @@ describe("explainEditError", () => {
     expect(msg).toMatch(/already been sold or used/);
     expect(msg).toMatch(/Keep stock as is/);
   });
+  it("joins a class-validator message array into one sentence", () => {
+    expect(
+      explainEditError({ response: { data: { message: ["a must be x", "b must be y"] } } }),
+    ).toBe("a must be x; b must be y");
+  });
   it("otherwise shows the server's own message, and null when there is none", () => {
     expect(
       explainEditError({ response: { data: { message: "Cannot edit a closed purchase order" } } }),
     ).toBe("Cannot edit a closed purchase order");
     expect(explainEditError(new Error("boom"))).toBeNull();
+  });
+});
+
+describe("DTO bounds mirrored client-side", () => {
+  const p = (id: string) => (id === "p2" ? 12 : 0);
+  const line = (o: Record<string, unknown> = {}) => ({
+    ...emptyEditLine(),
+    productId: "p1",
+    qty: "5",
+    unitCost: "1",
+    ...o,
+  });
+
+  it("caps a purchase order at 200 lines", () => {
+    const many = Array.from({ length: 201 }, () => line());
+    expect(validateEditLines(many, p)).toMatch(/at most 200 lines/);
+    expect(validateEditLines(many.slice(0, 200), p)).toBeNull();
+  });
+
+  it("enforces the quantity and cost ranges", () => {
+    expect(validateEditLines([line({ qty: "0.0004" })], p)).toMatch(/at least 0.001/);
+    expect(validateEditLines([line({ qty: "0.001" })], p)).toBeNull();
+    expect(validateEditLines([line({ qty: "9999999" })], p)).toBeNull();
+    expect(validateEditLines([line({ qty: "10000000" })], p)).toMatch(/9,999,999/);
+    expect(validateEditLines([line({ unitCost: "999999" })], p)).toBeNull();
+    expect(validateEditLines([line({ unitCost: "1000000" })], p)).toMatch(/999,999/);
+  });
+
+  it("buildUpdateItems rounds to the stored precision (3dp qty, 4dp cost)", () => {
+    const out = buildUpdateItems([line({ qty: "1.23456", unitCost: "2.999999" })], p);
+    expect(out[0]).toMatchObject({ qtyOrdered: 1.235, unitCost: 3 });
   });
 });

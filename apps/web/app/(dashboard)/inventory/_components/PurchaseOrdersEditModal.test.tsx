@@ -15,8 +15,11 @@ jest.mock("@routeflow/ui/web", () => {
 });
 
 const mutate = jest.fn();
+// The modal builds its form from the FRESH purchase order, not the list row it was opened from.
+let mockDetail: PurchaseOrder | undefined;
 jest.mock("@/lib/api/inventory", () => ({
   useUpdatePurchaseOrder: () => ({ mutate, isPending: false }),
+  usePurchaseOrder: () => ({ data: mockDetail, isError: false }),
 }));
 
 const suppliers = [
@@ -69,6 +72,7 @@ const draft = () =>
   });
 
 const renderModal = (p: PurchaseOrder, onClose = jest.fn()) => {
+  mockDetail = p;
   render(
     <PurchaseOrdersEditModal po={p} suppliers={suppliers} products={products} onClose={onClose} />,
   );
@@ -82,6 +86,7 @@ const save = () => fireEvent.click(screen.getByRole("button", { name: "Save chan
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockDetail = undefined;
   mutate.mockImplementation((_vars, opts) => opts?.onSuccess?.());
 });
 
@@ -246,6 +251,11 @@ describe("RECEIVED — protected lines and the re-apply question", () => {
     expect(screen.getByRole("button", { name: "Keep stock as is" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Re-apply" }));
     expect(mutate.mock.calls[0][0]).toMatchObject({ supplierId: "s2", reapplyInventory: true });
+    // the server only re-posts the receipts when it is sent `items` — without them just the PO
+    // header moves and the stock keeps the old supplier — so the (unchanged) lines ride along
+    expect(mutate.mock.calls[0][0].items).toEqual([
+      { id: "i1", productId: "p1", qtyOrdered: 10, unitCost: 3, sku: "W-1", packSize: null },
+    ]);
   });
 
   it("shows the API's partly-consumed-lot refusal in words and leaves 'Keep stock as is' available", () => {
@@ -276,5 +286,100 @@ describe("RECEIVED — protected lines and the re-apply question", () => {
     setCost("4");
     save();
     expect(screen.getByRole("dialog", { name: "Re-apply to inventory?" })).toBeInTheDocument();
+  });
+});
+
+describe("built from fresh data, once", () => {
+  it("shows Loading… (and no form) until the fresh purchase order has loaded", () => {
+    mockDetail = undefined;
+    render(
+      <PurchaseOrdersEditModal
+        po={po()}
+        suppliers={suppliers}
+        products={products}
+        onClose={jest.fn()}
+      />,
+    );
+    expect(screen.getByText("Edit PO-2026-0001")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Loading…");
+    expect(screen.queryByLabelText("Unit cost")).toBeNull();
+  });
+
+  it("waits for the product catalog too — a boxed line built before it arrives would flip shape", () => {
+    mockDetail = po();
+    render(
+      <PurchaseOrdersEditModal po={po()} suppliers={suppliers} products={[]} onClose={jest.fn()} />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Loading…");
+    expect(screen.queryByLabelText("Unit cost")).toBeNull();
+  });
+
+  it("uses the FRESH lines, not the stale list row (a line added since the list loaded must not be dropped)", () => {
+    const stale = po({ status: "DRAFT" });
+    mockDetail = po({
+      status: "DRAFT",
+      items: [
+        ...stale.items.map((i) => ({ ...i, qtyReceived: "0" })),
+        { id: "i2", productId: "p2", qtyOrdered: "12", qtyReceived: "0", unitCost: "2" },
+      ],
+    });
+    render(
+      <PurchaseOrdersEditModal
+        po={stale}
+        suppliers={suppliers}
+        products={products}
+        onClose={jest.fn()}
+      />,
+    );
+    expect(screen.getAllByLabelText("Product")).toHaveLength(2);
+    // saving an unrelated header edit must not have removed it: lines unchanged → no items sent
+    fireEvent.change(screen.getByLabelText("Notes"), { target: { value: "x" } });
+    save();
+    expect(mutate.mock.calls[0][0]).toEqual({ id: "po1", notes: "x" });
+  });
+});
+
+describe("values the API would reject are handled before the round trip", () => {
+  it("rounds a cost to 4dp and a quantity to 3dp", () => {
+    renderModal(draft());
+    setCost("3.12345");
+    setQty("10.1239");
+    save();
+    const item = mutate.mock.calls[0][0].items[0];
+    expect(item.unitCost).toBe(3.1235);
+    expect(item.qtyOrdered).toBe(10.124);
+  });
+
+  it("refuses a quantity above the maximum and below the minimum, and a cost above the maximum", () => {
+    renderModal(draft());
+    setQty("10000000");
+    save();
+    expect(screen.getByRole("alert")).toHaveTextContent(/9,999,999/);
+    setQty("0.0004");
+    save();
+    expect(screen.getByRole("alert")).toHaveTextContent(/at least 0.001/);
+    setQty("5");
+    setCost("1000000");
+    save();
+    expect(screen.getByRole("alert")).toHaveTextContent(/999,999/);
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it("shows Nest's array of validation messages as one sentence, not a run-together blob", () => {
+    mutate.mockImplementation((_vars, opts) =>
+      opts?.onError?.({
+        response: {
+          data: {
+            message: ["qtyOrdered must not be greater than 9999999", "unitCost must be a number"],
+          },
+        },
+      }),
+    );
+    renderModal(draft());
+    setCost("4");
+    save();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "qtyOrdered must not be greater than 9999999; unitCost must be a number",
+    );
   });
 });

@@ -18,6 +18,15 @@ import {
  * outstanding and is received later through the normal receive.
  */
 
+// UpdatePurchaseOrderDto's bounds (apps/api/src/inventory/dto/update-purchase-order.dto.ts):
+// the form mirrors them so a value the API would reject is explained here, not as a 400.
+const MAX_LINES = 200;
+const MIN_QTY = 0.001;
+const MAX_QTY = 9_999_999;
+const MAX_COST = 999_999;
+/** qtyOrdered is Decimal(10,3) — the DTO refuses more than 3 decimals. */
+const round3 = (n: number) => Math.round(n * 1000) / 1000;
+
 /** A form line: the create form's line plus what an EXISTING line carries. */
 export interface EditLine extends POLineItem {
   /** Present on an existing line; absent on one added in the modal. */
@@ -65,12 +74,6 @@ export function toEditLine(item: POItem, unitsPerBox: number): EditLine {
   return { ...base, qty: String(ordered), boxes: "", pieces: "", unitCost: String(cost) };
 }
 
-/** What `resolvePOLine` makes of a form line, plus whether the operator filled it in at all. */
-function resolved(line: EditLine, unitsPerBox: number) {
-  const { qty, unitCost } = resolvePOLine(line, unitsPerBox);
-  return { qty, unitCost, blank: !line.productId && !line.id };
-}
-
 /**
  * The first reason this line set can't be saved, or null. Client-side mirror of what
  * the API refuses, so the operator hears it before the round trip.
@@ -81,11 +84,15 @@ export function validateEditLines(
 ): string | null {
   const filled = lines.filter((l) => l.productId || l.id);
   if (filled.length === 0) return "Add at least one line item.";
+  if (filled.length > MAX_LINES) return `A purchase order can have at most ${MAX_LINES} lines.`;
   for (const l of filled) {
     if (!l.productId) return "Choose a product for every line.";
-    const { qty, unitCost } = resolved(l, unitsPerBoxFor(l.productId));
+    const { qty, unitCost } = resolvePOLine(l, unitsPerBoxFor(l.productId));
     if (!(qty > 0)) return "Every line needs a quantity above zero.";
     if (!(unitCost >= 0)) return "Every line needs a valid cost.";
+    if (qty < MIN_QTY) return "Every line needs a quantity of at least 0.001.";
+    if (qty > MAX_QTY) return "A line quantity can't be more than 9,999,999.";
+    if (unitCost > MAX_COST) return "A line cost can't be more than 999,999.";
     if (l.id && qty < l.received) {
       return (
         `A line can't go below what was already received (${l.received}). ` +
@@ -108,8 +115,9 @@ export function buildUpdateItems(
       return {
         ...(l.id ? { id: l.id } : {}),
         productId: l.productId,
-        qtyOrdered: qty,
-        unitCost,
+        // 3dp quantity / 4dp per-piece cost — the stored precision the DTO enforces
+        qtyOrdered: round3(qty),
+        unitCost: roundUnitCost(unitCost),
         ...(l.id ? { sku: l.sku ?? null, packSize: l.packSize ?? null } : {}),
       };
     });
@@ -142,13 +150,15 @@ export const isEditable = (po: Pick<PurchaseOrder, "status">) => po.status !== "
 
 /** Explain the API's refusals in operator terms; null = not one we know, show the server text. */
 export function explainEditError(err: unknown): string | null {
-  const data = (err as { response?: { data?: { code?: string; message?: string } } })?.response
-    ?.data;
+  const data = (err as { response?: { data?: { code?: string; message?: string | string[] } } })
+    ?.response?.data;
   if (data?.code === "PO_LOT_PARTIALLY_CONSUMED") {
     return (
       "Part of what was received on this purchase order has already been sold or used, so its cost " +
       "can't be restated in stock. Choose “Keep stock as is” to change the document only."
     );
   }
-  return data?.message ?? null;
+  // A class-validator 400 carries message: string[] — show it as one readable sentence.
+  const message = Array.isArray(data?.message) ? data.message.join("; ") : data?.message;
+  return message || null;
 }

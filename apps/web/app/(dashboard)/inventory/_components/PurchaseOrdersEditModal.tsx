@@ -5,7 +5,11 @@ import { Plus, X } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
 import { formatMoney } from "@/lib/format";
 import { unitsLabel } from "@/lib/stock-label";
-import { useUpdatePurchaseOrder, type UpdatePurchaseOrderInput } from "@/lib/api/inventory";
+import {
+  usePurchaseOrder,
+  useUpdatePurchaseOrder,
+  type UpdatePurchaseOrderInput,
+} from "@/lib/api/inventory";
 import { resolvePOLine, type PurchaseOrder, type Supplier } from "./purchase-orders-shared";
 import {
   buildUpdateItems,
@@ -32,7 +36,7 @@ const inputCls =
  * explicit answer: [Re-apply] restates the cost of what was received in stock and
  * average cost, [Keep stock as is] changes the document only.
  */
-export function PurchaseOrdersEditModal({
+function EditModalBody({
   po,
   suppliers,
   products,
@@ -117,7 +121,10 @@ export function PurchaseOrdersEditModal({
       ...(supplierChanged ? { supplierId } : {}),
       ...(expectedDate !== originalDate ? { expectedDate: expectedDate || null } : {}),
       ...(notes !== (po.notes ?? "") ? { notes: notes || null } : {}),
-      ...(changed ? { items } : {}),
+      // `items` is what makes the server run the reverse/re-post leg at all — a supplier
+      // change on a received order sends the (unchanged) lines so its receipts are re-posted
+      // under the new supplier; without them only the PO header would move.
+      ...(changed || (received && supplierChanged) ? { items } : {}),
     };
     if (Object.keys(payload).length === 0) {
       onClose();
@@ -312,6 +319,7 @@ export function PurchaseOrdersEditModal({
                                   min={0}
                                   step={1}
                                   title="Boxes"
+                                  aria-label="Boxes"
                                   value={line.boxes}
                                   onChange={(e) => updateLine(i, { boxes: e.target.value })}
                                   className={inputCls}
@@ -323,6 +331,7 @@ export function PurchaseOrdersEditModal({
                                   max={upb - 1}
                                   step={1}
                                   title="Extra pieces"
+                                  aria-label="Extra pieces"
                                   value={line.pieces}
                                   onChange={(e) => updateLine(i, { pieces: e.target.value })}
                                   className={inputCls}
@@ -427,6 +436,64 @@ export function PurchaseOrdersEditModal({
             </div>
           </form>
         )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The exported modal loads what the form must be built from BEFORE it mounts:
+ *  - the FRESH purchase order (the list row can be stale, and `items` is a full
+ *    replacement — a line added since the list loaded would otherwise be deleted, and a
+ *    line received since would have a stale floor), and
+ *  - the product catalog (a boxed line's Boxes + Pieces / cost-per-box shape depends on
+ *    `unitsPerBox`; building the form before it arrives would show per-piece figures that
+ *    flip to per-box once it does).
+ * The form is then built once from a frozen snapshot, so a background refetch can't
+ * reshuffle it mid-edit.
+ */
+export function PurchaseOrdersEditModal({
+  po,
+  suppliers,
+  products,
+  onClose,
+}: {
+  po: PurchaseOrder;
+  suppliers: Supplier[];
+  products: CatalogProduct[];
+  onClose: () => void;
+}) {
+  const { data: fresh, isError } = usePurchaseOrder(po.id);
+  const snapshot = React.useRef<PurchaseOrder | null>(null);
+  if (!snapshot.current && fresh && products.length > 0) snapshot.current = fresh as PurchaseOrder;
+
+  if (snapshot.current) {
+    return (
+      <EditModalBody
+        po={snapshot.current}
+        suppliers={suppliers}
+        products={products}
+        onClose={onClose}
+      />
+    );
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
+        <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
+          <h2 className="text-base font-semibold text-navy">Edit {po.poNumber}</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <p role="status" className="px-6 py-8 text-center text-sm text-navy/70">
+          {isError ? "Couldn't load this purchase order — close and try again." : "Loading…"}
+        </p>
       </div>
     </div>
   );
