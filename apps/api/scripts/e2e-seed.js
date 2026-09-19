@@ -141,6 +141,117 @@ async function ensureLicensedTrackedCategory(tenantId) {
   });
 }
 
+// B566 — the commerce rows the web e2e specs read off a FRESH database. Before this the tenant
+// had users and addons but no customers or products, so on a clean `local:reset` + seed the
+// customer picker, the product table and the boxed-line discovery were all empty and six specs
+// (06 CP-09, 08 ESC-01/ESC-02, 13 BOXED-01, 21 REG-B130/REG-B154) failed — passing only later
+// as a side effect of earlier specs creating rows. Idempotent (find-or-create on a stable key;
+// nothing is overwritten), fixture-prefixed so it never collides with a spec's own throwaways.
+// Business names contain an "e": 08/13 open the builder and type "e" into the customer picker.
+const FIXTURE_CUSTOMERS = [
+  { username: "e2e_fixture_cust_1", businessName: "E2E Fixture Cafe One" },
+  { username: "e2e_fixture_cust_2", businessName: "E2E Fixture Market Two" },
+  { username: "e2e_fixture_cust_3", businessName: "E2E Fixture Deli Three" },
+];
+// One boxed product (13 BOXED-01 discovers it by probing the product search — its name carries
+// "case" — and reads box price / pack size off the row) plus two plain ones, so the products
+// table has >= 3 selectable rows (21 REG-B154 selects up to 3, then 2) and CP-09 has price cells.
+const FIXTURE_PRODUCTS = [
+  { sku: "E2E-FIX-001", name: "E2E Fixture Widget A", unit: "each", pricePerUnit: "4.50" },
+  { sku: "E2E-FIX-002", name: "E2E Fixture Widget B", unit: "each", pricePerUnit: "7.25" },
+  {
+    sku: "E2E-FIX-BOX",
+    name: "E2E Fixture Boxed Case",
+    unit: "box",
+    pricePerUnit: "24.00",
+    unitsPerBox: 12,
+  },
+];
+
+const FIXTURE_INVOICE_NUMBER = "E2E-FIX-INV-001";
+
+async function ensureCommerceFixtures(tenantId) {
+  let invoiceCustomerId = null;
+  for (const c of FIXTURE_CUSTOMERS) {
+    let user = await prisma.user.findFirst({ where: { tenantId, username: c.username } });
+    if (!user) {
+      user = await prisma.user.create({
+        data: {
+          email: `${c.username}@e2e-routeflow.test`,
+          username: c.username,
+          // Never a login identity — a random hash nobody holds.
+          password: await bcrypt.hash(require("crypto").randomBytes(16).toString("hex"), 10),
+          role: "CUSTOMER",
+          status: "ACTIVE",
+          forcePasswordChange: false,
+          tenantId,
+        },
+      });
+    }
+    let customer = await prisma.customer.findFirst({ where: { tenantId, userId: user.id } });
+    if (!customer) {
+      customer = await prisma.customer.create({
+        data: {
+          userId: user.id,
+          businessName: c.businessName,
+          contactName: "E2E Fixture",
+          tenantId,
+        },
+      });
+    } else if (customer.deletedAt) {
+      // A spec's bulk delete soft-deletes a customer that holds records (REG-B130 territory);
+      // restore it, or a re-seed would report "present" while /customers shows fewer rows.
+      customer = await prisma.customer.update({
+        where: { id: customer.id },
+        data: { deletedAt: null },
+      });
+    }
+    if (c.username === FIXTURE_CUSTOMERS[0].username) invoiceCustomerId = customer.id;
+  }
+  // One SENT invoice so 06 CP-01 scans real amount cells on a fresh DB (its "$" scan otherwise
+  // reads the empty-state block as a malformatted amount).
+  const invoiceExists = await prisma.invoice.findFirst({
+    where: { tenantId, invoiceNumber: FIXTURE_INVOICE_NUMBER },
+  });
+  if (!invoiceExists) {
+    await prisma.invoice.create({
+      data: {
+        tenantId,
+        customerId: invoiceCustomerId,
+        invoiceNumber: FIXTURE_INVOICE_NUMBER,
+        status: "SENT",
+        sentAt: new Date(),
+        subtotal: "24.00",
+        total: "24.00",
+        items: {
+          create: [
+            {
+              tenantId, // a nested create is not tenant-scoped for us — set it explicitly (B571 class)
+              description: "E2E Fixture Boxed Case",
+              qty: 1,
+              unitPrice: "24.00",
+              subtotal: "24.00",
+            },
+          ],
+        },
+      },
+    });
+  }
+  for (const p of FIXTURE_PRODUCTS) {
+    const found = await prisma.product.findFirst({ where: { tenantId, sku: p.sku } });
+    if (!found) {
+      await prisma.product.create({
+        data: { tenantId, currentStock: 500, isActive: true, ...p },
+      });
+    } else if (!found.isActive) {
+      await prisma.product.update({ where: { id: found.id }, data: { isActive: true } });
+    }
+  }
+  console.log(
+    `  ✓ Commerce fixtures present: ${FIXTURE_CUSTOMERS.length} customers, ${FIXTURE_PRODUCTS.length} products (1 boxed), 1 invoice`,
+  );
+}
+
 async function main() {
   const isRailway = dbUrl.includes("railway") || dbUrl.includes("rlwy");
   console.log(`\n🌱 E2E Seed — ${isRailway ? "⚠  RAILWAY" : "Local dev"}`);
@@ -253,6 +364,9 @@ async function main() {
     // ── Licensed tracked category (REG-B91 precondition) ───────────────────────
     await ensureLicensedTrackedCategory(existing.id);
     console.log(`  ✓ Licensed tracked category "${LICENSED_TRACKED_CATEGORY_NAME}" active`);
+
+    // ── Commerce fixtures (B566) ─────────────────────────────────────────────────
+    await ensureCommerceFixtures(existing.id);
 
     // ── Sweep stale parked drafts left by the web e2e suite ─────────────────────
     // 08-create-order-escape's ESC tests auto-park REAL drafts ("Order, <name>",
@@ -377,6 +491,9 @@ async function main() {
   // ── Licensed tracked category (REG-B91 precondition) ──────────────────────────
   await ensureLicensedTrackedCategory(tenant.id);
   console.log(`  ✓ Licensed tracked category "${LICENSED_TRACKED_CATEGORY_NAME}" created`);
+
+  // ── Commerce fixtures (B566) ─────────────────────────────────────────────────
+  await ensureCommerceFixtures(tenant.id);
 
   console.log("\n✅ E2E seed complete.\n");
 }

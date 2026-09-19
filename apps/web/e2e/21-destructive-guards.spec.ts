@@ -318,12 +318,13 @@ test.describe("Destructive-write guards (F02b / P4)", () => {
 
     // Assign-to-type only renders for a tenant with regulated sections
     // configured — the e2e-routeflow seed carries them (09/19 already lean
-    // on this), but skip cleanly rather than false-red on a tenant that doesn't.
+    // on this); a tenant without them is a broken fixture, so this fails (B566).
     const sectionsRes = await request.get(`${api}/api/v1/tracked-categories`, {
       headers: headers!,
     });
     const sections: Array<{ id: string }> = sectionsRes.ok() ? await sectionsRes.json() : [];
-    test.skip(sections.length === 0, "Tenant has no regulated sections configured");
+    // Fail, never skip (B566): e2e-seed.js provisions the licensed tracked category.
+    expect(sections.length, "Tenant has no regulated sections configured").toBeGreaterThan(0);
 
     // ── Part 1: selecting on one filter view, then changing the search
     // filter, resets the selection Set instead of carrying it forward.
@@ -333,7 +334,10 @@ test.describe("Destructive-write guards (F02b / P4)", () => {
 
     await page.getByRole("button", { name: "Select", exact: true }).click();
     const firstBatch = Math.min(3, await rows.count());
-    test.skip(firstBatch === 0, "No products in the catalogue to select");
+    expect(
+      firstBatch,
+      "No products in the catalogue to select — run `node apps/api/scripts/e2e-seed.js` (B566)",
+    ).toBeGreaterThan(0);
     for (let i = 0; i < firstBatch; i++) {
       // The checkbox is the one target guaranteed to toggle regardless of
       // where a bare row click would land (several cells stopPropagation()).
@@ -362,7 +366,10 @@ test.describe("Destructive-write guards (F02b / P4)", () => {
     await expect(rows.first()).toBeVisible({ timeout: 15_000 });
     await page.getByRole("button", { name: "Select", exact: true }).click();
     const secondBatch = Math.min(2, await rows.count());
-    test.skip(secondBatch < 2, "Fewer than 2 products in the catalogue to select");
+    expect(
+      secondBatch,
+      "Fewer than 2 products in the catalogue to select — run `node apps/api/scripts/e2e-seed.js` (B566)",
+    ).toBeGreaterThanOrEqual(2);
     for (let i = 0; i < secondBatch; i++) {
       await rows.nth(i).getByRole("checkbox").click();
     }
