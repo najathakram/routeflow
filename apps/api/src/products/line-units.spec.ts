@@ -112,15 +112,42 @@ describe("resolveLineUnits — a rewrite keeps the LINE's snapshot, never the li
     });
   });
 
-  it("a unit-aware line with no usable snapshot is refused (409), never guessed from the pack", () => {
-    for (const bad of [null, undefined, 0, -3, "x"]) {
-      expect(() =>
-        resolveLineUnits(boxed, [caseRow], undefined, {
-          unitLabel: "Case",
-          unitsPerBox: bad as never,
-        }),
-      ).toThrow(ConflictException);
+  it("a missing/corrupt snapshot is RECOVERED from the ladder by label (never from the pack)", () => {
+    for (const bad of [null, undefined, 0, -3, Number.NaN]) {
+      expect(
+        resolveLineUnits(boxed, [caseRow], undefined, { unitLabel: "Case", unitsPerBox: bad }),
+      ).toEqual({ unitsPerBox: 288, unitLabel: "Case", kind: "level" });
     }
+  });
+
+  it("no snapshot AND no ladder row for the label: refused (409), never guessed from the pack", () => {
+    expect(() =>
+      resolveLineUnits(boxed, [], undefined, { unitLabel: "Case", unitsPerBox: null }),
+    ).toThrow(ConflictException);
+    // The pack's own label as a held label resolves to the pack (factor unknown here): also refused.
+    expect(() =>
+      resolveLineUnits(boxed, [], undefined, { unitLabel: "Box", unitsPerBox: null }),
+    ).toThrow(ConflictException);
+  });
+
+  it("requested.unitLabel undefined = unchanged; null or blank = an explicit switch back to the pack", () => {
+    expect(resolveLineUnits(boxed, [caseRow], undefined, caseLine).unitLabel).toBe("Case");
+    for (const clear of [null, "", "  "]) {
+      expect(resolveLineUnits(boxed, [caseRow], { unitLabel: clear }, caseLine)).toEqual({
+        unitsPerBox: 24,
+        unitLabel: null,
+        kind: "pack",
+      });
+    }
+  });
+
+  it("kind follows the label: a Case line whose snapshot is 1 is still a level, a Piece line is a piece", () => {
+    expect(
+      resolveLineUnits(boxed, [caseRow], undefined, { unitLabel: "Case", unitsPerBox: 1 }).kind,
+    ).toBe("piece"); // factor 1 == a single piece whatever it is called
+    expect(
+      resolveLineUnits(boxed, [], undefined, { unitLabel: "Piece", unitsPerBox: 1 }).kind,
+    ).toBe("piece");
   });
 
   it("an existing PACK line (no label) rewrites exactly like a new pack line", () => {
@@ -134,7 +161,12 @@ describe("resolveLineUnits — a rewrite keeps the LINE's snapshot, never the li
   });
 });
 
-describe("lineUnitsPerBoxSnapshot", () => {
+describe("lineUnitsPerBoxSnapshot — pinned against the real persisted expressions", () => {
+  // The two site rules today: orders.service.ts `boxes != null && upb > 1 ? upb : null`,
+  // invoices.service.ts:1011/2419 `upb > 0 ? upb : null`.
+  const orderRule = (boxes: number | null, upb: number) => (boxes != null && upb > 1 ? upb : null);
+  const positiveRule = (upb: number) => (upb > 0 ? upb : null);
+
   it("a unit-aware line ALWAYS snapshots its factor, including 1", () => {
     expect(
       lineUnitsPerBoxSnapshot({ unitsPerBox: 1, unitLabel: "Piece", kind: "piece" }, null),
@@ -142,15 +174,34 @@ describe("lineUnitsPerBoxSnapshot", () => {
     expect(lineUnitsPerBoxSnapshot({ unitsPerBox: 288, unitLabel: "Case", kind: "level" }, 2)).toBe(
       288,
     );
+    expect(
+      lineUnitsPerBoxSnapshot(
+        { unitsPerBox: 1, unitLabel: "Piece", kind: "piece" },
+        null,
+        "positive",
+      ),
+    ).toBe(1);
   });
 
-  it("a pack line keeps today's rule: only a box-split line over a real pack snapshots", () => {
-    const pack = { unitsPerBox: 24, unitLabel: null, kind: "pack" as const };
-    expect(lineUnitsPerBoxSnapshot(pack, 3)).toBe(24);
-    expect(lineUnitsPerBoxSnapshot(pack, null)).toBeNull();
-    expect(lineUnitsPerBoxSnapshot({ ...pack, unitsPerBox: 1 }, 3)).toBeNull();
-    expect(lineUnitsPerBoxSnapshot({ ...pack, unitsPerBox: 0 }, 3)).toBeNull();
-  });
+  it.each([0, 1, 2, 24])(
+    '"boxed" equals the orders rule for a pack line, upb=%i, boxes null/0/3',
+    (upb) => {
+      for (const boxes of [null, 0, 3]) {
+        const pack = { unitsPerBox: upb, unitLabel: null, kind: "pack" as const };
+        expect(lineUnitsPerBoxSnapshot(pack, boxes)).toBe(orderRule(boxes, upb));
+      }
+    },
+  );
+
+  it.each([0, 1, 2, 24])(
+    '"positive" equals the invoice copy rule for a pack line, upb=%i (boxes ignored)',
+    (upb) => {
+      for (const boxes of [null, 3]) {
+        const pack = { unitsPerBox: upb, unitLabel: null, kind: "pack" as const };
+        expect(lineUnitsPerBoxSnapshot(pack, boxes, "positive")).toBe(positiveRule(upb));
+      }
+    },
+  );
 });
 
 describe("money seam: the relabelled triple prices correctly through the EXISTING pricing helpers", () => {
@@ -168,15 +219,15 @@ describe("money seam: the relabelled triple prices correctly through the EXISTIN
     expect(sub).toBe(980); // 2 x 480 + 12 x (480 / 288)
   });
 
-  it("the 4x bug this whole design prevents: re-deriving the pack factor (24) bills 1200 instead of 980", () => {
-    const wrong = computeLineSubtotal({
-      unitPrice: 480,
-      qty: 588,
-      boxes: 2,
-      pieces: 12,
-      unitsPerBox: 24,
-    });
-    expect(wrong).toBe(1200); // 2 x 480 + 12 x (480 / 24)
+  it("the 4x bug this design prevents: a rewrite of a Case line after the pack was resized still bills 980, not 1200", () => {
+    const caseLine = { unitLabel: "Case", unitsPerBox: 288 };
+    const resized = { ...boxed, unitsPerBox: 24 };
+    const bill = (upb: number) =>
+      computeLineSubtotal({ unitPrice: 480, qty: 588, boxes: 2, pieces: 12, unitsPerBox: upb });
+    // Through the helper: the line's own snapshot (288) drives the price.
+    expect(bill(resolveLineUnits(resized, [caseRow], undefined, caseLine).unitsPerBox)).toBe(980);
+    // What every site did before (re-read the live pack) prices the same line wrong.
+    expect(bill(Number(resized.unitsPerBox))).toBe(1200); // 2 x 480 + 12 x (480 / 24)
   });
 
   it("a Piece line on a boxed product is qty x piece price (no proration, boxes/pieces null)", () => {
