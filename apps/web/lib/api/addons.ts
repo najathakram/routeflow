@@ -22,6 +22,17 @@ export function useDeveloperMode(): { enabled: boolean; isLoading: boolean; reso
   return { enabled, isLoading, resolved: isSuccess };
 }
 
+// ─── Order UI v2 (card-list order detail — LANE-S / order-ui-redesign) ────────
+//
+// Dark until the owner flips it. Gated on the existing in-development surface flag
+// (`developer_mode`) behind ONE indirection, so promoting it to a real per-tenant plan flag
+// later is a one-line change here and not a hunt through call sites. Read through this hook
+// only — never `useDeveloperMode()` directly at an order-UI call site.
+export function useOrderUiV2(): { enabled: boolean; resolved: boolean } {
+  const dev = useDeveloperMode();
+  return { enabled: dev.enabled, resolved: dev.resolved };
+}
+
 // ─── Recurring routes (standing route templates + scheduled dispatch) ─────────
 //
 // Owner decision 2026-08-25: order delivery and recurring routes are separate

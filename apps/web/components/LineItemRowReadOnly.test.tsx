@@ -1,5 +1,5 @@
 import * as React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { splitProductName } from "@/lib/product-display";
 import { LineItemRowReadOnly, type LineItemRowReadOnlyProps } from "./LineItemRowReadOnly";
 
@@ -133,6 +133,40 @@ describe("LineItemRowReadOnly — money contract (matches what the order bills)"
     expect(screen.getByLabelText("No charge — line cancelled")).toBeInTheDocument();
     expect(screen.queryByText("$520.00")).toBeNull();
     expect(screen.getByText("Cancelled")).toBeInTheDocument();
+  });
+});
+
+describe("LineItemRowReadOnly — price explanation and free units", () => {
+  it("names a BUY_N_GET_M free-unit count so a reduced total is not read as an error", () => {
+    renderRow({ freeUnits: 2, subtotal: "480.00" });
+    expect(screen.getByText("2 free")).toBeInTheDocument();
+  });
+
+  it("no free label for zero, fractional-below-one or missing free units", () => {
+    const zero = renderRow({ freeUnits: 0 });
+    expect(zero.container.textContent).not.toMatch(/free/);
+    zero.unmount();
+    const none = renderRow({ freeUnits: null });
+    expect(none.container.textContent).not.toMatch(/free/);
+  });
+
+  it("explains a discounted price with the struck list price and a pill", () => {
+    renderRow({ unitPrice: 65, priceType: "DISCOUNTED", originalPrice: 80 });
+    const tag = screen.getByTestId("line-price-tag");
+    expect(within(tag).getByText("$80.00")).toHaveClass("line-through");
+    expect(within(tag).getByText("Discounted")).toBeInTheDocument();
+  });
+
+  it("an upsell shows the price and pill but never the base", () => {
+    renderRow({ unitPrice: 65, priceType: "MANUAL", originalPrice: 50 });
+    const tag = screen.getByTestId("line-price-tag");
+    expect(within(tag).getByText("Upsell")).toBeInTheDocument();
+    expect(within(tag).queryByText("$50.00")).toBeNull();
+  });
+
+  it("a standard-priced line has no tag", () => {
+    renderRow({ priceType: "STANDARD", originalPrice: 80 });
+    expect(screen.queryByTestId("line-price-tag")).toBeNull();
   });
 });
 

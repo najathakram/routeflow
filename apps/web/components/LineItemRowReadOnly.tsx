@@ -7,6 +7,7 @@ import { computeLineSubtotal, formatQtySplit } from "@routeflow/pricing";
 import { formatMoney } from "@/lib/format";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { splitProductName } from "@/lib/product-display";
+import { linePriceTag } from "./line-price-tag";
 
 /** Prisma `Decimal` columns arrive as strings over the wire (`qty`, `unitPrice`, `subtotal`,
  *  `deliveredQty`), so every numeric prop accepts both and is coerced here — never `.toFixed`
@@ -33,8 +34,13 @@ export interface LineItemRowReadOnlyProps {
    * is exactly the order page's own rule.
    */
   subtotal?: Numeric | null;
-  /** `OrderItem.promoFreeUnits` — BUY_N_GET_M units subtracted by the fallback recompute. */
+  /** `OrderItem.promoFreeUnits` — BUY_N_GET_M units subtracted by the fallback recompute, and
+   *  named on the row ("N free") so a reduced total never reads as a pricing error. */
   freeUnits?: Numeric | null;
+  /** `OrderItem.priceType` + `originalPrice`: explains a Special / Upsell / Discounted / Promo /
+   *  Adjusted price with the struck list price and a pill (see `linePriceTag`). */
+  priceType?: string | null;
+  originalPrice?: Numeric | null;
   /** Custom label for the box-level unit (units ladder); defaults to "box". */
   boxLabel?: string | null;
   /** Custom label for loose pieces; defaults to "pcs". */
@@ -69,6 +75,8 @@ export function LineItemRowReadOnly({
   pieces,
   subtotal,
   freeUnits,
+  priceType,
+  originalPrice,
   boxLabel,
   unitLabel,
   lineStatus,
@@ -103,6 +111,8 @@ export function LineItemRowReadOnly({
       } of ${unitsPerBox}`
     : `${formatQtySplit({ qty })} × ${formatMoney(unitPrice)}`;
   const delivered = deliveredQty == null ? null : Number(deliveredQty);
+  const priceTag = linePriceTag({ priceType, originalPrice, unitPrice });
+  const freeCount = Math.max(0, Math.trunc(Number(freeUnits ?? 0) || 0));
 
   return (
     <li className={cn("flex items-start gap-3 px-3 py-3", className)}>
@@ -145,6 +155,39 @@ export function LineItemRowReadOnly({
         </p>
         {sku && <p className="mt-0.5 font-mono text-xs text-navy/60">SKU {sku}</p>}
         <p className="mt-1 text-xs text-navy/70">{qtyPriceLine}</p>
+        {priceTag && (
+          <p
+            className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs"
+            data-testid="line-price-tag"
+          >
+            {priceTag.strikeOriginal && (
+              <span className="text-navy/50 line-through">
+                {formatMoney(Number(originalPrice))}
+              </span>
+            )}
+            <span
+              className={cn(
+                "font-medium",
+                priceTag.tone === "emerald" ? "text-emerald-600" : "text-amber-600",
+              )}
+            >
+              {formatMoney(unitPrice)}
+            </span>
+            <span
+              className={cn(
+                "rounded-full px-1.5 py-0.5 text-[10px] font-medium ring-1",
+                priceTag.tone === "emerald"
+                  ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
+                  : "bg-amber-50 text-amber-700 ring-amber-200",
+              )}
+            >
+              {priceTag.label}
+            </span>
+          </p>
+        )}
+        {freeCount > 0 && (
+          <p className="text-[10px] font-medium text-amber-700">{freeCount} free</p>
+        )}
         {showDeliveryProgress && delivered != null && delivered < qty && (
           <p className="text-xs text-navy/70">
             {formatQtySplit({ qty: delivered })} of {formatQtySplit({ qty })} delivered
