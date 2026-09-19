@@ -1922,6 +1922,70 @@ describe("ProductsService", () => {
       expect(prisma.trackedSubcategory.findFirst).not.toHaveBeenCalled();
     });
   });
+
+  // ─── importFromZoho — opening stock baseline (B562 follow-up) ─────────────
+  //
+  // Writing an opening balance straight onto currentStock with no
+  // StockMovement permanently "gaps" the product: inventory.service.ts's
+  // replayProduct (replayed from a running stock of 0) can never account for
+  // where that quantity came from, so it refuses EVERY future backdated
+  // purchase/adjustment on it (ConflictException, B562). Modelling the
+  // opening stock as a PURCHASE movement — exactly like a real recordPurchase
+  // — gives the replay a legitimate baseline instead.
+  describe("importFromZoho — opening stock baseline (B562 follow-up)", () => {
+    it("writes a PURCHASE movement carrying the opening qty + cost when currentStock is nonzero", async () => {
+      prisma.product.findFirst.mockResolvedValue(null); // no name/sku/barcode collisions
+      prisma.product.create.mockResolvedValue({ id: "new-prod-1" });
+
+      const result = await service.importFromZoho({
+        items: [
+          { name: "Widget", unit: "each", pricePerUnit: 5, currentStock: "40", averageCost: "3" },
+        ],
+      } as any);
+
+      expect(result.created).toBe(1);
+      expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
+      const data = prisma.stockMovement.create.mock.calls[0][0].data;
+      expect(data.productId).toBe("new-prod-1");
+      expect(data.type).toBe("PURCHASE");
+      expect(data.quantity.toString()).toBe("40");
+      expect(data.unitCost.toString()).toBe("3");
+      expect(data.stockAfter.toString()).toBe("40");
+    });
+
+    it("writes NO movement when currentStock is zero/absent (unchanged prior behavior)", async () => {
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.create.mockResolvedValue({ id: "new-prod-2" });
+
+      const result = await service.importFromZoho({
+        items: [{ name: "Widget", unit: "each", pricePerUnit: 5 }],
+      } as any);
+
+      expect(result.created).toBe(1);
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+    });
+
+    // Pre-merge review gate Q1: a fresh import with opening stock but NO cost
+    // must leave the PURCHASE movement's unitCost null (never 0 — 0 is a real,
+    // costed value that would poison the very first weighted-average replay),
+    // and the product itself must be created with averageCost null.
+    it("writes a null unitCost (not 0) and creates the product with averageCost null when the import has no cost", async () => {
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.create.mockResolvedValue({ id: "new-prod-3" });
+
+      const result = await service.importFromZoho({
+        items: [{ name: "Widget", unit: "each", pricePerUnit: 5, currentStock: "40" }],
+      } as any);
+
+      expect(result.created).toBe(1);
+      const createArgs = prisma.product.create.mock.calls[0][0].data;
+      expect(createArgs.averageCost).toBeNull();
+
+      expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
+      const data = prisma.stockMovement.create.mock.calls[0][0].data;
+      expect(data.unitCost).toBeNull();
+    });
+  });
 });
 
 // ─── bulkDelete — REG-B24 / T-B24a (destructive-write guard) ────────────────

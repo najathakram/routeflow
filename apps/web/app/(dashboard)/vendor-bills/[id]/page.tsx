@@ -847,6 +847,26 @@ export default function VendorBillDetailPage() {
               : `Bill ${bill.billNumber} is now in Received status.`,
             variant: "success",
           });
+          // B562: quantity was still received for every line and costed
+          // normally (the weighted-average bump uses the real currentStock,
+          // independent of this) — this only flags that a product's
+          // HISTORICAL cost snapshots weren't recomputed because its stock
+          // ledger has a gap (usually past sales). The copy must not imply
+          // the cost wasn't updated — that reads as an invitation to hand-fix
+          // a value that is already correct.
+          if (updated?.gapsDetected && updated.gapsDetected.length > 0) {
+            const names = [...new Set(updated.gapsDetected.map((g) => g.name))];
+            const isPlural = names.length > 1;
+            toast({
+              title: "Received — cost history not recomputed",
+              description: `${names.join(", ")} — received and costed normally; ${
+                isPlural ? "their" : "its"
+              } historical cost snapshots weren't recalculated because the ledger has a gap for ${
+                isPlural ? "those products" : "that product"
+              }. No action needed.`,
+              variant: "warning",
+            });
+          }
         },
         onError: (err: any) => {
           // Unmapped lines → show the confirm dialog listing what gets skipped

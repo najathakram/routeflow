@@ -210,7 +210,7 @@ describe("VendorBillsService", () => {
       prisma.vendorBill.findUnique.mockResolvedValueOnce(bill());
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(10), averageCost: D(2) });
 
-      await service.receive("bill-1", undefined, "user-1");
+      const result = await service.receive("bill-1", undefined, "user-1");
 
       // (10×2 + 5×3.5) / 15 = 2.5
       const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
@@ -227,6 +227,10 @@ describe("VendorBillsService", () => {
 
       const productArgs = prisma.product.update.mock.calls[0][0].data;
       expect(productArgs.averageCost.toString()).toBe("2.5");
+
+      // Pre-merge review gate Q3 substance: a clean receive (no ledger gap)
+      // reports an empty gapsDetected, not undefined/missing.
+      expect((result as any).gapsDetected).toEqual([]);
     });
 
     it("still rejects double-receive (RF-084)", async () => {
@@ -307,8 +311,135 @@ describe("VendorBillsService", () => {
 
       await service.receive("bill-1", undefined, "user-1");
 
-      expect(inventory.recomputeProductInTx).toHaveBeenCalledWith(expect.anything(), "prod-1");
+      // throwOnGap:false — a gap on this line must flag it, never abort the
+      // whole (possibly multi-line) bill transaction. See B562 tests below.
+      expect(inventory.recomputeProductInTx).toHaveBeenCalledWith(expect.anything(), "prod-1", {
+        throwOnGap: false,
+      });
       expect(inventory.fireStockAlerts).toHaveBeenCalledWith(["prod-1"]);
+    });
+
+    // ─── B562 follow-up: a gapped line must not abort the whole bill ─────────
+    describe("B562 — gapped product on one line of a multi-line bill", () => {
+      const cleanItem = linkedItem({
+        id: "item-1",
+        productId: "prod-clean",
+        description: "Flour 25lb",
+        qty: D(5),
+        unitCost: D(3.5),
+        product: { id: "prod-clean", name: "Flour 25lb", currentStock: D(10), averageCost: D(2) },
+      });
+      const gappedItem = linkedItem({
+        id: "item-2",
+        productId: "prod-gapped",
+        description: "Sugar 50lb",
+        qty: D(3),
+        unitCost: D(9),
+        product: {
+          id: "prod-gapped",
+          name: "Sugar 50lb",
+          currentStock: D(15),
+          averageCost: D(7),
+        },
+      });
+
+      /** Mirrors the REAL recomputeProductInTx contract: throws on a gap
+       *  unless throwOnGap:false, in which case it resolves with the gap
+       *  report instead (see inventory.service.spec.ts). */
+      function mockReplayContract() {
+        inventory.recomputeProductInTx.mockImplementation(
+          (_tx: unknown, productId: string, opts?: { throwOnGap?: boolean }) => {
+            if (productId === "prod-gapped") {
+              if (opts?.throwOnGap === false) {
+                return Promise.resolve({
+                  gapDetected: true,
+                  stockDrift: 4,
+                  oldAvgCost: 7,
+                  newAvgCost: null,
+                  movementsBackfilled: 0,
+                  hasCostfulHistory: true,
+                });
+              }
+              return Promise.reject(
+                new ConflictException({
+                  code: "INVENTORY_LEDGER_GAP",
+                  message: "gap",
+                  productId,
+                  name: "Sugar 50lb",
+                  stockDrift: 4,
+                }),
+              );
+            }
+            return Promise.resolve({
+              gapDetected: false,
+              stockDrift: 0,
+              oldAvgCost: 2,
+              newAvgCost: 2.5,
+              movementsBackfilled: 2,
+              hasCostfulHistory: true,
+            });
+          },
+        );
+      }
+
+      beforeEach(() => {
+        prisma.vendorBill.findUnique.mockResolvedValueOnce(
+          bill({ items: [cleanItem, gappedItem] }),
+        );
+        prisma.product.findFirst.mockImplementation(({ where }: any) => {
+          if (where.id === "prod-gapped") {
+            return Promise.resolve({ currentStock: D(15), averageCost: D(7) });
+          }
+          return Promise.resolve({ currentStock: D(10), averageCost: D(2) });
+        });
+        prisma.stockMovement.count.mockResolvedValue(1); // both lines look backdated
+      });
+
+      it("the bill still succeeds: the clean line is re-costed, the gapped line is received but flagged", async () => {
+        mockReplayContract();
+
+        // Resolves (does NOT throw) despite the gapped line — that alone is
+        // the headline fix: today this rejects and the whole bill aborts.
+        const result = await service.receive("bill-1", undefined, "user-1");
+
+        // Both lines were actually received: movement + lot + product-update
+        // fired for each, so quantity landed for the gapped line too.
+        expect(prisma.stockMovement.create).toHaveBeenCalledTimes(2);
+        expect(prisma.stockLot.create).toHaveBeenCalledTimes(2);
+        expect(prisma.product.update).toHaveBeenCalledTimes(2);
+
+        // Q3's substance: the gapped line's own immediate weighted-average
+        // bump (real currentStock=15, averageCost=7, +3 @ $9 -> 7.3333) still
+        // lands on product.update — only the backdated ledger REPLAY is
+        // skipped for it, never the cost update from receiving itself.
+        const gappedProductCall = prisma.product.update.mock.calls.find(
+          (call: any) => call[0].where.id === "prod-gapped",
+        );
+        expect(gappedProductCall[0].data.averageCost.toString()).toBe("7.3333");
+
+        // The clean product's replay ran and reported no gap — its cost
+        // history WAS safely recomputed.
+        expect(inventory.recomputeProductInTx).toHaveBeenCalledWith(
+          expect.anything(),
+          "prod-clean",
+          { throwOnGap: false },
+        );
+        // The gapped product's replay was also attempted non-throwing...
+        expect(inventory.recomputeProductInTx).toHaveBeenCalledWith(
+          expect.anything(),
+          "prod-gapped",
+          { throwOnGap: false },
+        );
+        // ...and it alone is reported, same per-line shape as recomputeCosts's gapsDetected.
+        expect((result as any).gapsDetected).toEqual([
+          { productId: "prod-gapped", name: "Sugar 50lb", stockDrift: 4 },
+        ]);
+
+        // Both products were still restocked (low-stock alerts fire for both).
+        expect(inventory.fireStockAlerts).toHaveBeenCalledWith(
+          expect.arrayContaining(["prod-clean", "prod-gapped"]),
+        );
+      });
     });
 
     it("G3: partial receive applies only the requested quantity and marks PARTIAL", async () => {

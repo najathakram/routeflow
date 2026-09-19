@@ -196,6 +196,48 @@ describe("ImportService — import robustness (F17)", () => {
       expect(data.currentStock).toBe(2100);
     });
 
+    // B562 follow-up: a new product's opening balance used to land straight
+    // on currentStock with no StockMovement, permanently "gapping" its
+    // ledger — inventory.service.ts's replayProduct (replayed from stock=0)
+    // could never account for that quantity, so it would refuse EVERY future
+    // backdated purchase/adjustment on this product. Modelling the opening
+    // stock as a PURCHASE movement (like a real recordPurchase) gives the
+    // replay a legitimate baseline instead of a permanent false-positive gap.
+    it("B562 follow-up: a NEW product's opening stock is modelled as a PURCHASE movement, not a silent ledger gap", async () => {
+      prisma.product.findFirst.mockResolvedValue(null); // no existing match — creates new
+      prisma.product.create.mockResolvedValue({ id: "new-prod-1" });
+
+      const result = await service.importInventory(
+        Buffer.from("Item Name,Closing Stock\nWidget C,25\n"),
+        "user-1",
+      );
+
+      expect(result.created).toBe(1);
+      expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
+      const data = prisma.stockMovement.create.mock.calls[0][0].data;
+      expect(data.productId).toBe("new-prod-1");
+      expect(data.type).toBe("PURCHASE");
+      expect(data.quantity).toBe(25);
+      expect(data.performedById).toBe("user-1");
+      // Pre-merge review gate Q1: this CSV import carries no cost column at
+      // all, so the movement must carry no unitCost (undefined) — never a
+      // real 0, which would poison the first weighted-average replay.
+      expect(data.unitCost).toBeUndefined();
+    });
+
+    it("writes no opening movement for a new product with zero stock (unchanged prior behavior)", async () => {
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.create.mockResolvedValue({ id: "new-prod-2" });
+
+      const result = await service.importInventory(
+        Buffer.from("Item Name,Closing Stock\nWidget D,0\n"),
+        "user-1",
+      );
+
+      expect(result.created).toBe(1);
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+    });
+
     it("REG-B98 (T-B98): a comma/currency Balance Due drives PAID vs PARTIAL, and an absent Balance Due still falls back to the Zoho status label", async () => {
       prisma.customer.findFirst.mockResolvedValue({ id: "cust-1", businessName: "Acme Corp" });
 
