@@ -65,6 +65,21 @@ export function resolveLevelPrice(input: ResolveLevelPriceInput): number {
 // `ProductUnit` rows + an implicit Piece (factor 1). The SERVER resolves a line's factor
 // from this ladder by label — a client-supplied factor is never trusted (B13 posture).
 
+/** Thrown for a tier that is not an integer 1..5 — callers map it to a 400. */
+export class InvalidTierError extends Error {
+  constructor(readonly tier: unknown) {
+    super(`Invalid price tier "${String(tier)}" (expected an integer 1-5)`);
+    this.name = "InvalidTierError";
+  }
+}
+
+/** `Number()` at the boundary, then strict: blank/NaN/fractional/out-of-range never become tier 1. */
+function toTier(raw: unknown): 1 | 2 | 3 | 4 | 5 {
+  const n = typeof raw === "string" && raw.trim() === "" ? Number.NaN : Number(raw);
+  if (!Number.isInteger(n) || n < 1 || n > 5) throw new InvalidTierError(raw);
+  return n as 1 | 2 | 3 | 4 | 5;
+}
+
 export const PIECE_LABEL = "Piece";
 
 export interface LadderProduct {
@@ -162,7 +177,9 @@ export function resolveLadderLevel(
 }
 
 /**
- * Price PER ONE unit of `unitLabel` at customer tier `tierIndex` (1..5; anything else ⇒ 1).
+ * Price PER ONE unit of `unitLabel` at customer tier `tierIndex` (an integer 1..5 — a numeric
+ * string is accepted; anything else throws `InvalidTierError`, never silently priced as tier 1: a
+ * wrong tier is a wrong price, so callers map it to a 400).
  * A level's explicit price wins; otherwise derived from the pack (see `resolveLevelPrice`); the
  * pack itself and tier fallbacks follow `getTierPrice` exactly.
  */
@@ -170,9 +187,9 @@ export function resolveUnitPrice(
   product: LadderProduct,
   units: readonly LadderUnit[],
   unitLabel: string | null | undefined,
-  tierIndex: number,
+  tierIndex: number | string,
 ): number {
-  const tier = ([1, 2, 3, 4, 5].includes(tierIndex) ? tierIndex : 1) as 1 | 2 | 3 | 4 | 5;
+  const tier = toTier(tierIndex);
   const tierPackPrice = getTierPrice(product, tier);
   const level = resolveLadderLevel(product, units, unitLabel);
   if (level.kind === "pack") return roundMoney(tierPackPrice);
