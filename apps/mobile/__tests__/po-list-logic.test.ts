@@ -9,7 +9,7 @@ import {
 } from "../lib/po-list-logic";
 
 describe("poDisplayTotal — the PO list row total", () => {
-  it("REG: a server total arrives as a Decimal STRING and must not render as $0.00", () => {
+  it("REG-B582: a server total arrives as a Decimal STRING and must not render as $0.00", () => {
     // Prisma Decimal(10,2) serializes as "123.45". The list used Number.isFinite(<string>),
     // which is false, so every PO with a stored total showed $0.00.
     expect(formatPoMoney(poDisplayTotal({ totalAmount: "123.45", items: [] }))).toBe("$123.45");
