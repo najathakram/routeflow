@@ -11,17 +11,19 @@
  * S5: files that feed every workspace force FULL — root manifest, lockfile, turbo.json, a
  *     workspace manifest, the hooks, the CI workflows, the campaign ledger.
  * S4c/S8: root scripts/hooks select api; a cross-workspace move reports both paths.
+ * S9: the S8 fixture is inert against a hijacking GIT_DIR (B420) — proven on a decoy repo.
  * S6: decideScope stays FULL unless the hook opted in, and under FULL_VERIFY=1 / CI / master.
  * S7: the hook wiring — pre-push sets VERIFY_SCOPE=affected off FULL_VERIFY, keeps separate
  *     verified-tree markers, and package.json's verify chain goes through verify-turbo.mjs.
  */
-import { readFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
   changedFilesSince,
+  cleanGitEnv,
   computeScope,
   decideScope,
   loadWorkspaces,
@@ -99,35 +101,110 @@ check(
 );
 
 // S8: a cross-workspace MOVE must report both paths (git's default rename detection would hide
-// the source). Scratch repo — the real one is never touched.
-{
-  const dir = mkdtempSync(join(tmpdir(), "verify-scope-"));
-  const run = (...args) => spawnSync("git", args, { cwd: dir, encoding: "utf8" });
+// the source). Runs in a scratch repo under os.tmpdir() — and it must NEVER be able to touch the
+// real one: this file runs inside the pre-push hook, which exports GIT_DIR/GIT_INDEX_FILE/
+// GIT_WORK_TREE, and those override `cwd` (the B420 hijack: an earlier version of this block
+// committed a fixture "base"/"move" onto the real branch and wrote core.bare + user "t" into the
+// real .git/config). So: every git spawn below gets a GIT_*-free env, the fixture identity is
+// passed as `-c` flags (no `git config` writes at all), and no write happens until
+// `git rev-parse --show-toplevel` proves the repo git resolves IS the fixture dir.
+const fixtureEnv = () => ({
+  ...cleanGitEnv(),
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_CONFIG_SYSTEM: "/dev/null",
+});
+const IDENT = ["-c", "user.name=verify-scope-fixture", "-c", "user.email=fixture@invalid"];
+
+function runMoveFixture() {
+  const tmpRoot = realpathSync(tmpdir());
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "verify-scope-")));
+  const run = (...args) =>
+    spawnSync("git", args, { cwd: dir, encoding: "utf8", env: fixtureEnv() });
+  const out = { moved: null, unresolvable: undefined, guard: null };
   try {
+    if (!dir.startsWith(`${tmpRoot}/`)) throw new Error(`fixture ${dir} is not under ${tmpRoot}`);
     run("init", "-q", "-b", "master");
-    run("config", "user.email", "t@example.test");
-    run("config", "user.name", "t");
+    const top = realpathSync(run("rev-parse", "--show-toplevel").stdout.trim());
+    out.guard = top === dir;
+    if (!out.guard) return out; // git resolved somewhere else — write NOTHING
     mkdirSync(join(dir, "apps/web/lib"), { recursive: true });
     mkdirSync(join(dir, "apps/mobile/lib"), { recursive: true });
     writeFileSync(join(dir, "apps/web/lib/x.ts"), "export const x = 1;\n".repeat(20));
     run("add", "-A");
-    run("commit", "-q", "-m", "base");
+    run(...IDENT, "commit", "-q", "-m", "base");
     run("update-ref", "refs/remotes/origin/master", "HEAD");
     run("checkout", "-q", "-b", "feat/move");
     run("mv", "apps/web/lib/x.ts", "apps/mobile/lib/x.ts");
-    run("commit", "-q", "-am", "move");
-    check(
-      "S8 a web->mobile move reports both the old and the new path",
-      changedFilesSince(dir)?.sort(),
-      ["apps/mobile/lib/x.ts", "apps/web/lib/x.ts"],
-    );
-    check(
-      "S8b changedFilesSince is null (=> FULL) when origin/master is unresolvable",
-      changedFilesSince(dir, "origin/does-not-exist"),
-      null,
-    );
+    run(...IDENT, "commit", "-q", "-am", "move");
+    out.moved = changedFilesSince(dir)?.sort();
+    out.unresolvable = changedFilesSince(dir, "origin/does-not-exist");
+    return out;
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+{
+  const r = runMoveFixture();
+  check(
+    "S8 the fixture repo git resolves is the fixture dir (guard before any write)",
+    r.guard,
+    true,
+  );
+  check("S8 a web->mobile move reports both the old and the new path", r.moved, [
+    "apps/mobile/lib/x.ts",
+    "apps/web/lib/x.ts",
+  ]);
+  check(
+    "S8b changedFilesSince is null (=> FULL) when origin/master is unresolvable",
+    r.unresolvable,
+    null,
+  );
+}
+
+// S9: inertness. With GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE exported (as in a pre-push hook)
+// and pointing at a DECOY repo, the fixture run must leave the decoy untouched — no commits, no
+// refs, no core.bare, no identity in its config. (A decoy, not the real repo: if the scrub ever
+// regressed, this check must fail without damaging anything that matters.)
+{
+  const decoy = realpathSync(mkdtempSync(join(tmpdir(), "verify-scope-decoy-")));
+  const g = (...args) =>
+    spawnSync("git", args, { cwd: decoy, encoding: "utf8", env: fixtureEnv() }).stdout.trim();
+  const saved = {};
+  const hijack = {
+    GIT_DIR: join(decoy, ".git"),
+    GIT_WORK_TREE: decoy,
+    GIT_INDEX_FILE: join(decoy, ".git", "index"),
+  };
+  try {
+    g("init", "-q", "-b", "master");
+    const before = readFileSync(join(decoy, ".git", "config"), "utf8");
+    for (const [k, v] of Object.entries(hijack)) {
+      saved[k] = process.env[k];
+      process.env[k] = v;
+    }
+    const r = runMoveFixture();
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    check("S9 the fixture still ran correctly under a hijacking GIT_DIR", r.moved, [
+      "apps/mobile/lib/x.ts",
+      "apps/web/lib/x.ts",
+    ]);
+    check("S9 decoy repo has no commits", g("rev-list", "--all", "--count"), "0");
+    check("S9 decoy repo has no refs", g("for-each-ref"), "");
+    check(
+      "S9 decoy .git/config is byte-identical (no core.bare, no fixture identity)",
+      readFileSync(join(decoy, ".git", "config"), "utf8"),
+      before,
+    );
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    rmSync(decoy, { recursive: true, force: true });
   }
 }
 

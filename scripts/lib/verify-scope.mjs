@@ -115,8 +115,18 @@ export function computeScope(changedFiles, workspaces) {
 /** Short campaign-check workspace key ("api" | "web" | "mobile" | "pricing") for a package name. */
 export const shortName = (pkgName) => pkgName.replace(/^@routeflow\//, "");
 
+/**
+ * process.env minus every GIT_* variable. Inside a git hook the parent exports GIT_DIR /
+ * GIT_INDEX_FILE / GIT_WORK_TREE, and those override `cwd` — a git spawned for a DIFFERENT
+ * directory (a fixture repo) would silently act on the real repo (the B420 hijack). Every git
+ * this module spawns is repo-discovery-by-cwd only.
+ */
+export function cleanGitEnv(env = process.env) {
+  return Object.fromEntries(Object.entries(env).filter(([k]) => !/^GIT_/.test(k)));
+}
+
 function git(root, args) {
-  const r = spawnSync("git", args, { cwd: root, encoding: "utf8" });
+  const r = spawnSync("git", args, { cwd: root, encoding: "utf8", env: cleanGitEnv() });
   if (r.error || r.status !== 0) return null;
   return r.stdout;
 }
