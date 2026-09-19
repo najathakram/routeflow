@@ -2549,6 +2549,12 @@ export class OrdersService implements OnApplicationBootstrap {
       try {
         order = await this.prisma.tenantTransaction(
           async (tx) => {
+            // RF-014: generate the order number inside the transaction so a P2002 on
+            // @@unique([tenantId, orderNumber]) is retried with a fresh value. B587: the NUMERIC
+            // maximum over conforming `ORD-<digits>` numbers only (see order-number.ts). Minted BEFORE the
+            // product-row locks below: the scan is O(tenant orders), so it must not run under them.
+            const orderNumber = await nextOrderNumberFor(tx, this.prisma.getTenantId());
+
             // RF-017: stock validation — only for non-draft orders that have items.
             // Lock product rows first so concurrent requests serialise here.
             // Operators (and TENANT_ADMINs) are explicitly allowed to oversell — they may
@@ -2565,11 +2571,6 @@ export class OrdersService implements OnApplicationBootstrap {
               // second implementation of the lock/oversell-check/decrement).
               await this.decrementStockForSale(tx, stockLines, isStaffRole);
             }
-
-            // RF-014: generate the order number inside the transaction so a P2002 on
-            // @@unique([tenantId, orderNumber]) is retried with a fresh value. B587: the NUMERIC
-            // maximum over conforming `ORD-<digits>` numbers only (see order-number.ts).
-            const orderNumber = await nextOrderNumberFor(tx, this.prisma.getTenantId());
 
             return tx.order.create({
               data: {

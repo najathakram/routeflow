@@ -49,6 +49,11 @@ describe("nextOrderNumber", () => {
     expect(nextOrderNumber(max as never)).toBe(want);
   });
 
+  it("the sequence wall is an explicit RangeError, never a silent ORD-1000000000 that stops matching", () => {
+    expect(nextOrderNumber(999_999_998)).toBe("ORD-999999999");
+    expect(() => nextOrderNumber(999_999_999)).toThrow(RangeError);
+  });
+
   it.each([Number.NaN, Number.POSITIVE_INFINITY, -5, "abc"])(
     "a non-numeric/negative max (%p) falls back to ORD-00001 instead of NaN",
     (max) => {
@@ -65,8 +70,8 @@ describe("nextOrderNumberFor — the query", () => {
     await expect(nextOrderNumberFor(t as never, "tenant-1")).resolves.toBe("ORD-00010");
     const [strings, ...values] = t.$queryRaw.mock.calls[0];
     const sql = (strings as TemplateStringsArray).join("?");
-    expect(sql).toContain('MAX(CAST(substring("orderNumber" from 5) AS bigint))');
-    expect(sql).toContain('"orderNumber" ~');
+    expect(sql).toContain('THEN CAST(substring("orderNumber" from 5) AS bigint)');
+    expect(sql).toContain('CASE WHEN "orderNumber" ~'); // the cast is CASE-guarded, whatever the plan
     expect(values).toEqual([ORDER_SEQ_PATTERN, "tenant-1", "tenant-1"]);
   });
 

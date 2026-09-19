@@ -16,6 +16,8 @@ export const ORDER_NUMBER_PREFIX = "ORD-";
 /** Postgres regex for a sequence number (`~`); the 9-digit cap keeps the bigint cast overflow-proof. */
 export const ORDER_SEQ_PATTERN = "^ORD-[0-9]{1,9}$";
 const ORDER_SEQ_JS = /^ORD-([0-9]{1,9})$/;
+/** Highest sequence the 9-digit pattern still recognises; one more would fall OUT of the sequence. */
+const MAX_SEQ = 999_999_999;
 const PAD = 5;
 
 /** The numeric part of a conforming order number, else null. */
@@ -28,6 +30,9 @@ export function parseOrderSeq(orderNumber: string | null | undefined): number | 
 export function nextOrderNumber(maxSeq: number | bigint | string | null | undefined): string {
   const n = Number(maxSeq);
   const next = maxSeq != null && Number.isFinite(n) && n >= 0 ? Math.trunc(n) + 1 : 1;
+  // Past 999,999,999 the number would have 10 digits, stop matching the pattern, and the next
+  // create would recompute the SAME number and 500 forever (B587's mechanism) — fail loudly instead.
+  if (next > MAX_SEQ) throw new RangeError("Order number sequence exhausted (ORD-999999999)");
   return `${ORDER_NUMBER_PREFIX}${String(next).padStart(PAD, "0")}`;
 }
 
@@ -41,9 +46,9 @@ interface RawTx {
  */
 export async function nextOrderNumberFor(tx: RawTx, tenantId: string | null): Promise<string> {
   const rows = await tx.$queryRaw<Array<{ max: bigint | number | string | null }>>`
-    SELECT MAX(CAST(substring("orderNumber" from 5) AS bigint)) AS max
+    SELECT MAX(CASE WHEN "orderNumber" ~ ${ORDER_SEQ_PATTERN}
+                    THEN CAST(substring("orderNumber" from 5) AS bigint) END) AS max
     FROM "Order"
-    WHERE "orderNumber" ~ ${ORDER_SEQ_PATTERN}
-      AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId})`;
+    WHERE (${tenantId}::text IS NULL OR "tenantId" = ${tenantId})`;
   return nextOrderNumber(rows?.[0]?.max);
 }

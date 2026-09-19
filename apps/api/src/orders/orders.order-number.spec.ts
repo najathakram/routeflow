@@ -49,6 +49,7 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { Prisma } from "@prisma/client";
+import { ORDER_SEQ_PATTERN } from "./order-number";
 
 const MOCK_ORDER = {
   id: "ord-1",
@@ -268,6 +269,16 @@ describe("OrdersService.create — B587 order-number generation", () => {
       customerPayload as never,
     );
     expect(created()).toEqual(["ORD-00002"]);
+  });
+
+  it("the create path scopes the query to ITS tenant (Order has no RLS — this argument is the only isolation guard)", async () => {
+    const qr = jest.fn().mockResolvedValue([{ max: null }]);
+    arrange(qr);
+    await service.create(
+      { items: [{ productId: "prod-1", qty: 1 }] } as never,
+      customerPayload as never,
+    );
+    expect(qr.mock.calls[0].slice(1)).toEqual([ORDER_SEQ_PATTERN, "test-tenant", "test-tenant"]);
   });
 
   it("a tenant at ORD-9 gets ORD-00010", async () => {
