@@ -2,13 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 
 export type ImportFileStatus =
-  | "QUEUED"
-  | "PROCESSING"
-  | "CLEAN"
-  | "NEEDS_REVIEW"
-  | "DUPLICATE"
-  | "FAILED"
-  | "POSTED";
+  "QUEUED" | "PROCESSING" | "CLEAN" | "NEEDS_REVIEW" | "DUPLICATE" | "FAILED" | "POSTED";
 export type ImportBatchStatus = "PROCESSING" | "READY" | "POSTED" | "PARTIALLY_POSTED";
 
 export interface ImportBatch {
