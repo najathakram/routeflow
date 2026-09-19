@@ -79,6 +79,7 @@ Every row here is a pointer, not a description — open the linked file for the 
 | Security headers / CSP                                         | [`web`](web.md) → `next.config.mjs`                                                                                  |
 | File uploads & signed URLs                                     | [`api`](api.md) → `src/uploads/`                                                                                     |
 | Realtime (Socket.io)                                           | api `src/gateways/` → web `lib/socket.ts` → mobile `hooks/useSocket.ts`                                              |
+| Inventory cost recompute / averageCost drift (B562)            | [`api`](api/feature-modules-4/inventory.md) → `replayProduct` gap detection; recompute UI hidden (#931)              |
 | Deploy / Dockerfile / health                                   | per-app `Dockerfile` + `railway.toml`; `debug-deploy` skill                                                          |
 | Product capability model (problem → P0/P1/P2)                  | [`docs/product/`](../../docs/product/README.md) — 15 domains                                                         |
 | Marketing docs (product doc, strategy, content pack)           | [`docs/marketing/`](../../docs/marketing/README.md)                                                                  |
