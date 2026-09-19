@@ -40,6 +40,12 @@ describe("orderCreatedToast", () => {
     expect(t.title).toBe("Merged into order #abcdef");
   });
 
+  it("keeps the toast up longer only when there is an action to reach for", () => {
+    const withAction = orderCreatedToast({ asDraft: false, created, onViewOrder: jest.fn() });
+    expect(withAction.duration).toBe(8000);
+    expect(orderCreatedToast({ asDraft: false, created }).duration).toBeUndefined();
+  });
+
   it("no action without a handler or without a created id — never a dead button", () => {
     expect(orderCreatedToast({ asDraft: false, created }).action).toBeUndefined();
     expect(

@@ -17,6 +17,9 @@ export interface OrderCreatedToastInput {
  * redirect would fight rapid multi-order entry, so this offers a one-click "View Order" action
  * on the toast instead of navigating on its own.
  */
+/** Long enough to reach for the action (the provider default is 4s). */
+const ACTION_TOAST_MS = 8000;
+
 export function orderCreatedToast({
   mergeChoice,
   asDraft,
@@ -38,11 +41,13 @@ export function orderCreatedToast({
       title: `Merged into order ${created?.orderNumber ?? "#" + created?.id?.slice(0, 6)}`,
       variant: "success",
       action,
+      ...(action ? { duration: ACTION_TOAST_MS } : {}),
     };
   }
   return {
     title: asDraft ? "Order saved as draft" : "Order created",
     variant: "success",
     action,
+    ...(action ? { duration: ACTION_TOAST_MS } : {}),
   };
 }
