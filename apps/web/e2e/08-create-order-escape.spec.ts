@@ -294,10 +294,16 @@ test.describe("Operator — Create Order product search scan button, mobile (B49
     await expect(search).toBeVisible();
     await expect(scanButton).toBeVisible();
 
+    // The button is measured while the Create Order modal is still animating in: its box reads
+    // ~42.5px at +0ms and settles at exactly 44x44 by ~+300ms (B572). Poll until the size
+    // settles — a one-shot read raced the animation — but still FAIL if it never reaches 44.
+    const scanSize = async (dim: "width" | "height") =>
+      (await scanButton.boundingBox())?.[dim] ?? 0;
+    await expect.poll(() => scanSize("width"), { timeout: 5_000 }).toBeGreaterThanOrEqual(44);
+    await expect.poll(() => scanSize("height"), { timeout: 5_000 }).toBeGreaterThanOrEqual(44);
+
     const scanBox = await scanButton.boundingBox();
     expect(scanBox).not.toBeNull();
-    expect(scanBox!.width).toBeGreaterThanOrEqual(44);
-    expect(scanBox!.height).toBeGreaterThanOrEqual(44);
 
     // Neither control extends past the 390px viewport — the classic "add a button, blow the
     // row out to the right" mobile regression.
