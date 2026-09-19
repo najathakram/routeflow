@@ -699,6 +699,9 @@ function main() {
   let scopeCache = null;
   function scopedOut(ws) {
     if (process.env.VERIFY_SCOPE !== "affected") return false;
+    // A fixture run (a Jest spec spawning this script against a throwaway repo, which inherits the
+    // hook's VERIFY_SCOPE) must judge its OWN fixture strictly, never the real repo's diff.
+    if (process.env.CAMPAIGN_CHECK_STATUS_DIR || process.env.JEST_WORKER_ID) return false;
     scopeCache ??= decideScope(REPO_ROOT);
     return scopeCache.mode === "scoped" && !scopeCache.workspaces.map(shortName).includes(ws);
   }

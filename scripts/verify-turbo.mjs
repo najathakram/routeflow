@@ -37,5 +37,6 @@ console.log(
 const filters = scope.workspaces.map((w) => `--filter=${w}`);
 const first = turbo(["check-types", "lint", "test", ...filters]);
 // Keep going after a failure so one push reports every red workspace, like the full chain does.
+// Only apps/api defines test:repo-truth today; a second workspace adding one must be added here.
 const second = turbo(["test:repo-truth", "--filter=@routeflow/api"]);
 process.exit(first || second);

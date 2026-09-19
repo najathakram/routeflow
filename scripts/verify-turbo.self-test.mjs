@@ -10,14 +10,23 @@
  * S4: a docs-only / code-map-only diff selects only the pricing tripwire (repo-truth always runs).
  * S5: files that feed every workspace force FULL — root manifest, lockfile, turbo.json, a
  *     workspace manifest, the hooks, the CI workflows, the campaign ledger.
+ * S4c/S8: root scripts/hooks select api; a cross-workspace move reports both paths.
  * S6: decideScope stays FULL unless the hook opted in, and under FULL_VERIFY=1 / CI / master.
  * S7: the hook wiring — pre-push sets VERIFY_SCOPE=affected off FULL_VERIFY, keeps separate
  *     verified-tree markers, and package.json's verify chain goes through verify-turbo.mjs.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { computeScope, decideScope, loadWorkspaces, shortName } from "./lib/verify-scope.mjs";
+import {
+  changedFilesSince,
+  computeScope,
+  decideScope,
+  loadWorkspaces,
+  shortName,
+} from "./lib/verify-scope.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const workspaces = loadWorkspaces(ROOT);
@@ -78,6 +87,48 @@ for (const f of [
   ".claude/campaign/status/F01.jsonl",
 ]) {
   check(`S5 ${f} forces FULL`, computeScope([f, "apps/api/src/x.ts"], workspaces).mode, "full");
+}
+
+check(
+  "S4c root scripts/ and .claude/hooks/ pull api in (its plain test lane runs their specs)",
+  [scopedNames(["scripts/campaign-check.mjs"]), scopedNames([".claude/hooks/stop.mjs"])],
+  [
+    ["api", "pricing"],
+    ["api", "pricing"],
+  ],
+);
+
+// S8: a cross-workspace MOVE must report both paths (git's default rename detection would hide
+// the source). Scratch repo — the real one is never touched.
+{
+  const dir = mkdtempSync(join(tmpdir(), "verify-scope-"));
+  const run = (...args) => spawnSync("git", args, { cwd: dir, encoding: "utf8" });
+  try {
+    run("init", "-q", "-b", "master");
+    run("config", "user.email", "t@example.test");
+    run("config", "user.name", "t");
+    mkdirSync(join(dir, "apps/web/lib"), { recursive: true });
+    mkdirSync(join(dir, "apps/mobile/lib"), { recursive: true });
+    writeFileSync(join(dir, "apps/web/lib/x.ts"), "export const x = 1;\n".repeat(20));
+    run("add", "-A");
+    run("commit", "-q", "-m", "base");
+    run("update-ref", "refs/remotes/origin/master", "HEAD");
+    run("checkout", "-q", "-b", "feat/move");
+    run("mv", "apps/web/lib/x.ts", "apps/mobile/lib/x.ts");
+    run("commit", "-q", "-am", "move");
+    check(
+      "S8 a web->mobile move reports both the old and the new path",
+      changedFilesSince(dir)?.sort(),
+      ["apps/mobile/lib/x.ts", "apps/web/lib/x.ts"],
+    );
+    check(
+      "S8b changedFilesSince is null (=> FULL) when origin/master is unresolvable",
+      changedFilesSince(dir, "origin/does-not-exist"),
+      null,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 const gitRoot = ROOT;

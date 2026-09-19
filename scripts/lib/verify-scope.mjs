@@ -35,6 +35,14 @@ const FULL_PATTERNS = [
   /^packages\/[^/]+\/package\.json$/,
 ];
 
+// Files outside every workspace whose specs live in a workspace: root scripts and the hook/skill
+// scripts are executed by apps/api's plain `test` lane (campaign-check-freshness.spec.ts,
+// skip-verify-audit-script.spec.ts, rls-preflight.spec.ts ...), so a change there must select api.
+const PULLS_IN = [
+  { re: /^scripts\//, workspace: "@routeflow/api" },
+  { re: /^\.claude\/(hooks|skills)\//, workspace: "@routeflow/api" },
+];
+
 /** Read the npm-workspaces graph (name, dir, in-repo dependencies) from the package.json files. */
 export function loadWorkspaces(root) {
   const workspaces = [];
@@ -79,6 +87,11 @@ export function computeScope(changedFiles, workspaces) {
   }
 
   const selected = new Set(changed);
+  for (const f of files) {
+    for (const { re, workspace } of PULLS_IN) {
+      if (re.test(f) && workspaces.some((w) => w.name === workspace)) selected.add(workspace);
+    }
+  }
   let grew = true;
   while (grew) {
     grew = false;
@@ -112,7 +125,9 @@ function git(root, args) {
 export function changedFilesSince(root, base = "origin/master") {
   const mergeBase = git(root, ["merge-base", base, "HEAD"]);
   if (mergeBase === null) return null;
-  const diff = git(root, ["diff", "--name-only", mergeBase.trim()]);
+  // --no-renames: a move across workspaces must report BOTH paths, or the workspace that lost
+  // the file (whose importers now dangle) would never be checked.
+  const diff = git(root, ["diff", "--name-only", "--no-renames", mergeBase.trim()]);
   const untracked = git(root, ["ls-files", "--others", "--exclude-standard"]);
   if (diff === null || untracked === null) return null;
   return [...new Set([...diff.split("\n"), ...untracked.split("\n")].filter(Boolean))];
