@@ -1940,10 +1940,24 @@ const BOOT_STAMP_SLOP_MS = 5000;
 // synchronous `sleepSync` loop never does. That is exactly what CI's ubuntu
 // runner showed: the self-test's dead holder was never "gone", so its lock was
 // never broken and every later case inherited it. Linux exposes the state as
-// the "Z" field of /proc/<pid>/stat; treat that as gone. Windows has no zombie
-// state (the pid check fails the moment the process ends), and a host without
-// /proc simply keeps the signal-0 answer.
-const zombieOnLinux = (pid) => {
+// the "Z" field of /proc/<pid>/stat; treat that as gone. macOS has no /proc but
+// `ps -o stat= -p <pid>` prints the same state letter (B574: without this a
+// SIGKILLed, unreaped lock holder read as alive on a Mac and its lock was never
+// broken); a missing/failing `ps` means "cannot tell" = keep the signal-0 answer
+// (alive — the safe default). Windows has no zombie state (the pid check fails the
+// moment the process ends), and any other host without /proc keeps the signal-0 answer.
+const zombieProcess = (pid) => {
+  if (process.platform === "darwin") {
+    try {
+      const ps = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], {
+        encoding: "utf8",
+        timeout: 2000,
+      });
+      return ps.status === 0 && ps.stdout.trim().startsWith("Z");
+    } catch {
+      return false;
+    }
+  }
   if (process.platform !== "linux") return false;
   try {
     const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
@@ -1956,7 +1970,7 @@ const zombieOnLinux = (pid) => {
   }
 };
 
-// true = alive, false = definitely gone (ESRCH, or a Linux zombie) OR its owner
+// true = alive, false = definitely gone (ESRCH, or a zombie on Linux/macOS) OR its owner
 // pid predates this boot (so it cannot possibly be the process that wrote the
 // lock), null = cannot tell. EPERM means the pid exists and belongs to someone
 // else — alive, not free, UNLESS the boot stamp already proved it can't be ours.
@@ -1966,7 +1980,7 @@ const pidAlive = (pid, ownerBootAt) => {
     return false;
   try {
     process.kill(pid, 0);
-    return zombieOnLinux(pid) ? false : true;
+    return zombieProcess(pid) ? false : true;
   } catch (e) {
     return e.code === "ESRCH" ? false : true;
   }

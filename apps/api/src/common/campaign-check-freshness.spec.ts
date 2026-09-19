@@ -199,7 +199,11 @@ function runCampaignCheck(opts: {
 }
 
 function mkFixtureDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "campaign-check-freshness-"));
+  // realpath: on macOS os.tmpdir() is under /var, a symlink to /private/var, while `git
+  // rev-parse --show-toplevel` (what campaign-check derives its git root from) returns the
+  // resolved /private/var path — the unresolved fixture path made every ledger-freshness lookup
+  // point outside the repo, so six stale-report specs read "fresh" on a Mac.
+  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "campaign-check-freshness-")));
 }
 
 describe("campaign-check freshness guard (spec T1–T17)", () => {
