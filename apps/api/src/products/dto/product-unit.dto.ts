@@ -7,7 +7,14 @@ import {
   Max,
   MaxLength,
   Min,
+  ValidateIf,
 } from "class-validator";
+
+/**
+ * "Omitted is fine, but an explicit null is not" — `@IsOptional()` would let null through to a
+ * NOT NULL column (a 500). Prices keep `@IsOptional()` because null legitimately means "derived".
+ */
+const NotNull = () => ValidateIf((_o, v) => v !== undefined);
 
 // Decimal(10,2) ceiling.
 const MAX_PRICE = 99_999_999.99;
@@ -47,8 +54,8 @@ export class CreateProductUnitDto {
 
 /** PATCH body — every field optional; `factorToBase` is refused once a line carries the level. */
 export class UpdateProductUnitDto {
-  @IsOptional() @IsString() @MaxLength(40) label?: string;
-  @IsOptional() @IsInt() @Min(1) @Max(1_000_000) factorToBase?: number;
+  @NotNull() @IsString() @MaxLength(40) label?: string;
+  @NotNull() @IsInt() @Min(1) @Max(1_000_000) factorToBase?: number;
   @IsOptional() @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) @Max(MAX_PRICE) price?: number | null;
   @IsOptional()
   @IsNumber({ maxDecimalPlaces: 2 })
@@ -70,6 +77,6 @@ export class UpdateProductUnitDto {
   @Min(0)
   @Max(MAX_PRICE)
   priceTier5?: number | null;
-  @IsOptional() @IsBoolean() isDefaultSelling?: boolean;
-  @IsOptional() @IsInt() @Min(0) @Max(1000) sortOrder?: number;
+  @NotNull() @IsBoolean() isDefaultSelling?: boolean;
+  @NotNull() @IsInt() @Min(0) @Max(1000) sortOrder?: number;
 }

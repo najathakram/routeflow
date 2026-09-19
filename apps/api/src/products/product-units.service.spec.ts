@@ -17,20 +17,16 @@ function build(opts: {
   rows?: Row[];
   orderLineHit?: boolean;
   invoiceLineHit?: boolean;
+  createError?: unknown;
 }) {
   const product =
     opts.product === undefined
       ? { unit: "Box", unitsPerBox: 24, trackedCategoryId: null }
       : opts.product;
-  const tx = {
-    productUnit: {
-      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
-      create: jest.fn().mockImplementation(async ({ data }) => ({ id: "new", ...data })),
-      update: jest.fn().mockImplementation(async ({ where, data }) => ({ id: where.id, ...data })),
-    },
-  };
+  // One object serves as both `forTenant()` and the transaction client.
   const db = {
-    product: { findUnique: jest.fn().mockResolvedValue(product) },
+    $executeRaw: jest.fn().mockResolvedValue(1),
+    product: { findFirst: jest.fn().mockResolvedValue(product) },
     productUnit: {
       findMany: jest.fn().mockResolvedValue(opts.rows ?? []),
       findFirst: jest
@@ -38,6 +34,12 @@ function build(opts: {
         .mockImplementation(
           async ({ where }) => (opts.rows ?? []).find((r) => r.id === where.id) ?? null,
         ),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      create: jest.fn().mockImplementation(async ({ data }) => {
+        if (opts.createError) throw opts.createError;
+        return { id: "new", ...data };
+      }),
+      update: jest.fn().mockImplementation(async ({ where, data }) => ({ id: where.id, ...data })),
       delete: jest.fn().mockResolvedValue({}),
     },
     orderItem: {
@@ -49,9 +51,9 @@ function build(opts: {
   };
   const prisma = {
     forTenant: () => db,
-    tenantTransaction: jest.fn().mockImplementation(async (fn) => fn(tx)),
+    tenantTransaction: jest.fn().mockImplementation(async (fn) => fn(db)),
   };
-  return { service: new ProductUnitsService(prisma as never), db, tx, prisma };
+  return { service: new ProductUnitsService(prisma as never), db, tx: db, prisma };
 }
 
 const caseRow: Row = { id: "u-case", label: "Case", factorToBase: 288 };
@@ -61,6 +63,7 @@ describe("ProductUnitsService.create", () => {
     const { service, tx } = build({});
     await service.create("p1", { label: "  Case ", factorToBase: 288, price: 480 });
     expect(tx.productUnit.create).toHaveBeenCalledWith({
+      select: expect.objectContaining({ id: true, label: true }),
       data: expect.objectContaining({
         productId: "p1",
         label: "Case",
@@ -109,13 +112,30 @@ describe("ProductUnitsService.create", () => {
     );
   });
 
-  it("factor 1 is always named Piece; the name Piece is always factor 1", async () => {
+  it("factor 1 is always named Piece (canonical casing); the name Piece is always factor 1", async () => {
     const { service, tx } = build({});
-    await service.create("p1", { label: "each one", factorToBase: 1, price: 2 });
-    expect(tx.productUnit.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({ label: "Piece", factorToBase: 1 }),
-    });
+    await service.create("p1", { label: "piece", factorToBase: 1, price: 2 });
+    expect(tx.productUnit.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ label: "Piece", factorToBase: 1 }),
+      }),
+    );
+    await expect(service.create("p1", { label: "each one", factorToBase: 1 })).rejects.toThrow(
+      BadRequestException,
+    );
     await expect(service.create("p1", { label: "piece", factorToBase: 6 })).rejects.toThrow(
+      BadRequestException,
+    );
+  });
+
+  it("PATCHing a factor-1 row's name, or a row to factor 1 without naming it Piece, is a 400 (never a silent rename)", async () => {
+    const pieceRow: Row = { id: "u-piece", label: "Piece", factorToBase: 1 };
+    const a = build({ rows: [pieceRow] });
+    await expect(a.service.update("p1", "u-piece", { label: "Each" })).rejects.toThrow(
+      BadRequestException,
+    );
+    const b = build({ rows: [caseRow] });
+    await expect(b.service.update("p1", "u-case", { factorToBase: 1 })).rejects.toThrow(
       BadRequestException,
     );
   });
@@ -175,6 +195,7 @@ describe("ProductUnitsService.update", () => {
     await service.update("p1", "u-case", { price: 500 });
     expect(db.orderItem.findFirst).not.toHaveBeenCalled();
     expect(tx.productUnit.update).toHaveBeenCalledWith({
+      select: expect.objectContaining({ id: true }),
       where: { id: "u-case" },
       data: expect.objectContaining({ price: 500, label: "Case", factorToBase: 288 }),
     });
@@ -188,12 +209,19 @@ describe("ProductUnitsService.update", () => {
     expect(tx.productUnit.update).not.toHaveBeenCalled();
   });
 
-  it("a factor edit is allowed while no line uses the level, and checks the OLD label too", async () => {
+  it("a factor edit is allowed while no line uses the level, with ONE line check per table", async () => {
     const { service, db, tx } = build({ rows: [caseRow] });
     await service.update("p1", "u-case", { factorToBase: 300 });
-    const labels = db.orderItem.findFirst.mock.calls.map((c) => c[0].where.unitLabel.equals);
-    expect(labels).toEqual(["Case", "Case"]);
+    expect(db.orderItem.findFirst).toHaveBeenCalledTimes(1);
+    expect(db.invoiceItem.findFirst).toHaveBeenCalledTimes(1);
     expect(tx.productUnit.update).toHaveBeenCalled();
+  });
+
+  it("a rename + factor change also checks the OLD label's lines", async () => {
+    const { service, db } = build({ rows: [caseRow] });
+    await service.update("p1", "u-case", { label: "Crate", factorToBase: 300 });
+    const labels = db.orderItem.findFirst.mock.calls.map((c) => c[0].where.unitLabel.equals);
+    expect(labels).toEqual(["Case", "Crate"]);
   });
 
   it("does not collide with itself when re-saving the same label/factor", async () => {
@@ -237,6 +265,7 @@ describe("ProductUnitsService.remove / list", () => {
     await service.list("p1");
     expect(db.productUnit.findMany).toHaveBeenCalledWith({
       where: { productId: "p1" },
+      select: expect.not.objectContaining({ tenantId: true }),
       orderBy: [{ sortOrder: "asc" }, { factorToBase: "asc" }],
     });
   });
@@ -317,5 +346,60 @@ describe("ProductUnitsController — gate wiring", () => {
     expect(row?.gate.state).toBe("enforced");
     expect(row?.defaultGranted).toBe(false);
     expect(row?.gate.grantPath.length).toBeGreaterThan(0);
+  });
+});
+
+describe("concurrency + isolation (Opus review of step 2a)", () => {
+  it("every mutation runs in ONE transaction that takes the per-product advisory lock first", async () => {
+    const { service, prisma, db } = build({ rows: [caseRow] });
+    await service.create("p1", { label: "Pallet", factorToBase: 5760 });
+    await service.update("p1", "u-case", { price: 1 });
+    await service.remove("p1", "u-case");
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(3);
+    expect(db.$executeRaw).toHaveBeenCalledTimes(3);
+    expect(db.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      db.product.findFirst.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("reads the pack with findFirst({where:{id}}) so a foreign tenant product 404s", async () => {
+    const { service, db } = build({ product: null });
+    await expect(service.list("foreign")).rejects.toThrow(NotFoundException);
+    expect(db.product.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "foreign" } }),
+    );
+    expect((db.product as Record<string, unknown>).findUnique).toBeUndefined();
+  });
+
+  it("a racing unique-index violation surfaces as 409, not a 500", async () => {
+    const { service } = build({ createError: Object.assign(new Error("dup"), { code: "P2002" }) });
+    await expect(service.create("p1", { label: "Case", factorToBase: 288 })).rejects.toThrow(
+      ConflictException,
+    );
+  });
+
+  it("other errors pass through untouched", async () => {
+    const boom = new Error("db down");
+    const { service } = build({ createError: boom });
+    await expect(service.create("p1", { label: "Case", factorToBase: 288 })).rejects.toBe(boom);
+  });
+});
+
+describe("DTO nulls on NOT NULL columns (Opus review of step 2a)", () => {
+  it.each([
+    ["sortOrder", { sortOrder: null }],
+    ["isDefaultSelling", { isDefaultSelling: null }],
+    ["label", { label: null }],
+    ["factorToBase", { factorToBase: null }],
+  ])("PATCH rejects an explicit null %s (would 500 on the column)", async (_n, body) => {
+    const errs = await validate(plainToInstance(UpdateProductUnitDto, body));
+    expect(errs.length).toBeGreaterThan(0);
+  });
+
+  it("PATCH still allows null prices (derived) and omitted fields", async () => {
+    const errs = await validate(
+      plainToInstance(UpdateProductUnitDto, { price: null, priceTier3: null }),
+    );
+    expect(errs).toHaveLength(0);
   });
 });
