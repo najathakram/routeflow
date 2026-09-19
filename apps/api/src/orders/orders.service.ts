@@ -53,6 +53,7 @@ import {
   RouteRunStopStatus,
 } from "@prisma/client";
 import { ListOrdersDto } from "./dto/list-orders.dto";
+import { ORDER_HAS_NO_UNIT_AWARE_LINE, assertNoUnitAwareLines } from "./unit-aware-guard";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
 import {
   IDEMPOTENCY_KEY_CONFLICT,
@@ -641,6 +642,9 @@ export class OrdersService implements OnApplicationBootstrap {
         customerId,
         status: { in: [OrderStatus.DRAFT, OrderStatus.PENDING] },
         skipAutoMerge: false,
+        // units_v1: an order with a unit-aware line is never a merge target (the fold keys by
+        // productId alone and would corrupt it) — treated like an operator-separated order.
+        ...ORDER_HAS_NO_UNIT_AWARE_LINE,
       },
       include: {
         lineItems: {
@@ -913,6 +917,8 @@ export class OrdersService implements OnApplicationBootstrap {
               invoices: { none: {} },
               returns: { none: {} },
               skipAutoMerge: false,
+              // units_v1: never fold an order that holds a unit-aware line (see findActiveOrder).
+              ...ORDER_HAS_NO_UNIT_AWARE_LINE,
             },
             include: {
               lineItems: {
@@ -1263,6 +1269,12 @@ export class OrdersService implements OnApplicationBootstrap {
             orderBy: { updatedAt: "desc" },
           });
           if (orders.length <= 1) return orders[0] ?? null;
+          // units_v1: an explicit operator merge must not silently corrupt (or silently skip) a
+          // unit-aware order — refuse with a readable message.
+          assertNoUnitAwareLines(
+            orders.flatMap((o) => o.lineItems),
+            "consolidated into another order",
+          );
 
           const [winner, ...losers] = orders;
 
@@ -3489,6 +3501,9 @@ export class OrdersService implements OnApplicationBootstrap {
     if (order.status === "CANCELLED") {
       throw new BadRequestException("Items can't be edited on a cancelled order");
     }
+    // units_v1: every branch below (buyer/driver/staff replace-all, diff add, substitute, qty/price
+    // edit) re-derives the factor + price from the LIVE product — refuse on a unit-aware line.
+    assertNoUnitAwareLines(order.lineItems, "edited");
 
     // B63 (REG-B63): buyers self-edit only pre-dispatch orders — the post-dispatch
     // relaxation in the comment above is operator + driver only. Thrown BEFORE any
@@ -5862,6 +5877,11 @@ export class OrdersService implements OnApplicationBootstrap {
       const subtotal = Number(order.subtotal);
       const tax = Number(order.tax);
       return { merged: true, subtotal, tax, total: Number(order.total) };
+    }
+
+    // units_v1: CHANGE_QTY / ADD_ITEM match a line by productId and re-derive from the live pack.
+    if (cr.type !== ChangeRequestType.REMOVE_ITEM) {
+      assertNoUnitAwareLines(order.lineItems, "changed at the stop");
     }
 
     // Regulated license guard re-runs on approval for the incoming product
