@@ -18,6 +18,7 @@ import {
 import { useCreateDraft, useUpdateDraft, useDeleteDraft, useDraft } from "@/lib/api/drafts";
 import { draftDeviceLabel, type OrderDraftPayload } from "@/lib/drafts";
 import { apiClient } from "@/lib/api-client";
+import { orderCreatedToast } from "./order-created-toast";
 import { getTierPrice, computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
@@ -108,6 +109,8 @@ export interface CreateOrderModalProps {
   resumeDraftId?: string | null;
   /** A barcode to add on open (scan-to-draft / scan-to-new, pos-cost-roles §2). */
   initialScanCode?: string | null;
+  /** Wired by the orders page to `router.push` — powers the "View Order" toast action. */
+  onViewOrder?: (orderId: string) => void;
 }
 
 export function CreateOrderModal({
@@ -115,6 +118,7 @@ export function CreateOrderModal({
   onClose,
   resumeDraftId,
   initialScanCode,
+  onViewOrder,
 }: CreateOrderModalProps) {
   const { toast } = useToast();
   const createOrder = useCreateOrder();
@@ -943,16 +947,7 @@ export function CreateOrderModal({
       } as any,
       {
         onSuccess: (created: any) => {
-          if (mergeChoice === "merge") {
-            toast({
-              title: `Merged into order ${created?.orderNumber ?? "#" + created?.id?.slice(0, 6)}`,
-              variant: "success",
-            });
-          } else if (asDraft) {
-            toast({ title: "Order saved as draft", variant: "success" });
-          } else {
-            toast({ title: "Order created", variant: "success" });
-          }
+          toast(orderCreatedToast({ mergeChoice, asDraft, created, onViewOrder }));
           // The parked draft has become a real order — clear it from the dock.
           if (activeDraftId) deleteDraft.mutate(activeDraftId);
           setMergePrompt(null);
