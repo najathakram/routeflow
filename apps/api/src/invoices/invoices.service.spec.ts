@@ -610,6 +610,32 @@ describe("InvoicesService", () => {
       expect(created.qty).toBe(27);
     });
 
+    describe("units_v1: refuses to rewrite a unit-aware invoice (409 UNIT_AWARE_LINE)", () => {
+      const edit = { items: [{ productId: "prod-box", description: "x", qty: 1, unitPrice: 1 }] };
+
+      it("when the invoice's own lines carry a unitLabel", async () => {
+        prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
+        prisma.invoiceItem.findMany.mockResolvedValue([{ unitLabel: "Case" }]);
+        const err = await service.update("inv-box", edit).catch((e) => e);
+        expect(err.getResponse()).toMatchObject({ code: "UNIT_AWARE_LINE" });
+        expect(prisma.invoice.update).not.toHaveBeenCalled();
+      });
+
+      it("when the invoice carries NO label but its LINKED ORDER holds a unit-aware line (the back-sync would write onto it)", async () => {
+        prisma.invoice.findUnique.mockResolvedValue({ ...draftInvoice, orderId: "ord-1" });
+        prisma.invoiceItem.findMany.mockResolvedValue([]);
+        prisma.orderItem.findMany.mockResolvedValue([{ unitLabel: "Pallet", status: "PENDING" }]);
+        const err = await service.update("inv-box", edit).catch((e) => e);
+        expect(err.getResponse()).toMatchObject({ code: "UNIT_AWARE_LINE" });
+        expect(prisma.orderItem.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({ orderId: "ord-1", unitLabel: { not: null } }),
+          }),
+        );
+        expect(prisma.invoice.update).not.toHaveBeenCalled();
+      });
+    });
+
     it("charges unitPrice*qty for a non-boxed line (no boxes/pieces sent)", async () => {
       prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
       prisma.product.findMany.mockResolvedValue([]);
@@ -2653,6 +2679,24 @@ describe("InvoicesService", () => {
       expect(line.pieces).toBeNull();
       expect(line.qty).toBe(4);
       expect(line.orderItemId).toBe("oi-1");
+    });
+
+    it("carries the order line's unitLabel to the invoice line (units_v1) — and null for a pack line", () => {
+      const li = {
+        id: "oi-case",
+        productId: "p-1",
+        qty: 288,
+        boxes: 1,
+        pieces: 0,
+        unitsPerBox: 288,
+        unitLabel: "Case",
+        unitPrice: 480,
+        subtotal: 480,
+        product: { name: "Boxed", unitsPerBox: 24 },
+      };
+      expect(build(li, 288).unitLabel).toBe("Case");
+      expect(build(li, 288).unitsPerBox).toBe(288);
+      expect(build({ ...li, unitLabel: undefined }, 288).unitLabel).toBeNull();
     });
 
     it("copies a box-split line verbatim and carries its split + snapshot upb", () => {

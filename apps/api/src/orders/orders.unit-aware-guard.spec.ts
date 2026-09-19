@@ -24,7 +24,7 @@ jest.mock("../notifications/notifications.service", () => ({
 }));
 
 import { Test, TestingModule } from "@nestjs/testing";
-import { ConflictException } from "@nestjs/common";
+import { ConflictException, ForbiddenException } from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bull";
 import { ConfigService } from "@nestjs/config";
 
@@ -267,6 +267,7 @@ describe("OrdersService — units_v1 fail-closed guard on rewrite paths", () => 
 
     it.each(payloads)("%s", async (_n, user, dto) => {
       prisma.order.findUnique.mockResolvedValue(unitAwareOrder());
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" }); // the buyer OWNS the order
       const err = await service
         .updateOrderItems("ord-1", dto as never, user as never)
         .catch((e) => e);
@@ -292,10 +293,76 @@ describe("OrdersService — units_v1 fail-closed guard on rewrite paths", () => 
     });
   });
 
+  describe("updateOrderItems guard scope", () => {
+    it("a diff of ONLY CANCEL/DELETE entries is not refused (the operator's way to remove a mistaken Case line)", async () => {
+      prisma.order.findUnique.mockResolvedValue(unitAwareOrder());
+      const err = await service
+        .updateOrderItems(
+          "ord-1",
+          { replaceAll: false, items: [{ id: "li-case", action: "CANCEL" }] } as never,
+          operatorPayload as never,
+        )
+        .catch((e) => e);
+      expect(err?.getResponse?.()?.code).not.toBe("UNIT_AWARE_LINE");
+    });
+
+    it("but a mixed diff (cancel + qty edit) IS refused", async () => {
+      prisma.order.findUnique.mockResolvedValue(unitAwareOrder());
+      const err = await service
+        .updateOrderItems(
+          "ord-1",
+          {
+            replaceAll: false,
+            items: [
+              { id: "li-case", action: "CANCEL" },
+              { id: "li-other", qty: 3 },
+            ],
+          } as never,
+          operatorPayload as never,
+        )
+        .catch((e) => e);
+      expect(err.getResponse()).toMatchObject({ code: "UNIT_AWARE_LINE" });
+    });
+
+    it("a NON-owner buyer gets the bare 403, never a 409 naming a unit on someone else's order", async () => {
+      prisma.order.findUnique.mockResolvedValue(unitAwareOrder());
+      prisma.customer.findFirst.mockResolvedValue({ id: "someone-else" });
+      const err = await service
+        .updateOrderItems(
+          "ord-1",
+          { items: [{ productId: "prod-box", qty: 2 }] } as never,
+          customerPayload as never,
+        )
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+    });
+
+    it("the OWNER buyer gets the readable 409", async () => {
+      prisma.order.findUnique.mockResolvedValue(unitAwareOrder());
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+      const err = await service
+        .updateOrderItems(
+          "ord-1",
+          { items: [{ productId: "prod-box", qty: 2 }] } as never,
+          customerPayload as never,
+        )
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+    });
+  });
+
   describe("findActiveOrder never proposes an order holding a unit-aware line as a merge target", () => {
-    it("adds the no-unit-aware-line filter to the query", async () => {
+    it("display reads (default) stay UNFILTERED — a buyer must still see their open order", async () => {
       prisma.order.findFirst.mockResolvedValue(null);
       await service.findActiveOrder("cust-1");
+      const where = prisma.order.findFirst.mock.calls[0][0].where;
+      expect(where).not.toHaveProperty("lineItems");
+      expect(where).toMatchObject({ customerId: "cust-1" });
+    });
+
+    it("adds the no-unit-aware-line filter to the query for a MERGE decision", async () => {
+      prisma.order.findFirst.mockResolvedValue(null);
+      await service.findActiveOrder("cust-1", { forMerge: true });
       expect(prisma.order.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({ ...ORDER_HAS_NO_UNIT_AWARE_LINE, customerId: "cust-1" }),

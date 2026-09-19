@@ -27,7 +27,7 @@ const GUARDED: Array<{ file: string; method: string; token: string }> = [
   {
     file: "orders/orders.service.ts",
     method: "mergeAllPendingForCustomer",
-    token: "ORDER_HAS_NO_UNIT_AWARE_LINE",
+    token: "isUnitAwareLine",
   },
   {
     file: "orders/orders.service.ts",
@@ -48,8 +48,12 @@ const GUARDED: Array<{ file: string; method: string; token: string }> = [
   },
 ];
 
-/** Source of `method` = from its 2-space-indented declaration to the next one. */
-function methodBody(src: string, method: string): string {
+/** Source of `method` = from its 2-space-indented declaration to the next one, comments stripped
+ *  (a guard call that only exists in a comment must not satisfy the ratchet). */
+const stripComments = (s: string) =>
+  s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+function methodBody(rawSrc: string, method: string): string {
+  const src = stripComments(rawSrc);
   const decl = new RegExp(`^  (?:private |public )?(?:async )?${method}\\(`, "m");
   const start = src.search(decl);
   if (start < 0) return "";

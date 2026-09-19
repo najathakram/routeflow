@@ -1006,6 +1006,8 @@ export class InvoicesService {
       productId: li.productId,
       // Provenance back to the source order line (null for freeform lines).
       orderItemId: li.id ?? null,
+      // units_v1: the line's unit travels to the invoice (schema promises "carried verbatim").
+      unitLabel: li.unitLabel ?? null,
       qty: split.qty,
       boxes: split.boxes,
       pieces: split.pieces,
@@ -3410,11 +3412,26 @@ export class InvoicesService {
 
     if (dto.items) {
       // units_v1: this replaces every line re-split against the LIVE pack (and drops unitLabel).
+      // Also the LINKED ORDER's lines: an invoice built before the label was copied (or by any path
+      // that drops it) carries no unitLabel, but its order line does — and the back-sync
+      // (recomputeOrderFromInvoices) writes this edit straight onto that order line.
       assertNoUnitAwareLines(
-        await this.prisma.forTenant().invoiceItem.findMany({
-          where: { invoiceId: id, unitLabel: { not: null } },
-          select: { unitLabel: true },
-        }),
+        [
+          ...(await this.prisma.forTenant().invoiceItem.findMany({
+            where: { invoiceId: id, unitLabel: { not: null } },
+            select: { unitLabel: true },
+          })),
+          ...(inv.orderId
+            ? await this.prisma.forTenant().orderItem.findMany({
+                where: {
+                  orderId: inv.orderId,
+                  unitLabel: { not: null },
+                  status: { not: "CANCELLED" },
+                },
+                select: { unitLabel: true, status: true },
+              })
+            : []),
+        ],
         "edited",
       );
       // Pre-fetch products for boxes/pieces resolution AND the regulated-category
