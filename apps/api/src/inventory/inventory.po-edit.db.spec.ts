@@ -347,4 +347,106 @@ describeDb("PO edit + re-apply — real Postgres (LANE-U step 6)", () => {
     expect(done.status).toBe("RECEIVED");
     expect(Number((await productOf(w)).currentStock)).toBe(6);
   });
+
+  // ── 8. the receipt keeps its original date ─────────────────────────────────────────────
+  it("case 8: a re-apply keeps the receipt's ORIGINAL date on the movement and the lot (dated reports don't shift)", async () => {
+    const w = await seedWorld("c8", 20, 2);
+    const po = await receivedPo(w, 20, 4);
+    const original = new Date("2026-08-20T10:00:00.000Z");
+    await prisma.stockMovement.updateMany({
+      where: { tenantId: w.tenantId, reference: po.poNumber },
+      data: { createdAt: original },
+    });
+    await prisma.stockLot.updateMany({
+      where: { tenantId: w.tenantId, reference: po.poNumber },
+      data: { purchaseDate: original },
+    });
+
+    await inTenant(w, () =>
+      service.updatePurchaseOrder(
+        po.id,
+        {
+          reapplyInventory: true,
+          items: [{ id: po.items[0].id, productId: w.productId, qtyOrdered: 12, unitCost: 4 }],
+        },
+        w.userId,
+      ),
+    );
+
+    const [movement] = await prisma.stockMovement.findMany({
+      where: { tenantId: w.tenantId, reference: po.poNumber, type: "PURCHASE" },
+    });
+    const [lot] = await prisma.stockLot.findMany({
+      where: { tenantId: w.tenantId, reference: po.poNumber },
+    });
+    expect(movement.quantity.toString()).toBe("12");
+    expect(movement.createdAt.toISOString()).toBe(original.toISOString());
+    expect(lot.purchaseDate.toISOString()).toBe(original.toISOString());
+  });
+
+  // ── 9. another product's lot that happens to share the reference is left alone ─────────
+  it("case 9: a manual lot of ANOTHER product carrying this PO's reference survives the re-apply", async () => {
+    const w = await seedWorld("c9", 20, 2);
+    const other = await prisma.product.create({
+      data: {
+        name: `Other ${w.tenantId}`,
+        unit: "ea",
+        pricePerUnit: 5,
+        currentStock: 50,
+        averageCost: 2,
+        costingMethod: "AVCO",
+        tenantId: w.tenantId,
+      },
+    });
+    const po = await receivedPo(w, 20, 4);
+    const foreign = await prisma.stockLot.create({
+      data: {
+        productId: other.id,
+        qty: 50,
+        remainingQty: 50,
+        unitCost: 2,
+        reference: po.poNumber,
+        tenantId: w.tenantId,
+      },
+    });
+
+    await inTenant(w, () =>
+      service.updatePurchaseOrder(
+        po.id,
+        {
+          reapplyInventory: true,
+          items: [{ id: po.items[0].id, productId: w.productId, qtyOrdered: 10, unitCost: 6 }],
+        },
+        w.userId,
+      ),
+    );
+
+    expect(await prisma.stockLot.findUnique({ where: { id: foreign.id } })).not.toBeNull();
+  });
+
+  // ── 10. PO lines are created with a tenant ────────────────────────────────────────────
+  it("case 10: lines created through createPurchaseOrder and through an edit carry the tenant id", async () => {
+    const w = await seedWorld("c10", 0, 0);
+    const created = await inTenant(w, () =>
+      service.createPurchaseOrder(
+        { supplierId: w.supplierId, items: [{ productId: w.productId, qty: 3, unitCost: 2 }] },
+        w.userId,
+      ),
+    );
+    await inTenant(w, () =>
+      service.updatePurchaseOrder(
+        created.id,
+        {
+          items: [
+            { id: created.items[0].id, productId: w.productId, qtyOrdered: 3, unitCost: 2 },
+            { productId: w.productId, qtyOrdered: 1, unitCost: 2 },
+          ],
+        },
+        w.userId,
+      ),
+    );
+    const lines = await prisma.purchaseOrderItem.findMany({ where: { poId: created.id } });
+    expect(lines).toHaveLength(2);
+    expect(lines.every((l) => l.tenantId === w.tenantId)).toBe(true);
+  });
 });

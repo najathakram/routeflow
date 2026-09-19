@@ -1069,7 +1069,15 @@ export class InventoryService {
         expectedDate: dto.expectedDate ? new Date(dto.expectedDate) : null,
         notes: dto.notes,
         totalAmount,
-        items: { create: itemsData },
+        // Explicit tenantId on the nested lines - the tenant proxy only stamps the
+        // top-level create, and a tenant-less PurchaseOrderItem is invisible to the
+        // tenant-scoped item update receivePurchaseOrder performs.
+        items: {
+          create: itemsData.map((i: Record<string, unknown>) => ({
+            ...i,
+            tenantId: this.prisma.getTenantId(),
+          })),
+        },
       },
       include: {
         supplier: { select: { id: true, name: true } },
@@ -1129,12 +1137,16 @@ export class InventoryService {
     const result = await this.prisma.tenantTransaction(async (tx) => {
       // Serialize against a concurrent receive / edit-and-re-apply of the SAME
       // PO: without the row lock both read the same qtyReceived and post twice.
-      await tx.$executeRaw`SELECT id FROM "PurchaseOrder" WHERE id = ${id} FOR UPDATE`;
+      await this.lockPurchaseOrder(tx, id);
       const po = await tx.purchaseOrder.findUnique({ where: { id }, include: { items: true } });
       if (!po) throw new NotFoundException("PO not found");
       if (po.status === "CLOSED")
         throw new BadRequestException("Cannot receive against a closed PO");
       if (po.status === "RECEIVED") throw new BadRequestException("PO is already fully received");
+      await this.lockProducts(
+        tx,
+        po.items.map((i) => i.productId),
+      );
 
       for (const recv of dto.items) {
         const itemId = recv.id ?? recv.itemId;
@@ -1228,6 +1240,30 @@ export class InventoryService {
    * the earlier read: a concurrent order's stock decrement between that read and
    * this write would otherwise be silently overwritten.
    */
+  /**
+   * Row-lock a purchase order for the rest of the transaction. Scoped to the
+   * caller's tenant so a foreign id can't hold a lock before the tenant-scoped
+   * read 404s, and taken BEFORE that read so a concurrent receive/edit can't
+   * interleave on stale quantities.
+   */
+  private async lockPurchaseOrder(tx: Prisma.TransactionClient, id: string) {
+    const tenantId = this.prisma.getTenantId();
+    await tx.$executeRaw`SELECT id FROM "PurchaseOrder" WHERE id = ${id} AND "tenantId" = ${tenantId} FOR UPDATE`;
+  }
+
+  /**
+   * Row-lock the products a PO write is about to read-modify-write (stock +
+   * average cost), in sorted id order so two transactions can't deadlock.
+   * currentStock is written as an increment, but the average is derived from
+   * the read - the lock is what keeps that read consistent with the write.
+   */
+  private async lockProducts(tx: Prisma.TransactionClient, productIds: Iterable<string>) {
+    const tenantId = this.prisma.getTenantId();
+    for (const productId of [...new Set(productIds)].sort()) {
+      await tx.$executeRaw`SELECT id FROM "Product" WHERE id = ${productId} AND "tenantId" = ${tenantId} FOR UPDATE`;
+    }
+  }
+
   private async postPoReceipt(
     tx: Prisma.TransactionClient,
     po: { poNumber: string; supplierId: string },
@@ -1239,6 +1275,14 @@ export class InventoryService {
     } | null,
     qty: number | Prisma.Decimal,
     userId: string,
+    /**
+     * When the goods were originally received. A re-apply passes the ORIGINAL
+     * receipt date so the movement/lot keep their place in dated reports (the
+     * tobacco report sums PURCHASE movements by createdAt; FIFO/LIFO orders lots
+     * by purchaseDate) - re-posting at now() would move an already-reported
+     * receipt into the current period. Defaults to now (a fresh receive).
+     */
+    receivedAt?: Date,
   ) {
     const qtyReceived = new Prisma.Decimal(qty);
     // The PO line's cost basis is a property of the STORED row, never of the
@@ -1270,6 +1314,7 @@ export class InventoryService {
         supplierId: po.supplierId,
         reference: po.poNumber,
         performedById: userId,
+        ...(receivedAt ? { createdAt: receivedAt } : {}),
       },
     });
 
@@ -1277,7 +1322,7 @@ export class InventoryService {
     await tx.stockLot.create({
       data: {
         productId: item.productId,
-        purchaseDate: new Date(),
+        purchaseDate: receivedAt ?? new Date(),
         qty: qtyReceived,
         remainingQty: qtyReceived,
         unitCost: itemUnitCost,
@@ -1327,7 +1372,10 @@ export class InventoryService {
         type: MovementType.PURCHASE,
         productId: { in: productIds },
       },
-      orderBy: { createdAt: "desc" },
+      // id as the tiebreak: two movements of one receive share a transaction-time
+      // createdAt, and reverseAverageCost's empties-stock short-circuit is
+      // order-sensitive.
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     });
 
     const posted = new Map<string, Prisma.Decimal>();
@@ -1396,7 +1444,16 @@ export class InventoryService {
     if (movements.length > 0) {
       await tx.stockMovement.deleteMany({ where: { id: { in: movements.map((m) => m.id) } } });
     }
-    await this.reversePoLots(tx, po.poNumber);
+    await this.reversePoLots(tx, po.poNumber, productIds);
+
+    // The original receipt date per product (earliest movement) - handed back so
+    // the re-post keeps the receipt in the period it was first reported in.
+    const receiptDates = new Map<string, Date>();
+    for (const m of movements) {
+      const seen = receiptDates.get(m.productId);
+      if (!seen || m.createdAt < seen) receiptDates.set(m.productId, m.createdAt);
+    }
+    return receiptDates;
   }
 
   /**
@@ -1405,8 +1462,16 @@ export class InventoryService {
    * surrender what remains, so they are zeroed and annotated — the same rule
    * `VendorBillsService.reverseBillLots` applies to a bill's lots.
    */
-  private async reversePoLots(tx: Prisma.TransactionClient, poNumber: string) {
-    const lots = await tx.stockLot.findMany({ where: { reference: poNumber } });
+  private async reversePoLots(
+    tx: Prisma.TransactionClient,
+    poNumber: string,
+    productIds: string[],
+  ) {
+    // Filtered by product as well as reference: reference is free text a manual
+    // purchase can also set, and another product's lot must never be surrendered.
+    const lots = await tx.stockLot.findMany({
+      where: { reference: poNumber, productId: { in: productIds } },
+    });
     for (const lot of lots) {
       const remaining = new Prisma.Decimal(lot.remainingQty);
       if (remaining.gte(new Prisma.Decimal(lot.qty))) {
@@ -1442,14 +1507,26 @@ export class InventoryService {
    *        operator's explicit choice).
    *  - CLOSED: rejected.
    *
-   * The PO row is locked for the transaction, and so is every receive, so an
-   * edit can't interleave with a receipt of the same PO.
+   * The PO row (and the products it touches) are locked for the transaction, and
+   * so is every receive, so an edit can't interleave with a receipt of the same PO.
+   *
+   * Accepted by the plan (risks 1 and 5), stated here so nobody rediscovers them:
+   *  - A re-apply is the operator's statement of what arrived — a RECEIVED PO's
+   *    edited lines are all treated as received in full at the new qty/cost (a
+   *    raised `qtyOrdered`, or an added line, posts that stock).
+   *  - A PARTIAL PO re-post is capped at each line's new ordered qty; a shrink
+   *    below what was received drops the surplus from stock.
+   *  - The reversal DELETES the old movements/lots rather than posting offsetting
+   *    ones (like a bill's revertToDraft), so no reversing entry or audit record
+   *    is written and later movements' `stockAfter` snapshots go stale. The
+   *    re-post keeps the ORIGINAL receipt date so dated reports don't shift.
+   *  - `items` is a full replacement: a line left out of the payload is removed.
    */
   async updatePurchaseOrder(id: string, dto: UpdatePurchaseOrderDto, userId: string) {
     const restockedProductIds: string[] = [];
 
     const result = await this.prisma.tenantTransaction(async (tx) => {
-      await tx.$executeRaw`SELECT id FROM "PurchaseOrder" WHERE id = ${id} FOR UPDATE`;
+      await this.lockPurchaseOrder(tx, id);
       const po = await tx.purchaseOrder.findUnique({ where: { id }, include: { items: true } });
       if (!po) throw new NotFoundException("Purchase order not found");
       if (po.status === "CLOSED")
@@ -1541,7 +1618,15 @@ export class InventoryService {
       }
 
       // ── Reverse (re-apply only) ──
-      if (reapply) await this.reversePoReceipts(tx, po);
+      let receiptDates = new Map<string, Date>();
+      if (reapply) {
+        await this.lockProducts(tx, [
+          ...po.items.map((i) => i.productId),
+          ...items.map((l) => l.productId),
+        ]);
+        receiptDates = await this.reversePoReceipts(tx, po);
+      }
+      const tenantId = this.prisma.getTenantId();
 
       // ── Target receipt per line ──
       const targetReceived = (line: (typeof items)[number]): Prisma.Decimal => {
@@ -1595,6 +1680,9 @@ export class InventoryService {
             create: lineData
               .filter((l) => l.line.id === undefined)
               .map((l) => ({
+                // Explicit tenantId: nested creates get none from the tenant proxy,
+                // and a tenant-less line is invisible to tenant-scoped item writes.
+                tenantId,
                 productId: l.line.productId,
                 qtyOrdered: l.line.qtyOrdered,
                 qtyReceived: l.qtyReceived,
@@ -1620,6 +1708,7 @@ export class InventoryService {
             prod,
             l.qtyReceived,
             userId,
+            receiptDates.get(l.line.productId),
           );
           restockedProductIds.push(l.line.productId);
         }
@@ -1628,7 +1717,7 @@ export class InventoryService {
       return this.loadPoForResponse(tx, id);
     });
 
-    this.fireStockAlerts(restockedProductIds);
+    this.fireStockAlerts([...new Set(restockedProductIds)]);
     return result;
   }
 

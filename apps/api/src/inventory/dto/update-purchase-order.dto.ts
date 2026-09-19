@@ -1,4 +1,5 @@
 import {
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsDateString,
@@ -10,7 +11,6 @@ import {
   Max,
   MaxLength,
   Min,
-  ValidateIf,
   ValidateNested,
 } from "class-validator";
 import { Type } from "class-transformer";
@@ -25,31 +25,34 @@ import { Type } from "class-transformer";
 export class UpdatePurchaseOrderItemDto {
   @IsOptional() @IsUUID() id?: string;
   @IsUUID() productId: string;
-  /** Decimal-unit lines are real (kg, litre) — 3dp, matching the Decimal(10,3) column. */
-  @IsNumber({ maxDecimalPlaces: 3 }) @Min(0.001) qtyOrdered: number;
-  /** Cost per PIECE, 4dp — matching the Decimal(10,4) column. */
-  @IsNumber({ maxDecimalPlaces: 4 }) @Min(0) unitCost: number;
+  /**
+   * Decimal-unit lines are real (kg, litre) — 3dp, matching Decimal(10,3); the
+   * ceiling keeps an out-of-range value a 400 rather than a database overflow.
+   */
+  @IsNumber({ maxDecimalPlaces: 3 }) @Min(0.001) @Max(9_999_999) qtyOrdered: number;
+  /** Cost per PIECE, 4dp — matching Decimal(10,4). */
+  @IsNumber({ maxDecimalPlaces: 4 }) @Min(0) @Max(999_999) unitCost: number;
   /** Supplier's own SKU for the line (null clears it). */
-  @IsOptional() @ValidateIf((_, v) => v !== null) @IsString() @MaxLength(100) sku?: string | null;
+  @IsOptional() @IsString() @MaxLength(100) sku?: string | null;
   /** Pieces per supplier unit (null clears it). */
-  @IsOptional()
-  @ValidateIf((_, v) => v !== null)
-  @IsInt()
-  @Min(1)
-  @Max(1_000_000)
-  packSize?: number | null;
+  @IsOptional() @IsInt() @Min(1) @Max(1_000_000) packSize?: number | null;
 }
 
 export class UpdatePurchaseOrderDto {
   /** Supplier change — DRAFT/SENT, or a received PO only together with `reapplyInventory: true`. */
   @IsOptional() @IsUUID() supplierId?: string;
   /** null clears the expected date. */
-  @IsOptional() @ValidateIf((_, v) => v !== null) @IsDateString() expectedDate?: string | null;
+  @IsOptional() @IsDateString() expectedDate?: string | null;
   /** null clears the notes. */
-  @IsOptional() @ValidateIf((_, v) => v !== null) @IsString() notes?: string | null;
-  /** Full replacement line set (see {@link UpdatePurchaseOrderItemDto}). */
+  @IsOptional() @IsString() notes?: string | null;
+  /**
+   * The COMPLETE replacement line set (see {@link UpdatePurchaseOrderItemDto}) —
+   * an existing line left out of the array is deleted, so a client must send
+   * every line it means to keep.
+   */
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(200)
   @ValidateNested({ each: true })
   @Type(() => UpdatePurchaseOrderItemDto)
   items?: UpdatePurchaseOrderItemDto[];
@@ -59,6 +62,10 @@ export class UpdatePurchaseOrderDto {
    * and average cost, apply the edit and re-post the receipts in ONE
    * transaction; `false` = document-only (`qtyOrdered ≥ qtyReceived` enforced,
    * stock and cost untouched). Ignored on DRAFT/SENT (nothing was received).
+   *
+   * Re-applying is the operator's statement of what actually arrived: on a
+   * RECEIVED order every edited line is treated as received in full at its new
+   * quantity and cost.
    */
   @IsOptional() @IsBoolean() reapplyInventory?: boolean;
 }

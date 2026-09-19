@@ -51,6 +51,7 @@ const movement = (o: Record<string, unknown> = {}) => ({
   productId: "prod-1",
   quantity: D(10),
   unitCost: D(3),
+  createdAt: new Date("2026-08-01T00:00:00.000Z"),
   ...o,
 });
 
@@ -98,6 +99,7 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
   const expectNoStockWrites = () => {
     for (const fn of stockWrites()) expect(fn).not.toHaveBeenCalled();
   };
+  const sql = (n: number) => String((lock.mock.calls[n][0] as TemplateStringsArray).join("?"));
   const nestedItems = () => prisma.purchaseOrder.update.mock.calls[0][0].data.items;
 
   // ─── guards ────────────────────────────────────────────────────────────────
@@ -105,10 +107,10 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
   it("locks the PO row before reading it", async () => {
     prisma.purchaseOrder.findUnique.mockResolvedValue(po({ status: "DRAFT" }));
     await service.updatePurchaseOrder("po-1", { notes: "hi" }, "user-1");
+    // header-only edit: just the PO row lock - and it is tenant-scoped
     expect(lock).toHaveBeenCalledTimes(1);
-    expect(String((lock.mock.calls[0][0] as TemplateStringsArray).join("?"))).toMatch(
-      /FROM "PurchaseOrder" WHERE id = \? FOR UPDATE/,
-    );
+    expect(sql(0)).toMatch(/FROM "PurchaseOrder" WHERE id = \? AND "tenantId" = \? FOR UPDATE/);
+    expect(lock.mock.calls[0].slice(1)).toEqual(["po-1", "test-tenant"]);
     expect(lock.mock.invocationCallOrder[0]).toBeLessThan(
       prisma.purchaseOrder.findUnique.mock.invocationCallOrder[0],
     );
@@ -123,10 +125,16 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
       { items: [{ itemId: "poi-1", receivedQty: 4 }] },
       "u",
     );
-    expect(lock).toHaveBeenCalledTimes(1);
+    // PO row first (before the read), then the product it will restock
+    expect(lock).toHaveBeenCalledTimes(2);
+    expect(sql(0)).toMatch(/"PurchaseOrder".*FOR UPDATE/);
+    expect(sql(1)).toMatch(/"Product".*FOR UPDATE/);
+    expect(lock.mock.calls[1].slice(1)).toEqual(["prod-1", "test-tenant"]);
     expect(lock.mock.invocationCallOrder[0]).toBeLessThan(
       prisma.purchaseOrder.findUnique.mock.invocationCallOrder[0],
     );
+    // a plain receive stamps no date - the movement defaults to now()
+    expect(prisma.stockMovement.create.mock.calls[0][0].data).not.toHaveProperty("createdAt");
   });
 
   it("404s a missing PO and rejects a CLOSED one", async () => {
@@ -207,6 +215,8 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
     });
     expect(data.items.create[0]).toMatchObject({ productId: "prod-2", sku: null, packSize: null });
     expect(data.items.create[0].qtyReceived.toString()).toBe("0");
+    // nested creates get no tenantId from the tenant proxy - it must be explicit
+    expect(data.items.create[0].tenantId).toBe("test-tenant");
     expectNoStockWrites();
   });
 
@@ -463,7 +473,81 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
       expect(prisma.purchaseOrder.update.mock.calls[0][0].data.supplierId).toBe("sup-2");
     });
 
-    it("refuses — writing nothing — when the movements on record do not match the lines' receipts", async () => {
+    it("re-posts at the ORIGINAL receipt date so dated reports don't shift (earliest movement per product)", async () => {
+      const original = new Date("2026-08-20T10:00:00.000Z");
+      prisma.purchaseOrder.findUnique.mockResolvedValue(po());
+      prisma.stockMovement.findMany.mockResolvedValue([
+        movement({ id: "mv-2", quantity: D(4), createdAt: new Date("2026-08-25T09:00:00.000Z") }),
+        movement({ id: "mv-1", quantity: D(6), createdAt: original }),
+      ]);
+      await service.updatePurchaseOrder(
+        "po-1",
+        {
+          reapplyInventory: true,
+          items: [{ id: "poi-1", productId: "prod-1", qtyOrdered: 12, unitCost: 4 }],
+        },
+        "u",
+      );
+      expect(prisma.stockMovement.create.mock.calls[0][0].data.createdAt).toEqual(original);
+      expect(prisma.stockLot.create.mock.calls[0][0].data.purchaseDate).toEqual(original);
+    });
+
+    it("a line with no original receipt (added on the edit) is dated now", async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue(po());
+      await service.updatePurchaseOrder(
+        "po-1",
+        {
+          reapplyInventory: true,
+          items: [
+            { id: "poi-1", productId: "prod-1", qtyOrdered: 10, unitCost: 3 },
+            { productId: "prod-2", qtyOrdered: 2, unitCost: 1 },
+          ],
+        },
+        "u",
+      );
+      const byProduct = new Map(
+        prisma.stockMovement.create.mock.calls.map((c: any) => [c[0].data.productId, c[0].data]),
+      );
+      expect(byProduct.get("prod-1")).toHaveProperty("createdAt");
+      expect(byProduct.get("prod-2")).not.toHaveProperty("createdAt");
+    });
+
+    it("only surrenders THIS PO's product lots - the lot query is filtered by product, not just reference", async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue(po());
+      await service.updatePurchaseOrder(
+        "po-1",
+        {
+          reapplyInventory: true,
+          items: [{ id: "poi-1", productId: "prod-1", qtyOrdered: 10, unitCost: 3 }],
+        },
+        "u",
+      );
+      expect(prisma.stockLot.findMany).toHaveBeenCalledWith({
+        where: { reference: "PO-2026-0001", productId: { in: ["prod-1"] } },
+      });
+    });
+
+    it("locks every product it will read-modify-write, in sorted id order, after the PO row", async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue(po());
+      await service.updatePurchaseOrder(
+        "po-1",
+        {
+          reapplyInventory: true,
+          items: [
+            { id: "poi-1", productId: "prod-1", qtyOrdered: 10, unitCost: 3 },
+            { productId: "prod-2", qtyOrdered: 2, unitCost: 1 },
+          ],
+        },
+        "u",
+      );
+      expect(sql(0)).toMatch(/"PurchaseOrder"/);
+      expect(lock.mock.calls.slice(1).map((c) => c[1])).toEqual(["prod-1", "prod-2"]);
+      expect(lock.mock.invocationCallOrder[2]).toBeLessThan(
+        prisma.stockMovement.deleteMany.mock.invocationCallOrder[0],
+      );
+    });
+
+    it("refuses - writing nothing - when the movements on record do not match the lines' receipts", async () => {
       prisma.purchaseOrder.findUnique.mockResolvedValue(po());
       prisma.stockMovement.findMany.mockResolvedValue([movement({ quantity: D(6) })]);
       await expect(
