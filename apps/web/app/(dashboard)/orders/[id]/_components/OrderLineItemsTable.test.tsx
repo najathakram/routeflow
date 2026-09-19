@@ -60,6 +60,23 @@ describe("OrderLineItemsTable — columns and a plain line", () => {
     expect(screen.getAllByText("Custom")).toHaveLength(2);
   });
 
+  it("a catalog variant reads as '<Parent> - <Variant>' (composed at read time, not the bare flavor)", () => {
+    renderTable([
+      line({
+        product: {
+          id: "p-2",
+          name: "Strawberry Banana",
+          unit: "each",
+          variantName: "Strawberry Banana",
+          parentProductId: "p-parent",
+          parent: { name: "Sample Pod" },
+        },
+      }),
+    ]);
+    expect(screen.getByText("Sample Pod - Strawberry Banana")).toBeInTheDocument();
+    expect(screen.queryByText("Strawberry Banana")).toBeNull();
+  });
+
   it("shows the per-line note", () => {
     renderTable([line({ notes: "leave at dock" })]);
     expect(screen.getByText("leave at dock")).toBeInTheDocument();

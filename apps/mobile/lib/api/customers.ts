@@ -73,6 +73,13 @@ export interface CustomerStatement {
   availableCredit: number;
   advanceBalance: number;
   pendingOrdersAmount: number;
+  /** Operator statement only: the exposure the hard credit limit is checked
+   *  against (issued open-invoice balances, drafts backed by an open/delivered
+   *  order, and the unbilled value of open orders). */
+  creditExposure?: number;
+  /** Operator statement only: unissued DRAFT invoice balances with no open or
+   *  delivered order behind them — shown beside, never inside, `creditExposure`. */
+  pendingExposure?: number;
   /** True when the transactions ledger below is a capped partial view of the full history. */
   transactionsTruncated: boolean;
   transactions: Array<{

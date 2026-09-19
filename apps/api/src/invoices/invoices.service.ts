@@ -6,6 +6,7 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
+import * as unitAware from "../orders/unit-aware-guard";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
@@ -1005,6 +1006,7 @@ export class InvoicesService {
       productId: li.productId,
       // Provenance back to the source order line (null for freeform lines).
       orderItemId: li.id ?? null,
+      unitLabel: li.unitLabel ?? null, // units_v1: the unit travels with the line
       qty: split.qty,
       boxes: split.boxes,
       pieces: split.pieces,
@@ -3408,6 +3410,8 @@ export class InvoicesService {
     await this.assertOrderInvoiceUnlocked(inv);
 
     if (dto.items) {
+      // units_v1: replaces every line re-split against the LIVE pack — refuse on a unit-aware one.
+      await unitAware.assertInvoiceRewriteAllowed(this.prisma.forTenant(), inv);
       // Pre-fetch products for boxes/pieces resolution AND the regulated-category
       // snapshot (so an edited DRAFT re-attributes its regulated lines).
       const productIds = [
@@ -4638,6 +4642,7 @@ export class InvoicesService {
         "Cannot duplicate an order-linked invoice. Create a new invoice or issue a credit note instead.",
       );
     }
+    unitAware.assertNoUnitAwareLines(inv.items, "duplicated"); // the copy drops the unit
 
     const customer = await this.prisma
       .forTenant()
@@ -6372,6 +6377,8 @@ export class InvoicesService {
       if (!dto.sinceDate) throw new BadRequestException("sinceDate is required for bulk scope");
 
       // Build productId → newUnitPrice map from this invoice (to apply same price to same product elsewhere)
+      // units_v1: a bulk price is keyed by productId (a Case price would land on pack lines).
+      unitAware.assertNoUnitAwareLines(invoice.items, "re-priced across invoices");
       const productPriceMap = new Map<string, number>();
       for (const [itemId, newPrice] of priceMap.entries()) {
         const productId = productIdMap.get(itemId);
@@ -6394,7 +6401,7 @@ export class InvoicesService {
         // Build itemId → newUnitPrice for items whose productId matches
         const localMap = new Map<string, number>();
         for (const item of inv.items) {
-          if (item.productId && productPriceMap.has(item.productId)) {
+          if (item.productId && !item.unitLabel && productPriceMap.has(item.productId)) {
             localMap.set(item.id, productPriceMap.get(item.productId)!);
           }
         }

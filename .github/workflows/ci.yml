@@ -135,7 +135,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  NODE_VERSION: "20"
+  NODE_VERSION: "24"
 
 jobs:
   # ─── Verify (everything except E2E, in one runner) ─────────────────────────────
@@ -243,10 +243,11 @@ jobs:
       #
       # --engine-strict=false: the root .npmrc sets engine-strict=true, but that
       # gate was dead everywhere before the npm-ci migration (--force overrode it
-      # in CI; the Dockerfiles never COPY .npmrc) — and prisma 7.10's dev-only
-      # transitive @prisma/streams-local declares engines node>=22 while this
-      # runtime (and prod's node:20-alpine images) is Node 20. Keep the old
-      # warn-don't-block behavior; revisit when the prod images move to 22.
+      # in CI; the Dockerfiles never COPY .npmrc). Runtime and prod images are Node 24
+      # now (B570), which satisfies prisma 7.10's dev-only @prisma/streams-local
+      # (engines node>=22) and @zxing/library (>=24), so the flag no longer masks either;
+      # kept as the old warn-don't-block behaviour so a future engines drift in a
+      # transitive dep cannot block an install.
       - name: Install dependencies
         run: npm ci --engine-strict=false
 

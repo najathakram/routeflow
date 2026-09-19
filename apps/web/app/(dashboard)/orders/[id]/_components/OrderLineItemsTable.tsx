@@ -6,6 +6,7 @@ import { Badge, cn } from "@routeflow/ui/web";
 import { computeLineSubtotal, formatQtySplit } from "@routeflow/pricing";
 import { formatMoney } from "@/lib/format";
 import type { OrderItem } from "@/lib/api/orders";
+import { orderLineName } from "@/lib/product-display";
 import { displayLineStatus } from "./line-status";
 
 /**
@@ -53,7 +54,7 @@ export function OrderLineItemsTable({
                         li.status === "CANCELLED" && "line-through",
                       )}
                     >
-                      {li.product?.name ?? li.name ?? "Custom item"}
+                      {orderLineName(li) ?? "Custom item"}
                     </span>
                     {li.notes && <p className="mt-0.5 text-xs italic text-navy/60">{li.notes}</p>}
                   </div>
