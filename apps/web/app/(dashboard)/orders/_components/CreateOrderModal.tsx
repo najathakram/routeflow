@@ -1055,13 +1055,17 @@ export function CreateOrderModal({
       description="Create a new order on behalf of a customer."
       className="max-w-2xl"
       footer={
-        <>
+        // B564: the Modal footer is a `justify-end` flex row, so four buttons wider than a
+        // 390px sheet overflowed off the LEFT edge and clipped Minimize. Under `sm` the save
+        // actions get their own row and Minimize sits below them, full-width; from `sm` up
+        // this is the original single row with Minimize pinned left.
+        <div className="flex w-full flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
           {/* Minimize parks the whole builder into the bottom-left draft dock
               (pos-cost-roles-spec §2). Left-aligned, away from the save actions. */}
           <Button
             variant="ghost"
             type="button"
-            className="mr-auto"
+            className="w-full sm:mr-auto sm:w-auto"
             onClick={handleMinimize}
             disabled={!canMinimize || savingDraft}
             loading={savingDraft}
@@ -1072,21 +1076,23 @@ export function CreateOrderModal({
           {/* Three-tier hierarchy: ghost (dismiss) < secondary (alt save) <
               primary (main action). Save-as-Draft was an amber button that
               competed with the primary blue and misused a warning colour. */}
-          <Button variant="ghost" type="button" onClick={handleDismiss}>
-            Cancel
-          </Button>
-          <Button
-            variant="secondary"
-            type="button"
-            loading={createOrder.isPending}
-            onClick={onSaveDraft}
-          >
-            Save as Draft
-          </Button>
-          <Button type="submit" form="create-order-form" loading={createOrder.isPending}>
-            Create Order
-          </Button>
-        </>
+          <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
+            <Button variant="ghost" type="button" onClick={handleDismiss}>
+              Cancel
+            </Button>
+            <Button
+              variant="secondary"
+              type="button"
+              loading={createOrder.isPending}
+              onClick={onSaveDraft}
+            >
+              Save as Draft
+            </Button>
+            <Button type="submit" form="create-order-form" loading={createOrder.isPending}>
+              Create Order
+            </Button>
+          </div>
+        </div>
       }
     >
       <form
