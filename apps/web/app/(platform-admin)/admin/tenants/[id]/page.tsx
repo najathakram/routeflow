@@ -15,6 +15,7 @@ import { AdminModal } from "../../../_components/AdminModal";
 import { TenantPricingCard } from "./_components/TenantPricingCard";
 import { LayoutDashboard, CreditCard, Puzzle, Settings, ScrollText } from "lucide-react";
 import { FeatureConsole } from "./_features/FeatureConsole";
+import { TierChangeControl } from "./_features/TierChangeControl";
 import { PreviewDrawer } from "./_features/PreviewDrawer";
 import { previewTenantFeatures } from "@/lib/platform-admin/features";
 import type { FeaturePreviewResponse } from "./_features/types";
@@ -338,7 +339,6 @@ function OverviewTab({
   } | null>(null);
   const [copied, setCopied] = React.useState(false);
   const [trialDays, setTrialDays] = React.useState(14);
-  const [selectedPlan, setSelectedPlan] = React.useState(tenant.plan);
 
   const [recentLogs, setRecentLogs] = React.useState<AuditLogEntry[]>([]);
   React.useEffect(() => {
@@ -505,26 +505,14 @@ function OverviewTab({
             </button>
           )}
 
-          <div className="flex items-center gap-2">
-            <select
-              value={selectedPlan}
-              onChange={(e) => setSelectedPlan(e.target.value)}
-              className="h-9 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
-            >
-              {PLANS.map((p) => (
-                <option key={p} value={p}>
-                  {planLabel(p)}
-                </option>
-              ))}
-            </select>
-            <button
-              disabled={actionLoading === "plan" || selectedPlan === tenant.plan}
-              onClick={() => onAction("change-plan", { plan: selectedPlan }).catch(() => {})}
-              className="rounded-lg bg-slate-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-500 disabled:opacity-50"
-            >
-              Change Plan
-            </button>
-          </div>
+          <TierChangeControl
+            tenantId={tenant.id}
+            currentPlan={tenant.plan}
+            plans={PLANS}
+            planLabel={planLabel}
+            disabled={actionLoading === "change-plan"}
+            onChangePlan={(plan) => onAction("change-plan", { plan })}
+          />
 
           {tenant.status !== "CANCELLED" && (
             <button
