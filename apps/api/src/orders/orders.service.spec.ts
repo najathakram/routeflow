@@ -7678,7 +7678,7 @@ describe("OrdersService", () => {
     });
 
     it("creditLimit null → no limit: passes without querying exposure", async () => {
-      prisma.customer.findUnique.mockResolvedValue({ creditLimit: null });
+      prisma.customer.findFirst.mockResolvedValue({ creditLimit: null });
 
       await service.updateOrderItems("ord-1", editDto, operatorPayload);
 
@@ -7687,7 +7687,7 @@ describe("OrdersService", () => {
     });
 
     it("under the limit passes (exposure = open invoice balance + projected total)", async () => {
-      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 100 });
+      prisma.customer.findFirst.mockResolvedValue({ creditLimit: 100 });
       prisma.invoice.findMany.mockResolvedValue([
         { total: 50, orderId: null, payments: [{ amount: 20 }] }, // balance 30
       ]);
@@ -7737,7 +7737,7 @@ describe("OrdersService", () => {
     });
 
     it("excludes the edited order from exposure (its mirror invoice AND its order row)", async () => {
-      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 100 });
+      prisma.customer.findFirst.mockResolvedValue({ creditLimit: 100 });
       // Both rows belong to the order being edited — must not count; the
       // projected total (15) represents it instead.
       prisma.invoice.findMany.mockResolvedValue([{ total: 500, orderId: "ord-1", payments: [] }]);
@@ -7749,7 +7749,7 @@ describe("OrdersService", () => {
     });
 
     it("nets partial payments off an open invoice (partially-paid handling)", async () => {
-      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 100 });
+      prisma.customer.findFirst.mockResolvedValue({ creditLimit: 100 });
       prisma.invoice.findMany.mockResolvedValue([
         { total: 90, orderId: null, payments: [{ amount: 60 }, { amount: 10 }] }, // balance 20
       ]);
@@ -7812,7 +7812,7 @@ describe("OrdersService", () => {
     it("does NOT double-count an open order that already has an open mirror invoice", async () => {
       // ord-2 appears as BOTH an open invoice (40) and an open order (40):
       // exposure must be 40 + 30 + 15 = 85, not 125.
-      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 90 });
+      prisma.customer.findFirst.mockResolvedValue({ creditLimit: 90 });
       prisma.invoice.findMany.mockResolvedValue([{ total: 40, orderId: "ord-2", payments: [] }]);
       prisma.order.findMany.mockResolvedValue([
         { id: "ord-2", total: 40 },
@@ -7849,7 +7849,7 @@ describe("OrdersService", () => {
     it("skips both guards entirely on a DRAFT order", async () => {
       prisma.order.findUnique.mockResolvedValue({ ...editableOrder(), status: "DRAFT" });
       // Would block if the guard ran:
-      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 0.01 });
+      prisma.customer.findFirst.mockResolvedValue({ creditLimit: 0.01 });
 
       await service.updateOrderItems("ord-1", editDto, operatorPayload);
 

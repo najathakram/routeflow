@@ -76,6 +76,7 @@ import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { currentTaxRate } from "../common/tax-rate";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
+import { loadCreditExposure } from "../invoices/credit-exposure";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
@@ -5654,15 +5655,25 @@ export class OrdersService implements OnApplicationBootstrap {
    * P5-08b credit-limit guard — the FIRST credit enforcement in the codebase
    * (verified: no other creditLimit read exists in apps/api/src outside DTOs).
    *
-   * Exposure mirrors customers.service.ts getStatementForOperator (the
-   * authoritative statement derivation — do NOT invent a second balance
-   * formula):
-   *   • open invoice balances: status ∉ {PAID, VOID, WRITTEN_OFF}, each worth
-   *     Number(total) − Σ payments.amount (statement's `outstanding`);
+   * Exposure comes from the ONE shared derivation (`loadCreditExposure`,
+   * invoices/credit-exposure.ts) that the operator statement also uses, so the
+   * statement's exposure panel can never disagree with this block (L-119).
+   * It mirrors customers.service.ts getStatementForOperator — do NOT invent a
+   * second balance formula here:
+   *   • invoice balances: status ∉ {PAID, VOID, WRITTEN_OFF}, each worth
+   *     Number(total) − Σ non-VOID payments.amount. D6 / B462 owner ruling
+   *     (option B): a standalone unissued DRAFT is not a receivable — a DRAFT with
+   *     NO open/delivered order behind it (`isUnbackedDraft`) is NOT counted and is
+   *     surfaced as the statement's "pending exposure" instead — but a DRAFT whose
+   *     order is OPEN or DELIVERED DOES count, so delivered goods are never
+   *     unguarded. The DRAFT-PAYMENT basis (non-VOID, so a DRAFT bank-import
+   *     payment counts as paid) is deliberately unchanged;
    *   • open-order totals: status ∈ {PENDING, CONFIRMED, OUT_FOR_DELIVERY}
-   *     (statement's `pendingOrdersAmount`) — but ONLY orders with no counted
-   *     open invoice, else every order carrying a draft/sent mirror invoice
-   *     (reconcileOrderDraftInvoice keeps one in lockstep) counts twice;
+   *     (statement's `pendingOrdersAmount`). An order with counted invoices (issued
+   *     or backed drafts) counts max(order total, Σ its invoices) ONCE — the
+   *     unbilled remainder is added on top of the invoice balances, never the
+   *     order total AND the invoice (reconcileOrderDraftInvoice keeps a mirror
+   *     invoice in lockstep, so counting both would double-count);
    *   • the order being edited is EXCLUDED from both buckets and represented
    *     by projectedOrderTotal instead. Exact, not approximate: an editable
    *     order's linked invoice can never carry payments —
@@ -5706,59 +5717,13 @@ export class OrdersService implements OnApplicationBootstrap {
     if (customer?.creditLimit == null) return;
     const limit = Number(customer.creditLimit);
 
-    // JS-side exclusion of the edited order's invoices (avoids SQL null
-    // semantics of `not` on the nullable orderId column).
-    const openInvoices = (
-      await db.invoice.findMany({
-        where: {
-          customerId,
-          status: {
-            notIn: [InvoiceStatus.PAID, InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF],
-          },
-        },
-        select: {
-          total: true,
-          orderId: true,
-          payments: { select: { amount: true, status: true } },
-        },
-      })
-    ).filter((inv: any) => inv.orderId !== currentOrderId);
-
-    // Exclude VOID payments: a bounced check (P5-12) flips its InvoicePayment to VOID
-    // and reverts the invoice to OPEN/PARTIAL, so a reversed payment must NOT reduce the
-    // customer's credit exposure — otherwise a bounce lets them slip under the limit.
-    // PR-2 review (routeflow-Lead, 2026-09-16): reverted the earlier sumConfirmed
-    // conversion here — it silently changed credit-limit behavior (a DRAFT
-    // bank-import row would start producing a 409 CREDIT_LIMIT_EXCEEDED) with no
-    // sign-off. That behavior change is a real, separate decision out of PR-2's
-    // scope; flagged to the owner as a follow-up rather than made silently.
-    // Master's not-void basis kept as-is.
-    const invoiceExposure = openInvoices.reduce(
-      (sum: number, inv: any) =>
-        sum +
-        (Number(inv.total) -
-          // scan-ok: draft-payment-not-void — see comment above.
-          inv.payments
-            .filter((p: any) => p.status !== "VOID")
-            .reduce((s: number, p: any) => s + Number(p.amount), 0)),
-      0,
-    );
-
-    const invoicedOrderIds = new Set(openInvoices.map((inv: any) => inv.orderId).filter(Boolean));
-    const openOrders = await db.order.findMany({
-      where: {
-        customerId,
-        status: {
-          in: [OrderStatus.PENDING, OrderStatus.CONFIRMED, OrderStatus.OUT_FOR_DELIVERY],
-        },
-      },
-      select: { id: true, total: true },
+    // `db` is the caller's (transaction) client. The edited order is excluded from
+    // every bucket and represented by projectedOrderTotal below.
+    const { counted } = await loadCreditExposure(db, customerId, {
+      excludeOrderId: currentOrderId,
     });
-    const uninvoicedOrderExposure = openOrders
-      .filter((o: any) => o.id !== currentOrderId && !invoicedOrderIds.has(o.id))
-      .reduce((sum: number, o: any) => sum + Number(o.total), 0);
 
-    const exposure = roundMoney(invoiceExposure + uninvoicedOrderExposure + projectedOrderTotal);
+    const exposure = roundMoney(counted + projectedOrderTotal);
     if (exposure > limit) {
       throw new ConflictException({
         code: "CREDIT_LIMIT_EXCEEDED",
@@ -5773,8 +5738,8 @@ export class OrdersService implements OnApplicationBootstrap {
 
   /**
    * P5-09: public credit re-check for the change-request next-delivery path.
-   * Reuses the ONE exposure derivation (assertWithinCreditLimit) — never a
-   * second balance formula.
+   * Reuses the ONE exposure derivation (assertWithinCreditLimit →
+   * loadCreditExposure) — never a second balance formula.
    */
   async assertCreditForProjectedOrder(
     customerId: string,
