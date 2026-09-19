@@ -165,6 +165,56 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
     return JSON.parse(res.stdout) as Diff;
   }
 
+  /**
+   * D6/D8/D9 confirm a --live apply using a whole-database loss count `n` read from a PRECEDING,
+   * separate CLI invocation's preview, then pass `GRANT ${n} OVERRIDES` to a LATER, separate
+   * `--live` invocation that independently recomputes its own current `n` and compares. On a
+   * quiet database those two reads agree. But `jest.db.config.js` sets no maxWorkers/runInBand,
+   * so this file runs as ONE of many PARALLEL jest workers against the SAME shared Postgres —
+   * several of the other 27 `.db.spec.ts` files seed their own fixture tenants without bothering
+   * to set `Tenant.class` away from its schema default, `'PRODUCTION'`, so this script's
+   * (correct, safe) whole-database scan can see the total shift between the two calls. That is
+   * the confirmation phrase doing exactly its job — refusing to act on a stale count, exit 3,
+   * zero writes — not a bug in the script; a real operator hitting this would just re-run. This
+   * is why a single-file `npx jest publish-and-repin.db.spec.ts` run is 100% stable (no sibling
+   * workers touching the database) while the full `jest --config jest.db.config.js` lane (CI's
+   * "Replay migrations on a fresh database" job runs exactly this) can catch it — a difference in
+   * concurrency the earlier version of this file didn't account for, not in what the script does.
+   * Retries with a fresh preview on a `phrase-mismatch` refusal only; any other refusal reason is
+   * returned immediately rather than masked.
+   */
+  async function applyLiveWithRetry(
+    extraArgs: string[],
+    attempts = 8,
+  ): Promise<{ res: ReturnType<typeof runCli>; n: number }> {
+    let last: { res: ReturnType<typeof runCli>; n: number } | undefined;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      const preview = runJson(["--apply", ...extraArgs]);
+      const n = preview.losses.length - (preview.excludedAddonGateLosses ?? 0);
+      const res = runCli([
+        "--apply",
+        "--live",
+        ...extraArgs,
+        "--only-test-tenants",
+        "--confirm",
+        `GRANT ${n} OVERRIDES`,
+        "--backup-attested",
+        "spec",
+        "--json",
+      ]);
+      last = { res, n };
+      if (res.status !== 3) return last;
+      let refusal: string | undefined;
+      try {
+        refusal = (JSON.parse(res.stdout) as Partial<Diff>).applyRefused;
+      } catch {
+        // non-JSON stdout on this refusal path — treat as a non-retryable failure below
+      }
+      if (refusal !== "phrase-mismatch") return last;
+    }
+    return last!;
+  }
+
   async function activeOverrides(tenantId: string) {
     const { rows } = await db.query(
       `SELECT "featureKey", "effect", "kind", "reason", "expiresAt", "createdById"
@@ -328,25 +378,13 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
   });
 
   it("D6 --apply --live with the correct phrase: writes one GRANT/GRANDFATHER override per APPLICABLE loss, excluding addon-gate-courtesy ones", async () => {
-    // Read the exact whole-database count from a fresh preview first — mirrors
-    // backfill-legacy-tenant-ids.db.spec.ts's own "read n from the tool's own output" pattern;
-    // this spec does not assume it owns every PRODUCTION-class row in a shared compose database.
-    // n is the APPLICABLE count (excludedAddonGateLosses subtracted) — that's what --apply --live
-    // actually writes and what the typed confirmation phrase is computed from.
-    const preview = runJson(["--apply"]);
-    const n = preview.losses.length - (preview.excludedAddonGateLosses ?? 0);
+    // See applyLiveWithRetry's own doc comment: n is read fresh on each attempt (mirrors
+    // backfill-legacy-tenant-ids.db.spec.ts's "read n from the tool's own output" pattern) and
+    // retried only on a whole-database count drift from a concurrent sibling worker, never
+    // hard-coded. n is the APPLICABLE count (excludedAddonGateLosses subtracted) — what --apply
+    // --live actually writes and what the typed confirmation phrase is computed from.
+    const { res, n } = await applyLiveWithRetry([]);
     expect(n).toBeGreaterThanOrEqual(EXPECTED_APPLICABLE_LOSS_KEYS.length); // at least our own 12
-
-    const res = runCli([
-      "--apply",
-      "--live",
-      "--only-test-tenants",
-      "--confirm",
-      `GRANT ${n} OVERRIDES`,
-      "--backup-attested",
-      "spec",
-      "--json",
-    ]);
     expect(res.status).toBe(0);
     const result = JSON.parse(res.stdout) as Diff;
     expect(result.applied?.inserted).toBe(n);
@@ -378,7 +416,7 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
     }
     // the zero tenant received nothing
     expect(await activeOverrides(TENANT_ZERO_ID)).toEqual([]);
-  });
+  }, 60_000); // applyLiveWithRetry may spawn up to 8 CLI round-trips under real drift
 
   it("D7 --report after D6: the loss tenant shows ONLY the 3 excluded addon-gate-courtesy keys — --apply's grants explain everything else, but those were deliberately never granted", () => {
     const report = runReportJson();
@@ -395,36 +433,31 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
     const before = await activeOverrides(TENANT_LOSS_ID);
     expect(before).toHaveLength(12);
 
+    // Check the "nothing to grant" path with its own fresh preview first — a separate read from
+    // applyLiveWithRetry's own, so this branch isn't itself racing the preview inside the helper.
     const preview = runJson(["--apply"]);
-    const n = preview.losses.length - (preview.excludedAddonGateLosses ?? 0);
-
-    if (n === 0) {
-      // Nobody else in the shared database has a loss either — "nothing to grant" path.
+    const previewN = preview.losses.length - (preview.excludedAddonGateLosses ?? 0);
+    if (previewN === 0) {
       const res = runCli(["--apply", "--json"]);
       const result = JSON.parse(res.status === 0 ? res.stdout : "{}") as Partial<Diff>;
       expect(res.status).toBe(0);
       expect(result.applied).toBeNull();
     } else {
       // Something else in the shared database still shows a loss (not ours) — apply live again
-      // and prove OUR rows specifically are untouched, whatever total n the run reports.
-      const res = runCli([
-        "--apply",
-        "--live",
-        "--only-test-tenants",
-        "--confirm",
-        `GRANT ${n} OVERRIDES`,
-        "--backup-attested",
-        "spec",
-        "--json",
-      ]);
+      // (retrying on a whole-database count drift, see applyLiveWithRetry) and prove OUR rows
+      // specifically are untouched, whatever total n the run reports.
+      const { res } = await applyLiveWithRetry([]);
       expect(res.status).toBe(0);
     }
 
     const after = await activeOverrides(TENANT_LOSS_ID);
     expect(after).toEqual(before);
-  });
+  }, 60_000); // applyLiveWithRetry may spawn up to 8 CLI round-trips under real drift
 
   it("D9 --apply --live --include-addon-gates: the 3 previously-excluded addon-gate-courtesy keys are now granted too (ocr gets a 90-day expiry too — it carries a real billing SKU independent of the exclusion mechanism)", async () => {
+    // A dedicated preview first for the tenant-scoped assertions (independent of the one
+    // applyLiveWithRetry issues internally — this one is never retried, since these assertions
+    // are about OUR tenant's own rows, which no sibling worker can touch).
     const preview = runJson(["--apply", "--include-addon-gates"]);
     const ourLosses = preview.losses
       .filter((l) => l.tenant.includes(HASH_LOSS))
@@ -436,18 +469,11 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
     expect(ourLosses).toEqual([...ADDON_GATE_COURTESY_KEYS].sort());
     expect(preview.excludedAddonGateLosses ?? 0).toBe(0);
 
-    const n = preview.losses.length; // nothing excluded this run
-    const res = runCli([
-      "--apply",
-      "--live",
-      "--include-addon-gates",
-      "--only-test-tenants",
-      "--confirm",
-      `GRANT ${n} OVERRIDES`,
-      "--backup-attested",
-      "spec",
-      "--json",
-    ]);
+    // See applyLiveWithRetry's own doc comment: n is a WHOLE-DATABASE count and this file runs
+    // as one of many parallel jest workers against the same shared Postgres, so it retries on a
+    // count drift from a concurrent sibling worker's own fixture tenants rather than assuming
+    // the count read here would still match a few hundred milliseconds later.
+    const { res, n } = await applyLiveWithRetry(["--include-addon-gates"]);
     expect(res.status).toBe(0);
     const result = JSON.parse(res.stdout) as Diff;
     expect(result.applied?.inserted).toBe(n);
@@ -472,5 +498,5 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
     const report = runReportJson();
     const ourFinalLosses = report.losses.filter((l) => l.tenant.includes(HASH_LOSS));
     expect(ourFinalLosses).toEqual([]);
-  });
+  }, 60_000); // applyLiveWithRetry may spawn up to 8 CLI round-trips under real drift
 });
