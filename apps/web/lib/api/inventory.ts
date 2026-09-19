@@ -249,6 +249,46 @@ export function useReceivePurchaseOrder() {
   });
 }
 
+/**
+ * One line of `PATCH /inventory/purchase-orders/:id`. Like a create line, `qtyOrdered`
+ * is base-unit (piece) and `unitCost` per PIECE. `id` keeps an existing line (a line
+ * missing from the array is REMOVED — `items` is a full replacement); no `id` = new.
+ */
+export interface UpdatePurchaseOrderItemInput {
+  id?: string;
+  productId: string;
+  qtyOrdered: number;
+  unitCost: number;
+  sku?: string | null;
+  packSize?: number | null;
+}
+
+export interface UpdatePurchaseOrderInput {
+  supplierId?: string;
+  expectedDate?: string | null;
+  notes?: string | null;
+  items?: UpdatePurchaseOrderItemInput[];
+  /**
+   * Required by the API when `items` (or the supplier) changes a PARTIAL/RECEIVED order:
+   * `true` restates the COST (and supplier) of what was already received in stock and
+   * average cost; `false` changes the document only. Never changes a received quantity.
+   */
+  reapplyInventory?: boolean;
+}
+
+export function useUpdatePurchaseOrder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...data }: UpdatePurchaseOrderInput & { id: string }) =>
+      apiClient.patch(`/inventory/purchase-orders/${id}`, data).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["inventory", "purchase-orders"] });
+      // a re-apply moves stock + average cost, so the stock overview goes stale too
+      qc.invalidateQueries({ queryKey: ["inventory"] });
+    },
+  });
+}
+
 export function useClosePurchaseOrder() {
   const qc = useQueryClient();
   return useMutation({
