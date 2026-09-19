@@ -38,7 +38,7 @@ const LOCAL_DEFAULT_DB_URL = "postgresql://user:pass@localhost:5432/routeflow_de
 // Resolves the seed's DB target the same way prod-migrate.mjs/schema-drift.mjs do (Railway
 // proxy vars win over DATABASE_URL, since under `railway run` DATABASE_URL is the unreachable
 // *.railway.internal host) — imported dynamically because the shared helper is an ESM module
-// (`.mjs`) and CI still runs this script under Node 20, which cannot `require()` ESM.
+// (`.mjs`) and this script was written when CI ran Node 20, which cannot `require()` ESM (CI is Node 24 since B570, so the workaround is now optional).
 async function resolveTargetDbUrl() {
   const { resolveDatabaseUrl } = await import("./lib/railway-db-url.mjs");
   try {
