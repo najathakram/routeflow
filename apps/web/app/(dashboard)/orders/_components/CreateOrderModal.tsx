@@ -1867,7 +1867,7 @@ export function CreateOrderModal({
           lines={lineItems}
           renderLine={renderLine}
           renderPriceEditor={renderPriceEditor}
-          resolveCode={(code) => barcodeScanHandlerRef.current(code)}
+          resolveCode={(code, opts) => barcodeScanHandlerRef.current(code, opts)}
           onUndo={undoScan}
           hasCustomer={!!selectedCustomer}
         />

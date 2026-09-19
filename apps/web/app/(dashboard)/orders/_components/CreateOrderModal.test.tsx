@@ -428,6 +428,53 @@ describe("CreateOrderModal", () => {
       expect(screen.getByText("Case Soda")).toBeInTheDocument();
     });
 
+    describe("poor-signal queue (step 7)", () => {
+      const networkError = () => Object.assign(new Error("Network Error"), { code: "ERR_NETWORK" });
+
+      it("a scan that fails for lack of signal is queued OFF the order - never a line, never toasted", async () => {
+        mockResolveProductByCode.mockRejectedValue(networkError());
+        await openScreen();
+
+        await scanCode("012345678905");
+
+        expect(await screen.findByLabelText("Waiting for signal")).toHaveTextContent(
+          "012345678905",
+        );
+        expect(screen.getByText("0 items · $0.00")).toBeInTheDocument();
+        expect(screen.queryByText("Widget")).not.toBeInTheDocument();
+        // The screen is quiet: it reports through its own pill, not a toast per failure.
+        expect(mockToast).not.toHaveBeenCalled();
+      });
+
+      it("Retry now adds the line once the network is back, through the same resolver", async () => {
+        mockResolveProductByCode.mockRejectedValueOnce(networkError());
+        mockResolveProductByCode.mockResolvedValue(widget);
+        await openScreen();
+        await scanCode("012345678905");
+        await screen.findByLabelText("Waiting for signal");
+
+        fireEvent.click(screen.getByRole("button", { name: "Retry now" }));
+
+        expect(await screen.findByText("Widget", {}, { timeout: 4000 })).toBeInTheDocument();
+        expect(screen.getByText("1 item · $9.99")).toBeInTheDocument();
+        expect(screen.queryByLabelText("Waiting for signal")).not.toBeInTheDocument();
+      });
+
+      it("a real HTTP failure (server answered) is not queued", async () => {
+        mockResolveProductByCode.mockRejectedValue(
+          Object.assign(new Error("boom"), {
+            response: { status: 500, data: { message: "boom" } },
+          }),
+        );
+        await openScreen();
+
+        await scanCode("012345678905");
+
+        expect(await screen.findByText("Couldn't look up that code")).toBeInTheDocument();
+        expect(screen.queryByLabelText("Waiting for signal")).not.toBeInTheDocument();
+      });
+    });
+
     describe("price editor (step 6)", () => {
       const openEditor = async () => {
         mockResolveProductByCode.mockResolvedValue(widget);
