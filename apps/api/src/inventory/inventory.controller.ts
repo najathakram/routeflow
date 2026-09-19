@@ -146,15 +146,19 @@ export class InventoryController {
     return this.inventoryService.bulkSetCostBasis(dto, user.id);
   }
 
-  // B562 (interim mitigation, owner-approved): the web and mobile UI entry points
-  // that called this endpoint were deliberately removed — this recompute replays
-  // purchase history but is blind to raw order decrements (order creation/edits
-  // decrement stock without writing StockMovement rows), so one invocation can
-  // silently rewrite a tenant's entire inventory valuation with a sales-blind
-  // average, and it also overwrites `stockAfter` values, destroying the evidence
-  // needed to detect it. The endpoint, its role guard, and the service logic are
-  // UNCHANGED — only the UI buttons were hidden. Do NOT re-expose this in any
-  // client until B562's root cause is fixed.
+  // B562 (interim mitigation, owner-approved 2026-09-18): the web and mobile UI
+  // entry points that called this endpoint were deliberately removed — this
+  // recompute replays purchase history but is blind to raw order decrements
+  // (order creation/edits decrement stock without writing StockMovement rows).
+  // `recomputeCosts`/`recomputeProductInTx` NOW DETECT this (a nonzero
+  // stockDrift between currentStock and the replayed ledger) and refuse to
+  // write a sales-blind average or rewrite snapshots for the affected product
+  // — see replayProduct's gap-detection comment — so a call here can no
+  // longer silently corrupt valuation. It still can't produce a TRUE average
+  // for a product with any order-consumption gap (root cause: order paths
+  // write no StockMovement — unfixed, tracked as remaining B562 work), so it
+  // mostly reports `gapsDetected` rather than repairing anything useful. Keep
+  // the UI hidden until that root cause lands.
   @Post("recompute-costs")
   recomputeCosts(@Body() dto: RecomputeCostsDto) {
     return this.inventoryService.recomputeCosts(dto);

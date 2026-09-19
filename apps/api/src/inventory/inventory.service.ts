@@ -1,4 +1,10 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from "@nestjs/common";
 import * as crypto from "crypto";
 import { CostingMethod, MovementType, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
@@ -1868,6 +1874,11 @@ export class InventoryService {
    * movement history. Products with no costful history (no PURCHASE with a
    * unit cost, no COST_BASIS) are left untouched and reported under
    * `noHistory` so the operator can set a cost basis manually.
+   *
+   * B562: products whose ledger can't account for their real currentStock
+   * (see replayProduct's gap-detection comment — order sales/edits are the
+   * usual cause) are reported under `gapsDetected` instead: nothing is
+   * written for them, dry-run or not, because the replay would be sales-blind.
    */
   async recomputeCosts(dto: RecomputeCostsDto) {
     const where: Prisma.ProductWhereInput = {};
@@ -1887,6 +1898,11 @@ export class InventoryService {
       movementsBackfilled: number;
     }[] = [];
     const noHistory: { productId: string; name: string }[] = [];
+    // B562: products whose StockMovement ledger is missing quantity a real
+    // order sale/edit took out of currentStock (order paths write no
+    // movement row) never get a trustworthy replay — see replayProduct's
+    // gap-detection comment. Reported here instead of silently written.
+    const gapsDetected: { productId: string; name: string; stockDrift: number }[] = [];
 
     for (const product of products) {
       // One transaction per product to bound lock time on big tenants
@@ -1894,7 +1910,13 @@ export class InventoryService {
         ? await this.replayProduct(product, null)
         : await this.prisma.tenantTransaction((tx) => this.replayProduct(product, tx));
 
-      if (!replay.hasCostfulHistory) {
+      if (replay.gapDetected) {
+        gapsDetected.push({
+          productId: product.id,
+          name: product.name,
+          stockDrift: replay.stockDrift,
+        });
+      } else if (!replay.hasCostfulHistory) {
         noHistory.push({ productId: product.id, name: product.name });
       } else {
         results.push({
@@ -1913,6 +1935,7 @@ export class InventoryService {
       processed: products.length,
       updated: results.length,
       noHistory,
+      gapsDetected,
       results,
     };
   }
@@ -1922,13 +1945,19 @@ export class InventoryService {
   // supports an effective date in the past (manual purchase, adjustment, and
   // now vendor-bill receive stamping at billDate) must replay the product so
   // later snapshots stay true.
+  //
+  // B562: throwOnGap is true here because this call sits mid-transaction
+  // inside a live write (recordPurchase/recordAdjustment/vendor-bill receive)
+  // — if the replay can't be trusted, the whole backdated write must fail
+  // loudly and roll back rather than leave later movements' snapshots stale
+  // OR (the actual bug) silently stamp them with a sales-blind average.
   async recomputeProductInTx(tx: Prisma.TransactionClient, productId: string) {
     const product = await tx.product.findFirst({
       where: { id: productId },
       select: { id: true, name: true, currentStock: true, averageCost: true, costingMethod: true },
     });
     if (!product) return;
-    await this.replayProduct(product, tx);
+    await this.replayProduct(product, tx, { throwOnGap: true });
   }
 
   /**
@@ -1939,6 +1968,30 @@ export class InventoryService {
    * - everything else ⇒ quantity only, average unchanged
    * With a tx, snapshots are backfilled on every movement and the product's
    * averageCost is updated when costful history exists. Never mutates stock.
+   *
+   * B562 — GAP DETECTION (read before touching this method):
+   * Order creation/edit decrement `Product.currentStock` directly and write
+   * NO StockMovement row (see orders.service.ts `decrementStockForSale` /
+   * `settleStockForEdit`), so a replay driven purely off StockMovement rows
+   * is blind to every unit an order ever consumed. That used to mean this
+   * method computed a "sales-blind" weighted average and overwrote both
+   * `Product.averageCost` and every movement's `stockAfter`/`avgCostAfter`
+   * with it — a plausible-looking but wrong number that also destroyed the
+   * only evidence (the pre-replay snapshots) that could have exposed it.
+   *
+   * The fix does not need to query Order/OrderItem to see this: EVERY other
+   * writer of `currentStock` in this codebase (recordPurchase,
+   * recordAdjustment, receivePurchaseOrder, commitStockCount, variant-assign,
+   * returns) pairs it with an equal-quantity StockMovement row in the same
+   * transaction (grep `currentStock:` in this file — each hit sits next to a
+   * `stockMovement.create`). So replaying every StockMovement row from a
+   * running stock of 0 and comparing the result to the product's real
+   * `currentStock` is an EXACT, observable proxy for "is there consumption
+   * (or any other write) this ledger never saw" — the naive "did avgCostAfter
+   * change" check the bug write-up rules out isn't needed. A nonzero result
+   * (`stockDrift`) means the weighted-average math above ran against a wrong
+   * running stock balance and cannot be trusted, so the persist step below is
+   * skipped entirely for that product: nothing is written, in or out of a tx.
    */
   private async replayProduct(
     product: {
@@ -1949,6 +2002,7 @@ export class InventoryService {
       costingMethod: CostingMethod;
     },
     tx: Prisma.TransactionClient | null,
+    opts: { throwOnGap?: boolean } = {},
   ) {
     const client = tx ?? this.prisma.forTenant();
     const movements = await client.stockMovement.findMany({
@@ -1970,8 +2024,17 @@ export class InventoryService {
         : null
       : null;
     let hasCostfulHistory = isStandard && avg != null;
-    let movementsBackfilled = 0;
 
+    // ── Pass 1: pure computation, no writes. Every movement's would-be
+    // snapshot is staged so the persist step (pass 2) can be skipped
+    // atomically if a gap turns up — we must not have already written some
+    // movements' snapshots before discovering movement N+1 makes the replay
+    // untrustworthy.
+    const snapshots: {
+      id: string;
+      avgCostAfter: Prisma.Decimal | null;
+      stockAfter: Prisma.Decimal;
+    }[] = [];
     for (const m of movements) {
       const qty = new Prisma.Decimal(m.quantity);
       const unitCost = m.unitCost != null ? new Prisma.Decimal(m.unitCost) : null;
@@ -2004,30 +2067,63 @@ export class InventoryService {
       }
 
       stock = stock.add(qty);
+      snapshots.push({ id: m.id, avgCostAfter: avg, stockAfter: stock });
+    }
 
-      if (tx) {
+    const stockDrift = new Prisma.Decimal(product.currentStock).sub(stock);
+    const gapDetected = !stockDrift.isZero();
+
+    if (gapDetected) {
+      if (opts.throwOnGap) {
+        throw new ConflictException(
+          `Cannot recompute cost history for "${product.name}" (${product.id}): its ` +
+            `StockMovement ledger is missing ${stockDrift.neg().toString()} unit(s) of stock ` +
+            "movement (most likely order sales/edits, which write no StockMovement row — B562). " +
+            "A replay built from this ledger would compute a sales-blind average cost and " +
+            "overwrite the product's real cost plus every later movement's snapshot, destroying " +
+            "the evidence needed to catch it. Refusing rather than writing an untrustworthy number.",
+        );
+      }
+      // Bulk recomputeCosts path: report the gap, write nothing for this
+      // product (dry-run or not — a gap makes hasCostfulHistory/newAvgCost
+      // untrustworthy either way), and let the caller keep processing others.
+      return {
+        hasCostfulHistory,
+        oldAvgCost: product.averageCost != null ? Number(product.averageCost) : null,
+        newAvgCost: null,
+        stockDrift: Number(stockDrift),
+        movementsBackfilled: 0,
+        gapDetected: true,
+      };
+    }
+
+    // ── Pass 2: persist. Only reached when the ledger fully accounts for
+    // currentStock, i.e. the replay above is trustworthy.
+    let movementsBackfilled = 0;
+    if (tx) {
+      for (const snap of snapshots) {
         await tx.stockMovement.update({
-          where: { id: m.id },
-          data: { avgCostAfter: avg, stockAfter: stock },
+          where: { id: snap.id },
+          data: { avgCostAfter: snap.avgCostAfter, stockAfter: snap.stockAfter },
         });
         movementsBackfilled += 1;
       }
-    }
-
-    // STANDARD never rewrites averageCost (frozen); others persist the replayed avg.
-    if (tx && !isStandard && hasCostfulHistory && avg != null) {
-      await tx.product.update({
-        where: { id: product.id },
-        data: { averageCost: avg },
-      });
+      // STANDARD never rewrites averageCost (frozen); others persist the replayed avg.
+      if (!isStandard && hasCostfulHistory && avg != null) {
+        await tx.product.update({
+          where: { id: product.id },
+          data: { averageCost: avg },
+        });
+      }
     }
 
     return {
       hasCostfulHistory,
       oldAvgCost: product.averageCost != null ? Number(product.averageCost) : null,
       newAvgCost: avg != null ? Number(avg) : null,
-      stockDrift: Number(new Prisma.Decimal(product.currentStock).sub(stock)),
+      stockDrift: Number(stockDrift),
       movementsBackfilled,
+      gapDetected: false,
     };
   }
 }

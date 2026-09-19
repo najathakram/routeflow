@@ -211,6 +211,64 @@ describe("InventoryService", () => {
 
       expect(stockAlerts.fireForProducts).not.toHaveBeenCalled();
     });
+
+    // ─── B562: a backdated write must never trigger a sales-blind replay ──────
+    //
+    // Real lifecycle being modelled: 20 units bought @ $1 (movement m1), then
+    // 15 of them were SOLD via an order — orders decrement currentStock
+    // directly and write no StockMovement (B562's mechanism) — leaving 5
+    // physically on hand, then 10 more bought @ $10 (movement m2) for a true
+    // post-purchase stock of 15 at a true weighted average of
+    // (5×1 + 10×10)/15 = $7. `currentStock`/`averageCost` below already carry
+    // that true state. The operator now backdates an unrelated adjustment to
+    // before m1, which makes recordAdjustment think it must replay m1+m2 to
+    // repair their snapshots. Replaying from a movement-only view (blind to
+    // the 15-unit sale) recomputes stock as 20+10=30 and average as
+    // (20×1+10×10)/30 = $4 — a wrong but perfectly plausible-looking number
+    // that would silently clobber the correct $7 and rewrite m1/m2's
+    // snapshots to match the fabricated 30-unit stock, destroying the
+    // evidence needed to notice any of this afterwards.
+    it("B562: refuses a backdated adjustment's replay instead of overwriting averageCost with a sales-blind figure", async () => {
+      prisma.product.findUnique.mockResolvedValue(
+        product({ currentStock: D(15), averageCost: D(7) }),
+      );
+      // Both existing purchase movements postdate the new backdated adjustment.
+      prisma.stockMovement.count.mockResolvedValue(2);
+      // recomputeProductInTx re-reads the product fresh inside the tx.
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        name: "Flour 25lb",
+        currentStock: D(15),
+        averageCost: D(7),
+        costingMethod: "AVCO",
+      });
+      // The ledger the replay actually sees — no trace of the 15-unit sale.
+      prisma.stockMovement.findMany.mockResolvedValue([
+        { id: "m1", type: "PURCHASE", quantity: D(20), unitCost: D(1) },
+        { id: "m2", type: "PURCHASE", quantity: D(10), unitCost: D(10) },
+      ]);
+
+      await expect(
+        service.recordAdjustment(
+          {
+            productId: "prod-1",
+            quantity: -1,
+            effectiveDate: "2020-01-01",
+          } as any,
+          "user-1",
+        ),
+      ).rejects.toThrow(/stock movement|ledger|B562/i);
+
+      // The corrupting repair must never have run: averageCost was never
+      // rewritten to the sales-blind $4, and m1/m2's snapshots were never
+      // touched (the audit trail survives).
+      expect(prisma.product.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ averageCost: expect.anything() }),
+        }),
+      );
+      expect(prisma.stockMovement.update).not.toHaveBeenCalled();
+    });
   });
 
   // ─── receivePurchaseOrder — B11: STANDARD cost guard ───────────────────────
@@ -620,7 +678,11 @@ describe("InventoryService", () => {
     });
 
     it("reports products with no costful history and leaves their average untouched", async () => {
-      prisma.product.findMany.mockResolvedValue([product({ averageCost: null })]);
+      // currentStock matches the movements' net (-2+4=2) — no B562 gap here,
+      // just genuinely no PURCHASE/COST_BASIS to derive a cost from.
+      prisma.product.findMany.mockResolvedValue([
+        product({ averageCost: null, currentStock: D(2) }),
+      ]);
       prisma.stockMovement.findMany.mockResolvedValue([
         { id: "m1", type: "SALE", quantity: D(-2), unitCost: null },
         { id: "m2", type: "ADJUSTMENT", quantity: D(4), unitCost: null },
@@ -647,8 +709,12 @@ describe("InventoryService", () => {
       expect(prisma.product.update).not.toHaveBeenCalled();
     });
 
-    it("reports stock drift between currentStock and replayed movements", async () => {
-      // currentStock 10 but movements only account for 6 → drift 4 (imported opening stock)
+    // B562: currentStock 10 but the movement ledger only accounts for 6 — a
+    // real 4-unit gap (e.g. order consumption never written as a
+    // StockMovement) makes the replayed average untrustworthy. Previously
+    // this silently landed in `results` with a computed (wrong) newAvgCost;
+    // now it must be refused and reported separately, writing nothing.
+    it("B562: reports a stock-drift gap instead of computing a sales-blind average", async () => {
       prisma.product.findMany.mockResolvedValue([product()]);
       prisma.stockMovement.findMany.mockResolvedValue([
         { id: "m1", type: "PURCHASE", quantity: D(6), unitCost: D(2) },
@@ -656,7 +722,48 @@ describe("InventoryService", () => {
 
       const result = await service.recomputeCosts({ dryRun: true });
 
-      expect(result.results[0].stockDrift).toBe(4);
+      expect(result.results).toEqual([]);
+      expect(result.gapsDetected).toEqual([
+        { productId: "prod-1", name: "Flour 25lb", stockDrift: 4 },
+      ]);
+      expect(prisma.stockMovement.update).not.toHaveBeenCalled();
+      expect(prisma.product.update).not.toHaveBeenCalled();
+    });
+
+    it("B562: a real (non-dry-run) recompute also refuses to write for a gapped product but still processes the rest", async () => {
+      prisma.product.findMany.mockResolvedValue([
+        product({ id: "prod-1", name: "Gapped", currentStock: D(10) }),
+        product({ id: "prod-2", name: "Clean", currentStock: D(6), averageCost: D(9.99) }),
+      ]);
+      prisma.stockMovement.findMany.mockImplementation(({ where }: any) =>
+        Promise.resolve(
+          where.productId === "prod-1"
+            ? [{ id: "m1", type: "PURCHASE", quantity: D(6), unitCost: D(2) }] // drift 4
+            : [{ id: "m2", type: "PURCHASE", quantity: D(6), unitCost: D(3) }], // drift 0
+        ),
+      );
+
+      const result = await service.recomputeCosts({});
+
+      expect(result.gapsDetected).toEqual([{ productId: "prod-1", name: "Gapped", stockDrift: 4 }]);
+      expect(result.results).toEqual([
+        expect.objectContaining({ productId: "prod-2", newAvgCost: 3 }),
+      ]);
+      // The gapped product's snapshot/average were never touched...
+      expect(prisma.stockMovement.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: "m1" } }),
+      );
+      expect(prisma.product.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: "prod-1" } }),
+      );
+      // ...while the clean product WAS repaired normally.
+      expect(prisma.stockMovement.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: "m2" } }),
+      );
+      expect(prisma.product.update).toHaveBeenCalledWith({
+        where: { id: "prod-2" },
+        data: { averageCost: D(3) },
+      });
     });
   });
 

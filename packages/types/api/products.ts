@@ -12,6 +12,11 @@ export interface RecomputeCostsResult {
   processed: number;
   updated: number;
   noHistory: { productId: string; name: string }[];
+  /** B562: products whose StockMovement ledger can't account for their real
+   *  currentStock (order sales/edits write no movement row) — the replay
+   *  would be sales-blind, so nothing was written for these; `stockDrift` is
+   *  the unaccounted quantity. */
+  gapsDetected: { productId: string; name: string; stockDrift: number }[];
   results: {
     productId: string;
     name: string;
