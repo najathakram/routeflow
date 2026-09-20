@@ -637,46 +637,50 @@ export class BillingService {
         : null;
     const preparedTransition = transition ? await this.planTransition.prepare(transition) : null;
 
-    const upserted = await this.prisma.$transaction(
-      async (tx) => {
-        if (transition && preparedTransition) {
-          // A snapshot failure throws -> the whole checkout handler fails -> Stripe redelivers, so a
-          // downgrade is never applied without its snapshot (fail closed).
-          await this.planTransition.onPlanChange(tx, transition, preparedTransition);
-        }
-        return tx.tenantSubscription.upsert({
-          where: { tenantId },
-          create: {
-            tenantId,
-            stripeCustomerId: session.customer as string,
-            stripeSubId: subscriptionId,
-            currentPlan: resolvedPlanKey
-              ? planKeyToEnum(resolvedPlanKey)
-              : ((session.metadata?.plan as TenantPlan) ?? "STARTER"),
-            planKey: resolvedPlanKey,
-            basePriceSnapshot: resolvedBasePrice,
-            periodStart: new Date(stripeSub.current_period_start * 1000),
-            periodEnd: new Date(stripeSub.current_period_end * 1000),
-            billingInterval,
-          },
-          update: {
-            stripeSubId: subscriptionId,
-            stripeCustomerId: session.customer as string,
-            periodStart: new Date(stripeSub.current_period_start * 1000),
-            periodEnd: new Date(stripeSub.current_period_end * 1000),
-            ...(billingInterval ? { billingInterval } : {}),
-            ...(resolvedPlanKey ? { planKey: resolvedPlanKey } : {}),
-            ...(resolvedPlanKey && resolvedBasePrice != null && !hasNegotiatedOverride
-              ? { basePriceSnapshot: resolvedBasePrice }
-              : {}),
-          },
-        });
-        // Explicit budget (Prisma's default is 5 s): a restore issues one round-trip per config /
-        // grant row inside this transaction, and a paid checkout that times out would never be
-        // recorded on redelivery either.
+    const upsertArgs = {
+      where: { tenantId },
+      create: {
+        tenantId,
+        stripeCustomerId: session.customer as string,
+        stripeSubId: subscriptionId,
+        currentPlan: resolvedPlanKey
+          ? planKeyToEnum(resolvedPlanKey)
+          : ((session.metadata?.plan as TenantPlan) ?? "STARTER"),
+        planKey: resolvedPlanKey,
+        basePriceSnapshot: resolvedBasePrice,
+        periodStart: new Date(stripeSub.current_period_start * 1000),
+        periodEnd: new Date(stripeSub.current_period_end * 1000),
+        billingInterval,
       },
-      { timeout: 20_000, maxWait: 10_000 },
-    );
+      update: {
+        stripeSubId: subscriptionId,
+        stripeCustomerId: session.customer as string,
+        periodStart: new Date(stripeSub.current_period_start * 1000),
+        periodEnd: new Date(stripeSub.current_period_end * 1000),
+        ...(billingInterval ? { billingInterval } : {}),
+        ...(resolvedPlanKey ? { planKey: resolvedPlanKey } : {}),
+        ...(resolvedPlanKey && resolvedBasePrice != null && !hasNegotiatedOverride
+          ? { basePriceSnapshot: resolvedBasePrice }
+          : {}),
+      },
+    };
+
+    // Flag OFF (or a checkout that names no plan): EXACTLY the plain upsert this handler always
+    // did — no transaction, no hook. Only an active hook wraps it, so it commits with the snapshot.
+    const upserted =
+      transition && preparedTransition?.enabled
+        ? await this.prisma.$transaction(
+            async (tx) => {
+              // A snapshot failure (a DOWNGRADE) throws -> the handler fails -> Stripe redelivers,
+              // so a downgrade is never applied without its snapshot (fail closed).
+              await this.planTransition.onPlanChange(tx, transition, preparedTransition);
+              return tx.tenantSubscription.upsert(upsertArgs);
+            },
+            // Explicit budget (Prisma's default is 5 s): a restore issues one round-trip per
+            // config / grant row inside this transaction.
+            { timeout: 20_000, maxWait: 10_000 },
+          )
+        : await this.prisma.tenantSubscription.upsert(upsertArgs);
 
     // Atomic non-ACTIVE→ACTIVE: activates the tenant, and if it was previously non-paying (e.g.
     // SUSPENDED) re-adds its run-rate exactly once — idempotent against the paired

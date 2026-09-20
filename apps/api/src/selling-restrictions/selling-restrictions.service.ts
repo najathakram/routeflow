@@ -101,13 +101,17 @@ export interface SellableLinesParams {
    */
   customerId: string | null;
   lines: readonly SellableLine[];
-  channel?: RestrictionChannel;
+  /**
+   * Who is selling: `restrictionChannelForPrincipal(user)`, or `"STAFF"` for a cron / system caller
+   * with no principal. Omitted (a JS or `any` caller) FAILS CLOSED to BUYER_PORTAL — never STAFF.
+   */
+  channel: RestrictionChannel;
   at?: Date;
 }
 
 export interface EvaluateOptions {
-  /** Defaults to STAFF (every path except the self-serve buyer portal). */
-  channel?: RestrictionChannel;
+  /** As `SellableLinesParams.channel`: required, and an omitted value fails closed to BUYER_PORTAL. */
+  channel: RestrictionChannel;
   /** Point-in-time evaluation; defaults to now. */
   at?: Date;
 }
@@ -274,7 +278,7 @@ export class SellingRestrictionsService {
     tenantId: string,
     customerId: string | null,
     lines: readonly EvaluateLine[],
-    options: EvaluateOptions = {},
+    options: EvaluateOptions,
   ): Promise<RestrictionsEvaluation> {
     const policy = await this.getPolicy(tenantId);
     if (!policy.enabled) return offEvaluation();
@@ -282,8 +286,8 @@ export class SellingRestrictionsService {
     const productIds = [...new Set(lines.map((l) => l.productId))];
     if (productIds.length === 0) return { outcome: "ALLOW", reasons: [] };
 
-    const channel = options.channel ?? "STAFF";
-    const at = options.at ?? new Date();
+    const channel = options?.channel ?? "BUYER_PORTAL"; // fail closed: the channel that binds more
+    const at = options?.at ?? new Date();
     const db = this.prisma.forTenant();
 
     const labels = await this.productLabels.effectiveLabels(tenantId, productIds);

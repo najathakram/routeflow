@@ -633,16 +633,30 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
       expect(prisma.$transaction.mock.calls[0][1]).toEqual({ timeout: 20_000, maxWait: 10_000 });
     });
 
-    it("flag OFF: no extra tenant read and the hook is never consulted (the handler is exactly what it was)", async () => {
-      const { svc, prisma, planTransition } = make({ transitionCount: 1 });
+    it("flag OFF: no extra tenant read, the hook is never consulted, and the upsert is the PLAIN one (no transaction)", async () => {
+      const { svc, prisma, tx, planTransition } = make({ transitionCount: 1 });
       planTransition.isEnabled.mockResolvedValue(false);
+      planTransition.prepare.mockResolvedValue({ enabled: false, planAllows: null });
 
       await (svc as any).onCheckoutCompleted(session("GROWTH"));
 
       expect(prisma.tenant.findUnique).not.toHaveBeenCalled();
       expect(planTransition.prepare).not.toHaveBeenCalled();
       expect(planTransition.onPlanChange).not.toHaveBeenCalled();
-      expect(prisma.tenantSubscription.upsert).toHaveBeenCalledTimes(1); // the write itself is unchanged
+      // the write is exactly what it always was: called on the client itself, never through a tx
+      expect(prisma.tenantSubscription.upsert).toHaveBeenCalledTimes(1);
+      expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+    });
+
+    it("the flag flipped OFF between the two reads: still the plain upsert (prepared.enabled is false)", async () => {
+      const { svc, prisma, tx, planTransition } = make({ transitionCount: 1 });
+      planTransition.prepare.mockResolvedValue({ enabled: false, planAllows: null });
+
+      await (svc as any).onCheckoutCompleted(session("GROWTH"));
+
+      expect(planTransition.onPlanChange).not.toHaveBeenCalled();
+      expect(prisma.tenantSubscription.upsert).toHaveBeenCalledTimes(1);
+      expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
     });
 
     it("a checkout that names no plan cannot move it: the hook is not consulted at all", async () => {
@@ -654,7 +668,7 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
       expect(planTransition.onPlanChange).not.toHaveBeenCalled();
     });
 
-    it("a failing hook aborts the checkout handler (Stripe redelivers): no subscription write, no MRR event", async () => {
+    it("a failing hook (a downgrade whose snapshot cannot be written) aborts the checkout handler (Stripe redelivers): no subscription write, no MRR event", async () => {
       const { svc, prisma, events, planTransition } = make({ transitionCount: 1 });
       planTransition.onPlanChange.mockRejectedValueOnce(new Error("snapshot failed"));
 
