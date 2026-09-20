@@ -14,6 +14,13 @@ import bwipjs from "bwip-js";
 
 export type { InvoicePdfVariant };
 
+/** Storage key an invoice's rendered PDF is uploaded under — shared with
+ *  `invoices.service.ts` (email-attachment build) so a caller can read back the SAME
+ *  file `getOrGenerate` just rendered instead of rendering a second copy. */
+export function invoicePdfStorageKey(invoiceId: string): string {
+  return `invoice-pdfs/${invoiceId}.pdf`;
+}
+
 @Injectable()
 export class InvoicePdfService {
   private readonly logger = new Logger(InvoicePdfService.name);
@@ -211,7 +218,7 @@ export class InvoicePdfService {
       throw new Error(`PDF render failed: ${err}`);
     }
 
-    const key = `invoice-pdfs/${invoiceId}.pdf`;
+    const key = invoicePdfStorageKey(invoiceId);
     await this.storage.upload(key, pdfBuffer, "application/pdf");
 
     await this.prisma.invoice.update({

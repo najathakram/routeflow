@@ -1063,6 +1063,14 @@ export class EmailService {
     /** Deposit schedule (display-only, derived server-side) — null/absent renders nothing. */
     depositAmount?: number | null;
     depositDueDate?: string | null;
+    /**
+     * The invoice PDF, attached alongside the existing Download-PDF link (never instead
+     * of it — some inboxes strip attachments). `undefined` when the caller couldn't
+     * generate/read the PDF or it exceeded `MAX_INVOICE_EMAIL_ATTACHMENT_BYTES`
+     * (`invoices.service.ts#buildInvoiceEmailAttachment`) — the email still sends,
+     * link-only, exactly as before this field existed.
+     */
+    attachment?: { filename: string; content: Buffer; contentType: string };
   }) {
     const businessName = await this.getTenantBusinessName();
     const subject = params.isReminder
@@ -1070,7 +1078,13 @@ export class EmailService {
       : `Invoice ${params.invoiceNumber}`;
 
     const { html, text } = this.buildInvoiceEmail(params, businessName);
-    return this.send({ to: params.to, subject, html, text });
+    return this.send({
+      to: params.to,
+      subject,
+      html,
+      text,
+      attachments: params.attachment ? [params.attachment] : undefined,
+    });
   }
 
   // ─── Internal send ─────────────────────────────────────────────────────────
@@ -1107,6 +1121,14 @@ export class EmailService {
      * specific call sites migrated to `"platform"`.
      */
     senderClass?: "tenant" | "platform";
+    /**
+     * Files to attach (invoice PDF today). Threaded through every transport this
+     * method can reach (mailbox, tenant SMTP, platform SMTP, Resend) — nodemailer and
+     * Resend both accept this exact `{filename, content, contentType}` shape. Omitted
+     * by every EXISTING caller, so no prior behavior changes for anything but the new
+     * invoice-attachment callers.
+     */
+    attachments?: { filename: string; content: Buffer; contentType?: string }[];
   }): Promise<{
     delivered: boolean;
     transport: "mailbox" | "smtp" | "resend" | "none";
@@ -1162,6 +1184,7 @@ export class EmailService {
         text: params.text,
         replyTo,
         fromName: businessName || undefined,
+        attachments: params.attachments,
       });
       if (mailboxResult.delivered) {
         return {
@@ -1213,6 +1236,7 @@ export class EmailService {
           html: params.html,
           text: params.text,
           replyTo,
+          attachments: params.attachments,
         });
         this.logger.log(
           `Email sent via tenant SMTP to ${params.to} — messageId: ${info.messageId}`,
@@ -1252,6 +1276,7 @@ export class EmailService {
           subject: params.subject,
           html: params.html,
           replyTo,
+          attachments: params.attachments,
         });
         this.logger.log(
           `Email sent via platform SMTP to ${params.to} — messageId: ${info.messageId}`,
@@ -1296,6 +1321,10 @@ export class EmailService {
           html: params.html,
           text: params.text,
           replyTo,
+          attachments: params.attachments?.map((a) => ({
+            filename: a.filename,
+            content: a.content,
+          })),
         });
         if ((result as any)?.error) {
           const msg = (result as any).error?.message ?? "Resend rejected the message";

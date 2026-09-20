@@ -10,6 +10,10 @@ import { PlanCatalogController } from "./plan-catalog.controller";
 import { PlanAdminController } from "./plan-admin.controller";
 import { SettingsBillingController } from "./settings-billing.controller";
 import { ProrationService } from "./proration.service";
+import { TenantConfigSnapshotService } from "./tenant-config-snapshot.service";
+import { ConfigSnapshotFlagService } from "./config-snapshot-flag.service";
+import { PlanTransitionConfigService } from "./plan-transition-config.service";
+import { TenantConfigSnapshotAdminService } from "./tenant-config-snapshot-admin.service";
 import { SubscriptionService } from "./subscription.service";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BillingEventService } from "./billing-event.service";
@@ -50,6 +54,15 @@ import { EntitlementsModule } from "./entitlements.module";
     FeatureOverrideReviewJob,
     // B569: nightly sweep that revokes expired overrides (runs after the review job above).
     FeatureOverrideExpiryJob,
+    // Lane B A2 (DARK — nothing calls it yet): downgrade snapshot / re-upgrade restore of a
+    // tenant's feature config. Stateless, no dependencies.
+    TenantConfigSnapshotService,
+    // Lane B A2 step b: the ONE hook every plan-change site calls inside its transaction.
+    // Live flag `entitlements.configSnapshot` (default off, fail-closed) — wired but inert until flipped.
+    ConfigSnapshotFlagService,
+    PlanTransitionConfigService,
+    // Lane B A2 step c: admin list / preview / "Restore now" for the tenant snapshots tab.
+    TenantConfigSnapshotAdminService,
   ],
   exports: [
     StripeService,
@@ -69,6 +82,10 @@ import { EntitlementsModule } from "./entitlements.module";
     // one MRR engine instead of re-deriving its own estimate — was a provider only, so DI
     // resolution failed until exported here.
     MrrService,
+    TenantConfigSnapshotService,
+    ConfigSnapshotFlagService,
+    PlanTransitionConfigService,
+    TenantConfigSnapshotAdminService,
   ],
 })
 export class BillingModule {}

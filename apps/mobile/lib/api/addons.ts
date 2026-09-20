@@ -63,6 +63,17 @@ export function useOrderUiV2(): { enabled: boolean; resolved: boolean } {
   return { enabled: dev.enabled, resolved: dev.resolved };
 }
 
+// ─── scan_v2 (mirrors web; no mobile consumer yet) ──────────────────────────
+//
+// Fleet ruling 2026-09-19: no new plan flags while the feature registry is frozen, so the new scan
+// screen rides the `developer_mode` addon — already owner-grantable per tenant, dark by default
+// (`enabled` is false until the addons fetch succeeds AND lists it, so loading, an error and an
+// ungranted tenant all read OFF). One line to swap when a real flag exists; call sites use this
+// hook, never `useDeveloperMode` directly, so that swap touches only here.
+export function useScanV2(): boolean {
+  return useDeveloperMode().enabled;
+}
+
 // ─── Driver payments (per-tenant at-door collection opt-in) ───────────────────
 //
 // Owner decision 2026-08-24: collecting money at the door is opt-in per tenant

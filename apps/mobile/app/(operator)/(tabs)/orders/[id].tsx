@@ -42,6 +42,9 @@ import {
   type PdfSharePhase,
 } from "../../../../lib/invoice-send-logic";
 import { showToast } from "../../../../lib/toast";
+import { BlockedLinesModal } from "../../../../components/BlockedLinesModal";
+import { parseSellingRestricted } from "../../../../lib/selling-restricted";
+import type { BlockedLine } from "@routeflow/types";
 import { alertInfo, confirm } from "../../../../lib/confirm";
 import { formatQtySplit } from "@routeflow/pricing";
 import { freeUnitsLabel } from "../../../../lib/buyer-cart-logic";
@@ -104,6 +107,8 @@ export default function OrderDetailScreen() {
   const sendMut = useSendInvoice();
   const pdfMut = useInvoicePdf();
   const [shipmentModal, setShipmentModal] = useState(false);
+  // Selling restrictions: the lines a status change (e.g. promoting a draft) was refused for.
+  const [restrictedBlock, setRestrictedBlock] = useState<BlockedLine[] | null>(null);
   const [sendSheet, setSendSheet] = useState<{
     invoiceId: string;
     invoiceNumber: string;
@@ -165,6 +170,12 @@ export default function OrderDetailScreen() {
   const isTerminal = order.status === "DELIVERED" || order.status === "CANCELLED";
 
   const toastError = (e: unknown, fallback = "Try again.") => {
+    // A selling-restriction 409 gets its own modal, not the raw server message.
+    const restricted = parseSellingRestricted(e);
+    if (restricted) {
+      setRestrictedBlock(restricted);
+      return;
+    }
     const err = e as { response?: { data?: { message?: string } }; message?: string };
     showToast(err?.response?.data?.message ?? err?.message ?? fallback);
   };
@@ -1041,6 +1052,8 @@ export default function OrderDetailScreen() {
         onCancel={() => setReasonFor(null)}
         onSubmit={(reason) => reasonFor && runStatusChange({ ...reasonFor, reason })}
       />
+
+      <BlockedLinesModal lines={restrictedBlock} onClose={() => setRestrictedBlock(null)} />
     </SafeAreaView>
   );
 }

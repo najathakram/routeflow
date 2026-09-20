@@ -389,3 +389,7 @@ export type RestrictionSurfaceValue = (typeof RESTRICTION_SURFACE_VALUES)[number
 // STATE rule first when the customer has DEFAULT addresses of both types (owner ruling D4).
 export const RESTRICTION_ADDRESS_PRECEDENCE_VALUES = ["BILLING_FIRST", "SHIPPING_FIRST"] as const;
 export type RestrictionAddressPrecedence = (typeof RESTRICTION_ADDRESS_PRECEDENCE_VALUES)[number];
+
+/** Why a TenantFeatureConfigSnapshot was taken (Lane B A2): automatic on a downgrade, or by an admin. */
+export const SNAPSHOT_REASON_VALUES = ["DOWNGRADE", "MANUAL"] as const;
+export type SnapshotReasonValue = (typeof SNAPSHOT_REASON_VALUES)[number];
