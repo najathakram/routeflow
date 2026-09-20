@@ -242,9 +242,11 @@ export interface CreditPointParams {
  * works today: a failure to reach a verdict logs ERROR and allows; an unreadable switch is OFF with
  * an ERROR; only an ENFORCED tenant sees a failure. `excludeOrderId` = the order being sent out.
  *
- * ⚠ Do NOT set the switch to "true" for any tenant until the paths that still bypass it are
- * guarded: DRAFT → PENDING promotion in `changeStatus`, the standing-order cron (`order-templates`
- * writes PENDING orders directly), and the deliver point. (`updateOrderItems` is not one: it has
+ * ⚠ Do NOT set the switch to "true" for any tenant while these paths still bypass it: DRAFT →
+ * PENDING promotion in `changeStatus`, and the standing-order cron (`order-templates` writes PENDING
+ * orders directly). Guarded: a new order, `changeStatus` to OUT_FOR_DELIVERY, and CONFIRMED →
+ * DELIVERED. The driver's stop completion is EXCLUDED on purpose (goods are already at the door;
+ * pinned in `orders.deliver-credit-gate.spec.ts`). (`updateOrderItems` is not a bypass: it has
  * always run the edit guard, independent of this switch.)
  */
 export async function assertCreditAtEnforcementPoint(

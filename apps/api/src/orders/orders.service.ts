@@ -2644,9 +2644,16 @@ export class OrdersService implements OnApplicationBootstrap {
       checkedProductIds = new Set(pids);
     }
 
-    // B585: an order going OUT for delivery is credit-checked (operators only, by the role gates
-    // above; before any write; a driver's stop completion is not gated). Nothing runs unless set.
-    if (dto.status === OrderStatus.OUT_FOR_DELIVERY) {
+    // B585: goods leaving is the enforcement moment (operators only, by the role gates above; before
+    // any write). That is OUT_FOR_DELIVERY, or a counter hand-over straight to DELIVERED (the van-sale
+    // flow never sets OUT_FOR_DELIVERY); an order already out/part-delivered was gated on its way out.
+    // A driver's stop completion is not gated. Nothing runs unless the tenant switch is set.
+    const goodsLeaving =
+      dto.status === OrderStatus.OUT_FOR_DELIVERY ||
+      (dto.status === OrderStatus.DELIVERED &&
+        order.status !== OrderStatus.OUT_FOR_DELIVERY &&
+        order.status !== OrderStatus.PARTIALLY_DELIVERED);
+    if (goodsLeaving) {
       const p = { customerId: order.customerId, projectedTotal: Number(order.total) };
       await this.creditGate({ ...p, excludeOrderId: id, action: "delivery", principal: user });
     }
