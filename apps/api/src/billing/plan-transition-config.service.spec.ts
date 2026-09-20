@@ -1,3 +1,4 @@
+import { Logger } from "@nestjs/common";
 import { FEATURE_REGISTRY } from "./feature-registry";
 import { PLAN_KEYS } from "./plan-catalog.constants";
 import { RestoreBudgetExceededError } from "./tenant-config-snapshot.service";
@@ -382,8 +383,18 @@ describe("PlanTransitionConfigService (A2 step b)", () => {
       caches.authority.invalidate.mockImplementation(() => {
         throw new Error("boom");
       });
+      // The swallow must stay LOUD (the only operator signal is this log line): a refactor that
+      // makes it silent has to fail here.
+      const errorSpy = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
 
-      expect(() => svc.invalidateCaches("t7", prepared)).not.toThrow();
+      try {
+        expect(() => svc.invalidateCaches("t7", prepared)).not.toThrow();
+        expect(errorSpy).toHaveBeenCalledWith(
+          expect.stringContaining("resolver cache for tenant t7"),
+        );
+      } finally {
+        errorSpy.mockRestore();
+      }
 
       expect(caches.overrides.invalidate).toHaveBeenCalledWith("t7");
       expect(caches.configStore.invalidateTenant).toHaveBeenCalledWith("t7");
