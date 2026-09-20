@@ -1,6 +1,10 @@
 import { FEATURE_REGISTRY } from "./feature-registry";
 import { PLAN_KEYS } from "./plan-catalog.constants";
-import { PlanTransitionConfigService } from "./plan-transition-config.service";
+import {
+  HOOK_TX_OPTIONS,
+  PlanTransitionConfigService,
+  SnapshotFailedError,
+} from "./plan-transition-config.service";
 
 // Keys and plans come from the live registry/catalog (L-206), never re-typed here.
 const LOW = PLAN_KEYS[0];
@@ -265,6 +269,49 @@ describe("PlanTransitionConfigService (A2 step b)", () => {
         }),
       ).rejects.toThrow("db down");
       expect(sqlOf()).toEqual([]);
+    });
+  });
+
+  it("a failed downgrade snapshot throws a typed SnapshotFailedError carrying the tenant and the cause", async () => {
+    const { svc, snapshots } = build(true);
+    snapshots.snapshot.mockRejectedValueOnce(new Error("db down"));
+
+    const err = await runTransition(svc, {
+      tenantId: "t9",
+      fromPlanKey: HIGH,
+      toPlanKey: LOW,
+      toPlanVersionId: null,
+    }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(SnapshotFailedError);
+    expect(err.tenantId).toBe("t9");
+    expect(err.message).toContain("db down");
+  });
+
+  describe("transactionOptions — a longer transaction budget ONLY while the flag is on", () => {
+    it("returns the raised budget for an enabled transition", async () => {
+      const { svc } = build(true);
+      const prepared = await svc.prepare({
+        tenantId: "t1",
+        fromPlanKey: LOW,
+        toPlanKey: HIGH,
+        toPlanVersionId: null,
+      });
+      expect(svc.transactionOptions(prepared)).toBe(HOOK_TX_OPTIONS);
+      expect(HOOK_TX_OPTIONS.timeout).toBeGreaterThan(5_000); // Prisma's default is 5 s
+    });
+
+    it("returns undefined when the flag is off, or there is no transition — the site's tx is untouched", async () => {
+      const { svc } = build(false);
+      const prepared = await svc.prepare({
+        tenantId: "t1",
+        fromPlanKey: LOW,
+        toPlanKey: HIGH,
+        toPlanVersionId: null,
+      });
+      expect(svc.transactionOptions(prepared)).toBeUndefined();
+      expect(svc.transactionOptions(null)).toBeUndefined();
+      expect(svc.transactionOptions(undefined)).toBeUndefined();
     });
   });
 
