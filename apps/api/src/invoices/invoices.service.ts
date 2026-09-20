@@ -74,7 +74,7 @@ import { lockRowsNoWait } from "../common/db-locks";
 import { NumberingService } from "../import/numbering.service";
 import { buildManualInvoiceLines } from "./manual-invoice-lines";
 import { resolveLineUnits } from "../products/line-units";
-import { prepareUnitLadders } from "../orders/unit-line-build";
+import { prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
 
 const TERM_DAYS: Record<string, number> = {
   "Due on Receipt": 0,
@@ -149,18 +149,17 @@ export class InvoicesService {
    * msrp null) when the tenant does not have flag.msrp, so a tenant that turns the feature
    * off simply stops emitting MSRP on NEW invoices while old ones keep what they printed.
    */
-  private async applyMsrpSnapshots<T extends { productId?: string | null; msrp?: number | null }>(
-    db: any,
-    customerId: string,
-    itemsData: T[],
-  ): Promise<void> {
+  private async applyMsrpSnapshots<
+    T extends { productId?: string | null; msrp?: number | null; unitLabel?: string | null },
+  >(db: any, customerId: string, itemsData: T[]): Promise<void> {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId || !(await this.entitlements.hasFlag(tenantId, "flag.msrp"))) return;
     const ids = [...new Set(itemsData.map((i) => i.productId).filter(Boolean))] as string[];
     if (ids.length === 0) return;
     const map = await loadMsrpMap(db, customerId, ids);
     for (const it of itemsData) {
-      if (it.productId) it.msrp = map.get(it.productId) ?? null;
+      // units_v1: the MSRP map is per PACK, a unit line is priced per UNIT — never stamp it
+      if (it.productId && !it.unitLabel) it.msrp = map.get(it.productId) ?? null;
     }
   }
 
@@ -3354,6 +3353,11 @@ export class InvoicesService {
   }
 
   async update(id: string, dto: Partial<CreateInvoiceDto>) {
+    // units_v1: a line can be CREATED by a unit (create(), 4c-1) but not yet REWRITTEN by one (4c-2);
+    // the shared DTO accepts `unitLabel`, and this path would silently store a PACK line for it.
+    if (dto.items?.some(requestsUnit)) {
+      throw new BadRequestException("Selling by a unit can't be set on an invoice edit yet.");
+    }
     const inv = await this.findOneOrThrow(id);
     if (inv.status !== InvoiceStatus.DRAFT)
       throw new BadRequestException("Only DRAFT invoices can be edited");

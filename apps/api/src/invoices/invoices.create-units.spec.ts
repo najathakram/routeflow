@@ -6,6 +6,9 @@
  */
 jest.mock("./invoice-pdf.service", () => ({ InvoicePdfService: class InvoicePdfService {} }));
 jest.mock("../storage/compress.util", () => ({ compressDocument: jest.fn() }));
+jest.mock("../common/msrp", () => ({
+  loadMsrpMap: jest.fn().mockResolvedValue(new Map([["p1", 30]])),
+}));
 
 import { Test } from "@nestjs/testing";
 import { BadRequestException, ForbiddenException } from "@nestjs/common";
@@ -152,5 +155,20 @@ describe("InvoicesService.create — sell a line by a unit (units_v1, 4c-1)", ()
       await expect(create(items)).rejects.toBeInstanceOf(BadRequestException);
     }
     expect(prisma.invoice.create).not.toHaveBeenCalled();
+  });
+
+  it("a unit on an invoice EDIT is refused (the shared DTO accepts it; update() would store a pack line)", async () => {
+    await expect(
+      service.update("inv-1", { items: [line({ unitLabel: "Case" })] } as never),
+    ).rejects.toThrow(/invoice edit yet/);
+    expect(prisma.invoice.update).not.toHaveBeenCalled();
+  });
+
+  it("a unit line never gets the per-PACK MSRP stamped on it (the pack line still does)", async () => {
+    hasFlag.mockResolvedValue(true); // flag.msrp AND flag.units_v1
+    await create([line({ qty: 1 }), line({ unitLabel: "Case" })]);
+    const [pack, unit] = created().items.create;
+    expect(pack.msrp).toBe(30);
+    expect(unit.msrp).toBeNull();
   });
 });
