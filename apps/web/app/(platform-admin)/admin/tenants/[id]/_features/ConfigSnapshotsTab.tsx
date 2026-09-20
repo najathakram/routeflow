@@ -37,7 +37,7 @@ function errorMessage(e: unknown, fallback: string): string {
 function statusOf(s: ConfigSnapshotListItem): { label: string; tone: string } {
   if (!s.restoredAt) return { label: "Not restored", tone: "text-amber-300" };
   if (s.restoredToPlanKey === "SUPERSEDED") {
-    return { label: "Superseded by a newer snapshot", tone: "text-slate-500" };
+    return { label: "Superseded by a newer snapshot", tone: "text-slate-400" };
   }
   return {
     label: `Restored ${fmt(s.restoredAt)}${s.restoredToPlanKey ? ` → ${s.restoredToPlanKey}` : ""}`,
@@ -110,18 +110,7 @@ export function ConfigSnapshotsTab({ tenantId }: { tenantId: string }) {
   const nothingToRestore = !!preview && preview.willRestore.length === 0;
 
   return (
-    <AdminCard
-      title="Configuration snapshots"
-      actions={
-        <button
-          onClick={load}
-          className="rounded-lg px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-700"
-        >
-          Refresh
-        </button>
-      }
-      noPadding
-    >
+    <AdminCard title="Configuration snapshots" noPadding>
       <p className="border-b border-slate-700 px-5 py-3 text-xs text-slate-400">
         Taken automatically when a plan change downgrades this tenant. Nothing is deleted on a
         downgrade — settings and grants stay but stop being honoured. Restore puts a snapshot back
@@ -135,17 +124,22 @@ export function ConfigSnapshotsTab({ tenantId }: { tenantId: string }) {
           {notice}
         </p>
       )}
-      {loading && <p className="px-5 py-10 text-center text-sm text-slate-500">Loading…</p>}
+      {loading && <p className="px-5 py-10 text-center text-sm text-slate-400">Loading…</p>}
       {error && !loading && (
         <p role="alert" className="px-5 py-10 text-center text-sm text-red-400">
           {error}
         </p>
       )}
       {!loading && !error && (
-        <div className="overflow-x-auto">
+        <div
+          className="overflow-x-auto"
+          role="region"
+          aria-label="Configuration snapshots"
+          tabIndex={0}
+        >
           <table className="w-full text-xs">
             <thead>
-              <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
+              <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-400">
                 <th className="px-4 py-3 text-left">Taken</th>
                 <th className="px-4 py-3 text-left">Plan left</th>
                 <th className="px-4 py-3 text-left">Reason</th>
@@ -188,7 +182,7 @@ export function ConfigSnapshotsTab({ tenantId }: { tenantId: string }) {
               })}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-10 text-center text-slate-500">
+                  <td colSpan={6} className="px-4 py-10 text-center text-slate-400">
                     No snapshots yet — one is taken the first time this tenant is downgraded.
                   </td>
                 </tr>
@@ -234,14 +228,14 @@ export function ConfigSnapshotsTab({ tenantId }: { tenantId: string }) {
             </p>
             <PreviewSection title={`Will be restored (${preview.willRestore.length})`}>
               {preview.willRestore.length === 0 ? (
-                <li className="text-slate-500">
+                <li className="text-slate-400">
                   Nothing to restore — everything is already in place or skipped.
                 </li>
               ) : (
                 preview.willRestore.map((e) => (
                   <li key={`${e.kind}:${e.featureKey}`}>
                     <span className="font-mono text-slate-200">{e.featureKey}</span>{" "}
-                    <span className="text-slate-500">· {KIND_LABELS[e.kind]}</span>
+                    <span className="text-slate-400">· {KIND_LABELS[e.kind]}</span>
                   </li>
                 ))
               )}
@@ -262,13 +256,13 @@ export function ConfigSnapshotsTab({ tenantId }: { tenantId: string }) {
                 {preview.skipped.map((s) => (
                   <li key={`${s.kind}:${s.featureKey}`}>
                     <span className="font-mono text-slate-200">{s.featureKey}</span>{" "}
-                    <span className="text-slate-500">· {SKIP_REASON_LABELS[s.reason]}</span>
+                    <span className="text-slate-400">· {SKIP_REASON_LABELS[s.reason]}</span>
                   </li>
                 ))}
               </PreviewSection>
             )}
             {preview.unchangedCount > 0 && (
-              <p className="text-slate-500">{preview.unchangedCount} already match — no change.</p>
+              <p className="text-slate-400">{preview.unchangedCount} already match — no change.</p>
             )}
           </div>
         )}
