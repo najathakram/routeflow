@@ -52,7 +52,10 @@
 import { spawnSync } from "child_process";
 import { createHash, randomUUID } from "crypto";
 import path from "path";
-import { Client } from "pg";
+import { PrismaPg } from "@prisma/adapter-pg";
+import { PrismaClient } from "@prisma/client";
+import { Client, Pool } from "pg";
+import { publishV12 } from "../../prisma/publish-plan-catalog-v12";
 import { describeDb, requireLocalDatabaseUrl } from "./testing/db-spec";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -248,10 +251,32 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
     return new Date(rows[0].ref as string).getTime();
   }
 
+  // B592: the CLI refuses to run at all without a PUBLISHED plan catalog version ("nothing to
+  // compute"), and on a FRESH database nothing but another spec's leftovers provided one — so this
+  // file passed or failed with the lane's file order. It now guarantees its own baseline: when the
+  // database has none it publishes the real v12 catalog (the same publisher `local:seed` uses) and
+  // removes exactly that version again in afterAll. A database that already has one is untouched.
+  let baselineVersion: number | null = null;
+
+  async function ensurePublishedBaseline(): Promise<void> {
+    const have = await db.query(`SELECT 1 FROM "PlanVersion" WHERE status = 'PUBLISHED' LIMIT 1`);
+    if (have.rowCount) return;
+    const pool = new Pool({ connectionString: databaseUrl });
+    const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
+    try {
+      const out = await publishV12(prisma);
+      if (out.action === "published") baselineVersion = out.version;
+    } finally {
+      await prisma.$disconnect();
+      await pool.end();
+    }
+  }
+
   beforeAll(async () => {
     databaseUrl = requireLocalDatabaseUrl();
     db = new Client({ connectionString: databaseUrl });
     await db.connect();
+    await ensurePublishedBaseline();
 
     await db.query(
       `INSERT INTO "PlanVersion" ("id", "version", "status", "createdAt", "updatedAt")
@@ -297,6 +322,17 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
     await db.query('DELETE FROM "Tenant" WHERE "id" = ANY($1)', [[TENANT_LOSS_ID, TENANT_ZERO_ID]]);
     await db.query('DELETE FROM "PlanDefinition" WHERE "planVersionId" = $1', [PLAN_VERSION_ID]);
     await db.query('DELETE FROM "PlanVersion" WHERE "id" = $1', [PLAN_VERSION_ID]);
+    if (baselineVersion !== null) {
+      const ours = `(SELECT "id" FROM "PlanVersion" WHERE "version" = $1 AND "status" = 'PUBLISHED')`;
+      await db.query(`DELETE FROM "AddonSku" WHERE "planVersionId" IN ${ours}`, [baselineVersion]);
+      await db.query(`DELETE FROM "PlanDefinition" WHERE "planVersionId" IN ${ours}`, [
+        baselineVersion,
+      ]);
+      await db.query(
+        'DELETE FROM "PlanVersion" WHERE "version" = $1 AND "status" = \'PUBLISHED\'',
+        [baselineVersion],
+      );
+    }
     await db.end();
   }, 120_000);
 
