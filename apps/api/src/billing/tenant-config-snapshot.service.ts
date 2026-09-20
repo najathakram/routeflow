@@ -161,17 +161,24 @@ export class TenantConfigSnapshotService {
         },
       });
     }
-    for (const entry of plan.overrides.create) {
-      await tx.tenantFeatureOverride.create({
-        data: {
+    if (plan.overrides.create.length > 0) {
+      // ONE createMany with skipDuplicates (INSERT … ON CONFLICT DO NOTHING), not a create per row:
+      // a live override for the same feature can appear between our read and this write (an admin
+      // grant, a concurrent restore) and would hit the partial unique index
+      // (tenantId, featureKey) WHERE revokedAt IS NULL. A caught P2002 would leave the caller's
+      // Postgres transaction poisoned ("current transaction is aborted"), so the conflict is
+      // resolved IN the statement instead: the concurrent writer's row wins, ours is skipped.
+      await tx.tenantFeatureOverride.createMany({
+        skipDuplicates: true,
+        data: plan.overrides.create.map((entry) => ({
           tenantId,
           featureKey: entry.featureKey,
           effect: entry.effect,
-          kind: entry.kind as Prisma.TenantFeatureOverrideCreateInput["kind"],
+          kind: entry.kind as Prisma.TenantFeatureOverrideCreateManyInput["kind"],
           reason: entry.reason,
           expiresAt: entry.expiresAt ? new Date(entry.expiresAt) : null,
           createdById: entry.createdById,
-        },
+        })),
       });
     }
 

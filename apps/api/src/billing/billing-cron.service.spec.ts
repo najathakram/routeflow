@@ -93,7 +93,8 @@ function make(
     notifyDowngradeApplied: jest.fn().mockResolvedValue(undefined),
   } as any;
   const planTransition = {
-    prepare: jest.fn().mockResolvedValue({ planAllows: null }),
+    isEnabled: jest.fn().mockResolvedValue(true),
+    prepare: jest.fn().mockResolvedValue({ enabled: true, planAllows: null }),
     onPlanChange: jest.fn().mockResolvedValue({ action: "none" }),
   } as any;
   const svc = new BillingCronService(
@@ -284,6 +285,41 @@ describe("BillingCronService", () => {
       toPlanKey: "STARTER",
       actor: { id: null },
     });
+  });
+
+  it("flag OFF: the sweep issues exactly its old query (no tenant.plan join) and never touches the hook", async () => {
+    const { svc, prisma, planTransition } = make({
+      downgrades: [
+        {
+          tenantId: "t1",
+          planKey: "BUSINESS",
+          planVersionId: "v7",
+          downgradeToPlanKey: "STARTER",
+          retainedUserIds: [],
+        },
+      ],
+    });
+    planTransition.isEnabled.mockResolvedValue(false);
+
+    await svc.applyScheduledDowngrades();
+
+    const call = prisma.tenantSubscription.findMany.mock.calls.find(
+      (c: any[]) => c[0].where.downgradeEffectiveAt,
+    )!;
+    expect(call[0].select).not.toHaveProperty("tenant");
+    expect(planTransition.prepare).not.toHaveBeenCalled();
+    expect(planTransition.onPlanChange).not.toHaveBeenCalled();
+  });
+
+  it("flag ON: the tenant.plan join is present", async () => {
+    const { svc, prisma } = make({ downgrades: [] });
+
+    await svc.applyScheduledDowngrades();
+
+    const call = prisma.tenantSubscription.findMany.mock.calls.find(
+      (c: any[]) => c[0].where.downgradeEffectiveAt,
+    )!;
+    expect(call[0].select.tenant).toEqual({ select: { plan: true } });
   });
 
   it("A2b: a NULL stored planKey resolves the plan being left from tenant.plan, never skips the snapshot", async () => {
