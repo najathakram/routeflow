@@ -30,7 +30,7 @@ const HEADROOM = 25;
 /** Repo-relative path → baseline line count (measured 2026-09-19 at 91d323de). */
 const BASELINE: Record<string, number> = {
   "apps/api/src/orders/orders.service.ts": 5929, // R-2a-7: parsers + cancelImpact -> order-parsers.ts / order-cancel-impact.ts (was 6045)
-  "apps/api/src/invoices/invoices.service.ts": 6412,
+  "apps/api/src/invoices/invoices.service.ts": 6390, // 4c-1 prefactor: manual line builder -> manual-invoice-lines.ts (was 6412)
   "apps/api/src/orders/orders.service.spec.ts": 9511,
   "apps/api/src/customers/customers.service.ts": 3307,
   "apps/api/src/invoices/invoices.service.spec.ts": 9351,

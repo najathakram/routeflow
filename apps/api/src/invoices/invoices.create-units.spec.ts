@@ -171,4 +171,26 @@ describe("InvoicesService.create — sell a line by a unit (units_v1, 4c-1)", ()
     expect(pack.msrp).toBe(30);
     expect(unit.msrp).toBeNull();
   });
+
+  // PINNED ASYMMETRY (lead ruling, #1101): an ORDER line sold by a unit is PRICED BY THE LADDER at the
+  // customer's tier (or a staff one-time DISCOUNTED/MANUAL price against it — orders.create-units.spec.ts),
+  // but a MANUAL INVOICE line keeps the operator-supplied unitPrice VERBATIM, exactly as pack lines already
+  // do: POST /invoices is OPERATOR-only and an off-ladder price (discount, agreed price) is deliberate.
+  // The below-floor warning for such a price is the web MarginHint (see the 5c picker); the API has no floor.
+  it("PINNED: a manual invoice unit line keeps the operator's off-ladder price verbatim (below AND above the ladder)", async () => {
+    await create([
+      line({ unitLabel: "Case", unitPrice: 300 }), // ladder Case price is 480
+      line({ unitLabel: "Case", unitPrice: 900 }),
+    ]);
+    const [below, above] = created().items.create;
+    expect(below).toMatchObject({ unitPrice: 300, subtotal: 900, unitLabel: "Case" });
+    expect(above).toMatchObject({ unitPrice: 900, subtotal: 2700 });
+    // no ladder repricing, no priceType/originalPrice machinery on an invoice line
+    for (const l of [below, above]) {
+      expect("priceType" in l).toBe(false);
+      expect("originalPrice" in l).toBe(false);
+    }
+    // the ladder was read for the FACTOR only
+    expect(scopedUnits.findMany).toHaveBeenCalledTimes(1);
+  });
 });
