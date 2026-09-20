@@ -31,11 +31,19 @@ export function restrictionReasonText(line: Pick<BlockedLine, "reason" | "state"
 
 /**
  * What a BUYER sees when their cart is refused: the item names only (no rule, state or category
- * detail — that is for staff). Duplicates collapse; an empty list falls back to a generic line.
+ * detail — that is for staff). Duplicates collapse. Lines with no usable name (including the
+ * parser's detail-less placeholder) are counted, not dropped, so the buyer is never told fewer
+ * items are blocked than really are; with no names at all it falls back to a generic line.
  */
-export function buyerBlockedMessage(lines: Pick<BlockedLine, "productName">[]): string {
-  const names = Array.from(new Set(lines.map((l) => l.productName).filter(Boolean)));
-  return names.length
-    ? `Some items can't be ordered right now: ${names.join(", ")}. Remove them from your cart and try again.`
-    : "Some items in your cart can't be ordered right now. Remove them and try again.";
+export function buyerBlockedMessage(
+  lines: Pick<BlockedLine, "productId" | "productName">[],
+): string {
+  const named = lines.filter((l) => l.productName && l.productId);
+  const names = Array.from(new Set(named.map((l) => l.productName)));
+  if (names.length === 0) {
+    return "Some items in your cart can't be ordered right now. Remove them and try again.";
+  }
+  const unnamed = lines.length - named.length;
+  const more = unnamed > 0 ? ` and ${unnamed} other item${unnamed === 1 ? "" : "s"}` : "";
+  return `Some items can't be ordered right now: ${names.join(", ")}${more}. Remove them from your cart and try again.`;
 }

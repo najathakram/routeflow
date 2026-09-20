@@ -602,7 +602,7 @@ export default function BuyerCartPage() {
           </div>
 
           {orderError && (
-            <div className="rounded-lg bg-danger-bg px-3 py-2 text-xs text-danger">
+            <div role="alert" className="rounded-lg bg-danger-bg px-3 py-2 text-xs text-danger">
               {orderError}
             </div>
           )}

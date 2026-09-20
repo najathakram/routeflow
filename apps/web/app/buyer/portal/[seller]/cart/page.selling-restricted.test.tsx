@@ -58,7 +58,10 @@ describe("buyer cart — SELLING_RESTRICTED", () => {
       ],
     });
     await place();
-    expect(await screen.findByText(/can't be ordered right now: Hemp Gummies/)).toBeInTheDocument();
+    // role="alert": the banner sits below Place Order on a long cart, so it must be announced.
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /can't be ordered right now: Hemp Gummies/,
+    );
     expect(screen.queryByText(/federal|internal rule reason/i)).toBeNull();
     expect(clearCart).not.toHaveBeenCalled();
   });

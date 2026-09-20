@@ -48,9 +48,9 @@ describe("restrictionReasonText", () => {
 describe("buyerBlockedMessage", () => {
   it("names the items only, once each — never the rule, state or reason", () => {
     const msg = buyerBlockedMessage([
-      { productName: "Hemp Gummies" },
-      { productName: "Hemp Gummies" },
-      { productName: "Vape Pen" },
+      { productId: "p1", productName: "Hemp Gummies" },
+      { productId: "p1", productName: "Hemp Gummies" },
+      { productId: "p2", productName: "Vape Pen" },
     ]);
     expect(msg).toBe(
       "Some items can't be ordered right now: Hemp Gummies, Vape Pen. Remove them from your cart and try again.",
@@ -60,5 +60,22 @@ describe("buyerBlockedMessage", () => {
 
   it("falls back to a generic line for an empty list", () => {
     expect(buyerBlockedMessage([])).toMatch(/Some items in your cart can't be ordered/);
+  });
+
+  it("counts lines it cannot name instead of silently dropping them", () => {
+    expect(
+      buyerBlockedMessage([
+        { productId: "p1", productName: "Hemp Gummies" },
+        { productId: "p2", productName: "" },
+        { productId: "p3", productName: "" },
+      ]),
+    ).toBe(
+      "Some items can't be ordered right now: Hemp Gummies and 2 other items. Remove them from your cart and try again.",
+    );
+  });
+
+  it("the parser's detail-less placeholder reads as the generic line, not as an item name", () => {
+    const placeholder = parseSellingRestricted(api(409, { code: "SELLING_RESTRICTED" }));
+    expect(buyerBlockedMessage(placeholder ?? [])).toMatch(/Some items in your cart can't be/);
   });
 });
