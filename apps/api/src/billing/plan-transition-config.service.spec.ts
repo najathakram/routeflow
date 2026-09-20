@@ -240,13 +240,11 @@ describe("PlanTransitionConfigService (A2 step b)", () => {
       expect(JSON.stringify(data.meta)).not.toContain(MSG);
     });
 
-    it("a SAVEPOINT that cannot even be opened skips the restore instead of failing the upgrade", async () => {
+    it("a SAVEPOINT that cannot be opened means the tx is already aborted: it throws (alarm), never a silent skip", async () => {
       const { svc, snapshots } = build(true);
       raw.mockRejectedValueOnce(new Error("savepoint rejected"));
 
-      const out = await runTransition(svc, up);
-
-      expect(out).toEqual({ action: "restore", restore: null });
+      await expect(runTransition(svc, up)).rejects.toThrow("savepoint rejected");
       expect(snapshots.restoreLatest).not.toHaveBeenCalled();
     });
 

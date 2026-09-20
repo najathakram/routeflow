@@ -821,6 +821,21 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
         });
       });
 
+      it("a redelivered refusal does not stack a second audit row", async () => {
+        const { svc, prisma } = make({ transitionCount: 1 });
+        prisma.tenant.findUnique.mockResolvedValue(null);
+        prisma.auditLog.findFirst.mockResolvedValue({ id: "a-refused" });
+
+        await (svc as any).onCheckoutCompleted(withId("cs_refused"));
+
+        expect(prisma.auditLog.findFirst.mock.calls[0][0].where).toMatchObject({
+          tenantId: null,
+          entityId: "cs_refused",
+          action: "STRIPE_CHECKOUT_REFUSED",
+        });
+        expect(prisma.auditLog.create).not.toHaveBeenCalled();
+      });
+
       it("MAJOR 4: a session whose customer is not the tenant's stored Stripe customer is REFUSED", async () => {
         const { svc, prisma, planTransition } = make({
           transitionCount: 1,

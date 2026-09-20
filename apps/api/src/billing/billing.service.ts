@@ -679,10 +679,27 @@ export class BillingService {
         );
         // Stripe gets a 200 (there is nothing to retry), so the refusal must leave a findable trail,
         // not only a log line. tenantId is the METADATA's claim, so an unknown tenant is stored null.
+        // Idempotent: Stripe redelivers a 200-answered event only on its own retry logic, and a
+        // replayed refusal must not stack one row per delivery.
+        const refusedTenantId = tenantRow ? tenantId : null;
+        const alreadyRecorded = session.id
+          ? await this.prisma.auditLog
+              .findFirst({
+                where: {
+                  tenantId: refusedTenantId,
+                  entityType: STRIPE_CHECKOUT_ENTITY,
+                  entityId: session.id,
+                  action: STRIPE_CHECKOUT_REFUSED_ACTION,
+                },
+                select: { id: true },
+              })
+              .catch(() => null)
+          : null;
+        if (alreadyRecorded) return;
         await this.prisma.auditLog
           .create({
             data: {
-              tenantId: tenantRow ? tenantId : null,
+              tenantId: refusedTenantId,
               action: STRIPE_CHECKOUT_REFUSED_ACTION,
               entityType: STRIPE_CHECKOUT_ENTITY,
               entityId: session.id ?? null,
