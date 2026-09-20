@@ -634,12 +634,35 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
       expect(transition.toPlanKey).toBe(normalizePlanKey("BUSINESS"));
     });
 
-    it("the checkout transaction has an explicit budget (Prisma's 5 s default is too small for a restore)", async () => {
+    it("MINOR 6: the STORED planKey (create and update) is the canonical key too, not the raw metadata string", async () => {
+      const { svc, prisma } = make();
+
+      await (svc as any).onCheckoutCompleted({
+        metadata: { tenantId: "t1", plan: "BUSINESS" }, // a legacy alias resolves to a canonical key
+        subscription: "sub_1",
+        customer: "cus_1",
+      });
+
+      const canonical = normalizePlanKey("BUSINESS")!;
+      const args = prisma.tenantSubscription.upsert.mock.calls[0][0];
+      expect(args.update.planKey).toBe(canonical);
+      expect(args.create.planKey).toBe(canonical);
+    });
+
+    it("an unknown plan string is stored as-is (never dropped or nulled)", async () => {
+      const { svc, prisma } = make();
+      await (svc as any).onCheckoutCompleted(session("GROWTH"));
+      expect(prisma.tenantSubscription.upsert.mock.calls[0][0].update.planKey).toBe("GROWTH");
+    });
+
+    it("the checkout transaction has an explicit budget that ends inside Stripe's ~10 s webhook window", async () => {
       const { svc, prisma } = make();
 
       await (svc as any).onCheckoutCompleted(session("GROWTH"));
 
-      expect(prisma.$transaction.mock.calls[0][1]).toEqual({ timeout: 20_000, maxWait: 10_000 });
+      const opts = prisma.$transaction.mock.calls[0][1];
+      expect(opts).toEqual({ timeout: 6_000, maxWait: 2_000 });
+      expect(opts.timeout + opts.maxWait).toBeLessThan(10_000); // worst case still answers Stripe in time
     });
 
     it("flag OFF: no extra tenant read, the hook is never consulted, and the upsert is the PLAIN one (no transaction)", async () => {

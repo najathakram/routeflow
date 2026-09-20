@@ -76,6 +76,9 @@ function scheduleLeftArmed(sub: {
   };
 }
 
+/** The checkout hook transaction's budget — see the comment at its use. */
+const CHECKOUT_TX_OPTIONS = { timeout: 6_000, maxWait: 2_000 } as const;
+
 @Injectable()
 export class BillingService {
   private readonly logger = new Logger(BillingService.name);
@@ -587,8 +590,12 @@ export class BillingService {
     // is the legacy fallback. present-only — never overwrite an existing non-null planKey with
     // null on an idempotent replay, and never regress a row some OTHER path already correctly
     // populated (guarded below via the `update` branch's conditional spread).
-    const resolvedPlanKey: string | null =
-      session.metadata?.planKey ?? session.metadata?.plan ?? null;
+    // Canonical when it is a known key/legacy alias (metadata.plan can be the legacy enum name), so
+    // the stored `planKey` never differs by cohort — the same string the snapshot/audit rows carry.
+    const rawPlanKey: string | null = session.metadata?.planKey ?? session.metadata?.plan ?? null;
+    const resolvedPlanKey: string | null = rawPlanKey
+      ? (normalizePlanKey(rawPlanKey) ?? rawPlanKey)
+      : null;
 
     // resolveCatalogPricing already falls back tenant.subscription?.planKey ?? tenant.plan, so it
     // resolves correctly even before planKey is written below. It can throw BadRequestException
@@ -707,7 +714,7 @@ export class BillingService {
               normalizePlanKey(existingOverride?.planKey) ?? planKeyFromEnum(tenantRow.plan),
             // Canonical key (metadata.plan can be a legacy enum name): the snapshot and audit rows
             // store this string, so it must not differ by cohort.
-            toPlanKey: normalizePlanKey(planKeyForCheckout) ?? planKeyForCheckout,
+            toPlanKey: planKeyForCheckout,
             toPlanVersionId: tenantRow.planVersionId ?? null,
             actor: { id: null, name: "system: stripe checkout" },
           }
@@ -779,9 +786,11 @@ export class BillingService {
             }
             return row;
           },
-          // Explicit budget (Prisma's default is 5 s): a restore issues one round-trip per
-          // config / grant row inside this transaction.
-          { timeout: 20_000, maxWait: 10_000 },
+          // Explicit budget, but INSIDE Stripe's ~10 s webhook window (which also spends time on
+          // the Stripe/catalog reads before this): a handler that outlives it is redelivered while
+          // its transaction may still commit. Prisma's own 5 s default is too small for a restore
+          // (one round-trip per config / grant row); on timeout the tx rolls back and Stripe retries.
+          CHECKOUT_TX_OPTIONS,
         );
       } catch (err) {
         if (!(err instanceof ConflictException)) {
