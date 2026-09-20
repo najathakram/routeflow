@@ -1,6 +1,6 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen, waitFor, act, fireEvent } from "@/test-utils/render";
+import { renderWithProviders, screen, waitFor, act, fireEvent, within } from "@/test-utils/render";
 import { CreateOrderModal } from "./CreateOrderModal";
 
 // JSDOM has no scrollIntoView implementation at all (not a stub — genuinely absent), and
@@ -607,6 +607,46 @@ describe("CreateOrderModal", () => {
         capturedOnScan!("111");
 
         expect(await screen.findByText("$8.00 / each")).toBeInTheDocument();
+      });
+    });
+
+    describe("selling restrictions - the API's SELLING_RESTRICTED 409 is shown as a blocked-items dialog", () => {
+      const restricted409 = {
+        response: {
+          status: 409,
+          data: {
+            code: "SELLING_RESTRICTED",
+            blockedLines: [
+              {
+                productId: "p1",
+                productName: "Hemp Gummies",
+                categoryName: "Hemp",
+                ruleId: "r1",
+                reason: "STATE_BAN",
+                state: "TX",
+                message: "m",
+              },
+            ],
+          },
+        },
+      };
+
+      it("a blocked save opens the dialog with the item and a plain cause, and raises NO page-level toast", async () => {
+        mockCustomers = [acme];
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        await pickCustomer("Acme Foods");
+        fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+        expect(createOrderMutate).toHaveBeenCalledTimes(1);
+
+        createOrderMutate.mock.calls[0][1].onError(restricted409);
+
+        const dialog = await screen.findByRole("dialog", {
+          name: /can't be sold to this customer/i,
+        });
+        expect(within(dialog).getByText("Hemp Gummies")).toBeInTheDocument();
+        expect(within(dialog).getByText("Restricted in TX")).toBeInTheDocument();
+        expect(within(dialog).queryByText("p1")).toBeNull(); // never a raw id
+        expect(mockToast).not.toHaveBeenCalled();
       });
     });
   });
