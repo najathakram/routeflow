@@ -2074,6 +2074,13 @@ function acquireLock(p, name, guarded) {
     }
     const owner = readLockOwner(p);
     const alive = owner ? pidAlive(owner.pid, owner.bootAt) : null;
+    // TEST SEAM (B598): the holder finishes and releases in the gap between the owner read above
+    // and the break decision below — the window a descheduled waiter on a loaded host really hits.
+    if (
+      process.env.BUGS_SELF_TEST === "1" &&
+      process.env.BUGS_TEST_RELEASE_AFTER_OWNER_READ === "1"
+    )
+      rmSync(p, { recursive: true, force: true });
     // TEST SEAM (B588): announce "I am now blocked behind a LIVE holder" exactly once, so a test
     // can release the holder only after the waiter is provably in the spin loop.
     if (process.env.BUGS_SELF_TEST === "1" && process.env.BUGS_TEST_WAIT_MARKER && alive === true) {
@@ -2102,6 +2109,14 @@ function acquireLock(p, name, guarded) {
       breakWhy =
         `LAST RESORT: it is ${Math.round(age / 1000)}s old and carries no readable owner.json, ` +
         `so its holder cannot be verified either way`;
+    // B598: `owner` was read BEFORE the pid probe, and a loaded host can deschedule this waiter
+    // between the two for as long as the holder needs to finish, release and exit. The stale read
+    // then convicts a lock that is already gone — or that a third writer has just taken, which the
+    // rm below would rob. Break only a lockdir that STILL carries the very owner judged dead.
+    if (breakWhy) {
+      const now = readLockOwner(p);
+      if (owner ? now?.token !== owner.token : now !== null) breakWhy = null;
+    }
     if (breakWhy) {
       console.error(
         `bugs: breaking the lock on ${name} — ${breakWhy}; ` +
@@ -5993,10 +6008,11 @@ cmds["self-test"] = () => {
         slowKids.map((c) => c.code),
         [0, 0],
       );
+      // Compared as the offending line (null = none) so a red run names WHY the lock was broken.
       check(
         "live holder: a lock held past the OLD 5s threshold is NOT broken",
-        /breaking the lock on F01\.jsonl/.test(slow.out),
-        false,
+        slow.out.split(/\r?\n/).find((l) => /breaking the lock on F01\.jsonl/.test(l)) ?? null,
+        null,
       );
       const afterSlow = new Map(readShard("F01").rows.map((r) => [r.id, r]));
       check(
@@ -6097,6 +6113,37 @@ cmds["self-test"] = () => {
         readShard("F01").rows.find((r) => r.id === "B5")?.tier,
         "T2",
       );
+
+      // (b2) B598: a waiter reads owner.json, is descheduled, and the holder finishes + releases
+      // before the waiter's break decision. The stale read must NOT convict the (already gone)
+      // lock — no "breaking the lock" line, and the waiter simply takes the free lock. Driven
+      // deterministically: a dead owner's lockdir, and a seam that releases it right after the
+      // waiter's owner read (exactly what a loaded host does by chance).
+      const deadPid = spawnSync(process.execPath, ["-e", ""]).pid;
+      mkdirSync(lockDir);
+      writeFileSync(
+        join(lockDir, "owner.json"),
+        JSON.stringify({ pid: deadPid, token: "t-dead", at: Date.now(), bootAt: bootStamp() }),
+      );
+      process.env.BUGS_TEST_RELEASE_AFTER_OWNER_READ = "1";
+      let released;
+      try {
+        released = runCli(["tier", "B4", "T2", "--why", "released-under-the-waiter fixture"], tmp);
+      } finally {
+        delete process.env.BUGS_TEST_RELEASE_AFTER_OWNER_READ;
+      }
+      check("release race: the waiter exited 0", released.code, 0);
+      check(
+        "release race: a lock released under the waiter is NOT reported as broken",
+        released.out.split(/\r?\n/).find((l) => /breaking the lock on F01\.jsonl/.test(l)) ?? null,
+        null,
+      );
+      check(
+        "release race: the waiter's own write landed",
+        readShard("F01").rows.find((r) => r.id === "B4")?.tier,
+        "T2",
+      );
+      check("release race: the lock directory is released afterwards", existsSync(lockDir), false);
 
       // (c) The other half of the theft, from the RELEASE side: a process whose
       // lock was broken used to rm the lock PATH unconditionally on the way
