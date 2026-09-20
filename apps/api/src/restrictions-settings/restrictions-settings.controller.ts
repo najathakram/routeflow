@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Patch, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Patch, UseGuards } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
@@ -8,17 +8,24 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RestrictionsSettingsService } from "./restrictions-settings.service";
 import { UpdateRestrictionsSettingsDto } from "./update-restrictions-settings.dto";
 
-// Reads OPERATOR; the switch and the address policy are TENANT_ADMIN only.
+// Reads OPERATOR; the switch, the address policy and the readiness sweep are TENANT_ADMIN
+// (SUPER_ADMIN satisfies it via the RolesGuard hierarchy; OPERATOR gets 403).
 @Controller("settings/restrictions")
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class RestrictionsSettingsController {
   constructor(private readonly settings: RestrictionsSettingsService) {}
 
-  /** `?readiness=true` also runs the (customer-sweeping) enable-readiness probe. */
   @Get()
   @Roles(UserRole.OPERATOR)
-  get(@Query("readiness") readiness?: string) {
-    return this.settings.get(readiness === "true");
+  get() {
+    return this.settings.get();
+  }
+
+  /** Sweeps every customer, so it is admin-only and throttled per tenant (see the service). */
+  @Get("readiness")
+  @Roles(UserRole.TENANT_ADMIN)
+  readiness() {
+    return this.settings.readiness();
   }
 
   @Patch()
