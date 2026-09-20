@@ -6168,29 +6168,45 @@ cmds["self-test"] = () => {
           'writeFileSync(release, "go");',
         ].join("\n"),
       );
-      const releaseExit = join(tmp, "release-exit-code");
-      spawn(process.execPath, [stealerScript, lockDir, stolenMarker, releaseExit], {
-        stdio: "ignore",
-      });
-      const exitCodeProbe = spawnSync(
-        process.execPath,
-        [SCRIPT_PATH, "tier", "B6", "T2", "--why", "stolen-lock exit-code fixture"],
-        {
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            BUGS_ROOT: tmp,
-            BUGS_SELF_TEST: "1",
-            BUGS_TEST_HOLD_FILE: releaseExit, // held until the stealer has stolen — no timing window
-          },
-        },
-      );
-      const markerContent = existsSync(stolenMarker) ? readFileSync(stolenMarker, "utf8") : "";
+      // B588: the victim's OWN exit status is read from `spawnSync` (status + signal). A child that
+      // dies WITHOUT a status (status === null: killed by a signal — the OS/OOM under fleet load) has
+      // no exit code to assert on, so that attempt is discarded and the whole scenario re-run from a
+      // clean state, a bounded number of times. Nothing below is weakened: the assertions still
+      // demand a REAL, non-zero status, and "the stealer observed the owner stamp" is derived from
+      // state the stealer RECORDED (its marker file), never from the ordering of process exits.
+      let exitCodeProbe;
       let markerOwner = null;
-      try {
-        markerOwner = JSON.parse(markerContent);
-      } catch {
-        /* stealer never saw an owner.json in time — the checks below catch it */
+      let lockSurvived = false;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        rmSync(lockDir, { recursive: true, force: true });
+        const marker = `${stolenMarker}.${attempt}`;
+        const releaseExit = join(tmp, `release-exit-code.${attempt}`);
+        const stealer = spawn(process.execPath, [stealerScript, lockDir, marker, releaseExit], {
+          stdio: "ignore",
+        });
+        exitCodeProbe = spawnSync(
+          process.execPath,
+          [SCRIPT_PATH, "tier", "B6", "T2", "--why", "stolen-lock exit-code fixture"],
+          {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              BUGS_ROOT: tmp,
+              BUGS_SELF_TEST: "1",
+              BUGS_TEST_HOLD_FILE: releaseExit, // held until the stealer has stolen — no timing window
+            },
+          },
+        );
+        markerOwner = null;
+        try {
+          markerOwner = JSON.parse(readFileSync(marker, "utf8"));
+        } catch {
+          /* the stealer never saw an owner.json — the checks below catch it */
+        }
+        lockSurvived = existsSync(lockDir);
+        if (exitCodeProbe.status !== null) break; // a real exit status came back
+        stealer.kill(); // killed without a status: discard this attempt, re-run from clean state
+        writeFileSync(releaseExit, "go");
       }
       check(
         "stolen lock (exit code): the stealer really observed the victim's own owner stamp first",
@@ -6199,12 +6215,12 @@ cmds["self-test"] = () => {
       );
       check(
         "stolen lock (exit code): the successor's lockdir SURVIVES this writer's exit too",
-        existsSync(lockDir),
+        lockSurvived,
         true,
       );
       check(
         "stolen lock (exit code): the stolen-from writer's real process exit status is non-zero",
-        exitCodeProbe.status !== 0,
+        typeof exitCodeProbe.status === "number" && exitCodeProbe.status !== 0,
         true,
       );
       rmSync(lockDir, { recursive: true, force: true });
