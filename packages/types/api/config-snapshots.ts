@@ -39,6 +39,8 @@ export interface ConfigSnapshotPreview {
   ageDays: number;
   /** Older than the 90-day automatic-restore horizon: restoring it is a deliberate admin override. */
   beyondAutoRestoreHorizon: boolean;
+  /** The automatic-restore horizon in days (server constant — never mirror it in the UI). */
+  autoRestoreMaxAgeDays: number;
   /** The plan the tenant is on NOW — the plan the restore is judged against. */
   currentPlanKey: string;
   willRestore: { kind: ConfigSnapshotEntryKind; featureKey: string }[];

@@ -7,7 +7,7 @@ export class SetConfigSnapshotFlagDto {
   enabled!: boolean;
 
   /** Why — recorded in the audit row: this switches on unattended writes to tenant config. */
-  @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
+  @Transform(({ value }: { value: unknown }) => (typeof value === "string" ? value.trim() : value))
   @IsString()
   @MinLength(3)
   @MaxLength(2000)

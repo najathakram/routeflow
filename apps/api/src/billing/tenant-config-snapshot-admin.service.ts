@@ -13,6 +13,7 @@ import { CONFIG_SNAPSHOT_RESTORED_ACTION } from "./config-snapshot-audit.constan
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import type { RestorePlan, SkippedEntry } from "./tenant-config-snapshot";
 import {
+  AUTO_RESTORE_MAX_AGE_DAYS,
   TenantConfigSnapshotService,
   type RestoreResult,
   type SnapshotListItem,
@@ -27,6 +28,8 @@ export interface SnapshotPreviewView {
   ageDays: number;
   /** Older than the automatic-restore horizon (90 days): this restore is a deliberate override. */
   beyondAutoRestoreHorizon: boolean;
+  /** The horizon itself, so the UI states the real number instead of mirroring the constant. */
+  autoRestoreMaxAgeDays: number;
   /** The plan the tenant is on NOW — the plan restore is judged against. */
   currentPlanKey: string;
   willRestore: { kind: "config" | "override"; featureKey: string }[];
@@ -125,6 +128,7 @@ export class TenantConfigSnapshotAdminService {
       restoredAt: pre.restoredAt,
       ageDays: pre.ageDays,
       beyondAutoRestoreHorizon: pre.beyondAutoRestoreHorizon,
+      autoRestoreMaxAgeDays: AUTO_RESTORE_MAX_AGE_DAYS,
       currentPlanKey: planKey,
       ...flatten(pre.plan),
     };

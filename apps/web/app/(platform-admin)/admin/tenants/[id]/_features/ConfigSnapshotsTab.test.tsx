@@ -35,6 +35,7 @@ const PREVIEW: ConfigSnapshotPreview = {
   restoredAt: null,
   ageDays: 10,
   beyondAutoRestoreHorizon: false,
+  autoRestoreMaxAgeDays: 90,
   currentPlanKey: "SCALE",
   willRestore: [
     { kind: "config", featureKey: "routes_dispatch" },
@@ -79,7 +80,7 @@ describe("ConfigSnapshotsTab", () => {
     expect(screen.getByText(/→ SCALE/)).toBeTruthy();
     expect(screen.getByText("Superseded by a newer snapshot")).toBeTruthy();
     // Only the un-restored row offers the action.
-    expect(screen.getAllByRole("button", { name: "Restore now" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: /^Restore now/ })).toHaveLength(1);
   });
 
   it("explains the empty state", async () => {
@@ -96,14 +97,14 @@ describe("ConfigSnapshotsTab", () => {
   it("an unreadable snapshot is labelled and offers no restore", async () => {
     await renderTab([snap({ entries: null })]);
     expect(await screen.findByText("Unreadable")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Restore now" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Restore now/ })).toBeNull();
   });
 
   it("Restore now opens a PREVIEW first — restored / kept / skipped / unchanged — and writes nothing", async () => {
     mockPreview.mockResolvedValue(PREVIEW);
     await renderTab();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Restore now" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Restore now/ }));
 
     const dialog = await screen.findByRole("dialog");
     expect(mockPreview).toHaveBeenCalledWith(TENANT, "s1");
@@ -125,7 +126,7 @@ describe("ConfigSnapshotsTab", () => {
       report: { restored: 2, skipped: 1, keptNewer: 1, unchanged: 3 },
     });
     await renderTab();
-    fireEvent.click(await screen.findByRole("button", { name: "Restore now" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Restore now/ }));
     const dialog = await screen.findByRole("dialog");
     await within(dialog).findByText("Will be restored (2)");
 
@@ -142,7 +143,7 @@ describe("ConfigSnapshotsTab", () => {
   it("nothing to restore disables the confirm button", async () => {
     mockPreview.mockResolvedValue({ ...PREVIEW, willRestore: [], keptNewer: [], skipped: [] });
     await renderTab();
-    fireEvent.click(await screen.findByRole("button", { name: "Restore now" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Restore now/ }));
     const dialog = await screen.findByRole("dialog");
 
     await within(dialog).findByText(/Nothing to restore/);
@@ -155,7 +156,7 @@ describe("ConfigSnapshotsTab", () => {
     mockPreview.mockResolvedValue(PREVIEW);
     mockRestore.mockRejectedValue({ response: { status: 409 } });
     await renderTab();
-    fireEvent.click(await screen.findByRole("button", { name: "Restore now" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Restore now/ }));
     const dialog = await screen.findByRole("dialog");
     await within(dialog).findByText("Will be restored (2)");
 
@@ -168,7 +169,7 @@ describe("ConfigSnapshotsTab", () => {
   it("a failed preview shows the error and cannot be confirmed", async () => {
     mockPreview.mockRejectedValue({ response: { status: 422 } });
     await renderTab();
-    fireEvent.click(await screen.findByRole("button", { name: "Restore now" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Restore now/ }));
     const dialog = await screen.findByRole("dialog");
 
     expect((await within(dialog).findByRole("alert")).textContent).toMatch(/unreadable/);
@@ -206,24 +207,29 @@ describe("ConfigSnapshotsTab", () => {
   });
 
   it("the confirm dialog shows the age, and a snapshot beyond 90 days gets the deliberate-override warning", async () => {
-    mockPreview.mockResolvedValue({ ...PREVIEW, ageDays: 120, beyondAutoRestoreHorizon: true });
+    mockPreview.mockResolvedValue({
+      ...PREVIEW,
+      ageDays: 120,
+      beyondAutoRestoreHorizon: true,
+      autoRestoreMaxAgeDays: 45, // the warning states the SERVER's number, not a mirrored 90
+    });
     await renderTab([snap({ ageDays: 120 })]);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Restore now" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Restore now/ }));
     const dialog = await screen.findByRole("dialog");
 
     expect(await within(dialog).findByText(/120 days old/)).toBeTruthy();
-    expect(within(dialog).getByRole("note").textContent).toMatch(/older than 90 days/);
+    expect(within(dialog).getByRole("status").textContent).toMatch(/older than 45 days/);
   });
 
   it("a recent snapshot gets no warning", async () => {
     mockPreview.mockResolvedValue(PREVIEW);
     await renderTab();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Restore now" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Restore now/ }));
     const dialog = await screen.findByRole("dialog");
 
     await within(dialog).findByText(/10 days old/);
-    expect(within(dialog).queryByRole("note")).toBeNull();
+    expect(within(dialog).queryByRole("status")).toBeNull();
   });
 });

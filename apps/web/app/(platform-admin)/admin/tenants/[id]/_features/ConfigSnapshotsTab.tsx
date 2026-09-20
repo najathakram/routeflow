@@ -178,6 +178,7 @@ export function ConfigSnapshotsTab({ tenantId }: { tenantId: string }) {
                       {!r.restoredAt && r.entries && (
                         <button
                           onClick={() => openRestore(r)}
+                          aria-label={`Restore now — snapshot of ${fmt(r.takenAt)}`}
                           className="min-h-[36px] rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
                         >
                           Restore now
@@ -235,9 +236,10 @@ export function ConfigSnapshotsTab({ tenantId }: { tenantId: string }) {
               <b>{preview.currentPlanKey}</b>.
             </p>
             {preview.beyondAutoRestoreHorizon && (
-              <p role="note" className="rounded-lg bg-amber-900/30 px-3 py-2 text-amber-200">
-                This snapshot is older than 90 days, so an automatic restore would not have applied
-                it. You are restoring it deliberately — check the list below before confirming.
+              <p role="status" className="rounded-lg bg-amber-900/30 px-3 py-2 text-amber-200">
+                This snapshot is older than {preview.autoRestoreMaxAgeDays} days, so an automatic
+                restore would not have applied it. You are restoring it deliberately — check the
+                list below before confirming.
               </p>
             )}
             <PreviewSection title={`Will be restored (${preview.willRestore.length})`}>

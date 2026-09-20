@@ -176,6 +176,7 @@ describe("TenantConfigSnapshotAdminService (A2 step c)", () => {
     expect(view).toMatchObject({
       ageDays: 5,
       beyondAutoRestoreHorizon: false,
+      autoRestoreMaxAgeDays: 90,
       snapshotId: "s1",
       currentPlanKey: HIGH,
       willRestore: [
