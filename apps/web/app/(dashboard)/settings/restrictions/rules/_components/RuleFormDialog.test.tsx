@@ -108,4 +108,24 @@ describe("RuleFormDialog", () => {
     expect(post.mock.calls[0][1]).toMatchObject({ productId: "p9", jurisdiction: "FEDERAL" });
     expect(post.mock.calls[0][1]).not.toHaveProperty("categoryId");
   });
+
+  it("Escape returns focus to the button that opened it", async () => {
+    function Harness() {
+      const [on, setOn] = React.useState(false);
+      return (
+        <>
+          <button onClick={() => setOn(true)}>New rule</button>
+          {on && <RuleFormDialog open onClose={() => setOn(false)} />}
+        </>
+      );
+    }
+    renderWithProviders(<Harness />);
+    const opener = screen.getByRole("button", { name: "New rule" });
+    opener.focus();
+    fireEvent.click(opener);
+    await screen.findByRole("dialog", { name: "New selling restriction" });
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(opener).toHaveFocus());
+  });
 });

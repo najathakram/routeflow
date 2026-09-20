@@ -101,6 +101,9 @@ export function RuleFormDialog({ open, onClose }: { open: boolean; onClose: () =
   const [v, setV] = React.useState<RuleFormValues>(emptyRuleForm);
   const [productName, setProductName] = React.useState("");
   const [errors, setErrors] = React.useState<Errors>({});
+  // The page mounts this only while open, so Radix has no trigger to return focus to: remember
+  // who had focus and give it back on close (the BlockedLinesDialog pattern).
+  const returnFocusTo = React.useRef<HTMLElement | null>(null);
   const set = <K extends keyof RuleFormValues>(k: K, val: RuleFormValues[K]) =>
     setV((p) => ({ ...p, [k]: val }));
 
@@ -136,6 +139,18 @@ export function RuleFormDialog({ open, onClose }: { open: boolean; onClose: () =
       onClose={onClose}
       title="New selling restriction"
       description="Stop a category or product being sold where it is banned."
+      className="max-h-[92vh] overflow-y-auto"
+      onOpenAutoFocus={() => {
+        returnFocusTo.current = document.activeElement as HTMLElement | null;
+      }}
+      onCloseAutoFocus={(e) => {
+        const el = returnFocusTo.current;
+        returnFocusTo.current = null;
+        if (el && el.isConnected && el !== document.body) {
+          e.preventDefault();
+          el.focus();
+        }
+      }}
     >
       <form onSubmit={submit} noValidate className="space-y-4">
         <fieldset>
