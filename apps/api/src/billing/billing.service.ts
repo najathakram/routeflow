@@ -85,6 +85,18 @@ function scheduleLeftArmed(sub: {
   };
 }
 
+/**
+ * The checkout hook transaction's budget. OUR OWN number, not a Stripe-documented limit: Stripe's
+ * webhook docs (https://docs.stripe.com/webhooks) only say to "quickly return a successful status
+ * code (2xx) before any complex logic that could cause a timeout", list "(Timed out) ERR — the
+ * destination server took too long to respond" as a failed delivery, and retry failures for up to
+ * three days in live mode; they publish no seconds figure. So the budget is deliberately short
+ * (Prisma's 5 s default is too small for a restore's per-row round trips, an unbounded one risks
+ * the "timed out" failure): on timeout the transaction rolls back, the handler answers non-2xx and
+ * Stripe's automatic retry runs the checkout again — nothing is lost, only delayed.
+ */
+const CHECKOUT_TX_OPTIONS = { timeout: 6_000, maxWait: 2_000 } as const;
+
 @Injectable()
 export class BillingService {
   private readonly logger = new Logger(BillingService.name);
@@ -650,7 +662,13 @@ export class BillingService {
     // The signature proves the Stripe account, not that RouteFlow created this session, and the
     // hook now snapshots/RESTORES config: a session for a tenant we do not know, or whose customer
     // is not the one we stored for that tenant, is refused before anything is written.
-    let planKeyForCheckout = resolvedPlanKey;
+    // The STORED key is canonical (a legacy `metadata.plan` enum name -> its canonical key) only
+    // while the snapshot flag is on — the same string the snapshot/audit rows carry, so it never
+    // differs by cohort. Flag OFF the raw key is written exactly as before (byte-identical).
+    let planKeyForCheckout =
+      snapshotOn && resolvedPlanKey
+        ? (normalizePlanKey(resolvedPlanKey) ?? resolvedPlanKey)
+        : resolvedPlanKey;
     if (snapshotOn) {
       const storedCustomer = existingOverride?.stripeCustomerId;
       if (!tenantRow || (storedCustomer && storedCustomer !== session.customer)) {
@@ -727,7 +745,7 @@ export class BillingService {
               normalizePlanKey(existingOverride?.planKey) ?? planKeyFromEnum(tenantRow.plan),
             // Canonical key (metadata.plan can be a legacy enum name): the snapshot and audit rows
             // store this string, so it must not differ by cohort.
-            toPlanKey: normalizePlanKey(planKeyForCheckout) ?? planKeyForCheckout,
+            toPlanKey: planKeyForCheckout,
             toPlanVersionId: tenantRow.planVersionId ?? null,
             actor: { id: null, name: "system: stripe checkout" },
           }
@@ -815,9 +833,8 @@ export class BillingService {
             }
             return row;
           },
-          // Explicit budget (Prisma's default is 5 s): a restore issues one round-trip per
-          // config / grant row inside this transaction.
-          { timeout: 20_000, maxWait: 10_000 },
+          // Explicit, bounded budget — see CHECKOUT_TX_OPTIONS for why these numbers.
+          CHECKOUT_TX_OPTIONS,
         );
       } catch (err) {
         if (!(err instanceof ConflictException) && !isDeadlockOrSerialization(err)) {
