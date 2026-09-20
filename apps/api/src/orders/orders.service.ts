@@ -83,6 +83,7 @@ import { assertWithinCreditLimit, isCreditLimitCheckEnabled } from "./credit-lim
 import { SystemConfigService } from "../system-config/system-config.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
+import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
@@ -2954,6 +2955,15 @@ export class OrdersService implements OnApplicationBootstrap {
             (li.productId ? (catByProduct.get(li.productId) ?? null) : null),
         })),
         orderId: id,
+      });
+      // Lane R: the same "becomes a real sale" moment — a banned product refuses (409
+      // SELLING_RESTRICTED) BEFORE the status write / stock reservation. Drafts are created and
+      // edited without the check; this is the draft escape's second half.
+      await this.sellingRestrictions.assertLinesSellable({
+        tenantId: this.restrictionTenantId(user, order.tenantId),
+        customerId: order.customerId,
+        lines: items.flatMap((li) => (li.productId ? [{ productId: li.productId }] : [])),
+        channel: restrictionChannelForPrincipal(user), // judged at ENTRY time, like the license guard
       });
     }
 
