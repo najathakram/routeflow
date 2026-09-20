@@ -77,6 +77,18 @@
       ],
       "outputs": ["coverage/**"]
     },
+    // apps/web's `lib/order-line-display.parity.test.ts` imports apps/mobile/lib/order-line-display
+    // (and, through it, apps/mobile/lib/buyer-cart-logic + api/buyer) so the web and React-Native
+    // mirrors of the order-line display helpers cannot drift. apps/web's $TURBO_DEFAULT$ covers only
+    // apps/web, so without these entries a mobile-only edit replays a CACHED green for the very
+    // guard meant to catch it (dry-run: 0 of 671 inputs from apps/mobile). Add an entry here
+    // whenever a web spec reaches into apps/mobile. (A `@routeflow/api#test` override is the one
+    // that package-shape.spec.ts forbids; this is a different workspace.)
+    "@routeflow/web#test": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/apps/mobile/lib/**", "!**/node_modules/**"],
+      "outputs": ["coverage/**"]
+    },
     "test:e2e": {
       "dependsOn": ["^build"],
       "inputs": ["test/**", "**/*.e2e-spec.ts"],
@@ -129,6 +141,13 @@
     // dependents cannot typecheck until its dist/*.d.ts exists.
     "check-types": {
       "dependsOn": ["^build", "^check-types"],
+      "outputs": []
+    },
+    // apps/web's typecheck walks the apps/mobile files its parity test imports (see the
+    // `@routeflow/web#test` note above), so those must be hashed into ITS key too.
+    "@routeflow/web#check-types": {
+      "dependsOn": ["^build", "^check-types"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/apps/mobile/lib/**", "!**/node_modules/**"],
       "outputs": []
     },
     "clean": {
