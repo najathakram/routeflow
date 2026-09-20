@@ -184,7 +184,7 @@ export default function AdminCreateTenantPage() {
           {/* Slug */}
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium text-slate-300">
-              Slug <span className="text-slate-500 font-normal">(URL identifier, lowercase)</span>
+              Slug <span className="text-slate-400 font-normal">(URL identifier, lowercase)</span>
             </label>
             <input
               aria-label="Slug"
@@ -239,7 +239,7 @@ export default function AdminCreateTenantPage() {
           {/* Admin Password */}
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium text-slate-300">
-              Admin Password <span className="font-normal text-slate-500">(optional)</span>
+              Admin Password <span className="font-normal text-slate-400">(optional)</span>
             </label>
             <div className="relative">
               <input
@@ -289,7 +289,7 @@ export default function AdminCreateTenantPage() {
                 )}
               </button>
             </div>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-slate-400">
               If left blank, a secure temporary password is generated and shown once after creation.
             </p>
           </div>

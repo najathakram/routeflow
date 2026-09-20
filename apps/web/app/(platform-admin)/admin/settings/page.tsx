@@ -203,7 +203,7 @@ export default function AdminSettingsPage() {
 
         {loading ? (
           <div className="flex items-center justify-center py-20">
-            <RefreshCw className="h-6 w-6 animate-spin text-slate-500" />
+            <RefreshCw className="h-6 w-6 animate-spin text-slate-400" />
           </div>
         ) : (
           <div className="grid items-start gap-6 lg:grid-cols-[1.6fr_1fr]">
@@ -214,7 +214,7 @@ export default function AdminSettingsPage() {
                   <div>
                     <p className="text-sm font-medium text-slate-200">API Key Status</p>
                     {config?.keyPreview && (
-                      <p className="mt-0.5 font-mono text-xs text-slate-500">{config.keyPreview}</p>
+                      <p className="mt-0.5 font-mono text-xs text-slate-400">{config.keyPreview}</p>
                     )}
                   </div>
                   <StatusBadge
@@ -254,12 +254,12 @@ export default function AdminSettingsPage() {
                     type="button"
                     aria-label={showKey ? "Hide API key" : "Show API key"}
                     onClick={() => setShowKey((v) => !v)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-300"
                   >
                     {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
-                <p className="mt-2 text-xs text-slate-500">
+                <p className="mt-2 text-xs text-slate-400">
                   Leave blank to keep the current key. The key is stored securely and only a preview
                   is shown.
                 </p>
@@ -346,7 +346,7 @@ export default function AdminSettingsPage() {
                     );
                   })}
                 </div>
-                <p className="mt-3 text-xs text-slate-500">
+                <p className="mt-3 text-xs text-slate-400">
                   Tenants can override this with their own model selection if the feature is
                   enabled.
                 </p>
@@ -366,9 +366,9 @@ export default function AdminSettingsPage() {
                     step={256}
                     className="w-40 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                   />
-                  <span className="text-sm text-slate-500">tokens (256 – 32,768)</span>
+                  <span className="text-sm text-slate-400">tokens (256 – 32,768)</span>
                 </div>
-                <p className="mt-2 text-xs text-slate-500">
+                <p className="mt-2 text-xs text-slate-400">
                   Maximum number of tokens Claude will generate per response. 4,096 is a sensible
                   default.
                 </p>
@@ -412,35 +412,35 @@ export default function AdminSettingsPage() {
                 {usage && usage.totalCalls > 0 ? (
                   <dl className="flex flex-col gap-2.5 text-sm">
                     <div className="flex items-center justify-between">
-                      <dt className="text-slate-500">OCR bill scans</dt>
+                      <dt className="text-slate-400">OCR bill scans</dt>
                       <dd className="font-mono text-slate-200">
                         {usage.ocrScans.toLocaleString()}
                       </dd>
                     </div>
                     <div className="flex items-center justify-between">
-                      <dt className="text-slate-500">Forecast runs</dt>
+                      <dt className="text-slate-400">Forecast runs</dt>
                       <dd className="font-mono text-slate-200">
                         {usage.forecastRuns.toLocaleString()}
                       </dd>
                     </div>
                     <div className="flex items-center justify-between">
-                      <dt className="text-slate-500">Route insights</dt>
+                      <dt className="text-slate-400">Route insights</dt>
                       <dd className="font-mono text-slate-200">
                         {(usage.insightRuns ?? 0).toLocaleString()}
                       </dd>
                     </div>
                     <div className="flex items-center justify-between">
-                      <dt className="text-slate-500">Tokens in / out</dt>
+                      <dt className="text-slate-400">Tokens in / out</dt>
                       <dd className="font-mono text-slate-200">
                         {compact(usage.tokensIn)} / {compact(usage.tokensOut)}
                       </dd>
                     </div>
                     <div className="flex items-center justify-between">
-                      <dt className="text-slate-500">Est. spend</dt>
+                      <dt className="text-slate-400">Est. spend</dt>
                       <dd className="font-mono text-slate-200">${usage.estSpendUsd.toFixed(2)}</dd>
                     </div>
                     <div className="flex items-center justify-between">
-                      <dt className="text-slate-500">Error rate</dt>
+                      <dt className="text-slate-400">Error rate</dt>
                       <dd
                         className={`font-mono ${usage.errorRate > 2 ? "text-red-400" : "text-emerald-400"}`}
                       >
@@ -450,8 +450,8 @@ export default function AdminSettingsPage() {
                   </dl>
                 ) : (
                   <div className="py-6 text-center">
-                    <p className="text-sm text-slate-500">No AI usage recorded yet.</p>
-                    <p className="mt-1 text-xs text-slate-600">
+                    <p className="text-sm text-slate-400">No AI usage recorded yet.</p>
+                    <p className="mt-1 text-xs text-slate-400">
                       Usage accrues as OCR scanning and forecasting run.
                     </p>
                   </div>

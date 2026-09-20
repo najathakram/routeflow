@@ -156,9 +156,9 @@ export default function AuditLogsPage() {
       {/* Filters */}
       <div className="mb-4 rounded-xl bg-slate-800 p-4 ring-1 ring-white/5">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Filters</h2>
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Filters</h2>
           {hasFilters && (
-            <button onClick={clearFilters} className="text-xs text-slate-500 hover:text-slate-300">
+            <button onClick={clearFilters} className="text-xs text-slate-400 hover:text-slate-300">
               Clear all
             </button>
           )}
@@ -211,7 +211,7 @@ export default function AuditLogsPage() {
             className="h-9 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none"
           />
           <div className="flex items-center gap-2">
-            <label className="text-xs text-slate-500 shrink-0">From</label>
+            <label className="text-xs text-slate-400 shrink-0">From</label>
             <input
               aria-label="From date"
               type="date"
@@ -221,7 +221,7 @@ export default function AuditLogsPage() {
             />
           </div>
           <div className="flex items-center gap-2">
-            <label className="text-xs text-slate-500 shrink-0">To</label>
+            <label className="text-xs text-slate-400 shrink-0">To</label>
             <input
               aria-label="To date"
               type="date"
@@ -231,10 +231,10 @@ export default function AuditLogsPage() {
             />
           </div>
         </div>
-        {data && <p className="mt-2 text-xs text-slate-500">{data.meta.total} total entries</p>}
+        {data && <p className="mt-2 text-xs text-slate-400">{data.meta.total} total entries</p>}
       </div>
 
-      {loading && <div className="py-12 text-center text-slate-500">Loading audit logs...</div>}
+      {loading && <div className="py-12 text-center text-slate-400">Loading audit logs...</div>}
 
       {error && (
         <div className="mb-4 rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700">
@@ -253,7 +253,7 @@ export default function AuditLogsPage() {
             >
               <table className="w-full text-xs">
                 <thead>
-                  <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
+                  <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-400">
                     <th className="px-3 py-3 text-left">Tenant</th>
                     <th className="px-3 py-3 text-left">User</th>
                     <th className="px-3 py-3 text-left">Action</th>
@@ -272,12 +272,12 @@ export default function AuditLogsPage() {
                             <div className="text-slate-200">
                               {log.tenant.name || log.tenant.slug}
                             </div>
-                            <div className="font-mono text-[10px] text-slate-500">
+                            <div className="font-mono text-[10px] text-slate-400">
                               {log.tenant.slug}
                             </div>
                           </div>
                         ) : log.tenantId ? (
-                          <span className="font-mono text-slate-500">
+                          <span className="font-mono text-slate-400">
                             {log.tenantId.slice(0, 8)}…
                           </span>
                         ) : (
@@ -295,7 +295,7 @@ export default function AuditLogsPage() {
                             )}
                           </span>
                         ) : log.userId ? (
-                          <span className="font-mono text-slate-500">
+                          <span className="font-mono text-slate-400">
                             {log.userId.slice(0, 8)}…
                           </span>
                         ) : (
@@ -306,18 +306,18 @@ export default function AuditLogsPage() {
                         {log.actionLabel ?? log.action}
                       </td>
                       <td className="px-3 py-2 text-slate-400">{log.entityType}</td>
-                      <td className="px-3 py-2 font-mono text-slate-500">
+                      <td className="px-3 py-2 font-mono text-slate-400">
                         {log.entityId ? log.entityId.slice(0, 8) + "..." : "—"}
                       </td>
-                      <td className="px-3 py-2 text-slate-500">
+                      <td className="px-3 py-2 text-slate-400">
                         {new Date(log.createdAt).toLocaleString()}
                       </td>
-                      <td className="px-3 py-2 text-slate-500">{log.ip ?? "—"}</td>
+                      <td className="px-3 py-2 text-slate-400">{log.ip ?? "—"}</td>
                     </tr>
                   ))}
                   {data.data.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="px-4 py-10 text-center text-slate-500">
+                      <td colSpan={7} className="px-4 py-10 text-center text-slate-400">
                         No audit log entries found.
                       </td>
                     </tr>
@@ -336,7 +336,7 @@ export default function AuditLogsPage() {
               >
                 Prev
               </button>
-              <span className="text-sm text-slate-500">
+              <span className="text-sm text-slate-400">
                 Page {data.meta.page} of {data.meta.pages}
               </span>
               <button
