@@ -1,5 +1,6 @@
 import { FEATURE_REGISTRY } from "./feature-registry";
 import { PLAN_KEYS } from "./plan-catalog.constants";
+import { RestoreBudgetExceededError } from "./tenant-config-snapshot.service";
 import {
   HOOK_TX_OPTIONS,
   PlanTransitionConfigService,
@@ -244,6 +245,19 @@ describe("PlanTransitionConfigService (A2 step b)", () => {
       raw.mockResolvedValueOnce(1).mockRejectedValueOnce(new Error("rollback failed"));
 
       await expect(runTransition(svc, up)).resolves.toEqual({ action: "restore", restore: null });
+    });
+
+    it("a restore abandoned for exceeding its budget is rolled back to the savepoint and the upgrade carries on", async () => {
+      const { svc, snapshots } = build(true);
+      snapshots.restoreLatest.mockRejectedValueOnce(new RestoreBudgetExceededError("4 s"));
+
+      const out = await runTransition(svc, up);
+
+      expect(out).toEqual({ action: "restore", restore: null });
+      expect(sqlOf()).toEqual([
+        "SAVEPOINT config_snapshot_restore",
+        "ROLLBACK TO SAVEPOINT config_snapshot_restore",
+      ]);
     });
 
     it("a FAILED AUDIT write is non-fatal too — and rolls the restore back with it (no audit row, no restore)", async () => {

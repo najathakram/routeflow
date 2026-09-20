@@ -34,6 +34,9 @@ function QueryProviders({ children }: { children: React.ReactNode }) {
             "LINE_ALREADY_DELIVERED",
             "CHANGE_WINDOW_CLOSED",
             "EDIT_WINDOW_OPEN",
+            // Selling restrictions: the order UIs show a blocked-lines dialog (the lines and why),
+            // so the generic toast would only say "Request failed with status code 409".
+            "SELLING_RESTRICTED",
             // RO-1: a blocked write against a READ_ONLY tenant — handled explicitly
             // below with its own toast + CTA, never the bare guard message.
             "READ_ONLY",
