@@ -52,6 +52,7 @@ import { ProductCreateModal } from "./ProductCreateModal";
 import { displayProductName } from "@/lib/product-display";
 import { fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { roundMoney } from "@routeflow/pricing";
+import { RAISED_PO_NOTE, raisePoBlocker } from "@/lib/raise-po";
 import { apiClient } from "@/lib/api-client";
 import { SELECTABLE_PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "@/lib/payment-methods";
 
@@ -180,6 +181,8 @@ interface InvoiceGroup {
   billDate: string;
   dueDate: string;
   createMode: CreateMode;
+  /** Bill mode: also raise a draft PO from the lines, so the PO (not the bill) moves the stock. */
+  raisePo: boolean;
   expenseCategoryId: string;
   expenseDescription: string;
   expenseDate: string;
@@ -227,6 +230,7 @@ const makeInvoice = (kind: "pdf" | "images", files: File[]): InvoiceGroup => ({
   billDate: new Date().toISOString().slice(0, 10),
   dueDate: "",
   createMode: "bill",
+  raisePo: false,
   expenseCategoryId: "",
   expenseDescription: "",
   expenseDate: new Date().toISOString().slice(0, 10),
@@ -361,6 +365,47 @@ interface Props {
   open: boolean;
   onClose: () => void;
   onCreated?: () => void;
+}
+
+/**
+ * Bill mode's "Raise a purchase order" switch. A blocked switch stays visible with its reason — hiding it
+ * would leave the operator wondering where the option went.
+ */
+function RaisePoToggle({
+  checked,
+  blocker,
+  onChange,
+}: {
+  checked: boolean;
+  blocker: string | null;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <div className="col-span-2 rounded-lg border border-surface-border bg-surface-bg px-3 py-2">
+      <label
+        className={cn(
+          "flex items-start gap-2 text-sm text-navy",
+          blocker ? "cursor-not-allowed opacity-60" : "cursor-pointer",
+        )}
+      >
+        <input
+          type="checkbox"
+          className="mt-0.5 h-4 w-4"
+          checked={checked && !blocker}
+          disabled={!!blocker}
+          onChange={(e) => onChange(e.target.checked)}
+          data-testid="raise-po-toggle"
+        />
+        <span>
+          <span className="font-medium">Raise a purchase order from these lines</span>
+          <span className="block text-xs text-navy/70">
+            {blocker ??
+              "The bill records the money; stock is added when you receive the purchase order."}
+          </span>
+        </span>
+      </label>
+    </div>
+  );
 }
 
 export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
@@ -1301,6 +1346,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
       let billId = inv.createdBillId;
       if (wantsBill && !billId) {
         const billItems = buildBillItems(inv);
+        const raisesPo = inv.raisePo && !raisePoBlocker(inv.supplierId, billItems);
         const scannedTax = inv.scanResult?.tax ?? 0;
         const scannedSubtotal = inv.scanResult?.subtotal ?? 0;
         const bill = await createBill.mutateAsync({
@@ -1313,6 +1359,9 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
           notes: inv.invoiceNumber ? `Supplier invoice #${inv.invoiceNumber}` : undefined,
           supplierInvoiceNumber: inv.invoiceNumber.trim() || undefined,
           allowDuplicate: inv.allowDuplicate || undefined,
+          // The API turns the mapped lines into a draft PO linked to this bill; a switch left on
+          // while a line went unmatched is ignored rather than refused.
+          createPurchaseOrder: raisesPo ? true : undefined,
           // Sales tax is owed too; the server folds it into totalOwed (line
           // items only carry the pre-tax unit costs).
           taxAmount: scannedTax > 0 ? roundMoney(scannedTax) : undefined,
@@ -1334,9 +1383,11 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
             // operator explicitly confirmed up front; without them it's a no-op.
             await receiveBill.mutateAsync({ id: billId, acknowledgeUnlinked: true });
             notes.push(
-              matchedItems > 0
-                ? `Vendor bill received — inventory updated for ${matchedItems} item${matchedItems === 1 ? "" : "s"}`
-                : "Vendor bill received",
+              raisesPo
+                ? `Vendor bill received. ${RAISED_PO_NOTE}`
+                : matchedItems > 0
+                  ? `Vendor bill received — inventory updated for ${matchedItems} item${matchedItems === 1 ? "" : "s"}`
+                  : "Vendor bill received",
             );
           } catch (receiveErr: unknown) {
             // Bill was created but receive failed — surface the issue but don't lose the bill
@@ -2027,6 +2078,14 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                 className="w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                               />
                             </div>
+                            <RaisePoToggle
+                              checked={!!active?.raisePo}
+                              blocker={raisePoBlocker(
+                                supplierId,
+                                active ? buildBillItems(active) : [],
+                              )}
+                              onChange={(v) => updateActive({ raisePo: v })}
+                            />
                           </div>
                         ) : (
                           <div>
