@@ -2074,6 +2074,22 @@ function acquireLock(p, name, guarded) {
     }
     const owner = readLockOwner(p);
     const alive = owner ? pidAlive(owner.pid, owner.bootAt) : null;
+    // TEST SEAM (B598): the holder finishes and releases in the gap between the owner read above
+    // and the break decision below — the window a descheduled waiter on a loaded host really hits.
+    if (
+      process.env.BUGS_SELF_TEST === "1" &&
+      process.env.BUGS_TEST_RELEASE_AFTER_OWNER_READ === "1"
+    )
+      rmSync(p, { recursive: true, force: true });
+    // TEST SEAM (B588): announce "I am now blocked behind a LIVE holder" exactly once, so a test
+    // can release the holder only after the waiter is provably in the spin loop.
+    if (process.env.BUGS_SELF_TEST === "1" && process.env.BUGS_TEST_WAIT_MARKER && alive === true) {
+      try {
+        writeFileSync(process.env.BUGS_TEST_WAIT_MARKER, p, { flag: "wx" });
+      } catch {
+        /* already announced */
+      }
+    }
     const bootMismatch =
       alive === false &&
       typeof owner?.bootAt === "number" &&
@@ -2093,6 +2109,14 @@ function acquireLock(p, name, guarded) {
       breakWhy =
         `LAST RESORT: it is ${Math.round(age / 1000)}s old and carries no readable owner.json, ` +
         `so its holder cannot be verified either way`;
+    // B598: `owner` was read BEFORE the pid probe, and a loaded host can deschedule this waiter
+    // between the two for as long as the holder needs to finish, release and exit. The stale read
+    // then convicts a lock that is already gone — or that a third writer has just taken, which the
+    // rm below would rob. Break only a lockdir that STILL carries the very owner judged dead.
+    if (breakWhy) {
+      const now = readLockOwner(p);
+      if (owner ? now?.token !== owner.token : now !== null) breakWhy = null;
+    }
     if (breakWhy) {
       console.error(
         `bugs: breaking the lock on ${name} — ${breakWhy}; ` +
@@ -2240,6 +2264,15 @@ function upsertLedgerRowLocked(batch, row, opts = {}) {
       ? Math.min(Number(process.env.BUGS_TEST_STALL_MS) || 0, 30000)
       : 0;
   if (stallMs > 0) sleepSync(stallMs);
+  // TEST SEAM (B588): the EVENT-DRIVEN replacement for a fixed stall. Blocks inside the critical
+  // section until the named file exists, so a test drives lock state directly (steal, wait,
+  // release) instead of hoping a wall-clock window survives host load. Same gate as the stall,
+  // and capped so a test that never releases cannot wedge a run.
+  const holdFile = process.env.BUGS_SELF_TEST === "1" ? process.env.BUGS_TEST_HOLD_FILE : "";
+  if (holdFile) {
+    const cap = Date.now() + 120000;
+    while (!existsSync(holdFile) && Date.now() < cap) sleepSync(10);
+  }
   const i = rows.findIndex((r) => r.id === row.id);
   // `mustBeNew` makes an id COLLISION unrepresentable rather than merely
   // unlikely: `file` allocates a fresh id and must never silently take the
@@ -3151,6 +3184,67 @@ const capture = (fn) => {
   }
   return buf;
 };
+
+// B588 — a two-process race driven by EVENTS, never by wall-clock windows. `first` takes the
+// catalogue lock and HOLDS it (BUGS_TEST_HOLD_FILE) until released; the harness waits for that hold
+// to be visible on disk (owner.json), starts `second`, waits until `second` has announced it is
+// blocked behind a LIVE holder (BUGS_TEST_WAIT_MARKER), and only then releases `first`. So the
+// overlap under test is guaranteed to have happened however loaded the host is; load can only make
+// it slower. Returns the `node <orchestrator> …` argv string and the marker path (overlap proof).
+function gatedRaceArgv(tmp, first, second) {
+  const orchestrator = join(tmp, "gated-race.mjs");
+  const specFile = join(tmp, "gated-race.json");
+  const marker = join(tmp, "race-waiting.marker");
+  writeFileSync(specFile, JSON.stringify({ first, second }));
+  writeFileSync(
+    orchestrator,
+    [
+      'import { spawn } from "node:child_process";',
+      'import { existsSync, readFileSync, writeFileSync } from "node:fs";',
+      "const [script, root, ownerFile, marker, release, specFile] = process.argv.slice(2);",
+      'const { first, second } = JSON.parse(readFileSync(specFile, "utf8"));',
+      "const sleep = (ms) => new Promise((r) => setTimeout(r, ms));",
+      "const until = async (fn) => {",
+      "  const end = Date.now() + 60000;",
+      "  while (!fn() && Date.now() < end) await sleep(10);",
+      "  return fn();",
+      "};",
+      "const run = (job, env) =>",
+      "  new Promise((res) => {",
+      "    const p = spawn(process.execPath, [script, ...job.args], {",
+      "      env: { ...process.env, BUGS_ROOT: root, BUGS_SELF_TEST: '1', ...job.env, ...env },",
+      '      stdio: ["ignore", "pipe", "pipe"],',
+      "    });",
+      '    let out = "";',
+      '    p.stdout.on("data", (d) => (out += d));',
+      '    p.stderr.on("data", (d) => (out += d));',
+      '    p.on("close", (code) => res({ code, out }));',
+      "  });",
+      "const one = run(first, { BUGS_TEST_HOLD_FILE: release });",
+      "if (!(await until(() => existsSync(ownerFile)))) console.error('gated-race: the first process never took the lock');",
+      "const two = run(second, { BUGS_TEST_WAIT_MARKER: marker });",
+      "if (!(await until(() => existsSync(marker)))) console.error('gated-race: the second process was never blocked behind the first');",
+      'writeFileSync(release, "go"); // always release, even if a wait above timed out',
+      "console.log(JSON.stringify(await Promise.all([one, two])));",
+    ].join("\n"),
+  );
+  const argv = [
+    orchestrator,
+    SCRIPT_PATH,
+    tmp,
+    ownerPath(`${CATALOGUE()}.lock`),
+    marker,
+    join(tmp, "race-release"),
+    specFile,
+  ]
+    .map((a) => JSON.stringify(a))
+    .join(" ");
+  return { argv, marker, lockPath: `${CATALOGUE()}.lock` };
+}
+
+// Which lock the waiter announced it was blocked behind (null = it never blocked).
+const blockedBehind = (race) =>
+  existsSync(race.marker) ? readFileSync(race.marker, "utf8") : null;
 
 cmds["self-test"] = () => {
   // Git EXPORTS repo-scoped variables (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE,
@@ -5851,7 +5945,11 @@ cmds["self-test"] = () => {
         try {
           return {
             code: 0,
-            out: execSync(`node ${argv}`, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }),
+            out: execSync(`node ${argv}`, {
+              encoding: "utf8",
+              stdio: ["ignore", "pipe", "pipe"],
+              timeout: 240000,
+            }),
           };
         } catch (e) {
           return { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
@@ -5910,10 +6008,11 @@ cmds["self-test"] = () => {
         slowKids.map((c) => c.code),
         [0, 0],
       );
+      // Compared as the offending line (null = none) so a red run names WHY the lock was broken.
       check(
         "live holder: a lock held past the OLD 5s threshold is NOT broken",
-        /breaking the lock on F01\.jsonl/.test(slow.out),
-        false,
+        slow.out.split(/\r?\n/).find((l) => /breaking the lock on F01\.jsonl/.test(l)) ?? null,
+        null,
       );
       const afterSlow = new Map(readShard("F01").rows.map((r) => [r.id, r]));
       check(
@@ -5930,17 +6029,27 @@ cmds["self-test"] = () => {
       // Wait for a real child to be INSIDE its critical section. `owner.json`
       // is written immediately after the mkdir that wins the lock, so its
       // existence — not the lockdir's — is what proves the hold is established.
+      // B588: these wait on EVENTS (owner.json appearing, the pid exiting) with a generous budget —
+      // they do not race a wall-clock window, so host load can only make them slower, never red.
       const awaitHold = () => {
-        for (let i = 0; i < 400 && !existsSync(ownerPath(lockDir)); i++) sleepSync(25);
+        for (let i = 0; i < 2400 && !existsSync(ownerPath(lockDir)); i++) sleepSync(25);
         return existsSync(ownerPath(lockDir));
       };
-      const awaitExit = (child, ms = 15000) => {
+      const awaitExit = (child, ms = 60000) => {
         for (let i = 0; i * 25 < ms && pidAlive(child.pid) !== false; i++) sleepSync(25);
         return pidAlive(child.pid) === false;
       };
-      const holder = (id, stall, stdio) =>
+      // `holdFile` (B588): the holder blocks in its critical section until that file exists; without
+      // it the legacy fixed `stall` (ms) applies (still used where only "held for a while" matters).
+      const holder = (id, stall, stdio, holdFile) =>
         spawn(process.execPath, [SCRIPT_PATH, ...proveArgs(id, 700 + Number(id.slice(1)))], {
-          env: { ...process.env, BUGS_ROOT: tmp, BUGS_SELF_TEST: "1", BUGS_TEST_STALL_MS: stall },
+          env: {
+            ...process.env,
+            BUGS_ROOT: tmp,
+            BUGS_SELF_TEST: "1",
+            BUGS_TEST_STALL_MS: stall,
+            ...(holdFile ? { BUGS_TEST_HOLD_FILE: holdFile } : {}),
+          },
           stdio,
         });
 
@@ -5982,7 +6091,7 @@ cmds["self-test"] = () => {
       // the 5s age threshold it was waiting for, so it exited 1 blaming
       // "another bugs.mjs process is writing F01.jsonl" when nothing was
       // running at all.
-      const victim = holder("B5", "20000", "ignore");
+      const victim = holder("B5", "0", "ignore", join(tmp, "never-released-dead-holder"));
       const heldByVictim = awaitHold();
       victim.kill("SIGKILL");
       const victimGone = awaitExit(victim, 15000);
@@ -6005,6 +6114,37 @@ cmds["self-test"] = () => {
         "T2",
       );
 
+      // (b2) B598: a waiter reads owner.json, is descheduled, and the holder finishes + releases
+      // before the waiter's break decision. The stale read must NOT convict the (already gone)
+      // lock — no "breaking the lock" line, and the waiter simply takes the free lock. Driven
+      // deterministically: a dead owner's lockdir, and a seam that releases it right after the
+      // waiter's owner read (exactly what a loaded host does by chance).
+      const deadPid = spawnSync(process.execPath, ["-e", ""]).pid;
+      mkdirSync(lockDir);
+      writeFileSync(
+        join(lockDir, "owner.json"),
+        JSON.stringify({ pid: deadPid, token: "t-dead", at: Date.now(), bootAt: bootStamp() }),
+      );
+      process.env.BUGS_TEST_RELEASE_AFTER_OWNER_READ = "1";
+      let released;
+      try {
+        released = runCli(["tier", "B4", "T2", "--why", "released-under-the-waiter fixture"], tmp);
+      } finally {
+        delete process.env.BUGS_TEST_RELEASE_AFTER_OWNER_READ;
+      }
+      check("release race: the waiter exited 0", released.code, 0);
+      check(
+        "release race: a lock released under the waiter is NOT reported as broken",
+        released.out.split(/\r?\n/).find((l) => /breaking the lock on F01\.jsonl/.test(l)) ?? null,
+        null,
+      );
+      check(
+        "release race: the waiter's own write landed",
+        readShard("F01").rows.find((r) => r.id === "B4")?.tier,
+        "T2",
+      );
+      check("release race: the lock directory is released afterwards", existsSync(lockDir), false);
+
       // (c) The other half of the theft, from the RELEASE side: a process whose
       // lock was broken used to rm the lock PATH unconditionally on the way
       // out, deleting the lock its SUCCESSOR now held and admitting a third
@@ -6014,12 +6154,16 @@ cmds["self-test"] = () => {
       check("stolen lock: the fixture starts with no lock held", existsSync(lockDir), false);
       const errFile = join(tmp, "stolen.err");
       const errFd = openSync(errFile, "w");
-      const stolen = holder("B6", "3000", ["ignore", "ignore", errFd]);
+      const releaseStolen = join(tmp, "release-stolen");
+      const stolen = holder("B6", "0", ["ignore", "ignore", errFd], releaseStolen);
       const heldByStolen = awaitHold();
       writeFileSync(
         ownerPath(lockDir),
         JSON.stringify({ pid: process.pid, token: "a-successor-token", at: Date.now() }),
       );
+      // Only NOW may the victim leave its critical section — the theft is guaranteed to have
+      // happened while it still held the lock, however slow this host is.
+      writeFileSync(releaseStolen, "go");
       awaitExit(stolen);
       closeSync(errFd);
       const stolenErr = readFileSync(errFile, "utf8");
@@ -6054,10 +6198,11 @@ cmds["self-test"] = () => {
         stealerScript,
         [
           'import { existsSync, readFileSync, writeFileSync } from "node:fs";',
-          "const [dir, marker] = process.argv.slice(2);",
+          "const [dir, marker, release] = process.argv.slice(2);",
           'const ownerFile = dir + "/owner.json";',
-          "const deadline = Date.now() + 10000;",
-          "while (!existsSync(ownerFile) && Date.now() < deadline) {}",
+          "const deadline = Date.now() + 120000;",
+          "while (!existsSync(ownerFile) && Date.now() < deadline)",
+          "  await new Promise((r) => setTimeout(r, 10));",
           'const original = existsSync(ownerFile) ? readFileSync(ownerFile, "utf8") : "";',
           "writeFileSync(marker, original);",
           "if (original) {",
@@ -6066,23 +6211,49 @@ cmds["self-test"] = () => {
           '    JSON.stringify({ pid: process.pid, token: "a-second-successor-token", at: Date.now() }),',
           "  );",
           "}",
+          "// ALWAYS release the victim (even if no owner was ever seen) so it never waits out its cap.",
+          'writeFileSync(release, "go");',
         ].join("\n"),
       );
-      spawn(process.execPath, [stealerScript, lockDir, stolenMarker], { stdio: "ignore" });
-      const exitCodeProbe = spawnSync(
-        process.execPath,
-        [SCRIPT_PATH, "tier", "B6", "T2", "--why", "stolen-lock exit-code fixture"],
-        {
-          encoding: "utf8",
-          env: { ...process.env, BUGS_ROOT: tmp, BUGS_SELF_TEST: "1", BUGS_TEST_STALL_MS: "3000" },
-        },
-      );
-      const markerContent = existsSync(stolenMarker) ? readFileSync(stolenMarker, "utf8") : "";
+      // B588: the victim's OWN exit status is read from `spawnSync` (status + signal). A child that
+      // dies WITHOUT a status (status === null: killed by a signal — the OS/OOM under fleet load) has
+      // no exit code to assert on, so that attempt is discarded and the whole scenario re-run from a
+      // clean state, a bounded number of times. Nothing below is weakened: the assertions still
+      // demand a REAL, non-zero status, and "the stealer observed the owner stamp" is derived from
+      // state the stealer RECORDED (its marker file), never from the ordering of process exits.
+      let exitCodeProbe;
       let markerOwner = null;
-      try {
-        markerOwner = JSON.parse(markerContent);
-      } catch {
-        /* stealer never saw an owner.json in time — the checks below catch it */
+      let lockSurvived = false;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        rmSync(lockDir, { recursive: true, force: true });
+        const marker = `${stolenMarker}.${attempt}`;
+        const releaseExit = join(tmp, `release-exit-code.${attempt}`);
+        const stealer = spawn(process.execPath, [stealerScript, lockDir, marker, releaseExit], {
+          stdio: "ignore",
+        });
+        exitCodeProbe = spawnSync(
+          process.execPath,
+          [SCRIPT_PATH, "tier", "B6", "T2", "--why", "stolen-lock exit-code fixture"],
+          {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              BUGS_ROOT: tmp,
+              BUGS_SELF_TEST: "1",
+              BUGS_TEST_HOLD_FILE: releaseExit, // held until the stealer has stolen — no timing window
+            },
+          },
+        );
+        markerOwner = null;
+        try {
+          markerOwner = JSON.parse(readFileSync(marker, "utf8"));
+        } catch {
+          /* the stealer never saw an owner.json — the checks below catch it */
+        }
+        lockSurvived = existsSync(lockDir);
+        if (exitCodeProbe.status !== null) break; // a real exit status came back
+        stealer.kill(); // killed without a status: discard this attempt, re-run from clean state
+        writeFileSync(releaseExit, "go");
       }
       check(
         "stolen lock (exit code): the stealer really observed the victim's own owner stamp first",
@@ -6091,12 +6262,12 @@ cmds["self-test"] = () => {
       );
       check(
         "stolen lock (exit code): the successor's lockdir SURVIVES this writer's exit too",
-        existsSync(lockDir),
+        lockSurvived,
         true,
       );
       check(
         "stolen lock (exit code): the stolen-from writer's real process exit status is non-zero",
-        exitCodeProbe.status !== 0,
+        typeof exitCodeProbe.status === "number" && exitCodeProbe.status !== 0,
         true,
       );
       rmSync(lockDir, { recursive: true, force: true });
@@ -6135,9 +6306,15 @@ cmds["self-test"] = () => {
         [1, 1, 1],
       );
       if (process.platform !== "win32") {
-        const interrupted = holder("B8", "3000", "ignore");
+        // B588: the child is parked SYNCHRONOUSLY in its critical section (Atomics.wait), so Node cannot
+        // run its JS SIGINT handler until control returns to the event loop. So: deliver the signal
+        // while the lock is provably held, THEN release the hold — the queued SIGINT is handled as
+        // soon as the write finishes. (Holding until killed would never let the handler run.)
+        const releaseSigint = join(tmp, "release-sigint");
+        const interrupted = holder("B8", "0", "ignore", releaseSigint);
         const heldByInterrupted = awaitHold();
         interrupted.kill("SIGINT");
+        writeFileSync(releaseSigint, "go");
         awaitExit(interrupted);
         check("SIGINT: it really held the lock when it was interrupted", heldByInterrupted, true);
         check("SIGINT: an interrupted writer leaves NO lock directory", existsSync(lockDir), false);
@@ -6312,39 +6489,72 @@ cmds["self-test"] = () => {
       // (e) The seam itself. Unguarded, ONE env var made both blockers above
       // trivially reachable from a normal run: set above the old 5s threshold
       // it did not merely slow a write down, it MANUFACTURED the theft.
-      const timeCli = (id, env) => {
-        const t0 = Date.now();
-        try {
-          execSync(
-            `node ${[SCRIPT_PATH, "tier", id, "T3", "--why", "stall seam timing"].map((a) => JSON.stringify(a)).join(" ")}`,
-            {
-              encoding: "utf8",
-              stdio: ["ignore", "pipe", "pipe"],
-              env: { ...process.env, BUGS_ROOT: tmp, ...env },
-            },
-          );
-        } catch {
-          /* the elapsed time IS the assertion */
-        }
-        return Date.now() - t0;
-      };
-      const ungated = timeCli("B1", { BUGS_TEST_STALL_MS: "2500", BUGS_SELF_TEST: "" });
-      const gated = timeCli("B2", { BUGS_TEST_STALL_MS: "2500", BUGS_SELF_TEST: "1" });
-      // B454: `ungated < 2000` was a fixed wall-clock ceiling — under host load, plain
-      // Node process-launch overhead alone can exceed 2000ms with no stall involved at
-      // all, failing this even though the seam correctly did nothing. Both `timeCli`
-      // calls pay the SAME ambient spawn overhead, so the DIFFERENCE between them
-      // isolates the stall seam's actual effect regardless of how loaded the host is:
-      // a production run must be at least ~1500ms faster than a self-test-gated run of
-      // the identical command with the identical stall value.
+      // B588: proven by BEHAVIOUR, not by comparing two wall-clock durations. UNGATED, the seam
+      // must be inert: a run whose stall would last 200s and whose hold file never appears still
+      // finishes (a honoured seam would blow the 60s ceiling — a margin no host load approaches).
+      // GATED, the seam must really block inside the critical section until released.
+      // STALL half: 29s is just under the seam's own 30s cap; an honoured stall would run past this
+      // 25s ceiling and be killed (signal set). A production run takes a couple of seconds.
+      const ungatedStall = spawnSync(
+        process.execPath,
+        [SCRIPT_PATH, "tier", "B1", "T3", "--why", "stall seam ungated stall"],
+        {
+          encoding: "utf8",
+          timeout: 25000,
+          env: { ...process.env, BUGS_ROOT: tmp, BUGS_SELF_TEST: "", BUGS_TEST_STALL_MS: "29000" },
+        },
+      );
       check(
-        "stall seam: a production run ignores BUGS_TEST_STALL_MS (gated run is >=1500ms slower — load-tolerant, not a fixed ceiling)",
-        gated - ungated >= 1500,
+        "stall seam: a production run ignores BUGS_TEST_STALL_MS (it is not held for the stall)",
+        [ungatedStall.signal, ungatedStall.status],
+        [null, 0],
+      );
+      // HOLD half: a never-created hold file would block for the seam's 120s cap if honoured.
+      const ungated = spawnSync(
+        process.execPath,
+        [SCRIPT_PATH, "tier", "B1", "T3", "--why", "stall seam ungated hold"],
+        {
+          encoding: "utf8",
+          timeout: 60000,
+          env: {
+            ...process.env,
+            BUGS_ROOT: tmp,
+            BUGS_SELF_TEST: "",
+            BUGS_TEST_HOLD_FILE: join(tmp, "never-created"),
+          },
+        },
+      );
+      check(
+        "stall seam: a production run ignores BUGS_TEST_HOLD_FILE (it neither blocks nor is killed)",
+        [ungated.signal, ungated.status],
+        [null, 0],
+      );
+      const seamGate = join(tmp, "seam-gate");
+      const gatedChild = spawn(
+        process.execPath,
+        [SCRIPT_PATH, "tier", "B2", "T3", "--why", "stall seam gated"],
+        {
+          env: {
+            ...process.env,
+            BUGS_ROOT: tmp,
+            BUGS_SELF_TEST: "1",
+            BUGS_TEST_HOLD_FILE: seamGate,
+          },
+          stdio: "ignore",
+        },
+      );
+      const seamHeld = awaitHold();
+      check(
+        "stall seam: BUGS_SELF_TEST=1 un-gates it — the run is BLOCKED inside its critical section until released",
+        [seamHeld, pidAlive(gatedChild.pid)],
+        [true, true],
+      );
+      writeFileSync(seamGate, "go");
+      check(
+        "stall seam: ...and it finishes as soon as it is released",
+        awaitExit(gatedChild),
         true,
       );
-      // Unaffected by host load in the flaky direction: load can only push `gated`
-      // HIGHER, never below the 2500ms stall it's deliberately waiting out.
-      check("stall seam: BUGS_SELF_TEST=1 still un-gates it for this suite", gated >= 2500, true);
     } finally {
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
       else process.env.BUGS_ROOT = prevRoot;
@@ -6440,7 +6650,11 @@ cmds["self-test"] = () => {
       try {
         raced = {
           code: 0,
-          out: execSync(`node ${argv}`, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }),
+          out: execSync(`node ${argv}`, {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+            timeout: 240000,
+          }),
         };
       } catch (e) {
         raced = { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
@@ -6525,70 +6739,54 @@ cmds["self-test"] = () => {
         ["B1"],
       );
 
-      const orchestrator = join(tmp, "concurrent-move.mjs");
-      writeFileSync(
-        orchestrator,
-        [
-          'import { spawn } from "node:child_process";',
-          "const [script, root, stall] = process.argv.slice(2);",
-          "const run = (args, env, delay) =>",
-          "  new Promise((res) => {",
-          "    const start = () => {",
-          "      const p = spawn(process.execPath, [script, ...args], {",
-          "        env: { ...process.env, BUGS_ROOT: root, ...env },",
-          '        stdio: ["ignore", "pipe", "pipe"],',
-          "      });",
-          '      let out = "";',
-          '      p.stdout.on("data", (d) => (out += d));',
-          '      p.stderr.on("data", (d) => (out += d));',
-          '      p.on("close", (code) => res({ code, out }));',
-          "    };",
-          "    if (delay) setTimeout(start, delay);",
-          "    else start();",
-          "  });",
-          "const results = await Promise.all([",
-          "  run(",
-          '    ["file", "concurrent blocker", "--location", "apps/api/src/conc-blocker.ts", "--severity", "low", "--batch", "F03", "--tier", "T1"],',
-          '    { BUGS_SELF_TEST: "1", BUGS_TEST_STALL_MS: stall },',
-          "    0,",
-          "  ),",
-          '  run(["move", "B1", "--to", "F02"], {}, 200),',
-          "]);",
-          "console.log(JSON.stringify(results));",
-        ].join("\n"),
+      const race = gatedRaceArgv(
+        tmp,
+        {
+          args: [
+            "file",
+            "concurrent blocker",
+            "--location",
+            "apps/api/src/conc-blocker.ts",
+            "--severity",
+            "low",
+            "--batch",
+            "F03",
+            "--tier",
+            "T1",
+          ],
+        },
+        { args: ["move", "B1", "--to", "F02"] },
       );
-      const argv = [orchestrator, SCRIPT_PATH, tmp, "1500"].map((a) => JSON.stringify(a)).join(" ");
-      const t0 = Date.now();
+      const argv = race.argv;
       let raced;
       try {
         raced = {
           code: 0,
-          out: execSync(`node ${argv}`, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }),
+          out: execSync(`node ${argv}`, {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+            timeout: 240000,
+          }),
         };
       } catch (e) {
         raced = { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
       }
-      const elapsedMs = Date.now() - t0;
       check("move vs file: the orchestrator exited 0", raced.code, 0);
+      check(
+        "move vs file: `move` was provably BLOCKED behind the live filer (the overlap happened)",
+        blockedBehind(race),
+        race.lockPath,
+      );
       const kids = JSON.parse(raced.out.trim().split("\n").pop());
       check(
         "move vs file: BOTH child processes exited 0 (no deadlock, no refusal)",
         kids.map((k) => k.code),
         [0, 0],
       );
-      // B454: `elapsedMs < 8000` was a fixed wall-clock ceiling sitting only 20% below
-      // the real LOCK_SPIN_MS deadline (10000) — under host load, three chained process
-      // launches (orchestrator + 2 children) can push even a correctly-fast race well
-      // past 8000ms with nothing wrong. The check above (`BOTH child processes exited
-      // 0`) is the actual proof that neither side hit the give-up path — a give-up
-      // always exits non-zero (see "give-up message: ... (non-zero)" above). This is
-      // now a loose outer sanity bound (well below double LOCK_SPIN_MS) to catch a
-      // genuine hang, not a tight margin the exit-code check already covers.
-      check(
-        "move vs file: the race finished well below double the lock-wait deadline (outer sanity bound; exit codes above are the real proof)",
-        elapsedMs < LOCK_SPIN_MS * 2,
-        true,
-      );
+      // B454/B588: an elapsed-time ceiling is a wall-clock window and belongs to load, not to the
+      // code under test. The exit codes above are the proof that neither side hit the give-up path
+      // (a give-up always exits non-zero), and the harness caps every wait itself (120s) so a genuine
+      // hang still fails there — nothing here races the clock.
       const cat = readCatalogue();
       check(
         "move vs file: the catalogue's batch for B1 matches where it actually landed — file's own catalogue write did not revert it",
@@ -6693,49 +6891,44 @@ cmds["self-test"] = () => {
         [true, false],
       );
 
-      const orchestrator = join(tmp, "concurrent-index.mjs");
-      writeFileSync(
-        orchestrator,
-        [
-          'import { spawn } from "node:child_process";',
-          "const [script, root, stall] = process.argv.slice(2);",
-          "const run = (args, env, delay) =>",
-          "  new Promise((res) => {",
-          "    const start = () => {",
-          "      const p = spawn(process.execPath, [script, ...args], {",
-          "        env: { ...process.env, BUGS_ROOT: root, ...env },",
-          '        stdio: ["ignore", "pipe", "pipe"],',
-          "      });",
-          '      let out = "";',
-          '      p.stdout.on("data", (d) => (out += d));',
-          '      p.stderr.on("data", (d) => (out += d));',
-          '      p.on("close", (code) => res({ code, out }));',
-          "    };",
-          "    if (delay) setTimeout(start, delay);",
-          "    else start();",
-          "  });",
-          "const results = await Promise.all([",
-          "  run(",
-          '    ["file", "concurrent filer", "--location", "apps/api/src/conc-index.ts", "--severity", "low", "--batch", "F01", "--tier", "T1"],',
-          '    { BUGS_SELF_TEST: "1", BUGS_TEST_STALL_MS: stall },',
-          "    0,",
-          "  ),",
-          '  run(["index"], {}, 300),',
-          "]);",
-          "console.log(JSON.stringify(results));",
-        ].join("\n"),
+      const race = gatedRaceArgv(
+        tmp,
+        {
+          args: [
+            "file",
+            "concurrent filer",
+            "--location",
+            "apps/api/src/conc-index.ts",
+            "--severity",
+            "low",
+            "--batch",
+            "F01",
+            "--tier",
+            "T1",
+          ],
+        },
+        { args: ["index"] },
       );
-      const argv = [orchestrator, SCRIPT_PATH, tmp, "1500"].map((a) => JSON.stringify(a)).join(" ");
+      const argv = race.argv;
       let raced;
       try {
         raced = {
           code: 0,
-          out: execSync(`node ${argv}`, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }),
+          out: execSync(`node ${argv}`, {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+            timeout: 240000,
+          }),
         };
       } catch (e) {
         raced = { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
       }
       check("index vs file: the orchestrator exited 0", raced.code, 0);
+      check(
+        "index vs file: `index` was provably BLOCKED behind the live filer (the overlap happened — it was not hoped for)",
+        blockedBehind(race),
+        race.lockPath,
+      );
       const kids = JSON.parse(raced.out.trim().split("\n").pop());
       check(
         "index vs file: BOTH child processes exited 0",
@@ -6801,55 +6994,49 @@ cmds["self-test"] = () => {
       );
 
       const SHARED_EVIDENCE = "shared discharge run https://example.invalid/run/1234567890";
-      const orchestrator = join(tmp, "concurrent-discharge.mjs");
-      writeFileSync(
-        orchestrator,
-        [
-          'import { spawn } from "node:child_process";',
-          "const [script, root, stall, evidence] = process.argv.slice(2);",
-          "const run = (args, env, delay) =>",
-          "  new Promise((res) => {",
-          "    const start = () => {",
-          "      const p = spawn(process.execPath, [script, ...args], {",
-          "        env: { ...process.env, BUGS_ROOT: root, ...env },",
-          '        stdio: ["ignore", "pipe", "pipe"],',
-          "      });",
-          '      let out = "";',
-          '      p.stdout.on("data", (d) => (out += d));',
-          '      p.stderr.on("data", (d) => (out += d));',
-          '      p.on("close", (code) => res({ code, out }));',
-          "    };",
-          "    if (delay) setTimeout(start, delay);",
-          "    else start();",
-          "  });",
-          "const results = await Promise.all([",
-          "  run(",
-          '    ["discharge", "F01", "--evidence", "batch-wide evidence for F01, well over 40 chars", "--evidence-B1", evidence],',
-          '    { BUGS_SELF_TEST: "1", BUGS_TEST_STALL_MS: stall },',
-          "    0,",
-          "  ),",
-          "  run(",
-          '    ["discharge", "F02", "--evidence", "batch-wide evidence for F02, well over 40 chars", "--evidence-B2", evidence],',
-          "    {},",
-          "    300,",
-          "  ),",
-          "]);",
-          "console.log(JSON.stringify(results));",
-        ].join("\n"),
+      const race = gatedRaceArgv(
+        tmp,
+        {
+          args: [
+            "discharge",
+            "F01",
+            "--evidence",
+            "batch-wide evidence for F01, well over 40 chars",
+            "--evidence-B1",
+            SHARED_EVIDENCE,
+          ],
+        },
+        {
+          args: [
+            "discharge",
+            "F02",
+            "--evidence",
+            "batch-wide evidence for F02, well over 40 chars",
+            "--evidence-B2",
+            SHARED_EVIDENCE,
+          ],
+        },
       );
-      const argv = [orchestrator, SCRIPT_PATH, tmp, "1500", SHARED_EVIDENCE]
-        .map((a) => JSON.stringify(a))
-        .join(" ");
+      const argv = race.argv;
       let raced;
       try {
         raced = {
           code: 0,
-          out: execSync(`node ${argv}`, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }),
+          out: execSync(`node ${argv}`, {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+            timeout: 240000,
+          }),
         };
       } catch (e) {
         raced = { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
       }
       check("discharge race: the orchestrator exited 0", raced.code, 0);
+      check(
+        "discharge race: F02 was provably BLOCKED behind the live F01 discharge (the overlap happened)",
+        blockedBehind(race),
+        race.lockPath,
+      );
       const kids = JSON.parse(raced.out.trim().split("\n").pop());
       check("discharge race: F01 (the one holding the lock first) succeeds", kids[0].code, 0);
       check(
@@ -6971,53 +7158,38 @@ cmds["self-test"] = () => {
       ]);
       cmds.prove(["B2", "--pr", "960", "--proof", "REG-B2 jest: lock-order fixture"]);
 
-      const orchestrator = join(tmp, "lock-order-race.mjs");
-      writeFileSync(
-        orchestrator,
-        [
-          'import { spawn } from "node:child_process";',
-          "const [script, root, stall] = process.argv.slice(2);",
-          "const run = (args, env, delay) =>",
-          "  new Promise((res) => {",
-          "    const start = () => {",
-          "      const p = spawn(process.execPath, [script, ...args], {",
-          "        env: { ...process.env, BUGS_ROOT: root, ...env },",
-          '        stdio: ["ignore", "pipe", "pipe"],',
-          "      });",
-          '      let out = "";',
-          '      p.stdout.on("data", (d) => (out += d));',
-          '      p.stderr.on("data", (d) => (out += d));',
-          '      p.on("close", (code) => res({ code, out }));',
-          "    };",
-          "    if (delay) setTimeout(start, delay);",
-          "    else start();",
-          "  });",
-          "const results = await Promise.all([",
-          "  run(",
-          '    ["move", "B1", "--to", "F03"],',
-          '    { BUGS_SELF_TEST: "1", BUGS_TEST_STALL_MS: stall },',
-          "    0,",
-          "  ),",
-          "  run(",
-          '    ["discharge", "F02", "--evidence", "batch-wide evidence for F02, well over 40 chars"],',
-          "    {},",
-          "    200,",
-          "  ),",
-          "]);",
-          "console.log(JSON.stringify(results));",
-        ].join("\n"),
+      const race = gatedRaceArgv(
+        tmp,
+        { args: ["move", "B1", "--to", "F03"] },
+        {
+          args: [
+            "discharge",
+            "F02",
+            "--evidence",
+            "batch-wide evidence for F02, well over 40 chars",
+          ],
+        },
       );
-      const argv = [orchestrator, SCRIPT_PATH, tmp, "1200"].map((a) => JSON.stringify(a)).join(" ");
+      const argv = race.argv;
       let raced;
       try {
         raced = {
           code: 0,
-          out: execSync(`node ${argv}`, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }),
+          out: execSync(`node ${argv}`, {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+            timeout: 240000,
+          }),
         };
       } catch (e) {
         raced = { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
       }
       check("lock order (runtime): the orchestrator exited 0", raced.code, 0);
+      check(
+        "lock order (runtime): discharge was provably BLOCKED behind the live move (the overlap happened)",
+        blockedBehind(race),
+        race.lockPath,
+      );
       const kids = JSON.parse(raced.out.trim().split("\n").pop());
       check(
         "lock order (runtime): move and discharge BOTH exited 0 — no deadlock, no refusal",

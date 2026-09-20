@@ -64,6 +64,7 @@ import {
 } from "./order-edit-restrictions";
 import { planChangeRequestRestrictions } from "./change-request-restrictions";
 import { parseCommissionRatePct, parseOrderDate } from "./order-parsers";
+import { getOrderTracking } from "./order-tracking";
 import { CreateSaleDto } from "./dto/create-sale.dto";
 import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
 import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
@@ -5708,81 +5709,9 @@ export class OrdersService implements OnApplicationBootstrap {
     }
   }
 
-  async getOrderTracking(orderId: string, user: JwtPayload) {
-    const order = await this.prisma.forTenant().order.findUnique({
-      where: { id: orderId },
-      include: {
-        customer: { select: { deliveryWindowStart: true, deliveryWindowEnd: true } },
-        routeRunStop: {
-          include: {
-            routeRun: {
-              include: {
-                driver: { select: { id: true, contactName: true } },
-                route: { select: { id: true, name: true } },
-                stops: { orderBy: { stopNumber: "asc" } },
-              },
-            },
-          },
-        },
-      },
-    });
-    if (!order) throw new NotFoundException("Order not found");
-
-    // Ownership gate (security F2-002): this route has no RolesGuard, so without
-    // this any authenticated CUSTOMER could enumerate order ids and read another
-    // customer's route/driver/stop/delivery-window. Mirror findOne's CUSTOMER gate.
-    if (user.role === UserRole.CUSTOMER) {
-      // REG-B131: `deletedAt: null` here — a removal deactivates the user but an access token
-      // minted just before it stays valid for up to 15 minutes, so a removed customer's own
-      // in-flight session must fall into the existing refusal below.
-      const customer = await this.prisma
-        .forTenant()
-        .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
-      if (!customer || customer.id !== order.customerId) throw new ForbiddenException();
-    }
-
-    if (!order.routeRunStop) {
-      return { status: order.status, tracking: null };
-    }
-
-    // F11 (B129 / B146 contract, spec R5): a CANCELLED run is not tracking —
-    // the buyer card must never show a driver, a stop number or "you're next"
-    // for a called-off run. After F11 the release nulls the pointer at cancel
-    // time, so this branch serves rows stranded BEFORE the deploy until the D4
-    // repair frees them, and stays as the written contract. A SKIPPED own-stop
-    // on a live or completed run keeps the FULL payload (stopStatus: "SKIPPED",
-    // stopsAhead exactly as computed below) — the client branches on
-    // stopStatus; the server invents no "skipped shape".
-    if (order.routeRunStop.routeRun.status === RouteRunStatus.CANCELLED) {
-      return { status: order.status, tracking: null };
-    }
-
-    const stop = order.routeRunStop;
-    const run = stop.routeRun;
-    const allStops = run.stops ?? [];
-    const currentStopNumber = stop.stopNumber;
-
-    // Count PENDING stops before this customer's stop
-    const stopsAhead = allStops.filter(
-      (s) => s.stopNumber < currentStopNumber && s.status === "PENDING",
-    ).length;
-
-    return {
-      status: order.status,
-      tracking: {
-        runId: run.id,
-        routeName: run.route?.name ?? null,
-        driverName: run.driver?.contactName ?? null,
-        runStatus: run.status,
-        stopNumber: currentStopNumber,
-        stopStatus: stop.status,
-        stopsAhead,
-        estimatedArrivalWindow: {
-          start: order.customer?.deliveryWindowStart ?? null,
-          end: order.customer?.deliveryWindowEnd ?? null,
-        },
-      },
-    };
+  /** The order-tracking card (route / driver / stop / delivery window) — see `order-tracking.ts`. */
+  getOrderTracking(orderId: string, user: JwtPayload) {
+    return getOrderTracking({ prisma: this.prisma }, orderId, user);
   }
 
   /**
