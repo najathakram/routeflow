@@ -48,7 +48,11 @@ export const dayToIso = (day: string): string => new Date(`${day}T00:00:00`).toI
  */
 export const dayEndToIso = (day: string): string => {
   const [y, m, d] = day.split("-").map(Number);
-  return new Date(y, m - 1, d + 1).toISOString();
+  // setFullYear, not the Date(y, m, d) constructor: that one maps years 0-99 to 1900-1999, which
+  // would skew the end from `dayToIso` (which parses the year as written).
+  const end = new Date(2000, 0, 1);
+  end.setFullYear(y, m - 1, d + 1);
+  return end.toISOString();
 };
 
 export const ruleFormSchema = z

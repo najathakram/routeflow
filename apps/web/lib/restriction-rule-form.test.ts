@@ -105,6 +105,11 @@ describe("toCreateRequest", () => {
     expect(timed.effectiveTo).toBe(new Date("2027-01-01T00:00:00").toISOString());
   });
 
+  it("a year below 100 is not remapped to 19xx (end stays one day after the start)", () => {
+    expect(new Date(dayEndToIso("0026-12-31")).getFullYear()).toBe(27);
+    expect(new Date(dayToIso("0026-12-31")).getFullYear()).toBe(26);
+  });
+
   it("the exclusive end handles month and year rollover and a one-day rule", () => {
     expect(dayEndToIso("2026-01-31")).toBe(new Date("2026-02-01T00:00:00").toISOString());
     expect(dayEndToIso("2028-02-28")).toBe(new Date("2028-02-29T00:00:00").toISOString());

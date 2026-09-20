@@ -44,6 +44,15 @@ describe("restriction-rules display helpers", () => {
     ).toMatch(/2026 – .*2026$/);
   });
 
+  it("an unparseable end degrades to a dash instead of crashing the render", () => {
+    expect(() =>
+      windowText({ effectiveFrom: "2026-03-05T12:00:00Z", effectiveTo: "not-a-date" }),
+    ).not.toThrow();
+    expect(
+      windowText({ effectiveFrom: "2026-03-05T12:00:00Z", effectiveTo: "not-a-date" }),
+    ).toMatch(/– —$/);
+  });
+
   it("an end the admin set to Dec 31 reads Dec 31, not Jan 1 (the stored end is exclusive)", () => {
     const stored = dayEndToIso("2026-12-31"); // what the form sends: the start of Jan 1
     expect(windowText({ effectiveFrom: dayToIso("2026-12-01"), effectiveTo: stored })).toBe(

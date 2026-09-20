@@ -57,8 +57,12 @@ export const surfaceText = (s: SellingRestrictionListItemDto["surface"]) =>
  * containing the final millisecond before the end. This is right for any stored end (an API rule
  * ending mid-afternoon still shows that same day).
  */
-export const lastDayInForce = (effectiveTo: string): string =>
-  new Date(new Date(effectiveTo).getTime() - 1).toISOString();
+export const lastDayInForce = (effectiveTo: string): string => {
+  const t = new Date(effectiveTo).getTime();
+  // An unparseable end must not crash the page render (`toISOString` throws on NaN): hand it back
+  // untouched and let `fmtDate` show its usual dash.
+  return Number.isNaN(t) ? effectiveTo : new Date(t - 1).toISOString();
+};
 
 export function windowText(
   r: Pick<SellingRestrictionListItemDto, "effectiveFrom" | "effectiveTo">,
