@@ -182,6 +182,17 @@ export const RUN_STOP_INCLUDE = {
   },
 } as const;
 
+/**
+ * Orders the dispatch sweep must never attach and a stop completion must never flip to DELIVERED:
+ * a DRAFT is not yet a commitment (TripsService.TRIP_ELIGIBLE_STATUSES already excludes it), and
+ * DELIVERED/CANCELLED are terminal.
+ */
+export const NON_ROUTABLE_ORDER_STATUSES: OrderStatus[] = [
+  OrderStatus.DRAFT,
+  OrderStatus.DELIVERED,
+  OrderStatus.CANCELLED,
+];
+
 @Injectable()
 export class RoutesService {
   private readonly logger = new Logger(RoutesService.name);
@@ -1059,7 +1070,7 @@ export class RoutesService {
           this.prisma.forTenant().order.updateMany({
             where: {
               customerId: s.customerId!,
-              status: { notIn: [OrderStatus.DELIVERED, OrderStatus.CANCELLED] },
+              status: { notIn: NON_ROUTABLE_ORDER_STATUSES },
               routeRunStopId: null,
               // SHIP orders go out via a carrier, so they must never attach to a
               // run stop — a driver would otherwise see them on the route and
@@ -2438,7 +2449,7 @@ export class RoutesService {
         await tx.order.updateMany({
           where: {
             id: { in: orderIds },
-            status: { notIn: [OrderStatus.CANCELLED, OrderStatus.DELIVERED] },
+            status: { notIn: NON_ROUTABLE_ORDER_STATUSES },
           },
           data: { status: OrderStatus.DELIVERED },
         });
@@ -2686,7 +2697,7 @@ export class RoutesService {
         await tx.order.updateMany({
           where: {
             id: { in: orderIds },
-            status: { notIn: [OrderStatus.CANCELLED, OrderStatus.DELIVERED] },
+            status: { notIn: NON_ROUTABLE_ORDER_STATUSES },
           },
           data: { status: OrderStatus.DELIVERED },
         });
