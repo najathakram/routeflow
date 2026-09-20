@@ -129,3 +129,11 @@ mailbox.
 points the `api` service's `SMTP_HOST`/`SMTP_PORT` at it — the exact same code path as prod, just
 against a local catch-all instead of Google. See `local-assets/email-proof-2026-09-16/` for a
 screenshot of a real send (buyer invite) captured by Mailpit during this change's verification.
+
+The local mailpit now behaves like the real submission port — STARTTLS required, AUTH required
+(local throwaway credential), served from the committed throwaway cert in `docker/mailpit-tls/`
+(trusted through `NODE_EXTRA_CA_CERTS`; verification is never disabled). `npm run local:test:smtp`
+(also part of `npm run local:validate:features`) runs `apps/api/src/email/email-smtp.smtp.spec.ts`
+against it: a real connect → STARTTLS → AUTH → delivery, the delivered message read back through
+Mailpit's HTTP API (from-name, reply-to, subject, HTML), and the wrong-password / closed-port /
+unreachable-host failures. It fails — never skips — when Mailpit is not up.
