@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { LeaderCron } from "../common/cron-lock";
+import { FEATURE_OVERRIDE_AUDIT_ENTITY_TYPE } from "./feature-override-audit.constants";
 import { FeatureOverrideService } from "./feature-override.service";
 
 /** Audit action for a row this sweep revoked. Deliberately NOT `AdminAuditAction.
@@ -29,7 +30,8 @@ export const EXPIRED_REVOKE_REASON = "expired";
  * its once-ever "expired and still unrevoked" audit row must exist (B589). That is a state check,
  * not the old 24h time proxy: a missed 06:00 tick can no longer let a row be revoked unflagged
  * (its review audit is then lost for good, since the review job only reads unrevoked rows); the
- * sweep just waits for the flag.
+ * sweep just waits for the flag. Slot latency is unchanged: a row expiring at 06:31 is flagged at
+ * the next 06:00 and swept at 06:30 — up to ~24h (more if the review job's 500/tick cap is full).
  *
  * Cross-tenant by design, like the review job: the plain global `PrismaService`, never
  * `forTenant()`, so L-124's ambient-tenant trap does not apply.
@@ -52,7 +54,7 @@ export class FeatureOverrideExpiryJob {
             tenantId: row.tenantId,
             userId: null,
             action: FEATURE_OVERRIDE_EXPIRY_REVOKED_ACTION,
-            entityType: "tenantFeatureOverride",
+            entityType: FEATURE_OVERRIDE_AUDIT_ENTITY_TYPE,
             entityId: row.id,
             meta: {
               reason: EXPIRED_REVOKE_REASON,

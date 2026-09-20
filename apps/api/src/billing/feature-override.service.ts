@@ -8,7 +8,10 @@ import {
 import { Prisma, FeatureOverrideKind } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { isRegisteredFeatureKey } from "./feature-registry";
-import { FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION } from "./feature-override-review.job";
+import {
+  FEATURE_OVERRIDE_AUDIT_ENTITY_TYPE,
+  FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION,
+} from "./feature-override-audit.constants";
 
 export type FeatureOverrideEffect = "GRANT" | "DENY";
 export type { FeatureOverrideKind };
@@ -31,7 +34,7 @@ export interface CreateFeatureOverrideParams {
 
 const CACHE_TTL_MS = 30_000;
 
-/** `revokeExpired` scans expired overrides this many rows at a time, looking for review-flagged ones. */
+/** `revokeExpired` scans expired overrides this many rows at a time, for review-flagged ones. */
 const SCAN_PAGE_SIZE = 500;
 const MAX_SCAN_PAGES = 20;
 
@@ -267,7 +270,9 @@ export class FeatureOverrideService {
    * rows a capped batch takes — is total and repeatable), so a backlog drains FIFO across nightly
    * ticks. A row is taken ONLY once the review job has flagged it (its once-ever
    * `FEATURE_OVERRIDE_EXPIRED_REVIEW` audit row exists — B589), so a missed review tick can never
-   * cost a row its review audit: the sweep simply waits for the flag. `graceMs` only additionally
+   * cost a row its review audit: the sweep simply waits for the flag (slot latency is unchanged:
+   * a row expiring at 06:31 is flagged next 06:00 and swept at 06:30 — up to ~24h, more if the
+   * review job's 500/tick cap is saturated). `graceMs` only additionally
    * takes rows expired at least that long ago; it is required, never defaulted.
    */
   async revokeExpired(
@@ -278,7 +283,10 @@ export class FeatureOverrideService {
       inTransaction,
     }: {
       limit?: number;
-      /** Only rows expired at least this long ago. Explicit on purpose (no silent default): pass 0 to take every reviewed row. */
+      /**
+       * Only rows expired at least this long ago. Explicit on purpose (no silent default):
+       * pass 0 to take every review-flagged row.
+       */
       graceMs: number;
       /**
        * Runs INSIDE the same transaction as each row's revoke (B580): whatever it writes (the
@@ -325,6 +333,7 @@ export class FeatureOverrideService {
    */
   private async selectReviewedExpired(cutoff: Date, limit: number): Promise<RevokedExpiredRow[]> {
     const due: RevokedExpiredRow[] = [];
+    let scanned = 0;
     let cursor: { id: string } | undefined;
     for (let page = 0; page < MAX_SCAN_PAGES; page++) {
       const chunk = await this.prisma.tenantFeatureOverride.findMany({
@@ -341,13 +350,14 @@ export class FeatureOverrideService {
           expiresAt: true,
         },
       });
-      if (chunk.length === 0) return due;
+      if (chunk.length === 0) break;
+      scanned += chunk.length;
       const flagged = new Set(
         (
           await this.prisma.auditLog.findMany({
             where: {
               action: FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION,
-              entityType: "tenantFeatureOverride",
+              entityType: FEATURE_OVERRIDE_AUDIT_ENTITY_TYPE,
               entityId: { in: chunk.map((r) => r.id) },
             },
             select: { entityId: true },
@@ -365,13 +375,23 @@ export class FeatureOverrideService {
           return due;
         }
       }
-      if (chunk.length < SCAN_PAGE_SIZE) return due;
+      if (chunk.length < SCAN_PAGE_SIZE) break;
       cursor = { id: chunk[chunk.length - 1].id };
+      if (page === MAX_SCAN_PAGES - 1) {
+        this.logger.warn(
+          `revokeExpired scanned ${MAX_SCAN_PAGES * SCAN_PAGE_SIZE} expired overrides without ` +
+            `exhausting them — rows beyond that are not considered until the head clears.`,
+        );
+      }
     }
-    this.logger.warn(
-      `revokeExpired scanned ${MAX_SCAN_PAGES * SCAN_PAGE_SIZE} expired overrides without ` +
-        `exhausting them — rows beyond that are not considered until the head clears.`,
-    );
+    if (due.length === 0 && scanned > 0) {
+      // The sweep now depends on the review job's flag (B589): if that job stops flagging, this
+      // is the ONLY signal that expired rows are piling up unswept (they hold the unique-index slot).
+      this.logger.warn(
+        `revokeExpired: ${scanned} expired override(s) are waiting on billing.reviewExpiredOverrides ` +
+          `to flag them; none swept. If this repeats, check that job.`,
+      );
+    }
     return due;
   }
 

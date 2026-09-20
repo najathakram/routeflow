@@ -344,16 +344,47 @@ describe("FeatureOverrideExpiryJob.revokeExpiredOverrides (B569)", () => {
     }
   });
 
-  it("B589: graceMs is explicit — the type refuses a call that omits it, and it is honoured", async () => {
+  it("B589: when expired rows exist but none is flagged, it says so (the sweep depends on the review job)", async () => {
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    try {
+      const rows = [1, 2, 3].map((i) => overrideRow({ id: `ov${i}`, expiresAt: PAST }));
+      const { svc } = build(rows, { reviewed: [] });
+
+      expect(await svc.revokeExpired(new Date(), { graceMs: 0 })).toEqual([]);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "3 expired override(s) are waiting on billing.reviewExpiredOverrides",
+        ),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("B589: scanning stops at the page bound and says so — rows past it are not considered", async () => {
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    try {
+      // 20 full pages of unflagged rows, then one flagged row beyond the 10,000-row scan bound.
+      const many = Array.from({ length: 10_001 }, (_, i) =>
+        overrideRow({
+          id: `r${String(i).padStart(5, "0")}`,
+          expiresAt: new Date(Date.UTC(2000, 0, 1, 0, 0, i)),
+        }),
+      );
+      const { svc, rows } = build(many, { reviewed: ["r10000"] });
+
+      expect(await svc.revokeExpired(new Date(), { graceMs: 0 })).toEqual([]);
+      expect(rows.every((r) => r.revokedAt === null)).toBe(true);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("without exhausting them"));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("B589: graceMs is honoured — a row younger than the grace is left, 0 takes it", async () => {
     const { svc, rows } = build([
       overrideRow({ id: "ov-1h", expiresAt: new Date(Date.now() - 60 * 60 * 1000) }),
     ]);
-
-    // Compile-time proof only (never called): graceMs has no default — a silent 0 hid what the
-    // job relied on. ts-jest fails this file if the @ts-expect-error stops being an error.
-    // @ts-expect-error graceMs is required
-    const omitted = () => svc.revokeExpired(new Date(), {});
-    void omitted;
 
     expect(await svc.revokeExpired(new Date(), { graceMs: 2 * 60 * 60 * 1000 })).toEqual([]);
     expect(rows[0].revokedAt).toBeNull();
