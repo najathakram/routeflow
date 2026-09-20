@@ -31,6 +31,8 @@ export interface ConfigSnapshotPreview {
   takenAt: string;
   planKey: string;
   restoredAt: string | null;
+  /** Whole days, FLOORED. The horizon flag below is judged on exact time, so a snapshot 90 days
+   * 12 h old reads `ageDays: 90` AND `beyondAutoRestoreHorizon: true` — copy must key off the flag. */
   ageDays: number;
   /** Older than the 90-day automatic-restore horizon: restoring it is a deliberate admin override. */
   beyondAutoRestoreHorizon: boolean;
@@ -61,4 +63,6 @@ export interface ConfigSnapshotRestoreResult {
   planKey: string;
   restoredToPlanKey: string;
   report: ConfigSnapshotRestoreReport;
+  /** Older un-restored snapshots this restore superseded (the API returns it; the tab ignores it). */
+  supersededSnapshots: number;
 }
