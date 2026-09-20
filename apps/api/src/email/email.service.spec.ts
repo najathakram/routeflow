@@ -144,6 +144,103 @@ describe("EmailService — honest send (R5)", () => {
 });
 
 /**
+ * feat/email-invoice-pdf-attachment — `send()`'s `attachments` param is threaded to
+ * every transport it can reach (mailbox, tenant SMTP, Resend); `sendPlatform`
+ * (security/account mail only) is deliberately untouched — invoice sends never use
+ * `senderClass:"platform"`.
+ */
+describe("EmailService — attachments threaded to every transport", () => {
+  const smtpRows = () => [
+    { key: "email.smtpHost", value: "smtp.example.com" },
+    { key: "email.smtpUser", value: "user@example.com" },
+    { key: "email.smtpPassword", value: "pw" },
+    { key: "email.smtpPort", value: "587" },
+  ];
+  const attachment = {
+    filename: "Invoice-INV-1.pdf",
+    content: Buffer.from("pdf"),
+    contentType: "application/pdf",
+  };
+
+  it("tenant SMTP sendMail receives the attachments array", async () => {
+    const sendMail = jest.fn().mockResolvedValue({ messageId: "m1" });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({ systemConfigRows: smtpRows() });
+
+    await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>", attachments: [attachment] });
+
+    expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({ attachments: [attachment] }));
+  });
+
+  it("Resend receives a filename/content-only attachment (its SDK shape)", async () => {
+    const svc = makeService({ resendKey: "re_test" });
+    const sendSpy = jest.fn().mockResolvedValue({ data: { id: "eml_1" }, error: null });
+    (svc as any).resend.emails.send = sendSpy;
+
+    await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>", attachments: [attachment] });
+
+    expect(sendSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attachments: [{ filename: attachment.filename, content: attachment.content }],
+      }),
+    );
+  });
+
+  it("the connected-mailbox transport receives the attachments array", async () => {
+    const trySend = jest.fn().mockResolvedValue({ delivered: false, transport: "mailbox" });
+    const svc = makeService({ mailboxSend: { trySend } });
+
+    await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>", attachments: [attachment] });
+
+    expect(trySend).toHaveBeenCalledWith(
+      "t1",
+      expect.objectContaining({ attachments: [attachment] }),
+    );
+  });
+
+  it("sendInvoice wraps its single `attachment` param into send()'s `attachments` array", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendInvoice({
+      to: "buyer@example.com",
+      customerName: "Acme Buyer",
+      invoiceNumber: "INV-1",
+      invoiceId: "inv-1",
+      issueDate: "Jan 1, 2026",
+      dueDate: "Jan 31, 2026",
+      total: 100,
+      items: [],
+      attachment,
+    } as any);
+
+    expect(sendSpy).toHaveBeenCalledWith(expect.objectContaining({ attachments: [attachment] }));
+  });
+
+  it("sendInvoice omits `attachments` when no attachment was built (link-only fallback)", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendInvoice({
+      to: "buyer@example.com",
+      customerName: "Acme Buyer",
+      invoiceNumber: "INV-1",
+      invoiceId: "inv-1",
+      issueDate: "Jan 1, 2026",
+      dueDate: "Jan 31, 2026",
+      total: 100,
+      items: [],
+    } as any);
+
+    expect(sendSpy).toHaveBeenCalledWith(expect.objectContaining({ attachments: undefined }));
+  });
+});
+
+/**
  * B452 (a) — the tenant-branded sender fallback must never hard-code a domain
  * RouteFlow doesn't own. Previously `getTenantFromAddress()` fell back to a literal
  * "noreply@routeflow.app" (the real domain is routeflow.info) whenever a tenant had

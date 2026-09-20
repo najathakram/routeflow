@@ -4,14 +4,12 @@ import type { RestrictionStatus } from "@routeflow/types";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
-import { SellingRestrictionsAdminService } from "./selling-restrictions-admin.service";
+import {
+  RESTRICTION_STATUSES,
+  SellingRestrictionsAdminService,
+} from "./selling-restrictions-admin.service";
 
-const STATUSES = {
-  ACTIVE: "ACTIVE",
-  SCHEDULED: "SCHEDULED",
-  EXPIRED: "EXPIRED",
-  LIFTED: "LIFTED",
-} as const;
+const STATUSES = Object.fromEntries(RESTRICTION_STATUSES.map((s) => [s, s]));
 
 // Reads: OPERATOR. Writes: TENANT_ADMIN only (owner ruling, Lane R) — a rule decides what may be sold.
 @Controller("selling-restrictions")

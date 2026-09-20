@@ -4,6 +4,7 @@ import type {
   RestrictionChannel,
   RestrictionsEvaluation,
   RestrictionsPolicy,
+  SellingRestrictedError,
 } from "@routeflow/types";
 import { assertAmbientTenant } from "../common/ambient-tenant";
 import { normalizeUsState } from "../common/us-states";
@@ -77,9 +78,40 @@ const ADDRESS_SELECT = {
   stateNeedsReview: true,
 } as const;
 
+/**
+ * One line a write path is about to put on an order/invoice. `qtyDelta` omitted = a NEW line
+ * (always checked); a number is the net change in TOTAL SELLING UNITS (`boxes × unitsPerBox +
+ * pieces`, as one plain JS number — never a per-field delta such as "pieces only"). Decisions are
+ * per PRODUCT, not per line: a product whose lines' numeric deltas sum to `<= 0` (a decrease, a
+ * removal, or a repack across lines) is NEVER checked (owner rule: a ban must never trap an
+ * operator into keeping stock on an order); a product with ANY line whose delta is omitted,
+ * non-numeric or NaN cannot be netted, so it is checked (fail closed).
+ */
+export interface SellableLine {
+  productId: string;
+  qtyDelta?: number;
+}
+
+export interface SellableLinesParams {
+  tenantId: string;
+  /**
+   * Whose governing address decides. A change of customer or of the governing address is NOT a
+   * line delta: a caller in that situation must re-send the whole line set with `qtyDelta` omitted
+   * (a re-check of everything), or an all-decrease call would return ALLOW with no reads.
+   */
+  customerId: string | null;
+  lines: readonly SellableLine[];
+  /**
+   * Who is selling: `restrictionChannelForPrincipal(user)`, or `"STAFF"` for a cron / system caller
+   * with no principal. Omitted (a JS or `any` caller) FAILS CLOSED to BUYER_PORTAL — never STAFF.
+   */
+  channel: RestrictionChannel;
+  at?: Date;
+}
+
 export interface EvaluateOptions {
-  /** Defaults to STAFF (every path except the self-serve buyer portal). */
-  channel?: RestrictionChannel;
+  /** As `SellableLinesParams.channel`: required, and an omitted value fails closed to BUYER_PORTAL. */
+  channel: RestrictionChannel;
   /** Point-in-time evaluation; defaults to now. */
   at?: Date;
 }
@@ -102,8 +134,9 @@ export const SYSTEM_CONFIG_GOVERNING_ADDRESS = "selling_restrictions.governing_a
 /**
  * Selling restrictions (lane R step 1): `evaluate()` answers "may this customer be sold these
  * products?" — OFF / ALLOW / BLOCK / INDETERMINATE. Thin Prisma adapter over the pure core in
- * `selling-restrictions.core.ts`. READ-ONLY; it never writes and never throws for a business
- * outcome (the step-2 choke point turns BLOCK/INDETERMINATE into the 409).
+ * `selling-restrictions.core.ts`. READ-ONLY; `evaluate()` never writes and never throws for a
+ * business outcome — `assertLinesSellable()` (the step-2 choke point) turns BLOCK/INDETERMINATE
+ * into the 409.
  *
  * Labels and lineage come from `ProductLabelsService.effectiveLabels` (the one implementation),
  * resolved from each product's CURRENT parent at evaluation time — never a snapshot — so
@@ -245,7 +278,7 @@ export class SellingRestrictionsService {
     tenantId: string,
     customerId: string | null,
     lines: readonly EvaluateLine[],
-    options: EvaluateOptions = {},
+    options: EvaluateOptions,
   ): Promise<RestrictionsEvaluation> {
     const policy = await this.getPolicy(tenantId);
     if (!policy.enabled) return offEvaluation();
@@ -253,8 +286,8 @@ export class SellingRestrictionsService {
     const productIds = [...new Set(lines.map((l) => l.productId))];
     if (productIds.length === 0) return { outcome: "ALLOW", reasons: [] };
 
-    const channel = options.channel ?? "STAFF";
-    const at = options.at ?? new Date();
+    const channel = options?.channel ?? "BUYER_PORTAL"; // fail closed: the channel that binds more
+    const at = options?.at ?? new Date();
     const db = this.prisma.forTenant();
 
     const labels = await this.productLabels.effectiveLabels(tenantId, productIds);
@@ -351,5 +384,51 @@ export class SellingRestrictionsService {
     }
 
     return evaluateRestrictions({ channel, at, products, rules, governingState, categoryNames });
+  }
+
+  /**
+   * The choke point's read half (step 2): `evaluate()` over only the products that ADD sellable
+   * quantity. Lines with no product id (nothing to check) are dropped, then the lines are grouped
+   * by product: a product is checked when ANY of its lines has an omitted / non-numeric / NaN
+   * `qtyDelta` (cannot be netted — fail closed) or when its numeric deltas sum to `> 0`;
+   * decreases, removals and repacks (`sum <= 0`) are never checked. When nothing is left the
+   * answer is ALLOW with NO reads at all. It NEVER returns OFF for that case — "is this tenant
+   * gated?" is `getPolicy()`, not this method.
+   */
+  async checkLinesSellable(params: SellableLinesParams): Promise<RestrictionsEvaluation> {
+    if (!params.tenantId) throw new Error("checkLinesSellable requires a tenantId");
+    const byProduct = new Map<string, { undetermined: boolean; net: number }>();
+    for (const l of params.lines) {
+      if (!l.productId) continue;
+      const agg = byProduct.get(l.productId) ?? { undetermined: false, net: 0 };
+      if (typeof l.qtyDelta === "number" && !Number.isNaN(l.qtyDelta)) agg.net += l.qtyDelta;
+      else agg.undetermined = true;
+      byProduct.set(l.productId, agg);
+    }
+    // `!(net <= 0)` rather than `net > 0`: a NaN sum (e.g. -Infinity + Infinity) must stay checked.
+    const checkable = [...byProduct].filter(([, a]) => a.undetermined || !(a.net <= 0));
+    if (checkable.length === 0) return { outcome: "ALLOW", reasons: [] };
+    return this.evaluate(
+      params.tenantId,
+      params.customerId,
+      checkable.map(([productId]) => ({ productId })),
+      { channel: params.channel, at: params.at },
+    );
+  }
+
+  /**
+   * The choke point every line-writing path calls BEFORE it writes: BLOCK and INDETERMINATE
+   * (fail closed) throw a structured 409 mirroring `REGULATED_AUTH_REQUIRED`'s shape; OFF and
+   * ALLOW return. Read-only — a throw here leaves nothing mutated.
+   */
+  async assertLinesSellable(params: SellableLinesParams): Promise<void> {
+    const evaluation = await this.checkLinesSellable(params);
+    if (evaluation.outcome === "BLOCK" || evaluation.outcome === "INDETERMINATE") {
+      const body: SellingRestrictedError = {
+        code: "SELLING_RESTRICTED",
+        blockedLines: evaluation.reasons,
+      };
+      throw new ConflictException(body);
+    }
   }
 }

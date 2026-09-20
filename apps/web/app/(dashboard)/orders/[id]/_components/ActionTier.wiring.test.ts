@@ -1,0 +1,142 @@
+import fs from "node:fs";
+import path from "node:path";
+import ts from "typescript";
+
+/**
+ * Which existing action lands in which tier on the order-detail page (T7).
+ *
+ * `ActionTier.test.tsx` covers the wrapper, but nothing renders `OrderDetailPage` (it needs ~40
+ * hooks), so a mis-wrapped button — Cancel in the primary tier, Publish in danger, a tier dropped
+ * entirely — would pass every other test. This parses the page with the TypeScript compiler and
+ * reads the STRUCTURE (which <Button> labels sit inside which <ActionTier tier=…>), not raw text.
+ * It is deliberately a structural pin: adding or renaming an action must update the table below.
+ */
+
+const PAGE = path.resolve(__dirname, "../page.tsx");
+const source = ts.createSourceFile(
+  PAGE,
+  fs.readFileSync(PAGE, "utf8"),
+  ts.ScriptTarget.Latest,
+  true,
+  ts.ScriptKind.TSX,
+);
+
+interface Found {
+  tier: string;
+  buttons: string[];
+  deleteCalls: number;
+}
+
+/** String literals + plain JSX text directly inside a <Button>'s children. */
+function labelsOf(button: ts.JsxElement): string[] {
+  const out: string[] = [];
+  const visit = (n: ts.Node) => {
+    if (ts.isJsxText(n)) {
+      const t = n.getText().replace(/\s+/g, " ").trim();
+      if (t) out.push(t);
+    } else if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) {
+      // A literal compared with `===` is a condition (`fulfillPath === "SHIP"`), not a label.
+      const isComparison =
+        ts.isBinaryExpression(n.parent) &&
+        n.parent.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken;
+      if (!isComparison) out.push(n.text);
+    }
+    ts.forEachChild(n, visit);
+  };
+  button.children.forEach(visit);
+  return out;
+}
+
+function tierName(el: ts.JsxOpeningLikeElement): string | null {
+  const attr = el.attributes.properties.find(
+    (p): p is ts.JsxAttribute => ts.isJsxAttribute(p) && p.name.getText() === "tier",
+  );
+  return attr && attr.initializer && ts.isStringLiteral(attr.initializer)
+    ? attr.initializer.text
+    : null;
+}
+
+function collect(): Found[] {
+  const found: Found[] = [];
+  const visit = (n: ts.Node) => {
+    if (ts.isJsxElement(n) && n.openingElement.tagName.getText() === "ActionTier") {
+      const tier = tierName(n.openingElement);
+      const buttons: string[] = [];
+      let deleteCalls = 0;
+      const inner = (c: ts.Node) => {
+        if (ts.isJsxElement(c) && c.openingElement.tagName.getText() === "Button") {
+          buttons.push(...labelsOf(c));
+        }
+        if (ts.isCallExpression(c) && c.expression.getText() === "renderDeleteOrderAction") {
+          deleteCalls += 1;
+        }
+        ts.forEachChild(c, inner);
+      };
+      n.children.forEach(inner);
+      found.push({ tier: tier ?? "?", buttons, deleteCalls });
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(source);
+  return found;
+}
+
+const found = collect();
+const byTier = (tier: string) => found.filter((f) => f.tier === tier);
+const labels = (tier: string) => new Set(byTier(tier).flatMap((f) => f.buttons));
+
+describe("order-detail action bar tiers (page wiring)", () => {
+  it("finds the wrapped groups (a sanity floor: the parse must be able to fail)", () => {
+    expect(found.length).toBeGreaterThanOrEqual(15);
+    expect(found.every((f) => ["primary", "secondary", "danger"].includes(f.tier))).toBe(true);
+  });
+
+  it("PRIMARY holds only the actions that advance the order", () => {
+    expect(labels("primary")).toEqual(
+      new Set([
+        "Publish Order",
+        "Confirm Order",
+        "Mark shipped",
+        "Out for Delivery",
+        "Mark delivered",
+        "Mark as Delivered",
+      ]),
+    );
+  });
+
+  it("SECONDARY holds only reversible, non-destructive actions", () => {
+    expect(labels("secondary")).toEqual(
+      new Set(["Edit Items", "Unconfirm", "Unmark shipped", "Return to Confirmed", "Reopen Order"]),
+    );
+  });
+
+  it("DANGER holds only Cancel / Delete — and every Cancel and Delete is in it", () => {
+    expect(labels("danger")).toEqual(
+      new Set(["Cancel Order", "Delete Draft", "Delete", "Confirm Delete"]),
+    );
+    // no destructive label leaks into another tier
+    for (const tier of ["primary", "secondary"]) {
+      for (const l of labels(tier)) expect(l).not.toMatch(/^(Cancel|Delete|Confirm Delete)/);
+    }
+    // the shared Delete-order action (renderDeleteOrderAction) only ever appears in a danger tier
+    for (const tier of ["primary", "secondary"]) {
+      expect(byTier(tier).reduce((n, f) => n + f.deleteCalls, 0)).toBe(0);
+    }
+    expect(byTier("danger").reduce((n, f) => n + f.deleteCalls, 0)).toBeGreaterThanOrEqual(3);
+  });
+
+  it("no advance or reversible action sits in the danger tier", () => {
+    for (const l of [
+      "Publish Order",
+      "Confirm Order",
+      "Out for Delivery",
+      "Mark as Delivered",
+      "Unconfirm",
+      "Return to Confirmed",
+      "Reopen Order",
+      "Edit Items",
+    ]) {
+      expect(labels("danger").has(l)).toBe(false);
+    }
+  });
+});

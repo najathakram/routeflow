@@ -7,6 +7,7 @@ import { SellingRestrictionsAdminController } from "./selling-restrictions-admin
 import {
   SellingRestrictionsAdminService,
   restrictionStatus,
+  statusWhere,
 } from "./selling-restrictions-admin.service";
 
 const NOW = new Date("2026-09-20T12:00:00Z");
@@ -58,7 +59,7 @@ describe("SellingRestrictionsAdminService.list", () => {
     return { prisma, rules, service: new SellingRestrictionsAdminService(prisma) };
   }
 
-  it("computes each rule's status, filters by it, and ACTIVE uses the engine's SQL twin", async () => {
+  it("computes each rule's status, and a status filter is applied in SQL before the read cap", async () => {
     const s = setup();
     s.rules.findMany.mockResolvedValue([
       row({ id: "a" }),
@@ -70,11 +71,14 @@ describe("SellingRestrictionsAdminService.list", () => {
       "b:SCHEDULED",
       "c:LIFTED",
     ]);
-    expect((await s.service.list("SCHEDULED")).map((r) => r.id)).toEqual(["b"]);
+    expect(s.rules.findMany.mock.calls[0][0].where).toEqual({}); // no filter => all
+    await s.service.list("LIFTED");
+    const call = s.rules.findMany.mock.calls[1][0];
+    expect(call.where).toEqual(statusWhere("LIFTED", call.where.liftedAt.lte));
+    expect(call.take).toBe(500); // the cap applies AFTER the filter
     await s.service.list("ACTIVE");
     const where = s.rules.findMany.mock.calls[2][0].where;
     expect(where).toEqual(activeRuleWhere(where.effectiveFrom.lte));
-    expect(s.rules.findMany.mock.calls[0][0].take).toBe(500); // bounded read
   });
 
   it("returns display names and refuses without a tenant context", async () => {

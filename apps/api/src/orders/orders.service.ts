@@ -82,6 +82,7 @@ import { assertWithinCreditLimit, isCreditLimitCheckEnabled } from "./credit-lim
 import { SystemConfigService } from "../system-config/system-config.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
@@ -140,6 +141,9 @@ export class OrdersService implements OnApplicationBootstrap {
     private readonly systemConfig: SystemConfigService,
     private readonly inventoryService: InventoryService,
     private readonly authGuard: AuthorizationGuardService,
+    // Lane R: the selling-restrictions choke point. Required (never @Optional) — a missing
+    // provider must be a DI error, not a silent bypass of a jurisdiction ban.
+    private readonly sellingRestrictions: SellingRestrictionsService,
     private readonly promotionsService: PromotionsService,
     private readonly messaging: MessagingService,
     private readonly creditNotes: CreditNotesService,
@@ -157,6 +161,18 @@ export class OrdersService implements OnApplicationBootstrap {
     // that tenant's own config/data, never another tenant's.
     private readonly tenantCtx: TenantContextService,
   ) {}
+
+  /**
+   * Tenant scope for the selling-restrictions choke point: the row being written's own tenant
+   * when there is one (authoritative for an existing order), else the caller's, else the ambient
+   * one. None of them means the check cannot be evaluated — refuse (fail closed, 403) rather than
+   * skip: a tenant-less caller must act inside a tenant-scoped session.
+   */
+  private restrictionTenantId(user: JwtPayload | undefined, rowTenantId?: string | null): string {
+    const tenantId = rowTenantId ?? user?.tenantId ?? this.prisma.getTenantId();
+    if (tenantId) return tenantId;
+    throw new ForbiddenException("Selling restrictions require a tenant-scoped session");
+  }
 
   /**
    * P5-04: active promotions for the current tenant (window + isActive filtered).
@@ -4983,7 +4999,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // create()'s decrement at order time.
         if (order.status !== "DRAFT") {
           await this.settleStockForEdit(tx, order, heldItems, activeItems, user);
-          await this.assertWithinCreditLimit(
+          await assertWithinCreditLimit(
             tx,
             order.customerId,
             orderId,
@@ -5645,27 +5661,6 @@ export class OrdersService implements OnApplicationBootstrap {
   }
 
   /**
-   * P5-08b credit-limit guard — see `credit-limit-guard.ts` (B585 prefactor: the derivation notes
-   * and the blocking contract live there). Runs INSIDE the caller's transaction; the enabled
-   * decision is resolved by `isCreditLimitCheckEnabled` OUTSIDE it and passed in.
-   */
-  private assertWithinCreditLimit(
-    db: any,
-    customerId: string,
-    currentOrderId: string,
-    projectedOrderTotal: number,
-    creditCheckEnabled: boolean,
-  ): Promise<void> {
-    return assertWithinCreditLimit(
-      db,
-      customerId,
-      currentOrderId,
-      projectedOrderTotal,
-      creditCheckEnabled,
-    );
-  }
-
-  /**
    * P5-09: public credit re-check for the change-request next-delivery path.
    * Reuses the ONE exposure derivation (assertWithinCreditLimit →
    * loadCreditExposure) — never a second balance formula.
@@ -5675,7 +5670,7 @@ export class OrdersService implements OnApplicationBootstrap {
     excludeOrderId: string,
     projectedTotal: number,
   ): Promise<void> {
-    await this.assertWithinCreditLimit(
+    await assertWithinCreditLimit(
       this.prisma.forTenant(),
       customerId,
       excludeOrderId,
@@ -6183,13 +6178,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // CHANGE_WINDOW_CLOSED guard above — so settleStockForEdit's internal
         // DRAFT no-op never triggers on this call site).
         await this.settleStockForEdit(tx, order, heldItems, activeItems, resolver);
-        await this.assertWithinCreditLimit(
-          tx,
-          order.customerId,
-          order.id,
-          total,
-          creditCheckEnabled,
-        );
+        await assertWithinCreditLimit(tx, order.customerId, order.id, total, creditCheckEnabled);
 
         // NO status revert here — post-dispatch orders must NOT flip to PENDING
         // (the shouldRevert logic in updateOrderItems is pre-dispatch-only).

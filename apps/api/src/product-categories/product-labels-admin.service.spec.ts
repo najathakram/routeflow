@@ -496,3 +496,54 @@ describe("ProductLabelsAdminService — write serialization (review round)", () 
     expect(s.audit.log).not.toHaveBeenCalled();
   });
 });
+
+describe("ProductLabelsAdminService — lock budget and in-transaction checks (#990 follow-up)", () => {
+  const idx = (s: ReturnType<typeof setup>, model: string, sqlPart = "") =>
+    s.db.calls.findIndex(
+      (c) => c.model === model && (c.op.includes(sqlPart) || c.args?.includes?.(sqlPart)),
+    );
+
+  it("bounds the lock wait well inside Prisma's 5 s budget, then restores the default", async () => {
+    const s = family();
+    await s.service.setLabel("GP", "c", { mode: "INCLUDE" }, user);
+    const set = s.db.calls.findIndex((c) => c.op === "SET LOCAL lock_timeout = '2s'");
+    const lock = idx(s, "$executeRaw");
+    const reset = s.db.calls.findIndex((c) => c.op === "SET LOCAL lock_timeout = 0");
+    expect(set).toBeGreaterThan(-1);
+    expect(set).toBeLessThan(lock);
+    expect(lock).toBeLessThan(reset);
+  });
+
+  it.each([
+    [
+      "setLabel",
+      (s: ReturnType<typeof setup>) => s.service.setLabel("GP", "c", { mode: "INCLUDE" }, user),
+    ],
+    ["removeLabel", (s: ReturnType<typeof setup>) => s.service.removeLabel("GP", "c", user)],
+  ])(
+    "%s: a lock timeout surfaces as a clear 409, not an opaque tx-expired error",
+    async (_n, run) => {
+      const s = family();
+      s.db.addLabel("GP", "c", "INCLUDE");
+      s.db.lockError = Object.assign(new Error("canceling statement due to lock timeout"), {
+        meta: { code: "55P03" },
+      });
+      await expect(run(s)).rejects.toBeInstanceOf(ConflictException);
+      s.db.lockError = new Error("connection reset");
+      await expect(run(s)).rejects.toThrow("connection reset"); // anything else still propagates
+    },
+  );
+
+  it("the category (archived / unknown) is checked INSIDE the transaction, after the lock", async () => {
+    const s = family();
+    s.db.addCategory("old", "Old", TENANT, new Date());
+    await expect(s.service.setLabel("GP", "old", { mode: "INCLUDE" }, user)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    const lock = idx(s, "$executeRaw");
+    const categoryRead = s.db.calls.findIndex((c) => c.model === "productCategory");
+    expect(lock).toBeGreaterThan(-1);
+    expect(categoryRead).toBeGreaterThan(lock); // no category read happens before the lock is held
+    expect(s.db.labels).toHaveLength(0);
+  });
+});

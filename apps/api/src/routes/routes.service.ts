@@ -70,6 +70,7 @@ import {
 // stored mode's requires.allOf is no longer met.
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { ROUTES_DISPATCH_KEY, assertRouteKindDispatchAllowed } from "./route-dispatch-mode";
+import { observeRunCredit } from "./run-credit-observation";
 
 // F11 (B129 / B211): the `resolutionReason` stamped on a ChangeRequest that a
 // run-terminal release declined. Exported so a UI/report can recognise a
@@ -1635,6 +1636,14 @@ export class RoutesService {
           return row;
         })
       : await this.prisma.forTenant().routeRun.update({ where: { id }, data: updates, include });
+
+    // B585: observation only — never awaited, never blocks or fails the start. First start only.
+    if (dto.status === RouteRunStatus.IN_PROGRESS && !run.startedAt) {
+      void observeRunCredit(
+        { db: this.prisma.forTenant(), logger: this.logger, tenantId: this.prisma.getTenantId() },
+        id,
+      );
+    }
 
     if (updated.driver) {
       this.gateway.emitDriverStatusUpdated(this.prisma.getTenantId(), {
