@@ -8,6 +8,7 @@ import {
 } from "@nestjs/common";
 import { createHash, randomUUID } from "crypto";
 import { ConfigService } from "@nestjs/config";
+import { assertDeliveriesFitStop } from "./delivery-lines.util";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import {
@@ -2369,6 +2370,7 @@ export class RoutesService {
 
     let autoCompleted = false;
     await this.prisma.tenantTransaction(async (tx) => {
+      await assertDeliveriesFitStop(tx, stop.orders, dto.deliveries);
       // Phase 4 (W7b): regulated-delivery POD gate. Re-derive the age/ID
       // requirement from the stop's current orders (authoritative — orders can be
       // linked after dispatch), then block a regulated completion that lacks the
@@ -2612,6 +2614,7 @@ export class RoutesService {
     let excess: number | undefined;
     let advancePaymentId: string | null | undefined;
     await this.prisma.tenantTransaction(async (tx) => {
+      await assertDeliveriesFitStop(tx, stop.orders, dto.deliveries);
       // Phase 4 (W7b): regulated-delivery POD gate (same as completeStop).
       const db = tx as unknown as RegulatedDeliveryDb;
       const sets = await loadAgeIdCategorySets(db);
