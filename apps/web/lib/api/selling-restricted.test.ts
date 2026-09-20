@@ -15,11 +15,20 @@ describe("parseSellingRestricted", () => {
     expect(
       parseSellingRestricted(api(409, { code: "SELLING_RESTRICTED", blockedLines: [line] })),
     ).toEqual([line]);
-    expect(parseSellingRestricted(api(409, { code: "SELLING_RESTRICTED" }))).toEqual([]);
     expect(parseSellingRestricted(api(409, { code: "MERGE_CHOICE_REQUIRED" }))).toBeNull();
     expect(parseSellingRestricted(api(400, { code: "SELLING_RESTRICTED" }))).toBeNull();
     expect(parseSellingRestricted(new Error("network"))).toBeNull();
     expect(parseSellingRestricted(undefined)).toBeNull();
+  });
+});
+
+describe("parseSellingRestricted, refusals without detail", () => {
+  it.each([[undefined], [[]]])("never returns an empty list (blockedLines: %j)", (blockedLines) => {
+    const lines = parseSellingRestricted(
+      api(409, { code: "SELLING_RESTRICTED", blockedLines, message: "Some items can't be sold" }),
+    );
+    expect(lines).toHaveLength(1);
+    expect(lines?.[0]).toMatchObject({ productName: "An item on this order", ruleId: null });
   });
 });
 

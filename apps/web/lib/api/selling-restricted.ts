@@ -3,16 +3,31 @@ import type { BlockedLine, RestrictionReason } from "@routeflow/types";
 /**
  * The 409 `{ code: "SELLING_RESTRICTED", blockedLines }` the API's selling-restrictions choke point
  * throws when an order line may not be sold to this customer. Returns the blocked lines (never an
- * empty list for a matching error), or null for any other error. Mirrors `parseRegulatedAuthError`.
+ * empty list for a matching error: a detail-less refusal yields one generic line), or null for any other error. Mirrors `parseRegulatedAuthError`.
  */
 export function parseSellingRestricted(err: unknown): BlockedLine[] | null {
   const res = (
     err as {
-      response?: { status?: number; data?: { code?: string; blockedLines?: BlockedLine[] } };
+      response?: {
+        status?: number;
+        data?: { code?: string; blockedLines?: BlockedLine[]; message?: string };
+      };
     }
   )?.response;
   if (res?.status !== 409 || res.data?.code !== "SELLING_RESTRICTED") return null;
-  return res.data.blockedLines ?? [];
+  const lines = res.data.blockedLines;
+  if (lines && lines.length > 0) return lines;
+  // The code is suppressed from the global toast, so a refusal with no detail must still say
+  // something: one generic line, never an empty dialog.
+  return [
+    {
+      productId: "",
+      productName: "An item on this order",
+      ruleId: null,
+      reason: "UNKNOWN_PRODUCT",
+      message: res.data.message ?? "",
+    },
+  ];
 }
 
 /** Plain-language cause for one blocked line (never a raw enum or id). */

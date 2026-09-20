@@ -1,4 +1,5 @@
 import * as React from "react";
+import type { BlockedLine } from "@routeflow/types";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { Providers } from "@/app/providers";
 import OrderDetailPage from "./page";
@@ -47,20 +48,21 @@ const order = {
   total: 10,
   lineItems: [],
 };
+// The server's real shape (BlockedLine + the 409's own message): a typed fixture, so a renamed
+// field turns tsc red instead of letting the assertions pass on a fall-through.
+const blockedLine: BlockedLine = {
+  productId: "p1",
+  productName: "Hemp Gummies",
+  categoryName: "Hemp",
+  ruleId: "r1",
+  reason: "STATE_BAN",
+  state: "TX",
+  message: "Hemp Gummies is restricted in TX",
+};
 const blocked = {
   code: "SELLING_RESTRICTED",
-  blockedLines: [
-    {
-      productId: "p1",
-      productName: "Hemp Gummies",
-      ruleId: "r1",
-      categoryId: "cat1",
-      categoryName: "Hemp",
-      restrictionType: "STATE",
-      state: "TX",
-      cause: "RULE",
-    },
-  ],
+  message: "Some items can't be sold to this customer",
+  blockedLines: [blockedLine],
 };
 const reject = (status: number, data: object) =>
   patch.mockRejectedValueOnce(
@@ -88,6 +90,9 @@ describe("order detail — SELLING_RESTRICTED", () => {
     reject(409, blocked);
     await confirm();
     expect(await screen.findByText(/Hemp Gummies/)).toBeInTheDocument();
+    expect(screen.getByText("Restricted in TX")).toBeInTheDocument();
+    // The code is in providers.tsx's HANDLED_CODES; delete it and the global handler would add a
+    // second surface (a toast) on top of this dialog.
     expect(toast).not.toHaveBeenCalled();
   });
 
