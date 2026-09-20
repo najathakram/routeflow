@@ -150,6 +150,28 @@ describe("CustomersService — address state columns are derived at the write bo
       expect(written()).toMatchObject({ stateCode: "WA", stateNeedsReview: false });
     });
 
+    describe("a ZIP-only edit of an already-coded row (a written code must never contradict its zip)", () => {
+      beforeEach(() => {
+        prisma.customerAddress.findFirst.mockResolvedValue({
+          state: "Washington",
+          zip: "98101",
+          stateCode: "WA",
+        });
+      });
+
+      it("a contradicting zip (a DC one) drops the code to unresolved + review, like a fresh write of that pair", async () => {
+        await edit({ zip: "20001" });
+        expect(written()).toMatchObject({ stateCode: null, stateNeedsReview: true });
+      });
+
+      it("a zip that still confirms keeps the code; an UNCHANGED zip echoed by the form recomputes nothing", async () => {
+        await edit({ zip: "98102" });
+        expect(written(0)).toMatchObject({ stateCode: "WA", stateNeedsReview: false });
+        await edit({ zip: "98101" });
+        expect(written(1)).not.toHaveProperty("stateCode");
+      });
+    });
+
     it("an address that is not this customer's is a 404, not a derivation from nothing", async () => {
       prisma.customerAddress.findFirst.mockResolvedValue(null);
       await expect(edit({ city: "Dallas" })).rejects.toThrow("Address not found");

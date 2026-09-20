@@ -920,16 +920,17 @@ export class CustomersService {
           data: { isDefault: false },
         });
       }
-      // Recompute BOTH derived columns only when the state text CHANGED (the edit form resends it
-      // unchanged on every save) or the stored code is NULL (heals a row that had no confirming zip):
-      // see `addressStateFields`. A zip-only edit of an already-coded row does not recompute it.
+      // Recompute BOTH derived columns when the state or zip CHANGED (the form resends them unchanged
+      // on every save) or the code is NULL: a written code must never contradict its zip.
       const current = await tx.customerAddress.findFirst({
         where: { id: addrId, customerId: id },
         select: { state: true, zip: true, stateCode: true },
       });
       if (!current) throw new NotFoundException("Address not found");
       const stateChanged =
-        (dto.state !== undefined && dto.state !== current.state) || current.stateCode == null;
+        (dto.state !== undefined && dto.state !== current.state) ||
+        (dto.zip !== undefined && dto.zip !== current.zip) ||
+        current.stateCode == null;
       return tx.customerAddress.update({
         where: { id: addrId, customerId: id },
         // clear stale coords when the address changes
