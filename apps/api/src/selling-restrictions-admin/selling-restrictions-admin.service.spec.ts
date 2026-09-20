@@ -57,7 +57,12 @@ const user = { sub: "u1", username: "admin" } as JwtPayload;
 function setup() {
   const prisma = createMockPrisma();
   const models = prisma.forTenant() as any;
-  const rules = { findMany: jest.fn().mockResolvedValue([]), create: jest.fn() };
+  const rules = {
+    findMany: jest.fn().mockResolvedValue([]),
+    findFirst: jest.fn(),
+    create: jest.fn(),
+    updateMany: jest.fn(),
+  };
   models.sellingRestriction = rules;
   models.productCategory = {
     findFirst: jest.fn().mockResolvedValue({ id: "c1", archivedAt: null }),
@@ -182,11 +187,49 @@ describe("SellingRestrictionsAdminService.create", () => {
   });
 });
 
+describe("SellingRestrictionsAdminService.lift", () => {
+  it("lifts through a write guarded on liftedAt IS NULL, then audits", async () => {
+    const s = setup();
+    s.rules.updateMany.mockResolvedValue({ count: 1 });
+    s.rules.findFirst.mockResolvedValue(row({ liftedAt: NOW }));
+    await s.service.lift("r1", { reason: "Law repealed" }, user);
+    const call = s.rules.updateMany.mock.calls[0][0];
+    expect(call.where).toEqual({ id: "r1", liftedAt: null });
+    expect(call.data).toMatchObject({
+      liftedById: "u1",
+      liftedByName: "admin",
+      liftReason: "Law repealed",
+    });
+    expect(s.audit.log).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "selling_restriction.lifted" }),
+    );
+  });
+
+  it("a second lift is a 409 and never overwrites; an unknown id is a 404; needs a tenant", async () => {
+    const s = setup();
+    s.rules.updateMany.mockResolvedValue({ count: 0 });
+    s.rules.findFirst.mockResolvedValue(row({ liftedAt: NOW }));
+    await expect(s.service.lift("r1", { reason: "x" }, user)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    s.rules.findFirst.mockResolvedValue(null);
+    await expect(s.service.lift("nope", { reason: "x" }, user)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    (s.prisma.getTenantId as jest.Mock).mockReturnValue(null);
+    await expect(s.service.lift("r1", { reason: "x" }, user)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(s.audit.log).not.toHaveBeenCalled();
+  });
+});
+
 describe("SellingRestrictionsAdminController", () => {
-  it("reads are OPERATOR, create is TENANT_ADMIN, and the class is behind both guards", () => {
+  it("reads are OPERATOR, create/lift are TENANT_ADMIN, and the class is behind both guards", () => {
     const proto = SellingRestrictionsAdminController.prototype as unknown as Record<string, object>;
     expect(Reflect.getMetadata(ROLES_KEY, proto.list)).toEqual([UserRole.OPERATOR]);
     expect(Reflect.getMetadata(ROLES_KEY, proto.create)).toEqual([UserRole.TENANT_ADMIN]);
+    expect(Reflect.getMetadata(ROLES_KEY, proto.lift)).toEqual([UserRole.TENANT_ADMIN]);
     const guards = (
       Reflect.getMetadata("__guards__", SellingRestrictionsAdminController) ?? []
     ).map((g: { name: string }) => g.name);
