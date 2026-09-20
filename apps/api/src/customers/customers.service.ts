@@ -604,7 +604,7 @@ export class CustomersService {
             line2: addr.line2,
             city: addr.city,
             state: addr.state,
-            ...addressStateFields(addr.state),
+            ...addressStateFields(addr.state, addr.zip),
             zip: addr.zip,
             isDefault: idx === 0,
             ...(addressCoords[idx] ?? {}),
@@ -901,7 +901,7 @@ export class CustomersService {
           line2: dto.line2,
           city: dto.city,
           state: dto.state,
-          ...addressStateFields(dto.state),
+          ...addressStateFields(dto.state, dto.zip),
           zip: dto.zip,
           isDefault: dto.isDefault ?? false,
           addressType: dto.addressType ?? "BILLING",
@@ -920,15 +920,12 @@ export class CustomersService {
           data: { isDefault: false },
         });
       }
-      // A CHANGED `state` recomputes BOTH derived columns (a stale stateCode would keep the customer
-      // in the state they left). The edit form resends the unchanged text on every save, and the
-      // backfill may have resolved it by a rule the strict write boundary does not know ("TX 77001"):
-      // recomputing then would turn a correct code into "unresolved", so only a real change counts.
-      // A row whose stateCode is NULL (written after the backfill) is recomputed from its stored text
-      // on ANY edit, so it heals instead of staying unresolved forever.
+      // Recompute BOTH derived columns only when the state text CHANGED (the edit form resends it
+      // unchanged on every save) or the stored code is NULL (heals a row that had no confirming zip):
+      // see `addressStateFields`. A zip-only edit of an already-coded row does not recompute it.
       const current = await tx.customerAddress.findFirst({
         where: { id: addrId, customerId: id },
-        select: { state: true, stateCode: true },
+        select: { state: true, zip: true, stateCode: true },
       });
       if (!current) throw new NotFoundException("Address not found");
       const stateChanged =
@@ -938,7 +935,9 @@ export class CustomersService {
         // clear stale coords when the address changes
         data: {
           ...dto,
-          ...(stateChanged ? addressStateFields(dto.state ?? current.state) : {}),
+          ...(stateChanged
+            ? addressStateFields(dto.state ?? current.state, dto.zip ?? current.zip)
+            : {}),
           lat: null,
           lng: null,
         },
