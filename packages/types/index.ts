@@ -157,6 +157,7 @@ export * from "./api/crm";
 export * from "./api/checks";
 export * from "./api/features";
 export * from "./api/restrictions";
+export * from "./api/restrictions-settings";
 export * from "./api/us-states";
 
 // ─── Developer mode (hidden dispatch/driver/route addon) ──────────────────────
