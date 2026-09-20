@@ -258,11 +258,36 @@ const ALLOWLIST: Record<string, { hits: number; reason: string }> = {
 
 describe("credit-exposure coverage (D6 / B462, L-119)", () => {
   describe("(i) the hard block and the operator statement both read through loadCreditExposure", () => {
-    it("OrdersService.assertWithinCreditLimit calls loadCreditExposure and issues no invoice read of its own", () => {
-      const method = methodNamed(parseFile("orders/orders.service.ts"), "assertWithinCreditLimit");
-      expect(callsFunction(method, "loadCreditExposure")).toBe(true);
+    it("the credit-limit guard (orders/credit-limit-guard.ts) calls loadCreditExposure and issues no invoice read of its own", () => {
+      const fn = functionNamed(
+        parseFile("orders/credit-limit-guard.ts"),
+        "assertWithinCreditLimit",
+      );
+      expect(callsFunction(fn, "loadCreditExposure")).toBe(true);
       // One collection, one reader (L-119): the block must not grow a second invoice/order
-      // derivation next to the shared one.
+      // derivation next to the shared one — via ANY read shape, not just findMany.
+      for (const model of ["invoice", "order"]) {
+        for (const read of [
+          "findMany",
+          "findFirst",
+          "findUnique",
+          "aggregate",
+          "groupBy",
+          "count",
+        ]) {
+          expect({ model, read, hit: callsModelMethod(fn, model, read) }).toEqual({
+            model,
+            read,
+            hit: false,
+          });
+        }
+      }
+    });
+
+    it("OrdersService.assertWithinCreditLimit only delegates to the guard (no exposure math of its own)", () => {
+      const method = methodNamed(parseFile("orders/orders.service.ts"), "assertWithinCreditLimit");
+      expect(callsFunction(method, "assertWithinCreditLimit")).toBe(true);
+      expect(callsFunction(method, "loadCreditExposure")).toBe(false);
       expect(callsModelMethod(method, "invoice", "findMany")).toBe(false);
       expect(callsModelMethod(method, "order", "findMany")).toBe(false);
     });

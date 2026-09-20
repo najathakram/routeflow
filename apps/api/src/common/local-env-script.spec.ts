@@ -16,13 +16,22 @@ import path from "node:path";
 // suspiciously than a plain script file). A single trivial shim FILE, written once and invoked
 // with a mode argument, sidesteps that and keeps every case well under 3s.
 
-const SCRIPT = path.resolve(__dirname, "../../../../scripts/local-env.mjs");
+const REPO_ROOT = path.resolve(__dirname, "../../../..");
+const SCRIPT = path.join(REPO_ROOT, "scripts", "local-env.mjs");
 
 function scrubbedEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   delete env.DATABASE_URL;
+  delete env.RUN_SMTP_SPECS;
+  delete env.MAILPIT_API_URL;
+  delete env.NODE_EXTRA_CA_CERTS;
   for (const key of Object.keys(env)) {
-    if (key.startsWith("RAILWAY_") || key.startsWith("POSTGRES_") || key.startsWith("SMOKE_")) {
+    if (
+      key.startsWith("RAILWAY_") ||
+      key.startsWith("POSTGRES_") ||
+      key.startsWith("SMOKE_") ||
+      key.startsWith("SMTP_TEST_")
+    ) {
       delete env[key];
     }
   }
@@ -51,6 +60,18 @@ beforeAll(() => {
       "    [process.env.SMOKE_BASE_URL, process.env.SMOKE_TENANT_SLUG, process.env.SMOKE_WAIT_RETRIES].join(','),",
       "  );",
       "else if (mode === 'db-specs') process.stdout.write(String(process.env.RUN_DB_SPECS));",
+      "else if (mode === 'smtp-specs')",
+      "  process.stdout.write(",
+      "    [",
+      "      process.env.RUN_SMTP_SPECS,",
+      "      process.env.SMTP_TEST_HOST,",
+      "      process.env.SMTP_TEST_PORT,",
+      "      process.env.SMTP_TEST_USER,",
+      "      process.env.SMTP_TEST_PASS,",
+      "      process.env.MAILPIT_API_URL,",
+      "      process.env.NODE_EXTRA_CA_CERTS,",
+      "    ].join('|'),",
+      "  );",
       "else if (mode === 'exit') process.exit(Number(process.argv[3] || 0));",
       "else process.exit(0);",
       "",
@@ -108,6 +129,38 @@ describe("local-env.mjs contract (F10)", () => {
     const res = run(["--db-specs", "--", shim("db-specs")], scrubbedEnv());
 
     expect(res.stdout.trim()).toBe("local");
+    expect(res.status).toBe(0);
+  }, 10_000);
+
+  it("--smtp-specs exports the mailpit target and trusts the throwaway cert", () => {
+    const res = run(["--smtp-specs", "--", shim("smtp-specs")], scrubbedEnv());
+
+    expect(res.stdout.trim().split("|")).toEqual([
+      "local",
+      "127.0.0.1",
+      "1025",
+      "local@routeflow.info",
+      "local-mailpit-secret",
+      "http://127.0.0.1:8025",
+      path.join(REPO_ROOT, "docker", "mailpit-tls", "cert.pem"),
+    ]);
+    expect(res.status).toBe(0);
+  }, 10_000);
+
+  it("--smtp-specs keeps an already-exported target (other ports) but always sets the CA", () => {
+    const res = run(
+      ["--smtp-specs", "--", shim("smtp-specs")],
+      scrubbedEnv({
+        SMTP_TEST_PORT: "11025",
+        MAILPIT_API_URL: "http://127.0.0.1:18025",
+        NODE_EXTRA_CA_CERTS: "/somewhere/else.pem",
+      }),
+    );
+
+    const [, , port, , , api, ca] = res.stdout.trim().split("|");
+    expect(port).toBe("11025");
+    expect(api).toBe("http://127.0.0.1:18025");
+    expect(ca).toBe(path.join(REPO_ROOT, "docker", "mailpit-tls", "cert.pem"));
     expect(res.status).toBe(0);
   }, 10_000);
 

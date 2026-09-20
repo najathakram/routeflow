@@ -264,7 +264,22 @@ export class FeatureOverrideService {
    */
   async revokeExpired(
     now: Date = new Date(),
-    { limit = 500, graceMs = 0 }: { limit?: number; graceMs?: number } = {},
+    {
+      limit = 500,
+      graceMs = 0,
+      inTransaction,
+    }: {
+      limit?: number;
+      graceMs?: number;
+      /**
+       * Runs INSIDE the same transaction as each row's revoke (B580): whatever it writes (the
+       * sweep's audit row) commits or rolls back TOGETHER with that row's `revokedAt`. Before
+       * this the revokes committed one by one and the caller audited only after the whole batch
+       * returned, so a DB error at row N threw away the audit rows of rows 1..N-1 — already
+       * revoked, so no later sweep would ever see them again.
+       */
+      inTransaction?: (tx: Prisma.TransactionClient, row: RevokedExpiredRow) => Promise<void>;
+    } = {},
   ): Promise<RevokedExpiredRow[]> {
     const cutoff = new Date(now.getTime() - graceMs);
     const due = await this.prisma.tenantFeatureOverride.findMany({
@@ -283,9 +298,16 @@ export class FeatureOverrideService {
     const revoked: RevokedExpiredRow[] = [];
     for (const row of due) {
       try {
-        await this.prisma.tenantFeatureOverride.update({
-          where: { id: row.id, tenantId: row.tenantId, revokedAt: null },
-          data: { revokedAt: now },
+        // One transaction PER ROW: a failure on row N leaves rows 1..N-1 fully done (revoked AND
+        // audited) and row N untouched (still unrevoked, so a later sweep retries it). The error
+        // is rethrown, so rows N+1.. wait for that next sweep too — deliberate: a failing head
+        // row surfaces as a failed cron run instead of being swallowed.
+        await this.prisma.$transaction(async (tx) => {
+          await tx.tenantFeatureOverride.update({
+            where: { id: row.id, tenantId: row.tenantId, revokedAt: null },
+            data: { revokedAt: now },
+          });
+          if (inTransaction) await inTransaction(tx, row);
         });
       } catch (e) {
         if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2025") continue;

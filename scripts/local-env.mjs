@@ -7,7 +7,7 @@
 // broke every local:* gate on a Windows checkout. This script sets the variables in Node and
 // hands the command to the platform shell, so the same package.json line works on both.
 //
-// Usage: node scripts/local-env.mjs [--db] [--smoke] [--db-specs] [--e2e] -- "<command string>"
+// Usage: node scripts/local-env.mjs [--db] [--smoke] [--db-specs] [--smtp-specs] [--e2e] -- "<command string>"
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,6 +31,13 @@ Flags:
   --smoke      SMOKE_BASE_URL=http://localhost:3000, SMOKE_TENANT_SLUG=test,
                SMOKE_WAIT_RETRIES=30.
   --db-specs   RUN_DB_SPECS=local.
+  --smtp-specs RUN_SMTP_SPECS=local plus the compose mailpit target: SMTP_TEST_HOST=127.0.0.1,
+               SMTP_TEST_PORT=1025, SMTP_TEST_USER/PASS (the local throwaway credential from
+               docker-compose.yml), MAILPIT_API_URL=http://127.0.0.1:8025 and
+               NODE_EXTRA_CA_CERTS=<repo-root>/docker/mailpit-tls/cert.pem (trust for the
+               throwaway cert — TLS verification stays ON; this one is always set, replacing any
+               inherited value). Any SMTP_TEST_*/MAILPIT_API_URL already exported is kept, so the
+               same mailpit can be targeted on other ports.
   --e2e        Local Playwright E2E lane vars: PLAYWRIGHT_BASE_URL=http://localhost:3001,
                SMOKE_BASE_URL=http://localhost:3000, PLAYWRIGHT_TENANT_SLUG=e2e-routeflow,
                E2E_SEED_DATABASE_URL=<the compose Postgres URL, same POSTGRES_USER/
@@ -58,7 +65,9 @@ if (sep === -1 || argv.length <= sep + 1) {
 const flags = new Set(argv.slice(0, sep));
 const command = argv.slice(sep + 1).join(" ");
 
-const unknown = [...flags].filter((f) => !["--db", "--smoke", "--db-specs", "--e2e"].includes(f));
+const unknown = [...flags].filter(
+  (f) => !["--db", "--smoke", "--db-specs", "--smtp-specs", "--e2e"].includes(f),
+);
 if (unknown.length) {
   console.error(`local-env: unknown flag(s): ${unknown.join(", ")} — see --help`);
   process.exit(1);
@@ -91,6 +100,18 @@ if (flags.has("--smoke")) {
 
 if (flags.has("--db-specs")) {
   env.RUN_DB_SPECS = "local";
+}
+
+if (flags.has("--smtp-specs")) {
+  env.RUN_SMTP_SPECS = "local";
+  env.SMTP_TEST_HOST ||= "127.0.0.1";
+  env.SMTP_TEST_PORT ||= "1025";
+  // The credential compose gives mailpit (MP_SMTP_AUTH) and the api service (SMTP_USER/PASS) —
+  // a local throwaway, never a real mailbox.
+  env.SMTP_TEST_USER ||= "local@routeflow.info";
+  env.SMTP_TEST_PASS ||= "local-mailpit-secret";
+  env.MAILPIT_API_URL ||= "http://127.0.0.1:8025";
+  env.NODE_EXTRA_CA_CERTS = path.join(REPO_ROOT, "docker", "mailpit-tls", "cert.pem");
 }
 
 if (flags.has("--e2e")) {

@@ -67,6 +67,30 @@ function build(rows: Row[]) {
     return true;
   };
 
+  // Writes are only legal through the `tx` handed to a $transaction callback. Root-client writes
+  // (`this.prisma.x.update` inside the callback) would autocommit outside the transaction in real
+  // Prisma, so the fake refuses them — a refactor that drops `tx` can no longer pass this suite.
+  const viaTx = { on: false };
+  const assertViaTx = (what: string): void => {
+    if (!viaTx.on) throw new Error(`${what} called outside the transaction client (B580)`);
+  };
+  const throughTx =
+    <A, R>(fn: (a: A) => R) =>
+    (a: A): R => {
+      viaTx.on = true;
+      try {
+        return fn(a);
+      } finally {
+        viaTx.on = false;
+      }
+    };
+  const tx = {
+    tenantFeatureOverride: {
+      update: throughTx((a: unknown) => prisma.tenantFeatureOverride.update(a)),
+    },
+    auditLog: { create: throughTx((a: unknown) => prisma.auditLog.create(a)) },
+  };
+
   const prisma = {
     tenantFeatureOverride: {
       findMany: jest.fn().mockImplementation(({ where, take }: any) =>
@@ -78,6 +102,7 @@ function build(rows: Row[]) {
         ),
       ),
       update: jest.fn().mockImplementation(({ where, data }: any) => {
+        assertViaTx("tenantFeatureOverride.update");
         const r = rows.find((x) => matches(x, where));
         if (!r) {
           throw new Prisma.PrismaClientKnownRequestError("not found", {
@@ -89,10 +114,36 @@ function build(rows: Row[]) {
         return Promise.resolve(r);
       }),
     },
+    // The sweep writes its audit row with `tx.auditLog.create` INSIDE each row's transaction
+    // (B580); `audit.log` records every such write so the assertions below read the same.
+    auditLog: {
+      create: jest.fn().mockImplementation(({ data }: any) => {
+        assertViaTx("auditLog.create");
+        return audit.log(data);
+      }),
+    },
+    // Emulates an interactive transaction with ROLLBACK: rows and audits are snapshotted and
+    // restored when the callback throws — the property B580 depends on.
+    $transaction: jest.fn().mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
+      const rowsBefore = rows.map((r) => ({ ...r }));
+      const auditsBefore = audit.written.length;
+      try {
+        return await fn(tx);
+      } catch (e) {
+        rows.forEach((r, i) => Object.assign(r, rowsBefore[i]));
+        audit.written.length = auditsBefore;
+        throw e;
+      }
+    }),
+  } as any;
+  const audit = {
+    written: [] as any[],
+    log: jest.fn().mockImplementation(async (dto: any) => {
+      audit.written.push(dto);
+    }),
   } as any;
   const svc = new FeatureOverrideService(prisma);
-  const audit = { log: jest.fn().mockResolvedValue(undefined) } as any;
-  return { job: new FeatureOverrideExpiryJob(svc, audit), svc, prisma, audit, rows };
+  return { job: new FeatureOverrideExpiryJob(svc), svc, prisma, audit, rows };
 }
 
 describe("FeatureOverrideExpiryJob.revokeExpiredOverrides (B569)", () => {
@@ -260,5 +311,65 @@ describe("FeatureOverrideExpiryJob.revokeExpiredOverrides (B569)", () => {
     expect(JSON.stringify(withAdvisoryLockMock.mock.calls[0][0])).toContain(
       "billing.revokeExpiredOverrides",
     );
+  });
+
+  // ── B580: revoke + audit are ONE transaction per row ─────────────────────────
+  describe("B580 — a DB error mid-batch never loses an audit row", () => {
+    const expired = (n: number) =>
+      Array.from({ length: n }, (_, i) =>
+        overrideRow({
+          id: `ov${i + 1}`,
+          featureKey: `key${i + 1}`,
+          // distinct, ascending expiry so the sweep processes them in id order
+          expiresAt: new Date(PAST.getTime() + i * 1000),
+        }),
+      );
+
+    it("a write error on row 3 leaves rows 1-2 revoked AND audited, and rows 3-5 untouched", async () => {
+      const { job, rows, audit, prisma } = build(expired(5));
+      const real = prisma.tenantFeatureOverride.update.getMockImplementation()!;
+      prisma.tenantFeatureOverride.update.mockImplementation((args: any) => {
+        if (args.where.id === "ov3") throw new Error("connection reset");
+        return real(args);
+      });
+
+      await expect(job.revokeExpiredOverrides()).rejects.toThrow("connection reset");
+
+      expect(rows.filter((r) => r.revokedAt !== null).map((r) => r.id)).toEqual(["ov1", "ov2"]);
+      // The regression: previously ZERO audit rows survived a throw at row 3.
+      expect(audit.written.map((a: any) => a.entityId)).toEqual(["ov1", "ov2"]);
+    });
+
+    it("a failed AUDIT write rolls that row's revoke back with it — never revoked-but-unaudited", async () => {
+      const { job, rows, audit } = build(expired(3));
+      audit.log.mockImplementation(async (dto: any) => {
+        if (dto.entityId === "ov2") throw new Error("audit insert failed");
+        audit.written.push(dto);
+      });
+
+      await expect(job.revokeExpiredOverrides()).rejects.toThrow("audit insert failed");
+
+      expect(rows.find((r) => r.id === "ov1")!.revokedAt).not.toBeNull();
+      expect(rows.find((r) => r.id === "ov2")!.revokedAt).toBeNull(); // rolled back
+      expect(audit.written.map((a: any) => a.entityId)).toEqual(["ov1"]);
+    });
+
+    it("the next sweep retries the row that failed, and audits every row exactly once overall", async () => {
+      const { job, rows, audit, prisma } = build(expired(4));
+      const real = prisma.tenantFeatureOverride.update.getMockImplementation()!;
+      prisma.tenantFeatureOverride.update.mockImplementationOnce(real); // ov1 ok
+      prisma.tenantFeatureOverride.update.mockImplementationOnce(() => {
+        throw new Error("boom"); // ov2 fails
+      });
+      await expect(job.revokeExpiredOverrides()).rejects.toThrow("boom");
+
+      prisma.tenantFeatureOverride.update.mockImplementation(real); // DB healthy again
+      const second = await job.revokeExpiredOverrides();
+
+      expect(second.revoked).toBe(3); // ov2, ov3, ov4 — ov1 was already done
+      expect(rows.every((r) => r.revokedAt !== null)).toBe(true);
+      const ids = audit.written.map((a: any) => a.entityId).sort();
+      expect(ids).toEqual(["ov1", "ov2", "ov3", "ov4"]); // each exactly once, none lost
+    });
   });
 });

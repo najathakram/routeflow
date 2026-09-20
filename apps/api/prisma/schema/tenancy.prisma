@@ -103,7 +103,8 @@ model Tenant {
   featureOverrides        TenantFeatureOverride[]
   featureResolverDiffs    FeatureResolverDiff[]
   featureConfigs          TenantFeatureConfig[]
-  planVersion             PlanVersion?             @relation(fields: [planVersionId], references: [id])
+  featureConfigSnapshots  TenantFeatureConfigSnapshot[]
+  planVersion             PlanVersion?                  @relation(fields: [planVersionId], references: [id])
   meterUsages             MeterUsage[]
   billingEvents           BillingEvent[]
   billingNotificationLogs BillingNotificationLog[]

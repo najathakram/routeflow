@@ -30,6 +30,7 @@ import {
 } from "../invoices/invoice-status-sets";
 import {
   loadCreditExposure,
+  OPEN_ORDER_STATUSES,
   RECEIVABLE_INVOICE_SELECT,
   receivableBalance,
 } from "../invoices/credit-exposure";
@@ -271,8 +272,8 @@ export class CustomersService {
 
     const enriched = data.map((c) => ({
       ...c,
-      receivables: receivablesMap[c.id] ?? 0,
-      unusedCredits: creditsMap[c.id] ?? 0,
+      receivables: roundMoney(receivablesMap[c.id] ?? 0),
+      unusedCredits: roundMoney(creditsMap[c.id] ?? 0),
       regulatedCount: (c as any)._count?.authorizations ?? 0,
     }));
 
@@ -1088,7 +1089,9 @@ export class CustomersService {
       this.prisma.forTenant().order.findMany({
         where: {
           customerId,
-          status: { in: ["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"] as any },
+          // The same open set `loadCreditExposure` uses (B584): a new open status can't reach the
+          // block but miss this tile.
+          status: { in: OPEN_ORDER_STATUSES },
         },
         select: { id: true, total: true, orderNumber: true, status: true, createdAt: true },
       }),
@@ -1839,7 +1842,7 @@ export class CustomersService {
         escCsv(c.phone),
         escCsv(c.customerType),
         escCsv(c.user?.status),
-        receivables.toFixed(2),
+        roundMoney(receivables).toFixed(2),
         credits.toFixed(2),
       ].join(",");
     });
