@@ -59,6 +59,7 @@ import {
   IDEMPOTENCY_REPLAY_NEEDS_RECONCILE,
   shouldSkipInPlaceResync,
 } from "./merge-idempotency";
+import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
 import { CreateSaleDto } from "./dto/create-sale.dto";
 import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
 import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
@@ -105,19 +106,6 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { sumInlineReturnCredit } from "../returns/inline-return-credit.util";
-
-/**
- * B63 (REG-B63): the statuses past which a BUYER may no longer self-edit an
- * order's items. `updateOrderItems`'s write gate and the read-side `editWindow`
- * descriptor (`computeEditWindow`) both read THIS list, so a buyer client is
- * never told the window is open on an order the API is about to refuse.
- * Operators and drivers keep editing at every live stage.
- */
-const BUYER_EDIT_CLOSED_STATUSES: OrderStatus[] = [
-  OrderStatus.OUT_FOR_DELIVERY,
-  OrderStatus.PARTIALLY_DELIVERED,
-  OrderStatus.DELIVERED,
-];
 
 /**
  * B215: the statuses whose linked invoice(s) are re-synced IN PLACE after an item edit
@@ -471,43 +459,9 @@ export class OrdersService implements OnApplicationBootstrap {
     // P5-08 edit window (G7): free editing is open until the order's run dispatches.
     // `editableUntil` (the soft cutoff countdown) stays null until the per-weekday
     // routes-cutoff config lands — the HARD close is dispatch, which is authoritative.
-    (order as any).editWindow = this.computeEditWindow(order, user.role);
+    (order as any).editWindow = computeEditWindow(order, user.role);
 
     return order;
-  }
-
-  /**
-   * P5-08 / R1: derive the non-persisted edit-window descriptor from an order.
-   * editable ⟺ the order isn't CANCELLED — items can now be edited at every live
-   * stage (incl. OUT_FOR_DELIVERY / DELIVERED, on dispatched runs), with the write
-   * gate re-syncing any linked invoice + ledger. Single source of truth shared by
-   * the read and the write gate. `dispatched` no longer closes the window.
-   *
-   * B63 (REG-B63): for a CUSTOMER the window DOES close once the order is out the
-   * door — the same `BUYER_EDIT_CLOSED_STATUSES` the write gate refuses on, so the
-   * descriptor never reports "nothing is wrong" while `updateOrderItems` answers
-   * 403. `closedReason: "DISPATCHED"` is what buyer clients read to explain it.
-   */
-  private computeEditWindow(
-    order: {
-      status: string;
-      routeRunId?: string | null;
-      routeRun?: { status: string } | null;
-    },
-    role?: UserRole,
-  ): { editable: boolean; editableUntil: string | null; closedReason: string | null } {
-    if (
-      role === UserRole.CUSTOMER &&
-      BUYER_EDIT_CLOSED_STATUSES.includes(order.status as OrderStatus)
-    ) {
-      return { editable: false, editableUntil: null, closedReason: "DISPATCHED" };
-    }
-    const editable = order.status !== "CANCELLED";
-    return {
-      editable,
-      editableUntil: null,
-      closedReason: editable ? null : "STATUS",
-    };
   }
 
   /**
@@ -2655,6 +2609,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // W6: promoting a DRAFT into a live order is when it becomes a real sale, so
     // re-run the license guard (drafts are created/edited without it — that's the
     // "draft escape"). Categories resolve from each line's snapshot or its product.
+    let checkedProductIds: ReadonlySet<string> | undefined; // what the Lane R check saw
     if (order.status === "DRAFT" && dto.status !== OrderStatus.CANCELLED) {
       const items = await this.prisma.forTenant().orderItem.findMany({
         where: { orderId: id, status: { not: "CANCELLED" } },
@@ -2677,6 +2632,16 @@ export class OrdersService implements OnApplicationBootstrap {
         })),
         orderId: id,
       });
+      // Lane R: the same "becomes a real sale" moment — a banned product refuses (409
+      // SELLING_RESTRICTED) BEFORE the status write / stock reservation. Drafts are created and
+      // edited without the check; this is the draft escape's second half.
+      await this.sellingRestrictions.assertLinesSellable({
+        tenantId: this.restrictionTenantId(user, order.tenantId),
+        customerId: order.customerId,
+        lines: items.flatMap((li) => (li.productId ? [{ productId: li.productId }] : [])),
+        channel: restrictionChannelForPrincipal(user), // judged at ENTRY time, like the license guard
+      });
+      checkedProductIds = new Set(pids);
     }
 
     // Refuse the cancel BEFORE writing the status — a rejection must leave the
@@ -2741,6 +2706,13 @@ export class OrdersService implements OnApplicationBootstrap {
                 where: { orderId: id, status: { not: "CANCELLED" } },
                 select: { productId: true, qty: true },
               });
+            // The Lane R check ran outside this tx: a product added since (a concurrent draft
+            // edit) was never judged — roll back (the claim above included) and promote again.
+            if (activeItems.some((li) => li.productId && !checkedProductIds?.has(li.productId))) {
+              throw new ConflictException(
+                "The order's items changed while it was being promoted — review it and promote again.",
+              );
+            }
             const stockLines = activeItems
               .filter((li): li is { productId: string; qty: any } => !!li.productId)
               .map((li) => ({ productId: li.productId, qty: Number(li.qty) }));
