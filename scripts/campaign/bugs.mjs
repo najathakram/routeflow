@@ -6259,9 +6259,15 @@ cmds["self-test"] = () => {
         [1, 1, 1],
       );
       if (process.platform !== "win32") {
-        const interrupted = holder("B8", "0", "ignore", join(tmp, "never-released-sigint"));
+        // B588: the child is parked SYNCHRONOUSLY in its critical section (Atomics.wait), so Node cannot
+        // run its JS SIGINT handler until control returns to the event loop. So: deliver the signal
+        // while the lock is provably held, THEN release the hold — the queued SIGINT is handled as
+        // soon as the write finishes. (Holding until killed would never let the handler run.)
+        const releaseSigint = join(tmp, "release-sigint");
+        const interrupted = holder("B8", "0", "ignore", releaseSigint);
         const heldByInterrupted = awaitHold();
         interrupted.kill("SIGINT");
+        writeFileSync(releaseSigint, "go");
         awaitExit(interrupted);
         check("SIGINT: it really held the lock when it was interrupted", heldByInterrupted, true);
         check("SIGINT: an interrupted writer leaves NO lock directory", existsSync(lockDir), false);

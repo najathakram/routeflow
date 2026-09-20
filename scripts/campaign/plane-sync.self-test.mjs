@@ -36,6 +36,10 @@ import { deriveDesired, mapPriority, registryDigest } from "./plane-sync.mjs";
 import { createClient, gitEnv, repoRoot, machineRoot, CLOSED_MARKER } from "./plane-client.mjs";
 import { startFakePlane, DEFAULT_STATES } from "./plane-fake-server.mjs";
 
+// B588: a hard 15s kill turned a merely-slow child (a loaded fleet host) into `code: null`, and every
+// check after it read as a product defect. One generous, env-tunable budget for every CLI child.
+const CLI_BUDGET_MS = Number(process.env.PLANE_SELF_TEST_CLI_BUDGET_MS) || 90_000;
+
 const SCRIPT_PATH = fileURLToPath(new URL("./plane-sync.mjs", import.meta.url));
 const STOP_HOOK_PATH = fileURLToPath(new URL("../../.claude/hooks/stop.mjs", import.meta.url));
 
@@ -1647,7 +1651,7 @@ async function main() {
       let err = "";
       child.stdout.on("data", (c) => (out += c));
       child.stderr.on("data", (c) => (err += c));
-      const timer = setTimeout(() => child.kill(), 15_000);
+      const timer = setTimeout(() => child.kill(), CLI_BUDGET_MS);
       child.on("close", (c) => {
         clearTimeout(timer);
         resolve({ code: c, stdout: out, stderr: err });
@@ -1700,7 +1704,7 @@ async function main() {
       let err = "";
       child.stdout.on("data", (c) => (out += c));
       child.stderr.on("data", (c) => (err += c));
-      const timer = setTimeout(() => child.kill(), 15_000);
+      const timer = setTimeout(() => child.kill(), CLI_BUDGET_MS);
       child.on("close", (c) => {
         clearTimeout(timer);
         resolve({ code: c, stdout: out, stderr: err });
@@ -1761,7 +1765,7 @@ async function main() {
       let err = "";
       child.stdout.on("data", (c) => (out += c));
       child.stderr.on("data", (c) => (err += c));
-      const timer = setTimeout(() => child.kill(), 15_000);
+      const timer = setTimeout(() => child.kill(), CLI_BUDGET_MS);
       child.on("close", (c) => {
         clearTimeout(timer);
         resolve({ code: c, stdout: out, stderr: err });
