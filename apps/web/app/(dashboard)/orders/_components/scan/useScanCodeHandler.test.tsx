@@ -172,6 +172,20 @@ describe("useScanCodeHandler - connectivity + quiet", () => {
     );
   });
 
+  it("a BACKGROUND lookup that finds nothing reports unknown but never opens create-product", async () => {
+    mockResolve.mockResolvedValue({ notFound: true, archived: false });
+    const d = deps();
+    const { result } = renderHook(() => useScanCodeHandler(d));
+
+    await expect(result.current.current("111", { background: true })).resolves.toEqual({
+      kind: "unknown",
+    });
+    expect(d.onUnknownCode).not.toHaveBeenCalled();
+
+    await result.current.current("222"); // a live scan still does
+    expect(d.onUnknownCode).toHaveBeenCalledWith("222");
+  });
+
   it("quiet does NOT silence an archived-product toast (that is not a lookup failure)", async () => {
     mockResolve.mockResolvedValue({ notFound: false, archived: true, product: { name: "Old" } });
     const d = deps();
