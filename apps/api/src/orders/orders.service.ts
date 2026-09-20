@@ -83,6 +83,7 @@ import { assertWithinCreditLimit, isCreditLimitCheckEnabled } from "./credit-lim
 import { SystemConfigService } from "../system-config/system-config.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
+import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
@@ -2553,6 +2554,14 @@ export class OrdersService implements OnApplicationBootstrap {
       await this.authGuard.assertAuthorizedOrThrow({
         customerId,
         lines: lineItemsData.map((li) => ({ trackedCategoryId: li.trackedCategoryId })),
+      });
+      // Lane R: selling restrictions — a banned product refuses (409 SELLING_RESTRICTED) BEFORE the
+      // stock transaction, like the license guard above; a DRAFT is checked at its promotion.
+      await this.sellingRestrictions.assertLinesSellable({
+        tenantId: this.restrictionTenantId(user),
+        customerId,
+        lines: lineItemsData.flatMap((li) => (li.productId ? [{ productId: li.productId }] : [])),
+        channel: restrictionChannelForPrincipal(user), // judged at ENTRY time, like the license guard
       });
     }
 

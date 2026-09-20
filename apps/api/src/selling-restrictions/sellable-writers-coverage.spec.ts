@@ -42,7 +42,7 @@ const rec = (m: string) =>
 
 const TABLE: Record<string, Row> = {
   // ── orders: the nine enforcement points (each call-site PR flips its row) ──────────────────
-  [ord("create")]: P("2a: create"),
+  [ord("create")]: G,
   [ord("updateOrderItems")]: P("2a: update (merge + replace-all)"),
   [ord("approveChangeRequestAtStop")]: P("2a: change request at the door"),
   [ord("changeStatus")]: P("2a: DRAFT -> PENDING promotion (the draft escape)"),
@@ -102,7 +102,7 @@ const TABLE: Record<string, Row> = {
 };
 
 /** The RATCHET: how many rows are still PENDING. Lower it in the PR that flips a row to GUARDED. */
-const PENDING_BASELINE = 16;
+const PENDING_BASELINE = 15;
 /** GUARDED + PENDING: reclassifying a PENDING row to EXEMPT (an escape, not progress) must change THIS. */
 const ENFORCEMENT_POINTS = 16;
 const CHOKE_POINT = ["assertLinesSellable", "checkLinesSellable"];
