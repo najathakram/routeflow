@@ -194,8 +194,29 @@ function onDeadOrRecoveryBranch(n: ts.Node, stop: ts.Node): boolean {
   return false;
 }
 
+/** True when EVERY path through `stmts` ends in a throw: a `return`, a bare `if (x) throw e;` or falling off the end does not. */
+function alwaysThrows(stmts: readonly ts.Statement[]): boolean {
+  const branch = (n: ts.Statement) => alwaysThrows(ts.isBlock(n) ? n.statements : [n]);
+  /** A `return` anywhere under `n` (not inside a nested function) is a path that swallows. */
+  const returns = (n: ts.Node): boolean =>
+    ts.isReturnStatement(n) || (!ts.isFunctionLike(n) && ts.forEachChild(n, returns) === true);
+  for (const st of stmts) {
+    if (ts.isThrowStatement(st)) return true;
+    if (returns(st)) return false;
+    if (ts.isBlock(st) && alwaysThrows(st.statements)) return true;
+    if (
+      ts.isIfStatement(st) &&
+      st.elseStatement &&
+      branch(st.thenStatement) &&
+      branch(st.elseStatement)
+    )
+      return true;
+  }
+  return false;
+}
+
 /**
- * A call inside `try { … } catch { … }` whose catch never rethrows is a refusal that is SWALLOWED:
+ * A call inside `try { … } catch { … }` whose catch does not ALWAYS rethrow is a refusal that can be SWALLOWED:
  * the write goes ahead anyway, so it is not a guard. (Deliberately NOT part of `onDeadOrRecoveryBranch`:
  * the stale-row scan must still see such a call, so its method has to be classified GUARDED, and
  * then this proof rejects it.)
@@ -203,13 +224,7 @@ function onDeadOrRecoveryBranch(n: ts.Node, stop: ts.Node): boolean {
 function swallowedByTry(n: ts.Node, stop: ts.Node): boolean {
   for (let c: ts.Node | undefined = n.parent; c && c !== stop; c = c.parent) {
     if (!ts.isTryStatement(c) || !c.catchClause || !isWithin(n, c.tryBlock)) continue;
-    let rethrows = false;
-    const scan = (x: ts.Node) => {
-      if (ts.isThrowStatement(x)) rethrows = true;
-      ts.forEachChild(x, scan);
-    };
-    scan(c.catchClause.block);
-    if (!rethrows) return true;
+    if (!alwaysThrows(c.catchClause.block.statements)) return true;
   }
   return false;
 }
@@ -338,6 +353,9 @@ describe("the scanner and the proof themselves (so a silent no-match cannot pass
       recovery() { try { w(); } catch (e) { await this.r.assertLinesSellable({}); } this.prisma.orderItem.create({}); }
       swallowed() { try { await this.r.assertLinesSellable({}); } catch (e) { log(e); } this.prisma.orderItem.create({}); }
       rethrown() { try { await this.r.assertLinesSellable({}); } catch (e) { log(e); throw e; } this.prisma.orderItem.create({}); }
+      earlyReturn() { try { await this.r.assertLinesSellable({}); } catch (e) { if (x) return; throw e; } this.prisma.orderItem.create({}); }
+      condRethrown() { try { await this.r.assertLinesSellable({}); } catch (e) { if (x) throw e; } this.prisma.orderItem.create({}); }
+      bothRethrown() { try { await this.r.assertLinesSellable({}); } catch (e) { if (x) throw e; else throw new Error("y"); } this.prisma.orderItem.create({}); }
       nested() { return this.prisma.order.update({ data: { lineItems: c ? { create: [] } : undefined } }); }
       other() { return this.prisma.order.update({ data: { notes: "x" } }); }
     }`,
@@ -350,10 +368,11 @@ describe("the scanner and the proof themselves (so a silent no-match cannot pass
     expect(lineWritePositions(m.get("A.other")!, sf)).toHaveLength(0);
   });
 
-  it("the guard proof accepts a real early call and rejects none / late / commented / dead / recovery / swallowed", () => {
+  it("the guard proof accepts a real early call and rejects none / late / commented / dead / recovery / swallowed / conditionally rethrown", () => {
     expect(guardProblem(m.get("A.good")!, sf)).toBeNull();
     expect(guardProblem(m.get("A.inTx")!, sf)).toBeNull(); // awaited inside a transaction callback
     expect(guardProblem(m.get("A.rethrown")!, sf)).toBeNull(); // a catch that rethrows still refuses
+    expect(guardProblem(m.get("A.bothRethrown")!, sf)).toBeNull(); // every branch throws: still a refusal
     expect(guardProblem(m.get("A.late")!, sf)).toMatch(/AFTER/);
     for (const name of [
       "A.none",
@@ -361,6 +380,8 @@ describe("the scanner and the proof themselves (so a silent no-match cannot pass
       "A.dead",
       "A.recovery",
       "A.swallowed",
+      "A.condRethrown", // `if (x) throw e;` swallows every other error
+      "A.earlyReturn", // a path that returns swallows too
       "A.voided",
       "A.floating",
       "A.neverRun",
