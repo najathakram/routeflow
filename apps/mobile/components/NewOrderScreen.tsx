@@ -89,6 +89,7 @@ import {
 } from "../lib/sale-line";
 import { LicenseGuardModal } from "./LicenseGuardModal";
 import { parseRegulatedAuthError, type BlockedCategory } from "../lib/api/authorizations";
+import { parseSellingRestrictedError, summarizeRestrictedBlock } from "../lib/selling-restricted";
 import { ScanOutcome } from "../lib/scan-loop";
 import { bumpScanOrder, nextFlash, trayRowsFrom, type ScanFlash } from "../lib/scan-tray";
 import {
@@ -2100,6 +2101,13 @@ function ProductPickView({
           if (blocked && blocked.length > 0) {
             licenseRetryRef.current = mergeChoice;
             setLicenseBlock(blocked);
+            return;
+          }
+          // Jurisdiction selling restriction: read-only explanation (mobile never edits a rule).
+          const restricted = parseSellingRestrictedError(err);
+          if (restricted) {
+            const summary = summarizeRestrictedBlock(restricted);
+            alertInfo(summary.title, summary.body);
             return;
           }
           const msg = body?.message ?? err?.message ?? "Unable to save order.";
