@@ -1037,3 +1037,119 @@ describe("campaign-check freshness guard (spec T1–T17)", () => {
     }
   });
 });
+
+// `--print-stale` (read-only): the workspaces whose T1 report the freshness rule would refuse, one
+// turbo package name per line. Its only consumer is scripts/verify-turbo.mjs, which adds them to an
+// AFFECTED-scope run so a scoped push regenerates the report instead of being refused for it.
+// Enforcement is unchanged — these cases also pin that the enforcing mode agrees with the list.
+describe("campaign-check --print-stale (read-only list for the affected-scope verify)", () => {
+  const lines = (res: SpawnSyncReturns<string>) =>
+    (res.stdout ?? "").split("\n").filter((l) => l.trim() !== "");
+
+  it("lists a STALE, a PARTIAL and a MISSING report but not a FRESH one — one package per line, exit 0", () => {
+    const dir = mkFixtureDir();
+    try {
+      initFixtureRepo(dir);
+      writeApiSpecCommit(dir, T0);
+      writeLedgerCommit(dir, T0 + 600, [B1_DONE_ROW]);
+      const runsDir = path.join(dir, ".campaign", "runs");
+      writeReport(runsDir, "api", { generatedAt: iso(T0 + 300) }); // older than the ledger: STALE
+      writeReport(runsDir, "mobile", { generatedAt: iso(T0 + 10_000), tokens: [] }); // FRESH
+      fs.writeFileSync(
+        path.join(runsDir, "pricing.json"),
+        JSON.stringify({ generatedAt: iso(T0 + 10_000), partial: true, testResults: [] }),
+      ); // PARTIAL: fresh by time, still refused
+      // web.json is MISSING
+
+      const res = runCampaignCheck({ fixtureDir: dir, runsDir, args: ["--print-stale"] });
+
+      expect(res.status).toBe(0);
+      expect(lines(res)).toEqual(["@routeflow/api", "@routeflow/pricing", "@routeflow/web"]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("prints nothing when every report is fresh", () => {
+    const dir = mkFixtureDir();
+    try {
+      initFixtureRepo(dir);
+      writeApiSpecCommit(dir, T0);
+      writeLedgerCommit(dir, T0 + 600, [B1_DONE_ROW]);
+      const runsDir = path.join(dir, ".campaign", "runs");
+      for (const ws of ["api", "mobile", "pricing", "web"]) {
+        writeReport(runsDir, ws, { generatedAt: iso(T0 + 10_000), tokens: [] });
+      }
+
+      const res = runCampaignCheck({ fixtureDir: dir, runsDir, args: ["--print-stale"] });
+
+      expect(res.status).toBe(0);
+      expect(lines(res)).toEqual([]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("parity: whatever it lists, the ENFORCING mode refuses too — and only those (no relaxation)", () => {
+    const dir = mkFixtureDir();
+    try {
+      initFixtureRepo(dir);
+      writeApiSpecCommit(dir, T0);
+      writeLedgerCommit(dir, T0 + 600, [B1_DONE_ROW]);
+      const runsDir = path.join(dir, ".campaign", "runs");
+      writeReport(runsDir, "api", { generatedAt: iso(T0 + 300) });
+      writeReport(runsDir, "mobile", { generatedAt: iso(T0 + 10_000), tokens: [] });
+      writeReport(runsDir, "pricing", { generatedAt: iso(T0 + 10_000), tokens: [] });
+      writeReport(runsDir, "web", { generatedAt: iso(T0 + 10_000), tokens: [] });
+
+      const listed = lines(runCampaignCheck({ fixtureDir: dir, runsDir, args: ["--print-stale"] }));
+      const enforcing = runCampaignCheck({ fixtureDir: dir, runsDir });
+
+      expect(listed).toEqual(["@routeflow/api"]);
+      expect(combined(enforcing)).toContain("api.json is STALE");
+      expect(enforcing.status).toBe(1);
+      for (const fresh of ["mobile", "pricing", "web"]) {
+        expect(combined(enforcing)).toContain(`${fresh}.json fresh`);
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("with no T1 claim in the ledger there is nothing to be stale about", () => {
+    const dir = mkFixtureDir();
+    try {
+      initFixtureRepo(dir);
+      writeApiSpecCommit(dir, T0);
+      writeLedgerCommit(dir, T0 + 600, []); // no T1 rows
+      const runsDir = path.join(dir, ".campaign", "runs");
+
+      const res = runCampaignCheck({ fixtureDir: dir, runsDir, args: ["--print-stale"] });
+
+      expect(res.status).toBe(0);
+      expect(lines(res)).toEqual([]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("is read-only: it writes no report and forces no test run", () => {
+    const dir = mkFixtureDir();
+    try {
+      initFixtureRepo(dir);
+      writeApiSpecCommit(dir, T0);
+      writeLedgerCommit(dir, T0 + 600, [B1_DONE_ROW]);
+      const runsDir = path.join(dir, ".campaign", "runs");
+      writeReport(runsDir, "api", { generatedAt: iso(T0 + 300) });
+      const before = fs.readdirSync(runsDir).sort();
+
+      const res = runCampaignCheck({ fixtureDir: dir, runsDir, args: ["--print-stale"] });
+
+      expect(res.status).toBe(0);
+      expect(fs.readdirSync(runsDir).sort()).toEqual(before);
+      expect(combined(res)).not.toMatch(/forcing a real run/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

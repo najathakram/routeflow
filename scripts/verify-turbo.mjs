@@ -35,6 +35,12 @@ console.log(
     `always-run tripwires: @routeflow/pricing tests, @routeflow/api test:repo-truth). ` +
     `FULL_VERIFY=1 runs everything.`,
 );
+if (scope.stale?.length) {
+  console.log(
+    `+ STALE REPORTS: ${scope.stale.join(", ")} — campaign-check would refuse their report, so ` +
+      `their tests run too (regenerating it). No enforcement is relaxed.`,
+  );
+}
 const filters = scope.workspaces.map((w) => `--filter=${w}`);
 const first = turbo(["check-types", "lint", "test", ...filters]);
 // Keep going after a failure so one push reports every red workspace, like the full chain does.

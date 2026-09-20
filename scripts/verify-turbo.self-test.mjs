@@ -30,6 +30,8 @@ import {
   decideScope,
   loadWorkspaces,
   shortName,
+  staleWorkspaces,
+  withStale,
 } from "./lib/verify-scope.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -239,7 +241,7 @@ for (const b of ["master", "main", "HEAD"]) {
     "full",
   );
 }
-const dflt = decideScope(gitRoot, {}, { branch: "feat/x", files: someFiles });
+const dflt = decideScope(gitRoot, {}, { branch: "feat/x", files: someFiles, stale: [] });
 check(
   "S6d a feature branch with no env at all is SCOPED (the default)",
   [dflt.mode, dflt.workspaces?.map(shortName)],
@@ -254,6 +256,60 @@ check(
   "S6f a legacy VERIFY_SCOPE variable changes nothing (there is no ambient switch)",
   decideScope(gitRoot, { VERIFY_SCOPE: "full" }, { branch: "feat/x", files: someFiles }).mode,
   "scoped",
+);
+
+// ---- SP: stale campaign reports pull their workspace into an AFFECTED-scope run ----------------
+// campaign-check refuses a missing/partial/stale report; a scoped push that never touched (say)
+// apps/api would be refused for an api.json it had no reason to regenerate. The workspace is added
+// so its tests run and rewrite the report — enforcement itself is untouched.
+const webOnly = ["apps/web/lib/a.ts"];
+const spStale = decideScope(
+  gitRoot,
+  {},
+  { branch: "feat/x", files: webOnly, stale: ["@routeflow/api"] },
+);
+check(
+  "SP1 a STALE api report is pulled into a web-only scoped run",
+  [spStale.mode, spStale.workspaces.map(shortName), spStale.stale],
+  ["scoped", ["api", "pricing", "web"], ["@routeflow/api"]],
+);
+const spFresh = decideScope(gitRoot, {}, { branch: "feat/x", files: webOnly, stale: [] });
+check(
+  "SP2 a FRESH api report is NOT pulled in (same diff, nothing stale)",
+  [spFresh.workspaces.map(shortName), spFresh.stale],
+  [["pricing", "web"], []],
+);
+const spInScope = decideScope(
+  gitRoot,
+  {},
+  { branch: "feat/x", files: ["apps/api/src/a.ts"], stale: ["@routeflow/api"] },
+);
+check(
+  "SP3 a stale workspace the diff already reaches is not duplicated or reported as pulled in",
+  [spInScope.workspaces.map(shortName), spInScope.stale],
+  [["api", "pricing"], []],
+);
+check(
+  "SP4 stale reports never change a FULL decision",
+  decideScope(
+    gitRoot,
+    { FULL_VERIFY: "1" },
+    { branch: "feat/x", files: webOnly, stale: ["@routeflow/api"] },
+  ),
+  { mode: "full", reason: "FULL_VERIFY=1" },
+);
+check(
+  "SP5 staleWorkspaces FAILS OPEN when campaign-check cannot answer (no script -> [])",
+  staleWorkspaces(join(ROOT, "apps"), workspaces),
+  [],
+);
+check(
+  "SP6 withStale ignores a non-scoped decision and an empty/garbage list",
+  [
+    withStale({ mode: "full", reason: "x" }, ["@routeflow/api"]).mode,
+    withStale({ mode: "scoped", workspaces: ["a"], changed: [] }, [null, ""]).stale,
+  ],
+  ["full", []],
 );
 
 const hook = readFileSync(join(ROOT, ".husky", "pre-push"), "utf8");
