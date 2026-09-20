@@ -10,16 +10,19 @@
  *  L2 a Case line is priced by the ladder AND stocked in base pieces (qty x factor) — the same number
  *     the OrderItem stores and the stock statement decrements
  *  L3 a Pallet line derives its price from the pack and oversells for staff (stock goes negative, warn)
- *  L4 the maximum line the builder accepts fits the real columns (and stays exactly representable)
+ *  L4 the maximum line the builder accepts fits the real columns, and one unit more overflows them
  *  L5 pack boxes/pieces rollover: 1 box + 30 loose pieces of a 24-box is 2 boxes + 6 pieces = 54 base
  *     pieces, priced at 2.25 boxes, persisted and read back
+ *  L6 tiers through real Decimal rows: an explicit tier price wins, a level with only a base price scales
+ *     by the pack's tier ratio, a derived level uses the pack's tier price, and a typed price is
+ *     DISCOUNTED below / MANUAL above the ladder
  *
  * Run via `npm run local:test:db` (compose Postgres); collected only by jest.db.config.js. Test tenant
  * only (`qa-*`, enforced by assertTestTenant).
  */
 import { randomUUID } from "crypto";
 import { Logger } from "@nestjs/common";
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
@@ -68,7 +71,12 @@ describeDb("units_v1 ladder — real Postgres", () => {
     );
 
   /** Build a Case/Pallet line from the REAL ladder rows and the REAL product row. */
-  async function unitLine(label: string, qty: number, extra: Record<string, unknown> = {}) {
+  async function unitLine(
+    label: string,
+    qty: number,
+    extra: Record<string, unknown> = {},
+    tier: 1 | 2 | 3 | 4 | 5 = 1,
+  ) {
     const product = await raw.product.findUniqueOrThrow({ where: { id: productId } });
     const ladder = (await ladderOf(tenantA)).get(productId) ?? [];
     return buildUnitLine({
@@ -76,7 +84,7 @@ describeDb("units_v1 ladder — real Postgres", () => {
       units: ladder,
       resolved: resolveLineUnits(product, ladder, { unitLabel: label }),
       item: { productId, qty, unitLabel: label, ...extra },
-      tier: 1,
+      tier,
       taxFor: taxNone,
       position: 0,
       tenantId: tenantA,
@@ -85,10 +93,8 @@ describeDb("units_v1 ladder — real Postgres", () => {
 
   /** Persist a built line as a real OrderItem (the columns create() writes) and read it back. */
   async function persist(line: Record<string, any>) {
-    const { name, ...cols } = line;
-    void name;
     const row = await raw.orderItem.create({
-      data: { ...cols, orderId, productId, tenantId: tenantA } as never,
+      data: { ...line, orderId, productId, tenantId: tenantA } as never,
     });
     return raw.orderItem.findUniqueOrThrow({ where: { id: row.id } });
   }
@@ -127,6 +133,8 @@ describeDb("units_v1 ladder — real Postgres", () => {
           unit: "Box",
           pricePerUnit: "42.00",
           unitsPerBox: 24,
+          priceTier2: "21.00",
+          priceTier3: "40.00",
           currentStock: "10000",
           tenantId: tenantA,
         },
@@ -134,7 +142,14 @@ describeDb("units_v1 ladder — real Postgres", () => {
     ).id;
     await raw.productUnit.createMany({
       data: [
-        { tenantId: tenantA, productId, label: "Case", factorToBase: 288, price: "480.00" },
+        {
+          tenantId: tenantA,
+          productId,
+          label: "Case",
+          factorToBase: 288,
+          price: "480.00",
+          priceTier3: "450.00",
+        },
         { tenantId: tenantA, productId, label: "Pallet", factorToBase: 5760, sortOrder: 1 },
       ],
     });
@@ -159,8 +174,10 @@ describeDb("units_v1 ladder — real Postgres", () => {
       ["Case", 288],
       ["Pallet", 5760],
     ]);
-    // a Prisma Decimal, not a number: the price math must coerce it
-    expect(typeof (ladder[0].price as unknown as object)).toBe("object");
+    // a Prisma Decimal, not a number (and not null): the price math must coerce it; the derived
+    // Pallet level carries NO price of its own
+    expect(ladder[0].price).toBeInstanceOf(Prisma.Decimal);
+    expect(ladder[1].price).toBeNull();
     const line = await unitLine("Case", 3);
     expect(line).toMatchObject({ unitPrice: 480, subtotal: 1440, qty: 864, unitsPerBox: 288 });
     // tenant B sees none of tenant A's levels (the tenant extension scopes the read)
@@ -196,6 +213,14 @@ describeDb("units_v1 ladder — real Postgres", () => {
     });
     expect(Number(row.qty)).toBe(MAX_LINE_QTY);
     expect(Number(row.subtotal)).toBe(MAX_LINE_SUBTOTAL);
+    // the other half of the claim: the guard sits at the column edge, so one unit more must not fit
+    // (Decimal(10,3) qty, Decimal(10,2) subtotal) — otherwise the constants guard nothing
+    await expect(
+      persist({ ...(await unitLine("Case", 1)), qty: MAX_LINE_QTY + 1 }),
+    ).rejects.toThrow();
+    await expect(
+      persist({ ...(await unitLine("Case", 1)), subtotal: MAX_LINE_SUBTOTAL + 0.01 }),
+    ).rejects.toThrow();
   });
 
   it("L5: pack rollover — 1 box + 30 loose pieces of a 24-box is 2 boxes + 6 pieces (54 base pieces), priced at 2.25 boxes, persisted", async () => {
@@ -220,5 +245,32 @@ describeDb("units_v1 ladder — real Postgres", () => {
     expect(Number(row.qty)).toBe(54);
     expect(row).toMatchObject({ boxes: 2, pieces: 6, unitsPerBox: 24, unitLabel: null });
     expect(Number(row.subtotal)).toBe(94.5);
+  });
+
+  it("L6: tiers through real Decimal rows — explicit tier wins, a base-only level scales by the pack ratio, a derived level uses the pack tier price, a typed price is DISCOUNTED/MANUAL", async () => {
+    // tier 3: the Case has its own $450 → wins (SPECIAL, list $480 kept as originalPrice)
+    expect(await unitLine("Case", 3, {}, 3)).toMatchObject({
+      unitPrice: 450,
+      subtotal: 1350,
+      priceType: "SPECIAL",
+      originalPrice: 480,
+    });
+    // tier 2: no explicit tier-2 Case price → base 480 x (pack tier-2 $21 / pack $42) = 240
+    expect(await unitLine("Case", 3, {}, 2)).toMatchObject({ unitPrice: 240, subtotal: 720 });
+    // tier 3: the derived Pallet has no price of its own → pack tier-3 $40 x 5760 / 24 = 9600
+    expect(await unitLine("Pallet", 1, {}, 3)).toMatchObject({ unitPrice: 9600, subtotal: 9600 });
+    // a typed price below list is DISCOUNTED (list kept), above list is a MANUAL upsell
+    expect(await unitLine("Case", 3, { unitPrice: 400 })).toMatchObject({
+      unitPrice: 400,
+      subtotal: 1200,
+      priceType: "DISCOUNTED",
+      originalPrice: 480,
+    });
+    expect(await unitLine("Case", 3, { unitPrice: 500 })).toMatchObject({
+      unitPrice: 500,
+      subtotal: 1500,
+      priceType: "MANUAL",
+      originalPrice: 480,
+    });
   });
 });
