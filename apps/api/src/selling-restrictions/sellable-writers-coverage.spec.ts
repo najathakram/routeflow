@@ -8,8 +8,8 @@ import * as ts from "typescript";
  * the selling-restrictions choke point BEFORE their first line write. Same AST technique as
  * `orders/unit-line-writers.ast.spec.ts` (no regex over source; a comment or a string never counts).
  *
- *   GUARDED — calls `assertLinesSellable` / `checkLinesSellable` on a live branch, before its first
- *             line write (the AST proof below, positively controlled on inline source).
+ *   GUARDED — calls `assertLinesSellable` / `checkLinesSellable` on a live branch (not in a try whose
+ *             catch swallows the refusal), before its first line write (the AST proof below, positively controlled on inline source).
  *   PENDING — can add sellable goods and is NOT yet guarded: the enforcement points still to wire.
  *             A ratchet: `PENDING_BASELINE` may only go DOWN — flipping a row to GUARDED in the PR
  *             that wires it forces the constant down, so the list can never quietly grow or stall.
@@ -192,6 +192,26 @@ function onDeadOrRecoveryBranch(n: ts.Node, stop: ts.Node): boolean {
   return false;
 }
 
+/**
+ * A call inside `try { … } catch { … }` whose catch never rethrows is a refusal that is SWALLOWED:
+ * the write goes ahead anyway, so it is not a guard. (Deliberately NOT part of `onDeadOrRecoveryBranch`:
+ * the stale-row scan must still see such a call, so its method has to be classified GUARDED, and
+ * then this proof rejects it.)
+ */
+function swallowedByTry(n: ts.Node, stop: ts.Node): boolean {
+  for (let c: ts.Node | undefined = n.parent; c && c !== stop; c = c.parent) {
+    if (!ts.isTryStatement(c) || !c.catchClause || !isWithin(n, c.tryBlock)) continue;
+    let rethrows = false;
+    const scan = (x: ts.Node) => {
+      if (ts.isThrowStatement(x)) rethrows = true;
+      ts.forEachChild(x, scan);
+    };
+    scan(c.catchClause.block);
+    if (!rethrows) return true;
+  }
+  return false;
+}
+
 /** Positions of every REAL call to any of `names` under `node`, on live branches. */
 function callPositions(node: ts.Node, names: string[]): number[] {
   const at: number[] = [];
@@ -230,6 +250,7 @@ function guardCallPositions(node: ts.Node): number[] {
       if (
         CHOKE_POINT.includes(name) &&
         !onDeadOrRecoveryBranch(n, node) &&
+        !swallowedByTry(n, node) &&
         isAwaited(n, node) &&
         !inDeadClosure(n, node)
       )
@@ -313,6 +334,8 @@ describe("the scanner and the proof themselves (so a silent no-match cannot pass
       inTx() { await this.tx(async (tx) => { await this.r.assertLinesSellable({}); tx.orderItem.create({}); }); }
       dead() { if (false) { await this.r.assertLinesSellable({}); } this.prisma.orderItem.create({}); }
       recovery() { try { w(); } catch (e) { await this.r.assertLinesSellable({}); } this.prisma.orderItem.create({}); }
+      swallowed() { try { await this.r.assertLinesSellable({}); } catch (e) { log(e); } this.prisma.orderItem.create({}); }
+      rethrown() { try { await this.r.assertLinesSellable({}); } catch (e) { log(e); throw e; } this.prisma.orderItem.create({}); }
       nested() { return this.prisma.order.update({ data: { lineItems: c ? { create: [] } : undefined } }); }
       other() { return this.prisma.order.update({ data: { notes: "x" } }); }
     }`,
@@ -325,15 +348,17 @@ describe("the scanner and the proof themselves (so a silent no-match cannot pass
     expect(lineWritePositions(m.get("A.other")!, sf)).toHaveLength(0);
   });
 
-  it("the guard proof accepts a real early call and rejects none / late / commented / dead / recovery", () => {
+  it("the guard proof accepts a real early call and rejects none / late / commented / dead / recovery / swallowed", () => {
     expect(guardProblem(m.get("A.good")!, sf)).toBeNull();
     expect(guardProblem(m.get("A.inTx")!, sf)).toBeNull(); // awaited inside a transaction callback
+    expect(guardProblem(m.get("A.rethrown")!, sf)).toBeNull(); // a catch that rethrows still refuses
     expect(guardProblem(m.get("A.late")!, sf)).toMatch(/AFTER/);
     for (const name of [
       "A.none",
       "A.commented",
       "A.dead",
       "A.recovery",
+      "A.swallowed",
       "A.voided",
       "A.floating",
       "A.neverRun",
