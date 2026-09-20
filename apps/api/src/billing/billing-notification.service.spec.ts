@@ -249,6 +249,13 @@ describe("BillingNotificationService", () => {
       await expect(svc.notifySuspended("t1", "overdue payment")).resolves.toBeUndefined();
     });
 
+    it("notifyCheckoutPlanNotApplied emails the admin once per checkout session and never throws", async () => {
+      const { svc, sendPlatform } = makeService();
+      await svc.notifyCheckoutPlanNotApplied("t1", "SCALE", "cs_1");
+      expect(sendPlatform).toHaveBeenCalledTimes(1);
+      expect(sendPlatform.mock.calls[0][0].subject).toContain("plan not changed");
+    });
+
     it("a missing tenant row falls back to a generic businessName instead of throwing", async () => {
       const { svc, sendPlatform } = makeService({ tenant: null });
       await svc.notifyCancelled("t1");

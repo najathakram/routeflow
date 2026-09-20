@@ -2404,9 +2404,9 @@ export class RoutesService {
     });
 
     // P6-5: DELIVERED per order this completion flipped (driver bypasses
-    // changeStatus). AFTER the tx, fire-and-forget; skip already CANCELLED/DELIVERED.
+    // changeStatus). AFTER the tx, fire-and-forget; skip DRAFT/CANCELLED/DELIVERED.
     for (const o of stop.orders) {
-      if (o.status === OrderStatus.CANCELLED || o.status === OrderStatus.DELIVERED) continue;
+      if (NON_ROUTABLE_ORDER_STATUSES.includes(o.status)) continue;
       this.messaging
         .notifyEvent(NotificationEvent.DELIVERED, {
           customerId: o.customerId,
@@ -2606,7 +2606,9 @@ export class RoutesService {
       // + recomputeStatus over non-VOID sums).
       if (dto.payment && dto.payment.amount > 0) {
         const deliveredOrderIds = stop.orders
-          .filter((o) => o.status !== OrderStatus.CANCELLED)
+          // DELIVERED stays in (the office may have marked it already; it keeps its invoice), but a
+          // DRAFT is not a commitment yet: never invoiced or paid at the door.
+          .filter((o) => o.status !== OrderStatus.CANCELLED && o.status !== OrderStatus.DRAFT)
           .map((o) => o.id);
         const recorded = await this.invoicesService.recordDeliveryPaymentInTx(
           tx,
@@ -2683,9 +2685,9 @@ export class RoutesService {
     });
 
     // P6-5: DELIVERED per order this completion flipped (driver bypasses
-    // changeStatus). AFTER the tx, fire-and-forget; skip already CANCELLED/DELIVERED.
+    // changeStatus). AFTER the tx, fire-and-forget; skip DRAFT/CANCELLED/DELIVERED.
     for (const o of stop.orders) {
-      if (o.status === OrderStatus.CANCELLED || o.status === OrderStatus.DELIVERED) continue;
+      if (NON_ROUTABLE_ORDER_STATUSES.includes(o.status)) continue;
       this.messaging
         .notifyEvent(NotificationEvent.DELIVERED, {
           customerId: o.customerId,

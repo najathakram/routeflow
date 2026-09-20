@@ -13,6 +13,7 @@ import { ProrationService } from "./proration.service";
 import { TenantConfigSnapshotService } from "./tenant-config-snapshot.service";
 import { ConfigSnapshotFlagService } from "./config-snapshot-flag.service";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
+import { TenantConfigSnapshotAdminService } from "./tenant-config-snapshot-admin.service";
 import { SubscriptionService } from "./subscription.service";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BillingEventService } from "./billing-event.service";
@@ -60,6 +61,8 @@ import { EntitlementsModule } from "./entitlements.module";
     // Live flag `entitlements.configSnapshot` (default off, fail-closed) — wired but inert until flipped.
     ConfigSnapshotFlagService,
     PlanTransitionConfigService,
+    // Lane B A2 step c: admin list / preview / "Restore now" for the tenant snapshots tab.
+    TenantConfigSnapshotAdminService,
   ],
   exports: [
     StripeService,
@@ -82,6 +85,7 @@ import { EntitlementsModule } from "./entitlements.module";
     TenantConfigSnapshotService,
     ConfigSnapshotFlagService,
     PlanTransitionConfigService,
+    TenantConfigSnapshotAdminService,
   ],
 })
 export class BillingModule {}
