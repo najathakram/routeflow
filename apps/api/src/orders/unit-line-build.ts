@@ -138,18 +138,17 @@ export async function prepareUnitLadders(
   items: ReadonlyArray<{ unitLabel?: string | null; productId?: string | null }>,
   ctx: {
     isStaff: boolean;
-    tenantId: string | null | undefined;
+    prisma: { getTenantId(): string | null | undefined; forTenant(): any };
     entitlements: { hasFlag(tenantId: string, flag: string): Promise<boolean> };
-    db: Parameters<typeof loadUnitLadders>[0];
   },
 ): Promise<Map<string, LadderUnit[]>> {
   await assertMayUseUnits(items, {
     isStaff: ctx.isStaff,
-    tenantId: ctx.tenantId,
+    tenantId: ctx.prisma.getTenantId(),
     hasFlag: (t, f) => ctx.entitlements.hasFlag(t, f),
   });
   return loadUnitLadders(
-    ctx.db,
+    ctx.prisma.forTenant(),
     items.filter(requestsUnit).map((i) => i.productId as string),
   );
 }

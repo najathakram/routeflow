@@ -1744,7 +1744,6 @@ export class OrdersService implements OnApplicationBootstrap {
         // stored order; a mismatch is a client bug surfaced loudly, never a
         // silent wrong-cart acknowledgment.
         {
-          // units_v1: a stored unit line compares by its unit count + label (see replayLineKey).
           const norm = (rows: never[], stored: boolean) =>
             rows
               .map((r) => unitLines.replayLineKey(r, stored))
@@ -1821,13 +1820,11 @@ export class OrdersService implements OnApplicationBootstrap {
 
     const productMap = new Map(products.map((p) => [p.id, p]));
 
-    // units_v1 (4b-2b): the gate (staff only, flag.units_v1) + the server ladder of every product a
-    // line names a unit for; nothing is read when no line asks for a unit.
+    // units_v1 (4b-2b): the gate (staff, flag.units_v1) + the server ladder of the named units.
     const unitsByProduct = await unitLines.prepareUnitLadders(items, {
       isStaff: isStaffRole,
-      tenantId: this.prisma.getTenantId(),
+      prisma: this.prisma,
       entitlements: this.entitlements,
-      db: this.prisma.forTenant(),
     });
 
     // B142 (cause-ruling.md §2/§3, D3): staff AND buyer order create share this
@@ -1936,8 +1933,7 @@ export class OrdersService implements OnApplicationBootstrap {
       const product = productMap.get(item.productId);
       if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
 
-      // units_v1 (4b-2b): a non-pack unit is built from the SERVER ladder; the pack (no label, the
-      // pack's own label, a Piece on an unboxed product) falls through, byte-identical to before.
+      // units_v1 (4b-2b): a non-pack unit is built from the SERVER ladder; the pack falls through.
       const ladder = unitsByProduct.get(product.id) ?? [];
       const resolvedUnits = resolveLineUnits(product, ladder, item);
       if (unitLines.isUnitAware(resolvedUnits)) {
@@ -2179,6 +2175,7 @@ export class OrdersService implements OnApplicationBootstrap {
     //     stock, preventing concurrent oversell, and
     // (b) retry on P2002 if two requests race to the same order number.
     const MAX_RETRIES = 3;
+    const unitOrder = lineItemsData.some((li) => "unitLabel" in li); // units_v1: never auto-merged
     let order: any;
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
@@ -2227,10 +2224,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 // merge set in BOTH directions regardless of what the caller asked for:
                 // as a loser the sweep hard-deletes it (its orderDate and order number
                 // are gone), as a winner it absorbs items that belong to another day.
-                skipAutoMerge:
-                  orderDate != null ||
-                  (options.skipAutoMerge ?? false) ||
-                  lineItemsData.some((li) => "unitLabel" in li), // units_v1: never auto-merged
+                skipAutoMerge: orderDate != null || !!options.skipAutoMerge || unitOrder,
                 // Phase 4 (W4): denormalized flag — true when any line is regulated.
                 hasRegulated: lineItemsData.some((li) => li.trackedCategoryId != null),
                 requestedDeliveryDate: dto.requestedDeliveryDate
