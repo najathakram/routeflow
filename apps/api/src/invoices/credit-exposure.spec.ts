@@ -1000,9 +1000,11 @@ describe("loadCreditExposure (the ONLY reader)", () => {
 
     const invArgs = db.invoice.findMany.mock.calls[0][0];
     expect(invArgs.where.customerId).toBe("cust-1");
-    // The DB read drops SETTLED only — DRAFT must come back so backing can be judged.
-    expect(new Set(invArgs.where.status.notIn)).toEqual(new Set(CREDIT_NOT_APPLICABLE));
-    expect(invArgs.where.status.notIn).not.toContain("DRAFT");
+    // The DB read drops SETTLED only — DRAFT must come back so backing can be judged (B577 adds the
+    // covering PAID/WRITTEN_OFF invoices of open/delivered orders as a second OR branch).
+    const [issued] = invArgs.where.OR;
+    expect(new Set(issued.status.notIn)).toEqual(new Set(CREDIT_NOT_APPLICABLE));
+    expect(issued.status.notIn).not.toContain("DRAFT");
     expect(invArgs.select).toEqual({
       total: true,
       status: true,
