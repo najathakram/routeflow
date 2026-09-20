@@ -63,6 +63,13 @@ export const BACKING_ORDER_STATUSES: OrderStatus[] = [
   ...DELIVERED_ORDER_STATUSES,
 ];
 
+/**
+ * The statuses that do NOT back a draft. Together with BACKING_ORDER_STATUSES this must cover
+ * EVERY `OrderStatus` exactly once — `credit-exposure.spec.ts` pins that (B584), so a NEW order
+ * status can never silently fall on the wrong side of the credit block.
+ */
+export const NON_BACKING_ORDER_STATUSES: OrderStatus[] = [OrderStatus.DRAFT, OrderStatus.CANCELLED];
+
 const BACKING_ORDER_STATUS_SET: ReadonlySet<string> = new Set(BACKING_ORDER_STATUSES);
 
 /** "Not an ISSUED invoice": settled/dead/forgiven statuses AND DRAFT. */
@@ -74,8 +81,12 @@ export interface ExposureInvoice {
   status: string;
   orderId: string | null;
   payments: { amount: unknown; status: string }[];
-  /** The invoice's order (Invoice.order), when it has one. Decides whether a DRAFT is backed. */
-  order?: { id: string; status: string; total: unknown } | null;
+  /**
+   * The invoice's order (Invoice.order); decides whether a DRAFT is backed. REQUIRED (B584): a
+   * caller that forgets `order` in its select must fail to COMPILE, not quietly treat every draft
+   * as unbacked (an under-count). `null` = no order (orderId null).
+   */
+  order: { id: string; status: string; total: unknown } | null;
 }
 
 export interface ExposureOrder {
@@ -113,7 +124,8 @@ export interface CreditExposure {
  */
 export function isUnbackedDraft(inv: {
   status: string;
-  order?: { status: string } | null;
+  /** Required on purpose (B584): omitting it from a select is a compile error, not a silent under-count. */
+  order: { status: string } | null;
 }): boolean {
   return (
     inv.status === "DRAFT" && !(inv.order != null && BACKING_ORDER_STATUS_SET.has(inv.order.status))
@@ -165,7 +177,7 @@ export const RECEIVABLE_INVOICE_SELECT = {
  * (`credit-exposure-coverage.spec.ts` fails the build if either stops calling it).
  */
 export function receivableBalance(
-  inv: BalancedInvoice & { status: string; order?: { status: string } | null },
+  inv: BalancedInvoice & { status: string; order: { status: string } | null },
 ): number {
   return isUnbackedDraft(inv) ? 0 : invoiceBalance(inv);
 }
