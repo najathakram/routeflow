@@ -22,34 +22,42 @@ describe("OrdersService.changeStatus — DRAFT promotion and selling restriction
   };
   const operator = { ...operatorPayload, tenantId: "t-1" } as never;
   const tenantAdmin = { ...operatorPayload, role: "TENANT_ADMIN", tenantId: "t-1" } as never;
+  const line = (productId: string | null) => ({ productId, qty: 2, trackedCategoryId: null });
 
   let h: Awaited<ReturnType<typeof buildOrdersService>>;
+  const promote = (user: never = operator) =>
+    h.service.changeStatus("ord-1", { status: "PENDING" as never }, user);
   const expectNoSideEffects = () => {
     expect(h.sideEffects.gateway.emitOrderStatusChanged).not.toHaveBeenCalled();
     expect(h.sideEffects.notifications.sendToCustomer).not.toHaveBeenCalled();
     expect(h.sideEffects.messaging.notifyEvent).not.toHaveBeenCalled();
   };
+
+  // Mocked so a promotion COMPLETES: a test that lets an unrelated throw through (or swallows it)
+  // proves nothing about the call it is pinning.
   beforeEach(async () => {
     h = await buildOrdersService();
     h.prisma.order.findUnique.mockResolvedValue({ ...draft });
-    h.prisma.orderItem.findMany.mockResolvedValue([
-      { productId: "prod-1", trackedCategoryId: null },
-      { productId: null, trackedCategoryId: null }, // unlisted line: no product to restrict
+    h.prisma.orderItem.findMany.mockResolvedValue([line("prod-1"), line(null)]); // null = unlisted
+    h.prisma.product.findMany.mockResolvedValue([
+      { id: "prod-1", name: "Tomatoes", currentStock: 100, trackedCategoryId: null },
     ]);
-    h.prisma.product.findMany.mockResolvedValue([{ id: "prod-1", trackedCategoryId: null }]);
+    h.prisma.order.updateMany.mockResolvedValue({ count: 1 });
+    h.prisma.order.findUniqueOrThrow.mockResolvedValue({ ...draft, status: "PENDING" });
   });
 
   it("asks the choke point ONCE, with the order's own tenant / customer, its LISTED products only, and the STAFF channel — before any status write", async () => {
-    await h.service
-      .changeStatus("ord-1", { status: "PENDING" as never }, operator)
-      .catch(() => undefined);
+    await promote();
 
     expect(h.restrictions.assertLinesSellable).toHaveBeenCalledTimes(1);
     expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith({
       tenantId: "t-1",
       customerId: "cust-1",
       lines: [{ productId: "prod-1" }],
-      channel: "STAFF", // no `at`: judged at entry time, like the license guard (owner ruling pending)
+      // The channel is the PROMOTING principal's, so a draft a BUYER started and staff promotes is
+      // judged on STAFF (not BUYER_PORTAL): an open ruling, flagged in the PR. No `at`: judged at
+      // entry time, like the license guard (owner ruling pending).
+      channel: "STAFF",
     });
   });
 
@@ -58,9 +66,7 @@ describe("OrdersService.changeStatus — DRAFT promotion and selling restriction
       new ConflictException({ code: "SELLING_RESTRICTED", blockedLines: [] }),
     );
 
-    await expect(
-      h.service.changeStatus("ord-1", { status: "PENDING" as never }, operator),
-    ).rejects.toMatchObject({ response: { code: "SELLING_RESTRICTED" } });
+    await expect(promote()).rejects.toMatchObject({ response: { code: "SELLING_RESTRICTED" } });
     expect(h.prisma.tenantTransaction).not.toHaveBeenCalled();
     expect(h.prisma.order.update).not.toHaveBeenCalled();
     expect(h.prisma.order.updateMany).not.toHaveBeenCalled();
@@ -71,9 +77,7 @@ describe("OrdersService.changeStatus — DRAFT promotion and selling restriction
     const orderDate = new Date("2026-06-01T00:00:00Z");
     h.prisma.order.findUnique.mockResolvedValue({ ...draft, tenantId: "t-row", orderDate });
 
-    await h.service
-      .changeStatus("ord-1", { status: "PENDING" as never }, operator)
-      .catch(() => undefined);
+    await promote();
 
     const arg = h.restrictions.assertLinesSellable.mock.calls[0][0];
     expect(arg.tenantId).toBe("t-row");
@@ -81,41 +85,25 @@ describe("OrdersService.changeStatus — DRAFT promotion and selling restriction
   });
 
   it("cancelling a DRAFT is not a sale: never checked; a non-draft transition never reaches the check", async () => {
-    await h.service
-      .changeStatus("ord-1", { status: "CANCELLED" as never }, operator)
-      .catch(() => undefined);
+    // what the cancel guard (`cancelImpact`) reads: the order, no invoices, no delivered goods
+    h.prisma.order.findFirst.mockResolvedValue({ id: "ord-1", status: "DRAFT", orderNumber: "1" });
+    h.prisma.invoice.findMany.mockResolvedValue([]);
+    await h.service.changeStatus("ord-1", { status: "CANCELLED" as never }, operator);
     h.prisma.order.findUnique.mockResolvedValue({ ...draft, status: "PENDING" });
-    await h.service
-      .changeStatus("ord-1", { status: "CONFIRMED" as never }, operator)
-      .catch(() => undefined);
+    await h.service.changeStatus("ord-1", { status: "CONFIRMED" as never }, operator);
 
     expect(h.restrictions.assertLinesSellable).not.toHaveBeenCalled();
   });
 
   it("a TENANT_ADMIN promotes through the STAFF channel too (only a positively-staff role is)", async () => {
-    await h.service
-      .changeStatus("ord-1", { status: "PENDING" as never }, tenantAdmin)
-      .catch(() => undefined);
+    await promote(tenantAdmin);
 
     expect(h.restrictions.assertLinesSellable).toHaveBeenCalledTimes(1);
     expect(h.restrictions.assertLinesSellable.mock.calls[0][0].channel).toBe("STAFF");
   });
 
   describe("a promotion that passes the check (OFF / ALLOW) still completes", () => {
-    const line = (productId: string) => ({ productId, qty: 2, trackedCategoryId: null });
-    const promote = () => h.service.changeStatus("ord-1", { status: "PENDING" as never }, operator);
-
-    beforeEach(() => {
-      h.prisma.order.updateMany.mockResolvedValue({ count: 1 });
-      h.prisma.order.findUniqueOrThrow.mockResolvedValue({ ...draft, status: "PENDING" });
-      h.prisma.product.findMany.mockResolvedValue([
-        { id: "prod-1", name: "Tomatoes", currentStock: 100, trackedCategoryId: null },
-      ]);
-    });
-
     it("the status is written and the order comes back PENDING", async () => {
-      h.prisma.orderItem.findMany.mockResolvedValue([line("prod-1")]);
-
       await expect(promote()).resolves.toMatchObject({ status: "PENDING" });
       expect(h.restrictions.assertLinesSellable).toHaveBeenCalledTimes(1);
       expect(h.prisma.order.updateMany).toHaveBeenCalledTimes(1);
