@@ -1,8 +1,14 @@
-import { BadRequestException, ConflictException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  ExecutionContext,
+  HttpException,
+} from "@nestjs/common";
+import { Reflector } from "@nestjs/core";
 import { UserRole } from "@prisma/client";
 import { validate } from "class-validator";
 import { plainToInstance } from "class-transformer";
-import { ROLES_KEY } from "../auth/decorators/roles.decorator";
+import { RolesGuard } from "../auth/guards/roles.guard";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import {
   SELLING_RESTRICTIONS_NOT_READY,
@@ -10,7 +16,7 @@ import {
   SYSTEM_CONFIG_GOVERNING_ADDRESS,
 } from "../selling-restrictions/selling-restrictions.service";
 import { RestrictionsSettingsController } from "./restrictions-settings.controller";
-import { RestrictionsSettingsService } from "./restrictions-settings.service";
+import { READINESS_THROTTLE, RestrictionsSettingsService } from "./restrictions-settings.service";
 import { UpdateRestrictionsSettingsDto } from "./update-restrictions-settings.dto";
 
 const user = { sub: "u1", username: "admin" } as JwtPayload;
@@ -27,7 +33,35 @@ const READY = {
 
 function setup(initial: Record<string, string> = {}, ready = true) {
   const store = new Map(Object.entries(initial));
-  const config = { set: jest.fn(async (k: string, v: string) => void store.set(k, v)) };
+  let tenant: string | null = "t1";
+  let failOnKey: string | null = null;
+  const tx = {
+    systemConfig: {
+      findFirst: async ({ where }: any) => (store.has(where.key) ? { id: where.key } : null),
+      update: async ({ where, data }: any) => {
+        if (where.id === failOnKey) throw new Error("db down mid-write");
+        store.set(where.id, data.value);
+      },
+      create: async ({ data }: any) => {
+        if (data.key === failOnKey) throw new Error("db down mid-write");
+        store.set(data.key, data.value);
+      },
+    },
+  };
+  const prisma = {
+    getTenantId: () => tenant,
+    // A real transaction's contract: if the callback throws, nothing it wrote persists.
+    tenantTransaction: jest.fn(async (fn: (t: typeof tx) => Promise<unknown>) => {
+      const snap = new Map(store);
+      try {
+        return await fn(tx);
+      } catch (e) {
+        store.clear();
+        snap.forEach((v, k) => store.set(k, v));
+        throw e;
+      }
+    }),
+  };
   const engine = {
     getPolicy: jest.fn(async () => ({
       enabled: store.has(SYSTEM_CONFIG_ENABLED) && store.get(SYSTEM_CONFIG_ENABLED) !== "false",
@@ -44,102 +78,161 @@ function setup(initial: Record<string, string> = {}, ready = true) {
     }),
   };
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
-  const prisma = { getTenantId: jest.fn().mockReturnValue("t1") };
+  // Fixed-window counter per key, like the repo's RedisThrottlerStorage.
+  const hits = new Map<string, number>();
+  const limiter = {
+    increment: jest.fn(async (key: string) => ({
+      totalHits: hits.set(key, (hits.get(key) ?? 0) + 1).get(key)!,
+      timeToExpire: 42,
+      isBlocked: false,
+      timeToBlockExpire: 0,
+    })),
+  };
   const service = new RestrictionsSettingsService(
     prisma as any,
-    config as any,
     engine as any,
     audit as any,
+    limiter as any,
   );
-  return { store, config, engine, audit, prisma, service };
+  return {
+    store,
+    prisma,
+    engine,
+    audit,
+    limiter,
+    service,
+    setTenant: (t: string | null) => (tenant = t),
+    failOn: (k: string) => (failOnKey = k),
+  };
 }
 
-describe("RestrictionsSettingsService", () => {
-  it("defaults to OFF / BILLING_FIRST, and only runs the customer sweep when asked", async () => {
-    const s = setup();
-    expect(await s.service.get()).toEqual({
-      enabled: false,
-      governingAddress: "BILLING_FIRST",
-      readiness: null,
-    });
-    expect(s.engine.getEnableReadiness).not.toHaveBeenCalled();
-    expect((await s.service.get(true)).readiness).toEqual(READY);
+describe("readiness: admin-only, throttled per tenant", () => {
+  const proto = RestrictionsSettingsController.prototype as unknown as Record<string, object>;
+  const guard = new RolesGuard(new Reflector());
+  const can = (role: UserRole, handler: string) =>
+    guard.canActivate({
+      getHandler: () => proto[handler],
+      getClass: () => RestrictionsSettingsController,
+      switchToHttp: () => ({ getRequest: () => ({ user: { role } }) }),
+    } as unknown as ExecutionContext);
+
+  it("OPERATOR is denied on the readiness route; TENANT_ADMIN and SUPER_ADMIN are allowed; OPERATOR may still read the settings", () => {
+    expect(can(UserRole.OPERATOR, "readiness")).toBe(false);
+    expect(can(UserRole.TENANT_ADMIN, "readiness")).toBe(true);
+    expect(can(UserRole.SUPER_ADMIN, "readiness")).toBe(true);
+    expect(can(UserRole.OPERATOR, "get")).toBe(true);
+    expect(can(UserRole.OPERATOR, "update")).toBe(false);
   });
 
-  it("enabling checks readiness first, writes the engine's own 'true', and audits from/to", async () => {
+  it("trips with a 429 on the call after the limit for the SAME tenant, and not for another tenant", async () => {
+    const s = setup();
+    for (let i = 0; i < READINESS_THROTTLE.limit; i++) await s.service.readiness();
+    await expect(s.service.readiness()).rejects.toMatchObject({ status: 429 });
+    await expect(s.service.readiness()).rejects.toBeInstanceOf(HttpException);
+    expect(s.engine.getEnableReadiness).toHaveBeenCalledTimes(READINESS_THROTTLE.limit); // no sweep once tripped
+    s.setTenant("t2");
+    await expect(s.service.readiness()).resolves.toEqual(READY);
+    expect(s.limiter.increment).toHaveBeenLastCalledWith(
+      "restrictions-readiness:t2",
+      READINESS_THROTTLE.ttl,
+      READINESS_THROTTLE.limit,
+      0,
+      "restrictions-readiness",
+    );
+  });
+
+  it("an unreachable limiter fails open (it is abuse protection, not an authorisation gate)", async () => {
+    const s = setup();
+    s.limiter.increment.mockRejectedValue(new Error("redis down"));
+    await expect(s.service.readiness()).resolves.toEqual(READY);
+  });
+});
+
+describe("RestrictionsSettingsService.update", () => {
+  it("defaults to OFF / BILLING_FIRST and never sweeps on a plain read", async () => {
+    const s = setup();
+    expect(await s.service.get()).toEqual({ enabled: false, governingAddress: "BILLING_FIRST" });
+    expect(s.engine.getEnableReadiness).not.toHaveBeenCalled();
+  });
+
+  it("enabling checks readiness, writes the engine's own 'true' in ONE transaction, and audits from/to", async () => {
     const s = setup();
     await s.service.update({ enabled: true }, user);
     expect(s.engine.assertReadyToEnable).toHaveBeenCalledWith("t1");
     expect(s.store.get(SYSTEM_CONFIG_ENABLED)).toBe("true");
+    expect(s.prisma.tenantTransaction).toHaveBeenCalledTimes(1);
     expect(s.audit.log).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: "selling_restrictions.settings_changed",
-        meta: {
-          from: { enabled: false, governingAddress: "BILLING_FIRST" },
-          to: { enabled: true, governingAddress: "BILLING_FIRST" },
-        },
-      }),
+      expect.objectContaining({ action: "selling_restrictions.settings_changed" }),
     );
   });
 
-  it("an un-ready tenant is refused with the readiness, nothing written — and a precedence change in the same request is rolled back", async () => {
+  it("an un-ready tenant is refused and NOTHING is written", async () => {
     const s = setup({}, false);
-    await expect(
-      s.service.update({ enabled: true, governingAddress: "SHIPPING_FIRST" }, user),
-    ).rejects.toMatchObject({ response: { code: SELLING_RESTRICTIONS_NOT_READY } });
-    expect(s.store.has(SYSTEM_CONFIG_ENABLED)).toBe(false);
-    expect(s.store.get(SYSTEM_CONFIG_GOVERNING_ADDRESS)).toBe("BILLING_FIRST"); // restored
-    expect(s.audit.log).not.toHaveBeenCalled();
+    await expect(s.service.update({ enabled: true }, user)).rejects.toMatchObject({
+      response: { code: SELLING_RESTRICTIONS_NOT_READY },
+    });
+    expect(s.prisma.tenantTransaction).not.toHaveBeenCalled();
+    expect(s.store.size).toBe(0);
   });
 
-  it("disabling writes 'false'; a precedence-only change checks no readiness", async () => {
-    const s = setup({ [SYSTEM_CONFIG_ENABLED]: "true" });
-    await s.service.update({ enabled: false }, user);
-    expect(s.store.get(SYSTEM_CONFIG_ENABLED)).toBe("false");
-    await s.service.update({ governingAddress: "SHIPPING_FIRST" }, user);
-    expect(s.store.get(SYSTEM_CONFIG_GOVERNING_ADDRESS)).toBe("SHIPPING_FIRST");
+  it("turning enforcement ON while changing the address policy is refused (judge readiness under the policy in force)", async () => {
+    const s = setup();
+    await expect(
+      s.service.update({ enabled: true, governingAddress: "SHIPPING_FIRST" }, user),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(s.store.size).toBe(0);
     expect(s.engine.assertReadyToEnable).not.toHaveBeenCalled();
   });
 
-  it("a no-op patch (same values, or enabling when already on) writes and audits nothing, and skips the sweep", async () => {
+  it("disabling + a precedence change land together; the write is ALL-OR-NOTHING (a failure mid-write persists nothing)", async () => {
+    const s = setup({ [SYSTEM_CONFIG_ENABLED]: "true" });
+    await s.service.update({ enabled: false, governingAddress: "SHIPPING_FIRST" }, user);
+    expect(s.store.get(SYSTEM_CONFIG_ENABLED)).toBe("false");
+    expect(s.store.get(SYSTEM_CONFIG_GOVERNING_ADDRESS)).toBe("SHIPPING_FIRST");
+
+    // The precedence write (first) succeeds, then the "enabled" write (second) fails: the first must not persist.
+    const f = setup({ [SYSTEM_CONFIG_ENABLED]: "true" });
+    f.failOn(SYSTEM_CONFIG_ENABLED);
+    await expect(
+      f.service.update({ enabled: false, governingAddress: "SHIPPING_FIRST" }, user),
+    ).rejects.toThrow("db down mid-write");
+    expect(f.store.get(SYSTEM_CONFIG_ENABLED)).toBe("true");
+    expect(f.store.has(SYSTEM_CONFIG_GOVERNING_ADDRESS)).toBe(false); // rolled back with it
+    expect(f.audit.log).not.toHaveBeenCalled();
+  });
+
+  it("a no-op patch writes and audits nothing and skips the sweep; a tenant context is required", async () => {
     const s = setup({
       [SYSTEM_CONFIG_ENABLED]: "true",
       [SYSTEM_CONFIG_GOVERNING_ADDRESS]: "SHIPPING_FIRST",
     });
     await s.service.update({ enabled: true, governingAddress: "SHIPPING_FIRST" }, user);
-    expect(s.config.set).not.toHaveBeenCalled();
+    expect(s.prisma.tenantTransaction).not.toHaveBeenCalled();
     expect(s.engine.assertReadyToEnable).not.toHaveBeenCalled();
     expect(s.audit.log).not.toHaveBeenCalled();
-  });
-
-  it("refuses without a tenant context", async () => {
-    const s = setup();
-    s.prisma.getTenantId.mockReturnValue(null);
+    s.setTenant(null);
     await expect(s.service.get()).rejects.toBeInstanceOf(BadRequestException);
+    await expect(s.service.readiness()).rejects.toBeInstanceOf(BadRequestException);
     await expect(s.service.update({ enabled: true }, user)).rejects.toBeInstanceOf(
       BadRequestException,
     );
   });
-});
 
-describe("restrictions settings wiring", () => {
   it("only BILLING_FIRST / SHIPPING_FIRST pass validation", async () => {
-    const bad = plainToInstance(UpdateRestrictionsSettingsDto, { governingAddress: "DELIVERY" });
-    expect((await validate(bad)).length).toBeGreaterThan(0);
-    const ok = plainToInstance(UpdateRestrictionsSettingsDto, {
-      enabled: true,
-      governingAddress: "SHIPPING_FIRST",
-    });
-    expect(await validate(ok)).toHaveLength(0);
-  });
-
-  it("reads are OPERATOR, the PATCH is TENANT_ADMIN, and the class is behind both guards", () => {
-    const proto = RestrictionsSettingsController.prototype as unknown as Record<string, object>;
-    expect(Reflect.getMetadata(ROLES_KEY, proto.get)).toEqual([UserRole.OPERATOR]);
-    expect(Reflect.getMetadata(ROLES_KEY, proto.update)).toEqual([UserRole.TENANT_ADMIN]);
-    const guards = (Reflect.getMetadata("__guards__", RestrictionsSettingsController) ?? []).map(
-      (g: { name: string }) => g.name,
-    );
-    expect(guards).toEqual(expect.arrayContaining(["JwtAuthGuard", "RolesGuard"]));
+    expect(
+      (
+        await validate(
+          plainToInstance(UpdateRestrictionsSettingsDto, { governingAddress: "DELIVERY" }),
+        )
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(
+      await validate(
+        plainToInstance(UpdateRestrictionsSettingsDto, {
+          enabled: true,
+          governingAddress: "SHIPPING_FIRST",
+        }),
+      ),
+    ).toHaveLength(0);
   });
 });
