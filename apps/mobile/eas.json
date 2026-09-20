@@ -20,7 +20,7 @@
         "npm_config_engine_strict": "false",
         "NODE_PATH": "/home/expo/workingdir/build/apps/mobile/node_modules"
       },
-      "node": "20.19.4"
+      "node": "24.14.0"
     },
     "preview": {
       "distribution": "internal",
@@ -33,7 +33,7 @@
         "npm_config_engine_strict": "false",
         "NODE_PATH": "/home/expo/workingdir/build/apps/mobile/node_modules"
       },
-      "node": "20.19.4"
+      "node": "24.14.0"
     },
     "staging": {
       "distribution": "internal",
@@ -46,7 +46,7 @@
         "npm_config_engine_strict": "false",
         "NODE_PATH": "/home/expo/workingdir/build/apps/mobile/node_modules"
       },
-      "node": "20.19.4",
+      "node": "24.14.0",
       "channel": "staging"
     },
     "production": {
@@ -57,7 +57,7 @@
         "npm_config_engine_strict": "false",
         "NODE_PATH": "/home/expo/workingdir/build/apps/mobile/node_modules"
       },
-      "node": "20.19.4",
+      "node": "24.14.0",
       "channel": "production"
     }
   },

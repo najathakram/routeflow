@@ -6,6 +6,7 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
+import * as unitAware from "../orders/unit-aware-guard";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
@@ -1005,6 +1006,7 @@ export class InvoicesService {
       productId: li.productId,
       // Provenance back to the source order line (null for freeform lines).
       orderItemId: li.id ?? null,
+      unitLabel: li.unitLabel ?? null, // units_v1: the unit travels with the line
       qty: split.qty,
       boxes: split.boxes,
       pieces: split.pieces,
@@ -3407,6 +3409,12 @@ export class InvoicesService {
       throw new BadRequestException("Only DRAFT invoices can be edited");
     await this.assertOrderInvoiceUnlocked(inv);
 
+    // units_v1: BOTH rewrite paths — the item replace (re-split at the LIVE pack) and the
+    // discount/shipping recompute, whose order back-sync writes onto the linked order's lines.
+    if (dto.items || dto.discount !== undefined || dto.shippingFee !== undefined) {
+      await unitAware.assertInvoiceRewriteAllowed(this.prisma.forTenant(), inv);
+    }
+
     if (dto.items) {
       // Pre-fetch products for boxes/pieces resolution AND the regulated-category
       // snapshot (so an edited DRAFT re-attributes its regulated lines).
@@ -4638,6 +4646,7 @@ export class InvoicesService {
         "Cannot duplicate an order-linked invoice. Create a new invoice or issue a credit note instead.",
       );
     }
+    unitAware.assertNoUnitAwareLines(inv.items, "duplicated"); // the copy drops the unit
 
     const customer = await this.prisma
       .forTenant()
@@ -6189,6 +6198,11 @@ export class InvoicesService {
         `Cannot adjust prices on a ${invoice.status} invoice. Issue a credit note instead.`,
       );
     }
+    // units_v1: a bulk price is keyed by productId (a Case price would land on pack lines). The
+    // SINGLE scope only re-prices this invoice's own lines in place, off each line's own numbers.
+    if (dto.scope !== "SINGLE") {
+      unitAware.assertNoUnitAwareLines(invoice.items, "re-priced across invoices");
+    }
 
     // F03/R3: category (excise) tax follows the customer's exemption exactly like
     // the regular sales tax — foldCategoryTax zeroes every line's snapshot at creation
@@ -6394,7 +6408,7 @@ export class InvoicesService {
         // Build itemId → newUnitPrice for items whose productId matches
         const localMap = new Map<string, number>();
         for (const item of inv.items) {
-          if (item.productId && productPriceMap.has(item.productId)) {
+          if (item.productId && !item.unitLabel && productPriceMap.has(item.productId)) {
             localMap.set(item.id, productPriceMap.get(item.productId)!);
           }
         }

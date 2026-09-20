@@ -7,6 +7,7 @@ import { computeLineSubtotal, formatQtySplit } from "@routeflow/pricing";
 import { formatMoney } from "@/lib/format";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { splitProductName } from "@/lib/product-display";
+import { linePriceTag } from "./line-price-tag";
 
 /** Prisma `Decimal` columns arrive as strings over the wire (`qty`, `unitPrice`, `subtotal`,
  *  `deliveredQty`), so every numeric prop accepts both and is coerced here — never `.toFixed`
@@ -33,8 +34,13 @@ export interface LineItemRowReadOnlyProps {
    * is exactly the order page's own rule.
    */
   subtotal?: Numeric | null;
-  /** `OrderItem.promoFreeUnits` — BUY_N_GET_M units subtracted by the fallback recompute. */
+  /** `OrderItem.promoFreeUnits` — BUY_N_GET_M units subtracted by the fallback recompute, and
+   *  named on the row ("N free") so a reduced total never reads as a pricing error. */
   freeUnits?: Numeric | null;
+  /** `OrderItem.priceType` + `originalPrice`: explains a Special / Upsell / Discounted / Promo /
+   *  Adjusted price with the struck list price and a pill (see `linePriceTag`). */
+  priceType?: string | null;
+  originalPrice?: Numeric | null;
   /** Custom label for the box-level unit (units ladder); defaults to "box". */
   boxLabel?: string | null;
   /** Custom label for loose pieces; defaults to "pcs". */
@@ -47,6 +53,8 @@ export interface LineItemRowReadOnlyProps {
    *  past DRAFT/PENDING — `deliveredQty` is 0 (not null) on every undelivered line. */
   showDeliveryProgress?: boolean;
   note?: string | null;
+  /** An ad-hoc (unlisted, non-catalog) line — shows the "Custom" pill the table shows. */
+  custom?: boolean;
   className?: string;
 }
 
@@ -69,12 +77,15 @@ export function LineItemRowReadOnly({
   pieces,
   subtotal,
   freeUnits,
+  priceType,
+  originalPrice,
   boxLabel,
   unitLabel,
   lineStatus,
   deliveredQty,
   showDeliveryProgress,
   note,
+  custom,
   className,
 }: LineItemRowReadOnlyProps) {
   const [imageFailed, setImageFailed] = React.useState(false);
@@ -101,11 +112,17 @@ export function LineItemRowReadOnly({
     ? `${formatQtySplit({ qty, boxes, pieces, unitLabel, boxLabel })} · ${formatMoney(unitPrice)} / ${
         boxLabel?.trim() || "box"
       } of ${unitsPerBox}`
-    : `${formatQtySplit({ qty })} × ${formatMoney(unitPrice)}`;
+    : hasSplit
+      ? // A stored boxes/pieces split but no known pack size: keep the split the operator entered
+        // (priced per piece by `computeLineSubtotal`, so the price reads per unit).
+        `${formatQtySplit({ qty, boxes, pieces, unitLabel, boxLabel })} × ${formatMoney(unitPrice)}`
+      : `${formatQtySplit({ qty })} × ${formatMoney(unitPrice)}`;
   const delivered = deliveredQty == null ? null : Number(deliveredQty);
+  const priceTag = linePriceTag({ priceType, originalPrice, unitPrice });
+  const freeCount = Math.max(0, Math.trunc(Number(freeUnits ?? 0) || 0));
 
   return (
-    <li className={cn("flex items-start gap-3 px-3 py-3", className)}>
+    <li className={cn("flex items-start gap-3 px-3 py-3", cancelled && "opacity-50", className)}>
       {/* Reserved 40x40 in every case so a missing/failed image never shifts the row. */}
       <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md bg-surface-raised">
         {thumbnailUrl && !imageFailed ? (
@@ -124,11 +141,14 @@ export function LineItemRowReadOnly({
         )}
       </div>
 
-      <div className={cn("min-w-0 flex-1", cancelled && "text-navy/50 line-through")}>
+      <div className="min-w-0 flex-1">
         {/* Stem (family) clamps hard; the anchor (flavor / pack) only has a generous backstop so a
             brand-prefixed name can never bring back the unbounded-wrap row. */}
         {stem && (
-          <p data-testid="line-name-stem" className="line-clamp-2 text-xs text-navy/70">
+          <p
+            data-testid="line-name-stem"
+            className={cn("line-clamp-2 text-xs text-navy/70", cancelled && "line-through")}
+          >
             {stem}
           </p>
         )}
@@ -136,6 +156,7 @@ export function LineItemRowReadOnly({
           data-testid="line-name-anchor"
           className={cn(
             "text-sm font-medium text-navy [overflow-wrap:anywhere]",
+            cancelled && "line-through",
             // No separator → nothing to split: a plain 3-line clamp beats both an unbounded wrap
             // and a 1-line tail truncation.
             stem ? "line-clamp-4" : "line-clamp-3",
@@ -144,7 +165,41 @@ export function LineItemRowReadOnly({
           {anchor}
         </p>
         {sku && <p className="mt-0.5 font-mono text-xs text-navy/60">SKU {sku}</p>}
-        <p className="mt-1 text-xs text-navy/70">{qtyPriceLine}</p>
+        {custom && (
+          <span className="mt-1 inline-flex rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-700 ring-1 ring-brand-200">
+            Custom
+          </span>
+        )}
+        <p className="mt-1 text-xs text-navy/70" title={hasSplit ? `${qty} pcs total` : undefined}>
+          {qtyPriceLine}
+        </p>
+        {priceTag && (
+          <p
+            className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs"
+            data-testid="line-price-tag"
+          >
+            {priceTag.strikeOriginal && (
+              <span className="text-navy/50 line-through">
+                {formatMoney(Number(originalPrice))}
+              </span>
+            )}
+            {/* The current price is already on the qty line above — repeating it here read as
+                a second, different price on boxed lines. */}
+            <span
+              className={cn(
+                "rounded-full px-1.5 py-0.5 text-[10px] font-medium ring-1",
+                priceTag.tone === "emerald"
+                  ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
+                  : "bg-amber-50 text-amber-700 ring-amber-200",
+              )}
+            >
+              {priceTag.label}
+            </span>
+          </p>
+        )}
+        {freeCount > 0 && (
+          <p className="text-[10px] font-medium text-amber-700">{freeCount} free</p>
+        )}
         {showDeliveryProgress && delivered != null && delivered < qty && (
           <p className="text-xs text-navy/70">
             {formatQtySplit({ qty: delivered })} of {formatQtySplit({ qty })} delivered

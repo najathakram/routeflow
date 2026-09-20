@@ -22,9 +22,13 @@ window.HTMLElement.prototype.scrollIntoView = jest.fn();
  */
 
 const createOrderMutate = jest.fn();
+// Mutable so a test can put a customer in the picker / give them per-product tier prices.
+let mockCustomers: Array<Record<string, unknown>> = [];
+let mockCustomerPrices: Array<Record<string, unknown>> = [];
 jest.mock("@/lib/api/customers", () => ({
-  useCustomers: () => ({ data: { data: [] } }),
-  useCustomerPrices: () => ({ data: [] }),
+  useCustomers: () => ({ data: { data: mockCustomers } }),
+  // Like the real hook: nothing until a customer is selected.
+  useCustomerPrices: (customerId?: string) => ({ data: customerId ? mockCustomerPrices : [] }),
   useCustomer: () => ({ data: undefined }),
 }));
 jest.mock("@/lib/api/products", () => ({
@@ -153,6 +157,8 @@ describe("CreateOrderModal", () => {
     capturedOnError = undefined;
     capturedInlineCreate = undefined;
     capturedOnOpenContinuous = undefined;
+    mockCustomers = [];
+    mockCustomerPrices = [];
     cameraDetect = undefined;
     cameraEnabled = undefined;
     mockScanV2 = false;
@@ -514,6 +520,154 @@ describe("CreateOrderModal", () => {
       rerender(<CreateOrderModal isOpen onClose={jest.fn()} />);
       expect(await screen.findByRole("dialog", { name: "Create Order" })).toBeInTheDocument();
       expect(screen.queryByRole("dialog", { name: "Scan items" })).not.toBeInTheDocument();
+    });
+  });
+
+  // Regressions from the lead's review of the scan_v2 change (#977).
+  describe("scan_v2 review regressions", () => {
+    const boxedProduct = {
+      notFound: false,
+      archived: false,
+      product: {
+        id: "prod-b",
+        name: "Case Soda",
+        pricePerUnit: "24",
+        unit: "case",
+        unitsPerBox: 6,
+      },
+    };
+    const tiered = {
+      notFound: false,
+      archived: false,
+      product: {
+        id: "prod-1",
+        name: "Widget",
+        pricePerUnit: "10",
+        priceTier2: "8",
+        priceTier3: "7",
+        unit: "each",
+      },
+    };
+    const acme = { id: "c1", businessName: "Acme Foods", pricingTier: 2 };
+
+    const pickCustomer = async (name: string) => {
+      fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+        target: { value: name.slice(0, 3) },
+      });
+      fireEvent.click(await screen.findByText(name));
+    };
+
+    describe("a repeat add on a case-packed line (money)", () => {
+      it("flag OFF: the historical +1 unit - a repeat add does NOT add a whole extra case", async () => {
+        mockScanV2 = false;
+        mockResolveProductByCode.mockResolvedValue(boxedProduct);
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+
+        capturedOnScan!("111");
+        expect(await screen.findByText(/6 pcs total/)).toBeInTheDocument();
+        capturedOnScan!("111");
+
+        expect(await screen.findByText(/7 pcs total/)).toBeInTheDocument();
+        expect(screen.queryByText(/12 pcs total/)).not.toBeInTheDocument();
+      });
+
+      it("flag ON: the scan adds a whole case", async () => {
+        mockScanV2 = true;
+        mockResolveProductByCode.mockResolvedValue(boxedProduct);
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+
+        capturedOnScan!("111");
+        expect(await screen.findByText(/6 pcs total/)).toBeInTheDocument();
+        capturedOnScan!("111");
+
+        expect(await screen.findByText(/12 pcs total/)).toBeInTheDocument();
+      });
+    });
+
+    it("the order Dialog returns if the addon resolves away while the scan screen is open", async () => {
+      mockScanV2 = true;
+      const { rerender } = renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+      act(() => capturedOnOpenContinuous!());
+      await screen.findByRole("dialog", { name: "Scan items" });
+      expect(screen.queryByRole("dialog", { name: "Create Order" })).not.toBeInTheDocument();
+
+      mockScanV2 = false;
+      rerender(<CreateOrderModal isOpen onClose={jest.fn()} />);
+
+      expect(await screen.findByRole("dialog", { name: "Create Order" })).toBeInTheDocument();
+      expect(screen.queryByRole("dialog", { name: "Scan items" })).not.toBeInTheDocument();
+    });
+
+    describe("owner ruling D1 - the customer's price applies to lines scanned BEFORE the customer", () => {
+      it("choosing a tier-2 customer afterwards re-prices the scanned line to their tier price", async () => {
+        mockScanV2 = true;
+        mockCustomers = [acme];
+        mockResolveProductByCode.mockResolvedValue(tiered);
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        capturedOnScan!("111");
+        expect(await screen.findByText("$10.00 / each")).toBeInTheDocument();
+
+        await pickCustomer("Acme Foods");
+
+        expect(await screen.findByText("$8.00 / each")).toBeInTheDocument();
+        expect(screen.getByText("Special price")).toBeInTheDocument();
+      });
+
+      it("a customer-specific product tier (customer prices) wins over the customer's default tier", async () => {
+        mockScanV2 = true;
+        mockCustomers = [acme];
+        mockCustomerPrices = [{ productId: "prod-1", pricingTier: 3 }];
+        mockResolveProductByCode.mockResolvedValue(tiered);
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        capturedOnScan!("111");
+        await screen.findByText("$10.00 / each");
+
+        await pickCustomer("Acme Foods");
+
+        expect(await screen.findByText("$7.00 / each")).toBeInTheDocument();
+      });
+
+      it("an operator's one-time price is NOT overwritten by the customer's tier", async () => {
+        mockScanV2 = true;
+        mockCustomers = [acme];
+        mockResolveProductByCode.mockResolvedValue(tiered);
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        capturedOnScan!("111");
+        await screen.findByText("$10.00 / each");
+        fireEvent.change(screen.getByPlaceholderText("10.00"), { target: { value: "9.00" } });
+        expect(await screen.findByText("$9.00 / each")).toBeInTheDocument();
+
+        await pickCustomer("Acme Foods");
+
+        expect(screen.getByText("$9.00 / each")).toBeInTheDocument();
+        expect(screen.queryByText("$8.00 / each")).not.toBeInTheDocument();
+      });
+
+      it("flag OFF: the classic modal is unchanged - choosing a customer afterwards does NOT re-price", async () => {
+        mockScanV2 = false;
+        mockCustomers = [acme];
+        mockResolveProductByCode.mockResolvedValue(tiered);
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        capturedOnScan!("111");
+        await screen.findByText("$10.00 / each");
+
+        await pickCustomer("Acme Foods");
+
+        expect(screen.getByText("$10.00 / each")).toBeInTheDocument();
+        expect(screen.queryByText("$8.00 / each")).not.toBeInTheDocument();
+      });
+
+      it("a line scanned AFTER the customer is chosen is priced for them immediately", async () => {
+        mockScanV2 = true;
+        mockCustomers = [acme];
+        mockResolveProductByCode.mockResolvedValue(tiered);
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        await pickCustomer("Acme Foods");
+
+        capturedOnScan!("111");
+
+        expect(await screen.findByText("$8.00 / each")).toBeInTheDocument();
+      });
     });
   });
 });

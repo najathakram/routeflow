@@ -38,7 +38,7 @@ const LOCAL_DEFAULT_DB_URL = "postgresql://user:pass@localhost:5432/routeflow_de
 // Resolves the seed's DB target the same way prod-migrate.mjs/schema-drift.mjs do (Railway
 // proxy vars win over DATABASE_URL, since under `railway run` DATABASE_URL is the unreachable
 // *.railway.internal host) — imported dynamically because the shared helper is an ESM module
-// (`.mjs`) and CI still runs this script under Node 20, which cannot `require()` ESM.
+// (`.mjs`) and this script was written when CI ran Node 20, which cannot `require()` ESM (CI is Node 24 since B570, so the workaround is now optional).
 async function resolveTargetDbUrl() {
   const { resolveDatabaseUrl } = await import("./lib/railway-db-url.mjs");
   try {
@@ -190,8 +190,8 @@ const FIXTURE_INVOICE_NUMBER = "E2E-FIX-INV-001";
 // One PENDING order with one line on the first plain fixture product: 06 CP-02/CP-06 read real
 // order rows off a fresh DB, and 21 REG-B24 needs an ACTIVE order item against a catalog product
 // to prove the bulk-delete skip-guard. Found by a stable idempotencyKey — NOT by number: the app
-// generates the next order number as (lexicographically-highest "ORD-…") + 1
-// (orders.service.ts), so a fixed high literal like ORD-900001 would skew that tenant's sequence
+// generates the next order number as (numeric max over conforming "ORD-<digits>") + 1
+// (orders.service.ts / order-number.ts, B587), so a fixed high literal like ORD-900001 would skew that tenant's sequence
 // forever. The fixture takes the NEXT number in sequence exactly as a real order would, and
 // "ORD-<digits>" is also the shape 06 CP-06 finds the row by.
 const FIXTURE_ORDER_KEY = "e2e-fixture-order";
@@ -297,15 +297,17 @@ async function ensureCommerceFixtures(tenantId) {
 
   // One PENDING order + one line (see FIXTURE_ORDER_KEY). Same numbering rule as the app.
   const widget = products.get("E2E-FIX-001");
-  const lastOrder = await prisma.order.findFirst({
+  // B587: NUMERIC max over conforming `ORD-<1..9 digits>` numbers only (ORD-SEED-1 and friends
+  // sort above every numeric number as text) — the same rule as apps/api/src/orders/order-number.ts.
+  const existingOrderNumbers = await prisma.order.findMany({
     where: { tenantId, orderNumber: { startsWith: "ORD-" } },
-    orderBy: { orderNumber: "desc" },
     select: { orderNumber: true },
   });
-  const seq = lastOrder?.orderNumber
-    ? parseInt(lastOrder.orderNumber.replace("ORD-", ""), 10) + 1
-    : 1;
-  const orderNumber = `ORD-${String(Number.isFinite(seq) ? seq : 1).padStart(5, "0")}`;
+  const maxSeq = existingOrderNumbers.reduce((max, o) => {
+    const m = /^ORD-([0-9]{1,9})$/.exec(o.orderNumber ?? "");
+    return m ? Math.max(max, Number(m[1])) : max;
+  }, 0);
+  const orderNumber = `ORD-${String(maxSeq + 1).padStart(5, "0")}`;
   await prisma.order.upsert({
     where: { tenantId_idempotencyKey: { tenantId, idempotencyKey: FIXTURE_ORDER_KEY } },
     create: {

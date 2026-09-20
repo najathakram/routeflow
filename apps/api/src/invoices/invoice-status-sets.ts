@@ -42,6 +42,23 @@ export const KPI_SUMMARY_EXCLUDED: InvoiceStatus[] = [
   InvoiceStatus.DRAFT,
 ];
 /**
+ * "Not an ISSUED invoice": the settled/dead/forgiven statuses AND DRAFT. Used by the shared
+ * credit-exposure core (`credit-exposure.ts`) to split ISSUED invoices from drafts — it is NOT
+ * itself the credit-exposure read filter. D6 / B462 owner ruling (option B): a DRAFT counts
+ * toward credit exposure only when an OPEN or DELIVERED order backs it (`isUnbackedDraft`);
+ * only an unbacked draft is excluded and surfaced as "pending exposure". The DB read, the
+ * customers list Receivables and the CSV export therefore filter `CREDIT_NOT_APPLICABLE`
+ * (drafts included) and drop unbacked drafts in JS. Same members as KPI_SUMMARY_EXCLUDED on
+ * purpose (one meaning of "an issued receivable"), but a separate name so the credit basis is
+ * greppable and a future divergence is a deliberate edit, not an accident.
+ */
+export const CREDIT_EXPOSURE_EXCLUDED: InvoiceStatus[] = [
+  InvoiceStatus.PAID,
+  InvoiceStatus.VOID,
+  InvoiceStatus.WRITTEN_OFF,
+  InvoiceStatus.DRAFT,
+];
+/**
  * LIFETIME billed history (the customer statement's "Invoiced Amount" tile,
  * M1): every invoice the customer was actually billed, over the WHOLE history.
  * Deliberately WIDER than KPI_SUMMARY_EXCLUDED — PAID / OVERDUE / WRITTEN_OFF

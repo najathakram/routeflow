@@ -140,14 +140,18 @@ export function LineItemRow({
     <li
       ref={rowRef}
       className={cn(
-        "flex items-start gap-3 px-3 py-2.5",
+        // B565: under `sm` the row is a 2-column grid (info | actions, then qty | total) so
+        // the boxed controls no longer squeeze the info column to ~40px at 390px. From `sm`
+        // up it is the original single flex row — the grid-placement classes on the
+        // children are inert inside a flex container.
+        "grid grid-cols-[minmax(0,1fr)_auto] gap-x-2 gap-y-2 px-3 py-2.5 sm:flex sm:items-start sm:gap-3",
         category ? "border-l-2 border-l-amber-300 bg-amber-50/30" : "",
         highlighted ? "ring-2 ring-brand-500" : "",
       )}
     >
       {li.isUnlisted ? (
         // ── Unlisted (custom) line — editable name + price, no catalog data ──
-        <div className="min-w-0 flex-1 space-y-1">
+        <div className="col-start-1 row-start-1 min-w-0 flex-1 space-y-1">
           <div className="flex items-center gap-1.5">
             <input
               type="text"
@@ -184,7 +188,7 @@ export function LineItemRow({
           )}
         </div>
       ) : (
-        <div className="min-w-0 flex-1">
+        <div className="col-start-1 row-start-1 min-w-0 flex-1">
           <p className="truncate text-sm font-medium text-navy">{li.productName}</p>
           {/* Price display with special/discount indicators */}
           <div
@@ -299,7 +303,7 @@ export function LineItemRow({
       )}
       {/* Qty controls */}
       {li.unitsPerBox ? (
-        <div className="flex flex-col gap-0.5 min-w-[190px]">
+        <div className="col-start-1 row-start-2 flex min-w-[190px] flex-col gap-0.5">
           {/* Case | Unit sell-by toggle — UI-only; the payload always
               carries {qty, boxes, pieces} regardless of the mode. */}
           <div className="inline-flex self-start overflow-hidden rounded border border-surface-border text-[10px] font-medium">
@@ -378,7 +382,7 @@ export function LineItemRow({
           </span>
         </div>
       ) : (
-        <div className="flex items-center gap-1">
+        <div className="col-start-1 row-start-2 flex items-center gap-1">
           <button
             type="button"
             onClick={() => onQtyDelta(-1)}
@@ -398,7 +402,7 @@ export function LineItemRow({
         </div>
       )}
       {/* Line total */}
-      <span className="w-16 text-right text-sm font-semibold text-navy">
+      <span className="col-start-2 row-start-2 self-center text-right text-sm font-semibold text-navy sm:w-16 sm:self-auto">
         $
         {computeLineSubtotal({
           unitPrice: li.unitPrice,
@@ -408,25 +412,27 @@ export function LineItemRow({
           unitsPerBox: li.unitsPerBox ?? null,
         }).toFixed(2)}
       </span>
-      <button
-        type="button"
-        onClick={onToggleNoteOpen}
-        className={cn(
-          "shrink-0 rounded p-1 transition-colors hover:bg-surface-raised",
-          li.note?.trim() ? "text-brand-500" : "text-navy/30 hover:text-navy",
-        )}
-        title="Add flavor / note"
-      >
-        <StickyNote className="h-3.5 w-3.5" />
-      </button>
-      <button
-        type="button"
-        onClick={onRemove}
-        className="shrink-0 rounded p-1 text-navy/30 hover:bg-surface-raised hover:text-danger transition-colors"
-        title="Remove"
-      >
-        <X className="h-3.5 w-3.5" />
-      </button>
+      <div className="col-start-2 row-start-1 flex shrink-0 items-start gap-2 sm:gap-3">
+        <button
+          type="button"
+          onClick={onToggleNoteOpen}
+          className={cn(
+            "shrink-0 rounded p-1 transition-colors hover:bg-surface-raised",
+            li.note?.trim() ? "text-brand-500" : "text-navy/30 hover:text-navy",
+          )}
+          title="Add flavor / note"
+        >
+          <StickyNote className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          onClick={onRemove}
+          className="shrink-0 rounded p-1 text-navy/30 hover:bg-surface-raised hover:text-danger transition-colors"
+          title="Remove"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
     </li>
   );
 }
