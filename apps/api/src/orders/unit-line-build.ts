@@ -154,6 +154,26 @@ export async function prepareUnitLadders(
   );
 }
 
+/**
+ * One line's identity in the Idempotency-Key replay comparison. A unit line's REQUEST qty counts the
+ * unit (3 = three Cases) while the STORED qty is base pieces, so a stored unit line compares by its
+ * unit count (`boxes ?? qty`) and carries its label; a pack line's key is unchanged.
+ */
+export function replayLineKey(
+  r: {
+    productId?: string | null;
+    name?: string | null;
+    qty: unknown;
+    boxes?: unknown;
+    unitLabel?: string | null;
+  },
+  stored: boolean,
+): string {
+  const unit = (r.unitLabel ?? "").trim().toLowerCase();
+  const count = stored && unit ? (r.boxes ?? r.qty) : r.qty;
+  return `${r.productId ?? `unlisted:${r.name ?? ""}`}×${Number(count)}${unit ? `@${unit}` : ""}`;
+}
+
 /** Regulated per-category tax for a unit line (0 when the product has no tracked category). */
 export const categoryTaxForLine = (
   category: { taxType: unknown; rate: unknown; priceIncludesTax: boolean } | null | undefined,

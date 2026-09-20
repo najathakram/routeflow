@@ -100,6 +100,7 @@ import {
   categoryTaxForLine,
   isUnitAware,
   prepareUnitLadders,
+  replayLineKey,
 } from "./unit-line-build";
 import { assertBuyerCartPricesCurrent } from "./buyer-cart-price-check";
 import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
@@ -1809,18 +1810,18 @@ export class OrdersService implements OnApplicationBootstrap {
         // stored order; a mismatch is a client bug surfaced loudly, never a
         // silent wrong-cart acknowledgment.
         {
-          const norm = (
-            rows: Array<{ productId?: string | null; name?: string | null; qty: unknown }>,
-          ) =>
+          // units_v1: a stored unit line compares by its unit count + label (see replayLineKey).
+          const norm = (rows: never[], stored: boolean) =>
             rows
-              .map((r) => (r.productId ?? `unlisted:${r.name ?? ""}`) + "×" + Number(r.qty))
+              .map((r) => replayLineKey(r, stored))
               .sort()
               .join("|");
-          const incomingNorm = norm((dto.items ?? []) as never[]);
+          const incomingNorm = norm((dto.items ?? []) as never[], false);
           const storedNorm = norm(
             (existing.lineItems ?? []).filter(
               (li: { status?: string }) => li.status !== "CANCELLED",
             ) as never[],
+            true,
           );
           if (incomingNorm !== storedNorm) {
             throw new ConflictException(

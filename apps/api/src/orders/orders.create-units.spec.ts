@@ -68,6 +68,7 @@ describe("OrdersService.create — sell by a unit (units_v1, 4b-2b)", () => {
     { productId: "prod-1", label: "Pallet", factorToBase: 5760, price: null, sortOrder: 1 },
   ].map((u) => ({ priceTier2: null, priceTier3: null, priceTier4: null, priceTier5: null, ...u }));
   const staff = { ...operatorPayload, tenantId: "t-1" } as never;
+  const scopedUnits = { findMany: jest.fn() };
   const hasFlag = () => (service as any).entitlements.hasFlag as jest.Mock;
   const orderData = () => prisma.order.create.mock.calls[0][0].data;
 
@@ -80,7 +81,11 @@ describe("OrdersService.create — sell by a unit (units_v1, 4b-2b)", () => {
       deletedAt: null,
     });
     prisma.product.findMany.mockResolvedValue([PRODUCT]);
-    prisma.productUnit.findMany.mockResolvedValue(ladder);
+    scopedUnits.findMany.mockReset().mockResolvedValue(ladder);
+    (prisma.forTenant as jest.Mock).mockReturnValue({
+      ...(prisma.forTenant as jest.Mock)(),
+      productUnit: scopedUnits,
+    });
     prisma.order.create.mockResolvedValue({
       id: "ord-new",
       customerId: "cust-1",
@@ -121,10 +126,10 @@ describe("OrdersService.create — sell by a unit (units_v1, 4b-2b)", () => {
     });
     expect(d.subtotal).toBe(1440);
     expect(d.skipAutoMerge).toBe(true);
-    expect(prisma.productUnit.findMany).toHaveBeenCalledTimes(1);
-    expect(prisma.productUnit.findMany.mock.calls[0][0].where).toEqual({
-      productId: { in: ["prod-1"] },
-    });
+    // read through the TENANT-SCOPED client (forTenant), never the raw one
+    expect(scopedUnits.findMany).toHaveBeenCalledTimes(1);
+    expect(scopedUnits.findMany.mock.calls[0][0].where).toEqual({ productId: { in: ["prod-1"] } });
+    expect(prisma.productUnit.findMany).not.toHaveBeenCalled();
     expect(hasFlag()).toHaveBeenCalledWith("test-tenant", "flag.units_v1");
   });
 
@@ -143,7 +148,7 @@ describe("OrdersService.create — sell by a unit (units_v1, 4b-2b)", () => {
 
   it("a pack-only request reads nothing new: no ladder query, no entitlement lookup, merge behaviour unchanged", async () => {
     await create([{ productId: "prod-1", qty: 1 }]);
-    expect(prisma.productUnit.findMany).not.toHaveBeenCalled();
+    expect(scopedUnits.findMany).not.toHaveBeenCalled();
     expect(hasFlag()).not.toHaveBeenCalled();
     expect(orderData().skipAutoMerge).toBe(false);
     expect("unitLabel" in orderData().lineItems.create[0]).toBe(false);
@@ -192,5 +197,28 @@ describe("OrdersService.create — sell by a unit (units_v1, 4b-2b)", () => {
       originalPrice: 480,
       subtotal: 900,
     });
+  });
+
+  it("an Idempotency-Key retry of the SAME unit cart replays the original order; a changed unit is a 409", async () => {
+    const original = {
+      id: "ord-old",
+      customerId: "cust-1",
+      lineItems: [
+        { productId: "prod-1", qty: 864, boxes: 3, unitLabel: "Case", status: "PENDING" },
+      ],
+    };
+    jest.spyOn(service as any, "findReplayCandidateByKey").mockResolvedValue(original);
+    const withKey = (items: unknown[]) =>
+      service.create({ customerId: "cust-1", items, idempotencyKey: "k1" } as never, staff);
+    await expect(withKey([{ productId: "prod-1", qty: 3, unitLabel: "Case" }])).resolves.toBe(
+      original,
+    );
+    await expect(withKey([{ productId: "prod-1", qty: 3, unitLabel: "Pallet" }])).rejects.toThrow(
+      /different cart/,
+    );
+    await expect(withKey([{ productId: "prod-1", qty: 4, unitLabel: "Case" }])).rejects.toThrow(
+      /different cart/,
+    );
+    expect(prisma.order.create).not.toHaveBeenCalled();
   });
 });
