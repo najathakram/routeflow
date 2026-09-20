@@ -1,5 +1,6 @@
 -- T6 (owner ruling 2026-09-20): tenantId may never be NULL on the 56 tenant-owned business tables
--- whose every writer is proven to stamp it (d5-nullable-tenantid-models.md). Part 1 of 2: ADD the
+-- whose writers were audited to stamp it (the T6 / D5 audit; the two nested-create gaps it found are
+-- fixed by the PR that must land BEFORE this one). Part 1 of 2: ADD the
 -- CHECK as NOT VALID — metadata only, no table scan; it is enforced for every NEW insert/update from
 -- the moment it commits. Part 2 (the next migration) VALIDATEs it against existing rows.
 --
@@ -12,11 +13,16 @@
 -- NOT covered here on purpose: the 19 tables that need a backfill first, and the 6 that stay
 -- nullable by design (User, RefreshToken, PaymentCounter, ExpenseCategory, VendorBillItem, AuditLog).
 --
--- Rollback (per table, instant): ALTER TABLE "<t>" DROP CONSTRAINT "<t>_tenantId_nn";
+-- Rollback (per table, instant, no data touched): ALTER TABLE "<t>" DROP CONSTRAINT "<t>_tenantId_nn";
 --
--- Why lock_timeout: fail fast instead of queueing behind a long transaction — each ADD CONSTRAINT needs a
--- (each ADD CONSTRAINT needs a brief ACCESS EXCLUSIVE lock, and a waiting ACCESS EXCLUSIVE blocks
--- every reader behind it.
+-- Why lock_timeout: each ADD CONSTRAINT needs a brief ACCESS EXCLUSIVE lock on its table, and a
+-- waiting ACCESS EXCLUSIVE lock blocks every reader queued behind it. Prisma applies this whole
+-- file as ONE transaction, so the 56 locks are held until COMMIT; lock_timeout bounds each WAIT (not
+-- their sum). On real tables each ADD is metadata-only and instant, so the whole file takes well
+-- under a second; if a wait ever exceeds 5s the statement errors, the transaction rolls back (no
+-- constraint is left half-added) and the migration is recorded as FAILED — recover with
+-- `prisma migrate resolve --rolled-back 20260920200000_t6_tenantid_check_not_valid` from apps/api,
+-- then re-run (see the PR body). NEVER `--applied`: that would mark the guard as installed when it is not.
 SET lock_timeout = '5s';
 
 ALTER TABLE "Product" ADD CONSTRAINT "Product_tenantId_nn" CHECK ("tenantId" IS NOT NULL) NOT VALID;

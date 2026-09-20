@@ -1,6 +1,6 @@
 /**
  * T6 (owner ruling 2026-09-20) — the two migrations that put a `<table>_tenantId_nn` CHECK on the
- * 56 tenant-owned tables whose every writer stamps `tenantId` (d5-nullable-tenantid-models.md).
+ * 56 tenant-owned tables whose every writer stamps `tenantId` (the T6 / D5 audit, 2026-09-19).
  * Pins the SHAPE so a later edit cannot quietly widen the guard onto a table that still needs a
  * backfill, drop the NOT VALID-then-VALIDATE order, or slip in a `SET NOT NULL` (which would need
  * the Prisma schema flipped too — a separate PR, see the migration header).
@@ -59,9 +59,18 @@ describe("T6 tenantId guard migrations", () => {
     expect(statements).not.toMatch(/SET NOT NULL/i);
   });
 
-  it("part 1 sets a lock_timeout so a queued ACCESS EXCLUSIVE cannot stall the app", () => {
-    expect(p1).toMatch(/SET lock_timeout = '5s';/);
-    expect(p1).toMatch(/RESET lock_timeout;/);
+  it("both parts bound every lock WAIT with a lock_timeout (per statement, not their sum: Prisma runs a file as one transaction)", () => {
+    for (const sql of [p1, p2]) {
+      expect(sql).toMatch(/SET lock_timeout = '5s';/);
+      expect(sql).toMatch(/RESET lock_timeout;/);
+    }
+  });
+
+  it("the failure recovery is written down in both migrations (resolve --rolled-back, never --applied)", () => {
+    for (const sql of [p1, p2]) {
+      expect(sql).toMatch(/migrate resolve --rolled-back/);
+      expect(sql).toMatch(/NEVER `--applied`/);
+    }
   });
 
   it("every guarded table is a model whose tenantId is STILL nullable in the schema (no drift)", () => {

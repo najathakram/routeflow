@@ -1175,6 +1175,9 @@ describeDb("report-train4-damage.mjs — real Postgres (seeded damage vs. near-m
 
   afterAll(async () => {
     if (!pool) return;
+    // First, and NOT VALID (no scan): restoring the guard cannot fail on the NULL rows still there,
+    // and a throwing delete below can no longer leave the shared DB without its guard.
+    await restoreTenantIdGuards?.();
     const t = [TENANT_IDS];
     // FK order (test-plan.md §7): children before parents; BillingEvent/TenantSubscription are
     // cascade-deleted by the Tenant delete, never removed directly.
@@ -1201,7 +1204,6 @@ describeDb("report-train4-damage.mjs — real Postgres (seeded damage vs. near-m
 
     if (outDir) fs.rmSync(outDir, { recursive: true, force: true });
 
-    await restoreTenantIdGuards?.();
     await prisma?.$disconnect();
     await pool?.end();
   }, 180_000);

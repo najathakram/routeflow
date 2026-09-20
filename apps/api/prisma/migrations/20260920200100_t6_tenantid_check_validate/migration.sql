@@ -5,6 +5,13 @@
 -- part-1 constraints in place, so new NULLs are already refused.
 --
 -- Rollback: none needed (validation changes no data); to remove the guard entirely see part 1.
+-- If this migration FAILS it is recorded as failed: fix the NULL rows the error names (or drop that
+-- table's constraint), then `prisma migrate resolve --rolled-back 20260920200100_t6_tenantid_check_validate`
+-- from apps/api and re-run. NEVER `--applied`.
+--
+-- lock_timeout: VALIDATE holds SHARE UPDATE EXCLUSIVE (writes continue) but conflicts with DDL and
+-- autovacuum, and Prisma holds all 56 until COMMIT — so a wait is bounded, not open-ended.
+SET lock_timeout = '5s';
 
 ALTER TABLE "Product" VALIDATE CONSTRAINT "Product_tenantId_nn";
 ALTER TABLE "Supplier" VALIDATE CONSTRAINT "Supplier_tenantId_nn";
@@ -62,3 +69,5 @@ ALTER TABLE "Message" VALIDATE CONSTRAINT "Message_tenantId_nn";
 ALTER TABLE "MessageThread" VALIDATE CONSTRAINT "MessageThread_tenantId_nn";
 ALTER TABLE "MessageTemplate" VALIDATE CONSTRAINT "MessageTemplate_tenantId_nn";
 ALTER TABLE "NotificationRule" VALIDATE CONSTRAINT "NotificationRule_tenantId_nn";
+
+RESET lock_timeout;

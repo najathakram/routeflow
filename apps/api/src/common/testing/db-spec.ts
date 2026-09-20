@@ -38,7 +38,7 @@ export interface PgQueryable {
  * spec) must lift the guard on exactly the tables it needs for the duration of the file. Returns
  * the function that puts them back (as NOT VALID: the spec has just deleted its rows, and a
  * re-validating scan is not its job). A guard that is not present (a DB migrated without T6) is
- * neither dropped nor re-added. Call the restore from `afterAll`, in a `finally`.
+ * neither dropped nor re-added. Call the restore FIRST in `afterAll` (it is NOT VALID, so the rows the spec has not yet deleted cannot make it fail, and a throwing cleanup can no longer leave the DB without its guard).
  */
 export async function relaxTenantIdGuards(
   db: PgQueryable,
