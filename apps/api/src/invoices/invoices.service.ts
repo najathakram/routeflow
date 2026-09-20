@@ -58,11 +58,8 @@ import { UpdateShipmentDto } from "../orders/dto/update-shipment.dto";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { EmailService } from "../email/email.service";
-import { InvoicePdfService, invoicePdfStorageKey } from "./invoice-pdf.service";
-import {
-  MAX_INVOICE_EMAIL_ATTACHMENT_BYTES,
-  invoiceAttachmentFilename,
-} from "./invoice-attachment";
+import { InvoicePdfService } from "./invoice-pdf.service";
+import { buildInvoiceEmailAttachment, InvoiceEmailAttachment } from "./invoice-attachment";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
@@ -3898,43 +3895,6 @@ export class InvoicesService {
   }
 
   /** Send the invoice as an actual email and mark as SENT. */
-  /**
-   * Build the PDF attachment for an invoice send/reminder email — reads back the SAME
-   * file `pdfService.getOrGenerate` just rendered and uploaded (via `storage.download`),
-   * never a second `renderToBuffer` pass. NEVER throws: a download failure or an
-   * oversize PDF (`MAX_INVOICE_EMAIL_ATTACHMENT_BYTES`) both fall back to no attachment
-   * — the Download-PDF link already in the email body still works, and an attachment
-   * problem must never fail the send itself. Only called after `getOrGenerate` has
-   * already succeeded for this invoice.
-   */
-  private async buildInvoiceEmailAttachment(
-    invoiceId: string,
-    invoiceNumber: string,
-  ): Promise<{ filename: string; content: Buffer; contentType: string } | undefined> {
-    try {
-      const content = await this.storage.download(invoicePdfStorageKey(invoiceId));
-      if (content.length > MAX_INVOICE_EMAIL_ATTACHMENT_BYTES) {
-        this.logger.warn(
-          `Invoice ${invoiceId} PDF is ${content.length}B, over the ` +
-            `${MAX_INVOICE_EMAIL_ATTACHMENT_BYTES}B email attachment cap — sending the ` +
-            `download link only`,
-        );
-        return undefined;
-      }
-      return {
-        filename: invoiceAttachmentFilename(invoiceNumber),
-        content,
-        contentType: "application/pdf",
-      };
-    } catch (err) {
-      this.logger.warn(
-        `Could not read the generated PDF for invoice ${invoiceId} to attach to the ` +
-          `email — sending the download link only: ${err instanceof Error ? err.message : err}`,
-      );
-      return undefined;
-    }
-  }
-
   async sendEmail(id: string, overrideEmail?: string, variant?: "draft" | "final") {
     const inv = await this.prisma.forTenant().invoice.findUnique({
       where: { id },
@@ -3979,14 +3939,13 @@ export class InvoicesService {
       });
     }
 
-    // Get PDF URL (non-blocking — include in email if available). `variant`
-    // controls whether the DRAFT proforma or the FINAL invoice is attached.
-    let pdfUrl: string | undefined;
-    let attachment: { filename: string; content: Buffer; contentType: string } | undefined;
+    // Get PDF URL (non-blocking) + its attachment; `variant` picks DRAFT vs FINAL.
+    let pdfUrl: string | undefined, attachment: InvoiceEmailAttachment | undefined;
     try {
       pdfUrl = await this.pdfService.getOrGenerate(id, { variant });
       if (pdfUrl) {
-        attachment = await this.buildInvoiceEmailAttachment(id, inv.invoiceNumber);
+        const dl = this.storage.download.bind(this.storage);
+        attachment = await buildInvoiceEmailAttachment(dl, this.logger, id, inv.invoiceNumber);
       }
     } catch {
       this.logger.warn(
@@ -4214,11 +4173,12 @@ export class InvoicesService {
     }
 
     let pdfUrl: string | undefined;
-    let attachment: { filename: string; content: Buffer; contentType: string } | undefined;
+    let attachment: InvoiceEmailAttachment | undefined;
     try {
       pdfUrl = await this.pdfService.getOrGenerate(id);
       if (pdfUrl) {
-        attachment = await this.buildInvoiceEmailAttachment(id, inv.invoiceNumber);
+        const dl = this.storage.download.bind(this.storage);
+        attachment = await buildInvoiceEmailAttachment(dl, this.logger, id, inv.invoiceNumber);
       }
     } catch {
       /* non-critical */
