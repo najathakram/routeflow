@@ -19,4 +19,8 @@ export const CONFIG_SNAPSHOT_RESTORED_ACTION = "CONFIG_SNAPSHOT_RESTORED";
 export const STRIPE_CHECKOUT_ENTITY = "stripe_checkout_session";
 export const STRIPE_CHECKOUT_APPLIED_ACTION = "STRIPE_CHECKOUT_APPLIED";
 export const STRIPE_CHECKOUT_STALE_ACTION = "STRIPE_CHECKOUT_PLAN_SKIPPED_STALE";
+/** A checkout session refused outright (unknown tenant / a customer that is not the tenant's). */
+export const STRIPE_CHECKOUT_REFUSED_ACTION = "STRIPE_CHECKOUT_REFUSED";
+/** An automatic restore that failed or was abandoned: the plan change went ahead without it. */
+export const CONFIG_SNAPSHOT_RESTORE_FAILED_ACTION = "CONFIG_SNAPSHOT_RESTORE_FAILED";
 export const STRIPE_CHECKOUT_HOOK_FAILED_ACTION = "STRIPE_CHECKOUT_HOOK_FAILED";

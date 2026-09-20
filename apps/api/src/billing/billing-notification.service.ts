@@ -8,6 +8,7 @@ import {
   upgradeConfirmedTemplate,
   cancelledTemplate,
   suspendedTemplate,
+  checkoutPlanNotAppliedTemplate,
   TrialEndingMilestone,
   BillingEmailTemplate,
 } from "./billing-notification.templates";
@@ -265,6 +266,20 @@ export class BillingNotificationService {
     const key = new Date().toISOString().slice(0, 10);
     await this.sendIfClaimed(tenantId, "SUSPENDED", key, (admin, businessName) =>
       suspendedTemplate({ businessName, adminName: admin.name, reason }),
+    );
+  }
+
+  /**
+   * A paid Stripe checkout whose PLAN change was skipped because the tenant downgraded after the
+   * session was created. Idempotent per checkout session (the key), never throws.
+   */
+  async notifyCheckoutPlanNotApplied(
+    tenantId: string,
+    requestedPlanKey: string,
+    sessionId: string,
+  ): Promise<void> {
+    await this.sendIfClaimed(tenantId, "CHECKOUT_PLAN_SKIPPED", sessionId, (admin, businessName) =>
+      checkoutPlanNotAppliedTemplate({ businessName, adminName: admin.name, requestedPlanKey }),
     );
   }
 }

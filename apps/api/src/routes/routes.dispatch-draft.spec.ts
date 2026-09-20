@@ -188,4 +188,59 @@ describe("RoutesService — DRAFT orders never ride a dispatch or complete as de
     const where = tx.order.updateMany.mock.calls[0][0].where;
     expect(where.status.notIn).toContain(OrderStatus.DRAFT);
   });
+
+  it("(a3) a DRAFT order on a completed stop gets NO delivered notification (completeStop and completeWithPayment)", async () => {
+    prisma.routeRun.findUnique.mockResolvedValue({ ...RUN_FIXTURE, status: "IN_PROGRESS" });
+    prisma.routeRunStop.findFirst.mockResolvedValue(
+      stopWith([
+        { id: "ord-1", status: "DRAFT", customerId: "c1", orderNumber: "SO-1", total: 50 },
+      ]),
+    );
+    prisma.driver.findFirst.mockResolvedValue(null);
+    txFor();
+    prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({ id: "stop-1", status: "COMPLETED" });
+
+    await service.completeStop("run-1", "stop-1", { deliveries: [] } as any, operatorPayload);
+    await service.completeWithPayment(
+      "run-1",
+      "stop-1",
+      { deliveries: [] } as any,
+      operatorPayload,
+    );
+
+    expect(messaging.notifyEvent).not.toHaveBeenCalled();
+  });
+
+  it("(a4) completeWithPayment never invoices or pays a DRAFT order: it is excluded from the payment's order set", async () => {
+    prisma.routeRun.findUnique.mockResolvedValue({ ...RUN_FIXTURE, status: "IN_PROGRESS" });
+    prisma.routeRunStop.findFirst.mockResolvedValue(
+      stopWith([
+        { id: "ord-1", status: "DRAFT", customerId: "c1", orderNumber: "SO-1", total: 50 },
+        {
+          id: "ord-2",
+          status: "OUT_FOR_DELIVERY",
+          customerId: "c1",
+          orderNumber: "SO-2",
+          total: 20,
+        },
+      ]),
+    );
+    prisma.driver.findFirst.mockResolvedValue(null);
+    txFor();
+    prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({ id: "stop-1", status: "COMPLETED" });
+    invoicesService.recordDeliveryPaymentInTx.mockResolvedValue({
+      applied: 20,
+      invoiceIds: [],
+      paymentIds: [],
+    });
+
+    await service.completeWithPayment(
+      "run-1",
+      "stop-1",
+      { payment: { amount: 20, method: "CASH" } } as any,
+      operatorPayload,
+    );
+
+    expect(invoicesService.recordDeliveryPaymentInTx.mock.calls[0][1]).toEqual(["ord-2"]);
+  });
 });

@@ -67,7 +67,11 @@ function make(
       upsert: jest.fn((args: unknown) => prisma.tenantSubscription.upsert(args)),
       updateMany: jest.fn().mockResolvedValue({ count: overrides.casCount ?? 1 }),
     },
-    auditLog: { create: jest.fn().mockResolvedValue({}) },
+    auditLog: {
+      create: jest.fn().mockResolvedValue({}),
+      findFirst: jest.fn().mockResolvedValue(null), // no processed session in the tx by default
+    },
+    $executeRaw: jest.fn().mockResolvedValue(0),
   };
   const prisma = {
     tenant: {
@@ -121,6 +125,7 @@ function make(
   const billingNotification = {
     notifyCancelled: jest.fn().mockResolvedValue(undefined),
     notifySuspended: jest.fn().mockResolvedValue(undefined),
+    notifyCheckoutPlanNotApplied: jest.fn().mockResolvedValue(undefined),
   } as any;
   const planTransition = {
     isEnabled: jest.fn().mockResolvedValue(true),
@@ -634,12 +639,51 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
       expect(transition.toPlanKey).toBe(normalizePlanKey("BUSINESS"));
     });
 
-    it("the checkout transaction has an explicit budget (Prisma's 5 s default is too small for a restore)", async () => {
+    it("MINOR 6 (flag ON): the STORED planKey (create and update) is the canonical key, not the raw legacy metadata string", async () => {
+      const { svc, prisma } = make();
+
+      await (svc as any).onCheckoutCompleted({
+        metadata: { tenantId: "t1", plan: "BUSINESS" }, // a legacy alias resolves to a canonical key
+        subscription: "sub_1",
+        customer: "cus_1",
+      });
+
+      const canonical = normalizePlanKey("BUSINESS")!;
+      const args = prisma.tenantSubscription.upsert.mock.calls[0][0];
+      expect(args.update.planKey).toBe(canonical);
+      expect(args.create.planKey).toBe(canonical);
+    });
+
+    it("flag OFF stays BYTE-IDENTICAL: the legacy metadata.plan string is stored raw (create and update), no canonicalisation", async () => {
+      const { svc, prisma, planTransition } = make();
+      planTransition.isEnabled.mockResolvedValue(false);
+
+      await (svc as any).onCheckoutCompleted({
+        metadata: { tenantId: "t1", plan: "BUSINESS" },
+        subscription: "sub_1",
+        customer: "cus_1",
+      });
+
+      const args = prisma.tenantSubscription.upsert.mock.calls[0][0];
+      expect(args.update.planKey).toBe("BUSINESS");
+      expect(args.create.planKey).toBe("BUSINESS");
+      expect(normalizePlanKey("BUSINESS")).not.toBe("BUSINESS"); // the test would be vacuous otherwise
+    });
+
+    it("an unknown plan string is stored as-is (never dropped or nulled)", async () => {
+      const { svc, prisma } = make();
+      await (svc as any).onCheckoutCompleted(session("GROWTH"));
+      expect(prisma.tenantSubscription.upsert.mock.calls[0][0].update.planKey).toBe("GROWTH");
+    });
+
+    it("the checkout transaction has an explicit, bounded budget (our own number — Stripe documents no seconds figure)", async () => {
       const { svc, prisma } = make();
 
       await (svc as any).onCheckoutCompleted(session("GROWTH"));
 
-      expect(prisma.$transaction.mock.calls[0][1]).toEqual({ timeout: 20_000, maxWait: 10_000 });
+      const opts = prisma.$transaction.mock.calls[0][1];
+      expect(opts).toEqual({ timeout: 6_000, maxWait: 2_000 });
+      expect(opts.timeout + opts.maxWait).toBeLessThan(10_000); // bounded: a slow restore times out and Stripe retries
     });
 
     it("flag OFF: no extra tenant read, the hook is never consulted, and the upsert is the PLAIN one (no transaction)", async () => {
@@ -768,6 +812,13 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
         expect(planTransition.onPlanChange).not.toHaveBeenCalled();
         expect(prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
         expect(prisma.$transaction).not.toHaveBeenCalled();
+        // Stripe gets a 200, so the refusal must leave a trail (tenantId null: the claim is unproven).
+        expect(prisma.auditLog.create.mock.calls[0][0].data).toMatchObject({
+          tenantId: null,
+          action: "STRIPE_CHECKOUT_REFUSED",
+          entityId: "cs_1",
+          meta: { reason: "unknown_tenant" },
+        });
       });
 
       it("MAJOR 4: a session whose customer is not the tenant's stored Stripe customer is REFUSED", async () => {
@@ -786,6 +837,22 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
 
         expect(planTransition.onPlanChange).not.toHaveBeenCalled();
         expect(prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
+        expect(prisma.auditLog.create.mock.calls[0][0].data).toMatchObject({
+          tenantId: "t1",
+          action: "STRIPE_CHECKOUT_REFUSED",
+          meta: { reason: "customer_mismatch" },
+        });
+      });
+
+      it("a stale checkout's CREATE branch keeps a valid enum currentPlan (a plan KEY must never reach the enum column)", async () => {
+        const { svc, prisma } = make({ transitionCount: 1 });
+        prisma.tenantFeatureConfigSnapshot.findFirst.mockResolvedValue({ id: "snap-newer" });
+
+        await (svc as any).onCheckoutCompleted(withId("cs_stale2", { created: 1_700_000_000 }));
+
+        const create = prisma.tenantSubscription.upsert.mock.calls[0][0].create;
+        expect(create.planKey).toBeNull(); // the plan change is skipped ...
+        expect(create.currentPlan).toBe("TEAM"); // ... but currentPlan is planKeyToEnum("GROWTH"), not "GROWTH"
       });
 
       it("MAJOR 3: a hook failure on a PAID checkout leaves an alarm audit row and still fails the handler (Stripe retries)", async () => {
@@ -800,6 +867,86 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
           action: "STRIPE_CHECKOUT_HOOK_FAILED",
           entityId: "cs_paid",
         });
+      });
+
+      it("MUST-FIX: a concurrent redelivery serialises on a per-session advisory lock and, seeing the winner's committed row INSIDE the tx, does nothing", async () => {
+        const { svc, tx, prisma, planTransition, events } = make({ transitionCount: 1 });
+        tx.auditLog.findFirst.mockResolvedValue({ id: "won-by-the-other-delivery" });
+
+        await (svc as any).onCheckoutCompleted(withId("cs_race"));
+
+        const lockSql = (tx.$executeRaw as jest.Mock).mock.calls[0][0].join("");
+        expect(lockSql).toContain("pg_advisory_xact_lock");
+        expect((tx.$executeRaw as jest.Mock).mock.calls[0]).toContain("cs_race");
+        expect(planTransition.onPlanChange).not.toHaveBeenCalled();
+        expect(tx.tenantSubscription.updateMany).not.toHaveBeenCalled();
+        expect(prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
+        expect(emitted(events)).toEqual([]);
+      });
+
+      it("MUST-FIX: a deadlock/serialization failure is a retryable race — it rethrows WITHOUT the HOOK_FAILED alarm row", async () => {
+        const { svc, prisma, planTransition } = make({ transitionCount: 1 });
+        planTransition.onPlanChange.mockRejectedValueOnce(
+          Object.assign(new Error("Transaction failed due to a write conflict or a deadlock"), {
+            code: "P2034",
+          }),
+        );
+
+        await expect((svc as any).onCheckoutCompleted(withId("cs_dl"))).rejects.toThrow(/deadlock/);
+
+        expect(prisma.auditLog.create).not.toHaveBeenCalled();
+      });
+
+      it("MUST-FIX: the alarm audit row carries the error NAME and code only — never the raw message", async () => {
+        const { svc, prisma, planTransition } = make({ transitionCount: 1 });
+        planTransition.onPlanChange.mockRejectedValueOnce(
+          Object.assign(new Error('insert into "X" values (secret-row-fragment)'), {
+            code: "P2002",
+          }),
+        );
+
+        await expect((svc as any).onCheckoutCompleted(withId("cs_pii"))).rejects.toThrow();
+
+        const meta = prisma.auditLog.create.mock.calls[0][0].data.meta;
+        expect(meta).toMatchObject({ toPlanKey: "GROWTH", code: "P2002" });
+        expect(JSON.stringify(meta)).not.toContain("secret-row-fragment");
+      });
+
+      it("MUST-FIX: a stale checkout (newer downgrade) raises the tenant notification — money taken, plan unchanged — and stores no plan on create", async () => {
+        const { svc, prisma, planTransition } = make({ transitionCount: 1 });
+        prisma.tenantFeatureConfigSnapshot.findFirst.mockResolvedValue({ id: "snap-newer" });
+
+        await (svc as any).onCheckoutCompleted(withId("cs_stale", { created: 1_700_000_000 }));
+
+        expect(planTransition.onPlanChange).not.toHaveBeenCalled();
+        expect((svc as any).billingNotification.notifyCheckoutPlanNotApplied).toHaveBeenCalledWith(
+          "t1",
+          "GROWTH",
+          "cs_stale",
+        );
+        const create = prisma.tenantSubscription.upsert.mock.calls[0][0].create;
+        expect(create.planKey).toBeNull(); // the create branch honours the skipped plan too
+      });
+
+      it("MUST-FIX: a legacy session with NO planKey is guarded too (flag on): unknown tenant / foreign customer refused", async () => {
+        const noPlan = {
+          metadata: { tenantId: "t1" },
+          subscription: "sub_1",
+          customer: "cus_1",
+          id: "cs_np",
+        };
+
+        const unknown = make({ transitionCount: 1 });
+        unknown.prisma.tenant.findUnique.mockResolvedValue(null);
+        await (unknown.svc as any).onCheckoutCompleted(noPlan);
+        expect(unknown.prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
+
+        const foreign = make({
+          transitionCount: 1,
+          sub: { tenantId: "t1", planKey: null, discount: 0, stripeCustomerId: "cus_REAL" },
+        });
+        await (foreign.svc as any).onCheckoutCompleted(noPlan);
+        expect(foreign.prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
       });
 
       it("prepare() gets the transition it will be judged with (from/to/pin)", async () => {

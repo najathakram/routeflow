@@ -68,8 +68,12 @@ describe("OrdersService.changeStatus — B585 credit check at delivery", () => {
 
   const out = (user = operator, status = "OUT_FOR_DELIVERY") =>
     service.changeStatus("ord-1", { status: status as never }, user);
+  /** The DELIVERY key only (`credit_limit.enforce_delivery`): any other key reads as absent. */
   const setSwitch = (value: string | null) =>
-    prisma.systemConfig.findFirst.mockResolvedValue(value === null ? null : { value });
+    prisma.systemConfig.findFirst.mockImplementation(
+      async ({ where }: { where: { key: string } }) =>
+        value !== null && where.key === "credit_limit.enforce_delivery" ? { value } : null,
+    );
   /** limit 100; the customer already owes 60 on a sent invoice; this order is 50 => 110 (over). */
   const overLimit = () => {
     prisma.customer.findFirst.mockResolvedValue({ creditLimit: 100 });
@@ -220,6 +224,46 @@ describe("OrdersService.changeStatus — B585 credit check at delivery", () => {
     expect(prisma.invoice.findMany).not.toHaveBeenCalled();
   });
 
+  it("delivery has ITS OWN key: enforce_new_orders = 'true' alone never enforces a delivery (one read of the delivery key, then out)", async () => {
+    prisma.systemConfig.findFirst.mockImplementation(
+      async ({ where }: { where: { key: string } }) =>
+        where.key === "credit_limit.enforce_new_orders" ? { value: "true" } : null,
+    );
+    overLimit();
+    await expect(out()).resolves.toMatchObject({ status: "OUT_FOR_DELIVERY" });
+    expect(prisma.systemConfig.findFirst).toHaveBeenCalledTimes(1);
+    expect(prisma.systemConfig.findFirst.mock.calls[0][0].where.key).toBe(
+      "credit_limit.enforce_delivery",
+    );
+    expect(prisma.invoice.findMany).not.toHaveBeenCalled();
+  });
+
+  describe("goods that already left are not gated again on a re-dispatch", () => {
+    const from = (status: string) => {
+      setSwitch("true");
+      overLimit();
+      prisma.order.findUnique.mockResolvedValue({ ...ORDER, status });
+    };
+    // PARTIALLY_DELIVERED -> OUT_FOR_DELIVERY is a demotion: it needs a reason.
+    const redispatch = () =>
+      service.changeStatus(
+        "ord-1",
+        { status: "OUT_FOR_DELIVERY" as never, reason: "re-dispatch the remainder" },
+        operator,
+      );
+
+    it("PARTIALLY_DELIVERED -> OUT_FOR_DELIVERY (the undelivered remainder) goes out over the limit: the switch is never read", async () => {
+      from("PARTIALLY_DELIVERED");
+      await expect(redispatch()).resolves.toMatchObject({ status: "OUT_FOR_DELIVERY" });
+      expect(prisma.systemConfig.findFirst).not.toHaveBeenCalled();
+    });
+
+    it("control: a NEW dispatch (CONFIRMED -> OUT_FOR_DELIVERY, also after a demotion + reason) is gated", async () => {
+      from("CONFIRMED");
+      await expect(out()).rejects.toMatchObject({ response: { code: "CREDIT_LIMIT_EXCEEDED" } });
+    });
+  });
+
   describe("a counter hand-over, CONFIRMED -> DELIVERED, is goods leaving too (the van-sale flow never sets OUT_FOR_DELIVERY)", () => {
     const handOver = (from = "CONFIRMED", user = operator) => {
       prisma.order.findUnique.mockResolvedValue({ ...ORDER, status: from });
@@ -284,8 +328,22 @@ describe("OrdersService.changeStatus — B585 credit check at delivery", () => {
     });
   });
 
-  it("the driver's route-stop completion is NOT gated: RoutesService never touches the credit gate", () => {
-    const routes = fs.readFileSync(path.join(__dirname, "../routes/routes.service.ts"), "utf8");
+  // RoutesService may only OBSERVE credit (`observeRunCredit`, which never throws): any other credit
+  // import, or a gate reached THROUGH the observation module, would enforce at a stop completion.
+  it("the driver's route-stop completion is NOT gated: RoutesService only observes credit", () => {
+    const read = (rel: string) => fs.readFileSync(path.join(__dirname, rel), "utf8");
+    const routes = read("../routes/routes.service.ts");
     expect(routes).not.toMatch(/creditGate|assertCreditAtEnforcementPoint|credit_limit\.enforce/);
+    const creditImports = [...routes.matchAll(/import\s*\{([^}]*)\}\s*from\s*"([^"]*)"/g)]
+      .filter(([, names, from]) => /credit|exposure/i.test(`${names} ${from}`))
+      .map(([, names]) => names.replace(/\s+/g, " ").trim());
+    expect(creditImports).toEqual(["observeRunCredit"]);
+    const code = read("../routes/run-credit-observation.ts").replace(
+      /\/\*[\s\S]*?\*\/|\/\/.*/g,
+      "",
+    );
+    expect(code).not.toMatch(
+      /ConflictException|assertWithinCreditLimit|assertCreditAtEnforcementPoint|creditGate|\bthrow\b/,
+    );
   });
 });

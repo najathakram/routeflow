@@ -345,7 +345,8 @@ model RegulatedFiling {
 // ─── Selling restrictions (2026-09-19) ─────────────────────────────────────────
 // See local-assets/handoff/2026-09-18/PLAN-categories-jurisdiction-bans.md §1.4
 // + §2. Deny-only jurisdiction rules keyed to a label OR a product. Rows are
-// NEVER deleted — lifting sets effectiveTo/lifted*; point-in-time + audit come
+// NEVER deleted — lifting sets liftedAt/liftedById/liftedByName/liftReason and leaves
+// effectiveTo as authored (status LIFTED = liftedAt <= now); point-in-time + audit come
 // from this table alone plus AuditLog rows on create/lift.
 enum RestrictionJurisdiction {
   FEDERAL

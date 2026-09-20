@@ -1,6 +1,7 @@
 import { ConflictException } from "@nestjs/common";
 import {
   assertCreditAtEnforcementPoint,
+  CREDIT_LIMIT_DELIVERY_ENFORCE_KEY,
   CREDIT_LIMIT_ENFORCE_KEY,
   creditEnforcementMode,
 } from "./credit-limit-guard";
@@ -96,6 +97,23 @@ describe("creditEnforcementMode (the per-tenant switch)", () => {
       where: { tenantId: TENANT, key: CREDIT_LIMIT_ENFORCE_KEY },
       select: { value: true },
     });
+  });
+
+  it("each point reads ITS OWN key and there is no fallback: create ignores enforce_delivery, delivery ignores enforce_new_orders", async () => {
+    const onlyKey = (key: string) => {
+      const d = makeDeps();
+      d.db.systemConfig.findFirst.mockImplementation(
+        async ({ where }: { where: { key: string } }) =>
+          where.key === key ? { value: "true" } : null,
+      );
+      return d.prisma as never;
+    };
+    const mode = (key: string, action?: "order" | "delivery") =>
+      creditEnforcementMode(onlyKey(key), TENANT, action);
+    expect(await mode(CREDIT_LIMIT_ENFORCE_KEY)).toBe("ENFORCED");
+    expect(await mode(CREDIT_LIMIT_ENFORCE_KEY, "delivery")).toBe("OFF");
+    expect(await mode(CREDIT_LIMIT_DELIVERY_ENFORCE_KEY, "delivery")).toBe("ENFORCED");
+    expect(await mode(CREDIT_LIMIT_DELIVERY_ENFORCE_KEY)).toBe("OFF");
   });
 
   it("refuses a tenant that disagrees with the ambient one (the explicit id is not spread-overridden)", async () => {

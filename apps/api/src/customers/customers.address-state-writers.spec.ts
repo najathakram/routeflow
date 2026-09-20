@@ -65,7 +65,8 @@ describe("CustomersService — address state columns are derived at the write bo
   });
 
   describe("addAddress", () => {
-    const add = (state: string) => service.addAddress("cust-1", { ...ADDRESS, state } as any);
+    const add = (state: string, zip = "78701") =>
+      service.addAddress("cust-1", { ...ADDRESS, state, zip } as any);
     const written = () => prisma.customerAddress.create.mock.calls[0][0].data;
 
     beforeEach(() => {
@@ -73,12 +74,23 @@ describe("CustomersService — address state columns are derived at the write bo
     });
 
     it.each([
-      ["Texas", "TX"],
-      [" tx ", "TX"],
-      ["Colorado", "CO"],
-    ])("a newly added %j address resolves to %s", async (state, code) => {
-      await add(state);
+      ["Texas", "78701", "TX"],
+      [" tx ", "78701", "TX"],
+      ["Colorado", "80202", "CO"],
+    ])("a newly added %j address (zip %s) resolves to %s", async (state, zip, code) => {
+      await add(state, zip);
       expect(written()).toMatchObject({ state, stateCode: code, stateNeedsReview: false });
+    });
+
+    // F5: the zip column decides an ambiguous name and can contradict any state.
+    it.each([
+      ["Washington", "98101", "WA"], // a confirming zip resolves it
+      ["Washington", "20001", null], // a DC zip: never Washington state
+      ["Washington", "", null], // no zip: an ambiguous name is never guessed
+      ["Texas", "10001", null], // a zip that contradicts the state: unresolved, not a written guess
+    ])("%j with zip %j is stored with stateCode %j", async (state, zip, code) => {
+      await add(state, zip);
+      expect(written()).toMatchObject({ stateCode: code, stateNeedsReview: code === null });
     });
 
     it("an unresolvable state is stored, flagged for review and NOT rejected (fail closed in the engine)", async () => {
@@ -94,12 +106,21 @@ describe("CustomersService — address state columns are derived at the write bo
 
     beforeEach(() => {
       prisma.customerAddress.update.mockResolvedValue({ id: "addr-1", customerId: "cust-1" });
-      prisma.customerAddress.findFirst.mockResolvedValue({ state: "Texas", stateCode: "TX" }); // stored
+      prisma.customerAddress.findFirst.mockResolvedValue({
+        state: "Texas",
+        zip: "78701",
+        stateCode: "TX",
+      }); // stored
     });
 
-    it("editing TX -> CO recomputes stateCode to CO (never keeps the old TX)", async () => {
-      await edit({ state: "Colorado" });
+    it("editing TX -> CO (with the new zip) recomputes stateCode to CO (never keeps the old TX)", async () => {
+      await edit({ state: "Colorado", zip: "80202" });
       expect(written()).toMatchObject({ stateCode: "CO", stateNeedsReview: false });
+    });
+
+    it("editing the state but NOT the zip leaves a contradiction: unresolved (fail closed), never the stale TX or a guess", async () => {
+      await edit({ state: "Colorado" }); // the stored zip is still a Texas one
+      expect(written()).toMatchObject({ stateCode: null, stateNeedsReview: true });
     });
 
     it("an edit to an unresolvable state clears the code and flags the row (not the old code)", async () => {
@@ -110,9 +131,45 @@ describe("CustomersService — address state columns are derived at the write bo
     });
 
     it("a row whose stateCode is NULL heals on ANY edit, from its stored text (written after the backfill)", async () => {
-      prisma.customerAddress.findFirst.mockResolvedValue({ state: "Texas", stateCode: null });
+      prisma.customerAddress.findFirst.mockResolvedValue({
+        state: "Texas",
+        zip: "78701",
+        stateCode: null,
+      });
       await edit({ city: "Dallas" });
       expect(written()).toMatchObject({ stateCode: "TX", stateNeedsReview: false });
+    });
+
+    it("adding the zip that CONFIRMS an ambiguous 'Washington' heals the row (it had no zip, so it was unresolved)", async () => {
+      prisma.customerAddress.findFirst.mockResolvedValue({
+        state: "Washington",
+        zip: "",
+        stateCode: null,
+      });
+      await edit({ zip: "98101" });
+      expect(written()).toMatchObject({ stateCode: "WA", stateNeedsReview: false });
+    });
+
+    describe("a ZIP-only edit of an already-coded row (a written code must never contradict its zip)", () => {
+      beforeEach(() => {
+        prisma.customerAddress.findFirst.mockResolvedValue({
+          state: "Washington",
+          zip: "98101",
+          stateCode: "WA",
+        });
+      });
+
+      it("a contradicting zip (a DC one) drops the code to unresolved + review, like a fresh write of that pair", async () => {
+        await edit({ zip: "20001" });
+        expect(written()).toMatchObject({ stateCode: null, stateNeedsReview: true });
+      });
+
+      it("a zip that still confirms keeps the code; an UNCHANGED zip echoed by the form recomputes nothing", async () => {
+        await edit({ zip: "98102" });
+        expect(written(0)).toMatchObject({ stateCode: "WA", stateNeedsReview: false });
+        await edit({ zip: "98101" });
+        expect(written(1)).not.toHaveProperty("stateCode");
+      });
     });
 
     it("an address that is not this customer's is a 404, not a derivation from nothing", async () => {
@@ -131,7 +188,11 @@ describe("CustomersService — address state columns are derived at the write bo
     // resolved it by a rule the strict write boundary lacks ("TX 77001" -> TX): recomputing then
     // would turn a correct code into "unresolved" (and INDETERMINATE for the customer).
     it("resubmitting the UNCHANGED state text keeps the stored code (a typo fix in line1 must not un-resolve it)", async () => {
-      prisma.customerAddress.findFirst.mockResolvedValue({ state: "TX 77001", stateCode: "TX" });
+      prisma.customerAddress.findFirst.mockResolvedValue({
+        state: "TX 77001",
+        zip: "77001",
+        stateCode: "TX",
+      });
       await edit({ state: "TX 77001", line1: "2 Congress Ave" });
       expect(written()).not.toHaveProperty("stateCode");
       expect(written()).not.toHaveProperty("stateNeedsReview");
