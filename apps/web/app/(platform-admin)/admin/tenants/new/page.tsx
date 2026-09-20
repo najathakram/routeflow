@@ -187,6 +187,7 @@ export default function AdminCreateTenantPage() {
               Slug <span className="text-slate-500 font-normal">(URL identifier, lowercase)</span>
             </label>
             <input
+              aria-label="Slug"
               value={form.slug}
               onChange={onChange("slug")}
               placeholder="e.g. acme-foods"
@@ -199,6 +200,7 @@ export default function AdminCreateTenantPage() {
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium text-slate-300">Business Name</label>
             <input
+              aria-label="Business Name"
               value={form.businessName}
               onChange={onChange("businessName")}
               placeholder="e.g. Acme Foods Ltd."
@@ -211,6 +213,7 @@ export default function AdminCreateTenantPage() {
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium text-slate-300">Admin Email</label>
             <input
+              aria-label="Admin Email"
               type="email"
               value={form.adminEmail}
               onChange={onChange("adminEmail")}
@@ -224,6 +227,7 @@ export default function AdminCreateTenantPage() {
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium text-slate-300">Admin Username</label>
             <input
+              aria-label="Admin Username"
               value={form.adminUsername}
               onChange={onChange("adminUsername")}
               placeholder="acme_admin"
@@ -239,6 +243,7 @@ export default function AdminCreateTenantPage() {
             </label>
             <div className="relative">
               <input
+                aria-label="Admin Password"
                 type={showPw ? "text" : "password"}
                 value={form.adminPassword}
                 onChange={onChange("adminPassword")}
@@ -247,7 +252,7 @@ export default function AdminCreateTenantPage() {
               />
               <button
                 type="button"
-                tabIndex={-1}
+                aria-label={showPw ? "Hide password" : "Show password"}
                 onClick={() => setShowPw((v) => !v)}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition-colors"
               >
@@ -293,6 +298,7 @@ export default function AdminCreateTenantPage() {
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium text-slate-300">Plan</label>
             <select
+              aria-label="Plan"
               value={form.plan}
               onChange={onChange("plan")}
               className="h-10 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"

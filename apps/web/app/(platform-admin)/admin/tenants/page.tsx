@@ -345,6 +345,7 @@ export default function AdminTenantsPage() {
       {/* Search & Filters */}
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <input
+          aria-label="Search tenants"
           type="text"
           placeholder="Search by slug or name..."
           value={search}
@@ -352,6 +353,7 @@ export default function AdminTenantsPage() {
           className="h-9 w-64 rounded-lg border border-slate-600 bg-slate-800 px-3 text-sm text-white placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
         />
         <select
+          aria-label="Filter by status"
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
           className="h-9 rounded-lg border border-slate-600 bg-slate-800 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
@@ -363,6 +365,7 @@ export default function AdminTenantsPage() {
           <option value="CANCELLED">CANCELLED</option>
         </select>
         <select
+          aria-label="Filter by plan"
           value={planFilter}
           onChange={(e) => setPlanFilter(e.target.value)}
           className="h-9 rounded-lg border border-slate-600 bg-slate-800 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
@@ -469,6 +472,7 @@ export default function AdminTenantsPage() {
           <div className="mb-3">
             <label className="mb-1 block text-sm text-slate-400">New plan</label>
             <select
+              aria-label="New plan"
               value={bulkPlan}
               onChange={(e) => setBulkPlan(e.target.value)}
               className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white"
@@ -534,6 +538,7 @@ export default function AdminTenantsPage() {
             <strong className="font-mono text-slate-200">{deletingTenant?.slug}</strong> to confirm:
           </p>
           <input
+            aria-label="Type the tenant slug to confirm deletion"
             type="text"
             value={deleteConfirmSlug}
             onChange={(e) => setDeleteConfirmSlug(e.target.value)}
@@ -559,6 +564,7 @@ export default function AdminTenantsPage() {
                   <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
                     <th className="px-3 py-3 text-left w-8">
                       <input
+                        aria-label="Select all tenants"
                         ref={headerCheckboxRef}
                         type="checkbox"
                         checked={selected.size === rows.length && rows.length > 0}
@@ -613,6 +619,7 @@ export default function AdminTenantsPage() {
                     >
                       <td className="px-3 py-3">
                         <input
+                          aria-label={`Select ${t.slug}`}
                           type="checkbox"
                           checked={selected.has(t.id)}
                           onChange={() => toggleSelect(t.id)}
