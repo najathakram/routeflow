@@ -30,43 +30,13 @@ const EXPECTED_FILES = [
   "tenancy.prisma",
 ].sort();
 
-// The folder's CURRENT counts — measured via
-// `node apps/api/scripts/split-prisma-schema.mjs --check`, which reports
-// (215 blocks: 128 models, 85 enums, 2 datasource/generator). These are not
-// the split-time counts: the folder legitimately grows. Pinned as literals
-// per the brief; a real model/enum addition updates both the schema and this
-// pin in the same PR. (2026-09-13, Phase 0 T1: +1 enum — TenantClass.)
-// (2026-09-15, post-dated check payments PR-1: +1 enum — CheckReturnReason.)
-// (2026-09-15, Returns Inside Order Creation PR-1a: +1 enum — ReturnKind.)
-// (2026-09-16, public demo booking PR-1: +1 model — DemoBooking; +1 enum — DemoBookingStatus.)
-// (2026-09-16, N3 billing lifecycle emails: +1 model — BillingNotificationLog; enum count
-// untouched by that lane.)
-// (2026-09-17, email-connect-google PR-2/PR-3: +1 model — MailboxConnection; +2 enums —
-// MailboxProvider, MailboxConnectionStatus.)
-// (2026-09-16, Feature grants PR-1: +1 model — TenantFeatureOverride; +1 enum —
-// FeatureOverrideEffect.)
-// (2026-09-17, combined migration-batch merge tree: N3 + Feature grants PR-1 merged
-// together — counts summed and re-verified directly via
-// `node apps/api/scripts/split-prisma-schema.mjs --check` against the merged schema
-// folder, not re-derived by arithmetic.)
-// (2026-09-17, public demo booking API PR-2 (#808): +1 model, +1 enum — re-verified the
-// same way.)
-// (2026-09-17, feature grants v2 brief A: +2 models — FeatureResolverDiff,
-// TenantFeatureConfig; +2 enums — FeatureOverrideKind, FeatureSource. Stacked on #795,
-// own migration, later timestamp — re-verified via split-prisma-schema.mjs --check.)
-// (2026-09-17, email-connect-google merged onto master post-#811: +1 model —
-// MailboxConnection; +2 enums — MailboxProvider, MailboxConnectionStatus.)
-// (2026-09-17, migration-batch-2 merge tree: feature grants v2 brief A + email-connect-google
-// merged together — counts summed and re-verified directly via
-// `node apps/api/scripts/split-prisma-schema.mjs --check` against the merged schema folder,
-// not re-derived by arithmetic.)
-// (2026-09-19, schema spine PR-S1: +5 models — ProductUnit, SupplierProduct, ProductCategory,
-// ProductCategoryLabel, SellingRestriction; +3 enums — LabelMode, RestrictionJurisdiction,
-// RestrictionSurface. Re-verified via `node apps/api/scripts/split-prisma-schema.mjs --check`.)
-// (2026-09-19, Lane B A2: +1 model — TenantFeatureConfigSnapshot; +1 enum — SnapshotReason.
-// Re-verified via `node apps/api/scripts/split-prisma-schema.mjs --check`.)
-const EXPECTED_MODEL_COUNT = 140;
-const EXPECTED_ENUM_COUNT = 96;
+// B590: NO pinned totals. The folder legitimately grows with every model/enum a lane adds, and a
+// literal count turned each of those into a red push plus a one-line bump. The properties that
+// actually matter are asserted instead (below): every model is mapped to — and lives in — its domain
+// file, no map row names a model the folder lacks, every enum is used by the file that declares it,
+// and every name is unique. Floors (not pins) only prove the scanner is still reading the folder.
+const MODEL_FLOOR = 100;
+const ENUM_FLOOR = 60;
 
 function listSchemaFiles(): string[] {
   if (!fs.existsSync(SCHEMA_DIR)) return [];
@@ -90,6 +60,38 @@ function countTopLevel(text: string, kind: "model" | "enum" | "datasource" | "ge
 function extractNames(text: string, kind: "model" | "enum"): string[] {
   const re = new RegExp(`^${kind} ([A-Za-z_][A-Za-z0-9_]*)\\s*\\{$`, "gm");
   return Array.from(text.matchAll(re)).map((m) => m[1]);
+}
+
+/** model name -> the domain file it is declared in. */
+function modelFiles(): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const f of EXPECTED_FILES) {
+    for (const n of extractNames(readSchemaFileOrEmpty(f), "model")) out.set(n, f);
+  }
+  return out;
+}
+
+/** enum name -> the domain file it is declared in. */
+function enumFiles(): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const f of EXPECTED_FILES) {
+    for (const n of extractNames(readSchemaFileOrEmpty(f), "enum")) out.set(n, f);
+  }
+  return out;
+}
+
+/** MODEL_DOMAIN parsed straight from the split script's source: model name -> domain ("catalog"...). */
+function modelDomainMap(): Map<string, string> {
+  const src = fs.existsSync(SPLIT_SCRIPT) ? fs.readFileSync(SPLIT_SCRIPT, "utf8") : "";
+  const start = src.indexOf("const MODEL_DOMAIN = {");
+  const end = start < 0 ? -1 : src.indexOf("\n};", start);
+  const body = start < 0 || end < 0 ? "" : src.slice(start, end);
+  return new Map(
+    Array.from(body.matchAll(/^\s+([A-Za-z_][A-Za-z0-9_]*):\s*"([a-z]+)",/gm)).map((m) => [
+      m[1],
+      m[2],
+    ]),
+  );
 }
 
 describe("schema folder (wave E / imp-10a, T1)", () => {
@@ -118,20 +120,41 @@ describe("schema folder (wave E / imp-10a, T1)", () => {
     },
   );
 
-  it(`(d) the folder holds exactly ${EXPECTED_MODEL_COUNT} model blocks in total`, () => {
-    const total = EXPECTED_FILES.reduce(
-      (sum, f) => sum + countTopLevel(readSchemaFileOrEmpty(f), "model"),
-      0,
-    );
-    expect(total).toBe(EXPECTED_MODEL_COUNT);
+  it(`(d) the scanner sees a real schema (floors, never pins: >= ${MODEL_FLOOR} models, >= ${ENUM_FLOOR} enums)`, () => {
+    expect(modelFiles().size).toBeGreaterThanOrEqual(MODEL_FLOOR);
+    expect(enumFiles().size).toBeGreaterThanOrEqual(ENUM_FLOOR);
   });
 
-  it(`(d) the folder holds exactly ${EXPECTED_ENUM_COUNT} enum blocks in total`, () => {
-    const total = EXPECTED_FILES.reduce(
-      (sum, f) => sum + countTopLevel(readSchemaFileOrEmpty(f), "enum"),
-      0,
-    );
-    expect(total).toBe(EXPECTED_ENUM_COUNT);
+  it("(d) every model is mapped in MODEL_DOMAIN AND declared in the domain file the map names", () => {
+    const map = modelDomainMap();
+    expect(map.size).toBeGreaterThan(0); // the parser found the map (not a silent no-match)
+    const unmapped: string[] = [];
+    const misplaced: string[] = [];
+    for (const [model, file] of modelFiles()) {
+      const domain = map.get(model);
+      if (!domain) unmapped.push(model);
+      else if (`${domain}.prisma` !== file)
+        misplaced.push(`${model}: map says ${domain}, lives in ${file}`);
+    }
+    expect({ unmapped, misplaced }).toEqual({ unmapped: [], misplaced: [] });
+  });
+
+  it("(d) MODEL_DOMAIN names no model the folder lacks (no stale rows)", () => {
+    const declared = modelFiles();
+    const stale = [...modelDomainMap().keys()].filter((m) => !declared.has(m));
+    expect(stale).toEqual([]);
+  });
+
+  it("(d) every enum is declared in a file that actually references it (no orphan enums)", () => {
+    const orphans: string[] = [];
+    for (const [name, file] of enumFiles()) {
+      const text = readSchemaFileOrEmpty(file);
+      // the file minus the enum's own declaration block must still mention the name
+      const own = new RegExp(`^enum ${name}\\s*\\{[\\s\\S]*?^\\}`, "m");
+      if (!new RegExp(`\\b${name}\\b`).test(text.replace(own, "")))
+        orphans.push(`${name} (in ${file})`);
+    }
+    expect(orphans).toEqual([]);
   });
 
   it("(e) every model name is unique across the whole folder", () => {
