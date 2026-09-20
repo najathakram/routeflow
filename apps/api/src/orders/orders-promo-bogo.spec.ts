@@ -212,6 +212,7 @@ describe("OrdersService — BUY_N_GET_M (BOGO)", () => {
           useValue: {
             assertLinesSellable: jest.fn().mockResolvedValue(undefined),
             checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "OFF", reasons: [] }),
+            getPolicy: jest.fn().mockResolvedValue({ enabled: false }),
           },
         },
         {
