@@ -588,6 +588,21 @@ describe("TenantConfigSnapshotService — the automatic restore is bounded (row 
     expect(AUTO_RESTORE_TIME_BUDGET_MS).toBeLessThan(10_000);
   });
 
+  it("only the AUTOMATIC path is bounded: restoreLatest passes bounds to applySnapshot, the admin restoreSnapshot passes none", async () => {
+    const { tx, state } = await twoRowSnapshot();
+    const spy = jest.spyOn(svc as any, "applySnapshot");
+
+    await svc.restoreLatest(tx, TENANT, HIGH, NOW);
+    expect(spy.mock.calls[0][6]).toMatchObject({ maxRows: AUTO_RESTORE_MAX_ROWS });
+    expect(typeof (spy.mock.calls[0][6] as any).withinBudget).toBe("function");
+
+    // Same snapshot, restored explicitly by an admin: no bounds at all.
+    state.snapshots[0].restoredAt = null;
+    await svc.restoreSnapshot(tx, TENANT, state.snapshots[0].id, HIGH, NOW);
+    expect(spy.mock.calls[1][6]).toBeUndefined();
+    spy.mockRestore();
+  });
+
   it("a restore over the row cap is refused BEFORE any write and leaves the snapshot un-restored", async () => {
     const { tx, state } = await twoRowSnapshot();
 

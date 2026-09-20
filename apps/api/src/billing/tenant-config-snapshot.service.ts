@@ -184,7 +184,12 @@ export class TenantConfigSnapshotService {
     });
     if (!snapshot) return null;
 
-    return this.applySnapshot(tx, tenantId, snapshot, newPlanKey, now, planAllows);
+    // ONLY the automatic path is bounded (see AUTO_RESTORE_MAX_ROWS): the admin's explicit
+    // "Restore now" (restoreSnapshot) passes no bounds.
+    return this.applySnapshot(tx, tenantId, snapshot, newPlanKey, now, planAllows, {
+      maxRows: budget.maxRows,
+      withinBudget,
+    });
   }
 
   /**
@@ -274,6 +279,8 @@ export class TenantConfigSnapshotService {
     stampPlanKey: string,
     now: Date,
     planAllows?: (featureKey: string) => boolean,
+    /** Present only for the automatic restore; absent = unbounded (the admin path). */
+    bounds?: { maxRows: number; withinBudget: () => void },
   ): Promise<RestoreResult | null> {
     const [configs, overrides] = await Promise.all([
       tx.tenantFeatureConfig.findMany({ where: { tenantId } }),
@@ -287,12 +294,12 @@ export class TenantConfigSnapshotService {
     const plan = planRestore(payload, { configs, overrides }, snapshot.takenAt, now, planAllows);
     const rows =
       plan.configs.create.length + plan.configs.update.length + plan.overrides.create.length;
-    if (rows > budget.maxRows) {
-      throw new RestoreBudgetExceededError(`${rows} rows to write, over the ${budget.maxRows} cap`);
+    if (bounds && rows > bounds.maxRows) {
+      throw new RestoreBudgetExceededError(`${rows} rows to write, over the ${bounds.maxRows} cap`);
     }
 
     for (const entry of plan.configs.create) {
-      withinBudget();
+      bounds?.withinBudget();
       // upsert on the (tenantId, featureKey) unique key: a concurrent writer that created the row
       // between our read and this write must not turn the restore into a P2002 that aborts the
       // caller's whole plan change.
@@ -310,7 +317,7 @@ export class TenantConfigSnapshotService {
       });
     }
     for (const { id, entry } of plan.configs.update) {
-      withinBudget();
+      bounds?.withinBudget();
       // updateMany so tenantId scopes the write (the house pattern — see FeatureOverrideService).
       await tx.tenantFeatureConfig.updateMany({
         where: { id, tenantId },
