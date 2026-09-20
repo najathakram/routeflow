@@ -290,7 +290,10 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
             {
               line1: data.street!,
               city: data.city!,
-              state: data.state?.trim() || "TX",
+              // Never default a blank state (it used to become "TX"): the selling-restrictions
+              // engine keys off the address state, so a guessed one judges the customer in the
+              // wrong jurisdiction and hides the "can't tell where" path. Blank stays blank.
+              state: data.state?.trim() ?? "",
               zip: data.zip!,
               isDefault: true,
               label: "Main",

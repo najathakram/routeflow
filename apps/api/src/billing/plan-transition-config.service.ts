@@ -38,6 +38,24 @@ export interface PreparedPlanTransition {
   planAllows: ((featureKey: string) => boolean) | null;
 }
 
+/**
+ * A DOWNGRADE's snapshot could not be written. Sites fail closed (the plan change rolls back) — a
+ * typed error so a loop over many tenants (the scheduled-downgrade sweep) can skip THIS tenant and
+ * carry on instead of stranding every tenant after it.
+ */
+export class SnapshotFailedError extends Error {
+  constructor(
+    readonly tenantId: string,
+    cause: unknown,
+  ) {
+    super(`Config snapshot failed for tenant ${tenantId}: ${(cause as Error)?.message ?? cause}`);
+    this.name = "SnapshotFailedError";
+  }
+}
+
+/** A hook-active plan-change transaction's budget: a restore is one round-trip per config/grant row. */
+export const HOOK_TX_OPTIONS = { timeout: 20_000, maxWait: 10_000 } as const;
+
 export type PlanTransitionOutcome =
   | { action: "none" }
   | { action: "snapshot"; snapshotId: string }
@@ -124,14 +142,19 @@ export class PlanTransitionConfigService implements OnModuleInit {
     if (direction === "none") return { action: "none" };
 
     if (direction === "downgrade") {
-      const snap = await this.snapshots.snapshot(
-        tx,
-        t.tenantId,
-        t.fromPlanKey as string,
-        "DOWNGRADE",
-        t.actor,
-        now,
-      );
+      let snap: { id: string };
+      try {
+        snap = await this.snapshots.snapshot(
+          tx,
+          t.tenantId,
+          t.fromPlanKey as string,
+          "DOWNGRADE",
+          t.actor,
+          now,
+        );
+      } catch (err) {
+        throw new SnapshotFailedError(t.tenantId, err);
+      }
       this.logger.log(
         `Archived tenant ${t.tenantId} feature config (snapshot ${snap.id}) on ${t.fromPlanKey} -> ${t.toPlanKey}`,
       );
@@ -139,41 +162,96 @@ export class PlanTransitionConfigService implements OnModuleInit {
     }
 
     if (!prepared.planAllows) return { action: "restore", restore: null };
-    const restore = await this.snapshots.restoreLatest(
-      tx,
-      t.tenantId,
-      t.toPlanKey,
-      now,
-      prepared.planAllows,
-    );
-    if (restore) {
-      // The report goes into the existing audit trail (no migration), in the SAME transaction as
-      // the restore: it exists iff the restore does. The admin list reads the counts from here.
-      await tx.auditLog.create({
-        data: {
-          tenantId: t.tenantId,
-          userId: t.actor?.id ?? null,
-          action: CONFIG_SNAPSHOT_RESTORED_ACTION,
-          entityType: "tenant",
-          entityId: t.tenantId,
-          meta: {
-            automatic: true,
-            snapshotId: restore.snapshotId,
-            snapshotTakenAt: restore.takenAt,
-            snapshotPlanKey: restore.planKey,
-            fromPlanKey: t.fromPlanKey ?? null,
-            restoredToPlanKey: t.toPlanKey,
-            report: { ...restore.report },
-            supersededSnapshots: restore.supersededSnapshots,
-          },
-        },
-      });
-      this.logger.log(
-        `Restored tenant ${t.tenantId} feature config from snapshot ${restore.snapshotId} on ` +
-          `${t.fromPlanKey} -> ${t.toPlanKey}: ${JSON.stringify(restore.report)}`,
+    return this.restoreWithoutBlocking(tx, t, prepared.planAllows, now);
+  }
+
+  /**
+   * A restore is a convenience on an UPGRADE the tenant already paid for: whatever goes wrong in it
+   * — a DB error in the restore, a failed audit write, a conflict — must NEVER block or roll back
+   * the upgrade/checkout. Inside one Postgres transaction a caught error still poisons it ("current
+   * transaction is aborted"), so the whole restore (and its audit row, which exists iff the restore
+   * does) runs under a SAVEPOINT: on any failure we ROLL BACK TO it — undoing only the restore —
+   * log, and let the plan change carry on. (A DOWNGRADE's snapshot is the opposite: fail closed.)
+   */
+  private async restoreWithoutBlocking(
+    tx: Prisma.TransactionClient,
+    t: PlanTransition,
+    planAllows: (featureKey: string) => boolean,
+    now: Date,
+  ): Promise<PlanTransitionOutcome> {
+    try {
+      await tx.$executeRaw`SAVEPOINT config_snapshot_restore`;
+    } catch (err) {
+      // Not even a savepoint: skip the restore rather than let the paid upgrade fail on it.
+      this.logger.error(
+        `Config restore SKIPPED for tenant ${t.tenantId} (${t.fromPlanKey} -> ${t.toPlanKey}): ` +
+          `could not open a savepoint: ${(err as Error).message}`,
       );
+      return { action: "restore", restore: null };
     }
-    return { action: "restore", restore };
+    try {
+      const restore = await this.snapshots.restoreLatest(
+        tx,
+        t.tenantId,
+        t.toPlanKey,
+        now,
+        planAllows,
+      );
+      if (restore) {
+        // The report goes into the existing audit trail (no migration), in the SAME savepoint as
+        // the restore. The admin list reads the counts from here.
+        await tx.auditLog.create({
+          data: {
+            tenantId: t.tenantId,
+            userId: t.actor?.id ?? null,
+            action: CONFIG_SNAPSHOT_RESTORED_ACTION,
+            entityType: "tenant",
+            entityId: t.tenantId,
+            meta: {
+              automatic: true,
+              snapshotId: restore.snapshotId,
+              snapshotTakenAt: restore.takenAt,
+              snapshotPlanKey: restore.planKey,
+              fromPlanKey: t.fromPlanKey ?? null,
+              restoredToPlanKey: t.toPlanKey,
+              report: { ...restore.report },
+              supersededSnapshots: restore.supersededSnapshots,
+            },
+          },
+        });
+      }
+      await tx.$executeRaw`RELEASE SAVEPOINT config_snapshot_restore`;
+      if (restore) {
+        this.logger.log(
+          `Restored tenant ${t.tenantId} feature config from snapshot ${restore.snapshotId} on ` +
+            `${t.fromPlanKey} -> ${t.toPlanKey}: ${JSON.stringify(restore.report)}`,
+        );
+      }
+      return { action: "restore", restore };
+    } catch (err) {
+      try {
+        await tx.$executeRaw`ROLLBACK TO SAVEPOINT config_snapshot_restore`;
+      } catch (rollbackErr) {
+        this.logger.error(
+          `ROLLBACK TO SAVEPOINT failed for tenant ${t.tenantId}: ${(rollbackErr as Error).message}`,
+        );
+      }
+      this.logger.error(
+        `Config restore FAILED for tenant ${t.tenantId} (${t.fromPlanKey} -> ${t.toPlanKey}); the ` +
+          `plan change proceeds without it — restore manually from the admin list: ${(err as Error).message}`,
+      );
+      return { action: "restore", restore: null };
+    }
+  }
+
+  /**
+   * The `$transaction` options for a plan change: the widened budget ONLY while the hook is active;
+   * with the flag off this is `undefined`, so the site's transaction is exactly what it always was.
+   */
+  transactionOptions(
+    prepared: PreparedPlanTransition | null | undefined,
+  ): typeof HOOK_TX_OPTIONS | undefined {
+    return prepared?.enabled ? HOOK_TX_OPTIONS : undefined;
   }
 
   /** Rank only — never entitlement loss: a cancel/suspend leaves `planKey` (and so this) untouched. */

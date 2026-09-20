@@ -2,6 +2,11 @@ import { ConflictException, Logger } from "@nestjs/common";
 import { roundMoney } from "@routeflow/pricing";
 import type { EntitlementsService } from "../billing/entitlements.service";
 import { editedOrderContribution, loadCreditExposure } from "../invoices/credit-exposure";
+import { assertAmbientTenant } from "../common/ambient-tenant";
+import {
+  restrictionChannelForPrincipal,
+  type ChannelPrincipal,
+} from "../selling-restrictions/selling-restrictions.core";
 import type { PrismaService } from "../prisma/prisma.service";
 
 /**
@@ -108,15 +113,33 @@ export async function isCreditLimitCheckEnabled(deps: CreditLimitCheckDeps): Pro
  * isCreditLimitCheckEnabled OUTSIDE the transaction and passed in — this
  * function issues NO query on the non-transactional client.
  */
+/**
+ * The two tuning knobs of the guard, an OBJECT (not two defaulted positional parameters): a mechanical
+ * merge once put a string in a boolean slot, and a dropped `invoicesSurviveEdit` fails silently in the
+ * LOOSENING direction — a named option cannot be transposed.
+ */
+export interface CreditGuardOptions {
+  /**
+   * The edited order's issued invoices SURVIVE this edit untouched (a delivered, partially invoiced
+   * order: neither the revert nor the re-sync runs): their stored balance is a floor. Default false —
+   * the safe answer, never stricter than before the netting (see `editedOrderContribution`).
+   */
+  invoicesSurviveEdit?: boolean;
+  /** What the 409 message calls the thing that would breach the limit. */
+  action?: "edit" | "order" | "delivery";
+}
+
 export async function assertWithinCreditLimit(
   db: any,
   customerId: string,
-  currentOrderId: string,
+  /** The order being edited (excluded from every bucket); `null` = a NEW order, nothing to exclude. */
+  currentOrderId: string | null,
   projectedOrderTotal: number,
   creditCheckEnabled: boolean,
-  invoicesSurviveEdit = false,
+  opts: CreditGuardOptions = {},
 ): Promise<void> {
   if (!creditCheckEnabled) return;
+  const { invoicesSurviveEdit = false, action = "edit" } = opts;
 
   const customer = await db.customer.findFirst({
     where: { id: customerId },
@@ -144,10 +167,130 @@ export async function assertWithinCreditLimit(
     throw new ConflictException({
       code: "CREDIT_LIMIT_EXCEEDED",
       message:
-        `This edit would take the customer's exposure to ${exposure.toFixed(2)}, ` +
+        `This ${action} would take the customer's exposure to ${exposure.toFixed(2)}, ` +
         `over their credit limit of ${limit.toFixed(2)}.`,
       limit,
       exposure,
     });
+  }
+}
+
+// ─── B585: the new enforcement points (create / deliver), OFF by default ──────────────────────
+
+/**
+ * Per-tenant `SystemConfig` switch for the credit check at order CREATE and DELIVER. It is read
+ * FIRST: a tenant that never set it pays one indexed read and nothing else (the exposure derivation
+ * is several more queries on the hottest write path, so a default that ran it for everyone would
+ * not be free). Absent, or any value but the two below = OFF: nothing else runs. Exactly `"dark"` =
+ * OBSERVE: derive, log one "would deny" line, never block. Exactly `"true"` = ENFORCE. It does NOT
+ * govern the edit paths (`updateOrderItems` / change requests), which have always blocked.
+ */
+export const CREDIT_LIMIT_ENFORCE_KEY = "credit_limit.enforce_new_orders";
+
+export type CreditEnforcementMode = "OFF" | "DARK" | "ENFORCED";
+
+/** What the enforcement-point helpers read: the client (tenant scoping, no ambient tenant on cron). */
+export interface CreditEnforcementDeps extends CreditLimitCheckDeps {
+  prisma: Pick<PrismaService, "getTenantId" | "forTenant">;
+  logger: Pick<Logger, "error" | "warn">;
+}
+
+/**
+ * The tenant's mode. The read carries an EXPLICIT `tenantId` (L-124: with no ambient tenant,
+ * `forTenant()` is unscoped) and refuses one that disagrees with the ambient tenant. A DB error
+ * propagates; `assertCreditAtEnforcementPoint` decides what an unreadable switch means.
+ */
+export async function creditEnforcementMode(
+  prisma: Pick<PrismaService, "forTenant" | "getTenantId">,
+  tenantId: string,
+): Promise<CreditEnforcementMode> {
+  assertAmbientTenant(prisma, tenantId, "creditEnforcementMode");
+  const row: { value: string } | null = await prisma.forTenant().systemConfig.findFirst({
+    where: { tenantId, key: CREDIT_LIMIT_ENFORCE_KEY },
+    select: { value: true },
+  });
+  return row?.value === "true" ? "ENFORCED" : row?.value === "dark" ? "DARK" : "OFF";
+}
+
+const isCreditLimitExceeded = (e: unknown): e is ConflictException =>
+  e instanceof ConflictException &&
+  (e.getResponse() as { code?: string } | undefined)?.code === "CREDIT_LIMIT_EXCEEDED";
+
+const ACTION_LABEL = { order: "new order", delivery: "delivery" } as const;
+
+/** What an ENFORCED denial tells someone who may not see the customer's figures (a buyer). */
+const GENERIC_DENIAL = "This order can't be placed right now. Please contact your account manager.";
+
+/** One enforcement point's facts (the tenant is added by the caller's own client). */
+export interface CreditPointParams {
+  customerId: string;
+  projectedTotal: number;
+  /** The order being sent out (excluded from every bucket); absent = a NEW order. */
+  excludeOrderId?: string | null;
+  action?: keyof typeof ACTION_LABEL;
+  /** Who is acting. Only a positively-staff principal sees limit / exposure in a denial; absent = generic. */
+  principal?: ChannelPrincipal | null;
+}
+
+/**
+ * The credit check at a B585 enforcement point (a NEW order, or an order going out for delivery):
+ * same derivation as the edit guard, behind the per-tenant switch, which is read FIRST (OFF costs
+ * that one read). Runs BEFORE any write / stock transaction, so nothing is half-committed and no
+ * second pooled connection is taken inside a tx. When the guard would deny: ENFORCED throws its 409
+ * (generic for a non-staff principal: no limit, no exposure); DARK logs one "would deny" line (ids
+ * and figures only) and allows. No tenant on the caller = OFF. DARK must never break a create that
+ * works today: a failure to reach a verdict logs ERROR and allows; an unreadable switch is OFF with
+ * an ERROR; only an ENFORCED tenant sees a failure. `excludeOrderId` = the order being sent out.
+ *
+ * ⚠ Do NOT set the switch to "true" for any tenant until the paths that still bypass it are
+ * guarded: DRAFT → PENDING promotion in `changeStatus`, the standing-order cron (`order-templates`
+ * writes PENDING orders directly), and the deliver point. (`updateOrderItems` is not one: it has
+ * always run the edit guard, independent of this switch.)
+ */
+export async function assertCreditAtEnforcementPoint(
+  deps: CreditEnforcementDeps,
+  p: CreditPointParams & { tenantId: string | null | undefined },
+): Promise<void> {
+  const action = p.action ?? "order";
+  if (!p.tenantId) return; // no tenant = no switch to read = OFF
+  let mode: CreditEnforcementMode;
+  try {
+    mode = await creditEnforcementMode(deps.prisma, p.tenantId);
+  } catch (err) {
+    deps.logger.error(
+      `credit enforcement switch unreadable (treated as off): tenant=${p.tenantId}`,
+      err,
+    );
+    return;
+  }
+  if (mode === "OFF") return;
+  try {
+    const enabled = await isCreditLimitCheckEnabled(deps);
+    await assertWithinCreditLimit(
+      deps.prisma.forTenant(),
+      p.customerId,
+      p.excludeOrderId ?? null,
+      p.projectedTotal,
+      enabled,
+      { action },
+    );
+  } catch (e) {
+    if (mode === "ENFORCED") {
+      if (isCreditLimitExceeded(e) && restrictionChannelForPrincipal(p.principal) !== "STAFF")
+        throw new ConflictException({ code: "CREDIT_LIMIT_EXCEEDED", message: GENERIC_DENIAL });
+      throw e;
+    }
+    if (!isCreditLimitExceeded(e)) {
+      deps.logger.error(
+        `credit check unavailable, allowing (dark): tenant=${p.tenantId} customer=${p.customerId}`,
+        e,
+      );
+      return;
+    }
+    const { limit, exposure } = e.getResponse() as { limit: number; exposure: number };
+    deps.logger.warn(
+      `credit limit would DENY a ${ACTION_LABEL[action]} (dark): tenant=${p.tenantId} ` +
+        `customer=${p.customerId} exposure=${exposure} limit=${limit}`,
+    );
   }
 }

@@ -29,7 +29,7 @@ const HEADROOM = 25;
 
 /** Repo-relative path → baseline line count (measured 2026-09-19 at 91d323de). */
 const BASELINE: Record<string, number> = {
-  "apps/api/src/orders/orders.service.ts": 6340, // B585 prefactor: stock bookkeeping lives in orders/order-stock.ts (was 6598)
+  "apps/api/src/orders/orders.service.ts": 6045, // R-2a-6: edit-window helpers -> edit-window.ts (was 6072)
   "apps/api/src/invoices/invoices.service.ts": 6412,
   "apps/api/src/orders/orders.service.spec.ts": 9511,
   "apps/api/src/customers/customers.service.ts": 3307,

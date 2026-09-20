@@ -21,11 +21,9 @@ import {
   effectiveBuyerPrice,
   getTierPrice,
   normalizeBoxesPieces,
-  promotionMatchesProduct,
   roundMoney,
   isBlockingPayment,
   type CategoryTaxType,
-  type PromoContext,
   type PromotionRule,
 } from "@routeflow/pricing";
 import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-locks";
@@ -61,6 +59,7 @@ import {
   IDEMPOTENCY_REPLAY_NEEDS_RECONCILE,
   shouldSkipInPlaceResync,
 } from "./merge-idempotency";
+import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
 import { CreateSaleDto } from "./dto/create-sale.dto";
 import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
 import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
@@ -79,10 +78,24 @@ import { currentTaxRate } from "../common/tax-rate";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { decrementStockForSale, settleStockForEdit } from "./order-stock";
-import { assertWithinCreditLimit, isCreditLimitCheckEnabled } from "./credit-limit-guard";
+import { linePieceQty } from "./line-piece-qty";
+import {
+  isBuyerPricedLine,
+  isSpecialTier,
+  mergeBoxedContributions,
+  rescaleBogoFreeUnits,
+  resolveBuyerLinePrice,
+} from "./buyer-merge-pricing";
+import {
+  assertCreditAtEnforcementPoint,
+  assertWithinCreditLimit,
+  isCreditLimitCheckEnabled,
+  type CreditPointParams,
+} from "./credit-limit-guard";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
+import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
@@ -93,19 +106,6 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { sumInlineReturnCredit } from "../returns/inline-return-credit.util";
-
-/**
- * B63 (REG-B63): the statuses past which a BUYER may no longer self-edit an
- * order's items. `updateOrderItems`'s write gate and the read-side `editWindow`
- * descriptor (`computeEditWindow`) both read THIS list, so a buyer client is
- * never told the window is open on an order the API is about to refuse.
- * Operators and drivers keep editing at every live stage.
- */
-const BUYER_EDIT_CLOSED_STATUSES: OrderStatus[] = [
-  OrderStatus.OUT_FOR_DELIVERY,
-  OrderStatus.PARTIALLY_DELIVERED,
-  OrderStatus.DELIVERED,
-];
 
 /**
  * B215: the statuses whose linked invoice(s) are re-synced IN PLACE after an item edit
@@ -119,15 +119,6 @@ const POST_DELIVERY_EDIT_STATUSES: string[] = [
   OrderStatus.PARTIALLY_DELIVERED,
   OrderStatus.DELIVERED,
 ];
-
-/** B465: a tier different from 1 (list/STANDARD) is this customer's documented
- * contract price for the product — shared by every call site that must decide
- * whether a line is a SPECIAL-tier line, never re-derived ad hoc. A module-level
- * pure function (not a class method) so it works when called detached from an
- * OrdersService instance — e.g. `(OrdersService.prototype as any).resolveBuyerLinePrice(...)`
- * in order-templates.service.spec.ts, where `this` inside resolveBuyerLinePrice
- * is undefined and `this.isSpecialTier(...)` would throw (#815 verify finding). */
-export const isSpecialTier = (tierForProduct: number): boolean => tierForProduct !== 1;
 
 @Injectable()
 export class OrdersService implements OnApplicationBootstrap {
@@ -196,88 +187,9 @@ export class OrdersService implements OnApplicationBootstrap {
     }));
   }
 
-  /**
-   * P5-04: resolve a buyer catalog line's price = tier price, then the best
-   * applicable promotion (net unitPrice + originalPrice strikethrough, priceType
-   * PROMO). With no promo it reproduces the standard ladder (SPECIAL for tier≠1
-   * with the list price as the strikethrough, else STANDARD). Boxed proration is
-   * left to computeLineSubtotal by the caller — this only sets the SELLING-UNIT
-   * price. `promos` is empty for staff, so this is a no-op tier resolver there.
-   * Shared with OrderTemplatesService (REG-B48): a standing order is priced as
-   * the customer's own buyer checkout, whoever triggers it.
-   */
-  resolveBuyerLinePrice(
-    product: { id: string; category: string | null; pricePerUnit: unknown },
-    tierForProduct: number,
-    promos: PromotionRule[],
-    qtyPieces: number,
-    qtyUnits: number,
-    rememberedPrice?: number | null,
-    /**
-     * REG-B109: the line's box/piece denomination — the SAME values the caller
-     * then feeds `computeLineSubtotal` — so promo SELECTION compares candidates
-     * by the money this line will actually be billed, loose pieces included.
-     * Without it, a mixed line (whole boxes + loose pieces) is compared on whole
-     * boxes only and a BUY_N_GET_M can beat a deeper price promo that in fact
-     * bills less. Optional and defaulted: omitting it keeps the whole-selling-unit
-     * approximation, which is already exact for any line with no loose pieces.
-     */
-    denomination?: {
-      boxes: number | null;
-      pieces: number | null;
-      unitsPerBox: number | null;
-    },
-  ): {
-    unitPrice: number;
-    originalPrice: number | null;
-    priceType: PriceType;
-    /** BUY_N_GET_M: whole free selling units this line earned. 0 for every other case. */
-    freeUnits: number;
-  } {
-    const listPrice = Number(product.pricePerUnit);
-    const tierBase = getTierPrice(product, tierForProduct);
-    const remembered = rememberedPrice ?? null;
-    // Sticky upsell: ONLY a remembered ABOVE-LIST price becomes a MANUAL upsell.
-    // It overrides the tier AND takes precedence over promotions (a deliberate
-    // above-market price is never auto-discounted). Stored as MANUAL with the list
-    // base so the operator sees the upsell and the customer's read is redacted
-    // (upsell-redaction.ts). A premium tier (tierBase > list) is the customer's
-    // normal price, NOT an upsell — it must not trip this branch.
-    if (remembered != null && Number(remembered) > listPrice) {
-      return {
-        unitPrice: roundMoney(Number(remembered)),
-        originalPrice: listPrice,
-        priceType: PriceType.MANUAL,
-        freeUnits: 0,
-      };
-    }
-    const base = tierBase;
-    const promo = applyBestPromotion(base, promos, {
-      productId: product.id,
-      category: product.category,
-      qtyPieces,
-      qtyUnits,
-      boxes: denomination?.boxes ?? null,
-      pieces: denomination?.pieces ?? null,
-      unitsPerBox: denomination?.unitsPerBox ?? null,
-    });
-    if (promo.appliedPromoId) {
-      return {
-        unitPrice: promo.unitPrice,
-        originalPrice: promo.originalPrice,
-        priceType: PriceType.PROMO,
-        freeUnits: promo.freeUnits,
-      };
-    }
-    if (isSpecialTier(tierForProduct)) {
-      return {
-        unitPrice: base,
-        originalPrice: listPrice,
-        priceType: PriceType.SPECIAL,
-        freeUnits: 0,
-      };
-    }
-    return { unitPrice: base, originalPrice: null, priceType: PriceType.STANDARD, freeUnits: 0 };
+  /** Extracted verbatim to `buyer-merge-pricing.ts` (B585 prefactor #2); thin delegator. */
+  resolveBuyerLinePrice(...args: Parameters<typeof resolveBuyerLinePrice>) {
+    return resolveBuyerLinePrice(...args);
   }
 
   /**
@@ -289,27 +201,6 @@ export class OrdersService implements OnApplicationBootstrap {
     // InlineReturnsQuoteService's unreferenced-chunk pricing shares this exact reader
     // instead of a second hand-rolled percent→fraction parse — same rule, one place.
     return currentTaxRate(this.systemConfig);
-  }
-
-  /**
-   * RF-4: the piece count a per-unit category tax multiplies. Box-split lines
-   * store `qty` already in pieces; a boxed selling-unit line (boxes null) stores
-   * `qty` in SELLING UNITS, so expand it by the snapshot `unitsPerBox`. PER_VOLUME
-   * stays approximate (pieces, not true volume) until a `Product.volumePerUnit`
-   * field lands — see computeCategoryTax's contract.
-   */
-  private linePieceQty(
-    li: { qty: unknown; boxes: unknown; unitsPerBox?: unknown },
-    unitsPerBoxFallback?: number,
-  ): number {
-    const qty = Number(li.qty) || 0;
-    if (li.boxes != null) return qty; // already pieces
-    // A boxed product ordered as SELLING UNITS stores unitsPerBox:null on the line
-    // (create only snapshots it for box-split lines), so fall back to the product's
-    // unitsPerBox — otherwise a per-unit levy collapses by a factor of unitsPerBox on
-    // any later edit (create expanded qty→pieces but the recompute couldn't).
-    const upb = Number(li.unitsPerBox ?? unitsPerBoxFallback ?? 0);
-    return upb > 1 ? qty * upb : qty;
   }
 
   /**
@@ -353,7 +244,7 @@ export class OrdersService implements OnApplicationBootstrap {
         ? computeCategoryTax({
             taxType: cat.taxType as CategoryTaxType,
             rate: Number(cat.rate),
-            unitBasisQty: this.linePieceQty(li, upbMap.get(li.productId)),
+            unitBasisQty: linePieceQty(li, upbMap.get(li.productId)),
             lineSubtotal: Number(li.subtotal),
             priceIncludesTax: cat.priceIncludesTax,
           })
@@ -568,43 +459,9 @@ export class OrdersService implements OnApplicationBootstrap {
     // P5-08 edit window (G7): free editing is open until the order's run dispatches.
     // `editableUntil` (the soft cutoff countdown) stays null until the per-weekday
     // routes-cutoff config lands — the HARD close is dispatch, which is authoritative.
-    (order as any).editWindow = this.computeEditWindow(order, user.role);
+    (order as any).editWindow = computeEditWindow(order, user.role);
 
     return order;
-  }
-
-  /**
-   * P5-08 / R1: derive the non-persisted edit-window descriptor from an order.
-   * editable ⟺ the order isn't CANCELLED — items can now be edited at every live
-   * stage (incl. OUT_FOR_DELIVERY / DELIVERED, on dispatched runs), with the write
-   * gate re-syncing any linked invoice + ledger. Single source of truth shared by
-   * the read and the write gate. `dispatched` no longer closes the window.
-   *
-   * B63 (REG-B63): for a CUSTOMER the window DOES close once the order is out the
-   * door — the same `BUYER_EDIT_CLOSED_STATUSES` the write gate refuses on, so the
-   * descriptor never reports "nothing is wrong" while `updateOrderItems` answers
-   * 403. `closedReason: "DISPATCHED"` is what buyer clients read to explain it.
-   */
-  private computeEditWindow(
-    order: {
-      status: string;
-      routeRunId?: string | null;
-      routeRun?: { status: string } | null;
-    },
-    role?: UserRole,
-  ): { editable: boolean; editableUntil: string | null; closedReason: string | null } {
-    if (
-      role === UserRole.CUSTOMER &&
-      BUYER_EDIT_CLOSED_STATUSES.includes(order.status as OrderStatus)
-    ) {
-      return { editable: false, editableUntil: null, closedReason: "DISPATCHED" };
-    }
-    const editable = order.status !== "CANCELLED";
-    return {
-      editable,
-      editableUntil: null,
-      closedReason: editable ? null : "STATUS",
-    };
   }
 
   /**
@@ -698,207 +555,16 @@ export class OrdersService implements OnApplicationBootstrap {
    * without writing.
    */
 
-  /**
-   * BUY_N_GET_M free units for a line whose QUANTITY changed while its stored
-   * (agreed) unitPrice is kept — pending-order merges and every stored-price qty
-   * edit. Reusing the sale-time snapshot verbatim is wrong in BOTH directions: a
-   * merged (bigger) line loses the units it just earned and bills at full price,
-   * and a shrunk line keeps free units it no longer earns (a 12→2 box door edit
-   * billed $0.00). Lines that never earned free units return 0 untouched, so no
-   * operator/driver line can gain a promo it never had — UNLESS `canEarnNew` says
-   * this is a buyer's own consolidation of buyer-priced lines, where the combined
-   * quantity must earn what a single cart of the same size would have (3 + 3 boxes
-   * under a live buy-5-get-1 = 1 free, not 0).
-   *
-   * Preference order: re-run the LIVE BUY_N_GET_M rule against the new whole-unit
-   * count (exact — `floor(qtyUnits / (N + M)) * M`); if no active rule still
-   * covers the product (the promo ended after the sale) rescale the earned
-   * snapshot at the rate it was earned at, capped at the snapshot, so an
-   * already-agreed discount is never silently revoked by a later qty tweak.
-   */
-  private rescaleBogoFreeUnits(input: {
-    /** Active promo rules (any type — only BUY_N_GET_M ones are consulted). */
-    promos: PromotionRule[];
-    productId: string | null;
-    category: string | null;
-    /** The line's stored selling-unit price — BOGO never alters it, so it IS the base. */
-    unitPrice: number;
-    storedFreeUnits: number | null | undefined;
-    /** Whole selling units the snapshot was earned at. */
-    oldUnits: number;
-    /** Whole selling units after the change. */
-    newUnits: number;
-    /**
-     * Allow a line with NO snapshot to earn free units from the live rule. Only a
-     * buyer-driven merge of buyer-priced lines sets this; every staff qty edit and
-     * the hourly sweep leave it false, so an operator/driver line is never silently
-     * discounted by a customer promo it never had.
-     */
-    canEarnNew?: boolean;
-  }): number {
-    const stored = Math.max(0, Math.trunc(Number(input.storedFreeUnits ?? 0) || 0));
-    if (stored <= 0 && !input.canEarnNew) return 0;
-    const newUnits = Math.max(0, Math.trunc(Number(input.newUnits) || 0));
-    if (newUnits <= 0) return 0;
-    // A line is never entirely free — the buyer always pays the N in every (N + M).
-    const ceiling = Math.max(0, newUnits - 1);
-    if (input.productId) {
-      const ctx: PromoContext = {
-        productId: input.productId,
-        category: input.category,
-        // BUY_N_GET_M reads only qtyUnits; qtyPieces gates QTY_BREAK, which the
-        // filtered list below cannot contain.
-        qtyPieces: newUnits,
-        qtyUnits: newUnits,
-      };
-      const live = input.promos.filter(
-        (p) => p.type === "BUY_N_GET_M" && promotionMatchesProduct(p, ctx),
-      );
-      if (live.length > 0) {
-        return Math.min(ceiling, applyBestPromotion(input.unitPrice, live, ctx).freeUnits);
-      }
-    }
-    const oldUnits = Math.max(0, Math.trunc(Number(input.oldUnits) || 0));
-    if (oldUnits <= 0) return 0;
-    return Math.min(ceiling, stored, Math.floor((stored * newUnits) / oldUnits));
+  private rescaleBogoFreeUnits(...args: Parameters<typeof rescaleBogoFreeUnits>) {
+    return rescaleBogoFreeUnits(...args);
   }
 
-  /**
-   * Is this line's price the buyer's own (the tier/promo ladder), rather than an
-   * operator-set one? Only such a line may EARN BUY_N_GET_M free units it never had
-   * when a buyer-driven merge grows its quantity — a MANUAL upsell or a DISCOUNTED
-   * override is a deliberate operator price and is never discounted further by a
-   * customer promo (same rule as the manual-override branch in updateOrderItems).
-   * A missing priceType counts as NOT buyer-priced (money-safe default).
-   */
-  private isBuyerPricedLine(li: {
-    priceType?: PriceType | null;
-    overriddenBy?: string | null;
-  }): boolean {
-    return (
-      li.overriddenBy == null &&
-      (li.priceType === PriceType.STANDARD ||
-        li.priceType === PriceType.SPECIAL ||
-        li.priceType === PriceType.PROMO)
-    );
+  private isBuyerPricedLine(...args: Parameters<typeof isBuyerPricedLine>) {
+    return isBuyerPricedLine(...args);
   }
 
-  /**
-   * Combine one or more contributing order lines for the SAME product into a
-   * single merged line total. Boxed products price by the BOX, so every
-   * contribution is normalized to a total PIECE count first, then re-split and
-   * priced via `computeLineSubtotal` — a plain `qty * unitPrice` over-charges a
-   * boxed line by `unitsPerBox`. Handles mixed denominations: a box-split line
-   * (`boxes`/`pieces` set) stores `qty` as pieces; a selling-unit boxed line
-   * (`boxes==null`, from the box-unaware mobile cart) stores `qty` as a box
-   * count, so its pieces are `qty * unitsPerBox`. The merged line is always
-   * emitted piece-denominated (heals the inconsistency). Non-boxed products fall
-   * back to a simple qty sum × unit price.
-   *
-   * BUY_N_GET_M: the merged quantity earns its OWN free units — the contributing
-   * snapshots are re-derived against the combined whole-unit count (see
-   * `rescaleBogoFreeUnits`) and returned so the caller persists `promoFreeUnits`
-   * alongside the subtotal. Without this a merged BOGO line silently repriced to
-   * full price while the row kept a stale, contradicting `promoFreeUnits`.
-   * `bogo.canEarnNew` additionally lets the combined quantity earn free units none
-   * of the contributions had (a buyer's split carts) — granted only when EVERY
-   * contribution is buyer-priced, so one operator-priced contribution keeps the
-   * whole merged line on the conservative "never gain a promo it never had" path.
-   */
-  private mergeBoxedContributions(
-    contributions: Array<{
-      qty: unknown;
-      boxes: number | null;
-      pieces: number | null;
-      promoFreeUnits?: number | null;
-      priceType?: PriceType | null;
-      overriddenBy?: string | null;
-    }>,
-    unitPrice: number,
-    unitsPerBox: number | null | undefined,
-    bogo?: {
-      promos: PromotionRule[];
-      productId: string | null;
-      category: string | null;
-      canEarnNew?: boolean;
-      /**
-       * The merged line's surviving unitPrice already carries a price-promo
-       * discount (winner/meta line is PROMO with a strikethrough). Promotions
-       * never stack — a buyer splitting one cart in two must not merge back to
-       * a percent discount PLUS free units — so both the stored-snapshot rescale
-       * and canEarnNew are suppressed and the merged line keeps price-off only.
-       */
-      pricePromoApplied?: boolean;
-    },
-  ): {
-    qty: number;
-    boxes: number | null;
-    pieces: number | null;
-    subtotal: number;
-    freeUnits: number;
-    /** Σ of the contributions' BUY_N_GET_M snapshots — 0 when no line carried one. */
-    storedFreeUnits: number;
-  } {
-    const upb = Number(unitsPerBox ?? 0);
-    const totalPieces = contributions.reduce((sum, c) => {
-      const q = Number(c.qty);
-      const sellingUnit = upb > 1 && c.boxes == null && c.pieces == null;
-      return sum + (sellingUnit ? q * upb : q);
-    }, 0);
-    // Free-unit snapshots and the whole selling units they were earned at. A
-    // box-split line counts its BOXES (its `qty` is pieces); every other shape
-    // already stores selling units in `qty`.
-    const storedFreeUnits = contributions.reduce(
-      (sum, c) => sum + Math.max(0, Number(c.promoFreeUnits ?? 0) || 0),
-      0,
-    );
-    const oldUnits = contributions.reduce(
-      (sum, c) => sum + (c.boxes != null ? Number(c.boxes) : Number(c.qty)),
-      0,
-    );
-    const canEarnNew =
-      bogo?.canEarnNew === true && contributions.every((c) => this.isBuyerPricedLine(c));
-    const freeUnitsFor = (newUnits: number) =>
-      bogo?.pricePromoApplied === true
-        ? 0
-        : this.rescaleBogoFreeUnits({
-            promos: bogo?.promos ?? [],
-            productId: bogo?.productId ?? null,
-            category: bogo?.category ?? null,
-            unitPrice,
-            storedFreeUnits,
-            oldUnits,
-            newUnits,
-            canEarnNew,
-          });
-    if (upb > 1) {
-      const split = normalizeBoxesPieces({ qty: totalPieces, unitsPerBox: upb });
-      const freeUnits = freeUnitsFor(Number(split.boxes ?? 0));
-      return {
-        qty: split.qty,
-        boxes: split.boxes,
-        pieces: split.pieces,
-        freeUnits,
-        storedFreeUnits,
-        subtotal: computeLineSubtotal({
-          unitPrice,
-          qty: split.qty,
-          boxes: split.boxes,
-          pieces: split.pieces,
-          unitsPerBox: upb,
-          freeUnits,
-        }),
-      };
-    }
-    const freeUnits = freeUnitsFor(totalPieces);
-    return {
-      qty: totalPieces,
-      boxes: null,
-      pieces: null,
-      freeUnits,
-      storedFreeUnits,
-      subtotal: computeLineSubtotal({ unitPrice, qty: totalPieces, freeUnits }),
-    };
+  private mergeBoxedContributions(...args: Parameters<typeof mergeBoxedContributions>) {
+    return mergeBoxedContributions(...args);
   }
 
   /**
@@ -2554,6 +2220,16 @@ export class OrdersService implements OnApplicationBootstrap {
         customerId,
         lines: lineItemsData.map((li) => ({ trackedCategoryId: li.trackedCategoryId })),
       });
+      // Lane R: selling restrictions — a banned product refuses (409 SELLING_RESTRICTED) BEFORE the
+      // stock transaction, like the license guard above; a DRAFT is checked at its promotion.
+      await this.sellingRestrictions.assertLinesSellable({
+        tenantId: this.restrictionTenantId(user),
+        customerId,
+        lines: lineItemsData.flatMap((li) => (li.productId ? [{ productId: li.productId }] : [])),
+        channel: restrictionChannelForPrincipal(user), // judged at ENTRY time, like the license guard
+      });
+      // B585: credit check for a NEW order (nothing runs unless the tenant switch is set).
+      await this.creditGate({ customerId, projectedTotal: total, principal: user });
     }
 
     // RF-017 + RF-014: create the order inside a transaction so we can
@@ -2933,6 +2609,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // W6: promoting a DRAFT into a live order is when it becomes a real sale, so
     // re-run the license guard (drafts are created/edited without it — that's the
     // "draft escape"). Categories resolve from each line's snapshot or its product.
+    let checkedProductIds: ReadonlySet<string> | undefined; // what the Lane R check saw
     if (order.status === "DRAFT" && dto.status !== OrderStatus.CANCELLED) {
       const items = await this.prisma.forTenant().orderItem.findMany({
         where: { orderId: id, status: { not: "CANCELLED" } },
@@ -2955,6 +2632,16 @@ export class OrdersService implements OnApplicationBootstrap {
         })),
         orderId: id,
       });
+      // Lane R: the same "becomes a real sale" moment — a banned product refuses (409
+      // SELLING_RESTRICTED) BEFORE the status write / stock reservation. Drafts are created and
+      // edited without the check; this is the draft escape's second half.
+      await this.sellingRestrictions.assertLinesSellable({
+        tenantId: this.restrictionTenantId(user, order.tenantId),
+        customerId: order.customerId,
+        lines: items.flatMap((li) => (li.productId ? [{ productId: li.productId }] : [])),
+        channel: restrictionChannelForPrincipal(user), // judged at ENTRY time, like the license guard
+      });
+      checkedProductIds = new Set(pids);
     }
 
     // Refuse the cancel BEFORE writing the status — a rejection must leave the
@@ -3019,6 +2706,13 @@ export class OrdersService implements OnApplicationBootstrap {
                 where: { orderId: id, status: { not: "CANCELLED" } },
                 select: { productId: true, qty: true },
               });
+            // The Lane R check ran outside this tx: a product added since (a concurrent draft
+            // edit) was never judged — roll back (the claim above included) and promote again.
+            if (activeItems.some((li) => li.productId && !checkedProductIds?.has(li.productId))) {
+              throw new ConflictException(
+                "The order's items changed while it was being promoted — review it and promote again.",
+              );
+            }
             const stockLines = activeItems
               .filter((li): li is { productId: string; qty: any } => !!li.productId)
               .map((li) => ({ productId: li.productId, qty: Number(li.qty) }));
@@ -5010,10 +4704,12 @@ export class OrdersService implements OnApplicationBootstrap {
             // (pre-existing) does not subtract Order.discountAmount.
             total,
             creditCheckEnabled,
-            // B577: do this edit's issued invoices survive untouched? Only a delivered, partially
-            // invoiced order (re-sync skipped) is SURE to; pre-delivery a deposit mirror is
-            // rewritten by the reconcile, so the safe answer — never stricter than before — is no.
-            postDeliveryEdit && shouldSkipInPlaceResync(order.lineItems ?? []),
+            // B577: do the issued invoices survive this edit? Only a delivered, partially invoiced
+            // order (re-sync skipped) is SURE to; pre-delivery a deposit mirror is rewritten.
+            {
+              invoicesSurviveEdit:
+                postDeliveryEdit && shouldSkipInPlaceResync(order.lineItems ?? []),
+            },
           );
         }
 
@@ -5388,6 +5084,14 @@ export class OrdersService implements OnApplicationBootstrap {
       entitlements: this.entitlements,
       logger: this.logger,
     });
+  }
+
+  /** B585: the credit check at an enforcement point; MUST run before any write / stock tx. */
+  private creditGate(p: CreditPointParams): Promise<void> {
+    return assertCreditAtEnforcementPoint(
+      { prisma: this.prisma, entitlements: this.entitlements, logger: this.logger },
+      { ...p, tenantId: this.prisma.getTenantId() },
+    );
   }
 
   /**
