@@ -21,6 +21,10 @@ import {
 } from "../selling-restrictions/selling-restrictions.service";
 import { UpdateRestrictionsSettingsDto } from "./update-restrictions-settings.dto";
 
+/** `BadRequestException` code for "turn enforcement ON and change the address policy in one request". */
+export const SETTINGS_ENABLE_AND_POLICY_TOGETHER =
+  "SELLING_RESTRICTIONS_ENABLE_AND_POLICY_TOGETHER";
+
 /** DI token for the per-tenant limiter storage (the repo's `RedisThrottlerStorage`, same INCR window). */
 export const READINESS_LIMITER = Symbol("RESTRICTIONS_READINESS_LIMITER");
 
@@ -82,7 +86,7 @@ export class RestrictionsSettingsService {
       // An unreachable limiter must not take an admin diagnostic down with it (it is abuse
       // protection, not an authorisation gate) — fail open, loudly.
       this.logger.warn(
-        `readiness limiter unavailable, allowing the request: ${(e as Error).message}`,
+        `readiness limiter unavailable for tenant ${tenantId}, allowing the request: ${(e as Error).message}`,
       );
     }
     if (hit && hit.totalHits > limit) {
@@ -124,9 +128,11 @@ export class RestrictionsSettingsService {
     // Readiness is judged under the address policy ALREADY in force; judging it under one that is being
     // changed in the same request would need that policy applied first. Two steps keep it honest.
     if (enabling && precedenceChanges) {
-      throw new BadRequestException(
-        "Change which address decides the state first, then turn enforcement on, so readiness is checked under the policy that will apply.",
-      );
+      throw new BadRequestException({
+        code: SETTINGS_ENABLE_AND_POLICY_TOGETHER,
+        message:
+          "Change which address decides the state first, then turn enforcement on, so readiness is checked under the policy that will apply.",
+      });
     }
     if (enabling) await this.engine.assertReadyToEnable(tenantId);
 

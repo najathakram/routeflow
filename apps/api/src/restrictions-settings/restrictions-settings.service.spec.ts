@@ -16,7 +16,12 @@ import {
   SYSTEM_CONFIG_GOVERNING_ADDRESS,
 } from "../selling-restrictions/selling-restrictions.service";
 import { RestrictionsSettingsController } from "./restrictions-settings.controller";
-import { READINESS_THROTTLE, RestrictionsSettingsService } from "./restrictions-settings.service";
+import { Logger } from "@nestjs/common";
+import {
+  READINESS_THROTTLE,
+  RestrictionsSettingsService,
+  SETTINGS_ENABLE_AND_POLICY_TOGETHER,
+} from "./restrictions-settings.service";
 import { UpdateRestrictionsSettingsDto } from "./update-restrictions-settings.dto";
 
 const user = { sub: "u1", username: "admin" } as JwtPayload;
@@ -144,7 +149,11 @@ describe("readiness: admin-only, throttled per tenant", () => {
   it("an unreachable limiter fails open (it is abuse protection, not an authorisation gate)", async () => {
     const s = setup();
     s.limiter.increment.mockRejectedValue(new Error("redis down"));
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation();
     await expect(s.service.readiness()).resolves.toEqual(READY);
+    // The outage is visible AND says which tenant it affected.
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("tenant t1"));
+    warn.mockRestore();
   });
 });
 
