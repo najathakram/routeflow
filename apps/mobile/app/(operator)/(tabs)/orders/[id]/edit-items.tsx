@@ -93,6 +93,9 @@ import { createScanAttempt, createWedgeSubmitHandler } from "../../../../../lib/
 import { SellByToggle } from "../../../../../components/SellByToggle";
 import { MoneyTextInput } from "../../../../../components/MoneyTextInput";
 import { LicenseGuardModal } from "../../../../../components/LicenseGuardModal";
+import { BlockedLinesModal } from "../../../../../components/BlockedLinesModal";
+import { parseSellingRestricted } from "../../../../../lib/selling-restricted";
+import type { BlockedLine } from "@routeflow/types";
 import { CreditLimitGuardModal } from "../../../../../components/CreditLimitGuardModal";
 import {
   parseRegulatedAuthError,
@@ -278,6 +281,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   const [substituteFor, setSubstituteFor] = useState<string | null>(null);
   const [priceEditItem, setPriceEditItem] = useState<DraftItem | null>(null);
   const [licenseBlock, setLicenseBlock] = useState<BlockedCategory[] | null>(null);
+  const [restrictedBlock, setRestrictedBlock] = useState<BlockedLine[] | null>(null);
   const [creditBlock, setCreditBlock] = useState<CreditLimitExceededInfo | null>(null);
   const updateMut = useUpdateOrderItems();
 
@@ -905,6 +909,11 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
           leaveEditor();
         },
         onError: (e: any) => {
+          const restricted = parseSellingRestricted(e);
+          if (restricted) {
+            setRestrictedBlock(restricted);
+            return;
+          }
           // Regulated-sale block: open the guard, then replay the save on resolve.
           const blocked = parseRegulatedAuthError(e);
           if (blocked && blocked.length > 0) {
@@ -1067,6 +1076,8 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
         }}
         onClose={() => setLicenseBlock(null)}
       />
+
+      <BlockedLinesModal lines={restrictedBlock} onClose={() => setRestrictedBlock(null)} />
 
       <CreditLimitGuardModal
         open={!!creditBlock}

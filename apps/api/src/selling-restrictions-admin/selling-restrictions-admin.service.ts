@@ -12,6 +12,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { normalizeUsState } from "../common/us-states";
 import { activeRuleWhere, ruleIsActive } from "../selling-restrictions/selling-restrictions.core";
 import { CreateRestrictionDto } from "./dto/create-restriction.dto";
+import { LiftRestrictionDto } from "./dto/lift-restriction.dto";
 
 const INCLUDE = {
   category: { select: { name: true } },
@@ -94,7 +95,7 @@ function toDto(row: Row, now: Date): SellingRestrictionListItemDto {
 }
 
 /**
- * Rule ADMIN (Lane R step 5a): list / create / lift `SellingRestriction` rows (this slice: list + create).
+ * Rule ADMIN (Lane R step 5a): list / create / lift `SellingRestriction` rows (list, create and lift).
  * Reads OPERATOR, writes TENANT_ADMIN, all audited. It only WRITES rows the engine reads — the engine (rule shape,
  * `ruleIsActive`/`activeRuleWhere`) is imported, never re-decided here. Reading the list is LIVE for
  * OPERATOR; but nothing enforces the rules yet, so writing one changes no tenant's behaviour until
@@ -214,6 +215,38 @@ export class SellingRestrictionsAdminService {
         effectiveTo: effectiveTo?.toISOString() ?? null,
         reason: dto.reason,
       },
+    });
+    return toDto(row, now);
+  }
+
+  /** Lifts a rule now. The write itself is guarded on `liftedAt IS NULL`, so a double lift is a 409, never an overwrite. */
+  async lift(
+    id: string,
+    dto: LiftRestrictionDto,
+    user: JwtPayload,
+  ): Promise<SellingRestrictionListItemDto> {
+    const tenantId = this.requireTenant();
+    const db = this.prisma.forTenant();
+    const now = new Date();
+    const { count } = await db.sellingRestriction.updateMany({
+      where: { id, liftedAt: null },
+      data: {
+        liftedAt: now,
+        liftedById: user.sub,
+        liftedByName: user.username,
+        liftReason: dto.reason,
+      },
+    });
+    const row = await db.sellingRestriction.findFirst({ where: { id }, include: INCLUDE });
+    if (!row) throw new NotFoundException("Restriction not found");
+    if (count === 0) throw new ConflictException("This restriction has already been lifted.");
+    await this.audit.log({
+      tenantId,
+      userId: user.sub,
+      action: "selling_restriction.lifted",
+      entityType: "SellingRestriction",
+      entityId: id,
+      meta: { reason: dto.reason },
     });
     return toDto(row, now);
   }
