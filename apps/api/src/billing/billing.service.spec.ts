@@ -67,7 +67,11 @@ function make(
       upsert: jest.fn((args: unknown) => prisma.tenantSubscription.upsert(args)),
       updateMany: jest.fn().mockResolvedValue({ count: overrides.casCount ?? 1 }),
     },
-    auditLog: { create: jest.fn().mockResolvedValue({}) },
+    auditLog: {
+      create: jest.fn().mockResolvedValue({}),
+      findFirst: jest.fn().mockResolvedValue(null), // no processed session in the tx by default
+    },
+    $executeRaw: jest.fn().mockResolvedValue(0),
   };
   const prisma = {
     tenant: {
@@ -121,6 +125,7 @@ function make(
   const billingNotification = {
     notifyCancelled: jest.fn().mockResolvedValue(undefined),
     notifySuspended: jest.fn().mockResolvedValue(undefined),
+    notifyCheckoutPlanNotApplied: jest.fn().mockResolvedValue(undefined),
   } as any;
   const planTransition = {
     isEnabled: jest.fn().mockResolvedValue(true),
@@ -800,6 +805,86 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
           action: "STRIPE_CHECKOUT_HOOK_FAILED",
           entityId: "cs_paid",
         });
+      });
+
+      it("MUST-FIX: a concurrent redelivery serialises on a per-session advisory lock and, seeing the winner's committed row INSIDE the tx, does nothing", async () => {
+        const { svc, tx, prisma, planTransition, events } = make({ transitionCount: 1 });
+        tx.auditLog.findFirst.mockResolvedValue({ id: "won-by-the-other-delivery" });
+
+        await (svc as any).onCheckoutCompleted(withId("cs_race"));
+
+        const lockSql = (tx.$executeRaw as jest.Mock).mock.calls[0][0].join("");
+        expect(lockSql).toContain("pg_advisory_xact_lock");
+        expect((tx.$executeRaw as jest.Mock).mock.calls[0]).toContain("cs_race");
+        expect(planTransition.onPlanChange).not.toHaveBeenCalled();
+        expect(tx.tenantSubscription.updateMany).not.toHaveBeenCalled();
+        expect(prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
+        expect(emitted(events)).toEqual([]);
+      });
+
+      it("MUST-FIX: a deadlock/serialization failure is a retryable race — it rethrows WITHOUT the HOOK_FAILED alarm row", async () => {
+        const { svc, prisma, planTransition } = make({ transitionCount: 1 });
+        planTransition.onPlanChange.mockRejectedValueOnce(
+          Object.assign(new Error("Transaction failed due to a write conflict or a deadlock"), {
+            code: "P2034",
+          }),
+        );
+
+        await expect((svc as any).onCheckoutCompleted(withId("cs_dl"))).rejects.toThrow(/deadlock/);
+
+        expect(prisma.auditLog.create).not.toHaveBeenCalled();
+      });
+
+      it("MUST-FIX: the alarm audit row carries the error NAME and code only — never the raw message", async () => {
+        const { svc, prisma, planTransition } = make({ transitionCount: 1 });
+        planTransition.onPlanChange.mockRejectedValueOnce(
+          Object.assign(new Error('insert into "X" values (secret-row-fragment)'), {
+            code: "P2002",
+          }),
+        );
+
+        await expect((svc as any).onCheckoutCompleted(withId("cs_pii"))).rejects.toThrow();
+
+        const meta = prisma.auditLog.create.mock.calls[0][0].data.meta;
+        expect(meta).toMatchObject({ toPlanKey: "GROWTH", code: "P2002" });
+        expect(JSON.stringify(meta)).not.toContain("secret-row-fragment");
+      });
+
+      it("MUST-FIX: a stale checkout (newer downgrade) raises the tenant notification — money taken, plan unchanged — and stores no plan on create", async () => {
+        const { svc, prisma, planTransition } = make({ transitionCount: 1 });
+        prisma.tenantFeatureConfigSnapshot.findFirst.mockResolvedValue({ id: "snap-newer" });
+
+        await (svc as any).onCheckoutCompleted(withId("cs_stale", { created: 1_700_000_000 }));
+
+        expect(planTransition.onPlanChange).not.toHaveBeenCalled();
+        expect((svc as any).billingNotification.notifyCheckoutPlanNotApplied).toHaveBeenCalledWith(
+          "t1",
+          "GROWTH",
+          "cs_stale",
+        );
+        const create = prisma.tenantSubscription.upsert.mock.calls[0][0].create;
+        expect(create.planKey).toBeNull(); // the create branch honours the skipped plan too
+      });
+
+      it("MUST-FIX: a legacy session with NO planKey is guarded too (flag on): unknown tenant / foreign customer refused", async () => {
+        const noPlan = {
+          metadata: { tenantId: "t1" },
+          subscription: "sub_1",
+          customer: "cus_1",
+          id: "cs_np",
+        };
+
+        const unknown = make({ transitionCount: 1 });
+        unknown.prisma.tenant.findUnique.mockResolvedValue(null);
+        await (unknown.svc as any).onCheckoutCompleted(noPlan);
+        expect(unknown.prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
+
+        const foreign = make({
+          transitionCount: 1,
+          sub: { tenantId: "t1", planKey: null, discount: 0, stripeCustomerId: "cus_REAL" },
+        });
+        await (foreign.svc as any).onCheckoutCompleted(noPlan);
+        expect(foreign.prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
       });
 
       it("prepare() gets the transition it will be judged with (from/to/pin)", async () => {
