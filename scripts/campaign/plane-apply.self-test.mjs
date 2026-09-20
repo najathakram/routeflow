@@ -37,6 +37,10 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { startFakePlane } from "./plane-fake-server.mjs";
 
+// B588: a hard 15s kill turned a merely-slow child (a loaded fleet host) into `code: null`, and every
+// check after it read as a product defect. One generous, env-tunable budget for every CLI child.
+const CLI_BUDGET_MS = Number(process.env.PLANE_SELF_TEST_CLI_BUDGET_MS) || 90_000;
+
 const SCRIPT_PATH = fileURLToPath(new URL("./plane-apply.mjs", import.meta.url));
 
 // F4 pattern: every fixture dir this run creates (ops-file dirs and ledger
@@ -122,7 +126,7 @@ function runCli(argv, { baseUrl, stateDir, apiKey = "self-test-key", noKey = fal
     });
     let stdout = "";
     let stderr = "";
-    const timer = setTimeout(() => child.kill(), 15_000);
+    const timer = setTimeout(() => child.kill(), CLI_BUDGET_MS);
     child.stdout.on("data", (c) => (stdout += c));
     child.stderr.on("data", (c) => (stderr += c));
     child.on("close", (code) => {

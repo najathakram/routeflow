@@ -97,7 +97,11 @@ export default function MergeRequestsPage() {
   return (
     <div className="p-6 md:p-8">
       <div className="mb-6 flex items-center gap-4">
-        <Link href="/admin/buyers" className="text-slate-400 hover:text-white">
+        <Link
+          href="/admin/buyers"
+          aria-label="Back to buyers"
+          className="text-slate-400 hover:text-white"
+        >
           <ArrowLeft className="h-5 w-5" />
         </Link>
         <div className="flex items-center gap-3">
@@ -118,6 +122,7 @@ export default function MergeRequestsPage() {
         </div>
         <div className="ml-auto flex items-center gap-3">
           <select
+            aria-label="Filter by status"
             value={statusFilter}
             onChange={(e) => {
               setStatusFilter(e.target.value);

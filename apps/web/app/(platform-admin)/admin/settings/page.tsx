@@ -239,6 +239,7 @@ export default function AdminSettingsPage() {
 
                 <div className="relative">
                   <input
+                    aria-label="Anthropic API Key"
                     type={showKey ? "text" : "password"}
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
@@ -251,6 +252,7 @@ export default function AdminSettingsPage() {
                   />
                   <button
                     type="button"
+                    aria-label={showKey ? "Hide API key" : "Show API key"}
                     onClick={() => setShowKey((v) => !v)}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
                   >
@@ -355,6 +357,7 @@ export default function AdminSettingsPage() {
                 <h2 className="mb-4 text-sm font-semibold text-slate-200">Max Output Tokens</h2>
                 <div className="flex items-center gap-4">
                   <input
+                    aria-label="Max Output Tokens"
                     type="number"
                     value={maxTokens}
                     onChange={(e) => setMaxTokens(Number(e.target.value))}

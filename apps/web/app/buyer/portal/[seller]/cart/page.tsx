@@ -25,6 +25,7 @@ import {
 } from "@/lib/api/buyer";
 import { computeLineSubtotal, normalizeBoxesPieces, applyBestPromotion } from "@routeflow/pricing";
 import { objectPositionForUrl } from "@/lib/image-focal";
+import { buyerBlockedMessage, parseSellingRestricted } from "@/lib/api/selling-restricted";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -195,6 +196,11 @@ export default function BuyerCartPage() {
         setOrderError(
           `Your order includes regulated items${names ? ` (${names})` : ""} that need a verified license. Submit or renew it on the Licenses page, then try again.`,
         );
+        return;
+      }
+      const restricted = parseSellingRestricted(err);
+      if (restricted) {
+        setOrderError(buyerBlockedMessage(restricted));
         return;
       }
       setOrderError(data?.message ?? "Failed to create order. Please try again.");
@@ -596,7 +602,7 @@ export default function BuyerCartPage() {
           </div>
 
           {orderError && (
-            <div className="rounded-lg bg-danger-bg px-3 py-2 text-xs text-danger">
+            <div role="alert" className="rounded-lg bg-danger-bg px-3 py-2 text-xs text-danger">
               {orderError}
             </div>
           )}

@@ -14,6 +14,8 @@ export interface ConfigSnapshotListItem {
   /** The plan it was restored to, or "SUPERSEDED" when a newer snapshot replaced it. */
   restoredToPlanKey: string | null;
   createdByName: string | null;
+  /** Whole days since it was taken. */
+  ageDays: number;
   /** null = the stored payload is not a readable version-1 document. */
   entries: { configs: number; overrides: number } | null;
 }
@@ -29,6 +31,9 @@ export interface ConfigSnapshotPreview {
   takenAt: string;
   planKey: string;
   restoredAt: string | null;
+  ageDays: number;
+  /** Older than the 90-day automatic-restore horizon: restoring it is a deliberate admin override. */
+  beyondAutoRestoreHorizon: boolean;
   /** The plan the tenant is on NOW — the plan the restore is judged against. */
   currentPlanKey: string;
   willRestore: { kind: ConfigSnapshotEntryKind; featureKey: string }[];

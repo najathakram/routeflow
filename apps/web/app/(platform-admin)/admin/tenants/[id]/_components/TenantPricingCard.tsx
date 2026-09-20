@@ -199,6 +199,7 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
                   Monthly (USD)
                 </label>
                 <input
+                  aria-label="Monthly (USD)"
                   type="number"
                   min={0}
                   max={100000}
@@ -215,6 +216,7 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
                   <span className="text-slate-600">(optional — defaults to 10× monthly)</span>
                 </label>
                 <input
+                  aria-label="Annual (USD)"
                   type="number"
                   min={0}
                   max={100000}
@@ -257,6 +259,7 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
               </p>
               <div className="flex flex-wrap items-center gap-3">
                 <select
+                  aria-label="Billing interval"
                   value={billingInterval}
                   onChange={(e) => setBillingInterval(e.target.value as BillingInterval)}
                   className="h-9 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"

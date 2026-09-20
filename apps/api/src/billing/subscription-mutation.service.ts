@@ -429,6 +429,7 @@ export class SubscriptionMutationService {
       }
     }, this.planTransition.transactionOptions(preparedTransition));
 
+    this.planTransition.invalidateCaches(tenantId, preparedTransition);
     this.entitlements.invalidate(tenantId);
     this.tenantStatus.invalidate(tenantId);
     return { quote, subscription: await this.subscription.getSubscription(tenantId) };
@@ -748,6 +749,7 @@ export class SubscriptionMutationService {
       );
     }, this.planTransition.transactionOptions(preparedTransition));
 
+    this.planTransition.invalidateCaches(tenantId, preparedTransition);
     this.entitlements.invalidate(tenantId);
 
     // N3: best-effort admin notification, never blocks the upgrade above. `proratedNow` is

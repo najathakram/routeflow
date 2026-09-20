@@ -28,6 +28,10 @@ import { createServer } from "node:http";
 import { startFakePlane } from "./plane-fake-server.mjs";
 import { gitEnv } from "./plane-client.mjs";
 
+// B588: a hard 15s kill turned a merely-slow child (a loaded fleet host) into `code: null`, and every
+// check after it read as a product defect. One generous, env-tunable budget for every CLI child.
+const CLI_BUDGET_MS = Number(process.env.PLANE_SELF_TEST_CLI_BUDGET_MS) || 90_000;
+
 const SCRIPT_PATH = fileURLToPath(new URL("./plane-intake.mjs", import.meta.url));
 
 // Git exports repo-scoped vars (GIT_DIR, GIT_WORK_TREE, ...) into every child
@@ -279,7 +283,7 @@ function runCli(
     });
     let stdout = "";
     let stderr = "";
-    const timer = setTimeout(() => child.kill(), 15_000);
+    const timer = setTimeout(() => child.kill(), CLI_BUDGET_MS);
     child.stdout.on("data", (c) => (stdout += c));
     child.stderr.on("data", (c) => (stderr += c));
     child.on("close", (code) => {

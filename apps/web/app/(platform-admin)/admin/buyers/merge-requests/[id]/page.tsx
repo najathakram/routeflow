@@ -315,6 +315,7 @@ export default function MergeRequestDetailPage() {
           Admin Notes
         </h2>
         <textarea
+          aria-label="Admin Notes"
           value={adminNotes}
           onChange={(e) => setAdminNotes(e.target.value)}
           rows={2}

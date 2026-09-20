@@ -444,6 +444,7 @@ export default function BuyerDetailPage() {
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-400">Full Name</label>
               <input
+                aria-label="Full name"
                 type="text"
                 value={editName}
                 onChange={(e) => setEditName(e.target.value)}
@@ -459,6 +460,7 @@ export default function BuyerDetailPage() {
                 )}
               </label>
               <input
+                aria-label="Email"
                 type="email"
                 value={editEmail}
                 onChange={(e) => setEditEmail(e.target.value)}
@@ -469,6 +471,7 @@ export default function BuyerDetailPage() {
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-400">Phone</label>
               <input
+                aria-label="Phone"
                 type="tel"
                 value={editPhone}
                 onChange={(e) => setEditPhone(e.target.value)}
@@ -480,6 +483,7 @@ export default function BuyerDetailPage() {
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-400">Mobile</label>
               <input
+                aria-label="Mobile"
                 type="tel"
                 value={editMobile}
                 onChange={(e) => setEditMobile(e.target.value)}
@@ -683,6 +687,7 @@ export default function BuyerDetailPage() {
               <div className="text-sm text-slate-500">Loading tenants...</div>
             ) : (
               <select
+                aria-label="Select Seller (Tenant)"
                 value={selectedTenantId}
                 onChange={(e) => handleTenantSelect(e.target.value)}
                 className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
@@ -712,6 +717,7 @@ export default function BuyerDetailPage() {
                 </div>
               ) : (
                 <select
+                  aria-label="Select Customer Record in this Seller"
                   value={selectedCustomerId}
                   onChange={(e) => setSelectedCustomerId(e.target.value)}
                   className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"

@@ -83,7 +83,15 @@ describe("TenantConfigSnapshotAdminService (A2 step c)", () => {
     });
     (plan.configs.unchanged as any[]).push("same.config");
     const { svc, transitions, snapshots, planAllows } = build({
-      preview: { snapshotId: "s1", takenAt: TAKEN, planKey: HIGH, restoredAt: null, plan },
+      preview: {
+        snapshotId: "s1",
+        takenAt: TAKEN,
+        planKey: HIGH,
+        restoredAt: null,
+        ageDays: 5,
+        beyondAutoRestoreHorizon: false,
+        plan,
+      },
     });
 
     const view = await svc.preview("t1", "s1");
@@ -91,6 +99,8 @@ describe("TenantConfigSnapshotAdminService (A2 step c)", () => {
     expect(transitions.planAllowsFor).toHaveBeenCalledWith(HIGH, "v1"); // subscription key wins
     expect(snapshots.previewRestore.mock.calls[0][4]).toBe(planAllows);
     expect(view).toMatchObject({
+      ageDays: 5,
+      beyondAutoRestoreHorizon: false,
       snapshotId: "s1",
       currentPlanKey: HIGH,
       willRestore: [
@@ -151,6 +161,14 @@ describe("TenantConfigSnapshotAdminService (A2 step c)", () => {
       ["t1", CONFIG_KEY],
       ["t1", "second.config"],
     ]);
+  });
+
+  it("restoreNow() runs in a transaction with an explicit 30 s budget (the admin restore is unbounded, so Prisma's 5 s default would P2028 a large snapshot)", async () => {
+    const { svc, prisma } = build();
+
+    await svc.restoreNow("t1", "s1", "admin-1", NOW);
+
+    expect(prisma.$transaction.mock.calls[0][1]).toEqual({ timeout: 30_000, maxWait: 5_000 });
   });
 
   it("restoreNow() writes its audit row (actor + report) INSIDE the restore transaction", async () => {
