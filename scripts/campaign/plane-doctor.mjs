@@ -99,6 +99,16 @@ const SKILL_MAX_BYTES = 6144;
 // against via the fake server's own request log.
 export const ONLINE_GET_BUDGET = 3;
 
+// B591: every local probe below (git, `<script> --help`) runs under a hard spawn timeout. On a host
+// carrying a jest run or two a HEALTHY child can take longer than 5s, and the doctor then reported
+// FAIL for a slow machine ("script (exit error)"). The default is unchanged; the knob only ever
+// LENGTHENS the budget (never below 5s, capped at 2 min), so a self-test on a loaded fleet host can
+// tell "slow" from "broken" without weakening what the doctor checks.
+const PROBE_TIMEOUT_MS = Math.min(
+  Math.max(Number(process.env.PLANE_DOCTOR_PROBE_TIMEOUT_MS) || 5_000, 5_000),
+  120_000,
+);
+
 // PLANE_DOCTOR_HOME is a TEST-ONLY override, gated the same way as
 // PLANE_KNOBS_PATH/PLANE_RUNS_PATH/PLANE_DENYLIST_PATH in plane-client.mjs
 // (PLANE_SYNC_SELF_TEST=1 required alongside it) — it lets a self-test fake
@@ -122,7 +132,7 @@ function currentBranch() {
       cwd: repoRoot(),
       env: gitEnv(),
       encoding: "utf8",
-      timeout: 5_000,
+      timeout: PROBE_TIMEOUT_MS,
     });
   } catch {
     return "unknown";
@@ -178,7 +188,7 @@ function checkHelp() {
         cwd: THIS_FILE_DIR,
         env: { ...gitEnv(), PLANE_API_KEY: "", PLANE_BASE_URL: "http://127.0.0.1:1" },
         encoding: "utf8",
-        timeout: 5_000,
+        timeout: PROBE_TIMEOUT_MS,
       });
     } catch (err) {
       failing.push(`${script} (${err?.message ?? err})`);
@@ -370,7 +380,7 @@ function checkLandingWithoutSync() {
     const res = spawnSync(
       "git",
       ["log", "-1", "--format=%H%x1f%cI", "--", ".claude/campaign/status"],
-      { cwd: repoRoot(), env: gitEnv(), encoding: "utf8", timeout: 5_000 },
+      { cwd: repoRoot(), env: gitEnv(), encoding: "utf8", timeout: PROBE_TIMEOUT_MS },
     );
     if (res && !res.error && res.status === 0 && res.stdout && res.stdout.trim()) {
       const [sha, iso] = res.stdout.trim().split("\x1f");
@@ -422,7 +432,7 @@ function checkDrift({ branch, apiKey }) {
       cwd: repoRoot(),
       env: { ...gitEnv(), PLANE_API_KEY: apiKey ?? "" },
       encoding: "utf8",
-      timeout: 20_000,
+      timeout: Math.max(20_000, PROBE_TIMEOUT_MS),
     });
   } catch (err) {
     return result("drift", "WARN", `could not run plane-sync --check: ${err?.message ?? err}`);

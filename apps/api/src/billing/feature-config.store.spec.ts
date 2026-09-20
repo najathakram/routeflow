@@ -21,6 +21,21 @@ describe("FeatureConfigStore", () => {
     store = module.get(FeatureConfigStore);
   });
 
+  it("invalidateTenant drops every cached mode of THAT tenant only, so a bulk restore is read fresh", async () => {
+    prisma.tenantFeatureConfig.findUnique.mockResolvedValue({ mode: "scheduled" });
+    await store.getMode("tenant-a", "routes_dispatch");
+    await store.getMode("tenant-b", "routes_dispatch");
+    prisma.tenantFeatureConfig.findUnique.mockResolvedValue({ mode: "adhoc" });
+
+    // cached: still the old answer for both
+    expect((await store.getMode("tenant-a", "routes_dispatch")).value).toBe("scheduled");
+
+    store.invalidateTenant("tenant-a");
+
+    expect((await store.getMode("tenant-a", "routes_dispatch")).value).toBe("adhoc");
+    expect((await store.getMode("tenant-b", "routes_dispatch")).value).toBe("scheduled"); // untouched
+  });
+
   it("no row -> {value: 'unset', source: 'REGISTRY_DEFAULT'} for routes_dispatch", async () => {
     prisma.tenantFeatureConfig.findUnique.mockResolvedValue(null);
 

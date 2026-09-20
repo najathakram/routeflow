@@ -23,6 +23,9 @@ import { EntitlementsModule } from "../billing/entitlements.module";
 // (InvoicesService.voidInvoiceInTx, InvoicesService.deleteInvoice) already do.
 // RegulatedModule imports Storage/Audit/Billing only — no cycle with OrdersModule.
 import { RegulatedModule } from "../regulated/regulated.module";
+// Lane R: OrdersService is the first consumer of the selling-restrictions choke point. The module
+// imports only ProductLabelsModule (+ the global PrismaService) — no cycle with OrdersModule.
+import { SellingRestrictionsModule } from "../selling-restrictions/selling-restrictions.module";
 
 @Module({
   imports: [
@@ -40,6 +43,7 @@ import { RegulatedModule } from "../regulated/regulated.module";
     CommissionsModule,
     EntitlementsModule,
     RegulatedModule,
+    SellingRestrictionsModule,
   ],
   controllers: [OrdersController],
   providers: [OrdersService, ChangeRequestsService],

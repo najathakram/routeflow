@@ -1,6 +1,6 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen, waitFor, act, fireEvent } from "@/test-utils/render";
+import { renderWithProviders, screen, waitFor, act, fireEvent, within } from "@/test-utils/render";
 import { CreateOrderModal } from "./CreateOrderModal";
 
 // JSDOM has no scrollIntoView implementation at all (not a stub — genuinely absent), and
@@ -22,6 +22,8 @@ window.HTMLElement.prototype.scrollIntoView = jest.fn();
  */
 
 const createOrderMutate = jest.fn();
+// Mutable so a test can put the mutation in its error state (the modal's inline API-error banner).
+let mockCreateOrderError: unknown = null;
 // Mutable so a test can put a customer in the picker / give them per-product tier prices.
 let mockCustomers: Array<Record<string, unknown>> = [];
 let mockCustomerPrices: Array<Record<string, unknown>> = [];
@@ -40,7 +42,7 @@ jest.mock("@/lib/api/orders", () => ({
   useCreateOrder: () => ({
     mutate: createOrderMutate,
     isPending: false,
-    error: null,
+    error: mockCreateOrderError,
     reset: jest.fn(),
   }),
   useActiveOrderForCustomer: () => ({ data: undefined }),
@@ -607,6 +609,93 @@ describe("CreateOrderModal", () => {
         capturedOnScan!("111");
 
         expect(await screen.findByText("$8.00 / each")).toBeInTheDocument();
+      });
+    });
+
+    describe("selling restrictions - the API's SELLING_RESTRICTED 409 is shown as a blocked-items dialog", () => {
+      const restricted409 = {
+        response: {
+          status: 409,
+          data: {
+            code: "SELLING_RESTRICTED",
+            blockedLines: [
+              {
+                productId: "p1",
+                productName: "Hemp Gummies",
+                categoryName: "Hemp",
+                ruleId: "r1",
+                reason: "STATE_BAN",
+                state: "TX",
+                message: "m",
+              },
+            ],
+          },
+        },
+      };
+
+      afterEach(() => {
+        mockCreateOrderError = null;
+      });
+
+      // NOTE: a real *draft* is not blocked by the API (only non-draft sales are checked; the block
+      // lands at promotion), so the 409 is injected into the shared onError here. That handler is
+      // the one every create/promote path goes through; the real-server behaviour is F2's proof.
+      it("a blocked save opens the dialog with the item and a plain cause, and raises NO page-level toast", async () => {
+        mockCustomers = [acme];
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        await pickCustomer("Acme Foods");
+        fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+        expect(createOrderMutate).toHaveBeenCalledTimes(1);
+
+        createOrderMutate.mock.calls[0][1].onError(restricted409);
+
+        const dialog = await screen.findByRole("dialog", {
+          name: /can't be sold to this customer/i,
+        });
+        expect(within(dialog).getByText("Hemp Gummies")).toBeInTheDocument();
+        expect(within(dialog).getByText("Restricted in TX")).toBeInTheDocument();
+        expect(within(dialog).queryByText("p1")).toBeNull(); // never a raw id
+        expect(mockToast).not.toHaveBeenCalled();
+      });
+
+      it("shows no inline red banner for it (the dialog is the one message; the rule reason stays out)", async () => {
+        mockCustomers = [acme];
+        mockCreateOrderError = {
+          ...restricted409,
+          message: "Request failed",
+          response: {
+            ...restricted409.response,
+            data: { ...restricted409.response.data, message: "Restricted: internal rule reason" },
+          },
+        };
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        await pickCustomer("Acme Foods");
+        expect(screen.queryByText(/internal rule reason/)).toBeNull();
+        expect(screen.queryByText(/Request failed/)).toBeNull();
+      });
+
+      it("any other API error still shows the inline banner", async () => {
+        mockCustomers = [acme];
+        mockCreateOrderError = { response: { status: 500, data: { message: "Boom happened" } } };
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        await pickCustomer("Acme Foods");
+        expect(screen.getByText("Boom happened")).toBeInTheDocument();
+      });
+
+      // CREDIT_LIMIT_EXCEEDED is in providers.tsx's HANDLED_CODES (the order detail opens a guard
+      // dialog), which silences the global toast — so the create modal's inline banner is the ONLY
+      // place its message can show. This pins that a credit refusal on create is never silent.
+      it("a credit-limit refusal on create still shows the server's message in the banner", async () => {
+        mockCustomers = [acme];
+        mockCreateOrderError = {
+          response: {
+            status: 409,
+            data: { code: "CREDIT_LIMIT_EXCEEDED", message: "Over their credit limit of 100.00." },
+          },
+        };
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        await pickCustomer("Acme Foods");
+        expect(screen.getByText("Over their credit limit of 100.00.")).toBeInTheDocument();
       });
     });
   });

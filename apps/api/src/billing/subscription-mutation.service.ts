@@ -31,6 +31,7 @@ import {
 } from "./plan-catalog.constants";
 import { addCycle, Cycle } from "./billing-math";
 import { BillingNotificationService } from "./billing-notification.service";
+import { PlanTransitionConfigService } from "./plan-transition-config.service";
 
 export interface SubscribeInput {
   planKey: string;
@@ -145,6 +146,9 @@ export class SubscriptionMutationService {
     // BillingModule; no module change needed.
     private readonly stripe: StripeService,
     private readonly billingNotification: BillingNotificationService,
+    // Lane B A2b: downgrade -> snapshot the tenant's feature config, upgrade -> restore it, INSIDE
+    // the same transaction as the plan write (live flag entitlements.configSnapshot, default off).
+    private readonly planTransition: PlanTransitionConfigService,
   ) {}
 
   private readonly logger = new Logger(SubscriptionMutationService.name);
@@ -300,7 +304,18 @@ export class SubscriptionMutationService {
     const oldPlanMonthly =
       tenant.status === "ACTIVE" && priorSub?.planKey ? this.planMonthly(version, fromKey) : 0;
 
+    const transition = {
+      tenantId,
+      fromPlanKey: fromKey,
+      toPlanKey: input.planKey,
+      toPlanVersionId: version.id,
+      actor: { id: actorId ?? null },
+    };
+    // Read the catalog BEFORE the transaction (pool starvation) — see PlanTransitionConfigService.
+    const preparedTransition = await this.planTransition.prepare(transition);
+
     await this.prisma.$transaction(async (tx) => {
+      await this.planTransition.onPlanChange(tx, transition, preparedTransition);
       await tx.tenantSubscription.upsert({
         where: { tenantId },
         create: {
@@ -412,8 +427,9 @@ export class SubscriptionMutationService {
           );
         }
       }
-    });
+    }, this.planTransition.transactionOptions(preparedTransition));
 
+    this.planTransition.invalidateCaches(tenantId, preparedTransition);
     this.entitlements.invalidate(tenantId);
     this.tenantStatus.invalidate(tenantId);
     return { quote, subscription: await this.subscription.getSubscription(tenantId) };
@@ -683,7 +699,21 @@ export class SubscriptionMutationService {
     const amountDelta = roundMoney(newMonthly - ledgerOldMonthly);
     const proratedNow = this.proration.proratedDiff(sub, newMonthly - oldMonthly);
 
+    const transition = {
+      tenantId,
+      fromPlanKey: fromKey,
+      toPlanKey: planKey,
+      toPlanVersionId: version.id,
+      actor: { id: actorId ?? null },
+    };
+    const preparedTransition = await this.planTransition.prepare(transition);
+
     await this.prisma.$transaction(async (tx) => {
+      // The hook FIRST, exactly like subscribe()/updatePlan()/the cron: every site takes the
+      // snapshot/config row locks before the subscription/tenant rows, so two concurrent plan
+      // changes for one tenant can never wait on each other in opposite orders (deadlock). If the
+      // guard below then loses a race, the throw rolls the hook's writes back with it.
+      await this.planTransition.onPlanChange(tx, transition, preparedTransition);
       // Optimistic guard: only apply if still on the expected plan (blocks a concurrent
       // double-upgrade from re-emitting the delta). Matches the STORED key (null matches
       // IS NULL), never the resolved one.
@@ -717,8 +747,9 @@ export class SubscriptionMutationService {
         { fromPlan: fromKey, toPlan: planKey, instant: true, prorated: proratedNow },
         { amountDelta, actorId, tx },
       );
-    });
+    }, this.planTransition.transactionOptions(preparedTransition));
 
+    this.planTransition.invalidateCaches(tenantId, preparedTransition);
     this.entitlements.invalidate(tenantId);
 
     // N3: best-effort admin notification, never blocks the upgrade above. `proratedNow` is

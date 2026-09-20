@@ -73,9 +73,59 @@ export const UNRESOLVED_STATE: GoverningState = { resolved: false };
 /** `productName` of an UNKNOWN_PRODUCT reason — buyer-visible, so never a raw id. */
 export const UNKNOWN_PRODUCT_NAME = "Unknown product";
 
+/** The two fields of an authenticated principal the channel is read from. */
+export interface ChannelPrincipal {
+  /** Tenant users (`JwtPayload.role`); the buyer-portal principal carries NONE. */
+  role?: string | null;
+  /** `"BUYER"` on the buyer-portal principal (`BuyerJwtStrategy`); absent on tenant users. */
+  type?: string | null;
+}
+
+/** Roles that positively sell as staff. Compared as strings so the core stays free of Prisma. */
+const STAFF_ROLES: ReadonlySet<string> = new Set([
+  "SUPER_ADMIN",
+  "TENANT_ADMIN",
+  "OPERATOR",
+  "DRIVER",
+]);
+
+/**
+ * The channel a PRINCIPAL sells through — and it FAILS CLOSED. STAFF only for a principal that is
+ * positively staff: a known staff `role` and no buyer marker. Everything else is BUYER_PORTAL,
+ * which binds a superset of the rules (ALL + BUYER_PORTAL): the buyer-portal principal (`type:
+ * "BUYER"`, which carries no `role` at all), the CUSTOMER role, a hybrid carrying either marker,
+ * an unknown role, no principal. A misclassified caller is over-blocked, never let through.
+ * A system caller with no principal passes `"STAFF"` ONLY when the sale is genuinely
+ * staff-originated; background work that materialises a BUYER's order (a standing-order cron, a
+ * consolidation sweep) passes `"BUYER_PORTAL"`. The spec pins every `UserRole` value so a NEW role
+ * must be classified on purpose.
+ */
+export function restrictionChannelForPrincipal(
+  principal: ChannelPrincipal | null | undefined,
+): RestrictionChannel {
+  if (!principal || principal.type === "BUYER") return "BUYER_PORTAL";
+  return principal.role != null && STAFF_ROLES.has(principal.role) ? "STAFF" : "BUYER_PORTAL";
+}
+
 /** The OFF outcome: a first-class result, produced without reading anything else. */
 export function offEvaluation(): RestrictionsEvaluation {
   return { outcome: "OFF", reasons: [] };
+}
+
+/** Product names the 409 summary lists before "and N more"; the per-line detail stays in `blockedLines`. */
+const SUMMARY_NAMES = 3;
+
+/**
+ * The one human sentence a client shows when it has no blocked-lines panel of its own (the web
+ * handler toasts `body.message`; without one it shows "Request failed with status code 409"). A
+ * lone line is its own message; several are summarised by product name.
+ */
+export function restrictedSummary(lines: readonly BlockedLine[]): string {
+  if (lines.length === 0) return "This order can't be sold to this customer.";
+  if (lines.length === 1) return lines[0].message;
+  const names = lines.slice(0, SUMMARY_NAMES).map((l) => `"${l.productName}"`);
+  const more = lines.length - names.length;
+  return `${lines.length} products on this order can't be sold to this customer: ${names.join(", ")}${more > 0 ? ` and ${more} more` : ""}.`;
 }
 
 /**
@@ -367,4 +417,26 @@ export function evaluateRestrictions(input: EvaluateInput): RestrictionsEvaluati
   // matter what the address turns out to be; both lines still appear in `reasons`.
   const outcome = blocked ? "BLOCK" : indeterminate ? "INDETERMINATE" : "ALLOW";
   return { outcome, reasons };
+}
+
+/**
+ * The products of an order's lines that the choke point CHECKS, netted per PRODUCT (see
+ * `SellingRestrictionsService.checkLinesSellable`): lines with no product id are dropped; a product is
+ * checked when ANY of its lines has an omitted / non-numeric / NaN `qtyDelta` (cannot be netted, so
+ * fail closed) or when its numeric deltas sum to `> 0`; decreases, removals and repacks are not.
+ * One rule for the choke point AND for the order-edit re-check under the row lock.
+ */
+export function checkableProductIds(
+  lines: ReadonlyArray<{ productId?: string | null; qtyDelta?: number }>,
+): string[] {
+  const byProduct = new Map<string, { undetermined: boolean; net: number }>();
+  for (const l of lines) {
+    if (!l.productId) continue;
+    const agg = byProduct.get(l.productId) ?? { undetermined: false, net: 0 };
+    if (typeof l.qtyDelta === "number" && !Number.isNaN(l.qtyDelta)) agg.net += l.qtyDelta;
+    else agg.undetermined = true;
+    byProduct.set(l.productId, agg);
+  }
+  // `!(net <= 0)` rather than `net > 0`: a NaN sum (e.g. -Infinity + Infinity) must stay checked.
+  return [...byProduct].filter(([, a]) => a.undetermined || !(a.net <= 0)).map(([id]) => id);
 }

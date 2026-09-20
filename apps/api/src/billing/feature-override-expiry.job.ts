@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { LeaderCron } from "../common/cron-lock";
+import { FEATURE_OVERRIDE_AUDIT_ENTITY_TYPE } from "./feature-override-audit.constants";
 import { FeatureOverrideService } from "./feature-override.service";
 
 /** Audit action for a row this sweep revoked. Deliberately NOT `AdminAuditAction.
@@ -9,18 +10,6 @@ export const FEATURE_OVERRIDE_EXPIRY_REVOKED_ACTION = "FEATURE_OVERRIDE_EXPIRY_R
 
 /** The `reason` recorded in the audit meta for every row this sweep closes. */
 export const EXPIRED_REVOKE_REASON = "expired";
-
-/**
- * A row is swept only once it has been expired for a full review cycle. The review job
- * (`billing.reviewExpiredOverrides`, daily 06:00) flags each expired-unrevoked row exactly once
- * ever; a row that expired at, say, 06:10 would be revoked by today's 06:30 sweep BEFORE the
- * review job ever saw it (its `revokedAt: null` filter would exclude it from then on), silently
- * skipping the audit row that job promises. Requiring `expiresAt <= now - 24h` guarantees at
- * least one 06:00 review tick fell between expiry and revocation. Cost: the unique-index slot
- * frees up to ~24h after expiry (reads already ignore an expired row via `effectAt()`, and
- * `create()` still auto-closes an expired same-key row immediately, so only bulk writers wait).
- */
-export const EXPIRY_GRACE_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Nightly expiry sweep (B569): revokes every `TenantFeatureOverride` whose `expiresAt` has
@@ -37,9 +26,12 @@ export const EXPIRY_GRACE_MS = 24 * 60 * 60 * 1000;
  * Idempotent: a revoked row no longer matches, so a re-run revokes nothing and audits nothing.
  * A row with no `expiresAt` (a standing grant) never matches and is never touched.
  *
- * Runs at 06:30 and only takes rows expired for at least `EXPIRY_GRACE_MS`, so
- * `billing.reviewExpiredOverrides` (06:00) has always flagged a row — its once-ever "expired and
- * still unrevoked" audit entry — before this job closes it.
+ * Runs at 06:30 and only takes rows `billing.reviewExpiredOverrides` (06:00) has ALREADY flagged —
+ * its once-ever "expired and still unrevoked" audit row must exist (B589). That is a state check,
+ * not the old 24h time proxy: a missed 06:00 tick can no longer let a row be revoked unflagged
+ * (its review audit is then lost for good, since the review job only reads unrevoked rows); the
+ * sweep just waits for the flag. Slot latency is unchanged: a row expiring at 06:31 is flagged at
+ * the next 06:00 and swept at 06:30 — up to ~24h (more if the review job's 500/tick cap is full).
  *
  * Cross-tenant by design, like the review job: the plain global `PrismaService`, never
  * `forTenant()`, so L-124's ambient-tenant trap does not apply.
@@ -53,7 +45,7 @@ export class FeatureOverrideExpiryJob {
   @LeaderCron("30 6 * * *", "billing.revokeExpiredOverrides")
   async revokeExpiredOverrides(): Promise<{ revoked: number }> {
     const revoked = await this.overrides.revokeExpired(new Date(), {
-      graceMs: EXPIRY_GRACE_MS,
+      graceMs: 0, // the review-flag gate, not elapsed time, decides when a row may be swept
       // Written with `tx.auditLog.create` (not AuditService.log, which swallows its own errors
       // and has no transaction handle): a failed audit write must roll the revoke back.
       inTransaction: async (tx, row) => {
@@ -62,7 +54,7 @@ export class FeatureOverrideExpiryJob {
             tenantId: row.tenantId,
             userId: null,
             action: FEATURE_OVERRIDE_EXPIRY_REVOKED_ACTION,
-            entityType: "tenantFeatureOverride",
+            entityType: FEATURE_OVERRIDE_AUDIT_ENTITY_TYPE,
             entityId: row.id,
             meta: {
               reason: EXPIRED_REVOKE_REASON,
