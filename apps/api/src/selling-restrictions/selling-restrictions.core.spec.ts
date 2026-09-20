@@ -1,4 +1,5 @@
 import { UserRole } from "@prisma/client";
+import type { BlockedLine } from "@routeflow/types";
 import {
   activeRuleWhere,
   compareRules,
@@ -6,6 +7,7 @@ import {
   matchingRules,
   offEvaluation,
   resolveGoverningState,
+  restrictedSummary,
   restrictionChannelForPrincipal,
   ruleBindsChannel,
   ruleIsActive,
@@ -877,5 +879,39 @@ describe("restrictionChannelForPrincipal — fails CLOSED", () => {
   it('no principal, no role, an empty role: BUYER_PORTAL (a system caller passes `channel: "STAFF"` itself)', () => {
     for (const p of [undefined, null, {}, { role: null }, { role: "" }])
       expect(restrictionChannelForPrincipal(p)).toBe("BUYER_PORTAL");
+  });
+});
+
+describe("restrictedSummary — the 409's human `message`", () => {
+  const blocked = (n: number, over: Partial<BlockedLine> = {}): BlockedLine => ({
+    productId: `p${n}`,
+    productName: `Product ${n}`,
+    ruleId: "r1",
+    reason: "FEDERAL_BAN",
+    message: `"Product ${n}" can't be sold: restricted federally.`,
+    ...over,
+  });
+
+  it("a lone blocked line is its own message (it already names the product and why)", () => {
+    expect(restrictedSummary([blocked(1)])).toBe(
+      `"Product 1" can't be sold: restricted federally.`,
+    );
+  });
+
+  it("several lines are summarised by product name, never by the raw rule text", () => {
+    expect(restrictedSummary([blocked(1), blocked(2)])).toBe(
+      `2 products on this order can't be sold to this customer: "Product 1", "Product 2".`,
+    );
+  });
+
+  it("more than three names are cut with a count, so the toast stays one readable line", () => {
+    const five = [1, 2, 3, 4, 5].map((n) => blocked(n));
+    expect(restrictedSummary(five)).toBe(
+      `5 products on this order can't be sold to this customer: "Product 1", "Product 2", "Product 3" and 2 more.`,
+    );
+  });
+
+  it("an empty list (should not happen) still yields a real sentence, never an empty toast", () => {
+    expect(restrictedSummary([])).toBe("This order can't be sold to this customer.");
   });
 });

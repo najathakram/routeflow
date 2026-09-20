@@ -150,6 +150,12 @@ const GROUPS: HubGroup[] = [
         href: "/settings?tab=regulated",
         show: "admin",
       },
+      {
+        label: "Selling restrictions",
+        desc: "Block restricted products by the customer's state",
+        href: "/settings/restrictions",
+        show: "admin",
+      },
     ],
   },
 ];

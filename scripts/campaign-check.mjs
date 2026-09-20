@@ -75,6 +75,7 @@
 //   node scripts/campaign-check.mjs --batch F02                     # just F02
 //   node scripts/campaign-check.mjs --batch F02 --pipeline-dir <dir># + explicit build-plan.md
 //   node scripts/campaign-check.mjs --runs-dir <dir>                # override .campaign/runs
+//   node scripts/campaign-check.mjs --print-stale                   # read-only: workspaces whose T1 report is missing/partial/stale (one per line)
 //
 // Exit 0: every affirmative claim in scope is backed by a real, passing,
 //         non-skipped/non-todo REG-B### proof (or legitimate evidence).
@@ -890,6 +891,69 @@ function main() {
     }
     // mode === "freshness-only": R4 always exits here, before any token scan.
     process.exit(anyHitRefusal ? 1 : 0);
+  }
+
+  // --print-stale (read-only): the workspaces whose T1 report the freshness rule would refuse —
+  // missing, unparseable, partial (a scoped jest run) or stale (older than the newest commit
+  // touching its tests / the ledger). One turbo package name per line on stdout, nothing else,
+  // exit 0. It changes NO enforcement: `checkFreshness` still refuses exactly as before. Its only
+  // consumer is scripts/verify-turbo.mjs, which adds these workspaces to an AFFECTED-scope run so
+  // their tests execute and regenerate the report — otherwise a scoped push that never touched
+  // (say) apps/api is refused for a stale api.json it had no reason to regenerate.
+  // The classification below MIRRORS checkFreshness's (parity is pinned by
+  // campaign-check-freshness.spec.ts, which drives both on the same fixtures).
+  function printStale() {
+    if (!t1Needed) return;
+    const gitRoot = resolveGitRoot();
+    let ledgerPathspec = null;
+    if (gitRoot) {
+      const rel = path.relative(gitRoot, statusDir).split(path.sep).join("/");
+      ledgerPathspec = rel || ".";
+    }
+    const skewNoted = new Set();
+    const realLog = console.log;
+    console.log = () => {}; // the clock-skew note must not pollute the machine-readable list
+    try {
+      for (const wsInfo of T1_WORKSPACES) {
+        let stale = false;
+        if (!fs.existsSync(wsInfo.jsonPath)) {
+          stale = true;
+        } else {
+          const raw = loadJsonIfExists(wsInfo.jsonPath);
+          if (raw === "PARSE_ERROR" || raw === null || typeof raw !== "object") {
+            stale = true;
+          } else if (raw.partial === true) {
+            stale = true;
+          } else {
+            const parsed = typeof raw.generatedAt === "string" ? Date.parse(raw.generatedAt) : NaN;
+            const reportTimeMs = Number.isNaN(parsed)
+              ? fs.statSync(wsInfo.jsonPath).mtimeMs
+              : parsed;
+            const testsCommit = clampCommitToNow(
+              gitRoot ? newestCommit(gitRoot, wsInfo.testPathspecs) : null,
+              skewNoted,
+            );
+            const ledgerCommit = clampCommitToNow(
+              gitRoot && ledgerPathspec ? newestCommit(gitRoot, [ledgerPathspec]) : null,
+              skewNoted,
+            );
+            const newestMs = Math.max(
+              testsCommit ? testsCommit.ct * 1000 : -Infinity,
+              ledgerCommit ? ledgerCommit.ct * 1000 : -Infinity,
+            );
+            stale = newestMs !== -Infinity && reportTimeMs < newestMs;
+          }
+        }
+        if (stale) realLog(resolvePkgName(gitRoot, wsInfo));
+      }
+    } finally {
+      console.log = realLog;
+    }
+  }
+
+  if (args.includes("--print-stale")) {
+    printStale();
+    return;
   }
 
   if (freshnessOnly) {

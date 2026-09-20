@@ -11,6 +11,7 @@ import { parse } from "csv-parse/sync";
 import { ImportEntityType, InvoiceStatus, MovementType, UserRole } from "@prisma/client";
 import * as bcrypt from "bcrypt";
 import * as crypto from "crypto";
+import { addressStateFields } from "../customers/address-state";
 
 /**
  * F9-008: hard row-count cap on any CSV import. The byte-size caps on the upload
@@ -351,6 +352,7 @@ export class ImportService {
                 line1: billingLine1 || billingCity || "Unknown",
                 city: billingCity || "Unknown",
                 state: billingState || "Unknown",
+                ...addressStateFields(billingState, billingZip),
                 zip: billingZip || "00000",
                 lat: billingLat,
                 lng: billingLng,
@@ -370,6 +372,7 @@ export class ImportService {
                 line1: shippingLine1 || shippingCity || "Unknown",
                 city: shippingCity || "Unknown",
                 state: shippingState || "Unknown",
+                ...addressStateFields(shippingState, shippingZip),
                 zip: shippingZip || "00000",
                 lat: shippingLat,
                 lng: shippingLng,
@@ -462,6 +465,7 @@ export class ImportService {
                 line1: billingLine1 || billingCity || "Unknown",
                 city: billingCity || "Unknown",
                 state: billingState || "Unknown",
+                ...addressStateFields(billingState, billingZip),
                 zip: billingZip || "00000",
                 lat: billingLat,
                 lng: billingLng,
@@ -480,6 +484,7 @@ export class ImportService {
                 line1: shippingLine1 || shippingCity || "Unknown",
                 city: shippingCity || "Unknown",
                 state: shippingState || "Unknown",
+                ...addressStateFields(shippingState, shippingZip),
                 zip: shippingZip || "00000",
                 lat: shippingLat,
                 lng: shippingLng,
@@ -650,6 +655,7 @@ export class ImportService {
                   line1: street || city || "Unknown",
                   city: city || "Unknown",
                   state: state || "Unknown",
+                  ...addressStateFields(state, zip),
                   zip: zip || "00000",
                   isDefault: true,
                 },

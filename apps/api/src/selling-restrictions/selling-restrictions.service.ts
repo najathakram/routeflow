@@ -13,10 +13,12 @@ import { ProductLabelsService } from "../product-labels/product-labels.service";
 import {
   activeRuleWhere,
   anyRuleNeedsState,
+  checkableProductIds,
   evaluateRestrictions,
   matchingRules,
   offEvaluation,
   resolveGoverningState,
+  restrictedSummary,
   ruleStates,
   UNRESOLVED_STATE,
   type ProductFacts,
@@ -397,21 +399,12 @@ export class SellingRestrictionsService {
    */
   async checkLinesSellable(params: SellableLinesParams): Promise<RestrictionsEvaluation> {
     if (!params.tenantId) throw new Error("checkLinesSellable requires a tenantId");
-    const byProduct = new Map<string, { undetermined: boolean; net: number }>();
-    for (const l of params.lines) {
-      if (!l.productId) continue;
-      const agg = byProduct.get(l.productId) ?? { undetermined: false, net: 0 };
-      if (typeof l.qtyDelta === "number" && !Number.isNaN(l.qtyDelta)) agg.net += l.qtyDelta;
-      else agg.undetermined = true;
-      byProduct.set(l.productId, agg);
-    }
-    // `!(net <= 0)` rather than `net > 0`: a NaN sum (e.g. -Infinity + Infinity) must stay checked.
-    const checkable = [...byProduct].filter(([, a]) => a.undetermined || !(a.net <= 0));
+    const checkable = checkableProductIds(params.lines);
     if (checkable.length === 0) return { outcome: "ALLOW", reasons: [] };
     return this.evaluate(
       params.tenantId,
       params.customerId,
-      checkable.map(([productId]) => ({ productId })),
+      checkable.map((productId) => ({ productId })),
       { channel: params.channel, at: params.at },
     );
   }
@@ -426,6 +419,7 @@ export class SellingRestrictionsService {
     if (evaluation.outcome === "BLOCK" || evaluation.outcome === "INDETERMINATE") {
       const body: SellingRestrictedError = {
         code: "SELLING_RESTRICTED",
+        message: restrictedSummary(evaluation.reasons),
         blockedLines: evaluation.reasons,
       };
       throw new ConflictException(body);

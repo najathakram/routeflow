@@ -1,7 +1,12 @@
 import { ConflictException, Logger } from "@nestjs/common";
 import { roundMoney } from "@routeflow/pricing";
 import type { EntitlementsService } from "../billing/entitlements.service";
-import { loadCreditExposure } from "../invoices/credit-exposure";
+import { editedOrderContribution, loadCreditExposure } from "../invoices/credit-exposure";
+import { assertAmbientTenant } from "../common/ambient-tenant";
+import {
+  restrictionChannelForPrincipal,
+  type ChannelPrincipal,
+} from "../selling-restrictions/selling-restrictions.core";
 import type { PrismaService } from "../prisma/prisma.service";
 
 /**
@@ -76,12 +81,18 @@ export async function isCreditLimitCheckEnabled(deps: CreditLimitCheckDeps): Pro
  *     order total AND the invoice (reconcileOrderDraftInvoice keeps a mirror
  *     invoice in lockstep, so counting both would double-count);
  *   • the order being edited is EXCLUDED from both buckets and represented
- *     by projectedOrderTotal instead. Exact, not approximate: an editable
- *     order's linked invoice can never carry payments —
- *     revertLinkedInvoicesForOrderEdit (already called by updateOrderItems)
- *     throws if it does;
- *   • credit notes / advance payments are NOT netted (the statement reports
- *     them separately from outstandingAmount; netting loosens a money guard);
+ *     by projectedOrderTotal instead, LESS the money already RECEIVED toward
+ *     it (`excludedOrderPaid`: confirmed cash / advance on its issued-or-paid
+ *     invoices, capped per invoice — a CREDIT_NOTE application is never cash,
+ *     B421) and never below what its unsettled invoices (SENT/VIEWED/PARTIAL/
+ *     OVERDUE) owe (`editedOrderContribution`). An editable order CAN carry
+ *     payments (a PAID/PARTIAL invoice is not reverted; nothing is for
+ *     OUT_FOR_DELIVERY+ edits), so a prepaid order was blocked for money
+ *     already paid. Invoices that SURVIVE the edit (`invoicesSurviveEdit`)
+ *     keep their balance as a floor; ones the edit REWRITES count only up to
+ *     the projected total (B577 follow-up);
+ *   • UNAPPLIED credit notes / advance balances are NOT netted (netting loosens
+ *     a money guard) — only what was already APPLIED to this order's invoices;
  *   • the Transaction model is NOT read — delivered orders have BOTH a
  *     Transaction and an invoice, so mixing the two double-counts.
  *
@@ -102,14 +113,33 @@ export async function isCreditLimitCheckEnabled(deps: CreditLimitCheckDeps): Pro
  * isCreditLimitCheckEnabled OUTSIDE the transaction and passed in — this
  * function issues NO query on the non-transactional client.
  */
+/**
+ * The two tuning knobs of the guard, an OBJECT (not two defaulted positional parameters): a mechanical
+ * merge once put a string in a boolean slot, and a dropped `invoicesSurviveEdit` fails silently in the
+ * LOOSENING direction — a named option cannot be transposed.
+ */
+export interface CreditGuardOptions {
+  /**
+   * The edited order's issued invoices SURVIVE this edit untouched (a delivered, partially invoiced
+   * order: neither the revert nor the re-sync runs): their stored balance is a floor. Default false —
+   * the safe answer, never stricter than before the netting (see `editedOrderContribution`).
+   */
+  invoicesSurviveEdit?: boolean;
+  /** What the 409 message calls the thing that would breach the limit. */
+  action?: "edit" | "order" | "delivery";
+}
+
 export async function assertWithinCreditLimit(
   db: any,
   customerId: string,
-  currentOrderId: string,
+  /** The order being edited (excluded from every bucket); `null` = a NEW order, nothing to exclude. */
+  currentOrderId: string | null,
   projectedOrderTotal: number,
   creditCheckEnabled: boolean,
+  opts: CreditGuardOptions = {},
 ): Promise<void> {
   if (!creditCheckEnabled) return;
+  const { invoicesSurviveEdit = false, action = "edit" } = opts;
 
   const customer = await db.customer.findFirst({
     where: { id: customerId },
@@ -120,19 +150,167 @@ export async function assertWithinCreditLimit(
 
   // `db` is the caller's (transaction) client. The edited order is excluded from
   // every bucket and represented by projectedOrderTotal below.
-  const { counted } = await loadCreditExposure(db, customerId, {
-    excludeOrderId: currentOrderId,
-  });
+  const { counted, excludedOrderPaid, excludedOrderUnsettledOutstanding } =
+    await loadCreditExposure(db, customerId, { excludeOrderId: currentOrderId });
 
-  const exposure = roundMoney(counted + projectedOrderTotal);
+  // The edited order counts its still-UNPAID projected total, floored by its unsettled invoices.
+  const exposure = roundMoney(
+    counted +
+      editedOrderContribution(
+        projectedOrderTotal,
+        excludedOrderPaid ?? 0,
+        excludedOrderUnsettledOutstanding ?? 0,
+        invoicesSurviveEdit,
+      ),
+  );
   if (exposure > limit) {
     throw new ConflictException({
       code: "CREDIT_LIMIT_EXCEEDED",
       message:
-        `This edit would take the customer's exposure to ${exposure.toFixed(2)}, ` +
+        `This ${action} would take the customer's exposure to ${exposure.toFixed(2)}, ` +
         `over their credit limit of ${limit.toFixed(2)}.`,
       limit,
       exposure,
     });
+  }
+}
+
+// ─── B585: the new enforcement points (create / deliver), OFF by default ──────────────────────
+
+/**
+ * Per-tenant `SystemConfig` switches for the credit check, ONE PER ENFORCEMENT POINT so an owner can
+ * flip them independently: `enforce_new_orders` governs order CREATE only; `enforce_delivery` governs
+ * goods leaving (`changeStatus` to OUT_FOR_DELIVERY, or CONFIRMED → DELIVERED). There is no fallback
+ * between them (a fallback would re-couple the points). Each is read FIRST: a tenant that never set it
+ * pays one indexed read and nothing else (the exposure derivation is several more queries on the
+ * hottest write path, so a default that ran it for everyone would not be free). Absent, or any value
+ * but the two below = OFF: nothing else runs. Exactly `"dark"` = OBSERVE: derive, log one "would deny"
+ * line, never block. Exactly `"true"` = ENFORCE. Neither governs the edit paths (`updateOrderItems` /
+ * change requests), which have always blocked.
+ */
+export const CREDIT_LIMIT_ENFORCE_KEY = "credit_limit.enforce_new_orders";
+export const CREDIT_LIMIT_DELIVERY_ENFORCE_KEY = "credit_limit.enforce_delivery";
+
+export type CreditEnforcementMode = "OFF" | "DARK" | "ENFORCED";
+
+/** What the enforcement-point helpers read: the client (tenant scoping, no ambient tenant on cron). */
+export interface CreditEnforcementDeps extends CreditLimitCheckDeps {
+  prisma: Pick<PrismaService, "getTenantId" | "forTenant">;
+  logger: Pick<Logger, "error" | "warn">;
+}
+
+/**
+ * The tenant's mode. The read carries an EXPLICIT `tenantId` (L-124: with no ambient tenant,
+ * `forTenant()` is unscoped) and refuses one that disagrees with the ambient tenant. A DB error
+ * propagates; `assertCreditAtEnforcementPoint` decides what an unreadable switch means.
+ */
+export async function creditEnforcementMode(
+  prisma: Pick<PrismaService, "forTenant" | "getTenantId">,
+  tenantId: string,
+  action: "order" | "delivery" = "order",
+): Promise<CreditEnforcementMode> {
+  assertAmbientTenant(prisma, tenantId, "creditEnforcementMode");
+  const key = action === "delivery" ? CREDIT_LIMIT_DELIVERY_ENFORCE_KEY : CREDIT_LIMIT_ENFORCE_KEY;
+  const row: { value: string } | null = await prisma.forTenant().systemConfig.findFirst({
+    where: { tenantId, key },
+    select: { value: true },
+  });
+  return row?.value === "true" ? "ENFORCED" : row?.value === "dark" ? "DARK" : "OFF";
+}
+
+const isCreditLimitExceeded = (e: unknown): e is ConflictException =>
+  e instanceof ConflictException &&
+  (e.getResponse() as { code?: string } | undefined)?.code === "CREDIT_LIMIT_EXCEEDED";
+
+const ACTION_LABEL = { order: "new order", delivery: "delivery" } as const;
+
+/** What an ENFORCED denial tells someone who may not see the customer's figures (a buyer). */
+const GENERIC_DENIAL = "This order can't be placed right now. Please contact your account manager.";
+
+/** One enforcement point's facts (the tenant is added by the caller's own client). */
+export interface CreditPointParams {
+  customerId: string;
+  projectedTotal: number;
+  /** The order being sent out (excluded from every bucket); absent = a NEW order. */
+  excludeOrderId?: string | null;
+  action?: keyof typeof ACTION_LABEL;
+  /** Who is acting. Only a positively-staff principal sees limit / exposure in a denial; absent = generic. */
+  principal?: ChannelPrincipal | null;
+}
+
+/**
+ * The credit check at a B585 enforcement point (a NEW order, or an order going out for delivery):
+ * same derivation as the edit guard, behind the per-tenant switch, which is read FIRST (OFF costs
+ * that one read). Runs BEFORE any write / stock transaction, so nothing is half-committed and no
+ * second pooled connection is taken inside a tx. When the guard would deny: ENFORCED throws its 409
+ * (generic for a non-staff principal: no limit, no exposure); DARK logs one "would deny" line (ids
+ * and figures only) and allows. No tenant on the caller = OFF. DARK must never break a create that
+ * works today: a failure to reach a verdict logs ERROR and allows; an unreadable switch is OFF with
+ * an ERROR; only an ENFORCED tenant sees a failure. `excludeOrderId` = the order being sent out.
+ *
+ * ⚠ Do NOT set either key to "true" for any tenant while these paths still bypass it:
+ *   - `enforce_new_orders`: DRAFT → PENDING promotion in `changeStatus`, and the standing-order cron
+ *     (`order-templates` writes PENDING orders directly);
+ *   - `enforce_delivery`: an OPERATOR-role `completeStop` / `completeWithPayment` (RoutesService marks
+ *     every linked order DELIVERED, ungated: an operator refused at the counter can complete the
+ *     order's stop from the office). A DRIVER's completion is EXCLUDED on purpose (the goods are
+ *     already at the door); RoutesService may only OBSERVE credit — pinned in
+ *     `orders.deliver-credit-gate.spec.ts`.
+ * Route DISPATCH and stop COMPLETION are OBSERVATION-ONLY (run start only logs; `completeStop` flips
+ * orders to DELIVERED directly), so "already out = gated" holds only for an order that was dispatched
+ * through `changeStatus` while `enforce_delivery` was "true".
+ * Guarded: a new order; `changeStatus` to OUT_FOR_DELIVERY (not a re-dispatch of a PARTIALLY_DELIVERED
+ * order, whose goods already left); CONFIRMED → DELIVERED. A demotion (OUT_FOR_DELIVERY → CONFIRMED,
+ * with a reason) then a re-dispatch is a NEW dispatch and is gated. (`updateOrderItems` is not a
+ * bypass: it has always run the edit guard, independent of these keys.)
+ *
+ * Known limit: the gate runs outside any transaction and takes no customer advisory lock, so two
+ * concurrent creates / hand-overs for one customer can both pass on the same exposure.
+ */
+export async function assertCreditAtEnforcementPoint(
+  deps: CreditEnforcementDeps,
+  p: CreditPointParams & { tenantId: string | null | undefined },
+): Promise<void> {
+  const action = p.action ?? "order";
+  if (!p.tenantId) return; // no tenant = no switch to read = OFF
+  let mode: CreditEnforcementMode;
+  try {
+    mode = await creditEnforcementMode(deps.prisma, p.tenantId, action);
+  } catch (err) {
+    deps.logger.error(
+      `credit enforcement switch unreadable (treated as off): tenant=${p.tenantId}`,
+      err,
+    );
+    return;
+  }
+  if (mode === "OFF") return;
+  try {
+    const enabled = await isCreditLimitCheckEnabled(deps);
+    await assertWithinCreditLimit(
+      deps.prisma.forTenant(),
+      p.customerId,
+      p.excludeOrderId ?? null,
+      p.projectedTotal,
+      enabled,
+      { action },
+    );
+  } catch (e) {
+    if (mode === "ENFORCED") {
+      if (isCreditLimitExceeded(e) && restrictionChannelForPrincipal(p.principal) !== "STAFF")
+        throw new ConflictException({ code: "CREDIT_LIMIT_EXCEEDED", message: GENERIC_DENIAL });
+      throw e;
+    }
+    if (!isCreditLimitExceeded(e)) {
+      deps.logger.error(
+        `credit check unavailable, allowing (dark): tenant=${p.tenantId} customer=${p.customerId}`,
+        e,
+      );
+      return;
+    }
+    const { limit, exposure } = e.getResponse() as { limit: number; exposure: number };
+    deps.logger.warn(
+      `credit limit would DENY a ${ACTION_LABEL[action]} (dark): tenant=${p.tenantId} ` +
+        `customer=${p.customerId} exposure=${exposure} limit=${limit}`,
+    );
   }
 }

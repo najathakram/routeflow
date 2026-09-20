@@ -11,9 +11,10 @@ jest.mock("../common/db-locks", () => ({
   LockUnavailableError: class extends Error {},
 }));
 
+import { SnapshotFailedError } from "./plan-transition-config.service";
 import { Logger } from "@nestjs/common";
 import { BillingCronService } from "./billing-cron.service";
-import { BILLING_EVENTS } from "./plan-catalog.constants";
+import { BILLING_EVENTS, normalizePlanKey, planKeyFromEnum } from "./plan-catalog.constants";
 
 function make(
   data: {
@@ -52,7 +53,12 @@ function make(
   // route findMany call-sites by argument shape
   prisma.tenantSubscription.findMany.mockImplementation(({ where }: any) => {
     if (where.graceStartedAt) return Promise.resolve(data.graceSubs ?? []);
-    if (where.downgradeEffectiveAt) return Promise.resolve(data.downgrades ?? []);
+    // `tenant.plan` is part of the real select (the nullable-planKey fallback); default it here.
+    if (where.downgradeEffectiveAt) {
+      return Promise.resolve(
+        (data.downgrades ?? []).map((d: any) => ({ tenant: { plan: "BUSINESS" }, ...d })),
+      );
+    }
     if (where.cancelAtPeriodEnd) return Promise.resolve(data.cancellations ?? []);
     return Promise.resolve(data.rollSubs ?? []);
   });
@@ -87,6 +93,12 @@ function make(
     notifyTrialEnding: jest.fn().mockResolvedValue(undefined),
     notifyDowngradeApplied: jest.fn().mockResolvedValue(undefined),
   } as any;
+  const planTransition = {
+    isEnabled: jest.fn().mockResolvedValue(true),
+    prepare: jest.fn().mockResolvedValue({ enabled: true, planAllows: null }),
+    onPlanChange: jest.fn().mockResolvedValue({ action: "none" }),
+    transactionOptions: jest.fn().mockReturnValue(undefined),
+  } as any;
   const svc = new BillingCronService(
     prisma,
     events,
@@ -95,8 +107,10 @@ function make(
     catalog,
     meters,
     billingNotification,
+    planTransition,
   );
   return {
+    planTransition,
     svc,
     prisma,
     tx,
@@ -238,6 +252,192 @@ describe("BillingCronService", () => {
       graceMeter: null,
     });
     expect(emitted(events)).toContain(BILLING_EVENTS.GRACE_EXPIRED);
+  });
+
+  it("A2b: a scheduled downgrade snapshots via the hook INSIDE its transaction, before the plan write", async () => {
+    const { svc, tx, planTransition } = make({
+      downgrades: [
+        {
+          tenantId: "t1",
+          planKey: "BUSINESS",
+          planVersionId: "v7",
+          downgradeToPlanKey: "STARTER",
+          retainedUserIds: [],
+        },
+      ],
+    });
+    const order: string[] = [];
+    planTransition.onPlanChange.mockImplementation(async () => {
+      order.push("onPlanChange");
+      return { action: "snapshot", snapshotId: "s1" };
+    });
+    tx.tenantSubscription.update.mockImplementation(async () => {
+      order.push("plan-write");
+      return {};
+    });
+
+    await svc.applyScheduledDowngrades();
+
+    expect(order).toEqual(["onPlanChange", "plan-write"]);
+    const [txArg, transition] = planTransition.onPlanChange.mock.calls[0];
+    expect(txArg).toBe(tx);
+    expect(transition).toMatchObject({
+      tenantId: "t1",
+      fromPlanKey: normalizePlanKey("BUSINESS"), // the stored key, normalised (BUSINESS -> SCALE)
+      toPlanKey: "STARTER",
+      actor: { id: null },
+    });
+  });
+
+  it("flag OFF: the sweep issues exactly its old query (no tenant.plan join) and never touches the hook", async () => {
+    const { svc, prisma, planTransition } = make({
+      downgrades: [
+        {
+          tenantId: "t1",
+          planKey: "BUSINESS",
+          planVersionId: "v7",
+          downgradeToPlanKey: "STARTER",
+          retainedUserIds: [],
+        },
+      ],
+    });
+    planTransition.isEnabled.mockResolvedValue(false);
+
+    await svc.applyScheduledDowngrades();
+
+    const call = prisma.tenantSubscription.findMany.mock.calls.find(
+      (c: any[]) => c[0].where.downgradeEffectiveAt,
+    )!;
+    expect(call[0].select).not.toHaveProperty("tenant");
+    expect(planTransition.prepare).not.toHaveBeenCalled();
+    expect(planTransition.onPlanChange).not.toHaveBeenCalled();
+  });
+
+  it("flag ON: the tenant.plan join is present", async () => {
+    const { svc, prisma } = make({ downgrades: [] });
+
+    await svc.applyScheduledDowngrades();
+
+    const call = prisma.tenantSubscription.findMany.mock.calls.find(
+      (c: any[]) => c[0].where.downgradeEffectiveAt,
+    )!;
+    expect(call[0].select.tenant).toEqual({ select: { plan: true } });
+  });
+
+  it("A2b: a NULL stored planKey resolves the plan being left from tenant.plan, never skips the snapshot", async () => {
+    const { svc, planTransition } = make({
+      downgrades: [
+        {
+          tenantId: "t1",
+          planKey: null,
+          planVersionId: "v7",
+          downgradeToPlanKey: "STARTER",
+          retainedUserIds: [],
+          tenant: { plan: "BUSINESS" },
+        },
+      ],
+    });
+
+    await svc.applyScheduledDowngrades();
+
+    const [, transition] = planTransition.onPlanChange.mock.calls[0];
+    expect(transition.fromPlanKey).toBe(planKeyFromEnum("BUSINESS"));
+  });
+
+  it("A2b: a snapshot failure fails THAT tenant closed (no plan write, no event) but the sweep carries on to the next tenant", async () => {
+    const { svc, tx, planTransition, events } = make({
+      downgrades: [
+        {
+          tenantId: "t1",
+          planKey: "BUSINESS",
+          planVersionId: "v7",
+          downgradeToPlanKey: "STARTER",
+          retainedUserIds: [],
+        },
+        {
+          tenantId: "t2",
+          planKey: "BUSINESS",
+          planVersionId: "v7",
+          downgradeToPlanKey: "STARTER",
+          retainedUserIds: [],
+        },
+      ],
+    });
+    planTransition.onPlanChange
+      .mockRejectedValueOnce(new SnapshotFailedError("t1", new Error("disk full")))
+      .mockResolvedValue({ action: "none" });
+
+    await expect(svc.applyScheduledDowngrades()).resolves.not.toThrow();
+
+    // t1 wrote nothing (fail closed, schedule stays armed for the next tick) ...
+    expect(planTransition.onPlanChange).toHaveBeenCalledTimes(2);
+    // ... and t2, later in the same sweep, was NOT stranded.
+    expect(tx.tenantSubscription.update).toHaveBeenCalledTimes(1);
+    expect(emitted(events).filter((e: string) => e === BILLING_EVENTS.PLAN_CHANGED)).toHaveLength(
+      1,
+    );
+  });
+
+  it("A2b: three snapshot failures in a row are systemic — the sweep aborts as a real cron failure", async () => {
+    const row = (tenantId: string) => ({
+      tenantId,
+      planKey: "BUSINESS",
+      planVersionId: "v7",
+      downgradeToPlanKey: "STARTER",
+      retainedUserIds: [],
+    });
+    const { svc, planTransition, tx } = make({
+      downgrades: [row("t1"), row("t2"), row("t3"), row("t4")],
+    });
+    planTransition.onPlanChange.mockImplementation(
+      async (_tx: unknown, t: { tenantId: string }) => {
+        throw new SnapshotFailedError(t.tenantId, new Error("pool timeout"));
+      },
+    );
+
+    await expect(svc.applyScheduledDowngrades()).rejects.toBeInstanceOf(SnapshotFailedError);
+
+    expect(planTransition.onPlanChange).toHaveBeenCalledTimes(3); // t4 never attempted
+    expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+  });
+
+  it("A2b: any OTHER hook failure still rethrows (pool exhaustion etc. is a real cron failure)", async () => {
+    const { svc, tx, planTransition } = make({
+      downgrades: [
+        {
+          tenantId: "t1",
+          planKey: "BUSINESS",
+          planVersionId: "v7",
+          downgradeToPlanKey: "STARTER",
+          retainedUserIds: [],
+        },
+      ],
+    });
+    planTransition.onPlanChange.mockRejectedValueOnce(new Error("pool exhausted"));
+    await expect(svc.applyScheduledDowngrades()).rejects.toThrow("pool exhausted");
+    expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+  });
+
+  it("A2b: the per-tenant transaction gets the hook's timeout options", async () => {
+    const { svc, prisma, planTransition } = make({
+      downgrades: [
+        {
+          tenantId: "t1",
+          planKey: "BUSINESS",
+          planVersionId: "v7",
+          downgradeToPlanKey: "STARTER",
+          retainedUserIds: [],
+        },
+      ],
+    });
+    const opts = { timeout: 20_000, maxWait: 10_000 };
+    planTransition.transactionOptions.mockReturnValue(opts);
+    await svc.applyScheduledDowngrades();
+    expect(planTransition.transactionOptions).toHaveBeenCalledWith({
+      enabled: true,
+      planAllows: null,
+    });
+    expect(prisma.$transaction.mock.calls.at(-1)[1]).toBe(opts);
   });
 
   it("applyScheduledDowngrades switches plan, frees non-retained seats, emits events", async () => {

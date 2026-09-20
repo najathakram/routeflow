@@ -1011,7 +1011,7 @@ describe("RoutesService", () => {
       // and is never backfilled, so this is behaviour-identical for existing data.
       const EXPECTED_SCHEDULED_WHERE = {
         customerId: "c1",
-        status: { notIn: [OrderStatus.DELIVERED, OrderStatus.CANCELLED] },
+        status: { notIn: [OrderStatus.DRAFT, OrderStatus.DELIVERED, OrderStatus.CANCELLED] },
         routeRunStopId: null,
         fulfillPath: FulfillPath.ROUTE,
       };
@@ -1530,7 +1530,9 @@ describe("RoutesService", () => {
         id: "stop-1",
         routeRunId: "run-1",
         status: "PENDING",
-        orders: [],
+        orders: [
+          { id: "ord-1", status: "PENDING", customerId: "cust-1", orderNumber: "SO-1", total: 50 },
+        ],
       });
       prisma.driver.findFirst.mockResolvedValue(null);
       const txMock = {
@@ -1547,6 +1549,7 @@ describe("RoutesService", () => {
           findFirst: jest
             .fn()
             .mockResolvedValue({ orderId: "ord-1", productId: "prod-1", unitPrice: 10 }),
+          findMany: jest.fn().mockResolvedValue([{ id: "oi-1", orderId: "ord-1", qty: 10 }]),
         },
         deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
         $executeRaw: jest.fn().mockResolvedValue(0),
@@ -2011,6 +2014,8 @@ describe("RoutesService", () => {
         orderItem: {
           ...prisma.orderItem,
           findFirst: jest.fn().mockResolvedValue({ orderId: "ord-1" }),
+          findMany: jest.fn().mockResolvedValue([{ id: "oi-1", orderId: "ord-1", qty: 10 }]),
+
           update: jest.fn().mockResolvedValue({}),
         },
         deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
@@ -2196,6 +2201,8 @@ describe("RoutesService", () => {
         orderItem: {
           ...prisma.orderItem,
           findFirst: jest.fn().mockResolvedValue({ orderId: "ord-1", productId: "prod-1" }),
+          findMany: jest.fn().mockResolvedValue([{ id: "oi-1", orderId: "ord-1", qty: 10 }]),
+
           update: jest.fn().mockResolvedValue({}),
         },
         deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },

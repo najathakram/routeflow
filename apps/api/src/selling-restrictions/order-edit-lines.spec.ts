@@ -78,6 +78,12 @@ describe("sellableLinesForMergeEdit", () => {
     ).toStrictEqual([{ productId: "p9" }]);
   });
 
+  it("an UNREADABLE qty (NaN, Infinity, a string) on an existing line is never 'no change' — checked (COORD: NaN stays checked); null is absent", () => {
+    for (const qty of [Number.NaN, Number.POSITIVE_INFINITY, "5"])
+      expect(merge([line()], items({ id: "li-1", qty }))).toStrictEqual([{ productId: "p1" }]);
+    expect(merge([line()], items({ id: "li-1", qty: null, notes: "x" }))).toEqual([]);
+  });
+
   it("a price / notes / reason-only edit (no quantity) emits nothing", () => {
     expect(
       merge([line()], items({ id: "li-1", action: "UPDATE", unitPrice: 9, notes: "chilled" })),
