@@ -19,6 +19,13 @@ export interface OrderItem {
     unitsPerBox?: number | null; // NEW — boxed-line steppers (at-door adjust, P10-POS-3)
     averageCost?: number | string | null; // NEW
     category?: string | null; // NEW
+    /** Row anatomy (order-ui T1/T8): SKU line + read-time variant-name composition — the order
+     *  detail read (`GET /orders/:id`) selects these. */
+    sku?: string | null;
+    unitSku?: string | null;
+    variantName?: string | null;
+    parentProductId?: string | null;
+    parent?: { name: string } | null;
   };
   qty: number;
   unitPrice: number;
