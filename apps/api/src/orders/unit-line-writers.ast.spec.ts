@@ -110,8 +110,8 @@ const INVENTORY: Record<string, Row> = {
     why: "bulk scope keys a price by productId",
   },
   "invoices/invoices.service.ts::InvoicesService.create": {
-    kind: "PACK_ONLY_CREATE",
-    why: "CreateInvoiceDto carries no unitLabel yet (4c)",
+    kind: "CONVERTED",
+    why: "resolveLineUnits per item; buildManualInvoiceLines builds the unit line (4c-1)",
   },
   "invoices/invoices.service.ts::InvoicesService.createSplitInvoices": {
     kind: "SAFE_COPY",

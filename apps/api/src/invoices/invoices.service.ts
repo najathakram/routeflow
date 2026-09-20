@@ -73,6 +73,8 @@ import { startOfCalendarDay, endOfCalendarDay } from "../common/calendar-date";
 import { lockRowsNoWait } from "../common/db-locks";
 import { NumberingService } from "../import/numbering.service";
 import { buildManualInvoiceLines } from "./manual-invoice-lines";
+import { resolveLineUnits } from "../products/line-units";
+import { prepareUnitLadders } from "../orders/unit-line-build";
 
 const TERM_DAYS: Record<string, number> = {
   "Due on Receipt": 0,
@@ -368,6 +370,7 @@ export class InvoicesService {
             where: { id: { in: productIds } },
             select: {
               id: true,
+              unit: true,
               unitsPerBox: true,
               trackedCategoryId: true,
               trackedSubcategoryId: true,
@@ -375,6 +378,21 @@ export class InvoicesService {
           })
         : [];
     const productMap = new Map(products.map((p) => [p.id, p]));
+    // units_v1 (4c-1): the gate (flag.units_v1) + the server ladder of the products a line names a
+    // unit for, then EVERY line's factor through resolveLineUnits (the pack = today's behaviour).
+    const unitsByProduct = await prepareUnitLadders(dto.items, {
+      isStaff: true, // POST /invoices is OPERATOR+ (RolesGuard)
+      tenantId: this.prisma.getTenantId(),
+      entitlements: this.entitlements,
+      db: this.prisma.forTenant(),
+    });
+    const resolved = dto.items.map((it) =>
+      resolveLineUnits(
+        productMap.get(it.productId ?? "") ?? {},
+        unitsByProduct.get(it.productId ?? "") ?? [],
+        it,
+      ),
+    );
     // RF-4: load the regulated section (TrackedCategory) tax config so a manual
     // invoice's regulated lines carry + owe category tax just like an order-derived one.
     const manualCatIds = [
@@ -395,6 +413,7 @@ export class InvoicesService {
       categoryMap,
       tenantId: this.prisma.getTenantId(),
       clampFreeUnits: (free, boxes, qty) => this.clampLineFreeUnits(free, boxes, qty),
+      resolved,
     });
     let subtotal = linesSubtotal;
     subtotal = roundMoney(subtotal);
