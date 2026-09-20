@@ -157,7 +157,7 @@ export function PreviewDrawer({
                 >
                   <span aria-hidden className={`h-2 w-2 rounded-full ${tone.dot}`} />
                   {panel.title} ({rows.length})
-                  <span className="text-xs font-normal text-slate-500">{panel.hint}</span>
+                  <span className="text-xs font-normal text-slate-400">{panel.hint}</span>
                 </h4>
                 <ul className="mt-2 flex flex-col gap-2">
                   {rows.map((row) => (
@@ -169,7 +169,7 @@ export function PreviewDrawer({
           })}
         </div>
       )}
-      {note && <p className="mt-3 text-xs text-slate-500">{note}</p>}
+      {note && <p className="mt-3 text-xs text-slate-400">{note}</p>}
     </AdminModal>
   );
 }
@@ -191,7 +191,7 @@ function DiffRow({ row }: { row: PreviewRow }) {
           </span>
         )}
         {after?.mode && before?.mode && after.mode.effective !== before.mode.effective && (
-          <span className="text-slate-500">
+          <span className="text-slate-400">
             mode: {before.mode.effective} → {after.mode.effective}
           </span>
         )}
@@ -205,5 +205,5 @@ function DiffRow({ row }: { row: PreviewRow }) {
 
 function StateChip({ on }: { on?: boolean }) {
   // Text, not colour alone — "On"/"Off" are the accessible names.
-  return <span className={on ? "text-emerald-400" : "text-slate-500"}>{on ? "On" : "Off"}</span>;
+  return <span className={on ? "text-emerald-400" : "text-slate-400"}>{on ? "On" : "Off"}</span>;
 }

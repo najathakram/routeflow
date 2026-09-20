@@ -299,7 +299,7 @@ export default function BuyerDetailPage() {
 
   if (loading) {
     return (
-      <div className="flex h-64 items-center justify-center text-slate-500">
+      <div className="flex h-64 items-center justify-center text-slate-400">
         Loading buyer account...
       </div>
     );
@@ -353,7 +353,7 @@ export default function BuyerDetailPage() {
               )}
             </div>
             <p className="mt-1 text-sm text-slate-400">{buyer.email}</p>
-            <p className="mt-0.5 text-xs text-slate-600">
+            <p className="mt-0.5 text-xs text-slate-400">
               Joined {new Date(buyer.createdAt).toLocaleDateString()} · ID: {buyer.id}
             </p>
           </div>
@@ -496,7 +496,7 @@ export default function BuyerDetailPage() {
           <div className="mt-4 flex items-center justify-between">
             <button
               onClick={fetchBuyer}
-              className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300"
+              className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-300"
             >
               <RefreshCw className="h-3.5 w-3.5" /> Reset changes
             </button>
@@ -512,7 +512,7 @@ export default function BuyerDetailPage() {
 
           {/* Account metadata */}
           <div className="mt-6 border-t border-slate-700 pt-4">
-            <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+            <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">
               Account Info
             </h3>
             <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
@@ -525,7 +525,7 @@ export default function BuyerDetailPage() {
                 { label: "Google Account", value: "Check DB" },
               ].map((item) => (
                 <div key={item.label}>
-                  <dt className="text-xs text-slate-500">{item.label}</dt>
+                  <dt className="text-xs text-slate-400">{item.label}</dt>
                   <dd
                     className={`mt-0.5 ${item.mono ? "font-mono text-xs text-slate-400" : "text-white"}`}
                   >
@@ -557,8 +557,8 @@ export default function BuyerDetailPage() {
           {/* Active links */}
           {buyer.customerLinks.length === 0 ? (
             <div className="rounded-xl bg-slate-800 p-10 text-center ring-1 ring-white/5">
-              <Link2 className="mx-auto mb-3 h-8 w-8 text-slate-600" />
-              <p className="text-sm text-slate-500">No seller connections yet.</p>
+              <Link2 className="mx-auto mb-3 h-8 w-8 text-slate-400" />
+              <p className="text-sm text-slate-400">No seller connections yet.</p>
               <button
                 onClick={openAddLink}
                 className="mt-3 text-sm text-indigo-400 hover:text-indigo-300"
@@ -570,7 +570,7 @@ export default function BuyerDetailPage() {
             <div className="rounded-xl bg-slate-800 ring-1 ring-white/5 overflow-hidden">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
+                  <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-400">
                     <th className="px-4 py-3 text-left">Seller (Tenant)</th>
                     <th className="px-4 py-3 text-left">Customer Record</th>
                     <th className="px-4 py-3 text-left">Status</th>
@@ -583,19 +583,19 @@ export default function BuyerDetailPage() {
                     <tr key={link.id} className="hover:bg-slate-700/20 transition-colors">
                       <td className="px-4 py-3">
                         <div className="font-medium text-white">{link.tenant.name}</div>
-                        <div className="font-mono text-xs text-slate-500">{link.tenant.slug}</div>
+                        <div className="font-mono text-xs text-slate-400">{link.tenant.slug}</div>
                       </td>
                       <td className="px-4 py-3 text-slate-300">
-                        {link.customer.businessName ?? <span className="text-slate-600">—</span>}
+                        {link.customer.businessName ?? <span className="text-slate-400">—</span>}
                       </td>
                       <td className="px-4 py-3">
                         <AdminBadge>{link.status}</AdminBadge>
                       </td>
-                      <td className="px-4 py-3 text-slate-500">
+                      <td className="px-4 py-3 text-slate-400">
                         {link.linkedAt ? (
                           new Date(link.linkedAt).toLocaleDateString()
                         ) : (
-                          <span className="text-slate-600">—</span>
+                          <span className="text-slate-400">—</span>
                         )}
                       </td>
                       <td className="px-4 py-3">
@@ -684,7 +684,7 @@ export default function BuyerDetailPage() {
               Select Seller (Tenant)
             </label>
             {tenantsLoading ? (
-              <div className="text-sm text-slate-500">Loading tenants...</div>
+              <div className="text-sm text-slate-400">Loading tenants...</div>
             ) : (
               <select
                 aria-label="Select Seller (Tenant)"
@@ -709,9 +709,9 @@ export default function BuyerDetailPage() {
                 Select Customer Record in this Seller
               </label>
               {customersLoading ? (
-                <div className="text-sm text-slate-500">Loading customers...</div>
+                <div className="text-sm text-slate-400">Loading customers...</div>
               ) : tenantCustomers.length === 0 ? (
-                <div className="text-sm text-slate-500">
+                <div className="text-sm text-slate-400">
                   No customers found in this tenant. Ask the seller to create a customer record
                   first.
                 </div>

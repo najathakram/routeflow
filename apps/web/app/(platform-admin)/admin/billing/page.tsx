@@ -92,7 +92,7 @@ export default function BillingPage() {
   }, []);
 
   if (loading)
-    return <div className="p-6 py-12 text-center text-slate-500">Loading billing data...</div>;
+    return <div className="p-6 py-12 text-center text-slate-400">Loading billing data...</div>;
   if (error)
     return (
       <div className="p-6">
@@ -253,7 +253,7 @@ export default function BillingPage() {
         actions={
           <>
             <div className="relative">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
               <input
                 aria-label="Search subscriptions"
                 value={search}
@@ -310,7 +310,7 @@ export default function BillingPage() {
         <div className="overflow-x-auto" role="region" aria-label="All subscriptions" tabIndex={0}>
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
+              <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-400">
                 <th className="px-4 py-3 text-left">Tenant</th>
                 <th className="px-4 py-3 text-left">Status</th>
                 <th className="px-4 py-3 text-left">Plan</th>
@@ -333,7 +333,7 @@ export default function BillingPage() {
                     <td className="px-4 py-3">
                       <div>
                         <span className="text-white">{s.tenantName ?? s.tenantSlug}</span>
-                        <span className="block text-xs font-mono text-slate-500">
+                        <span className="block text-xs font-mono text-slate-400">
                           {s.tenantSlug}
                         </span>
                       </div>
@@ -358,10 +358,10 @@ export default function BillingPage() {
                       {s.cancelAtPeriodEnd ? (
                         <span className="text-red-400 text-xs font-medium">Yes</span>
                       ) : (
-                        <span className="text-slate-600 text-xs">No</span>
+                        <span className="text-slate-400 text-xs">No</span>
                       )}
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs text-slate-500">
+                    <td className="px-4 py-3 font-mono text-xs text-slate-400">
                       {s.stripeCustomerId?.slice(0, 18) ?? "—"}
                     </td>
                     <td className="px-4 py-3">
@@ -377,7 +377,7 @@ export default function BillingPage() {
               })}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-slate-500">
+                  <td colSpan={7} className="px-4 py-10 text-center text-slate-400">
                     {data.subscriptions.length === 0
                       ? "No subscription records found."
                       : "No subscriptions match your filters."}

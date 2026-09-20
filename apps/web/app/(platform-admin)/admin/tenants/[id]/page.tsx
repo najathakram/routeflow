@@ -248,7 +248,7 @@ function TenantAdminSection({
             ],
           ].map(([label, value]) => (
             <div key={String(label)} className="flex justify-between items-center">
-              <dt className="text-slate-500">{label}</dt>
+              <dt className="text-slate-400">{label}</dt>
               <dd>{value}</dd>
             </div>
           ))}
@@ -256,7 +256,7 @@ function TenantAdminSection({
       ) : (
         <div className="rounded-lg border border-dashed border-red-700/40 bg-red-900/10 p-4 text-center">
           <p className="text-sm font-semibold text-red-400">No admin account found</p>
-          <p className="mt-1 text-xs text-slate-500">
+          <p className="mt-1 text-xs text-slate-400">
             This tenant cannot be impersonated until an admin account exists.
           </p>
           {!showCreateForm ? (
@@ -291,7 +291,7 @@ function TenantAdminSection({
                   className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
                 />
               </div>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-slate-400">
                 A temporary password will be auto-generated and emailed to the admin.
               </p>
               <div className="flex gap-2">
@@ -362,19 +362,19 @@ function OverviewTab({
       {/* At-a-glance KPIs */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:col-span-2">
         <div className="rounded-xl bg-slate-800 p-5 ring-1 ring-white/5">
-          <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Est. MRR</p>
+          <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Est. MRR</p>
           <p className="mt-2 text-2xl font-bold text-white">{usd(tenant.estMrrUsd ?? 0)}</p>
-          <p className="mt-1 text-xs text-slate-500">{planLabel(tenant.plan)} · stopgap estimate</p>
+          <p className="mt-1 text-xs text-slate-400">{planLabel(tenant.plan)} · stopgap estimate</p>
         </div>
         <div className="rounded-xl bg-slate-800 p-5 ring-1 ring-white/5">
-          <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Orders, 30d</p>
+          <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Orders, 30d</p>
           <p className="mt-2 text-2xl font-bold text-white">{tenant.orders30d ?? 0}</p>
-          <p className="mt-1 text-xs text-slate-500">Placed in the last 30 days</p>
+          <p className="mt-1 text-xs text-slate-400">Placed in the last 30 days</p>
         </div>
         <div className="rounded-xl bg-slate-800 p-5 ring-1 ring-white/5">
-          <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Users</p>
+          <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Users</p>
           <p className="mt-2 text-2xl font-bold text-white">{tenant.counts?.users ?? 0}</p>
-          <p className="mt-1 text-xs text-slate-500">Across this workspace</p>
+          <p className="mt-1 text-xs text-slate-400">Across this workspace</p>
         </div>
       </div>
 
@@ -415,13 +415,13 @@ function OverviewTab({
             ],
           ].map(([label, value]) => (
             <div key={String(label)} className="flex justify-between items-center">
-              <dt className="text-slate-500">{label}</dt>
+              <dt className="text-slate-400">{label}</dt>
               <dd>{value}</dd>
             </div>
           ))}
           {tenant.trialEndsAt && (
             <div className="flex justify-between items-center">
-              <dt className="text-slate-500">Trial Ends</dt>
+              <dt className="text-slate-400">Trial Ends</dt>
               <dd>
                 <TrialEndsBadge trialEndsAt={tenant.trialEndsAt} />
               </dd>
@@ -429,7 +429,7 @@ function OverviewTab({
           )}
           {tenant.primaryColor && (
             <div className="flex justify-between items-center">
-              <dt className="text-slate-500">Brand color</dt>
+              <dt className="text-slate-400">Brand color</dt>
               <dd className="flex items-center gap-2">
                 <span
                   className="inline-block h-3.5 w-3.5 rounded ring-1 ring-white/10"
@@ -441,19 +441,19 @@ function OverviewTab({
           )}
           {tenant.counts && (
             <div className="flex justify-between items-center">
-              <dt className="text-slate-500">Linked buyers</dt>
+              <dt className="text-slate-400">Linked buyers</dt>
               <dd className="font-mono text-slate-300">{tenant.counts.customerLinks}</dd>
             </div>
           )}
           {sub?.periodEnd && (
             <div className="flex justify-between items-center">
-              <dt className="text-slate-500">Next renewal</dt>
+              <dt className="text-slate-400">Next renewal</dt>
               <dd className="text-slate-300">{new Date(sub.periodEnd).toLocaleDateString()}</dd>
             </div>
           )}
           {paymentMethodLabel && (
             <div className="flex justify-between items-center">
-              <dt className="text-slate-500">Payment method</dt>
+              <dt className="text-slate-400">Payment method</dt>
               <dd className="text-slate-300">{paymentMethodLabel}</dd>
             </div>
           )}
@@ -475,7 +475,7 @@ function OverviewTab({
             ).map(([label, count]) => (
               <div key={label} className="rounded-lg bg-slate-700/50 p-3 text-center">
                 <p className="text-lg font-bold text-white">{count}</p>
-                <p className="text-xs text-slate-500">{label}</p>
+                <p className="text-xs text-slate-400">{label}</p>
               </div>
             ))}
           </div>
@@ -555,7 +555,7 @@ function OverviewTab({
 
         {/* Extend Trial */}
         <div className="mt-5 border-t border-slate-700 pt-4">
-          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">
             Extend Trial
           </h3>
           <div className="flex items-center gap-3">
@@ -581,7 +581,7 @@ function OverviewTab({
 
         {/* Reset Admin Password */}
         <div className="mt-4 border-t border-slate-700 pt-4">
-          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">
             Admin Password Reset
           </h3>
           {!showResetConfirm ? (
@@ -664,7 +664,7 @@ function OverviewTab({
         noPadding
       >
         {recentLogs.length === 0 ? (
-          <p className="px-5 py-6 text-sm text-slate-500">No audit log entries for this tenant.</p>
+          <p className="px-5 py-6 text-sm text-slate-400">No audit log entries for this tenant.</p>
         ) : (
           <div
             className="overflow-x-auto"
@@ -674,7 +674,7 @@ function OverviewTab({
           >
             <table className="w-full text-xs">
               <thead>
-                <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
+                <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-400">
                   <th className="px-4 py-2.5 text-left">Action</th>
                   <th className="px-4 py-2.5 text-left">Entity</th>
                   <th className="px-4 py-2.5 text-left">User</th>
@@ -699,12 +699,12 @@ function OverviewTab({
                           )}
                         </span>
                       ) : (
-                        <span className="font-mono text-slate-500">
+                        <span className="font-mono text-slate-400">
                           {log.userId?.slice(0, 8) ?? "—"}
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-2 text-slate-500">
+                    <td className="px-4 py-2 text-slate-400">
                       {new Date(log.createdAt).toLocaleString()}
                     </td>
                   </tr>
@@ -849,36 +849,36 @@ function BillingTab({
               </div>
             )}
             <div className="flex justify-between">
-              <dt className="text-slate-500">Plan</dt>
+              <dt className="text-slate-400">Plan</dt>
               <dd className="text-white">{sub.currentPlan}</dd>
             </div>
             {sub.periodStart && (
               <div className="flex justify-between">
-                <dt className="text-slate-500">Period Start</dt>
+                <dt className="text-slate-400">Period Start</dt>
                 <dd className="text-slate-300">{new Date(sub.periodStart).toLocaleDateString()}</dd>
               </div>
             )}
             {sub.periodEnd && (
               <div className="flex justify-between">
-                <dt className="text-slate-500">Period End</dt>
+                <dt className="text-slate-400">Period End</dt>
                 <dd className="text-slate-300">{new Date(sub.periodEnd).toLocaleDateString()}</dd>
               </div>
             )}
             <div className="flex justify-between">
-              <dt className="text-slate-500">Cancel Pending</dt>
+              <dt className="text-slate-400">Cancel Pending</dt>
               <dd className={sub.cancelAtPeriodEnd ? "text-red-400" : "text-green-400"}>
                 {sub.cancelAtPeriodEnd ? "Yes" : "No"}
               </dd>
             </div>
             {sub.externalPaymentRef && (
               <div className="flex justify-between">
-                <dt className="text-slate-500">Payment Ref</dt>
+                <dt className="text-slate-400">Payment Ref</dt>
                 <dd className="font-mono text-xs text-slate-300">{sub.externalPaymentRef}</dd>
               </div>
             )}
             {sub.externalPaymentNotes && (
               <div className="flex flex-col gap-1">
-                <dt className="text-slate-500">Notes</dt>
+                <dt className="text-slate-400">Notes</dt>
                 <dd className="rounded bg-slate-700/50 px-3 py-2 text-xs text-slate-300">
                   {sub.externalPaymentNotes}
                 </dd>
@@ -886,13 +886,13 @@ function BillingTab({
             )}
             {sub.stripeCustomerId && (
               <div className="flex justify-between">
-                <dt className="text-slate-500">Stripe ID</dt>
+                <dt className="text-slate-400">Stripe ID</dt>
                 <dd className="font-mono text-xs text-slate-400">{sub.stripeCustomerId}</dd>
               </div>
             )}
           </dl>
         ) : (
-          <p className="text-sm text-slate-500">No subscription record yet.</p>
+          <p className="text-sm text-slate-400">No subscription record yet.</p>
         )}
       </AdminCard>
 
@@ -978,7 +978,7 @@ function BillingTab({
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-400">
               Transaction / Confirmation Reference{" "}
-              <span className="text-slate-600">(optional)</span>
+              <span className="text-slate-400">(optional)</span>
             </label>
             <input
               aria-label="Transaction / confirmation reference"
@@ -993,7 +993,7 @@ function BillingTab({
           {/* Notes */}
           <div className="sm:col-span-2">
             <label className="mb-1 block text-xs font-medium text-slate-400">
-              Notes <span className="text-slate-600">(optional)</span>
+              Notes <span className="text-slate-400">(optional)</span>
             </label>
             <input
               aria-label="Notes"
@@ -1014,7 +1014,7 @@ function BillingTab({
             >
               {activating ? "Activating..." : "Activate Subscription"}
             </button>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-slate-400">
               This will set the tenant status to <strong className="text-slate-300">ACTIVE</strong>{" "}
               and record the selected payment method.
             </p>
@@ -1309,7 +1309,7 @@ export const FeatureOverridesSection = React.forwardRef<
       )}
 
       {loading ? (
-        <div className="py-8 text-center text-slate-500">Loading overrides...</div>
+        <div className="py-8 text-center text-slate-400">Loading overrides...</div>
       ) : (
         <div className="rounded-xl bg-slate-800 ring-1 ring-white/5 overflow-hidden">
           <div
@@ -1320,7 +1320,7 @@ export const FeatureOverridesSection = React.forwardRef<
           >
             <table className="w-full text-xs">
               <thead>
-                <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
+                <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-400">
                   <th className="px-4 py-3 text-left">Feature Key</th>
                   <th className="px-4 py-3 text-left">Effect</th>
                   <th className="px-4 py-3 text-left">Reason</th>
@@ -1351,7 +1351,7 @@ export const FeatureOverridesSection = React.forwardRef<
                       <td className="px-4 py-2 text-slate-400" title={o.reason}>
                         {o.reason}
                       </td>
-                      <td className="px-4 py-2 text-slate-500">
+                      <td className="px-4 py-2 text-slate-400">
                         {o.expiresAt ? new Date(o.expiresAt).toLocaleDateString() : "Standing"}
                       </td>
                       <td className="px-4 py-2">
@@ -1375,7 +1375,7 @@ export const FeatureOverridesSection = React.forwardRef<
                 })}
                 {activeOverrides.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-4 py-10 text-center text-slate-500">
+                    <td colSpan={6} className="px-4 py-10 text-center text-slate-400">
                       No active overrides.
                     </td>
                   </tr>
@@ -1584,7 +1584,7 @@ function ConfigTab({ tenant }: { tenant: TenantDetail }) {
       <dl className="mb-6 flex flex-col gap-3 text-sm">
         {readOnlyFields.map(([label, value]) => (
           <div key={label} className="flex items-center justify-between">
-            <dt className="text-slate-500">{label}</dt>
+            <dt className="text-slate-400">{label}</dt>
             <dd className="text-white">
               {label === "Primary Color" && value ? (
                 <span className="flex items-center gap-2">
@@ -1595,7 +1595,7 @@ function ConfigTab({ tenant }: { tenant: TenantDetail }) {
                   {value}
                 </span>
               ) : (
-                (value ?? <span className="text-slate-600">Not set</span>)
+                (value ?? <span className="text-slate-400">Not set</span>)
               )}
             </dd>
           </div>
@@ -1651,7 +1651,7 @@ function AuditLogTab({ tenantId }: { tenantId: string }) {
       .finally(() => setLoading(false));
   }, [tenantId, page]);
 
-  if (loading) return <div className="py-8 text-center text-slate-500">Loading audit logs...</div>;
+  if (loading) return <div className="py-8 text-center text-slate-400">Loading audit logs...</div>;
 
   return (
     <div>
@@ -1659,7 +1659,7 @@ function AuditLogTab({ tenantId }: { tenantId: string }) {
         <div className="overflow-x-auto" role="region" aria-label="Audit log entries" tabIndex={0}>
           <table className="w-full text-xs">
             <thead>
-              <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
+              <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-400">
                 <th className="px-4 py-3 text-left">Action</th>
                 <th className="px-4 py-3 text-left">Entity Type</th>
                 <th className="px-4 py-3 text-left">Entity ID</th>
@@ -1675,7 +1675,7 @@ function AuditLogTab({ tenantId }: { tenantId: string }) {
                     {log.actionLabel ?? log.action}
                   </td>
                   <td className="px-4 py-2 text-slate-400">{log.entityType}</td>
-                  <td className="px-4 py-2 font-mono text-slate-500">
+                  <td className="px-4 py-2 font-mono text-slate-400">
                     {log.entityId?.slice(0, 8) ?? "—"}
                   </td>
                   <td className="px-4 py-2 text-slate-400">
@@ -1689,20 +1689,20 @@ function AuditLogTab({ tenantId }: { tenantId: string }) {
                         )}
                       </span>
                     ) : (
-                      <span className="font-mono text-slate-500">
+                      <span className="font-mono text-slate-400">
                         {log.userId?.slice(0, 8) ?? "—"}
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-2 text-slate-500">
+                  <td className="px-4 py-2 text-slate-400">
                     {new Date(log.createdAt).toLocaleString()}
                   </td>
-                  <td className="px-4 py-2 text-slate-500">{log.ip ?? "—"}</td>
+                  <td className="px-4 py-2 text-slate-400">{log.ip ?? "—"}</td>
                 </tr>
               ))}
               {logs.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-10 text-center text-slate-500">
+                  <td colSpan={6} className="px-4 py-10 text-center text-slate-400">
                     No audit log entries.
                   </td>
                 </tr>
@@ -1720,7 +1720,7 @@ function AuditLogTab({ tenantId }: { tenantId: string }) {
           >
             Prev
           </button>
-          <span className="text-sm text-slate-500">
+          <span className="text-sm text-slate-400">
             Page {page} of {meta.pages}
           </span>
           <button
@@ -1842,7 +1842,7 @@ export default function AdminTenantDetailPage() {
     }
   };
 
-  if (loading) return <div className="p-6 text-center text-slate-500">Loading tenant...</div>;
+  if (loading) return <div className="p-6 text-center text-slate-400">Loading tenant...</div>;
 
   if (error || !tenant) {
     return (
@@ -1867,12 +1867,12 @@ export default function AdminTenantDetailPage() {
         <Link href="/admin/tenants" className="text-sm text-slate-400 hover:text-slate-300">
           Tenants
         </Link>
-        <span className="text-slate-600">/</span>
+        <span className="text-slate-400">/</span>
         <h1 className="text-xl font-bold text-white">{tenant.businessName ?? tenant.name}</h1>
         <AdminBadge>{tenant.status}</AdminBadge>
         <AdminBadge variant="plan">{tenant.plan}</AdminBadge>
       </div>
-      <p className="mb-4 text-sm text-slate-500">
+      <p className="mb-4 text-sm text-slate-400">
         <span className="font-mono">{tenant.slug}</span>.routeflow.info · created{" "}
         {new Date(tenant.createdAt).toLocaleDateString()}
         {tenant.counts ? ` · ${tenant.counts.users} users` : ""}
