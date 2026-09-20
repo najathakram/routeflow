@@ -3,6 +3,9 @@ import { FEATURE_REGISTRY } from "./feature-registry";
 import { PLAN_KEYS } from "./plan-catalog.constants";
 import {
   AUTO_RESTORE_MAX_AGE_DAYS,
+  AUTO_RESTORE_MAX_ROWS,
+  AUTO_RESTORE_TIME_BUDGET_MS,
+  RestoreBudgetExceededError,
   TenantConfigSnapshotService,
 } from "./tenant-config-snapshot.service";
 
@@ -463,5 +466,62 @@ describe("TenantConfigSnapshotService — restore reports honestly and only cons
     const res = await svc.restoreLatest(tx, TENANT, HIGH, NOW);
 
     expect(res?.report).toEqual({ restored: 0, skipped: 0, keptNewer: 1, unchanged: 0 });
+  });
+});
+
+describe("TenantConfigSnapshotService — the automatic restore is bounded (row cap + time budget)", () => {
+  const svc = new TenantConfigSnapshotService();
+
+  async function twoRowSnapshot() {
+    const seeded = fakeTx({ configs: [cfgRow()], overrides: [ovrRow()] });
+    await svc.snapshot(seeded.tx, TENANT, HIGH, "DOWNGRADE", undefined, T0);
+    const { tx, state } = fakeTx();
+    state.snapshots.push(...seeded.state.snapshots);
+    return { tx, state };
+  }
+
+  it("the defaults are finite and sane", () => {
+    expect(AUTO_RESTORE_MAX_ROWS).toBeGreaterThan(0);
+    expect(AUTO_RESTORE_MAX_ROWS).toBeLessThanOrEqual(1000);
+    expect(AUTO_RESTORE_TIME_BUDGET_MS).toBeGreaterThan(0);
+    expect(AUTO_RESTORE_TIME_BUDGET_MS).toBeLessThan(10_000);
+  });
+
+  it("a restore over the row cap is refused BEFORE any write and leaves the snapshot un-restored", async () => {
+    const { tx, state } = await twoRowSnapshot();
+
+    await expect(
+      svc.restoreLatest(tx, TENANT, HIGH, NOW, undefined, { maxRows: 1, timeBudgetMs: 60_000 }),
+    ).rejects.toBeInstanceOf(RestoreBudgetExceededError);
+
+    expect(state.configs).toHaveLength(0);
+    expect(state.overrides).toHaveLength(0);
+    expect(state.snapshots[0].restoredAt).toBeNull(); // still there for an explicit "Restore now"
+  });
+
+  it("exactly at the cap is allowed", async () => {
+    const { tx, state } = await twoRowSnapshot();
+    const res = await svc.restoreLatest(tx, TENANT, HIGH, NOW, undefined, {
+      maxRows: 2,
+      timeBudgetMs: 60_000,
+    });
+    expect(res?.report.restored).toBe(2);
+    expect(state.snapshots[0].restoredAt).not.toBeNull();
+  });
+
+  it("a restore that outlives its time budget is abandoned mid-way with the typed error (the caller's savepoint undoes it)", async () => {
+    const { tx, state } = await twoRowSnapshot();
+    let t = 0;
+    const clock = () => (t += 5_000); // every look at the clock costs 5 s
+
+    await expect(
+      svc.restoreLatest(tx, TENANT, HIGH, NOW, undefined, {
+        maxRows: 100,
+        timeBudgetMs: 1_000,
+        clock,
+      }),
+    ).rejects.toBeInstanceOf(RestoreBudgetExceededError);
+
+    expect(state.snapshots[0].restoredAt).toBeNull();
   });
 });
