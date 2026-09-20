@@ -29,7 +29,7 @@ import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 
 /**
  * B585 — the credit check when an order goes OUT for delivery (operator `changeStatus` to
- * OUT_FOR_DELIVERY), behind the per-tenant switch #1043 introduced: absent = OFF (one switch read,
+ * OUT_FOR_DELIVERY, or a counter hand-over CONFIRMED -> DELIVERED), behind the per-tenant switch #1043 introduced: absent = OFF (one switch read,
  * nothing else), "dark" = observe, "true" = enforce. It runs BEFORE any write, so nothing is half
  * committed. The driver's stop completion (`RoutesService`) is deliberately NOT gated.
  */
@@ -218,6 +218,70 @@ describe("OrdersService.changeStatus — B585 credit check at delivery", () => {
 
     expect(prisma.systemConfig.findFirst).not.toHaveBeenCalled();
     expect(prisma.invoice.findMany).not.toHaveBeenCalled();
+  });
+
+  describe("a counter hand-over, CONFIRMED -> DELIVERED, is goods leaving too (the van-sale flow never sets OUT_FOR_DELIVERY)", () => {
+    const handOver = (from = "CONFIRMED", user = operator) => {
+      prisma.order.findUnique.mockResolvedValue({ ...ORDER, status: from });
+      prisma.order.update.mockResolvedValue({ ...ORDER, status: "DELIVERED" });
+      return out(user, "DELIVERED");
+    };
+
+    it("ENFORCED and over the limit: refused 409 with the figures, BEFORE any write", async () => {
+      setSwitch("true");
+      overLimit();
+      const err = await handOver().catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(ConflictException);
+      expect((err as ConflictException).getResponse()).toMatchObject({
+        code: "CREDIT_LIMIT_EXCEEDED",
+        limit: 100,
+        exposure: 110,
+      });
+      expect(prisma.order.update).not.toHaveBeenCalled();
+    });
+
+    it("ENFORCED and within the limit, the order itself counted once: it is handed over", async () => {
+      setSwitch("true");
+      prisma.customer.findFirst.mockResolvedValue({ creditLimit: 100 });
+      prisma.invoice.findMany.mockResolvedValue([sent(40)]);
+      prisma.order.findMany.mockResolvedValue([{ id: "ord-1", total: 50 }]); // itself, CONFIRMED
+      await expect(handOver()).resolves.toMatchObject({ status: "DELIVERED" });
+    });
+
+    it("OFF: ONE switch read, no derivation; DARK: allowed with exactly one would-deny line", async () => {
+      setSwitch(null);
+      overLimit();
+      await expect(handOver()).resolves.toMatchObject({ status: "DELIVERED" });
+      expect(prisma.systemConfig.findFirst).toHaveBeenCalledTimes(1);
+      expect(prisma.invoice.findMany).not.toHaveBeenCalled();
+
+      setSwitch("dark");
+      await expect(handOver()).resolves.toMatchObject({ status: "DELIVERED" });
+      const lines = warn.mock.calls
+        .map((c) => String(c[0]))
+        .filter((m) => m.includes("would DENY"));
+      expect(lines).toHaveLength(1);
+    });
+
+    it.each(["OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED"])(
+      "an order already %s was gated on its way out: DELIVERED never re-reads the switch",
+      async (from) => {
+        setSwitch("true");
+        overLimit();
+        await expect(handOver(from)).resolves.toMatchObject({ status: "DELIVERED" });
+        expect(prisma.systemConfig.findFirst).not.toHaveBeenCalled();
+        expect(prisma.invoice.findMany).not.toHaveBeenCalled();
+      },
+    );
+
+    it("a DRIVER cannot reach it: refused by the role gate before the switch is read", async () => {
+      setSwitch("true");
+      overLimit();
+      await expect(handOver("CONFIRMED", driver)).rejects.toThrow(/Drivers can only confirm/);
+      expect(prisma.systemConfig.findFirst).not.toHaveBeenCalled();
+      expect(prisma.order.update).not.toHaveBeenCalled();
+    });
   });
 
   it("the driver's route-stop completion is NOT gated: RoutesService never touches the credit gate", () => {
