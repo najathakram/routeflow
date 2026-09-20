@@ -477,6 +477,11 @@ export class OrdersService implements OnApplicationBootstrap {
    * P5-04: PROMO lines are excluded — a promotion's net price is transient
    * (window-bound) and must NOT become the customer's remembered operator price,
    * or an expired promo price would silently pre-fill future operator orders.
+   *
+   * B606: unit-aware lines (`unitLabel` set) are excluded for the same reason — a Case line's
+   * price is per-CASE money that only means something with its unit. Remembered as the
+   * product's price it would price a plain pack line at the Case price (2 boxes at $450 each),
+   * and `distinct: productId` would let a newer Case row shadow a real pack override.
    */
   async getCustomerPriceHistory(
     customerId: string,
@@ -489,6 +494,7 @@ export class OrdersService implements OnApplicationBootstrap {
         },
         originalPrice: { not: null },
         priceType: { not: PriceType.PROMO },
+        unitLabel: null,
       },
       // Order by updatedAt so the MOST RECENTLY SAVED override wins — editing a
       // line's price on any order and saving makes it the customer's remembered

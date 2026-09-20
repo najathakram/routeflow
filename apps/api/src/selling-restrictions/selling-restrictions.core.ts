@@ -129,6 +129,19 @@ export function restrictedSummary(lines: readonly BlockedLine[]): string {
 }
 
 /**
+ * The one sentence a BUYER-channel 409 carries (B612). Built from product NAMES only — never from a
+ * line's own `message`, which quotes the rule (its admin-entered reason, the state). One product is
+ * named; several are counted and the first few named; none falls back to a generic line.
+ */
+export function buyerRestrictedSummary(lines: readonly { productName: string }[]): string {
+  if (lines.length === 0) return "Some items on this order can't be ordered right now.";
+  if (lines.length === 1) return `"${lines[0].productName}" can't be ordered right now.`;
+  const names = lines.slice(0, SUMMARY_NAMES).map((l) => `"${l.productName}"`);
+  const more = lines.length - names.length;
+  return `${lines.length} items on this order can't be ordered right now: ${names.join(", ")}${more > 0 ? ` and ${more} more` : ""}.`;
+}
+
+/**
  * A rule is active at `at` when inside its [effectiveFrom, effectiveTo) window and not lifted.
  * Lifting stamps `liftedAt` (and closes `effectiveTo`); a lift dated after `at` doesn't
  * retroactively deactivate the rule for a point-in-time check.
