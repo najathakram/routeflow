@@ -785,6 +785,8 @@ describe("CustomersService", () => {
   describe("updateAddress", () => {
     beforeEach(() => {
       prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
+      // the stored address (updateAddress 404s a missing one and reads its state columns)
+      prisma.customerAddress.findFirst.mockResolvedValue({ state: "Texas", stateCode: "TX" });
     });
 
     it("passes addressType through to the update data (no field-picking omits it)", async () => {
