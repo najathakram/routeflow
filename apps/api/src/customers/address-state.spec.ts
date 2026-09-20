@@ -1,9 +1,10 @@
-import { addressStateFields } from "./address-state";
+import { AMBIGUOUS_STATE_TEXTS, addressStateFields } from "./address-state";
 
 /**
  * F4 — `addressStateFields` derives the two `CustomerAddress` columns the selling-restrictions
- * engine reads (it reads ONLY `stateCode`) from the free-text `state`. The writers that spread it
- * are pinned in `customers.address-state-writers.spec.ts`.
+ * engine reads (it reads ONLY `stateCode`) from the free-text `state`, and never guesses: an
+ * AMBIGUOUS text ("Washington", "Oregon", ...) is unresolved. The writers that spread it are pinned
+ * in `customers.address-state-writers.spec.ts`.
  */
 describe("addressStateFields", () => {
   it.each([
@@ -12,7 +13,7 @@ describe("addressStateFields", () => {
     [" TX ", "TX"],
     ["tx", "TX"],
     ["New York", "NY"],
-    ["california", "CA"],
+    ["colorado", "CO"],
   ])("%j resolves to %s and needs no review", (state, code) => {
     expect(addressStateFields(state)).toEqual({ stateCode: code, stateNeedsReview: false });
   });
@@ -26,4 +27,60 @@ describe("addressStateFields", () => {
       });
     },
   );
+});
+
+describe("addressStateFields never guesses an AMBIGUOUS text (lead ruling, #988)", () => {
+  const exactNames = [
+    "Washington",
+    "Kansas",
+    "Indiana",
+    "Delaware",
+    "Oregon",
+    "Nevada",
+    "Wyoming",
+    "Virginia",
+    "California",
+    "Louisiana",
+    "Florida",
+    "Georgia",
+  ];
+
+  it.each(exactNames)(
+    "%s alone is UNRESOLVED (null + needs review): a city of that name exists elsewhere",
+    (name) => {
+      for (const text of [name, name.toUpperCase(), ` ${name.toLowerCase()} `])
+        expect(addressStateFields(text)).toEqual({ stateCode: null, stateNeedsReview: true });
+    },
+  );
+
+  it("a bare 2-letter code is never ambiguous, and an unambiguous name still resolves", () => {
+    expect(addressStateFields("LA")).toEqual({ stateCode: "LA", stateNeedsReview: false });
+    expect(addressStateFields("WA")).toEqual({ stateCode: "WA", stateNeedsReview: false });
+    expect(addressStateFields("Texas")).toEqual({ stateCode: "TX", stateNeedsReview: false });
+    expect(addressStateFields("West Virginia")).toEqual({
+      stateCode: "WV",
+      stateNeedsReview: false,
+    });
+  });
+
+  it("the set is exactly the ruled one (adding or dropping a member is a deliberate, reviewed change)", () => {
+    expect([...AMBIGUOUS_STATE_TEXTS].sort()).toEqual(
+      [
+        "california",
+        "delaware",
+        "florida",
+        "georgia",
+        "indiana",
+        "kansas",
+        "la",
+        "louisiana",
+        "nevada",
+        "oregon",
+        "virginia",
+        "wash",
+        "washington",
+        "wyoming",
+      ].sort(),
+    );
+  });
 });

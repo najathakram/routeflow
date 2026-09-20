@@ -924,20 +924,20 @@ export class CustomersService {
       // in the state they left). The edit form resends the unchanged text on every save, and the
       // backfill may have resolved it by a rule the strict write boundary does not know ("TX 77001"):
       // recomputing then would turn a correct code into "unresolved", so only a real change counts.
-      const current =
-        dto.state === undefined
-          ? null
-          : await tx.customerAddress.findFirst({
-              where: { id: addrId, customerId: id },
-              select: { state: true },
-            });
-      const stateChanged = dto.state !== undefined && dto.state !== current?.state;
+      // A row whose stateCode is NULL (written after the backfill) is recomputed from its stored text
+      // on ANY edit, so it heals instead of staying unresolved forever.
+      const current = await tx.customerAddress.findFirst({
+        where: { id: addrId, customerId: id },
+        select: { state: true, stateCode: true },
+      });
+      const stateChanged =
+        (dto.state !== undefined && dto.state !== current?.state) || current?.stateCode == null;
       return tx.customerAddress.update({
         where: { id: addrId, customerId: id },
         // clear stale coords when the address changes
         data: {
           ...dto,
-          ...(stateChanged ? addressStateFields(dto.state) : {}),
+          ...(stateChanged ? addressStateFields(dto.state ?? current?.state) : {}),
           lat: null,
           lng: null,
         },

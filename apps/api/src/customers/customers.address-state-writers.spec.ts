@@ -75,7 +75,7 @@ describe("CustomersService — address state columns are derived at the write bo
     it.each([
       ["Texas", "TX"],
       [" tx ", "TX"],
-      ["California", "CA"],
+      ["Colorado", "CO"],
     ])("a newly added %j address resolves to %s", async (state, code) => {
       await add(state);
       expect(written()).toMatchObject({ state, stateCode: code, stateNeedsReview: false });
@@ -94,12 +94,12 @@ describe("CustomersService — address state columns are derived at the write bo
 
     beforeEach(() => {
       prisma.customerAddress.update.mockResolvedValue({ id: "addr-1", customerId: "cust-1" });
-      prisma.customerAddress.findFirst.mockResolvedValue({ state: "Texas" }); // the stored text
+      prisma.customerAddress.findFirst.mockResolvedValue({ state: "Texas", stateCode: "TX" }); // stored
     });
 
-    it("editing TX -> CA recomputes stateCode to CA (never keeps the old TX)", async () => {
-      await edit({ state: "California" });
-      expect(written()).toMatchObject({ stateCode: "CA", stateNeedsReview: false });
+    it("editing TX -> CO recomputes stateCode to CO (never keeps the old TX)", async () => {
+      await edit({ state: "Colorado" });
+      expect(written()).toMatchObject({ stateCode: "CO", stateNeedsReview: false });
     });
 
     it("an edit to an unresolvable state clears the code and flags the row (not the old code)", async () => {
@@ -107,6 +107,12 @@ describe("CustomersService — address state columns are derived at the write bo
       await edit({ state: "" });
       expect(written(0)).toMatchObject({ stateCode: null, stateNeedsReview: true });
       expect(written(1)).toMatchObject({ stateCode: null, stateNeedsReview: true });
+    });
+
+    it("a row whose stateCode is NULL heals on ANY edit, from its stored text (written after the backfill)", async () => {
+      prisma.customerAddress.findFirst.mockResolvedValue({ state: "Texas", stateCode: null });
+      await edit({ city: "Dallas" });
+      expect(written()).toMatchObject({ stateCode: "TX", stateNeedsReview: false });
     });
 
     it("an edit that does not touch `state` leaves BOTH derived columns alone", async () => {
@@ -119,7 +125,7 @@ describe("CustomersService — address state columns are derived at the write bo
     // resolved it by a rule the strict write boundary lacks ("TX 77001" -> TX): recomputing then
     // would turn a correct code into "unresolved" (and INDETERMINATE for the customer).
     it("resubmitting the UNCHANGED state text keeps the stored code (a typo fix in line1 must not un-resolve it)", async () => {
-      prisma.customerAddress.findFirst.mockResolvedValue({ state: "TX 77001" });
+      prisma.customerAddress.findFirst.mockResolvedValue({ state: "TX 77001", stateCode: "TX" });
       await edit({ state: "TX 77001", line1: "2 Congress Ave" });
       expect(written()).not.toHaveProperty("stateCode");
       expect(written()).not.toHaveProperty("stateNeedsReview");
