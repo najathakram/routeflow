@@ -22,6 +22,7 @@ const snap = (over: Partial<ConfigSnapshotListItem> = {}): ConfigSnapshotListIte
   restoredAt: null,
   restoredToPlanKey: null,
   createdByName: "Ann Admin",
+  ageDays: 10,
   entries: { configs: 2, overrides: 1 },
   ...over,
 });
@@ -31,6 +32,8 @@ const PREVIEW: ConfigSnapshotPreview = {
   takenAt: "2026-09-10T12:00:00.000Z",
   planKey: "SCALE",
   restoredAt: null,
+  ageDays: 10,
+  beyondAutoRestoreHorizon: false,
   currentPlanKey: "SCALE",
   willRestore: [
     { kind: "config", featureKey: "routes_dispatch" },

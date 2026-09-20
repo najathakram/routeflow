@@ -78,6 +78,10 @@ import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { startFakePlane } from "./plane-fake-server.mjs";
 
+// B588: a hard 15s kill turned a merely-slow child (a loaded fleet host) into `code: null`, and every
+// check after it read as a product defect. One generous, env-tunable budget for every CLI child.
+const CLI_BUDGET_MS = Number(process.env.PLANE_SELF_TEST_CLI_BUDGET_MS) || 90_000;
+
 const THIS_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(THIS_DIR, "..", ".."); // scripts/campaign/ -> repo root, computed independently of plane-client.mjs's own repoRoot() so this file's real-path invariant check never depends on the thing it is guarding.
 const SYNC_PATH = fileURLToPath(new URL("./plane-sync.mjs", import.meta.url));
@@ -311,7 +315,7 @@ function startAlways500Server() {
 // PLANE_RUNS_PATH / PLANE_DENYLIST_PATH override in this family shares, so an
 // override this file passes is honoured and an accidental leak of the same
 // var into a real run stays inert.
-function runCli(scriptPath, argv, { env: overrides = {}, timeoutMs = 15_000 } = {}) {
+function runCli(scriptPath, argv, { env: overrides = {}, timeoutMs = CLI_BUDGET_MS } = {}) {
   const env = {
     ...process.env,
     PLANE_SYNC_SELF_TEST: "1",

@@ -86,6 +86,8 @@ export interface SnapshotListItem {
   /** The plan it was restored to, or "SUPERSEDED" when a newer snapshot replaced it. */
   restoredToPlanKey: string | null;
   createdByName: string | null;
+  /** Whole days since it was taken (the admin list/confirm dialog shows this). */
+  ageDays: number;
   /** Entry counts, or null when the payload is not a readable version-1 document. */
   entries: { configs: number; overrides: number } | null;
 }
@@ -95,6 +97,9 @@ export interface SnapshotPreview {
   takenAt: Date;
   planKey: string;
   restoredAt: Date | null;
+  ageDays: number;
+  /** Older than the automatic-restore horizon: only an explicit admin restore applies it. */
+  beyondAutoRestoreHorizon: boolean;
   /** What a restore WOULD do right now; null when the payload is unreadable. Never written. */
   plan: RestorePlan | null;
 }
@@ -212,6 +217,7 @@ export class TenantConfigSnapshotService {
         restoredAt: r.restoredAt,
         restoredToPlanKey: r.restoredToPlanKey,
         createdByName: r.createdByName,
+        ageDays: snapshotAgeDays(r.takenAt, new Date()),
         entries: payload
           ? { configs: payload.configs.length, overrides: payload.overrides.length }
           : null,
@@ -245,6 +251,8 @@ export class TenantConfigSnapshotService {
       takenAt: snapshot.takenAt,
       planKey: snapshot.planKey,
       restoredAt: snapshot.restoredAt,
+      ageDays: snapshotAgeDays(snapshot.takenAt, now),
+      beyondAutoRestoreHorizon: beyondAutoRestoreHorizon(snapshot.takenAt, now),
       plan: payload
         ? planRestore(payload, { configs, overrides }, snapshot.takenAt, now, planAllows)
         : null,
@@ -299,6 +307,19 @@ export class TenantConfigSnapshotService {
     if (bounds && rows > bounds.maxRows) {
       throw new RestoreBudgetExceededError(`${rows} rows to write, over the ${bounds.maxRows} cap`);
     }
+
+    // CLAIM the snapshot before applying anything: a conditional stamp (`restoredAt IS NULL`).
+    // Two concurrent restores — a Stripe webhook redelivery, an admin double-click, an upgrade
+    // racing a manual restore — both read the snapshot as un-restored under READ COMMITTED; the
+    // second UPDATE waits on the first's row lock, re-checks the predicate after it commits, matches
+    // 0 rows, and returns null instead of restoring twice (and double-writing the audit row). If
+    // the writes below throw, the caller's transaction rolls the claim back with them.
+    bounds?.withinBudget(); // a budget already spent must not even take the claim
+    const claimed = await tx.tenantFeatureConfigSnapshot.updateMany({
+      where: { id: snapshot.id, tenantId, restoredAt: null },
+      data: { restoredAt: now, restoredToPlanKey: stampPlanKey },
+    });
+    if (claimed.count === 0) return null;
 
     for (const entry of plan.configs.create) {
       bounds?.withinBudget();
@@ -356,10 +377,6 @@ export class TenantConfigSnapshotService {
       conflictedOverrides = plan.overrides.create.length - inserted.count;
     }
 
-    await tx.tenantFeatureConfigSnapshot.update({
-      where: { id: snapshot.id },
-      data: { restoredAt: now, restoredToPlanKey: stampPlanKey },
-    });
     const superseded = await tx.tenantFeatureConfigSnapshot.updateMany({
       // Only older DOWNGRADE archives are superseded: a MANUAL save-point is never auto-consumed.
       where: { tenantId, restoredAt: null, reason: "DOWNGRADE", takenAt: { lt: snapshot.takenAt } },
