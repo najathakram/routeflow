@@ -430,12 +430,13 @@ export class OrderTemplatesService {
         channel: "BUYER_PORTAL",
       }),
     );
-    if (restricted.length > 0) {
-      await this.notifySkippedRestrictedLines(
-        template,
-        restricted,
-        allowedItems.length - sellableItems.length,
-      ).catch(() => {});
+    // Gated on what was DROPPED, not on the reasons: an outcome that names no product still drops
+    // every line (fail closed) and must never do it silently.
+    const restrictedCount = allowedItems.length - sellableItems.length;
+    if (restrictedCount > 0) {
+      await this.notifySkippedRestrictedLines(template, restricted, restrictedCount).catch(
+        () => {},
+      );
     }
     if (sellableItems.length === 0) return null;
 
@@ -517,10 +518,7 @@ export class OrderTemplatesService {
     const skipNote =
       (skippedCount > 0
         ? ` (${skippedCount} regulated line(s) skipped — license not verified)`
-        : "") +
-      (restricted.length > 0
-        ? ` (${allowedItems.length - sellableItems.length} line(s) skipped — restricted)`
-        : "");
+        : "") + (restrictedCount > 0 ? ` (${restrictedCount} line(s) skipped — restricted)` : "");
 
     const created = await this.prisma.forTenant().order.create({
       data: {
@@ -572,8 +570,6 @@ export class OrderTemplatesService {
     return merged ?? created;
   }
 
-  /** Spec §8: when a standing order skips license-gated lines, notify the buyer
-   *  (push) and the seller's operators (push). Best-effort per recipient. */
   /** Restricted lines dropped from a standing order (lane R): tell the customer generically, the operators by name. */
   private async notifySkippedRestrictedLines(
     template: { customerId: string; name: string },
@@ -604,6 +600,8 @@ export class OrderTemplatesService {
     }
   }
 
+  /** Spec §8: when a standing order skips license-gated lines, notify the buyer
+   *  (push) and the seller's operators (push). Best-effort per recipient. */
   private async notifySkippedRegulatedLines(
     template: { customerId: string; name: string },
     blocked: Array<{ categoryName: string }>,

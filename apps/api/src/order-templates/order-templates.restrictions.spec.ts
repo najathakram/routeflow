@@ -140,6 +140,14 @@ describe("OrderTemplatesService — selling restrictions on a standing order", (
     expect(notifications.sendToUser).toHaveBeenCalled();
   });
 
+  it("an outcome that names no product drops every line but is never silent", async () => {
+    restrictions.checkLinesSellable.mockResolvedValue(evaluation("BLOCK", []));
+    await expect(service.generateOrder("t1")).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.order.create).not.toHaveBeenCalled();
+    expect(notifications.sendToCustomer).toHaveBeenCalledTimes(1);
+    expect(notifications.sendToUser).toHaveBeenCalledTimes(1);
+  });
+
   it("a notification failure never turns a skip into a failed run", async () => {
     restrictions.checkLinesSellable.mockResolvedValue(evaluation("BLOCK", ["p-ban"]));
     notifications.sendToCustomer.mockRejectedValue(new Error("push down"));
