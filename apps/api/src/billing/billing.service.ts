@@ -608,13 +608,16 @@ export class BillingService {
     // `Tenant.plan` (the same fallback every plan path uses). Only a checkout that names a plan can
     // move it; a replay of the same webhook resolves to the same rank -> the hook does nothing.
     // `prepare()` (the flag + catalog read) runs BEFORE the transaction, `onPlanChange` inside it.
-    const tenantRow = resolvedPlanKey
+    // Read ONLY while the snapshot flag is on: flag off, this handler issues exactly the queries it
+    // did before the hook existed.
+    const snapshotOn = resolvedPlanKey ? await this.planTransition.isEnabled() : false;
+    const tenantRow = snapshotOn
       ? await this.prisma.tenant.findUnique({
           where: { id: tenantId },
           select: { plan: true, planVersionId: true },
         })
       : null;
-    if (resolvedPlanKey && !tenantRow) {
+    if (snapshotOn && !tenantRow) {
       this.logger.warn(
         `checkout.session.completed: tenant ${tenantId} not found for the plan-transition hook — skipping it`,
       );

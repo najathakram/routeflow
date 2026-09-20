@@ -114,7 +114,8 @@ function make(
     notifySuspended: jest.fn().mockResolvedValue(undefined),
   } as any;
   const planTransition = {
-    prepare: jest.fn().mockResolvedValue({ enabled: false, planAllows: null }),
+    isEnabled: jest.fn().mockResolvedValue(true),
+    prepare: jest.fn().mockResolvedValue({ enabled: true, planAllows: null }),
     onPlanChange: jest.fn().mockResolvedValue({ action: "none" }),
   } as any;
   const svc = new BillingService(
@@ -630,6 +631,18 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
       await (svc as any).onCheckoutCompleted(session("GROWTH"));
 
       expect(prisma.$transaction.mock.calls[0][1]).toEqual({ timeout: 20_000, maxWait: 10_000 });
+    });
+
+    it("flag OFF: no extra tenant read and the hook is never consulted (the handler is exactly what it was)", async () => {
+      const { svc, prisma, planTransition } = make({ transitionCount: 1 });
+      planTransition.isEnabled.mockResolvedValue(false);
+
+      await (svc as any).onCheckoutCompleted(session("GROWTH"));
+
+      expect(prisma.tenant.findUnique).not.toHaveBeenCalled();
+      expect(planTransition.prepare).not.toHaveBeenCalled();
+      expect(planTransition.onPlanChange).not.toHaveBeenCalled();
+      expect(prisma.tenantSubscription.upsert).toHaveBeenCalledTimes(1); // the write itself is unchanged
     });
 
     it("a checkout that names no plan cannot move it: the hook is not consulted at all", async () => {
