@@ -644,6 +644,19 @@ describe("ScanOrderScreen", () => {
       expect(props.onClose).toHaveBeenCalledTimes(1);
     });
 
+    it("the status pill wraps instead of truncating, so the discard instruction is never cut off (B595)", async () => {
+      setup({}, async () => offline());
+      await scan("111");
+      fireEvent.click(screen.getByRole("button", { name: "Done" }));
+
+      const pill = screen.getByText(/press Done again to discard/);
+      expect(pill).toHaveAttribute("role", "status");
+      expect(pill).not.toHaveClass("truncate");
+      expect(pill).toHaveClass("break-words");
+      // The row lets the "Enter code manually" toggle drop below a long message.
+      expect(pill.parentElement).toHaveClass("flex-wrap");
+    });
+
     it("Escape and Close use the same warn-then-discard rule", async () => {
       const { props } = setup({}, async () => offline());
       await scan("111");
