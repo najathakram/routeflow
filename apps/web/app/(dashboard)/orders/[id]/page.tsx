@@ -38,6 +38,7 @@ import {
   useToast,
   type BadgeStatus,
 } from "@routeflow/ui/web";
+import { orderLineName } from "@/lib/product-display";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useOrder,
@@ -57,7 +58,7 @@ import {
 } from "@/lib/api/orders";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
-import { SALES_AGENTS_ADDON } from "@/lib/api/addons";
+import { SALES_AGENTS_ADDON, useOrderUiV2 } from "@/lib/api/addons";
 import { describeCancelImpact } from "@/lib/cancel-impact";
 import { fmtCalendarDate, isInternalEmail } from "@/lib/formatting";
 import { formatMoney, formatQty } from "@/lib/format";
@@ -70,6 +71,7 @@ import {
 import { useCreateInvoiceFromOrder, useSendInvoice, useSendInvoiceEmail } from "@/lib/api/invoices";
 import { LicenseGuardModal } from "../_components/LicenseGuardModal";
 import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
+import { OrderLineItemCards } from "./_components/OrderLineItemCards";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { useProducts } from "@/lib/api/products";
 import {
@@ -1712,6 +1714,8 @@ export default function OrderDetailPage() {
   const id = params.id as string;
   const { setTitle } = usePageTitle();
   const { data: order, isLoading, isError } = useOrder(id);
+  // `order_ui_v2` (dark): card-list lines instead of the table.
+  const orderUiV2 = useOrderUiV2();
   const { data: priceHistory } = useCustomerPriceHistory(order?.customerId);
   // Customer tier pricing (mirrors mobile's edit-items screen): a substituted
   // line prices off the customer's effective tier, not the raw list price.
@@ -1848,7 +1852,7 @@ export default function OrderDetailPage() {
             .filter((li) => li.status !== "CANCELLED")
             .map((li) => {
               const isUnlisted = !li.productId;
-              const label = li.product?.name ?? li.name ?? li.productId ?? "Custom item";
+              const label = orderLineName(li) ?? li.productId ?? "Custom item";
               return {
                 id: li.id,
                 isUnlisted,
@@ -2003,7 +2007,7 @@ export default function OrderDetailPage() {
         .filter((li) => li.status !== "CANCELLED")
         .map((li) => {
           const isUnlisted = !li.productId;
-          const label = li.product?.name ?? li.name ?? li.productId ?? "Custom item";
+          const label = orderLineName(li) ?? li.productId ?? "Custom item";
           return {
             id: li.id,
             isUnlisted,
@@ -2988,6 +2992,12 @@ export default function OrderDetailPage() {
                   )}
                 </div>
               </div>
+            ) : orderUiV2.enabled ? (
+              <OrderLineItemCards
+                lineItems={order.lineItems}
+                orderStatus={order.status}
+                total={total}
+              />
             ) : (
               <OrderLineItemsTable
                 lineItems={order.lineItems}
@@ -3464,7 +3474,7 @@ export default function OrderDetailPage() {
         orderNumber={order.orderNumber ?? null}
         items={(order.lineItems ?? []).map((li: any) => ({
           id: li.id,
-          productName: li.product?.name ?? li.name ?? "Custom item",
+          productName: orderLineName(li) ?? "Custom item",
           qty: Number(li.qty),
           invoicedQty: Number((li as any).invoicedQty ?? 0),
           unitPrice: Number(li.unitPrice),

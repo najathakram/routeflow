@@ -108,6 +108,7 @@ describe("InvoicesService", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    prisma.invoice.findFirst.mockResolvedValue({ items: [] }); // units_v1 guard reads the parent invoice
     mockNumbering.reserveNext.mockClear();
     mockNumbering.reserveNext.mockResolvedValue("INV-2026-0001");
     mockEntitlements.hasFlag.mockReset();
@@ -2653,6 +2654,24 @@ describe("InvoicesService", () => {
       expect(line.pieces).toBeNull();
       expect(line.qty).toBe(4);
       expect(line.orderItemId).toBe("oi-1");
+    });
+
+    it("carries the order line's unitLabel to the invoice line (units_v1) — and null for a pack line", () => {
+      const li = {
+        id: "oi-case",
+        productId: "p-1",
+        qty: 288,
+        boxes: 1,
+        pieces: 0,
+        unitsPerBox: 288,
+        unitLabel: "Case",
+        unitPrice: 480,
+        subtotal: 480,
+        product: { name: "Boxed", unitsPerBox: 24 },
+      };
+      expect(build(li, 288).unitLabel).toBe("Case");
+      expect(build(li, 288).unitsPerBox).toBe(288);
+      expect(build({ ...li, unitLabel: undefined }, 288).unitLabel).toBeNull();
     });
 
     it("copies a box-split line verbatim and carries its split + snapshot upb", () => {

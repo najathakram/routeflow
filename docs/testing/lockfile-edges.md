@@ -171,15 +171,18 @@ established hoist-shim pattern here, used for the jest coverage chain, `react-na
 `rxjs`), then regenerate:
 
 ```bash
-npx -y npm@10.8.2 install --package-lock-only --no-audit --fund=false
+npm install --package-lock-only --no-audit --fund=false
 ```
 
-Always regenerate with **npm 10.8.2** — it is what CI and the Dockerfiles run, and npm 11 masks
-the override-awareness bug described above. Always pass `--no-audit`; through `npx` the audit step
-hangs for ten minutes or more. Then confirm both gates:
+Regenerate with the repo's own **npm 11** (Node 24 bundles it; root `engines.npm` is `>=11` and
+`engine-strict` is on, so an older npm refuses to run here, and CI and the Dockerfiles run npm 11
+too since B570). npm 11 applies `overrides` while resolving, so it can silently paper over an
+incoherent workspace range that npm 10 would float — the exact hole the hard OVERRIDE BREAK check
+in `validate-lock-edges` exists to catch, so run it after EVERY regeneration. Always pass
+`--no-audit`; the audit step can hang for ten minutes or more. Then confirm both gates:
 
 ```bash
-npx -y npm@10.8.2 ci --dry-run --no-audit
+npm ci --dry-run --no-audit
 ```
 
 must print zero Invalid/Missing, and `npm run validate-lock` must exit 0. The two checks overlap

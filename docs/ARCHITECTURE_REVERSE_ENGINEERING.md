@@ -76,7 +76,7 @@ Component responsibilities in one line each:
 
 | Layer       | Choice                                                                                                                                                                               |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Monorepo    | npm workspaces (`apps/*`,`packages/*`) + **Turbo**, npm 10.8, Node ≥18 (CI/prod pin **20**) ([`package.json`](../package.json), [`turbo.json`](../turbo.json))                       |
+| Monorepo    | npm workspaces (`apps/*`,`packages/*`) + **Turbo**, npm 10.8, Node ≥24 (CI/prod pin **24**, B570) ([`package.json`](../package.json), [`turbo.json`](../turbo.json))                 |
 | API         | NestJS 11, Prisma 7 (`@prisma/adapter-pg`), PostgreSQL, Redis (`ioredis`), Passport JWT, `@nestjs/throttler`, `@nestjs/bull`, `@nestjs/schedule`, helmet, Swagger (non-prod), Sentry |
 | Web         | Next.js 14 App Router, React 18, Radix + Tailwind, **TanStack Query v5** (primary data layer), react-hook-form + zod, socket.io-client, recharts, Google Maps                        |
 | Mobile      | Expo 55, RN 0.83, React 19, expo-router, TanStack Query + **Zustand**, axios, socket.io-client, expo-secure-store, expo-camera/location/notifications, react-native-maps             |
@@ -248,7 +248,7 @@ One Socket.io gateway, `RouteFlowGateway` ([`routeflow.gateway.ts:144`](../apps/
 
 ### Build & packaging
 
-- **API Dockerfile** ([`apps/api/Dockerfile`](../apps/api/Dockerfile)): 2-stage `node:20-alpine`; builder does `npm ci` → `prisma generate` (linux-musl) → `nest build`; runner copies hoisted `node_modules` + `dist` + prisma schema, drops to non-root `node` via `su-exec` after fixing the uploads-volume perms (F12-003). `CMD ["node","dist/main.js"]`.
+- **API Dockerfile** ([`apps/api/Dockerfile`](../apps/api/Dockerfile)): 2-stage `node:24-alpine`; builder does `npm ci` → `prisma generate` (linux-musl) → `nest build`; runner copies hoisted `node_modules` + `dist` + prisma schema, drops to non-root `node` via `su-exec` after fixing the uploads-volume perms (F12-003). `CMD ["node","dist/main.js"]`.
 - **Web Dockerfile** ([`apps/web/Dockerfile`](../apps/web/Dockerfile)): 2-stage; force-pins **React 18** at the image root (the monorepo hoists mobile's React 19, which breaks `next build`), bakes `NEXT_PUBLIC_*` as build args, `output: standalone`; runner runs `node apps/web/server.js` as non-root, PORT injected by Railway.
 - **db-backup Dockerfile** ([`apps/db-backup/Dockerfile`](../apps/db-backup/Dockerfile)): `postgres:17-alpine` + aws-cli; a Railway **cron** service (`cronSchedule = "7 */2 * * *"`, `restartPolicyType = "NEVER"`).
 

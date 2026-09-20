@@ -69,6 +69,21 @@ export function displayProductName(
 }
 
 /**
+ * The name to show for an order line on any READ surface (order detail, split-invoice picker…).
+ * A catalog variant stores only its own flavor in `Product.name`, and the composed
+ * "<Parent> - <Variant>" the operator saw while building the order is never persisted (the create
+ * payload sends only `productId`), so every read has to re-compose it. Ad-hoc lines carry their
+ * label in `line.name`. Returns null when neither exists so each caller keeps its own fallback.
+ */
+export function orderLineName(line: {
+  product?: DisplayProductLike | null;
+  name?: string | null;
+}): string | null {
+  if (line.product) return displayProductName(line.product) || line.name || null;
+  return line.name ?? null;
+}
+
+/**
  * Where a row may break a long product name (display only — never derive or store data from it).
  * The catalog convention is "<family> - <distinguishing part>" (`PRODUCT_NAME_SEPARATOR`), e.g.
  * "Sample Pod - Strawberry Banana - 5ct". `stem` is the shared family and may be clamped;
