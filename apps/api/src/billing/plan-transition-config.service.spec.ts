@@ -9,6 +9,7 @@ import {
 
 // Keys and plans come from the live registry/catalog (L-206), never re-typed here.
 const LOW = PLAN_KEYS[0];
+const MSG = "raw row fragment (secret)";
 const HIGH = PLAN_KEYS[PLAN_KEYS.length - 1];
 const planFlagKeys = FEATURE_REGISTRY.filter(
   (f) => f.gate.via === "RequirePlanFlag" && !f.defaultGranted,
@@ -218,7 +219,7 @@ describe("PlanTransitionConfigService (A2 step b)", () => {
 
     it("a restore that THROWS is rolled back to the savepoint and the upgrade carries on (no throw)", async () => {
       const { svc, snapshots } = build(true);
-      snapshots.restoreLatest.mockRejectedValueOnce(new Error("deadlock detected"));
+      snapshots.restoreLatest.mockRejectedValueOnce(new Error(`deadlock detected ${MSG}`));
 
       const out = await runTransition(svc, up);
 
@@ -226,7 +227,17 @@ describe("PlanTransitionConfigService (A2 step b)", () => {
       expect(sqlOf()).toEqual([
         "SAVEPOINT config_snapshot_restore",
         "ROLLBACK TO SAVEPOINT config_snapshot_restore",
+        "SAVEPOINT config_snapshot_alarm",
+        "RELEASE SAVEPOINT config_snapshot_alarm",
       ]);
+      // ... and a failure is FINDABLE: an audit row (name/code only, never the raw message).
+      const data = auditCreate.mock.calls.at(-1)![0].data;
+      expect(data).toMatchObject({
+        tenantId: "t1",
+        action: "CONFIG_SNAPSHOT_RESTORE_FAILED",
+        meta: { automatic: true, toPlanKey: HIGH },
+      });
+      expect(JSON.stringify(data.meta)).not.toContain(MSG);
     });
 
     it("a SAVEPOINT that cannot even be opened skips the restore instead of failing the upgrade", async () => {
@@ -257,7 +268,36 @@ describe("PlanTransitionConfigService (A2 step b)", () => {
       expect(sqlOf()).toEqual([
         "SAVEPOINT config_snapshot_restore",
         "ROLLBACK TO SAVEPOINT config_snapshot_restore",
+        "SAVEPOINT config_snapshot_alarm",
+        "RELEASE SAVEPOINT config_snapshot_alarm",
       ]);
+      // ... and a failure is FINDABLE: an audit row (name/code only, never the raw message).
+      const data = auditCreate.mock.calls.at(-1)![0].data;
+      expect(data).toMatchObject({
+        tenantId: "t1",
+        action: "CONFIG_SNAPSHOT_RESTORE_FAILED",
+        meta: { automatic: true, toPlanKey: HIGH },
+      });
+      expect(JSON.stringify(data.meta)).not.toContain(MSG);
+    });
+
+    it("an abandoned (over-budget) restore is flagged budgetExceeded in its alarm row", async () => {
+      const { svc, snapshots } = build(true);
+      snapshots.restoreLatest.mockRejectedValueOnce(new RestoreBudgetExceededError("3 s"));
+
+      await runTransition(svc, up);
+
+      expect(auditCreate.mock.calls.at(-1)![0].data.meta).toMatchObject({ budgetExceeded: true });
+    });
+
+    it("the alarm write cannot poison the upgrade: it runs in its own savepoint and a failure is swallowed", async () => {
+      const { svc, snapshots } = build(true);
+      snapshots.restoreLatest.mockRejectedValueOnce(new Error("boom"));
+      auditCreate.mockRejectedValueOnce(new Error("audit down"));
+
+      await expect(runTransition(svc, up)).resolves.toEqual({ action: "restore", restore: null });
+
+      expect(sqlOf()).toContain("ROLLBACK TO SAVEPOINT config_snapshot_alarm");
     });
 
     it("a FAILED AUDIT write is non-fatal too — and rolls the restore back with it (no audit row, no restore)", async () => {

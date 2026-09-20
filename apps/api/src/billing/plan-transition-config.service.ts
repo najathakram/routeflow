@@ -1,11 +1,15 @@
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { FEATURE_REGISTRY } from "./feature-registry";
-import { CONFIG_SNAPSHOT_RESTORED_ACTION } from "./config-snapshot-audit.constants";
+import {
+  CONFIG_SNAPSHOT_RESTORED_ACTION,
+  CONFIG_SNAPSHOT_RESTORE_FAILED_ACTION,
+} from "./config-snapshot-audit.constants";
 import { ConfigSnapshotFlagService } from "./config-snapshot-flag.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { findPlanDefinition, planRank } from "./plan-catalog.constants";
 import {
+  RestoreBudgetExceededError,
   TenantConfigSnapshotService,
   type RestoreResult,
   type SnapshotActor,
@@ -240,7 +244,52 @@ export class PlanTransitionConfigService implements OnModuleInit {
         `Config restore FAILED for tenant ${t.tenantId} (${t.fromPlanKey} -> ${t.toPlanKey}); the ` +
           `plan change proceeds without it — restore manually from the admin list: ${(err as Error).message}`,
       );
+      await this.recordRestoreFailure(tx, t, err);
       return { action: "restore", restore: null };
+    }
+  }
+
+  /**
+   * A restore that failed or was abandoned (over its row cap / time budget) leaves the snapshot
+   * un-restored and the tenant on a plan whose config is NOT back — a log line alone is invisible,
+   * so it also leaves an audit row (error NAME/code only, never a raw message) that the admin tab's
+   * owner can find. It runs in its OWN savepoint: an audit failure here must never poison the
+   * paid plan-change transaction.
+   */
+  private async recordRestoreFailure(
+    tx: Prisma.TransactionClient,
+    t: PlanTransition,
+    err: unknown,
+  ): Promise<void> {
+    try {
+      await tx.$executeRaw`SAVEPOINT config_snapshot_alarm`;
+      await tx.auditLog.create({
+        data: {
+          tenantId: t.tenantId,
+          userId: t.actor?.id ?? null,
+          action: CONFIG_SNAPSHOT_RESTORE_FAILED_ACTION,
+          entityType: "tenant",
+          entityId: t.tenantId,
+          meta: {
+            automatic: true,
+            fromPlanKey: t.fromPlanKey ?? null,
+            toPlanKey: t.toPlanKey,
+            budgetExceeded: err instanceof RestoreBudgetExceededError,
+            errorName: (err as Error)?.name ?? null,
+            code: (err as { code?: string } | null)?.code ?? null,
+          },
+        },
+      });
+      await tx.$executeRaw`RELEASE SAVEPOINT config_snapshot_alarm`;
+    } catch (alarmErr) {
+      this.logger.error(
+        `Could not record the failed restore for tenant ${t.tenantId}: ${(alarmErr as Error).message}`,
+      );
+      try {
+        await tx.$executeRaw`ROLLBACK TO SAVEPOINT config_snapshot_alarm`;
+      } catch {
+        // The savepoint never opened (or the connection is gone): nothing more to undo.
+      }
     }
   }
 
