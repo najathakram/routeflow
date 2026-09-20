@@ -120,4 +120,28 @@ describeDb("TenantConfigSnapshotService — real Postgres round trip", () => {
     expect(res?.report.keptNewer).toBe(1);
     expect(await prisma.tenantFeatureOverride.count({ where: { tenantId } })).toBe(1);
   });
+
+  it("createMany + skipDuplicates resolves a live-override conflict inside the statement (no P2002, tx stays usable)", async () => {
+    await prisma.tenantFeatureOverride.deleteMany({ where: { tenantId } });
+    await prisma.tenantFeatureOverride.create({
+      data: { tenantId, featureKey: PLAIN_KEY, effect: "GRANT", kind: "COMP", reason: "live" },
+    });
+
+    const out = await prisma.$transaction(async (tx) => {
+      const res = await tx.tenantFeatureOverride.createMany({
+        skipDuplicates: true,
+        data: [
+          { tenantId, featureKey: PLAIN_KEY, effect: "DENY", kind: "COMP", reason: "restored" },
+        ],
+      });
+      // the transaction is NOT aborted: a further statement still runs
+      const still = await tx.tenantFeatureOverride.count({ where: { tenantId, revokedAt: null } });
+      return { res, still };
+    });
+
+    expect(out.res.count).toBe(0); // the real partial unique index made the insert a no-op
+    expect(out.still).toBe(1);
+    const row = await prisma.tenantFeatureOverride.findFirstOrThrow({ where: { tenantId } });
+    expect(row.reason).toBe("live"); // the concurrent writer's row won
+  });
 });
