@@ -39,6 +39,18 @@ export const REASON_MAX = 500;
 /** A date input's day as the start of that day in the admin's own timezone, as an ISO instant. */
 export const dayToIso = (day: string): string => new Date(`${day}T00:00:00`).toISOString();
 
+/**
+ * The stored END of a rule for an "Ends on <day>" the admin typed. The engine's window is
+ * [effectiveFrom, effectiveTo): the end is EXCLUSIVE, so a rule the admin means to cover all of
+ * Dec 31 must be sent as the start of Jan 1 (local calendar arithmetic, so month/year/DST
+ * boundaries are right). Sending the start of Dec 31 would free the banned product a whole day
+ * early.
+ */
+export const dayEndToIso = (day: string): string => {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(y, m - 1, d + 1).toISOString();
+};
+
 export const ruleFormSchema = z
   .object({
     targetKind: z.enum(["CATEGORY", "PRODUCT"]),
@@ -65,12 +77,25 @@ export const ruleFormSchema = z
     if (v.jurisdiction === "STATE" && v.states.length === 0) {
       ctx.addIssue({ code: "custom", path: ["states"], message: "Pick at least one state" });
     }
-    if (v.endsOn && v.startsOn && dayToIso(v.endsOn) <= dayToIso(v.startsOn)) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["endsOn"],
-        message: "The end date must be after the start date",
-      });
+    if (v.endsOn) {
+      // Compare the exclusive END bound: a same-day rule (start = end) is a valid one-day rule. A
+      // blank start means "now" (the API's default), so an end day already past is refused here in
+      // words about the field the admin actually filled in, not by a server error about a start
+      // date they never entered.
+      const endBound = new Date(dayEndToIso(v.endsOn)).getTime();
+      if (v.startsOn && endBound <= new Date(dayToIso(v.startsOn)).getTime()) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["endsOn"],
+          message: "The end date can't be before the start date",
+        });
+      } else if (!v.startsOn && endBound <= Date.now()) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["endsOn"],
+          message: "The end date has already passed",
+        });
+      }
     }
   });
 
@@ -82,7 +107,7 @@ export function toCreateRequest(v: RuleFormValues): CreateSellingRestrictionRequ
     ...(v.jurisdiction === "STATE" ? { states: [...new Set(v.states)] } : {}),
     surface: v.surface,
     ...(v.startsOn ? { effectiveFrom: dayToIso(v.startsOn) } : {}),
-    ...(v.endsOn ? { effectiveTo: dayToIso(v.endsOn) } : {}),
+    ...(v.endsOn ? { effectiveTo: dayEndToIso(v.endsOn) } : {}),
     reason: v.reason.trim(),
   };
 }
