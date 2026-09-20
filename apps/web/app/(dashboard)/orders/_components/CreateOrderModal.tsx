@@ -100,6 +100,18 @@ interface LineItem {
   /** UI-only qty entry mode for case-packed lines. NEVER submitted — the payload always
    *  carries {qty, boxes, pieces} and the per-case unitPrice. */
   sellBy?: "case" | "unit";
+  /**
+   * The product's tier-price columns, snapshotted when the line is added, so a customer chosen
+   * AFTER scanning can still re-price the line (owner ruling D1) without refetching the product.
+   * UI-only: never submitted (the payload maps lines field by field).
+   */
+  tierPrices?: {
+    pricePerUnit: unknown;
+    priceTier2?: unknown;
+    priceTier3?: unknown;
+    priceTier4?: unknown;
+    priceTier5?: unknown;
+  };
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -192,10 +204,13 @@ export function CreateOrderModal({
   // order state stays in this component, so nothing is lost across the swap.
   const scanV2 = useScanV2();
   const [scanScreenOpen, setScanScreenOpen] = React.useState(false);
-  // A closed order builder never reopens straight into the scan screen.
+  // The screen counts as open only while the gate is on: if the addon resolves away mid-session the
+  // Dialog must come back, never stay closed behind a screen that is no longer rendered.
+  const scanScreenActive = scanV2 && scanScreenOpen;
+  // A closed order builder (or a gate that turned off) never reopens straight into the scan screen.
   React.useEffect(() => {
-    if (!isOpen) setScanScreenOpen(false);
-  }, [isOpen]);
+    if (!isOpen || !scanV2) setScanScreenOpen(false);
+  }, [isOpen, scanV2]);
 
   // Merge-vs-separate prompt state. Set when the operator submits and the API
   // (or our pre-check) reports an existing active order for the same customer.
@@ -372,6 +387,37 @@ export function CreateOrderModal({
     setAppliedCredits([]);
   }, [selectedCustomer?.id]);
 
+  // scan_v2 / owner ruling D1: the customer's price applies IMMEDIATELY, including to lines scanned
+  // BEFORE the customer was chosen (the classic modal never re-priced them). Only lines whose price
+  // is still the auto-derived tier price move; an operator's one-time price, an upsell, or a
+  // history-prefilled override stands, as do unlisted lines and lines added before this snapshot
+  // existed (no `tierPrices`). Behind the gate so the classic modal's behaviour is untouched.
+  React.useEffect(() => {
+    if (!scanV2) return;
+    setLineItems((prev) => {
+      let changed = false;
+      const next = prev.map((li) => {
+        if (li.isUnlisted || !li.tierPrices) return li;
+        if (li.priceType === "DISCOUNTED" || li.priceType === "MANUAL") return li;
+        if (li.discountedPrice != null) return li;
+        const tier = cpMap.get(li.productId) ?? selectedCustomer?.pricingTier ?? 1;
+        const tierPrice = getTierPrice(li.tierPrices, tier);
+        const priceType = tier !== 1 ? ("SPECIAL" as const) : ("STANDARD" as const);
+        const specialPrice = tier !== 1 ? tierPrice : undefined;
+        if (
+          li.unitPrice === tierPrice &&
+          li.priceType === priceType &&
+          li.specialPrice === specialPrice
+        ) {
+          return li;
+        }
+        changed = true;
+        return { ...li, unitPrice: tierPrice, priceType, specialPrice };
+      });
+      return changed ? next : prev;
+    });
+  }, [scanV2, selectedCustomer?.pricingTier, cpMap]);
+
   // ── Derived totals ────────────────────────────────────────────────────────
 
   // Use the shared helper so the live "Line total" matches what the server
@@ -451,7 +497,15 @@ export function CreateOrderModal({
     const existing = lineItems.find((li) => li.productId === product.id);
     if (existing) {
       setLineItems((prev) =>
-        prev.map((li) => (li.productId === product.id ? stepLineUnit(li, 1) : li)),
+        prev.map((li) =>
+          li.productId === product.id
+            ? // scan_v2 adds a whole case to a case-packed line (a new line starts as one case);
+              // the classic picker keeps its historical +1 qty so nothing changes with the gate off.
+              scanV2
+              ? stepLineUnit(li, 1)
+              : { ...li, qty: li.qty + 1 }
+            : li,
+        ),
       );
       setScrollToId(existing.tempId);
       setProductSearch("");
@@ -506,6 +560,13 @@ export function CreateOrderModal({
         unitCost: product.averageCost != null ? Number(product.averageCost) : undefined,
         category: product.category ?? undefined,
         trackedCategoryId: product.trackedCategoryId ?? null,
+        tierPrices: {
+          pricePerUnit: product.pricePerUnit,
+          priceTier2: product.priceTier2,
+          priceTier3: product.priceTier3,
+          priceTier4: product.priceTier4,
+          priceTier5: product.priceTier5,
+        },
       },
     ]);
     setScrollToId(newTempId);
@@ -1116,7 +1177,7 @@ export function CreateOrderModal({
 
   const dialog = (
     <Modal
-      open={isOpen && !scanScreenOpen}
+      open={isOpen && !scanScreenActive}
       onClose={handleDismiss}
       onEscapeKeyDown={handleEscape}
       title={resumeDraftId ? "Resume draft" : "Create Order"}
@@ -1848,7 +1909,7 @@ export function CreateOrderModal({
           hasCustomer={!!selectedCustomer}
         />
       )}
-      {scanScreenOpen && (
+      {scanScreenActive && (
         <InlineCreateProductModal
           isOpen={createProductOpen}
           onClose={() => setCreateProductOpen(false)}
