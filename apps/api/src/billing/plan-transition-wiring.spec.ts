@@ -76,6 +76,14 @@ describe("plan-transition wiring (A2b meta-spec)", () => {
     expect(actual).toEqual(WIRED);
   });
 
+  it("every wired site also drops the feature caches after commit (invalidateCaches)", () => {
+    for (const file of Object.keys(WIRED)) {
+      const text = files.find((f) => f.file === file)!.text;
+      const drops = (text.match(/planTransition\.invalidateCaches\(/g) ?? []).length;
+      expect(drops).toBe(WIRED[file]);
+    }
+  });
+
   it("each wired site calls prepare() before opening its transaction", () => {
     for (const file of Object.keys(WIRED)) {
       const text = files.find((f) => f.file === file)!.text;

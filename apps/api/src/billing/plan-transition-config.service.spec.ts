@@ -48,8 +48,20 @@ function build(enabled: boolean) {
     }),
   };
   const flag = { isEnabled: jest.fn().mockResolvedValue(enabled) };
-  const svc = new PlanTransitionConfigService(flag as never, snapshots as never, catalog as never);
-  return { svc, snapshots, catalog, flag };
+  const caches = {
+    authority: { invalidate: jest.fn() },
+    overrides: { invalidate: jest.fn() },
+    configStore: { invalidateTenant: jest.fn() },
+  };
+  const svc = new PlanTransitionConfigService(
+    flag as never,
+    snapshots as never,
+    catalog as never,
+    caches.authority as never,
+    caches.overrides as never,
+    caches.configStore as never,
+  );
+  return { svc, snapshots, catalog, flag, caches };
 }
 
 /** The real call order at a site: prepare() BEFORE the transaction, onPlanChange(tx, ...) inside it. */
@@ -340,6 +352,42 @@ describe("PlanTransitionConfigService (A2 step b)", () => {
     expect(err).toBeInstanceOf(SnapshotFailedError);
     expect(err.tenantId).toBe("t9");
     expect(err.message).toContain("db down");
+  });
+
+  describe("invalidateCaches — an automatic restore is visible immediately, not after the 30 s TTL", () => {
+    it("drops the resolver, override and config-mode caches of THAT tenant when the hook was active", async () => {
+      const { svc, caches } = build(true);
+      const prepared = await svc.prepare({
+        tenantId: "t7",
+        fromPlanKey: LOW,
+        toPlanKey: HIGH,
+        toPlanVersionId: null,
+      });
+
+      svc.invalidateCaches("t7", prepared);
+
+      expect(caches.authority.invalidate).toHaveBeenCalledWith("t7");
+      expect(caches.overrides.invalidate).toHaveBeenCalledWith("t7");
+      expect(caches.configStore.invalidateTenant).toHaveBeenCalledWith("t7");
+    });
+
+    it("touches NOTHING when the flag is off (or there was no transition) — flag-off behaviour is unchanged", async () => {
+      const { svc, caches } = build(false);
+      const prepared = await svc.prepare({
+        tenantId: "t7",
+        fromPlanKey: LOW,
+        toPlanKey: HIGH,
+        toPlanVersionId: null,
+      });
+
+      svc.invalidateCaches("t7", prepared);
+      svc.invalidateCaches("t7", null);
+      svc.invalidateCaches("t7", undefined);
+
+      expect(caches.authority.invalidate).not.toHaveBeenCalled();
+      expect(caches.overrides.invalidate).not.toHaveBeenCalled();
+      expect(caches.configStore.invalidateTenant).not.toHaveBeenCalled();
+    });
   });
 
   describe("transactionOptions — a longer transaction budget ONLY while the flag is on", () => {

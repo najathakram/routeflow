@@ -131,6 +131,7 @@ function make(
     isEnabled: jest.fn().mockResolvedValue(true),
     prepare: jest.fn().mockResolvedValue({ enabled: true, planAllows: null }),
     onPlanChange: jest.fn().mockResolvedValue({ action: "none" }),
+    invalidateCaches: jest.fn(),
   } as any;
   const svc = new BillingService(
     prisma,
@@ -769,6 +770,35 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
         expect(prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
         expect(emitted(events)).toEqual([]);
         expect(tx.auditLog.create).not.toHaveBeenCalled();
+      });
+
+      it("drops the feature caches AFTER the transaction commits, and not for a redelivery or a failed tx", async () => {
+        const ok = make({ transitionCount: 1 });
+        const order: string[] = [];
+        const realTx = ok.prisma.$transaction.getMockImplementation();
+        ok.prisma.$transaction.mockImplementation(async (fn: any, opts: any) => {
+          const r = await realTx!(fn, opts);
+          order.push("commit");
+          return r;
+        });
+        ok.planTransition.invalidateCaches.mockImplementation(() => order.push("invalidate"));
+        await (ok.svc as any).onCheckoutCompleted(withId("cs_inv"));
+        // the later status transition opens its own tx; only the order of the first two matters
+        expect(order.slice(0, 2)).toEqual(["commit", "invalidate"]);
+        expect(ok.planTransition.invalidateCaches).toHaveBeenCalledWith(
+          "t1",
+          expect.objectContaining({ enabled: true }),
+        );
+
+        const dup = make({ transitionCount: 1 });
+        dup.prisma.auditLog.findFirst.mockResolvedValue({ id: "a1" });
+        await (dup.svc as any).onCheckoutCompleted(withId("cs_done"));
+        expect(dup.planTransition.invalidateCaches).not.toHaveBeenCalled();
+
+        const failed = make({ transitionCount: 1 });
+        failed.planTransition.onPlanChange.mockRejectedValue(new Error("snapshot failed"));
+        await expect((failed.svc as any).onCheckoutCompleted(withId("cs_bad"))).rejects.toThrow();
+        expect(failed.planTransition.invalidateCaches).not.toHaveBeenCalled();
       });
 
       it("a successful checkout records the session as applied, in the SAME transaction as the write", async () => {
