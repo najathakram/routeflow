@@ -11,6 +11,7 @@ import { PlanAdminController } from "./plan-admin.controller";
 import { SettingsBillingController } from "./settings-billing.controller";
 import { ProrationService } from "./proration.service";
 import { TenantConfigSnapshotService } from "./tenant-config-snapshot.service";
+import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import { SubscriptionService } from "./subscription.service";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BillingEventService } from "./billing-event.service";
@@ -54,6 +55,9 @@ import { EntitlementsModule } from "./entitlements.module";
     // Lane B A2 (DARK — nothing calls it yet): downgrade snapshot / re-upgrade restore of a
     // tenant's feature config. Stateless, no dependencies.
     TenantConfigSnapshotService,
+    // Lane B A2 step b: the ONE hook every plan-change site calls inside its transaction.
+    // Flag ENTITLEMENT_CONFIG_SNAPSHOT (default off) — wired but inert until flipped.
+    PlanTransitionConfigService,
   ],
   exports: [
     StripeService,
@@ -74,6 +78,7 @@ import { EntitlementsModule } from "./entitlements.module";
     // resolution failed until exported here.
     MrrService,
     TenantConfigSnapshotService,
+    PlanTransitionConfigService,
   ],
 })
 export class BillingModule {}
