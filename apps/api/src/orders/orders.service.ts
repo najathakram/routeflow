@@ -82,6 +82,7 @@ import { assertWithinCreditLimit, isCreditLimitCheckEnabled } from "./credit-lim
 import { SystemConfigService } from "../system-config/system-config.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
@@ -140,6 +141,9 @@ export class OrdersService implements OnApplicationBootstrap {
     private readonly systemConfig: SystemConfigService,
     private readonly inventoryService: InventoryService,
     private readonly authGuard: AuthorizationGuardService,
+    // Lane R: the selling-restrictions choke point. Required (never @Optional) — a missing
+    // provider must be a DI error, not a silent bypass of a jurisdiction ban.
+    private readonly sellingRestrictions: SellingRestrictionsService,
     private readonly promotionsService: PromotionsService,
     private readonly messaging: MessagingService,
     private readonly creditNotes: CreditNotesService,
@@ -157,6 +161,18 @@ export class OrdersService implements OnApplicationBootstrap {
     // that tenant's own config/data, never another tenant's.
     private readonly tenantCtx: TenantContextService,
   ) {}
+
+  /**
+   * Tenant scope for the selling-restrictions choke point: the row being written's own tenant
+   * when there is one (authoritative for an existing order), else the caller's, else the ambient
+   * one. None of them means the check cannot be evaluated — refuse (fail closed, 403) rather than
+   * skip: a tenant-less caller must act inside a tenant-scoped session.
+   */
+  private restrictionTenantId(user: JwtPayload | undefined, rowTenantId?: string | null): string {
+    const tenantId = rowTenantId ?? user?.tenantId ?? this.prisma.getTenantId();
+    if (tenantId) return tenantId;
+    throw new ForbiddenException("Selling restrictions require a tenant-scoped session");
+  }
 
   /**
    * P5-04: active promotions for the current tenant (window + isActive filtered).
