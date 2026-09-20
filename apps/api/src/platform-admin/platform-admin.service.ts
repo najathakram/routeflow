@@ -19,6 +19,7 @@ import { ProrationService } from "../billing/proration.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { MeterService } from "../billing/meter.service";
 import { FeatureOverrideService } from "../billing/feature-override.service";
+import { PlanTransitionConfigService } from "../billing/plan-transition-config.service";
 import { gateVia } from "../billing/feature-registry";
 import { BillingEventService } from "../billing/billing-event.service";
 import { MrrService } from "../billing/mrr.service";
@@ -79,6 +80,9 @@ export class PlatformAdminService {
     private readonly mrrService: MrrService,
     private readonly tenantMirror: TenantMirrorService,
     private readonly featureOverrides: FeatureOverrideService,
+    // Lane B A2b: downgrade -> snapshot the tenant's feature config, upgrade -> restore it, in
+    // the same transaction as the plan write (flag ENTITLEMENT_CONFIG_SNAPSHOT, default off).
+    private readonly planTransition: PlanTransitionConfigService,
   ) {}
 
   /**
@@ -773,7 +777,17 @@ ${
     const wasPaying = before.status === "ACTIVE" && priorSub?.planKey != null;
     const isPaying = before.status === "ACTIVE";
 
+    const transition = {
+      tenantId: id,
+      fromPlanKey: fromKey,
+      toPlanKey: definition.planKey,
+      toPlanVersionId: version.id,
+      actor: { id: adminId },
+    };
+    const preparedTransition = await this.planTransition.prepare(transition);
+
     const tenant = await this.prisma.$transaction(async (tx) => {
+      await this.planTransition.onPlanChange(tx, transition, preparedTransition);
       const updated = await tx.tenant.update({
         where: { id },
         data: { plan: dto.plan, planVersionId: version.id },
@@ -879,7 +893,24 @@ ${
     const now = new Date();
     const periodEnd = new Date(now.getTime() + dto.billingPeriodDays * 24 * 60 * 60 * 1000);
 
+    // Lane B A2b: the plan being LEFT, read before the transaction so the catalog read in
+    // `prepare()` also happens outside it. A tenant with no subscription row falls back to
+    // `Tenant.plan`, exactly like updatePlan().
+    const prior = await this.prisma.tenant.findUniqueOrThrow({
+      where: { id },
+      select: { plan: true, subscription: { select: { planKey: true } } },
+    });
+    const transition = {
+      tenantId: id,
+      fromPlanKey: normalizePlanKey(prior.subscription?.planKey) ?? planKeyFromEnum(prior.plan),
+      toPlanKey: definition.planKey,
+      toPlanVersionId: version.id,
+      actor: { id: adminId },
+    };
+    const preparedTransition = await this.planTransition.prepare(transition);
+
     const tenant = await this.prisma.$transaction(async (tx) => {
+      await this.planTransition.onPlanChange(tx, transition, preparedTransition);
       // B557 (B551's mirror-image gap): capture the tenant's paying-set inputs BEFORE this
       // call writes anything. This activation can move a tenant into MrrService's paying set
       // (status→ACTIVE + a resolved planKey) with no compensating BillingEvent today — the
