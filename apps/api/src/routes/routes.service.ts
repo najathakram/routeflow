@@ -3183,7 +3183,8 @@ export class RoutesService {
       // orders reverses exactly this stop's delivery and nothing else.
       for (const order of stop.orders) {
         await tx.orderItem.updateMany({
-          where: { orderId: order.id },
+          // A cancelled line stays cancelled: reopening a stop undoes a DELIVERY, never a cancel.
+          where: { orderId: order.id, status: { not: "CANCELLED" } },
           data: { status: "PENDING", deliveredQty: 0 },
         });
         if (order.status === "DELIVERED" || order.status === "OUT_FOR_DELIVERY") {
