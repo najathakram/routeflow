@@ -43,7 +43,9 @@ const rec = (m: string) =>
 const TABLE: Record<string, Row> = {
   // ── orders: the nine enforcement points (each call-site PR flips its row) ──────────────────
   [ord("create")]: G,
-  [ord("updateOrderItems")]: P("2a: update (merge + replace-all)"),
+  [ord("updateOrderItems")]: P(
+    "2a: update (merge + replace-all) - MOST live-order traffic (buyer + operator edits fold into it), so the flag must not flip before this row is GUARDED",
+  ),
   [ord("approveChangeRequestAtStop")]: P("2a: change request at the door"),
   [ord("changeStatus")]: P("2a: DRAFT -> PENDING promotion (the draft escape)"),
   [ord("reopenOrder")]: P("2a: reopen (revives cancelled lines)"),

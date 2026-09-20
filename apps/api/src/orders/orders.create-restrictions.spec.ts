@@ -285,6 +285,37 @@ describe("OrdersService.create — selling restrictions call site (lane R 2a-5)"
     }
   });
 
+  const activeCustomer = {
+    id: "cust-1",
+    pricingTier: 1,
+    user: { status: "ACTIVE" },
+    deletedAt: null,
+  };
+
+  it.each(["OPERATOR", "TENANT_ADMIN", "DRIVER"])(
+    "a %s is judged on the STAFF channel, exactly once (a driver's at-door sale is neither skipped nor over-blocked as a buyer)",
+    async (role) => {
+      prisma.customer.findUnique.mockResolvedValue(activeCustomer);
+      await service.create(input({ customerId: "cust-1" }), {
+        ...operatorPayload,
+        role,
+        tenantId: "t-1",
+      } as never);
+      expect(restrictions.assertLinesSellable).toHaveBeenCalledTimes(1);
+      expect(restrictions.assertLinesSellable.mock.calls[0][0].channel).toBe("STAFF");
+    },
+  );
+
+  it("an order of ONLY unlisted (catalog-free) lines still asks the choke point, with no lines: they have no product to restrict", async () => {
+    prisma.customer.findUnique.mockResolvedValue(activeCustomer);
+    await service.create(
+      input({ customerId: "cust-1", items: [{ name: "Delivery", qty: 1, unitPrice: 5 }] }),
+      { ...operatorPayload, tenantId: "t-1" } as never,
+    );
+    expect(restrictions.assertLinesSellable).toHaveBeenCalledTimes(1);
+    expect(restrictions.assertLinesSellable.mock.calls[0][0].lines).toEqual([]);
+  });
+
   it("a BACKDATED sale is still judged NOW: a staff-settable order date must not move a compliance check", async () => {
     prisma.customer.findUnique.mockResolvedValue({
       id: "cust-1",
@@ -318,11 +349,22 @@ describe("OrdersService.create — selling restrictions call site (lane R 2a-5)"
     expect(restrictions.assertLinesSellable).not.toHaveBeenCalled();
   });
 
-  it("no tenant on the caller and none ambient: refused (403) rather than skipped — fail closed", async () => {
-    (prisma.getTenantId as jest.Mock).mockReturnValue(null);
-    await expect(service.create(input(), customerPayload as never)).rejects.toBeInstanceOf(
-      ForbiddenException,
-    );
-    expect(prisma.tenantTransaction).not.toHaveBeenCalled();
-  });
+  // Even with the feature OFF: the tenant is needed to READ the tenant's policy, so a caller that
+  // cannot name one is refused rather than assumed OFF (fail closed; the price of a check that can
+  // never be skipped by omitting the tenant). Staff and buyer alike.
+  it.each([
+    ["a buyer", customerPayload],
+    ["a staff principal", operatorPayload],
+  ])(
+    "%s with no tenant on the caller and none ambient: refused (403) rather than skipped",
+    async (_who, principal) => {
+      (prisma.getTenantId as jest.Mock).mockReturnValue(null);
+      prisma.customer.findUnique.mockResolvedValue(activeCustomer);
+      await expect(
+        service.create(input({ customerId: "cust-1" }), principal as never),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(restrictions.assertLinesSellable).not.toHaveBeenCalled();
+      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+    },
+  );
 });
