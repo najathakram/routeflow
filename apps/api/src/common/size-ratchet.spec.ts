@@ -29,7 +29,7 @@ const HEADROOM = 25;
 
 /** Repo-relative path → baseline line count (measured 2026-09-19 at 91d323de). */
 const BASELINE: Record<string, number> = {
-  "apps/api/src/orders/orders.service.ts": 6728,
+  "apps/api/src/orders/orders.service.ts": 6625, // B585 prefactor: credit guard moved to credit-limit-guard.ts (was 6728)
   "apps/api/src/invoices/invoices.service.ts": 6412,
   "apps/api/src/orders/orders.service.spec.ts": 9511,
   "apps/api/src/customers/customers.service.ts": 3307,
