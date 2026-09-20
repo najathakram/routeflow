@@ -63,8 +63,10 @@ const EXPECTED_FILES = [
 // (2026-09-19, schema spine PR-S1: +5 models — ProductUnit, SupplierProduct, ProductCategory,
 // ProductCategoryLabel, SellingRestriction; +3 enums — LabelMode, RestrictionJurisdiction,
 // RestrictionSurface. Re-verified via `node apps/api/scripts/split-prisma-schema.mjs --check`.)
-const EXPECTED_MODEL_COUNT = 139;
-const EXPECTED_ENUM_COUNT = 95;
+// (2026-09-19, Lane B A2: +1 model — TenantFeatureConfigSnapshot; +1 enum — SnapshotReason.
+// Re-verified via `node apps/api/scripts/split-prisma-schema.mjs --check`.)
+const EXPECTED_MODEL_COUNT = 140;
+const EXPECTED_ENUM_COUNT = 96;
 
 function listSchemaFiles(): string[] {
   if (!fs.existsSync(SCHEMA_DIR)) return [];

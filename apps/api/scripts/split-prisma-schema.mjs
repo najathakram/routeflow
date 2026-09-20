@@ -223,6 +223,7 @@ const MODEL_DOMAIN = {
   TenantFeatureOverride: "platform",
   FeatureResolverDiff: "platform",
   TenantFeatureConfig: "platform",
+  TenantFeatureConfigSnapshot: "platform",
   PlanVersion: "platform",
   PlanDefinition: "platform",
   AddonSku: "platform",
