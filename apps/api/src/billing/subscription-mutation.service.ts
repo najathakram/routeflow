@@ -147,7 +147,7 @@ export class SubscriptionMutationService {
     private readonly stripe: StripeService,
     private readonly billingNotification: BillingNotificationService,
     // Lane B A2b: downgrade -> snapshot the tenant's feature config, upgrade -> restore it, INSIDE
-    // the same transaction as the plan write (flag ENTITLEMENT_CONFIG_SNAPSHOT, default off).
+    // the same transaction as the plan write (live flag entitlements.configSnapshot, default off).
     private readonly planTransition: PlanTransitionConfigService,
   ) {}
 

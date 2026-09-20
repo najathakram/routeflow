@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 import { FEATURE_REGISTRY } from "./feature-registry";
+import { ConfigSnapshotFlagService } from "./config-snapshot-flag.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { findPlanDefinition, planRank } from "./plan-catalog.constants";
 import {
@@ -30,6 +30,9 @@ export interface PlanTransition {
  * connection can starve the pool under load). Produced by `prepare()`.
  */
 export interface PreparedPlanTransition {
+  /** The live flag as read BEFORE the transaction: `onPlanChange` never reads it (pool, and one
+   *  consistent answer for the whole plan change). */
+  enabled: boolean;
   /** null = restore is skipped for this change (flag off, not an upgrade, or the catalog read failed). */
   planAllows: ((featureKey: string) => boolean) | null;
 }
@@ -48,30 +51,31 @@ export type PlanTransitionOutcome =
  *  - rank(to) > rank(from) → restore the newest un-restored snapshot the new plan covers, as-was;
  *  - same rank, an unknown/absent `from`, or the flag off → nothing.
  *
- * FLAG: `ENTITLEMENT_CONFIG_SNAPSHOT=on` (default off). While off this service never reads the
- * catalog or touches a table, so wiring it into a site changes nothing until the owner flips it.
+ * FLAG: the `entitlements.configSnapshot` PlatformConfig row (`ConfigSnapshotFlagService`; default
+ * OFF, fail-closed, flippable by a super-admin without a redeploy). While off this service never
+ * reads the catalog or touches a table, so wiring it into a site changes nothing until it is flipped.
  */
 @Injectable()
 export class PlanTransitionConfigService implements OnModuleInit {
   private readonly logger = new Logger(PlanTransitionConfigService.name);
 
   constructor(
-    private readonly config: ConfigService,
+    private readonly flag: ConfigSnapshotFlagService,
     private readonly snapshots: TenantConfigSnapshotService,
     private readonly catalog: PlanCatalogService,
   ) {}
 
   onModuleInit(): void {
-    // A typo ("yes", "enabled") parses as OFF — make the resolved state visible once at boot.
-    this.logger.log(
-      `Entitlement config snapshot/restore is ${this.isEnabled() ? "ON" : "OFF"} ` +
-        `(ENTITLEMENT_CONFIG_SNAPSHOT=${this.config.get<string>("ENTITLEMENT_CONFIG_SNAPSHOT") ?? "<unset>"})`,
-    );
-  }
-
-  isEnabled(): boolean {
-    const raw = this.config.get<string>("ENTITLEMENT_CONFIG_SNAPSHOT");
-    return typeof raw === "string" && ["on", "1", "true"].includes(raw.trim().toLowerCase());
+    // Make the resolved state visible once at boot — fire-and-forget: Nest awaits an async
+    // onModuleInit before listening, and one log line must never be able to stall boot on a slow DB.
+    void this.flag
+      .isEnabled()
+      .then((on) =>
+        this.logger.log(
+          `Entitlement config snapshot/restore is ${on ? "ON" : "OFF"} (PlatformConfig entitlements.configSnapshot)`,
+        ),
+      )
+      .catch(() => undefined);
   }
 
   /**
@@ -81,15 +85,16 @@ export class PlanTransitionConfigService implements OnModuleInit {
    * failed, already-paid upgrade is not).
    */
   async prepare(t: PlanTransition): Promise<PreparedPlanTransition> {
-    if (!this.isEnabled() || this.direction(t) !== "upgrade") return { planAllows: null };
+    const enabled = await this.flag.isEnabled();
+    if (!enabled || this.direction(t) !== "upgrade") return { enabled, planAllows: null };
     try {
-      return { planAllows: await this.planAllowsFor(t.toPlanKey, t.toPlanVersionId) };
+      return { enabled, planAllows: await this.planAllowsFor(t.toPlanKey, t.toPlanVersionId) };
     } catch (err) {
       this.logger.error(
         `Config restore skipped for tenant ${t.tenantId} (${t.fromPlanKey} -> ${t.toPlanKey}): ` +
           `plan catalog unavailable — ${(err as Error).message}`,
       );
-      return { planAllows: null };
+      return { enabled, planAllows: null };
     }
   }
 
@@ -104,7 +109,7 @@ export class PlanTransitionConfigService implements OnModuleInit {
     prepared: PreparedPlanTransition,
     now: Date = new Date(),
   ): Promise<PlanTransitionOutcome> {
-    if (!this.isEnabled()) return { action: "none" };
+    if (!prepared.enabled) return { action: "none" };
     const direction = this.direction(t);
     if (direction === "none") return { action: "none" };
 
@@ -155,7 +160,7 @@ export class PlanTransitionConfigService implements OnModuleInit {
    * bridge ∪ default-granted ∪ addon-keyed gates. A plan-bundled flag the new plan lacks and no SKU
    * grants is skipped and reported by `planRestore`.
    */
-  private async planAllowsFor(
+  async planAllowsFor(
     planKey: string,
     planVersionId: string | null,
   ): Promise<(featureKey: string) => boolean> {

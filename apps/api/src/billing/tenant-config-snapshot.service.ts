@@ -16,6 +16,23 @@ const toJson = (v: unknown): Prisma.InputJsonValue | typeof Prisma.DbNull =>
     : // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- tsc needs it: `unknown` is not assignable
       (v as Prisma.InputJsonValue);
 
+/**
+ * Automatic restore (a re-upgrade) only considers snapshots taken within this many days (lead
+ * ruling 2026-09-20): a config archived long ago is more likely stale than wanted, so it is never
+ * re-applied unattended. It stays listed, and a SUPER_ADMIN can still restore it explicitly
+ * after seeing its age. Inclusive: a snapshot exactly 90 days old restores.
+ */
+export const AUTO_RESTORE_MAX_AGE_DAYS = 90;
+const DAY_MS = 86_400_000;
+
+/** Whole days since the snapshot was taken (floor; never negative). */
+export const snapshotAgeDays = (takenAt: Date, now: Date): number =>
+  Math.max(0, Math.floor((now.getTime() - takenAt.getTime()) / DAY_MS));
+
+/** True when automatic restore would refuse this snapshot as too old. */
+export const beyondAutoRestoreHorizon = (takenAt: Date, now: Date): boolean =>
+  now.getTime() - takenAt.getTime() > AUTO_RESTORE_MAX_AGE_DAYS * DAY_MS;
+
 export interface SnapshotActor {
   id?: string | null;
   name?: string | null;
@@ -78,6 +95,7 @@ export class TenantConfigSnapshotService {
    * SUPERSEDED (stamped `restoredToPlanKey: "SUPERSEDED"`): the newer snapshot's payload already
    * carries every row the older one did (a downgrade never deletes config), so a later upgrade
    * must not re-apply the stale one over state this restore established.
+   * A snapshot older than `AUTO_RESTORE_MAX_AGE_DAYS` is never restored here (left un-stamped).
    * `planAllows` — does the plan being restored TO allow this feature? — is supplied by the
    * plan-change wiring; the default (allow) is only for callers with no plan context.
    */
@@ -97,7 +115,7 @@ export class TenantConfigSnapshotService {
     });
     const snapshot = candidates.find((s) => {
       const r = planRank(s.planKey);
-      return r >= 0 && r <= newRank;
+      return r >= 0 && r <= newRank && !beyondAutoRestoreHorizon(s.takenAt, now);
     });
     if (!snapshot) return null;
 
