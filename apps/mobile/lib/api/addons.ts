@@ -52,6 +52,17 @@ export function useDeveloperMode(): { enabled: boolean; isLoading: boolean; reso
   return { enabled, isLoading, resolved: query.isSuccess };
 }
 
+// ─── Order UI v2 (card-list order detail — LANE-S / order-ui-redesign, T8) ─────
+//
+// Mirror of web's `useOrderUiV2` (`apps/web/lib/api/addons.ts`): dark until granted, one
+// indirection over the in-development-surface flag so promoting it to a real per-tenant flag is a
+// one-line change here. Read through this hook only — never `useDeveloperMode()` at an order-UI
+// call site.
+export function useOrderUiV2(): { enabled: boolean; resolved: boolean } {
+  const dev = useDeveloperMode();
+  return { enabled: dev.enabled, resolved: dev.resolved };
+}
+
 // ─── Driver payments (per-tenant at-door collection opt-in) ───────────────────
 //
 // Owner decision 2026-08-24: collecting money at the door is opt-in per tenant

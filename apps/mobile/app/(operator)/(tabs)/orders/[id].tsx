@@ -45,6 +45,9 @@ import { showToast } from "../../../../lib/toast";
 import { alertInfo, confirm } from "../../../../lib/confirm";
 import { formatQtySplit } from "@routeflow/pricing";
 import { freeUnitsLabel } from "../../../../lib/buyer-cart-logic";
+import { OrderLineCard } from "../../../../components/OrderLineCard";
+import { orderLineCardModel } from "../../../../lib/order-line-display";
+import { useOrderUiV2 } from "../../../../lib/api/addons";
 import {
   ACTIVATION_BUDGET_MS,
   canShareFilesHere,
@@ -90,6 +93,8 @@ export default function OrderDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: order, isLoading, isError, refetch } = useAdminOrder(id ?? "");
+  // `order_ui_v2` (dark): card rows instead of the legacy item row.
+  const orderUiV2 = useOrderUiV2();
   const changeMut = useChangeOrderStatus();
   const reopenMut = useReopenOrder();
   const deleteMut = useDeleteOrder();
@@ -635,6 +640,15 @@ export default function OrderDetailScreen() {
               <Text style={styles.empty}>No items on this order.</Text>
             ) : (
               order.lineItems.map((li, i) => {
+                if (orderUiV2.enabled) {
+                  return (
+                    <OrderLineCard
+                      key={li.id}
+                      model={orderLineCardModel(li, order.status)}
+                      first={i === 0}
+                    />
+                  );
+                }
                 const upbRaw = (li as any).product?.unitsPerBox;
                 const upb = upbRaw == null ? 0 : Number(upbRaw);
                 const isBoxed = upb > 1;
