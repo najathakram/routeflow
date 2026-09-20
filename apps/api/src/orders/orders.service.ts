@@ -4983,7 +4983,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // create()'s decrement at order time.
         if (order.status !== "DRAFT") {
           await this.settleStockForEdit(tx, order, heldItems, activeItems, user);
-          await this.assertWithinCreditLimit(
+          await assertWithinCreditLimit(
             tx,
             order.customerId,
             orderId,
@@ -5649,29 +5649,6 @@ export class OrdersService implements OnApplicationBootstrap {
   }
 
   /**
-   * P5-08b credit-limit guard — see `credit-limit-guard.ts` (B585 prefactor: the derivation notes
-   * and the blocking contract live there). Runs INSIDE the caller's transaction; the enabled
-   * decision is resolved by `isCreditLimitCheckEnabled` OUTSIDE it and passed in.
-   */
-  private assertWithinCreditLimit(
-    db: any,
-    customerId: string,
-    currentOrderId: string,
-    projectedOrderTotal: number,
-    creditCheckEnabled: boolean,
-    invoicesSurviveEdit = false,
-  ): Promise<void> {
-    return assertWithinCreditLimit(
-      db,
-      customerId,
-      currentOrderId,
-      projectedOrderTotal,
-      creditCheckEnabled,
-      invoicesSurviveEdit,
-    );
-  }
-
-  /**
    * P5-09: public credit re-check for the change-request next-delivery path.
    * Reuses the ONE exposure derivation (assertWithinCreditLimit →
    * loadCreditExposure) — never a second balance formula.
@@ -5681,7 +5658,7 @@ export class OrdersService implements OnApplicationBootstrap {
     excludeOrderId: string,
     projectedTotal: number,
   ): Promise<void> {
-    await this.assertWithinCreditLimit(
+    await assertWithinCreditLimit(
       this.prisma.forTenant(),
       customerId,
       excludeOrderId,
@@ -6189,13 +6166,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // CHANGE_WINDOW_CLOSED guard above — so settleStockForEdit's internal
         // DRAFT no-op never triggers on this call site).
         await this.settleStockForEdit(tx, order, heldItems, activeItems, resolver);
-        await this.assertWithinCreditLimit(
-          tx,
-          order.customerId,
-          order.id,
-          total,
-          creditCheckEnabled,
-        );
+        await assertWithinCreditLimit(tx, order.customerId, order.id, total, creditCheckEnabled);
 
         // NO status revert here — post-dispatch orders must NOT flip to PENDING
         // (the shouldRevert logic in updateOrderItems is pre-dispatch-only).

@@ -5,7 +5,7 @@ import { CREDIT_EXPOSURE_EXCLUDED, CREDIT_NOT_APPLICABLE } from "./invoice-statu
 /**
  * ONE derivation of a customer's credit exposure (D6 / B462, owner ruling "option B").
  *
- * Consumed by BOTH the hard credit-limit block (`OrdersService.assertWithinCreditLimit`)
+ * Consumed by BOTH the hard credit-limit block (`assertWithinCreditLimit` in `orders/credit-limit-guard.ts`)
  * and the operator statement (`CustomersService.getStatementForOperator`), so the
  * panel can never disagree with the block (lesson L-119: both halves of one money
  * figure derive from ONE collection). Do NOT re-derive any of this at a call site —
