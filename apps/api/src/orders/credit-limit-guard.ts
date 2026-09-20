@@ -178,14 +178,18 @@ export async function assertWithinCreditLimit(
 // ─── B585: the new enforcement points (create / deliver), OFF by default ──────────────────────
 
 /**
- * Per-tenant `SystemConfig` switch for the credit check at order CREATE and DELIVER. It is read
- * FIRST: a tenant that never set it pays one indexed read and nothing else (the exposure derivation
- * is several more queries on the hottest write path, so a default that ran it for everyone would
- * not be free). Absent, or any value but the two below = OFF: nothing else runs. Exactly `"dark"` =
- * OBSERVE: derive, log one "would deny" line, never block. Exactly `"true"` = ENFORCE. It does NOT
- * govern the edit paths (`updateOrderItems` / change requests), which have always blocked.
+ * Per-tenant `SystemConfig` switches for the credit check, ONE PER ENFORCEMENT POINT so an owner can
+ * flip them independently: `enforce_new_orders` governs order CREATE only; `enforce_delivery` governs
+ * goods leaving (`changeStatus` to OUT_FOR_DELIVERY, or CONFIRMED → DELIVERED). There is no fallback
+ * between them (a fallback would re-couple the points). Each is read FIRST: a tenant that never set it
+ * pays one indexed read and nothing else (the exposure derivation is several more queries on the
+ * hottest write path, so a default that ran it for everyone would not be free). Absent, or any value
+ * but the two below = OFF: nothing else runs. Exactly `"dark"` = OBSERVE: derive, log one "would deny"
+ * line, never block. Exactly `"true"` = ENFORCE. Neither governs the edit paths (`updateOrderItems` /
+ * change requests), which have always blocked.
  */
 export const CREDIT_LIMIT_ENFORCE_KEY = "credit_limit.enforce_new_orders";
+export const CREDIT_LIMIT_DELIVERY_ENFORCE_KEY = "credit_limit.enforce_delivery";
 
 export type CreditEnforcementMode = "OFF" | "DARK" | "ENFORCED";
 
@@ -203,10 +207,12 @@ export interface CreditEnforcementDeps extends CreditLimitCheckDeps {
 export async function creditEnforcementMode(
   prisma: Pick<PrismaService, "forTenant" | "getTenantId">,
   tenantId: string,
+  action: "order" | "delivery" = "order",
 ): Promise<CreditEnforcementMode> {
   assertAmbientTenant(prisma, tenantId, "creditEnforcementMode");
+  const key = action === "delivery" ? CREDIT_LIMIT_DELIVERY_ENFORCE_KEY : CREDIT_LIMIT_ENFORCE_KEY;
   const row: { value: string } | null = await prisma.forTenant().systemConfig.findFirst({
-    where: { tenantId, key: CREDIT_LIMIT_ENFORCE_KEY },
+    where: { tenantId, key },
     select: { value: true },
   });
   return row?.value === "true" ? "ENFORCED" : row?.value === "dark" ? "DARK" : "OFF";
@@ -242,12 +248,21 @@ export interface CreditPointParams {
  * works today: a failure to reach a verdict logs ERROR and allows; an unreadable switch is OFF with
  * an ERROR; only an ENFORCED tenant sees a failure. `excludeOrderId` = the order being sent out.
  *
- * ⚠ Do NOT set the switch to "true" for any tenant while these paths still bypass it: DRAFT →
- * PENDING promotion in `changeStatus`, and the standing-order cron (`order-templates` writes PENDING
- * orders directly). Guarded: a new order, `changeStatus` to OUT_FOR_DELIVERY, and CONFIRMED →
- * DELIVERED. The driver's stop completion is EXCLUDED on purpose (goods are already at the door;
- * pinned in `orders.deliver-credit-gate.spec.ts`). (`updateOrderItems` is not a bypass: it has
- * always run the edit guard, independent of this switch.)
+ * ⚠ Do NOT set either key to "true" for any tenant while these paths still bypass it:
+ *   - `enforce_new_orders`: DRAFT → PENDING promotion in `changeStatus`, and the standing-order cron
+ *     (`order-templates` writes PENDING orders directly);
+ *   - `enforce_delivery`: an OPERATOR-role `completeStop` / `completeWithPayment` (RoutesService marks
+ *     every linked order DELIVERED, ungated: an operator refused at the counter can complete the
+ *     order's stop from the office). A DRIVER's completion is EXCLUDED on purpose (the goods are
+ *     already at the door); RoutesService may only OBSERVE credit — pinned in
+ *     `orders.deliver-credit-gate.spec.ts`.
+ * Guarded: a new order; `changeStatus` to OUT_FOR_DELIVERY (not a re-dispatch of a PARTIALLY_DELIVERED
+ * order, whose goods already left); CONFIRMED → DELIVERED. A demotion (OUT_FOR_DELIVERY → CONFIRMED,
+ * with a reason) then a re-dispatch is a NEW dispatch and is gated. (`updateOrderItems` is not a
+ * bypass: it has always run the edit guard, independent of these keys.)
+ *
+ * Known limit: the gate runs outside any transaction and takes no customer advisory lock, so two
+ * concurrent creates / hand-overs for one customer can both pass on the same exposure.
  */
 export async function assertCreditAtEnforcementPoint(
   deps: CreditEnforcementDeps,
@@ -257,7 +272,7 @@ export async function assertCreditAtEnforcementPoint(
   if (!p.tenantId) return; // no tenant = no switch to read = OFF
   let mode: CreditEnforcementMode;
   try {
-    mode = await creditEnforcementMode(deps.prisma, p.tenantId);
+    mode = await creditEnforcementMode(deps.prisma, p.tenantId, action);
   } catch (err) {
     deps.logger.error(
       `credit enforcement switch unreadable (treated as off): tenant=${p.tenantId}`,

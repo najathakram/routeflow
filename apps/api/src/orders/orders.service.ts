@@ -2645,14 +2645,17 @@ export class OrdersService implements OnApplicationBootstrap {
     }
 
     // B585: goods leaving is the enforcement moment (operators only, by the role gates above; before
-    // any write). That is OUT_FOR_DELIVERY, or a counter hand-over straight to DELIVERED (the van-sale
-    // flow never sets OUT_FOR_DELIVERY); an order already out/part-delivered was gated on its way out.
-    // A driver's stop completion is not gated. Nothing runs unless the tenant switch is set.
+    // any write): OUT_FOR_DELIVERY, or a counter hand-over straight to DELIVERED (the van-sale flow never
+    // sets OUT_FOR_DELIVERY). An order whose goods already left (PARTIALLY_DELIVERED, or OUT_FOR_DELIVERY
+    // going on to DELIVERED) was gated on its way out. A driver's stop completion is not gated. Nothing
+    // runs unless the tenant's `credit_limit.enforce_delivery` is set.
+    const alreadyOut =
+      order.status === OrderStatus.OUT_FOR_DELIVERY ||
+      order.status === OrderStatus.PARTIALLY_DELIVERED;
     const goodsLeaving =
-      dto.status === OrderStatus.OUT_FOR_DELIVERY ||
-      (dto.status === OrderStatus.DELIVERED &&
-        order.status !== OrderStatus.OUT_FOR_DELIVERY &&
-        order.status !== OrderStatus.PARTIALLY_DELIVERED);
+      (dto.status === OrderStatus.OUT_FOR_DELIVERY &&
+        order.status !== OrderStatus.PARTIALLY_DELIVERED) ||
+      (dto.status === OrderStatus.DELIVERED && !alreadyOut);
     if (goodsLeaving) {
       const p = { customerId: order.customerId, projectedTotal: Number(order.total) };
       await this.creditGate({ ...p, excludeOrderId: id, action: "delivery", principal: user });
