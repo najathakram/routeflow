@@ -58,7 +58,7 @@ import {
 } from "@/lib/api/orders";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
-import { SALES_AGENTS_ADDON } from "@/lib/api/addons";
+import { SALES_AGENTS_ADDON, useOrderUiV2 } from "@/lib/api/addons";
 import { describeCancelImpact } from "@/lib/cancel-impact";
 import { fmtCalendarDate, isInternalEmail } from "@/lib/formatting";
 import { formatMoney, formatQty } from "@/lib/format";
@@ -71,6 +71,7 @@ import {
 import { useCreateInvoiceFromOrder, useSendInvoice, useSendInvoiceEmail } from "@/lib/api/invoices";
 import { LicenseGuardModal } from "../_components/LicenseGuardModal";
 import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
+import { OrderLineItemCards } from "./_components/OrderLineItemCards";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { useProducts } from "@/lib/api/products";
 import {
@@ -1713,6 +1714,8 @@ export default function OrderDetailPage() {
   const id = params.id as string;
   const { setTitle } = usePageTitle();
   const { data: order, isLoading, isError } = useOrder(id);
+  // `order_ui_v2` (dark): card-list lines instead of the table.
+  const orderUiV2 = useOrderUiV2();
   const { data: priceHistory } = useCustomerPriceHistory(order?.customerId);
   // Customer tier pricing (mirrors mobile's edit-items screen): a substituted
   // line prices off the customer's effective tier, not the raw list price.
@@ -2989,6 +2992,12 @@ export default function OrderDetailPage() {
                   )}
                 </div>
               </div>
+            ) : orderUiV2.enabled ? (
+              <OrderLineItemCards
+                lineItems={order.lineItems}
+                orderStatus={order.status}
+                total={total}
+              />
             ) : (
               <OrderLineItemsTable
                 lineItems={order.lineItems}
