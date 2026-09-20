@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { FEATURE_REGISTRY } from "./feature-registry";
+import { CONFIG_SNAPSHOT_RESTORED_ACTION } from "./config-snapshot-audit.constants";
 import { ConfigSnapshotFlagService } from "./config-snapshot-flag.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { findPlanDefinition, planRank } from "./plan-catalog.constants";
@@ -137,6 +138,27 @@ export class PlanTransitionConfigService implements OnModuleInit {
       prepared.planAllows,
     );
     if (restore) {
+      // The report goes into the existing audit trail (no migration), in the SAME transaction as
+      // the restore: it exists iff the restore does. The admin list reads the counts from here.
+      await tx.auditLog.create({
+        data: {
+          tenantId: t.tenantId,
+          userId: t.actor?.id ?? null,
+          action: CONFIG_SNAPSHOT_RESTORED_ACTION,
+          entityType: "tenant",
+          entityId: t.tenantId,
+          meta: {
+            automatic: true,
+            snapshotId: restore.snapshotId,
+            snapshotTakenAt: restore.takenAt,
+            snapshotPlanKey: restore.planKey,
+            fromPlanKey: t.fromPlanKey ?? null,
+            restoredToPlanKey: t.toPlanKey,
+            report: { ...restore.report },
+            supersededSnapshots: restore.supersededSnapshots,
+          },
+        },
+      });
       this.logger.log(
         `Restored tenant ${t.tenantId} feature config from snapshot ${restore.snapshotId} on ` +
           `${t.fromPlanKey} -> ${t.toPlanKey}: ${JSON.stringify(restore.report)}`,

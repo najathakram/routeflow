@@ -141,6 +141,52 @@ describe("PlanTransitionConfigService (A2 step b)", () => {
     expect(planAllows("no.such.feature")).toBe(false);
   });
 
+  it("an automatic restore writes its report into the AUDIT TRAIL in the same tx (no migration)", async () => {
+    const { svc } = build(true);
+
+    await runTransition(svc, {
+      tenantId: "t1",
+      fromPlanKey: LOW,
+      toPlanKey: HIGH,
+      toPlanVersionId: null,
+      actor: { id: "u9" },
+    });
+
+    expect(auditCreate).toHaveBeenCalledTimes(1);
+    expect(auditCreate.mock.calls[0][0].data).toMatchObject({
+      tenantId: "t1",
+      userId: "u9",
+      action: "CONFIG_SNAPSHOT_RESTORED",
+      entityType: "tenant",
+      entityId: "t1",
+      meta: {
+        automatic: true,
+        snapshotId: "snap-0",
+        restoredToPlanKey: HIGH,
+        report: { restored: 2, skipped: 1, keptNewer: 1, unchanged: 0 },
+        supersededSnapshots: 2,
+      },
+    });
+  });
+
+  it("no audit row when nothing was restored, and none for a downgrade", async () => {
+    const { svc, snapshots } = build(true);
+    snapshots.restoreLatest.mockResolvedValueOnce(null);
+    await runTransition(svc, {
+      tenantId: "t1",
+      fromPlanKey: LOW,
+      toPlanKey: HIGH,
+      toPlanVersionId: null,
+    });
+    await runTransition(svc, {
+      tenantId: "t1",
+      fromPlanKey: HIGH,
+      toPlanKey: LOW,
+      toPlanVersionId: null,
+    });
+    expect(auditCreate).not.toHaveBeenCalled();
+  });
+
   it("the catalog is read BEFORE the transaction and only for an enabled upgrade", async () => {
     const { svc, catalog } = build(true);
     const up = { tenantId: "t1", fromPlanKey: LOW, toPlanKey: HIGH, toPlanVersionId: "v1" };

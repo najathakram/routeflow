@@ -345,4 +345,15 @@ describe("TenantConfigSnapshotService — 90-day automatic-restore horizon (A2 d
     const { tx } = await snapshottedAgo(90, 1);
     expect(await svc.restoreLatest(tx, TENANT, HIGH, NOW)).toBeNull();
   });
+
+  it("restoreLatest reports how many older snapshots it superseded", async () => {
+    const { tx, state } = fakeTx({ configs: [cfgRow()] });
+    await svc.snapshot(tx, TENANT, HIGH, "DOWNGRADE", undefined, daysAgo(20));
+    await svc.snapshot(tx, TENANT, HIGH, "DOWNGRADE", undefined, daysAgo(10));
+    state.configs.length = 0;
+
+    const res = await svc.restoreLatest(tx, TENANT, HIGH, NOW);
+
+    expect(res?.supersededSnapshots).toBe(1);
+  });
 });

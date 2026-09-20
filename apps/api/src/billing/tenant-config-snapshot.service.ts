@@ -43,6 +43,8 @@ export interface RestoreResult {
   takenAt: Date;
   planKey: string;
   report: RestoreReport;
+  /** Older un-restored snapshots this restore superseded. */
+  supersededSnapshots: number;
 }
 
 /**
@@ -177,7 +179,7 @@ export class TenantConfigSnapshotService {
       where: { id: snapshot.id },
       data: { restoredAt: now, restoredToPlanKey: newPlanKey },
     });
-    await tx.tenantFeatureConfigSnapshot.updateMany({
+    const superseded = await tx.tenantFeatureConfigSnapshot.updateMany({
       where: { tenantId, restoredAt: null, takenAt: { lt: snapshot.takenAt } },
       data: { restoredAt: now, restoredToPlanKey: "SUPERSEDED" },
     });
@@ -187,6 +189,7 @@ export class TenantConfigSnapshotService {
       takenAt: snapshot.takenAt,
       planKey: snapshot.planKey,
       report: summarizeRestore(plan),
+      supersededSnapshots: superseded.count,
     };
   }
 }
