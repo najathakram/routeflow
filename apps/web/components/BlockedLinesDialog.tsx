@@ -17,10 +17,24 @@ export function BlockedLinesDialog({
   lines: BlockedLine[] | null;
   onClose: () => void;
 }) {
+  // Opened by an error handler, so Radix has no trigger to return focus to: without this, closing
+  // (Esc / OK) drops focus on <body> and the Create Order modal underneath loses its place.
+  const returnFocusTo = React.useRef<HTMLElement | null>(null);
   return (
     <Modal
       open={!!lines}
       onClose={onClose}
+      onOpenAutoFocus={() => {
+        returnFocusTo.current = document.activeElement as HTMLElement | null;
+      }}
+      onCloseAutoFocus={(e) => {
+        const el = returnFocusTo.current;
+        returnFocusTo.current = null;
+        if (el && el.isConnected && el !== document.body) {
+          e.preventDefault();
+          el.focus();
+        }
+      }}
       title="Some items can't be sold to this customer"
       description="Remove them from the order to continue."
       footer={<Button onClick={onClose}>OK</Button>}

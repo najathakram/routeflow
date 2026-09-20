@@ -22,6 +22,8 @@ window.HTMLElement.prototype.scrollIntoView = jest.fn();
  */
 
 const createOrderMutate = jest.fn();
+// Mutable so a test can put the mutation in its error state (the modal's inline API-error banner).
+let mockCreateOrderError: unknown = null;
 // Mutable so a test can put a customer in the picker / give them per-product tier prices.
 let mockCustomers: Array<Record<string, unknown>> = [];
 let mockCustomerPrices: Array<Record<string, unknown>> = [];
@@ -40,7 +42,7 @@ jest.mock("@/lib/api/orders", () => ({
   useCreateOrder: () => ({
     mutate: createOrderMutate,
     isPending: false,
-    error: null,
+    error: mockCreateOrderError,
     reset: jest.fn(),
   }),
   useActiveOrderForCustomer: () => ({ data: undefined }),
@@ -631,6 +633,13 @@ describe("CreateOrderModal", () => {
         },
       };
 
+      afterEach(() => {
+        mockCreateOrderError = null;
+      });
+
+      // NOTE: a real *draft* is not blocked by the API (only non-draft sales are checked; the block
+      // lands at promotion), so the 409 is injected into the shared onError here. That handler is
+      // the one every create/promote path goes through; the real-server behaviour is F2's proof.
       it("a blocked save opens the dialog with the item and a plain cause, and raises NO page-level toast", async () => {
         mockCustomers = [acme];
         renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
@@ -647,6 +656,30 @@ describe("CreateOrderModal", () => {
         expect(within(dialog).getByText("Restricted in TX")).toBeInTheDocument();
         expect(within(dialog).queryByText("p1")).toBeNull(); // never a raw id
         expect(mockToast).not.toHaveBeenCalled();
+      });
+
+      it("shows no inline red banner for it (the dialog is the one message; the rule reason stays out)", async () => {
+        mockCustomers = [acme];
+        mockCreateOrderError = {
+          ...restricted409,
+          message: "Request failed",
+          response: {
+            ...restricted409.response,
+            data: { ...restricted409.response.data, message: "Restricted: internal rule reason" },
+          },
+        };
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        await pickCustomer("Acme Foods");
+        expect(screen.queryByText(/internal rule reason/)).toBeNull();
+        expect(screen.queryByText(/Request failed/)).toBeNull();
+      });
+
+      it("any other API error still shows the inline banner", async () => {
+        mockCustomers = [acme];
+        mockCreateOrderError = { response: { status: 500, data: { message: "Boom happened" } } };
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        await pickCustomer("Acme Foods");
+        expect(screen.getByText("Boom happened")).toBeInTheDocument();
       });
     });
   });

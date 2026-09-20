@@ -1116,6 +1116,9 @@ export function CreateOrderModal({
       message?: string;
     } | null;
     if (!err) return null;
+    // A SELLING_RESTRICTED 409 has its own dialog; the banner would repeat it (with the rule's
+    // admin-written reason) and outlive the dialog's OK.
+    if (parseSellingRestricted(err)) return null;
     return err.response?.data?.message || err.message || "Something went wrong. Please try again.";
   })();
 
