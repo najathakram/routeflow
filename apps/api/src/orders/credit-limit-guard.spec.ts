@@ -129,6 +129,36 @@ describe("assertWithinCreditLimit (the hard block)", () => {
     expect(db.order.findMany.mock.calls[0][0].where.customerId).toBe("c-1");
   });
 
+  it("the two options are NAMED: invoicesSurviveEdit floors the edited order at its surviving invoices (the default caps it at the projected total) and `action` words the 409", async () => {
+    const paid = {
+      total: 1000,
+      status: "PAID",
+      orderId: "o-1",
+      order: null,
+      payments: [{ amount: 1000, status: "PAID" }],
+    };
+    const owing = { total: 1000, status: "OVERDUE", orderId: "o-1", order: null, payments: [] };
+    const at = (creditLimit: number, projected: number, opts?: object) =>
+      assertWithinCreditLimit(
+        makeDb({ creditLimit, invoices: [paid, owing] }),
+        "c-1",
+        "o-1",
+        projected,
+        true,
+        opts,
+      );
+    await expect(at(999, 1050, { invoicesSurviveEdit: true })).rejects.toMatchObject({
+      response: { exposure: 1000 }, // the surviving OVERDUE batch, not the netted 50
+    });
+    await expect(at(600, 600)).resolves.toBeUndefined(); // default: never stricter than before
+    await expect(at(600, 600, { invoicesSurviveEdit: true })).rejects.toMatchObject({
+      response: { exposure: 1000, limit: 600 },
+    });
+    await expect(at(10, 11, { action: "delivery" })).rejects.toMatchObject({
+      response: { message: expect.stringContaining("This delivery would") },
+    });
+  });
+
   it("passes at or under the limit (the block is strictly exposure > limit)", async () => {
     const db = makeDb({ creditLimit: 100, invoices: [sent(60)] });
     await expect(assertWithinCreditLimit(db, "c-1", "o-1", 40, true)).resolves.toBeUndefined(); // 100 = limit

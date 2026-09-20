@@ -349,6 +349,7 @@ export class ChangeRequestsService {
       status: UserStatus.ACTIVE,
       forcePasswordChange: false,
       tenantId: this.prisma.getTenantId(),
+      type: "BUYER",
     } as JwtPayload;
 
     const draft = await this.ordersService.create(
