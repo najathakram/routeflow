@@ -2,6 +2,7 @@ import { ConflictException, Logger } from "@nestjs/common";
 import { roundMoney } from "@routeflow/pricing";
 import type { EntitlementsService } from "../billing/entitlements.service";
 import { loadCreditExposure } from "../invoices/credit-exposure";
+import { assertAmbientTenant } from "../common/ambient-tenant";
 import type { PrismaService } from "../prisma/prisma.service";
 
 /**
@@ -105,9 +106,12 @@ export async function isCreditLimitCheckEnabled(deps: CreditLimitCheckDeps): Pro
 export async function assertWithinCreditLimit(
   db: any,
   customerId: string,
-  currentOrderId: string,
+  /** The order being edited (excluded from every bucket); `null` = a NEW order, nothing to exclude. */
+  currentOrderId: string | null,
   projectedOrderTotal: number,
   creditCheckEnabled: boolean,
+  /** What the 409 message calls the thing that would breach the limit. */
+  action: "edit" | "order" | "delivery" = "edit",
 ): Promise<void> {
   if (!creditCheckEnabled) return;
 
@@ -129,10 +133,114 @@ export async function assertWithinCreditLimit(
     throw new ConflictException({
       code: "CREDIT_LIMIT_EXCEEDED",
       message:
-        `This edit would take the customer's exposure to ${exposure.toFixed(2)}, ` +
+        `This ${action} would take the customer's exposure to ${exposure.toFixed(2)}, ` +
         `over their credit limit of ${limit.toFixed(2)}.`,
       limit,
       exposure,
     });
+  }
+}
+
+// ─── B585: the new enforcement points (create / deliver), dark first ──────────────────────────
+
+/**
+ * Per-tenant `SystemConfig` switch (default OFF = DARK) for the credit check at order CREATE and
+ * DELIVER: DARK logs "would deny" and never blocks; only the EXACT value `"true"` ENFORCES. It does
+ * NOT govern the edit paths (`updateOrderItems` / change requests), which have always blocked.
+ */
+export const CREDIT_LIMIT_ENFORCE_KEY = "credit_limit.enforce_new_orders";
+
+export type CreditEnforcementMode = "DARK" | "ENFORCED";
+
+/** What the enforcement-point helpers read: the client (tenant scoping, no ambient tenant on cron). */
+export interface CreditEnforcementDeps extends CreditLimitCheckDeps {
+  prisma: Pick<PrismaService, "getTenantId" | "forTenant">;
+  logger: Pick<Logger, "error" | "warn">;
+}
+
+/**
+ * The tenant's mode. The read carries an EXPLICIT `tenantId` (L-124: with no ambient tenant,
+ * `forTenant()` is unscoped) and refuses one that disagrees with the ambient tenant. A DB error
+ * propagates; `assertCreditAtEnforcementPoint` decides what an unreadable switch means.
+ */
+export async function creditEnforcementMode(
+  prisma: Pick<PrismaService, "forTenant" | "getTenantId">,
+  tenantId: string,
+): Promise<CreditEnforcementMode> {
+  assertAmbientTenant(prisma, tenantId, "creditEnforcementMode");
+  const row: { value: string } | null = await prisma.forTenant().systemConfig.findFirst({
+    where: { tenantId, key: CREDIT_LIMIT_ENFORCE_KEY },
+    select: { value: true },
+  });
+  return row?.value === "true" ? "ENFORCED" : "DARK";
+}
+
+const isCreditLimitExceeded = (e: unknown): e is ConflictException =>
+  e instanceof ConflictException &&
+  (e.getResponse() as { code?: string } | undefined)?.code === "CREDIT_LIMIT_EXCEEDED";
+
+const ACTION_LABEL = { order: "new order", delivery: "delivery" } as const;
+
+/**
+ * The credit check at a B585 enforcement point (a NEW order, or an order going out for delivery):
+ * same derivation as the edit guard, behind the per-tenant switch. Runs BEFORE any write / stock
+ * transaction, so nothing is half-committed and no second pooled connection is taken inside a tx.
+ * When the guard would deny: ENFORCED throws its 409; DARK logs one "would deny" line (ids and
+ * figures only) and allows. No tenant on the caller = DARK. DARK must never break a create that
+ * works today: any failure to reach a verdict (unreadable exposure or switch) logs ERROR and
+ * allows; only an ENFORCED tenant sees it. `excludeOrderId` = the order being sent out.
+ *
+ * ⚠ Do NOT set the switch to "true" for any tenant until the paths that still bypass this check
+ * are guarded: DRAFT → PENDING promotion in `changeStatus`, the standing-order cron
+ * (`order-templates` writes PENDING orders directly), and the deliver point.
+ */
+export async function assertCreditAtEnforcementPoint(
+  deps: CreditEnforcementDeps,
+  p: {
+    tenantId: string | null | undefined;
+    customerId: string;
+    projectedTotal: number;
+    excludeOrderId?: string | null;
+    action?: keyof typeof ACTION_LABEL;
+  },
+): Promise<void> {
+  const action = p.action ?? "order";
+  // An unreadable switch is DARK (allow + ERROR): never a 500 for a create that works today.
+  const modeOrDark = async (): Promise<CreditEnforcementMode> => {
+    if (!p.tenantId) return "DARK";
+    try {
+      return await creditEnforcementMode(deps.prisma, p.tenantId);
+    } catch (err) {
+      deps.logger.error(
+        `credit enforcement switch unreadable (treated as dark): tenant=${p.tenantId}`,
+        err,
+      );
+      return "DARK";
+    }
+  };
+  try {
+    const enabled = await isCreditLimitCheckEnabled(deps);
+    await assertWithinCreditLimit(
+      deps.prisma.forTenant(),
+      p.customerId,
+      p.excludeOrderId ?? null,
+      p.projectedTotal,
+      enabled,
+      action,
+    );
+  } catch (e) {
+    if ((await modeOrDark()) === "ENFORCED") throw e;
+    if (!isCreditLimitExceeded(e)) {
+      deps.logger.error(
+        `credit check unavailable, allowing (dark): tenant=${p.tenantId ?? "none"} customer=${p.customerId}`,
+        e,
+      );
+      return;
+    }
+    const { limit, exposure } = e.getResponse() as { limit: number; exposure: number };
+    deps.logger.warn(
+      `credit limit would DENY a ${ACTION_LABEL[action]} (dark): tenant=${p.tenantId ?? "none"} ` +
+        `customer=${p.customerId} exposure=${exposure} limit=${limit}`,
+    );
   }
 }
