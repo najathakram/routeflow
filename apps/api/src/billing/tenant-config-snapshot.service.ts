@@ -136,7 +136,9 @@ export class TenantConfigSnapshotService {
     if (newRank < 0) return null;
 
     const candidates = await tx.tenantFeatureConfigSnapshot.findMany({
-      where: { tenantId, restoredAt: null },
+      // Only DOWNGRADE archives are ever auto-consumed: a MANUAL snapshot is an admin's own
+      // save-point and stays until an admin restores it (Restore now), never on a re-upgrade.
+      where: { tenantId, restoredAt: null, reason: "DOWNGRADE" },
       orderBy: { takenAt: "desc" },
     });
     const snapshot = candidates.find((s) => {
@@ -276,6 +278,7 @@ export class TenantConfigSnapshotService {
         },
       });
     }
+    let conflictedOverrides = 0;
     if (plan.overrides.create.length > 0) {
       // ONE createMany with skipDuplicates (INSERT … ON CONFLICT DO NOTHING), not a create per row:
       // a live override for the same feature can appear between our read and this write (an admin
@@ -283,7 +286,7 @@ export class TenantConfigSnapshotService {
       // (tenantId, featureKey) WHERE revokedAt IS NULL. A caught P2002 would leave the caller's
       // Postgres transaction poisoned ("current transaction is aborted"), so the conflict is
       // resolved IN the statement instead: the concurrent writer's row wins, ours is skipped.
-      await tx.tenantFeatureOverride.createMany({
+      const inserted = await tx.tenantFeatureOverride.createMany({
         skipDuplicates: true,
         data: plan.overrides.create.map((entry) => ({
           tenantId,
@@ -295,6 +298,9 @@ export class TenantConfigSnapshotService {
           createdById: entry.createdById,
         })),
       });
+      // Rows the statement SKIPPED (a live override won the conflict) were not restored: count them
+      // as kept — the concurrent writer's value stands — so the audit report never overstates.
+      conflictedOverrides = plan.overrides.create.length - inserted.count;
     }
 
     await tx.tenantFeatureConfigSnapshot.update({
@@ -302,7 +308,8 @@ export class TenantConfigSnapshotService {
       data: { restoredAt: now, restoredToPlanKey: stampPlanKey },
     });
     const superseded = await tx.tenantFeatureConfigSnapshot.updateMany({
-      where: { tenantId, restoredAt: null, takenAt: { lt: snapshot.takenAt } },
+      // Only older DOWNGRADE archives are superseded: a MANUAL save-point is never auto-consumed.
+      where: { tenantId, restoredAt: null, reason: "DOWNGRADE", takenAt: { lt: snapshot.takenAt } },
       data: { restoredAt: now, restoredToPlanKey: "SUPERSEDED" },
     });
 
@@ -310,7 +317,14 @@ export class TenantConfigSnapshotService {
       snapshotId: snapshot.id,
       takenAt: snapshot.takenAt,
       planKey: snapshot.planKey,
-      report: summarizeRestore(plan),
+      report: (() => {
+        const r = summarizeRestore(plan);
+        return {
+          ...r,
+          restored: r.restored - conflictedOverrides,
+          keptNewer: r.keptNewer + conflictedOverrides,
+        };
+      })(),
       supersededSnapshots: superseded.count,
     };
   }

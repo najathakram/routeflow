@@ -77,7 +77,8 @@ function fakeTx(seed: { configs?: any[]; overrides?: any[]; snapshots?: any[] } 
           .filter(
             (s) =>
               s.tenantId === where.tenantId &&
-              (where.restoredAt === undefined || s.restoredAt === where.restoredAt),
+              (where.restoredAt === undefined || s.restoredAt === where.restoredAt) &&
+              (where.reason === undefined || s.reason === where.reason),
           )
           .sort((a, b) => b.takenAt.getTime() - a.takenAt.getTime()),
       findFirst: async ({ where }: any) =>
@@ -103,6 +104,7 @@ function fakeTx(seed: { configs?: any[]; overrides?: any[]; snapshots?: any[] } 
           (s) =>
             s.tenantId === where.tenantId &&
             s.restoredAt === null &&
+            (where.reason === undefined || s.reason === where.reason) &&
             s.takenAt.getTime() < where.takenAt.lt.getTime(),
         );
         rows.forEach((r) => Object.assign(r, data));
@@ -508,5 +510,59 @@ describe("TenantConfigSnapshotService — a concurrent live override never abort
     expect(state.overrides).toHaveLength(1);
     expect(state.overrides[0].id).toBe("raced"); // the concurrent writer's row wins
     expect(state.snapshots[0].restoredAt).not.toBeNull();
+  });
+});
+
+describe("TenantConfigSnapshotService — restore reports honestly and only consumes DOWNGRADE archives", () => {
+  const svc = new TenantConfigSnapshotService();
+
+  it("(d) a MANUAL snapshot is never auto-consumed by a re-upgrade", async () => {
+    const { tx, state } = fakeTx({ configs: [cfgRow()] });
+    await svc.snapshot(tx, TENANT, HIGH, "MANUAL", undefined, T0);
+    state.configs.length = 0;
+
+    expect(await svc.restoreLatest(tx, TENANT, HIGH, NOW)).toBeNull();
+    expect(state.configs).toHaveLength(0);
+    expect(state.snapshots[0].restoredAt).toBeNull();
+  });
+
+  it("(d) with both kinds present, only the DOWNGRADE archive is consumed", async () => {
+    const { tx, state } = fakeTx({ configs: [cfgRow()] });
+    await svc.snapshot(tx, TENANT, HIGH, "DOWNGRADE", undefined, T0);
+    await svc.snapshot(tx, TENANT, HIGH, "MANUAL", undefined, new Date(T0.getTime() + 1000));
+    state.configs.length = 0;
+
+    const res = await svc.restoreLatest(tx, TENANT, HIGH, NOW);
+
+    expect(res?.snapshotId).toBe(state.snapshots[0].id); // the DOWNGRADE one, though older
+    expect(state.snapshots[1].restoredAt).toBeNull();
+  });
+
+  it("(d) a MANUAL snapshot OLDER than the restored DOWNGRADE one is not superseded either", async () => {
+    const { tx, state } = fakeTx({ configs: [cfgRow()] });
+    await svc.snapshot(tx, TENANT, HIGH, "MANUAL", undefined, T0);
+    await svc.snapshot(tx, TENANT, HIGH, "DOWNGRADE", undefined, new Date(T0.getTime() + 1000));
+    state.configs.length = 0;
+
+    const res = await svc.restoreLatest(tx, TENANT, HIGH, NOW);
+
+    expect(res?.snapshotId).toBe(state.snapshots[1].id);
+    expect(res?.supersededSnapshots).toBe(0);
+    expect(state.snapshots[0].restoredAt).toBeNull(); // the admin's save-point survives
+  });
+
+  it("(a) an override the statement SKIPPED (a live one won the race) is reported as kept, not restored", async () => {
+    const { tx, state } = fakeTx({ overrides: [ovrRow()] });
+    await svc.snapshot(tx, TENANT, HIGH, "DOWNGRADE", undefined, T0);
+    state.overrides.length = 0;
+    const real = (tx.tenantFeatureOverride as any).createMany;
+    (tx.tenantFeatureOverride as any).createMany = async (args: any) => {
+      state.overrides.push({ ...ovrRow({ id: "raced" }) }); // an admin grant lands just before the insert
+      return real(args);
+    };
+
+    const res = await svc.restoreLatest(tx, TENANT, HIGH, NOW);
+
+    expect(res?.report).toEqual({ restored: 0, skipped: 0, keptNewer: 1, unchanged: 0 });
   });
 });

@@ -50,15 +50,24 @@ export class BillingWebhookController {
       return;
     }
 
+    let event: ReturnType<StripeService["constructWebhookEvent"]>;
     try {
-      const event = this.stripeService.constructWebhookEvent(rawBody, signature);
-
-      await this.billingService.handleWebhookEvent(event);
-
-      res.status(HttpStatus.OK).json({ received: true });
+      event = this.stripeService.constructWebhookEvent(rawBody, signature);
     } catch (err: any) {
       this.logger.error(`Webhook signature verification failed: ${err.message}`);
       res.status(HttpStatus.BAD_REQUEST).json({ error: "Webhook signature verification failed" });
+      return;
+    }
+
+    // A handler failure is NOT a signature problem: report it as what it is (500, so Stripe
+    // redelivers) instead of a misleading 400 that sends on-call to rotate the webhook secret and
+    // that Stripe counts against the endpoint (repeated 4xx can get the endpoint disabled).
+    try {
+      await this.billingService.handleWebhookEvent(event);
+      res.status(HttpStatus.OK).json({ received: true });
+    } catch (err: any) {
+      this.logger.error(`Webhook handler failed for ${event.type}: ${err.message}`, err.stack);
+      res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ error: "Webhook handler failed" });
     }
   }
 }

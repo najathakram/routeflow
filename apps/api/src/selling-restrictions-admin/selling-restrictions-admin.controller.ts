@@ -1,4 +1,4 @@
-import { Controller, Get, ParseEnumPipe, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, ParseEnumPipe, Post, Query, UseGuards } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
 import type { RestrictionStatus } from "@routeflow/types";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -8,6 +8,9 @@ import {
   RESTRICTION_STATUSES,
   SellingRestrictionsAdminService,
 } from "./selling-restrictions-admin.service";
+import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { CreateRestrictionDto } from "./dto/create-restriction.dto";
 
 const STATUSES = Object.fromEntries(RESTRICTION_STATUSES.map((s) => [s, s]));
 
@@ -23,5 +26,11 @@ export class SellingRestrictionsAdminController {
     @Query("status", new ParseEnumPipe(STATUSES, { optional: true })) status?: RestrictionStatus,
   ) {
     return this.rules.list(status);
+  }
+
+  @Post()
+  @Roles(UserRole.TENANT_ADMIN)
+  create(@Body() dto: CreateRestrictionDto, @CurrentUser() user: JwtPayload) {
+    return this.rules.create(dto, user);
   }
 }
