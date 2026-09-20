@@ -103,6 +103,18 @@ function fakeTx(seed: { configs?: any[]; overrides?: any[]; snapshots?: any[] } 
         );
       },
       updateMany: async ({ where, data }: any) => {
+        if (where.id) {
+          // the restore's CLAIM: a conditional stamp, `restoredAt IS NULL` (only one caller wins)
+          const row = state.snapshots.find(
+            (s) =>
+              s.id === where.id &&
+              s.tenantId === where.tenantId &&
+              s.restoredAt === where.restoredAt,
+          );
+          if (!row) return { count: 0 };
+          Object.assign(row, data);
+          return { count: 1 };
+        }
         const rows = state.snapshots.filter(
           (s) =>
             s.tenantId === where.tenantId &&
@@ -639,5 +651,80 @@ describe("TenantConfigSnapshotService — the automatic restore is bounded (row 
     ).rejects.toBeInstanceOf(RestoreBudgetExceededError);
 
     expect(state.snapshots[0].restoredAt).toBeNull();
+  });
+});
+
+describe("TenantConfigSnapshotService — two concurrent restores restore ONCE (review F7)", () => {
+  const svc = new TenantConfigSnapshotService();
+
+  it("the loser of a race returns null: no second restore, no second stamp, no double write", async () => {
+    const { tx, state } = fakeTx({ configs: [cfgRow()], overrides: [ovrRow()] });
+    await svc.snapshot(tx, TENANT, HIGH, "DOWNGRADE", undefined, T0);
+    state.configs.length = 0;
+    state.overrides.length = 0;
+    const snap = state.snapshots[0];
+    const staleRead = { ...snap }; // what the second transaction read BEFORE the first committed
+
+    const first = await svc.restoreLatest(tx, TENANT, HIGH, NOW);
+    expect(first).not.toBeNull();
+    const writesAfterFirst = JSON.stringify([state.configs, state.overrides]);
+
+    // the second transaction still believes the snapshot is un-restored ...
+    const findMany = (tx.tenantFeatureConfigSnapshot as any).findMany;
+    (tx.tenantFeatureConfigSnapshot as any).findMany = async () => [staleRead];
+    const second = await svc.restoreLatest(tx, TENANT, HIGH, new Date(NOW.getTime() + 1000));
+    (tx.tenantFeatureConfigSnapshot as any).findMany = findMany;
+
+    // ... but its conditional claim matches 0 rows
+    expect(second).toBeNull();
+    expect(JSON.stringify([state.configs, state.overrides])).toBe(writesAfterFirst);
+    expect(snap.restoredAt).toEqual(NOW); // the FIRST restore's stamp, untouched
+  });
+
+  it("a manual restore racing an already-claimed snapshot is also a no-op (double-click)", async () => {
+    const { tx, state } = fakeTx({ configs: [cfgRow()] });
+    await svc.snapshot(tx, TENANT, HIGH, "DOWNGRADE", undefined, T0);
+    state.configs.length = 0;
+    const id = state.snapshots[0].id;
+    (tx.tenantFeatureConfigSnapshot as any).findFirst = async () => ({
+      ...state.snapshots[0],
+      restoredAt: null,
+    });
+
+    expect(await svc.restoreSnapshot(tx, TENANT, id, HIGH, NOW)).not.toBeNull();
+    expect(await svc.restoreSnapshot(tx, TENANT, id, HIGH, NOW)).toBeNull();
+  });
+});
+
+describe("TenantConfigSnapshotService — ages in list() and previewRestore()", () => {
+  const svc = new TenantConfigSnapshotService();
+  const daysAgo = (n: number) => new Date(NOW.getTime() - n * 86_400_000);
+
+  it("previewRestore() reports the age and whether it is beyond the automatic-restore horizon", async () => {
+    const { tx, state } = fakeTx({ configs: [cfgRow()] });
+    await svc.snapshot(tx, TENANT, HIGH, "DOWNGRADE", undefined, daysAgo(91));
+    await svc.snapshot(tx, TENANT, HIGH, "MANUAL", undefined, daysAgo(10));
+
+    const old = await svc.previewRestore(tx, TENANT, state.snapshots[0].id, NOW);
+    const fresh = await svc.previewRestore(tx, TENANT, state.snapshots[1].id, NOW);
+
+    expect(old).toMatchObject({ ageDays: 91, beyondAutoRestoreHorizon: true });
+    expect(fresh).toMatchObject({ ageDays: 10, beyondAutoRestoreHorizon: false });
+  });
+
+  it("list() carries a whole-day age per row", async () => {
+    const { tx } = fakeTx({ configs: [cfgRow()] });
+    await svc.snapshot(
+      tx,
+      TENANT,
+      HIGH,
+      "DOWNGRADE",
+      undefined,
+      new Date(Date.now() - 3 * 86_400_000 - 1000),
+    );
+
+    const rows = await svc.list(tx, TENANT);
+
+    expect(rows[0].ageDays).toBe(3);
   });
 });
