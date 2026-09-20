@@ -14,6 +14,7 @@ import {
 } from "@/lib/restriction-rule-form";
 import { StatePicker } from "./StatePicker";
 
+const PRODUCT_LIMIT = 8;
 type Errors = Partial<Record<keyof RuleFormValues, string>>;
 
 const Legend = ({ children }: { children: React.ReactNode }) => (
@@ -37,7 +38,7 @@ function ProductPick({
     return () => clearTimeout(t);
   }, [q]);
   const { data } = useProducts(
-    { search: term || undefined, isActive: true, limit: 8 },
+    { search: term || undefined, isActive: true, limit: PRODUCT_LIMIT },
     { enabled: !!term },
   );
   const results: { id: string; name: string; sku?: string | null }[] = term
@@ -61,6 +62,7 @@ function ProductPick({
         placeholder="Search products by name or SKU"
         value={q}
         onChange={(e) => setQ(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && e.preventDefault()}
         error={error}
       />
       {results.length > 0 && (
@@ -81,6 +83,11 @@ function ProductPick({
             </li>
           ))}
         </ul>
+      )}
+      {results.length === PRODUCT_LIMIT && (
+        <p className="text-xs text-navy/60">
+          Showing the first {PRODUCT_LIMIT}. Refine your search.
+        </p>
       )}
       {term && results.length === 0 && data && (
         <p className="text-xs text-navy/60">No matching products</p>
@@ -104,8 +111,10 @@ export function RuleFormDialog({ open, onClose }: { open: boolean; onClose: () =
   // The page mounts this only while open, so Radix has no trigger to return focus to: remember
   // who had focus and give it back on close (the BlockedLinesDialog pattern).
   const returnFocusTo = React.useRef<HTMLElement | null>(null);
-  const set = <K extends keyof RuleFormValues>(k: K, val: RuleFormValues[K]) =>
+  const set = <K extends keyof RuleFormValues>(k: K, val: RuleFormValues[K]) => {
     setV((p) => ({ ...p, [k]: val }));
+    setErrors((e) => (e[k] ? { ...e, [k]: undefined } : e));
+  };
 
   React.useEffect(() => {
     if (open) {
