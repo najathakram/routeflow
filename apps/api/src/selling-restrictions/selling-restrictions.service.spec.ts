@@ -3,7 +3,11 @@ import { Test } from "@nestjs/testing";
 import { PrismaService } from "../prisma/prisma.service";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
 import { createMockPrisma } from "../testing/prisma-mock";
-import { activeRuleWhere, restrictionChannelForPrincipal } from "./selling-restrictions.core";
+import {
+  activeRuleWhere,
+  restrictedSummary,
+  restrictionChannelForPrincipal,
+} from "./selling-restrictions.core";
 import {
   ENABLE_READINESS_MAX_PAGES,
   ENABLE_READINESS_PAGE_SIZE,
@@ -999,8 +1003,11 @@ describe("SellingRestrictionsService.evaluate", () => {
       expect(err.getStatus()).toBe(409);
       expect(err.getResponse()).toEqual({
         code: "SELLING_RESTRICTED",
+        message: restrictedSummary(evaluation.reasons),
         blockedLines: evaluation.reasons,
       });
+      // a client with no blocked-lines panel toasts `message`: it must be a real sentence
+      expect((err.getResponse() as { message: string }).message).toMatch(/can't be sold/);
       expect((err.getResponse() as any).blockedLines[0]).toMatchObject({
         productId: "p1",
         reason: "FEDERAL_BAN",

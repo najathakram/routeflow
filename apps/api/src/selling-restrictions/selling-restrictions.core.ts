@@ -112,6 +112,22 @@ export function offEvaluation(): RestrictionsEvaluation {
   return { outcome: "OFF", reasons: [] };
 }
 
+/** Product names the 409 summary lists before "and N more"; the per-line detail stays in `blockedLines`. */
+const SUMMARY_NAMES = 3;
+
+/**
+ * The one human sentence a client shows when it has no blocked-lines panel of its own (the web
+ * handler toasts `body.message`; without one it shows "Request failed with status code 409"). A
+ * lone line is its own message; several are summarised by product name.
+ */
+export function restrictedSummary(lines: readonly BlockedLine[]): string {
+  if (lines.length === 0) return "This order can't be sold to this customer.";
+  if (lines.length === 1) return lines[0].message;
+  const names = lines.slice(0, SUMMARY_NAMES).map((l) => `"${l.productName}"`);
+  const more = lines.length - names.length;
+  return `${lines.length} products on this order can't be sold to this customer: ${names.join(", ")}${more > 0 ? ` and ${more} more` : ""}.`;
+}
+
 /**
  * A rule is active at `at` when inside its [effectiveFrom, effectiveTo) window and not lifted.
  * Lifting stamps `liftedAt` (and closes `effectiveTo`); a lift dated after `at` doesn't
