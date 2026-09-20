@@ -7,6 +7,8 @@
  *   • Customer:            harbor_cafe / Customer1!
  *   • Tenant admin:        e2e_admin / TenantAdmin1!
  *   • Sessions operator:   e2e_sessions_op / Sessions1! (dedicated — spec 32, L-050)
+ *   • Approved buyer:      e2e_buyer@e2e-routeflow.test / BuyerPortal1! — ACTIVE-linked to its own
+ *                          dedicated customer (e2e_buyer_cust); no address, no selling rule
  *
  * Safe to run multiple times — skips creation if data already exists. On an
  * existing tenant it also sweeps stale parked SaleDrafts the web e2e suite
@@ -91,6 +93,14 @@ const TENANT_ADMIN_PASSWORD = "TenantAdmin1!";
 // storageState: operator.json project also loads.
 const SESSIONS_OP_USERNAME = "e2e_sessions_op";
 const SESSIONS_OP_PASSWORD = "Sessions1!";
+// Approved-buyer fixture (buyer-facing compliance proofs need a BUYER that can reach the order
+// call, and a fresh self-registered buyer has no seller link). Linked to a DEDICATED customer:
+// CustomerLink.customerId is @unique, so one customer holds one buyer - never harbor_cafe or the
+// picker fixtures, which other specs/setup steps depend on. Deliberately NO billing address and
+// NO selling-restriction rule: proofs set and undo those per-run, so the resting state stays true.
+const BUYER_EMAIL = "e2e_buyer@e2e-routeflow.test";
+const BUYER_PASSWORD = "BuyerPortal1!";
+const BUYER_CUSTOMER = { username: "e2e_buyer_cust", businessName: "E2E Buyer Portal Cafe" };
 // Feature addons the web e2e suite depends on. developer_mode no longer
 // unlocks the GA delivery features in client UI (owner decision 2026-08-28) —
 // the web e2e suite exercises /routes and /deliveries, which now need the
@@ -348,6 +358,86 @@ async function ensureCommerceFixtures(tenantId) {
   );
 }
 
+// A BuyerAccount whose CustomerLink to a dedicated customer on this tenant is ACTIVE (the
+// "approved" state - the enum default is INVITED). Idempotent: each piece is found first and
+// reported "exists", or created/repaired (re-approving a link a spec disconnected, un-deleting or
+// unlocking the account, restoring a changed password).
+async function ensureBuyerFixture(tenantId) {
+  const user = await ensureFixtureUser(tenantId, BUYER_CUSTOMER);
+  const customer = await prisma.customer.upsert({
+    where: { userId: user.id },
+    create: {
+      userId: user.id,
+      businessName: BUYER_CUSTOMER.businessName,
+      contactName: "E2E Buyer",
+      tenantId,
+    },
+    update: { deletedAt: null },
+  });
+
+  let account = await prisma.buyerAccount.findUnique({ where: { email: BUYER_EMAIL } });
+  if (!account) {
+    account = await prisma.buyerAccount.create({
+      data: {
+        email: BUYER_EMAIL,
+        passwordHash: await bcrypt.hash(BUYER_PASSWORD, 10),
+        name: "E2E Buyer",
+        emailVerified: true,
+      },
+    });
+    console.log(`  ✓ Created buyer: ${BUYER_EMAIL} / ${BUYER_PASSWORD}`);
+  } else {
+    const passwordOk = await bcrypt.compare(BUYER_PASSWORD, account.passwordHash);
+    const healthy =
+      passwordOk &&
+      account.status === "ACTIVE" &&
+      !account.deletedAt &&
+      !account.lockedUntil &&
+      account.failedLoginAttempts === 0;
+    if (!healthy) {
+      account = await prisma.buyerAccount.update({
+        where: { id: account.id },
+        data: {
+          status: "ACTIVE",
+          deletedAt: null,
+          lockedUntil: null,
+          failedLoginAttempts: 0,
+          ...(passwordOk ? {} : { passwordHash: await bcrypt.hash(BUYER_PASSWORD, 10) }),
+        },
+      });
+      console.log(`  ✓ Repaired buyer: ${BUYER_EMAIL}`);
+    } else {
+      console.log(`  ✓ Buyer "${BUYER_EMAIL}" exists`);
+    }
+  }
+
+  const link = await prisma.customerLink.findUnique({ where: { customerId: customer.id } });
+  if (!link || link.buyerAccountId !== account.id || link.status !== "ACTIVE") {
+    await prisma.customerLink.upsert({
+      where: { customerId: customer.id },
+      create: {
+        buyerAccountId: account.id,
+        customerId: customer.id,
+        tenantId,
+        status: "ACTIVE",
+        linkedAt: new Date(),
+      },
+      update: {
+        buyerAccountId: account.id,
+        status: "ACTIVE",
+        linkedAt: new Date(),
+        disconnectedAt: null,
+        disconnectedBy: null,
+        inviteToken: null,
+        inviteExpiresAt: null,
+      },
+    });
+    console.log(`  ✓ Buyer approved-linked to "${BUYER_CUSTOMER.businessName}"`);
+  } else {
+    console.log(`  ✓ Buyer link to "${BUYER_CUSTOMER.businessName}" exists (ACTIVE)`);
+  }
+}
+
 async function main() {
   const isRailway = dbUrl.includes("railway") || dbUrl.includes("rlwy");
   console.log(`\n🌱 E2E Seed — ${isRailway ? "⚠  RAILWAY" : "Local dev"}`);
@@ -463,6 +553,7 @@ async function main() {
 
     // ── Commerce fixtures (B566) ─────────────────────────────────────────────────
     await ensureCommerceFixtures(existing.id);
+    await ensureBuyerFixture(existing.id);
 
     // ── Sweep stale parked drafts left by the web e2e suite ─────────────────────
     // 08-create-order-escape's ESC tests auto-park REAL drafts ("Order, <name>",
@@ -590,6 +681,7 @@ async function main() {
 
   // ── Commerce fixtures (B566) ─────────────────────────────────────────────────
   await ensureCommerceFixtures(tenant.id);
+  await ensureBuyerFixture(tenant.id);
 
   console.log("\n✅ E2E seed complete.\n");
 }

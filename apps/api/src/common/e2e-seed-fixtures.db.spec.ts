@@ -152,4 +152,31 @@ describeDb("e2e-seed.js commerce fixtures (B566) — real Postgres", () => {
     expect(allCustomers).toBe(3); // no fourth (duplicate) customer
     expect((await counts()).customers).toBe(3); // and all three are active again
   }, 300_000);
+
+  it("seeds an approved buyer on a dedicated customer, idempotently, with no address or rule baked in", async () => {
+    runSeed(dbUrl);
+    runSeed(dbUrl);
+    const tenant = await prisma.tenant.findUniqueOrThrow({ where: { slug: TENANT_SLUG } });
+    const email = "e2e_buyer@e2e-routeflow.test";
+
+    const accounts = await prisma.buyerAccount.findMany({ where: { email } });
+    expect(accounts).toHaveLength(1); // a re-run never duplicates the buyer
+    expect(accounts[0]).toMatchObject({ status: "ACTIVE", deletedAt: null });
+
+    const links = await prisma.customerLink.findMany({
+      where: { buyerAccountId: accounts[0].id },
+      include: { customer: { include: { user: true } } },
+    });
+    expect(links).toHaveLength(1);
+    // "Approved" is ACTIVE (the enum default is INVITED) on the approved test tenant.
+    expect(links[0]).toMatchObject({ status: "ACTIVE", tenantId: tenant.id });
+    // Dedicated customer: CustomerLink.customerId is @unique, so harbor_cafe stays free.
+    expect(links[0].customer.user.username).toBe("e2e_buyer_cust");
+
+    // Per-proof state (a billing address, a selling rule) is set and undone by the prover, so the
+    // resting fixture carries no address on its customer.
+    expect(await prisma.customerAddress.count({ where: { customerId: links[0].customerId } })).toBe(
+      0,
+    );
+  }, 300_000);
 });

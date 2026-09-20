@@ -38,6 +38,10 @@ export const CREDENTIALS = {
   // the shared operator/tenant-admin above, which every storageState: operator.json project
   // also loads. Seeded by apps/api/scripts/e2e-seed.js.
   sessionsOp: { username: "e2e_sessions_op", password: "Sessions1!" },
+  // Approved buyer (BUYER role, email login): ACTIVE-linked to a dedicated customer on the
+  // e2e-routeflow tenant so it can reach the order call — a self-registered buyer has no seller
+  // link. Seeded by apps/api/scripts/e2e-seed.js; auth.setup.ts logs it in (no registration).
+  buyer: { email: "e2e_buyer@e2e-routeflow.test", password: "BuyerPortal1!" },
 } as const;
 
 /** True when super-admin credentials are provided via env (super-admin specs skip otherwise). */
