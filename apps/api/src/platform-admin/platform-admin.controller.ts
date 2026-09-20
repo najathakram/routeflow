@@ -43,6 +43,8 @@ import { FeatureDiffService } from "../billing/feature-diff.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { FeaturePreviewService } from "../billing/feature-preview.service";
 import { TenantConfigSnapshotAdminService } from "../billing/tenant-config-snapshot-admin.service";
+import { ConfigSnapshotFlagService } from "../billing/config-snapshot-flag.service";
+import { SetConfigSnapshotFlagDto } from "./dto/set-config-snapshot-flag.dto";
 import { toEffectiveFeature } from "../billing/feature-resolver.service";
 import type { FeaturePreviewRequest } from "@routeflow/types";
 import { AdminAuditAction } from "./audit-actions.constant";
@@ -64,6 +66,7 @@ export class PlatformAdminController {
     private readonly authority: EntitlementAuthority,
     private readonly featurePreview: FeaturePreviewService,
     private readonly snapshotAdmin: TenantConfigSnapshotAdminService,
+    private readonly snapshotFlag: ConfigSnapshotFlagService,
   ) {}
 
   @Get("stats")
@@ -636,6 +639,34 @@ export class PlatformAdminController {
       overrideId,
     });
     return result;
+  }
+
+  @Get("entitlements/config-snapshot")
+  @ApiOperation({
+    summary:
+      "Whether automatic config snapshot/restore on plan changes is switched on (default OFF)",
+  })
+  async getConfigSnapshotFlag() {
+    return { enabled: await this.snapshotFlag.isEnabled() };
+  }
+
+  @Put("entitlements/config-snapshot")
+  @ApiOperation({
+    summary:
+      "Switch automatic config snapshot/restore on plan changes on/off — live, no redeploy, effective across replicas within ~5 s. Audited with the reason.",
+  })
+  async setConfigSnapshotFlag(
+    @Body() dto: SetConfigSnapshotFlagDto,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    await this.snapshotFlag.setEnabled(dto.enabled);
+    await this.svc.recordAdminAction(
+      null,
+      admin.sub,
+      AdminAuditAction.CONFIG_SNAPSHOT_FLAG_CHANGED,
+      { enabled: dto.enabled, reason: dto.reason },
+    );
+    return { enabled: dto.enabled };
   }
 
   // ─── Configuration snapshots (Lane B A2 step c) ───────────────────────────
