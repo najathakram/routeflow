@@ -24,11 +24,13 @@ export function StatePicker({
       s.name.toLowerCase().includes(q.trim().toLowerCase()) ||
       s.code.toLowerCase() === q.trim().toLowerCase(),
   );
-  // The API returns `states` verbatim, so a rule saved as "tx" must still tick Texas; compare
-  // upper-cased, and never hand the parent a duplicate ("tx" + "TX").
-  const has = (code: string) => value.some((c) => c.toUpperCase() === code);
+  // The API returns `states` verbatim, so a rule saved as "tx" must still tick Texas. Both sides of
+  // every comparison are upper-cased: a checkbox passes a US_STATES code, but a chip passes the
+  // STORED value (possibly "tx"). Never hand the parent a duplicate ("tx" + "TX").
+  const same = (a: string, b: string) => a.toUpperCase() === b.toUpperCase();
+  const has = (code: string) => value.some((c) => same(c, code));
   const toggle = (code: string) =>
-    onChange(has(code) ? value.filter((c) => c.toUpperCase() !== code) : [...value, code]);
+    onChange(has(code) ? value.filter((c) => !same(c, code)) : [...value, code]);
 
   return (
     <div className="space-y-2">

@@ -62,4 +62,32 @@ describe("StatePicker", () => {
     fireEvent.click(box("Florida"));
     expect(onChange).toHaveBeenLastCalledWith(["tx", "FL"]);
   });
+
+  it("a chip for a lower-case or mixed-case stored code removes it, leaving no duplicate", () => {
+    // Real state (Host), not a frozen prop: the emitted value must round-trip through the parent.
+    const seen: string[][] = [];
+    function Spy({ initial }: { initial: string[] }) {
+      const [v, setV] = React.useState(initial);
+      return (
+        <StatePicker
+          value={v}
+          onChange={(next) => {
+            seen.push(next);
+            setV(next);
+          }}
+        />
+      );
+    }
+    render(<Spy initial={["tx", "TX", "FL"]} />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Remove tx" })[0]);
+    expect(seen.at(-1)).toEqual(["FL"]);
+    expect(box("Texas")).not.toBeChecked();
+    expect(box("Florida")).toBeChecked();
+  });
+
+  it("a lone lower-case chip removes to an empty selection", () => {
+    render(<Host initial={["tx"]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Remove tx" }));
+    expect(screen.queryByRole("list", { name: "Selected states" })).toBeNull();
+  });
 });
