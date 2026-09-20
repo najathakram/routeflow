@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Plus, Eye, Pencil, Send, PackageCheck, ChevronDown, ChevronUp } from "lucide-react";
+import { Plus, Eye, Send, PackageCheck, ChevronDown, ChevronUp } from "lucide-react";
 import { Badge, Button, useToast } from "@routeflow/ui/web";
 import { formatMoney } from "@/lib/format";
 import { unitsLabel } from "@/lib/stock-label";
@@ -15,8 +15,6 @@ import {
 import type { POItem, POStatus, PurchaseOrder, Supplier } from "./purchase-orders-shared";
 import { CreatePOModal } from "./PurchaseOrdersCreateModal";
 import { ReceivePOModal } from "./PurchaseOrdersReceiveModal";
-import { PurchaseOrdersEditModal } from "./PurchaseOrdersEditModal";
-import { isEditable } from "./purchase-orders-edit";
 
 function poStatusBadge(status: POStatus) {
   const map: Record<
@@ -183,7 +181,6 @@ export function PurchaseOrdersTab({
   const [showCreateModal, setShowCreateModal] = React.useState(false);
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
   const [receivePO, setReceivePO] = React.useState<PurchaseOrder | null>(null);
-  const [editPO, setEditPO] = React.useState<PurchaseOrder | null>(null);
 
   const { data: poData, isLoading } = usePurchaseOrders({
     status: statusFilter || undefined,
@@ -320,15 +317,6 @@ export function PurchaseOrdersTab({
                         >
                           <Eye className="h-4 w-4" />
                         </button>
-                        {isEditable(po) && (
-                          <button
-                            onClick={() => setEditPO(po)}
-                            title="Edit"
-                            className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </button>
-                        )}
                         {po.status === "DRAFT" && <SendPOButton poId={po.id} />}
                         {(po.status === "SENT" || po.status === "PARTIAL") && (
                           <button
@@ -380,14 +368,6 @@ export function PurchaseOrdersTab({
       )}
       {receivePO && (
         <ReceivePOModal po={receivePO} products={products} onClose={() => setReceivePO(null)} />
-      )}
-      {editPO && (
-        <PurchaseOrdersEditModal
-          po={editPO}
-          suppliers={suppliers}
-          products={products}
-          onClose={() => setEditPO(null)}
-        />
       )}
     </>
   );
