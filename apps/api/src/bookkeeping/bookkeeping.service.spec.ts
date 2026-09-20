@@ -1261,6 +1261,30 @@ describe("BookkeepingService", () => {
 
   // ─── extractExpenseItems (AI receipt extraction) ──────────────────────────
 
+  describe("createExpense — nested line items carry the tenant (T6)", () => {
+    // Nested creates bypass the forTenant() extension, so an itemized expense's ExpenseLineItem rows
+    // must be stamped IN the nested literal. Unstamped they were written with a NULL tenantId (and
+    // would be refused outright once the tenantId NOT NULL guard lands).
+    it("stamps every nested ExpenseLineItem with the ambient tenant id", async () => {
+      prisma.expense.create.mockResolvedValue({ id: "exp-new" });
+      await service.createExpense(
+        {
+          date: new Date("2026-09-01T00:00:00Z"),
+          amount: 0,
+          isItemized: true,
+          lineItems: [
+            { account: "Supplies", amount: 5 },
+            { account: "Fuel", amount: 7, notes: "n" },
+          ],
+        },
+        "u1",
+      );
+      const created = prisma.expense.create.mock.calls[0][0].data.lineItems.create;
+      expect(created).toHaveLength(2);
+      for (const li of created) expect(li.tenantId).toBe("test-tenant");
+    });
+  });
+
   describe("extractExpenseItems", () => {
     const RECEIPT_MODEL = "claude-opus-4-5-20251101";
 
