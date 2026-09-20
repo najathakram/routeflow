@@ -2078,7 +2078,7 @@ function acquireLock(p, name, guarded) {
     // can release the holder only after the waiter is provably in the spin loop.
     if (process.env.BUGS_SELF_TEST === "1" && process.env.BUGS_TEST_WAIT_MARKER && alive === true) {
       try {
-        writeFileSync(process.env.BUGS_TEST_WAIT_MARKER, String(process.pid), { flag: "wx" });
+        writeFileSync(process.env.BUGS_TEST_WAIT_MARKER, p, { flag: "wx" });
       } catch {
         /* already announced */
       }
@@ -3190,7 +3190,7 @@ function gatedRaceArgv(tmp, first, second) {
       'const { first, second } = JSON.parse(readFileSync(specFile, "utf8"));',
       "const sleep = (ms) => new Promise((r) => setTimeout(r, ms));",
       "const until = async (fn) => {",
-      "  const end = Date.now() + 120000;",
+      "  const end = Date.now() + 60000;",
       "  while (!fn() && Date.now() < end) await sleep(10);",
       "  return fn();",
       "};",
@@ -3206,9 +3206,9 @@ function gatedRaceArgv(tmp, first, second) {
       '    p.on("close", (code) => res({ code, out }));',
       "  });",
       "const one = run(first, { BUGS_TEST_HOLD_FILE: release });",
-      "await until(() => existsSync(ownerFile)); // the first process holds the lock",
+      "if (!(await until(() => existsSync(ownerFile)))) console.error('gated-race: the first process never took the lock');",
       "const two = run(second, { BUGS_TEST_WAIT_MARKER: marker });",
-      "await until(() => existsSync(marker)); // the second is provably blocked behind it",
+      "if (!(await until(() => existsSync(marker)))) console.error('gated-race: the second process was never blocked behind the first');",
       'writeFileSync(release, "go"); // always release, even if a wait above timed out',
       "console.log(JSON.stringify(await Promise.all([one, two])));",
     ].join("\n"),
@@ -3224,8 +3224,12 @@ function gatedRaceArgv(tmp, first, second) {
   ]
     .map((a) => JSON.stringify(a))
     .join(" ");
-  return { argv, marker };
+  return { argv, marker, lockPath: `${CATALOGUE()}.lock` };
 }
+
+// Which lock the waiter announced it was blocked behind (null = it never blocked).
+const blockedBehind = (race) =>
+  existsSync(race.marker) ? readFileSync(race.marker, "utf8") : null;
 
 cmds["self-test"] = () => {
   // Git EXPORTS repo-scoped variables (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE,
@@ -5926,7 +5930,11 @@ cmds["self-test"] = () => {
         try {
           return {
             code: 0,
-            out: execSync(`node ${argv}`, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }),
+            out: execSync(`node ${argv}`, {
+              encoding: "utf8",
+              stdio: ["ignore", "pipe", "pipe"],
+              timeout: 240000,
+            }),
           };
         } catch (e) {
           return { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
@@ -6008,10 +6016,10 @@ cmds["self-test"] = () => {
       // B588: these wait on EVENTS (owner.json appearing, the pid exiting) with a generous budget —
       // they do not race a wall-clock window, so host load can only make them slower, never red.
       const awaitHold = () => {
-        for (let i = 0; i < 4800 && !existsSync(ownerPath(lockDir)); i++) sleepSync(25);
+        for (let i = 0; i < 2400 && !existsSync(ownerPath(lockDir)); i++) sleepSync(25);
         return existsSync(ownerPath(lockDir));
       };
-      const awaitExit = (child, ms = 120000) => {
+      const awaitExit = (child, ms = 60000) => {
         for (let i = 0; i * 25 < ms && pidAlive(child.pid) !== false; i++) sleepSync(25);
         return pidAlive(child.pid) === false;
       };
@@ -6067,7 +6075,7 @@ cmds["self-test"] = () => {
       // the 5s age threshold it was waiting for, so it exited 1 blaming
       // "another bugs.mjs process is writing F01.jsonl" when nothing was
       // running at all.
-      const victim = holder("B5", "20000", "ignore");
+      const victim = holder("B5", "0", "ignore", join(tmp, "never-released-dead-holder"));
       const heldByVictim = awaitHold();
       victim.kill("SIGKILL");
       const victimGone = awaitExit(victim, 15000);
@@ -6235,7 +6243,7 @@ cmds["self-test"] = () => {
         [1, 1, 1],
       );
       if (process.platform !== "win32") {
-        const interrupted = holder("B8", "3000", "ignore");
+        const interrupted = holder("B8", "0", "ignore", join(tmp, "never-released-sigint"));
         const heldByInterrupted = awaitHold();
         interrupted.kill("SIGINT");
         awaitExit(interrupted);
@@ -6416,9 +6424,26 @@ cmds["self-test"] = () => {
       // must be inert: a run whose stall would last 200s and whose hold file never appears still
       // finishes (a honoured seam would blow the 60s ceiling — a margin no host load approaches).
       // GATED, the seam must really block inside the critical section until released.
+      // STALL half: 29s is just under the seam's own 30s cap; an honoured stall would run past this
+      // 25s ceiling and be killed (signal set). A production run takes a couple of seconds.
+      const ungatedStall = spawnSync(
+        process.execPath,
+        [SCRIPT_PATH, "tier", "B1", "T3", "--why", "stall seam ungated stall"],
+        {
+          encoding: "utf8",
+          timeout: 25000,
+          env: { ...process.env, BUGS_ROOT: tmp, BUGS_SELF_TEST: "", BUGS_TEST_STALL_MS: "29000" },
+        },
+      );
+      check(
+        "stall seam: a production run ignores BUGS_TEST_STALL_MS (it is not held for the stall)",
+        [ungatedStall.signal, ungatedStall.status],
+        [null, 0],
+      );
+      // HOLD half: a never-created hold file would block for the seam's 120s cap if honoured.
       const ungated = spawnSync(
         process.execPath,
-        [SCRIPT_PATH, "tier", "B1", "T3", "--why", "stall seam ungated"],
+        [SCRIPT_PATH, "tier", "B1", "T3", "--why", "stall seam ungated hold"],
         {
           encoding: "utf8",
           timeout: 60000,
@@ -6426,15 +6451,14 @@ cmds["self-test"] = () => {
             ...process.env,
             BUGS_ROOT: tmp,
             BUGS_SELF_TEST: "",
-            BUGS_TEST_STALL_MS: "200000",
             BUGS_TEST_HOLD_FILE: join(tmp, "never-created"),
           },
         },
       );
       check(
-        "stall seam: a production run ignores BUGS_TEST_STALL_MS / BUGS_TEST_HOLD_FILE (it neither blocks nor is killed)",
-        [ungated.signal, ungated.error === undefined],
-        [null, true],
+        "stall seam: a production run ignores BUGS_TEST_HOLD_FILE (it neither blocks nor is killed)",
+        [ungated.signal, ungated.status],
+        [null, 0],
       );
       const seamGate = join(tmp, "seam-gate");
       const gatedChild = spawn(
@@ -6557,7 +6581,11 @@ cmds["self-test"] = () => {
       try {
         raced = {
           code: 0,
-          out: execSync(`node ${argv}`, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }),
+          out: execSync(`node ${argv}`, {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+            timeout: 240000,
+          }),
         };
       } catch (e) {
         raced = { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
@@ -6665,7 +6693,11 @@ cmds["self-test"] = () => {
       try {
         raced = {
           code: 0,
-          out: execSync(`node ${argv}`, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }),
+          out: execSync(`node ${argv}`, {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+            timeout: 240000,
+          }),
         };
       } catch (e) {
         raced = { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
@@ -6673,8 +6705,8 @@ cmds["self-test"] = () => {
       check("move vs file: the orchestrator exited 0", raced.code, 0);
       check(
         "move vs file: `move` was provably BLOCKED behind the live filer (the overlap happened)",
-        existsSync(race.marker),
-        true,
+        blockedBehind(race),
+        race.lockPath,
       );
       const kids = JSON.parse(raced.out.trim().split("\n").pop());
       check(
@@ -6813,7 +6845,11 @@ cmds["self-test"] = () => {
       try {
         raced = {
           code: 0,
-          out: execSync(`node ${argv}`, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }),
+          out: execSync(`node ${argv}`, {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+            timeout: 240000,
+          }),
         };
       } catch (e) {
         raced = { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
@@ -6821,8 +6857,8 @@ cmds["self-test"] = () => {
       check("index vs file: the orchestrator exited 0", raced.code, 0);
       check(
         "index vs file: `index` was provably BLOCKED behind the live filer (the overlap happened — it was not hoped for)",
-        existsSync(race.marker),
-        true,
+        blockedBehind(race),
+        race.lockPath,
       );
       const kids = JSON.parse(raced.out.trim().split("\n").pop());
       check(
@@ -6917,7 +6953,11 @@ cmds["self-test"] = () => {
       try {
         raced = {
           code: 0,
-          out: execSync(`node ${argv}`, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }),
+          out: execSync(`node ${argv}`, {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+            timeout: 240000,
+          }),
         };
       } catch (e) {
         raced = { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
@@ -6925,8 +6965,8 @@ cmds["self-test"] = () => {
       check("discharge race: the orchestrator exited 0", raced.code, 0);
       check(
         "discharge race: F02 was provably BLOCKED behind the live F01 discharge (the overlap happened)",
-        existsSync(race.marker),
-        true,
+        blockedBehind(race),
+        race.lockPath,
       );
       const kids = JSON.parse(raced.out.trim().split("\n").pop());
       check("discharge race: F01 (the one holding the lock first) succeeds", kids[0].code, 0);
@@ -7066,7 +7106,11 @@ cmds["self-test"] = () => {
       try {
         raced = {
           code: 0,
-          out: execSync(`node ${argv}`, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }),
+          out: execSync(`node ${argv}`, {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+            timeout: 240000,
+          }),
         };
       } catch (e) {
         raced = { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
@@ -7074,8 +7118,8 @@ cmds["self-test"] = () => {
       check("lock order (runtime): the orchestrator exited 0", raced.code, 0);
       check(
         "lock order (runtime): discharge was provably BLOCKED behind the live move (the overlap happened)",
-        existsSync(race.marker),
-        true,
+        blockedBehind(race),
+        race.lockPath,
       );
       const kids = JSON.parse(raced.out.trim().split("\n").pop());
       check(

@@ -272,8 +272,11 @@ function makeFixture({
  */
 function shouldRetryCli(r, attemptIndex) {
   if (attemptIndex >= 2) return false;
-  if (r.spawnError) return true;
-  return r.code === null && !r.timedOut && !r.stdout && !String(r.stderr ?? "").trim();
+  // A failed spawn AND a failed post-timeout `kill()` both surface as an 'error' event: only the
+  // former is safe to retry — after a timeout the first child may still be alive and may have written.
+  const silent = !r.stdout && !String(r.stderr ?? "").trim();
+  if (r.spawnError) return !r.timedOut && silent;
+  return r.code === null && !r.timedOut && silent;
 }
 
 // ── CLI runner ───────────────────────────────────────────────────────────────
@@ -368,7 +371,7 @@ function runCli(
       }, budgetMs);
       child.on("error", (e) => {
         clearTimeout(timer);
-        done({ code: null, stdout, stderr: stderr + String(e), timedOut, spawnError: true });
+        done({ code: null, stdout, stderr, timedOut, spawnError: true, errorMessage: String(e) });
       });
       child.on("close", (code) => {
         clearTimeout(timer);
@@ -404,8 +407,13 @@ async function main() {
     );
     check(
       "B588: ...a failed spawn is retried too",
-      shouldRetryCli({ code: null, spawnError: true, stderr: "spawn EAGAIN" }, 1),
+      shouldRetryCli({ code: null, spawnError: true, stdout: "", stderr: "" }, 1),
       true,
+    );
+    check(
+      "B588: ...but an 'error' AFTER our own timeout (a failed kill: the child may still be running) is NOT",
+      shouldRetryCli({ code: null, spawnError: true, timedOut: true, stdout: "", stderr: "" }, 0),
+      false,
     );
     check("B588: ...but at most twice", shouldRetryCli(silentDeath, 2), false);
     check(
