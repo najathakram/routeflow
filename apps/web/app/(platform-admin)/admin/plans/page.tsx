@@ -155,6 +155,7 @@ export default function PlansPage() {
                       </td>
                       <td className="px-5 py-3">
                         <input
+                          aria-label={`${plan.name} monthly price (USD)`}
                           type="number"
                           min={0}
                           max={100000}
@@ -167,6 +168,7 @@ export default function PlansPage() {
                       </td>
                       <td className="px-5 py-3">
                         <input
+                          aria-label={`${plan.name} annual price (USD)`}
                           type="number"
                           min={0}
                           max={100000}

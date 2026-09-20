@@ -165,6 +165,7 @@ export default function AuditLogsPage() {
         </div>
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
           <select
+            aria-label="Filter by tenant"
             value={tenantIdFilter}
             onChange={(e) => setTenantIdFilter(e.target.value)}
             className="h-9 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
@@ -181,6 +182,7 @@ export default function AuditLogsPage() {
             ))}
           </select>
           <select
+            aria-label="Filter by action"
             value={actionFilter}
             onChange={(e) => setActionFilter(e.target.value)}
             className="h-9 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
@@ -193,6 +195,7 @@ export default function AuditLogsPage() {
             ))}
           </select>
           <input
+            aria-label="Entity type"
             type="text"
             placeholder="Entity Type (e.g. User, Order)..."
             value={entityTypeFilter}
@@ -200,6 +203,7 @@ export default function AuditLogsPage() {
             className="h-9 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none"
           />
           <input
+            aria-label="User ID"
             type="text"
             placeholder="User ID..."
             value={userIdFilter}
@@ -209,6 +213,7 @@ export default function AuditLogsPage() {
           <div className="flex items-center gap-2">
             <label className="text-xs text-slate-500 shrink-0">From</label>
             <input
+              aria-label="From date"
               type="date"
               value={fromDate}
               onChange={(e) => setFromDate(e.target.value)}
@@ -218,6 +223,7 @@ export default function AuditLogsPage() {
           <div className="flex items-center gap-2">
             <label className="text-xs text-slate-500 shrink-0">To</label>
             <input
+              aria-label="To date"
               type="date"
               value={toDate}
               onChange={(e) => setToDate(e.target.value)}
@@ -239,7 +245,12 @@ export default function AuditLogsPage() {
       {data && !loading && (
         <>
           <div className="rounded-xl bg-slate-800 ring-1 ring-white/5 overflow-hidden">
-            <div className="overflow-x-auto">
+            <div
+              className="overflow-x-auto"
+              role="region"
+              aria-label="Audit log entries"
+              tabIndex={0}
+            >
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">

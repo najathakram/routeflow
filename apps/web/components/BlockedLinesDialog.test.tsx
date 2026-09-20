@@ -34,6 +34,12 @@ describe("BlockedLinesDialog", () => {
     expect(screen.queryByText(/uuid-/)).toBeNull();
   });
 
+  it("opts into the scroll cap so a long list cannot push OK off-screen", () => {
+    render(<BlockedLinesDialog lines={lines} onClose={jest.fn()} />);
+    expect(screen.getByRole("dialog").className).toMatch(/max-h-\[92vh\]/);
+    expect(screen.getByRole("button", { name: "OK" })).toBeInTheDocument();
+  });
+
   it("renders nothing when there are no lines, and OK closes it", () => {
     const onClose = jest.fn();
     const { rerender } = render(<BlockedLinesDialog lines={null} onClose={onClose} />);
@@ -66,6 +72,18 @@ describe("BlockedLinesDialog", () => {
     it("OK returns focus to the control that had it", async () => {
       const save = openIt();
       fireEvent.click(await screen.findByRole("button", { name: "OK" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      await waitFor(() => expect(save).toHaveFocus());
+    });
+
+    it("returns focus to a trigger that was blurred (disabled while loading) before opening", async () => {
+      render(<Host />);
+      const save = screen.getByRole("button", { name: "Save" });
+      save.focus();
+      // The browser blurs a button the moment it is disabled for `loading`; the 409 arrives after.
+      save.blur();
+      fireEvent.click(save);
+      fireEvent.keyDown(await screen.findByRole("dialog"), { key: "Escape" });
       await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
       await waitFor(() => expect(save).toHaveFocus());
     });

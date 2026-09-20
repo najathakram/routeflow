@@ -156,6 +156,12 @@ const GROUPS: HubGroup[] = [
         href: "/settings/restrictions",
         show: "admin",
       },
+      {
+        label: "Product labels",
+        desc: "Restriction categories applied to products",
+        href: "/settings/product-categories",
+        show: "admin",
+      },
     ],
   },
 ];
