@@ -21,6 +21,19 @@ type LabelRow = Prisma.ProductCategoryLabelGetPayload<{ include: typeof LABEL_IN
 
 /** Same hop bound as the engine (`MAX_ANCESTOR_DEPTH` in product-labels.service): a product has at most this many ancestors. */
 const MAX_HOPS = 5;
+/**
+ * How long a label write waits for the per-category advisory lock. Kept well inside Prisma's 5 s
+ * interactive-transaction budget: a longer wait would surface contention as an opaque P2028
+ * (transaction expired) instead of the clear 409 below.
+ */
+const LOCK_WAIT = "2s";
+
+/** Postgres `lock_not_available` (SQLSTATE 55P03), however Prisma wraps it (P2010 raw error / message). */
+function isLockTimeout(e: unknown): boolean {
+  const err = e as { meta?: { code?: string }; message?: string };
+  return err?.meta?.code === "55P03" || /55P03|lock timeout/i.test(err?.message ?? "");
+}
+
 /** Upper bound on the descendants one label removal will inspect — a runaway subtree fails closed. */
 const MAX_SUBTREE = 5000;
 /** How many voided opt-outs are spelled out in the audit row (the rest are counted). */
@@ -166,8 +179,24 @@ export class ProductLabelsAdminService {
    * just after a concurrent `removeLabel` of that INCLUDE finished its cleanup, stranding an opt-out
    * that revives when the label is re-added (B581). Label writes are rare admin actions: coarse is fine.
    */
-  private async lockCategory(tx: any, tenantId: string, categoryId: string): Promise<void> {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"product-labels"}), hashtext(${`${tenantId}:${categoryId}`}))`;
+  private async lockCategory(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    categoryId: string,
+  ): Promise<void> {
+    try {
+      // Bound only THIS wait; then restore the default so later row-lock waits are unaffected.
+      await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '${LOCK_WAIT}'`);
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"product-labels"}), hashtext(${`${tenantId}:${categoryId}`}))`;
+      await tx.$executeRawUnsafe("SET LOCAL lock_timeout = 0");
+    } catch (e) {
+      if (isLockTimeout(e)) {
+        throw new ConflictException(
+          "Another label change for this category is in progress. Try again in a moment.",
+        );
+      }
+      throw e;
+    }
   }
 
   /**
@@ -176,7 +205,7 @@ export class ProductLabelsAdminService {
    * carried" before a change and "may have stopped" after it, i.e. they fail closed).
    */
   private async carries(
-    tx: any,
+    tx: Prisma.TransactionClient,
     tenantId: string,
     productId: string,
     categoryId: string,
@@ -192,7 +221,7 @@ export class ProductLabelsAdminService {
    * fail closed.
    */
   private async loadChain(
-    tx: any,
+    tx: Prisma.TransactionClient,
     tenantId: string,
     startProductId: string,
     categoryId: string,
@@ -223,7 +252,7 @@ export class ProductLabelsAdminService {
    * approval, so the caller records them in the audit row).
    */
   private async voidDependentOptOuts(
-    tx: any,
+    tx: Prisma.TransactionClient,
     tenantId: string,
     rootId: string,
     categoryId: string,
@@ -293,7 +322,7 @@ export class ProductLabelsAdminService {
    * EXCLUDE is removed (the label starts reaching again).
    */
   private async voidIfStoppedCarrying(
-    tx: any,
+    tx: Prisma.TransactionClient,
     tenantId: string,
     productId: string,
     categoryId: string,
@@ -311,13 +340,7 @@ export class ProductLabelsAdminService {
     user: JwtPayload,
   ): Promise<ProductLabelDto> {
     const tenantId = this.requireTenant();
-    const db = this.prisma.forTenant();
     await this.loadProduct(productId);
-    const category = await db.productCategory.findFirst({ where: { id: categoryId } });
-    if (!category) throw new NotFoundException("Category not found");
-    if (category.archivedAt) {
-      throw new ConflictException("This category is archived. Restore it before labelling.");
-    }
     const reason = dto.mode === "EXCLUDE" ? dto.reason?.trim() || null : null;
     if (dto.mode === "EXCLUDE" && !reason) {
       throw new BadRequestException("A reason is required to opt out of a label.");
@@ -335,6 +358,16 @@ export class ProductLabelsAdminService {
         if (!product) throw new NotFoundException("Product not found");
 
         await this.lockCategory(tx, tenantId, categoryId);
+        // The category is checked INSIDE the transaction, after the lock: an archive that commits
+        // between an outside check and the write could otherwise still get a label written to it.
+        const category = await tx.productCategory.findFirst({
+          where: { id: categoryId, tenantId },
+          select: { archivedAt: true },
+        });
+        if (!category) throw new NotFoundException("Category not found");
+        if (category.archivedAt) {
+          throw new ConflictException("This category is archived. Restore it before labelling.");
+        }
         const before = await this.carries(tx, tenantId, productId, categoryId);
 
         let pin: string | null = null;
