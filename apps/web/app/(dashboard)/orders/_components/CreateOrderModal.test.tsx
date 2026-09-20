@@ -681,6 +681,22 @@ describe("CreateOrderModal", () => {
         await pickCustomer("Acme Foods");
         expect(screen.getByText("Boom happened")).toBeInTheDocument();
       });
+
+      // CREDIT_LIMIT_EXCEEDED is in providers.tsx's HANDLED_CODES (the order detail opens a guard
+      // dialog), which silences the global toast — so the create modal's inline banner is the ONLY
+      // place its message can show. This pins that a credit refusal on create is never silent.
+      it("a credit-limit refusal on create still shows the server's message in the banner", async () => {
+        mockCustomers = [acme];
+        mockCreateOrderError = {
+          response: {
+            status: 409,
+            data: { code: "CREDIT_LIMIT_EXCEEDED", message: "Over their credit limit of 100.00." },
+          },
+        };
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        await pickCustomer("Acme Foods");
+        expect(screen.getByText("Over their credit limit of 100.00.")).toBeInTheDocument();
+      });
     });
   });
 });

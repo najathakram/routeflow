@@ -48,6 +48,7 @@ import {
   type DuplicateVendorBillInfo,
 } from "@/lib/api/vendor-bills";
 import { useSuppliers as useInventorySuppliers, usePurchaseOrders } from "@/lib/api/inventory";
+import { getPoBillRefusal, type PoBillRefusal } from "@/lib/po-bill-refusal";
 import { useProducts } from "@/lib/api/products";
 import {
   useExpenses,
@@ -539,6 +540,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
   const { data: posData } = usePurchaseOrders(supplierId ? { supplierId } : undefined);
   const purchaseOrders: Array<{ id: string; poNumber: string }> = (posData as any)?.data ?? [];
   const [purchaseOrderId, setPurchaseOrderId] = React.useState("");
+  const [poRefusal, setPoRefusal] = React.useState<PoBillRefusal | null>(null);
 
   React.useEffect(() => {
     if (isOpen) {
@@ -553,6 +555,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
       setLineItems([emptyLineItem()]);
       setErrors({});
       setDuplicate(null);
+      setPoRefusal(null);
       if (prefs?.["bill.lastSupplierId"]) setSupplierId(prefs["bill.lastSupplierId"]);
     }
   }, [isOpen]);
@@ -560,6 +563,11 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
   React.useEffect(() => {
     setPurchaseOrderId("");
   }, [supplierId]);
+
+  // The refusal describes the lines as sent — once the operator edits them or re-points the PO it is stale.
+  React.useEffect(() => {
+    setPoRefusal(null);
+  }, [purchaseOrderId, lineItems]);
 
   // Prefill Terms (and the Due Date it drives) from the selected supplier's
   // defaultTerms — once per supplier pick, and never over a term the operator
@@ -661,6 +669,12 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
             setDuplicate(dup.duplicate);
             return;
           }
+          // Over-billing a linked PO is a refusal to fix in the form, not a passing toast.
+          const refusal = getPoBillRefusal(err);
+          if (refusal) {
+            setPoRefusal(refusal);
+            return;
+          }
           const data = (
             err as { response?: { data?: { code?: string; message?: string | string[] } } }
           )?.response?.data;
@@ -724,6 +738,22 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
               disabled={createBill.isPending}
               onCreateAnyway={() => postBill(true)}
             />
+          )}
+          {poRefusal && (
+            <div
+              role="alert"
+              className="rounded-lg border border-danger/40 bg-danger/5 px-3 py-2.5 text-sm text-navy"
+            >
+              <p className="font-medium text-danger">
+                This bill is more than {poRefusal.poNumber} authorised
+              </p>
+              <ul className="mt-1 list-disc space-y-0.5 pl-5 text-navy/80">
+                {poRefusal.lines.map((l) => (
+                  <li key={l}>{l}</li>
+                ))}
+              </ul>
+              <p className="mt-1.5 text-navy/70">{poRefusal.advice}</p>
+            </div>
           )}
           {/* ── Barcode scan strip ── */}
           <div className="flex items-center gap-2 rounded-lg border border-dashed border-brand-300 bg-brand-50 px-3 py-2">

@@ -6,6 +6,7 @@ import {
   upgradeConfirmedTemplate,
   cancelledTemplate,
   suspendedTemplate,
+  checkoutPlanNotAppliedTemplate,
   billingSettingsUrl,
 } from "./billing-notification.templates";
 
@@ -198,6 +199,20 @@ describe("billing-notification.templates", () => {
       });
       expect(t.html).not.toContain("<b>hacked</b>");
       expect(t.html).toContain("&lt;b&gt;hacked&lt;/b&gt;");
+    });
+  });
+
+  describe("checkoutPlanNotAppliedTemplate", () => {
+    it("says money was received but the plan did NOT change, and escapes hostile input", () => {
+      const t = checkoutPlanNotAppliedTemplate({
+        businessName: "Acme Retail",
+        adminName: "Jamie",
+        requestedPlanKey: "<b>SCALE</b>",
+      });
+      expect(t.subject).toContain("plan not changed");
+      expect(t.text).toContain("NOT changed");
+      expect(t.html).toContain("/settings/billing");
+      expect(t.html).not.toContain("<b>SCALE</b>");
     });
   });
 });

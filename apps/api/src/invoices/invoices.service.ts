@@ -72,6 +72,7 @@ import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
 import { startOfCalendarDay, endOfCalendarDay } from "../common/calendar-date";
 import { lockRowsNoWait } from "../common/db-locks";
 import { NumberingService } from "../import/numbering.service";
+import { buildManualInvoiceLines } from "./manual-invoice-lines";
 
 const TERM_DAYS: Record<string, number> = {
   "Due on Receipt": 0,
@@ -388,85 +389,14 @@ export class InvoicesService {
       ).map((c: any) => [c.id, c]),
     );
 
-    let subtotal = 0;
-    const itemsData = dto.items.map((item) => {
-      const product = item.productId ? productMap.get(item.productId) : undefined;
-      let qty = item.qty;
-      let boxes: number | null = null;
-      let pieces: number | null = null;
-      let unitsPerBox: number | undefined;
-      if (item.productId && (item.boxes != null || item.pieces != null)) {
-        if (product?.unitsPerBox) {
-          unitsPerBox = product.unitsPerBox;
-          // Force integer boxes/pieces and roll pieces >= unitsPerBox into boxes.
-          const split = normalizeBoxesPieces({
-            boxes: item.boxes,
-            pieces: item.pieces,
-            unitsPerBox,
-          });
-          boxes = split.boxes;
-          pieces = split.pieces;
-          qty = split.qty;
-        }
-      }
-      // BUY_N_GET_M: free whole selling units come off the subtotal BEFORE pricing
-      // (never a rounded net unit price). 0 for every other line.
-      const freeUnits = this.clampLineFreeUnits(item.promoFreeUnits, boxes, qty);
-      const beforeDiscount = computeLineSubtotal({
-        unitPrice: item.unitPrice,
-        qty,
-        boxes,
-        pieces,
-        unitsPerBox,
-        freeUnits,
-      });
-      const lineSub = roundMoney(beforeDiscount - (item.discount ?? 0));
-      subtotal += lineSub;
-      // RF-4: per-line regulated category tax on the NET (post-discount) sale — the
-      // same basis as the regular line tax. Piece count is the basis for per-unit
-      // levies; a boxed selling-unit line expands via the product's box size.
-      const category = product?.trackedCategoryId
-        ? categoryMap.get(product.trackedCategoryId)
-        : null;
-      const upbForPieces = Number(product?.unitsPerBox ?? 0);
-      const pieceQty = boxes != null ? qty : upbForPieces > 1 ? qty * upbForPieces : qty;
-      const categoryTaxAmount = category
-        ? computeCategoryTax({
-            taxType: category.taxType as CategoryTaxType,
-            rate: Number(category.rate),
-            unitBasisQty: pieceQty,
-            lineSubtotal: lineSub,
-            priceIncludesTax: category.priceIncludesTax,
-          })
-        : 0;
-      return {
-        description: item.description,
-        productId: item.productId,
-        qty,
-        unitPrice: item.unitPrice,
-        discount: item.discount ?? 0,
-        taxRate: item.taxRate ?? 0,
-        subtotal: lineSub,
-        boxes,
-        pieces,
-        // Snapshot the box size when this line was priced as a box split, so a later
-        // edit/PDF recompute uses the sale-time size (mirrors order-derived lines).
-        unitsPerBox: boxes != null && unitsPerBox ? unitsPerBox : null,
-        // BUY_N_GET_M snapshot — stored so the next edit re-prices off it.
-        promoFreeUnits: freeUnits > 0 ? freeUnits : null,
-        // Snapshot the regulated category/subcategory AT SALE TIME (never re-read the
-        // live product later — it may drift), so the ledger and filings attribute this
-        // line even if the product is re-classified afterward.
-        trackedCategoryId: product?.trackedCategoryId ?? null,
-        trackedSubcategoryId: product?.trackedSubcategoryId ?? null,
-        // RF-4: per-line category tax snapshot (folded into taxTotal below).
-        categoryTaxAmount,
-        notes: item.notes ?? null,
-        // MSRP snapshot — set below by applyMsrpSnapshots (null when flag.msrp is off).
-        msrp: null as number | null,
-        tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
-      };
+    // Manual-invoice line builder: see manual-invoice-lines.ts (verbatim move; units_v1 4c-1 prefactor).
+    const { itemsData, subtotal: linesSubtotal } = buildManualInvoiceLines(dto.items, {
+      productMap,
+      categoryMap,
+      tenantId: this.prisma.getTenantId(),
+      clampFreeUnits: (free, boxes, qty) => this.clampLineFreeUnits(free, boxes, qty),
     });
+    let subtotal = linesSubtotal;
     subtotal = roundMoney(subtotal);
     await this.applyMsrpSnapshots(this.prisma.forTenant(), dto.customerId, itemsData);
 

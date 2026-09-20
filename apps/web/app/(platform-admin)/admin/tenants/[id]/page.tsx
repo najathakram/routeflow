@@ -13,8 +13,9 @@ import { AdminBadge, planLabel } from "../../../_components/AdminBadge";
 import { AdminCard } from "../../../_components/AdminCard";
 import { AdminModal } from "../../../_components/AdminModal";
 import { TenantPricingCard } from "./_components/TenantPricingCard";
-import { LayoutDashboard, CreditCard, Puzzle, Settings, ScrollText } from "lucide-react";
+import { LayoutDashboard, CreditCard, Puzzle, Settings, ScrollText, Archive } from "lucide-react";
 import { FeatureConsole } from "./_features/FeatureConsole";
+import { ConfigSnapshotsTab } from "./_features/ConfigSnapshotsTab";
 import { TierChangeControl } from "./_features/TierChangeControl";
 import { PreviewDrawer } from "./_features/PreviewDrawer";
 import { previewTenantFeatures } from "@/lib/platform-admin/features";
@@ -97,6 +98,7 @@ const TABS = [
   { key: "billing", label: "Billing & Subscription", icon: <CreditCard className="h-4 w-4" /> },
   { key: "addons", label: "Addons & Features", icon: <Puzzle className="h-4 w-4" /> },
   { key: "config", label: "Configuration", icon: <Settings className="h-4 w-4" /> },
+  { key: "snapshots", label: "Config Snapshots", icon: <Archive className="h-4 w-4" /> },
   { key: "audit", label: "Audit Log", icon: <ScrollText className="h-4 w-4" /> },
 ];
 
@@ -1877,6 +1879,7 @@ export default function AdminTenantDetailPage() {
         <AddonsTab tenant={tenant} onAction={handleAction} actionLoading={actionLoading} />
       )}
       {activeTab === "config" && <ConfigTab tenant={tenant} />}
+      {activeTab === "snapshots" && <ConfigSnapshotsTab tenantId={tenant.id} />}
       {activeTab === "audit" && <AuditLogTab tenantId={tenant.id} />}
     </div>
   );
