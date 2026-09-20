@@ -883,6 +883,11 @@ export class BillingService {
         }
         throw err;
       }
+      // Committed: an automatic restore may have rewritten the tenant's feature rows, so drop the
+      // 30 s resolver/override/config caches. A redelivery that did nothing has nothing to drop.
+      if (upserted !== ALREADY_APPLIED) {
+        this.planTransition.invalidateCaches(tenantId, preparedTransition);
+      }
     } else {
       // Flag OFF (or a checkout that names no plan / a stale one): EXACTLY the plain upsert this handler always
       // did — no transaction, no hook. Only an active hook wraps it, so it commits with the snapshot.

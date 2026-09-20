@@ -161,6 +161,9 @@ describeDb("TenantConfigSnapshotService — real Postgres round trip", () => {
       { isEnabled: async () => true } as never,
       svcs as never,
       { getVersionForTenant: async () => ({ definitions: [], addonSkus: [] }) } as never,
+      { invalidate: () => undefined } as never,
+      { invalidate: () => undefined } as never,
+      { invalidateTenant: () => undefined } as never,
     );
     const t = { tenantId, fromPlanKey: LOW, toPlanKey: HIGH, toPlanVersionId: null };
     const prepared = await hook.prepare(t);
