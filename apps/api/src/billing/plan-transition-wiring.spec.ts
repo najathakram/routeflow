@@ -40,6 +40,10 @@ const WIRED: Record<string, number> = {
   // updatePlan() (the cron applies it later), setPriceOverride, updatePlanPrices, updateStatus's
   // NULL-planKey fill-in, and createTenant (no prior plan).
   "platform-admin/platform-admin.service.ts": 2,
+  // Stripe onCheckoutCompleted (B593) — the ONE wired write in this file. The other `currentPlan:`
+  // there is ensureStripeCustomer's upsert, which copies Tenant.plan and never sets `planKey`, so
+  // no rank moves; the status moves (cancel/CANCELLED, past-due) touch no plan either.
+  "billing/billing.service.ts": 1,
 };
 
 /** Plan-writing files that are deliberately NOT wired, each with the reason. */
@@ -48,8 +52,6 @@ const EXEMPT: Record<string, string> = {
     "register(): creates the tenant + subscription at STARTER — no prior plan to snapshot",
   "customers/customers.service.ts":
     "grace-window stub upsert: planKey stays null and no rank moves",
-  "billing/billing.service.ts":
-    "Stripe onCheckoutCompleted: NOT WIRED YET — it is not in a transaction and has no prior plan in scope, so it needs a wrapping tx + a prior-plan read first (tracked follow-up). Its other writes (price ledger reconcile, cancel/CANCELLED status) move no rank",
 };
 
 const hookCalls = (text: string) => (text.match(/\.onPlanChange\(/g) ?? []).length;

@@ -8,6 +8,7 @@ import {
 } from "@nestjs/common";
 import { createHash, randomUUID } from "crypto";
 import { ConfigService } from "@nestjs/config";
+import { assertDeliveriesFitStop } from "./delivery-lines.util";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import {
@@ -180,6 +181,17 @@ export const RUN_STOP_INCLUDE = {
     },
   },
 } as const;
+
+/**
+ * Orders the dispatch sweep must never attach and a stop completion must never flip to DELIVERED:
+ * a DRAFT is not yet a commitment (TripsService.TRIP_ELIGIBLE_STATUSES already excludes it), and
+ * DELIVERED/CANCELLED are terminal.
+ */
+export const NON_ROUTABLE_ORDER_STATUSES: OrderStatus[] = [
+  OrderStatus.DRAFT,
+  OrderStatus.DELIVERED,
+  OrderStatus.CANCELLED,
+];
 
 @Injectable()
 export class RoutesService {
@@ -1058,7 +1070,7 @@ export class RoutesService {
           this.prisma.forTenant().order.updateMany({
             where: {
               customerId: s.customerId!,
-              status: { notIn: [OrderStatus.DELIVERED, OrderStatus.CANCELLED] },
+              status: { notIn: NON_ROUTABLE_ORDER_STATUSES },
               routeRunStopId: null,
               // SHIP orders go out via a carrier, so they must never attach to a
               // run stop — a driver would otherwise see them on the route and
@@ -2369,6 +2381,7 @@ export class RoutesService {
 
     let autoCompleted = false;
     await this.prisma.tenantTransaction(async (tx) => {
+      await assertDeliveriesFitStop(tx, stop.orders, dto.deliveries);
       // Phase 4 (W7b): regulated-delivery POD gate. Re-derive the age/ID
       // requirement from the stop's current orders (authoritative — orders can be
       // linked after dispatch), then block a regulated completion that lacks the
@@ -2436,7 +2449,7 @@ export class RoutesService {
         await tx.order.updateMany({
           where: {
             id: { in: orderIds },
-            status: { notIn: [OrderStatus.CANCELLED, OrderStatus.DELIVERED] },
+            status: { notIn: NON_ROUTABLE_ORDER_STATUSES },
           },
           data: { status: OrderStatus.DELIVERED },
         });
@@ -2612,6 +2625,7 @@ export class RoutesService {
     let excess: number | undefined;
     let advancePaymentId: string | null | undefined;
     await this.prisma.tenantTransaction(async (tx) => {
+      await assertDeliveriesFitStop(tx, stop.orders, dto.deliveries);
       // Phase 4 (W7b): regulated-delivery POD gate (same as completeStop).
       const db = tx as unknown as RegulatedDeliveryDb;
       const sets = await loadAgeIdCategorySets(db);
@@ -2683,7 +2697,7 @@ export class RoutesService {
         await tx.order.updateMany({
           where: {
             id: { in: orderIds },
-            status: { notIn: [OrderStatus.CANCELLED, OrderStatus.DELIVERED] },
+            status: { notIn: NON_ROUTABLE_ORDER_STATUSES },
           },
           data: { status: OrderStatus.DELIVERED },
         });
@@ -3169,7 +3183,8 @@ export class RoutesService {
       // orders reverses exactly this stop's delivery and nothing else.
       for (const order of stop.orders) {
         await tx.orderItem.updateMany({
-          where: { orderId: order.id },
+          // A cancelled line stays cancelled: reopening a stop undoes a DELIVERY, never a cancel.
+          where: { orderId: order.id, status: { not: "CANCELLED" } },
           data: { status: "PENDING", deliveredQty: 0 },
         });
         if (order.status === "DELIVERED" || order.status === "OUT_FOR_DELIVERY") {

@@ -15,6 +15,7 @@ import { Pool } from "pg";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { FEATURE_REGISTRY } from "./feature-registry";
 import { PLAN_KEYS } from "./plan-catalog.constants";
+import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import { TenantConfigSnapshotService } from "./tenant-config-snapshot.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -143,5 +144,35 @@ describeDb("TenantConfigSnapshotService — real Postgres round trip", () => {
     expect(out.still).toBe(1);
     const row = await prisma.tenantFeatureOverride.findFirstOrThrow({ where: { tenantId } });
     expect(row.reason).toBe("live"); // the concurrent writer's row won
+  });
+
+  it("a restore that hits a REAL Postgres error is rolled back to its savepoint and the transaction stays usable", async () => {
+    const svcs = {
+      snapshot: jest.fn(),
+      restoreLatest: async (tx: any) => {
+        // a genuine constraint failure (FK to a tenant that does not exist) — Postgres aborts the tx
+        await tx.tenantFeatureConfig.create({
+          data: { tenantId: "no-such-tenant", featureKey: CONFIG_KEY, mode: MODE, reason: "x" },
+        });
+        return null;
+      },
+    };
+    const hook = new PlanTransitionConfigService(
+      { isEnabled: async () => true } as never,
+      svcs as never,
+      { getVersionForTenant: async () => ({ definitions: [], addonSkus: [] }) } as never,
+    );
+    const t = { tenantId, fromPlanKey: LOW, toPlanKey: HIGH, toPlanVersionId: null };
+    const prepared = await hook.prepare(t);
+
+    const out = await prisma.$transaction(async (tx) => {
+      const outcome = await hook.onPlanChange(tx, t, prepared);
+      // the plan change itself still runs: a statement AFTER the failed restore succeeds
+      const still = await tx.tenant.count({ where: { id: tenantId } });
+      return { outcome, still };
+    });
+
+    expect(out.outcome).toEqual({ action: "restore", restore: null });
+    expect(out.still).toBe(1);
   });
 });

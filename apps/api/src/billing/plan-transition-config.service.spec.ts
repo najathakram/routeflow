@@ -15,11 +15,15 @@ const ADDON_KEYED = FEATURE_REGISTRY.find((f) => f.gate.via === "RequireAddon")!
 const DEFAULT_GRANTED = FEATURE_REGISTRY.find((f) => f.defaultGranted)!.key;
 
 const auditCreate = jest.fn().mockResolvedValue({});
-const TX = { tag: "tx", auditLog: { create: auditCreate } } as never;
+const raw = jest.fn().mockResolvedValue(1);
+// A tagged-template call: the first argument is the strings array.
+const sqlOf = () => raw.mock.calls.map((c) => (c[0] as string[]).join("").trim());
+const TX = { tag: "tx", auditLog: { create: auditCreate }, $executeRaw: raw } as never;
 const ACTOR = { id: "u1", name: "Admin" };
 
 function build(enabled: boolean) {
   auditCreate.mockClear();
+  raw.mockClear();
   const snapshots = {
     snapshot: jest.fn().mockResolvedValue({ id: "snap-1", takenAt: new Date() }),
     restoreLatest: jest.fn().mockResolvedValue({
@@ -190,6 +194,78 @@ describe("PlanTransitionConfigService (A2 step b)", () => {
       toPlanVersionId: null,
     });
     expect(auditCreate).not.toHaveBeenCalled();
+  });
+
+  describe("a restore NEVER blocks the upgrade (savepointed) — a downgrade snapshot still fails closed", () => {
+    const up = { tenantId: "t1", fromPlanKey: LOW, toPlanKey: HIGH, toPlanVersionId: null };
+
+    it("success: SAVEPOINT, then the restore + its audit row, then RELEASE", async () => {
+      const { svc } = build(true);
+
+      await runTransition(svc, up);
+
+      expect(sqlOf()).toEqual([
+        "SAVEPOINT config_snapshot_restore",
+        "RELEASE SAVEPOINT config_snapshot_restore",
+      ]);
+      expect(auditCreate).toHaveBeenCalledTimes(1);
+    });
+
+    it("a restore that THROWS is rolled back to the savepoint and the upgrade carries on (no throw)", async () => {
+      const { svc, snapshots } = build(true);
+      snapshots.restoreLatest.mockRejectedValueOnce(new Error("deadlock detected"));
+
+      const out = await runTransition(svc, up);
+
+      expect(out).toEqual({ action: "restore", restore: null });
+      expect(sqlOf()).toEqual([
+        "SAVEPOINT config_snapshot_restore",
+        "ROLLBACK TO SAVEPOINT config_snapshot_restore",
+      ]);
+    });
+
+    it("a SAVEPOINT that cannot even be opened skips the restore instead of failing the upgrade", async () => {
+      const { svc, snapshots } = build(true);
+      raw.mockRejectedValueOnce(new Error("savepoint rejected"));
+
+      const out = await runTransition(svc, up);
+
+      expect(out).toEqual({ action: "restore", restore: null });
+      expect(snapshots.restoreLatest).not.toHaveBeenCalled();
+    });
+
+    it("a failing ROLLBACK TO SAVEPOINT is logged, never thrown", async () => {
+      const { svc, snapshots } = build(true);
+      snapshots.restoreLatest.mockRejectedValueOnce(new Error("boom"));
+      raw.mockResolvedValueOnce(1).mockRejectedValueOnce(new Error("rollback failed"));
+
+      await expect(runTransition(svc, up)).resolves.toEqual({ action: "restore", restore: null });
+    });
+
+    it("a FAILED AUDIT write is non-fatal too — and rolls the restore back with it (no audit row, no restore)", async () => {
+      const { svc } = build(true);
+      auditCreate.mockRejectedValueOnce(new Error("audit insert failed"));
+
+      const out = await runTransition(svc, up);
+
+      expect(out).toEqual({ action: "restore", restore: null });
+      expect(sqlOf()).toContain("ROLLBACK TO SAVEPOINT config_snapshot_restore");
+    });
+
+    it("the opposite for a DOWNGRADE: a failed snapshot still throws (fail closed) and uses no savepoint", async () => {
+      const { svc, snapshots } = build(true);
+      snapshots.snapshot.mockRejectedValueOnce(new Error("db down"));
+
+      await expect(
+        runTransition(svc, {
+          tenantId: "t1",
+          fromPlanKey: HIGH,
+          toPlanKey: LOW,
+          toPlanVersionId: null,
+        }),
+      ).rejects.toThrow("db down");
+      expect(sqlOf()).toEqual([]);
+    });
   });
 
   it("the catalog is read BEFORE the transaction and only for an enabled upgrade", async () => {
