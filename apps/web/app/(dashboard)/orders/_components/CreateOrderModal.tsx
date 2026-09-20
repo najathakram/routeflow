@@ -532,6 +532,12 @@ export function CreateOrderModal({
         : scanV2
           ? stepLineUnit(li, 1)
           : { ...li, qty: li.qty + 1 };
+    // KNOWN LIMITATION (do not "fix" the mapping below in isolation): a line is matched on
+    // `productId` ALONE — `find` takes the first, and the `map` updates EVERY line with that
+    // productId. That is right while a product has one line, but once `units_v1` lets one order
+    // hold two unit levels of the same product (a case line AND a piece line), a single add would
+    // increment both. The re-key to productId + unit belongs to the create-order picker work
+    // (Lane U units, with its own spec), not to this typed-qty step.
     const existing = lineItems.find((li) => li.productId === product.id);
     if (existing) {
       setLineItems((prev) => prev.map((li) => (li.productId === product.id ? merge(li) : li)));
