@@ -767,3 +767,37 @@ jobs:
           name: playwright-report-ci-${{ github.run_number }}
           path: apps/web/playwright-report/
           retention-days: 7
+
+      # ─── Release-health gate (scripts/release-health.mjs) ────────────────────
+      # There is no OTHER automatic post-deploy check in this workflow to hook after —
+      # scripts/post-deploy-check.mjs is wired only into nightly.yml (scheduled) and
+      # post-deploy.yml (manual workflow_dispatch), never here — so this runs right after the
+      # Playwright suite, the closest thing this job has to one: the deploy is confirmed fresh
+      # (the readiness gate above) and Playwright's ~5-8 minutes of real traffic against the new
+      # deploy doubles as most of the soak window "for free." See
+      # docs/runbooks/release-health.md for the full loop (what a regression looks like, who
+      # reverts, how to read a new-issue spike).
+      #
+      # FAIL LOUD vs FAIL OPEN, same rule as scripts/ci-audit-critical.mjs /
+      # scripts/ci-freshness-guard.mjs: the script itself exits 1 only on a real regression
+      # signal (new "critical"+ issue groups over the threshold) and exits 0 with a
+      # `::warning::` on stderr for anything that means the check couldn't run cleanly —
+      # missing SENTRY_ORG/SENTRY_AUTH_TOKEN/SENTRY_PROJECT secrets included. That means this
+      # step is safe to merge and run before those secrets are ever provisioned; it simply
+      # warns and stays green until then.
+      #
+      # Only runs when the deploy was fresh (not a superseded/stale event) — same gate every
+      # other step in this job past the freshness check uses.
+      - name: Release health check (Sentry regression gate)
+        if: steps.freshness.outputs.run == 'true'
+        env:
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+          # Short and explicit, not a separate billed sleep-only step: real traffic (Playwright,
+          # just above) is most of the soak; this only tops it up before comparing.
+          RELEASE_HEALTH_SOAK_SECONDS: "60"
+        run: |
+          echo "Soaking ${RELEASE_HEALTH_SOAK_SECONDS}s for recent errors to reach Sentry..."
+          sleep "$RELEASE_HEALTH_SOAK_SECONDS"
+          node scripts/release-health.mjs current previous --min-severity critical --threshold 0
