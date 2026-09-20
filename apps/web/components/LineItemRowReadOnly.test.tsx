@@ -1,5 +1,5 @@
 import * as React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { splitProductName } from "@/lib/product-display";
 import { LineItemRowReadOnly, type LineItemRowReadOnlyProps } from "./LineItemRowReadOnly";
 
@@ -136,6 +136,40 @@ describe("LineItemRowReadOnly — money contract (matches what the order bills)"
   });
 });
 
+describe("LineItemRowReadOnly — price explanation and free units", () => {
+  it("names a BUY_N_GET_M free-unit count so a reduced total is not read as an error", () => {
+    renderRow({ freeUnits: 2, subtotal: "480.00" });
+    expect(screen.getByText("2 free")).toBeInTheDocument();
+  });
+
+  it("no free label for zero, fractional-below-one or missing free units", () => {
+    const zero = renderRow({ freeUnits: 0 });
+    expect(zero.container.textContent).not.toMatch(/free/);
+    zero.unmount();
+    const none = renderRow({ freeUnits: null });
+    expect(none.container.textContent).not.toMatch(/free/);
+  });
+
+  it("explains a discounted price with the struck list price and a pill", () => {
+    renderRow({ unitPrice: 65, priceType: "DISCOUNTED", originalPrice: 80 });
+    const tag = screen.getByTestId("line-price-tag");
+    expect(within(tag).getByText("$80.00")).toHaveClass("line-through");
+    expect(within(tag).getByText("Discounted")).toBeInTheDocument();
+  });
+
+  it("an upsell shows the price and pill but never the base", () => {
+    renderRow({ unitPrice: 65, priceType: "MANUAL", originalPrice: 50 });
+    const tag = screen.getByTestId("line-price-tag");
+    expect(within(tag).getByText("Upsell")).toBeInTheDocument();
+    expect(within(tag).queryByText("$50.00")).toBeNull();
+  });
+
+  it("a standard-priced line has no tag", () => {
+    renderRow({ priceType: "STANDARD", originalPrice: 80 });
+    expect(screen.queryByTestId("line-price-tag")).toBeNull();
+  });
+});
+
 describe("LineItemRowReadOnly — SKU, thumbnail, status, delivery, note", () => {
   it("shows the SKU line, and omits it when there is none", () => {
     const r = renderRow();
@@ -215,5 +249,50 @@ describe("LineItemRowReadOnly — nothing editable, no cost data", () => {
     expect(screen.getByTestId("line-name-anchor")).toBeInTheDocument(); // it rendered at all
     expect(container.querySelector("button, input, select, textarea")).toBeNull();
     expect(container.textContent).not.toMatch(/margin|cost|floor|sell anyway/i);
+  });
+});
+
+describe("LineItemRowReadOnly — table parity details", () => {
+  it("a cancelled row is dimmed as a whole but only the NAME is struck through", () => {
+    renderRow({ lineStatus: "CANCELLED", sku: "100200300" });
+    expect(screen.getByRole("listitem")).toHaveClass("opacity-50");
+    expect(screen.getByTestId("line-name-anchor")).toHaveClass("line-through");
+    expect(screen.getByText("SKU 100200300")).not.toHaveClass("line-through");
+    expect(screen.getByText("8 × $65.00")).not.toHaveClass("line-through");
+    expect(screen.getByText("Cancelled").className).not.toMatch(/line-through/);
+  });
+
+  it("an active row is not dimmed", () => {
+    renderRow();
+    expect(screen.getByRole("listitem")).not.toHaveClass("opacity-50");
+  });
+
+  it("shows the Custom pill only for an ad-hoc line", () => {
+    const on = renderRow({ custom: true });
+    expect(screen.getByText("Custom")).toBeInTheDocument();
+    on.unmount();
+    renderRow({ custom: false });
+    expect(screen.queryByText("Custom")).toBeNull();
+  });
+
+  it("a stored boxes/pieces split with NO known pack size keeps the split, priced per unit", () => {
+    renderRow({ boxes: 2, pieces: 3, unitsPerBox: null, qty: 27, unitPrice: 30 });
+    expect(screen.getByText("2 boxes + 3 pcs × $30.00")).toBeInTheDocument();
+    expect(screen.queryByText(/box of/)).toBeNull();
+  });
+
+  it("a split line gets a total-pieces tooltip; a plain line does not", () => {
+    const split = renderRow({ boxes: 2, pieces: 3, unitsPerBox: 12, qty: 27, unitPrice: 30 });
+    expect(screen.getByText(/2 boxes \+ 3 pcs/)).toHaveAttribute("title", "27 pcs total");
+    split.unmount();
+    renderRow();
+    expect(screen.getByText("8 × $65.00")).not.toHaveAttribute("title");
+  });
+
+  it("the price tag line does not repeat the unit price already on the qty line", () => {
+    renderRow({ unitPrice: 65, priceType: "DISCOUNTED", originalPrice: 80 });
+    // the price lives in the qty line only; there is no stand-alone "$65.00" element
+    expect(screen.getByText("8 × $65.00")).toBeInTheDocument();
+    expect(screen.queryByText("$65.00")).toBeNull();
   });
 });
