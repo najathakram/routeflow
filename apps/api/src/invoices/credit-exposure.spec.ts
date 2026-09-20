@@ -1054,6 +1054,8 @@ describe("loadCreditExposure (the ONLY reader)", () => {
       uninvoicedOrderExposure: 0,
       counted: 120,
       pendingExposure: 12, // the standalone draft only
+      excludedOrderPaid: 0, // present only because an order is being edited; nothing was paid on it
+      excludedOrderUnsettledOutstanding: 100, // ...but its own SENT invoice (100) is issued and unsettled
     });
   });
 

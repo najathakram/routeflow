@@ -129,6 +129,40 @@ describe("assertWithinCreditLimit (the hard block)", () => {
     expect(db.order.findMany.mock.calls[0][0].where.customerId).toBe("c-1");
   });
 
+  it.each(["SENT", "VIEWED", "OVERDUE"])(
+    "B577 follow-up (review): a surviving %s invoice of the edited order keeps its balance — a PAID sibling never erases it; the block equals the statement (1000, not 50)",
+    async (status) => {
+      // delivered, partially invoiced: no revert, no re-sync — batch 2 stays live (edit → 1050)
+      const paid = {
+        total: 1000,
+        status: "PAID",
+        orderId: "o-1",
+        order: null,
+        payments: [{ amount: 1000, status: "PAID" }],
+      };
+      const owing = { total: 1000, status, orderId: "o-1", order: null, payments: [] };
+      const at = (creditLimit: number, projected: number, survives: boolean) =>
+        assertWithinCreditLimit(
+          makeDb({ creditLimit, invoices: [paid, owing] }),
+          "c-1",
+          "o-1",
+          projected,
+          true,
+          survives,
+        );
+      // the invoices survive: the block equals the statement (1000), never the netted 50
+      await expect(at(999, 1050, true)).rejects.toMatchObject({
+        response: { code: "CREDIT_LIMIT_EXCEEDED", exposure: 1000, limit: 999 },
+      });
+      // the edit cuts the order to 600 and the re-sync rewrites the invoices: never stricter
+      // than before the netting (600), where surviving invoices would still book 1000
+      await expect(at(600, 600, false)).resolves.toBeUndefined();
+      await expect(at(600, 600, true)).rejects.toMatchObject({
+        response: { exposure: 1000, limit: 600 },
+      });
+    },
+  );
+
   it("passes at or under the limit (the block is strictly exposure > limit)", async () => {
     const db = makeDb({ creditLimit: 100, invoices: [sent(60)] });
     await expect(assertWithinCreditLimit(db, "c-1", "o-1", 40, true)).resolves.toBeUndefined(); // 100 = limit

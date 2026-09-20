@@ -4993,6 +4993,10 @@ export class OrdersService implements OnApplicationBootstrap {
             // (pre-existing) does not subtract Order.discountAmount.
             total,
             creditCheckEnabled,
+            // B577: do this edit's issued invoices survive untouched? Only a delivered, partially
+            // invoiced order (re-sync skipped) is SURE to; pre-delivery a deposit mirror is
+            // rewritten by the reconcile, so the safe answer — never stricter than before — is no.
+            postDeliveryEdit && shouldSkipInPlaceResync(order.lineItems ?? []),
           );
         }
 
@@ -5655,6 +5659,7 @@ export class OrdersService implements OnApplicationBootstrap {
     currentOrderId: string,
     projectedOrderTotal: number,
     creditCheckEnabled: boolean,
+    invoicesSurviveEdit = false,
   ): Promise<void> {
     return assertWithinCreditLimit(
       db,
@@ -5662,6 +5667,7 @@ export class OrdersService implements OnApplicationBootstrap {
       currentOrderId,
       projectedOrderTotal,
       creditCheckEnabled,
+      invoicesSurviveEdit,
     );
   }
 
