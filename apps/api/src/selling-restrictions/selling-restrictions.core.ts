@@ -73,14 +73,38 @@ export const UNRESOLVED_STATE: GoverningState = { resolved: false };
 /** `productName` of an UNKNOWN_PRODUCT reason — buyer-visible, so never a raw id. */
 export const UNKNOWN_PRODUCT_NAME = "Unknown product";
 
+/** The two fields of an authenticated principal the channel is read from. */
+export interface ChannelPrincipal {
+  /** Tenant users (`JwtPayload.role`); the buyer-portal principal carries NONE. */
+  role?: string | null;
+  /** `"BUYER"` on the buyer-portal principal (`BuyerJwtStrategy`); absent on tenant users. */
+  type?: string | null;
+}
+
+/** Roles that positively sell as staff. Compared as strings so the core stays free of Prisma. */
+const STAFF_ROLES: ReadonlySet<string> = new Set([
+  "SUPER_ADMIN",
+  "TENANT_ADMIN",
+  "OPERATOR",
+  "DRIVER",
+]);
+
 /**
- * The channel a caller's role sells through: the CUSTOMER role IS the self-serve buyer portal
- * (BUYER_PORTAL surface rules bind it); every other role — operator, tenant admin, driver, and
- * cron/system callers with no role at all — is STAFF. Compared as a string so the core stays free
- * of Prisma; the spec pins it against every `UserRole` value so a rename cannot drift silently.
+ * The channel a PRINCIPAL sells through — and it FAILS CLOSED. STAFF only for a principal that is
+ * positively staff: a known staff `role` and no buyer marker. Everything else is BUYER_PORTAL,
+ * which binds a superset of the rules (ALL + BUYER_PORTAL): the buyer-portal principal (`type:
+ * "BUYER"`, which carries no `role` at all), the CUSTOMER role, a hybrid carrying either marker,
+ * an unknown role, no principal. A misclassified caller is over-blocked, never let through.
+ * A system caller with no principal passes `"STAFF"` ONLY when the sale is genuinely
+ * staff-originated; background work that materialises a BUYER's order (a standing-order cron, a
+ * consolidation sweep) passes `"BUYER_PORTAL"`. The spec pins every `UserRole` value so a NEW role
+ * must be classified on purpose.
  */
-export function restrictionChannelForRole(role: string | undefined): RestrictionChannel {
-  return role === "CUSTOMER" ? "BUYER_PORTAL" : "STAFF";
+export function restrictionChannelForPrincipal(
+  principal: ChannelPrincipal | null | undefined,
+): RestrictionChannel {
+  if (!principal || principal.type === "BUYER") return "BUYER_PORTAL";
+  return principal.role != null && STAFF_ROLES.has(principal.role) ? "STAFF" : "BUYER_PORTAL";
 }
 
 /** The OFF outcome: a first-class result, produced without reading anything else. */
