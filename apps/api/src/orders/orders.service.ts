@@ -15,7 +15,6 @@ import type { Queue } from "bull";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import {
-  applyBestPromotion,
   computeCategoryTax,
   computeLineSubtotal,
   effectiveBuyerPrice,
@@ -37,11 +36,9 @@ import {
   OrderStatus,
   UserRole,
   ItemStatus,
-  TxnStatus,
   MutationType,
   InvoiceStatus,
   PriceType,
-  Prisma,
   ChangeRequestStatus,
   ChangeRequestType,
   NotificationEvent,
@@ -60,18 +57,18 @@ import {
 } from "./merge-idempotency";
 import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
 import { cancelImpact } from "./order-cancel-impact";
+import {
+  EXISTING_LINE_SELECT,
+  orderEditMode,
+  planOrderEditRestrictions,
+  type OrderEditRestrictionPlan,
+} from "./order-edit-restrictions";
 import { parseCommissionRatePct, parseOrderDate } from "./order-parsers";
 import { CreateSaleDto } from "./dto/create-sale.dto";
 import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
 import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import { UpdateShipmentDto } from "./dto/update-shipment.dto";
 import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
-import {
-  assertRegulatedDeliverySatisfied,
-  deriveStopRegulatedRequirements,
-  loadAgeIdCategorySets,
-  type RegulatedDeliveryDb,
-} from "../common/regulated-delivery";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
@@ -3161,6 +3158,30 @@ export class OrdersService implements OnApplicationBootstrap {
       });
     }
 
+    // Lane R: a banned product added by this edit refuses (409 SELLING_RESTRICTED) BEFORE the invoice
+    // revert and any write. Non-draft only (a draft is judged at its promotion). OFF = one policy read
+    // here and nothing else; the plan is re-checked under the row lock below (order-edit-restrictions.ts).
+    let restrictionPlan: OrderEditRestrictionPlan | null = null;
+    if (order.status !== "DRAFT") {
+      const tenantId = this.restrictionTenantId(user, order.tenantId);
+      restrictionPlan = await planOrderEditRestrictions(
+        { restrictions: this.sellingRestrictions, prisma: this.prisma },
+        {
+          tenantId,
+          existing: order.lineItems ?? [],
+          items: dto.items ?? [],
+          mode: orderEditMode(user?.role, dto.replaceAll, isDiffPayload),
+        },
+      );
+      if (restrictionPlan)
+        await this.sellingRestrictions.assertLinesSellable({
+          tenantId,
+          customerId: order.customerId,
+          lines: restrictionPlan.lines,
+          channel: restrictionChannelForPrincipal(user),
+        });
+    }
+
     // R1: a POST-DELIVERY edit (order already OUT_FOR_DELIVERY / PARTIALLY_DELIVERED /
     // DELIVERED) re-syncs its finalized / paid / delivery-batch invoice(s) IN PLACE
     // after the mutation (resyncOrderInvoicesForEdit) — keeping payments and surfacing
@@ -3246,8 +3267,9 @@ export class OrdersService implements OnApplicationBootstrap {
         await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
         const heldItems = await tx.orderItem.findMany({
           where: { orderId },
-          select: { productId: true, qty: true, deliveredQty: true, status: true },
+          select: { ...EXISTING_LINE_SELECT, deliveredQty: true },
         });
+        restrictionPlan?.assertHeld(heldItems);
 
         // Customer/Driver path: replace items by productId. A4: a DRIVER diff
         // payload skips this branch entirely — it merges below like an operator
