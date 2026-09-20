@@ -858,7 +858,7 @@ ${
         { amountDelta: roundMoney(nextContribution - priorContribution), actorId: adminId, tx },
       );
       return updated;
-    });
+    }, this.planTransition.transactionOptions(preparedTransition));
 
     this.entitlementsService.invalidate(id);
 
@@ -1017,7 +1017,7 @@ ${
       }
 
       return updated;
-    });
+    }, this.planTransition.transactionOptions(preparedTransition));
 
     // Invalidate cached tenant status so the guard picks up ACTIVE immediately
     this.tenantStatusGuard.invalidate(id);

@@ -40,7 +40,12 @@ describe("PlatformAdminService — audit provenance", () => {
   let billingEventService: { emit: jest.Mock };
   let meterService: { readAll: jest.Mock };
   let featureOverrides: { allActive: jest.Mock };
-  let planTransition: { isEnabled: jest.Mock; prepare: jest.Mock; onPlanChange: jest.Mock };
+  let planTransition: {
+    isEnabled: jest.Mock;
+    prepare: jest.Mock;
+    onPlanChange: jest.Mock;
+    transactionOptions: jest.Mock;
+  };
   let platformPricingService: { resolveTenantPricing: jest.Mock };
   let mrrService: {
     computeOverview: jest.Mock;
@@ -104,6 +109,7 @@ describe("PlatformAdminService — audit provenance", () => {
       isEnabled: jest.fn().mockResolvedValue(true),
       prepare: jest.fn().mockResolvedValue({ enabled: true, planAllows: null }),
       onPlanChange: jest.fn().mockResolvedValue({ action: "none" }),
+      transactionOptions: jest.fn().mockReturnValue(undefined),
     };
     platformPricingService = { resolveTenantPricing: jest.fn() };
     // Default: zeroed overview — the getStats-enrichment describe block below overrides

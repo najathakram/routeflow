@@ -20,7 +20,10 @@ import {
 } from "./plan-catalog.constants";
 import { addCycle } from "./billing-math";
 import { BillingNotificationService } from "./billing-notification.service";
-import { PlanTransitionConfigService } from "./plan-transition-config.service";
+import { PlanTransitionConfigService, SnapshotFailedError } from "./plan-transition-config.service";
+
+/** A run of this many snapshot failures in one sweep is systemic — the sweep aborts loudly. */
+const MAX_CONSECUTIVE_SNAPSHOT_FAILURES = 3;
 
 /**
  * Plan lifecycle crons (Plans & Billing Phase 5). Operate cross-tenant with explicit
@@ -226,6 +229,7 @@ export class BillingCronService {
       },
     });
     let applied = 0;
+    let consecutiveSnapshotFailures = 0;
     for (const s of subs) {
       const target = s.downgradeToPlanKey as string;
       // Price the MRR delta + caps from the tenant's PINNED version (grandfathering),
@@ -339,7 +343,7 @@ export class BillingCronService {
             { fromPlan: s.planKey, toPlan: target, scheduled: true, applied: true },
             { amountDelta, tx },
           );
-        });
+        }, this.planTransition.transactionOptions(preparedTransition));
 
         // N3: best-effort admin notification, never blocks the transaction above. `key` is
         // the effective date this tenant's row carried before the transaction cleared it —
@@ -365,6 +369,16 @@ export class BillingCronService {
         // Error is a data problem this sweep may skip past. Anything else (pool exhaustion, a
         // Prisma error, any other unrelated failure) rethrows so it surfaces as a real cron
         // failure instead of being logged and swallowed as if it were a bad plan key.
+        // A snapshot that could not be written fails THIS tenant's downgrade closed (the tx rolled
+        // back, the schedule stays armed, next tick retries) — but must not strand every tenant
+        // after it in this sweep, so it is logged loudly and the loop carries on.
+        if (err instanceof SnapshotFailedError) {
+          this.logger.error(`Scheduled downgrade held back — ${err.message}`);
+          // Several in a row is not one bad tenant but a systemic fault (pool exhausted, DB down):
+          // surface it as the cron failure it is instead of "succeeding" having applied nothing.
+          if (++consecutiveSnapshotFailures >= MAX_CONSECUTIVE_SNAPSHOT_FAILURES) throw err;
+          continue;
+        }
         if (!this.isUnresolvablePlanKeyError(err)) throw err;
         // B218: log and move on — a cron that dies on tenant N's bad row would silently
         // strand every tenant after it unapplied too, which is worse than the one bad row.
@@ -377,6 +391,7 @@ export class BillingCronService {
       }
       this.entitlements.invalidate(s.tenantId);
       this.tenantStatus.invalidate(s.tenantId);
+      consecutiveSnapshotFailures = 0;
       applied++;
     }
     if (applied) this.logger.log(`Applied ${applied} scheduled downgrades`);

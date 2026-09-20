@@ -18,7 +18,6 @@ import {
   applyBestPromotion,
   computeCategoryTax,
   computeLineSubtotal,
-  effectiveBuyerPrice,
   getTierPrice,
   normalizeBoxesPieces,
   roundMoney,
@@ -102,6 +101,7 @@ import {
   isUnitAware,
   prepareUnitLadders,
 } from "./unit-line-build";
+import { assertBuyerCartPricesCurrent } from "./buyer-cart-price-check";
 import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PromotionsService } from "../promotions/promotions.service";
@@ -1955,44 +1955,15 @@ export class OrdersService implements OnApplicationBootstrap {
     // P5-04: active promotions — only for the buyer (CUSTOMER) self-service path.
     const activePromos = await this.loadActivePromotions(user.role);
 
-    // RF-198: price-race check — buyer cart may have been built with a stale price.
-    // Re-fetch (already done above) and compare against the cart unitPrice for each item.
-    // Only applies when the CUSTOMER role sends unitPrice values (buyer portal checkout).
-    if (user.role === UserRole.CUSTOMER && items.some((i) => i.unitPrice != null)) {
-      const changedItems: Array<{
-        productId: string;
-        name: string;
-        cartPrice: number;
-        currentPrice: number;
-      }> = [];
-      for (const item of items) {
-        if (item.unitPrice == null || !item.productId) continue;
-        const product = productMap.get(item.productId);
-        if (!product) continue; // missing product caught in lineItemsData.map below
-        const tierForProduct = cpMap.get(item.productId) ?? defaultTier;
-        // Compare against the customer's EFFECTIVE price (tier or sticky upsell) so
-        // a legitimately-upsold cart doesn't 409 at checkout.
-        const currentPrice = effectiveBuyerPrice(
-          Number(getTierPrice(product, tierForProduct)),
-          Number(product.pricePerUnit),
-          priceHistory[item.productId]?.lastPrice ?? null,
-        );
-        if (Math.abs(currentPrice - item.unitPrice) > 0.01) {
-          changedItems.push({
-            productId: item.productId,
-            name: product.name,
-            cartPrice: item.unitPrice,
-            currentPrice,
-          });
-        }
-      }
-      if (changedItems.length > 0) {
-        throw new ConflictException({
-          message: "Prices have been updated. Please review your cart.",
-          changedItems,
-        });
-      }
-    }
+    // RF-198: buyer cart price-race check — see buyer-cart-price-check.ts.
+    assertBuyerCartPricesCurrent({
+      role: user.role,
+      items,
+      productMap,
+      cpMap,
+      defaultTier,
+      priceHistory,
+    });
 
     let subtotal = 0;
     const lineItemsData = items.map((item, index) => {
