@@ -549,6 +549,7 @@ describe("normalize-address-states — the alias table and constants", () => {
       "UNPARSEABLE",
       "NEEDS_GOOGLE",
       "NEEDS_ZIP",
+      "AMBIGUOUS_NEEDS_ZIP",
       "GOOGLE_NO_MATCH",
       "GOOGLE_INCOMPLETE",
       "GOOGLE_INFERRED",
@@ -1665,20 +1666,20 @@ describe("normalize-address-states — ZIP cross-check (a resolution must not co
     expect(rows.every((r) => r.reason === null)).toBe(true);
   });
 
-  it("X3: no zip, a blank zip, an unparseable zip or a no-data prefix skips the check", () => {
+  it("X3: for an UNAMBIGUOUS text, no zip / a blank / unparseable zip / a no-data prefix skips the check", () => {
     const [o] = evaluate([
       plan([
-        zrow(1, "Washington", ""),
-        zrow(2, "Washington", "   "),
-        zrow(3, "Washington", "2000"),
-        zrow(4, "Washington", "abcde"),
-        zrow(5, "Washington", "09001"), // military: no reliable state
-        zrow(6, "Washington", "00101"), // unassigned
-        row(7, { state: "Washington", zip: undefined, googleSendable: false }), // no zip at all
+        zrow(1, "Idaho", ""),
+        zrow(2, "Idaho", "   "),
+        zrow(3, "Idaho", "2000"),
+        zrow(4, "Idaho", "abcde"),
+        zrow(5, "Idaho", "09001"), // military: no reliable state
+        zrow(6, "Idaho", "00101"), // unassigned
+        row(7, { state: "Idaho", zip: undefined, googleSendable: false }), // no zip at all
       ]),
     ]);
     const rows = JSON.parse(o.value.json).rows as Report[];
-    expect(rows.map((r) => r.stateCode)).toEqual(Array(7).fill("WA"));
+    expect(rows.map((r) => r.stateCode)).toEqual(Array(7).fill("ID"));
   });
 
   it("X4: the report path carries only the SQL's zip3 prefix — and it drives the same check", () => {
@@ -1691,11 +1692,13 @@ describe("normalize-address-states — ZIP cross-check (a resolution must not co
       ]),
     ]);
     const rows = JSON.parse(o.value.json).rows as Report[];
+    // "Washington" is AMBIGUOUS: only the confirming prefix (981) resolves; a DC prefix conflicts;
+    // no prefix at all, or a military one, is AMBIGUOUS_NEEDS_ZIP — never a guessed WA.
     expect(rows.map((r) => r.verdict)).toEqual([
       "UNRESOLVED:ZIP_CONFLICT",
       "RESOLVED_LOCAL_EXACT",
-      "RESOLVED_LOCAL_EXACT",
-      "RESOLVED_LOCAL_EXACT",
+      "UNRESOLVED:AMBIGUOUS_NEEDS_ZIP",
+      "UNRESOLVED:AMBIGUOUS_NEEDS_ZIP",
     ]);
     // neither the prefix nor a zip is ever placed on a report
     expect(o.value.json).not.toContain("zip3");
@@ -1783,6 +1786,152 @@ describe("normalize-address-states — ZIP cross-check (a resolution must not co
       { remainder: null, zip: "77001" },
       { remainder: null, zip: null },
     ]);
+  });
+
+  // PC-lead ruling: ambiguous free text (a state name / abbreviation that is ALSO a city's) with a
+  // blank, invalid or MILITARY zip is UNRESOLVED — never a guessed state.
+  it("X8: an AMBIGUOUS text needs a CONFIRMING civilian zip — blank, invalid, military and unassigned zips leave it UNRESOLVED:AMBIGUOUS_NEEDS_ZIP", () => {
+    const [o] = evaluate([
+      plan([
+        zrow(1, "Washington", ""), // blank zip
+        zrow(2, "Washington", "   "),
+        zrow(3, "Washington", "2000"), // invalid (4 digits)
+        zrow(4, "Washington", "abcde"), // invalid
+        zrow(5, "Washington", "09001"), // MILITARY (APO/FPO)
+        zrow(6, "Washington", "96201"), // MILITARY (AP)
+        zrow(7, "Washington", "00101"), // unassigned
+        row(8, { state: "Washington", zip: undefined, googleSendable: false }), // no zip at all
+        zrow(9, "L.A.", ""), // Los Angeles or Louisiana?
+        zrow(10, "Wash.", "09001"), // military again
+        zrow(11, "Washington", "98101"), // a Seattle zip CONFIRMS
+        zrow(12, "L.A.", "70112"), // a New Orleans zip confirms Louisiana
+        zrow(13, "Washington 98101", ""), // a confirming zip inside the text
+      ]),
+    ]);
+    const rows = reportsOfPipeline(o);
+    expect(rows.map((r) => r.verdict)).toEqual([
+      "UNRESOLVED:AMBIGUOUS_NEEDS_ZIP",
+      "UNRESOLVED:AMBIGUOUS_NEEDS_ZIP",
+      "UNRESOLVED:AMBIGUOUS_NEEDS_ZIP",
+      "UNRESOLVED:AMBIGUOUS_NEEDS_ZIP",
+      "UNRESOLVED:AMBIGUOUS_NEEDS_ZIP",
+      "UNRESOLVED:AMBIGUOUS_NEEDS_ZIP",
+      "UNRESOLVED:AMBIGUOUS_NEEDS_ZIP",
+      "UNRESOLVED:AMBIGUOUS_NEEDS_ZIP",
+      "UNRESOLVED:AMBIGUOUS_NEEDS_ZIP",
+      "UNRESOLVED:AMBIGUOUS_NEEDS_ZIP",
+      "RESOLVED_LOCAL_EXACT",
+      "RESOLVED_LOCAL_ALIAS",
+      "RESOLVED_LOCAL_ALIAS",
+    ]);
+    expect(rows.slice(0, 10).every((r) => r.stateCode === null)).toBe(true);
+    expect(rows[10].stateCode).toBe("WA");
+    expect(rows[11].stateCode).toBe("LA");
+    expect(rows[12].stateCode).toBe("WA");
+    // the write list only FLAGS an unresolved row — an AMBIGUOUS_NEEDS_ZIP never receives a code
+    const actions = (o.value.updates as { action: string; stateCode: unknown }[]).map(
+      (u) => `${u.action}:${u.stateCode}`,
+    );
+    expect(actions.slice(0, 10)).toEqual(Array(10).fill("flag-review:null"));
+  });
+
+  it("X9: an unambiguous text and a bare 2-letter code are unaffected — Idaho and LA resolve without a zip", () => {
+    const [o] = evaluate([
+      plan([
+        zrow(1, "Idaho", ""), // a state name that is not in the ambiguous set
+        zrow(2, "LA", ""), // the bare code is Louisiana; only the punctuated "L.A." is ambiguous
+        zrow(3, "la", ""),
+        zrow(4, "Tex", "09001"), // an unambiguous alias, military zip: no check, no block
+        zrow(5, "OR", ""), // a bare code that is also an English word
+      ]),
+    ]);
+    const rows = reportsOfPipeline(o);
+    expect(rows.map((r) => r.stateCode)).toEqual(["ID", "LA", "LA", "TX", "OR"]);
+    expect(rows.every((r) => r.reason === null)).toBe(true);
+  });
+
+  it("X10: the ambiguous set is pinned exactly — a name is added or removed on purpose", () => {
+    const o = evaluate([get("AMBIGUOUS_STATE_TEXTS")]);
+    expect((o[0].value as string[]).sort()).toEqual(
+      [
+        "california",
+        "delaware",
+        "florida",
+        "georgia",
+        "indiana",
+        "kansas",
+        "la",
+        "louisiana",
+        "nevada",
+        "oregon",
+        "virginia",
+        "wash",
+        "washington",
+        "wyoming",
+      ].sort(),
+    );
+  });
+
+  // Every member of the set, behaviourally (X10 pins the list; this pins what each one DOES): a
+  // blank zip and a military zip leave it unresolved, a zip inside its own state confirms it.
+  it.each([
+    ["Washington", "98101", "WA"],
+    ["Wash.", "98101", "WA"],
+    ["Kansas", "66101", "KS"],
+    ["Indiana", "46201", "IN"],
+    ["Delaware", "19901", "DE"],
+    ["Oregon", "97201", "OR"],
+    ["Nevada", "89101", "NV"],
+    ["Wyoming", "82001", "WY"],
+    ["Virginia", "22201", "VA"],
+    ["California", "90012", "CA"],
+    ["Louisiana", "70112", "LA"],
+    ["Florida", "33101", "FL"],
+    ["Georgia", "30301", "GA"],
+    ["L.A.", "70112", "LA"],
+    ["La.", "70112", "LA"], // the AP abbreviation for Louisiana folds to the same key as "L.A."
+  ])(
+    "X12: %s — blank / military zip → AMBIGUOUS_NEEDS_ZIP, a confirming zip (%s) → %s",
+    (text, zip, code) => {
+      const [o] = evaluate([plan([zrow(1, text, ""), zrow(2, text, "09001"), zrow(3, text, zip)])]);
+      const rows = reportsOfPipeline(o);
+      expect(rows.map((r) => r.verdict.startsWith("RESOLVED"))).toEqual([false, false, true]);
+      expect(rows.slice(0, 2).map((r) => r.reason)).toEqual([
+        "AMBIGUOUS_NEEDS_ZIP",
+        "AMBIGUOUS_NEEDS_ZIP",
+      ]);
+      expect(rows[2].stateCode).toBe(code);
+    },
+  );
+
+  it("X13: a bare 2-letter code is never ambiguous, even the ones that are English words or city initials", () => {
+    const [o] = evaluate([
+      plan(
+        ["LA", "la", "La", "OR", "IN", "ME", "OK", "OH", "DE"].map((t, i) => zrow(i + 1, t, "")),
+      ),
+    ]);
+    const rows = reportsOfPipeline(o);
+    expect(rows.map((r) => r.stateCode)).toEqual([
+      "LA",
+      "LA",
+      "LA",
+      "OR",
+      "IN",
+      "ME",
+      "OK",
+      "OH",
+      "DE",
+    ]);
+    expect(rows.every((r) => r.reason === null)).toBe(true);
+  });
+
+  it("X11: an ambiguous row that needs a zip is NEVER sent to Google (it is a local AMBIGUOUS_NEEDS_ZIP, not an UNPARSEABLE)", () => {
+    const [o] = evaluate([
+      plan([zrow(1, "Washington", "", { googleSendable: true })], gcfg([{ forbidden: true }])),
+    ]);
+    expect(o.ok).toBe(true);
+    expect(reportsOfPipeline(o)[0].verdict).toBe("UNRESOLVED:AMBIGUOUS_NEEDS_ZIP");
+    expect(o.calls).toHaveLength(0); // the fake fetch (which throws if reached) was never called
   });
 });
 
@@ -2440,6 +2589,7 @@ describe("normalize-address-states.mjs CLI contract", () => {
       "UNRESOLVED:<reason>",
       "NEEDS_GOOGLE",
       "NEEDS_ZIP",
+      "AMBIGUOUS_NEEDS_ZIP",
       "GOOGLE_INFERRED",
       "ZIP_CONFLICT",
       "NULL_TENANT",

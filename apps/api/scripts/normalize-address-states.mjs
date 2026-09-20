@@ -23,6 +23,9 @@
  *                          Reasons: EMPTY (blank state) · UNPARSEABLE (text that is not a state) ·
  *                          NEEDS_GOOGLE (would need --google, not attempted) · NEEDS_ZIP (would
  *                          need Google but has no usable 5-digit zip — never sent) ·
+ *                          AMBIGUOUS_NEEDS_ZIP (a text that is also a city's name — "Washington",
+ *                          "Kansas", "L.A." — with no valid civilian zip to confirm the state;
+ *                          add or fix the zip and re-run, Google is NOT involved) ·
  *                          GOOGLE_NO_MATCH · GOOGLE_INCOMPLETE · GOOGLE_INFERRED (Google inferred,
  *                          replaced or could not confirm a component) · GOOGLE_ERROR (HTTP /
  *                          timeout / network) · ZIP_CONFLICT (a resolved state that contradicts the
@@ -30,9 +33,11 @@
  * ZIP CROSS-CHECK. After ANY resolution (local or Google), a row with a parseable 5-digit zip whose
  * 3-digit prefix has a known state set (`lib/us-zip3.mjs`; military and unassigned prefixes have no
  * set, so no check) is UNRESOLVED:ZIP_CONFLICT when the resolved code is not in that set — bare
- * "Washington" with a DC zip, "L.A." (alias `la` = Louisiana) with a Los Angeles zip. A blank zip
- * skips the check for a local resolution. A false conflict only lists a row; a false agreement
- * would write a wrong state, so the table errs wide.
+ * "Washington" with a DC zip, "L.A." (alias `la` = Louisiana) with a Los Angeles zip. For an
+ * UNAMBIGUOUS text a blank zip skips the check; for an AMBIGUOUS one (`AMBIGUOUS_STATE_TEXTS`) a
+ * blank, invalid, military or unassigned zip is UNRESOLVED:AMBIGUOUS_NEEDS_ZIP — only a zip that
+ * CONFIRMS the state resolves it. A false conflict only lists a row; a false agreement would write
+ * a wrong state, so the table errs wide.
  * There is no fuzzy matching, no edit distance, no city inference: "Tejas" and "Texs" are
  * UNRESOLVED on purpose. Only rows with `stateCode IS NULL` are candidates, so a re-run after a
  * partial run is safe and already-normalised rows are never touched.
@@ -248,10 +253,13 @@ Verdicts (one line per row: id, tenantId, verdict, proposed code):
                          country token ("TX 77001", "Texas, USA")
   RESOLVED_GOOGLE        (--google) Google returned a COMPLETE, CONFIRMED US state (not inferred)
   UNRESOLVED:<reason>    listed, NEVER guessed; --live sets ONLY stateNeedsReview = true on it
-    EMPTY  UNPARSEABLE  NEEDS_GOOGLE  NEEDS_ZIP  GOOGLE_NO_MATCH  GOOGLE_INCOMPLETE
-    GOOGLE_INFERRED  GOOGLE_ERROR  ZIP_CONFLICT  NULL_TENANT
+    EMPTY  UNPARSEABLE  NEEDS_GOOGLE  NEEDS_ZIP  AMBIGUOUS_NEEDS_ZIP  GOOGLE_NO_MATCH
+    GOOGLE_INCOMPLETE  GOOGLE_INFERRED  GOOGLE_ERROR  ZIP_CONFLICT  NULL_TENANT
   ZIP_CONFLICT: a resolved state contradicting the row's own 5-digit zip (bare "Washington" with a
   DC zip, "L.A." with a California zip) is listed, never written with a code.
+  AMBIGUOUS_NEEDS_ZIP: the text is also a city's name ("Washington", "Kansas", "L.A.") and no valid
+  civilian zip confirms the state — a blank, invalid or military (APO/FPO/DPO) zip leaves it unset.
+  Fix the row's zip and re-run; --google is not involved (it is never sent).
   No fuzzy matching: "Tejas" and "Texs" are UNRESOLVED. Reports carry verdict + reason only; the
   raw state text appears ONLY with --show-unresolved-text — never an address line, city or zip.
   Tip: pipe the report through  grep UNRESOLVED  to see only the rows that need a decision.

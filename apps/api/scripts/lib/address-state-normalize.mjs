@@ -45,11 +45,23 @@
  *      `zip3States` (lib/us-zip3.mjs) has an answer for its prefix AND the resolved code is not in
  *      that set, the row is `UNRESOLVED:ZIP_CONFLICT` — listed, never written with a code
  *      ("Washington" + a DC zip; "L.A." folding to Louisiana for a California zip). Either zip
- *      contradicting is a conflict. A blank or unparseable zip, or a prefix with no reliable state,
- *      skips the check.
+ *      contradicting is a conflict. For an UNAMBIGUOUS text a blank or unparseable zip, or a prefix
+ *      with no reliable state, skips the check (rule 7 covers the ambiguous ones).
+ *   7. AMBIGUOUS TEXT (PC-lead ruling) — a state text that is ALSO a city's name or abbreviation
+ *      (`AMBIGUOUS_STATE_TEXTS`: "Washington", "Wash.", "L.A.", "Oregon", "Virginia", ...) resolves
+ *      ONLY when a valid civilian zip's ZIP3 CONFIRMS the state (`zipConfirmsState`). A blank,
+ *      invalid, MILITARY (APO/FPO/DPO) or unassigned zip leaves it `UNRESOLVED:AMBIGUOUS_NEEDS_ZIP`
+ *      — a wrong `stateCode` silently changes which jurisdiction's selling rules apply, so a guess
+ *      is worse than leaving it unset. A bare 2-letter code (`LA`) is never ambiguous. Note the
+ *      confirmation reads `lib/us-zip3.mjs` in the OPPOSITE polarity to the conflict check: that
+ *      table is widened where a prefix is uncertain (a false conflict is cheap), which also widens
+ *      what CONFIRMS — e.g. "Virginia" with a White House zip (`20500`, block 200-205 = DC/MD/VA)
+ *      resolves VA. Narrowing a range weakens neither check; WIDENING one weakens confirmation.
  *
  * REASON CODES (`UNRESOLVED:<reason>`): EMPTY, UNPARSEABLE, NEEDS_GOOGLE (would need Google and
  * `--google` was not given), NEEDS_ZIP (would need Google but has no usable 5-digit zip),
+ * AMBIGUOUS_NEEDS_ZIP (an ambiguous text — rule 7 — that no valid civilian zip confirms; add or fix
+ * the zip and re-run, Google is not involved),
  * GOOGLE_NO_MATCH, GOOGLE_INCOMPLETE, GOOGLE_INFERRED (Google inferred / replaced / could not
  * confirm a component), GOOGLE_ERROR (HTTP / timeout / network / unreadable body — kept apart from
  * NO_MATCH so a transient failure is not read as "Google has no data"), ZIP_CONFLICT (a resolved
@@ -92,6 +104,9 @@ export const REASON_EMPTY = "EMPTY";
 export const REASON_UNPARSEABLE = "UNPARSEABLE";
 export const REASON_NEEDS_GOOGLE = "NEEDS_GOOGLE";
 export const REASON_NEEDS_ZIP = "NEEDS_ZIP";
+/** An AMBIGUOUS text resolved locally but no valid civilian zip confirms it (rule 7). Kept apart from
+ *  NEEDS_ZIP: the remedy differs — add / fix the zip and re-run; `--google` is NOT involved. */
+export const REASON_AMBIGUOUS_NEEDS_ZIP = "AMBIGUOUS_NEEDS_ZIP";
 export const REASON_GOOGLE_NO_MATCH = "GOOGLE_NO_MATCH";
 export const REASON_GOOGLE_INCOMPLETE = "GOOGLE_INCOMPLETE";
 export const REASON_GOOGLE_INFERRED = "GOOGLE_INFERRED";
@@ -104,6 +119,7 @@ export const REASONS = [
   REASON_UNPARSEABLE,
   REASON_NEEDS_GOOGLE,
   REASON_NEEDS_ZIP,
+  REASON_AMBIGUOUS_NEEDS_ZIP,
   REASON_GOOGLE_NO_MATCH,
   REASON_GOOGLE_INCOMPLETE,
   REASON_GOOGLE_INFERRED,
@@ -259,9 +275,45 @@ export function stripTrailingZipCountry(folded) {
 // ─── local classification ─────────────────────────────────────────────────────────────────────
 
 /**
- * One free-text `state` value -> `{ resolved: true, stateCode, verdict, rule }` or
+ * FOLDED state texts that free-text data entry also uses for a CITY or town ("Washington" is a city
+ * in a dozen states and the capital; "Kansas" is the Kansas City metro's shorthand and a town in
+ * OK/IL/AL; "L.A." is Los Angeles). PC-lead ruling: such a text never resolves on its own — with a
+ * blank, invalid, military or unassigned zip it is `UNRESOLVED:AMBIGUOUS_NEEDS_ZIP`, because a
+ * wrong `stateCode` silently changes which jurisdiction's selling rules apply, so a guess is worse
+ * than leaving it unset. It resolves only when a valid civilian zip's ZIP3 CONFIRMS the state.
+ * CRITERION: a state name is here when a real municipality of that name exists in ANOTHER state
+ * and the text is plausibly typed for it (Washington, Kansas OK/IL, Indiana PA, Delaware OH,
+ * Oregon IL/OH/WI, Nevada MO/IA, Wyoming MI/PA, Virginia MN/IL, California MD/PA/MO, Louisiana
+ * MO, Florida NY, Georgia VT). Considered and left OUT as implausible free-text city entries:
+ * Texas, Michigan, Ohio, Maine, Vermont, Alabama, Iowa, Tennessee, Nebraska, Oklahoma. Also the
+ * punctuated forms that fold to `la` — "L.A." AND the Louisiana abbreviation "La." (folding cannot
+ * tell them apart, so both wait for a zip; the bare code `LA` is rule 1 and stays Louisiana) — and
+ * `wash`, the abbreviation typed interchangeably for Washington state and Washington, D.C.
+ * Add a name by adding one entry here; the spec pins the whole set and every member's behaviour.
+ */
+export const AMBIGUOUS_STATE_TEXTS = new Set([
+  "washington",
+  "wash",
+  "kansas",
+  "indiana",
+  "delaware",
+  "oregon",
+  "nevada",
+  "wyoming",
+  "virginia",
+  "california",
+  "louisiana",
+  "florida",
+  "georgia",
+  "la",
+]);
+
+/**
+ * One free-text `state` value -> `{ resolved: true, stateCode, verdict, rule, ambiguous }` or
  * `{ resolved: false, reason }`. `rule` is one of exact | folded-code | folded-name | alias |
  * stripped, for the owner's records; the verdict is `RESOLVED_LOCAL_EXACT` only for `exact`.
+ * `ambiguous` is true when the text is in `AMBIGUOUS_STATE_TEXTS` (the caller must then demand a
+ * confirming zip — see `settle`). A bare 2-letter code is never ambiguous (`LA` is Louisiana).
  *
  * @param {string|null|undefined} raw
  */
@@ -271,11 +323,13 @@ export function classifyLocal(raw) {
 
   const exact = normalizeUsState(text);
   if (exact) {
+    const key = foldState(text);
     return {
       resolved: true,
       stateCode: exact,
       verdict: VERDICT_RESOLVED_LOCAL_EXACT,
       rule: "exact",
+      ambiguous: key.length > 2 && AMBIGUOUS_STATE_TEXTS.has(key),
     };
   }
 
@@ -287,6 +341,7 @@ export function classifyLocal(raw) {
       stateCode: viaFold.code,
       verdict: VERDICT_RESOLVED_LOCAL_ALIAS,
       rule: viaFold.rule,
+      ambiguous: AMBIGUOUS_STATE_TEXTS.has(folded),
     };
   }
 
@@ -301,6 +356,7 @@ export function classifyLocal(raw) {
         rule: "stripped",
         // A zip written INSIDE the state text ("Washington 20001") is checked like the zip column.
         embeddedZip,
+        ambiguous: AMBIGUOUS_STATE_TEXTS.has(remainder),
       };
     }
   }
@@ -564,21 +620,51 @@ export function checkZipAgreement(stateCode, row, embeddedZip = null) {
   return { conflict: false };
 }
 
-/** Applies a resolution unless the row's own zip contradicts it (then ZIP_CONFLICT, never a code). */
-function settle(report, row, stateCode, verdict, rule, showText, embeddedZip = null) {
+/**
+ * Does a valid CIVILIAN zip positively confirm this state? True only when the row's zip column or
+ * an embedded zip has a ZIP3 with a reliable state set (`zip3States` — null for military APO/FPO/DPO,
+ * unassigned, blank or malformed prefixes) that CONTAINS the state. "No zip" is never confirmation.
+ */
+export function zipConfirmsState(stateCode, row, embeddedZip = null) {
+  return [rowZipPrefix(row), zip3Prefix(embeddedZip)].some((prefix) => {
+    const allowed = prefix ? zip3States(prefix) : null;
+    return allowed !== null && allowed.includes(stateCode);
+  });
+}
+
+/**
+ * Applies a resolution unless the row's own zip contradicts it (then ZIP_CONFLICT, never a code),
+ * or — for an AMBIGUOUS text ("Washington", "L.A.") — unless a valid civilian zip confirms it (then
+ * AMBIGUOUS_NEEDS_ZIP: a blank / invalid / military zip must not turn a maybe-a-city into a guessed
+ * state).
+ */
+function settle(
+  report,
+  row,
+  stateCode,
+  verdict,
+  rule,
+  showText,
+  embeddedZip = null,
+  ambiguous = false,
+) {
   const zip = checkZipAgreement(stateCode, row, embeddedZip);
-  if (!zip.conflict) {
-    resolve(report, stateCode, verdict, rule);
-    return true;
+  if (zip.conflict) {
+    unresolve(
+      report,
+      row,
+      REASON_ZIP_CONFLICT,
+      { conflictCode: stateCode, zipStates: zip.allowed },
+      showText,
+    );
+    return false;
   }
-  unresolve(
-    report,
-    row,
-    REASON_ZIP_CONFLICT,
-    { conflictCode: stateCode, zipStates: zip.allowed },
-    showText,
-  );
-  return false;
+  if (ambiguous && !zipConfirmsState(stateCode, row, embeddedZip)) {
+    unresolve(report, row, REASON_AMBIGUOUS_NEEDS_ZIP, {}, showText);
+    return false;
+  }
+  resolve(report, stateCode, verdict, rule);
+  return true;
 }
 
 /**
@@ -617,6 +703,7 @@ export async function classifyBatch(rows, { google = null, showUnresolvedText = 
         local.rule,
         showUnresolvedText,
         local.embeddedZip ?? null,
+        local.ambiguous === true,
       );
       continue;
     }

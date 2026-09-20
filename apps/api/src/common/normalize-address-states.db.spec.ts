@@ -803,12 +803,18 @@ describeDb("normalize-address-states.mjs — real Postgres (report / dry-run / l
   });
 
   it("D16 a resolution that contradicts the row's own zip is flagged and NEVER given a code (real rows, --live)", async () => {
-    const [WASH_DC, LA, KANSAS_OK, WASH_OK] = [9, 10, 11, 12].map(addrId);
+    const [WASH_DC, LA, KANSAS_OK, WASH_OK, WASH_BLANK, WASH_MIL] = [9, 10, 11, 12, 13, 14].map(
+      addrId,
+    );
     await seedAddress(WASH_DC, 9, "Washington", { zip: "20001" }); // bare Washington, a DC zip
     await seedAddress(LA, 10, "L.A.", { zip: "90012" }); // alias `la` = Louisiana, a Los Angeles zip
     await seedAddress(KANSAS_OK, 11, "Kansas", { zip: "66101" }); // agrees
-    await seedAddress(WASH_OK, 12, "Washington", { zip: "98101" }); // agrees
-    const everything = [...ALL, WASH_DC, LA, KANSAS_OK, WASH_OK];
+    await seedAddress(WASH_OK, 12, "Washington", { zip: "98101" }); // a Seattle zip CONFIRMS it
+    // PC-lead ruling: an AMBIGUOUS text ("Washington" is also a city) with a blank or MILITARY zip is
+    // left UNRESOLVED (AMBIGUOUS_NEEDS_ZIP) — never guessed. The SQL's zip3 column is NULL for the blank row.
+    await seedAddress(WASH_BLANK, 13, "Washington", { zip: "" });
+    await seedAddress(WASH_MIL, 14, "Washington", { zip: "09001" }); // APO/FPO
+    const everything = [...ALL, WASH_DC, LA, KANSAS_OK, WASH_OK, WASH_BLANK, WASH_MIL];
 
     const report = jsonReport(scoped("--dry-run"));
     const verdict = Object.fromEntries(report.rows.map((r) => [r.id, r.verdict]));
@@ -816,6 +822,8 @@ describeDb("normalize-address-states.mjs — real Postgres (report / dry-run / l
     expect(verdict[LA]).toBe("UNRESOLVED:ZIP_CONFLICT");
     expect(verdict[KANSAS_OK]).toBe("RESOLVED_LOCAL_EXACT");
     expect(verdict[WASH_OK]).toBe("RESOLVED_LOCAL_EXACT");
+    expect(verdict[WASH_BLANK]).toBe("UNRESOLVED:AMBIGUOUS_NEEDS_ZIP");
+    expect(verdict[WASH_MIL]).toBe("UNRESOLVED:AMBIGUOUS_NEEDS_ZIP");
     // the JSON carries state CODES for a conflict, never a zip or a zip prefix
     const raw = runCli(scoped("--dry-run", "--json")).stdout;
     expect(raw).toContain("ZIP_CONFLICT");
@@ -831,17 +839,17 @@ describeDb("normalize-address-states.mjs — real Postgres (report / dry-run / l
         "--only-test-tenants",
         "--live",
         "--confirm",
-        "NORMALIZE 10 ADDRESSES",
+        "NORMALIZE 12 ADDRESSES",
         "--backup-attested",
         ATTESTATION,
         "--expect-rows",
-        "10",
+        "12",
       ),
     );
     expect(res.status).toBe(0);
     const after = await snapshot(everything);
-    // the conflicts: ONLY the review annotation — no code
-    for (const rowId of [WASH_DC, LA]) {
+    // the conflicts and the ambiguous-without-a-confirming-zip rows: ONLY the review annotation — no code
+    for (const rowId of [WASH_DC, LA, WASH_BLANK, WASH_MIL]) {
       expect(after.get(rowId)).toMatchObject({ stateCode: null, stateNeedsReview: true });
       expect(after.get(rowId)!.updatedAt).toBeGreaterThan(before.get(rowId)!.updatedAt);
     }
