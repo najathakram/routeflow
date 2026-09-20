@@ -73,6 +73,16 @@ export const UNRESOLVED_STATE: GoverningState = { resolved: false };
 /** `productName` of an UNKNOWN_PRODUCT reason — buyer-visible, so never a raw id. */
 export const UNKNOWN_PRODUCT_NAME = "Unknown product";
 
+/**
+ * The channel a caller's role sells through: the CUSTOMER role IS the self-serve buyer portal
+ * (BUYER_PORTAL surface rules bind it); every other role — operator, tenant admin, driver, and
+ * cron/system callers with no role at all — is STAFF. Compared as a string so the core stays free
+ * of Prisma; the spec pins it against every `UserRole` value so a rename cannot drift silently.
+ */
+export function restrictionChannelForRole(role: string | undefined): RestrictionChannel {
+  return role === "CUSTOMER" ? "BUYER_PORTAL" : "STAFF";
+}
+
 /** The OFF outcome: a first-class result, produced without reading anything else. */
 export function offEvaluation(): RestrictionsEvaluation {
   return { outcome: "OFF", reasons: [] };
