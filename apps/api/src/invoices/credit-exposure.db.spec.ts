@@ -36,9 +36,14 @@ describeDb("loadCreditExposure — edited-order reads (B577 follow-up), real Pos
   });
 
   afterAll(async () => {
-    for (const tenantId of tenantIds) {
+    // REVERSE creation order: the "floor" test seeds an invoice in a LATER tenant that points at an
+    // EARLIER tenant's customer, so the later tenant must go first or the customer delete is refused.
+    for (const tenantId of [...tenantIds].reverse()) {
       // eslint-disable-next-line no-await-in-loop
-      await cleanup(tenantId).catch(() => undefined); // never mask a test's own result
+      await cleanup(tenantId).catch((e) => {
+        // never mask a test's own result — but never hide a leak either
+        console.warn(`credit-exposure.db.spec: cleanup of tenant ${tenantId} failed: ${e}`);
+      });
     }
     await prisma?.$disconnect();
   });
