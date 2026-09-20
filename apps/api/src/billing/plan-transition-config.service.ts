@@ -155,7 +155,7 @@ export class PlanTransitionConfigService implements OnModuleInit {
    * bridge ∪ default-granted ∪ addon-keyed gates. A plan-bundled flag the new plan lacks and no SKU
    * grants is skipped and reported by `planRestore`.
    */
-  private async planAllowsFor(
+  async planAllowsFor(
     planKey: string,
     planVersionId: string | null,
   ): Promise<(featureKey: string) => boolean> {
