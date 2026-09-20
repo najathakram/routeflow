@@ -1,7 +1,10 @@
 import { Prisma } from "@prisma/client";
 import { FEATURE_REGISTRY } from "./feature-registry";
 import { PLAN_KEYS } from "./plan-catalog.constants";
-import { TenantConfigSnapshotService } from "./tenant-config-snapshot.service";
+import {
+  AUTO_RESTORE_MAX_AGE_DAYS,
+  TenantConfigSnapshotService,
+} from "./tenant-config-snapshot.service";
 
 // Plan keys and feature keys come from the live catalog/registry (L-206), never re-typed here.
 const LOW = PLAN_KEYS[0];
@@ -407,5 +410,66 @@ describe("TenantConfigSnapshotService — admin surface (A2 step c)", () => {
     state.snapshots[1].restoredAt = NOW;
 
     expect(await svc.restoreSnapshot(tx, TENANT, state.snapshots[1].id, HIGH, NOW)).toBeNull();
+  });
+});
+
+describe("TenantConfigSnapshotService — 90-day automatic-restore horizon (A2 decision 1)", () => {
+  const svc = new TenantConfigSnapshotService();
+  const daysAgo = (n: number, ms = 0) => new Date(NOW.getTime() - n * 86_400_000 - ms);
+
+  /** A tenant on HIGH that was snapshotted `days` before NOW, then lost its config. */
+  async function snapshottedAgo(days: number, extraMs = 0) {
+    const { tx, state } = fakeTx({ configs: [cfgRow()], overrides: [ovrRow()] });
+    await svc.snapshot(tx, TENANT, HIGH, "DOWNGRADE", undefined, daysAgo(days, extraMs));
+    state.configs.length = 0;
+    return { tx, state };
+  }
+
+  it("pins the horizon at 90 days", () => expect(AUTO_RESTORE_MAX_AGE_DAYS).toBe(90));
+
+  it("a re-upgrade restores a snapshot 89 days old", async () => {
+    const { tx, state } = await snapshottedAgo(89);
+    expect(await svc.restoreLatest(tx, TENANT, HIGH, NOW)).not.toBeNull();
+    expect(state.configs).toHaveLength(1);
+  });
+
+  it("the boundary is inclusive: exactly 90 days old still restores", async () => {
+    const { tx } = await snapshottedAgo(90);
+    expect(await svc.restoreLatest(tx, TENANT, HIGH, NOW)).not.toBeNull();
+  });
+
+  it("a snapshot 91 days old is NOT restored automatically, and stays un-stamped for an admin", async () => {
+    const { tx, state } = await snapshottedAgo(91);
+
+    expect(await svc.restoreLatest(tx, TENANT, HIGH, NOW)).toBeNull();
+    expect(state.configs).toHaveLength(0);
+    expect(state.snapshots[0].restoredAt).toBeNull();
+  });
+
+  it("one millisecond past 90 days is refused (no rounding in the tenant's favour)", async () => {
+    const { tx } = await snapshottedAgo(90, 1);
+    expect(await svc.restoreLatest(tx, TENANT, HIGH, NOW)).toBeNull();
+  });
+
+  it("an explicit admin restore still applies a snapshot far past the horizon", async () => {
+    const { tx, state } = await snapshottedAgo(400);
+
+    const res = await svc.restoreSnapshot(tx, TENANT, state.snapshots[0].id, HIGH, NOW);
+
+    expect(res?.report.restored).toBeGreaterThan(0);
+    expect(state.configs).toHaveLength(1);
+  });
+
+  it("list() and previewRestore() report the age and whether it is beyond the horizon", async () => {
+    const { tx, state } = await snapshottedAgo(91);
+    await svc.snapshot(tx, TENANT, HIGH, "MANUAL", undefined, daysAgo(10));
+
+    const preview = await svc.previewRestore(tx, TENANT, state.snapshots[0].id, NOW);
+    const fresh = await svc.previewRestore(tx, TENANT, state.snapshots[1].id, NOW);
+
+    expect(preview).toMatchObject({ ageDays: 91, beyondAutoRestoreHorizon: true });
+    expect(fresh).toMatchObject({ ageDays: 10, beyondAutoRestoreHorizon: false });
+    const ages = (await svc.list(tx, TENANT)).map((r) => r.ageDays);
+    expect(ages.every((a) => Number.isInteger(a) && a >= 0)).toBe(true);
   });
 });

@@ -17,6 +17,23 @@ const toJson = (v: unknown): Prisma.InputJsonValue | typeof Prisma.DbNull =>
     : // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- tsc needs it: `unknown` is not assignable
       (v as Prisma.InputJsonValue);
 
+/**
+ * Automatic restore (a re-upgrade) only considers snapshots taken within this many days (lead
+ * ruling 2026-09-20): a config archived long ago is more likely stale than wanted, so it is never
+ * re-applied unattended. It stays in the list, and a SUPER_ADMIN can still restore it explicitly
+ * (`restoreSnapshot`) after seeing its age. Inclusive: a snapshot exactly 90 days old restores.
+ */
+export const AUTO_RESTORE_MAX_AGE_DAYS = 90;
+const DAY_MS = 86_400_000;
+
+/** Whole days since the snapshot was taken (floor; never negative). */
+export const snapshotAgeDays = (takenAt: Date, now: Date): number =>
+  Math.max(0, Math.floor((now.getTime() - takenAt.getTime()) / DAY_MS));
+
+/** True when automatic restore would refuse this snapshot as too old. */
+export const beyondAutoRestoreHorizon = (takenAt: Date, now: Date): boolean =>
+  now.getTime() - takenAt.getTime() > AUTO_RESTORE_MAX_AGE_DAYS * DAY_MS;
+
 export interface SnapshotActor {
   id?: string | null;
   name?: string | null;
@@ -39,6 +56,8 @@ export interface SnapshotListItem {
   /** The plan it was restored to, or "SUPERSEDED" when a newer snapshot replaced it. */
   restoredToPlanKey: string | null;
   createdByName: string | null;
+  /** Whole days since it was taken (the admin list/confirm dialog shows this). */
+  ageDays: number;
   /** Entry counts, or null when the payload is not a readable version-1 document. */
   entries: { configs: number; overrides: number } | null;
 }
@@ -48,6 +67,9 @@ export interface SnapshotPreview {
   takenAt: Date;
   planKey: string;
   restoredAt: Date | null;
+  ageDays: number;
+  /** Older than the automatic-restore horizon: only an explicit admin restore applies it. */
+  beyondAutoRestoreHorizon: boolean;
   /** What a restore WOULD do right now; null when the payload is unreadable. Never written. */
   plan: RestorePlan | null;
 }
@@ -102,6 +124,8 @@ export class TenantConfigSnapshotService {
    * SUPERSEDED (stamped `restoredToPlanKey: "SUPERSEDED"`): the newer snapshot's payload already
    * carries every row the older one did (a downgrade never deletes config), so a later upgrade
    * must not re-apply the stale one over state this restore established.
+   * A snapshot older than `AUTO_RESTORE_MAX_AGE_DAYS` is never restored here (left un-stamped, still
+   * restorable by an explicit admin action).
    * `planAllows` — does the plan being restored TO allow this feature? — is supplied by the
    * plan-change wiring; the default (allow) is only for callers with no plan context.
    */
@@ -121,7 +145,7 @@ export class TenantConfigSnapshotService {
     });
     const snapshot = candidates.find((s) => {
       const r = planRank(s.planKey);
-      return r >= 0 && r <= newRank;
+      return r >= 0 && r <= newRank && !beyondAutoRestoreHorizon(s.takenAt, now);
     });
     if (!snapshot) return null;
 
@@ -146,6 +170,7 @@ export class TenantConfigSnapshotService {
         restoredAt: r.restoredAt,
         restoredToPlanKey: r.restoredToPlanKey,
         createdByName: r.createdByName,
+        ageDays: snapshotAgeDays(r.takenAt, new Date()),
         entries: payload
           ? { configs: payload.configs.length, overrides: payload.overrides.length }
           : null,
@@ -179,6 +204,8 @@ export class TenantConfigSnapshotService {
       takenAt: snapshot.takenAt,
       planKey: snapshot.planKey,
       restoredAt: snapshot.restoredAt,
+      ageDays: snapshotAgeDays(snapshot.takenAt, now),
+      beyondAutoRestoreHorizon: beyondAutoRestoreHorizon(snapshot.takenAt, now),
       plan: payload
         ? planRestore(payload, { configs, overrides }, snapshot.takenAt, now, planAllows)
         : null,
