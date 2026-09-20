@@ -93,3 +93,18 @@ export async function nudgeFocus(track: MediaStreamTrack | null | undefined): Pr
     // No focus control on this camera — nothing to do.
   }
 }
+
+/** Maps the webcam failure modes callers actually hit to a message an operator can act on. */
+export function classifyScannerError(err: unknown): string {
+  const name = (err as { name?: string })?.name;
+  if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+    return "Camera access was denied. Allow camera access in your browser's site settings, then try again.";
+  }
+  if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+    return "No camera was found on this device.";
+  }
+  if (name === "NotReadableError" || name === "TrackStartError") {
+    return "The camera is already in use by another app or tab.";
+  }
+  return "Couldn't start the camera. Check camera permissions and try again.";
+}

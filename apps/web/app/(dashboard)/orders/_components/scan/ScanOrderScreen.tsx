@@ -1,0 +1,386 @@
+"use client";
+
+import * as React from "react";
+import { createPortal } from "react-dom";
+import { AlertTriangle, Keyboard, Undo2, X, Zap, ZapOff } from "lucide-react";
+import { Button, cn } from "@routeflow/ui/web";
+import {
+  cueForOutcome,
+  createScanEngine,
+  frameScanned,
+  manualScanned,
+  scanSettled,
+  type ScanEngineState,
+  type ScanEngineStep,
+  type ScanOutcome,
+} from "@routeflow/scanning";
+import { playScanCue, unlockScanCue } from "@/lib/scan-cue";
+import type { ScanResolution } from "./useScanCodeHandler";
+import { useContinuousScanCamera } from "./useContinuousScanCamera";
+import {
+  distinctSkuCount,
+  popHistory,
+  pushHistory,
+  scanTotal,
+  type ScanHistoryEntry,
+  type SummaryLine,
+} from "./scan-summary";
+
+/** How long the just-scanned row keeps its ring, and how long the result pill stays up. */
+const HIGHLIGHT_MS = 2000;
+const FEEDBACK_MS = 2500;
+
+export interface ScanOrderScreenProps<T extends SummaryLine & { tempId: string }> {
+  open: boolean;
+  /**
+   * True while another dialog (create-product for an unknown barcode) is up: the camera stops and
+   * the screen hides, but the session — history, the list, the engine — is kept, so scanning
+   * resumes exactly where it was when the dialog closes.
+   */
+  paused?: boolean;
+  onClose: () => void;
+  /** The order's lines — the SAME state CreateOrderModal owns; this screen never keeps its own cart. */
+  lines: readonly T[];
+  /** One row per line. `highlighted` marks the line the last scan touched. */
+  renderLine: (line: T, ctx: { highlighted: boolean }) => React.ReactNode;
+  /** Resolves one accepted code (the modal's `useScanCodeHandler`). */
+  resolveCode: (code: string) => Promise<ScanResolution>;
+  /** Inverts one scan (remove the line it created, or take back one unit). */
+  onUndo: (entry: ScanHistoryEntry) => void;
+  /** A customer is chosen, so scanned lines are priced for them immediately (owner ruling D1). */
+  hasCustomer: boolean;
+}
+
+/**
+ * The accumulating scan screen (scanner-redesign-spec.md §3/§5, LANE-S step 5): a compact camera
+ * strip that STAYS OPEN across scans, the order's lines below it (the very same `LineItemRow`s the
+ * create-order list renders), and a pinned total + Done. It owns no order state — lines come in,
+ * `resolveCode` / `onUndo` go out — so the classic modal and this screen can never disagree.
+ *
+ * Rendered in a portal on `document.body`: the create-order Dialog's content is transformed (a
+ * `fixed` child would be positioned against the dialog box, not the viewport) and its focus trap
+ * would fight the qty/note inputs. The modal therefore closes its Dialog while this is open.
+ */
+export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
+  open,
+  paused = false,
+  onClose,
+  lines,
+  renderLine,
+  resolveCode,
+  onUndo,
+  hasCustomer,
+}: ScanOrderScreenProps<T>) {
+  const live = open && !paused;
+
+  const engineRef = React.useRef<ScanEngineState>(createScanEngine());
+  const [resolving, setResolving] = React.useState(false);
+  const [history, setHistory] = React.useState<ScanHistoryEntry[]>([]);
+  const [highlightId, setHighlightId] = React.useState<string | null>(null);
+  const [feedback, setFeedback] = React.useState<{ kind: "added" | "error"; text: string } | null>(
+    null,
+  );
+  const [manualOpen, setManualOpen] = React.useState(false);
+  const [manualValue, setManualValue] = React.useState("");
+  const highlightTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const feedbackTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Callbacks go through refs so the camera hook's decode callback never goes stale.
+  const resolveCodeRef = React.useRef(resolveCode);
+  resolveCodeRef.current = resolveCode;
+
+  // A new session starts clean: fresh gate/buffer clocks, no stale undo stack.
+  React.useEffect(() => {
+    if (!open) return;
+    engineRef.current = createScanEngine();
+    setResolving(false);
+    setHistory([]);
+    setHighlightId(null);
+    setFeedback(null);
+    setManualOpen(false);
+    setManualValue("");
+    unlockScanCue();
+  }, [open]);
+
+  React.useEffect(
+    () => () => {
+      if (highlightTimer.current) clearTimeout(highlightTimer.current);
+      if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
+    },
+    [],
+  );
+
+  const showFeedback = React.useCallback((kind: "added" | "error", text: string) => {
+    setFeedback({ kind, text });
+    if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
+    feedbackTimer.current = setTimeout(() => setFeedback(null), FEEDBACK_MS);
+  }, []);
+
+  /**
+   * Resolves one accepted code, then drains whatever the engine buffered while it was in flight —
+   * recursing (not looping) so each queued code gets its own cue/feedback cycle, exactly like
+   * `ScanCamera.web.tsx` on mobile. The engine advances in `finally`, so a throwing resolver can
+   * never strand a buffered code.
+   */
+  const resolveOne = React.useCallback(
+    async (code: string) => {
+      try {
+        // The modal's handler already turns lookup failures into a `kind: "error"` resolution, but
+        // this screen must not depend on that: a rejection here would be an unhandled promise (the
+        // caller is fire-and-forget) with no cue, so it is folded into the same error path.
+        let res: ScanResolution;
+        try {
+          res = await resolveCodeRef.current(code);
+        } catch (err) {
+          res = { kind: "error", message: (err as Error)?.message ?? "lookup failed" };
+        }
+        let outcome: ScanOutcome;
+        if (res.kind === "added") {
+          const name = String(res.product?.name ?? "Item");
+          outcome = { feedback: { kind: "added", text: `Added ${name}` } };
+          setHistory((h) =>
+            pushHistory(h, { productId: String(res.product.id), created: res.created }),
+          );
+          setHighlightId(String(res.product.id));
+          if (highlightTimer.current) clearTimeout(highlightTimer.current);
+          highlightTimer.current = setTimeout(() => setHighlightId(null), HIGHLIGHT_MS);
+        } else {
+          const text =
+            res.kind === "archived"
+              ? `${res.name} is archived`
+              : res.kind === "unknown"
+                ? `Not in the catalog: ${code}`
+                : "Couldn't look up that code";
+          outcome = { feedback: { kind: "error", text } };
+        }
+        // The cue comes straight from the shared decision (`cueForOutcome`) and BEFORE any
+        // rendering, so the beep/vibration is immediate; it never throws (see scan-cue.ts).
+        playScanCue(cueForOutcome(outcome));
+        const fb = outcome?.feedback;
+        if (fb) showFeedback(fb.kind, fb.text);
+      } finally {
+        const step = scanSettled(engineRef.current);
+        applyStep(step);
+      }
+    },
+    // applyStep is declared below and only reads refs/setters, so it is safe to omit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [showFeedback],
+  );
+
+  const applyStep = React.useCallback(
+    (step: ScanEngineStep) => {
+      engineRef.current = step.next;
+      if (step.indicator) setResolving(step.indicator === "on");
+      if (step.startResolving) void resolveOne(step.startResolving);
+    },
+    [resolveOne],
+  );
+
+  // A camera frame decoded `code`. The gate drops per-frame repeats; only a genuine new item (or
+  // a deliberate re-present) reaches the resolver.
+  const handleFrame = React.useCallback(
+    (code: string) => applyStep(frameScanned(engineRef.current, code, Date.now())),
+    [applyStep],
+  );
+
+  // A deliberate manual entry: always intentional, so it skips the gate but still queues mid-resolve.
+  const submitManual = () => {
+    const code = manualValue.trim();
+    if (!code) return;
+    setManualValue("");
+    applyStep(manualScanned(engineRef.current, code));
+  };
+
+  const camera = useContinuousScanCamera({ enabled: live, onDetect: handleFrame });
+
+  const undo = () => {
+    const { entry, rest } = popHistory(history);
+    if (!entry) return;
+    setHistory(rest);
+    onUndo(entry);
+  };
+
+  // Escape closes THIS screen only — capture phase + stopPropagation so it can never also dismiss
+  // an order builder underneath.
+  React.useEffect(() => {
+    if (!live) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      onClose();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [live, onClose]);
+
+  if (!open || typeof document === "undefined") return null;
+
+  const count = distinctSkuCount(lines);
+  const total = scanTotal(lines);
+  const manualPrimary = !!camera.error;
+
+  return createPortal(
+    <div
+      role="dialog"
+      aria-label="Scan items"
+      aria-hidden={paused || undefined}
+      className={cn(
+        "fixed inset-0 z-[80] flex flex-col bg-white pt-[env(safe-area-inset-top)]",
+        paused && "hidden",
+      )}
+    >
+      <header className="flex h-11 shrink-0 items-center justify-between border-b border-surface-border px-3">
+        <button
+          type="button"
+          onClick={onClose}
+          className="flex items-center gap-1.5 rounded px-2 py-1.5 text-sm font-medium text-navy/70 hover:bg-surface-raised"
+        >
+          <X className="h-4 w-4" />
+          Close
+        </button>
+        <h2 className="text-sm font-semibold text-navy">Scan items</h2>
+        {camera.torchAvailable ? (
+          <button
+            type="button"
+            onClick={camera.toggleTorch}
+            aria-pressed={camera.torchOn}
+            aria-label={camera.torchOn ? "Turn flashlight off" : "Turn flashlight on"}
+            className={cn(
+              "flex h-8 w-8 items-center justify-center rounded-full",
+              camera.torchOn ? "bg-brand-500 text-white" : "bg-surface-raised text-navy/70",
+            )}
+          >
+            {camera.torchOn ? <Zap className="h-4 w-4" /> : <ZapOff className="h-4 w-4" />}
+          </button>
+        ) : (
+          <span className="w-8" aria-hidden />
+        )}
+      </header>
+
+      {/* Camera strip: wide and short (a barcode is held that way); object-cover crops the frame
+          for display only — zxing still reads all of it. */}
+      <div className="relative h-36 shrink-0 bg-black sm:h-44">
+        {camera.error ? (
+          <div className="flex h-full items-center justify-center px-4 text-center text-sm text-white/80">
+            {camera.error}
+          </div>
+        ) : (
+          <>
+            <video
+              ref={camera.videoRef}
+              className="h-full w-full cursor-pointer object-cover"
+              autoPlay
+              muted
+              playsInline
+              onClick={camera.refocus}
+            />
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <div className="h-3/5 w-5/6 rounded border-2 border-brand-400 opacity-80" />
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="shrink-0 border-b border-surface-border px-3 py-2">
+        <div className="flex min-h-[28px] items-center justify-between gap-2 text-sm">
+          {feedback ? (
+            <p
+              role="status"
+              className={cn(
+                "min-w-0 truncate rounded px-2 py-1 text-xs font-medium",
+                feedback.kind === "added"
+                  ? "bg-emerald-50 text-emerald-800"
+                  : "bg-red-50 text-red-700",
+              )}
+            >
+              {feedback.text}
+            </p>
+          ) : (
+            <p className="min-w-0 truncate text-xs text-navy/60">
+              {manualPrimary
+                ? "Camera unavailable — enter codes below"
+                : "Align the barcode in the box"}
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={() => setManualOpen((v) => !v)}
+            aria-expanded={manualOpen || manualPrimary}
+            className="flex shrink-0 items-center gap-1 text-xs font-medium text-brand-500 hover:text-brand-600"
+          >
+            <Keyboard className="h-3.5 w-3.5" />
+            Enter code manually
+          </button>
+        </div>
+        {(manualOpen || manualPrimary) && (
+          <div className="mt-2 flex items-center gap-2">
+            <input
+              type="text"
+              inputMode="numeric"
+              autoComplete="off"
+              value={manualValue}
+              onChange={(e) => setManualValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  submitManual();
+                }
+              }}
+              placeholder="Type or paste a barcode / SKU"
+              aria-label="Barcode or SKU"
+              className="h-10 min-w-0 flex-1 rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+            />
+            <Button type="button" size="sm" onClick={submitManual} disabled={!manualValue.trim()}>
+              Add
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {!hasCustomer && (
+        <div className="flex shrink-0 items-start gap-2 border-b border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
+          <span>No customer selected — scanned items are priced at list price.</span>
+        </div>
+      )}
+
+      <div className="flex h-9 shrink-0 items-center justify-between border-b border-surface-border px-3 text-xs">
+        <button
+          type="button"
+          onClick={undo}
+          disabled={history.length === 0}
+          className="flex items-center gap-1 font-medium text-navy/70 enabled:hover:text-navy disabled:opacity-40"
+        >
+          <Undo2 className="h-3.5 w-3.5" />
+          Undo last scan
+        </button>
+        <span className="text-navy/70">
+          {resolving && <span className="mr-2 text-navy/50">Resolving…</span>}
+          {count} {count === 1 ? "item" : "items"}
+        </span>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
+        {lines.length > 0 ? (
+          <ul className="divide-y divide-surface-border overflow-hidden rounded-lg border border-surface-border">
+            {lines.map((line) =>
+              renderLine(line, { highlighted: !!line.productId && line.productId === highlightId }),
+            )}
+          </ul>
+        ) : (
+          <p className="py-8 text-center text-sm text-navy/60">Scan an item to add it.</p>
+        )}
+      </div>
+
+      <footer className="flex h-14 shrink-0 items-center justify-between border-t border-surface-border bg-white px-3 pb-[env(safe-area-inset-bottom)]">
+        <p className="text-sm font-semibold text-navy" aria-live="polite">
+          {count} {count === 1 ? "item" : "items"} · ${total.toFixed(2)}
+        </p>
+        <Button type="button" onClick={onClose}>
+          Done
+        </Button>
+      </footer>
+    </div>,
+    document.body,
+  );
+}
