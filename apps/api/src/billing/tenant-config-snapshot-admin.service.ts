@@ -24,6 +24,9 @@ export interface SnapshotPreviewView {
   takenAt: Date;
   planKey: string;
   restoredAt: Date | null;
+  ageDays: number;
+  /** Older than the automatic-restore horizon (90 days): this restore is a deliberate override. */
+  beyondAutoRestoreHorizon: boolean;
   /** The plan the tenant is on NOW — the plan restore is judged against. */
   currentPlanKey: string;
   willRestore: { kind: "config" | "override"; featureKey: string }[];
@@ -75,6 +78,8 @@ export class TenantConfigSnapshotAdminService {
       takenAt: pre.takenAt,
       planKey: pre.planKey,
       restoredAt: pre.restoredAt,
+      ageDays: pre.ageDays,
+      beyondAutoRestoreHorizon: pre.beyondAutoRestoreHorizon,
       currentPlanKey: planKey,
       ...flatten(pre.plan),
     };
