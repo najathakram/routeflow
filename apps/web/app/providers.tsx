@@ -41,6 +41,9 @@ function QueryProviders({ children }: { children: React.ReactNode }) {
             // Selling restrictions: the order UIs show a blocked-lines dialog (the lines and why),
             // so the generic toast would only say "Request failed with status code 409".
             "SELLING_RESTRICTED",
+            // Credit limit: the order detail opens a guard dialog (the server's limit / exposure and a
+            // "collect a payment" exit); CreateOrderModal keeps its inline banner. No override exists.
+            "CREDIT_LIMIT_EXCEEDED",
             // RO-1: a blocked write against a READ_ONLY tenant — handled explicitly
             // below with its own toast + CTA, never the bare guard message.
             "READ_ONLY",

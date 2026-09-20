@@ -323,7 +323,7 @@ describe("ci-freshness-guard.mjs contract", () => {
     expect(doc.jobs.verify.permissions).toBeUndefined();
   });
 
-  it("T4 · REG-E2EGUARD-403 · freshness step calls the script; its 7 consumers are unchanged", () => {
+  it("T4 · REG-E2EGUARD-403 · freshness step calls the script; its 8 consumers are unchanged", () => {
     const raw = fs.readFileSync(WORKFLOW, "utf8");
 
     expect(freshnessRunText()).toContain("scripts/ci-freshness-guard.mjs");
@@ -332,7 +332,11 @@ describe("ci-freshness-guard.mjs contract", () => {
     expect((freshnessStep().env ?? {}).EVENT_NAME).toBe("${{ github.event_name }}");
     // Explicit fail-open fallback for a crash OUTSIDE the script's own logic.
     expect(freshnessRunText()).toContain("run=true");
-    expect((raw.match(/steps\.freshness\.outputs\.run == 'true'/g) ?? []).length).toBe(7);
+    // 7 -> 8 (ci: post-deploy release-health gate): the new "Release health check" step is
+    // correctly gated on the same freshness check as every other post-readiness step in this
+    // job, so it adds exactly one more consumer of `steps.freshness.outputs.run == 'true'` —
+    // this count is intentionally bumped alongside that step, not a drift to paper over.
+    expect((raw.match(/steps\.freshness\.outputs\.run == 'true'/g) ?? []).length).toBe(8);
 
     // The helper checkout must take the script from the DEFAULT BRANCH: on
     // deployment_status, checkout's default ref is the deployment's sha, which

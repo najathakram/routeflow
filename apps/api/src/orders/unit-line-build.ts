@@ -2,9 +2,11 @@ import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import { PriceType } from "@prisma/client";
 import {
   InvalidTierError,
+  computeCategoryTax,
   computeLineSubtotal,
   normalizeBoxesPieces,
   resolveUnitPrice,
+  type CategoryTaxType,
   type LadderProduct,
   type LadderUnit,
   roundMoney,
@@ -44,11 +46,32 @@ export interface UnitLineRequest {
   itemNote?: string | null;
 }
 
+/** A Prisma `Decimal` (or number/string) — coerced once by `toLadderProduct`. */
+type Money = number | string | { toString(): string };
+
 /** The subset of `Product` a unit line reads (tracked-category snapshots + the ladder base). */
-export interface UnitLineProduct extends LadderProduct {
+export interface UnitLineProduct {
+  unit?: string | null;
+  unitsPerBox?: number | null;
+  pricePerUnit: Money;
+  priceTier2?: Money | null;
+  priceTier3?: Money | null;
+  priceTier4?: Money | null;
+  priceTier5?: Money | null;
   trackedCategoryId?: string | null;
   trackedSubcategoryId?: string | null;
 }
+
+const str = (v: Money | null | undefined): string | null => (v == null ? null : String(v));
+const toLadderProduct = (p: UnitLineProduct): LadderProduct => ({
+  unit: p.unit,
+  unitsPerBox: p.unitsPerBox,
+  pricePerUnit: String(p.pricePerUnit),
+  priceTier2: str(p.priceTier2),
+  priceTier3: str(p.priceTier3),
+  priceTier4: str(p.priceTier4),
+  priceTier5: str(p.priceTier5),
+});
 
 /** true when the request asks to sell by a named unit (`""`/null/undefined = the pack). */
 export const requestsUnit = (item: { unitLabel?: string | null } | null | undefined): boolean =>
@@ -82,6 +105,89 @@ export async function assertMayUseUnits(
     throw new ForbiddenException("Selling by unit is not included in this plan.");
   }
 }
+
+/**
+ * The server ladder (ProductUnit rows) of the given products, grouped by product. `db` is the
+ * TENANT-SCOPED client (`prisma.forTenant()`), so a foreign product id can never read another
+ * tenant's levels. No ids = no query.
+ */
+export async function loadUnitLadders(
+  db: { productUnit: { findMany(args: any): Promise<any[]> } },
+  productIds: ReadonlyArray<string>,
+): Promise<Map<string, LadderUnit[]>> {
+  const ids = [...new Set(productIds.filter(Boolean))];
+  const out = new Map<string, LadderUnit[]>();
+  if (ids.length === 0) return out;
+  const rows = await db.productUnit.findMany({
+    where: { productId: { in: ids } },
+    orderBy: { sortOrder: "asc" },
+  });
+  for (const r of rows) {
+    const list = out.get(r.productId) ?? [];
+    list.push(r as LadderUnit);
+    out.set(r.productId, list);
+  }
+  return out;
+}
+
+/**
+ * `OrdersService.create()` in ONE call: the gate (who may sell by a unit, under flag.units_v1) and
+ * the server ladder of every product a line names a unit for. Reads nothing when no line asks.
+ */
+export async function prepareUnitLadders(
+  items: ReadonlyArray<{ unitLabel?: string | null; productId?: string | null }>,
+  ctx: {
+    isStaff: boolean;
+    prisma: { getTenantId(): string | null | undefined; forTenant(): any };
+    entitlements: { hasFlag(tenantId: string, flag: string): Promise<boolean> };
+  },
+): Promise<Map<string, LadderUnit[]>> {
+  await assertMayUseUnits(items, {
+    isStaff: ctx.isStaff,
+    tenantId: ctx.prisma.getTenantId(),
+    hasFlag: (t, f) => ctx.entitlements.hasFlag(t, f),
+  });
+  return loadUnitLadders(
+    ctx.prisma.forTenant(),
+    items.filter(requestsUnit).map((i) => i.productId as string),
+  );
+}
+
+/**
+ * One line's identity in the Idempotency-Key replay comparison. A unit line's REQUEST qty counts the
+ * unit (3 = three Cases) while the STORED qty is base pieces, so a stored unit line compares by its
+ * unit count (`boxes ?? qty`) and carries its label; a pack line's key is unchanged.
+ */
+export function replayLineKey(
+  r: {
+    productId?: string | null;
+    name?: string | null;
+    qty: unknown;
+    boxes?: unknown;
+    unitLabel?: string | null;
+  },
+  stored: boolean,
+): string {
+  const unit = (r.unitLabel ?? "").trim().toLowerCase();
+  const count = stored && unit ? (r.boxes ?? r.qty) : r.qty;
+  return `${r.productId ?? `unlisted:${r.name ?? ""}`}×${Number(count)}${unit ? `@${unit}` : ""}`;
+}
+
+/** Regulated per-category tax for a unit line (0 when the product has no tracked category). */
+export const categoryTaxForLine = (
+  category: { taxType: unknown; rate: unknown; priceIncludesTax: boolean } | null | undefined,
+  qtyPieces: number,
+  lineSubtotal: number,
+): number =>
+  category
+    ? computeCategoryTax({
+        taxType: category.taxType as CategoryTaxType,
+        rate: Number(category.rate),
+        unitBasisQty: qtyPieces,
+        lineSubtotal,
+        priceIncludesTax: category.priceIncludesTax,
+      })
+    : 0;
 
 /** OrderItem.qty is Decimal(10,3) and subtotal Decimal(10,2): a bigger line would 500 the order. */
 export const MAX_LINE_QTY = 9_999_999;
@@ -122,6 +228,7 @@ export function buildUnitLine(input: {
   tenantId: string | null | undefined;
 }): UnitLineData {
   const { product, units, resolved, item, tier, taxFor } = input;
+  const ladderProduct = toLadderProduct(product);
   const label = resolved.unitLabel;
   if (label == null) throw new Error("buildUnitLine needs a unit-aware resolution, not the pack");
   if ((item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0) {
@@ -149,8 +256,8 @@ export function buildUnitLine(input: {
   let listPrice: number;
   let tierPrice: number;
   try {
-    listPrice = resolveUnitPrice(product, units, label, 1);
-    tierPrice = resolveUnitPrice(product, units, label, tier);
+    listPrice = resolveUnitPrice(ladderProduct, units, label, 1);
+    tierPrice = resolveUnitPrice(ladderProduct, units, label, tier);
   } catch (e) {
     if (e instanceof InvalidTierError) {
       throw new BadRequestException(

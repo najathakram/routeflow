@@ -24,6 +24,9 @@ export interface SnapshotPreviewView {
   takenAt: Date;
   planKey: string;
   restoredAt: Date | null;
+  ageDays: number;
+  /** Older than the automatic-restore horizon (90 days): this restore is a deliberate override. */
+  beyondAutoRestoreHorizon: boolean;
   /** The plan the tenant is on NOW — the plan restore is judged against. */
   currentPlanKey: string;
   willRestore: { kind: "config" | "override"; featureKey: string }[];
@@ -37,6 +40,13 @@ export interface SnapshotPreviewView {
 export interface RestoreNowResult extends RestoreResult {
   restoredToPlanKey: string;
 }
+
+/**
+ * The explicit "Restore now" is deliberately UNBOUNDED (no row cap, no time budget — unlike the
+ * automatic path), so its transaction must not inherit Prisma's 5 s default: a large snapshot is
+ * one round trip per config row and would fail with P2028 half-way. 30 s is generous but finite.
+ */
+export const ADMIN_RESTORE_TX_OPTIONS = { timeout: 30_000, maxWait: 5_000 } as const;
 
 /**
  * Admin surface for the tenant "Configuration snapshots" tab (Lane B A2 step c): list, preview and
@@ -75,6 +85,8 @@ export class TenantConfigSnapshotAdminService {
       takenAt: pre.takenAt,
       planKey: pre.planKey,
       restoredAt: pre.restoredAt,
+      ageDays: pre.ageDays,
+      beyondAutoRestoreHorizon: pre.beyondAutoRestoreHorizon,
       currentPlanKey: planKey,
       ...flatten(pre.plan),
     };
@@ -133,7 +145,7 @@ export class TenantConfigSnapshotAdminService {
         },
       });
       return res;
-    });
+    }, ADMIN_RESTORE_TX_OPTIONS);
 
     // After commit: the resolver, the override cache and each touched config key.
     this.authority.invalidate(tenantId);

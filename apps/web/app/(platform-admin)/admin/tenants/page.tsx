@@ -226,7 +226,7 @@ export default function AdminTenantsPage() {
   };
 
   const SortIcon = ({ col }: { col: SortKey }) => {
-    if (sortKey !== col) return <span className="text-slate-600 ml-1">&#8597;</span>;
+    if (sortKey !== col) return <span className="text-slate-400 ml-1">&#8597;</span>;
     return sortDir === "asc" ? (
       <ChevronUp className="inline h-3 w-3 ml-0.5" />
     ) : (
@@ -345,6 +345,7 @@ export default function AdminTenantsPage() {
       {/* Search & Filters */}
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <input
+          aria-label="Search tenants"
           type="text"
           placeholder="Search by slug or name..."
           value={search}
@@ -352,6 +353,7 @@ export default function AdminTenantsPage() {
           className="h-9 w-64 rounded-lg border border-slate-600 bg-slate-800 px-3 text-sm text-white placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
         />
         <select
+          aria-label="Filter by status"
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
           className="h-9 rounded-lg border border-slate-600 bg-slate-800 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
@@ -363,6 +365,7 @@ export default function AdminTenantsPage() {
           <option value="CANCELLED">CANCELLED</option>
         </select>
         <select
+          aria-label="Filter by plan"
           value={planFilter}
           onChange={(e) => setPlanFilter(e.target.value)}
           className="h-9 rounded-lg border border-slate-600 bg-slate-800 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
@@ -377,7 +380,7 @@ export default function AdminTenantsPage() {
           className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
             showDeleted
               ? "border-slate-500 bg-slate-700 text-slate-300"
-              : "border-slate-700 text-slate-500 hover:border-slate-500 hover:text-slate-400"
+              : "border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-400"
           }`}
         >
           {showDeleted
@@ -393,7 +396,7 @@ export default function AdminTenantsPage() {
               setPlanFilter("");
               setShowDeleted(false);
             }}
-            className="text-xs text-slate-500 hover:text-slate-300"
+            className="text-xs text-slate-400 hover:text-slate-300"
           >
             Clear filters
           </button>
@@ -469,6 +472,7 @@ export default function AdminTenantsPage() {
           <div className="mb-3">
             <label className="mb-1 block text-sm text-slate-400">New plan</label>
             <select
+              aria-label="New plan"
               value={bulkPlan}
               onChange={(e) => setBulkPlan(e.target.value)}
               className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white"
@@ -534,6 +538,7 @@ export default function AdminTenantsPage() {
             <strong className="font-mono text-slate-200">{deletingTenant?.slug}</strong> to confirm:
           </p>
           <input
+            aria-label="Type the tenant slug to confirm deletion"
             type="text"
             value={deleteConfirmSlug}
             onChange={(e) => setDeleteConfirmSlug(e.target.value)}
@@ -543,7 +548,7 @@ export default function AdminTenantsPage() {
         </div>
       </AdminModal>
 
-      {loading && <div className="text-center text-slate-500 py-12">Loading tenants...</div>}
+      {loading && <div className="text-center text-slate-400 py-12">Loading tenants...</div>}
       {error && (
         <div className="rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700 mb-4">
           {error}
@@ -556,9 +561,10 @@ export default function AdminTenantsPage() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
+                  <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-400">
                     <th className="px-3 py-3 text-left w-8">
                       <input
+                        aria-label="Select all tenants"
                         ref={headerCheckboxRef}
                         type="checkbox"
                         checked={selected.size === rows.length && rows.length > 0}
@@ -613,6 +619,7 @@ export default function AdminTenantsPage() {
                     >
                       <td className="px-3 py-3">
                         <input
+                          aria-label={`Select ${t.slug}`}
                           type="checkbox"
                           checked={selected.has(t.id)}
                           onChange={() => toggleSelect(t.id)}
@@ -633,7 +640,7 @@ export default function AdminTenantsPage() {
                                   className={
                                     d <= 2
                                       ? "text-xs font-semibold text-red-400"
-                                      : "text-xs text-slate-500"
+                                      : "text-xs text-slate-400"
                                   }
                                 >
                                   · {d <= 0 ? "expired" : `${d}d left`}
@@ -648,7 +655,7 @@ export default function AdminTenantsPage() {
                       <td className="px-4 py-3 text-right text-slate-400">
                         {t.counts?.users ?? 0}
                       </td>
-                      <td className="px-4 py-3 text-slate-500">
+                      <td className="px-4 py-3 text-slate-400">
                         {new Date(t.createdAt).toLocaleDateString()}
                       </td>
                       <td className="px-4 py-3">
@@ -695,7 +702,7 @@ export default function AdminTenantsPage() {
                   ))}
                   {rows.length === 0 && (
                     <tr>
-                      <td colSpan={8} className="px-4 py-10 text-center text-slate-500">
+                      <td colSpan={8} className="px-4 py-10 text-center text-slate-400">
                         {filtersActive ? (
                           "No tenants match your filters."
                         ) : (
@@ -726,7 +733,7 @@ export default function AdminTenantsPage() {
               >
                 Prev
               </button>
-              <span className="text-sm text-slate-500">
+              <span className="text-sm text-slate-400">
                 Page {data.meta.page} of {data.meta.pages}
               </span>
               <button

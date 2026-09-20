@@ -74,6 +74,11 @@ import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
 import { OrderLineItemCards } from "./_components/OrderLineItemCards";
 import { ActionTier } from "./_components/ActionTier";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
+import { parseSellingRestricted } from "@/lib/api/selling-restricted";
+import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
+import type { BlockedLine } from "@routeflow/types";
+import { CreditLimitGuardDialog } from "@/components/CreditLimitGuardDialog";
+import { parseCreditLimitError, type CreditLimitInfo } from "@/lib/api/credit-limit";
 import { useProducts } from "@/lib/api/products";
 import {
   computeLineSubtotal,
@@ -1791,14 +1796,27 @@ export default function OrderDetailPage() {
   // License guard (W6b): the edit/promote guard can 409 REGULATED_AUTH_REQUIRED.
   const [licenseBlock, setLicenseBlock] = React.useState<BlockedCategory[] | null>(null);
   const licenseRetryRef = React.useRef<(() => void) | null>(null);
+  // Selling restrictions: lines the API refused for this customer (a dialog, not a raw toast).
+  const [restrictedBlock, setRestrictedBlock] = React.useState<BlockedLine[] | null>(null);
+  // Credit limit: the server's numbers + a "collect a payment" exit (no override exists).
+  const [creditBlock, setCreditBlock] = React.useState<CreditLimitInfo | null>(null);
   // Opens the guard modal on a REGULATED_AUTH_REQUIRED 409; other errors fall
   // through to the global mutation toast.
   const guardError = (retry: () => void) => (err: unknown) => {
+    const restricted = parseSellingRestricted(err);
+    if (restricted) {
+      setRestrictedBlock(restricted);
+      return;
+    }
     const blocked = parseRegulatedAuthError(err);
     if (blocked && blocked.length > 0) {
       licenseRetryRef.current = retry;
       setLicenseBlock(blocked);
+      return;
     }
+    // A credit-limit 409 gets its own dialog (real numbers + a way out), not a bare toast.
+    const credit = parseCreditLimitError(err);
+    if (credit) setCreditBlock(credit);
   };
 
   // Status tracking — use actual API status directly
@@ -1941,8 +1959,8 @@ export default function OrderDetailPage() {
    * lost race: toast what happened and let the hook's onSettled invalidation
    * refetch the winning state. REGULATED_AUTH_REQUIRED routes into the
    * existing license-guard modal with a retry, like every other guarded 409
-   * on this page. INSUFFICIENT_STOCK / CREDIT_LIMIT_EXCEEDED carry a server
-   * message and surface via the global mutation toast — no handling needed.
+   * on this page. CREDIT_LIMIT_EXCEEDED opens the credit guard dialog via guardError;
+   * INSUFFICIENT_STOCK carries a server message and surfaces via the global mutation toast.
    */
   function handleResolve(cr: ChangeRequest, action: ChangeRequestResolveAction, reason?: string) {
     const run = () =>
@@ -2263,6 +2281,8 @@ export default function OrderDetailPage() {
     updateStatus.mutate(
       { id: order.id, status: "DELIVERED" },
       {
+        // Delivery can be refused for credit (B585 gate): open the guard, not a bare toast.
+        onError: guardError(() => handleDeliver()),
         onSuccess: () => {
           setLocalStatus("DELIVERED");
           // Create the invoice (idempotent — returns existing if already there)
@@ -3568,6 +3588,7 @@ export default function OrderDetailPage() {
 
       {/* License guard (W6b): an edit/promote hit a 409 REGULATED_AUTH_REQUIRED.
           Lines are removed via the edit UI here, so the remove exit is omitted. */}
+      <BlockedLinesDialog lines={restrictedBlock} onClose={() => setRestrictedBlock(null)} />
       {licenseBlock && order && (
         <LicenseGuardModal
           open
@@ -3582,6 +3603,11 @@ export default function OrderDetailPage() {
           onClose={() => setLicenseBlock(null)}
         />
       )}
+      <CreditLimitGuardDialog
+        info={creditBlock}
+        customerId={order?.customerId}
+        onClose={() => setCreditBlock(null)}
+      />
     </div>
   );
 }

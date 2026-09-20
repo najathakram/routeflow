@@ -1,3 +1,6 @@
+import { EntitlementAuthority } from "./entitlement-authority.service";
+import { FeatureOverrideService } from "./feature-override.service";
+import { FeatureConfigStore } from "./feature-config.store";
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { FEATURE_REGISTRY } from "./feature-registry";
@@ -86,6 +89,9 @@ export class PlanTransitionConfigService implements OnModuleInit {
     private readonly flag: ConfigSnapshotFlagService,
     private readonly snapshots: TenantConfigSnapshotService,
     private readonly catalog: PlanCatalogService,
+    private readonly authority: EntitlementAuthority,
+    private readonly overrides: FeatureOverrideService,
+    private readonly configStore: FeatureConfigStore,
   ) {}
 
   onModuleInit(): void {
@@ -186,12 +192,16 @@ export class PlanTransitionConfigService implements OnModuleInit {
     try {
       await tx.$executeRaw`SAVEPOINT config_snapshot_restore`;
     } catch (err) {
-      // Not even a savepoint: skip the restore rather than let the paid upgrade fail on it.
+      // A statement error inside a Postgres transaction ABORTS it (a dead connection kills it too),
+      // so the upgrade cannot succeed past this point whatever we do: "skip and carry on" would only
+      // hide a failure the next write surfaces anyway. Fail loudly instead, so the caller's own
+      // alarm fires (the checkout webhook records HOOK_FAILED and Stripe redelivers; an in-app
+      // upgrade shows the error) — never a silently dropped paid upgrade.
       this.logger.error(
-        `Config restore SKIPPED for tenant ${t.tenantId} (${t.fromPlanKey} -> ${t.toPlanKey}): ` +
-          `could not open a savepoint: ${(err as Error).message}`,
+        `Config restore could not open a savepoint for tenant ${t.tenantId} ` +
+          `(${t.fromPlanKey} -> ${t.toPlanKey}); the transaction is unusable: ${(err as Error).message}`,
       );
-      return { action: "restore", restore: null };
+      throw err;
     }
     try {
       const restore = await this.snapshots.restoreLatest(
@@ -301,6 +311,36 @@ export class PlanTransitionConfigService implements OnModuleInit {
     prepared: PreparedPlanTransition | null | undefined,
   ): typeof HOOK_TX_OPTIONS | undefined {
     return prepared?.enabled ? HOOK_TX_OPTIONS : undefined;
+  }
+
+  /**
+   * AFTER the site's transaction commits: an automatic restore rewrote `TenantFeatureConfig` /
+   * `TenantFeatureOverride` rows, but the resolver, override and config-mode caches (30 s each)
+   * still hold the downgrade-era answer — the restore would look like it did nothing. The manual
+   * "Restore now" already drops all three; the automatic path must too. In-process only: another
+   * replica keeps the old answer until its own TTL (≤ 30 s), same limit as the manual restore. Only while the flag is on
+   * (`prepared.enabled`): flag off, no site touches these caches, exactly as before.
+   */
+  invalidateCaches(tenantId: string, prepared: PreparedPlanTransition | null | undefined): void {
+    if (!prepared?.enabled) return;
+    // Runs AFTER the plan change committed, inside callers whose catch may rethrow (the cron's
+    // per-tenant loop would abort the whole sweep): it must never throw. Each cache is dropped on
+    // its own so one failing does not leave the others stale.
+    const drops: Array<[string, () => void]> = [
+      ["resolver", () => this.authority.invalidate(tenantId)],
+      ["override", () => this.overrides.invalidate(tenantId)],
+      ["config-mode", () => this.configStore.invalidateTenant(tenantId)],
+    ];
+    for (const [name, drop] of drops) {
+      try {
+        drop();
+      } catch (err) {
+        this.logger.error(
+          `Could not drop the ${name} cache for tenant ${tenantId} after a plan change (stale for ` +
+            `at most its TTL): ${(err as Error).message}`,
+        );
+      }
+    }
   }
 
   /** Rank only — never entitlement loss: a cancel/suspend leaves `planKey` (and so this) untouched. */

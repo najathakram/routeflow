@@ -66,20 +66,20 @@ function AccountCard({ account, label }: { account: BuyerInfo; label: string }) 
     <div className="rounded-xl border border-slate-700/50 bg-slate-800/40 p-5">
       <div className="mb-3 flex items-center gap-2">
         <User className="h-4 w-4 text-slate-400" />
-        <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+        <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
           {label}
         </span>
       </div>
       <p className="text-base font-semibold text-white">{account.name ?? account.email}</p>
       <p className="text-sm text-slate-400">{account.email}</p>
-      <p className="mt-1 text-xs text-slate-500">Status: {account.status}</p>
-      {account.googleId && <p className="mt-1 text-xs text-slate-500">Has Google account linked</p>}
+      <p className="mt-1 text-xs text-slate-400">Status: {account.status}</p>
+      {account.googleId && <p className="mt-1 text-xs text-slate-400">Has Google account linked</p>}
       <div className="mt-3">
-        <p className="mb-1 text-xs font-medium text-slate-500">
+        <p className="mb-1 text-xs font-medium text-slate-400">
           Seller connections ({account.customerLinks.length})
         </p>
         {account.customerLinks.length === 0 ? (
-          <p className="text-xs text-slate-600">None</p>
+          <p className="text-xs text-slate-400">None</p>
         ) : (
           <ul className="space-y-1">
             {account.customerLinks.map((l) => (
@@ -88,7 +88,7 @@ function AccountCard({ account, label }: { account: BuyerInfo; label: string }) 
                   className={`h-1.5 w-1.5 rounded-full ${l.status === "ACTIVE" ? "bg-green-400" : "bg-slate-500"}`}
                 />
                 <span className="text-slate-300">{l.tenant.name}</span>
-                <span className="text-slate-500">({l.customer.businessName})</span>
+                <span className="text-slate-400">({l.customer.businessName})</span>
               </li>
             ))}
           </ul>
@@ -232,7 +232,7 @@ export default function MergeRequestDetailPage() {
 
       {req.initiatorNotes && (
         <div className="mb-4 rounded-lg bg-slate-700/40 px-4 py-3 text-sm text-slate-300">
-          <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+          <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
             Initiator notes:{" "}
           </span>
           {req.initiatorNotes}
@@ -259,7 +259,7 @@ export default function MergeRequestDetailPage() {
               </span>
             </div>
             {req.preview.linksToTransfer.length === 0 ? (
-              <p className="text-xs text-slate-500">None</p>
+              <p className="text-xs text-slate-400">None</p>
             ) : (
               <ul className="space-y-1">
                 {req.preview.linksToTransfer.map((l) => (
@@ -278,7 +278,7 @@ export default function MergeRequestDetailPage() {
               </span>
             </div>
             {req.preview.conflictingLinks.length === 0 ? (
-              <p className="text-xs text-slate-500">None</p>
+              <p className="text-xs text-slate-400">None</p>
             ) : (
               <ul className="space-y-1">
                 {req.preview.conflictingLinks.map((l) => (
@@ -315,6 +315,7 @@ export default function MergeRequestDetailPage() {
           Admin Notes
         </h2>
         <textarea
+          aria-label="Admin Notes"
           value={adminNotes}
           onChange={(e) => setAdminNotes(e.target.value)}
           rows={2}

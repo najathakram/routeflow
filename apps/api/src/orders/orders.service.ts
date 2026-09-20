@@ -63,6 +63,7 @@ import {
   type OrderEditRestrictionPlan,
 } from "./order-edit-restrictions";
 import { parseCommissionRatePct, parseOrderDate } from "./order-parsers";
+import { getOrderTracking } from "./order-tracking";
 import { CreateSaleDto } from "./dto/create-sale.dto";
 import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
 import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
@@ -92,6 +93,8 @@ import {
 import { SystemConfigService } from "../system-config/system-config.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
+import { resolveLineUnits } from "../products/line-units";
+import * as unitLines from "./unit-line-build";
 import { assertBuyerCartPricesCurrent } from "./buyer-cart-price-check";
 import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
@@ -474,6 +477,11 @@ export class OrdersService implements OnApplicationBootstrap {
    * P5-04: PROMO lines are excluded — a promotion's net price is transient
    * (window-bound) and must NOT become the customer's remembered operator price,
    * or an expired promo price would silently pre-fill future operator orders.
+   *
+   * B606: unit-aware lines (`unitLabel` set) are excluded for the same reason — a Case line's
+   * price is per-CASE money that only means something with its unit. Remembered as the
+   * product's price it would price a plain pack line at the Case price (2 boxes at $450 each),
+   * and `distinct: productId` would let a newer Case row shadow a real pack override.
    */
   async getCustomerPriceHistory(
     customerId: string,
@@ -486,6 +494,7 @@ export class OrdersService implements OnApplicationBootstrap {
         },
         originalPrice: { not: null },
         priceType: { not: PriceType.PROMO },
+        unitLabel: null,
       },
       // Order by updatedAt so the MOST RECENTLY SAVED override wins — editing a
       // line's price on any order and saving makes it the customer's remembered
@@ -1742,18 +1751,17 @@ export class OrdersService implements OnApplicationBootstrap {
         // stored order; a mismatch is a client bug surfaced loudly, never a
         // silent wrong-cart acknowledgment.
         {
-          const norm = (
-            rows: Array<{ productId?: string | null; name?: string | null; qty: unknown }>,
-          ) =>
+          const norm = (rows: never[], stored: boolean) =>
             rows
-              .map((r) => (r.productId ?? `unlisted:${r.name ?? ""}`) + "×" + Number(r.qty))
+              .map((r) => unitLines.replayLineKey(r, stored))
               .sort()
               .join("|");
-          const incomingNorm = norm((dto.items ?? []) as never[]);
+          const incomingNorm = norm((dto.items ?? []) as never[], false);
           const storedNorm = norm(
             (existing.lineItems ?? []).filter(
               (li: { status?: string }) => li.status !== "CANCELLED",
             ) as never[],
+            true,
           );
           if (incomingNorm !== storedNorm) {
             throw new ConflictException(
@@ -1818,6 +1826,13 @@ export class OrdersService implements OnApplicationBootstrap {
         : [];
 
     const productMap = new Map(products.map((p) => [p.id, p]));
+
+    // units_v1 (4b-2b): the gate (staff, flag.units_v1) + the server ladder of the named units.
+    const unitsByProduct = await unitLines.prepareUnitLadders(items, {
+      isStaff: isStaffRole,
+      prisma: this.prisma,
+      entitlements: this.entitlements,
+    });
 
     // B142 (cause-ruling.md §2/§3, D3): staff AND buyer order create share this
     // one branch (cause-refutation.md §2 row 1) — reject a NEW order carrying an
@@ -1924,6 +1939,25 @@ export class OrdersService implements OnApplicationBootstrap {
 
       const product = productMap.get(item.productId);
       if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
+
+      // units_v1 (4b-2b): a non-pack unit is built from the SERVER ladder; the pack falls through.
+      const ladder = unitsByProduct.get(product.id) ?? [];
+      const resolvedUnits = resolveLineUnits(product, ladder, item);
+      if (unitLines.isUnitAware(resolvedUnits)) {
+        const category = categoryMap.get(product.trackedCategoryId ?? "");
+        const unitLine = unitLines.buildUnitLine({
+          product,
+          units: ladder,
+          resolved: resolvedUnits,
+          item: { ...item, productId: product.id },
+          tier: cpMap.get(product.id) ?? defaultTier,
+          taxFor: (qty, sub) => unitLines.categoryTaxForLine(category, qty, sub),
+          position: index,
+          tenantId: this.prisma.getTenantId(),
+        });
+        subtotal += unitLine.subtotal;
+        return unitLine;
+      }
 
       // Recompute qty from boxes/pieces when provided (backend is authoritative).
       // Normalize to integers and roll loose pieces >= unitsPerBox into boxes.
@@ -2148,6 +2182,7 @@ export class OrdersService implements OnApplicationBootstrap {
     //     stock, preventing concurrent oversell, and
     // (b) retry on P2002 if two requests race to the same order number.
     const MAX_RETRIES = 3;
+    const unitOrder = lineItemsData.some((li) => "unitLabel" in li); // units_v1: never auto-merged
     let order: any;
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
@@ -2196,7 +2231,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 // merge set in BOTH directions regardless of what the caller asked for:
                 // as a loser the sweep hard-deletes it (its orderDate and order number
                 // are gone), as a winner it absorbs items that belong to another day.
-                skipAutoMerge: orderDate != null || (options.skipAutoMerge ?? false),
+                skipAutoMerge: orderDate != null || !!options.skipAutoMerge || unitOrder,
                 // Phase 4 (W4): denormalized flag — true when any line is regulated.
                 hasRegulated: lineItemsData.some((li) => li.trackedCategoryId != null),
                 requestedDeliveryDate: dto.requestedDeliveryDate
@@ -5691,81 +5726,9 @@ export class OrdersService implements OnApplicationBootstrap {
     }
   }
 
-  async getOrderTracking(orderId: string, user: JwtPayload) {
-    const order = await this.prisma.forTenant().order.findUnique({
-      where: { id: orderId },
-      include: {
-        customer: { select: { deliveryWindowStart: true, deliveryWindowEnd: true } },
-        routeRunStop: {
-          include: {
-            routeRun: {
-              include: {
-                driver: { select: { id: true, contactName: true } },
-                route: { select: { id: true, name: true } },
-                stops: { orderBy: { stopNumber: "asc" } },
-              },
-            },
-          },
-        },
-      },
-    });
-    if (!order) throw new NotFoundException("Order not found");
-
-    // Ownership gate (security F2-002): this route has no RolesGuard, so without
-    // this any authenticated CUSTOMER could enumerate order ids and read another
-    // customer's route/driver/stop/delivery-window. Mirror findOne's CUSTOMER gate.
-    if (user.role === UserRole.CUSTOMER) {
-      // REG-B131: `deletedAt: null` here — a removal deactivates the user but an access token
-      // minted just before it stays valid for up to 15 minutes, so a removed customer's own
-      // in-flight session must fall into the existing refusal below.
-      const customer = await this.prisma
-        .forTenant()
-        .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
-      if (!customer || customer.id !== order.customerId) throw new ForbiddenException();
-    }
-
-    if (!order.routeRunStop) {
-      return { status: order.status, tracking: null };
-    }
-
-    // F11 (B129 / B146 contract, spec R5): a CANCELLED run is not tracking —
-    // the buyer card must never show a driver, a stop number or "you're next"
-    // for a called-off run. After F11 the release nulls the pointer at cancel
-    // time, so this branch serves rows stranded BEFORE the deploy until the D4
-    // repair frees them, and stays as the written contract. A SKIPPED own-stop
-    // on a live or completed run keeps the FULL payload (stopStatus: "SKIPPED",
-    // stopsAhead exactly as computed below) — the client branches on
-    // stopStatus; the server invents no "skipped shape".
-    if (order.routeRunStop.routeRun.status === RouteRunStatus.CANCELLED) {
-      return { status: order.status, tracking: null };
-    }
-
-    const stop = order.routeRunStop;
-    const run = stop.routeRun;
-    const allStops = run.stops ?? [];
-    const currentStopNumber = stop.stopNumber;
-
-    // Count PENDING stops before this customer's stop
-    const stopsAhead = allStops.filter(
-      (s) => s.stopNumber < currentStopNumber && s.status === "PENDING",
-    ).length;
-
-    return {
-      status: order.status,
-      tracking: {
-        runId: run.id,
-        routeName: run.route?.name ?? null,
-        driverName: run.driver?.contactName ?? null,
-        runStatus: run.status,
-        stopNumber: currentStopNumber,
-        stopStatus: stop.status,
-        stopsAhead,
-        estimatedArrivalWindow: {
-          start: order.customer?.deliveryWindowStart ?? null,
-          end: order.customer?.deliveryWindowEnd ?? null,
-        },
-      },
-    };
+  /** The order-tracking card (route / driver / stop / delivery window) — see `order-tracking.ts`. */
+  getOrderTracking(orderId: string, user: JwtPayload) {
+    return getOrderTracking({ prisma: this.prisma }, orderId, user);
   }
 
   /**
