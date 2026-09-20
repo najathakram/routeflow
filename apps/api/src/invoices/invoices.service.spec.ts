@@ -9,6 +9,7 @@ jest.mock("./invoice-pdf.service", () => ({
   InvoicePdfService: jest.fn().mockImplementation(() => ({
     getOrGenerate: jest.fn().mockResolvedValue("https://example.com/invoice.pdf"),
   })),
+  invoicePdfStorageKey: (id: string) => `invoice-pdfs/${id}.pdf`,
 }));
 
 // Payment-image attachment (clone of the expense-receipt pattern): mock
@@ -54,6 +55,13 @@ describe("InvoicesService", () => {
     emitUrgentOrder: jest.fn(),
   };
 
+  // Default resolves to undefined (no URL) — matching this file's pre-existing bare
+  // `jest.fn()` behavior, so every pre-existing test is unaffected. The new PDF-
+  // attachment tests below override this per-test via mockResolvedValueOnce.
+  const mockPdfService = {
+    getOrGenerate: jest.fn(),
+  };
+
   const mockEmailService = {
     sendInvoice: jest.fn().mockResolvedValue({ delivered: true, transport: "resend" }),
     isEmailConfigured: jest.fn().mockResolvedValue(true),
@@ -82,6 +90,7 @@ describe("InvoicesService", () => {
     upload: jest.fn().mockResolvedValue("stored"),
     presignedUrl: jest.fn().mockResolvedValue("https://signed/url"),
     delete: jest.fn().mockResolvedValue(undefined),
+    download: jest.fn().mockResolvedValue(Buffer.from("pdf-bytes")),
   };
 
   // flag.msrp — reset to OFF in beforeEach; MSRP snapshot tests flip it ON.
@@ -133,6 +142,9 @@ describe("InvoicesService", () => {
     mockStorage.presignedUrl.mockResolvedValue("https://signed/url");
     mockStorage.delete.mockClear();
     mockStorage.delete.mockResolvedValue(undefined);
+    mockStorage.download.mockClear();
+    mockStorage.download.mockResolvedValue(Buffer.from("pdf-bytes"));
+    mockPdfService.getOrGenerate.mockReset();
     mockCompressDocument.mockReset();
     mockCompressDocument.mockResolvedValue({
       buffer: Buffer.from("compressed-bytes"),
@@ -146,7 +158,7 @@ describe("InvoicesService", () => {
         { provide: PrismaService, useValue: prisma },
         { provide: RouteFlowGateway, useValue: mockGateway },
         { provide: EmailService, useValue: mockEmailService },
-        { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
+        { provide: InvoicePdfService, useValue: mockPdfService },
         { provide: SystemConfigService, useValue: mockSystemConfig },
         {
           provide: RegulatedLedgerService,
@@ -1776,6 +1788,115 @@ describe("InvoicesService", () => {
 
       const res = await service.sendEmail("i1", "owner@realstore.com");
       expect(res).toMatchObject({ success: true, sentTo: "owner@realstore.com" });
+    });
+  });
+
+  // ─── PDF attachment on send-email / send-reminder (feat/email-invoice-pdf-attachment) ──
+  describe("sendEmail / sendReminder — PDF attachment", () => {
+    const draftInvoice = () => ({
+      id: "i1",
+      orderId: null,
+      invoiceNumber: "INV-1",
+      status: InvoiceStatus.DRAFT,
+      deliveryBatchId: null,
+      total: 100,
+      issueDate: new Date("2026-07-01"),
+      dueDate: new Date("2026-07-15"),
+      customer: { id: "c1", businessName: "Acme", email: "buyer@example.com" },
+      items: [],
+    });
+
+    beforeEach(() => {
+      prisma.invoice.findUnique.mockResolvedValue(draftInvoice() as any);
+      mockEmailService.isEmailConfigured.mockResolvedValue(true);
+      mockEmailService.sendInvoice.mockResolvedValue({ delivered: true, transport: "resend" });
+      prisma.invoice.update.mockResolvedValue({
+        id: "i1",
+        invoiceNumber: "INV-1",
+        customerId: "c1",
+        status: InvoiceStatus.SENT,
+        total: 100,
+        dueDate: null,
+      });
+    });
+
+    it("attaches the PDF with the sanitized filename and content type when the PDF is available", async () => {
+      mockPdfService.getOrGenerate.mockResolvedValueOnce("https://example.com/invoice.pdf");
+      mockStorage.download.mockResolvedValueOnce(Buffer.from("pdf-bytes"));
+
+      await service.sendEmail("i1");
+
+      expect(mockStorage.download).toHaveBeenCalledWith("invoice-pdfs/i1.pdf");
+      expect(mockEmailService.sendInvoice).toHaveBeenCalledWith(
+        expect.objectContaining({
+          pdfUrl: "https://example.com/invoice.pdf",
+          attachment: {
+            filename: "Invoice-INV-1.pdf",
+            content: Buffer.from("pdf-bytes"),
+            contentType: "application/pdf",
+          },
+        }),
+      );
+    });
+
+    it("falls back to link-only (never fails the send) when the generated PDF exceeds the attachment cap", async () => {
+      mockPdfService.getOrGenerate.mockResolvedValueOnce("https://example.com/invoice.pdf");
+      mockStorage.download.mockResolvedValueOnce(Buffer.alloc(11 * 1024 * 1024)); // > 10MB cap
+
+      const res = await service.sendEmail("i1");
+
+      expect(res).toMatchObject({ success: true });
+      expect(mockEmailService.sendInvoice).toHaveBeenCalledWith(
+        expect.objectContaining({
+          pdfUrl: "https://example.com/invoice.pdf",
+          attachment: undefined,
+        }),
+      );
+    });
+
+    it("falls back to link-only (never fails the send) when reading the generated PDF back fails", async () => {
+      mockPdfService.getOrGenerate.mockResolvedValueOnce("https://example.com/invoice.pdf");
+      mockStorage.download.mockRejectedValueOnce(new Error("storage unavailable"));
+
+      const res = await service.sendEmail("i1");
+
+      expect(res).toMatchObject({ success: true });
+      expect(mockEmailService.sendInvoice).toHaveBeenCalledWith(
+        expect.objectContaining({
+          pdfUrl: "https://example.com/invoice.pdf",
+          attachment: undefined,
+        }),
+      );
+    });
+
+    it("falls back to link-only (existing R5-unrelated behavior, unchanged) when PDF generation itself fails", async () => {
+      mockPdfService.getOrGenerate.mockRejectedValueOnce(new Error("render failed"));
+
+      const res = await service.sendEmail("i1");
+
+      expect(res).toMatchObject({ success: true });
+      expect(mockStorage.download).not.toHaveBeenCalled();
+      expect(mockEmailService.sendInvoice).toHaveBeenCalledWith(
+        expect.objectContaining({ pdfUrl: undefined, attachment: undefined }),
+      );
+    });
+
+    it("sendReminder also attaches the PDF when available", async () => {
+      mockPdfService.getOrGenerate.mockResolvedValueOnce("https://example.com/invoice.pdf");
+      mockStorage.download.mockResolvedValueOnce(Buffer.from("pdf-bytes"));
+
+      await service.sendReminder("i1");
+
+      expect(mockEmailService.sendInvoice).toHaveBeenCalledWith(
+        expect.objectContaining({
+          isReminder: true,
+          attachment: {
+            filename: "Invoice-INV-1.pdf",
+            content: Buffer.from("pdf-bytes"),
+            contentType: "application/pdf",
+          },
+        }),
+      );
     });
   });
 
