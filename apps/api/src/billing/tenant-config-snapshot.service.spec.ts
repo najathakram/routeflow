@@ -4,6 +4,8 @@ import { PLAN_KEYS } from "./plan-catalog.constants";
 import { TenantConfigSnapshotService } from "./tenant-config-snapshot.service";
 
 // Plan keys and feature keys come from the live catalog/registry (L-206), never re-typed here.
+const LOW = PLAN_KEYS[0];
+const MID = PLAN_KEYS[2];
 const HIGH = PLAN_KEYS[PLAN_KEYS.length - 1];
 const configFeature = FEATURE_REGISTRY.find((f) => f.config)!;
 const CONFIG_KEY = configFeature.key;
@@ -147,5 +149,158 @@ describe("TenantConfigSnapshotService.snapshot", () => {
     await expect(svc.snapshot(tx, TENANT, HIGH, "DOWNGRADE", undefined, T0)).rejects.toThrow(
       "db down",
     );
+  });
+});
+
+describe("TenantConfigSnapshotService.restoreLatest", () => {
+  const svc = new TenantConfigSnapshotService();
+
+  async function downgradedTenant() {
+    // Tenant on HIGH with config + a grant; downgrade snapshots then the rows go inert-but-present.
+    const { tx, state } = fakeTx({ configs: [cfgRow()], overrides: [ovrRow()] });
+    await svc.snapshot(tx, TENANT, HIGH, "DOWNGRADE", undefined, T0);
+    return { tx, state };
+  }
+
+  it("restores as-was on re-upgrade to the same plan, stamps the snapshot, and reports counts", async () => {
+    const { tx, state } = fakeTx();
+    // Rows were lost/reset after the downgrade (worst case): seed a snapshot with a payload.
+    const seeded = fakeTx({ configs: [cfgRow()], overrides: [ovrRow()] });
+    await svc.snapshot(seeded.tx, TENANT, HIGH, "DOWNGRADE", undefined, T0);
+    state.snapshots.push(...seeded.state.snapshots);
+
+    const res = await svc.restoreLatest(tx, TENANT, HIGH, NOW);
+
+    expect(res).not.toBeNull();
+    expect(res!.report).toEqual({ restored: 2, skipped: 0, keptNewer: 0, unchanged: 0 });
+    expect(state.configs).toHaveLength(1);
+    expect(state.configs[0]).toMatchObject({
+      featureKey: CONFIG_KEY,
+      mode: MODE,
+      settings: { x: 1 },
+    });
+    expect(state.overrides).toHaveLength(1);
+    expect(state.snapshots[0]).toMatchObject({ restoredAt: NOW, restoredToPlanKey: HIGH });
+  });
+
+  it("is idempotent — a second restore finds no un-restored snapshot and changes nothing", async () => {
+    const { tx, state } = fakeTx();
+    const seeded = fakeTx({ configs: [cfgRow()], overrides: [ovrRow()] });
+    await svc.snapshot(seeded.tx, TENANT, HIGH, "DOWNGRADE", undefined, T0);
+    state.snapshots.push(...seeded.state.snapshots);
+
+    await svc.restoreLatest(tx, TENANT, HIGH, NOW);
+    const before = JSON.stringify([state.configs, state.overrides]);
+    const again = await svc.restoreLatest(tx, TENANT, HIGH, NOW);
+
+    expect(again).toBeNull();
+    expect(JSON.stringify([state.configs, state.overrides])).toBe(before);
+  });
+
+  it("a plan LOWER than the snapshot's never restores", async () => {
+    const { tx, state } = await downgradedTenant();
+    expect(await svc.restoreLatest(tx, TENANT, MID, NOW)).toBeNull();
+    expect(await svc.restoreLatest(tx, TENANT, LOW, NOW)).toBeNull();
+    expect(state.snapshots[0].restoredAt).toBeNull();
+  });
+
+  it("an upgrade to a HIGHER plan than the snapshot's restores it", async () => {
+    const { tx, state } = fakeTx();
+    const seeded = fakeTx({ configs: [cfgRow()] });
+    await svc.snapshot(seeded.tx, TENANT, MID, "DOWNGRADE", undefined, T0);
+    state.snapshots.push(...seeded.state.snapshots);
+    const res = await svc.restoreLatest(tx, TENANT, HIGH, NOW);
+    expect(res?.planKey).toBe(MID);
+    expect(state.configs).toHaveLength(1);
+  });
+
+  it("a newer manual change made AFTER the downgrade survives the restore and is reported", async () => {
+    const { tx, state } = fakeTx({
+      configs: [cfgRow({ mode: "manual_change", updatedAt: new Date("2026-09-15T00:00:00.000Z") })],
+    });
+    const seeded = fakeTx({ configs: [cfgRow()] });
+    await svc.snapshot(seeded.tx, TENANT, HIGH, "DOWNGRADE", undefined, T0);
+    state.snapshots.push(...seeded.state.snapshots);
+
+    const res = await svc.restoreLatest(tx, TENANT, HIGH, NOW);
+    expect(res!.report.keptNewer).toBe(1);
+    expect(state.configs[0].mode).toBe("manual_change");
+  });
+
+  it("restores an as-was NULL settings value with DbNull, not 'leave unchanged'", async () => {
+    const { tx, state } = fakeTx({
+      configs: [
+        cfgRow({ settings: { stale: true }, updatedAt: new Date("2026-09-01T00:00:00.000Z") }),
+      ],
+    });
+    const seeded = fakeTx({ configs: [cfgRow({ settings: null })] });
+    await svc.snapshot(seeded.tx, TENANT, HIGH, "DOWNGRADE", undefined, T0);
+    state.snapshots.push(...seeded.state.snapshots);
+
+    await svc.restoreLatest(tx, TENANT, HIGH, NOW);
+    expect(state.configs[0].settings).toBe(Prisma.DbNull);
+  });
+
+  it("returns null for an unknown plan key (never restores on a guess)", async () => {
+    const { tx } = await downgradedTenant();
+    expect(await svc.restoreLatest(tx, TENANT, "NOT_A_PLAN", NOW)).toBeNull();
+  });
+
+  it("supersedes OLDER un-restored snapshots so a later upgrade cannot re-apply a stale payload", async () => {
+    const { tx, state } = fakeTx();
+    const older = fakeTx({ configs: [cfgRow({ settings: { old: true } })] });
+    await svc.snapshot(
+      older.tx,
+      TENANT,
+      HIGH,
+      "DOWNGRADE",
+      undefined,
+      new Date("2026-09-05T00:00:00.000Z"),
+    );
+    const newer = fakeTx({ configs: [cfgRow()] });
+    await svc.snapshot(newer.tx, TENANT, MID, "DOWNGRADE", undefined, T0);
+    // each fakeTx mints its own ids ("s1"…) — make them distinct before merging the two stores
+    older.state.snapshots[0].id = "s-old";
+    newer.state.snapshots[0].id = "s-new";
+    state.snapshots.push(...older.state.snapshots, ...newer.state.snapshots);
+
+    const res = await svc.restoreLatest(tx, TENANT, HIGH, NOW);
+    expect(res?.planKey).toBe(MID); // the NEWEST eligible one
+    const stamped = state.snapshots.map((s) => [s.planKey, s.restoredToPlanKey]);
+    expect(stamped).toContainEqual([MID, HIGH]);
+    expect(stamped).toContainEqual([HIGH, "SUPERSEDED"]);
+    // a later re-upgrade finds nothing left to restore
+    expect(await svc.restoreLatest(tx, TENANT, HIGH, NOW)).toBeNull();
+  });
+
+  it("a malformed / future-version payload never throws and is left un-stamped", async () => {
+    const { tx, state } = fakeTx({
+      snapshots: [
+        {
+          id: "sx",
+          tenantId: TENANT,
+          planKey: HIGH,
+          takenAt: T0,
+          restoredAt: null,
+          restoredToPlanKey: null,
+          payload: { version: 99, configs: [], overrides: [] },
+        },
+      ],
+    });
+    await expect(svc.restoreLatest(tx, TENANT, HIGH, NOW)).resolves.toBeNull();
+    expect(state.snapshots[0].restoredAt).toBeNull();
+    expect(state.configs).toHaveLength(0);
+  });
+
+  it("passes the plan's allow-list through: a not-allowed entry is skipped and reported", async () => {
+    const { tx, state } = fakeTx();
+    const seeded = fakeTx({ configs: [cfgRow()], overrides: [ovrRow()] });
+    await svc.snapshot(seeded.tx, TENANT, HIGH, "DOWNGRADE", undefined, T0);
+    state.snapshots.push(...seeded.state.snapshots);
+
+    const res = await svc.restoreLatest(tx, TENANT, HIGH, NOW, (k) => k !== CONFIG_KEY);
+    expect(res!.report).toEqual({ restored: 1, skipped: 1, keptNewer: 0, unchanged: 0 });
+    expect(state.configs).toHaveLength(0);
+    expect(state.overrides).toHaveLength(1);
   });
 });
