@@ -492,12 +492,14 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
       </div>
 
       <div className="shrink-0 border-b border-surface-border px-3 py-2">
-        <div className="flex min-h-[28px] items-center justify-between gap-2 text-sm">
+        <div className="flex min-h-[28px] flex-wrap items-center justify-between gap-2 text-sm">
           {feedback ? (
             <p
               role="status"
               className={cn(
-                "min-w-0 truncate rounded px-2 py-1 text-xs font-medium",
+                // Wraps, never truncates: the actionable half of a queue message ("press Done again to
+                // discard") is the part a one-line ellipsis cuts off at 390px (B595).
+                "min-w-0 max-w-full break-words rounded px-2 py-1 text-xs font-medium",
                 feedback.kind === "added"
                   ? "bg-emerald-50 text-emerald-800"
                   : feedback.kind === "queued"
