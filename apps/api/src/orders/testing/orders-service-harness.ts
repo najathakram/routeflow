@@ -199,5 +199,11 @@ export async function buildOrdersService() {
     authGuard: module.get(AuthorizationGuardService) as unknown as {
       assertAuthorizedOrThrow: jest.Mock;
     },
+    /** the side-effect stubs a refused or rolled-back status change must never reach */
+    sideEffects: {
+      gateway: module.get(RouteFlowGateway) as unknown as { emitOrderStatusChanged: jest.Mock },
+      notifications: module.get(NotificationsService) as unknown as { sendToCustomer: jest.Mock },
+      messaging: module.get(MessagingService) as unknown as { notifyEvent: jest.Mock },
+    },
   };
 }

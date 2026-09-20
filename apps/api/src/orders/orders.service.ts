@@ -2934,6 +2934,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // W6: promoting a DRAFT into a live order is when it becomes a real sale, so
     // re-run the license guard (drafts are created/edited without it — that's the
     // "draft escape"). Categories resolve from each line's snapshot or its product.
+    let checkedProductIds: ReadonlySet<string> | undefined; // what the Lane R check saw
     if (order.status === "DRAFT" && dto.status !== OrderStatus.CANCELLED) {
       const items = await this.prisma.forTenant().orderItem.findMany({
         where: { orderId: id, status: { not: "CANCELLED" } },
@@ -2965,6 +2966,7 @@ export class OrdersService implements OnApplicationBootstrap {
         lines: items.flatMap((li) => (li.productId ? [{ productId: li.productId }] : [])),
         channel: restrictionChannelForPrincipal(user), // judged at ENTRY time, like the license guard
       });
+      checkedProductIds = new Set(pids);
     }
 
     // Refuse the cancel BEFORE writing the status — a rejection must leave the
@@ -3029,6 +3031,13 @@ export class OrdersService implements OnApplicationBootstrap {
                 where: { orderId: id, status: { not: "CANCELLED" } },
                 select: { productId: true, qty: true },
               });
+            // The Lane R check ran outside this tx: a product added since (a concurrent draft
+            // edit) was never judged — roll back (the claim above included) and promote again.
+            if (activeItems.some((li) => li.productId && !checkedProductIds?.has(li.productId))) {
+              throw new ConflictException(
+                "The order's items changed while it was being promoted — review it and promote again.",
+              );
+            }
             const stockLines = activeItems
               .filter((li): li is { productId: string; qty: any } => !!li.productId)
               .map((li) => ({ productId: li.productId, qty: Number(li.qty) }));
