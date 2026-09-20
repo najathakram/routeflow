@@ -25,7 +25,7 @@ export function ProductLabelsCard({ productId }: { productId: string }) {
   const isAdmin = useAuth().user?.role === "TENANT_ADMIN";
   const { toast } = useToast();
   const { data, isLoading, isError } = useProductLabels(productId);
-  const { data: categories = [] } = useProductCategories();
+  const { data: categories = [], isError: categoriesFailed } = useProductCategories();
   const setLabel = useSetProductLabel(productId);
   const removeLabel = useRemoveProductLabel(productId);
   const [pickId, setPickId] = React.useState("");
@@ -51,11 +51,17 @@ export function ProductLabelsCard({ productId }: { productId: string }) {
   const busy = setLabel.isPending || removeLabel.isPending;
   const optOutName = data.inherited.find((l) => l.categoryId === optOutId)?.categoryName;
 
-  const remove = (categoryId: string, name: string) =>
+  // `undoOptOut`: deleting an opt-out row RE-APPLIES the inherited restriction, so the message must
+  // not say "removed" (that reads as the restriction being lifted, the opposite of what happened).
+  const remove = (categoryId: string, name: string, undoOptOut = false) =>
     removeLabel.mutate(
       { categoryId },
       {
-        onSuccess: () => toast({ title: `${name} removed`, variant: "success" }),
+        onSuccess: () =>
+          toast({
+            title: undoOptOut ? `${name} applies to this variant again` : `${name} removed`,
+            variant: "success",
+          }),
       },
     );
   const submitOptOut = () =>
@@ -118,7 +124,7 @@ export function ProductLabelsCard({ productId }: { productId: string }) {
                     disabled={busy}
                     onClick={() =>
                       active
-                        ? remove(l.categoryId, l.categoryName)
+                        ? remove(l.categoryId, l.categoryName, true)
                         : (setOptOutId(l.categoryId), setReason(""))
                     }
                   >
@@ -172,12 +178,17 @@ export function ProductLabelsCard({ productId }: { productId: string }) {
         <div className="mt-3 flex items-center gap-2">
           <select
             aria-label="Add a label"
+            disabled={categoriesFailed}
             value={pickId}
             onChange={(e) => setPickId(e.target.value)}
             className="h-9 min-w-0 flex-1 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
           >
             <option value="">
-              {addable.length === 0 ? "No more labels to add" : "Add a label…"}
+              {categoriesFailed
+                ? "Couldn't load labels to add"
+                : addable.length === 0
+                  ? "No more labels to add"
+                  : "Add a label…"}
             </option>
             {addable.map((c) => (
               <option key={c.id} value={c.id}>

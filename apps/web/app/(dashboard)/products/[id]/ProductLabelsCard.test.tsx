@@ -8,6 +8,7 @@ const toast = jest.fn();
 const removeMutate = jest.fn();
 let role = "TENANT_ADMIN";
 let labels: any;
+let categoriesFailed = false;
 
 jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
@@ -19,7 +20,10 @@ jest.mock("@routeflow/ui/web", () => ({
 }));
 jest.mock("@/lib/api/product-labels", () => ({
   useProductCategories: () => ({
-    data: ["Alcohol", "THC"].map((name, i) => ({ id: `c${i + 1}`, name })),
+    data: categoriesFailed
+      ? undefined
+      : ["Alcohol", "THC"].map((name, i) => ({ id: `c${i + 1}`, name })),
+    isError: categoriesFailed,
   }),
   useProductLabels: () => ({ data: labels }),
   useSetProductLabel: () => ({ mutate: setMutate, isPending: false }),
@@ -54,6 +58,7 @@ const click = (name: RegExp | string) => fireEvent.click(screen.getByRole("butto
 beforeEach(() => {
   jest.clearAllMocks();
   role = "TENANT_ADMIN";
+  categoriesFailed = false;
   labels = view();
 });
 
@@ -112,18 +117,53 @@ describe("ProductLabelsCard", () => {
     expect(removeMutate).toHaveBeenCalledWith({ categoryId: "c1" }, expect.any(Object));
   });
 
-  it("an API error raises NO page-level toast (the global mutation handler shows it once)", () => {
+  it("a failed write raises NO page-level toast (the global mutation handler shows it once)", () => {
+    // Fail the way react-query does: run whichever failure callbacks the component supplied. If the
+    // component ever adds its own onError toast, this turns red.
+    const err = {
+      response: { status: 400, data: { message: "Parent does not carry this label." } },
+    };
+    setMutate.mockImplementation((_v, opts) => {
+      opts?.onError?.(err);
+      opts?.onSettled?.(undefined, err);
+    });
     render();
     click("Opt out");
     fireEvent.change(screen.getByLabelText(/why does this variant opt out/i), {
       target: { value: "x" },
     });
     click("Confirm opt-out");
-    const opts = setMutate.mock.calls[0][1];
-    opts.onError?.({
-      response: { status: 400, data: { message: "The parent product does not carry this label." } },
-    });
+    expect(setMutate).toHaveBeenCalled();
+    expect(Object.keys(setMutate.mock.calls[0][1])).toEqual(["onSuccess"]);
     expect(toast).not.toHaveBeenCalled();
+  });
+
+  it("undoing an opt-out says the label applies again, never 'removed'; removing a label says removed", () => {
+    removeMutate.mockImplementation((_v, opts) => opts.onSuccess());
+    labels = view({ own: [own({ mode: "EXCLUDE", reason: "x", optOutActive: true })] });
+    render();
+    click("Undo opt-out");
+    expect(toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Alcohol applies to this variant again" }),
+    );
+    expect(toast).not.toHaveBeenCalledWith(expect.objectContaining({ title: "Alcohol removed" }));
+  });
+
+  it("removing an own label toasts 'removed'", () => {
+    removeMutate.mockImplementation((_v, opts) => opts.onSuccess());
+    labels = view({ parentProductId: null, inherited: [], own: [own()] });
+    render();
+    click("Remove Alcohol");
+    expect(toast).toHaveBeenCalledWith(expect.objectContaining({ title: "Alcohol removed" }));
+  });
+
+  it("a failed categories fetch says so, never 'No more labels to add'", () => {
+    categoriesFailed = true;
+    render();
+    const select = screen.getByLabelText("Add a label") as HTMLSelectElement;
+    expect(select).toBeDisabled();
+    expect(select.options[0].text).toBe("Couldn't load labels to add");
+    expect(screen.queryByText(/No more labels to add/)).toBeNull();
   });
 
   it("is read-only for a non-admin", () => {
