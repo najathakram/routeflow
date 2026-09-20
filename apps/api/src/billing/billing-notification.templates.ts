@@ -260,3 +260,30 @@ export function suspendedTemplate(params: {
     text,
   };
 }
+
+export function checkoutPlanNotAppliedTemplate(params: {
+  businessName: string;
+  adminName: string;
+  requestedPlanKey: string;
+}): BillingEmailTemplate {
+  const manageUrl = billingSettingsUrl();
+  const html = baseLayout({
+    tagline: "Payment received, plan not changed",
+    bodyHtml: `
+      <p style="margin:0 0 8px;font-size:15px;color:#6b7280;">Hi ${escapeHtml(params.adminName)},</p>
+      <p style="margin:0 0 16px;font-size:15px;color:#374151;">
+        We received your payment for <strong>${escapeHtml(params.requestedPlanKey)}</strong> on
+        <strong>${escapeHtml(params.businessName)}</strong>, but your plan was NOT changed: it was
+        downgraded after you started that checkout, and we never override a newer plan choice.
+        Please review your plan below or contact support and we will sort it out.
+      </p>
+      ${ctaButtonHtml(manageUrl, "Review your plan")}
+    `,
+  });
+  const text = `Hi ${params.adminName},\n\nWe received your payment for ${params.requestedPlanKey} on ${params.businessName}, but your plan was NOT changed: it was downgraded after you started that checkout, and we never override a newer plan choice. Please review your plan or contact support.\n\nReview your plan: ${manageUrl}`;
+  return {
+    subject: `Payment received, plan not changed — ${params.businessName}`,
+    html,
+    text,
+  };
+}

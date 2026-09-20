@@ -10,6 +10,12 @@
 # from the repo root). Output (including any failure) is appended to backups\task-scheduler.log.
 # For a more reliable alternative, use the GitHub Actions workflow instead.
 
+param(
+    # Print the exact scheduled action (cmd.exe + argument + working directory) and exit WITHOUT
+    # registering anything: run it once on the box to confirm the command line before scheduling.
+    [switch]$DryRun
+)
+
 $TaskName  = "RouteFlow-DB-Backup"
 # This file lives in <repo>\apps\api\scripts, so the repo root is THREE levels up.
 $ScriptDir = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
@@ -32,7 +38,22 @@ New-Item -ItemType Directory -Force $BackupDir | Out-Null
 # cmd.exe /c so stdout AND stderr land in the log: a silent scheduled non-backup is the worst
 # failure mode this task has, and Task Scheduler alone only shows a last-result code.
 $Command = "`"$Railway`" run --service postgres node $Script scheduled >> `"$LogFile`" 2>&1"
-$Action  = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c $Command" -WorkingDirectory $ScriptDir
+# cmd.exe /c QUOTING (B579): when the text after /c starts with a quote and holds more than two
+# quote characters, cmd strips the FIRST and the LAST quote of the line. `/c "railway" run … >>
+# "log" 2>&1` therefore became `railway" run … >> "log 2>&1` and the task failed on every run.
+# Wrapping the whole command in ONE extra outer pair makes cmd strip exactly that pair and run the
+# command as written (the standard `cmd /c ""a" b "c""` idiom). Covered by
+# apps/api/src/common/schedule-local-backup-ps1.spec.ts (applies cmd's documented rule).
+$Argument = "/c `"$Command`""
+$Action  = New-ScheduledTaskAction -Execute "cmd.exe" -Argument $Argument -WorkingDirectory $ScriptDir
+
+if ($DryRun) {
+    Write-Host "DRY RUN - nothing registered."
+    Write-Host "  Execute:          cmd.exe"
+    Write-Host "  Argument:         $Argument"
+    Write-Host "  WorkingDirectory: $ScriptDir"
+    exit 0
+}
 $Trigger = New-ScheduledTaskTrigger -Daily -At "07:00"
 $Settings = New-ScheduledTaskSettingsSet `
     -ExecutionTimeLimit (New-TimeSpan -Hours 1) `

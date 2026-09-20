@@ -38,7 +38,11 @@ jest.mock("@/lib/api/margin", () => ({
   floorForCategory: () => null,
 }));
 jest.mock("@/lib/api/tracked-categories", () => ({ useTrackedCategories: () => ({ data: [] }) }));
-jest.mock("@/lib/api/tobacco", () => ({ useHasAddon: () => false }));
+jest.mock("@/lib/api/tobacco", () => ({
+  useHasAddon: () => false,
+  // The modal reads the developer_mode addon (useScanV2 -> useDeveloperMode -> useTenantAddons).
+  useTenantAddons: () => ({ data: undefined, isLoading: false, isSuccess: false }),
+}));
 jest.mock("@/lib/api-client", () => ({
   apiClient: {
     get: jest.fn().mockResolvedValue({ data: { taxRate: 0 } }),

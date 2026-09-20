@@ -28,13 +28,18 @@ import { InlineCreateProductModal } from "@/components/InlineCreateProductModal"
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { LineItemRow } from "@/components/LineItemRow";
 import { useScanCodeHandler } from "./scan/useScanCodeHandler";
+import { ScanOrderScreen } from "./scan/ScanOrderScreen";
+import type { ScanHistoryEntry } from "./scan/scan-summary";
 import { LicenseGuardModal } from "./LicenseGuardModal";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
+import { parseSellingRestricted } from "@/lib/api/selling-restricted";
+import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
+import type { BlockedLine } from "@routeflow/types";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { CreditNotePicker, type CreditSelection } from "./CreditNotePicker";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
-import { SALES_AGENTS_ADDON } from "@/lib/api/addons";
+import { SALES_AGENTS_ADDON, useOrderUiV2, useScanV2 } from "@/lib/api/addons";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -99,6 +104,18 @@ interface LineItem {
   /** UI-only qty entry mode for case-packed lines. NEVER submitted — the payload always
    *  carries {qty, boxes, pieces} and the per-case unitPrice. */
   sellBy?: "case" | "unit";
+  /**
+   * The product's tier-price columns, snapshotted when the line is added, so a customer chosen
+   * AFTER scanning can still re-price the line (owner ruling D1) without refetching the product.
+   * UI-only: never submitted (the payload maps lines field by field).
+   */
+  tierPrices?: {
+    pricePerUnit: unknown;
+    priceTier2?: unknown;
+    priceTier3?: unknown;
+    priceTier4?: unknown;
+    priceTier5?: unknown;
+  };
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -197,12 +214,30 @@ export function CreateOrderModal({
   const [createProductOpen, setCreateProductOpen] = React.useState(false);
   const [createProductInitialName, setCreateProductInitialName] = React.useState("");
   const [createProductInitialSku, setCreateProductInitialSku] = React.useState("");
+  // scan_v2 (dark, owner-granted per tenant): the accumulating scan screen replaces the
+  // single-shot camera overlay. While it is open the Dialog below is closed (its content is
+  // transformed and focus-trapped, so a full-screen overlay cannot live inside it); every piece of
+  // order state stays in this component, so nothing is lost across the swap.
+  const scanV2 = useScanV2();
+  // order_ui_v2 (dark): the quick-order extras — the typed Qty field, the merge toast and the
+  // box-aware merge. Off = the modal is exactly what it was (a repeat add keeps its historical step).
+  const orderUiV2 = useOrderUiV2().enabled;
+  const [scanScreenOpen, setScanScreenOpen] = React.useState(false);
+  // The screen counts as open only while the gate is on: if the addon resolves away mid-session the
+  // Dialog must come back, never stay closed behind a screen that is no longer rendered.
+  const scanScreenActive = scanV2 && scanScreenOpen;
+  // A closed order builder (or a gate that turned off) never reopens straight into the scan screen.
+  React.useEffect(() => {
+    if (!isOpen || !scanV2) setScanScreenOpen(false);
+  }, [isOpen, scanV2]);
 
   // Merge-vs-separate prompt state. Set when the operator submits and the API
   // (or our pre-check) reports an existing active order for the same customer.
   const [mergePrompt, setMergePrompt] = React.useState<ActiveOrderSummary | null>(null);
   // The license guard (W6b): categories blocked by a 409 REGULATED_AUTH_REQUIRED.
   const [licenseBlock, setLicenseBlock] = React.useState<BlockedCategory[] | null>(null);
+  // Selling restrictions: lines the API refused for this customer (shown instead of a raw toast).
+  const [restrictedBlock, setRestrictedBlock] = React.useState<BlockedLine[] | null>(null);
   // Pre-check: as soon as a customer is selected, look up their active order so we can
   // surface the prompt the moment "Create Order" is clicked.
   const { data: activeOrderForCustomer } = useActiveOrderForCustomer(selectedCustomer?.id);
@@ -292,11 +327,15 @@ export function CreateOrderModal({
   const barcodeScanHandlerRef = useScanCodeHandler({
     // A thunk: addLineItem is declared further down and is read only when a code is scanned.
     addLineItem: (product) => {
+      // `created` is read in the same closure that performs the add, so it is exact even
+      // though setLineItems has not flushed yet (the scan screen uses it to undo).
+      const created = !lineItems.some((li) => li.productId === product.id);
       const typed = typedQtyRef.current;
       typedQtyRef.current = null;
       const fresh = !!typed && Date.now() - typed.at < 5000;
       addLineItem(product, fresh ? typed!.qty : 1);
       if (fresh) setAddQtyRaw("1"); // the typed qty was used — a scan that ignored it leaves it alone
+      return { created };
     },
     onUnknownCode: (code) => {
       setCreateProductInitialName("");
@@ -375,6 +414,37 @@ export function CreateOrderModal({
     setAppliedCredits([]);
   }, [selectedCustomer?.id]);
 
+  // scan_v2 / owner ruling D1: the customer's price applies IMMEDIATELY, including to lines scanned
+  // BEFORE the customer was chosen (the classic modal never re-priced them). Only lines whose price
+  // is still the auto-derived tier price move; an operator's one-time price, an upsell, or a
+  // history-prefilled override stands, as do unlisted lines and lines added before this snapshot
+  // existed (no `tierPrices`). Behind the gate so the classic modal's behaviour is untouched.
+  React.useEffect(() => {
+    if (!scanV2) return;
+    setLineItems((prev) => {
+      let changed = false;
+      const next = prev.map((li) => {
+        if (li.isUnlisted || !li.tierPrices) return li;
+        if (li.priceType === "DISCOUNTED" || li.priceType === "MANUAL") return li;
+        if (li.discountedPrice != null) return li;
+        const tier = cpMap.get(li.productId) ?? selectedCustomer?.pricingTier ?? 1;
+        const tierPrice = getTierPrice(li.tierPrices, tier);
+        const priceType = tier !== 1 ? ("SPECIAL" as const) : ("STANDARD" as const);
+        const specialPrice = tier !== 1 ? tierPrice : undefined;
+        if (
+          li.unitPrice === tierPrice &&
+          li.priceType === priceType &&
+          li.specialPrice === specialPrice
+        ) {
+          return li;
+        }
+        changed = true;
+        return { ...li, unitPrice: tierPrice, priceType, specialPrice };
+      });
+      return changed ? next : prev;
+    });
+  }, [scanV2, selectedCustomer?.pricingTier, cpMap]);
+
   // ── Derived totals ────────────────────────────────────────────────────────
 
   // Use the shared helper so the live "Line total" matches what the server
@@ -433,21 +503,46 @@ export function CreateOrderModal({
 
   // ── Stop management ───────────────────────────────────────────────────────
 
+  /**
+   * One scanned/picked unit on a line: a whole case for a case-packed line (a new line starts as
+   * one case, so a repeat must add a case too), one piece otherwise. For a boxed line the pricing
+   * package IGNORES `qty` once boxes/pieces are set, so bumping `qty` alone changes nothing the
+   * customer is charged for or sent — the repeat scan was silently a no-op.
+   */
+  const stepLineUnit = (li: LineItem, dir: 1 | -1): LineItem => {
+    if (li.unitsPerBox) {
+      const pieces = li.pieces ?? 0;
+      // Never step a case-packed line below one case (or its loose pieces) — undo must not zero it.
+      const boxes = Math.max(pieces > 0 ? 0 : 1, (li.boxes ?? 0) + dir);
+      return { ...li, boxes, qty: boxes * li.unitsPerBox + pieces };
+    }
+    return { ...li, qty: Math.max(1, li.qty + dir) };
+  };
+
   const addLineItem = (product: any, addQty = 1) => {
-    const n = parseAddQty(addQty);
-    // Already in the list: MERGE (sum) into that line instead of adding a duplicate — +1 for a
-    // scan / plain pick, +N for a typed qty. Box-aware: a case-packed line gains N cases and its
-    // qty is re-derived from boxes/pieces (pricing reads the split, not `qty`).
+    const n = orderUiV2 ? parseAddQty(addQty) : 1; // the typed Qty exists only under order_ui_v2
+    // Already in the list: MERGE (sum) into that line instead of adding a duplicate.
+    //  - order_ui_v2: +1 for a scan / plain pick, +N for a typed qty. Box-aware: a case-packed line
+    //    gains N cases and its qty is re-derived from boxes/pieces (pricing reads the split).
+    //  - scan_v2 alone: one whole case for a case-packed line (a new line starts as one case).
+    //  - neither: the classic picker keeps its historical +1 qty so nothing changes with the gates off.
+    const merge = (li: LineItem): LineItem =>
+      orderUiV2
+        ? mergeQtyIntoLine(li, n)
+        : scanV2
+          ? stepLineUnit(li, 1)
+          : { ...li, qty: li.qty + 1 };
     const existing = lineItems.find((li) => li.productId === product.id);
     if (existing) {
-      setLineItems((prev) =>
-        prev.map((li) => (li.productId === product.id ? mergeQtyIntoLine(li, n) : li)),
-      );
-      toast({
-        title: "Added to existing line",
-        description: mergedLineMessage(existing.productName, mergeQtyIntoLine(existing, n)),
-        variant: "info",
-      });
+      setLineItems((prev) => prev.map((li) => (li.productId === product.id ? merge(li) : li)));
+      // The scan screen shows its own running rows (a toast per repeat scan would bury them).
+      if (orderUiV2 && !scanScreenActive) {
+        toast({
+          title: "Added to existing line",
+          description: mergedLineMessage(existing.productName, merge(existing)),
+          variant: "info",
+        });
+      }
       setScrollToId(existing.tempId);
       setProductSearch("");
       setDebouncedProductSearch("");
@@ -499,6 +594,13 @@ export function CreateOrderModal({
         unitCost: product.averageCost != null ? Number(product.averageCost) : undefined,
         category: product.category ?? undefined,
         trackedCategoryId: product.trackedCategoryId ?? null,
+        tierPrices: {
+          pricePerUnit: product.pricePerUnit,
+          priceTier2: product.priceTier2,
+          priceTier3: product.priceTier3,
+          priceTier4: product.priceTier4,
+          priceTier5: product.priceTier5,
+        },
       },
     ]);
     setScrollToId(newTempId);
@@ -977,6 +1079,11 @@ export function CreateOrderModal({
             setMergePrompt(body.activeOrder as ActiveOrderSummary);
             return;
           }
+          const restricted = parseSellingRestricted(err);
+          if (restricted) {
+            setRestrictedBlock(restricted);
+            return;
+          }
           // A regulated line needs a verified license (or a §8 override / removal).
           const blocked = parseRegulatedAuthError(err);
           if (blocked && blocked.length > 0) {
@@ -1046,12 +1153,81 @@ export function CreateOrderModal({
       message?: string;
     } | null;
     if (!err) return null;
+    // A SELLING_RESTRICTED 409 has its own dialog; the banner would repeat it (with the rule's
+    // admin-written reason) and outlive the dialog's OK.
+    if (parseSellingRestricted(err)) return null;
     return err.response?.data?.message || err.message || "Something went wrong. Please try again.";
   })();
 
-  return (
+  // The same LineItemRow for the create-order list and the scan screen, so the two can never drift.
+  const renderLine = (li: LineItem, ctx?: { highlighted?: boolean }) => (
+    <LineItemRow
+      key={li.tempId}
+      item={li}
+      category={lineCategory(li) ?? null}
+      marginFloor={floorForCategory(marginConfig, li.category)}
+      floorAcked={floorAcked.has(li.tempId)}
+      costRevealed={costRevealed.has(li.tempId)}
+      priceHistoryEntry={priceHistory?.[li.productId]}
+      highlighted={ctx?.highlighted}
+      rowRef={(el) => {
+        if (el) rowRefs.current.set(li.tempId, el);
+        else rowRefs.current.delete(li.tempId);
+      }}
+      onQtyDelta={(delta) => updateQty(li.tempId, delta)}
+      onSetBoxes={(value) => setBoxes(li.tempId, value)}
+      onSetPieces={(value) => setPieces(li.tempId, value)}
+      onSetUnitQty={(value) => setUnitQty(li.tempId, value)}
+      onSetSellBy={(mode) => setSellBy(li.tempId, mode)}
+      onSetDiscountedPrice={(value) => setDiscountedPrice(li.tempId, value)}
+      onSetToFloor={(floorPrice) => setDiscountedPrice(li.tempId, floorPrice)}
+      onAckFloor={() => ackFloor(li.tempId)}
+      onToggleCostRevealed={() => toggleCostRevealed(li.tempId)}
+      onToggleNoteOpen={() => toggleNoteOpen(li.tempId)}
+      onSetNote={(note) => setLineNote(li.tempId, note)}
+      onUpdateUnlistedName={(name) => updateUnlistedName(li.tempId, name)}
+      onUpdateUnlistedPrice={(value) => updateUnlistedPrice(li.tempId, value)}
+      onRemove={() => removeLineItem(li.tempId)}
+    />
+  );
+
+  // Inverts one scan by taking ONE unit back. The line is dropped only when the scan created it AND
+  // it is still that single unit — so an operator who has since edited the quantity (or two rapid
+  // scans that both recorded "created") never loses the whole line to one Undo.
+  const undoScan = ({ productId, created }: ScanHistoryEntry) => {
+    const line = lineItems.find((li) => li.productId === productId);
+    if (!line) return; // the operator already removed it by hand
+    const singleUnit = line.unitsPerBox
+      ? (line.boxes ?? 0) <= 1 && (line.pieces ?? 0) === 0
+      : line.qty <= 1;
+    if (created && singleUnit) {
+      removeLineItem(line.tempId);
+      return;
+    }
+    setLineItems((prev) =>
+      prev.map((li) => (li.tempId === line.tempId ? stepLineUnit(li, -1) : li)),
+    );
+  };
+
+  // A product created from the unknown-barcode fallback lands on the order like a picked one.
+  const handleProductCreated = (product: any) => {
+    addLineItem({
+      id: product.id,
+      // A just-created variant's `name` is the bare flavor — compose
+      // "Parent - Flavor" so the line label matches picked products.
+      name: displayProductName(product),
+      sku: product.sku,
+      unit: product.unit,
+      pricePerUnit: product.pricePerUnit,
+      // Real box size so boxed products get the Boxes+Pcs editor.
+      unitsPerBox: product.unitsPerBox ?? undefined,
+    });
+    setCreateProductOpen(false);
+  };
+
+  const dialog = (
     <Modal
-      open={isOpen}
+      open={isOpen && !scanScreenActive}
       onClose={handleDismiss}
       onEscapeKeyDown={handleEscape}
       title={resumeDraftId ? "Resume draft" : "Create Order"}
@@ -1225,30 +1401,34 @@ export function CreateOrderModal({
                   }
                 }}
                 className={cn(
-                  "h-10 min-w-0 flex-1 rounded border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:outline-none focus:ring-2 focus:ring-brand-500",
+                  // B596: at 390 the [search][Qty][scan] row leaves ~200px — the placeholder is one line, so it
+                  // steps down a size and ellipsizes instead of being cut mid-word.
+                  "h-10 min-w-0 flex-1 text-ellipsis rounded border bg-white px-2 text-sm text-navy placeholder:text-xs placeholder:text-navy/70 focus:outline-none focus:ring-2 focus:ring-brand-500 sm:px-3 sm:placeholder:text-sm",
                   lineItemsError && lineItems.length === 0
                     ? "border-danger focus:border-transparent"
                     : "border-surface-border focus:border-transparent",
                 )}
               />
-              <input
-                type="number"
-                inputMode="numeric"
-                min={1}
-                max={9999}
-                value={addQtyRaw}
-                onChange={(e) => setAddQtyRaw(e.target.value)}
-                onFocus={(e) => e.target.select()}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    productSearchRef.current?.focus(); // commit the qty, move on to the search
-                  }
-                }}
-                aria-label="Quantity to add"
-                title="Quantity to add (cases for case-packed products)"
-                className="h-10 w-14 shrink-0 rounded border border-surface-border bg-white px-1 text-center text-sm font-semibold text-navy [appearance:textfield] focus:outline-none focus:ring-2 focus:ring-brand-500 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-              />
+              {orderUiV2 && (
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={9999}
+                  value={addQtyRaw}
+                  onChange={(e) => setAddQtyRaw(e.target.value)}
+                  onFocus={(e) => e.target.select()}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      productSearchRef.current?.focus(); // commit the qty, move on to the search
+                    }
+                  }}
+                  aria-label="Quantity to add"
+                  title="Quantity to add (cases for case-packed products)"
+                  className="h-10 w-14 shrink-0 rounded border border-surface-border bg-white px-1 text-center text-sm font-semibold text-navy [appearance:textfield] focus:outline-none focus:ring-2 focus:ring-brand-500 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                />
+              )}
               <BarcodeScannerButton
                 inputRef={productSearchRef}
                 onScan={(code) => {
@@ -1257,6 +1437,7 @@ export function CreateOrderModal({
                   barcodeScanHandlerRef.current(code);
                 }}
                 onError={(message) => toast({ variant: "error", title: message })}
+                onOpenContinuous={scanV2 ? () => setScanScreenOpen(true) : undefined}
                 className="h-10 min-h-[44px] w-10 min-w-[44px] shrink-0"
                 title="Scan barcode"
               />
@@ -1479,35 +1660,7 @@ export function CreateOrderModal({
             {/* Line items list */}
             {lineItems.length > 0 ? (
               <ul className="divide-y divide-surface-border overflow-hidden rounded-lg border border-surface-border">
-                {lineItems.map((li) => (
-                  <LineItemRow
-                    key={li.tempId}
-                    item={li}
-                    category={lineCategory(li) ?? null}
-                    marginFloor={floorForCategory(marginConfig, li.category)}
-                    floorAcked={floorAcked.has(li.tempId)}
-                    costRevealed={costRevealed.has(li.tempId)}
-                    priceHistoryEntry={priceHistory?.[li.productId]}
-                    rowRef={(el) => {
-                      if (el) rowRefs.current.set(li.tempId, el);
-                      else rowRefs.current.delete(li.tempId);
-                    }}
-                    onQtyDelta={(delta) => updateQty(li.tempId, delta)}
-                    onSetBoxes={(value) => setBoxes(li.tempId, value)}
-                    onSetPieces={(value) => setPieces(li.tempId, value)}
-                    onSetUnitQty={(value) => setUnitQty(li.tempId, value)}
-                    onSetSellBy={(mode) => setSellBy(li.tempId, mode)}
-                    onSetDiscountedPrice={(value) => setDiscountedPrice(li.tempId, value)}
-                    onSetToFloor={(floorPrice) => setDiscountedPrice(li.tempId, floorPrice)}
-                    onAckFloor={() => ackFloor(li.tempId)}
-                    onToggleCostRevealed={() => toggleCostRevealed(li.tempId)}
-                    onToggleNoteOpen={() => toggleNoteOpen(li.tempId)}
-                    onSetNote={(note) => setLineNote(li.tempId, note)}
-                    onUpdateUnlistedName={(name) => updateUnlistedName(li.tempId, name)}
-                    onUpdateUnlistedPrice={(value) => updateUnlistedPrice(li.tempId, value)}
-                    onRemove={() => removeLineItem(li.tempId)}
-                  />
-                ))}
+                {lineItems.map((li) => renderLine(li))}
               </ul>
             ) : (
               <div className="rounded-lg border border-dashed border-surface-border bg-surface-raised py-6 text-center">
@@ -1716,20 +1869,7 @@ export function CreateOrderModal({
       <InlineCreateProductModal
         isOpen={createProductOpen}
         onClose={() => setCreateProductOpen(false)}
-        onCreated={(product) => {
-          addLineItem({
-            id: product.id,
-            // A just-created variant's `name` is the bare flavor — compose
-            // "Parent - Flavor" so the line label matches picked products.
-            name: displayProductName(product),
-            sku: product.sku,
-            unit: product.unit,
-            pricePerUnit: product.pricePerUnit,
-            // Real box size so boxed products get the Boxes+Pcs editor.
-            unitsPerBox: product.unitsPerBox ?? undefined,
-          });
-          setCreateProductOpen(false);
-        }}
+        onCreated={handleProductCreated}
         initialName={createProductInitialName}
         initialSku={createProductInitialSku}
       />
@@ -1804,6 +1944,7 @@ export function CreateOrderModal({
       </Modal>
 
       {/* License guard (W6b): the sale hit a 409 REGULATED_AUTH_REQUIRED. */}
+      <BlockedLinesDialog lines={restrictedBlock} onClose={() => setRestrictedBlock(null)} />
       {licenseBlock && selectedCustomer && (
         <LicenseGuardModal
           open
@@ -1826,5 +1967,34 @@ export function CreateOrderModal({
         />
       )}
     </Modal>
+  );
+
+  return (
+    <>
+      {dialog}
+      {scanV2 && (
+        <ScanOrderScreen
+          open={isOpen && scanScreenOpen}
+          // The create-product dialog for an unknown barcode lives in the (closed) Dialog above, so
+          // while the scan screen is up it is rendered here — and the screen pauses beneath it.
+          paused={createProductOpen}
+          onClose={() => setScanScreenOpen(false)}
+          lines={lineItems}
+          renderLine={renderLine}
+          resolveCode={(code) => barcodeScanHandlerRef.current(code)}
+          onUndo={undoScan}
+          hasCustomer={!!selectedCustomer}
+        />
+      )}
+      {scanScreenActive && (
+        <InlineCreateProductModal
+          isOpen={createProductOpen}
+          onClose={() => setCreateProductOpen(false)}
+          onCreated={handleProductCreated}
+          initialName={createProductInitialName}
+          initialSku={createProductInitialSku}
+        />
+      )}
+    </>
   );
 }

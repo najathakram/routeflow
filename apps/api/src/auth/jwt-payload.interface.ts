@@ -19,6 +19,13 @@ export interface JwtPayload {
   hasPassword?: boolean;
   /** Present only on impersonation tokens issued by platform admins. */
   impersonatedBy?: string;
+  /**
+   * `"BUYER"` on the buyer-portal principal and on every pseudo-user built for a buyer's request
+   * (`makePseudoUser`): the selling-restrictions channel reads it (`restrictionChannelForPrincipal`),
+   * so a buyer route that overrides `role` (e.g. OPERATOR, to skip a userId lookup) is still the
+   * BUYER_PORTAL channel. Tenant tokens never carry it.
+   */
+  type?: "BUYER";
   // ─── Plans & Billing entitlement snapshot (client renders gates; server re-resolves) ───
   /** Plan key: STARTER | TEAM | BUSINESS | ENTERPRISE. */
   plan?: string;

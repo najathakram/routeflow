@@ -30,6 +30,7 @@ import {
 } from "../invoices/invoice-status-sets";
 import {
   loadCreditExposure,
+  OPEN_ORDER_STATUSES,
   RECEIVABLE_INVOICE_SELECT,
   receivableBalance,
 } from "../invoices/credit-exposure";
@@ -52,6 +53,7 @@ import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { buildPlanGateBody, PlanGateUpgrade } from "../billing/plan-gate";
 import { EmailService } from "../email/email.service";
+import { addressStateFields } from "./address-state";
 // Same grace window BillingCronService.expireGrace() clears hourly — the create()
 // gate applies it synchronously rather than waiting for the cron to run.
 import { GRACE_DAYS } from "../billing/plan-catalog.constants";
@@ -271,8 +273,8 @@ export class CustomersService {
 
     const enriched = data.map((c) => ({
       ...c,
-      receivables: receivablesMap[c.id] ?? 0,
-      unusedCredits: creditsMap[c.id] ?? 0,
+      receivables: roundMoney(receivablesMap[c.id] ?? 0),
+      unusedCredits: roundMoney(creditsMap[c.id] ?? 0),
       regulatedCount: (c as any)._count?.authorizations ?? 0,
     }));
 
@@ -602,6 +604,7 @@ export class CustomersService {
             line2: addr.line2,
             city: addr.city,
             state: addr.state,
+            ...addressStateFields(addr.state, addr.zip),
             zip: addr.zip,
             isDefault: idx === 0,
             ...(addressCoords[idx] ?? {}),
@@ -898,6 +901,7 @@ export class CustomersService {
           line2: dto.line2,
           city: dto.city,
           state: dto.state,
+          ...addressStateFields(dto.state, dto.zip),
           zip: dto.zip,
           isDefault: dto.isDefault ?? false,
           addressType: dto.addressType ?? "BILLING",
@@ -916,9 +920,28 @@ export class CustomersService {
           data: { isDefault: false },
         });
       }
+      // Recompute BOTH derived columns when the state or zip CHANGED (the form resends them unchanged
+      // on every save) or the code is NULL: a written code must never contradict its zip.
+      const current = await tx.customerAddress.findFirst({
+        where: { id: addrId, customerId: id },
+        select: { state: true, zip: true, stateCode: true },
+      });
+      if (!current) throw new NotFoundException("Address not found");
+      const stateChanged =
+        (dto.state !== undefined && dto.state !== current.state) ||
+        (dto.zip !== undefined && dto.zip !== current.zip) ||
+        current.stateCode == null;
       return tx.customerAddress.update({
         where: { id: addrId, customerId: id },
-        data: { ...dto, lat: null, lng: null }, // clear stale coords when address changes
+        // clear stale coords when the address changes
+        data: {
+          ...dto,
+          ...(stateChanged
+            ? addressStateFields(dto.state ?? current.state, dto.zip ?? current.zip)
+            : {}),
+          lat: null,
+          lng: null,
+        },
       });
     });
     // Re-geocode asynchronously (don't block the response)
@@ -1088,7 +1111,9 @@ export class CustomersService {
       this.prisma.forTenant().order.findMany({
         where: {
           customerId,
-          status: { in: ["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"] as any },
+          // The same open set `loadCreditExposure` uses (B584): a new open status can't reach the
+          // block but miss this tile.
+          status: { in: OPEN_ORDER_STATUSES },
         },
         select: { id: true, total: true, orderNumber: true, status: true, createdAt: true },
       }),
@@ -1839,7 +1864,7 @@ export class CustomersService {
         escCsv(c.phone),
         escCsv(c.customerType),
         escCsv(c.user?.status),
-        receivables.toFixed(2),
+        roundMoney(receivables).toFixed(2),
         credits.toFixed(2),
       ].join(",");
     });

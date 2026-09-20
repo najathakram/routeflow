@@ -65,6 +65,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
@@ -204,6 +205,13 @@ describe("OrdersService — BUY_N_GET_M (BOGO)", () => {
               unitCost: new Prisma.Decimal(0),
               stockAfter: new Prisma.Decimal(0),
             }),
+          },
+        },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "OFF", reasons: [] }),
           },
         },
         {

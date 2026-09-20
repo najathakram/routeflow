@@ -18,7 +18,9 @@
  * resolvable rows and flags the rest; D8 a second run is a no-op; D9 a row changed under the run
  * exits 4 and rolls everything back; D10 the guard refuses a non-approved tenant in every mode;
  * D11 the guard's happy path (unattended, test tenant); D12 an unknown --tenant-slug is exit 1;
- * D13 the --json document.
+ * D13 the --json document; D14 --max-rows refuses before any output or write; D15 --expect-rows
+ * is a real check (mismatch = exit 3, zero writes, in every confirmation path); D16 a resolution
+ * that contradicts the row's own zip is flagged and NEVER given a code.
  *
  * NEVER CALLS GOOGLE. `runCli` strips GOOGLE_MAPS_API_KEY from the child's environment and no case
  * passes `--google`, so nothing in this file can send an address anywhere; the Google leg is
@@ -65,7 +67,9 @@ const NOT_APPROVED_CUSTOMER_ID = `${ID_PREFIX}customer-zz`;
 const NOT_APPROVED_ADDRESS_ID = `${ID_PREFIX}addr-zz`;
 
 // Fixture address data: fake and distinctive, so a leak into an output is a plain substring match.
-const FIX = { line1: "1 Nas-Spec Fixture Way", city: "Nasfixtureville", zip: "90909" };
+// The zip is a MILITARY (AE) prefix on purpose: the ZIP cross-check has no state for it, so the
+// standard rows below resolve on their state text alone. D16 seeds its own real zips.
+const FIX = { line1: "1 Nas-Spec Fixture Way", city: "Nasfixtureville", zip: "09909" };
 
 const addrId = (n: number) => `${ID_PREFIX}addr-${n}`;
 const A1 = addrId(1); // "tx"            -> RESOLVED_LOCAL_EXACT  TX
@@ -82,10 +86,11 @@ const PHRASE_6 = "NORMALIZE 6 ADDRESSES";
 
 const SET_SQL =
   'UPDATE "CustomerAddress" SET "stateCode" = $1, "stateNeedsReview" = false, "updatedAt" = now() ' +
-  'WHERE "id" = $2 AND "stateCode" IS NULL RETURNING "id"';
+  'WHERE "id" = $2 AND "tenantId" = $3 AND "stateCode" IS NULL RETURNING "id"';
 const FLAG_SQL =
   'UPDATE "CustomerAddress" SET "stateNeedsReview" = true, "updatedAt" = now() ' +
-  'WHERE "id" = $1 AND "stateCode" IS NULL AND "stateNeedsReview" = false RETURNING "id"';
+  'WHERE "id" = $1 AND "tenantId" = $2 AND "stateCode" IS NULL AND "stateNeedsReview" = false ' +
+  'RETURNING "id"';
 
 type Snap = { stateCode: string | null; stateNeedsReview: boolean; updatedAt: number };
 
@@ -155,6 +160,7 @@ describeDb("normalize-address-states.mjs — real Postgres (report / dry-run / l
       customerId?: string;
       stateCode?: string | null;
       needsReview?: boolean;
+      zip?: string;
     } = {},
   ) {
     await db.query(
@@ -170,7 +176,7 @@ describeDb("normalize-address-states.mjs — real Postgres (report / dry-run / l
         FIX.line1,
         FIX.city,
         state,
-        FIX.zip,
+        opts.zip ?? FIX.zip,
         opts.stateCode ?? null,
         opts.needsReview ?? false,
         n,
@@ -278,9 +284,13 @@ describeDb("normalize-address-states.mjs — real Postgres (report / dry-run / l
     expect(out).toMatch(new RegExp(`id=${A2}.*\\[RESOLVED_LOCAL_ALIAS\\].*stateCode=NY`));
     expect(out).toMatch(new RegExp(`id=${A3}.*\\[RESOLVED_LOCAL_ALIAS\\].*stateCode=TX`));
     // no --google: the rows that WOULD need it say so, and EMPTY is never a Google candidate
-    expect(out).toMatch(new RegExp(`id=${A4}.*\\[UNRESOLVED:NEEDS_GOOGLE\\].*state="Tejas"`));
+    expect(out).toMatch(new RegExp(`id=${A4}.*\\[UNRESOLVED:NEEDS_GOOGLE\\]`));
     expect(out).toMatch(new RegExp(`id=${A5}.*\\[UNRESOLVED:EMPTY\\]`));
-    expect(out).toMatch(new RegExp(`id=${A6}.*\\[UNRESOLVED:NEEDS_GOOGLE\\].*state="Houston"`));
+    expect(out).toMatch(new RegExp(`id=${A6}.*\\[UNRESOLVED:NEEDS_GOOGLE\\]`));
+    // the raw free-text state is NOT printed unless asked for (--show-unresolved-text)
+    expect(out).not.toContain("state=");
+    expect(out).not.toContain("Tejas");
+    expect(out).not.toContain("Houston");
     expect(out).toContain(`tenantSlug=${TENANT_SLUG}`);
     // the control row (already normalised) and the NULL-tenant row are not in a scoped listing
     expect(out).not.toContain(A7);
@@ -296,12 +306,22 @@ describeDb("normalize-address-states.mjs — real Postgres (report / dry-run / l
 
     // read-only in fact, not only in the banner
     expect(await snapshot(ALL)).toEqual(before);
+
+    // opt-in: the truncated, escaped text of the UNRESOLVED rows only — never a resolved row's
+    const shown = runCli(scoped("--show-unresolved-text"));
+    expect(shown.status).toBe(0);
+    expect(shown.stdout).toMatch(new RegExp(`id=${A4}.*state="Tejas"`));
+    expect(shown.stdout).toMatch(new RegExp(`id=${A6}.*state="Houston"`));
+    expect(shown.stdout).not.toContain("Texas, USA");
+    expect(await snapshot(ALL)).toEqual(before);
   });
 
   it("D2 an UNSCOPED report lists the NULL-tenant row as NULL_TENANT and writes nothing", async () => {
     const before = await snapshot(ALL);
 
-    const report = jsonReport([]);
+    // The row ceiling is D14's subject; lifted here so a well-used compose DB (demo/e2e seeds) whose
+    // candidate count passes the default 500 cannot fail an unrelated case.
+    const report = jsonReport(["--max-rows", "100000"]);
 
     expect(report.mode).toBe("report");
     expect(report.tenantSlug).toBeNull();
@@ -327,7 +347,10 @@ describeDb("normalize-address-states.mjs — real Postgres (report / dry-run / l
     expect(res.stdout).toContain("$1 = NY");
     expect(res.stdout).toContain(`$2 = ${A1}`);
     expect(res.stdout).toContain(`$1 = ${A4}`);
-    // an unresolved row's statement has ONE parameter and can never carry a code
+    // every statement is pinned to the tenant the listing approved: $3 (set) / $2 (flag)
+    expect(res.stdout).toContain(`$3 = ${TENANT_ID}`);
+    expect(res.stdout).toContain(`$2 = ${TENANT_ID}`);
+    // an unresolved row's statement can never carry a code
     expect(res.stdout).not.toMatch(/stateCode" = \$1, "stateNeedsReview" = true/);
     expect(await snapshot(ALL)).toEqual(before);
   });
@@ -355,7 +378,7 @@ describeDb("normalize-address-states.mjs — real Postgres (report / dry-run / l
   it("D5 --live with a mismatched confirmation: exit 3 and no row is touched", async () => {
     const before = await snapshot(ALL);
 
-    const res = runCli(scoped("--live", "--backup-attested", ATTESTATION), {
+    const res = runCli(scoped("--live", "--backup-attested", ATTESTATION, "--expect-rows", "6"), {
       NORMALIZE_CONFIRM_TOKEN: "NORMALIZE 99 ADDRESSES",
     });
 
@@ -370,7 +393,7 @@ describeDb("normalize-address-states.mjs — real Postgres (report / dry-run / l
 
     // spawnSync gives the child a pipe, not a terminal, so this is the unattended case the TTY
     // check exists for — and NORMALIZE_CONFIRM_TOKEN is deliberately absent here.
-    const res = runCli(scoped("--live", "--backup-attested", ATTESTATION));
+    const res = runCli(scoped("--live", "--backup-attested", ATTESTATION, "--expect-rows", "6"));
 
     expect(res.status).toBe(3);
     expect(res.stderr).toContain("interactive TTY");
@@ -380,7 +403,7 @@ describeDb("normalize-address-states.mjs — real Postgres (report / dry-run / l
   it("D7 --live: exactly the resolvable rows get a code, the rest are only FLAGGED, nothing else moves", async () => {
     const before = await snapshot(ALL);
 
-    const res = runCli(scoped("--live", "--backup-attested", ATTESTATION), {
+    const res = runCli(scoped("--live", "--backup-attested", ATTESTATION, "--expect-rows", "6"), {
       NORMALIZE_CONFIRM_TOKEN: PHRASE_6,
     });
 
@@ -416,7 +439,7 @@ describeDb("normalize-address-states.mjs — real Postgres (report / dry-run / l
   });
 
   it("D8 a second run is a no-op: resolved rows are no longer candidates, flagged rows are not rewritten", async () => {
-    const first = runCli(scoped("--live", "--backup-attested", ATTESTATION), {
+    const first = runCli(scoped("--live", "--backup-attested", ATTESTATION, "--expect-rows", "6"), {
       NORMALIZE_CONFIRM_TOKEN: PHRASE_6,
     });
     expect(first.status).toBe(0);
@@ -428,7 +451,7 @@ describeDb("normalize-address-states.mjs — real Postgres (report / dry-run / l
     expect(report.rows.every((r) => r.alreadyFlagged)).toBe(true);
     expect(report.summary).toMatchObject({ candidates: 3, toWrite: 0 });
 
-    const again = runCli(scoped("--live", "--backup-attested", ATTESTATION), {
+    const again = runCli(scoped("--live", "--backup-attested", ATTESTATION, "--expect-rows", "0"), {
       NORMALIZE_CONFIRM_TOKEN: "NORMALIZE 0 ADDRESSES",
     });
     expect(again.status).toBe(0);
@@ -438,7 +461,7 @@ describeDb("normalize-address-states.mjs — real Postgres (report / dry-run / l
     expect(await snapshot(ALL)).toEqual(between);
   });
 
-  it("D9 a row that changes under the run: exit 4 and the WHOLE batch rolls back", async () => {
+  it("D9 a row that changes under the run: exit 4, the WHOLE batch rolls back, and --json still emits its document", async () => {
     const before = await snapshot(ALL);
 
     // Hold A6's row lock with an uncommitted change. The child's listing is a plain SELECT (MVCC),
@@ -446,10 +469,24 @@ describeDb("normalize-address-states.mjs — real Postgres (report / dry-run / l
     // statement in report order — then blocks on the lock, and when we commit, Postgres re-checks
     // the WHERE and finds "stateCode" no longer NULL: zero rows -> ROLLBACK -> exit 4. A1..A5's
     // statements already ran inside that transaction, so unchanged rows prove the rollback.
+    //
+    // TIMING. The script pins `statement_timeout = 60s` on its own connection and offers no knob to
+    // change it, so the lock is held for a bounded time far under that: we commit the moment the
+    // child is observed parked (its wait starts at that instant), and give up — with a clear
+    // failure, releasing the lock — if it is not parked within PARK_DEADLINE_MS. A timeout inside
+    // the script would surface as exit 1, never as the exit 4 asserted below. The child carries its
+    // own PGAPPNAME so the wait is attributed to IT, not to any other session's lock wait on the
+    // same table (parallel DB specs).
+    const PARK_DEADLINE_MS = 20_000;
+    const EXIT_DEADLINE_MS = 30_000;
+    const appName = `nas-d9-${RUN_SUFFIX}`;
     const blocker = new Client({ connectionString: databaseUrl });
     await blocker.connect();
     let committed = false;
     let child: ReturnType<typeof spawn> | null = null;
+    let stdout = "";
+    let stderr = "";
+    let exitCode: number | null | "timeout" = null;
     try {
       await blocker.query("BEGIN");
       await blocker.query('UPDATE "CustomerAddress" SET "stateCode" = $1 WHERE "id" = $2', [
@@ -457,49 +494,86 @@ describeDb("normalize-address-states.mjs — real Postgres (report / dry-run / l
         A6,
       ]);
 
+      // The UNATTENDED path (--only-test-tenants --confirm), with --json: the exit-4 branch must
+      // still print its JSON document.
       child = spawn(
         process.execPath,
-        [CLI, ...scoped("--live", "--backup-attested", ATTESTATION)],
+        [
+          CLI,
+          ...scoped(
+            "--only-test-tenants",
+            "--live",
+            "--confirm",
+            PHRASE_6,
+            "--backup-attested",
+            ATTESTATION,
+            "--json",
+          ),
+        ],
         {
           cwd: API_DIR,
-          env: cliEnv({ NORMALIZE_CONFIRM_TOKEN: PHRASE_6 }),
+          env: cliEnv({ PGAPPNAME: appName }),
           stdio: ["ignore", "pipe", "pipe"],
         },
       );
-      let stdout = "";
-      let stderr = "";
       child.stdout?.on("data", (chunk) => (stdout += String(chunk)));
       child.stderr?.on("data", (chunk) => (stderr += String(chunk)));
       const exited = new Promise<number | null>((resolve) => child!.on("close", resolve));
 
       // Wait until the child is genuinely parked on the lock — no sleeps standing in for it.
-      const deadline = Date.now() + 60_000;
+      const deadline = Date.now() + PARK_DEADLINE_MS;
       let blocked = false;
       while (!blocked && Date.now() < deadline) {
         const { rows } = await db.query(
           `SELECT 1 FROM pg_stat_activity
             WHERE datname = current_database()
+              AND application_name = $1
               AND wait_event_type = 'Lock'
               AND query LIKE 'UPDATE "CustomerAddress"%'`,
+          [appName],
         );
         blocked = rows.length > 0;
         if (!blocked) await new Promise((r) => setTimeout(r, 100));
       }
-      expect(blocked).toBe(true);
+      if (!blocked) {
+        throw new Error(
+          `D9: the CLI never parked on A6's row lock within ${PARK_DEADLINE_MS} ms ` +
+            `(slow start, or the lock was never taken) — cannot prove exit 4. ` +
+            `child stderr so far: ${stderr}`,
+        );
+      }
 
       await blocker.query("COMMIT");
       committed = true;
 
-      expect(await exited).toBe(4);
-      expect(stderr).toContain("ROLLED BACK");
-      expect(stderr).toContain(A6);
-      expect(stderr).toContain("nothing was written");
-      expect(stdout).not.toContain("=== APPLIED ===");
+      exitCode = await Promise.race([
+        exited,
+        new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), EXIT_DEADLINE_MS)),
+      ]);
     } finally {
       if (!committed) await blocker.query("ROLLBACK").catch(() => undefined);
       await blocker.end();
       if (child && child.exitCode === null) child.kill("SIGKILL");
     }
+
+    // one assertion carrying the evidence, so a failure names what the child actually said
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 4,
+      stderr: expect.stringContaining("ROLLED BACK"),
+    });
+    expect(stderr).toContain(A6);
+    expect(stderr).toContain("nothing was written");
+    // --json: exactly one document, naming the row that changed under us, with nothing applied
+    const doc = JSON.parse(stdout) as {
+      mode: string;
+      rolledBack: { table: string; id: string };
+      applied: Record<string, number>;
+      summary: { blocked?: boolean; toWrite: number };
+    };
+    expect(doc.mode).toBe("live");
+    expect(doc.rolledBack).toEqual({ table: "CustomerAddress", id: A6 });
+    expect(doc.applied).toEqual({});
+    expect(doc.summary).toMatchObject({ blocked: true, toWrite: 6 });
 
     const after = await snapshot(ALL);
     // A6 is the blocker's own committed change; A1..A5 are exactly as they were
@@ -540,21 +614,35 @@ describeDb("normalize-address-states.mjs — real Postgres (report / dry-run / l
       ATTESTATION,
     ]);
     expect(live.status).toBe(3);
+    // The gate is judged on the candidate LISTING before anything is classified, so the refusal
+    // names the TENANT (id + slug) and never an address row; it goes to stderr, stdout stays empty
+    // of rows.
+    expect(live.stderr).toContain("--only-test-tenants refuses this run");
+    expect(live.stderr).toContain(`tenantId=${NOT_APPROVED_TENANT_ID}`);
+    expect(live.stderr).toContain(`tenantSlug=${NOT_APPROVED_SLUG}`);
+    expect(live.stderr).toContain("NOTHING was written");
+    expect(live.stderr).toContain("NOTHING was sent to Google");
     const combined = live.stdout + live.stderr;
-    expect(combined).toContain("--only-test-tenants refuses this batch");
-    expect(combined).toContain(`CustomerAddress ${NOT_APPROVED_ADDRESS_ID}`);
-    expect(combined).toContain(`tenantSlug=${NOT_APPROVED_SLUG}`);
-    expect(combined).toContain("NOTHING was written");
-    expect(live.stdout).not.toContain("=== APPLIED ===");
+    expect(combined).not.toContain(NOT_APPROVED_ADDRESS_ID);
+    expect(combined).not.toContain("=== APPLIED ===");
+    expect(live.stdout).not.toContain("id=");
 
-    // enforced in --dry-run and in the plain report, so the preflight the owner reads IS the gate
+    // enforced in --dry-run and in the plain report, so the preflight the owner reads IS the gate —
+    // and it prints no candidate row on stdout before refusing
     const dry = runCli([...guardScope, "--only-test-tenants", "--dry-run"]);
     expect(dry.status).toBe(3);
-    expect(dry.stdout).toContain("=== REFUSED — --only-test-tenants ===");
+    expect(dry.stderr).toContain(`tenantSlug=${NOT_APPROVED_SLUG}`);
+    expect(dry.stdout).not.toContain("id=");
     expect(dry.stdout).not.toContain("statement(s) --live would execute");
     expect(runCli([...guardScope, "--only-test-tenants"]).status).toBe(3);
 
-    // Unscoped, the same row is in the whole-database write list — so the guard refuses that too,
+    // ...also under --json: the notice is on stderr, and stdout carries no document of rows
+    const asJson = runCli([...guardScope, "--only-test-tenants", "--dry-run", "--json"]);
+    expect(asJson.status).toBe(3);
+    expect(asJson.stderr).toContain(`tenantSlug=${NOT_APPROVED_SLUG}`);
+    expect(asJson.stdout.trim()).toBe("");
+
+    // Unscoped, the same tenant is in the whole-database listing — so the guard refuses that too,
     // whatever else the compose database holds.
     expect(runCli(["--only-test-tenants", "--dry-run"]).status).toBe(3);
 
@@ -633,5 +721,140 @@ describeDb("normalize-address-states.mjs — real Postgres (report / dry-run / l
       [A6]: "UNRESOLVED:NEEDS_GOOGLE",
     });
     expect(doc.updates!.every((u) => u.sql === SET_SQL || u.sql === FLAG_SQL)).toBe(true);
+  });
+  it("D14 --max-rows: more candidates than the ceiling is exit 2 before any row is printed or written", async () => {
+    const before = await snapshot(ALL);
+
+    for (const args of [
+      scoped("--max-rows", "5"),
+      scoped("--dry-run", "--max-rows", "5"),
+      scoped("--live", "--backup-attested", ATTESTATION, "--expect-rows", "6", "--max-rows", "5"),
+    ]) {
+      // the token would confirm a --live run if it ever got that far: it must not
+      const res = runCli(args, { NORMALIZE_CONFIRM_TOKEN: PHRASE_6 });
+      expect(res.status).toBe(2);
+      expect(res.stderr).toContain("6 candidate row(s)");
+      expect(res.stderr).toContain("--max-rows is 5");
+      expect(res.stderr).toContain("nothing was written");
+      expect(res.stdout).not.toContain("id="); // no candidate row was printed
+      expect(res.stdout).not.toContain("=== APPLIED ===");
+    }
+    expect(await snapshot(ALL)).toEqual(before);
+
+    // exactly at the ceiling is fine (the refusal is `>`, not `>=`)
+    const atCeiling = runCli(scoped("--dry-run", "--max-rows", "6"));
+    expect(atCeiling.status).toBe(0);
+    expect(atCeiling.stdout).toContain("the 6 statement(s) --live would execute");
+    expect(await snapshot(ALL)).toEqual(before);
+  });
+
+  it("D15 --expect-rows: a mismatch with the computed write count is exit 3 with zero writes, whichever way the confirmation is supplied", async () => {
+    const before = await snapshot(ALL);
+
+    const viaToken = runCli(
+      scoped("--live", "--backup-attested", ATTESTATION, "--expect-rows", "5"),
+      { NORMALIZE_CONFIRM_TOKEN: PHRASE_6 },
+    );
+    expect(viaToken.status).toBe(3);
+    expect(viaToken.stderr).toContain("--expect-rows 5 does not match the 6 row(s)");
+
+    const viaConfirm = runCli(
+      scoped(
+        "--only-test-tenants",
+        "--live",
+        "--confirm",
+        PHRASE_6,
+        "--backup-attested",
+        ATTESTATION,
+        "--expect-rows",
+        "7",
+      ),
+    );
+    expect(viaConfirm.status).toBe(3);
+    expect(viaConfirm.stderr).toContain("--expect-rows 7 does not match the 6 row(s)");
+    expect(viaConfirm.stdout).not.toContain("=== APPLIED ===");
+    expect(await snapshot(ALL)).toEqual(before);
+
+    // the right count writes (the phrase is still compared on top of it)
+    const ok = runCli(
+      scoped(
+        "--only-test-tenants",
+        "--live",
+        "--confirm",
+        PHRASE_6,
+        "--backup-attested",
+        ATTESTATION,
+        "--expect-rows",
+        "6",
+      ),
+    );
+    expect(ok.status).toBe(0);
+    expect(ok.stdout).toContain("=== APPLIED ===");
+    expect((await snapshot([A1])).get(A1)).toMatchObject({ stateCode: "TX" });
+
+    // a STALE expectation against an already-normalised scope is a loud refusal (computed 0 != 6),
+    // not a silent "nothing to do"
+    const stale = runCli(scoped("--live", "--backup-attested", ATTESTATION, "--expect-rows", "6"), {
+      NORMALIZE_CONFIRM_TOKEN: PHRASE_6,
+    });
+    expect(stale.status).toBe(3);
+    expect(stale.stderr).toContain("--expect-rows 6 does not match the 0 row(s)");
+    expect(stale.stdout).not.toContain("nothing to do");
+  });
+
+  it("D16 a resolution that contradicts the row's own zip is flagged and NEVER given a code (real rows, --live)", async () => {
+    const [WASH_DC, LA, KANSAS_OK, WASH_OK, WASH_BLANK, WASH_MIL] = [9, 10, 11, 12, 13, 14].map(
+      addrId,
+    );
+    await seedAddress(WASH_DC, 9, "Washington", { zip: "20001" }); // bare Washington, a DC zip
+    await seedAddress(LA, 10, "L.A.", { zip: "90012" }); // alias `la` = Louisiana, a Los Angeles zip
+    await seedAddress(KANSAS_OK, 11, "Kansas", { zip: "66101" }); // agrees
+    await seedAddress(WASH_OK, 12, "Washington", { zip: "98101" }); // a Seattle zip CONFIRMS it
+    // PC-lead ruling: an AMBIGUOUS text ("Washington" is also a city) with a blank or MILITARY zip is
+    // left UNRESOLVED (AMBIGUOUS_NEEDS_ZIP) — never guessed. The SQL's zip3 column is NULL for the blank row.
+    await seedAddress(WASH_BLANK, 13, "Washington", { zip: "" });
+    await seedAddress(WASH_MIL, 14, "Washington", { zip: "09001" }); // APO/FPO
+    const everything = [...ALL, WASH_DC, LA, KANSAS_OK, WASH_OK, WASH_BLANK, WASH_MIL];
+
+    const report = jsonReport(scoped("--dry-run"));
+    const verdict = Object.fromEntries(report.rows.map((r) => [r.id, r.verdict]));
+    expect(verdict[WASH_DC]).toBe("UNRESOLVED:ZIP_CONFLICT");
+    expect(verdict[LA]).toBe("UNRESOLVED:ZIP_CONFLICT");
+    expect(verdict[KANSAS_OK]).toBe("RESOLVED_LOCAL_EXACT");
+    expect(verdict[WASH_OK]).toBe("RESOLVED_LOCAL_EXACT");
+    expect(verdict[WASH_BLANK]).toBe("UNRESOLVED:AMBIGUOUS_NEEDS_ZIP");
+    expect(verdict[WASH_MIL]).toBe("UNRESOLVED:AMBIGUOUS_NEEDS_ZIP");
+    // the JSON carries state CODES for a conflict, never a zip or a zip prefix
+    const raw = runCli(scoped("--dry-run", "--json")).stdout;
+    expect(raw).toContain("ZIP_CONFLICT");
+    // The conflict payload names the allowed STATE codes (`zipStates` — a key that itself starts
+    // with "zip", so the assertions are on the exact key names), never a zip or a zip prefix.
+    expect(raw).toContain('"zipStates"');
+    expect(raw).not.toContain('"zip"');
+    expect(raw).not.toContain('"zip3"');
+
+    const before = await snapshot(everything);
+    const res = runCli(
+      scoped(
+        "--only-test-tenants",
+        "--live",
+        "--confirm",
+        "NORMALIZE 12 ADDRESSES",
+        "--backup-attested",
+        ATTESTATION,
+        "--expect-rows",
+        "12",
+      ),
+    );
+    expect(res.status).toBe(0);
+    const after = await snapshot(everything);
+    // the conflicts and the ambiguous-without-a-confirming-zip rows: ONLY the review annotation — no code
+    for (const rowId of [WASH_DC, LA, WASH_BLANK, WASH_MIL]) {
+      expect(after.get(rowId)).toMatchObject({ stateCode: null, stateNeedsReview: true });
+      expect(after.get(rowId)!.updatedAt).toBeGreaterThan(before.get(rowId)!.updatedAt);
+    }
+    // the agreeing ones: written
+    expect(after.get(KANSAS_OK)).toMatchObject({ stateCode: "KS", stateNeedsReview: false });
+    expect(after.get(WASH_OK)).toMatchObject({ stateCode: "WA", stateNeedsReview: false });
   });
 });

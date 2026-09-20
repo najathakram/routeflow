@@ -47,6 +47,16 @@ ARG NEXT_PUBLIC_API_URL=https://routeflowapi-production.up.railway.app/api/v1
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_GOOGLE_MAPS_KEY=""
 ENV NEXT_PUBLIC_GOOGLE_MAPS_KEY=$NEXT_PUBLIC_GOOGLE_MAPS_KEY
+# Release-health tagging (SentryInit.tsx): the browser-side Sentry release tag.
+# RAILWAY_GIT_COMMIT_SHA is a Railway system var proven present at container
+# RUNTIME (see apps/web/app/api/health/route.ts) but NOT proven present at
+# BUILD time, and a client component can only ever see a NEXT_PUBLIC_* var
+# baked in at `next build` — so this is its own build arg, populated by
+# setting a `NEXT_PUBLIC_RELEASE_SHA` service variable in Railway that
+# references `${{RAILWAY_GIT_COMMIT_SHA}}` (see apps/web/.env.example). Empty
+# default so a build with the var unset never fails.
+ARG NEXT_PUBLIC_RELEASE_SHA=""
+ENV NEXT_PUBLIC_RELEASE_SHA=$NEXT_PUBLIC_RELEASE_SHA
 # Purge any Next.js build cache to ensure a completely fresh build.
 # Then build the Next.js application (output: standalone is set in next.config.mjs)
 WORKDIR /app/apps/web

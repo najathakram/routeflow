@@ -22,6 +22,28 @@ export function useDeveloperMode(): { enabled: boolean; isLoading: boolean; reso
   return { enabled, isLoading, resolved: isSuccess };
 }
 
+// ─── scan_v2 (accumulating create-order scan screen) ──────────────────────────
+//
+// Fleet ruling 2026-09-19: no new plan flags while the feature registry is frozen, so the new scan
+// screen rides the `developer_mode` addon — already owner-grantable per tenant, dark by default
+// (`enabled` is false until the addons fetch succeeds AND lists it, so loading, an error and an
+// ungranted tenant all read OFF). One line to swap when a real flag exists; call sites use this
+// hook, never `useDeveloperMode` directly, so that swap touches only here.
+export function useScanV2(): boolean {
+  return useDeveloperMode().enabled;
+}
+
+// ─── Order UI v2 (card-list order detail — LANE-S / order-ui-redesign) ────────
+//
+// Dark until the owner flips it. Gated on the existing in-development surface flag
+// (`developer_mode`) behind ONE indirection, so promoting it to a real per-tenant plan flag
+// later is a one-line change here and not a hunt through call sites. Read through this hook
+// only — never `useDeveloperMode()` directly at an order-UI call site.
+export function useOrderUiV2(): { enabled: boolean; resolved: boolean } {
+  const dev = useDeveloperMode();
+  return { enabled: dev.enabled, resolved: dev.resolved };
+}
+
 // ─── Recurring routes (standing route templates + scheduled dispatch) ─────────
 //
 // Owner decision 2026-08-25: order delivery and recurring routes are separate
@@ -52,7 +74,7 @@ export function useOrderDelivery(): { enabled: boolean; isLoading: boolean; reso
 
 /** Order-delivery surface visibility — the feature addon alone (owner decision 2026-08-28:
  *  developer_mode no longer unlocks GA delivery features; it remains only for genuinely
- *  in-development surfaces, none of which exist on web today). */
+ *  in-development surfaces — today that is the order-detail card list, see `useOrderUiV2`). */
 export function useDeliveryAccess(): { enabled: boolean; resolved: boolean } {
   const od = useOrderDelivery();
   return { enabled: od.enabled, resolved: od.resolved };

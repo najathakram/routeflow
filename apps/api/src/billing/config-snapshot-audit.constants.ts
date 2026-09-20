@@ -1,0 +1,26 @@
+/**
+ * The audit action for an entitlement-config restore, written by BOTH paths so the admin UI reads
+ * one shape: the automatic restore on a re-upgrade (inside the plan-change transaction, by
+ * `PlanTransitionConfigService`) and the super-admin "Restore now" (by the platform-admin
+ * controller, where it is `AdminAuditAction.CONFIG_SNAPSHOT_RESTORED` — pinned equal by spec).
+ * `meta` carries `snapshotId`, `restoredToPlanKey` and `report` {restored, skipped, keptNewer,
+ * unchanged} — no migration: the report lives in the existing audit trail.
+ */
+export const CONFIG_SNAPSHOT_RESTORED_ACTION = "CONFIG_SNAPSHOT_RESTORED";
+
+/**
+ * Stripe checkout bookkeeping written into the existing audit trail (no migration), only while the
+ * snapshot flag is on. `APPLIED` (entityType `stripe_checkout_session`, entityId = the session id)
+ * is the processed-session record: a redelivered `checkout.session.completed` finds it and does
+ * nothing, so a late redelivery can never re-run an old plan change over a newer one. `STALE` marks
+ * a checkout whose plan change was NOT applied because a downgrade committed after the session was
+ * created; `HOOK_FAILED` is the alarm row when the plan-transition hook fails a paid checkout.
+ */
+export const STRIPE_CHECKOUT_ENTITY = "stripe_checkout_session";
+export const STRIPE_CHECKOUT_APPLIED_ACTION = "STRIPE_CHECKOUT_APPLIED";
+export const STRIPE_CHECKOUT_STALE_ACTION = "STRIPE_CHECKOUT_PLAN_SKIPPED_STALE";
+/** A checkout session refused outright (unknown tenant / a customer that is not the tenant's). */
+export const STRIPE_CHECKOUT_REFUSED_ACTION = "STRIPE_CHECKOUT_REFUSED";
+/** An automatic restore that failed or was abandoned: the plan change went ahead without it. */
+export const CONFIG_SNAPSHOT_RESTORE_FAILED_ACTION = "CONFIG_SNAPSHOT_RESTORE_FAILED";
+export const STRIPE_CHECKOUT_HOOK_FAILED_ACTION = "STRIPE_CHECKOUT_HOOK_FAILED";

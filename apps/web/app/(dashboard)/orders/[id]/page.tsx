@@ -58,7 +58,7 @@ import {
 } from "@/lib/api/orders";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
-import { SALES_AGENTS_ADDON } from "@/lib/api/addons";
+import { SALES_AGENTS_ADDON, useOrderUiV2 } from "@/lib/api/addons";
 import { describeCancelImpact } from "@/lib/cancel-impact";
 import { fmtCalendarDate, isInternalEmail } from "@/lib/formatting";
 import { formatMoney, formatQty } from "@/lib/format";
@@ -71,7 +71,11 @@ import {
 import { useCreateInvoiceFromOrder, useSendInvoice, useSendInvoiceEmail } from "@/lib/api/invoices";
 import { LicenseGuardModal } from "../_components/LicenseGuardModal";
 import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
+import { OrderLineItemCards } from "./_components/OrderLineItemCards";
+import { ActionTier } from "./_components/ActionTier";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
+import { CreditLimitGuardDialog } from "@/components/CreditLimitGuardDialog";
+import { parseCreditLimitError, type CreditLimitInfo } from "@/lib/api/credit-limit";
 import { useProducts } from "@/lib/api/products";
 import {
   computeLineSubtotal,
@@ -1713,6 +1717,8 @@ export default function OrderDetailPage() {
   const id = params.id as string;
   const { setTitle } = usePageTitle();
   const { data: order, isLoading, isError } = useOrder(id);
+  // `order_ui_v2` (dark): card-list lines instead of the table.
+  const orderUiV2 = useOrderUiV2();
   const { data: priceHistory } = useCustomerPriceHistory(order?.customerId);
   // Customer tier pricing (mirrors mobile's edit-items screen): a substituted
   // line prices off the customer's effective tier, not the raw list price.
@@ -1787,6 +1793,8 @@ export default function OrderDetailPage() {
   // License guard (W6b): the edit/promote guard can 409 REGULATED_AUTH_REQUIRED.
   const [licenseBlock, setLicenseBlock] = React.useState<BlockedCategory[] | null>(null);
   const licenseRetryRef = React.useRef<(() => void) | null>(null);
+  // Credit limit: the server's numbers + a "collect a payment" exit (no override exists).
+  const [creditBlock, setCreditBlock] = React.useState<CreditLimitInfo | null>(null);
   // Opens the guard modal on a REGULATED_AUTH_REQUIRED 409; other errors fall
   // through to the global mutation toast.
   const guardError = (retry: () => void) => (err: unknown) => {
@@ -1794,7 +1802,11 @@ export default function OrderDetailPage() {
     if (blocked && blocked.length > 0) {
       licenseRetryRef.current = retry;
       setLicenseBlock(blocked);
+      return;
     }
+    // A credit-limit 409 gets its own dialog (real numbers + a way out), not a bare toast.
+    const credit = parseCreditLimitError(err);
+    if (credit) setCreditBlock(credit);
   };
 
   // Status tracking — use actual API status directly
@@ -1937,8 +1949,8 @@ export default function OrderDetailPage() {
    * lost race: toast what happened and let the hook's onSettled invalidation
    * refetch the winning state. REGULATED_AUTH_REQUIRED routes into the
    * existing license-guard modal with a retry, like every other guarded 409
-   * on this page. INSUFFICIENT_STOCK / CREDIT_LIMIT_EXCEEDED carry a server
-   * message and surface via the global mutation toast — no handling needed.
+   * on this page. CREDIT_LIMIT_EXCEEDED opens the credit guard dialog via guardError;
+   * INSUFFICIENT_STOCK carries a server message and surfaces via the global mutation toast.
    */
   function handleResolve(cr: ChangeRequest, action: ChangeRequestResolveAction, reason?: string) {
     const run = () =>
@@ -2259,6 +2271,8 @@ export default function OrderDetailPage() {
     updateStatus.mutate(
       { id: order.id, status: "DELIVERED" },
       {
+        // Delivery can be refused for credit (B585 gate): open the guard, not a bare toast.
+        onError: guardError(() => handleDeliver()),
         onSuccess: () => {
           setLocalStatus("DELIVERED");
           // Create the invoice (idempotent — returns existing if already there)
@@ -2462,14 +2476,16 @@ export default function OrderDetailPage() {
         <div className="flex flex-wrap items-center gap-2">
           {/* Edit Items button */}
           {canEdit && !isEditing && (
-            <Button
-              size="sm"
-              variant="secondary"
-              leftIcon={<Pencil className="h-4 w-4" />}
-              onClick={enterEditMode}
-            >
-              Edit Items
-            </Button>
+            <ActionTier tier="secondary">
+              <Button
+                size="sm"
+                variant="secondary"
+                leftIcon={<Pencil className="h-4 w-4" />}
+                onClick={enterEditMode}
+              >
+                Edit Items
+              </Button>
+            </ActionTier>
           )}
 
           {/* P5-08 / R1: staff editing closes only once the order is CANCELLED
@@ -2509,202 +2525,222 @@ export default function OrderDetailPage() {
           {/* DRAFT actions */}
           {localStatus === "DRAFT" && !isEditing && (
             <>
-              <Button
-                size="sm"
-                leftIcon={<CheckCircle2 className="h-4 w-4" />}
-                onClick={() => {
-                  const publish = () =>
-                    updateStatus.mutate(
-                      { id: order.id, status: "PENDING" as any },
-                      {
-                        onSuccess: () => setLocalStatus("PENDING"),
-                        onError: guardError(() => publish()),
-                      },
-                    );
-                  publish();
-                }}
-                loading={updateStatus.isPending}
-              >
-                Publish Order
-              </Button>
-              {showDeleteConfirm ? (
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-danger font-medium">Delete order?</span>
-                  <Button
-                    size="sm"
-                    variant="danger"
-                    loading={deleteOrder.isPending}
-                    onClick={() => {
-                      deleteOrder.mutate(order.id, {
-                        onSuccess: () => {
-                          toast({ title: "Draft deleted", variant: "success" });
-                          router.push("/orders");
-                        },
-                        onError: (e) => {
-                          toast({ title: e.message, variant: "error" });
-                          setShowDeleteConfirm(false);
-                        },
-                      });
-                    }}
-                  >
-                    Confirm Delete
-                  </Button>
-                  <button
-                    onClick={() => setShowDeleteConfirm(false)}
-                    className="text-sm text-navy/70 hover:text-navy transition-colors"
-                  >
-                    No
-                  </button>
-                </div>
-              ) : (
+              <ActionTier tier="primary">
                 <Button
                   size="sm"
-                  variant="ghost"
-                  leftIcon={<Trash2 className="h-4 w-4" />}
-                  onClick={() => setShowDeleteConfirm(true)}
+                  leftIcon={<CheckCircle2 className="h-4 w-4" />}
+                  onClick={() => {
+                    const publish = () =>
+                      updateStatus.mutate(
+                        { id: order.id, status: "PENDING" as any },
+                        {
+                          onSuccess: () => setLocalStatus("PENDING"),
+                          onError: guardError(() => publish()),
+                        },
+                      );
+                    publish();
+                  }}
+                  loading={updateStatus.isPending}
                 >
-                  Delete Draft
+                  Publish Order
                 </Button>
-              )}
+              </ActionTier>
+              <ActionTier tier="danger">
+                {showDeleteConfirm ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-danger font-medium">Delete order?</span>
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      loading={deleteOrder.isPending}
+                      onClick={() => {
+                        deleteOrder.mutate(order.id, {
+                          onSuccess: () => {
+                            toast({ title: "Draft deleted", variant: "success" });
+                            router.push("/orders");
+                          },
+                          onError: (e) => {
+                            toast({ title: e.message, variant: "error" });
+                            setShowDeleteConfirm(false);
+                          },
+                        });
+                      }}
+                    >
+                      Confirm Delete
+                    </Button>
+                    <button
+                      onClick={() => setShowDeleteConfirm(false)}
+                      className="text-sm text-navy/70 hover:text-navy transition-colors"
+                    >
+                      No
+                    </button>
+                  </div>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    leftIcon={<Trash2 className="h-4 w-4" />}
+                    onClick={() => setShowDeleteConfirm(true)}
+                  >
+                    Delete Draft
+                  </Button>
+                )}
+              </ActionTier>
             </>
           )}
 
           {/* PENDING actions */}
           {localStatus === "PENDING" && !isEditing && (
             <>
-              <Button
-                size="sm"
-                leftIcon={<CheckCircle2 className="h-4 w-4" />}
-                onClick={handleConfirm}
-                loading={updateStatus.isPending}
-              >
-                Confirm Order
-              </Button>
-              <Button
-                size="sm"
-                variant="danger"
-                leftIcon={<XCircle className="h-4 w-4" />}
-                onClick={handleCancel}
-              >
-                Cancel Order
-              </Button>
-              {showDeleteConfirm ? (
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-danger font-medium">Delete order?</span>
-                  <Button
-                    size="sm"
-                    variant="danger"
-                    loading={deleteOrder.isPending}
-                    onClick={() => {
-                      deleteOrder.mutate(order.id, {
-                        onSuccess: () => {
-                          toast({ title: "Order deleted", variant: "success" });
-                          router.push("/orders");
-                        },
-                        onError: (e) => {
-                          toast({ title: e.message, variant: "error" });
-                          setShowDeleteConfirm(false);
-                        },
-                      });
-                    }}
-                  >
-                    Confirm Delete
-                  </Button>
-                  <button
-                    onClick={() => setShowDeleteConfirm(false)}
-                    className="text-sm text-navy/70 hover:text-navy transition-colors"
-                  >
-                    No
-                  </button>
-                </div>
-              ) : (
+              <ActionTier tier="primary">
                 <Button
                   size="sm"
-                  variant="ghost"
-                  leftIcon={<Trash2 className="h-4 w-4" />}
-                  onClick={() => setShowDeleteConfirm(true)}
+                  leftIcon={<CheckCircle2 className="h-4 w-4" />}
+                  onClick={handleConfirm}
+                  loading={updateStatus.isPending}
                 >
-                  Delete
+                  Confirm Order
                 </Button>
-              )}
+              </ActionTier>
+              <ActionTier tier="danger">
+                <Button
+                  size="sm"
+                  variant="danger"
+                  leftIcon={<XCircle className="h-4 w-4" />}
+                  onClick={handleCancel}
+                >
+                  Cancel Order
+                </Button>
+                {showDeleteConfirm ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-danger font-medium">Delete order?</span>
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      loading={deleteOrder.isPending}
+                      onClick={() => {
+                        deleteOrder.mutate(order.id, {
+                          onSuccess: () => {
+                            toast({ title: "Order deleted", variant: "success" });
+                            router.push("/orders");
+                          },
+                          onError: (e) => {
+                            toast({ title: e.message, variant: "error" });
+                            setShowDeleteConfirm(false);
+                          },
+                        });
+                      }}
+                    >
+                      Confirm Delete
+                    </Button>
+                    <button
+                      onClick={() => setShowDeleteConfirm(false)}
+                      className="text-sm text-navy/70 hover:text-navy transition-colors"
+                    >
+                      No
+                    </button>
+                  </div>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    leftIcon={<Trash2 className="h-4 w-4" />}
+                    onClick={() => setShowDeleteConfirm(true)}
+                  >
+                    Delete
+                  </Button>
+                )}
+              </ActionTier>
             </>
           )}
 
           {/* CONFIRMED actions */}
           {localStatus === "CONFIRMED" && !isEditing && (
             <>
-              <div className="flex flex-col items-start gap-1">
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  leftIcon={<Truck className="h-4 w-4" />}
-                  onClick={handleLock}
-                  loading={updateStatus.isPending}
-                >
-                  {order.fulfillPath === "SHIP" ? "Mark shipped" : "Out for Delivery"}
-                </Button>
-                {order.fulfillPath === "SHIP" && (
-                  <p className="text-[11px] text-navy/50">
-                    Sets the order to Out for Delivery — the customer is notified it&apos;s on the
-                    way.
-                  </p>
-                )}
-              </div>
+              <ActionTier tier="primary">
+                <div className="flex flex-col items-start gap-1">
+                  <Button
+                    size="sm"
+                    variant={orderUiV2.enabled ? undefined : "secondary"}
+                    leftIcon={<Truck className="h-4 w-4" />}
+                    onClick={handleLock}
+                    loading={updateStatus.isPending}
+                  >
+                    {order.fulfillPath === "SHIP" ? "Mark shipped" : "Out for Delivery"}
+                  </Button>
+                  {order.fulfillPath === "SHIP" && (
+                    <p className="text-[11px] text-navy/50">
+                      Sets the order to Out for Delivery — the customer is notified it&apos;s on the
+                      way.
+                    </p>
+                  )}
+                </div>
+              </ActionTier>
               {/* CONFIRMED→PENDING is a demotion — the server rejects it without a
                   reason, so the ONLY path is the DemoteReasonModal. A second
                   "Unconfirm" button used to submit directly (predating the
                   reason rule) and guaranteed a 400 with nowhere to type one. */}
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<RotateCcw className="h-4 w-4" />}
-                onClick={() => setDemoteTarget("PENDING")}
-                loading={updateStatus.isPending}
-              >
-                Unconfirm
-              </Button>
-              <Button
-                size="sm"
-                variant="danger"
-                leftIcon={<XCircle className="h-4 w-4" />}
-                onClick={handleCancel}
-              >
-                Cancel Order
-              </Button>
-              {renderDeleteOrderAction("Delete this order? This can't be undone.")}
+              <ActionTier tier="secondary">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  leftIcon={<RotateCcw className="h-4 w-4" />}
+                  onClick={() => setDemoteTarget("PENDING")}
+                  loading={updateStatus.isPending}
+                >
+                  Unconfirm
+                </Button>
+              </ActionTier>
+              <ActionTier tier="danger">
+                <Button
+                  size="sm"
+                  variant="danger"
+                  leftIcon={<XCircle className="h-4 w-4" />}
+                  onClick={handleCancel}
+                >
+                  Cancel Order
+                </Button>
+                {renderDeleteOrderAction("Delete this order? This can't be undone.")}
+              </ActionTier>
             </>
           )}
 
           {/* OUT_FOR_DELIVERY actions */}
           {localStatus === "OUT_FOR_DELIVERY" && (
             <>
-              <Button
-                size="sm"
-                leftIcon={<CheckCircle2 className="h-4 w-4" />}
-                onClick={handleDeliver}
-                loading={updateStatus.isPending}
-              >
-                {order.fulfillPath === "SHIP" ? "Mark delivered" : "Mark as Delivered"}
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<RefreshCcw className="h-4 w-4" />}
-                onClick={() => setDemoteTarget("CONFIRMED")}
-              >
-                {order.fulfillPath === "SHIP" ? "Unmark shipped" : "Return to Confirmed"}
-              </Button>
-              <Button
-                size="sm"
-                variant="danger"
-                leftIcon={<XCircle className="h-4 w-4" />}
-                onClick={handleCancel}
-              >
-                Cancel Order
-              </Button>
-              {renderDeleteOrderAction(
-                "Delete this order? It's out for delivery — this can't be undone.",
-              )}
+              <ActionTier tier="primary">
+                <Button
+                  size="sm"
+                  leftIcon={<CheckCircle2 className="h-4 w-4" />}
+                  onClick={handleDeliver}
+                  loading={updateStatus.isPending}
+                >
+                  {order.fulfillPath === "SHIP" ? "Mark delivered" : "Mark as Delivered"}
+                </Button>
+              </ActionTier>
+              <ActionTier tier="secondary">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  leftIcon={<RefreshCcw className="h-4 w-4" />}
+                  onClick={() => setDemoteTarget("CONFIRMED")}
+                >
+                  {order.fulfillPath === "SHIP" ? "Unmark shipped" : "Return to Confirmed"}
+                </Button>
+              </ActionTier>
+              <ActionTier tier="danger">
+                <Button
+                  size="sm"
+                  variant="danger"
+                  leftIcon={<XCircle className="h-4 w-4" />}
+                  onClick={handleCancel}
+                >
+                  Cancel Order
+                </Button>
+                {renderDeleteOrderAction(
+                  "Delete this order? It's out for delivery — this can't be undone.",
+                )}
+              </ActionTier>
             </>
           )}
 
@@ -2717,83 +2753,91 @@ export default function OrderDetailPage() {
               special-cased UI needed here. */}
           {localStatus === "DELIVERED" && (
             <>
-              <div className="flex flex-col items-start gap-1">
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  leftIcon={<RotateCcw className="h-4 w-4" />}
-                  onClick={() => setDemoteTarget("CONFIRMED")}
-                >
-                  Reopen Order
-                </Button>
-                <p className="text-[11px] text-navy/50">
-                  Reopening keeps the invoice in sync while you edit. Orders delivered on a route
-                  reopen at their original stop.
-                </p>
-              </div>
-              {renderDeleteOrderAction(
-                "Delete this DELIVERED order? Its delivery record is removed permanently.",
-              )}
+              <ActionTier tier="secondary">
+                <div className="flex flex-col items-start gap-1">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    leftIcon={<RotateCcw className="h-4 w-4" />}
+                    onClick={() => setDemoteTarget("CONFIRMED")}
+                  >
+                    Reopen Order
+                  </Button>
+                  <p className="text-[11px] text-navy/50">
+                    Reopening keeps the invoice in sync while you edit. Orders delivered on a route
+                    reopen at their original stop.
+                  </p>
+                </div>
+              </ActionTier>
+              <ActionTier tier="danger">
+                {renderDeleteOrderAction(
+                  "Delete this DELIVERED order? Its delivery record is removed permanently.",
+                )}
+              </ActionTier>
             </>
           )}
 
           {/* CANCELLED */}
           {localStatus === "CANCELLED" && (
             <>
-              <Button
-                variant="secondary"
-                size="sm"
-                leftIcon={<RotateCcw className="h-4 w-4" />}
-                onClick={() => {
-                  if (confirm("Reopen this order? It will return to Pending status.")) {
-                    reopenOrder.mutate(order.id, {
-                      onSuccess: () => setLocalStatus("PENDING"),
-                    });
-                  }
-                }}
-                loading={reopenOrder.isPending}
-              >
-                Reopen Order
-              </Button>
-              {showDeleteConfirm ? (
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-danger font-medium">Delete order?</span>
+              <ActionTier tier="secondary">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  leftIcon={<RotateCcw className="h-4 w-4" />}
+                  onClick={() => {
+                    if (confirm("Reopen this order? It will return to Pending status.")) {
+                      reopenOrder.mutate(order.id, {
+                        onSuccess: () => setLocalStatus("PENDING"),
+                      });
+                    }
+                  }}
+                  loading={reopenOrder.isPending}
+                >
+                  Reopen Order
+                </Button>
+              </ActionTier>
+              <ActionTier tier="danger">
+                {showDeleteConfirm ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-danger font-medium">Delete order?</span>
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      loading={deleteOrder.isPending}
+                      onClick={() => {
+                        deleteOrder.mutate(order.id, {
+                          onSuccess: () => {
+                            toast({ title: "Order deleted", variant: "success" });
+                            router.push("/orders");
+                          },
+                          onError: (e) => {
+                            toast({ title: e.message, variant: "error" });
+                            setShowDeleteConfirm(false);
+                          },
+                        });
+                      }}
+                    >
+                      Confirm Delete
+                    </Button>
+                    <button
+                      onClick={() => setShowDeleteConfirm(false)}
+                      className="text-sm text-navy/70 hover:text-navy transition-colors"
+                    >
+                      No
+                    </button>
+                  </div>
+                ) : (
                   <Button
                     size="sm"
-                    variant="danger"
-                    loading={deleteOrder.isPending}
-                    onClick={() => {
-                      deleteOrder.mutate(order.id, {
-                        onSuccess: () => {
-                          toast({ title: "Order deleted", variant: "success" });
-                          router.push("/orders");
-                        },
-                        onError: (e) => {
-                          toast({ title: e.message, variant: "error" });
-                          setShowDeleteConfirm(false);
-                        },
-                      });
-                    }}
+                    variant="ghost"
+                    leftIcon={<Trash2 className="h-4 w-4" />}
+                    onClick={() => setShowDeleteConfirm(true)}
                   >
-                    Confirm Delete
+                    Delete
                   </Button>
-                  <button
-                    onClick={() => setShowDeleteConfirm(false)}
-                    className="text-sm text-navy/70 hover:text-navy transition-colors"
-                  >
-                    No
-                  </button>
-                </div>
-              ) : (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  leftIcon={<Trash2 className="h-4 w-4" />}
-                  onClick={() => setShowDeleteConfirm(true)}
-                >
-                  Delete
-                </Button>
-              )}
+                )}
+              </ActionTier>
             </>
           )}
         </div>
@@ -2989,6 +3033,12 @@ export default function OrderDetailPage() {
                   )}
                 </div>
               </div>
+            ) : orderUiV2.enabled ? (
+              <OrderLineItemCards
+                lineItems={order.lineItems}
+                orderStatus={order.status}
+                total={total}
+              />
             ) : (
               <OrderLineItemsTable
                 lineItems={order.lineItems}
@@ -3542,6 +3592,11 @@ export default function OrderDetailPage() {
           onClose={() => setLicenseBlock(null)}
         />
       )}
+      <CreditLimitGuardDialog
+        info={creditBlock}
+        customerId={order?.customerId}
+        onClose={() => setCreditBlock(null)}
+      />
     </div>
   );
 }

@@ -1,0 +1,32 @@
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiClient } from "../api-client";
+import type {
+  CreateSellingRestrictionRequest,
+  SellingRestrictionListItemDto,
+} from "@routeflow/types";
+
+/**
+ * Create a selling-restriction rule (TENANT_ADMIN). No `onError` here on purpose: the API's plain
+ * 400/404/409 messages ("A state restriction needs at least one state.", "That category is
+ * archived…") reach the user through the app's single global mutation toast — a second inline
+ * message would double it. Refreshes every cached rules list (the "selling-restrictions" prefix).
+ */
+// scan-ok: dead-hook — its caller, the New-rule dialog (LANE-R step 5b-2b), lands in the next PR; the size cap split it out. Remove this note then.
+export function useCreateRestriction() {
+  const qc = useQueryClient();
+  return useMutation<SellingRestrictionListItemDto, Error, CreateSellingRestrictionRequest>({
+    mutationFn: (body) => apiClient.post("/selling-restrictions", body).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["selling-restrictions"] }),
+  });
+}
+
+/** Lift a rule now (TENANT_ADMIN). Same single-toast rule as create. */
+// scan-ok: dead-hook — its caller, the Lift-rule dialog (LANE-R step 5b-3), lands in a later PR; the size cap split it out. Remove this note then.
+export function useLiftRestriction() {
+  const qc = useQueryClient();
+  return useMutation<SellingRestrictionListItemDto, Error, { id: string; reason: string }>({
+    mutationFn: ({ id, reason }) =>
+      apiClient.post(`/selling-restrictions/${id}/lift`, { reason }).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["selling-restrictions"] }),
+  });
+}

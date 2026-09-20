@@ -56,6 +56,13 @@ jest.mock("@/lib/api/margin", () => ({
 }));
 jest.mock("@/lib/api/tracked-categories", () => ({ useTrackedCategories: () => ({ data: [] }) }));
 jest.mock("@/lib/api/tobacco", () => ({ useHasAddon: () => false }));
+// order_ui_v2 is the gate for every behaviour under test (dark by default); scan_v2 stays off.
+let mockOrderUiV2 = true;
+jest.mock("@/lib/api/addons", () => ({
+  ...jest.requireActual("@/lib/api/addons"),
+  useOrderUiV2: () => ({ enabled: mockOrderUiV2, resolved: true }),
+  useScanV2: () => false,
+}));
 jest.mock("@/lib/api-client", () => ({
   apiClient: {
     get: jest.fn().mockResolvedValue({ data: { taxRate: 0 } }),
@@ -288,5 +295,38 @@ describe("typed Qty does not outlive the builder session", () => {
     fireEvent.keyDown(qtyField(), { key: "Enter" });
     expect(document.activeElement).toBe(search());
     expect(qtyField().value).toBe("5");
+  });
+});
+
+describe("order_ui_v2 OFF — the modal is what it was (LANE-S step 10)", () => {
+  beforeEach(() => {
+    mockOrderUiV2 = false;
+  });
+  afterEach(() => {
+    mockOrderUiV2 = true;
+  });
+
+  it("has no Qty field", async () => {
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await screen.findByPlaceholderText(/search by name, sku or scan barcode/i);
+    expect(screen.queryByLabelText("Quantity to add")).not.toBeInTheDocument();
+  });
+
+  it("a repeat add keeps its historical +1 qty and says nothing", async () => {
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await pick("Sample Cola");
+    await waitFor(() => expect(lineFor("Sample Cola")).toBeTruthy());
+    await pick("Sample Cola");
+    await waitFor(() => expect(lineFor("Sample Cola").textContent).toContain("2"));
+    expect(mockToast).not.toHaveBeenCalled();
+  });
+
+  it("a repeat add on a case-packed line is the historical +1 unit, not a whole extra case", async () => {
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await pick("Sample Chips");
+    await waitFor(() => expect(lineFor("Sample Chips")).toBeTruthy());
+    await pick("Sample Chips");
+    await waitFor(() => expect(lineFor("Sample Chips").textContent).toContain("13 pcs total"));
+    expect(mockToast).not.toHaveBeenCalled();
   });
 });

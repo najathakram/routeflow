@@ -15,17 +15,12 @@ import type { Queue } from "bull";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import {
-  applyBestPromotion,
   computeCategoryTax,
   computeLineSubtotal,
-  effectiveBuyerPrice,
   getTierPrice,
   normalizeBoxesPieces,
-  promotionMatchesProduct,
   roundMoney,
-  isBlockingPayment,
   type CategoryTaxType,
-  type PromoContext,
   type PromotionRule,
 } from "@routeflow/pricing";
 import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-locks";
@@ -40,11 +35,9 @@ import {
   OrderStatus,
   UserRole,
   ItemStatus,
-  TxnStatus,
   MutationType,
   InvoiceStatus,
   PriceType,
-  Prisma,
   ChangeRequestStatus,
   ChangeRequestType,
   NotificationEvent,
@@ -61,27 +54,48 @@ import {
   IDEMPOTENCY_REPLAY_NEEDS_RECONCILE,
   shouldSkipInPlaceResync,
 } from "./merge-idempotency";
+import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
+import { cancelImpact } from "./order-cancel-impact";
+import {
+  EXISTING_LINE_SELECT,
+  orderEditMode,
+  planOrderEditRestrictions,
+  type OrderEditRestrictionPlan,
+} from "./order-edit-restrictions";
+import { parseCommissionRatePct, parseOrderDate } from "./order-parsers";
+import { getOrderTracking } from "./order-tracking";
 import { CreateSaleDto } from "./dto/create-sale.dto";
 import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
 import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import { UpdateShipmentDto } from "./dto/update-shipment.dto";
 import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
-import {
-  assertRegulatedDeliverySatisfied,
-  deriveStopRegulatedRequirements,
-  loadAgeIdCategorySets,
-  type RegulatedDeliveryDb,
-} from "../common/regulated-delivery";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { currentTaxRate } from "../common/tax-rate";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
-import { loadCreditExposure } from "../invoices/credit-exposure";
+import { decrementStockForSale, settleStockForEdit } from "./order-stock";
+import { linePieceQty } from "./line-piece-qty";
+import {
+  isBuyerPricedLine,
+  isSpecialTier,
+  mergeBoxedContributions,
+  rescaleBogoFreeUnits,
+  resolveBuyerLinePrice,
+} from "./buyer-merge-pricing";
+import {
+  assertCreditAtEnforcementPoint,
+  assertWithinCreditLimit,
+  isCreditLimitCheckEnabled,
+  type CreditPointParams,
+} from "./credit-limit-guard";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
+import { assertBuyerCartPricesCurrent } from "./buyer-cart-price-check";
+import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
@@ -91,19 +105,6 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { sumInlineReturnCredit } from "../returns/inline-return-credit.util";
-
-/**
- * B63 (REG-B63): the statuses past which a BUYER may no longer self-edit an
- * order's items. `updateOrderItems`'s write gate and the read-side `editWindow`
- * descriptor (`computeEditWindow`) both read THIS list, so a buyer client is
- * never told the window is open on an order the API is about to refuse.
- * Operators and drivers keep editing at every live stage.
- */
-const BUYER_EDIT_CLOSED_STATUSES: OrderStatus[] = [
-  OrderStatus.OUT_FOR_DELIVERY,
-  OrderStatus.PARTIALLY_DELIVERED,
-  OrderStatus.DELIVERED,
-];
 
 /**
  * B215: the statuses whose linked invoice(s) are re-synced IN PLACE after an item edit
@@ -118,15 +119,6 @@ const POST_DELIVERY_EDIT_STATUSES: string[] = [
   OrderStatus.DELIVERED,
 ];
 
-/** B465: a tier different from 1 (list/STANDARD) is this customer's documented
- * contract price for the product — shared by every call site that must decide
- * whether a line is a SPECIAL-tier line, never re-derived ad hoc. A module-level
- * pure function (not a class method) so it works when called detached from an
- * OrdersService instance — e.g. `(OrdersService.prototype as any).resolveBuyerLinePrice(...)`
- * in order-templates.service.spec.ts, where `this` inside resolveBuyerLinePrice
- * is undefined and `this.isSpecialTier(...)` would throw (#815 verify finding). */
-export const isSpecialTier = (tierForProduct: number): boolean => tierForProduct !== 1;
-
 @Injectable()
 export class OrdersService implements OnApplicationBootstrap {
   private readonly logger = new Logger(OrdersService.name);
@@ -140,6 +132,9 @@ export class OrdersService implements OnApplicationBootstrap {
     private readonly systemConfig: SystemConfigService,
     private readonly inventoryService: InventoryService,
     private readonly authGuard: AuthorizationGuardService,
+    // Lane R: the selling-restrictions choke point. Required (never @Optional) — a missing
+    // provider must be a DI error, not a silent bypass of a jurisdiction ban.
+    private readonly sellingRestrictions: SellingRestrictionsService,
     private readonly promotionsService: PromotionsService,
     private readonly messaging: MessagingService,
     private readonly creditNotes: CreditNotesService,
@@ -157,6 +152,18 @@ export class OrdersService implements OnApplicationBootstrap {
     // that tenant's own config/data, never another tenant's.
     private readonly tenantCtx: TenantContextService,
   ) {}
+
+  /**
+   * Tenant scope for the selling-restrictions choke point: the row being written's own tenant
+   * when there is one (authoritative for an existing order), else the caller's, else the ambient
+   * one. None of them means the check cannot be evaluated — refuse (fail closed, 403) rather than
+   * skip: a tenant-less caller must act inside a tenant-scoped session.
+   */
+  private restrictionTenantId(user: JwtPayload | undefined, rowTenantId?: string | null): string {
+    const tenantId = rowTenantId ?? user?.tenantId ?? this.prisma.getTenantId();
+    if (tenantId) return tenantId;
+    throw new ForbiddenException("Selling restrictions require a tenant-scoped session");
+  }
 
   /**
    * P5-04: active promotions for the current tenant (window + isActive filtered).
@@ -179,88 +186,9 @@ export class OrdersService implements OnApplicationBootstrap {
     }));
   }
 
-  /**
-   * P5-04: resolve a buyer catalog line's price = tier price, then the best
-   * applicable promotion (net unitPrice + originalPrice strikethrough, priceType
-   * PROMO). With no promo it reproduces the standard ladder (SPECIAL for tier≠1
-   * with the list price as the strikethrough, else STANDARD). Boxed proration is
-   * left to computeLineSubtotal by the caller — this only sets the SELLING-UNIT
-   * price. `promos` is empty for staff, so this is a no-op tier resolver there.
-   * Shared with OrderTemplatesService (REG-B48): a standing order is priced as
-   * the customer's own buyer checkout, whoever triggers it.
-   */
-  resolveBuyerLinePrice(
-    product: { id: string; category: string | null; pricePerUnit: unknown },
-    tierForProduct: number,
-    promos: PromotionRule[],
-    qtyPieces: number,
-    qtyUnits: number,
-    rememberedPrice?: number | null,
-    /**
-     * REG-B109: the line's box/piece denomination — the SAME values the caller
-     * then feeds `computeLineSubtotal` — so promo SELECTION compares candidates
-     * by the money this line will actually be billed, loose pieces included.
-     * Without it, a mixed line (whole boxes + loose pieces) is compared on whole
-     * boxes only and a BUY_N_GET_M can beat a deeper price promo that in fact
-     * bills less. Optional and defaulted: omitting it keeps the whole-selling-unit
-     * approximation, which is already exact for any line with no loose pieces.
-     */
-    denomination?: {
-      boxes: number | null;
-      pieces: number | null;
-      unitsPerBox: number | null;
-    },
-  ): {
-    unitPrice: number;
-    originalPrice: number | null;
-    priceType: PriceType;
-    /** BUY_N_GET_M: whole free selling units this line earned. 0 for every other case. */
-    freeUnits: number;
-  } {
-    const listPrice = Number(product.pricePerUnit);
-    const tierBase = getTierPrice(product, tierForProduct);
-    const remembered = rememberedPrice ?? null;
-    // Sticky upsell: ONLY a remembered ABOVE-LIST price becomes a MANUAL upsell.
-    // It overrides the tier AND takes precedence over promotions (a deliberate
-    // above-market price is never auto-discounted). Stored as MANUAL with the list
-    // base so the operator sees the upsell and the customer's read is redacted
-    // (upsell-redaction.ts). A premium tier (tierBase > list) is the customer's
-    // normal price, NOT an upsell — it must not trip this branch.
-    if (remembered != null && Number(remembered) > listPrice) {
-      return {
-        unitPrice: roundMoney(Number(remembered)),
-        originalPrice: listPrice,
-        priceType: PriceType.MANUAL,
-        freeUnits: 0,
-      };
-    }
-    const base = tierBase;
-    const promo = applyBestPromotion(base, promos, {
-      productId: product.id,
-      category: product.category,
-      qtyPieces,
-      qtyUnits,
-      boxes: denomination?.boxes ?? null,
-      pieces: denomination?.pieces ?? null,
-      unitsPerBox: denomination?.unitsPerBox ?? null,
-    });
-    if (promo.appliedPromoId) {
-      return {
-        unitPrice: promo.unitPrice,
-        originalPrice: promo.originalPrice,
-        priceType: PriceType.PROMO,
-        freeUnits: promo.freeUnits,
-      };
-    }
-    if (isSpecialTier(tierForProduct)) {
-      return {
-        unitPrice: base,
-        originalPrice: listPrice,
-        priceType: PriceType.SPECIAL,
-        freeUnits: 0,
-      };
-    }
-    return { unitPrice: base, originalPrice: null, priceType: PriceType.STANDARD, freeUnits: 0 };
+  /** Extracted verbatim to `buyer-merge-pricing.ts` (B585 prefactor #2); thin delegator. */
+  resolveBuyerLinePrice(...args: Parameters<typeof resolveBuyerLinePrice>) {
+    return resolveBuyerLinePrice(...args);
   }
 
   /**
@@ -272,27 +200,6 @@ export class OrdersService implements OnApplicationBootstrap {
     // InlineReturnsQuoteService's unreferenced-chunk pricing shares this exact reader
     // instead of a second hand-rolled percent→fraction parse — same rule, one place.
     return currentTaxRate(this.systemConfig);
-  }
-
-  /**
-   * RF-4: the piece count a per-unit category tax multiplies. Box-split lines
-   * store `qty` already in pieces; a boxed selling-unit line (boxes null) stores
-   * `qty` in SELLING UNITS, so expand it by the snapshot `unitsPerBox`. PER_VOLUME
-   * stays approximate (pieces, not true volume) until a `Product.volumePerUnit`
-   * field lands — see computeCategoryTax's contract.
-   */
-  private linePieceQty(
-    li: { qty: unknown; boxes: unknown; unitsPerBox?: unknown },
-    unitsPerBoxFallback?: number,
-  ): number {
-    const qty = Number(li.qty) || 0;
-    if (li.boxes != null) return qty; // already pieces
-    // A boxed product ordered as SELLING UNITS stores unitsPerBox:null on the line
-    // (create only snapshots it for box-split lines), so fall back to the product's
-    // unitsPerBox — otherwise a per-unit levy collapses by a factor of unitsPerBox on
-    // any later edit (create expanded qty→pieces but the recompute couldn't).
-    const upb = Number(li.unitsPerBox ?? unitsPerBoxFallback ?? 0);
-    return upb > 1 ? qty * upb : qty;
   }
 
   /**
@@ -336,7 +243,7 @@ export class OrdersService implements OnApplicationBootstrap {
         ? computeCategoryTax({
             taxType: cat.taxType as CategoryTaxType,
             rate: Number(cat.rate),
-            unitBasisQty: this.linePieceQty(li, upbMap.get(li.productId)),
+            unitBasisQty: linePieceQty(li, upbMap.get(li.productId)),
             lineSubtotal: Number(li.subtotal),
             priceIncludesTax: cat.priceIncludesTax,
           })
@@ -551,43 +458,9 @@ export class OrdersService implements OnApplicationBootstrap {
     // P5-08 edit window (G7): free editing is open until the order's run dispatches.
     // `editableUntil` (the soft cutoff countdown) stays null until the per-weekday
     // routes-cutoff config lands — the HARD close is dispatch, which is authoritative.
-    (order as any).editWindow = this.computeEditWindow(order, user.role);
+    (order as any).editWindow = computeEditWindow(order, user.role);
 
     return order;
-  }
-
-  /**
-   * P5-08 / R1: derive the non-persisted edit-window descriptor from an order.
-   * editable ⟺ the order isn't CANCELLED — items can now be edited at every live
-   * stage (incl. OUT_FOR_DELIVERY / DELIVERED, on dispatched runs), with the write
-   * gate re-syncing any linked invoice + ledger. Single source of truth shared by
-   * the read and the write gate. `dispatched` no longer closes the window.
-   *
-   * B63 (REG-B63): for a CUSTOMER the window DOES close once the order is out the
-   * door — the same `BUYER_EDIT_CLOSED_STATUSES` the write gate refuses on, so the
-   * descriptor never reports "nothing is wrong" while `updateOrderItems` answers
-   * 403. `closedReason: "DISPATCHED"` is what buyer clients read to explain it.
-   */
-  private computeEditWindow(
-    order: {
-      status: string;
-      routeRunId?: string | null;
-      routeRun?: { status: string } | null;
-    },
-    role?: UserRole,
-  ): { editable: boolean; editableUntil: string | null; closedReason: string | null } {
-    if (
-      role === UserRole.CUSTOMER &&
-      BUYER_EDIT_CLOSED_STATUSES.includes(order.status as OrderStatus)
-    ) {
-      return { editable: false, editableUntil: null, closedReason: "DISPATCHED" };
-    }
-    const editable = order.status !== "CANCELLED";
-    return {
-      editable,
-      editableUntil: null,
-      closedReason: editable ? null : "STATUS",
-    };
   }
 
   /**
@@ -681,207 +554,16 @@ export class OrdersService implements OnApplicationBootstrap {
    * without writing.
    */
 
-  /**
-   * BUY_N_GET_M free units for a line whose QUANTITY changed while its stored
-   * (agreed) unitPrice is kept — pending-order merges and every stored-price qty
-   * edit. Reusing the sale-time snapshot verbatim is wrong in BOTH directions: a
-   * merged (bigger) line loses the units it just earned and bills at full price,
-   * and a shrunk line keeps free units it no longer earns (a 12→2 box door edit
-   * billed $0.00). Lines that never earned free units return 0 untouched, so no
-   * operator/driver line can gain a promo it never had — UNLESS `canEarnNew` says
-   * this is a buyer's own consolidation of buyer-priced lines, where the combined
-   * quantity must earn what a single cart of the same size would have (3 + 3 boxes
-   * under a live buy-5-get-1 = 1 free, not 0).
-   *
-   * Preference order: re-run the LIVE BUY_N_GET_M rule against the new whole-unit
-   * count (exact — `floor(qtyUnits / (N + M)) * M`); if no active rule still
-   * covers the product (the promo ended after the sale) rescale the earned
-   * snapshot at the rate it was earned at, capped at the snapshot, so an
-   * already-agreed discount is never silently revoked by a later qty tweak.
-   */
-  private rescaleBogoFreeUnits(input: {
-    /** Active promo rules (any type — only BUY_N_GET_M ones are consulted). */
-    promos: PromotionRule[];
-    productId: string | null;
-    category: string | null;
-    /** The line's stored selling-unit price — BOGO never alters it, so it IS the base. */
-    unitPrice: number;
-    storedFreeUnits: number | null | undefined;
-    /** Whole selling units the snapshot was earned at. */
-    oldUnits: number;
-    /** Whole selling units after the change. */
-    newUnits: number;
-    /**
-     * Allow a line with NO snapshot to earn free units from the live rule. Only a
-     * buyer-driven merge of buyer-priced lines sets this; every staff qty edit and
-     * the hourly sweep leave it false, so an operator/driver line is never silently
-     * discounted by a customer promo it never had.
-     */
-    canEarnNew?: boolean;
-  }): number {
-    const stored = Math.max(0, Math.trunc(Number(input.storedFreeUnits ?? 0) || 0));
-    if (stored <= 0 && !input.canEarnNew) return 0;
-    const newUnits = Math.max(0, Math.trunc(Number(input.newUnits) || 0));
-    if (newUnits <= 0) return 0;
-    // A line is never entirely free — the buyer always pays the N in every (N + M).
-    const ceiling = Math.max(0, newUnits - 1);
-    if (input.productId) {
-      const ctx: PromoContext = {
-        productId: input.productId,
-        category: input.category,
-        // BUY_N_GET_M reads only qtyUnits; qtyPieces gates QTY_BREAK, which the
-        // filtered list below cannot contain.
-        qtyPieces: newUnits,
-        qtyUnits: newUnits,
-      };
-      const live = input.promos.filter(
-        (p) => p.type === "BUY_N_GET_M" && promotionMatchesProduct(p, ctx),
-      );
-      if (live.length > 0) {
-        return Math.min(ceiling, applyBestPromotion(input.unitPrice, live, ctx).freeUnits);
-      }
-    }
-    const oldUnits = Math.max(0, Math.trunc(Number(input.oldUnits) || 0));
-    if (oldUnits <= 0) return 0;
-    return Math.min(ceiling, stored, Math.floor((stored * newUnits) / oldUnits));
+  private rescaleBogoFreeUnits(...args: Parameters<typeof rescaleBogoFreeUnits>) {
+    return rescaleBogoFreeUnits(...args);
   }
 
-  /**
-   * Is this line's price the buyer's own (the tier/promo ladder), rather than an
-   * operator-set one? Only such a line may EARN BUY_N_GET_M free units it never had
-   * when a buyer-driven merge grows its quantity — a MANUAL upsell or a DISCOUNTED
-   * override is a deliberate operator price and is never discounted further by a
-   * customer promo (same rule as the manual-override branch in updateOrderItems).
-   * A missing priceType counts as NOT buyer-priced (money-safe default).
-   */
-  private isBuyerPricedLine(li: {
-    priceType?: PriceType | null;
-    overriddenBy?: string | null;
-  }): boolean {
-    return (
-      li.overriddenBy == null &&
-      (li.priceType === PriceType.STANDARD ||
-        li.priceType === PriceType.SPECIAL ||
-        li.priceType === PriceType.PROMO)
-    );
+  private isBuyerPricedLine(...args: Parameters<typeof isBuyerPricedLine>) {
+    return isBuyerPricedLine(...args);
   }
 
-  /**
-   * Combine one or more contributing order lines for the SAME product into a
-   * single merged line total. Boxed products price by the BOX, so every
-   * contribution is normalized to a total PIECE count first, then re-split and
-   * priced via `computeLineSubtotal` — a plain `qty * unitPrice` over-charges a
-   * boxed line by `unitsPerBox`. Handles mixed denominations: a box-split line
-   * (`boxes`/`pieces` set) stores `qty` as pieces; a selling-unit boxed line
-   * (`boxes==null`, from the box-unaware mobile cart) stores `qty` as a box
-   * count, so its pieces are `qty * unitsPerBox`. The merged line is always
-   * emitted piece-denominated (heals the inconsistency). Non-boxed products fall
-   * back to a simple qty sum × unit price.
-   *
-   * BUY_N_GET_M: the merged quantity earns its OWN free units — the contributing
-   * snapshots are re-derived against the combined whole-unit count (see
-   * `rescaleBogoFreeUnits`) and returned so the caller persists `promoFreeUnits`
-   * alongside the subtotal. Without this a merged BOGO line silently repriced to
-   * full price while the row kept a stale, contradicting `promoFreeUnits`.
-   * `bogo.canEarnNew` additionally lets the combined quantity earn free units none
-   * of the contributions had (a buyer's split carts) — granted only when EVERY
-   * contribution is buyer-priced, so one operator-priced contribution keeps the
-   * whole merged line on the conservative "never gain a promo it never had" path.
-   */
-  private mergeBoxedContributions(
-    contributions: Array<{
-      qty: unknown;
-      boxes: number | null;
-      pieces: number | null;
-      promoFreeUnits?: number | null;
-      priceType?: PriceType | null;
-      overriddenBy?: string | null;
-    }>,
-    unitPrice: number,
-    unitsPerBox: number | null | undefined,
-    bogo?: {
-      promos: PromotionRule[];
-      productId: string | null;
-      category: string | null;
-      canEarnNew?: boolean;
-      /**
-       * The merged line's surviving unitPrice already carries a price-promo
-       * discount (winner/meta line is PROMO with a strikethrough). Promotions
-       * never stack — a buyer splitting one cart in two must not merge back to
-       * a percent discount PLUS free units — so both the stored-snapshot rescale
-       * and canEarnNew are suppressed and the merged line keeps price-off only.
-       */
-      pricePromoApplied?: boolean;
-    },
-  ): {
-    qty: number;
-    boxes: number | null;
-    pieces: number | null;
-    subtotal: number;
-    freeUnits: number;
-    /** Σ of the contributions' BUY_N_GET_M snapshots — 0 when no line carried one. */
-    storedFreeUnits: number;
-  } {
-    const upb = Number(unitsPerBox ?? 0);
-    const totalPieces = contributions.reduce((sum, c) => {
-      const q = Number(c.qty);
-      const sellingUnit = upb > 1 && c.boxes == null && c.pieces == null;
-      return sum + (sellingUnit ? q * upb : q);
-    }, 0);
-    // Free-unit snapshots and the whole selling units they were earned at. A
-    // box-split line counts its BOXES (its `qty` is pieces); every other shape
-    // already stores selling units in `qty`.
-    const storedFreeUnits = contributions.reduce(
-      (sum, c) => sum + Math.max(0, Number(c.promoFreeUnits ?? 0) || 0),
-      0,
-    );
-    const oldUnits = contributions.reduce(
-      (sum, c) => sum + (c.boxes != null ? Number(c.boxes) : Number(c.qty)),
-      0,
-    );
-    const canEarnNew =
-      bogo?.canEarnNew === true && contributions.every((c) => this.isBuyerPricedLine(c));
-    const freeUnitsFor = (newUnits: number) =>
-      bogo?.pricePromoApplied === true
-        ? 0
-        : this.rescaleBogoFreeUnits({
-            promos: bogo?.promos ?? [],
-            productId: bogo?.productId ?? null,
-            category: bogo?.category ?? null,
-            unitPrice,
-            storedFreeUnits,
-            oldUnits,
-            newUnits,
-            canEarnNew,
-          });
-    if (upb > 1) {
-      const split = normalizeBoxesPieces({ qty: totalPieces, unitsPerBox: upb });
-      const freeUnits = freeUnitsFor(Number(split.boxes ?? 0));
-      return {
-        qty: split.qty,
-        boxes: split.boxes,
-        pieces: split.pieces,
-        freeUnits,
-        storedFreeUnits,
-        subtotal: computeLineSubtotal({
-          unitPrice,
-          qty: split.qty,
-          boxes: split.boxes,
-          pieces: split.pieces,
-          unitsPerBox: upb,
-          freeUnits,
-        }),
-      };
-    }
-    const freeUnits = freeUnitsFor(totalPieces);
-    return {
-      qty: totalPieces,
-      boxes: null,
-      pieces: null,
-      freeUnits,
-      storedFreeUnits,
-      subtotal: computeLineSubtotal({ unitPrice, qty: totalPieces, freeUnits }),
-    };
+  private mergeBoxedContributions(...args: Parameters<typeof mergeBoxedContributions>) {
+    return mergeBoxedContributions(...args);
   }
 
   /**
@@ -1690,64 +1372,6 @@ export class OrdersService implements OnApplicationBootstrap {
   }
 
   /**
-   * Resolve the staff-supplied business date of an order. A bare "YYYY-MM-DD"
-   * parses to midnight UTC, matching how requestedDeliveryDate/issueDate are handled.
-   * The upper bound is the END of the current UTC day so an operator in a timezone
-   * ahead of UTC can still enter today.
-   */
-  private parseOrderDate(raw: string | undefined, role: UserRole): Date | undefined {
-    if (raw == null) return undefined;
-    // POST /orders is reachable by CUSTOMER and DRIVER — only staff may backdate.
-    if (role !== UserRole.OPERATOR && role !== UserRole.TENANT_ADMIN) {
-      throw new ForbiddenException("Only staff can set an order date");
-    }
-
-    const parsed = new Date(raw);
-    if (Number.isNaN(parsed.getTime())) throw new BadRequestException("Invalid order date");
-
-    const now = new Date();
-    const endOfToday = Date.UTC(
-      now.getUTCFullYear(),
-      now.getUTCMonth(),
-      now.getUTCDate(),
-      23,
-      59,
-      59,
-      999,
-    );
-    if (parsed.getTime() > endOfToday) {
-      throw new BadRequestException("Order date cannot be in the future");
-    }
-    const earliest = new Date(now);
-    earliest.setUTCFullYear(earliest.getUTCFullYear() - 2);
-    if (parsed.getTime() < earliest.getTime()) {
-      throw new BadRequestException("Order date cannot be more than 2 years in the past");
-    }
-    return parsed;
-  }
-
-  /**
-   * Sales agents & commissions: staff-only per-order commission-rate override.
-   * `0` IS a valid value ("exempt"); `undefined` means "no override given"
-   * (falls back to customer/agent default rates). Gated exactly like
-   * parseOrderDate — CUSTOMER/DRIVER callers may never set this.
-   */
-  private parseCommissionRatePct(
-    raw: number | null | undefined,
-    role: UserRole,
-  ): number | null | undefined {
-    if (raw === undefined) return undefined;
-    if (role !== UserRole.OPERATOR && role !== UserRole.TENANT_ADMIN) {
-      throw new ForbiddenException("Only staff can set a commission rate");
-    }
-    if (raw === null) return null;
-    if (typeof raw !== "number" || Number.isNaN(raw) || raw < 0 || raw > 100) {
-      throw new BadRequestException("commissionRatePct must be between 0 and 100");
-    }
-    return raw;
-  }
-
-  /**
    * F30/R8 (B196): the order that already applied this Idempotency-Key for
    * THIS customer, if any.
    *
@@ -1995,9 +1619,9 @@ export class OrdersService implements OnApplicationBootstrap {
     // routeRunId (resolved from the validated stop).
     let resolvedRouteRunId: string | null = null;
 
-    const orderDate = this.parseOrderDate(dto.orderDate, user.role);
+    const orderDate = parseOrderDate(dto.orderDate, user.role);
     // Sales agents & commissions: staff-gated per-order rate override.
-    const commissionRatePct = this.parseCommissionRatePct(dto.commissionRatePct, user.role);
+    const commissionRatePct = parseCommissionRatePct(dto.commissionRatePct, user.role);
 
     const isStaffRole = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
     // B318: the edit path (updateOrderItems' isStaffCreditEdit) already strips
@@ -2256,44 +1880,15 @@ export class OrdersService implements OnApplicationBootstrap {
     // P5-04: active promotions — only for the buyer (CUSTOMER) self-service path.
     const activePromos = await this.loadActivePromotions(user.role);
 
-    // RF-198: price-race check — buyer cart may have been built with a stale price.
-    // Re-fetch (already done above) and compare against the cart unitPrice for each item.
-    // Only applies when the CUSTOMER role sends unitPrice values (buyer portal checkout).
-    if (user.role === UserRole.CUSTOMER && items.some((i) => i.unitPrice != null)) {
-      const changedItems: Array<{
-        productId: string;
-        name: string;
-        cartPrice: number;
-        currentPrice: number;
-      }> = [];
-      for (const item of items) {
-        if (item.unitPrice == null || !item.productId) continue;
-        const product = productMap.get(item.productId);
-        if (!product) continue; // missing product caught in lineItemsData.map below
-        const tierForProduct = cpMap.get(item.productId) ?? defaultTier;
-        // Compare against the customer's EFFECTIVE price (tier or sticky upsell) so
-        // a legitimately-upsold cart doesn't 409 at checkout.
-        const currentPrice = effectiveBuyerPrice(
-          Number(getTierPrice(product, tierForProduct)),
-          Number(product.pricePerUnit),
-          priceHistory[item.productId]?.lastPrice ?? null,
-        );
-        if (Math.abs(currentPrice - item.unitPrice) > 0.01) {
-          changedItems.push({
-            productId: item.productId,
-            name: product.name,
-            cartPrice: item.unitPrice,
-            currentPrice,
-          });
-        }
-      }
-      if (changedItems.length > 0) {
-        throw new ConflictException({
-          message: "Prices have been updated. Please review your cart.",
-          changedItems,
-        });
-      }
-    }
+    // RF-198: buyer cart price-race check — see buyer-cart-price-check.ts.
+    assertBuyerCartPricesCurrent({
+      role: user.role,
+      items,
+      productMap,
+      cpMap,
+      defaultTier,
+      priceHistory,
+    });
 
     let subtotal = 0;
     const lineItemsData = items.map((item, index) => {
@@ -2537,6 +2132,16 @@ export class OrdersService implements OnApplicationBootstrap {
         customerId,
         lines: lineItemsData.map((li) => ({ trackedCategoryId: li.trackedCategoryId })),
       });
+      // Lane R: selling restrictions — a banned product refuses (409 SELLING_RESTRICTED) BEFORE the
+      // stock transaction, like the license guard above; a DRAFT is checked at its promotion.
+      await this.sellingRestrictions.assertLinesSellable({
+        tenantId: this.restrictionTenantId(user),
+        customerId,
+        lines: lineItemsData.flatMap((li) => (li.productId ? [{ productId: li.productId }] : [])),
+        channel: restrictionChannelForPrincipal(user), // judged at ENTRY time, like the license guard
+      });
+      // B585: credit check for a NEW order (nothing runs unless the tenant switch is set).
+      await this.creditGate({ customerId, projectedTotal: total, principal: user });
     }
 
     // RF-017 + RF-014: create the order inside a transaction so we can
@@ -2732,7 +2337,7 @@ export class OrdersService implements OnApplicationBootstrap {
    * existing open order.
    */
   async createSale(dto: CreateSaleDto, user: JwtPayload) {
-    const orderDate = this.parseOrderDate(dto.orderDate, user.role);
+    const orderDate = parseOrderDate(dto.orderDate, user.role);
 
     // Delivery-date picker (owner 2026-08-25): `deliveredOn` REPLACES
     // `deliveredNow`'s binary when present — past/today is a (back)dated
@@ -2762,7 +2367,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // Past/today: the sale happened on that day, so it goes through the same
         // staff-only gate and 2-year floor backdating has always had.
         deliveredNow = true;
-        deliveredAt = this.parseOrderDate(dto.deliveredOn, user.role);
+        deliveredAt = parseOrderDate(dto.deliveredOn, user.role);
       }
     }
 
@@ -2916,6 +2521,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // W6: promoting a DRAFT into a live order is when it becomes a real sale, so
     // re-run the license guard (drafts are created/edited without it — that's the
     // "draft escape"). Categories resolve from each line's snapshot or its product.
+    let checkedProductIds: ReadonlySet<string> | undefined; // what the Lane R check saw
     if (order.status === "DRAFT" && dto.status !== OrderStatus.CANCELLED) {
       const items = await this.prisma.forTenant().orderItem.findMany({
         where: { orderId: id, status: { not: "CANCELLED" } },
@@ -2938,6 +2544,33 @@ export class OrdersService implements OnApplicationBootstrap {
         })),
         orderId: id,
       });
+      // Lane R: the same "becomes a real sale" moment — a banned product refuses (409
+      // SELLING_RESTRICTED) BEFORE the status write / stock reservation. Drafts are created and
+      // edited without the check; this is the draft escape's second half.
+      await this.sellingRestrictions.assertLinesSellable({
+        tenantId: this.restrictionTenantId(user, order.tenantId),
+        customerId: order.customerId,
+        lines: items.flatMap((li) => (li.productId ? [{ productId: li.productId }] : [])),
+        channel: restrictionChannelForPrincipal(user), // judged at ENTRY time, like the license guard
+      });
+      checkedProductIds = new Set(pids);
+    }
+
+    // B585: goods leaving is the enforcement moment (operators only, by the role gates above; before
+    // any write): OUT_FOR_DELIVERY, or a counter hand-over straight to DELIVERED (the van-sale flow never
+    // sets OUT_FOR_DELIVERY). An order whose goods already left (PARTIALLY_DELIVERED, or OUT_FOR_DELIVERY
+    // going on to DELIVERED) was gated on its way out. A driver's stop completion is not gated. Nothing
+    // runs unless the tenant's `credit_limit.enforce_delivery` is set.
+    const alreadyOut =
+      order.status === OrderStatus.OUT_FOR_DELIVERY ||
+      order.status === OrderStatus.PARTIALLY_DELIVERED;
+    const goodsLeaving =
+      (dto.status === OrderStatus.OUT_FOR_DELIVERY &&
+        order.status !== OrderStatus.PARTIALLY_DELIVERED) ||
+      (dto.status === OrderStatus.DELIVERED && !alreadyOut);
+    if (goodsLeaving) {
+      const p = { customerId: order.customerId, projectedTotal: Number(order.total) };
+      await this.creditGate({ ...p, excludeOrderId: id, action: "delivery", principal: user });
     }
 
     // Refuse the cancel BEFORE writing the status — a rejection must leave the
@@ -3002,6 +2635,13 @@ export class OrdersService implements OnApplicationBootstrap {
                 where: { orderId: id, status: { not: "CANCELLED" } },
                 select: { productId: true, qty: true },
               });
+            // The Lane R check ran outside this tx: a product added since (a concurrent draft
+            // edit) was never judged — roll back (the claim above included) and promote again.
+            if (activeItems.some((li) => li.productId && !checkedProductIds?.has(li.productId))) {
+              throw new ConflictException(
+                "The order's items changed while it was being promoted — review it and promote again.",
+              );
+            }
             const stockLines = activeItems
               .filter((li): li is { productId: string; qty: any } => !!li.productId)
               .map((li) => ({ productId: li.productId, qty: Number(li.qty) }));
@@ -3280,85 +2920,9 @@ export class OrdersService implements OnApplicationBootstrap {
     return updated;
   }
 
-  /**
-   * What cancelling this order will actually do to its money. Read-only — it backs
-   * both the confirmation the operator sees ("INV-12 will be voided, $50.00 goes
-   * back to CN-7") and the guard that refuses the cancel, so the warning and the
-   * rule can never disagree.
-   */
-  async cancelImpact(id: string) {
-    const order = await this.prisma.forTenant().order.findFirst({
-      where: { id },
-      select: { id: true, status: true, orderNumber: true },
-    });
-    if (!order) throw new NotFoundException("Order not found");
-
-    const invoices = await this.prisma.forTenant().invoice.findMany({
-      where: { orderId: id, status: { not: "VOID" } },
-      select: {
-        id: true,
-        invoiceNumber: true,
-        status: true,
-        total: true,
-        payments: { select: { method: true, amount: true, status: true } },
-      },
-    });
-
-    // B56 (REG-B56): delivered goods block a cancel — the same signal
-    // settleStockForEdit already refuses to treat as returnable.
-    const activeLines = await this.prisma.forTenant().orderItem.findMany({
-      where: { orderId: id, status: { not: "CANCELLED" } },
-      select: { qty: true, deliveredQty: true },
-    });
-    const deliveredUnits =
-      Math.round(activeLines.reduce((s, li) => s + Number(li.deliveredQty ?? 0), 0) * 1000) / 1000;
-
-    // External money can't be un-taken by software; it blocks the cancel until a
-    // human refunds it. Wallet money (credit notes, advances) is simply returned.
-    // PR-2 (check-payments B1 hardening, N4 owner ruling): isBlockingPayment (NOT
-    // isHeldPayment) — a DRAFT external payment is money in flight and must keep
-    // blocking the cancel exactly as it does today; HELD (PAID ∪ PENDING) is for
-    // money TOTALS only, never an existence/blocking check.
-    const blockers: Array<{ invoiceNumber: string; amount: number }> = [];
-    for (const inv of invoices) {
-      const external = roundMoney(
-        (inv.payments ?? [])
-          .filter(
-            (p: any) =>
-              isBlockingPayment(p) && p.method !== "CREDIT_NOTE" && p.method !== "ADVANCE",
-          )
-          .reduce((s: number, p: any) => s + Number(p.amount), 0),
-      );
-      if (external > 0.001)
-        blockers.push({ invoiceNumber: inv.invoiceNumber ?? "", amount: external });
-    }
-
-    const credits = await this.creditNotes.previewOrderCreditRelease(id);
-    // scan-ok: draft-payment-not-void — method-scoped to ADVANCE; a CHECK/PENDING row
-    // can never match, so PR-2's PENDING concern doesn't apply here.
-    const advances = roundMoney(
-      invoices
-        .flatMap((i) => i.payments ?? [])
-        .filter((p: any) => p.status !== "VOID" && p.method === "ADVANCE")
-        .reduce((s: number, p: any) => s + Number(p.amount), 0),
-    );
-
-    return {
-      orderId: order.id,
-      orderNumber: order.orderNumber ?? "",
-      alreadyCancelled: order.status === OrderStatus.CANCELLED,
-      invoicesToVoid: invoices.map((i) => ({
-        id: i.id,
-        invoiceNumber: i.invoiceNumber ?? "",
-        status: i.status,
-        total: roundMoney(Number(i.total)),
-      })),
-      creditsToRestore: credits,
-      advanceToRestore: advances,
-      blockingPayments: blockers,
-      deliveredUnits,
-      canCancel: blockers.length === 0 && deliveredUnits <= 0.001,
-    };
+  /** What cancelling this order will do to its money (read-only) — see `order-cancel-impact.ts`. */
+  cancelImpact(id: string) {
+    return cancelImpact({ prisma: this.prisma, creditNotes: this.creditNotes }, id);
   }
 
   /**
@@ -3569,6 +3133,30 @@ export class OrdersService implements OnApplicationBootstrap {
       });
     }
 
+    // Lane R: a banned product added by this edit refuses (409 SELLING_RESTRICTED) BEFORE the invoice
+    // revert and any write. Non-draft only (a draft is judged at its promotion). OFF = one policy read
+    // here and nothing else; the plan is re-checked under the row lock below (order-edit-restrictions.ts).
+    let restrictionPlan: OrderEditRestrictionPlan | null = null;
+    if (order.status !== "DRAFT") {
+      const tenantId = this.restrictionTenantId(user, order.tenantId);
+      restrictionPlan = await planOrderEditRestrictions(
+        { restrictions: this.sellingRestrictions, prisma: this.prisma },
+        {
+          tenantId,
+          existing: order.lineItems ?? [],
+          items: dto.items ?? [],
+          mode: orderEditMode(user?.role, dto.replaceAll, isDiffPayload),
+        },
+      );
+      if (restrictionPlan)
+        await this.sellingRestrictions.assertLinesSellable({
+          tenantId,
+          customerId: order.customerId,
+          lines: restrictionPlan.lines,
+          channel: restrictionChannelForPrincipal(user),
+        });
+    }
+
     // R1: a POST-DELIVERY edit (order already OUT_FOR_DELIVERY / PARTIALLY_DELIVERED /
     // DELIVERED) re-syncs its finalized / paid / delivery-batch invoice(s) IN PLACE
     // after the mutation (resyncOrderInvoicesForEdit) — keeping payments and surfacing
@@ -3654,8 +3242,9 @@ export class OrdersService implements OnApplicationBootstrap {
         await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
         const heldItems = await tx.orderItem.findMany({
           where: { orderId },
-          select: { productId: true, qty: true, deliveredQty: true, status: true },
+          select: { ...EXISTING_LINE_SELECT, deliveredQty: true },
         });
+        restrictionPlan?.assertHeld(heldItems);
 
         // Customer/Driver path: replace items by productId. A4: a DRIVER diff
         // payload skips this branch entirely — it merges below like an operator
@@ -4983,7 +4572,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // create()'s decrement at order time.
         if (order.status !== "DRAFT") {
           await this.settleStockForEdit(tx, order, heldItems, activeItems, user);
-          await this.assertWithinCreditLimit(
+          await assertWithinCreditLimit(
             tx,
             order.customerId,
             orderId,
@@ -4993,6 +4582,12 @@ export class OrdersService implements OnApplicationBootstrap {
             // (pre-existing) does not subtract Order.discountAmount.
             total,
             creditCheckEnabled,
+            // B577: do the issued invoices survive this edit? Only a delivered, partially invoiced
+            // order (re-sync skipped) is SURE to; pre-delivery a deposit mirror is rewritten.
+            {
+              invoicesSurviveEdit:
+                postDeliveryEdit && shouldSkipInPlaceResync(order.lineItems ?? []),
+            },
           );
         }
 
@@ -5334,420 +4929,47 @@ export class OrdersService implements OnApplicationBootstrap {
     });
   }
 
-  /**
-   * B283: the ONE stock-decrement code path for turning a set of order lines
-   * into a real (non-draft) sale — locks the touched product rows FOR UPDATE,
-   * blocks (customer/driver) or warns (staff) on insufficient stock, then
-   * applies ONE aggregated UPDATE. Extracted out of create()'s non-draft
-   * branch so changeStatus()'s DRAFT→PENDING promotion (the same "becomes a
-   * real sale" moment) calls the IDENTICAL logic instead of a second
-   * implementation — see REG-B283. Must be called from inside the caller's
-   * transaction (the FOR UPDATE lock is only meaningful there).
-   */
-  private async decrementStockForSale(
+  /** B283 / stock: extracted verbatim to `order-stock.ts` (B585 prefactor); thin delegators, same names. */
+  private stockDeps() {
+    return { logger: this.logger, tenantId: this.prisma.getTenantId() };
+  }
+
+  private decrementStockForSale(
     tx: any,
     stockLines: Array<{ productId: string; qty: number }>,
     isStaffRole: boolean,
   ): Promise<void> {
-    if (stockLines.length === 0) return;
-    const productIds = stockLines.map((li) => li.productId);
-    // SELECT … FOR UPDATE acquires row-level locks in the current transaction.
-    await tx.$executeRaw`
-      SELECT id FROM "Product"
-      WHERE id IN (${Prisma.join(productIds)})
-      FOR UPDATE
-    `;
-
-    const lockedProducts = await tx.product.findMany({
-      where: { id: { in: productIds } },
-      select: { id: true, name: true, currentStock: true },
-    });
-
-    const oosItems: string[] = [];
-    for (const li of stockLines) {
-      const p = lockedProducts.find((lp: any) => lp.id === li.productId);
-      if (p && Number(p.currentStock) < li.qty) {
-        oosItems.push(
-          `${p.name ?? li.productId} (available: ${Number(p.currentStock)}, requested: ${li.qty})`,
-        );
-      }
-    }
-    if (oosItems.length > 0) {
-      if (isStaffRole) {
-        this.logger.warn(`Operator-initiated order will go below stock: ${oosItems.join("; ")}`);
-      } else {
-        throw new ConflictException(`Insufficient stock: ${oosItems.join("; ")}`);
-      }
-    }
-
-    // Decrement stock atomically while the lock is held. For operator-initiated
-    // overselling, this lets currentStock go negative — the inventory page can
-    // surface that and the operator can reconcile after restock.
-    //
-    // B116 (REG-B116): ONE aggregated, set-based UPDATE instead of a per-line
-    // ORM call — a per-line write ordering is why multiple lines for the same
-    // product used to touch it twice instead of once. Aggregate first:
-    // `UPDATE … FROM (VALUES …)` applies at most one row per join key, so
-    // summing qty per product BEFORE the statement is load-bearing.
-    //
-    // Raw SQL bypasses the tenant proxy that scoped the ORM call it replaces,
-    // so the tenant predicate is re-stated explicitly here — a cross-tenant
-    // productId must not be able to move another tenant's stock. Null
-    // tenantId (SUPER_ADMIN context) keeps the unscoped behaviour the ORM
-    // call had in that same context.
-    const stockTenantId = this.prisma.getTenantId();
-    const qtyByProduct = new Map<string, number>();
-    for (const li of stockLines) {
-      qtyByProduct.set(li.productId, (qtyByProduct.get(li.productId) ?? 0) + li.qty);
-    }
-    const stockValues = Prisma.join(
-      [...qtyByProduct.entries()].map(
-        ([productId, qty]) => Prisma.sql`(${productId}::text, ${qty}::numeric)`,
-      ),
-    );
-    await tx.$executeRaw`
-      UPDATE "Product" AS p
-      SET "currentStock" = p."currentStock" - v.qty
-      FROM (VALUES ${stockValues}) AS v(id, qty)
-      WHERE p.id = v.id
-        ${stockTenantId ? Prisma.sql`AND p."tenantId" = ${stockTenantId}` : Prisma.empty}
-    `;
+    return decrementStockForSale(this.stockDeps(), tx, stockLines, isStaffRole);
   }
 
-  /**
-   * P5-08b + WP1 stock settle — validates the delta between the order's
-   * pre-edit line set and the edited (post-edit) active line set, THEN
-   * applies it to `Product.currentStock`.
-   *
-   * Lifecycle (why delta, not absolute): create() already decremented
-   * Product.currentStock for every non-draft line under a row lock (RF-017,
-   * create() ~line 1850-1902), so the order's existing lines are already "out
-   * of" currentStock. NOTHING ELSE decrements for delivery — completeStop
-   * writes no stock and InventoryService.recordSale has no caller — so
-   * `currentStock` is settled at order time and re-settled here on edit, and
-   * nowhere else. An edit therefore only needs to settle the
-   * CHANGE against what the order already holds:
-   *   - a product whose requested qty EXCEEDS its held qty needs the increase
-   *     validated against currentStock (same guard as before), then that
-   *     increase decremented;
-   *   - a product whose requested qty is LESS than held (line reduced,
-   *     removed, or zeroed) returns the difference to currentStock, CLAMPED
-   *     to the undelivered remainder (`held − deliveredQty`) — delivered
-   *     goods are gone and never come back via an edit. This is new; the
-   *     pre-refactor version only validated increases, it never wrote
-   *     anything.
-   * Held/requested are compared over the UNION of product ids on both sides
-   * (not just `requested`'s keys) so a product that disappears from the
-   * edited set entirely (line removed) still gets its stock credited back.
-   * A product with a ZERO delta (unchanged line) never enters the delta map
-   * at all — no lock, no read, no write for it (see the DELTA_MAP short
-   * circuit below), which is also why a same-qty edit never re-queries stock.
-   *
-   * Role semantics mirror create(): CUSTOMER/DRIVER hard-block (409
-   * INSUFFICIENT_STOCK) with NO write on a violation; everyone else
-   * (operator/admin/undefined = internal caller) may knowingly oversell —
-   * warn-only log, and then (unlike the old validate-only guard) the write
-   * still proceeds, matching create()'s oversell-writes-anyway posture.
-   * Quantities compare in each line's own stored denomination (pieces for
-   * box-split lines, selling units otherwise) — the same mixed-denomination
-   * convention create() uses against currentStock.
-   *
-   * `SELECT ... FOR UPDATE` locks the touched product rows FIRST, before
-   * reading currentStock — mirroring create()'s lock (:1863-1867). The old
-   * validate-only assert read unlocked because it reserved nothing; now that
-   * this method WRITES currentStock, the lock is load-bearing (closes the
-   * same concurrent-oversell race create() closes). No StockMovement rows are
-   * written — matches create(), which tracks currentStock only.
-   *
-   * Applies to DELIVERED/OUT_FOR_DELIVERY orders too: a qty increase on an
-   * already-dispatched order means more goods physically went out the door,
-   * symmetric with create() decrementing at order time.
-   *
-   * Skips ENTIRELY — no validation, no write, no query — when
-   * `order.status === "DRAFT"`: creation never decremented stock for a draft,
-   * so an edit of one must not either.
-   *
-   * Unknown/missing product rows and non-numeric quantities fail OPEN (skip)
-   * for VALIDATION only — same posture as create()'s `if (p && ...)`; the
-   * write still applies for every non-zero delta regardless (mirrors
-   * create()'s unconditional decrement loop).
-   *
-   * `heldItems` is the pre-edit line set and MUST be read INSIDE the caller's
-   * transaction, after that transaction has locked the order row
-   * (`SELECT id FROM "Order" … FOR UPDATE`) and BEFORE it writes any
-   * orderItem. Reading it from a pre-transaction `order.lineItems` snapshot
-   * made the delta stale under a concurrent edit of the same order (web PATCH
-   * racing an at-door approve), which settles a wrong-MAGNITUDE stock write —
-   * far worse than a lost update, because the error persists in inventory.
-   */
-  private async settleStockForEdit(
+  private settleStockForEdit(
     db: any,
     order: { id: string; status: string },
     heldItems: Array<{ productId: string | null; qty: any; deliveredQty?: any; status?: string }>,
     finalActiveItems: Array<{ productId: string | null; qty: any }>,
     user?: JwtPayload,
   ): Promise<void> {
-    if (order.status === "DRAFT") return;
-
-    // Qty the order already holds per product (pre-edit, non-cancelled lines),
-    // plus — over the SAME line set — how much of it has already gone out the
-    // door. Delivered goods are physically gone: an edit that shrinks or drops
-    // a delivered line must NOT put them back on the shelf. This mirrors the
-    // at-door precedent, where a CHANGE_QTY/REMOVE_ITEM request against a line
-    // with deliveredQty > 0 is refused outright (LINE_ALREADY_DELIVERED,
-    // ~:4205) — the operator edit path allows the edit but credits back only
-    // the UNDELIVERED remainder.
-    const held = new Map<string, number>();
-    const deliveredHeld = new Map<string, number>();
-    for (const li of heldItems ?? []) {
-      if (li.productId && li.status !== "CANCELLED") {
-        held.set(li.productId, (held.get(li.productId) ?? 0) + Number(li.qty));
-        deliveredHeld.set(
-          li.productId,
-          (deliveredHeld.get(li.productId) ?? 0) + Number(li.deliveredQty ?? 0),
-        );
-      }
-    }
-    // Qty the edit requests per product (post-edit active line set).
-    const requested = new Map<string, number>();
-    for (const li of finalActiveItems) {
-      if (li.productId) {
-        requested.set(li.productId, (requested.get(li.productId) ?? 0) + Number(li.qty));
-      }
-    }
-
-    // Delta per product over the UNION of both sides — a product present only
-    // in `held` (its line was removed/zeroed in the edit) still gets an entry
-    // here (delta = 0 − held < 0) so its stock is returned. Zero-delta
-    // products (untouched lines) are dropped, so they never trigger a lock, a
-    // stock read, or a write (DELTA_MAP short circuit).
-    // Qty is Decimal(10,3): subtracting two float-converted Decimals leaves
-    // binary residue (36 − 12.1 = 23.900000000000002), which `!== 0` reads as
-    // a real delta and would write a phantom 1e-15 stock adjustment. Round to
-    // the column's 3 decimals BEFORE the zero check, and write the ROUNDED
-    // value.
-    const deltas = new Map<string, number>();
-    for (const productId of new Set([...held.keys(), ...requested.keys()])) {
-      const raw = (requested.get(productId) ?? 0) - (held.get(productId) ?? 0);
-      const delta = Math.round(raw * 1000) / 1000;
-      if (delta !== 0) deltas.set(productId, delta);
-    }
-    if (deltas.size === 0) return;
-
-    const productIds = [...deltas.keys()];
-    // RF-017 parity: lock the touched product rows BEFORE reading
-    // currentStock, mirroring create()'s lock (:1863-1867).
-    await db.$executeRaw`
-      SELECT id FROM "Product"
-      WHERE id IN (${Prisma.join(productIds)})
-      FOR UPDATE
-    `;
-    const products = await db.product.findMany({
-      where: { id: { in: productIds } },
-      select: { id: true, name: true, currentStock: true },
-    });
-
-    const increases = [...deltas.entries()]
-      .filter(([, delta]) => delta > 0)
-      .map(([productId, delta]) => ({
-        productId,
-        requested: requested.get(productId) ?? 0,
-        delta,
-      }));
-
-    if (increases.length > 0) {
-      const violations: Array<{
-        productId: string;
-        name: string;
-        available: number;
-        requested: number;
-        delta: number;
-      }> = [];
-      for (const inc of increases) {
-        const p = products.find((lp: any) => lp.id === inc.productId);
-        if (p && Number(p.currentStock) < inc.delta) {
-          violations.push({
-            productId: inc.productId,
-            name: p.name,
-            available: Number(p.currentStock),
-            requested: inc.requested,
-            delta: inc.delta,
-          });
-        }
-      }
-      if (violations.length > 0) {
-        if (user?.role !== UserRole.CUSTOMER && user?.role !== UserRole.DRIVER) {
-          // Operators/admins may oversell — matches create()'s warn-only path.
-          // Unlike the old validate-only guard, this does NOT return: the
-          // write below still applies so the oversell lands in currentStock,
-          // exactly like create()'s oversell write.
-          this.logger.warn(
-            `Operator edit of order ${order.id} will go below stock: ` +
-              violations
-                .map((v) => `${v.name} (available: ${v.available}, requested increase: ${v.delta})`)
-                .join("; "),
-          );
-        } else {
-          const first = violations[0];
-          throw new ConflictException({
-            code: "INSUFFICIENT_STOCK",
-            message:
-              `Not enough stock for ${first.name} ` +
-              `(available: ${first.available}, requested: ${first.requested}).`,
-            productId: first.productId,
-            available: first.available,
-            requested: first.requested,
-          });
-        }
-      }
-    }
-
-    // Apply: an increase decrements currentStock by the delta; a
-    // decrease/removal increments back only the UNDELIVERED portion of what
-    // the order held. Delivered goods never come back through an edit — the
-    // at-door path makes the same call by refusing the change outright
-    // (LINE_ALREADY_DELIVERED, ~:4205); crediting a delivered line's full qty
-    // would invent inventory that physically left the warehouse. Cap =
-    // max(0, held − deliveredHeld); a fully-delivered line's cap is 0, so it
-    // is skipped entirely (no write at all). No StockMovement rows — matches
-    // create(), which tracks currentStock only.
-    for (const [productId, delta] of deltas) {
-      if (delta > 0) {
-        await db.product.update({
-          where: { id: productId },
-          data: { currentStock: { decrement: delta } },
-        });
-        continue;
-      }
-      const undelivered = Math.max(
-        0,
-        (held.get(productId) ?? 0) - (deliveredHeld.get(productId) ?? 0),
-      );
-      const credit = Math.min(-delta, undelivered);
-      if (credit <= 0) continue;
-      await db.product.update({
-        where: { id: productId },
-        data: { currentStock: { increment: credit } },
-      });
-    }
+    return settleStockForEdit(this.stockDeps(), db, order, heldItems, finalActiveItems, user);
   }
 
   /**
-   * WP3: resolves whether the credit-limit check applies to this tenant.
-   *
-   * MUST be called BEFORE opening an interactive transaction (pool-starvation
-   * guard, :1660-1672): EntitlementsService reads the tenant row on its OWN
-   * pooled connection, so a cache miss inside an open tx would check out a
-   * second connection while the first is held — N concurrent edits on a cold
-   * cache then deadlock the pool (P2024) and every edit rolls back.
-   *
-   * Both fallbacks resolve to TRUE (run the check) because the legacy,
-   * pre-flag behavior is that the check ALWAYS runs, and assertWithinCreditLimit
-   * throws inside the order-edit transaction: a catalog/DB hiccup must degrade
-   * to the money guard staying ON, never to a rolled-back edit reporting a
-   * billing-catalog error. (PlanFlagGuard fails CLOSED instead — it can deny a
-   * request cleanly; this call site cannot.)
+   * WP3: whether the credit-limit check applies to this tenant — see `credit-limit-guard.ts`
+   * (B585 prefactor). MUST be called BEFORE opening an interactive transaction (pool starvation).
    */
-  private async isCreditLimitCheckEnabled(): Promise<boolean> {
-    // Release toggle (REMOVE by 2026-10-01): plan-flag enforcement ships dark.
-    // "on" = enforce; anything else = legacy behavior (always check).
-    if ((process.env.PLAN_FLAG_ENFORCEMENT ?? "off") !== "on") return true;
-    const tenantId = this.prisma.getTenantId();
-    if (!tenantId) return true;
-    try {
-      return await this.entitlements.hasFlag(tenantId, "flag.credit_limits");
-    } catch (err) {
-      this.logger.error(
-        `Entitlement resolution failed for tenant ${tenantId}; running the credit check (legacy)`,
-        err as Error,
-      );
-      return true;
-    }
+  private isCreditLimitCheckEnabled(): Promise<boolean> {
+    return isCreditLimitCheckEnabled({
+      prisma: this.prisma,
+      entitlements: this.entitlements,
+      logger: this.logger,
+    });
   }
 
-  /**
-   * P5-08b credit-limit guard — the FIRST credit enforcement in the codebase
-   * (verified: no other creditLimit read exists in apps/api/src outside DTOs).
-   *
-   * Exposure comes from the ONE shared derivation (`loadCreditExposure`,
-   * invoices/credit-exposure.ts) that the operator statement also uses, so the
-   * statement's exposure panel can never disagree with this block (L-119).
-   * It mirrors customers.service.ts getStatementForOperator — do NOT invent a
-   * second balance formula here:
-   *   • invoice balances: status ∉ {PAID, VOID, WRITTEN_OFF}, each worth
-   *     Number(total) − Σ non-VOID payments.amount. D6 / B462 owner ruling
-   *     (option B): a standalone unissued DRAFT is not a receivable — a DRAFT with
-   *     NO open/delivered order behind it (`isUnbackedDraft`) is NOT counted and is
-   *     surfaced as the statement's "pending exposure" instead — but a DRAFT whose
-   *     order is OPEN or DELIVERED DOES count, so delivered goods are never
-   *     unguarded. The DRAFT-PAYMENT basis (non-VOID, so a DRAFT bank-import
-   *     payment counts as paid) is deliberately unchanged;
-   *   • open-order totals: status ∈ {PENDING, CONFIRMED, OUT_FOR_DELIVERY}
-   *     (statement's `pendingOrdersAmount`). An order with counted invoices (issued
-   *     or backed drafts) counts max(order total, Σ its invoices) ONCE — the
-   *     unbilled remainder is added on top of the invoice balances, never the
-   *     order total AND the invoice (reconcileOrderDraftInvoice keeps a mirror
-   *     invoice in lockstep, so counting both would double-count);
-   *   • the order being edited is EXCLUDED from both buckets and represented
-   *     by projectedOrderTotal instead. Exact, not approximate: an editable
-   *     order's linked invoice can never carry payments —
-   *     revertLinkedInvoicesForOrderEdit (already called by updateOrderItems)
-   *     throws if it does;
-   *   • credit notes / advance payments are NOT netted (the statement reports
-   *     them separately from outstandingAmount; netting loosens a money guard);
-   *   • the Transaction model is NOT read — delivered orders have BOTH a
-   *     Transaction and an invoice, so mixing the two double-counts.
-   *
-   * creditLimit == null (or customer row not found) → no limit → no check.
-   * Blocks ALL roles — money exposure is stricter than stock (operators may
-   * oversell, they may not silently extend credit); the shared error code
-   * leaves room for a future explicit operator-override flow.
-   *
-   * Runs INSIDE the updateOrderItems transaction, after the totals recompute:
-   * projectedOrderTotal is the SAME roundMoney(subtotal + tax) the order.update
-   * persists. A throw rolls the whole edit back.
-   *
-   * flag.credit_limits gates the CHECK itself, not customer CRUD — an
-   * unflagged tenant's stored creditLimit values persist but are inert. Same
-   * PLAN_FLAG_ENFORCEMENT kill switch as PlanFlagGuard (see plan-flag.guard.ts):
-   * legacy behavior (kill switch off) is that this check ALWAYS runs, so the
-   * off-path must keep running it, not skip it. The decision is resolved by
-   * isCreditLimitCheckEnabled OUTSIDE the transaction and passed in — this
-   * method issues NO query on the non-transactional client.
-   */
-  private async assertWithinCreditLimit(
-    db: any,
-    customerId: string,
-    currentOrderId: string,
-    projectedOrderTotal: number,
-    creditCheckEnabled: boolean,
-  ): Promise<void> {
-    if (!creditCheckEnabled) return;
-
-    const customer = await db.customer.findFirst({
-      where: { id: customerId },
-      select: { creditLimit: true },
-    });
-    if (customer?.creditLimit == null) return;
-    const limit = Number(customer.creditLimit);
-
-    // `db` is the caller's (transaction) client. The edited order is excluded from
-    // every bucket and represented by projectedOrderTotal below.
-    const { counted } = await loadCreditExposure(db, customerId, {
-      excludeOrderId: currentOrderId,
-    });
-
-    const exposure = roundMoney(counted + projectedOrderTotal);
-    if (exposure > limit) {
-      throw new ConflictException({
-        code: "CREDIT_LIMIT_EXCEEDED",
-        message:
-          `This edit would take the customer's exposure to ${exposure.toFixed(2)}, ` +
-          `over their credit limit of ${limit.toFixed(2)}.`,
-        limit,
-        exposure,
-      });
-    }
+  /** B585: the credit check at an enforcement point; MUST run before any write / stock tx. */
+  private creditGate(p: CreditPointParams): Promise<void> {
+    return assertCreditAtEnforcementPoint(
+      { prisma: this.prisma, entitlements: this.entitlements, logger: this.logger },
+      { ...p, tenantId: this.prisma.getTenantId() },
+    );
   }
 
   /**
@@ -5760,7 +4982,7 @@ export class OrdersService implements OnApplicationBootstrap {
     excludeOrderId: string,
     projectedTotal: number,
   ): Promise<void> {
-    await this.assertWithinCreditLimit(
+    await assertWithinCreditLimit(
       this.prisma.forTenant(),
       customerId,
       excludeOrderId,
@@ -6268,13 +5490,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // CHANGE_WINDOW_CLOSED guard above — so settleStockForEdit's internal
         // DRAFT no-op never triggers on this call site).
         await this.settleStockForEdit(tx, order, heldItems, activeItems, resolver);
-        await this.assertWithinCreditLimit(
-          tx,
-          order.customerId,
-          order.id,
-          total,
-          creditCheckEnabled,
-        );
+        await assertWithinCreditLimit(tx, order.customerId, order.id, total, creditCheckEnabled);
 
         // NO status revert here — post-dispatch orders must NOT flip to PENDING
         // (the shouldRevert logic in updateOrderItems is pre-dispatch-only).
@@ -6476,81 +5692,9 @@ export class OrdersService implements OnApplicationBootstrap {
     }
   }
 
-  async getOrderTracking(orderId: string, user: JwtPayload) {
-    const order = await this.prisma.forTenant().order.findUnique({
-      where: { id: orderId },
-      include: {
-        customer: { select: { deliveryWindowStart: true, deliveryWindowEnd: true } },
-        routeRunStop: {
-          include: {
-            routeRun: {
-              include: {
-                driver: { select: { id: true, contactName: true } },
-                route: { select: { id: true, name: true } },
-                stops: { orderBy: { stopNumber: "asc" } },
-              },
-            },
-          },
-        },
-      },
-    });
-    if (!order) throw new NotFoundException("Order not found");
-
-    // Ownership gate (security F2-002): this route has no RolesGuard, so without
-    // this any authenticated CUSTOMER could enumerate order ids and read another
-    // customer's route/driver/stop/delivery-window. Mirror findOne's CUSTOMER gate.
-    if (user.role === UserRole.CUSTOMER) {
-      // REG-B131: `deletedAt: null` here — a removal deactivates the user but an access token
-      // minted just before it stays valid for up to 15 minutes, so a removed customer's own
-      // in-flight session must fall into the existing refusal below.
-      const customer = await this.prisma
-        .forTenant()
-        .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
-      if (!customer || customer.id !== order.customerId) throw new ForbiddenException();
-    }
-
-    if (!order.routeRunStop) {
-      return { status: order.status, tracking: null };
-    }
-
-    // F11 (B129 / B146 contract, spec R5): a CANCELLED run is not tracking —
-    // the buyer card must never show a driver, a stop number or "you're next"
-    // for a called-off run. After F11 the release nulls the pointer at cancel
-    // time, so this branch serves rows stranded BEFORE the deploy until the D4
-    // repair frees them, and stays as the written contract. A SKIPPED own-stop
-    // on a live or completed run keeps the FULL payload (stopStatus: "SKIPPED",
-    // stopsAhead exactly as computed below) — the client branches on
-    // stopStatus; the server invents no "skipped shape".
-    if (order.routeRunStop.routeRun.status === RouteRunStatus.CANCELLED) {
-      return { status: order.status, tracking: null };
-    }
-
-    const stop = order.routeRunStop;
-    const run = stop.routeRun;
-    const allStops = run.stops ?? [];
-    const currentStopNumber = stop.stopNumber;
-
-    // Count PENDING stops before this customer's stop
-    const stopsAhead = allStops.filter(
-      (s) => s.stopNumber < currentStopNumber && s.status === "PENDING",
-    ).length;
-
-    return {
-      status: order.status,
-      tracking: {
-        runId: run.id,
-        routeName: run.route?.name ?? null,
-        driverName: run.driver?.contactName ?? null,
-        runStatus: run.status,
-        stopNumber: currentStopNumber,
-        stopStatus: stop.status,
-        stopsAhead,
-        estimatedArrivalWindow: {
-          start: order.customer?.deliveryWindowStart ?? null,
-          end: order.customer?.deliveryWindowEnd ?? null,
-        },
-      },
-    };
+  /** The order-tracking card (route / driver / stop / delivery window) — see `order-tracking.ts`. */
+  getOrderTracking(orderId: string, user: JwtPayload) {
+    return getOrderTracking({ prisma: this.prisma }, orderId, user);
   }
 
   /**

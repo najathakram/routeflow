@@ -40,6 +40,7 @@ function dump({
   withMigrations = true,
   truncate = false,
   tenantRows = ["t1\tacme", "t2\tglobex"],
+  userRows = ["u1\tada", "u2\tbob"],
 }: {
   tables?: number;
   migrations?: string[];
@@ -49,12 +50,16 @@ function dump({
   /** Simulate pg_dump killed mid-write: the file stops INSIDE the migrations COPY block. */
   truncate?: boolean;
   tenantRows?: string[];
+  userRows?: string[];
 } = {}) {
   const lines = [
     "-- PostgreSQL database dump",
     ...tableLines(tables),
     'COPY public."Tenant" (id, name) FROM stdin;',
     ...tenantRows,
+    "\\.",
+    'COPY public."User" (id, username) FROM stdin;',
+    ...userRows,
     "\\.",
     ...(withMigrations ? [header, ...migrations, ...(truncate ? [] : ["\\."])] : []),
     ...(truncate ? [] : ["-- PostgreSQL database dump complete"]),
@@ -68,6 +73,7 @@ const scan = (text: string) =>
     tables: number;
     copyBlocks: number;
     migrationRows: number;
+    tableRows: Record<string, number>;
     complete: boolean;
     unterminated: boolean;
   }>("return lib.scanDump(input.split('\\n'))", text);
@@ -77,7 +83,7 @@ describe("scanDump", () => {
     const s = scan(dump());
     expect(s.migrationRows).toBe(3);
     expect(s.tables).toBe(120);
-    expect(s.copyBlocks).toBe(2);
+    expect(s.copyBlocks).toBe(3);
   });
 
   it('also recognises a quoted COPY public."_prisma_migrations" header', () => {
@@ -123,7 +129,7 @@ describe("scanDump", () => {
       }),
     );
     expect(s.tables).toBe(5);
-    expect(s.copyBlocks).toBe(2); // Tenant + _prisma_migrations, not the fake ones
+    expect(s.copyBlocks).toBe(3); // Tenant + User + _prisma_migrations, not the fake ones
   });
 
   it("a complete dump is complete and terminated", () => {
@@ -142,7 +148,7 @@ describe("scanDump", () => {
 describe("dumpProblems", () => {
   const problems = (stats: object) => run<string[]>("return lib.dumpProblems(input)", stats);
 
-  const ok = { complete: true, unterminated: false };
+  const ok = { complete: true, unterminated: false, tableRows: { Tenant: 3, User: 4 } };
 
   it("accepts a full-looking prod dump", () => {
     expect(problems({ ...ok, tables: 125, migrationRows: 240 })).toEqual([]);
@@ -171,6 +177,41 @@ describe("dumpProblems", () => {
   it("refuses an empty migrations block, and reports every reason at once", () => {
     expect(problems({ ...ok, tables: 125, migrationRows: 0 })[0]).toMatch(/0 rows/);
     expect(problems({ ...ok, tables: 3, migrationRows: -1 })).toHaveLength(2);
+  });
+});
+
+describe("B578 — a prod-SHAPED but EMPTY dump is not a backup", () => {
+  /** scan + verdict end to end, exactly as runBackup does it. */
+  const verify = (text: string) =>
+    run<string[]>(
+      "const s = await lib.scanDump(input.split('\\n')); return lib.dumpProblems(s)",
+      text,
+    );
+
+  it("a dump with 120 tables, full migration history and trailer but ZERO Tenant/User rows is REJECTED", () => {
+    const problems = verify(dump({ tenantRows: [], userRows: [] }));
+    expect(problems.join("\n")).toMatch(/"Tenant" COPY block has 0 rows/);
+    expect(problems.join("\n")).toMatch(/"User" COPY block has 0 rows/);
+  });
+
+  it("a dump with no Tenant/User COPY block at all is rejected too", () => {
+    const text = dump().replace(/COPY public\."User"[\s\S]*?\\\.\n/, "");
+    expect(verify(text).join("\n")).toMatch(/no COPY block for "User"/);
+  });
+
+  it("scanDump reports per-table row counts for every COPY block", () => {
+    const s = scan(dump({ tenantRows: ["a", "b", "c"], userRows: ["x"] }));
+    expect(s.tableRows).toMatchObject({ Tenant: 3, User: 1, _prisma_migrations: 3 });
+  });
+
+  it("a dump with data in Tenant and User (and the rest of the checks) is accepted", () => {
+    expect(verify(dump())).toEqual([]);
+  });
+
+  it("rows that merely READ like a COPY header are data, not a new table", () => {
+    const s = scan(dump({ tenantRows: ['COPY public."User" (id) FROM stdin;', "t1\tacme"] }));
+    expect(s.tableRows.Tenant).toBe(2);
+    expect(s.tableRows.User).toBe(2);
   });
 });
 
