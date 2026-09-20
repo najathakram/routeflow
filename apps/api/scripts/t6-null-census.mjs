@@ -6,6 +6,7 @@
 //   railway run --service postgres node apps/api/scripts/t6-null-census.mjs     # prod (owner)
 //   DATABASE_URL=postgresql://…@localhost:5432/<db> node apps/api/scripts/t6-null-census.mjs --local
 //
+// `--guards` instead checks the 56 `<table>_tenantId_nn` constraints exist and are validated (run it after the migration).
 // Exit: 0 every table has zero NULL rows (safe to migrate) · 1 at least one table has NULL rows
 // (prints table + count; do NOT migrate — the VALIDATE migration would fail) · 2 env/connection error.
 // It opens a READ ONLY transaction and only ever runs SELECT count(*).
@@ -55,6 +56,23 @@ async function main() {
   try {
     await client.connect();
     await client.query("BEGIN READ ONLY");
+    if (process.argv.includes("--guards")) {
+      // Post-apply check (still read-only): every one of the 56 guards present and validated.
+      const { rows } = await client.query(
+        `SELECT conname, convalidated FROM pg_constraint WHERE conname LIKE '%\\_tenantId\\_nn'`,
+      );
+      await client.query("ROLLBACK");
+      const names = new Set(rows.map((r) => r.conname));
+      const missing = tables.filter((t) => !names.has(`${t}_tenantId_nn`));
+      const unvalidated = rows.filter((r) => !r.convalidated).map((r) => r.conname);
+      console.log(
+        `t6-null-census --guards: ${rows.length} guards, ${rows.length - unvalidated.length} validated`,
+      );
+      if (rows.length === 56 && missing.length === 0 && unvalidated.length === 0) return 0;
+      if (missing.length) console.error(`  missing: ${missing.join(", ")}`);
+      if (unvalidated.length) console.error(`  NOT VALID: ${unvalidated.join(", ")}`);
+      return 1;
+    }
     const bad = [];
     for (const t of tables) {
       const { rows } = await client.query(
