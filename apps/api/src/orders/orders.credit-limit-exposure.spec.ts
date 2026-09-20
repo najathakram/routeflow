@@ -451,6 +451,41 @@ describe("OrdersService — credit-limit exposure (D6 / B462, option B)", () => 
       ).rejects.toMatchObject(overLimit(115, 110));
     });
 
+    it("B577: another OPEN order fully prepaid by a PAID invoice is not counted again — 0 + 15 passes a limit of 100 (was 100 + 15, a false 409)", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          total: 100,
+          status: "PAID",
+          orderId: "ord-2",
+          order: orderOf("ord-2", "CONFIRMED", 100),
+          payments: [{ amount: 100, status: "PAID" }],
+        },
+      ]);
+      prisma.order.findMany.mockResolvedValue([{ id: "ord-2", total: 100 }]);
+
+      await service.updateOrderItems("ord-1", editDto, operatorPayload);
+
+      expect(prisma.order.update).toHaveBeenCalled();
+    });
+
+    it("B577: a partially prepaid open order counts only its unbilled remainder: PAID 60 of 100 → 40 + 15 = 55 blocks a limit of 50", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ creditLimit: 50 });
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          total: 60,
+          status: "PAID",
+          orderId: "ord-2",
+          order: orderOf("ord-2", "CONFIRMED", 100),
+          payments: [{ amount: 60, status: "PAID" }],
+        },
+      ]);
+      prisma.order.findMany.mockResolvedValue([{ id: "ord-2", total: 100 }]);
+
+      await expect(
+        service.updateOrderItems("ord-1", editDto, operatorPayload),
+      ).rejects.toMatchObject(overLimit(55, 50));
+    });
+
     it("E4: an open order (90) whose sole DRAFT mirror is 110 (shipping fee) counts the draft's 110: 110 + 15 = 125 blocks a limit of 120", async () => {
       prisma.customer.findFirst.mockResolvedValue({ creditLimit: 120 });
       prisma.invoice.findMany.mockResolvedValue([
@@ -518,8 +553,11 @@ describe("OrdersService — credit-limit exposure (D6 / B462, option B)", () => 
       await service.updateOrderItems("ord-1", editDto, operatorPayload);
 
       const args = prisma.invoice.findMany.mock.calls[0][0];
-      // Settled only — DRAFT must come back so the derivation can judge each draft's backing.
-      expect(new Set(args.where.status.notIn)).toEqual(new Set(["PAID", "VOID", "WRITTEN_OFF"]));
+      // Settled only — DRAFT must come back so the derivation can judge each draft's backing —
+      // plus (B577) the PAID invoices of OPEN orders, which cover their order.
+      const [issued, cover] = args.where.OR;
+      expect(new Set(issued.status.notIn)).toEqual(new Set(["PAID", "VOID", "WRITTEN_OFF"]));
+      expect(cover.status.in).toEqual(["PAID"]);
       // Without `status` every DRAFT would silently count again...
       expect(args.select.status).toBe(true);
       // ...and without the order relation every DRAFT would look unbacked and leave the block.

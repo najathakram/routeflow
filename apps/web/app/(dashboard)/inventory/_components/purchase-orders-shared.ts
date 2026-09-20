@@ -30,6 +30,9 @@ export interface POItem {
   qtyReceived: number | string;
   unitCost: number | string;
   totalCost?: number | string;
+  /** The supplier's own SKU / pieces-per-supplier-unit — null on lines that never carried them. */
+  sku?: string | null;
+  packSize?: number | null;
 }
 
 export interface PurchaseOrder {

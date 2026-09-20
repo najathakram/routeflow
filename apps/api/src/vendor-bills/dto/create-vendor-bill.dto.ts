@@ -53,7 +53,15 @@ export class VendorBillItemDto {
  */
 export class CreateVendorBillDto {
   @IsOptional() @IsString() supplierId?: string;
+  /** Link this bill to an existing purchase order (one bill per PO; may not exceed it). */
   @IsOptional() @IsString() purchaseOrderId?: string;
+  /**
+   * Raise a DRAFT purchase order from this bill's own lines, in the same
+   * transaction, and link them (the scan flow). Needs a supplier and every line
+   * mapped to a product; not combinable with `purchaseOrderId`. The PO moves
+   * stock (send → receive); the linked bill is money only.
+   */
+  @IsOptional() @IsBoolean() createPurchaseOrder?: boolean;
   @IsOptional() @IsString() billDate?: string;
   @IsOptional() @IsString() dueDate?: string;
   /** Net-terms label as entered on the bill ("Net 30", "Due on Receipt", …),

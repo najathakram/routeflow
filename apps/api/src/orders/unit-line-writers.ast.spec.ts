@@ -199,6 +199,10 @@ const INVENTORY: Record<string, Row> = {
     kind: "NOT_ORDER_INVOICE_LINE",
     why: "PurchaseOrderItem",
   },
+  "inventory/inventory.service.ts::InventoryService.createDraftPurchaseOrderInTx": {
+    kind: "NOT_ORDER_INVOICE_LINE",
+    why: "PurchaseOrderItem",
+  },
   "order-templates/order-templates.service.ts::OrderTemplatesService.create": {
     kind: "NOT_ORDER_INVOICE_LINE",
     why: "OrderTemplateItem",

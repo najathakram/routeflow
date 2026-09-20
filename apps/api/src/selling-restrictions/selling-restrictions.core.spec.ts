@@ -1,3 +1,4 @@
+import { UserRole } from "@prisma/client";
 import {
   activeRuleWhere,
   compareRules,
@@ -5,6 +6,7 @@ import {
   matchingRules,
   offEvaluation,
   resolveGoverningState,
+  restrictionChannelForRole,
   ruleBindsChannel,
   ruleIsActive,
   UNKNOWN_PRODUCT_NAME,
@@ -838,5 +840,32 @@ describe("review MINOR 6: UNKNOWN_PRODUCT never shows a raw id to the buyer", ()
       expect(res.reasons[0].productName).toBe(UNKNOWN_PRODUCT_NAME);
       expect(res.reasons[0].message).not.toContain("uuid-9");
     });
+  });
+});
+
+describe("restrictionChannelForRole", () => {
+  it("the CUSTOMER role is the self-serve buyer portal", () => {
+    expect(restrictionChannelForRole(UserRole.CUSTOMER)).toBe("BUYER_PORTAL");
+    expect(restrictionChannelForRole("CUSTOMER")).toBe("BUYER_PORTAL");
+  });
+
+  it("every other role is STAFF — pinned against the whole UserRole enum so a rename cannot drift", () => {
+    const others = Object.values(UserRole).filter((r) => r !== UserRole.CUSTOMER);
+    expect(others.length).toBeGreaterThan(0);
+    for (const role of others) expect(restrictionChannelForRole(role)).toBe("STAFF");
+    expect(others).toEqual(
+      expect.arrayContaining(["SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR", "DRIVER"]),
+    );
+  });
+
+  it("the EXACT role set is pinned: a NEW role must be classified here (staff or buyer) on purpose, not inherit STAFF", () => {
+    expect([...Object.values(UserRole)].sort()).toEqual(
+      ["CUSTOMER", "DRIVER", "OPERATOR", "SUPER_ADMIN", "TENANT_ADMIN"].sort(),
+    );
+  });
+
+  it("no role at all (cron / system callers) is STAFF", () => {
+    expect(restrictionChannelForRole(undefined)).toBe("STAFF");
+    expect(restrictionChannelForRole("")).toBe("STAFF");
   });
 });

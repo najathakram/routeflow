@@ -22,6 +22,17 @@ export function useDeveloperMode(): { enabled: boolean; isLoading: boolean; reso
   return { enabled, isLoading, resolved: isSuccess };
 }
 
+// ─── scan_v2 (accumulating create-order scan screen) ──────────────────────────
+//
+// Fleet ruling 2026-09-19: no new plan flags while the feature registry is frozen, so the new scan
+// screen rides the `developer_mode` addon — already owner-grantable per tenant, dark by default
+// (`enabled` is false until the addons fetch succeeds AND lists it, so loading, an error and an
+// ungranted tenant all read OFF). One line to swap when a real flag exists; call sites use this
+// hook, never `useDeveloperMode` directly, so that swap touches only here.
+export function useScanV2(): boolean {
+  return useDeveloperMode().enabled;
+}
+
 // ─── Order UI v2 (card-list order detail — LANE-S / order-ui-redesign) ────────
 //
 // Dark until the owner flips it. Gated on the existing in-development surface flag

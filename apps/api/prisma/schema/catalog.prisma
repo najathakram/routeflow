@@ -403,6 +403,11 @@ model ProductCategoryLabel {
   categoryId    String
   mode          LabelMode
   reason        String?
+  // The variant's CURRENT parent at the moment an EXCLUDE (opt-out) was written — set by the write
+  // side on EVERY EXCLUDE write and never touched by reparenting, so an opt-out approved against one
+  // parent can never ride along to another. The engine treats an EXCLUDE whose pin is null or is not
+  // the variant's current parent as INERT (fail closed). Always null on INCLUDE rows and on legacy rows.
+  parentProductIdAtWrite String?
   createdById   String?
   createdByName String?
   createdAt     DateTime  @default(now())
