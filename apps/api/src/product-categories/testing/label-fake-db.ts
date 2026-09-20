@@ -61,6 +61,8 @@ export class LabelFakeDb {
   categories: FakeCategory[] = [];
   /** Every query issued, so a spec can assert on what was (not) asked. */
   calls: Array<{ model: string; op: string; args: any }> = [];
+  /** When set, the advisory-lock statement rejects with it (simulates lock_timeout / a dead connection). */
+  lockError: unknown = null;
   private seq = 0;
 
   private log(model: string, op: string, args: any) {
@@ -205,6 +207,11 @@ export class LabelFakeDb {
             // key and that it is taken before the first read.
             $executeRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
               this.log("$executeRaw", strings.join("?"), values);
+              if (this.lockError) throw this.lockError as Error;
+              return 0;
+            },
+            $executeRawUnsafe: async (sql: string) => {
+              this.log("$executeRawUnsafe", sql, []);
               return 0;
             },
           });
