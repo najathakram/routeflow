@@ -30,17 +30,10 @@ export function OrderLineCard({
         !first && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: ios.separator },
         model.cancelled && styles.cancelled,
       ]}
-      // One spoken sentence per line: family + flavor, qty · price, status, total. `accessible`
+      // One spoken sentence per line (`model.spoken`). `accessible`
       // makes the row a single element (a plain View is skipped by VoiceOver, and its label with it).
       accessible
-      accessibilityLabel={[
-        stem ? `${stem} ${anchor}` : anchor,
-        model.qtyPriceLine,
-        model.status?.label,
-        model.total ?? "cancelled, no charge",
-      ]
-        .filter(Boolean)
-        .join(", ")}
+      accessibilityLabel={model.spoken}
     >
       <View style={styles.body}>
         {stem ? (

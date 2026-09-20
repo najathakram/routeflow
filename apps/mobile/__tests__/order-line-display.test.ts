@@ -260,3 +260,53 @@ describe("orderLineCardModel", () => {
     expect(m.tag).toMatchObject({ label: "Upsell", originalText: null });
   });
 });
+
+// B597 — on a boxed line `qty` and `deliveredQty` are PIECES while the row shows BOXES + pieces.
+describe("boxed line: delivery progress and the spoken label (B597)", () => {
+  const boxed = (over: Record<string, unknown> = {}) =>
+    line({
+      qty: 51,
+      boxes: 2,
+      pieces: 3,
+      unitsPerBox: 24,
+      unitPrice: 30,
+      subtotal: 63.75,
+      deliveredQty: 0,
+      ...over,
+    });
+
+  it("reads progress in the same units as the quantity, never '0 of 51'", () => {
+    const m = orderLineCardModel(boxed(), "OUT_FOR_DELIVERY");
+    expect(m.qtyPriceLine).toContain("2 boxes + 3 pcs");
+    expect(m.deliveryText).toBe("0 of 2 boxes + 3 pcs delivered");
+    expect(
+      orderLineCardModel(boxed({ deliveredQty: 27 }), "PARTIALLY_DELIVERED").deliveryText,
+    ).toBe("1 box + 3 pcs of 2 boxes + 3 pcs delivered");
+    expect(
+      orderLineCardModel(boxed({ deliveredQty: 24 }), "PARTIALLY_DELIVERED").deliveryText,
+    ).toBe("1 box of 2 boxes + 3 pcs delivered");
+  });
+
+  it("a non-boxed line still counts plain units", () => {
+    expect(orderLineCardModel(line({ deliveredQty: 3 }), "OUT_FOR_DELIVERY").deliveryText).toBe(
+      "3 of 8 delivered",
+    );
+  });
+
+  it("speaks name, quantity and price, tag, progress, status and total — once each", () => {
+    const m = orderLineCardModel(
+      boxed({ priceType: "SPECIAL", originalPrice: 35, deliveredQty: 24 }),
+      "PARTIALLY_DELIVERED",
+    );
+    expect(m.spoken).toBe(
+      "Sample Cola 12oz, 2 boxes + 3 pcs · $30.00 / box of 24, Special price, " +
+        "1 box of 2 boxes + 3 pcs delivered, Partial, total $63.75",
+    );
+  });
+
+  it("a cancelled line says 'Cancelled' exactly once, keeps its price, and has no total", () => {
+    const m = orderLineCardModel(line({ status: "CANCELLED" }), "CONFIRMED");
+    expect(m.spoken).toBe("Sample Cola 12oz, 8 × $65.00, Cancelled, no charge");
+    expect(m.spoken.match(/cancelled/gi)).toHaveLength(1);
+  });
+});

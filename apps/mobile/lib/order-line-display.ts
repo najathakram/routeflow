@@ -144,6 +144,46 @@ export interface OrderLineCardModel {
   cancelled: boolean;
   status: { label: string; variant: "green" | "orange" | "red" | "gray" } | null;
   deliveryText: string | null;
+  /** One screen-reader sentence for the whole card (see `spokenLine`). */
+  spoken: string;
+}
+
+/** A piece count as whole boxes + loose pieces (delivery progress on a boxed line). */
+function splitIntoBoxes(
+  n: number,
+  unitsPerBox: number,
+): { qty: number; boxes: number; pieces: number } {
+  const whole = Math.max(0, Math.trunc(n));
+  const boxes = Math.floor(whole / unitsPerBox);
+  return { qty: n, boxes, pieces: whole - boxes * unitsPerBox };
+}
+
+/**
+ * The screen-reader sentence for one card: name, quantity · price, price tag, free units, delivery
+ * progress, then EITHER the total OR "Cancelled, no charge" — the status pill is spoken only when it
+ * is not the cancelled one, so "Cancelled" is never said twice (B597).
+ */
+export function spokenLine(p: {
+  name: string;
+  qtyPriceLine: string;
+  tagText: string | null;
+  freeLabel: string | null;
+  deliveryText: string | null;
+  status: string | null;
+  cancelled: boolean;
+  total: string | null;
+}): string {
+  return [
+    p.name,
+    p.qtyPriceLine,
+    p.tagText,
+    p.freeLabel,
+    p.deliveryText,
+    p.cancelled ? "Cancelled, no charge" : p.status,
+    p.cancelled ? null : p.total ? `total ${p.total}` : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
 }
 
 interface LineInput {
@@ -215,11 +255,27 @@ export function orderLineCardModel(li: LineInput, orderStatus: string): OrderLin
                   : ("gray" as const),
         };
 
+  // `qty` and `deliveredQty` are both in PIECES; a boxed line shows its quantity as boxes + pieces,
+  // so progress must read in the same units ("0 of 2 boxes + 3 pcs", never "0 of 51") — B597.
+  const qtyText = (n: number) =>
+    boxed ? formatQtySplit(splitIntoBoxes(n, upb as number)) : formatQtySplit({ qty: n });
   const delivered = li.deliveredQty == null ? null : Number(li.deliveredQty);
   const deliveryText =
     DELIVERY_PROGRESS_STATUSES.has(orderStatus) && delivered != null && delivered < qty
-      ? `${formatQtySplit({ qty: delivered })} of ${formatQtySplit({ qty })} delivered`
+      ? `${qtyText(delivered)} of ${qtyText(qty)} delivered`
       : null;
+  const tagText = tag ? `${tag.label} price` : null;
+  const totalText = cancelled ? null : money(total);
+  const spoken = spokenLine({
+    name: stem ? `${stem} ${anchor}` : anchor,
+    qtyPriceLine,
+    tagText,
+    freeLabel: freeUnitsLabel(li.promoFreeUnits),
+    deliveryText,
+    status: status?.label ?? null,
+    cancelled,
+    total: totalText,
+  });
 
   return {
     id: li.id,
@@ -237,9 +293,10 @@ export function orderLineCardModel(li: LineInput, orderStatus: string): OrderLin
       : null,
     freeLabel: freeUnitsLabel(li.promoFreeUnits),
     note: li.notes?.trim() ? li.notes.trim() : null,
-    total: cancelled ? null : money(total),
+    total: totalText,
     cancelled,
     status,
     deliveryText,
+    spoken,
   };
 }
