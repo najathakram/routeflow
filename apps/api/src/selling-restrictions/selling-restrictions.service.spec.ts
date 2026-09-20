@@ -921,4 +921,237 @@ describe("SellingRestrictionsService.evaluate", () => {
       expect(prisma.customer.findMany).not.toHaveBeenCalled();
     });
   });
+
+  describe("checkLinesSellable / assertLinesSellable (the step-2 choke point)", () => {
+    // `qtyDelta` is `unknown` on purpose: the fail-closed cases below need null, NaN and strings,
+    // which the typed interface (rightly) cannot express.
+    const line = (productId: string, qtyDelta?: unknown) =>
+      (qtyDelta === undefined ? { productId } : { productId, qtyDelta }) as {
+        productId: string;
+        qtyDelta?: number;
+      };
+    const args = (lines: Array<{ productId: string; qtyDelta?: number }>, over = {}) => ({
+      tenantId: T,
+      customerId: "c1",
+      lines,
+      at: NOW,
+      ...over,
+    });
+    const fedRule = () => dbRule({ jurisdiction: "FEDERAL", states: [] });
+    const inState = (stateCode: string) =>
+      withAddresses([
+        { isDefault: true, addressType: "BILLING", stateCode, stateNeedsReview: false },
+      ]);
+    const expectNoReads = () => {
+      expect(prisma.systemConfig.findMany).not.toHaveBeenCalled();
+      expect(prisma.product.findMany).not.toHaveBeenCalled();
+      expect(prisma.sellingRestriction.findMany).not.toHaveBeenCalled();
+      expect(prisma.customer.findFirst).not.toHaveBeenCalled();
+    };
+
+    it("decrease-only lines (qtyDelta <= 0) ALLOW with NO reads at all — even before the policy is read", async () => {
+      const lines = [line("p1", -2), line("p1", 0), line("p2", -0.5)];
+      expect(await service.checkLinesSellable(args(lines))).toEqual({
+        outcome: "ALLOW",
+        reasons: [],
+      });
+      await expect(service.assertLinesSellable(args(lines))).resolves.toBeUndefined();
+      expectNoReads();
+    });
+
+    it("no lines, and lines with an empty product id, also ALLOW without reads", async () => {
+      expect((await service.checkLinesSellable(args([]))).outcome).toBe("ALLOW");
+      expect((await service.checkLinesSellable(args([line("")]))).outcome).toBe("ALLOW");
+      expectNoReads();
+    });
+
+    it("a banned product that is only being REMOVED or REDUCED never blocks (the owner rule)", async () => {
+      enable(true);
+      withProduct();
+      prisma.sellingRestriction.findMany.mockResolvedValue([
+        dbRule({ jurisdiction: "FEDERAL", states: [] }),
+      ]);
+      await expect(
+        service.assertLinesSellable(args([line("p1", -5), line("p1", 0)])),
+      ).resolves.toBeUndefined();
+      expectNoReads();
+    });
+
+    it("a NEW line (no qtyDelta) is checked: BLOCK throws a 409 SELLING_RESTRICTED with the blocked lines", async () => {
+      enable(true);
+      withProduct();
+      prisma.sellingRestriction.findMany.mockResolvedValue([
+        dbRule({ jurisdiction: "FEDERAL", states: [] }),
+      ]);
+      const evaluation = await service.checkLinesSellable(args([line("p1")]));
+      expect(evaluation.outcome).toBe("BLOCK");
+
+      const err: ConflictException = await service.assertLinesSellable(args([line("p1")])).then(
+        () => {
+          throw new Error("expected a rejection");
+        },
+        (e) => e,
+      );
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getStatus()).toBe(409);
+      expect(err.getResponse()).toEqual({
+        code: "SELLING_RESTRICTED",
+        blockedLines: evaluation.reasons,
+      });
+      expect((err.getResponse() as any).blockedLines[0]).toMatchObject({
+        productId: "p1",
+        reason: "FEDERAL_BAN",
+        ruleId: "r1",
+      });
+    });
+
+    it("a quantity INCREASE (qtyDelta > 0) is checked", async () => {
+      enable(true);
+      withProduct();
+      inState("TX");
+      prisma.sellingRestriction.findMany.mockResolvedValue([dbRule()]);
+      await expect(service.assertLinesSellable(args([line("p1", 3)]))).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+    });
+
+    it("INDETERMINATE (state rule, unresolvable address) also throws 409 SELLING_RESTRICTED — fail closed", async () => {
+      enable(true);
+      withProduct();
+      prisma.sellingRestriction.findMany.mockResolvedValue([dbRule()]);
+      withAddresses([]);
+      const err: ConflictException = await service.assertLinesSellable(args([line("p1")])).then(
+        () => {
+          throw new Error("expected a rejection");
+        },
+        (e) => e,
+      );
+      expect(err).toBeInstanceOf(ConflictException);
+      expect((err.getResponse() as any).code).toBe("SELLING_RESTRICTED");
+      expect((err.getResponse() as any).blockedLines[0]).toMatchObject({
+        reason: "INDETERMINATE_ADDRESS",
+      });
+    });
+
+    it("ALLOW resolves (enabled, nothing matches)", async () => {
+      enable(true);
+      withProduct();
+      const evaluation = await service.checkLinesSellable(args([line("p1")]));
+      expect(evaluation).toEqual({ outcome: "ALLOW", reasons: [] });
+      await expect(service.assertLinesSellable(args([line("p1")]))).resolves.toBeUndefined();
+    });
+
+    it("OFF resolves — and stays reachable: a checkable line still reaches the policy read", async () => {
+      policyRows([]); // no row = OFF
+      expect(await service.checkLinesSellable(args([line("p1")]))).toEqual({
+        outcome: "OFF",
+        reasons: [],
+      });
+      await expect(service.assertLinesSellable(args([line("p1", 4)]))).resolves.toBeUndefined();
+      expect(prisma.sellingRestriction.findMany).not.toHaveBeenCalled(); // OFF evaluates nothing else
+    });
+
+    it("only the checkable lines reach the evaluator: a reduced banned product is dropped, an added one is not", async () => {
+      enable(true);
+      // p2 (added) carries no label; p1 (reduced) would be banned if it were looked at.
+      prisma.product.findMany.mockResolvedValue([
+        { id: "p2", name: "Plain", parentProductId: null, categoryLabels: [] },
+      ]);
+      prisma.sellingRestriction.findMany.mockResolvedValue([
+        dbRule({ jurisdiction: "FEDERAL", states: [] }),
+      ]);
+      const res = await service.checkLinesSellable(args([line("p1", -3), line("p2", 2)]));
+      expect(res.outcome).toBe("ALLOW");
+      expect(prisma.product.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { tenantId: T, id: { in: ["p2"] } } }),
+      );
+    });
+
+    it("threads `channel` through: a BUYER_PORTAL-only rule blocks the buyer portal, never staff", async () => {
+      enable(true);
+      withProduct();
+      prisma.sellingRestriction.findMany.mockResolvedValue([
+        dbRule({ jurisdiction: "FEDERAL", states: [], surface: "BUYER_PORTAL" }),
+      ]);
+      const staff = await service.checkLinesSellable(args([line("p1")], { channel: "STAFF" }));
+      expect(staff.outcome).toBe("ALLOW");
+      const noChannel = await service.checkLinesSellable(args([line("p1")]));
+      expect(noChannel.outcome).toBe("ALLOW"); // default channel is STAFF
+      const buyer = await service.checkLinesSellable(
+        args([line("p1")], { channel: "BUYER_PORTAL" }),
+      );
+      expect(buyer.outcome).toBe("BLOCK");
+      expect(buyer.reasons[0].reason).toBe("BUYER_PORTAL_ONLY");
+    });
+
+    it("threads `at` through: a rule that starts after the point in time does not bind", async () => {
+      enable(true);
+      withProduct();
+      prisma.sellingRestriction.findMany.mockResolvedValue([
+        dbRule({ jurisdiction: "FEDERAL", states: [], effectiveFrom: new Date("2026-12-01") }),
+      ]);
+      expect((await service.checkLinesSellable(args([line("p1")]))).outcome).toBe("ALLOW");
+      expect(
+        (await service.checkLinesSellable(args([line("p1")], { at: new Date("2027-01-01") })))
+          .outcome,
+      ).toBe("BLOCK");
+    });
+
+    it("is read-only: neither method writes to ANY model", async () => {
+      enable(true);
+      withProduct();
+      prisma.sellingRestriction.findMany.mockResolvedValue([fedRule()]);
+      await service.checkLinesSellable(args([line("p1")]));
+      await service.assertLinesSellable(args([line("p1")])).catch(() => undefined);
+      for (const model of ["sellingRestriction", "product", "customer", "systemConfig"]) {
+        for (const verb of ["create", "update", "upsert", "delete", "updateMany", "deleteMany"]) {
+          expect(prisma[model][verb]).not.toHaveBeenCalled();
+        }
+      }
+    });
+
+    // Decisions are per PRODUCT: a Case line -1 next to a Piece line +12 is one net change, not
+    // "a decrease plus an increase" (the review's repack hole).
+    it("a REPACK across two lines of one product (net <= 0) is never checked", async () => {
+      enable(true);
+      withProduct();
+      prisma.sellingRestriction.findMany.mockResolvedValue([fedRule()]);
+      for (const lines of [
+        [line("p1", -12), line("p1", 12)],
+        [line("p1", -12), line("p1", 5)],
+      ]) {
+        await expect(service.assertLinesSellable(args(lines))).resolves.toBeUndefined();
+      }
+      expectNoReads();
+    });
+
+    // FAIL CLOSED: a delta that cannot be netted is never read as a decrease, and a product that
+    // nets to an increase is checked once whatever its individual lines say.
+    it.each([
+      ["a null delta (explicit JSON null)", [line("p1", null)]],
+      ["a NaN delta", [line("p1", Number.NaN)]],
+      ['the string "-1"', [line("p1", "-1")]],
+      ['the string "5"', [line("p1", "5")]],
+      ["an Infinity delta", [line("p1", Number.POSITIVE_INFINITY)]],
+      ["one un-nettable line beside a big decrease", [line("p1", -100), line("p1", null)]],
+      ["a NaN net (-Infinity + Infinity)", [line("p1", -Infinity), line("p1", Infinity)]],
+      [
+        "lines netting to an increase (-1 + 12 + 0)",
+        [line("p1", -1), line("p1", 12), line("p1", 0)],
+      ],
+    ])("%s is CHECKED, never dropped as a decrease", async (_label, lines) => {
+      enable(true);
+      withProduct();
+      prisma.sellingRestriction.findMany.mockResolvedValue([fedRule()]);
+      expect((await service.checkLinesSellable(args(lines))).outcome).toBe("BLOCK");
+      expect(prisma.product.findMany.mock.calls[0][0].where.id.in).toEqual(["p1"]); // once
+    });
+
+    it("an empty tenantId is a programming error, not a silent OFF (it would read zero SystemConfig rows)", async () => {
+      await expect(
+        service.checkLinesSellable(args([line("p1")], { tenantId: "" })),
+      ).rejects.toThrow(/tenantId/);
+      expectNoReads();
+    });
+  });
 });
