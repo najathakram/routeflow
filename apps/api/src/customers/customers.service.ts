@@ -930,14 +930,15 @@ export class CustomersService {
         where: { id: addrId, customerId: id },
         select: { state: true, stateCode: true },
       });
+      if (!current) throw new NotFoundException("Address not found");
       const stateChanged =
-        (dto.state !== undefined && dto.state !== current?.state) || current?.stateCode == null;
+        (dto.state !== undefined && dto.state !== current.state) || current.stateCode == null;
       return tx.customerAddress.update({
         where: { id: addrId, customerId: id },
         // clear stale coords when the address changes
         data: {
           ...dto,
-          ...(stateChanged ? addressStateFields(dto.state ?? current?.state) : {}),
+          ...(stateChanged ? addressStateFields(dto.state ?? current.state) : {}),
           lat: null,
           lng: null,
         },

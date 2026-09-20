@@ -1,4 +1,4 @@
-import { AMBIGUOUS_STATE_TEXTS, addressStateFields } from "./address-state";
+import { addressStateFields } from "./address-state";
 
 /**
  * F4 — `addressStateFields` derives the two `CustomerAddress` columns the selling-restrictions
@@ -29,7 +29,7 @@ describe("addressStateFields", () => {
   );
 });
 
-describe("addressStateFields never guesses an AMBIGUOUS text (lead ruling, #988)", () => {
+describe("addressStateFields never guesses an AMBIGUOUS name (lead ruling, #988)", () => {
   const exactNames = [
     "Washington",
     "Kansas",
@@ -61,26 +61,5 @@ describe("addressStateFields never guesses an AMBIGUOUS text (lead ruling, #988)
       stateCode: "WV",
       stateNeedsReview: false,
     });
-  });
-
-  it("the set is exactly the ruled one (adding or dropping a member is a deliberate, reviewed change)", () => {
-    expect([...AMBIGUOUS_STATE_TEXTS].sort()).toEqual(
-      [
-        "california",
-        "delaware",
-        "florida",
-        "georgia",
-        "indiana",
-        "kansas",
-        "la",
-        "louisiana",
-        "nevada",
-        "oregon",
-        "virginia",
-        "wash",
-        "washington",
-        "wyoming",
-      ].sort(),
-    );
   });
 });

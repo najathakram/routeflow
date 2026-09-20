@@ -115,6 +115,12 @@ describe("CustomersService — address state columns are derived at the write bo
       expect(written()).toMatchObject({ stateCode: "TX", stateNeedsReview: false });
     });
 
+    it("an address that is not this customer's is a 404, not a derivation from nothing", async () => {
+      prisma.customerAddress.findFirst.mockResolvedValue(null);
+      await expect(edit({ city: "Dallas" })).rejects.toThrow("Address not found");
+      expect(prisma.customerAddress.update).not.toHaveBeenCalled();
+    });
+
     it("an edit that does not touch `state` leaves BOTH derived columns alone", async () => {
       await edit({ city: "Dallas", addressType: "SHIPPING" });
       expect(written()).not.toHaveProperty("stateCode");
