@@ -18,7 +18,6 @@ import {
   applyBestPromotion,
   computeCategoryTax,
   computeLineSubtotal,
-  effectiveBuyerPrice,
   getTierPrice,
   normalizeBoxesPieces,
   roundMoney,
@@ -95,6 +94,15 @@ import {
 import { SystemConfigService } from "../system-config/system-config.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
+import { resolveLineUnits } from "../products/line-units";
+import {
+  buildUnitLine,
+  categoryTaxForLine,
+  isUnitAware,
+  prepareUnitLadders,
+  replayLineKey,
+} from "./unit-line-build";
+import { assertBuyerCartPricesCurrent } from "./buyer-cart-price-check";
 import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PromotionsService } from "../promotions/promotions.service";
@@ -1802,18 +1810,18 @@ export class OrdersService implements OnApplicationBootstrap {
         // stored order; a mismatch is a client bug surfaced loudly, never a
         // silent wrong-cart acknowledgment.
         {
-          const norm = (
-            rows: Array<{ productId?: string | null; name?: string | null; qty: unknown }>,
-          ) =>
+          // units_v1: a stored unit line compares by its unit count + label (see replayLineKey).
+          const norm = (rows: never[], stored: boolean) =>
             rows
-              .map((r) => (r.productId ?? `unlisted:${r.name ?? ""}`) + "×" + Number(r.qty))
+              .map((r) => replayLineKey(r, stored))
               .sort()
               .join("|");
-          const incomingNorm = norm((dto.items ?? []) as never[]);
+          const incomingNorm = norm((dto.items ?? []) as never[], false);
           const storedNorm = norm(
             (existing.lineItems ?? []).filter(
               (li: { status?: string }) => li.status !== "CANCELLED",
             ) as never[],
+            true,
           );
           if (incomingNorm !== storedNorm) {
             throw new ConflictException(
@@ -1879,6 +1887,15 @@ export class OrdersService implements OnApplicationBootstrap {
 
     const productMap = new Map(products.map((p) => [p.id, p]));
 
+    // units_v1 (4b-2b): the gate (staff only, flag.units_v1) + the server ladder of every product a
+    // line names a unit for; nothing is read when no line asks for a unit.
+    const unitsByProduct = await prepareUnitLadders(items, {
+      isStaff: isStaffRole,
+      tenantId: this.prisma.getTenantId(),
+      entitlements: this.entitlements,
+      db: this.prisma.forTenant(),
+    });
+
     // B142 (cause-ruling.md §2/§3, D3): staff AND buyer order create share this
     // one branch (cause-refutation.md §2 row 1) — reject a NEW order carrying an
     // archived product line at this interactive edge.
@@ -1939,44 +1956,15 @@ export class OrdersService implements OnApplicationBootstrap {
     // P5-04: active promotions — only for the buyer (CUSTOMER) self-service path.
     const activePromos = await this.loadActivePromotions(user.role);
 
-    // RF-198: price-race check — buyer cart may have been built with a stale price.
-    // Re-fetch (already done above) and compare against the cart unitPrice for each item.
-    // Only applies when the CUSTOMER role sends unitPrice values (buyer portal checkout).
-    if (user.role === UserRole.CUSTOMER && items.some((i) => i.unitPrice != null)) {
-      const changedItems: Array<{
-        productId: string;
-        name: string;
-        cartPrice: number;
-        currentPrice: number;
-      }> = [];
-      for (const item of items) {
-        if (item.unitPrice == null || !item.productId) continue;
-        const product = productMap.get(item.productId);
-        if (!product) continue; // missing product caught in lineItemsData.map below
-        const tierForProduct = cpMap.get(item.productId) ?? defaultTier;
-        // Compare against the customer's EFFECTIVE price (tier or sticky upsell) so
-        // a legitimately-upsold cart doesn't 409 at checkout.
-        const currentPrice = effectiveBuyerPrice(
-          Number(getTierPrice(product, tierForProduct)),
-          Number(product.pricePerUnit),
-          priceHistory[item.productId]?.lastPrice ?? null,
-        );
-        if (Math.abs(currentPrice - item.unitPrice) > 0.01) {
-          changedItems.push({
-            productId: item.productId,
-            name: product.name,
-            cartPrice: item.unitPrice,
-            currentPrice,
-          });
-        }
-      }
-      if (changedItems.length > 0) {
-        throw new ConflictException({
-          message: "Prices have been updated. Please review your cart.",
-          changedItems,
-        });
-      }
-    }
+    // RF-198: buyer cart price-race check — see buyer-cart-price-check.ts.
+    assertBuyerCartPricesCurrent({
+      role: user.role,
+      items,
+      productMap,
+      cpMap,
+      defaultTier,
+      priceHistory,
+    });
 
     let subtotal = 0;
     const lineItemsData = items.map((item, index) => {
@@ -2013,6 +2001,26 @@ export class OrdersService implements OnApplicationBootstrap {
 
       const product = productMap.get(item.productId);
       if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
+
+      // units_v1 (4b-2b): a non-pack unit is built from the SERVER ladder; the pack (no label, the
+      // pack's own label, a Piece on an unboxed product) falls through, byte-identical to before.
+      const ladder = unitsByProduct.get(product.id) ?? [];
+      const resolvedUnits = resolveLineUnits(product, ladder, item);
+      if (isUnitAware(resolvedUnits)) {
+        const category = categoryMap.get(product.trackedCategoryId ?? "");
+        const unitLine = buildUnitLine({
+          product,
+          units: ladder,
+          resolved: resolvedUnits,
+          item: { ...item, productId: product.id },
+          tier: cpMap.get(product.id) ?? defaultTier,
+          taxFor: (qty, sub) => categoryTaxForLine(category, qty, sub),
+          position: index,
+          tenantId: this.prisma.getTenantId(),
+        });
+        subtotal += unitLine.subtotal;
+        return unitLine;
+      }
 
       // Recompute qty from boxes/pieces when provided (backend is authoritative).
       // Normalize to integers and roll loose pieces >= unitsPerBox into boxes.
@@ -2285,7 +2293,10 @@ export class OrdersService implements OnApplicationBootstrap {
                 // merge set in BOTH directions regardless of what the caller asked for:
                 // as a loser the sweep hard-deletes it (its orderDate and order number
                 // are gone), as a winner it absorbs items that belong to another day.
-                skipAutoMerge: orderDate != null || (options.skipAutoMerge ?? false),
+                skipAutoMerge:
+                  orderDate != null ||
+                  (options.skipAutoMerge ?? false) ||
+                  lineItemsData.some((li) => "unitLabel" in li), // units_v1: never auto-merged
                 // Phase 4 (W4): denormalized flag — true when any line is regulated.
                 hasRegulated: lineItemsData.some((li) => li.trackedCategoryId != null),
                 requestedDeliveryDate: dto.requestedDeliveryDate
