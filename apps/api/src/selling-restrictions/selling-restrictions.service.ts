@@ -17,6 +17,7 @@ import {
   matchingRules,
   offEvaluation,
   resolveGoverningState,
+  restrictedSummary,
   ruleStates,
   UNRESOLVED_STATE,
   type ProductFacts,
@@ -426,6 +427,7 @@ export class SellingRestrictionsService {
     if (evaluation.outcome === "BLOCK" || evaluation.outcome === "INDETERMINATE") {
       const body: SellingRestrictedError = {
         code: "SELLING_RESTRICTED",
+        message: restrictedSummary(evaluation.reasons),
         blockedLines: evaluation.reasons,
       };
       throw new ConflictException(body);

@@ -38,6 +38,24 @@ export interface PreparedPlanTransition {
   planAllows: ((featureKey: string) => boolean) | null;
 }
 
+/**
+ * A DOWNGRADE's snapshot could not be written. Sites fail closed (the plan change rolls back) — a
+ * typed error so a loop over many tenants (the scheduled-downgrade sweep) can skip THIS tenant and
+ * carry on instead of stranding every tenant after it.
+ */
+export class SnapshotFailedError extends Error {
+  constructor(
+    readonly tenantId: string,
+    cause: unknown,
+  ) {
+    super(`Config snapshot failed for tenant ${tenantId}: ${(cause as Error)?.message ?? cause}`);
+    this.name = "SnapshotFailedError";
+  }
+}
+
+/** A hook-active plan-change transaction's budget: a restore is one round-trip per config/grant row. */
+export const HOOK_TX_OPTIONS = { timeout: 20_000, maxWait: 10_000 } as const;
+
 export type PlanTransitionOutcome =
   | { action: "none" }
   | { action: "snapshot"; snapshotId: string }
@@ -124,14 +142,19 @@ export class PlanTransitionConfigService implements OnModuleInit {
     if (direction === "none") return { action: "none" };
 
     if (direction === "downgrade") {
-      const snap = await this.snapshots.snapshot(
-        tx,
-        t.tenantId,
-        t.fromPlanKey as string,
-        "DOWNGRADE",
-        t.actor,
-        now,
-      );
+      let snap: { id: string };
+      try {
+        snap = await this.snapshots.snapshot(
+          tx,
+          t.tenantId,
+          t.fromPlanKey as string,
+          "DOWNGRADE",
+          t.actor,
+          now,
+        );
+      } catch (err) {
+        throw new SnapshotFailedError(t.tenantId, err);
+      }
       this.logger.log(
         `Archived tenant ${t.tenantId} feature config (snapshot ${snap.id}) on ${t.fromPlanKey} -> ${t.toPlanKey}`,
       );
@@ -219,6 +242,16 @@ export class PlanTransitionConfigService implements OnModuleInit {
       );
       return { action: "restore", restore: null };
     }
+  }
+
+  /**
+   * The `$transaction` options for a plan change: the widened budget ONLY while the hook is active;
+   * with the flag off this is `undefined`, so the site's transaction is exactly what it always was.
+   */
+  transactionOptions(
+    prepared: PreparedPlanTransition | null | undefined,
+  ): typeof HOOK_TX_OPTIONS | undefined {
+    return prepared?.enabled ? HOOK_TX_OPTIONS : undefined;
   }
 
   /** Rank only — never entitlement loss: a cancel/suspend leaves `planKey` (and so this) untouched. */
