@@ -1,5 +1,7 @@
 import { ConflictException, Injectable, Logger } from "@nestjs/common";
 import type {
+  BuyerBlockedLine,
+  BuyerSellingRestrictedError,
   RestrictionAddressPrecedence,
   RestrictionChannel,
   RestrictionsEvaluation,
@@ -13,6 +15,7 @@ import { ProductLabelsService } from "../product-labels/product-labels.service";
 import {
   activeRuleWhere,
   anyRuleNeedsState,
+  buyerRestrictedSummary,
   checkableProductIds,
   evaluateRestrictions,
   matchingRules,
@@ -413,10 +416,18 @@ export class SellingRestrictionsService {
    * The choke point every line-writing path calls BEFORE it writes: BLOCK and INDETERMINATE
    * (fail closed) throw a structured 409 mirroring `REGULATED_AUTH_REQUIRED`'s shape; OFF and
    * ALLOW return. Read-only — a throw here leaves nothing mutated.
+   *
+   * The body is redacted BY AUDIENCE, HERE, where the exception is built (B612): only an explicit
+   * `STAFF` channel gets the rule id, reason, state, category and rule text. Anything else — a
+   * buyer, an omitted or unrecognised channel — gets `{ productId, productName }` lines (deduped,
+   * so the number of rules per product is not disclosed either) and a sentence built from names.
+   * The web UI happens to render only the names; the leak is in the payload, not the pixels.
    */
   async assertLinesSellable(params: SellableLinesParams): Promise<void> {
     const evaluation = await this.checkLinesSellable(params);
-    if (evaluation.outcome === "BLOCK" || evaluation.outcome === "INDETERMINATE") {
+    if (evaluation.outcome !== "BLOCK" && evaluation.outcome !== "INDETERMINATE") return;
+    // Same value the evaluation was judged on; only the literal "STAFF" is trusted with the detail.
+    if (params.channel === "STAFF") {
       const body: SellingRestrictedError = {
         code: "SELLING_RESTRICTED",
         message: restrictedSummary(evaluation.reasons),
@@ -424,5 +435,18 @@ export class SellingRestrictionsService {
       };
       throw new ConflictException(body);
     }
+    const seen = new Set<string>();
+    const blockedLines: BuyerBlockedLine[] = [];
+    for (const r of evaluation.reasons) {
+      if (seen.has(r.productId)) continue;
+      seen.add(r.productId);
+      blockedLines.push({ productId: r.productId, productName: r.productName });
+    }
+    const body: BuyerSellingRestrictedError = {
+      code: "SELLING_RESTRICTED",
+      message: buyerRestrictedSummary(blockedLines),
+      blockedLines,
+    };
+    throw new ConflictException(body);
   }
 }
