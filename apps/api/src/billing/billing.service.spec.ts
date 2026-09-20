@@ -834,16 +834,16 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
       });
 
       it("MAJOR 4: an unknown tenant is REFUSED (nothing written), not warned-and-upserted", async () => {
-        const { svc, prisma, planTransition } = make({ transitionCount: 1 });
+        const { svc, prisma, tx, planTransition } = make({ transitionCount: 1 });
         prisma.tenant.findUnique.mockResolvedValue(null);
 
         await (svc as any).onCheckoutCompleted(withId());
 
         expect(planTransition.onPlanChange).not.toHaveBeenCalled();
         expect(prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
-        expect(prisma.$transaction).not.toHaveBeenCalled();
         // Stripe gets a 200, so the refusal must leave a trail (tenantId null: the claim is unproven).
-        expect(prisma.auditLog.create.mock.calls[0][0].data).toMatchObject({
+        expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
+        expect(tx.auditLog.create.mock.calls[0][0].data).toMatchObject({
           tenantId: null,
           action: "STRIPE_CHECKOUT_REFUSED",
           entityId: "cs_1",
@@ -851,8 +851,100 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
         });
       });
 
+      it("a FIRST refusal takes the session lock, looks up by (entityType, entityId, action) only, and writes exactly one row", async () => {
+        const { svc, prisma, tx } = make({ transitionCount: 1 });
+        prisma.tenant.findUnique.mockResolvedValue(null);
+        const order: string[] = [];
+        tx.$executeRaw.mockImplementation(async () => order.push("lock"));
+        tx.auditLog.findFirst.mockImplementation(async () => {
+          order.push("lookup");
+          return null;
+        });
+        tx.auditLog.create.mockImplementation(async () => order.push("create"));
+
+        await (svc as any).onCheckoutCompleted(withId("cs_first"));
+
+        expect(order).toEqual(["lock", "lookup", "create"]);
+        expect(prisma.$transaction.mock.calls[0][1]).toEqual({ timeout: 6_000, maxWait: 2_000 });
+        // The tenant id is payload, never key (it differs between deliveries), and the key names
+        // all three columns — dropping any one silently widens the lookup.
+        expect(tx.auditLog.findFirst.mock.calls[0][0].where).toEqual({
+          entityType: "stripe_checkout_session",
+          entityId: "cs_first",
+          action: "STRIPE_CHECKOUT_REFUSED",
+        });
+      });
+
+      it("a redelivered refusal does not stack a second audit row", async () => {
+        const { svc, prisma, tx } = make({ transitionCount: 1 });
+        prisma.tenant.findUnique.mockResolvedValue(null);
+        tx.auditLog.findFirst.mockResolvedValue({ id: "a-refused" });
+
+        await (svc as any).onCheckoutCompleted(withId("cs_refused"));
+
+        expect(tx.auditLog.findFirst).toHaveBeenCalledTimes(1);
+        expect(tx.auditLog.create).not.toHaveBeenCalled();
+      });
+
+      it("two CONCURRENT deliveries of one refused session, and one whose tenant resolved differently, leave exactly ONE row", async () => {
+        const store: any[] = [];
+        let held: Promise<void> | null = null;
+        const mk = (tenantFound: boolean) => {
+          const m = make({ transitionCount: 1 });
+          if (!tenantFound) m.prisma.tenant.findUnique.mockResolvedValue(null);
+          else
+            m.prisma.tenantSubscription.findUnique.mockResolvedValue({
+              tenantId: "t1",
+              planKey: "BUSINESS",
+              basePriceSnapshot: 349,
+              discount: 0,
+              stripeCustomerId: "cus_REAL",
+            });
+          let release: () => void = () => undefined;
+          // An advisory xact lock: whoever asks while it is held waits; it is dropped at tx end.
+          m.tx.$executeRaw.mockImplementation(async () => {
+            while (held) await held;
+            held = new Promise<void>((r) => (release = r));
+            return 0;
+          });
+          m.tx.auditLog.findFirst.mockImplementation(async ({ where }: any) => {
+            // The READ happens at arrival, the result is delivered later (a real timer): with the
+            // lock the other deliveries are still blocked in $executeRaw and read only after the
+            // winner committed; without it all three read the empty store before anyone writes.
+            // (Delaying the read instead would not race: Node drains microtasks between timers.)
+            // Matches on EVERY key it is given, so a tenant-keyed lookup misses across deliveries.
+            const found =
+              store.find((row) => Object.entries(where).every(([k, v]) => row[k] === v)) ?? null;
+            await new Promise((r) => setTimeout(r, 15));
+            return found;
+          });
+          m.tx.auditLog.create.mockImplementation(async ({ data }: any) => void store.push(data));
+          const realTx = m.prisma.$transaction.getMockImplementation();
+          m.prisma.$transaction.mockImplementation(async (fn: any, o: any) => {
+            try {
+              return await realTx!(fn, o);
+            } finally {
+              const r = release;
+              held = null;
+              r();
+            }
+          });
+          return m;
+        };
+        const a = mk(false);
+        const b = mk(false);
+        const c = mk(true); // same session, but this delivery finds the tenant (customer mismatch)
+        await Promise.all([
+          (a.svc as any).onCheckoutCompleted(withId("cs_race")),
+          (b.svc as any).onCheckoutCompleted(withId("cs_race")),
+          (c.svc as any).onCheckoutCompleted(withId("cs_race")),
+        ]);
+
+        expect(store.filter((r) => r.entityId === "cs_race")).toHaveLength(1);
+      });
+
       it("MAJOR 4: a session whose customer is not the tenant's stored Stripe customer is REFUSED", async () => {
-        const { svc, prisma, planTransition } = make({
+        const { svc, prisma, tx, planTransition } = make({
           transitionCount: 1,
           sub: {
             tenantId: "t1",
@@ -867,7 +959,7 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
 
         expect(planTransition.onPlanChange).not.toHaveBeenCalled();
         expect(prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
-        expect(prisma.auditLog.create.mock.calls[0][0].data).toMatchObject({
+        expect(tx.auditLog.create.mock.calls[0][0].data).toMatchObject({
           tenantId: "t1",
           action: "STRIPE_CHECKOUT_REFUSED",
           meta: { reason: "customer_mismatch" },

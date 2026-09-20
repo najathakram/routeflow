@@ -192,12 +192,16 @@ export class PlanTransitionConfigService implements OnModuleInit {
     try {
       await tx.$executeRaw`SAVEPOINT config_snapshot_restore`;
     } catch (err) {
-      // Not even a savepoint: skip the restore rather than let the paid upgrade fail on it.
+      // A statement error inside a Postgres transaction ABORTS it (a dead connection kills it too),
+      // so the upgrade cannot succeed past this point whatever we do: "skip and carry on" would only
+      // hide a failure the next write surfaces anyway. Fail loudly instead, so the caller's own
+      // alarm fires (the checkout webhook records HOOK_FAILED and Stripe redelivers; an in-app
+      // upgrade shows the error) — never a silently dropped paid upgrade.
       this.logger.error(
-        `Config restore SKIPPED for tenant ${t.tenantId} (${t.fromPlanKey} -> ${t.toPlanKey}): ` +
-          `could not open a savepoint: ${(err as Error).message}`,
+        `Config restore could not open a savepoint for tenant ${t.tenantId} ` +
+          `(${t.fromPlanKey} -> ${t.toPlanKey}); the transaction is unusable: ${(err as Error).message}`,
       );
-      return { action: "restore", restore: null };
+      throw err;
     }
     try {
       const restore = await this.snapshots.restoreLatest(
