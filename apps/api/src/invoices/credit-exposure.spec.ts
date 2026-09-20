@@ -1001,7 +1001,7 @@ describe("loadCreditExposure (the ONLY reader)", () => {
     const invArgs = db.invoice.findMany.mock.calls[0][0];
     expect(invArgs.where.customerId).toBe("cust-1");
     // The DB read drops SETTLED only — DRAFT must come back so backing can be judged (B577 adds the
-    // covering PAID/WRITTEN_OFF invoices of open/delivered orders as a second OR branch).
+    // covering PAID invoices of OPEN orders as a second OR branch; an edit adds a third).
     const [issued] = invArgs.where.OR;
     expect(new Set(issued.status.notIn)).toEqual(new Set(CREDIT_NOT_APPLICABLE));
     expect(issued.status.notIn).not.toContain("DRAFT");
@@ -1011,7 +1011,7 @@ describe("loadCreditExposure (the ONLY reader)", () => {
       orderId: true,
       // Without the order relation every DRAFT would look unbacked and vanish from the block.
       order: { select: { id: true, status: true, total: true } },
-      payments: { select: { amount: true, status: true } },
+      payments: { select: { amount: true, status: true, method: true } },
     });
 
     const ordArgs = db.order.findMany.mock.calls[0][0];

@@ -76,22 +76,18 @@ export async function isCreditLimitCheckEnabled(deps: CreditLimitCheckDeps): Pro
  *     order total AND the invoice (reconcileOrderDraftInvoice keeps a mirror
  *     invoice in lockstep, so counting both would double-count);
  *   • the order being edited is EXCLUDED from both buckets and represented
- *     by projectedOrderTotal instead, LESS what is already applied toward it
- *     (`excludedOrderPaid`: confirmed applications — cash, advance or
- *     credit-note — on its issued-or-paid invoices, capped per invoice) and
- *     never below what its still-UNSETTLED invoices (SENT/VIEWED/PARTIAL/
+ *     by projectedOrderTotal instead, LESS the money already RECEIVED toward
+ *     it (`excludedOrderPaid`: confirmed cash / advance on its issued-or-paid
+ *     invoices, capped per invoice — a CREDIT_NOTE application is never cash,
+ *     B421) and never below what its unsettled invoices (SENT/VIEWED/PARTIAL/
  *     OVERDUE) owe (`editedOrderContribution`). An editable order CAN carry
- *     payments: a PAID or PARTIAL invoice is not reverted by
- *     revertLinkedInvoicesForOrderEdit (it only touches SENT/VIEWED/OVERDUE,
- *     and updateOrderItems does not call it at all for OUT_FOR_DELIVERY+
- *     edits), so without the netting a prepaid order would be blocked for
- *     money the customer already paid; invoices that SURVIVE the edit
- *     (`invoicesSurviveEdit`) keep their balance as a floor, so one invoice's
- *     payment never erases another's; ones the post-delivery re-sync
- *     REWRITES count only up to the projected total (B577 follow-up);
- *   • UNAPPLIED credit notes / advance balances are NOT netted (the statement
- *     reports them separately from outstandingAmount; netting loosens a money
- *     guard) — only what was already APPLIED to this order's invoices is;
+ *     payments (a PAID/PARTIAL invoice is not reverted; nothing is for
+ *     OUT_FOR_DELIVERY+ edits), so a prepaid order was blocked for money
+ *     already paid. Invoices that SURVIVE the edit (`invoicesSurviveEdit`)
+ *     keep their balance as a floor; ones the edit REWRITES count only up to
+ *     the projected total (B577 follow-up);
+ *   • UNAPPLIED credit notes / advance balances are NOT netted (netting loosens
+ *     a money guard) — only what was already APPLIED to this order's invoices;
  *   • the Transaction model is NOT read — delivered orders have BOTH a
  *     Transaction and an invoice, so mixing the two double-counts.
  *
@@ -134,8 +130,7 @@ export async function assertWithinCreditLimit(
   const { counted, excludedOrderPaid, excludedOrderUnsettledOutstanding } =
     await loadCreditExposure(db, customerId, { excludeOrderId: currentOrderId });
 
-  // The edited order counts what is still UNPAID of its projected total (floored at 0), never
-  // less than what its unsettled invoices owe (see `editedOrderContribution` for the cap).
+  // The edited order counts its still-UNPAID projected total, floored by its unsettled invoices.
   const exposure = roundMoney(
     counted +
       editedOrderContribution(

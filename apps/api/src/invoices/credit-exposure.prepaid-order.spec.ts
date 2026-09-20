@@ -1,4 +1,7 @@
+import { InvoiceStatus } from "@prisma/client";
 import {
+  NO_RECEIVED_PAYMENT_INVOICE_STATUSES,
+  UNSETTLED_INVOICE_STATUSES,
   computeCreditExposure,
   editedOrderContribution,
   loadCreditExposure,
@@ -196,13 +199,21 @@ describe("SETTLED_COVERING_STATUSES and the reader (B577)", () => {
 });
 
 describe("orderPaidAmount — money already received toward the EDITED order (B577 follow-up)", () => {
-  const pay = (amount: number, status = "PAID") => ({ amount, status });
+  const pay = (amount: number, status = "PAID", method?: string) => ({ amount, status, method });
   const forOrder = (
     total: number,
     status: string,
-    payments: { amount: number; status: string }[],
+    payments: { amount: number; status: string; method?: string }[],
     orderId = "o1",
   ) => inv({ total, status, orderId, payments });
+
+  it("B421: a CREDIT_NOTE application is never money received — a goodwill credit note that flips an invoice to PAID covers NOTHING; cash and ADVANCE do", () => {
+    const paidBy = (...p: ReturnType<typeof pay>[]) =>
+      orderPaidAmount([forOrder(100, "PAID", p)], "o1");
+    expect(paidBy(pay(100, "PAID", "CREDIT_NOTE"))).toBe(0);
+    expect(paidBy(pay(60, "PAID", "ADVANCE"))).toBe(60);
+    expect(paidBy(pay(40, "PAID", "CASH"), pay(60, "PAID", "CREDIT_NOTE"))).toBe(40);
+  });
 
   it("counts only confirmed payments, capped at the invoice total (an over-payment's excess is credit, not cover)", () => {
     expect(orderPaidAmount([forOrder(100, "PAID", [pay(100)])], "o1")).toBe(100);
@@ -225,13 +236,9 @@ describe("orderPaidAmount — money already received toward the EDITED order (B5
       forOrder(100, "DRAFT", [pay(100)]), // an unissued draft's payment is not received money
       forOrder(100, "VOID", [pay(100)]),
       forOrder(100, "WRITTEN_OFF", [pay(100)]),
+      { total: 100, status: "PAID", orderId: "o1", order: null } as any, // no payments relation: 0, not a TypeError
     ];
     expect(orderPaidAmount(rows, "o1")).toBe(0);
-  });
-
-  it("a row without a payments relation is a decision, never a TypeError inside the edit transaction", () => {
-    const bare = { total: 100, status: "PAID", orderId: "o1", order: null } as any;
-    expect(orderPaidAmount([bare], "o1")).toBe(0);
   });
 });
 
@@ -310,4 +317,13 @@ describe("loadCreditExposure with an edited order (B577 follow-up)", () => {
     expect(r.excludedOrderUnsettledOutstanding).toBe(0);
     expect(r.counted).toBe(0); // the edited order's invoices never enter the other buckets
   });
+});
+
+it("the status sets are pinned EXHAUSTIVELY against InvoiceStatus: a NEW status must not silently drop out of the floor", () => {
+  const classified = [
+    ...UNSETTLED_INVOICE_STATUSES,
+    "PAID",
+    ...NO_RECEIVED_PAYMENT_INVOICE_STATUSES,
+  ];
+  expect(classified.sort()).toEqual(Object.values(InvoiceStatus).sort());
 });

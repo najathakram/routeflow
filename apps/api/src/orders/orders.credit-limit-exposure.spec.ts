@@ -491,13 +491,25 @@ describe("OrdersService — credit-limit exposure (D6 / B462, option B)", () => 
       total: number;
       status: string;
       paid?: number;
+      method?: string;
       orderStatus?: string;
     }) => ({
       total: o.total,
       status: o.status,
       orderId: "ord-1",
       order: orderOf("ord-1", o.orderStatus ?? "OUT_FOR_DELIVERY", o.total),
-      payments: o.paid ? [{ amount: o.paid, status: "PAID" }] : [],
+      payments: o.paid ? [{ amount: o.paid, status: "PAID", method: o.method }] : [],
+    });
+
+    it("B577 follow-up (COORD): a CREDIT NOTE that flips the invoice to PAID does NOT cover the edit (100 + 15 blocks a limit of 100)", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        ownInvoice({ total: 15, status: "PAID", paid: 15, method: "CREDIT_NOTE" }),
+      ]);
+      prisma.order.findMany.mockResolvedValue([{ id: "ord-2", total: 100 }]);
+
+      await expect(
+        service.updateOrderItems("ord-1", editDto, operatorPayload),
+      ).rejects.toMatchObject(overLimit(115, 100));
     });
 
     it("B577 follow-up: editing a FULLY PREPAID order counts only its unpaid part — other order 100 + (15 − 15 paid) = 100 passes a limit of 100 (was 115, a false 409)", async () => {

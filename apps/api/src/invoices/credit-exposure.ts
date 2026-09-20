@@ -1,5 +1,5 @@
 import { InvoiceStatus, OrderStatus } from "@prisma/client";
-import { roundMoney } from "@routeflow/pricing";
+import { roundMoney, splitConfirmed } from "@routeflow/pricing";
 import { CREDIT_EXPOSURE_EXCLUDED, CREDIT_NOT_APPLICABLE } from "./invoice-status-sets";
 
 /**
@@ -83,42 +83,50 @@ const BACKING_ORDER_STATUS_SET: ReadonlySet<string> = new Set(BACKING_ORDER_STAT
 export const SETTLED_COVERING_STATUSES: InvoiceStatus[] = [InvoiceStatus.PAID];
 const SETTLED_COVERING_STATUS_SET: ReadonlySet<string> = new Set(SETTLED_COVERING_STATUSES);
 
-/** Invoice statuses whose CONFIRMED payments count as money received toward their order. */
-const RECEIVED_PAYMENT_INVOICE_STATUSES: ReadonlySet<string> = new Set([
+/** Issued, still-unsettled statuses: they owe a balance and can survive an order edit. */
+export const UNSETTLED_INVOICE_STATUSES: readonly string[] = [
   "SENT",
   "VIEWED",
   "PARTIAL",
   "OVERDUE",
+];
+/** Statuses that never carry money received toward an order (pinned vs `InvoiceStatus`). */
+export const NO_RECEIVED_PAYMENT_INVOICE_STATUSES: readonly string[] = [
+  "DRAFT",
+  "VOID",
+  "WRITTEN_OFF",
+];
+/** Invoice statuses whose CONFIRMED payments count as money received toward their order. */
+const RECEIVED_PAYMENT_INVOICE_STATUSES: ReadonlySet<string> = new Set([
+  ...UNSETTLED_INVOICE_STATUSES,
   "PAID",
 ]);
 
 /**
- * Money already applied toward ONE order: per issued-or-paid invoice, the CONFIRMED applications
- * (payment status PAID — cash, advance or credit-note), capped at that invoice's total. Netted out
- * of the edited order's projected total (`editedOrderContribution`), else a fully prepaid order is
- * blocked for money already paid. Conservative on purpose (it can only LOOSEN the guard): DRAFT and
- * VOID invoices, DRAFT/PENDING payments contribute nothing (the reader never returns WRITTEN_OFF).
+ * Money already RECEIVED toward ONE order: per issued-or-paid invoice, the CONFIRMED cash-like and
+ * ADVANCE applications (`splitConfirmed`), capped at that invoice's total. A CREDIT_NOTE application
+ * is never money received (B421): a goodwill credit note that flips an invoice to PAID must not cover
+ * the order. Netted out of the edited order's projected total (`editedOrderContribution`), else a
+ * fully prepaid order is blocked for money already paid. Conservative on purpose (it can only LOOSEN
+ * the guard): DRAFT/VOID invoices and DRAFT/PENDING payments contribute nothing.
  */
 export function orderPaidAmount(invoices: ExposureInvoice[], orderId: string): number {
   let paid = 0;
   for (const inv of invoices) {
     if (inv.orderId !== orderId || !RECEIVED_PAYMENT_INVOICE_STATUSES.has(inv.status)) continue;
-    const confirmed = (inv.payments ?? [])
-      .filter((p) => p.status === "PAID")
-      .reduce((sum, p) => sum + toNumber(p.amount), 0);
-    paid += Math.min(toNumber(inv.total), confirmed);
+    const { cash, advanceApplied } = splitConfirmed(inv.payments ?? []);
+    paid += Math.min(toNumber(inv.total), cash + advanceApplied);
   }
   return paid;
 }
 
 /**
- * What the ISSUED, unsettled invoices of ONE order (SENT / VIEWED / PARTIAL / OVERDUE) owe as
- * stored. They may SURVIVE an edit untouched (a delivered, partially invoiced order runs neither the
- * revert nor the re-sync), so one invoice's payment must never erase another's balance — or the
- * edit rewrites them (`editedOrderContribution`).
+ * What the ISSUED, unsettled invoices of ONE order owe as stored. They may SURVIVE an edit untouched
+ * (a delivered, partially invoiced order runs neither the revert nor the re-sync): one invoice's
+ * payment must never erase another's balance — or the edit rewrites them (`editedOrderContribution`).
  */
 export function orderUnsettledOutstanding(invoices: ExposureInvoice[], orderId: string): number {
-  const unsettled = new Set(["SENT", "VIEWED", "PARTIAL", "OVERDUE"]);
+  const unsettled = new Set(UNSETTLED_INVOICE_STATUSES);
   let owed = 0;
   for (const inv of invoices) {
     if (inv.orderId === orderId && unsettled.has(inv.status))
@@ -153,7 +161,7 @@ export interface ExposureInvoice {
   total: unknown;
   status: string;
   orderId: string | null;
-  payments: { amount: unknown; status: string }[];
+  payments: { amount: unknown; status: string; method?: string }[]; // method: credit note vs cash
   /**
    * The invoice's order (Invoice.order); decides whether a DRAFT is backed. REQUIRED (B584): a
    * caller that forgets `order` in its select must fail to COMPILE, not quietly treat every draft
@@ -405,7 +413,7 @@ export async function loadCreditExposure(
       status: true,
       orderId: true,
       order: { select: { id: true, status: true, total: true } },
-      payments: { select: { amount: true, status: true } },
+      payments: { select: { amount: true, status: true, method: true } },
     },
   })) as ExposureInvoice[];
   const openOrders = (await db.order.findMany({
