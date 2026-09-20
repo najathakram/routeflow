@@ -1,7 +1,13 @@
+import { InvoiceStatus } from "@prisma/client";
 import {
+  NO_RECEIVED_PAYMENT_INVOICE_STATUSES,
+  UNSETTLED_INVOICE_STATUSES,
   computeCreditExposure,
+  editedOrderContribution,
   loadCreditExposure,
   OPEN_ORDER_STATUSES,
+  orderPaidAmount,
+  orderUnsettledOutstanding,
   SETTLED_COVERING_STATUSES,
   type ExposureInvoice,
 } from "./credit-exposure";
@@ -89,7 +95,7 @@ describe("computeCreditExposure — settled invoices COVER their order (B577)", 
     expect(r.counted).toBe(0);
   });
 
-  it("a WRITTEN_OFF invoice covers NOTHING (conservative: only PAID is ruled; write-off cover is an open owner question)", () => {
+  it("a WRITTEN_OFF invoice covers NOTHING — its order stays counted (ruling: a write-off means we gave up collecting, the strongest reason to withhold credit)", () => {
     const r = computeCreditExposure({
       invoices: [paid("o1", 100, "WRITTEN_OFF")],
       openOrders: [open("o1", 100)],
@@ -190,4 +196,134 @@ describe("SETTLED_COVERING_STATUSES and the reader (B577)", () => {
     };
     await expect(loadCreditExposure(db, "cust-1")).resolves.toMatchObject({ counted: 0 });
   });
+});
+
+describe("orderPaidAmount — money already received toward the EDITED order (B577 follow-up)", () => {
+  const pay = (amount: number, status = "PAID", method?: string) => ({ amount, status, method });
+  const forOrder = (
+    total: number,
+    status: string,
+    payments: { amount: number; status: string; method?: string }[],
+    orderId = "o1",
+  ) => inv({ total, status, orderId, payments });
+
+  it("B421: a CREDIT_NOTE application is never money received — a goodwill credit note that flips an invoice to PAID covers NOTHING; cash and ADVANCE do", () => {
+    const paidBy = (...p: ReturnType<typeof pay>[]) =>
+      orderPaidAmount([forOrder(100, "PAID", p)], "o1");
+    expect(paidBy(pay(100, "PAID", "CREDIT_NOTE"))).toBe(0);
+    expect(paidBy(pay(60, "PAID", "ADVANCE"))).toBe(60);
+    expect(paidBy(pay(40, "PAID", "CASH"), pay(60, "PAID", "CREDIT_NOTE"))).toBe(40);
+  });
+
+  it("counts only confirmed payments, capped at the invoice total (an over-payment's excess is credit, not cover)", () => {
+    expect(orderPaidAmount([forOrder(100, "PAID", [pay(100)])], "o1")).toBe(100);
+    expect(orderPaidAmount([forOrder(1000, "PARTIAL", [pay(400), pay(200)])], "o1")).toBe(600);
+    expect(orderPaidAmount([forOrder(100, "PAID", [pay(130)])], "o1")).toBe(100);
+  });
+
+  it("sums across the order's invoices and ignores every other order", () => {
+    const rows = [
+      forOrder(100, "PAID", [pay(100)]),
+      forOrder(50, "PARTIAL", [pay(20)]),
+      forOrder(900, "PAID", [pay(900)], "other"),
+    ];
+    expect(orderPaidAmount(rows, "o1")).toBe(120);
+  });
+
+  it("is CONSERVATIVE: only confirmed (PAID) payments on issued-or-paid invoices loosen the guard", () => {
+    const rows = [
+      forOrder(100, "SENT", [pay(60, "DRAFT"), pay(30, "PENDING"), pay(10, "VOID")]),
+      forOrder(100, "DRAFT", [pay(100)]), // an unissued draft's payment is not received money
+      forOrder(100, "VOID", [pay(100)]),
+      forOrder(100, "WRITTEN_OFF", [pay(100)]),
+      { total: 100, status: "PAID", orderId: "o1", order: null } as any, // no payments relation: 0, not a TypeError
+    ];
+    expect(orderPaidAmount(rows, "o1")).toBe(0);
+  });
+});
+
+describe("orderUnsettledOutstanding + editedOrderContribution — the floor under an edited order (B577 follow-up)", () => {
+  const partial = (total: number, paidAmount: number, orderId = "o1") =>
+    inv({ total, status: "PARTIAL", orderId, payments: [{ amount: paidAmount, status: "PAID" }] });
+
+  it("every ISSUED unsettled invoice of THIS order owes its balance — PAID, DRAFT and other orders nothing; never negative when over-paid", () => {
+    const rows = [
+      partial(200, 50), // owes 150
+      partial(80, 20, "other"),
+      inv({ total: 100, status: "SENT", orderId: "o1" }),
+      inv({ total: 60, status: "VIEWED", orderId: "o1" }),
+      inv({ total: 40, status: "OVERDUE", orderId: "o1" }),
+      inv({
+        total: 100,
+        status: "PAID",
+        orderId: "o1",
+        payments: [{ amount: 100, status: "PAID" }],
+      }),
+      inv({ total: 100, status: "DRAFT", orderId: "o1" }),
+    ];
+    expect(orderUnsettledOutstanding(rows, "o1")).toBe(350);
+    expect(orderUnsettledOutstanding([partial(100, 130)], "o1")).toBe(0);
+  });
+
+  it.each([
+    // projected, paid, unsettledOwed, survives → contribution
+    [15, 15, 0, false, 0], // fully prepaid → nothing
+    [15, 5, 0, false, 10], // half paid → the unpaid part
+    [100, 0, 0, false, 100], // nothing paid → the projected total, as before B577
+    [15, 50, 150, true, 150], // a PARTIAL invoice that SURVIVES still owes 150 → its balance wins
+    [15, 50, 150, false, 15], // ... but if the edit REWRITES it, only up to the projected total
+    [1050, 1000, 1000, true, 1000], // review: PAID batch + a surviving OVERDUE batch → its balance, not 50
+    [600, 300, 700, false, 600], // review #2: fully invoiced PARTIAL 1000/300 cut to 600 → 600, not 700
+  ])(
+    "editedOrderContribution(projected %p, paid %p, unsettled owes %p, survives %p) = %p",
+    (p, paid, unsettled, survives, want) => {
+      expect(editedOrderContribution(p, paid, unsettled, survives)).toBe(want);
+    },
+  );
+});
+
+describe("loadCreditExposure with an edited order (B577 follow-up)", () => {
+  const makeDb = (invoices: unknown[]) => ({
+    invoice: { findMany: jest.fn().mockResolvedValue(invoices) },
+    order: { findMany: jest.fn().mockResolvedValue([]) },
+  });
+
+  it("without excludeOrderId the result has exactly the four figures and the query has two branches", async () => {
+    const db = makeDb([]);
+    const r = await loadCreditExposure(db, "cust-1");
+    expect(Object.keys(r).sort()).toEqual(
+      ["counted", "invoiceExposure", "pendingExposure", "uninvoicedOrderExposure"].sort(),
+    );
+    expect(db.invoice.findMany.mock.calls[0][0].where.OR).toHaveLength(2);
+  });
+
+  it("with excludeOrderId it also reads that order's PAID invoices (any order status) and reports excludedOrderPaid", async () => {
+    const db = makeDb([
+      // the edited order's own PAID invoice — read by the extra branch even if the order is delivered
+      {
+        total: 900,
+        status: "PAID",
+        orderId: "edit",
+        order: orderRef("edit", "DELIVERED", 900),
+        payments: [{ amount: 900, status: "PAID" }],
+      },
+    ]);
+    const r = await loadCreditExposure(db, "cust-1", { excludeOrderId: "edit" });
+
+    const branches = db.invoice.findMany.mock.calls[0][0].where.OR;
+    expect(branches).toHaveLength(3);
+    expect(branches[2]).toEqual({ status: { in: ["PAID"] }, orderId: "edit" });
+    expect(r.excludedOrderPaid).toBe(900);
+    expect(r.excludedOrderUnsettledOutstanding).toBe(0);
+    expect(r.counted).toBe(0); // the edited order's invoices never enter the other buckets
+  });
+});
+
+it("the status sets are pinned EXHAUSTIVELY against InvoiceStatus: a NEW status must not silently drop out of the floor", () => {
+  const classified = [
+    ...UNSETTLED_INVOICE_STATUSES,
+    "PAID",
+    ...NO_RECEIVED_PAYMENT_INVOICE_STATUSES,
+  ];
+  expect(classified.sort()).toEqual(Object.values(InvoiceStatus).sort());
 });

@@ -82,6 +82,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
@@ -132,6 +133,13 @@ describe("OrdersService merge paths — customer advisory lock (T3, R3)", () => 
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: NotificationsService, useValue: {} },
         { provide: InventoryService, useValue: {} },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "OFF", reasons: [] }),
+          },
+        },
         {
           provide: AuthorizationGuardService,
           useValue: { assertAuthorizedOrThrow: jest.fn().mockResolvedValue(undefined) },

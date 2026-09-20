@@ -38,6 +38,9 @@ function QueryProviders({ children }: { children: React.ReactNode }) {
             // (a fix list / a two-step instruction) and toasts them itself, once.
             "SELLING_RESTRICTIONS_NOT_READY",
             "SELLING_RESTRICTIONS_ENABLE_AND_POLICY_TOGETHER",
+            // Selling restrictions: the order UIs show a blocked-lines dialog (the lines and why),
+            // so the generic toast would only say "Request failed with status code 409".
+            "SELLING_RESTRICTED",
             // RO-1: a blocked write against a READ_ONLY tenant — handled explicitly
             // below with its own toast + CTA, never the bare guard message.
             "READ_ONLY",

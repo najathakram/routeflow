@@ -31,6 +31,9 @@ import { ScanOrderScreen } from "./scan/ScanOrderScreen";
 import type { ScanHistoryEntry } from "./scan/scan-summary";
 import { LicenseGuardModal } from "./LicenseGuardModal";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
+import { parseSellingRestricted } from "@/lib/api/selling-restricted";
+import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
+import type { BlockedLine } from "@routeflow/types";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { CreditNotePicker, type CreditSelection } from "./CreditNotePicker";
 import { useAuth } from "@/lib/auth-context";
@@ -217,6 +220,8 @@ export function CreateOrderModal({
   const [mergePrompt, setMergePrompt] = React.useState<ActiveOrderSummary | null>(null);
   // The license guard (W6b): categories blocked by a 409 REGULATED_AUTH_REQUIRED.
   const [licenseBlock, setLicenseBlock] = React.useState<BlockedCategory[] | null>(null);
+  // Selling restrictions: lines the API refused for this customer (shown instead of a raw toast).
+  const [restrictedBlock, setRestrictedBlock] = React.useState<BlockedLine[] | null>(null);
   // Pre-check: as soon as a customer is selected, look up their active order so we can
   // surface the prompt the moment "Create Order" is clicked.
   const { data: activeOrderForCustomer } = useActiveOrderForCustomer(selectedCustomer?.id);
@@ -1037,6 +1042,11 @@ export function CreateOrderModal({
             setMergePrompt(body.activeOrder as ActiveOrderSummary);
             return;
           }
+          const restricted = parseSellingRestricted(err);
+          if (restricted) {
+            setRestrictedBlock(restricted);
+            return;
+          }
           // A regulated line needs a verified license (or a §8 override / removal).
           const blocked = parseRegulatedAuthError(err);
           if (blocked && blocked.length > 0) {
@@ -1106,6 +1116,9 @@ export function CreateOrderModal({
       message?: string;
     } | null;
     if (!err) return null;
+    // A SELLING_RESTRICTED 409 has its own dialog; the banner would repeat it (with the rule's
+    // admin-written reason) and outlive the dialog's OK.
+    if (parseSellingRestricted(err)) return null;
     return err.response?.data?.message || err.message || "Something went wrong. Please try again.";
   })();
 
@@ -1868,6 +1881,7 @@ export function CreateOrderModal({
       </Modal>
 
       {/* License guard (W6b): the sale hit a 409 REGULATED_AUTH_REQUIRED. */}
+      <BlockedLinesDialog lines={restrictedBlock} onClose={() => setRestrictedBlock(null)} />
       {licenseBlock && selectedCustomer && (
         <LicenseGuardModal
           open

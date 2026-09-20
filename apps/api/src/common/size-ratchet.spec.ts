@@ -29,7 +29,7 @@ const HEADROOM = 25;
 
 /** Repo-relative path → baseline line count (measured 2026-09-19 at 91d323de). */
 const BASELINE: Record<string, number> = {
-  "apps/api/src/orders/orders.service.ts": 6625, // B585 prefactor: credit guard moved to credit-limit-guard.ts (was 6728)
+  "apps/api/src/orders/orders.service.ts": 5929, // R-2a-7: parsers + cancelImpact -> order-parsers.ts / order-cancel-impact.ts (was 6045)
   "apps/api/src/invoices/invoices.service.ts": 6412,
   "apps/api/src/orders/orders.service.spec.ts": 9511,
   "apps/api/src/customers/customers.service.ts": 3307,
@@ -37,7 +37,7 @@ const BASELINE: Record<string, number> = {
   "apps/web/app/(dashboard)/customers/[id]/page.tsx": 4378,
   "apps/web/app/(dashboard)/orders/[id]/page.tsx": 3728,
   "apps/api/src/customers/customers.service.spec.ts": 3209,
-  "apps/api/src/routes/routes.service.ts": 3270,
+  "apps/api/src/routes/routes.service.ts": 3189, // prefactor: run/stop select shapes + status constants live in routes/routes.constants.ts (was 3270)
   "apps/web/app/(dashboard)/products/[id]/page.tsx": 2942,
   "apps/mobile/app/(operator)/(tabs)/orders/[id]/edit-items.tsx": 3315,
   "apps/mobile/components/NewOrderScreen.tsx": 4556,

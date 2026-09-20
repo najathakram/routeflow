@@ -1,4 +1,5 @@
 import { UserRole } from "@prisma/client";
+import type { BlockedLine } from "@routeflow/types";
 import {
   activeRuleWhere,
   compareRules,
@@ -6,7 +7,8 @@ import {
   matchingRules,
   offEvaluation,
   resolveGoverningState,
-  restrictionChannelForRole,
+  restrictedSummary,
+  restrictionChannelForPrincipal,
   ruleBindsChannel,
   ruleIsActive,
   UNKNOWN_PRODUCT_NAME,
@@ -843,29 +845,73 @@ describe("review MINOR 6: UNKNOWN_PRODUCT never shows a raw id to the buyer", ()
   });
 });
 
-describe("restrictionChannelForRole", () => {
-  it("the CUSTOMER role is the self-serve buyer portal", () => {
-    expect(restrictionChannelForRole(UserRole.CUSTOMER)).toBe("BUYER_PORTAL");
-    expect(restrictionChannelForRole("CUSTOMER")).toBe("BUYER_PORTAL");
-  });
+describe("restrictionChannelForPrincipal — fails CLOSED", () => {
+  // The REAL buyer-portal principal (BuyerJwtStrategy.validate): a `type`, and NO `role`.
+  const buyerPrincipal = { sub: "b-1", email: "b@example.test", type: "BUYER" as const };
 
-  it("every other role is STAFF — pinned against the whole UserRole enum so a rename cannot drift", () => {
-    const others = Object.values(UserRole).filter((r) => r !== UserRole.CUSTOMER);
-    expect(others.length).toBeGreaterThan(0);
-    for (const role of others) expect(restrictionChannelForRole(role)).toBe("STAFF");
-    expect(others).toEqual(
-      expect.arrayContaining(["SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR", "DRIVER"]),
+  it("the buyer-portal principal (type BUYER, no role) is BUYER_PORTAL — the P1: keyed on `role` it was STAFF and no portal ban bound", () => {
+    expect(restrictionChannelForPrincipal(buyerPrincipal)).toBe("BUYER_PORTAL");
+    expect(restrictionChannelForPrincipal({ ...buyerPrincipal, role: undefined })).toBe(
+      "BUYER_PORTAL",
     );
   });
 
-  it("the EXACT role set is pinned: a NEW role must be classified here (staff or buyer) on purpose, not inherit STAFF", () => {
+  it("the CUSTOMER role (the pseudo-user the buyer controller builds) is BUYER_PORTAL, and so is a hybrid carrying EITHER marker", () => {
+    expect(restrictionChannelForPrincipal({ role: UserRole.CUSTOMER })).toBe("BUYER_PORTAL");
+    expect(restrictionChannelForPrincipal({ role: UserRole.OPERATOR, type: "BUYER" })).toBe(
+      "BUYER_PORTAL",
+    );
+  });
+
+  it("every staff role is STAFF — pinned against the whole UserRole enum", () => {
+    const staff = Object.values(UserRole).filter((r) => r !== UserRole.CUSTOMER);
+    for (const role of staff) expect(restrictionChannelForPrincipal({ role })).toBe("STAFF");
+    expect([...staff].sort()).toEqual(["DRIVER", "OPERATOR", "SUPER_ADMIN", "TENANT_ADMIN"]);
+  });
+
+  it("the EXACT role set is pinned: a NEW role is BUYER_PORTAL until it is classified here on purpose", () => {
     expect([...Object.values(UserRole)].sort()).toEqual(
       ["CUSTOMER", "DRIVER", "OPERATOR", "SUPER_ADMIN", "TENANT_ADMIN"].sort(),
     );
+    expect(restrictionChannelForPrincipal({ role: "SALES_AGENT" })).toBe("BUYER_PORTAL");
   });
 
-  it("no role at all (cron / system callers) is STAFF", () => {
-    expect(restrictionChannelForRole(undefined)).toBe("STAFF");
-    expect(restrictionChannelForRole("")).toBe("STAFF");
+  it('no principal, no role, an empty role: BUYER_PORTAL (a system caller passes `channel: "STAFF"` itself)', () => {
+    for (const p of [undefined, null, {}, { role: null }, { role: "" }])
+      expect(restrictionChannelForPrincipal(p)).toBe("BUYER_PORTAL");
+  });
+});
+
+describe("restrictedSummary — the 409's human `message`", () => {
+  const blocked = (n: number, over: Partial<BlockedLine> = {}): BlockedLine => ({
+    productId: `p${n}`,
+    productName: `Product ${n}`,
+    ruleId: "r1",
+    reason: "FEDERAL_BAN",
+    message: `"Product ${n}" can't be sold: restricted federally.`,
+    ...over,
+  });
+
+  it("a lone blocked line is its own message (it already names the product and why)", () => {
+    expect(restrictedSummary([blocked(1)])).toBe(
+      `"Product 1" can't be sold: restricted federally.`,
+    );
+  });
+
+  it("several lines are summarised by product name, never by the raw rule text", () => {
+    expect(restrictedSummary([blocked(1), blocked(2)])).toBe(
+      `2 products on this order can't be sold to this customer: "Product 1", "Product 2".`,
+    );
+  });
+
+  it("more than three names are cut with a count, so the toast stays one readable line", () => {
+    const five = [1, 2, 3, 4, 5].map((n) => blocked(n));
+    expect(restrictedSummary(five)).toBe(
+      `5 products on this order can't be sold to this customer: "Product 1", "Product 2", "Product 3" and 2 more.`,
+    );
+  });
+
+  it("an empty list (should not happen) still yields a real sentence, never an empty toast", () => {
+    expect(restrictedSummary([])).toBe("This order can't be sold to this customer.");
   });
 });

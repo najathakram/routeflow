@@ -214,7 +214,7 @@ describe("RoutesService — F11 run cancel/skip pins (no REG- token; excluded fr
     const sweepArgs = (prisma.order.updateMany as jest.Mock).mock.calls[0][0];
     expect(sweepArgs.where).toEqual({
       customerId: "c1",
-      status: { notIn: [OrderStatus.DELIVERED, OrderStatus.CANCELLED] },
+      status: { notIn: [OrderStatus.DRAFT, OrderStatus.DELIVERED, OrderStatus.CANCELLED] },
       routeRunStopId: null,
       fulfillPath: FulfillPath.ROUTE,
     });

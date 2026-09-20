@@ -4,7 +4,7 @@
  * Modeled on `common/no-bare-cron.spec.ts`; it never self-skips — a missing file, a missing
  * method or an empty scan FAILS, it does not pass vacuously.
  *
- *   (i)   the hard block (`OrdersService.assertWithinCreditLimit`) and the operator statement
+ *   (i)   the hard block (`assertWithinCreditLimit` in `orders/credit-limit-guard.ts`) and the operator statement
  *         (`CustomersService.getStatementForOperator`) each CALL `loadCreditExposure`, and the
  *         block issues no invoice read of its own;
  *   (ii)  the customers list (`findAll`) and its CSV export (`exportCustomers`) each read
@@ -284,12 +284,22 @@ describe("credit-exposure coverage (D6 / B462, L-119)", () => {
       }
     });
 
-    it("OrdersService.assertWithinCreditLimit only delegates to the guard (no exposure math of its own)", () => {
-      const method = methodNamed(parseFile("orders/orders.service.ts"), "assertWithinCreditLimit");
-      expect(callsFunction(method, "assertWithinCreditLimit")).toBe(true);
-      expect(callsFunction(method, "loadCreditExposure")).toBe(false);
-      expect(callsModelMethod(method, "invoice", "findMany")).toBe(false);
-      expect(callsModelMethod(method, "order", "findMany")).toBe(false);
+    it("OrdersService has no guard of its own: every pre-existing credit call site calls the imported guard function", () => {
+      const sf = parseFile("orders/orders.service.ts");
+      // the guard has ONE home (credit-limit-guard.ts) — a private copy in the service would be a fork
+      expect(() => methodNamed(sf, "assertWithinCreditLimit")).toThrow(/found 0/);
+      for (const name of [
+        "updateOrderItems",
+        "approveChangeRequestAtStop",
+        "assertCreditForProjectedOrder",
+      ]) {
+        const method = methodNamed(sf, name);
+        expect({ name, calls: callsFunction(method, "assertWithinCreditLimit") }).toEqual({
+          name,
+          calls: true,
+        });
+        expect(callsFunction(method, "loadCreditExposure")).toBe(false);
+      }
     });
 
     it("CustomersService.getStatementForOperator calls loadCreditExposure", () => {

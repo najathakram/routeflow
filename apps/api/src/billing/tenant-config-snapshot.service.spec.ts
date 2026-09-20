@@ -1,7 +1,13 @@
 import { Prisma } from "@prisma/client";
 import { FEATURE_REGISTRY } from "./feature-registry";
 import { PLAN_KEYS } from "./plan-catalog.constants";
-import { TenantConfigSnapshotService } from "./tenant-config-snapshot.service";
+import {
+  AUTO_RESTORE_MAX_AGE_DAYS,
+  AUTO_RESTORE_MAX_ROWS,
+  AUTO_RESTORE_TIME_BUDGET_MS,
+  RestoreBudgetExceededError,
+  TenantConfigSnapshotService,
+} from "./tenant-config-snapshot.service";
 
 // Plan keys and feature keys come from the live catalog/registry (L-206), never re-typed here.
 const LOW = PLAN_KEYS[0];
@@ -49,16 +55,33 @@ function fakeTx(seed: { configs?: any[]; overrides?: any[]; snapshots?: any[] } 
     },
     tenantFeatureOverride: {
       findMany: async () => state.overrides.map((r) => ({ ...r })),
-      create: async ({ data }: any) => {
-        const row = { id: id("o"), createdAt: NOW, revokedAt: null, ...data };
-        state.overrides.push(row);
-        return row;
+      // ON CONFLICT DO NOTHING: a live (unrevoked) row for the same feature wins, ours is skipped.
+      createMany: async ({ data, skipDuplicates }: any) => {
+        let count = 0;
+        for (const d of data) {
+          const live = state.overrides.some(
+            (o) =>
+              o.tenantId === d.tenantId && o.featureKey === d.featureKey && o.revokedAt === null,
+          );
+          if (live) {
+            if (!skipDuplicates) throw new Error("P2002 unique violation");
+            continue;
+          }
+          state.overrides.push({ id: id("o"), createdAt: NOW, revokedAt: null, ...d });
+          count++;
+        }
+        return { count };
       },
     },
     tenantFeatureConfigSnapshot: {
       findMany: async ({ where }: any) =>
         state.snapshots
-          .filter((s) => s.tenantId === where.tenantId && s.restoredAt === null)
+          .filter(
+            (s) =>
+              s.tenantId === where.tenantId &&
+              s.restoredAt === null &&
+              (where.reason === undefined || s.reason === where.reason),
+          )
           .sort((a, b) => b.takenAt.getTime() - a.takenAt.getTime()),
       create: async ({ data }: any) => {
         const row = { id: id("s"), restoredAt: null, restoredToPlanKey: null, ...data };
@@ -76,6 +99,7 @@ function fakeTx(seed: { configs?: any[]; overrides?: any[]; snapshots?: any[] } 
           (s) =>
             s.tenantId === where.tenantId &&
             s.restoredAt === null &&
+            (where.reason === undefined || s.reason === where.reason) &&
             s.takenAt.getTime() < where.takenAt.lt.getTime(),
         );
         rows.forEach((r) => Object.assign(r, data));
@@ -302,5 +326,202 @@ describe("TenantConfigSnapshotService.restoreLatest", () => {
     expect(res!.report).toEqual({ restored: 1, skipped: 1, keptNewer: 0, unchanged: 0 });
     expect(state.configs).toHaveLength(0);
     expect(state.overrides).toHaveLength(1);
+  });
+});
+
+describe("TenantConfigSnapshotService — 90-day automatic-restore horizon (A2 decision 1)", () => {
+  const svc = new TenantConfigSnapshotService();
+  const daysAgo = (n: number, ms = 0) => new Date(NOW.getTime() - n * 86_400_000 - ms);
+
+  /** A tenant on HIGH that was snapshotted `days` before NOW, then lost its config. */
+  async function snapshottedAgo(days: number, extraMs = 0) {
+    const { tx, state } = fakeTx({ configs: [cfgRow()], overrides: [ovrRow()] });
+    await svc.snapshot(tx, TENANT, HIGH, "DOWNGRADE", undefined, daysAgo(days, extraMs));
+    state.configs.length = 0;
+    return { tx, state };
+  }
+
+  it("pins the horizon at 90 days", () => expect(AUTO_RESTORE_MAX_AGE_DAYS).toBe(90));
+
+  it("a re-upgrade restores a snapshot 89 days old", async () => {
+    const { tx, state } = await snapshottedAgo(89);
+    expect(await svc.restoreLatest(tx, TENANT, HIGH, NOW)).not.toBeNull();
+    expect(state.configs).toHaveLength(1);
+  });
+
+  it("the boundary is inclusive: exactly 90 days old still restores", async () => {
+    const { tx } = await snapshottedAgo(90);
+    expect(await svc.restoreLatest(tx, TENANT, HIGH, NOW)).not.toBeNull();
+  });
+
+  it("a snapshot 91 days old is NOT restored automatically, and stays un-stamped", async () => {
+    const { tx, state } = await snapshottedAgo(91);
+
+    expect(await svc.restoreLatest(tx, TENANT, HIGH, NOW)).toBeNull();
+    expect(state.configs).toHaveLength(0);
+    expect(state.snapshots[0].restoredAt).toBeNull();
+  });
+
+  it("one millisecond past 90 days is refused (no rounding in the tenant's favour)", async () => {
+    const { tx } = await snapshottedAgo(90, 1);
+    expect(await svc.restoreLatest(tx, TENANT, HIGH, NOW)).toBeNull();
+  });
+
+  it("restoreLatest reports how many older snapshots it superseded", async () => {
+    const { tx, state } = fakeTx({ configs: [cfgRow()] });
+    await svc.snapshot(tx, TENANT, HIGH, "DOWNGRADE", undefined, daysAgo(20));
+    await svc.snapshot(tx, TENANT, HIGH, "DOWNGRADE", undefined, daysAgo(10));
+    state.configs.length = 0;
+
+    const res = await svc.restoreLatest(tx, TENANT, HIGH, NOW);
+
+    expect(res?.supersededSnapshots).toBe(1);
+  });
+});
+
+describe("TenantConfigSnapshotService — a concurrent live override never aborts the restore (P2002)", () => {
+  const svc = new TenantConfigSnapshotService();
+
+  it("restores overrides with ONE createMany + skipDuplicates (ON CONFLICT DO NOTHING), not a create per row", async () => {
+    const { tx, state } = fakeTx({ overrides: [ovrRow()] });
+    await svc.snapshot(tx, TENANT, HIGH, "DOWNGRADE", undefined, T0);
+    state.overrides.length = 0;
+    const spy = jest.spyOn(tx.tenantFeatureOverride as any, "createMany");
+
+    await svc.restoreLatest(tx, TENANT, HIGH, NOW);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][0]).toMatchObject({ skipDuplicates: true });
+    expect(state.overrides).toHaveLength(1);
+  });
+
+  it("a live override that appears between the plan and the write wins and the restore still completes", async () => {
+    const { tx, state } = fakeTx({ overrides: [ovrRow()] });
+    await svc.snapshot(tx, TENANT, HIGH, "DOWNGRADE", undefined, T0);
+    state.overrides.length = 0; // the plan will see "no override" ...
+    const real = (tx.tenantFeatureOverride as any).createMany;
+    (tx.tenantFeatureOverride as any).createMany = async (args: any) => {
+      // ... and an admin grants the same feature just before the insert lands
+      state.overrides.push({ ...ovrRow({ id: "raced", reason: "admin" }) });
+      return real(args);
+    };
+
+    const res = await svc.restoreLatest(tx, TENANT, HIGH, NOW);
+
+    expect(res).not.toBeNull(); // did not throw
+    expect(state.overrides).toHaveLength(1);
+    expect(state.overrides[0].id).toBe("raced"); // the concurrent writer's row wins
+    expect(state.snapshots[0].restoredAt).not.toBeNull();
+  });
+});
+
+describe("TenantConfigSnapshotService — restore reports honestly and only consumes DOWNGRADE archives", () => {
+  const svc = new TenantConfigSnapshotService();
+
+  it("(d) a MANUAL snapshot is never auto-consumed by a re-upgrade", async () => {
+    const { tx, state } = fakeTx({ configs: [cfgRow()] });
+    await svc.snapshot(tx, TENANT, HIGH, "MANUAL", undefined, T0);
+    state.configs.length = 0;
+
+    expect(await svc.restoreLatest(tx, TENANT, HIGH, NOW)).toBeNull();
+    expect(state.configs).toHaveLength(0);
+    expect(state.snapshots[0].restoredAt).toBeNull();
+  });
+
+  it("(d) with both kinds present, only the DOWNGRADE archive is consumed", async () => {
+    const { tx, state } = fakeTx({ configs: [cfgRow()] });
+    await svc.snapshot(tx, TENANT, HIGH, "DOWNGRADE", undefined, T0);
+    await svc.snapshot(tx, TENANT, HIGH, "MANUAL", undefined, new Date(T0.getTime() + 1000));
+    state.configs.length = 0;
+
+    const res = await svc.restoreLatest(tx, TENANT, HIGH, NOW);
+
+    expect(res?.snapshotId).toBe(state.snapshots[0].id); // the DOWNGRADE one, though older
+    expect(state.snapshots[1].restoredAt).toBeNull();
+  });
+
+  it("(d) a MANUAL snapshot OLDER than the restored DOWNGRADE one is not superseded either", async () => {
+    const { tx, state } = fakeTx({ configs: [cfgRow()] });
+    await svc.snapshot(tx, TENANT, HIGH, "MANUAL", undefined, T0);
+    await svc.snapshot(tx, TENANT, HIGH, "DOWNGRADE", undefined, new Date(T0.getTime() + 1000));
+    state.configs.length = 0;
+
+    const res = await svc.restoreLatest(tx, TENANT, HIGH, NOW);
+
+    expect(res?.snapshotId).toBe(state.snapshots[1].id);
+    expect(res?.supersededSnapshots).toBe(0);
+    expect(state.snapshots[0].restoredAt).toBeNull(); // the admin's save-point survives
+  });
+
+  it("(a) an override the statement SKIPPED (a live one won the race) is reported as kept, not restored", async () => {
+    const { tx, state } = fakeTx({ overrides: [ovrRow()] });
+    await svc.snapshot(tx, TENANT, HIGH, "DOWNGRADE", undefined, T0);
+    state.overrides.length = 0;
+    const real = (tx.tenantFeatureOverride as any).createMany;
+    (tx.tenantFeatureOverride as any).createMany = async (args: any) => {
+      state.overrides.push({ ...ovrRow({ id: "raced" }) }); // an admin grant lands just before the insert
+      return real(args);
+    };
+
+    const res = await svc.restoreLatest(tx, TENANT, HIGH, NOW);
+
+    expect(res?.report).toEqual({ restored: 0, skipped: 0, keptNewer: 1, unchanged: 0 });
+  });
+});
+
+describe("TenantConfigSnapshotService — the automatic restore is bounded (row cap + time budget)", () => {
+  const svc = new TenantConfigSnapshotService();
+
+  async function twoRowSnapshot() {
+    const seeded = fakeTx({ configs: [cfgRow()], overrides: [ovrRow()] });
+    await svc.snapshot(seeded.tx, TENANT, HIGH, "DOWNGRADE", undefined, T0);
+    const { tx, state } = fakeTx();
+    state.snapshots.push(...seeded.state.snapshots);
+    return { tx, state };
+  }
+
+  it("the defaults are finite and sane", () => {
+    expect(AUTO_RESTORE_MAX_ROWS).toBeGreaterThan(0);
+    expect(AUTO_RESTORE_MAX_ROWS).toBeLessThanOrEqual(1000);
+    expect(AUTO_RESTORE_TIME_BUDGET_MS).toBeGreaterThan(0);
+    expect(AUTO_RESTORE_TIME_BUDGET_MS).toBeLessThan(10_000);
+  });
+
+  it("a restore over the row cap is refused BEFORE any write and leaves the snapshot un-restored", async () => {
+    const { tx, state } = await twoRowSnapshot();
+
+    await expect(
+      svc.restoreLatest(tx, TENANT, HIGH, NOW, undefined, { maxRows: 1, timeBudgetMs: 60_000 }),
+    ).rejects.toBeInstanceOf(RestoreBudgetExceededError);
+
+    expect(state.configs).toHaveLength(0);
+    expect(state.overrides).toHaveLength(0);
+    expect(state.snapshots[0].restoredAt).toBeNull(); // still there for an explicit "Restore now"
+  });
+
+  it("exactly at the cap is allowed", async () => {
+    const { tx, state } = await twoRowSnapshot();
+    const res = await svc.restoreLatest(tx, TENANT, HIGH, NOW, undefined, {
+      maxRows: 2,
+      timeBudgetMs: 60_000,
+    });
+    expect(res?.report.restored).toBe(2);
+    expect(state.snapshots[0].restoredAt).not.toBeNull();
+  });
+
+  it("a restore that outlives its time budget is abandoned mid-way with the typed error (the caller's savepoint undoes it)", async () => {
+    const { tx, state } = await twoRowSnapshot();
+    let t = 0;
+    const clock = () => (t += 5_000); // every look at the clock costs 5 s
+
+    await expect(
+      svc.restoreLatest(tx, TENANT, HIGH, NOW, undefined, {
+        maxRows: 100,
+        timeBudgetMs: 1_000,
+        clock,
+      }),
+    ).rejects.toBeInstanceOf(RestoreBudgetExceededError);
+
+    expect(state.snapshots[0].restoredAt).toBeNull();
   });
 });
