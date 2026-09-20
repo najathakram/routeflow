@@ -175,4 +175,28 @@ describeDb("TenantConfigSnapshotService — real Postgres round trip", () => {
     expect(out.outcome).toEqual({ action: "restore", restore: null });
     expect(out.still).toBe(1);
   });
+
+  it("two CONCURRENT restores of the same snapshot restore exactly ONCE (real row lock, READ COMMITTED)", async () => {
+    await prisma.tenantFeatureConfigSnapshot.deleteMany({ where: { tenantId } });
+    await prisma.tenantFeatureOverride.deleteMany({ where: { tenantId } });
+    await prisma.tenantFeatureConfig.deleteMany({ where: { tenantId } });
+    await prisma.tenantFeatureConfig.create({
+      data: { tenantId, featureKey: CONFIG_KEY, mode: MODE, settings: { x: 1 }, reason: "pilot" },
+    });
+    await prisma.$transaction((tx) => svc.snapshot(tx, tenantId, HIGH, "DOWNGRADE"));
+    await prisma.tenantFeatureConfig.deleteMany({ where: { tenantId } });
+
+    // Two interactive transactions, started together: both read the snapshot as un-restored; the
+    // second's conditional claim blocks on the first's row lock and then matches 0 rows.
+    const results = await Promise.all([
+      prisma.$transaction((tx) => svc.restoreLatest(tx, tenantId, HIGH)),
+      prisma.$transaction((tx) => svc.restoreLatest(tx, tenantId, HIGH)),
+    ]);
+
+    expect(results.filter((r) => r !== null)).toHaveLength(1);
+    expect(await prisma.tenantFeatureConfig.count({ where: { tenantId } })).toBe(1);
+    const snaps = await prisma.tenantFeatureConfigSnapshot.findMany({ where: { tenantId } });
+    expect(snaps).toHaveLength(1);
+    expect(snaps[0].restoredAt).not.toBeNull();
+  });
 });

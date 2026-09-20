@@ -83,7 +83,15 @@ describe("TenantConfigSnapshotAdminService (A2 step c)", () => {
     });
     (plan.configs.unchanged as any[]).push("same.config");
     const { svc, transitions, snapshots, planAllows } = build({
-      preview: { snapshotId: "s1", takenAt: TAKEN, planKey: HIGH, restoredAt: null, plan },
+      preview: {
+        snapshotId: "s1",
+        takenAt: TAKEN,
+        planKey: HIGH,
+        restoredAt: null,
+        ageDays: 5,
+        beyondAutoRestoreHorizon: false,
+        plan,
+      },
     });
 
     const view = await svc.preview("t1", "s1");
@@ -91,6 +99,8 @@ describe("TenantConfigSnapshotAdminService (A2 step c)", () => {
     expect(transitions.planAllowsFor).toHaveBeenCalledWith(HIGH, "v1"); // subscription key wins
     expect(snapshots.previewRestore.mock.calls[0][4]).toBe(planAllows);
     expect(view).toMatchObject({
+      ageDays: 5,
+      beyondAutoRestoreHorizon: false,
       snapshotId: "s1",
       currentPlanKey: HIGH,
       willRestore: [
