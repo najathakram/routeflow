@@ -263,6 +263,19 @@ function makeFixture({
   return dir;
 }
 
+/**
+ * B588: retry ONLY a child that died without an exit code, was not killed by our own timeout, and
+ * said nothing (OS kill / OOM / a failed spawn — it cannot have reached the fake server, so a retry
+ * is idempotent). Never a timeout (it may already have written), never a real exit code, at most
+ * two retries. Pure, so the self-test can pin the decision on every platform (win32 reports a
+ * killed child as exit 1, so the "no code" case cannot be produced there by a real kill).
+ */
+function shouldRetryCli(r, attemptIndex) {
+  if (attemptIndex >= 2) return false;
+  if (r.spawnError) return true;
+  return r.code === null && !r.timedOut && !r.stdout && !String(r.stderr ?? "").trim();
+}
+
 // ── CLI runner ───────────────────────────────────────────────────────────────
 // Runs the CLI out-of-process via `spawn` (never `spawnSync`): the fake Plane
 // server above listens on this same harness process's event loop, and a
@@ -324,25 +337,50 @@ function runCli(
   else env.PLANE_API_KEY = apiKey;
   const effectiveArgv =
     allowBranch && !argv.includes("--allow-branch") ? [...argv, "--allow-branch"] : argv;
-  return new Promise((resolve) => {
-    const child = spawn(process.execPath, [scriptPath, ...effectiveArgv], {
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
+  // B588: one attempt = one child. The budget is generous (a fleet-loaded host can take tens of
+  // seconds to start node inside a throwaway git repo) and env-tunable; the result comes from the
+  // child's own `close` event. A child that dies WITHOUT an exit code and without our timeout having
+  // fired (killed by the OS/OOM, a failed spawn) and without having said anything is retried — it
+  // cannot have reached the fake server, so a retry is idempotent. A timeout is never retried (the
+  // child may already have written).
+  const budgetMs = Number(process.env.PLANE_SELF_TEST_CLI_BUDGET_MS) || 90_000;
+  const attempt = () =>
+    new Promise((resolve) => {
+      let settled = false;
+      const done = (r) => {
+        if (!settled) {
+          settled = true;
+          resolve(r);
+        }
+      };
+      const child = spawn(process.execPath, [scriptPath, ...effectiveArgv], {
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (c) => (stdout += c));
+      child.stderr.on("data", (c) => (stderr += c));
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill();
+      }, budgetMs);
+      child.on("error", (e) => {
+        clearTimeout(timer);
+        done({ code: null, stdout, stderr: stderr + String(e), timedOut, spawnError: true });
+      });
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        done({ code, stdout, stderr, timedOut });
+      });
     });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (c) => (stdout += c));
-    child.stderr.on("data", (c) => (stderr += c));
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill();
-    }, 15_000);
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({ code, stdout, stderr, timedOut });
-    });
-  });
+  return (async () => {
+    for (let n = 0; ; n++) {
+      const r = await attempt();
+      if (!shouldRetryCli(r, n)) return r;
+    }
+  })();
 }
 
 // ── assertion helper (repo convention: PASS/FAIL lines, exit 1 on failure) ──
@@ -356,6 +394,40 @@ function check(name, got, want) {
 }
 
 async function main() {
+  // B588 — the runner's retry decision (see shouldRetryCli).
+  {
+    const silentDeath = { code: null, timedOut: false, stdout: "", stderr: "" };
+    check(
+      "B588: a child that dies without an exit code, silently, IS retried",
+      shouldRetryCli(silentDeath, 0),
+      true,
+    );
+    check(
+      "B588: ...a failed spawn is retried too",
+      shouldRetryCli({ code: null, spawnError: true, stderr: "spawn EAGAIN" }, 1),
+      true,
+    );
+    check("B588: ...but at most twice", shouldRetryCli(silentDeath, 2), false);
+    check(
+      "B588: our own timeout is NEVER retried (the child may already have written)",
+      shouldRetryCli({ ...silentDeath, timedOut: true }, 0),
+      false,
+    );
+    check(
+      "B588: a real exit code is never retried, zero or not",
+      [
+        shouldRetryCli({ code: 0, stdout: "x", stderr: "" }, 0),
+        shouldRetryCli({ code: 1, stdout: "", stderr: "" }, 0),
+      ],
+      [false, false],
+    );
+    check(
+      "B588: a silent death that DID emit output is not retried (it may have written)",
+      shouldRetryCli({ ...silentDeath, stdout: "posting…" }, 0),
+      false,
+    );
+  }
+
   // T1 / R1 R2 R3 — registry has B01 (queued, F01 -> issue 532); Plane has no
   // items -> exactly one POST creating the mirrored work item.
   {
