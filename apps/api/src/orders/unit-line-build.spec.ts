@@ -2,7 +2,13 @@ import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import { PriceType } from "@prisma/client";
 import type { LadderUnit } from "@routeflow/pricing";
 import { resolveLineUnits } from "../products/line-units";
-import { assertMayUseUnits, buildUnitLine, requestsUnit } from "./unit-line-build";
+import {
+  MAX_LINE_QTY,
+  assertMayUseUnits,
+  buildUnitLine,
+  isUnitAware,
+  requestsUnit,
+} from "./unit-line-build";
 
 // A 24-piece box priced $42.00 (tier 2 $40.00); a Case of 288 pieces with an explicit $480.00 (no
 // tier prices → tiers derive); a Pallet with NO price (derived: 42 x 5760 / 24).
@@ -37,6 +43,8 @@ const build = (item: Record<string, unknown>, tier = 1, label = "Case") =>
     item: { productId: "p1", qty: 3, unitLabel: label, ...item },
     tier,
     taxFor,
+    position: 4,
+    tenantId: "t1",
   });
 
 describe("buildUnitLine — an order line sold by a non-pack unit", () => {
@@ -67,6 +75,7 @@ describe("buildUnitLine — an order line sold by a non-pack unit", () => {
     const l = build({ qty: 1 }, 2, "Pallet");
     expect(l.unitPrice).toBe(9600); // 40 x 5760 / 24
     expect(l.priceType).toBe(PriceType.SPECIAL);
+    expect(l.originalPrice).toBe(10080); // the tier-1 unit price, like a SPECIAL pack line
   });
 
   it("a Piece off a boxed pack is a per-piece line that still snapshots factor 1", () => {
@@ -115,6 +124,8 @@ describe("buildUnitLine — an order line sold by a non-pack unit", () => {
         item: { productId: "p1", qty: 1 },
         tier: 1,
         taxFor,
+        position: 0,
+        tenantId: "t1",
       }),
     ).toThrow(/unit-aware/);
   });
@@ -125,6 +136,54 @@ describe("buildUnitLine — an order line sold by a non-pack unit", () => {
     expect(l.categoryTaxAmount).toBe(864 + 1.44);
     expect(l.trackedCategoryId).toBe("cat-1");
     expect(l.trackedSubcategoryId).toBe("sub-1");
+  });
+
+  it("a typed price is compared to the TIER-1 unit price, exactly like the pack branch", () => {
+    // tier 2 Pallet = 9600, tier 1 = 10080: typing 9800 sits BETWEEN them -> below list = DISCOUNTED
+    const l = build({ qty: 1, unitPrice: 9800 }, 2, "Pallet");
+    expect(l).toMatchObject({
+      unitPrice: 9800,
+      priceType: PriceType.DISCOUNTED,
+      originalPrice: 10080,
+    });
+  });
+
+  it("carries position and tenantId on the line (a nested create bypasses forTenant())", () => {
+    expect(build({})).toMatchObject({ position: 4, tenantId: "t1", name: null });
+  });
+
+  it("a bad customer tier is a 400, not a 500", () => {
+    expect(() => build({}, 0)).toThrow(BadRequestException);
+    expect(() => build({}, 6)).toThrow(/pricing tier/);
+  });
+
+  it("a line too big for its Decimal columns is a 400, not an order-wide 500", () => {
+    expect(() => build({ qty: Math.floor(MAX_LINE_QTY / 288) + 1 })).toThrow(/over the/);
+    expect(() => build({ qty: 100_000 }, 1, "Pallet")).toThrow(BadRequestException); // 5.76e8 pieces
+    expect(() => build({ qty: 99_999, unitPrice: 999_999 }, 1, "Piece")).toThrow(/total is over/);
+  });
+
+  it("only a unit-aware resolution is built: the pack and a Piece on an unboxed product stay on the pack branch", () => {
+    expect(isUnitAware(resolveLineUnits(product, units, { unitLabel: "Case" }))).toBe(true);
+    expect(isUnitAware(resolveLineUnits(product, units, { unitLabel: "Box" }))).toBe(false);
+    expect(isUnitAware(resolveLineUnits(product, units, { unitLabel: null }))).toBe(false);
+    const unboxed = { ...product, unitsPerBox: 1 };
+    expect(isUnitAware(resolveLineUnits(unboxed, units, { unitLabel: "Piece" }))).toBe(false);
+  });
+
+  it("a factor-1 level under any name is a per-piece line (not units stored as pieces)", () => {
+    const each = level({ label: "Each", factorToBase: 1 });
+    const l = buildUnitLine({
+      product,
+      units: [each],
+      resolved: resolveLineUnits(product, [each], { unitLabel: "Each" }),
+      item: { productId: "p1", qty: 4, unitLabel: "Each" },
+      tier: 1,
+      taxFor,
+      position: 0,
+      tenantId: "t1",
+    });
+    expect(l).toMatchObject({ boxes: null, qty: 4, unitsPerBox: 1, unitLabel: "Each" });
   });
 
   it("carries the item note (itemNote wins over notes)", () => {
@@ -154,31 +213,46 @@ describe("requestsUnit / assertMayUseUnits — who may sell by a unit, and only 
   });
 
   it("consults nothing when no line asks for a unit (a pack-only request is byte-identical)", async () => {
-    await assertMayUseUnits([{}, { unitLabel: "" }], ctx({ isStaff: false, tenantId: null }));
+    await assertMayUseUnits(
+      [{ productId: "p1" }, { unitLabel: "", productId: "p1" }],
+      ctx({ isStaff: false, tenantId: null }),
+    );
     expect(hasFlag).not.toHaveBeenCalled();
+  });
+
+  it("refuses a unit on a custom (unlisted) line instead of silently dropping it", async () => {
+    await expect(
+      assertMayUseUnits([{ unitLabel: "Case", productId: null }], ctx()),
+    ).rejects.toThrow(/custom line/);
+    expect(hasFlag).not.toHaveBeenCalled();
+    await expect(
+      assertMayUseUnits([{ unitLabel: "Case", productId: "p1" }], ctx()),
+    ).resolves.toBeUndefined();
   });
 
   it("refuses a buyer before the entitlement is even read", async () => {
     await expect(
-      assertMayUseUnits([{ unitLabel: "Case" }], ctx({ isStaff: false })),
+      assertMayUseUnits([{ unitLabel: "Case", productId: "p1" }], ctx({ isStaff: false })),
     ).rejects.toThrow(BadRequestException);
     expect(hasFlag).not.toHaveBeenCalled();
   });
 
   it("refuses a tenant without flag.units_v1 and a tenant-less caller (fails closed)", async () => {
     hasFlag.mockResolvedValue(false);
-    await expect(assertMayUseUnits([{ unitLabel: "Case" }], ctx())).rejects.toThrow(
-      ForbiddenException,
-    );
+    await expect(
+      assertMayUseUnits([{ unitLabel: "Case", productId: "p1" }], ctx()),
+    ).rejects.toThrow(ForbiddenException);
     expect(hasFlag).toHaveBeenCalledWith("t1", "flag.units_v1");
     hasFlag.mockClear();
     await expect(
-      assertMayUseUnits([{ unitLabel: "Case" }], ctx({ tenantId: null })),
+      assertMayUseUnits([{ unitLabel: "Case", productId: "p1" }], ctx({ tenantId: null })),
     ).rejects.toThrow(ForbiddenException);
     expect(hasFlag).not.toHaveBeenCalled();
   });
 
   it("lets a staff caller on a granted tenant through", async () => {
-    await expect(assertMayUseUnits([{ unitLabel: "Case" }], ctx())).resolves.toBeUndefined();
+    await expect(
+      assertMayUseUnits([{ unitLabel: "Case", productId: "p1" }], ctx()),
+    ).resolves.toBeUndefined();
   });
 });
