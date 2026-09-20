@@ -76,6 +76,18 @@ describe("BlockedLinesDialog", () => {
       await waitFor(() => expect(save).toHaveFocus());
     });
 
+    it("returns focus to a trigger that was blurred (disabled while loading) before opening", async () => {
+      render(<Host />);
+      const save = screen.getByRole("button", { name: "Save" });
+      save.focus();
+      // The browser blurs a button the moment it is disabled for `loading`; the 409 arrives after.
+      save.blur();
+      fireEvent.click(save);
+      fireEvent.keyDown(await screen.findByRole("dialog"), { key: "Escape" });
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      await waitFor(() => expect(save).toHaveFocus());
+    });
+
     it("Escape returns focus to the control that had it", async () => {
       const save = openIt();
       fireEvent.keyDown(await screen.findByRole("dialog"), { key: "Escape" });

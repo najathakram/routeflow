@@ -20,6 +20,18 @@ export function BlockedLinesDialog({
   // Opened by an error handler, so Radix has no trigger to return focus to: without this, closing
   // (Esc / OK) drops focus on <body> and the Create Order modal underneath loses its place.
   const returnFocusTo = React.useRef<HTMLElement | null>(null);
+  // A trigger that disables itself while its request is in flight (`loading`) is blurred by the
+  // browser BEFORE the 409 arrives, so by the time this opens `activeElement` is <body>. Track the
+  // last element that actually held focus outside a dialog and fall back to it.
+  const lastFocused = React.useRef<HTMLElement | null>(null);
+  React.useEffect(() => {
+    const onFocusIn = (e: FocusEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && t !== document.body && !t.closest('[role="dialog"]')) lastFocused.current = t;
+    };
+    document.addEventListener("focusin", onFocusIn);
+    return () => document.removeEventListener("focusin", onFocusIn);
+  }, []);
   return (
     <Modal
       open={!!lines}
@@ -28,7 +40,8 @@ export function BlockedLinesDialog({
       // inline dropdowns), so the opt-in scroll cap cannot clip anything here.
       scroll
       onOpenAutoFocus={() => {
-        returnFocusTo.current = document.activeElement as HTMLElement | null;
+        const active = document.activeElement as HTMLElement | null;
+        returnFocusTo.current = active && active !== document.body ? active : lastFocused.current;
       }}
       onCloseAutoFocus={(e) => {
         const el = returnFocusTo.current;
