@@ -329,7 +329,7 @@ export default function AdminDashboardPage() {
                         <td className="px-4 py-2">
                           <Link
                             href={`/admin/tenants/${t.id}`}
-                            className="text-xs text-indigo-400 hover:text-indigo-300"
+                            className="text-xs text-indigo-400 hover:text-indigo-300 max-[768px]:inline-flex max-[768px]:min-h-10 max-[768px]:items-center"
                           >
                             View
                           </Link>
@@ -387,7 +387,7 @@ export default function AdminDashboardPage() {
                       <td className="px-4 py-2">
                         <Link
                           href={`/admin/tenants/${t.id}`}
-                          className="text-xs text-indigo-400 hover:text-indigo-300"
+                          className="text-xs text-indigo-400 hover:text-indigo-300 max-[768px]:inline-flex max-[768px]:min-h-10 max-[768px]:items-center"
                         >
                           View
                         </Link>
@@ -405,7 +405,10 @@ export default function AdminDashboardPage() {
       <AdminCard
         title="Recent Tenants"
         actions={
-          <Link href="/admin/tenants" className="text-xs text-indigo-400 hover:text-indigo-300">
+          <Link
+            href="/admin/tenants"
+            className="text-xs text-indigo-400 hover:text-indigo-300 max-[768px]:inline-flex max-[768px]:min-h-10 max-[768px]:items-center"
+          >
             View all
           </Link>
         }

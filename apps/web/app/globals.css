@@ -221,6 +221,27 @@ body {
   }
 }
 
+/* Lane B A3 F7 — platform-admin controls under 40 px tall at phone/tablet width (audit 2026-09-20).
+   A floor, not a redesign: every button and button-styled link gets a 40 px minimum height, and an
+   icon-only button a 40 px minimum width. Button-styled links (a `rounded` class) are made block
+   flex boxes so the floor applies wherever they sit and their label stays vertically centred, as a
+   button's is. Plain text links opt in with `max-[768px]:min-h-10` instead — an inline link inside
+   a sentence must not turn into a flex box (and `max-md` stops at 767 px, so the arbitrary value).
+   Desktop is untouched. */
+@media (max-width: 768px) {
+  .surface-admin button,
+  .surface-admin a[class*="rounded"] {
+    min-height: 40px;
+  }
+  .surface-admin a[class*="rounded"]:not([class*="hidden"]) {
+    display: flex;
+    align-items: center;
+  }
+  .surface-admin button:has(> svg:only-child) {
+    min-width: 40px;
+  }
+}
+
 /* Print (WP4, R6.10) — hide the dashboard chrome so a printed invoice/PDF
    isn't framed by the sidebar/topbar. */
 @media print {

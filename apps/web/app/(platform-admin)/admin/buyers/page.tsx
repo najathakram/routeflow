@@ -396,7 +396,7 @@ export default function AdminBuyersPage() {
             <div className="border-t border-slate-700 px-5 py-2 text-center">
               <Link
                 href="/admin/buyers/merge-requests"
-                className="text-xs text-indigo-400 hover:text-indigo-300"
+                className="text-xs text-indigo-400 hover:text-indigo-300 max-[768px]:inline-flex max-[768px]:min-h-10 max-[768px]:items-center"
               >
                 View all {merges.pendingCount} merge requests
               </Link>

@@ -99,7 +99,10 @@ export default function AdminCreateTenantPage() {
   return (
     <div className="p-6">
       <div className="mb-6 flex items-center gap-4">
-        <Link href="/admin/tenants" className="text-sm text-slate-400 hover:text-slate-300">
+        <Link
+          href="/admin/tenants"
+          className="text-sm text-slate-400 hover:text-slate-300 max-[768px]:inline-flex max-[768px]:min-h-10 max-[768px]:items-center"
+        >
           ← Back to Tenants
         </Link>
         <h1 className="text-2xl font-bold text-white">Create New Tenant</h1>

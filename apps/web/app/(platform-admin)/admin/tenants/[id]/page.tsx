@@ -656,7 +656,7 @@ function OverviewTab({
         actions={
           <Link
             href={`/admin/audit-logs?tenantId=${tenant.id}`}
-            className="text-xs text-indigo-400 hover:text-indigo-300"
+            className="text-xs text-indigo-400 hover:text-indigo-300 max-[768px]:inline-flex max-[768px]:min-h-10 max-[768px]:items-center"
           >
             View all
           </Link>
@@ -1864,7 +1864,10 @@ export default function AdminTenantDetailPage() {
     <div className="p-6">
       {/* Header */}
       <div className="mb-1 flex items-center gap-4">
-        <Link href="/admin/tenants" className="text-sm text-slate-400 hover:text-slate-300">
+        <Link
+          href="/admin/tenants"
+          className="text-sm text-slate-400 hover:text-slate-300 max-[768px]:inline-flex max-[768px]:min-h-10 max-[768px]:items-center"
+        >
           Tenants
         </Link>
         <span className="text-slate-400">/</span>
