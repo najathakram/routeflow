@@ -53,6 +53,7 @@ import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { buildPlanGateBody, PlanGateUpgrade } from "../billing/plan-gate";
 import { EmailService } from "../email/email.service";
+import { addressStateFields } from "./address-state";
 // Same grace window BillingCronService.expireGrace() clears hourly — the create()
 // gate applies it synchronously rather than waiting for the cron to run.
 import { GRACE_DAYS } from "../billing/plan-catalog.constants";
@@ -603,6 +604,7 @@ export class CustomersService {
             line2: addr.line2,
             city: addr.city,
             state: addr.state,
+            ...addressStateFields(addr.state),
             zip: addr.zip,
             isDefault: idx === 0,
             ...(addressCoords[idx] ?? {}),
@@ -899,6 +901,7 @@ export class CustomersService {
           line2: dto.line2,
           city: dto.city,
           state: dto.state,
+          ...addressStateFields(dto.state),
           zip: dto.zip,
           isDefault: dto.isDefault ?? false,
           addressType: dto.addressType ?? "BILLING",
@@ -917,9 +920,27 @@ export class CustomersService {
           data: { isDefault: false },
         });
       }
+      // A CHANGED `state` recomputes BOTH derived columns (a stale stateCode would keep the customer
+      // in the state they left). The edit form resends the unchanged text on every save, and the
+      // backfill may have resolved it by a rule the strict write boundary does not know ("TX 77001"):
+      // recomputing then would turn a correct code into "unresolved", so only a real change counts.
+      const current =
+        dto.state === undefined
+          ? null
+          : await tx.customerAddress.findFirst({
+              where: { id: addrId, customerId: id },
+              select: { state: true },
+            });
+      const stateChanged = dto.state !== undefined && dto.state !== current?.state;
       return tx.customerAddress.update({
         where: { id: addrId, customerId: id },
-        data: { ...dto, lat: null, lng: null }, // clear stale coords when address changes
+        // clear stale coords when the address changes
+        data: {
+          ...dto,
+          ...(stateChanged ? addressStateFields(dto.state) : {}),
+          lat: null,
+          lng: null,
+        },
       });
     });
     // Re-geocode asynchronously (don't block the response)
