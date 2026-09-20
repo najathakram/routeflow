@@ -80,8 +80,10 @@ test.describe("Operator — Boxed order entry (WP2-13)", () => {
       .click();
     const title = page.getByRole("heading", { name: "Create Order" });
     await expect(title).toBeVisible({ timeout: 10_000 });
-    // First row, data-agnostic: "e" matches most seeded business names.
-    await page.getByPlaceholder("Search by business name…").fill("e");
+    // A known seeded customer (e2e-seed.js FIXTURE_CUSTOMERS) BY EXACT NAME, not "the first row for
+    // 'e'": that depended on customer creation order (the seeded approved buyer's customer also
+    // contains an "e").
+    await page.getByPlaceholder("Search by business name…").fill("E2E Fixture Deli Three");
     await page
       .locator('input[placeholder="Search by business name…"] ~ ul li button')
       .first()

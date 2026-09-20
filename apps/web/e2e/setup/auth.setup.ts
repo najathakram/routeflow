@@ -12,7 +12,7 @@ import { test as setup } from "@playwright/test";
 import fs from "fs";
 import path from "path";
 import { fillWorkspaceIfShown, setTenantCookie } from "../helpers/auth";
-import { CREDENTIALS, HAS_SUPER_ADMIN_CREDS, TENANT_SLUG } from "../helpers/constants";
+import { CREDENTIALS, HAS_SUPER_ADMIN_CREDS, TENANT_SLUG, isLocalUrl } from "../helpers/constants";
 
 export const AUTH_DIR = path.join(__dirname, ".auth");
 export const SUPER_ADMIN_AUTH = path.join(AUTH_DIR, "super-admin.json");
@@ -72,14 +72,53 @@ setup("authenticate as customer", async ({ page, context }) => {
 
 // Logs in the SEEDED approved buyer (apps/api/scripts/e2e-seed.js) — it does not register one.
 // The portal only resolves a seller once one is picked, which is what writes
-// rf:buyer:activeSeller, so the step clicks the seller card before capturing.
-setup("authenticate as buyer", async ({ page }) => {
+// rf:buyer:activeSeller, so the step clicks the seller card before capturing. Only an ACTIVE link
+// renders the card as a <button> (a pending one is a <div>), hence the button selector.
+setup("authenticate as buyer", async ({ page, baseURL }) => {
+  // First line of output, so whoever mints sees where this is pointing (an unset
+  // PLAYWRIGHT_BASE_URL resolves to PRODUCTION - which this step must never log in to).
+  console.log(`[buyer setup] base URL: ${baseURL ?? "(unset)"}`);
+  // The buyer is seeded on LOCAL databases only (a committed throwaway password on a global
+  // account), so never contact a non-local target: skip before any request, and write nothing —
+  // no dependent project loads buyer.json, and a missing file stops a prover loudly.
+  if (!isLocalUrl(baseURL)) {
+    setup.skip(true, "buyer fixture is seeded on local targets only");
+    return;
+  }
   await page.goto("/buyer/login");
   await page.getByPlaceholder("Enter your email").fill(CREDENTIALS.buyer.email);
   await page.getByPlaceholder("Enter your password").fill(CREDENTIALS.buyer.password);
   await page.getByRole("button", { name: "Sign in", exact: true }).first().click();
-  await page.waitForURL("**/buyer/portal", { timeout: 60_000 });
-  await page.getByTestId("seller-card").first().click();
+  // Race the success URL against the form's inline API error so a failed login is told apart from
+  // a hang: a 401 ("Invalid email or password.") means the buyer is not seeded here -> skip; any
+  // other outcome throws with the page state, so a red run explains itself.
+  const errorText = page.getByText(/invalid email or password|login failed/i).first();
+  const outcome = await Promise.race([
+    page.waitForURL("**/buyer/portal", { timeout: 30_000 }).then(() => "portal" as const),
+    errorText.waitFor({ timeout: 30_000 }).then(() => "error" as const),
+  ]).catch(async (err: unknown) => {
+    const formText = await page
+      .locator("form")
+      .first()
+      .innerText()
+      .catch(() => "(no form)");
+    throw new Error(
+      `buyer login neither reached /buyer/portal nor showed an error: url=${page.url()} form=${JSON.stringify(formText)} cause=${String(err)}`,
+    );
+  });
+  if (outcome === "error") {
+    const shown = (await errorText.innerText()).trim();
+    if (/invalid email or password/i.test(shown)) {
+      // Local, but the buyer is not seeded (or its password drifted) - run the e2e seed.
+      setup.skip(
+        true,
+        "seeded buyer could not log in - run the e2e seed against the local database",
+      );
+      return;
+    }
+    throw new Error(`buyer login failed with an unexpected message: ${shown}`);
+  }
+  await page.locator('button[data-testid="seller-card"]').first().click();
   await page.waitForURL("**/buyer/portal/*/orders", { timeout: 60_000 });
 
   const keys = await page.evaluate(() => ({

@@ -15,6 +15,8 @@
  * left in the operator's dock (see 08-create-order-escape.spec.ts).
  *
  * Usage (from repo root):
+ *   Local (compose stack): node scripts/local-env.mjs --db -- "node apps/api/scripts/e2e-seed.js"
+ *     (`npm run local:seed` runs prisma/seed.ts, NOT this script, so it never seeds the fixtures here)
  *   Local:                  node apps/api/scripts/e2e-seed.js
  *   Railway (explicit URL): DATABASE_URL="postgresql://..." node apps/api/scripts/e2e-seed.js
  *   Railway (via runner):   railway run --service postgres node apps/api/scripts/e2e-seed.js
@@ -34,6 +36,7 @@ const { PrismaPg } = require("../../../node_modules/@prisma/adapter-pg");
 const { Pool } = require("../../../node_modules/pg");
 const bcrypt = require("../../../node_modules/bcrypt");
 const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
+const { isLocalDbTarget } = require("./lib/local-db-target.cjs");
 
 const LOCAL_DEFAULT_DB_URL = "postgresql://user:pass@localhost:5432/routeflow_dev";
 
@@ -358,6 +361,18 @@ async function ensureCommerceFixtures(tenantId) {
   );
 }
 
+// The buyer is a GLOBAL account (not tenant-scoped) with a committed throwaway password, and this
+// script is also run against production (`railway run ... e2e-seed.js`). So the fixture is created
+// ONLY when the resolved target is provably local (allowlist in lib/local-db-target.cjs) — never on
+// Railway or any host we cannot classify — and no flag overrides that.
+async function ensureBuyerFixtureIfLocal(tenantId) {
+  if (!isLocalDbTarget(dbUrl)) {
+    console.log("  - buyer fixture skipped (non-local target)");
+    return;
+  }
+  await ensureBuyerFixture(tenantId);
+}
+
 // A BuyerAccount whose CustomerLink to a dedicated customer on this tenant is ACTIVE (the
 // "approved" state - the enum default is INVITED). Idempotent: each piece is found first and
 // reported "exists", or created/repaired (re-approving a link a spec disconnected, un-deleting or
@@ -385,7 +400,7 @@ async function ensureBuyerFixture(tenantId) {
         emailVerified: true,
       },
     });
-    console.log(`  ✓ Created buyer: ${BUYER_EMAIL} / ${BUYER_PASSWORD}`);
+    console.log(`  ✓ Created buyer: ${BUYER_EMAIL} (password: see e2e/helpers/constants.ts)`);
   } else {
     const passwordOk = await bcrypt.compare(BUYER_PASSWORD, account.passwordHash);
     const healthy =
@@ -553,7 +568,7 @@ async function main() {
 
     // ── Commerce fixtures (B566) ─────────────────────────────────────────────────
     await ensureCommerceFixtures(existing.id);
-    await ensureBuyerFixture(existing.id);
+    await ensureBuyerFixtureIfLocal(existing.id);
 
     // ── Sweep stale parked drafts left by the web e2e suite ─────────────────────
     // 08-create-order-escape's ESC tests auto-park REAL drafts ("Order, <name>",
@@ -681,7 +696,7 @@ async function main() {
 
   // ── Commerce fixtures (B566) ─────────────────────────────────────────────────
   await ensureCommerceFixtures(tenant.id);
-  await ensureBuyerFixture(tenant.id);
+  await ensureBuyerFixtureIfLocal(tenant.id);
 
   console.log("\n✅ E2E seed complete.\n");
 }

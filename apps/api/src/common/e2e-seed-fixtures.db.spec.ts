@@ -11,10 +11,15 @@
  * rows those specs need exist and that a re-run is idempotent (no duplicates). The tenant is the
  * standing approved test tenant `e2e-routeflow` — `assertTestTenant` inside the script guards it.
  *
+ * The seed is `apps/api/scripts/e2e-seed.js`; to seed a local compose stack by hand run
+ * `node scripts/local-env.mjs --db -- "node apps/api/scripts/e2e-seed.js"` (NOT `npm run local:seed`,
+ * which runs prisma/seed.ts and never touches these fixtures).
+ *
  * Collected only by `jest.db.config.js` (`.db.spec.ts$`), run via `npm run local:test:db`.
  * `requireLocalDatabaseUrl()` refuses any non-local host.
  */
 import { spawnSync } from "child_process";
+import * as bcrypt from "bcrypt";
 import path from "path";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
@@ -162,6 +167,9 @@ describeDb("e2e-seed.js commerce fixtures (B566) — real Postgres", () => {
     const accounts = await prisma.buyerAccount.findMany({ where: { email } });
     expect(accounts).toHaveLength(1); // a re-run never duplicates the buyer
     expect(accounts[0]).toMatchObject({ status: "ACTIVE", deletedAt: null });
+    // A re-seed must not rotate a valid hash: a minted buyer.json depends on the password
+    // still verifying after the second run.
+    expect(await bcrypt.compare("BuyerPortal1!", accounts[0].passwordHash)).toBe(true);
 
     const links = await prisma.customerLink.findMany({
       where: { buyerAccountId: accounts[0].id },

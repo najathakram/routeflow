@@ -40,7 +40,9 @@ export const CREDENTIALS = {
   sessionsOp: { username: "e2e_sessions_op", password: "Sessions1!" },
   // Approved buyer (BUYER role, email login): ACTIVE-linked to a dedicated customer on the
   // e2e-routeflow tenant so it can reach the order call — a self-registered buyer has no seller
-  // link. Seeded by apps/api/scripts/e2e-seed.js; auth.setup.ts logs it in (no registration).
+  // link. Seeded by apps/api/scripts/e2e-seed.js ONLY on a local database (a LOCAL THROWAWAY
+  // password by design; the seed refuses any non-local target); auth.setup.ts logs it in (no
+  // registration) and skips on a non-local base URL.
   buyer: { email: "e2e_buyer@e2e-routeflow.test", password: "BuyerPortal1!" },
 } as const;
 
@@ -52,3 +54,6 @@ export const HAS_SUPER_ADMIN_CREDS =
 export function uniqueBuyerEmail(): string {
   return `e2e_buyer_${Date.now()}@example.com`;
 }
+
+// Re-exported so the e2e setup can skip non-local targets (unit-tested in lib/local-url.test.ts).
+export { isLocalUrl } from "../../lib/local-url";
