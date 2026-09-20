@@ -13,6 +13,7 @@ import { BillingEventService } from "../billing/billing-event.service";
 import { MeterService } from "../billing/meter.service";
 import { MrrService } from "../billing/mrr.service";
 import { FeatureOverrideService } from "../billing/feature-override.service";
+import { PlanTransitionConfigService } from "../billing/plan-transition-config.service";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -39,6 +40,7 @@ describe("PlatformAdminService — audit provenance", () => {
   let billingEventService: { emit: jest.Mock };
   let meterService: { readAll: jest.Mock };
   let featureOverrides: { allActive: jest.Mock };
+  let planTransition: { isEnabled: jest.Mock; prepare: jest.Mock; onPlanChange: jest.Mock };
   let platformPricingService: { resolveTenantPricing: jest.Mock };
   let mrrService: {
     computeOverview: jest.Mock;
@@ -98,6 +100,11 @@ describe("PlatformAdminService — audit provenance", () => {
     // collaborator-contract addition (Opus review of 8130b204, item 4) defaults to "no
     // override" — the same raw-entitlements behavior those tests already assert on.
     featureOverrides = { allActive: jest.fn().mockResolvedValue(new Map()) };
+    planTransition = {
+      isEnabled: jest.fn().mockResolvedValue(true),
+      prepare: jest.fn().mockResolvedValue({ enabled: true, planAllows: null }),
+      onPlanChange: jest.fn().mockResolvedValue({ action: "none" }),
+    };
     platformPricingService = { resolveTenantPricing: jest.fn() };
     // Default: zeroed overview — the getStats-enrichment describe block below overrides
     // per-case to prove getStats() reads MrrService, not a re-derived estimate.
@@ -163,6 +170,7 @@ describe("PlatformAdminService — audit provenance", () => {
         { provide: MrrService, useValue: mrrService },
         { provide: TenantMirrorService, useValue: tenantMirror },
         { provide: FeatureOverrideService, useValue: featureOverrides },
+        { provide: PlanTransitionConfigService, useValue: planTransition },
       ],
     }).compile();
 
@@ -1907,6 +1915,192 @@ describe("PlatformAdminService — audit provenance", () => {
       const upsertArg = (prisma as any).tenantSubscription.upsert.mock.calls[0][0];
       expect(upsertArg.create).toMatchObject({ planKey: "LITE", planVersionId: "v-12" });
       expect(upsertArg.update).toMatchObject({ planKey: "LITE", planVersionId: "v-12" });
+    });
+  });
+
+  // Lane B A2b: the plan-transition hook (config snapshot on downgrade / restore on upgrade).
+  describe("A2b plan-transition hook", () => {
+    const periodStart = new Date("2026-09-01T00:00:00Z");
+    const periodEnd = new Date("2026-10-01T00:00:00Z");
+    const defs = {
+      id: "v-9",
+      definitions: [
+        { planKey: "STARTER", monthlyPrice: 99 },
+        { planKey: "SCALE", monthlyPrice: 499 },
+      ],
+    };
+    const subscription = (planKey: string) => ({
+      planKey,
+      basePriceSnapshot: 99,
+      priceOverrideMonthly: null,
+      discount: null,
+      cycle: "MONTHLY",
+      periodStart,
+      periodEnd,
+    });
+
+    it("updatePlan instant UPGRADE: prepare() first, then the hook INSIDE the tx, ahead of the plan write", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "STARTER",
+        status: "ACTIVE",
+      } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "PROFESSIONAL",
+      } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue(defs);
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue(subscription("STARTER"));
+      prorationService.proratedDiff.mockReturnValue(0);
+      const order: string[] = [];
+      planTransition.prepare.mockImplementation(async () => {
+        order.push("prepare");
+        return { planAllows: null };
+      });
+      planTransition.onPlanChange.mockImplementation(async () => {
+        order.push("onPlanChange");
+        return { action: "none" };
+      });
+      prisma.tenant.update.mockImplementation((async () => {
+        order.push("plan-write");
+        return { id: TENANT_ID, slug: "acme", plan: "PROFESSIONAL" };
+      }) as any);
+
+      await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+
+      expect(order).toEqual(["prepare", "onPlanChange", "plan-write"]);
+      expect(planTransition.onPlanChange.mock.calls[0][1]).toMatchObject({
+        tenantId: TENANT_ID,
+        fromPlanKey: "STARTER",
+        toPlanKey: "SCALE",
+        toPlanVersionId: "v-9",
+        actor: { id: ADMIN_ID },
+      });
+    });
+
+    it("updatePlan on a NON-ACTIVE tenant downgrades instantly, so the hook sees the downgrade", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "PROFESSIONAL",
+        status: "READ_ONLY",
+      } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "STARTER",
+      } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue(defs);
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue(subscription("SCALE"));
+
+      await service.updatePlan(TENANT_ID, { plan: "STARTER" } as any, ADMIN_ID);
+
+      expect(planTransition.onPlanChange.mock.calls[0][1]).toMatchObject({
+        fromPlanKey: "SCALE",
+        toPlanKey: "STARTER",
+      });
+    });
+
+    it("updatePlan that only SCHEDULES a downgrade (ACTIVE tenant) never calls the hook — the cron applies it later", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "PROFESSIONAL",
+        status: "ACTIVE",
+      } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue(defs);
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue(subscription("SCALE"));
+
+      await service.updatePlan(TENANT_ID, { plan: "STARTER" } as any, ADMIN_ID);
+
+      expect(planTransition.prepare).not.toHaveBeenCalled();
+      expect(planTransition.onPlanChange).not.toHaveBeenCalled();
+    });
+
+    it("a failing hook aborts the instant plan change: no plan write", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "PROFESSIONAL",
+        status: "READ_ONLY",
+      } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue(defs);
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue(subscription("SCALE"));
+      planTransition.onPlanChange.mockRejectedValueOnce(new Error("snapshot failed"));
+
+      await expect(
+        service.updatePlan(TENANT_ID, { plan: "STARTER" } as any, ADMIN_ID),
+      ).rejects.toThrow("snapshot failed");
+      expect(prisma.tenant.update).not.toHaveBeenCalled();
+    });
+
+    it("activateManualSubscription with the flag OFF issues NO extra tenant read and never touches the hook", async () => {
+      planTransition.isEnabled.mockResolvedValue(false);
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        status: "SUSPENDED",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: { planKey: null, basePriceSnapshot: null, discount: 0 },
+      } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-9",
+        definitions: [{ planKey: "STARTER", monthlyPrice: 99, isCustom: false }],
+      } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+        plan: "STARTER",
+      } as any);
+
+      await service.activateManualSubscription(
+        TENANT_ID,
+        { plan: "STARTER", billingPeriodDays: 30, paymentMethod: "BANK_TRANSFER" } as any,
+        ADMIN_ID,
+      );
+
+      expect(prisma.tenant.findUniqueOrThrow).toHaveBeenCalledTimes(1); // only the in-tx paying-set read
+      expect(planTransition.prepare).not.toHaveBeenCalled();
+      expect(planTransition.onPlanChange).not.toHaveBeenCalled();
+    });
+
+    it("activateManualSubscription: the plan being left falls back to Tenant.plan and the hook runs in the tx", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        plan: "PROFESSIONAL",
+        status: "SUSPENDED",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: { planKey: null, basePriceSnapshot: null, discount: 0 },
+      } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-9",
+        definitions: [{ planKey: "STARTER", monthlyPrice: 99, isCustom: false }],
+      } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+        plan: "STARTER",
+      } as any);
+
+      await service.activateManualSubscription(
+        TENANT_ID,
+        { plan: "STARTER", billingPeriodDays: 30, paymentMethod: "BANK_TRANSFER" } as any,
+        ADMIN_ID,
+      );
+
+      expect(planTransition.onPlanChange).toHaveBeenCalledTimes(1);
+      expect(planTransition.onPlanChange.mock.calls[0][1]).toMatchObject({
+        tenantId: TENANT_ID,
+        fromPlanKey: "SCALE", // Tenant.plan PROFESSIONAL -> planKeyFromEnum
+        toPlanKey: "STARTER",
+        toPlanVersionId: "v-9",
+        actor: { id: ADMIN_ID },
+      });
     });
   });
 

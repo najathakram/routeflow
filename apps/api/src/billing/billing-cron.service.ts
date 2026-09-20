@@ -13,11 +13,14 @@ import {
   findPlanDefinition,
   GRACE_DAYS,
   PlanNotInCatalogError,
+  normalizePlanKey,
+  planKeyFromEnum,
   planKeyToEnum,
   UnknownPlanKeyError,
 } from "./plan-catalog.constants";
 import { addCycle } from "./billing-math";
 import { BillingNotificationService } from "./billing-notification.service";
+import { PlanTransitionConfigService } from "./plan-transition-config.service";
 
 /**
  * Plan lifecycle crons (Plans & Billing Phase 5). Operate cross-tenant with explicit
@@ -36,6 +39,8 @@ export class BillingCronService {
     private readonly catalog: PlanCatalogService,
     private readonly meters: MeterService,
     private readonly billingNotification: BillingNotificationService,
+    // Lane B A2b: a scheduled downgrade snapshots the tenant's feature config in the same tx.
+    private readonly planTransition: PlanTransitionConfigService,
   ) {}
 
   private planMonthly(version: PlanVersionWithCatalog | null, planKey: string | null): number {
@@ -196,6 +201,7 @@ export class BillingCronService {
   @LeaderCron("0 2 * * *", "billing-cron.applyScheduledDowngrades")
   async applyScheduledDowngrades(): Promise<void> {
     const now = new Date();
+    const snapshotOn = await this.planTransition.isEnabled();
     const subs = await this.prisma.tenantSubscription.findMany({
       // Same tenant filter as applyScheduledCancellations below: a SUSPENDED / CANCELLED /
       // soft-deleted tenant has already had its churn delta booked, so applying a schedule left
@@ -213,6 +219,10 @@ export class BillingCronService {
         downgradeToPlanKey: true,
         downgradeEffectiveAt: true,
         retainedUserIds: true,
+        // `planKey` is nullable (the pre-plans-as-data cohort): resolve the plan being LEFT the
+        // way every other plan path does, or the snapshot would be skipped for exactly those tenants.
+        // Joined ONLY while the snapshot flag is on — flag off, the query is exactly what it was.
+        ...(snapshotOn ? { tenant: { select: { plan: true } } } : {}),
       },
     });
     let applied = 0;
@@ -250,7 +260,26 @@ export class BillingCronService {
         );
         const seatCap = targetDef.seatsIncluded ?? null;
 
+        const tenantPlan = (s as { tenant?: { plan?: string } }).tenant?.plan;
+        const transition = snapshotOn
+          ? {
+              tenantId: s.tenantId,
+              fromPlanKey: normalizePlanKey(s.planKey) ?? planKeyFromEnum(tenantPlan),
+              toPlanKey: target,
+              toPlanVersionId: targetVersion.id,
+              actor: { id: null, name: "system: scheduled downgrade" },
+            }
+          : null;
+        const preparedTransition = transition
+          ? await this.planTransition.prepare(transition)
+          : null;
+
         await this.prisma.$transaction(async (tx) => {
+          // Snapshot first, in the same transaction: a failure here throws into the per-row catch
+          // below, so THIS tenant's downgrade is not applied (fail closed) and retries next tick.
+          if (transition && preparedTransition) {
+            await this.planTransition.onPlanChange(tx, transition, preparedTransition);
+          }
           await tx.tenantSubscription.update({
             where: { tenantId: s.tenantId },
             data: {

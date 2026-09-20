@@ -16,6 +16,23 @@ const toJson = (v: unknown): Prisma.InputJsonValue | typeof Prisma.DbNull =>
     : // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- tsc needs it: `unknown` is not assignable
       (v as Prisma.InputJsonValue);
 
+/**
+ * Automatic restore (a re-upgrade) only considers snapshots taken within this many days (lead
+ * ruling 2026-09-20): a config archived long ago is more likely stale than wanted, so it is never
+ * re-applied unattended. It stays listed, and a SUPER_ADMIN can still restore it explicitly
+ * after seeing its age. Inclusive: a snapshot exactly 90 days old restores.
+ */
+export const AUTO_RESTORE_MAX_AGE_DAYS = 90;
+const DAY_MS = 86_400_000;
+
+/** Whole days since the snapshot was taken (floor; never negative). */
+export const snapshotAgeDays = (takenAt: Date, now: Date): number =>
+  Math.max(0, Math.floor((now.getTime() - takenAt.getTime()) / DAY_MS));
+
+/** True when automatic restore would refuse this snapshot as too old. */
+export const beyondAutoRestoreHorizon = (takenAt: Date, now: Date): boolean =>
+  now.getTime() - takenAt.getTime() > AUTO_RESTORE_MAX_AGE_DAYS * DAY_MS;
+
 export interface SnapshotActor {
   id?: string | null;
   name?: string | null;
@@ -26,6 +43,8 @@ export interface RestoreResult {
   takenAt: Date;
   planKey: string;
   report: RestoreReport;
+  /** Older un-restored snapshots this restore superseded. */
+  supersededSnapshots: number;
 }
 
 /**
@@ -78,6 +97,7 @@ export class TenantConfigSnapshotService {
    * SUPERSEDED (stamped `restoredToPlanKey: "SUPERSEDED"`): the newer snapshot's payload already
    * carries every row the older one did (a downgrade never deletes config), so a later upgrade
    * must not re-apply the stale one over state this restore established.
+   * A snapshot older than `AUTO_RESTORE_MAX_AGE_DAYS` is never restored here (left un-stamped).
    * `planAllows` — does the plan being restored TO allow this feature? — is supplied by the
    * plan-change wiring; the default (allow) is only for callers with no plan context.
    */
@@ -92,12 +112,14 @@ export class TenantConfigSnapshotService {
     if (newRank < 0) return null;
 
     const candidates = await tx.tenantFeatureConfigSnapshot.findMany({
-      where: { tenantId, restoredAt: null },
+      // Only DOWNGRADE archives are ever auto-consumed: a MANUAL snapshot is an admin's own
+      // save-point and stays until an admin restores it (Restore now), never on a re-upgrade.
+      where: { tenantId, restoredAt: null, reason: "DOWNGRADE" },
       orderBy: { takenAt: "desc" },
     });
     const snapshot = candidates.find((s) => {
       const r = planRank(s.planKey);
-      return r >= 0 && r <= newRank;
+      return r >= 0 && r <= newRank && !beyondAutoRestoreHorizon(s.takenAt, now);
     });
     if (!snapshot) return null;
 
@@ -141,26 +163,38 @@ export class TenantConfigSnapshotService {
         },
       });
     }
-    for (const entry of plan.overrides.create) {
-      await tx.tenantFeatureOverride.create({
-        data: {
+    let conflictedOverrides = 0;
+    if (plan.overrides.create.length > 0) {
+      // ONE createMany with skipDuplicates (INSERT … ON CONFLICT DO NOTHING), not a create per row:
+      // a live override for the same feature can appear between our read and this write (an admin
+      // grant, a concurrent restore) and would hit the partial unique index
+      // (tenantId, featureKey) WHERE revokedAt IS NULL. A caught P2002 would leave the caller's
+      // Postgres transaction poisoned ("current transaction is aborted"), so the conflict is
+      // resolved IN the statement instead: the concurrent writer's row wins, ours is skipped.
+      const inserted = await tx.tenantFeatureOverride.createMany({
+        skipDuplicates: true,
+        data: plan.overrides.create.map((entry) => ({
           tenantId,
           featureKey: entry.featureKey,
           effect: entry.effect,
-          kind: entry.kind as Prisma.TenantFeatureOverrideCreateInput["kind"],
+          kind: entry.kind as Prisma.TenantFeatureOverrideCreateManyInput["kind"],
           reason: entry.reason,
           expiresAt: entry.expiresAt ? new Date(entry.expiresAt) : null,
           createdById: entry.createdById,
-        },
+        })),
       });
+      // Rows the statement SKIPPED (a live override won the conflict) were not restored: count them
+      // as kept — the concurrent writer's value stands — so the audit report never overstates.
+      conflictedOverrides = plan.overrides.create.length - inserted.count;
     }
 
     await tx.tenantFeatureConfigSnapshot.update({
       where: { id: snapshot.id },
       data: { restoredAt: now, restoredToPlanKey: newPlanKey },
     });
-    await tx.tenantFeatureConfigSnapshot.updateMany({
-      where: { tenantId, restoredAt: null, takenAt: { lt: snapshot.takenAt } },
+    const superseded = await tx.tenantFeatureConfigSnapshot.updateMany({
+      // Only older DOWNGRADE archives are superseded: a MANUAL save-point is never auto-consumed.
+      where: { tenantId, restoredAt: null, reason: "DOWNGRADE", takenAt: { lt: snapshot.takenAt } },
       data: { restoredAt: now, restoredToPlanKey: "SUPERSEDED" },
     });
 
@@ -168,7 +202,15 @@ export class TenantConfigSnapshotService {
       snapshotId: snapshot.id,
       takenAt: snapshot.takenAt,
       planKey: snapshot.planKey,
-      report: summarizeRestore(plan),
+      report: (() => {
+        const r = summarizeRestore(plan);
+        return {
+          ...r,
+          restored: r.restored - conflictedOverrides,
+          keptNewer: r.keptNewer + conflictedOverrides,
+        };
+      })(),
+      supersededSnapshots: superseded.count,
     };
   }
 }

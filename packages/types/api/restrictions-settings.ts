@@ -1,4 +1,5 @@
-// Selling-restrictions tenant settings contract (Lane R step 6a): GET/PATCH /settings/restrictions.
+// Selling-restrictions tenant settings contract (Lane R step 6a): GET/PATCH /settings/restrictions,
+// GET /settings/restrictions/readiness (TENANT_ADMIN, throttled per tenant).
 import type { RestrictionAddressPrecedence } from "./enums";
 
 export interface RestrictionsSettingsDto {
@@ -18,11 +19,6 @@ export interface RestrictionsEnableReadiness {
   addressesMissingStateCode: number;
   addressesNeedingReview: number;
   indeterminateCustomerCount: number;
-}
-
-/** `readiness` is only computed on request (`?readiness=true`): it sweeps every customer. */
-export interface RestrictionsSettingsWithReadinessDto extends RestrictionsSettingsDto {
-  readiness: RestrictionsEnableReadiness | null;
 }
 
 export interface UpdateRestrictionsSettingsRequest {
