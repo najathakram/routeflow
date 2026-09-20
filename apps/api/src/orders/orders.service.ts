@@ -85,7 +85,12 @@ import {
   rescaleBogoFreeUnits,
   resolveBuyerLinePrice,
 } from "./buyer-merge-pricing";
-import { assertWithinCreditLimit, isCreditLimitCheckEnabled } from "./credit-limit-guard";
+import {
+  assertCreditAtEnforcementPoint,
+  assertWithinCreditLimit,
+  isCreditLimitCheckEnabled,
+  type CreditPointParams,
+} from "./credit-limit-guard";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
@@ -2269,6 +2274,8 @@ export class OrdersService implements OnApplicationBootstrap {
         lines: lineItemsData.flatMap((li) => (li.productId ? [{ productId: li.productId }] : [])),
         channel: restrictionChannelForPrincipal(user), // judged at ENTRY time, like the license guard
       });
+      // B585: credit check for a NEW order (nothing runs unless the tenant switch is set).
+      await this.creditGate({ customerId, projectedTotal: total, principal: user });
     }
 
     // RF-017 + RF-014: create the order inside a transaction so we can
@@ -4725,10 +4732,12 @@ export class OrdersService implements OnApplicationBootstrap {
             // (pre-existing) does not subtract Order.discountAmount.
             total,
             creditCheckEnabled,
-            // B577: do this edit's issued invoices survive untouched? Only a delivered, partially
-            // invoiced order (re-sync skipped) is SURE to; pre-delivery a deposit mirror is
-            // rewritten by the reconcile, so the safe answer — never stricter than before — is no.
-            postDeliveryEdit && shouldSkipInPlaceResync(order.lineItems ?? []),
+            // B577: do the issued invoices survive this edit? Only a delivered, partially invoiced
+            // order (re-sync skipped) is SURE to; pre-delivery a deposit mirror is rewritten.
+            {
+              invoicesSurviveEdit:
+                postDeliveryEdit && shouldSkipInPlaceResync(order.lineItems ?? []),
+            },
           );
         }
 
@@ -5103,6 +5112,14 @@ export class OrdersService implements OnApplicationBootstrap {
       entitlements: this.entitlements,
       logger: this.logger,
     });
+  }
+
+  /** B585: the credit check at an enforcement point; MUST run before any write / stock tx. */
+  private creditGate(p: CreditPointParams): Promise<void> {
+    return assertCreditAtEnforcementPoint(
+      { prisma: this.prisma, entitlements: this.entitlements, logger: this.logger },
+      { ...p, tenantId: this.prisma.getTenantId() },
+    );
   }
 
   /**

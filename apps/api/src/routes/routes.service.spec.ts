@@ -1011,7 +1011,7 @@ describe("RoutesService", () => {
       // and is never backfilled, so this is behaviour-identical for existing data.
       const EXPECTED_SCHEDULED_WHERE = {
         customerId: "c1",
-        status: { notIn: [OrderStatus.DELIVERED, OrderStatus.CANCELLED] },
+        status: { notIn: [OrderStatus.DRAFT, OrderStatus.DELIVERED, OrderStatus.CANCELLED] },
         routeRunStopId: null,
         fulfillPath: FulfillPath.ROUTE,
       };
