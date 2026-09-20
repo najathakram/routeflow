@@ -25,16 +25,44 @@ import { Logger } from "@nestjs/common";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
-import { computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
+import { computeLineSubtotal, normalizeBoxesPieces, type LadderUnit } from "@routeflow/pricing";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { resolveLineUnits } from "../products/line-units";
 import { decrementStockForSale } from "./order-stock";
-import { MAX_LINE_QTY, MAX_LINE_SUBTOTAL, buildUnitLine, loadUnitLadders } from "./unit-line-build";
+import { MAX_LINE_QTY, MAX_LINE_SUBTOTAL, buildUnitLine } from "./unit-line-build";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
+
+/**
+ * TODO(2026-09-20, #1090): replace this inline read with `loadUnitLadders` from `unit-line-build.ts`
+ * when #1090 is on master. Until then L1 proves the query shape and its tenant scoping, NOT the
+ * helper itself.
+ *
+ * VERBATIM copy of `loadUnitLadders` on #1090's branch (feat/u-orders-create-unit-wire2) — same
+ * `where`, same `orderBy sortOrder asc`, same grouping and empty-ids guard. Keep it identical: a
+ * stand-in that drifts proves a different query than production runs.
+ */
+async function loadUnitLadders(
+  db: { productUnit: { findMany(args: any): Promise<any[]> } },
+  productIds: ReadonlyArray<string>,
+): Promise<Map<string, LadderUnit[]>> {
+  const ids = [...new Set(productIds.filter(Boolean))];
+  const out = new Map<string, LadderUnit[]>();
+  if (ids.length === 0) return out;
+  const rows = await db.productUnit.findMany({
+    where: { productId: { in: ids } },
+    orderBy: { sortOrder: "asc" },
+  });
+  for (const r of rows) {
+    const list = out.get(r.productId) ?? [];
+    list.push(r as LadderUnit);
+    out.set(r.productId, list);
+  }
+  return out;
+}
 
 describeDb("units_v1 ladder — real Postgres", () => {
   let pool: Pool;
@@ -77,7 +105,17 @@ describeDb("units_v1 ladder — real Postgres", () => {
     extra: Record<string, unknown> = {},
     tier: 1 | 2 | 3 | 4 | 5 = 1,
   ) {
-    const product = await raw.product.findUniqueOrThrow({ where: { id: productId } });
+    const row = await raw.product.findUniqueOrThrow({ where: { id: productId } });
+    // the product's Decimals are coerced to strings at the boundary (what the production builder does
+    // with them); the LADDER rows below stay real Prisma Decimals
+    const product = {
+      ...row,
+      pricePerUnit: String(row.pricePerUnit),
+      priceTier2: String(row.priceTier2),
+      priceTier3: String(row.priceTier3),
+      priceTier4: String(row.priceTier4),
+      priceTier5: String(row.priceTier5),
+    };
     const ladder = (await ladderOf(tenantA)).get(productId) ?? [];
     return buildUnitLine({
       product,
