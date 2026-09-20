@@ -59,6 +59,7 @@ import { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { EmailService } from "../email/email.service";
 import { InvoicePdfService } from "./invoice-pdf.service";
+import { buildInvoiceEmailAttachment, InvoiceEmailAttachment } from "./invoice-attachment";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
@@ -3938,11 +3939,14 @@ export class InvoicesService {
       });
     }
 
-    // Get PDF URL (non-blocking — include in email if available). `variant`
-    // controls whether the DRAFT proforma or the FINAL invoice is attached.
-    let pdfUrl: string | undefined;
+    // Get PDF URL (non-blocking) + its attachment; `variant` picks DRAFT vs FINAL.
+    let pdfUrl: string | undefined, attachment: InvoiceEmailAttachment | undefined;
     try {
       pdfUrl = await this.pdfService.getOrGenerate(id, { variant });
+      if (pdfUrl) {
+        const dl = this.storage.download.bind(this.storage);
+        attachment = await buildInvoiceEmailAttachment(dl, this.logger, id, inv.invoiceNumber);
+      }
     } catch {
       this.logger.warn(
         `Could not generate PDF for invoice ${id} — email will be sent without PDF link`,
@@ -4009,6 +4013,7 @@ export class InvoicesService {
         promoFreeUnits: it.promoFreeUnits != null ? Number(it.promoFreeUnits) : null,
       })),
       pdfUrl,
+      attachment,
       isReminder: false,
       hideOriginalPrice,
       // Deposit schedule (display-only): derive with the same read-time math the
@@ -4168,8 +4173,13 @@ export class InvoicesService {
     }
 
     let pdfUrl: string | undefined;
+    let attachment: InvoiceEmailAttachment | undefined;
     try {
       pdfUrl = await this.pdfService.getOrGenerate(id);
+      if (pdfUrl) {
+        const dl = this.storage.download.bind(this.storage);
+        attachment = await buildInvoiceEmailAttachment(dl, this.logger, id, inv.invoiceNumber);
+      }
     } catch {
       /* non-critical */
     }
@@ -4222,6 +4232,7 @@ export class InvoicesService {
         promoFreeUnits: it.promoFreeUnits != null ? Number(it.promoFreeUnits) : null,
       })),
       pdfUrl,
+      attachment,
       isReminder: true,
       hideOriginalPrice,
     };
