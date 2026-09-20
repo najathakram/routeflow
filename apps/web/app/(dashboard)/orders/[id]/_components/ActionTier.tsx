@@ -18,12 +18,18 @@ export type ActionTierName = "primary" | "secondary" | "danger";
  *   danger    — Cancel / Delete, on their own ruled-off row (hidden when the group is empty, e.g.
  *               Delete is not offered once the order is closed or invoiced)
  *
+ * There is deliberately NO "you can reopen it later" caption under Cancel: cancelling voids the
+ * order's live invoices, `reopenOrder` does not un-void them, can be refused when an invoice is
+ * paid, and returns the order to PENDING — a reassurance there would sit above the only real
+ * warning (the cancel-impact dialog).
+ *
  * WITH THE FLAG OFF THIS IS A PLAIN FRAGMENT: the same children in the same order, no wrapper
  * element, so the page renders exactly as before. It only re-groups and re-orders JSX the page
  * already renders — no handler, gating condition or confirm step lives here or moves.
  */
 const TIER_CLASSES: Record<ActionTierName, string> = {
-  primary: "order-1 flex items-center gap-2 max-sm:w-full max-sm:[&>*]:flex-1",
+  primary:
+    "order-1 flex items-center gap-2 max-sm:w-full max-sm:[&>*]:flex-1 max-sm:[&_button]:w-full",
   secondary: "order-2 flex flex-wrap items-center gap-2 max-sm:w-full",
   danger:
     "order-3 mt-1 flex w-full flex-wrap items-center gap-2 border-t border-surface-border pt-3 empty:hidden",
@@ -31,12 +37,9 @@ const TIER_CLASSES: Record<ActionTierName, string> = {
 
 export function ActionTier({
   tier,
-  caption,
   children,
 }: {
   tier: ActionTierName;
-  /** Small helper line under a tier (v2 only) — e.g. that Cancel can be undone with Reopen. */
-  caption?: string;
   children: React.ReactNode;
 }) {
   const { enabled } = useOrderUiV2();
@@ -44,13 +47,12 @@ export function ActionTier({
 
   return (
     <div
-      data-testid={`action-tier-${tier}`}
+      // `data-tier` (not a test id): several secondary tiers can share one bar.
       data-tier={tier}
       // 44px touch targets under sm (spec §9) without touching the shared Button.
       className={cn(TIER_CLASSES[tier], "max-sm:[&_button]:min-h-11")}
     >
       {children}
-      {caption && <p className="w-full text-[11px] text-navy/50">{caption}</p>}
     </div>
   );
 }

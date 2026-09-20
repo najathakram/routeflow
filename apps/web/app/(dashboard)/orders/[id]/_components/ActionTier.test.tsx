@@ -1,10 +1,11 @@
 import * as React from "react";
-import { render, screen } from "@testing-library/react";
+import { render } from "@testing-library/react";
 import { ActionTier } from "./ActionTier";
 
 /**
  * T7 action-bar tiers. The flag-off contract is the important one: the page must render exactly as
- * before, so `ActionTier` must add NO element and NO text when `order_ui_v2` is off.
+ * before, so `ActionTier` must add NO element and NO reordering class when `order_ui_v2` is off.
+ * Which button sits in which tier on the real page is pinned by `ActionTier.wiring.test.ts`.
  */
 
 let mockV2 = false;
@@ -16,28 +17,22 @@ beforeEach(() => {
   mockV2 = false;
 });
 
+const tierEl = (c: HTMLElement, tier: string) =>
+  c.querySelector(`[data-tier="${tier}"]`) as HTMLElement;
+
 describe("ActionTier — flag off (must be invisible)", () => {
   it("renders its children in place with no wrapper element", () => {
     const { container } = render(
       <div id="bar">
-        <ActionTier tier="danger" caption="hidden when off">
+        <ActionTier tier="danger">
           <button>Cancel Order</button>
         </ActionTier>
       </div>,
     );
     const bar = container.querySelector("#bar")!;
     expect(bar.children).toHaveLength(1);
-    expect(bar.firstElementChild!.tagName).toBe("BUTTON"); // the button is a direct child of the bar
+    expect(bar.firstElementChild!.tagName).toBe("BUTTON"); // a direct child of the bar
     expect(container.querySelector("[data-tier]")).toBeNull();
-  });
-
-  it("does not render the caption", () => {
-    render(
-      <ActionTier tier="danger" caption="Cancelling keeps the order">
-        <button>Cancel Order</button>
-      </ActionTier>,
-    );
-    expect(screen.queryByText("Cancelling keeps the order")).toBeNull();
   });
 
   it("keeps sibling order — tiers add no reordering classes when off", () => {
@@ -65,7 +60,7 @@ describe("ActionTier — flag on", () => {
   });
 
   it("wraps each tier in its own element carrying the tier name", () => {
-    render(
+    const { container } = render(
       <>
         <ActionTier tier="primary">
           <button>Confirm Order</button>
@@ -79,12 +74,27 @@ describe("ActionTier — flag on", () => {
       </>,
     );
     for (const tier of ["primary", "secondary", "danger"]) {
-      expect(screen.getByTestId(`action-tier-${tier}`)).toHaveAttribute("data-tier", tier);
+      expect(tierEl(container, tier)).not.toBeNull();
     }
   });
 
+  it("several secondary tiers can share a bar (Edit Items + a status's own) without an id clash", () => {
+    const { container } = render(
+      <>
+        <ActionTier tier="secondary">
+          <button>Edit Items</button>
+        </ActionTier>
+        <ActionTier tier="secondary">
+          <button>Unconfirm</button>
+        </ActionTier>
+      </>,
+    );
+    expect(container.querySelectorAll('[data-tier="secondary"]')).toHaveLength(2);
+    expect(container.querySelector("[id]")).toBeNull();
+  });
+
   it("orders primary before secondary before danger, whatever the JSX order", () => {
-    render(
+    const { container } = render(
       <>
         <ActionTier tier="danger">
           <button>Delete</button>
@@ -97,56 +107,75 @@ describe("ActionTier — flag on", () => {
         </ActionTier>
       </>,
     );
-    expect(screen.getByTestId("action-tier-primary")).toHaveClass("order-1");
-    expect(screen.getByTestId("action-tier-secondary")).toHaveClass("order-2");
-    expect(screen.getByTestId("action-tier-danger")).toHaveClass("order-3");
+    expect(tierEl(container, "primary")).toHaveClass("order-1");
+    expect(tierEl(container, "secondary")).toHaveClass("order-2");
+    expect(tierEl(container, "danger")).toHaveClass("order-3");
   });
 
   it("the danger tier is its own ruled-off full-width row that hides itself when empty", () => {
-    render(
+    const { container } = render(
       <ActionTier tier="danger">
         <button>Cancel Order</button>
       </ActionTier>,
     );
-    const danger = screen.getByTestId("action-tier-danger");
-    expect(danger).toHaveClass("w-full", "border-t", "empty:hidden");
+    expect(tierEl(container, "danger")).toHaveClass("w-full", "border-t", "empty:hidden");
   });
 
   it("an empty danger tier renders no child nodes, so `empty:hidden` can hide it", () => {
-    render(<ActionTier tier="danger">{null}</ActionTier>);
-    expect(screen.getByTestId("action-tier-danger").childNodes).toHaveLength(0);
+    const { container } = render(<ActionTier tier="danger">{null}</ActionTier>);
+    expect(tierEl(container, "danger").childNodes).toHaveLength(0);
   });
 
-  it("the primary action is full width on a phone; every tier gets 44px targets under sm", () => {
-    render(
+  it("the primary CTA fills the row on a phone — including a button inside a wrapper", () => {
+    const { container } = render(
       <ActionTier tier="primary">
-        <button>Mark as Delivered</button>
+        <div className="flex flex-col items-start gap-1">
+          <button>Out for Delivery</button>
+        </div>
       </ActionTier>,
     );
-    const primary = screen.getByTestId("action-tier-primary");
+    const primary = tierEl(container, "primary");
     expect(primary).toHaveClass("max-sm:w-full");
-    expect(primary.className).toContain("max-sm:[&_button]:min-h-11");
+    expect(primary.className).toContain("max-sm:[&>*]:flex-1"); // stretches the wrapper...
+    expect(primary.className).toContain("max-sm:[&_button]:w-full"); // ...and the button inside it
   });
 
-  it("shows the caption under the tier", () => {
-    render(
-      <ActionTier tier="danger" caption="Cancelling keeps the order — you can reopen it later.">
+  it("every tier gets 44px touch targets under sm", () => {
+    const { container } = render(
+      <>
+        <ActionTier tier="primary">
+          <button>A</button>
+        </ActionTier>
+        <ActionTier tier="secondary">
+          <button>B</button>
+        </ActionTier>
+        <ActionTier tier="danger">
+          <button>C</button>
+        </ActionTier>
+      </>,
+    );
+    for (const tier of ["primary", "secondary", "danger"]) {
+      expect(tierEl(container, tier).className).toContain("max-sm:[&_button]:min-h-11");
+    }
+  });
+
+  it("adds no caption or text of its own — nothing reassuring above the cancel-impact dialog", () => {
+    const { container } = render(
+      <ActionTier tier="danger">
         <button>Cancel Order</button>
       </ActionTier>,
     );
-    expect(
-      screen.getByText("Cancelling keeps the order — you can reopen it later."),
-    ).toBeInTheDocument();
+    expect(tierEl(container, "danger").textContent).toBe("Cancel Order");
   });
 
   it("does not change what the buttons do — a click reaches the child's own handler", () => {
     const onClick = jest.fn();
-    render(
+    const { getByRole } = render(
       <ActionTier tier="primary">
         <button onClick={onClick}>Confirm Order</button>
       </ActionTier>,
     );
-    screen.getByRole("button", { name: "Confirm Order" }).click();
+    getByRole("button", { name: "Confirm Order" }).click();
     expect(onClick).toHaveBeenCalledTimes(1);
   });
 });

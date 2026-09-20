@@ -2592,10 +2592,7 @@ export default function OrderDetailPage() {
                   Confirm Order
                 </Button>
               </ActionTier>
-              <ActionTier
-                tier="danger"
-                caption="Cancelling keeps the order — you can reopen it later."
-              >
+              <ActionTier tier="danger">
                 <Button
                   size="sm"
                   variant="danger"
@@ -2684,10 +2681,7 @@ export default function OrderDetailPage() {
                   Unconfirm
                 </Button>
               </ActionTier>
-              <ActionTier
-                tier="danger"
-                caption="Cancelling keeps the order — you can reopen it later."
-              >
+              <ActionTier tier="danger">
                 <Button
                   size="sm"
                   variant="danger"
@@ -2724,10 +2718,7 @@ export default function OrderDetailPage() {
                   {order.fulfillPath === "SHIP" ? "Unmark shipped" : "Return to Confirmed"}
                 </Button>
               </ActionTier>
-              <ActionTier
-                tier="danger"
-                caption="Cancelling keeps the order — you can reopen it later."
-              >
+              <ActionTier tier="danger">
                 <Button
                   size="sm"
                   variant="danger"
