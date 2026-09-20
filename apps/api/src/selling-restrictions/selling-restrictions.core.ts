@@ -418,3 +418,25 @@ export function evaluateRestrictions(input: EvaluateInput): RestrictionsEvaluati
   const outcome = blocked ? "BLOCK" : indeterminate ? "INDETERMINATE" : "ALLOW";
   return { outcome, reasons };
 }
+
+/**
+ * The products of an order's lines that the choke point CHECKS, netted per PRODUCT (see
+ * `SellingRestrictionsService.checkLinesSellable`): lines with no product id are dropped; a product is
+ * checked when ANY of its lines has an omitted / non-numeric / NaN `qtyDelta` (cannot be netted, so
+ * fail closed) or when its numeric deltas sum to `> 0`; decreases, removals and repacks are not.
+ * One rule for the choke point AND for the order-edit re-check under the row lock.
+ */
+export function checkableProductIds(
+  lines: ReadonlyArray<{ productId?: string | null; qtyDelta?: number }>,
+): string[] {
+  const byProduct = new Map<string, { undetermined: boolean; net: number }>();
+  for (const l of lines) {
+    if (!l.productId) continue;
+    const agg = byProduct.get(l.productId) ?? { undetermined: false, net: 0 };
+    if (typeof l.qtyDelta === "number" && !Number.isNaN(l.qtyDelta)) agg.net += l.qtyDelta;
+    else agg.undetermined = true;
+    byProduct.set(l.productId, agg);
+  }
+  // `!(net <= 0)` rather than `net > 0`: a NaN sum (e.g. -Infinity + Infinity) must stay checked.
+  return [...byProduct].filter(([, a]) => a.undetermined || !(a.net <= 0)).map(([id]) => id);
+}

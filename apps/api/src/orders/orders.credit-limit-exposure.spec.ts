@@ -126,6 +126,7 @@ describe("OrdersService — credit-limit exposure (D6 / B462, option B)", () => 
           useValue: {
             assertLinesSellable: jest.fn().mockResolvedValue(undefined),
             checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "OFF", reasons: [] }),
+            getPolicy: jest.fn().mockResolvedValue({ enabled: false }),
           },
         },
         {
