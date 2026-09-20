@@ -40,6 +40,12 @@ const HIGHLIGHT_MS = 2000;
 const FEEDBACK_MS = 2500;
 /** How often the poor-signal queue checks for scans that are due a retry. */
 const RETRY_TICK_MS = 1500;
+/**
+ * Pause between two retries. The modal decides add-vs-increment from the RENDER it last saw, so a
+ * second retry of the same product started before React committed the first would read an empty
+ * list and add a DUPLICATE row; yielding lets the commit land first.
+ */
+const RETRY_COMMIT_YIELD_MS = 60;
 
 export interface ScanOrderScreenProps<T extends SummaryLine & { tempId: string }> {
   open: boolean;
@@ -61,7 +67,10 @@ export interface ScanOrderScreenProps<T extends SummaryLine & { tempId: string }
    */
   renderPriceEditor?: (line: T, close: () => void) => React.ReactNode;
   /** Resolves one accepted code (the modal's `useScanCodeHandler`). */
-  resolveCode: (code: string, opts?: { quiet?: boolean }) => Promise<ScanResolution>;
+  resolveCode: (
+    code: string,
+    opts?: { quiet?: boolean; background?: boolean },
+  ) => Promise<ScanResolution>;
   /** Inverts one scan (remove the line it created, or take back one unit). */
   onUndo: (entry: ScanHistoryEntry) => void;
   /** A customer is chosen, so scanned lines are priced for them immediately (owner ruling D1). */
@@ -109,6 +118,12 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
   }, []);
   const pendingSeq = React.useRef(0);
   const retryInFlight = React.useRef(new Set<string>());
+  // One retry at a time, across every entry point (tick, online, Retry now).
+  const retryRunning = React.useRef(false);
+  // True only while retries are allowed to touch the order (screen live, no sheet/dialog over it).
+  const retryAllowed = React.useRef(false);
+  // Closing with scans still waiting needs a second, deliberate press.
+  const [closeArmed, setCloseArmed] = React.useState(false);
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [manualOpen, setManualOpen] = React.useState(false);
   const [manualValue, setManualValue] = React.useState("");
@@ -132,6 +147,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
     // A queued scan belongs to the session that made it — it never lands on a later order.
     pendingRef.current = [];
     setPending([]);
+    setCloseArmed(false);
     retryInFlight.current.clear();
     unlockScanCue();
   }, [open]);
@@ -269,7 +285,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
       try {
         let res: ScanResolution;
         try {
-          res = await resolveCodeRef.current(item.code, { quiet: true });
+          res = await resolveCodeRef.current(item.code, { quiet: true, background: true });
         } catch {
           // An unexpected throw is treated as transient; the attempt cap bounds it.
           res = { kind: "error", message: "lookup failed", offline: true };
@@ -312,23 +328,76 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
   // line landing under the operator's cursor) or under the create-product dialog, and nothing while
   // the browser reports it is offline; the browser's `online` event makes everything due at once.
   const canRetry = live && !editorOpen;
+  retryAllowed.current = canRetry;
+
+  // The "press again to discard" warning only applies while something is actually waiting.
+  React.useEffect(() => {
+    if (pending.length === 0) setCloseArmed(false);
+  }, [pending.length]);
+
+  /**
+   * Retries whatever is due - strictly ONE AT A TIME (see RETRY_COMMIT_YIELD_MS), never while a
+   * live scan is resolving, and it stops the moment retries are no longer allowed.
+   */
+  const runDueRetries = React.useCallback(async () => {
+    if (retryRunning.current) return;
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+    retryRunning.current = true;
+    try {
+      for (const item of dueScans(pendingRef.current, Date.now())) {
+        if (!retryAllowed.current || engineRef.current.buffer.isResolving) break;
+        await retryOne(item);
+        await new Promise((r) => setTimeout(r, RETRY_COMMIT_YIELD_MS));
+      }
+    } finally {
+      retryRunning.current = false;
+    }
+  }, [retryOne]);
+
   React.useEffect(() => {
     if (!canRetry) return;
-    const tick = () => {
-      if (typeof navigator !== "undefined" && navigator.onLine === false) return;
-      for (const item of dueScans(pendingRef.current, Date.now())) void retryOne(item);
-    };
+    const id = setInterval(() => void runDueRetries(), RETRY_TICK_MS);
+    return () => clearInterval(id);
+  }, [canRetry, runDueRetries]);
+
+  // The browser coming back online makes everything due. That is recorded even while the price sheet
+  // or a dialog is up (retrying waits for them to close) so a reconnect is never missed.
+  React.useEffect(() => {
+    if (!live) return;
     const onOnline = () => {
       setPendingBoth(retryAllNow(pendingRef.current, Date.now()));
-      tick();
+      void runDueRetries();
     };
-    const id = setInterval(tick, RETRY_TICK_MS);
     window.addEventListener("online", onOnline);
-    return () => {
-      clearInterval(id);
-      window.removeEventListener("online", onOnline);
-    };
-  }, [canRetry, retryOne, setPendingBoth]);
+    return () => window.removeEventListener("online", onOnline);
+  }, [live, runDueRetries, setPendingBoth]);
+
+  /** "Retry now": due immediately, or - honestly - say we are still offline. */
+  const retryNow = () => {
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      showFeedback("queued", "Still offline - will retry as soon as the connection returns");
+      return;
+    }
+    setPendingBoth(retryAllNow(pendingRef.current, Date.now()));
+    void runDueRetries();
+  };
+
+  /**
+   * Close / Done / Escape. With scans still waiting for signal the FIRST press only warns (they
+   * would be discarded with the session); a second press closes.
+   */
+  const requestClose = () => {
+    if (pendingRef.current.length > 0 && !closeArmed) {
+      setCloseArmed(true);
+      const n = pendingRef.current.length;
+      showFeedback(
+        "queued",
+        `${n} scan${n === 1 ? "" : "s"} still waiting for signal - press Done again to discard`,
+      );
+      return;
+    }
+    onClose();
+  };
 
   const undo = () => {
     const { entry, rest } = popHistory(history);
@@ -347,11 +416,12 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
       if (e.key !== "Escape") return;
       e.stopPropagation();
       if (editorOpen) setEditingId(null);
-      else onClose();
+      else requestClose();
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [live, onClose, editorOpen]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live, onClose, editorOpen, closeArmed]);
 
   if (!open || typeof document === "undefined") return null;
 
@@ -372,7 +442,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
       <header className="flex h-11 shrink-0 items-center justify-between border-b border-surface-border px-3">
         <button
           type="button"
-          onClick={onClose}
+          onClick={requestClose}
           className="flex items-center gap-1.5 rounded px-2 py-1.5 text-sm font-medium text-navy/70 hover:bg-surface-raised"
         >
           <X className="h-4 w-4" />
@@ -505,15 +575,17 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
         {pending.length > 0 && (
           <div
-            role="status"
+            role="group"
             aria-label="Waiting for signal"
             className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"
           >
             <div className="flex items-center justify-between gap-2">
-              <p className="font-medium">Waiting for signal ({pending.length})</p>
+              <p role="status" className="font-medium">
+                Waiting for signal ({pending.length})
+              </p>
               <button
                 type="button"
-                onClick={() => setPendingBoth(retryAllNow(pendingRef.current, Date.now()))}
+                onClick={retryNow}
                 className="font-medium text-brand-600 hover:text-brand-700"
               >
                 Retry now
@@ -554,7 +626,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
         <p className="text-sm font-semibold text-navy" aria-live="polite">
           {count} {count === 1 ? "item" : "items"} · ${total.toFixed(2)}
         </p>
-        <Button type="button" onClick={onClose}>
+        <Button type="button" onClick={requestClose}>
           Done
         </Button>
       </footer>

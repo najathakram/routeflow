@@ -67,13 +67,13 @@ export interface ScanCodeHandlerDeps {
  */
 export function useScanCodeHandler(deps: ScanCodeHandlerDeps) {
   const handlerRef = React.useRef<
-    (code: string, opts?: { quiet?: boolean }) => Promise<ScanResolution>
+    (code: string, opts?: { quiet?: boolean; background?: boolean }) => Promise<ScanResolution>
   >(async () => ({ kind: "unknown" }));
   // `quiet` suppresses ONLY the lookup-failure toast: the scan screen shows its own status and
   // retries a queued scan every few seconds, which must not toast on every failed retry.
   handlerRef.current = async (
     code: string,
-    opts?: { quiet?: boolean },
+    opts?: { quiet?: boolean; background?: boolean },
   ): Promise<ScanResolution> => {
     try {
       const result = await resolveProductByCode(code);
@@ -107,8 +107,11 @@ export function useScanCodeHandler(deps: ScanCodeHandlerDeps) {
       }
       return { kind: "error", message, offline: isConnectivityError(err) };
     }
-    // Nothing found — let the caller open create-product with the scanned barcode as SKU
-    deps.onUnknownCode(code);
+    // Nothing found — let the caller open create-product with the scanned barcode as SKU. Not for a
+    // BACKGROUND retry: a queued scan resolving minutes later must not pop a dialog mid-scan (and
+    // several would overwrite each other's SKU); the scan screen reports it and the operator can
+    // rescan the code when ready to create it.
+    if (!opts?.background) deps.onUnknownCode(code);
     return { kind: "unknown" };
   };
   return handlerRef;

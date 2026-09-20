@@ -460,6 +460,29 @@ describe("CreateOrderModal", () => {
         expect(screen.queryByLabelText("Waiting for signal")).not.toBeInTheDocument();
       });
 
+      it("two queued scans of the SAME product retry into ONE line with qty 2 - never two rows", async () => {
+        // Both original lookups fail for lack of signal, then the network returns. The modal decides
+        // add-vs-increment from the render it last saw, so retries must run one at a time with a
+        // commit in between, or both would read an empty list and add a duplicate row.
+        mockResolveProductByCode.mockRejectedValueOnce(networkError());
+        mockResolveProductByCode.mockRejectedValueOnce(networkError());
+        mockResolveProductByCode.mockResolvedValue(widget);
+        await openScreen();
+        await scanCode("111");
+        await scanCode("222");
+        expect(await screen.findByLabelText("Waiting for signal")).toHaveTextContent("(2)");
+
+        await act(async () => {
+          window.dispatchEvent(new Event("online"));
+        });
+
+        await waitFor(() => expect(screen.getByText("1 item · $19.98")).toBeInTheDocument(), {
+          timeout: 4000,
+        });
+        expect(screen.getAllByText("Widget")).toHaveLength(1);
+        expect(screen.queryByLabelText("Waiting for signal")).not.toBeInTheDocument();
+      });
+
       it("a real HTTP failure (server answered) is not queued", async () => {
         mockResolveProductByCode.mockRejectedValue(
           Object.assign(new Error("boom"), {
