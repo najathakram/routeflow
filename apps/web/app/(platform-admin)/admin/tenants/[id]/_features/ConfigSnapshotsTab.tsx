@@ -1,0 +1,289 @@
+"use client";
+
+import * as React from "react";
+import type {
+  ConfigSnapshotListItem,
+  ConfigSnapshotPreview,
+  ConfigSnapshotRestoreResult,
+  ConfigSnapshotSkipReason,
+} from "@routeflow/types";
+import {
+  fetchConfigSnapshots,
+  previewConfigSnapshotRestore,
+  restoreConfigSnapshot,
+} from "@/lib/platform-admin/config-snapshots";
+import { AdminCard } from "../../../../_components/AdminCard";
+import { AdminModal } from "../../../../_components/AdminModal";
+
+const SKIP_REASON_LABELS: Record<ConfigSnapshotSkipReason, string> = {
+  UNKNOWN_FEATURE: "Feature no longer exists",
+  MODE_NOT_OFFERED: "Mode no longer offered",
+  EXPIRED: "Grant has expired",
+  PLAN_NOT_ALLOWED: "Current plan does not include it",
+};
+
+const KIND_LABELS = { config: "Setting", override: "Grant/deny" } as const;
+
+const fmt = (iso: string) => new Date(iso).toLocaleDateString();
+
+function errorMessage(e: unknown, fallback: string): string {
+  const status = (e as { response?: { status?: number } })?.response?.status;
+  if (status === 409) return "This snapshot was already restored — the list has been refreshed.";
+  if (status === 404) return "Snapshot not found.";
+  if (status === 422) return "This snapshot's stored data is unreadable, so it cannot be restored.";
+  return fallback;
+}
+
+function statusOf(s: ConfigSnapshotListItem): { label: string; tone: string } {
+  if (!s.restoredAt) return { label: "Not restored", tone: "text-amber-300" };
+  if (s.restoredToPlanKey === "SUPERSEDED") {
+    return { label: "Superseded by a newer snapshot", tone: "text-slate-500" };
+  }
+  return {
+    label: `Restored ${fmt(s.restoredAt)}${s.restoredToPlanKey ? ` → ${s.restoredToPlanKey}` : ""}`,
+    tone: "text-green-400",
+  };
+}
+
+/**
+ * Tenant "Configuration snapshots" tab (Lane B A2 step c). A snapshot is taken automatically when
+ * a plan change downgrades the tenant; "Restore now" applies one as-was to the plan the tenant is
+ * on today, after showing exactly what will be restored, kept and skipped (the preview is the same
+ * plan a real restore runs). Restoring is a write, so it always goes through this preview → confirm.
+ */
+export function ConfigSnapshotsTab({ tenantId }: { tenantId: string }) {
+  const [rows, setRows] = React.useState<ConfigSnapshotListItem[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+  const [notice, setNotice] = React.useState<string | null>(null);
+
+  const [target, setTarget] = React.useState<ConfigSnapshotListItem | null>(null);
+  const [preview, setPreview] = React.useState<ConfigSnapshotPreview | null>(null);
+  const [previewError, setPreviewError] = React.useState<string | null>(null);
+  const [restoring, setRestoring] = React.useState(false);
+
+  const load = React.useCallback(() => {
+    setLoading(true);
+    setError(null);
+    fetchConfigSnapshots(tenantId)
+      .then(setRows)
+      .catch(() => setError("Failed to load configuration snapshots."))
+      .finally(() => setLoading(false));
+  }, [tenantId]);
+
+  React.useEffect(load, [load]);
+
+  function openRestore(row: ConfigSnapshotListItem) {
+    setTarget(row);
+    setPreview(null);
+    setPreviewError(null);
+    previewConfigSnapshotRestore(tenantId, row.id)
+      .then(setPreview)
+      .catch((e) => setPreviewError(errorMessage(e, "Failed to load the restore preview.")));
+  }
+
+  function closeRestore() {
+    setTarget(null);
+    setPreview(null);
+    setPreviewError(null);
+  }
+
+  async function confirmRestore() {
+    if (!target) return;
+    setRestoring(true);
+    try {
+      const res: ConfigSnapshotRestoreResult = await restoreConfigSnapshot(tenantId, target.id);
+      setNotice(
+        `Restored the ${fmt(res.takenAt)} snapshot: ${res.report.restored} restored, ` +
+          `${res.report.keptNewer} kept (changed since), ${res.report.skipped} skipped.`,
+      );
+      closeRestore();
+      load();
+    } catch (e) {
+      setPreviewError(errorMessage(e, "Restore failed — nothing was changed."));
+      if ((e as { response?: { status?: number } })?.response?.status === 409) load();
+    } finally {
+      setRestoring(false);
+    }
+  }
+
+  const nothingToRestore = !!preview && preview.willRestore.length === 0;
+
+  return (
+    <AdminCard
+      title="Configuration snapshots"
+      actions={
+        <button
+          onClick={load}
+          className="rounded-lg px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-700"
+        >
+          Refresh
+        </button>
+      }
+      noPadding
+    >
+      <p className="border-b border-slate-700 px-5 py-3 text-xs text-slate-400">
+        Taken automatically when a plan change downgrades this tenant. Nothing is deleted on a
+        downgrade — settings and grants stay but stop being honoured. Restore puts a snapshot back
+        as it was, on the plan the tenant is on today.
+      </p>
+      {notice && (
+        <p
+          role="status"
+          className="border-b border-slate-700 bg-green-900/20 px-5 py-3 text-xs text-green-300"
+        >
+          {notice}
+        </p>
+      )}
+      {loading && <p className="px-5 py-10 text-center text-sm text-slate-500">Loading…</p>}
+      {error && !loading && (
+        <p role="alert" className="px-5 py-10 text-center text-sm text-red-400">
+          {error}
+        </p>
+      )}
+      {!loading && !error && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
+                <th className="px-4 py-3 text-left">Taken</th>
+                <th className="px-4 py-3 text-left">Plan left</th>
+                <th className="px-4 py-3 text-left">Reason</th>
+                <th className="px-4 py-3 text-left">Entries</th>
+                <th className="px-4 py-3 text-left">Status</th>
+                <th className="px-4 py-3 text-right">
+                  <span className="sr-only">Actions</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-700/50">
+              {rows.map((r) => {
+                const st = statusOf(r);
+                return (
+                  <tr key={r.id} className="hover:bg-slate-700/20">
+                    <td className="px-4 py-2 text-slate-300">{fmt(r.takenAt)}</td>
+                    <td className="px-4 py-2 text-slate-300">{r.planKey}</td>
+                    <td className="px-4 py-2 text-slate-400">
+                      {r.reason === "DOWNGRADE" ? "Downgrade" : "Manual"}
+                      {r.createdByName ? ` · ${r.createdByName}` : ""}
+                    </td>
+                    <td className="px-4 py-2 text-slate-400">
+                      {r.entries
+                        ? `${r.entries.configs} settings, ${r.entries.overrides} grants`
+                        : "Unreadable"}
+                    </td>
+                    <td className={`px-4 py-2 ${st.tone}`}>{st.label}</td>
+                    <td className="px-4 py-2 text-right">
+                      {!r.restoredAt && r.entries && (
+                        <button
+                          onClick={() => openRestore(r)}
+                          className="min-h-[36px] rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
+                        >
+                          Restore now
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-10 text-center text-slate-500">
+                    No snapshots yet — one is taken the first time this tenant is downgraded.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <AdminModal
+        open={!!target}
+        onClose={closeRestore}
+        title="Restore configuration snapshot"
+        footer={
+          <>
+            <button
+              onClick={closeRestore}
+              className="rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-slate-700"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={confirmRestore}
+              disabled={!preview || nothingToRestore || restoring}
+              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+            >
+              {restoring ? "Restoring…" : "Restore now"}
+            </button>
+          </>
+        }
+      >
+        {previewError && (
+          <p role="alert" className="mb-3 text-xs text-red-400">
+            {previewError}
+          </p>
+        )}
+        {!preview && !previewError && <p className="text-sm text-slate-400">Loading preview…</p>}
+        {preview && (
+          <div className="flex flex-col gap-4 text-xs">
+            <p className="text-slate-300">
+              Snapshot of {fmt(preview.takenAt)} (taken leaving {preview.planKey}), restored as it
+              was onto the tenant&apos;s current plan, <b>{preview.currentPlanKey}</b>.
+            </p>
+            <PreviewSection title={`Will be restored (${preview.willRestore.length})`}>
+              {preview.willRestore.length === 0 ? (
+                <li className="text-slate-500">
+                  Nothing to restore — everything is already in place or skipped.
+                </li>
+              ) : (
+                preview.willRestore.map((e) => (
+                  <li key={`${e.kind}:${e.featureKey}`}>
+                    <span className="font-mono text-slate-200">{e.featureKey}</span>{" "}
+                    <span className="text-slate-500">· {KIND_LABELS[e.kind]}</span>
+                  </li>
+                ))
+              )}
+            </PreviewSection>
+            {preview.keptNewer.length > 0 && (
+              <PreviewSection
+                title={`Kept — changed since the snapshot (${preview.keptNewer.length})`}
+              >
+                {preview.keptNewer.map((k) => (
+                  <li key={k} className="font-mono text-slate-200">
+                    {k}
+                  </li>
+                ))}
+              </PreviewSection>
+            )}
+            {preview.skipped.length > 0 && (
+              <PreviewSection title={`Skipped (${preview.skipped.length})`}>
+                {preview.skipped.map((s) => (
+                  <li key={`${s.kind}:${s.featureKey}`}>
+                    <span className="font-mono text-slate-200">{s.featureKey}</span>{" "}
+                    <span className="text-slate-500">· {SKIP_REASON_LABELS[s.reason]}</span>
+                  </li>
+                ))}
+              </PreviewSection>
+            )}
+            {preview.unchangedCount > 0 && (
+              <p className="text-slate-500">{preview.unchangedCount} already match — no change.</p>
+            )}
+          </div>
+        )}
+      </AdminModal>
+    </AdminCard>
+  );
+}
+
+function PreviewSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section>
+      <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+        {title}
+      </h4>
+      <ul className="flex max-h-40 flex-col gap-1 overflow-y-auto">{children}</ul>
+    </section>
+  );
+}
