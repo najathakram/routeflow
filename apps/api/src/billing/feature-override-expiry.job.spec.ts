@@ -12,6 +12,7 @@ jest.mock("../common/db-locks", () => ({
   LockUnavailableError: class extends Error {},
 }));
 
+import { Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { FeatureOverrideService } from "./feature-override.service";
 import {
@@ -51,7 +52,9 @@ function overrideRow(o: Partial<Row> = {}): Row {
  * dropping `revokedAt: null`, the `lte`/`not: null` expiry predicate, or the take cap from the
  * implementation changes what comes back and fails the assertions instead of silently passing.
  */
-function build(rows: Row[]) {
+function build(rows: Row[], opts: { reviewed?: string[] } = {}) {
+  // Ids the review job has flagged (its once-ever audit row exists). Default: every seeded row.
+  const reviewed = new Set(opts.reviewed ?? rows.map((r) => r.id));
   // Emulates the query semantics the implementation relies on. Deliberately does NOT treat
   // "lte" as implicitly excluding NULL (real SQL does, but then `not: null` becomes unobservable):
   // a null expiresAt is excluded ONLY by an explicit `not: null`, so deleting it fails a test.
@@ -93,14 +96,21 @@ function build(rows: Row[]) {
 
   const prisma = {
     tenantFeatureOverride: {
-      findMany: jest.fn().mockImplementation(({ where, take }: any) =>
-        Promise.resolve(
-          rows
-            .filter((r) => matches(r, where))
-            .sort((a, b) => (a.expiresAt?.getTime() ?? 0) - (b.expiresAt?.getTime() ?? 0))
-            .slice(0, take ?? rows.length),
-        ),
-      ),
+      findMany: jest.fn().mockImplementation(({ where, take, orderBy, cursor, skip }: any) => {
+        // Applies the query's REAL ordering: a single-key orderBy (no id tiebreak) leaves ties in
+        // insertion order — the fake reverses them so a missing tiebreak is observable.
+        const keys: any[] = Array.isArray(orderBy) ? orderBy : [orderBy];
+        const hasIdTiebreak = keys.some((k) => k?.id === "asc");
+        const sorted = rows
+          .filter((r) => matches(r, where))
+          .sort((a, b) => {
+            const d = (a.expiresAt?.getTime() ?? 0) - (b.expiresAt?.getTime() ?? 0);
+            if (d !== 0) return d;
+            return hasIdTiebreak ? (a.id < b.id ? -1 : 1) : a.id < b.id ? 1 : -1;
+          });
+        const from = cursor ? sorted.findIndex((r) => r.id === cursor.id) + (skip ?? 0) : 0;
+        return Promise.resolve(sorted.slice(from, from + (take ?? rows.length)));
+      }),
       update: jest.fn().mockImplementation(({ where, data }: any) => {
         assertViaTx("tenantFeatureOverride.update");
         const r = rows.find((x) => matches(x, where));
@@ -117,6 +127,19 @@ function build(rows: Row[]) {
     // The sweep writes its audit row with `tx.auditLog.create` INSIDE each row's transaction
     // (B580); `audit.log` records every such write so the assertions below read the same.
     auditLog: {
+      // The sweep's selection reads the review job's once-ever audit rows (B589).
+      findMany: jest
+        .fn()
+        .mockImplementation(({ where }: any) =>
+          Promise.resolve(
+            where.action === "FEATURE_OVERRIDE_EXPIRED_REVIEW" &&
+              where.entityType === "tenantFeatureOverride"
+              ? (where.entityId.in as string[])
+                  .filter((id) => reviewed.has(id))
+                  .map((entityId) => ({ entityId }))
+              : [],
+          ),
+        ),
       create: jest.fn().mockImplementation(({ data }: any) => {
         assertViaTx("auditLog.create");
         return audit.log(data);
@@ -143,7 +166,7 @@ function build(rows: Row[]) {
     }),
   } as any;
   const svc = new FeatureOverrideService(prisma);
-  return { job: new FeatureOverrideExpiryJob(svc), svc, prisma, audit, rows };
+  return { job: new FeatureOverrideExpiryJob(svc), svc, prisma, audit, rows, reviewed };
 }
 
 describe("FeatureOverrideExpiryJob.revokeExpiredOverrides (B569)", () => {
@@ -251,30 +274,123 @@ describe("FeatureOverrideExpiryJob.revokeExpiredOverrides (B569)", () => {
     expect(invalidate.mock.calls.map((c) => c[0]).sort()).toEqual(["t1", "t2"]);
   });
 
-  it("leaves a row for the review job until it has been expired a full day (24h grace)", async () => {
-    const now = Date.now();
-    const { job, rows, audit } = build([
-      overrideRow({ id: "ov-1h", expiresAt: new Date(now - 60 * 60 * 1000) }),
-      overrideRow({ id: "ov-23h", expiresAt: new Date(now - 23 * 60 * 60 * 1000) }),
-      overrideRow({ id: "ov-25h", expiresAt: new Date(now - 25 * 60 * 60 * 1000) }),
-    ]);
+  it("B589: revokes only rows the review job has flagged — an unflagged expired row waits, unaudited", async () => {
+    const { job, rows, audit, reviewed } = build(
+      [
+        overrideRow({ id: "ov-flagged", expiresAt: PAST }),
+        // Expired but its review tick was missed: revoking it now would lose the review audit for good.
+        overrideRow({ id: "ov-unflagged", expiresAt: new Date(PAST.getTime() + 1000) }),
+      ],
+      { reviewed: ["ov-flagged"] },
+    );
 
-    const result = await job.revokeExpiredOverrides();
+    expect((await job.revokeExpiredOverrides()).revoked).toBe(1);
+    expect(rows.find((r) => r.id === "ov-flagged")!.revokedAt).toBeInstanceOf(Date);
+    expect(rows.find((r) => r.id === "ov-unflagged")!.revokedAt).toBeNull();
+    expect(audit.written.map((a: any) => a.entityId)).toEqual(["ov-flagged"]);
 
-    expect(result.revoked).toBe(1);
-    expect(rows.find((r) => r.id === "ov-25h")!.revokedAt).toBeInstanceOf(Date);
-    expect(rows.find((r) => r.id === "ov-1h")!.revokedAt).toBeNull();
-    expect(rows.find((r) => r.id === "ov-23h")!.revokedAt).toBeNull();
-    expect(audit.log).toHaveBeenCalledTimes(1);
+    reviewed.add("ov-unflagged"); // the next review tick flags it ...
+    expect((await job.revokeExpiredOverrides()).revoked).toBe(1); // ... and only then is it swept
+    expect(rows.find((r) => r.id === "ov-unflagged")!.revokedAt).toBeInstanceOf(Date);
   });
 
-  it("the service itself has no grace by default — revokeExpired() takes a row expired 1h ago", async () => {
+  it("B589: an unflagged head of the queue cannot starve flagged rows behind it", async () => {
+    // 600 unflagged rows sort ahead of two flagged ones: the second scan page must be reached.
+    const unflagged = Array.from({ length: 600 }, (_, i) =>
+      overrideRow({
+        id: `u${String(i).padStart(3, "0")}`,
+        expiresAt: new Date(Date.UTC(2000, 0, 1, 0, 0, i)),
+      }),
+    );
+    const flagged = ["f1", "f2"].map((id, i) =>
+      overrideRow({ id, expiresAt: new Date(Date.UTC(2001, 0, 1, 0, 0, i)) }),
+    );
+    const { job, rows } = build([...unflagged, ...flagged], { reviewed: ["f1", "f2"] });
+
+    expect((await job.revokeExpiredOverrides()).revoked).toBe(2);
+    expect(rows.filter((r) => r.revokedAt).map((r) => r.id)).toEqual(["f1", "f2"]);
+  });
+
+  it("B589: rows sharing an expiresAt are taken in id order — a capped batch is repeatable", async () => {
+    const same = ["c", "a", "b"].map((id) => overrideRow({ id, expiresAt: PAST }));
+    const { svc } = build(same);
+
+    const first = await svc.revokeExpired(new Date(), { graceMs: 0, limit: 2 });
+    const second = await svc.revokeExpired(new Date(), { graceMs: 0, limit: 2 });
+
+    expect(first.map((r) => r.id)).toEqual(["a", "b"]);
+    expect(second.map((r) => r.id)).toEqual(["c"]);
+  });
+
+  it("B589: a batch that comes back exactly at the cap is logged (a full batch looks empty from outside)", async () => {
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    try {
+      const rows = Array.from({ length: 3 }, (_, i) =>
+        overrideRow({ id: `ov${i}`, expiresAt: new Date(PAST.getTime() + i) }),
+      );
+      const { svc } = build(rows);
+
+      await svc.revokeExpired(new Date(), { graceMs: 0, limit: 3 });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("hit its batch cap of 3"));
+
+      warn.mockClear();
+      await build([overrideRow({ id: "solo", expiresAt: PAST })]).svc.revokeExpired(new Date(), {
+        graceMs: 0,
+        limit: 3,
+      });
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("B589: when expired rows exist but none is flagged, it says so (the sweep depends on the review job)", async () => {
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    try {
+      const rows = [1, 2, 3].map((i) => overrideRow({ id: `ov${i}`, expiresAt: PAST }));
+      const { svc } = build(rows, { reviewed: [] });
+
+      expect(await svc.revokeExpired(new Date(), { graceMs: 0 })).toEqual([]);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "3 expired override(s) are waiting on billing.reviewExpiredOverrides",
+        ),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("B589: scanning stops at the page bound and says so — rows past it are not considered", async () => {
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    try {
+      // 20 full pages of unflagged rows, then one flagged row beyond the 10,000-row scan bound.
+      const many = Array.from({ length: 10_001 }, (_, i) =>
+        overrideRow({
+          id: `r${String(i).padStart(5, "0")}`,
+          expiresAt: new Date(Date.UTC(2000, 0, 1, 0, 0, i)),
+        }),
+      );
+      const { svc, rows } = build(many, { reviewed: ["r10000"] });
+
+      expect(await svc.revokeExpired(new Date(), { graceMs: 0 })).toEqual([]);
+      expect(rows.every((r) => r.revokedAt === null)).toBe(true);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("without exhausting them"));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("B589: graceMs is honoured — a row younger than the grace is left, 0 takes it", async () => {
     const { svc, rows } = build([
       overrideRow({ id: "ov-1h", expiresAt: new Date(Date.now() - 60 * 60 * 1000) }),
     ]);
-    const revoked = await svc.revokeExpired();
-    expect(revoked.map((r) => r.id)).toEqual(["ov-1h"]);
-    expect(rows[0].revokedAt).toBeInstanceOf(Date);
+
+    expect(await svc.revokeExpired(new Date(), { graceMs: 2 * 60 * 60 * 1000 })).toEqual([]);
+    expect(rows[0].revokedAt).toBeNull();
+    expect((await svc.revokeExpired(new Date(), { graceMs: 0 })).map((r) => r.id)).toEqual([
+      "ov-1h",
+    ]);
   });
 
   it("queries only revoked=null + expired rows, oldest first, capped at 500", async () => {
@@ -286,7 +402,7 @@ describe("FeatureOverrideExpiryJob.revokeExpiredOverrides (B569)", () => {
           revokedAt: null,
           expiresAt: { not: null, lte: expect.any(Date) },
         }),
-        orderBy: { expiresAt: "asc" },
+        orderBy: [{ expiresAt: "asc" }, { id: "asc" }],
         take: 500,
       }),
     );
