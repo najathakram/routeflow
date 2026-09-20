@@ -18,6 +18,7 @@ import {
 import { useCreateDraft, useUpdateDraft, useDeleteDraft, useDraft } from "@/lib/api/drafts";
 import { draftDeviceLabel, type OrderDraftPayload } from "@/lib/drafts";
 import { apiClient } from "@/lib/api-client";
+import { orderCreatedToast } from "./order-created-toast";
 import { getTierPrice, computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
@@ -110,6 +111,8 @@ export interface CreateOrderModalProps {
   resumeDraftId?: string | null;
   /** A barcode to add on open (scan-to-draft / scan-to-new, pos-cost-roles §2). */
   initialScanCode?: string | null;
+  /** Wired by the orders page to `router.push` — powers the "View Order" toast action. */
+  onViewOrder?: (orderId: string) => void;
 }
 
 export function CreateOrderModal({
@@ -117,6 +120,7 @@ export function CreateOrderModal({
   onClose,
   resumeDraftId,
   initialScanCode,
+  onViewOrder,
 }: CreateOrderModalProps) {
   const { toast } = useToast();
   const createOrder = useCreateOrder();
@@ -950,16 +954,7 @@ export function CreateOrderModal({
       } as any,
       {
         onSuccess: (created: any) => {
-          if (mergeChoice === "merge") {
-            toast({
-              title: `Merged into order ${created?.orderNumber ?? "#" + created?.id?.slice(0, 6)}`,
-              variant: "success",
-            });
-          } else if (asDraft) {
-            toast({ title: "Order saved as draft", variant: "success" });
-          } else {
-            toast({ title: "Order created", variant: "success" });
-          }
+          toast(orderCreatedToast({ mergeChoice, asDraft, created, onViewOrder }));
           // The parked draft has become a real order — clear it from the dock.
           if (activeDraftId) deleteDraft.mutate(activeDraftId);
           setMergePrompt(null);
@@ -1128,13 +1123,17 @@ export function CreateOrderModal({
       description="Create a new order on behalf of a customer."
       className="max-w-2xl"
       footer={
-        <>
+        // B564: the Modal footer is a `justify-end` flex row, so four buttons wider than a
+        // 390px sheet overflowed off the LEFT edge and clipped Minimize. Under `sm` the save
+        // actions get their own row and Minimize sits below them, full-width; from `sm` up
+        // this is the original single row with Minimize pinned left.
+        <div className="flex w-full flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
           {/* Minimize parks the whole builder into the bottom-left draft dock
               (pos-cost-roles-spec §2). Left-aligned, away from the save actions. */}
           <Button
             variant="ghost"
             type="button"
-            className="mr-auto"
+            className="w-full sm:mr-auto sm:w-auto"
             onClick={handleMinimize}
             disabled={!canMinimize || savingDraft}
             loading={savingDraft}
@@ -1145,21 +1144,23 @@ export function CreateOrderModal({
           {/* Three-tier hierarchy: ghost (dismiss) < secondary (alt save) <
               primary (main action). Save-as-Draft was an amber button that
               competed with the primary blue and misused a warning colour. */}
-          <Button variant="ghost" type="button" onClick={handleDismiss}>
-            Cancel
-          </Button>
-          <Button
-            variant="secondary"
-            type="button"
-            loading={createOrder.isPending}
-            onClick={onSaveDraft}
-          >
-            Save as Draft
-          </Button>
-          <Button type="submit" form="create-order-form" loading={createOrder.isPending}>
-            Create Order
-          </Button>
-        </>
+          <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
+            <Button variant="ghost" type="button" onClick={handleDismiss}>
+              Cancel
+            </Button>
+            <Button
+              variant="secondary"
+              type="button"
+              loading={createOrder.isPending}
+              onClick={onSaveDraft}
+            >
+              Save as Draft
+            </Button>
+            <Button type="submit" form="create-order-form" loading={createOrder.isPending}>
+              Create Order
+            </Button>
+          </div>
+        </div>
       }
     >
       <form

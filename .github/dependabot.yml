@@ -70,9 +70,10 @@ updates:
       - dependency-name: "react-native-svg"
         update-types: ["version-update:semver-minor", "version-update:semver-patch"]
       # sanitize-html >= 2.17.6 swapped in an ESM-only htmlparser2 12 and
-      # requires Node >= 22.12 (Jest can't load it; prod containers run
-      # node:20). Pinned at 2.17.5 in apps/api — unpin both this ignore and
-      # the pin when the platform moves to Node 22. The 2.17.6/2.17.7 security
+      # requires Node >= 22.12 (Jest can't load it; prod containers ran
+      # node:20 when this was written). Pinned at 2.17.5 in apps/api. The
+      # platform is on Node 24 since B570, so unpinning both this ignore and
+      # the pin is now possible — a separate change (Jest must load it). The 2.17.6/2.17.7 security
       # fixes don't affect us (they need allowed svg/math/animation tags; we
       # sanitize with allowedTags: [], allowedAttributes: {}).
       - dependency-name: "sanitize-html"

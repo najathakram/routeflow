@@ -56,7 +56,7 @@ concurrency:
   cancel-in-progress: false # let a running nightly finish
 
 env:
-  NODE_VERSION: "20"
+  NODE_VERSION: "24"
   API_URL: ${{ inputs.api_url || secrets.SMOKE_BASE_URL || 'https://routeflowapi-production.up.railway.app' }}
   WEB_URL: ${{ inputs.web_url || secrets.PLAYWRIGHT_BASE_URL || 'https://routeflowweb-production.up.railway.app' }}
 

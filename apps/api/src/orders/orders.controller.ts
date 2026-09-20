@@ -109,7 +109,9 @@ export class OrdersController {
       dto.mergeChoice ?? (dto.forceNew ? "separate" : undefined);
 
     if (isStaff && dto.customerId) {
-      const activeOrder = await this.ordersService.findActiveOrder(dto.customerId);
+      const activeOrder = await this.ordersService.findActiveOrder(dto.customerId, {
+        forMerge: true,
+      });
       if (activeOrder) {
         // Operator hasn't told us what to do — make them choose.
         if (!choice) {
@@ -165,7 +167,9 @@ export class OrdersController {
               // sweep/force paths (no client attached) take the service's 20s wait.
               { family: "order-merge", key: dto.customerId, mode: "wait", waitMs: 10_000 },
               async () => {
-                const current = await this.ordersService.findActiveOrder(dto.customerId!);
+                const current = await this.ordersService.findActiveOrder(dto.customerId!, {
+                  forMerge: true,
+                });
                 // The in-lock re-read is AUTHORITATIVE. A null here means the pre-lock snapshot
                 // is stale — the request that held this lock before us merged that order away or
                 // deleted it — so there is nothing to fold into. Folding into `activeOrder`
@@ -377,7 +381,7 @@ export class OrdersController {
   @Roles(UserRole.OPERATOR)
   async getActiveOrderForCustomer(@Query("customerId") customerId: string) {
     if (!customerId) return null;
-    const order = await this.ordersService.findActiveOrder(customerId);
+    const order = await this.ordersService.findActiveOrder(customerId, { forMerge: true });
     if (!order) return null;
     return {
       id: order.id,
