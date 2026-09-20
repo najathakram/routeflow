@@ -52,4 +52,14 @@ describe("StatePicker", () => {
     fireEvent.change(screen.getByLabelText("Search states"), { target: { value: "" } });
     expect(box("Ohio")).toBeChecked();
   });
+
+  it("a lower-case saved code still ticks its state, and unticking leaves no duplicate", () => {
+    const onChange = jest.fn();
+    render(<StatePicker value={["tx"]} onChange={onChange} />);
+    expect(box("Texas")).toBeChecked();
+    fireEvent.click(box("Texas"));
+    expect(onChange).toHaveBeenCalledWith([]);
+    fireEvent.click(box("Florida"));
+    expect(onChange).toHaveBeenLastCalledWith(["tx", "FL"]);
+  });
 });

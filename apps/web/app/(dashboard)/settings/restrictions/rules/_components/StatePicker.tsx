@@ -24,8 +24,11 @@ export function StatePicker({
       s.name.toLowerCase().includes(q.trim().toLowerCase()) ||
       s.code.toLowerCase() === q.trim().toLowerCase(),
   );
+  // The API returns `states` verbatim, so a rule saved as "tx" must still tick Texas; compare
+  // upper-cased, and never hand the parent a duplicate ("tx" + "TX").
+  const has = (code: string) => value.some((c) => c.toUpperCase() === code);
   const toggle = (code: string) =>
-    onChange(value.includes(code) ? value.filter((c) => c !== code) : [...value, code]);
+    onChange(has(code) ? value.filter((c) => c.toUpperCase() !== code) : [...value, code]);
 
   return (
     <div className="space-y-2">
@@ -65,11 +68,7 @@ export function StatePicker({
             key={s.code}
             className="flex min-h-[36px] cursor-pointer items-center gap-2 rounded px-2 text-sm hover:bg-surface-raised"
           >
-            <input
-              type="checkbox"
-              checked={value.includes(s.code)}
-              onChange={() => toggle(s.code)}
-            />
+            <input type="checkbox" checked={has(s.code)} onChange={() => toggle(s.code)} />
             <span>{s.name}</span>
             <span className="ml-auto text-xs text-navy/60">{s.code}</span>
           </label>
