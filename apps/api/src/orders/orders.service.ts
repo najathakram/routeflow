@@ -21,11 +21,9 @@ import {
   effectiveBuyerPrice,
   getTierPrice,
   normalizeBoxesPieces,
-  promotionMatchesProduct,
   roundMoney,
   isBlockingPayment,
   type CategoryTaxType,
-  type PromoContext,
   type PromotionRule,
 } from "@routeflow/pricing";
 import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-locks";
@@ -79,6 +77,7 @@ import { currentTaxRate } from "../common/tax-rate";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { decrementStockForSale, settleStockForEdit } from "./order-stock";
+import { linePieceQty } from "./line-piece-qty";
 import {
   isBuyerPricedLine,
   isSpecialTier,
@@ -212,27 +211,6 @@ export class OrdersService implements OnApplicationBootstrap {
   }
 
   /**
-   * RF-4: the piece count a per-unit category tax multiplies. Box-split lines
-   * store `qty` already in pieces; a boxed selling-unit line (boxes null) stores
-   * `qty` in SELLING UNITS, so expand it by the snapshot `unitsPerBox`. PER_VOLUME
-   * stays approximate (pieces, not true volume) until a `Product.volumePerUnit`
-   * field lands — see computeCategoryTax's contract.
-   */
-  private linePieceQty(
-    li: { qty: unknown; boxes: unknown; unitsPerBox?: unknown },
-    unitsPerBoxFallback?: number,
-  ): number {
-    const qty = Number(li.qty) || 0;
-    if (li.boxes != null) return qty; // already pieces
-    // A boxed product ordered as SELLING UNITS stores unitsPerBox:null on the line
-    // (create only snapshots it for box-split lines), so fall back to the product's
-    // unitsPerBox — otherwise a per-unit levy collapses by a factor of unitsPerBox on
-    // any later edit (create expanded qty→pieces but the recompute couldn't).
-    const upb = Number(li.unitsPerBox ?? unitsPerBoxFallback ?? 0);
-    return upb > 1 ? qty * upb : qty;
-  }
-
-  /**
    * RF-4: recompute + persist each regulated line's `categoryTaxAmount` from its
    * STORED subtotal + piece qty and the line's section (TrackedCategory) tax
    * config, and return the order-level Σ (rounded). Non-regulated lines are 0.
@@ -273,7 +251,7 @@ export class OrdersService implements OnApplicationBootstrap {
         ? computeCategoryTax({
             taxType: cat.taxType as CategoryTaxType,
             rate: Number(cat.rate),
-            unitBasisQty: this.linePieceQty(li, upbMap.get(li.productId)),
+            unitBasisQty: linePieceQty(li, upbMap.get(li.productId)),
             lineSubtotal: Number(li.subtotal),
             priceIncludesTax: cat.priceIncludesTax,
           })

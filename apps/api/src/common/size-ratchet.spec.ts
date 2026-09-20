@@ -29,7 +29,7 @@ const HEADROOM = 25;
 
 /** Repo-relative path → baseline line count (measured 2026-09-19 at 91d323de). */
 const BASELINE: Record<string, number> = {
-  "apps/api/src/orders/orders.service.ts": 6072, // B585 prefactor #2: buyer pricing + boxed-merge helpers live in orders/buyer-merge-pricing.ts (was 6340)
+  "apps/api/src/orders/orders.service.ts": 6059, // R-2a-5: linePieceQty -> line-piece-qty.ts + 2 dead imports (was 6072)
   "apps/api/src/invoices/invoices.service.ts": 6412,
   "apps/api/src/orders/orders.service.spec.ts": 9511,
   "apps/api/src/customers/customers.service.ts": 3307,
