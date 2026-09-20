@@ -11,7 +11,6 @@ import type {
  * archived…") reach the user through the app's single global mutation toast — a second inline
  * message would double it. Refreshes every cached rules list (the "selling-restrictions" prefix).
  */
-// scan-ok: dead-hook — its caller, the New-rule dialog (LANE-R step 5b-2b), lands in the next PR; the size cap split it out. Remove this note then.
 export function useCreateRestriction() {
   const qc = useQueryClient();
   return useMutation<SellingRestrictionListItemDto, Error, CreateSellingRestrictionRequest>({
