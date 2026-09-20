@@ -371,6 +371,24 @@ describe("PlanTransitionConfigService (A2 step b)", () => {
       expect(caches.configStore.invalidateTenant).toHaveBeenCalledWith("t7");
     });
 
+    it("never throws (the cron's per-tenant catch rethrows) and one failing cache does not leave the others stale", async () => {
+      const { svc, caches } = build(true);
+      const prepared = await svc.prepare({
+        tenantId: "t7",
+        fromPlanKey: LOW,
+        toPlanKey: HIGH,
+        toPlanVersionId: null,
+      });
+      caches.authority.invalidate.mockImplementation(() => {
+        throw new Error("boom");
+      });
+
+      expect(() => svc.invalidateCaches("t7", prepared)).not.toThrow();
+
+      expect(caches.overrides.invalidate).toHaveBeenCalledWith("t7");
+      expect(caches.configStore.invalidateTenant).toHaveBeenCalledWith("t7");
+    });
+
     it("touches NOTHING when the flag is off (or there was no transition) — flag-off behaviour is unchanged", async () => {
       const { svc, caches } = build(false);
       const prepared = await svc.prepare({

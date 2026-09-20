@@ -319,9 +319,24 @@ export class PlanTransitionConfigService implements OnModuleInit {
    */
   invalidateCaches(tenantId: string, prepared: PreparedPlanTransition | null | undefined): void {
     if (!prepared?.enabled) return;
-    this.authority.invalidate(tenantId);
-    this.overrides.invalidate(tenantId);
-    this.configStore.invalidateTenant(tenantId);
+    // Runs AFTER the plan change committed, inside callers whose catch may rethrow (the cron's
+    // per-tenant loop would abort the whole sweep): it must never throw. Each cache is dropped on
+    // its own so one failing does not leave the others stale.
+    const drops: Array<[string, () => void]> = [
+      ["resolver", () => this.authority.invalidate(tenantId)],
+      ["override", () => this.overrides.invalidate(tenantId)],
+      ["config-mode", () => this.configStore.invalidateTenant(tenantId)],
+    ];
+    for (const [name, drop] of drops) {
+      try {
+        drop();
+      } catch (err) {
+        this.logger.error(
+          `Could not drop the ${name} cache for tenant ${tenantId} after a plan change (stale for ` +
+            `at most its TTL): ${(err as Error).message}`,
+        );
+      }
+    }
   }
 
   /** Rank only — never entitlement loss: a cancel/suspend leaves `planKey` (and so this) untouched. */
