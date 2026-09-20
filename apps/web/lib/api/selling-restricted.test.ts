@@ -1,4 +1,8 @@
-import { parseSellingRestricted, restrictionReasonText } from "./selling-restricted";
+import {
+  buyerBlockedMessage,
+  parseSellingRestricted,
+  restrictionReasonText,
+} from "./selling-restricted";
 
 const api = (status: number, data: object) => ({ response: { status, data } });
 const line = {
@@ -38,5 +42,23 @@ describe("restrictionReasonText", () => {
     const text = restrictionReasonText(l);
     expect(text).toEqual(want);
     expect(text).not.toMatch(/[A-Z]{3,}_[A-Z]{3,}/);
+  });
+});
+
+describe("buyerBlockedMessage", () => {
+  it("names the items only, once each — never the rule, state or reason", () => {
+    const msg = buyerBlockedMessage([
+      { productName: "Hemp Gummies" },
+      { productName: "Hemp Gummies" },
+      { productName: "Vape Pen" },
+    ]);
+    expect(msg).toBe(
+      "Some items can't be ordered right now: Hemp Gummies, Vape Pen. Remove them from your cart and try again.",
+    );
+    expect(msg).not.toMatch(/TX|federal|restricted/i);
+  });
+
+  it("falls back to a generic line for an empty list", () => {
+    expect(buyerBlockedMessage([])).toMatch(/Some items in your cart can't be ordered/);
   });
 });

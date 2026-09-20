@@ -28,3 +28,14 @@ export function restrictionReasonText(line: Pick<BlockedLine, "reason" | "state"
   };
   return byReason[line.reason] ?? "Restricted";
 }
+
+/**
+ * What a BUYER sees when their cart is refused: the item names only (no rule, state or category
+ * detail — that is for staff). Duplicates collapse; an empty list falls back to a generic line.
+ */
+export function buyerBlockedMessage(lines: Pick<BlockedLine, "productName">[]): string {
+  const names = Array.from(new Set(lines.map((l) => l.productName).filter(Boolean)));
+  return names.length
+    ? `Some items can't be ordered right now: ${names.join(", ")}. Remove them from your cart and try again.`
+    : "Some items in your cart can't be ordered right now. Remove them and try again.";
+}
