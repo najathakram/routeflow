@@ -23,10 +23,10 @@ export function BlockedLinesModal({ lines, onClose }: Props) {
         <View style={styles.card}>
           <View style={styles.header}>
             <Ionicons name="alert-circle-outline" size={20} color={ios.system.red} />
-            <Text style={styles.title}>Can't sell these items</Text>
+            <Text style={styles.title}>Can’t sell these items</Text>
           </View>
           <Text style={styles.message}>
-            Remove the items below from this order, then save again.
+            Remove the items below from this order, then try again.
           </Text>
           <ScrollView style={styles.list}>
             {lines.map((l) => (
