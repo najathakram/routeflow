@@ -318,6 +318,7 @@ function make(opts: Opts = {}) {
     prepare: jest.fn().mockResolvedValue({ planAllows: null }),
     onPlanChange: jest.fn().mockResolvedValue({ action: "none" }),
     transactionOptions: jest.fn().mockReturnValue(undefined),
+    invalidateCaches: jest.fn(),
   } as any;
   const svc = new SubscriptionMutationService(
     prisma,
@@ -570,6 +571,26 @@ describe("SubscriptionMutationService.upgrade", () => {
     await svc.upgrade("t1", "BUSINESS", "admin");
 
     expect(order).toEqual(["onPlanChange", "guard"]);
+  });
+
+  it("A2b: after the transaction COMMITS the hook's caches are invalidated (subscribe and upgrade), never before", async () => {
+    const { svc, prisma, planTransition } = make({
+      sub: { planKey: "STARTER", cycle: "MONTHLY", periodStart: null, periodEnd: null },
+    });
+    const order: string[] = [];
+    const realTx = prisma.$transaction.getMockImplementation();
+    prisma.$transaction.mockImplementation(async (fn: any, ...rest: any[]) => {
+      const out = await realTx!(fn, ...rest);
+      order.push("tx-committed");
+      return out;
+    });
+    planTransition.invalidateCaches.mockImplementation(() => order.push("invalidate"));
+
+    await svc.upgrade("t1", "BUSINESS", "admin");
+    await svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY", addons: [] }, "admin");
+
+    expect(order).toEqual(["tx-committed", "invalidate", "tx-committed", "invalidate"]);
+    expect(planTransition.invalidateCaches).toHaveBeenCalledWith("t1", { planAllows: null });
   });
 
   it("A2b: a lost optimistic-guard race still rejects (the hook's writes roll back with the tx)", async () => {

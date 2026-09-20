@@ -860,6 +860,7 @@ ${
       return updated;
     }, this.planTransition.transactionOptions(preparedTransition));
 
+    this.planTransition.invalidateCaches(id, preparedTransition);
     this.entitlementsService.invalidate(id);
 
     await this.recordAdminAction(id, adminId, AdminAuditAction.TENANT_PLAN_CHANGED, {
@@ -1019,6 +1020,7 @@ ${
       return updated;
     }, this.planTransition.transactionOptions(preparedTransition));
 
+    this.planTransition.invalidateCaches(id, preparedTransition);
     // Invalidate cached tenant status so the guard picks up ACTIVE immediately
     this.tenantStatusGuard.invalidate(id);
 

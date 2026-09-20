@@ -344,6 +344,7 @@ export class BillingCronService {
             { amountDelta, tx },
           );
         }, this.planTransition.transactionOptions(preparedTransition));
+        this.planTransition.invalidateCaches(s.tenantId, preparedTransition);
 
         // N3: best-effort admin notification, never blocks the transaction above. `key` is
         // the effective date this tenant's row carried before the transaction cleared it —

@@ -92,4 +92,9 @@ export class FeatureConfigStore implements FeatureModeProvider {
   invalidate(tenantId: string, key: string): void {
     this.cache.delete(`${tenantId}:${key}`);
   }
+
+  /** Drops every cached mode of one tenant — for a bulk write whose touched keys are not tracked. */
+  invalidateTenant(tenantId: string): void {
+    for (const k of this.cache.keys()) if (k.startsWith(`${tenantId}:`)) this.cache.delete(k);
+  }
 }
