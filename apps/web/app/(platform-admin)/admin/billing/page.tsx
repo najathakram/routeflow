@@ -255,6 +255,7 @@ export default function BillingPage() {
             <div className="relative">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
               <input
+                aria-label="Search subscriptions"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search tenant…"
@@ -306,7 +307,7 @@ export default function BillingPage() {
             )}
           </div>
         )}
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto" role="region" aria-label="All subscriptions" tabIndex={0}>
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">

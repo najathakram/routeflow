@@ -271,6 +271,7 @@ function TenantAdminSection({
               <div>
                 <label className="mb-1 block text-xs font-medium text-slate-400">Username</label>
                 <input
+                  aria-label="Username"
                   required
                   value={createForm.username}
                   onChange={(e) => setCreateForm((f) => ({ ...f, username: e.target.value }))}
@@ -281,6 +282,7 @@ function TenantAdminSection({
               <div>
                 <label className="mb-1 block text-xs font-medium text-slate-400">Email</label>
                 <input
+                  aria-label="Email"
                   required
                   type="email"
                   value={createForm.email}
@@ -559,6 +561,7 @@ function OverviewTab({
           <div className="flex items-center gap-3">
             <label className="text-sm text-slate-400">Days</label>
             <input
+              aria-label="Days"
               type="number"
               min={1}
               max={365}
@@ -663,7 +666,12 @@ function OverviewTab({
         {recentLogs.length === 0 ? (
           <p className="px-5 py-6 text-sm text-slate-500">No audit log entries for this tenant.</p>
         ) : (
-          <div className="overflow-x-auto">
+          <div
+            className="overflow-x-auto"
+            role="region"
+            aria-label="Recent audit log entries"
+            tabIndex={0}
+          >
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
@@ -917,6 +925,7 @@ function BillingTab({
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-400">Plan</label>
             <select
+              aria-label="Plan"
               value={manualForm.plan}
               onChange={(e) => setManualForm((f) => ({ ...f, plan: e.target.value }))}
               className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
@@ -933,6 +942,7 @@ function BillingTab({
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-400">Payment Method</label>
             <select
+              aria-label="Payment method"
               value={manualForm.paymentMethod}
               onChange={(e) => setManualForm((f) => ({ ...f, paymentMethod: e.target.value }))}
               className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
@@ -949,6 +959,7 @@ function BillingTab({
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-400">Billing Period</label>
             <select
+              aria-label="Billing period"
               value={manualForm.billingPeriodDays}
               onChange={(e) =>
                 setManualForm((f) => ({ ...f, billingPeriodDays: Number(e.target.value) }))
@@ -970,6 +981,7 @@ function BillingTab({
               <span className="text-slate-600">(optional)</span>
             </label>
             <input
+              aria-label="Transaction / confirmation reference"
               type="text"
               value={manualForm.paymentRef}
               onChange={(e) => setManualForm((f) => ({ ...f, paymentRef: e.target.value }))}
@@ -984,6 +996,7 @@ function BillingTab({
               Notes <span className="text-slate-600">(optional)</span>
             </label>
             <input
+              aria-label="Notes"
               type="text"
               value={manualForm.notes}
               onChange={(e) => setManualForm((f) => ({ ...f, notes: e.target.value }))}
@@ -1299,7 +1312,12 @@ export const FeatureOverridesSection = React.forwardRef<
         <div className="py-8 text-center text-slate-500">Loading overrides...</div>
       ) : (
         <div className="rounded-xl bg-slate-800 ring-1 ring-white/5 overflow-hidden">
-          <div className="overflow-x-auto">
+          <div
+            className="overflow-x-auto"
+            role="region"
+            aria-label="Feature overrides"
+            tabIndex={0}
+          >
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
@@ -1593,6 +1611,7 @@ function ConfigTab({ tenant }: { tenant: TenantDetail }) {
           <div key={key} className="flex flex-col gap-1">
             <label className="text-xs text-slate-400">{label}</label>
             <input
+              aria-label={label}
               className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500"
               value={form[key]}
               onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
@@ -1637,7 +1656,7 @@ function AuditLogTab({ tenantId }: { tenantId: string }) {
   return (
     <div>
       <div className="rounded-xl bg-slate-800 ring-1 ring-white/5 overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto" role="region" aria-label="Audit log entries" tabIndex={0}>
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">

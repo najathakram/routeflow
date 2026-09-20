@@ -185,6 +185,7 @@ export default function AdminBuyersPage() {
       {/* Search + segment chips */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <input
+          aria-label="Search buyers"
           type="text"
           placeholder="Buyer email or name..."
           value={search}
@@ -219,7 +220,7 @@ export default function AdminBuyersPage() {
       {data && (
         <>
           <div className="rounded-xl bg-slate-800 ring-1 ring-white/5 overflow-hidden">
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto" role="region" aria-label="Buyers" tabIndex={0}>
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">

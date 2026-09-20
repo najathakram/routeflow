@@ -284,7 +284,12 @@ export default function AdminDashboardPage() {
           {stats.trialsExpiringSoon.length === 0 ? (
             <p className="px-5 py-6 text-sm text-slate-500">No trials expiring within 7 days.</p>
           ) : (
-            <div className="overflow-x-auto">
+            <div
+              className="overflow-x-auto"
+              role="region"
+              aria-label="Trials expiring soon"
+              tabIndex={0}
+            >
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
@@ -351,7 +356,12 @@ export default function AdminDashboardPage() {
           {stats.atRiskTenants.length === 0 ? (
             <p className="px-5 py-6 text-sm text-slate-500">No at-risk tenants.</p>
           ) : (
-            <div className="overflow-x-auto">
+            <div
+              className="overflow-x-auto"
+              role="region"
+              aria-label="At-risk tenants"
+              tabIndex={0}
+            >
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
@@ -401,7 +411,7 @@ export default function AdminDashboardPage() {
         }
         noPadding
       >
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto" role="region" aria-label="Recent tenants" tabIndex={0}>
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
