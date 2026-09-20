@@ -35,13 +35,14 @@ describe("SELLING_RESTRICTED on mobile", () => {
     expect(restrictionReasonText(l)).toEqual(text);
   });
 
-  it.each(["components/NewOrderScreen.tsx", "app/(operator)/(tabs)/orders/[id]/edit-items.tsx"])(
-    "%s opens the blocked-lines modal from its save error handler",
-    (rel) => {
-      const src = readFileSync(join(__dirname, "..", rel), "utf8");
-      expect(src).toMatch(/parseSellingRestricted\(\w+\)/);
-      expect(src).toMatch(/setRestrictedBlock\(restricted\)/);
-      expect(src).toMatch(/<BlockedLinesModal lines=\{restrictedBlock\}/);
-    },
-  );
+  it.each([
+    "components/NewOrderScreen.tsx",
+    "app/(operator)/(tabs)/orders/[id]/edit-items.tsx",
+    "app/(operator)/(tabs)/orders/[id].tsx",
+  ])("%s opens the blocked-lines modal from its error handler", (rel) => {
+    const src = readFileSync(join(__dirname, "..", rel), "utf8");
+    expect(src).toMatch(/parseSellingRestricted\(\w+\)/);
+    expect(src).toMatch(/setRestrictedBlock\(restricted\)/);
+    expect(src).toMatch(/<BlockedLinesModal lines=\{restrictedBlock\}/);
+  });
 });
