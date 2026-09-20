@@ -222,31 +222,80 @@ function baseEnv() {
   for (const key of Object.keys(env)) {
     if (key.startsWith("PLANE_")) delete env[key];
   }
+  // B591: the doctor's own 5s probe budget is right for a person at a prompt and wrong for a
+  // fleet host under load — give the fixture runs room so a slow child is not read as a broken one.
+  env.PLANE_DOCTOR_PROBE_TIMEOUT_MS = "60000";
   return env;
+}
+
+/**
+ * B591: retry ONLY a child that died without an exit code, was not killed by our own timeout, and
+ * said nothing (OS kill / OOM / a failed spawn — it cannot have done anything observable). Never a
+ * timeout, never a real exit code, at most two retries. Pure, so it is pinned on every platform.
+ */
+function shouldRetryDoctor(r, attemptIndex) {
+  if (attemptIndex >= 2) return false;
+  const silent = !r.stdout && !String(r.stderr ?? "").trim();
+  if (r.spawnError) return !r.timedOut && silent;
+  return r.code === null && !r.timedOut && silent;
 }
 
 // Async `spawn` (never `spawnSync`) — the fake Plane server used by the
 // online cases lives on this harness process's own event loop, same
 // discipline as plane-triage.self-test.mjs.
+// B591: the old 20s hard kill reported `code: null` for a doctor that was merely slow under fleet
+// load, and every check downstream then read as a product defect ("exit 0 got null"). The budget is
+// generous and env-tunable, and a run that STILL ends without an exit code is announced as such.
 function runDoctor(fixtureDir, argv, envOverrides = {}) {
   const scriptPath = join(fixtureDir, DOCTOR_FIXTURE_PATH);
   const env = { ...baseEnv(), ...envOverrides };
-  return new Promise((resolve) => {
-    const child = spawn(process.execPath, [scriptPath, ...argv], {
-      cwd: fixtureDir,
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
+  const budgetMs = Number(process.env.PLANE_SELF_TEST_CLI_BUDGET_MS) || 90_000;
+  const attempt = () =>
+    new Promise((resolve) => {
+      let settled = false;
+      const done = (r) => {
+        if (!settled) {
+          settled = true;
+          resolve(r);
+        }
+      };
+      const child = spawn(process.execPath, [scriptPath, ...argv], {
+        cwd: fixtureDir,
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = "";
+      let stderr = "";
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill();
+      }, budgetMs);
+      child.stdout.on("data", (c) => (stdout += c));
+      child.stderr.on("data", (c) => (stderr += c));
+      child.on("error", () => {
+        clearTimeout(timer);
+        done({ code: null, signal: null, stdout, stderr, timedOut, spawnError: true });
+      });
+      child.on("close", (code, signal) => {
+        clearTimeout(timer);
+        done({ code, signal, stdout, stderr, timedOut });
+      });
     });
-    let stdout = "";
-    let stderr = "";
-    const timer = setTimeout(() => child.kill(), 20_000);
-    child.stdout.on("data", (c) => (stdout += c));
-    child.stderr.on("data", (c) => (stderr += c));
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({ code, stdout, stderr });
-    });
-  });
+  return (async () => {
+    for (let n = 0; ; n++) {
+      const r = await attempt();
+      if (shouldRetryDoctor(r, n)) continue;
+      if (r.code === null) {
+        failures++;
+        console.log(
+          `  FAIL runDoctor: the child ended WITHOUT an exit code (signal ${r.signal ?? "none"}, ` +
+            `timedOut ${r.timedOut}) after ${n + 1} attempt(s) — the checks that follow read a dead child, not the doctor`,
+        );
+      }
+      return r;
+    }
+  })();
 }
 
 function git(cwd, args) {
@@ -446,7 +495,7 @@ async function main() {
   // `%cI` carries the commit's own UTC offset while runs.jsonl's `ts` is
   // always `Z`. Commits are seeded with GIT_COMMITTER_DATE (env, via
   // baseEnv()) so the offset is exact and reproducible. ─────────────────────
-  async function runLandingWithoutSyncCase(commitDateIso, syncTsIso) {
+  async function runLandingWithoutSyncCase(commitDateIso, syncTsIso, tz) {
     const dir = makeFixtureRepo();
     const home = makeFakeHome({ withScheduledTask: true });
     git(dir, ["init", "--quiet"]);
@@ -504,6 +553,7 @@ async function main() {
       PLANE_DOCTOR_HOME: home,
       PLANE_API_KEY: "self-test-key",
       PLANE_BASE_URL: server.url,
+      ...(tz ? { TZ: tz } : {}),
     });
     await server.close();
     return result;
@@ -536,6 +586,78 @@ async function main() {
     checkTrue(
       "M2 offset (fix-round): +05:30 commit (absolute earlier) vs Z sync -> PASS",
       stdout.includes("PASS landing without sync:"),
+    );
+  }
+
+  // B591: the +05:30 / -07:00 cases above only ever exercised one negative offset. The doctor
+  // compares INSTANTS (Date.parse on both sides), so it must be independent of BOTH the commit's own
+  // offset and the machine's TZ. Confirmed a genuine load timeout, not an offset defect: this
+  // logic is correct; the failure was the harness's 20s kill (see runDoctor).
+  {
+    // -08:00: 2026-09-11T22:00:00-08:00 == 2026-09-12T06:00:00Z, AFTER the 05:00Z sync -> WARN. A
+    // naive string compare ("2026-09-11…" < "2026-09-12…") says PASS, so this discriminates.
+    const { code, stdout } = await runLandingWithoutSyncCase(
+      "2026-09-11T22:00:00-08:00",
+      "2026-09-12T05:00:00.000Z",
+      "Asia/Kolkata", // a +05:30 HOST: the machine offset must not leak into the comparison
+    );
+    check("M2 offset (B591): -08:00 commit landing after sync, +05:30 host: exit 0", code, 0);
+    checkTrue(
+      "M2 offset (B591): -08:00 commit (absolute later) vs Z sync -> WARN, on a +05:30 host",
+      stdout.includes("WARN landing without sync:"),
+    );
+  }
+  {
+    // Boundary: 2026-09-11T21:00:00-08:00 == 2026-09-12T05:00:00Z, the SAME instant as the sync.
+    // The rule is strictly "commit after sync", so equal instants are PASS.
+    const { code, stdout } = await runLandingWithoutSyncCase(
+      "2026-09-11T21:00:00-08:00",
+      "2026-09-12T05:00:00.000Z",
+      "America/Los_Angeles", // a -08:00/-07:00 HOST
+    );
+    check("M2 offset (B591): equal instants (-08:00 vs Z), -07/-08 host: exit 0", code, 0);
+    checkTrue(
+      "M2 offset (B591): equal instants -> PASS (strictly-after rule), on a negative-offset host",
+      stdout.includes("PASS landing without sync:"),
+    );
+  }
+  {
+    // The original +05:30 companion, now ALSO under a +05:30 host — the exact machine the fleet runs.
+    const { code, stdout } = await runLandingWithoutSyncCase(
+      "2026-09-12T02:00:00+05:30",
+      "2026-09-12T05:00:00.000Z",
+      "Asia/Kolkata",
+    );
+    check("M2 offset (B591): +05:30 commit before sync on a +05:30 host: exit 0", code, 0);
+    checkTrue(
+      "M2 offset (B591): +05:30 commit (absolute earlier) vs Z sync -> PASS, on a +05:30 host",
+      stdout.includes("PASS landing without sync:"),
+    );
+  }
+
+  // B591: the retry decision, pinned on every platform (a real kill reads as exit 1 on win32).
+  {
+    const silent = { code: null, timedOut: false, stdout: "", stderr: "" };
+    check(
+      "B591: a silent death without an exit code IS retried",
+      shouldRetryDoctor(silent, 0),
+      true,
+    );
+    check("B591: ...at most twice", shouldRetryDoctor(silent, 2), false);
+    check(
+      "B591: our own timeout is never retried",
+      shouldRetryDoctor({ ...silent, timedOut: true }, 0),
+      false,
+    );
+    check(
+      "B591: a real exit code is never retried",
+      [shouldRetryDoctor({ ...silent, code: 0 }, 0), shouldRetryDoctor({ ...silent, code: 1 }, 0)],
+      [false, false],
+    );
+    check(
+      "B591: a spawn 'error' after our own timeout (a failed kill) is not retried",
+      shouldRetryDoctor({ ...silent, spawnError: true, timedOut: true }, 0),
+      false,
     );
   }
 
