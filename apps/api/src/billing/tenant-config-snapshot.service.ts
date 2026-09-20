@@ -25,6 +25,32 @@ const toJson = (v: unknown): Prisma.InputJsonValue | typeof Prisma.DbNull =>
 export const AUTO_RESTORE_MAX_AGE_DAYS = 90;
 const DAY_MS = 86_400_000;
 
+/**
+ * The AUTOMATIC restore runs inside a paid upgrade/checkout transaction, one round trip per config
+ * row. It is therefore bounded: at most this many rows written, within this wall-clock budget. A
+ * restore that would exceed either is abandoned (the caller's savepoint rolls it back, the plan
+ * change proceeds, the snapshot stays un-restored and visible) and an admin restores it explicitly
+ * with "Restore now", which is not bounded by these. A tenant has at most one config row per
+ * registry feature plus its active overrides, so real snapshots sit far below the row cap; the cap
+ * is the guard against a malformed or hostile payload holding the transaction open.
+ */
+export const AUTO_RESTORE_MAX_ROWS = 200;
+export const AUTO_RESTORE_TIME_BUDGET_MS = 4_000;
+
+export class RestoreBudgetExceededError extends Error {
+  constructor(detail: string) {
+    super(`automatic restore abandoned: ${detail}`);
+    this.name = "RestoreBudgetExceededError";
+  }
+}
+
+export interface RestoreBudget {
+  maxRows: number;
+  timeBudgetMs: number;
+  /** Injectable clock (ms) so the time budget is testable without sleeping. */
+  clock?: () => number;
+}
+
 /** Whole days since the snapshot was taken (floor; never negative). */
 export const snapshotAgeDays = (takenAt: Date, now: Date): number =>
   Math.max(0, Math.floor((now.getTime() - takenAt.getTime()) / DAY_MS));
@@ -107,7 +133,18 @@ export class TenantConfigSnapshotService {
     newPlanKey: string,
     now: Date = new Date(),
     planAllows?: (featureKey: string) => boolean,
+    budget: RestoreBudget = {
+      maxRows: AUTO_RESTORE_MAX_ROWS,
+      timeBudgetMs: AUTO_RESTORE_TIME_BUDGET_MS,
+    },
   ): Promise<RestoreResult | null> {
+    const clock = budget.clock ?? Date.now;
+    const deadline = clock() + budget.timeBudgetMs;
+    const withinBudget = (): void => {
+      if (clock() > deadline) {
+        throw new RestoreBudgetExceededError(`over the ${budget.timeBudgetMs} ms time budget`);
+      }
+    };
     const newRank = planRank(newPlanKey);
     if (newRank < 0) return null;
 
@@ -133,8 +170,14 @@ export class TenantConfigSnapshotService {
     const payload = parseSnapshotPayload(snapshot.payload);
     if (!payload) return null;
     const plan = planRestore(payload, { configs, overrides }, snapshot.takenAt, now, planAllows);
+    const rows =
+      plan.configs.create.length + plan.configs.update.length + plan.overrides.create.length;
+    if (rows > budget.maxRows) {
+      throw new RestoreBudgetExceededError(`${rows} rows to write, over the ${budget.maxRows} cap`);
+    }
 
     for (const entry of plan.configs.create) {
+      withinBudget();
       // upsert on the (tenantId, featureKey) unique key: a concurrent writer that created the row
       // between our read and this write must not turn the restore into a P2002 that aborts the
       // caller's whole plan change.
@@ -152,6 +195,7 @@ export class TenantConfigSnapshotService {
       });
     }
     for (const { id, entry } of plan.configs.update) {
+      withinBudget();
       // updateMany so tenantId scopes the write (the house pattern — see FeatureOverrideService).
       await tx.tenantFeatureConfig.updateMany({
         where: { id, tenantId },
