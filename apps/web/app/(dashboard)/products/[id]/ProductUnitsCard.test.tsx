@@ -139,12 +139,21 @@ describe("ProductUnitsCard", () => {
     );
   });
 
-  it("the (derived) placeholder previews the DERIVED price, not the explicit price being cleared", () => {
+  it("the placeholder previews the DERIVED price, not the explicit price being cleared", () => {
     mockUnits = [caseUnit]; // explicit 480.00; derived = 42 x 288 / 24 = 504
     renderCard();
-    expect((screen.getByLabelText("Case price") as HTMLInputElement).placeholder).toBe(
-      "$504.00 (derived)",
-    );
+    expect((screen.getByLabelText("Case price") as HTMLInputElement).placeholder).toBe("$504.00");
+  });
+
+  it("B594: no placeholder carries a wordy suffix (it clipped in the 2-col grid at 390px); the card explains it once", () => {
+    mockUnits = [caseUnit];
+    renderCard();
+    for (const name of ["Case price", "Case Tier 2 price", "Case Tier 3 price"]) {
+      const ph = (screen.getByLabelText(name) as HTMLInputElement).placeholder;
+      expect(ph).not.toMatch(/derived/i);
+      expect(ph.length).toBeLessThanOrEqual(10);
+    }
+    expect(screen.getAllByText(/derived from the pack price/i)).toHaveLength(1);
   });
 
   it("an invalid draft (blank name or size) cannot be saved", () => {
@@ -170,10 +179,7 @@ describe("ProductUnitsCard", () => {
     mockUnits = [caseUnit];
     renderCard();
     fireEvent.click(screen.getAllByRole("radio")[1]); // [0] = the pack row's radio
-    expect(updateMutate).toHaveBeenCalledWith(
-      { id: "u-case", isDefaultSelling: true },
-      expect.any(Object),
-    );
+    expect(updateMutate).toHaveBeenCalledWith({ id: "u-case", isDefaultSelling: true });
   });
 
   it("Remove asks first, and only deletes on confirm", async () => {
@@ -186,15 +192,31 @@ describe("ProductUnitsCard", () => {
     expect(removeMutate).toHaveBeenCalledWith("u-case", expect.any(Object));
   });
 
-  it("a save error is shown, with the server's message", async () => {
+  it("B594: a failed write raises NO toast of its own — the global MutationCache handler already shows the server's message once", async () => {
     mockUnits = [caseUnit];
-    updateMutate.mockImplementation((_b, opts) =>
-      opts?.onError?.({ response: { data: { message: "size cannot change" } } }),
-    );
+    const err = { response: { data: { message: "size cannot change" } } };
+    updateMutate.mockImplementation((_b, opts) => opts?.onError?.(err));
+    createMutate.mockImplementation((_b, opts) => opts?.onError?.(err));
+    removeMutate.mockImplementation((_id, opts) => opts?.onError?.(err));
     renderCard();
+    // save
     fireEvent.change(screen.getByLabelText("Case price"), { target: { value: "500" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByText("size cannot change")).toBeInTheDocument();
+    // add
+    fireEvent.change(screen.getByLabelText("New unit"), { target: { value: "Pallet" } });
+    fireEvent.change(screen.getByLabelText("Pieces per new unit"), { target: { value: "5760" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add unit" }));
+    // remove (the confirm dialog closes on failure)
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    fireEvent.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: "Remove" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(updateMutate).toHaveBeenCalled();
+    expect(createMutate).toHaveBeenCalled();
+    expect(removeMutate).toHaveBeenCalled();
+    expect(screen.queryByText("size cannot change")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Couldn't/)).not.toBeInTheDocument();
   });
 
   describe("the yes/no cascade prompt", () => {

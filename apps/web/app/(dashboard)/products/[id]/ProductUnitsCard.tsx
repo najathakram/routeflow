@@ -39,12 +39,6 @@ const num = (v: string | number | null | undefined): number | null =>
 /** 0 means "derive" to the ladder (getTierPrice convention) — never store it as an explicit price. */
 const priceOrNull = (v: number | null): number | null => (v != null && v > 0 ? v : null);
 
-const errText = (e: unknown): string =>
-  String(
-    (e as { response?: { data?: { message?: unknown } } })?.response?.data?.message ??
-      "Check the fields and try again.",
-  );
-
 const FIELD =
   "h-10 w-full rounded-md border border-surface-border bg-white px-2.5 text-sm text-navy focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20";
 const LABEL = "mb-1 block text-[11px] font-medium uppercase tracking-wide text-navy/60";
@@ -156,13 +150,16 @@ function UnitRow({
             aria-label={`${unit.label} price`}
             className={FIELD}
             value={draft.prices[0]}
-            placeholder={derived(1) != null ? `${fmt(derived(1) as number)} (derived)` : ""}
+            placeholder={derived(1) != null ? fmt(derived(1) as number) : ""}
             onChange={(v) =>
               setDraft({ ...draft, prices: draft.prices.map((p, i) => (i ? p : v)) })
             }
           />
         </div>
       </div>
+      <p className="mt-1.5 text-[11px] text-navy/50">
+        A grey figure is derived from the pack price; type a price to override it.
+      </p>
       <details className="mt-2">
         <summary className="cursor-pointer text-xs font-medium text-brand-600">Tier prices</summary>
         <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -176,7 +173,7 @@ function UnitRow({
                 aria-label={`${unit.label} ${tierLabel(tierNames, t)} price`}
                 className={FIELD}
                 value={draft.prices[t - 1]}
-                placeholder={derived(t) != null ? `${fmt(derived(t) as number)} (derived)` : ""}
+                placeholder={derived(t) != null ? fmt(derived(t) as number) : ""}
                 onChange={(v) =>
                   setDraft({ ...draft, prices: draft.prices.map((p, i) => (i === t - 1 ? v : p)) })
                 }
@@ -237,8 +234,8 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
   const units = list.data ?? [];
   const busy = create.isPending || update.isPending || remove.isPending;
   const tierNames = tiers;
-  const fail = (title: string) => (e: unknown) =>
-    toast({ title, description: errText(e), variant: "error" });
+  // B594: no component-level error toasts — app/providers.tsx's global MutationCache handler
+  // already toasts the server's message for every failed mutation, so a second one here doubled it.
 
   const save = (unit: ProductUnitLevel, d: Draft) => {
     const oldPrices = draftOf(unit).prices;
@@ -256,7 +253,6 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
     update.mutate(body, {
       // EVERY tier cascades, each independently (a tier-2 edit offers tier 2 to the others).
       onSuccess: () => setProposals(proposeCascade(units, unit.id, oldPrices, newPrices)),
-      onError: fail("Couldn't save the unit"),
     });
   };
 
@@ -288,7 +284,6 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
           setFactor(null);
           setPrice(null);
         },
-        onError: fail("Couldn't add the unit"),
       },
     );
   };
@@ -325,10 +320,7 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
                 onChange={() => {
                   const current = units.find((u) => u.isDefaultSelling);
                   if (current) {
-                    update.mutate(
-                      { id: current.id, isDefaultSelling: false },
-                      { onError: fail("Couldn't change the default") },
-                    );
+                    update.mutate({ id: current.id, isDefaultSelling: false });
                   }
                 }}
               />
@@ -367,12 +359,7 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
                 busy={busy}
                 onSave={save}
                 onDelete={setRemoving}
-                onMakeDefault={(x) =>
-                  update.mutate(
-                    { id: x.id, isDefaultSelling: true },
-                    { onError: fail("Couldn't change the default") },
-                  )
-                }
+                onMakeDefault={(x) => update.mutate({ id: x.id, isDefaultSelling: true })}
               />
             ))}
           </ul>
@@ -434,10 +421,7 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
           if (!removing) return;
           remove.mutate(removing.id, {
             onSuccess: () => setRemoving(null),
-            onError: (e) => {
-              setRemoving(null);
-              fail("Couldn't remove the unit")(e);
-            },
+            onError: () => setRemoving(null),
           });
         }}
       />
