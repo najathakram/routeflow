@@ -256,6 +256,9 @@ export interface CreditPointParams {
  *     order's stop from the office). A DRIVER's completion is EXCLUDED on purpose (the goods are
  *     already at the door); RoutesService may only OBSERVE credit — pinned in
  *     `orders.deliver-credit-gate.spec.ts`.
+ * Route DISPATCH and stop COMPLETION are OBSERVATION-ONLY (run start only logs; `completeStop` flips
+ * orders to DELIVERED directly), so "already out = gated" holds only for an order that was dispatched
+ * through `changeStatus` while `enforce_delivery` was "true".
  * Guarded: a new order; `changeStatus` to OUT_FOR_DELIVERY (not a re-dispatch of a PARTIALLY_DELIVERED
  * order, whose goods already left); CONFIRMED → DELIVERED. A demotion (OUT_FOR_DELIVERY → CONFIRMED,
  * with a reason) then a re-dispatch is a NEW dispatch and is gated. (`updateOrderItems` is not a
