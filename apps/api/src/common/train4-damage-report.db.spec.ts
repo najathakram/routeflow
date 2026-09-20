@@ -34,7 +34,7 @@ import path from "path";
 import { PrismaClient, type Prisma } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
-import { describeDb, requireLocalDatabaseUrl } from "./testing/db-spec";
+import { describeDb, relaxTenantIdGuards, requireLocalDatabaseUrl } from "./testing/db-spec";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -306,9 +306,13 @@ describeDb("report-train4-damage.mjs — real Postgres (seeded damage vs. near-m
     return out;
   }
 
+  // T6: this spec plants legacy NULL-tenant rows on purpose, so it lifts the tenantId guard on these tables.
+  let restoreTenantIdGuards: (() => Promise<void>) | undefined;
+
   beforeAll(async () => {
     const databaseUrl = requireLocalDatabaseUrl();
     pool = new Pool({ connectionString: databaseUrl });
+    restoreTenantIdGuards = await relaxTenantIdGuards(pool, ["OrderRevision"]);
     prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
 
     // ── Tenants ──────────────────────────────────────────────────────────────────────────────
@@ -1197,6 +1201,7 @@ describeDb("report-train4-damage.mjs — real Postgres (seeded damage vs. near-m
 
     if (outDir) fs.rmSync(outDir, { recursive: true, force: true });
 
+    await restoreTenantIdGuards?.();
     await prisma?.$disconnect();
     await pool?.end();
   }, 180_000);

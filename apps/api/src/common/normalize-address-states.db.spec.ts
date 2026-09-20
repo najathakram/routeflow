@@ -43,7 +43,7 @@ import { randomUUID } from "crypto";
 import fs from "fs";
 import path from "path";
 import { Client } from "pg";
-import { describeDb, requireLocalDatabaseUrl } from "./testing/db-spec";
+import { describeDb, relaxTenantIdGuards, requireLocalDatabaseUrl } from "./testing/db-spec";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -250,10 +250,14 @@ describeDb("normalize-address-states.mjs — real Postgres (report / dry-run / l
     };
   }
 
+  // T6: this spec plants legacy NULL-tenant rows on purpose, so it lifts the tenantId guard on these tables.
+  let restoreTenantIdGuards: (() => Promise<void>) | undefined;
+
   beforeAll(async () => {
     databaseUrl = requireLocalDatabaseUrl();
     db = new Client({ connectionString: databaseUrl });
     await db.connect();
+    restoreTenantIdGuards = await relaxTenantIdGuards(db, ["CustomerAddress"]);
     await insertTenantGraph(TENANT_ID, TENANT_SLUG, USER_ID, CUSTOMER_ID);
   }, 120_000);
 
@@ -265,6 +269,7 @@ describeDb("normalize-address-states.mjs — real Postgres (report / dry-run / l
     await db.query('DELETE FROM "Customer" WHERE "id" LIKE $1', [`${ID_PREFIX}%`]);
     await db.query('DELETE FROM "User" WHERE "id" LIKE $1', [`${ID_PREFIX}%`]);
     await db.query('DELETE FROM "Tenant" WHERE "id" LIKE $1', [`${ID_PREFIX}%`]);
+    await restoreTenantIdGuards?.();
     await db.end();
   }, 120_000);
 

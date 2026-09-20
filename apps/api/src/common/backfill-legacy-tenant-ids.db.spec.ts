@@ -42,7 +42,7 @@ import { spawnSync } from "child_process";
 import { randomUUID } from "crypto";
 import path from "path";
 import { Client } from "pg";
-import { describeDb, requireLocalDatabaseUrl } from "./testing/db-spec";
+import { describeDb, relaxTenantIdGuards, requireLocalDatabaseUrl } from "./testing/db-spec";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -214,10 +214,14 @@ describeDb("backfill-legacy-tenant-ids.mjs — real Postgres (report / dry-run /
     );
   }
 
+  // T6: this spec plants legacy NULL-tenant rows on purpose, so it lifts the tenantId guard on these tables.
+  let restoreTenantIdGuards: (() => Promise<void>) | undefined;
+
   beforeAll(async () => {
     databaseUrl = requireLocalDatabaseUrl();
     db = new Client({ connectionString: databaseUrl });
     await db.connect();
+    restoreTenantIdGuards = await relaxTenantIdGuards(db, ["RouteRun", "RouteRunStop"]);
 
     // Ancestors all carry the tenant — that is what makes the NULL child's tenant derivable.
     await db.query(
@@ -253,6 +257,7 @@ describeDb("backfill-legacy-tenant-ids.mjs — real Postgres (report / dry-run /
     // By prefix, not by id: D9's negative-control tenant is deleted in the case itself, and this
     // is the net that removes it (and any future sibling) if that case ever fails part-way.
     await db.query('DELETE FROM "Tenant" WHERE "id" LIKE $1', [`${ID_PREFIX}%`]);
+    await restoreTenantIdGuards?.();
     await db.end();
   }, 120_000);
 
