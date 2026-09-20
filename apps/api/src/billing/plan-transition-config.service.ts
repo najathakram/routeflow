@@ -80,6 +80,15 @@ export class PlanTransitionConfigService implements OnModuleInit {
   }
 
   /**
+   * The live flag. Sites use it to skip EVERY extra read the hook needs (a `Tenant.plan` join, a
+   * pre-read of the plan being left) while it is off, so wiring a site adds nothing at all until
+   * the flag is flipped.
+   */
+  isEnabled(): Promise<boolean> {
+    return this.flag.isEnabled();
+  }
+
+  /**
    * Call BEFORE opening the plan-change transaction. Reads the catalog only when the flag is on
    * and the change is an upgrade; a catalog failure never blocks the change — the restore is
    * skipped and logged (a missed restore is recoverable from the admin "Restore now" action; a

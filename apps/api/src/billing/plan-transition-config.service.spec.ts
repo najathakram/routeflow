@@ -74,6 +74,11 @@ describe("PlanTransitionConfigService (A2 step b)", () => {
     expect(catalog.getVersionForTenant).not.toHaveBeenCalled();
   });
 
+  it("isEnabled() is the live flag, for sites that skip their extra reads while it is off", async () => {
+    expect(await build(true).svc.isEnabled()).toBe(true);
+    expect(await build(false).svc.isEnabled()).toBe(false);
+  });
+
   it("the flag is read once, in prepare() BEFORE the transaction — onPlanChange never reads it", async () => {
     const { svc, flag } = build(true);
     const t = { tenantId: "t1", fromPlanKey: HIGH, toPlanKey: LOW, toPlanVersionId: null };

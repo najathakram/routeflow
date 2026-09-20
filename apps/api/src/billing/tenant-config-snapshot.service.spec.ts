@@ -52,10 +52,22 @@ function fakeTx(seed: { configs?: any[]; overrides?: any[]; snapshots?: any[] } 
     },
     tenantFeatureOverride: {
       findMany: async () => state.overrides.map((r) => ({ ...r })),
-      create: async ({ data }: any) => {
-        const row = { id: id("o"), createdAt: NOW, revokedAt: null, ...data };
-        state.overrides.push(row);
-        return row;
+      // ON CONFLICT DO NOTHING: a live (unrevoked) row for the same feature wins, ours is skipped.
+      createMany: async ({ data, skipDuplicates }: any) => {
+        let count = 0;
+        for (const d of data) {
+          const live = state.overrides.some(
+            (o) =>
+              o.tenantId === d.tenantId && o.featureKey === d.featureKey && o.revokedAt === null,
+          );
+          if (live) {
+            if (!skipDuplicates) throw new Error("P2002 unique violation");
+            continue;
+          }
+          state.overrides.push({ id: id("o"), createdAt: NOW, revokedAt: null, ...d });
+          count++;
+        }
+        return { count };
       },
     },
     tenantFeatureConfigSnapshot: {
@@ -355,5 +367,41 @@ describe("TenantConfigSnapshotService — 90-day automatic-restore horizon (A2 d
     const res = await svc.restoreLatest(tx, TENANT, HIGH, NOW);
 
     expect(res?.supersededSnapshots).toBe(1);
+  });
+});
+
+describe("TenantConfigSnapshotService — a concurrent live override never aborts the restore (P2002)", () => {
+  const svc = new TenantConfigSnapshotService();
+
+  it("restores overrides with ONE createMany + skipDuplicates (ON CONFLICT DO NOTHING), not a create per row", async () => {
+    const { tx, state } = fakeTx({ overrides: [ovrRow()] });
+    await svc.snapshot(tx, TENANT, HIGH, "DOWNGRADE", undefined, T0);
+    state.overrides.length = 0;
+    const spy = jest.spyOn(tx.tenantFeatureOverride as any, "createMany");
+
+    await svc.restoreLatest(tx, TENANT, HIGH, NOW);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][0]).toMatchObject({ skipDuplicates: true });
+    expect(state.overrides).toHaveLength(1);
+  });
+
+  it("a live override that appears between the plan and the write wins and the restore still completes", async () => {
+    const { tx, state } = fakeTx({ overrides: [ovrRow()] });
+    await svc.snapshot(tx, TENANT, HIGH, "DOWNGRADE", undefined, T0);
+    state.overrides.length = 0; // the plan will see "no override" ...
+    const real = (tx.tenantFeatureOverride as any).createMany;
+    (tx.tenantFeatureOverride as any).createMany = async (args: any) => {
+      // ... and an admin grants the same feature just before the insert lands
+      state.overrides.push({ ...ovrRow({ id: "raced", reason: "admin" }) });
+      return real(args);
+    };
+
+    const res = await svc.restoreLatest(tx, TENANT, HIGH, NOW);
+
+    expect(res).not.toBeNull(); // did not throw
+    expect(state.overrides).toHaveLength(1);
+    expect(state.overrides[0].id).toBe("raced"); // the concurrent writer's row wins
+    expect(state.snapshots[0].restoredAt).not.toBeNull();
   });
 });
