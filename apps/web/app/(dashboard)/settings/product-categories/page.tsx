@@ -16,8 +16,8 @@ import {
 const actionCls =
   "inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-navy/70 hover:bg-surface-raised hover:text-navy disabled:opacity-50";
 
-const apiMessage = (e: unknown, fallback: string) =>
-  (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? fallback;
+// Errors are NOT toasted here: app/providers.tsx's global MutationCache handler already shows the
+// server message once (a second toast here doubled it — B594 class).
 const okToast = (title: string) => ({ title, variant: "success" as const });
 
 /** Label manager: the restriction categories products are labelled with (TENANT_ADMIN writes). */
@@ -29,8 +29,6 @@ export default function ProductCategoriesPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === "TENANT_ADMIN";
   const { toast } = useToast();
-  const fail = (fallback: string) => (err: unknown) =>
-    toast({ title: apiMessage(err, fallback), variant: "error" });
   const [showArchived, setShowArchived] = React.useState(false);
   const { data: categories = [], isLoading, isError } = useProductCategories(showArchived);
   const create = useCreateProductCategory();
@@ -51,7 +49,6 @@ export default function ProductCategoriesPage() {
           setNewName("");
           toast(okToast(`Label "${name}" added`));
         },
-        onError: fail("Failed to add label"),
       },
     );
   };
@@ -69,7 +66,6 @@ export default function ProductCategoriesPage() {
           setRenamingId(null);
           toast(okToast("Label renamed"));
         },
-        onError: fail("Failed to rename label"),
       },
     );
   };
@@ -79,7 +75,6 @@ export default function ProductCategoriesPage() {
       { id: c.id, data: { archived } },
       {
         onSuccess: () => toast(okToast(archived ? `${c.name} archived` : `${c.name} restored`)),
-        onError: fail("Failed to update label"),
       },
     );
 

@@ -6,6 +6,7 @@ import ProductCategoriesPage from "./page";
 const createMutate = jest.fn();
 const updateMutate = jest.fn();
 const useCategories = jest.fn();
+const toast = jest.fn();
 let role = "TENANT_ADMIN";
 let categories: unknown[] = [];
 let isError = false;
@@ -13,6 +14,10 @@ let isError = false;
 jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
   useAuth: () => ({ user: { role } }),
+}));
+jest.mock("@routeflow/ui/web", () => ({
+  ...jest.requireActual("@routeflow/ui/web"),
+  useToast: () => ({ toast }),
 }));
 jest.mock("@/lib/page-title-context", () => ({ usePageTitle: () => ({ setTitle: jest.fn() }) }));
 jest.mock("@/lib/api/product-labels", () => ({
@@ -51,6 +56,20 @@ describe("Product labels page", () => {
     render();
     expect(screen.getByText(/couldn.t load labels/i)).toBeInTheDocument();
     expect(screen.queryByText(/no labels yet/i)).toBeNull();
+  });
+
+  it("an API error raises NO page-level toast (the global mutation handler shows it once)", () => {
+    render();
+    fireEvent.change(screen.getByLabelText("New label name"), { target: { value: "THC" } });
+    click(/add label/i);
+    const opts = createMutate.mock.calls[0][1];
+    opts.onError?.({
+      response: { status: 409, data: { message: "A category named THC already exists." } },
+    });
+    expect(toast).not.toHaveBeenCalled(); // no error toast from the page
+    opts.onSuccess?.(); // a success still gets exactly one confirmation
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(toast).toHaveBeenCalledWith(expect.objectContaining({ variant: "success" }));
   });
 
   it("lists labels with product counts and an active-rules badge", () => {
