@@ -314,6 +314,10 @@ function make(opts: Opts = {}) {
       notifyUpgradeConfirmed: jest.fn().mockResolvedValue(undefined),
       notifyDowngradeScheduled: jest.fn().mockResolvedValue(undefined),
     } as any);
+  const planTransition = {
+    prepare: jest.fn().mockResolvedValue({ planAllows: null }),
+    onPlanChange: jest.fn().mockResolvedValue({ action: "none" }),
+  } as any;
   const svc = new SubscriptionMutationService(
     prisma,
     cat,
@@ -324,8 +328,20 @@ function make(opts: Opts = {}) {
     tenantStatus,
     stripe,
     billingNotification,
+    planTransition,
   );
-  return { svc, prisma, tx, events, entitlements, tenantStatus, cat, stripe, billingNotification };
+  return {
+    svc,
+    prisma,
+    tx,
+    events,
+    entitlements,
+    tenantStatus,
+    cat,
+    stripe,
+    billingNotification,
+    planTransition,
+  };
 }
 
 const deltaOf = (events: any, type: string) => {
@@ -446,6 +462,40 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
   });
 });
 
+describe("SubscriptionMutationService.subscribe — A2b plan-transition hook", () => {
+  it("runs prepare() then onPlanChange(tx, ...) with the resolved from-plan and the target pin", async () => {
+    const { svc, tx, planTransition } = make({
+      sub: { planKey: "STARTER", cycle: "MONTHLY", periodStart: null, periodEnd: null },
+    });
+
+    await svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY", addons: [] }, "admin");
+
+    expect(planTransition.prepare).toHaveBeenCalledTimes(1);
+    expect(planTransition.onPlanChange).toHaveBeenCalledTimes(1);
+    const [txArg, transition] = planTransition.onPlanChange.mock.calls[0];
+    expect(txArg).toBe(tx);
+    expect(transition).toMatchObject({
+      tenantId: "t1",
+      fromPlanKey: "STARTER",
+      toPlanKey: "BUSINESS",
+      actor: { id: "admin" },
+    });
+    expect(transition.toPlanVersionId).toEqual(expect.any(String));
+  });
+
+  it("a failing hook aborts the subscribe: no subscription write survives", async () => {
+    const { svc, tx, planTransition } = make({
+      sub: { planKey: "STARTER", cycle: "MONTHLY", periodStart: null, periodEnd: null },
+    });
+    planTransition.onPlanChange.mockRejectedValueOnce(new Error("snapshot failed"));
+
+    await expect(
+      svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY", addons: [] }, "admin"),
+    ).rejects.toThrow("snapshot failed");
+    expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+  });
+});
+
 describe("SubscriptionMutationService.upgrade", () => {
   it("applies instantly (optimistic guard) with MRR delta = new − old", async () => {
     const { svc, tx, events } = make({
@@ -456,6 +506,49 @@ describe("SubscriptionMutationService.upgrade", () => {
       planKey: "STARTER",
     });
     expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(290); // 349 − 59
+  });
+
+  it("A2b: prepares before the transaction, then runs the plan-transition hook INSIDE it with from/to/pin", async () => {
+    const { svc, tx, prisma, planTransition } = make({
+      sub: { planKey: "STARTER", cycle: "MONTHLY", periodStart: null, periodEnd: null },
+    });
+    const order: string[] = [];
+    planTransition.prepare.mockImplementation(async () => {
+      order.push("prepare");
+      return { planAllows: null };
+    });
+    const realTx = prisma.$transaction.getMockImplementation();
+    prisma.$transaction.mockImplementation(async (fn: any, ...rest: any[]) => {
+      order.push("tx-open");
+      return realTx!(fn, ...rest);
+    });
+    planTransition.onPlanChange.mockImplementation(async () => {
+      order.push("onPlanChange");
+      return { action: "none" };
+    });
+
+    await svc.upgrade("t1", "BUSINESS", "admin");
+
+    expect(order).toEqual(["prepare", "tx-open", "onPlanChange"]);
+    const [txArg, transition] = planTransition.onPlanChange.mock.calls[0];
+    expect(txArg).toBe(tx);
+    expect(transition).toMatchObject({
+      tenantId: "t1",
+      fromPlanKey: "STARTER",
+      toPlanKey: "BUSINESS",
+      actor: { id: "admin" },
+    });
+    expect(transition.toPlanVersionId).toEqual(expect.any(String));
+  });
+
+  it("A2b: a failing hook aborts the upgrade before any plan write is emitted", async () => {
+    const { svc, events, planTransition } = make({
+      sub: { planKey: "STARTER", cycle: "MONTHLY", periodStart: null, periodEnd: null },
+    });
+    planTransition.onPlanChange.mockRejectedValueOnce(new Error("snapshot failed"));
+
+    await expect(svc.upgrade("t1", "BUSINESS", "admin")).rejects.toThrow("snapshot failed");
+    expect(emitted(events)).not.toContain(BILLING_EVENTS.PLAN_CHANGED);
   });
 
   it("rejects a concurrent double-upgrade (updateMany matched 0 rows)", async () => {
@@ -808,6 +901,7 @@ describe("SubscriptionMutationService.enableAddon — F1 tenant-path concurrency
       tenantStatus,
       stripe,
       billingNotification,
+      { prepare: jest.fn(), onPlanChange: jest.fn() } as any,
     );
 
     const [a, b] = await Promise.allSettled([
