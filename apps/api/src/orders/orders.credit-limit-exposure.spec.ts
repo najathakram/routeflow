@@ -39,6 +39,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
@@ -118,6 +119,13 @@ describe("OrdersService — credit-limit exposure (D6 / B462, option B)", () => 
               unitCost: new Prisma.Decimal(0),
               stockAfter: new Prisma.Decimal(0),
             }),
+          },
+        },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "OFF", reasons: [] }),
           },
         },
         {
@@ -451,6 +459,141 @@ describe("OrdersService — credit-limit exposure (D6 / B462, option B)", () => 
       ).rejects.toMatchObject(overLimit(115, 110));
     });
 
+    it("B577: another OPEN order fully prepaid by a PAID invoice is not counted again — 0 + 15 passes a limit of 100 (was 100 + 15, a false 409)", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          total: 100,
+          status: "PAID",
+          orderId: "ord-2",
+          order: orderOf("ord-2", "CONFIRMED", 100),
+          payments: [{ amount: 100, status: "PAID" }],
+        },
+      ]);
+      prisma.order.findMany.mockResolvedValue([{ id: "ord-2", total: 100 }]);
+
+      await service.updateOrderItems("ord-1", editDto, operatorPayload);
+
+      expect(prisma.order.update).toHaveBeenCalled();
+    });
+
+    it("B577: a partially prepaid open order counts only its unbilled remainder: PAID 60 of 100 → 40 + 15 = 55 blocks a limit of 50", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ creditLimit: 50 });
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          total: 60,
+          status: "PAID",
+          orderId: "ord-2",
+          order: orderOf("ord-2", "CONFIRMED", 100),
+          payments: [{ amount: 60, status: "PAID" }],
+        },
+      ]);
+      prisma.order.findMany.mockResolvedValue([{ id: "ord-2", total: 100 }]);
+
+      await expect(
+        service.updateOrderItems("ord-1", editDto, operatorPayload),
+      ).rejects.toMatchObject(overLimit(55, 50));
+    });
+
+    // an invoice of the edited order (ord-1); `paid` = its confirmed payment
+    const ownInvoice = (o: {
+      total: number;
+      status: string;
+      paid?: number;
+      method?: string;
+      orderStatus?: string;
+    }) => ({
+      total: o.total,
+      status: o.status,
+      orderId: "ord-1",
+      order: orderOf("ord-1", o.orderStatus ?? "OUT_FOR_DELIVERY", o.total),
+      payments: o.paid ? [{ amount: o.paid, status: "PAID", method: o.method }] : [],
+    });
+
+    it("B577 follow-up (COORD): a CREDIT NOTE that flips the invoice to PAID does NOT cover the edit (100 + 15 blocks a limit of 100)", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        ownInvoice({ total: 15, status: "PAID", paid: 15, method: "CREDIT_NOTE" }),
+      ]);
+      prisma.order.findMany.mockResolvedValue([{ id: "ord-2", total: 100 }]);
+
+      await expect(
+        service.updateOrderItems("ord-1", editDto, operatorPayload),
+      ).rejects.toMatchObject(overLimit(115, 100));
+    });
+
+    it("B577 follow-up: editing a FULLY PREPAID order counts only its unpaid part — other order 100 + (15 − 15 paid) = 100 passes a limit of 100 (was 115, a false 409)", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        ownInvoice({ total: 15, status: "PAID", paid: 15 }),
+      ]);
+      prisma.order.findMany.mockResolvedValue([{ id: "ord-2", total: 100 }]);
+
+      await service.updateOrderItems("ord-1", editDto, operatorPayload);
+
+      expect(prisma.order.update).toHaveBeenCalled();
+    });
+
+    it("B577 follow-up: a PARTIALLY paid edited order counts its unpaid remainder — 100 + (15 − 5) = 110 blocks a limit of 100", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        ownInvoice({ total: 15, status: "PARTIAL", paid: 5 }),
+      ]);
+      prisma.order.findMany.mockResolvedValue([{ id: "ord-2", total: 100 }]);
+
+      await expect(
+        service.updateOrderItems("ord-1", editDto, operatorPayload),
+      ).rejects.toMatchObject(overLimit(110, 100));
+    });
+
+    it("B577 follow-up: the netting is FLOORED at 0 — a big prepayment on the edited order never subtracts from OTHER orders' exposure (900 + 0 = 900 blocks a limit of 100)", async () => {
+      // the edited order was prepaid 900, and is edited down to 15
+      prisma.invoice.findMany.mockResolvedValue([
+        ownInvoice({ total: 900, status: "PAID", paid: 900 }),
+      ]);
+      prisma.order.findMany.mockResolvedValue([{ id: "ord-2", total: 900 }]); // an unrelated open order
+
+      await expect(
+        service.updateOrderItems("ord-1", editDto, operatorPayload),
+      ).rejects.toMatchObject(overLimit(900, 100));
+    });
+
+    it.each([
+      ["PARTIAL, owes 150", { total: 200, status: "PARTIAL", paid: 50 }],
+      ["a lone SENT deposit-mirror shape, owes 1000", { total: 1000, status: "SENT" }],
+    ])(
+      "B577 follow-up (review): PRE-delivery an issued invoice (%s) is never trusted to survive — the reconcile rewrites a deposit mirror — so a cut to 15 counts 15, as before the netting (never stricter than master)",
+      async (_label, invoice) => {
+        prisma.invoice.findMany.mockResolvedValue([
+          ownInvoice({ ...invoice, orderStatus: "CONFIRMED" }),
+        ]);
+        prisma.order.findMany.mockResolvedValue([]);
+
+        await service.updateOrderItems("ord-1", editDto, operatorPayload); // 15 ≤ 100
+
+        expect(prisma.order.update).toHaveBeenCalled();
+      },
+    );
+
+    it.each([
+      ["fully invoiced (the post-delivery re-sync rewrites the invoice)", 2, "passes"],
+      ["partially invoiced (neither the revert nor the re-sync runs)", 1, "blocks"],
+    ])(
+      "B577 follow-up (review): a DELIVERED order, %s — its PARTIAL invoice (owes 150) cut to 15 %s a limit of 100",
+      async (_label, invoicedQty, verdict) => {
+        const order = editableOrder();
+        prisma.order.findUnique.mockResolvedValue({
+          ...order,
+          status: "DELIVERED" as const,
+          lineItems: [{ ...order.lineItems[0], invoicedQty }],
+        });
+        prisma.invoice.findMany.mockResolvedValue([
+          ownInvoice({ total: 200, status: "PARTIAL", paid: 50, orderStatus: "DELIVERED" }),
+        ]);
+        prisma.order.findMany.mockResolvedValue([]);
+
+        const edit = service.updateOrderItems("ord-1", editDto, operatorPayload);
+        if (verdict === "blocks") await expect(edit).rejects.toMatchObject(overLimit(150, 100));
+        else await edit;
+      },
+    );
+
     it("E4: an open order (90) whose sole DRAFT mirror is 110 (shipping fee) counts the draft's 110: 110 + 15 = 125 blocks a limit of 120", async () => {
       prisma.customer.findFirst.mockResolvedValue({ creditLimit: 120 });
       prisma.invoice.findMany.mockResolvedValue([
@@ -518,8 +661,11 @@ describe("OrdersService — credit-limit exposure (D6 / B462, option B)", () => 
       await service.updateOrderItems("ord-1", editDto, operatorPayload);
 
       const args = prisma.invoice.findMany.mock.calls[0][0];
-      // Settled only — DRAFT must come back so the derivation can judge each draft's backing.
-      expect(new Set(args.where.status.notIn)).toEqual(new Set(["PAID", "VOID", "WRITTEN_OFF"]));
+      // Settled only — DRAFT must come back so the derivation can judge each draft's backing —
+      // plus (B577) the PAID invoices of OPEN orders, which cover their order.
+      const [issued, cover] = args.where.OR;
+      expect(new Set(issued.status.notIn)).toEqual(new Set(["PAID", "VOID", "WRITTEN_OFF"]));
+      expect(cover.status.in).toEqual(["PAID"]);
       // Without `status` every DRAFT would silently count again...
       expect(args.select.status).toBe(true);
       // ...and without the order relation every DRAFT would look unbacked and leave the block.

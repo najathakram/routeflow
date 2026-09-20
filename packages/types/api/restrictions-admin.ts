@@ -4,7 +4,8 @@ import type { RestrictionJurisdictionValue, RestrictionSurfaceValue } from "./en
 import type { SellingRestrictionDto } from "./restrictions";
 
 /** Where a rule is in its life, computed server-side at read time from the engine's own window rule. */
-export type RestrictionStatus = "ACTIVE" | "SCHEDULED" | "EXPIRED" | "LIFTED";
+export const RESTRICTION_STATUS_VALUES = ["ACTIVE", "SCHEDULED", "EXPIRED", "LIFTED"] as const;
+export type RestrictionStatus = (typeof RESTRICTION_STATUS_VALUES)[number];
 
 export interface SellingRestrictionListItemDto extends SellingRestrictionDto {
   status: RestrictionStatus;

@@ -81,7 +81,7 @@ export class PlatformAdminService {
     private readonly tenantMirror: TenantMirrorService,
     private readonly featureOverrides: FeatureOverrideService,
     // Lane B A2b: downgrade -> snapshot the tenant's feature config, upgrade -> restore it, in
-    // the same transaction as the plan write (flag ENTITLEMENT_CONFIG_SNAPSHOT, default off).
+    // the same transaction as the plan write (live flag entitlements.configSnapshot, default off).
     private readonly planTransition: PlanTransitionConfigService,
   ) {}
 
@@ -896,21 +896,30 @@ ${
     // Lane B A2b: the plan being LEFT, read before the transaction so the catalog read in
     // `prepare()` also happens outside it. A tenant with no subscription row falls back to
     // `Tenant.plan`, exactly like updatePlan().
-    const prior = await this.prisma.tenant.findUniqueOrThrow({
-      where: { id },
-      select: { plan: true, subscription: { select: { planKey: true } } },
-    });
-    const transition = {
-      tenantId: id,
-      fromPlanKey: normalizePlanKey(prior.subscription?.planKey) ?? planKeyFromEnum(prior.plan),
-      toPlanKey: definition.planKey,
-      toPlanVersionId: version.id,
-      actor: { id: adminId },
-    };
-    const preparedTransition = await this.planTransition.prepare(transition);
+    // Read ONLY while the snapshot flag is on: flag off, this method issues exactly the queries it
+    // did before the hook existed.
+    const snapshotOn = await this.planTransition.isEnabled();
+    const prior = snapshotOn
+      ? await this.prisma.tenant.findUniqueOrThrow({
+          where: { id },
+          select: { plan: true, subscription: { select: { planKey: true } } },
+        })
+      : null;
+    const transition = prior
+      ? {
+          tenantId: id,
+          fromPlanKey: normalizePlanKey(prior.subscription?.planKey) ?? planKeyFromEnum(prior.plan),
+          toPlanKey: definition.planKey,
+          toPlanVersionId: version.id,
+          actor: { id: adminId },
+        }
+      : null;
+    const preparedTransition = transition ? await this.planTransition.prepare(transition) : null;
 
     const tenant = await this.prisma.$transaction(async (tx) => {
-      await this.planTransition.onPlanChange(tx, transition, preparedTransition);
+      if (transition && preparedTransition) {
+        await this.planTransition.onPlanChange(tx, transition, preparedTransition);
+      }
       // B557 (B551's mirror-image gap): capture the tenant's paying-set inputs BEFORE this
       // call writes anything. This activation can move a tenant into MrrService's paying set
       // (status→ACTIVE + a resolved planKey) with no compensating BillingEvent today — the

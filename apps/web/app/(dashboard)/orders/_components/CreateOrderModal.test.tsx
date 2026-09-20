@@ -1,6 +1,6 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
+import { renderWithProviders, screen, waitFor, act, fireEvent } from "@/test-utils/render";
 import { CreateOrderModal } from "./CreateOrderModal";
 
 // JSDOM has no scrollIntoView implementation at all (not a stub — genuinely absent), and
@@ -22,9 +22,13 @@ window.HTMLElement.prototype.scrollIntoView = jest.fn();
  */
 
 const createOrderMutate = jest.fn();
+// Mutable so a test can put a customer in the picker / give them per-product tier prices.
+let mockCustomers: Array<Record<string, unknown>> = [];
+let mockCustomerPrices: Array<Record<string, unknown>> = [];
 jest.mock("@/lib/api/customers", () => ({
-  useCustomers: () => ({ data: { data: [] } }),
-  useCustomerPrices: () => ({ data: [] }),
+  useCustomers: () => ({ data: { data: mockCustomers } }),
+  // Like the real hook: nothing until a customer is selected.
+  useCustomerPrices: (customerId?: string) => ({ data: customerId ? mockCustomerPrices : [] }),
   useCustomer: () => ({ data: undefined }),
 }));
 jest.mock("@/lib/api/products", () => ({
@@ -73,14 +77,17 @@ jest.mock("@/lib/api-client", () => ({
 // live onScan/onError props so a test can trigger them directly, same as a real scan would.
 let capturedOnScan: ((code: string) => void) | undefined;
 let capturedOnError: ((message: string) => void) | undefined;
+let capturedOnOpenContinuous: (() => void) | undefined;
 jest.mock("@/components/BarcodeScannerButton", () => ({
   BarcodeScannerButton: (props: {
     onScan: (code: string) => void;
     onError?: (message: string) => void;
+    onOpenContinuous?: () => void;
     title?: string;
   }) => {
     capturedOnScan = props.onScan;
     capturedOnError = props.onError;
+    capturedOnOpenContinuous = props.onOpenContinuous;
     return (
       <button type="button" title={props.title} aria-label={props.title}>
         {props.title}
@@ -101,6 +108,37 @@ jest.mock("@/components/InlineCreateProductModal", () => ({
   },
 }));
 
+// scan_v2: the flag and the camera are the two seams. The flag is a mutable stub; the camera hook
+// hands the test the screen's onDetect so a barcode can be injected without getUserMedia.
+let mockScanV2 = false;
+jest.mock("@/lib/api/addons", () => ({
+  ...jest.requireActual("@/lib/api/addons"),
+  useScanV2: () => mockScanV2,
+}));
+let cameraDetect: ((code: string) => void) | undefined;
+let cameraEnabled: boolean | undefined;
+jest.mock("./scan/useContinuousScanCamera", () => ({
+  useContinuousScanCamera: ({
+    enabled,
+    onDetect,
+  }: {
+    enabled: boolean;
+    onDetect: (c: string) => void;
+  }) => {
+    cameraDetect = onDetect;
+    cameraEnabled = enabled;
+    return {
+      videoRef: { current: null },
+      torchAvailable: false,
+      torchOn: false,
+      toggleTorch: jest.fn(),
+      refocus: jest.fn(),
+      error: null,
+    };
+  },
+}));
+jest.mock("@/lib/scan-cue", () => ({ playScanCue: jest.fn(), unlockScanCue: jest.fn() }));
+
 const mockResolveProductByCode = jest.fn();
 jest.mock("@/lib/barcode-resolve", () => ({
   resolveProductByCode: (code: string) => mockResolveProductByCode(code),
@@ -118,6 +156,12 @@ describe("CreateOrderModal", () => {
     capturedOnScan = undefined;
     capturedOnError = undefined;
     capturedInlineCreate = undefined;
+    capturedOnOpenContinuous = undefined;
+    mockCustomers = [];
+    mockCustomerPrices = [];
+    cameraDetect = undefined;
+    cameraEnabled = undefined;
+    mockScanV2 = false;
   });
 
   it("blocks submit with 'Please select a customer' and never calls the create mutation", async () => {
@@ -232,6 +276,337 @@ describe("CreateOrderModal", () => {
         variant: "error",
         title:
           "Camera access was denied. Allow camera access in your browser's site settings, then try again.",
+      });
+    });
+  });
+
+  describe("scan_v2 - the accumulating scan screen", () => {
+    const widget = {
+      notFound: false,
+      archived: false,
+      product: { id: "prod-1", name: "Widget", pricePerUnit: "9.99", unit: "each" },
+    };
+    const openScreen = async () => {
+      mockScanV2 = true;
+      const utils = renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+      act(() => capturedOnOpenContinuous!());
+      await screen.findByRole("dialog", { name: "Scan items" });
+      return utils;
+    };
+    const scanCode = async (code: string) => {
+      await act(async () => {
+        cameraDetect!(code);
+      });
+    };
+
+    it("flag OFF (the default): the scan button gets no continuous handler - behaviour unchanged", () => {
+      renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+      expect(capturedOnOpenContinuous).toBeUndefined();
+    });
+
+    it("flag ON: the scan button opens the screen INSTEAD of the single-shot overlay, and the Dialog closes", async () => {
+      mockScanV2 = true;
+      renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+      expect(screen.getByRole("dialog", { name: "Create Order" })).toBeInTheDocument();
+      expect(capturedOnOpenContinuous).toBeDefined();
+
+      act(() => capturedOnOpenContinuous!());
+
+      expect(await screen.findByRole("dialog", { name: "Scan items" })).toBeInTheDocument();
+      expect(screen.queryByRole("dialog", { name: "Create Order" })).not.toBeInTheDocument();
+      expect(cameraEnabled).toBe(true);
+    });
+
+    it("a scan adds the line through the SAME resolver - shown in the screen with a running total", async () => {
+      mockResolveProductByCode.mockResolvedValue(widget);
+      await openScreen();
+
+      await scanCode("012345678905");
+
+      expect(await screen.findByText("Widget")).toBeInTheDocument();
+      expect(screen.getByText("1 item · $9.99")).toBeInTheDocument();
+      expect(mockResolveProductByCode).toHaveBeenCalledWith("012345678905");
+    });
+
+    it("a repeat scan of the same product increments its quantity, never duplicates the row", async () => {
+      mockResolveProductByCode.mockResolvedValue(widget);
+      await openScreen();
+
+      await scanCode("111");
+      await screen.findByText("Widget");
+      await scanCode("222"); // a different barcode for the same product (past the gate)
+
+      await waitFor(() => expect(screen.getByText("1 item · $19.98")).toBeInTheDocument());
+      expect(screen.getAllByText("Widget")).toHaveLength(1);
+    });
+
+    it("Done returns to the order builder with the scanned lines intact", async () => {
+      mockResolveProductByCode.mockResolvedValue(widget);
+      await openScreen();
+      await scanCode("012345678905");
+      await screen.findByText("Widget");
+
+      fireEvent.click(screen.getByRole("button", { name: "Done" }));
+
+      expect(await screen.findByRole("dialog", { name: "Create Order" })).toBeInTheDocument();
+      expect(screen.queryByRole("dialog", { name: "Scan items" })).not.toBeInTheDocument();
+      expect(screen.getByText("Widget")).toBeInTheDocument();
+    });
+
+    it("Undo removes a line the scan CREATED", async () => {
+      mockResolveProductByCode.mockResolvedValue(widget);
+      await openScreen();
+      await scanCode("012345678905");
+      await screen.findByText("Widget");
+
+      fireEvent.click(screen.getByRole("button", { name: /undo last scan/i }));
+
+      await waitFor(() => expect(screen.queryByText("Widget")).not.toBeInTheDocument());
+      expect(screen.getByText("0 items · $0.00")).toBeInTheDocument();
+    });
+
+    it("Undo of a repeat scan takes ONE unit back and keeps the line", async () => {
+      mockResolveProductByCode.mockResolvedValue(widget);
+      await openScreen();
+      await scanCode("111");
+      await screen.findByText("Widget");
+      await scanCode("222");
+      await waitFor(() => expect(screen.getByText("1 item · $19.98")).toBeInTheDocument());
+
+      fireEvent.click(screen.getByRole("button", { name: /undo last scan/i }));
+
+      await waitFor(() => expect(screen.getByText("1 item · $9.99")).toBeInTheDocument());
+      expect(screen.getByText("Widget")).toBeInTheDocument();
+    });
+
+    const caseSoda = {
+      notFound: false,
+      archived: false,
+      // A case-packed product: the line is priced PER CASE (unitPrice x boxes), qty is derived.
+      product: {
+        id: "prod-b",
+        name: "Case Soda",
+        pricePerUnit: "24",
+        unit: "case",
+        unitsPerBox: 6,
+      },
+    };
+
+    it("a repeat scan of a CASE-PACKED product adds a case and the total moves (it used to bump qty, which pricing ignores for boxed lines)", async () => {
+      mockResolveProductByCode.mockResolvedValue(caseSoda);
+      await openScreen();
+
+      await scanCode("111");
+      await screen.findByText("Case Soda");
+      expect(screen.getByText("1 item · $24.00")).toBeInTheDocument();
+      await scanCode("222");
+
+      await waitFor(() => expect(screen.getByText("1 item · $48.00")).toBeInTheDocument());
+      expect(screen.getAllByText("Case Soda")).toHaveLength(1);
+    });
+
+    it("Undo of a repeat scan on a case-packed line takes ONE case back and keeps the line", async () => {
+      mockResolveProductByCode.mockResolvedValue(caseSoda);
+      await openScreen();
+      await scanCode("111");
+      await screen.findByText("Case Soda");
+      await scanCode("222");
+      await waitFor(() => expect(screen.getByText("1 item · $48.00")).toBeInTheDocument());
+
+      fireEvent.click(screen.getByRole("button", { name: /undo last scan/i }));
+
+      await waitFor(() => expect(screen.getByText("1 item · $24.00")).toBeInTheDocument());
+      expect(screen.getByText("Case Soda")).toBeInTheDocument();
+    });
+
+    it("Undo never deletes a line the operator has since raised - it takes one case back", async () => {
+      mockResolveProductByCode.mockResolvedValue(caseSoda);
+      await openScreen();
+      await scanCode("111"); // this scan CREATED the line
+      await screen.findByText("Case Soda");
+      // The operator raises it to 3 cases by hand.
+      fireEvent.change(screen.getByTitle("Number of whole cases"), { target: { value: "3" } });
+      await waitFor(() => expect(screen.getByText("1 item · $72.00")).toBeInTheDocument());
+
+      fireEvent.click(screen.getByRole("button", { name: /undo last scan/i }));
+
+      await waitFor(() => expect(screen.getByText("1 item · $48.00")).toBeInTheDocument());
+      expect(screen.getByText("Case Soda")).toBeInTheDocument();
+    });
+
+    it("an UNKNOWN code opens create-product with the code as SKU and pauses the screen beneath it", async () => {
+      mockResolveProductByCode.mockResolvedValue({ notFound: true, archived: false });
+      await openScreen();
+
+      await scanCode("999000111222");
+
+      await waitFor(() => expect(capturedInlineCreate?.isOpen).toBe(true));
+      expect(capturedInlineCreate?.initialSku).toBe("999000111222");
+      expect(cameraEnabled).toBe(false); // camera off while the dialog is up
+      expect(screen.getByLabelText("Scan items")).toHaveAttribute("aria-hidden", "true");
+    });
+
+    it("no customer chosen: warns that scanned items are at list price", async () => {
+      await openScreen();
+      expect(screen.getByText(/No customer selected/)).toBeInTheDocument();
+    });
+
+    it("closing the order builder tears the screen down; reopening does not land straight in it", async () => {
+      const { rerender } = await openScreen();
+
+      rerender(<CreateOrderModal isOpen={false} onClose={jest.fn()} />);
+      expect(screen.queryByRole("dialog", { name: "Scan items" })).not.toBeInTheDocument();
+
+      rerender(<CreateOrderModal isOpen onClose={jest.fn()} />);
+      expect(await screen.findByRole("dialog", { name: "Create Order" })).toBeInTheDocument();
+      expect(screen.queryByRole("dialog", { name: "Scan items" })).not.toBeInTheDocument();
+    });
+  });
+
+  // Regressions from the lead's review of the scan_v2 change (#977).
+  describe("scan_v2 review regressions", () => {
+    const boxedProduct = {
+      notFound: false,
+      archived: false,
+      product: {
+        id: "prod-b",
+        name: "Case Soda",
+        pricePerUnit: "24",
+        unit: "case",
+        unitsPerBox: 6,
+      },
+    };
+    const tiered = {
+      notFound: false,
+      archived: false,
+      product: {
+        id: "prod-1",
+        name: "Widget",
+        pricePerUnit: "10",
+        priceTier2: "8",
+        priceTier3: "7",
+        unit: "each",
+      },
+    };
+    const acme = { id: "c1", businessName: "Acme Foods", pricingTier: 2 };
+
+    const pickCustomer = async (name: string) => {
+      fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+        target: { value: name.slice(0, 3) },
+      });
+      fireEvent.click(await screen.findByText(name));
+    };
+
+    describe("a repeat add on a case-packed line (money)", () => {
+      it("flag OFF: the historical +1 unit - a repeat add does NOT add a whole extra case", async () => {
+        mockScanV2 = false;
+        mockResolveProductByCode.mockResolvedValue(boxedProduct);
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+
+        capturedOnScan!("111");
+        expect(await screen.findByText(/6 pcs total/)).toBeInTheDocument();
+        capturedOnScan!("111");
+
+        expect(await screen.findByText(/7 pcs total/)).toBeInTheDocument();
+        expect(screen.queryByText(/12 pcs total/)).not.toBeInTheDocument();
+      });
+
+      it("flag ON: the scan adds a whole case", async () => {
+        mockScanV2 = true;
+        mockResolveProductByCode.mockResolvedValue(boxedProduct);
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+
+        capturedOnScan!("111");
+        expect(await screen.findByText(/6 pcs total/)).toBeInTheDocument();
+        capturedOnScan!("111");
+
+        expect(await screen.findByText(/12 pcs total/)).toBeInTheDocument();
+      });
+    });
+
+    it("the order Dialog returns if the addon resolves away while the scan screen is open", async () => {
+      mockScanV2 = true;
+      const { rerender } = renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+      act(() => capturedOnOpenContinuous!());
+      await screen.findByRole("dialog", { name: "Scan items" });
+      expect(screen.queryByRole("dialog", { name: "Create Order" })).not.toBeInTheDocument();
+
+      mockScanV2 = false;
+      rerender(<CreateOrderModal isOpen onClose={jest.fn()} />);
+
+      expect(await screen.findByRole("dialog", { name: "Create Order" })).toBeInTheDocument();
+      expect(screen.queryByRole("dialog", { name: "Scan items" })).not.toBeInTheDocument();
+    });
+
+    describe("owner ruling D1 - the customer's price applies to lines scanned BEFORE the customer", () => {
+      it("choosing a tier-2 customer afterwards re-prices the scanned line to their tier price", async () => {
+        mockScanV2 = true;
+        mockCustomers = [acme];
+        mockResolveProductByCode.mockResolvedValue(tiered);
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        capturedOnScan!("111");
+        expect(await screen.findByText("$10.00 / each")).toBeInTheDocument();
+
+        await pickCustomer("Acme Foods");
+
+        expect(await screen.findByText("$8.00 / each")).toBeInTheDocument();
+        expect(screen.getByText("Special price")).toBeInTheDocument();
+      });
+
+      it("a customer-specific product tier (customer prices) wins over the customer's default tier", async () => {
+        mockScanV2 = true;
+        mockCustomers = [acme];
+        mockCustomerPrices = [{ productId: "prod-1", pricingTier: 3 }];
+        mockResolveProductByCode.mockResolvedValue(tiered);
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        capturedOnScan!("111");
+        await screen.findByText("$10.00 / each");
+
+        await pickCustomer("Acme Foods");
+
+        expect(await screen.findByText("$7.00 / each")).toBeInTheDocument();
+      });
+
+      it("an operator's one-time price is NOT overwritten by the customer's tier", async () => {
+        mockScanV2 = true;
+        mockCustomers = [acme];
+        mockResolveProductByCode.mockResolvedValue(tiered);
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        capturedOnScan!("111");
+        await screen.findByText("$10.00 / each");
+        fireEvent.change(screen.getByPlaceholderText("10.00"), { target: { value: "9.00" } });
+        expect(await screen.findByText("$9.00 / each")).toBeInTheDocument();
+
+        await pickCustomer("Acme Foods");
+
+        expect(screen.getByText("$9.00 / each")).toBeInTheDocument();
+        expect(screen.queryByText("$8.00 / each")).not.toBeInTheDocument();
+      });
+
+      it("flag OFF: the classic modal is unchanged - choosing a customer afterwards does NOT re-price", async () => {
+        mockScanV2 = false;
+        mockCustomers = [acme];
+        mockResolveProductByCode.mockResolvedValue(tiered);
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        capturedOnScan!("111");
+        await screen.findByText("$10.00 / each");
+
+        await pickCustomer("Acme Foods");
+
+        expect(screen.getByText("$10.00 / each")).toBeInTheDocument();
+        expect(screen.queryByText("$8.00 / each")).not.toBeInTheDocument();
+      });
+
+      it("a line scanned AFTER the customer is chosen is priced for them immediately", async () => {
+        mockScanV2 = true;
+        mockCustomers = [acme];
+        mockResolveProductByCode.mockResolvedValue(tiered);
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        await pickCustomer("Acme Foods");
+
+        capturedOnScan!("111");
+
+        expect(await screen.findByText("$8.00 / each")).toBeInTheDocument();
       });
     });
   });

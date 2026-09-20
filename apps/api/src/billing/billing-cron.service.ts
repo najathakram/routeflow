@@ -201,6 +201,7 @@ export class BillingCronService {
   @LeaderCron("0 2 * * *", "billing-cron.applyScheduledDowngrades")
   async applyScheduledDowngrades(): Promise<void> {
     const now = new Date();
+    const snapshotOn = await this.planTransition.isEnabled();
     const subs = await this.prisma.tenantSubscription.findMany({
       // Same tenant filter as applyScheduledCancellations below: a SUSPENDED / CANCELLED /
       // soft-deleted tenant has already had its churn delta booked, so applying a schedule left
@@ -220,7 +221,8 @@ export class BillingCronService {
         retainedUserIds: true,
         // `planKey` is nullable (the pre-plans-as-data cohort): resolve the plan being LEFT the
         // way every other plan path does, or the snapshot would be skipped for exactly those tenants.
-        tenant: { select: { plan: true } },
+        // Joined ONLY while the snapshot flag is on — flag off, the query is exactly what it was.
+        ...(snapshotOn ? { tenant: { select: { plan: true } } } : {}),
       },
     });
     let applied = 0;
@@ -258,19 +260,26 @@ export class BillingCronService {
         );
         const seatCap = targetDef.seatsIncluded ?? null;
 
-        const transition = {
-          tenantId: s.tenantId,
-          fromPlanKey: normalizePlanKey(s.planKey) ?? planKeyFromEnum(s.tenant.plan),
-          toPlanKey: target,
-          toPlanVersionId: targetVersion.id,
-          actor: { id: null, name: "system: scheduled downgrade" },
-        };
-        const preparedTransition = await this.planTransition.prepare(transition);
+        const tenantPlan = (s as { tenant?: { plan?: string } }).tenant?.plan;
+        const transition = snapshotOn
+          ? {
+              tenantId: s.tenantId,
+              fromPlanKey: normalizePlanKey(s.planKey) ?? planKeyFromEnum(tenantPlan),
+              toPlanKey: target,
+              toPlanVersionId: targetVersion.id,
+              actor: { id: null, name: "system: scheduled downgrade" },
+            }
+          : null;
+        const preparedTransition = transition
+          ? await this.planTransition.prepare(transition)
+          : null;
 
         await this.prisma.$transaction(async (tx) => {
           // Snapshot first, in the same transaction: a failure here throws into the per-row catch
           // below, so THIS tenant's downgrade is not applied (fail closed) and retries next tick.
-          await this.planTransition.onPlanChange(tx, transition, preparedTransition);
+          if (transition && preparedTransition) {
+            await this.planTransition.onPlanChange(tx, transition, preparedTransition);
+          }
           await tx.tenantSubscription.update({
             where: { tenantId: s.tenantId },
             data: {

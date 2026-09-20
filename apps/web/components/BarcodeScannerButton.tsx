@@ -3,7 +3,13 @@
 import * as React from "react";
 import { Camera, X, Zap, ZapOff } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
-import { hasTorch, nudgeFocus, openCamera, setTorch } from "@/lib/scan-camera";
+import {
+  classifyScannerError,
+  hasTorch,
+  nudgeFocus,
+  openCamera,
+  setTorch,
+} from "@/lib/scan-camera";
 import { playScanCue, unlockScanCue } from "@/lib/scan-cue";
 
 interface BarcodeScannerButtonProps {
@@ -20,21 +26,12 @@ interface BarcodeScannerButtonProps {
    * an inline message) rather than leaving the operator staring at nothing.
    */
   onError?: (message: string) => void;
-}
-
-/** Maps the webcam failure modes callers actually hit to a message an operator can act on. */
-function classifyScannerError(err: unknown): string {
-  const name = (err as { name?: string })?.name;
-  if (name === "NotAllowedError" || name === "PermissionDeniedError") {
-    return "Camera access was denied. Allow camera access in your browser's site settings, then try again.";
-  }
-  if (name === "NotFoundError" || name === "DevicesNotFoundError") {
-    return "No camera was found on this device.";
-  }
-  if (name === "NotReadableError" || name === "TrackStartError") {
-    return "The camera is already in use by another app or tab.";
-  }
-  return "Couldn't start the camera. Check camera permissions and try again.";
+  /**
+   * When given, tapping the camera button calls this INSTEAD of opening the single-shot overlay —
+   * the caller (CreateOrderModal behind `scan_v2`) renders its own accumulating scan screen. The
+   * secure-context check still runs first, and the USB/wedge-scanner path is unaffected.
+   */
+  onOpenContinuous?: () => void;
 }
 
 /**
@@ -56,6 +53,7 @@ export function BarcodeScannerButton({
   className,
   title = "Scan barcode",
   onError,
+  onOpenContinuous,
 }: BarcodeScannerButtonProps) {
   const [scannerOpen, setScannerOpen] = React.useState(false);
   const [torchAvailable, setTorchAvailable] = React.useState(false);
@@ -120,6 +118,10 @@ export function BarcodeScannerButton({
     // The tap that opens the scanner is the user gesture browsers require before audio can play,
     // so unlock the cue's AudioContext now rather than on the first (silent) scan.
     unlockScanCue();
+    if (onOpenContinuous) {
+      onOpenContinuous();
+      return;
+    }
     setTorchOn(false);
     setTorchAvailable(false);
     setScannerOpen(true);

@@ -3,6 +3,16 @@ builder = "DOCKERFILE"
 dockerfilePath = "apps/web/Dockerfile"
 # Railway builds from the repo root — the Dockerfile COPY context is "."
 watchPatterns = ["apps/web/**", "packages/**"]
+# Release-health tagging (2026-09): the Dockerfile declares
+# `ARG NEXT_PUBLIC_RELEASE_SHA`. Railway's documented behavior is to pass every
+# configured SERVICE env var as a matching Docker build ARG automatically (the
+# same mechanism NEXT_PUBLIC_API_URL already relies on) — so set a
+# `NEXT_PUBLIC_RELEASE_SHA` variable on this service in the Railway dashboard
+# whose value is the reference `${{RAILWAY_GIT_COMMIT_SHA}}`. This file has no
+# supported key for injecting a literal build arg directly (railway.toml's
+# [build] section does not expose one as of this writing), so the dashboard
+# variable is the wiring; verify post-deploy that apps/web/app/api/health
+# (server, RUNTIME) and the browser Sentry release (BUILD-time, this arg) agree.
 
 [deploy]
 healthcheckPath = "/login"

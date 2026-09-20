@@ -1,10 +1,11 @@
-import { Prisma } from "@prisma/client";
+import { OrderStatus, Prisma } from "@prisma/client";
 import {
   BACKING_ORDER_STATUSES,
   computeCreditExposure,
   DELIVERED_ORDER_STATUSES,
   isUnbackedDraft,
   loadCreditExposure,
+  NON_BACKING_ORDER_STATUSES,
   OPEN_ORDER_STATUSES,
   RECEIVABLE_INVOICE_SELECT,
   receivableBalance,
@@ -33,6 +34,7 @@ const invoice = (o: Partial<ExposureInvoice> & { total: unknown }): ExposureInvo
   status: "SENT",
   orderId: null,
   payments: [],
+  order: null, // required on ExposureInvoice (B584) — overridden per test where an order backs it
   ...o,
 });
 const order = (id: string, total: unknown): ExposureOrder => ({ id, total });
@@ -51,9 +53,12 @@ describe("isUnbackedDraft (the single draft-exclusion predicate)", () => {
     expect(isUnbackedDraft({ status: "DRAFT", order: { status } })).toBe(true);
   });
 
-  it("a standalone DRAFT (order null or absent) is UNBACKED", () => {
+  it("a standalone DRAFT (order null) is UNBACKED", () => {
     expect(isUnbackedDraft({ status: "DRAFT", order: null })).toBe(true);
-    expect(isUnbackedDraft({ status: "DRAFT" })).toBe(true);
+  });
+
+  it("B584: a DRAFT whose `order` is missing at RUNTIME is still UNBACKED (the loader's `as` cast can deliver undefined; the type guards the typed call sites, this pins the fallback)", () => {
+    expect(isUnbackedDraft({ status: "DRAFT" } as any)).toBe(true);
   });
 
   it.each(["SENT", "VIEWED", "PARTIAL", "OVERDUE", "PAID", "VOID", "WRITTEN_OFF"])(
@@ -71,7 +76,7 @@ describe("receivableBalance (what ONE invoice adds to a customers list / CSV rec
     total: unknown;
     order?: { status: string } | null;
     payments?: { amount: unknown; status: string }[];
-  }) => ({ payments: [], ...o });
+  }) => ({ payments: [], order: null, ...o });
 
   it.each([
     ["standalone (no order)", null],
@@ -995,16 +1000,18 @@ describe("loadCreditExposure (the ONLY reader)", () => {
 
     const invArgs = db.invoice.findMany.mock.calls[0][0];
     expect(invArgs.where.customerId).toBe("cust-1");
-    // The DB read drops SETTLED only — DRAFT must come back so backing can be judged.
-    expect(new Set(invArgs.where.status.notIn)).toEqual(new Set(CREDIT_NOT_APPLICABLE));
-    expect(invArgs.where.status.notIn).not.toContain("DRAFT");
+    // The DB read drops SETTLED only — DRAFT must come back so backing can be judged (B577 adds the
+    // covering PAID invoices of OPEN orders as a second OR branch; an edit adds a third).
+    const [issued] = invArgs.where.OR;
+    expect(new Set(issued.status.notIn)).toEqual(new Set(CREDIT_NOT_APPLICABLE));
+    expect(issued.status.notIn).not.toContain("DRAFT");
     expect(invArgs.select).toEqual({
       total: true,
       status: true,
       orderId: true,
       // Without the order relation every DRAFT would look unbacked and vanish from the block.
       order: { select: { id: true, status: true, total: true } },
-      payments: { select: { amount: true, status: true } },
+      payments: { select: { amount: true, status: true, method: true } },
     });
 
     const ordArgs = db.order.findMany.mock.calls[0][0];
@@ -1047,6 +1054,8 @@ describe("loadCreditExposure (the ONLY reader)", () => {
       uninvoicedOrderExposure: 0,
       counted: 120,
       pendingExposure: 12, // the standalone draft only
+      excludedOrderPaid: 0, // present only because an order is being edited; nothing was paid on it
+      excludedOrderUnsettledOutstanding: 100, // ...but its own SENT invoice (100) is issued and unsettled
     });
   });
 
@@ -1055,5 +1064,24 @@ describe("loadCreditExposure (the ONLY reader)", () => {
     await loadCreditExposure(db, "cust-1");
     expect(db.invoice.findMany).toHaveBeenCalledTimes(1);
     expect(db.order.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  describe("B584: BACKING_ORDER_STATUSES is pinned exhaustively against OrderStatus", () => {
+    it("every OrderStatus is classified exactly once — BACKING or NON_BACKING — so a NEW status cannot silently fall on the wrong side of the credit block", () => {
+      const all = Object.values(OrderStatus).sort();
+      const classified = [...BACKING_ORDER_STATUSES, ...NON_BACKING_ORDER_STATUSES].sort();
+      expect(all.length).toBeGreaterThan(0);
+      expect(classified).toEqual(all); // covers every status, none twice
+      expect(BACKING_ORDER_STATUSES.filter((s) => NON_BACKING_ORDER_STATUSES.includes(s))).toEqual(
+        [],
+      );
+    });
+
+    it("the classification is the ruling's: backing = open + delivered; non-backing = DRAFT and CANCELLED only", () => {
+      expect([...BACKING_ORDER_STATUSES].sort()).toEqual(
+        ["CONFIRMED", "DELIVERED", "OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED", "PENDING"].sort(),
+      );
+      expect([...NON_BACKING_ORDER_STATUSES].sort()).toEqual(["CANCELLED", "DRAFT"]);
+    });
   });
 });

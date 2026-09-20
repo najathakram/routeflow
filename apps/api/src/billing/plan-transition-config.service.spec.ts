@@ -14,17 +14,20 @@ const SKU_GRANTED = planFlagKeys[2];
 const ADDON_KEYED = FEATURE_REGISTRY.find((f) => f.gate.via === "RequireAddon")!.key;
 const DEFAULT_GRANTED = FEATURE_REGISTRY.find((f) => f.defaultGranted)!.key;
 
-const TX = { tag: "tx" } as never;
+const auditCreate = jest.fn().mockResolvedValue({});
+const TX = { tag: "tx", auditLog: { create: auditCreate } } as never;
 const ACTOR = { id: "u1", name: "Admin" };
 
-function build(flag: string | undefined) {
+function build(enabled: boolean) {
+  auditCreate.mockClear();
   const snapshots = {
     snapshot: jest.fn().mockResolvedValue({ id: "snap-1", takenAt: new Date() }),
     restoreLatest: jest.fn().mockResolvedValue({
       snapshotId: "snap-0",
       takenAt: new Date(),
       planKey: HIGH,
-      report: { restored: 2, skipped: 0, keptNewer: 0, unchanged: 0 },
+      report: { restored: 2, skipped: 1, keptNewer: 1, unchanged: 0 },
+      supersededSnapshots: 2,
     }),
   };
   const catalog = {
@@ -34,13 +37,9 @@ function build(flag: string | undefined) {
       addonSkus: [{ sku: "SOME_SKU", grantsFlags: [SKU_GRANTED] }],
     }),
   };
-  const config = { get: (k: string) => (k === "ENTITLEMENT_CONFIG_SNAPSHOT" ? flag : undefined) };
-  const svc = new PlanTransitionConfigService(
-    config as never,
-    snapshots as never,
-    catalog as never,
-  );
-  return { svc, snapshots, catalog };
+  const flag = { isEnabled: jest.fn().mockResolvedValue(enabled) };
+  const svc = new PlanTransitionConfigService(flag as never, snapshots as never, catalog as never);
+  return { svc, snapshots, catalog, flag };
 }
 
 /** The real call order at a site: prepare() BEFORE the transaction, onPlanChange(tx, ...) inside it. */
@@ -54,40 +53,47 @@ async function runTransition(
 }
 
 describe("PlanTransitionConfigService (A2 step b)", () => {
-  it.each([undefined, "", "off", "0", "false", "yes please"])(
-    "flag %p is OFF: nothing is read or written on a downgrade or an upgrade",
-    async (flag) => {
-      const { svc, snapshots, catalog } = build(flag);
-      expect(svc.isEnabled()).toBe(false);
+  it("with the flag OFF nothing is read or written on a downgrade or an upgrade", async () => {
+    const { svc, snapshots, catalog } = build(false);
 
+    for (const [from, to] of [
+      [HIGH, LOW],
+      [LOW, HIGH],
+    ]) {
       expect(
         await runTransition(svc, {
           tenantId: "t1",
-          fromPlanKey: HIGH,
-          toPlanKey: LOW,
+          fromPlanKey: from,
+          toPlanKey: to,
           toPlanVersionId: null,
         }),
       ).toEqual({ action: "none" });
-      expect(
-        await runTransition(svc, {
-          tenantId: "t1",
-          fromPlanKey: LOW,
-          toPlanKey: HIGH,
-          toPlanVersionId: null,
-        }),
-      ).toEqual({ action: "none" });
-      expect(snapshots.snapshot).not.toHaveBeenCalled();
-      expect(snapshots.restoreLatest).not.toHaveBeenCalled();
-      expect(catalog.getVersionForTenant).not.toHaveBeenCalled();
-    },
-  );
+    }
+    expect(snapshots.snapshot).not.toHaveBeenCalled();
+    expect(snapshots.restoreLatest).not.toHaveBeenCalled();
+    expect(catalog.getVersionForTenant).not.toHaveBeenCalled();
+  });
 
-  it.each(["on", "ON", " 1 ", "true"])("flag %p turns it on", (flag) => {
-    expect(build(flag).svc.isEnabled()).toBe(true);
+  it("isEnabled() is the live flag, for sites that skip their extra reads while it is off", async () => {
+    expect(await build(true).svc.isEnabled()).toBe(true);
+    expect(await build(false).svc.isEnabled()).toBe(false);
+  });
+
+  it("the flag is read once, in prepare() BEFORE the transaction — onPlanChange never reads it", async () => {
+    const { svc, flag } = build(true);
+    const t = { tenantId: "t1", fromPlanKey: HIGH, toPlanKey: LOW, toPlanVersionId: null };
+
+    const prepared = await svc.prepare(t);
+    expect(prepared.enabled).toBe(true);
+    expect(flag.isEnabled).toHaveBeenCalledTimes(1);
+
+    flag.isEnabled.mockResolvedValue(false); // flipped mid-flight: this plan change stays consistent
+    expect(await svc.onPlanChange(TX, t, prepared)).toMatchObject({ action: "snapshot" });
+    expect(flag.isEnabled).toHaveBeenCalledTimes(1);
   });
 
   it("a downgrade snapshots the plan being LEFT, inside the caller's tx, once", async () => {
-    const { svc, snapshots } = build("on");
+    const { svc, snapshots } = build(true);
     const now = new Date("2026-09-20T00:00:00Z");
 
     const out = await runTransition(
@@ -103,7 +109,7 @@ describe("PlanTransitionConfigService (A2 step b)", () => {
   });
 
   it("fails closed: a failed snapshot rejects, so the caller's transaction aborts the downgrade", async () => {
-    const { svc, snapshots } = build("on");
+    const { svc, snapshots } = build(true);
     snapshots.snapshot.mockRejectedValueOnce(new Error("db down"));
 
     await expect(
@@ -117,7 +123,7 @@ describe("PlanTransitionConfigService (A2 step b)", () => {
   });
 
   it("an upgrade restores the newest snapshot the new plan covers, with a plan-aware allow-list", async () => {
-    const { svc, snapshots, catalog } = build("on");
+    const { svc, snapshots, catalog } = build(true);
 
     const out = await runTransition(svc, {
       tenantId: "t1",
@@ -140,13 +146,59 @@ describe("PlanTransitionConfigService (A2 step b)", () => {
     expect(planAllows("no.such.feature")).toBe(false);
   });
 
+  it("an automatic restore writes its report into the AUDIT TRAIL in the same tx (no migration)", async () => {
+    const { svc } = build(true);
+
+    await runTransition(svc, {
+      tenantId: "t1",
+      fromPlanKey: LOW,
+      toPlanKey: HIGH,
+      toPlanVersionId: null,
+      actor: { id: "u9" },
+    });
+
+    expect(auditCreate).toHaveBeenCalledTimes(1);
+    expect(auditCreate.mock.calls[0][0].data).toMatchObject({
+      tenantId: "t1",
+      userId: "u9",
+      action: "CONFIG_SNAPSHOT_RESTORED",
+      entityType: "tenant",
+      entityId: "t1",
+      meta: {
+        automatic: true,
+        snapshotId: "snap-0",
+        restoredToPlanKey: HIGH,
+        report: { restored: 2, skipped: 1, keptNewer: 1, unchanged: 0 },
+        supersededSnapshots: 2,
+      },
+    });
+  });
+
+  it("no audit row when nothing was restored, and none for a downgrade", async () => {
+    const { svc, snapshots } = build(true);
+    snapshots.restoreLatest.mockResolvedValueOnce(null);
+    await runTransition(svc, {
+      tenantId: "t1",
+      fromPlanKey: LOW,
+      toPlanKey: HIGH,
+      toPlanVersionId: null,
+    });
+    await runTransition(svc, {
+      tenantId: "t1",
+      fromPlanKey: HIGH,
+      toPlanKey: LOW,
+      toPlanVersionId: null,
+    });
+    expect(auditCreate).not.toHaveBeenCalled();
+  });
+
   it("the catalog is read BEFORE the transaction and only for an enabled upgrade", async () => {
-    const { svc, catalog } = build("on");
+    const { svc, catalog } = build(true);
     const up = { tenantId: "t1", fromPlanKey: LOW, toPlanKey: HIGH, toPlanVersionId: "v1" };
 
     await svc.prepare({ ...up, fromPlanKey: HIGH, toPlanKey: LOW }); // downgrade
     await svc.prepare({ ...up, fromPlanKey: HIGH, toPlanKey: HIGH }); // same rank
-    await build(undefined).svc.prepare(up); // flag off
+    await build(false).svc.prepare(up); // flag off
     expect(catalog.getVersionForTenant).not.toHaveBeenCalled();
 
     await svc.prepare(up);
@@ -154,7 +206,7 @@ describe("PlanTransitionConfigService (A2 step b)", () => {
   });
 
   it("a catalog failure never blocks the upgrade: the restore is skipped and logged", async () => {
-    const { svc, snapshots, catalog } = build("on");
+    const { svc, snapshots, catalog } = build(true);
     catalog.getVersionForTenant.mockRejectedValueOnce(new Error("catalog unseeded"));
 
     const out = await runTransition(svc, {
@@ -169,7 +221,7 @@ describe("PlanTransitionConfigService (A2 step b)", () => {
   });
 
   it("an upgrade with nothing to restore reports restore: null", async () => {
-    const { svc, snapshots } = build("on");
+    const { svc, snapshots } = build(true);
     snapshots.restoreLatest.mockResolvedValueOnce(null);
 
     expect(
@@ -189,7 +241,7 @@ describe("PlanTransitionConfigService (A2 step b)", () => {
     ["unknown previous plan", "legacy-nonsense", HIGH],
     ["unknown target plan", HIGH, "legacy-nonsense"],
   ])("%s: nothing happens", async (_label, from, to) => {
-    const { svc, snapshots } = build("on");
+    const { svc, snapshots } = build(true);
 
     expect(
       await runTransition(svc, {

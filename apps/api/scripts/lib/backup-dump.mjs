@@ -16,9 +16,19 @@ import { spawnSync } from "node:child_process";
 /** A prod dump below either floor is not the production database (125+ models, 200+ migrations). */
 export const MIN_TABLES = 100;
 
+/**
+ * Tables that a real production database ALWAYS has rows in. A dump of a freshly migrated, empty
+ * database has >= 100 CREATE TABLEs and a full _prisma_migrations block, so table count + migration
+ * rows alone bless it as "verified" (B578) — these row-count floors are what make it a BACKUP.
+ * Names are the Prisma model / table names as pg_dump emits them (quoted, case-preserved).
+ */
+export const REQUIRED_DATA_TABLES = ["Tenant", "User"];
+
 /** `COPY public._prisma_migrations (...)` — pg_dump emits it unquoted; accept a quoted form too. */
 const MIGRATIONS_COPY_RE = /^COPY public\.(?:_prisma_migrations|"_prisma_migrations") /;
 const CREATE_TABLE_RE = /^CREATE TABLE public\./;
+/** `COPY public."Tenant" (...)` / `COPY public.users (...)` — captures the table name either way. */
+const COPY_TABLE_RE = /^COPY public\.(?:"([^"]+)"|([A-Za-z0-9_]+)) /;
 /** pg_dump ends every COPY data block with a line holding exactly backslash + dot. */
 const COPY_TERMINATOR = "\\.";
 /** pg_dump's last line of real content. A dump killed mid-write never reaches it. */
@@ -29,6 +39,8 @@ const DUMP_TRAILER = "-- PostgreSQL database dump complete";
  * multi-hundred-MB dump is never held in memory) and reports what proves it is the full prod DB.
  * `migrationRows` counts the DATA rows inside the `_prisma_migrations` COPY block — the header and
  * the `\.` terminator are not rows — and is -1 only when there is no such block at all.
+ * `tableRows` maps EVERY COPY block's table name to its data-row count (B578: table presence and
+ * migration history do not prove there is any data in the dump).
  */
 export async function scanDump(lines) {
   let tables = 0;
@@ -36,6 +48,8 @@ export async function scanDump(lines) {
   let migrationRows = -1;
   let inCopy = false; // inside ANY COPY data block — its rows are data, never structure
   let inMigrations = false; // ...and it is the _prisma_migrations block
+  let currentTable = null; // the table of the COPY block we are inside
+  const tableRows = {};
   let sawTrailer = false;
   let total = 0;
   for await (const raw of lines) {
@@ -43,7 +57,10 @@ export async function scanDump(lines) {
     const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
     if (inCopy) {
       if (line === COPY_TERMINATOR) inCopy = inMigrations = false;
-      else if (inMigrations) migrationRows++;
+      else {
+        if (inMigrations) migrationRows++;
+        if (currentTable !== null) tableRows[currentTable]++;
+      }
       continue;
     }
     if (line.startsWith(DUMP_TRAILER)) sawTrailer = true;
@@ -51,6 +68,9 @@ export async function scanDump(lines) {
     else if (line.startsWith("COPY ")) {
       copyBlocks++;
       inCopy = true;
+      const m = COPY_TABLE_RE.exec(line);
+      currentTable = m ? (m[1] ?? m[2]) : null;
+      if (currentTable !== null) tableRows[currentTable] ??= 0;
       if (MIGRATIONS_COPY_RE.test(line)) {
         migrationRows = 0;
         inMigrations = true;
@@ -63,6 +83,7 @@ export async function scanDump(lines) {
     tables,
     copyBlocks,
     migrationRows,
+    tableRows,
     complete: sawTrailer && !inCopy,
     unterminated: inCopy,
   };
@@ -78,6 +99,14 @@ export function dumpProblems(stats) {
     problems.push("the dump ends inside a COPY data block (truncated)");
   } else if (!stats.complete) {
     problems.push(`no "${DUMP_TRAILER}" trailer (truncated, or still being written)`);
+  }
+  for (const table of REQUIRED_DATA_TABLES) {
+    const rows = stats.tableRows?.[table];
+    if (rows === undefined) {
+      problems.push(`no COPY block for "${table}" (a production dump always has ${table} data)`);
+    } else if (rows === 0) {
+      problems.push(`the "${table}" COPY block has 0 rows — an empty database is not a backup`);
+    }
   }
   if (stats.migrationRows < 0) {
     problems.push(
@@ -211,7 +240,8 @@ export async function runBackup({
   const mb = (statSync(file).size / 1048576).toFixed(1);
   log(
     `\nBackup written: ${mb} MB · ${stats.lines} lines · ${stats.tables} tables · ` +
-      `${stats.copyBlocks} COPY blocks · _prisma_migrations rows: ${stats.migrationRows}`,
+      `${stats.copyBlocks} COPY blocks · _prisma_migrations rows: ${stats.migrationRows} · ` +
+      REQUIRED_DATA_TABLES.map((t) => `${t} rows: ${stats.tableRows?.[t] ?? 0}`).join(" · "),
   );
 
   const problems = dumpProblems(stats);

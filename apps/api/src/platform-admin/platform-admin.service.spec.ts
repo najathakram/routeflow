@@ -40,7 +40,7 @@ describe("PlatformAdminService — audit provenance", () => {
   let billingEventService: { emit: jest.Mock };
   let meterService: { readAll: jest.Mock };
   let featureOverrides: { allActive: jest.Mock };
-  let planTransition: { prepare: jest.Mock; onPlanChange: jest.Mock };
+  let planTransition: { isEnabled: jest.Mock; prepare: jest.Mock; onPlanChange: jest.Mock };
   let platformPricingService: { resolveTenantPricing: jest.Mock };
   let mrrService: {
     computeOverview: jest.Mock;
@@ -101,7 +101,8 @@ describe("PlatformAdminService — audit provenance", () => {
     // override" — the same raw-entitlements behavior those tests already assert on.
     featureOverrides = { allActive: jest.fn().mockResolvedValue(new Map()) };
     planTransition = {
-      prepare: jest.fn().mockResolvedValue({ planAllows: null }),
+      isEnabled: jest.fn().mockResolvedValue(true),
+      prepare: jest.fn().mockResolvedValue({ enabled: true, planAllows: null }),
       onPlanChange: jest.fn().mockResolvedValue({ action: "none" }),
     };
     platformPricingService = { resolveTenantPricing: jest.fn() };
@@ -2033,6 +2034,37 @@ describe("PlatformAdminService — audit provenance", () => {
         service.updatePlan(TENANT_ID, { plan: "STARTER" } as any, ADMIN_ID),
       ).rejects.toThrow("snapshot failed");
       expect(prisma.tenant.update).not.toHaveBeenCalled();
+    });
+
+    it("activateManualSubscription with the flag OFF issues NO extra tenant read and never touches the hook", async () => {
+      planTransition.isEnabled.mockResolvedValue(false);
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        status: "SUSPENDED",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: { planKey: null, basePriceSnapshot: null, discount: 0 },
+      } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-9",
+        definitions: [{ planKey: "STARTER", monthlyPrice: 99, isCustom: false }],
+      } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+        plan: "STARTER",
+      } as any);
+
+      await service.activateManualSubscription(
+        TENANT_ID,
+        { plan: "STARTER", billingPeriodDays: 30, paymentMethod: "BANK_TRANSFER" } as any,
+        ADMIN_ID,
+      );
+
+      expect(prisma.tenant.findUniqueOrThrow).toHaveBeenCalledTimes(1); // only the in-tx paying-set read
+      expect(planTransition.prepare).not.toHaveBeenCalled();
+      expect(planTransition.onPlanChange).not.toHaveBeenCalled();
     });
 
     it("activateManualSubscription: the plan being left falls back to Tenant.plan and the hook runs in the tx", async () => {

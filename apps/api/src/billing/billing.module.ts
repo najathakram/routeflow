@@ -11,6 +11,7 @@ import { PlanAdminController } from "./plan-admin.controller";
 import { SettingsBillingController } from "./settings-billing.controller";
 import { ProrationService } from "./proration.service";
 import { TenantConfigSnapshotService } from "./tenant-config-snapshot.service";
+import { ConfigSnapshotFlagService } from "./config-snapshot-flag.service";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import { TenantConfigSnapshotAdminService } from "./tenant-config-snapshot-admin.service";
 import { SubscriptionService } from "./subscription.service";
@@ -57,7 +58,8 @@ import { EntitlementsModule } from "./entitlements.module";
     // tenant's feature config. Stateless, no dependencies.
     TenantConfigSnapshotService,
     // Lane B A2 step b: the ONE hook every plan-change site calls inside its transaction.
-    // Flag ENTITLEMENT_CONFIG_SNAPSHOT (default off) — wired but inert until flipped.
+    // Live flag `entitlements.configSnapshot` (default off, fail-closed) — wired but inert until flipped.
+    ConfigSnapshotFlagService,
     PlanTransitionConfigService,
     // Lane B A2 step c: admin list / preview / "Restore now" for the tenant snapshots tab.
     TenantConfigSnapshotAdminService,
@@ -81,6 +83,7 @@ import { EntitlementsModule } from "./entitlements.module";
     // resolution failed until exported here.
     MrrService,
     TenantConfigSnapshotService,
+    ConfigSnapshotFlagService,
     PlanTransitionConfigService,
     TenantConfigSnapshotAdminService,
   ],

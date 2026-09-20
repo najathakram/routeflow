@@ -3,8 +3,9 @@ import { ProductLabelsModule } from "../product-labels/product-labels.module";
 import { SellingRestrictionsService } from "./selling-restrictions.service";
 
 /**
- * Selling restrictions (lane R). Step 1 ships the evaluator; step 2's `assertLinesSellable`
- * choke point lands here and the line-writing modules import this module to reach it.
+ * Selling restrictions (lane R). Step 1 shipped the evaluator; step 2's `assertLinesSellable`
+ * choke point lives beside it, and every line-writing module will import this module to reach it
+ * as its call site lands (none does yet).
  */
 @Module({
   imports: [ProductLabelsModule],

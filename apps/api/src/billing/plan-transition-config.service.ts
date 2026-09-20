@@ -1,7 +1,8 @@
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 import { FEATURE_REGISTRY } from "./feature-registry";
+import { CONFIG_SNAPSHOT_RESTORED_ACTION } from "./config-snapshot-audit.constants";
+import { ConfigSnapshotFlagService } from "./config-snapshot-flag.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { findPlanDefinition, planRank } from "./plan-catalog.constants";
 import {
@@ -30,6 +31,9 @@ export interface PlanTransition {
  * connection can starve the pool under load). Produced by `prepare()`.
  */
 export interface PreparedPlanTransition {
+  /** The live flag as read BEFORE the transaction: `onPlanChange` never reads it (pool, and one
+   *  consistent answer for the whole plan change). */
+  enabled: boolean;
   /** null = restore is skipped for this change (flag off, not an upgrade, or the catalog read failed). */
   planAllows: ((featureKey: string) => boolean) | null;
 }
@@ -48,30 +52,40 @@ export type PlanTransitionOutcome =
  *  - rank(to) > rank(from) → restore the newest un-restored snapshot the new plan covers, as-was;
  *  - same rank, an unknown/absent `from`, or the flag off → nothing.
  *
- * FLAG: `ENTITLEMENT_CONFIG_SNAPSHOT=on` (default off). While off this service never reads the
- * catalog or touches a table, so wiring it into a site changes nothing until the owner flips it.
+ * FLAG: the `entitlements.configSnapshot` PlatformConfig row (`ConfigSnapshotFlagService`; default
+ * OFF, fail-closed, flippable by a super-admin without a redeploy). While off this service never
+ * reads the catalog or touches a table, so wiring it into a site changes nothing until it is flipped.
  */
 @Injectable()
 export class PlanTransitionConfigService implements OnModuleInit {
   private readonly logger = new Logger(PlanTransitionConfigService.name);
 
   constructor(
-    private readonly config: ConfigService,
+    private readonly flag: ConfigSnapshotFlagService,
     private readonly snapshots: TenantConfigSnapshotService,
     private readonly catalog: PlanCatalogService,
   ) {}
 
   onModuleInit(): void {
-    // A typo ("yes", "enabled") parses as OFF — make the resolved state visible once at boot.
-    this.logger.log(
-      `Entitlement config snapshot/restore is ${this.isEnabled() ? "ON" : "OFF"} ` +
-        `(ENTITLEMENT_CONFIG_SNAPSHOT=${this.config.get<string>("ENTITLEMENT_CONFIG_SNAPSHOT") ?? "<unset>"})`,
-    );
+    // Make the resolved state visible once at boot — fire-and-forget: Nest awaits an async
+    // onModuleInit before listening, and one log line must never be able to stall boot on a slow DB.
+    void this.flag
+      .isEnabled()
+      .then((on) =>
+        this.logger.log(
+          `Entitlement config snapshot/restore is ${on ? "ON" : "OFF"} (PlatformConfig entitlements.configSnapshot)`,
+        ),
+      )
+      .catch(() => undefined);
   }
 
-  isEnabled(): boolean {
-    const raw = this.config.get<string>("ENTITLEMENT_CONFIG_SNAPSHOT");
-    return typeof raw === "string" && ["on", "1", "true"].includes(raw.trim().toLowerCase());
+  /**
+   * The live flag. Sites use it to skip EVERY extra read the hook needs (a `Tenant.plan` join, a
+   * pre-read of the plan being left) while it is off, so wiring a site adds nothing at all until
+   * the flag is flipped.
+   */
+  isEnabled(): Promise<boolean> {
+    return this.flag.isEnabled();
   }
 
   /**
@@ -81,15 +95,16 @@ export class PlanTransitionConfigService implements OnModuleInit {
    * failed, already-paid upgrade is not).
    */
   async prepare(t: PlanTransition): Promise<PreparedPlanTransition> {
-    if (!this.isEnabled() || this.direction(t) !== "upgrade") return { planAllows: null };
+    const enabled = await this.flag.isEnabled();
+    if (!enabled || this.direction(t) !== "upgrade") return { enabled, planAllows: null };
     try {
-      return { planAllows: await this.planAllowsFor(t.toPlanKey, t.toPlanVersionId) };
+      return { enabled, planAllows: await this.planAllowsFor(t.toPlanKey, t.toPlanVersionId) };
     } catch (err) {
       this.logger.error(
         `Config restore skipped for tenant ${t.tenantId} (${t.fromPlanKey} -> ${t.toPlanKey}): ` +
           `plan catalog unavailable — ${(err as Error).message}`,
       );
-      return { planAllows: null };
+      return { enabled, planAllows: null };
     }
   }
 
@@ -104,7 +119,7 @@ export class PlanTransitionConfigService implements OnModuleInit {
     prepared: PreparedPlanTransition,
     now: Date = new Date(),
   ): Promise<PlanTransitionOutcome> {
-    if (!this.isEnabled()) return { action: "none" };
+    if (!prepared.enabled) return { action: "none" };
     const direction = this.direction(t);
     if (direction === "none") return { action: "none" };
 
@@ -132,6 +147,27 @@ export class PlanTransitionConfigService implements OnModuleInit {
       prepared.planAllows,
     );
     if (restore) {
+      // The report goes into the existing audit trail (no migration), in the SAME transaction as
+      // the restore: it exists iff the restore does. The admin list reads the counts from here.
+      await tx.auditLog.create({
+        data: {
+          tenantId: t.tenantId,
+          userId: t.actor?.id ?? null,
+          action: CONFIG_SNAPSHOT_RESTORED_ACTION,
+          entityType: "tenant",
+          entityId: t.tenantId,
+          meta: {
+            automatic: true,
+            snapshotId: restore.snapshotId,
+            snapshotTakenAt: restore.takenAt,
+            snapshotPlanKey: restore.planKey,
+            fromPlanKey: t.fromPlanKey ?? null,
+            restoredToPlanKey: t.toPlanKey,
+            report: { ...restore.report },
+            supersededSnapshots: restore.supersededSnapshots,
+          },
+        },
+      });
       this.logger.log(
         `Restored tenant ${t.tenantId} feature config from snapshot ${restore.snapshotId} on ` +
           `${t.fromPlanKey} -> ${t.toPlanKey}: ${JSON.stringify(restore.report)}`,

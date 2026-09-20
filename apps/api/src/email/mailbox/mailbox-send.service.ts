@@ -35,6 +35,14 @@ export interface MailboxSendParams {
   replyTo?: string;
   /** Sanitized display name for the From header (e.g. the tenant's business name). */
   fromName?: string;
+  /**
+   * Files to attach (invoice PDF today) — passed straight through to nodemailer's
+   * `MailComposer`, which both Gmail and Graph send via the SAME MIME buffer. An
+   * attachment simply grows that buffer; `sendViaGraph`'s existing 4MB size check
+   * already falls through to the next transport for an oversize message, so no
+   * separate size handling is needed here for the Microsoft path.
+   */
+  attachments?: { filename: string; content: Buffer; contentType?: string }[];
 }
 
 export interface MailboxSendResult {
@@ -251,6 +259,7 @@ export class MailboxSendService {
     html: string;
     text?: string;
     replyTo?: string;
+    attachments?: { filename: string; content: Buffer; contentType?: string }[];
   }): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       const composer = new MailComposer({
@@ -260,6 +269,7 @@ export class MailboxSendService {
         html: opts.html,
         text: opts.text,
         replyTo: opts.replyTo,
+        attachments: opts.attachments,
       });
       composer.compile().build((err: Error | null, message: Buffer) => {
         if (err) return reject(err);
@@ -305,6 +315,7 @@ export class MailboxSendService {
         html: params.html,
         text: params.text,
         replyTo: params.replyTo,
+        attachments: params.attachments,
       });
     } catch (err: any) {
       this.logger.error(`Mailbox MIME build failed for tenant ${tenantId}: ${err?.message ?? err}`);
