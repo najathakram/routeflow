@@ -74,6 +74,9 @@ import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
 import { OrderLineItemCards } from "./_components/OrderLineItemCards";
 import { ActionTier } from "./_components/ActionTier";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
+import { parseSellingRestricted } from "@/lib/api/selling-restricted";
+import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
+import type { BlockedLine } from "@routeflow/types";
 import { useProducts } from "@/lib/api/products";
 import {
   computeLineSubtotal,
@@ -1791,9 +1794,16 @@ export default function OrderDetailPage() {
   // License guard (W6b): the edit/promote guard can 409 REGULATED_AUTH_REQUIRED.
   const [licenseBlock, setLicenseBlock] = React.useState<BlockedCategory[] | null>(null);
   const licenseRetryRef = React.useRef<(() => void) | null>(null);
+  // Selling restrictions: lines the API refused for this customer (a dialog, not a raw toast).
+  const [restrictedBlock, setRestrictedBlock] = React.useState<BlockedLine[] | null>(null);
   // Opens the guard modal on a REGULATED_AUTH_REQUIRED 409; other errors fall
   // through to the global mutation toast.
   const guardError = (retry: () => void) => (err: unknown) => {
+    const restricted = parseSellingRestricted(err);
+    if (restricted) {
+      setRestrictedBlock(restricted);
+      return;
+    }
     const blocked = parseRegulatedAuthError(err);
     if (blocked && blocked.length > 0) {
       licenseRetryRef.current = retry;
@@ -3568,6 +3578,7 @@ export default function OrderDetailPage() {
 
       {/* License guard (W6b): an edit/promote hit a 409 REGULATED_AUTH_REQUIRED.
           Lines are removed via the edit UI here, so the remove exit is omitted. */}
+      <BlockedLinesDialog lines={restrictedBlock} onClose={() => setRestrictedBlock(null)} />
       {licenseBlock && order && (
         <LicenseGuardModal
           open
