@@ -175,6 +175,7 @@ describe("OrdersService — units_v1 fail-closed guard on rewrite paths", () => 
           useValue: {
             assertLinesSellable: jest.fn().mockResolvedValue(undefined),
             checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "OFF", reasons: [] }),
+            getPolicy: jest.fn().mockResolvedValue({ enabled: false }),
           },
         },
         {

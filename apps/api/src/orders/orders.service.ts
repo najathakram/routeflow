@@ -15,13 +15,11 @@ import type { Queue } from "bull";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import {
-  applyBestPromotion,
   computeCategoryTax,
   computeLineSubtotal,
   getTierPrice,
   normalizeBoxesPieces,
   roundMoney,
-  isBlockingPayment,
   type CategoryTaxType,
   type PromotionRule,
 } from "@routeflow/pricing";
@@ -37,11 +35,9 @@ import {
   OrderStatus,
   UserRole,
   ItemStatus,
-  TxnStatus,
   MutationType,
   InvoiceStatus,
   PriceType,
-  Prisma,
   ChangeRequestStatus,
   ChangeRequestType,
   NotificationEvent,
@@ -59,17 +55,19 @@ import {
   shouldSkipInPlaceResync,
 } from "./merge-idempotency";
 import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
+import { cancelImpact } from "./order-cancel-impact";
+import {
+  EXISTING_LINE_SELECT,
+  orderEditMode,
+  planOrderEditRestrictions,
+  type OrderEditRestrictionPlan,
+} from "./order-edit-restrictions";
+import { parseCommissionRatePct, parseOrderDate } from "./order-parsers";
 import { CreateSaleDto } from "./dto/create-sale.dto";
 import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
 import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import { UpdateShipmentDto } from "./dto/update-shipment.dto";
 import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
-import {
-  assertRegulatedDeliverySatisfied,
-  deriveStopRegulatedRequirements,
-  loadAgeIdCategorySets,
-  type RegulatedDeliveryDb,
-} from "../common/regulated-delivery";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
@@ -1375,64 +1373,6 @@ export class OrdersService implements OnApplicationBootstrap {
   }
 
   /**
-   * Resolve the staff-supplied business date of an order. A bare "YYYY-MM-DD"
-   * parses to midnight UTC, matching how requestedDeliveryDate/issueDate are handled.
-   * The upper bound is the END of the current UTC day so an operator in a timezone
-   * ahead of UTC can still enter today.
-   */
-  private parseOrderDate(raw: string | undefined, role: UserRole): Date | undefined {
-    if (raw == null) return undefined;
-    // POST /orders is reachable by CUSTOMER and DRIVER — only staff may backdate.
-    if (role !== UserRole.OPERATOR && role !== UserRole.TENANT_ADMIN) {
-      throw new ForbiddenException("Only staff can set an order date");
-    }
-
-    const parsed = new Date(raw);
-    if (Number.isNaN(parsed.getTime())) throw new BadRequestException("Invalid order date");
-
-    const now = new Date();
-    const endOfToday = Date.UTC(
-      now.getUTCFullYear(),
-      now.getUTCMonth(),
-      now.getUTCDate(),
-      23,
-      59,
-      59,
-      999,
-    );
-    if (parsed.getTime() > endOfToday) {
-      throw new BadRequestException("Order date cannot be in the future");
-    }
-    const earliest = new Date(now);
-    earliest.setUTCFullYear(earliest.getUTCFullYear() - 2);
-    if (parsed.getTime() < earliest.getTime()) {
-      throw new BadRequestException("Order date cannot be more than 2 years in the past");
-    }
-    return parsed;
-  }
-
-  /**
-   * Sales agents & commissions: staff-only per-order commission-rate override.
-   * `0` IS a valid value ("exempt"); `undefined` means "no override given"
-   * (falls back to customer/agent default rates). Gated exactly like
-   * parseOrderDate — CUSTOMER/DRIVER callers may never set this.
-   */
-  private parseCommissionRatePct(
-    raw: number | null | undefined,
-    role: UserRole,
-  ): number | null | undefined {
-    if (raw === undefined) return undefined;
-    if (role !== UserRole.OPERATOR && role !== UserRole.TENANT_ADMIN) {
-      throw new ForbiddenException("Only staff can set a commission rate");
-    }
-    if (raw === null) return null;
-    if (typeof raw !== "number" || Number.isNaN(raw) || raw < 0 || raw > 100) {
-      throw new BadRequestException("commissionRatePct must be between 0 and 100");
-    }
-    return raw;
-  }
-
-  /**
    * F30/R8 (B196): the order that already applied this Idempotency-Key for
    * THIS customer, if any.
    *
@@ -1680,9 +1620,9 @@ export class OrdersService implements OnApplicationBootstrap {
     // routeRunId (resolved from the validated stop).
     let resolvedRouteRunId: string | null = null;
 
-    const orderDate = this.parseOrderDate(dto.orderDate, user.role);
+    const orderDate = parseOrderDate(dto.orderDate, user.role);
     // Sales agents & commissions: staff-gated per-order rate override.
-    const commissionRatePct = this.parseCommissionRatePct(dto.commissionRatePct, user.role);
+    const commissionRatePct = parseCommissionRatePct(dto.commissionRatePct, user.role);
 
     const isStaffRole = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
     // B318: the edit path (updateOrderItems' isStaffCreditEdit) already strips
@@ -1804,7 +1744,6 @@ export class OrdersService implements OnApplicationBootstrap {
         // stored order; a mismatch is a client bug surfaced loudly, never a
         // silent wrong-cart acknowledgment.
         {
-          // units_v1: a stored unit line compares by its unit count + label (see replayLineKey).
           const norm = (rows: never[], stored: boolean) =>
             rows
               .map((r) => unitLines.replayLineKey(r, stored))
@@ -1881,13 +1820,11 @@ export class OrdersService implements OnApplicationBootstrap {
 
     const productMap = new Map(products.map((p) => [p.id, p]));
 
-    // units_v1 (4b-2b): the gate (staff only, flag.units_v1) + the server ladder of every product a
-    // line names a unit for; nothing is read when no line asks for a unit.
+    // units_v1 (4b-2b): the gate (staff, flag.units_v1) + the server ladder of the named units.
     const unitsByProduct = await unitLines.prepareUnitLadders(items, {
       isStaff: isStaffRole,
-      tenantId: this.prisma.getTenantId(),
+      prisma: this.prisma,
       entitlements: this.entitlements,
-      db: this.prisma.forTenant(),
     });
 
     // B142 (cause-ruling.md §2/§3, D3): staff AND buyer order create share this
@@ -1996,8 +1933,7 @@ export class OrdersService implements OnApplicationBootstrap {
       const product = productMap.get(item.productId);
       if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
 
-      // units_v1 (4b-2b): a non-pack unit is built from the SERVER ladder; the pack (no label, the
-      // pack's own label, a Piece on an unboxed product) falls through, byte-identical to before.
+      // units_v1 (4b-2b): a non-pack unit is built from the SERVER ladder; the pack falls through.
       const ladder = unitsByProduct.get(product.id) ?? [];
       const resolvedUnits = resolveLineUnits(product, ladder, item);
       if (unitLines.isUnitAware(resolvedUnits)) {
@@ -2239,6 +2175,7 @@ export class OrdersService implements OnApplicationBootstrap {
     //     stock, preventing concurrent oversell, and
     // (b) retry on P2002 if two requests race to the same order number.
     const MAX_RETRIES = 3;
+    const unitOrder = lineItemsData.some((li) => "unitLabel" in li); // units_v1: never auto-merged
     let order: any;
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
@@ -2287,10 +2224,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 // merge set in BOTH directions regardless of what the caller asked for:
                 // as a loser the sweep hard-deletes it (its orderDate and order number
                 // are gone), as a winner it absorbs items that belong to another day.
-                skipAutoMerge:
-                  orderDate != null ||
-                  (options.skipAutoMerge ?? false) ||
-                  lineItemsData.some((li) => "unitLabel" in li), // units_v1: never auto-merged
+                skipAutoMerge: orderDate != null || !!options.skipAutoMerge || unitOrder,
                 // Phase 4 (W4): denormalized flag — true when any line is regulated.
                 hasRegulated: lineItemsData.some((li) => li.trackedCategoryId != null),
                 requestedDeliveryDate: dto.requestedDeliveryDate
@@ -2430,7 +2364,7 @@ export class OrdersService implements OnApplicationBootstrap {
    * existing open order.
    */
   async createSale(dto: CreateSaleDto, user: JwtPayload) {
-    const orderDate = this.parseOrderDate(dto.orderDate, user.role);
+    const orderDate = parseOrderDate(dto.orderDate, user.role);
 
     // Delivery-date picker (owner 2026-08-25): `deliveredOn` REPLACES
     // `deliveredNow`'s binary when present — past/today is a (back)dated
@@ -2460,7 +2394,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // Past/today: the sale happened on that day, so it goes through the same
         // staff-only gate and 2-year floor backdating has always had.
         deliveredNow = true;
-        deliveredAt = this.parseOrderDate(dto.deliveredOn, user.role);
+        deliveredAt = parseOrderDate(dto.deliveredOn, user.role);
       }
     }
 
@@ -2650,14 +2584,17 @@ export class OrdersService implements OnApplicationBootstrap {
     }
 
     // B585: goods leaving is the enforcement moment (operators only, by the role gates above; before
-    // any write). That is OUT_FOR_DELIVERY, or a counter hand-over straight to DELIVERED (the van-sale
-    // flow never sets OUT_FOR_DELIVERY); an order already out/part-delivered was gated on its way out.
-    // A driver's stop completion is not gated. Nothing runs unless the tenant switch is set.
+    // any write): OUT_FOR_DELIVERY, or a counter hand-over straight to DELIVERED (the van-sale flow never
+    // sets OUT_FOR_DELIVERY). An order whose goods already left (PARTIALLY_DELIVERED, or OUT_FOR_DELIVERY
+    // going on to DELIVERED) was gated on its way out. A driver's stop completion is not gated. Nothing
+    // runs unless the tenant's `credit_limit.enforce_delivery` is set.
+    const alreadyOut =
+      order.status === OrderStatus.OUT_FOR_DELIVERY ||
+      order.status === OrderStatus.PARTIALLY_DELIVERED;
     const goodsLeaving =
-      dto.status === OrderStatus.OUT_FOR_DELIVERY ||
-      (dto.status === OrderStatus.DELIVERED &&
-        order.status !== OrderStatus.OUT_FOR_DELIVERY &&
-        order.status !== OrderStatus.PARTIALLY_DELIVERED);
+      (dto.status === OrderStatus.OUT_FOR_DELIVERY &&
+        order.status !== OrderStatus.PARTIALLY_DELIVERED) ||
+      (dto.status === OrderStatus.DELIVERED && !alreadyOut);
     if (goodsLeaving) {
       const p = { customerId: order.customerId, projectedTotal: Number(order.total) };
       await this.creditGate({ ...p, excludeOrderId: id, action: "delivery", principal: user });
@@ -3010,85 +2947,9 @@ export class OrdersService implements OnApplicationBootstrap {
     return updated;
   }
 
-  /**
-   * What cancelling this order will actually do to its money. Read-only — it backs
-   * both the confirmation the operator sees ("INV-12 will be voided, $50.00 goes
-   * back to CN-7") and the guard that refuses the cancel, so the warning and the
-   * rule can never disagree.
-   */
-  async cancelImpact(id: string) {
-    const order = await this.prisma.forTenant().order.findFirst({
-      where: { id },
-      select: { id: true, status: true, orderNumber: true },
-    });
-    if (!order) throw new NotFoundException("Order not found");
-
-    const invoices = await this.prisma.forTenant().invoice.findMany({
-      where: { orderId: id, status: { not: "VOID" } },
-      select: {
-        id: true,
-        invoiceNumber: true,
-        status: true,
-        total: true,
-        payments: { select: { method: true, amount: true, status: true } },
-      },
-    });
-
-    // B56 (REG-B56): delivered goods block a cancel — the same signal
-    // settleStockForEdit already refuses to treat as returnable.
-    const activeLines = await this.prisma.forTenant().orderItem.findMany({
-      where: { orderId: id, status: { not: "CANCELLED" } },
-      select: { qty: true, deliveredQty: true },
-    });
-    const deliveredUnits =
-      Math.round(activeLines.reduce((s, li) => s + Number(li.deliveredQty ?? 0), 0) * 1000) / 1000;
-
-    // External money can't be un-taken by software; it blocks the cancel until a
-    // human refunds it. Wallet money (credit notes, advances) is simply returned.
-    // PR-2 (check-payments B1 hardening, N4 owner ruling): isBlockingPayment (NOT
-    // isHeldPayment) — a DRAFT external payment is money in flight and must keep
-    // blocking the cancel exactly as it does today; HELD (PAID ∪ PENDING) is for
-    // money TOTALS only, never an existence/blocking check.
-    const blockers: Array<{ invoiceNumber: string; amount: number }> = [];
-    for (const inv of invoices) {
-      const external = roundMoney(
-        (inv.payments ?? [])
-          .filter(
-            (p: any) =>
-              isBlockingPayment(p) && p.method !== "CREDIT_NOTE" && p.method !== "ADVANCE",
-          )
-          .reduce((s: number, p: any) => s + Number(p.amount), 0),
-      );
-      if (external > 0.001)
-        blockers.push({ invoiceNumber: inv.invoiceNumber ?? "", amount: external });
-    }
-
-    const credits = await this.creditNotes.previewOrderCreditRelease(id);
-    // scan-ok: draft-payment-not-void — method-scoped to ADVANCE; a CHECK/PENDING row
-    // can never match, so PR-2's PENDING concern doesn't apply here.
-    const advances = roundMoney(
-      invoices
-        .flatMap((i) => i.payments ?? [])
-        .filter((p: any) => p.status !== "VOID" && p.method === "ADVANCE")
-        .reduce((s: number, p: any) => s + Number(p.amount), 0),
-    );
-
-    return {
-      orderId: order.id,
-      orderNumber: order.orderNumber ?? "",
-      alreadyCancelled: order.status === OrderStatus.CANCELLED,
-      invoicesToVoid: invoices.map((i) => ({
-        id: i.id,
-        invoiceNumber: i.invoiceNumber ?? "",
-        status: i.status,
-        total: roundMoney(Number(i.total)),
-      })),
-      creditsToRestore: credits,
-      advanceToRestore: advances,
-      blockingPayments: blockers,
-      deliveredUnits,
-      canCancel: blockers.length === 0 && deliveredUnits <= 0.001,
-    };
+  /** What cancelling this order will do to its money (read-only) — see `order-cancel-impact.ts`. */
+  cancelImpact(id: string) {
+    return cancelImpact({ prisma: this.prisma, creditNotes: this.creditNotes }, id);
   }
 
   /**
@@ -3299,6 +3160,30 @@ export class OrdersService implements OnApplicationBootstrap {
       });
     }
 
+    // Lane R: a banned product added by this edit refuses (409 SELLING_RESTRICTED) BEFORE the invoice
+    // revert and any write. Non-draft only (a draft is judged at its promotion). OFF = one policy read
+    // here and nothing else; the plan is re-checked under the row lock below (order-edit-restrictions.ts).
+    let restrictionPlan: OrderEditRestrictionPlan | null = null;
+    if (order.status !== "DRAFT") {
+      const tenantId = this.restrictionTenantId(user, order.tenantId);
+      restrictionPlan = await planOrderEditRestrictions(
+        { restrictions: this.sellingRestrictions, prisma: this.prisma },
+        {
+          tenantId,
+          existing: order.lineItems ?? [],
+          items: dto.items ?? [],
+          mode: orderEditMode(user?.role, dto.replaceAll, isDiffPayload),
+        },
+      );
+      if (restrictionPlan)
+        await this.sellingRestrictions.assertLinesSellable({
+          tenantId,
+          customerId: order.customerId,
+          lines: restrictionPlan.lines,
+          channel: restrictionChannelForPrincipal(user),
+        });
+    }
+
     // R1: a POST-DELIVERY edit (order already OUT_FOR_DELIVERY / PARTIALLY_DELIVERED /
     // DELIVERED) re-syncs its finalized / paid / delivery-batch invoice(s) IN PLACE
     // after the mutation (resyncOrderInvoicesForEdit) — keeping payments and surfacing
@@ -3384,8 +3269,9 @@ export class OrdersService implements OnApplicationBootstrap {
         await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
         const heldItems = await tx.orderItem.findMany({
           where: { orderId },
-          select: { productId: true, qty: true, deliveredQty: true, status: true },
+          select: { ...EXISTING_LINE_SELECT, deliveredQty: true },
         });
+        restrictionPlan?.assertHeld(heldItems);
 
         // Customer/Driver path: replace items by productId. A4: a DRIVER diff
         // payload skips this branch entirely — it merges below like an operator

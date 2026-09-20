@@ -381,9 +381,8 @@ export class InvoicesService {
     // unit for, then EVERY line's factor through resolveLineUnits (the pack = today's behaviour).
     const unitsByProduct = await prepareUnitLadders(dto.items, {
       isStaff: true, // POST /invoices is OPERATOR+ (RolesGuard)
-      tenantId: this.prisma.getTenantId(),
+      prisma: this.prisma,
       entitlements: this.entitlements,
-      db: this.prisma.forTenant(),
     });
     const resolved = dto.items.map((it) =>
       resolveLineUnits(

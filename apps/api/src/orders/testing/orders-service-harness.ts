@@ -137,6 +137,7 @@ export async function buildOrdersService() {
         useValue: {
           assertLinesSellable: jest.fn().mockResolvedValue(undefined),
           checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "OFF", reasons: [] }),
+          getPolicy: jest.fn().mockResolvedValue({ enabled: false }),
         },
       },
       {
@@ -191,10 +192,11 @@ export async function buildOrdersService() {
     service,
     prisma,
     module,
-    /** the `SellingRestrictionsService` stub (`assertLinesSellable` / `checkLinesSellable`) */
+    /** the `SellingRestrictionsService` stub (`assertLinesSellable` / `checkLinesSellable` / `getPolicy`, OFF) */
     restrictions: module.get(SellingRestrictionsService) as unknown as {
       assertLinesSellable: jest.Mock;
       checkLinesSellable: jest.Mock;
+      getPolicy: jest.Mock;
     },
     authGuard: module.get(AuthorizationGuardService) as unknown as {
       assertAuthorizedOrThrow: jest.Mock;
