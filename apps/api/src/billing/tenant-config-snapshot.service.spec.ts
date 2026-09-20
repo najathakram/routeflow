@@ -74,15 +74,23 @@ function fakeTx(seed: { configs?: any[]; overrides?: any[]; snapshots?: any[] } 
       },
     },
     tenantFeatureConfigSnapshot: {
+      // Applies the query's real `where`: `restoredAt: null` only when the caller asks for it.
       findMany: async ({ where }: any) =>
         state.snapshots
           .filter(
             (s) =>
               s.tenantId === where.tenantId &&
-              s.restoredAt === null &&
+              (where.restoredAt === undefined || s.restoredAt === where.restoredAt) &&
               (where.reason === undefined || s.reason === where.reason),
           )
           .sort((a, b) => b.takenAt.getTime() - a.takenAt.getTime()),
+      findFirst: async ({ where }: any) =>
+        state.snapshots.find(
+          (s) =>
+            s.id === where.id &&
+            s.tenantId === where.tenantId &&
+            (where.restoredAt === undefined || s.restoredAt === where.restoredAt),
+        ) ?? null,
       create: async ({ data }: any) => {
         const row = { id: id("s"), restoredAt: null, restoredToPlanKey: null, ...data };
         state.snapshots.push(row);
@@ -329,6 +337,99 @@ describe("TenantConfigSnapshotService.restoreLatest", () => {
   });
 });
 
+describe("TenantConfigSnapshotService — admin surface (A2 step c)", () => {
+  const svc = new TenantConfigSnapshotService();
+
+  async function twoSnapshots() {
+    // Older snapshot on MID, newer on HIGH; both un-restored, each with its own payload.
+    const { tx, state } = fakeTx({ configs: [cfgRow()], overrides: [ovrRow()] });
+    await svc.snapshot(tx, TENANT, PLAN_KEYS[1], "DOWNGRADE", { id: "u1", name: "Ann" }, T0);
+    await svc.snapshot(tx, TENANT, HIGH, "MANUAL", undefined, new Date(T0.getTime() + 86_400_000));
+    return { tx, state };
+  }
+
+  it("list() returns every snapshot newest-first with entry counts, restored ones included", async () => {
+    const { tx, state } = await twoSnapshots();
+    state.snapshots[0].restoredAt = NOW;
+    state.snapshots[0].restoredToPlanKey = "SUPERSEDED";
+
+    const rows = await svc.list(tx, TENANT);
+
+    expect(rows.map((r) => [r.planKey, r.reason])).toEqual([
+      [HIGH, "MANUAL"],
+      [PLAN_KEYS[1], "DOWNGRADE"],
+    ]);
+    expect(rows[1]).toMatchObject({
+      restoredAt: NOW,
+      restoredToPlanKey: "SUPERSEDED",
+      createdByName: "Ann",
+      entries: { configs: 1, overrides: 1 },
+    });
+  });
+
+  it("list() reports entries: null for an unreadable payload instead of throwing", async () => {
+    const { tx, state } = await twoSnapshots();
+    state.snapshots[0].payload = { version: 99 };
+
+    const rows = await svc.list(tx, TENANT);
+
+    expect(rows.find((r) => r.planKey === PLAN_KEYS[1])!.entries).toBeNull();
+  });
+
+  it("previewRestore() shows what a restore would do and writes NOTHING", async () => {
+    const { tx, state } = await twoSnapshots();
+    state.configs.length = 0; // the config went missing
+    const before = JSON.stringify(state);
+
+    const preview = await svc.previewRestore(tx, TENANT, state.snapshots[1].id, NOW);
+
+    expect(preview?.plan?.configs.create).toHaveLength(1);
+    expect(preview?.plan?.overrides.unchanged).toHaveLength(1); // the grant is still live
+    expect(JSON.stringify(state)).toBe(before);
+  });
+
+  it("previewRestore() and restoreSnapshot() never see another tenant's snapshot", async () => {
+    const { tx, state } = await twoSnapshots();
+    const id = state.snapshots[0].id;
+
+    expect(await svc.previewRestore(tx, "other-tenant", id, NOW)).toBeNull();
+    expect(await svc.restoreSnapshot(tx, "other-tenant", id, HIGH, NOW)).toBeNull();
+    expect(state.snapshots.every((s) => s.restoredAt === null)).toBe(true);
+  });
+
+  it("restoreSnapshot() restores the CHOSEN snapshot to the current plan, stamps it, supersedes older ones", async () => {
+    const { tx, state } = await twoSnapshots();
+    state.configs.length = 0;
+    const newest = state.snapshots[1];
+
+    const res = await svc.restoreSnapshot(tx, TENANT, newest.id, MID, NOW);
+
+    expect(res?.snapshotId).toBe(newest.id);
+    expect(res?.report.restored).toBeGreaterThan(0);
+    expect(newest.restoredAt).toBe(NOW);
+    expect(newest.restoredToPlanKey).toBe(MID); // stamped with the CURRENT plan, not the snapshot's
+    expect(state.snapshots[0].restoredToPlanKey).toBe("SUPERSEDED");
+    expect(state.configs).toHaveLength(1);
+  });
+
+  it("restoreSnapshot() applies to a plan LOWER than the snapshot's (the admin saw the preview) and honours planAllows", async () => {
+    const { tx, state } = await twoSnapshots();
+    state.configs.length = 0;
+
+    const res = await svc.restoreSnapshot(tx, TENANT, state.snapshots[1].id, LOW, NOW, () => false);
+
+    expect(res?.report.skipped).toBeGreaterThan(0);
+    expect(state.configs).toHaveLength(0); // the plan allows nothing -> nothing restored
+  });
+
+  it("restoreSnapshot() refuses an already-restored snapshot (null)", async () => {
+    const { tx, state } = await twoSnapshots();
+    state.snapshots[1].restoredAt = NOW;
+
+    expect(await svc.restoreSnapshot(tx, TENANT, state.snapshots[1].id, HIGH, NOW)).toBeNull();
+  });
+});
+
 describe("TenantConfigSnapshotService — 90-day automatic-restore horizon (A2 decision 1)", () => {
   const svc = new TenantConfigSnapshotService();
   const daysAgo = (n: number, ms = 0) => new Date(NOW.getTime() - n * 86_400_000 - ms);
@@ -485,6 +586,21 @@ describe("TenantConfigSnapshotService — the automatic restore is bounded (row 
     expect(AUTO_RESTORE_MAX_ROWS).toBeLessThanOrEqual(1000);
     expect(AUTO_RESTORE_TIME_BUDGET_MS).toBeGreaterThan(0);
     expect(AUTO_RESTORE_TIME_BUDGET_MS).toBeLessThan(10_000);
+  });
+
+  it("only the AUTOMATIC path is bounded: restoreLatest passes bounds to applySnapshot, the admin restoreSnapshot passes none", async () => {
+    const { tx, state } = await twoRowSnapshot();
+    const spy = jest.spyOn(svc as any, "applySnapshot");
+
+    await svc.restoreLatest(tx, TENANT, HIGH, NOW);
+    expect(spy.mock.calls[0][6]).toMatchObject({ maxRows: AUTO_RESTORE_MAX_ROWS });
+    expect(typeof (spy.mock.calls[0][6] as any).withinBudget).toBe("function");
+
+    // Same snapshot, restored explicitly by an admin: no bounds at all.
+    state.snapshots[0].restoredAt = null;
+    await svc.restoreSnapshot(tx, TENANT, state.snapshots[0].id, HIGH, NOW);
+    expect(spy.mock.calls[1][6]).toBeUndefined();
+    spy.mockRestore();
   });
 
   it("a restore over the row cap is refused BEFORE any write and leaves the snapshot un-restored", async () => {
