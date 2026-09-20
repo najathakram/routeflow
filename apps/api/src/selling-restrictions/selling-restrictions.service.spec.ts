@@ -3,7 +3,7 @@ import { Test } from "@nestjs/testing";
 import { PrismaService } from "../prisma/prisma.service";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
 import { createMockPrisma } from "../testing/prisma-mock";
-import { activeRuleWhere } from "./selling-restrictions.core";
+import { activeRuleWhere, restrictionChannelForPrincipal } from "./selling-restrictions.core";
 import {
   ENABLE_READINESS_MAX_PAGES,
   ENABLE_READINESS_PAGE_SIZE,
@@ -934,6 +934,9 @@ describe("SellingRestrictionsService.evaluate", () => {
       tenantId: T,
       customerId: "c1",
       lines,
+      // NB: specs are not type-checked, so the required `channel` is only enforced in source; most
+      // fixtures here are `surface: "ALL"` (channel-agnostic) — a BUYER_PORTAL fixture must say so.
+      channel: "STAFF" as const,
       at: NOW,
       ...over,
     });
@@ -1075,13 +1078,35 @@ describe("SellingRestrictionsService.evaluate", () => {
       ]);
       const staff = await service.checkLinesSellable(args([line("p1")], { channel: "STAFF" }));
       expect(staff.outcome).toBe("ALLOW");
-      const noChannel = await service.checkLinesSellable(args([line("p1")]));
-      expect(noChannel.outcome).toBe("ALLOW"); // default channel is STAFF
+      // a caller that omits the channel (JS / `any`) FAILS CLOSED to the channel that binds more
+      const noChannel = await service.checkLinesSellable(
+        args([line("p1")], { channel: undefined as any }),
+      );
+      expect(noChannel.outcome).toBe("BLOCK");
       const buyer = await service.checkLinesSellable(
         args([line("p1")], { channel: "BUYER_PORTAL" }),
       );
       expect(buyer.outcome).toBe("BLOCK");
       expect(buyer.reasons[0].reason).toBe("BUYER_PORTAL_ONLY");
+    });
+
+    it("P1: a real BUYER principal (type BUYER, no role) hits a BUYER_PORTAL ban and is BLOCKED; a staff principal is unaffected", async () => {
+      enable(true);
+      withProduct();
+      prisma.sellingRestriction.findMany.mockResolvedValue([
+        dbRule({ jurisdiction: "FEDERAL", states: [], surface: "BUYER_PORTAL" }),
+      ]);
+      const buyerPrincipal = { sub: "b-1", email: "b@example.test", type: "BUYER" as const };
+      const staffPrincipal = { sub: "u-1", role: "OPERATOR" };
+      const asBuyer = await service.checkLinesSellable(
+        args([line("p1")], { channel: restrictionChannelForPrincipal(buyerPrincipal) }),
+      );
+      expect(asBuyer.outcome).toBe("BLOCK");
+      expect(asBuyer.reasons[0].reason).toBe("BUYER_PORTAL_ONLY");
+      const asStaff = await service.checkLinesSellable(
+        args([line("p1")], { channel: restrictionChannelForPrincipal(staffPrincipal) }),
+      );
+      expect(asStaff.outcome).toBe("ALLOW");
     });
 
     it("threads `at` through: a rule that starts after the point in time does not bind", async () => {
