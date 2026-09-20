@@ -54,6 +54,7 @@ import { BuyerModule } from "./buyer/buyer.module";
 import { TobaccoModule } from "./tobacco/tobacco.module";
 import { DraftsModule } from "./drafts/drafts.module";
 import { TrackedCategoriesModule } from "./tracked-categories/tracked-categories.module";
+import { SellingRestrictionsAdminModule } from "./selling-restrictions-admin/selling-restrictions-admin.module";
 import { RegulatedModule } from "./regulated/regulated.module";
 import { AuthorizationsModule } from "./authorizations/authorizations.module";
 import { SellingRestrictionsModule } from "./selling-restrictions/selling-restrictions.module";
@@ -172,6 +173,7 @@ import { AppService } from "./app.service";
     DraftsModule,
     // ─── Regulated / tracked categories (Phase 4) ──────────────────────────────
     TrackedCategoriesModule,
+    SellingRestrictionsAdminModule,
     RegulatedModule,
     AuthorizationsModule,
     SellingRestrictionsModule,
