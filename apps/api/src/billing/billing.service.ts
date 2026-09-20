@@ -28,6 +28,7 @@ import {
   STRIPE_CHECKOUT_APPLIED_ACTION,
   STRIPE_CHECKOUT_ENTITY,
   STRIPE_CHECKOUT_HOOK_FAILED_ACTION,
+  STRIPE_CHECKOUT_REFUSED_ACTION,
   STRIPE_CHECKOUT_STALE_ACTION,
 } from "./config-snapshot-audit.constants";
 
@@ -676,6 +677,22 @@ export class BillingService {
           `checkout.session.completed REFUSED for tenant ${tenantId}: ` +
             (tenantRow ? "customer does not match the tenant's Stripe customer" : "unknown tenant"),
         );
+        // Stripe gets a 200 (there is nothing to retry), so the refusal must leave a findable trail,
+        // not only a log line. tenantId is the METADATA's claim, so an unknown tenant is stored null.
+        await this.prisma.auditLog
+          .create({
+            data: {
+              tenantId: tenantRow ? tenantId : null,
+              action: STRIPE_CHECKOUT_REFUSED_ACTION,
+              entityType: STRIPE_CHECKOUT_ENTITY,
+              entityId: session.id ?? null,
+              meta: {
+                reason: tenantRow ? "customer_mismatch" : "unknown_tenant",
+                requestedPlanKey: resolvedPlanKey,
+              },
+            },
+          })
+          .catch(() => undefined);
         return;
       }
       if (session.id) {
@@ -758,8 +775,11 @@ export class BillingService {
         tenantId,
         stripeCustomerId: session.customer as string,
         stripeSubId: subscriptionId,
-        currentPlan: planKeyForCheckout
-          ? planKeyToEnum(planKeyForCheckout)
+        // The plan KEY resolved from the session, never the skipped/stale one: when the plan
+        // change is skipped `planKeyForCheckout` is null and this would otherwise fall back to a
+        // raw `metadata.plan` cast to the enum — a plan-key value is a Prisma enum reject (500 loop).
+        currentPlan: resolvedPlanKey
+          ? planKeyToEnum(resolvedPlanKey)
           : ((session.metadata?.plan as TenantPlan) ?? "STARTER"),
         planKey: planKeyForCheckout,
         basePriceSnapshot: resolvedBasePrice,

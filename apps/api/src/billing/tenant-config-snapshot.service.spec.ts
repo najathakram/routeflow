@@ -484,7 +484,7 @@ describe("TenantConfigSnapshotService — the automatic restore is bounded (row 
     expect(AUTO_RESTORE_MAX_ROWS).toBeGreaterThan(0);
     expect(AUTO_RESTORE_MAX_ROWS).toBeLessThanOrEqual(1000);
     expect(AUTO_RESTORE_TIME_BUDGET_MS).toBeGreaterThan(0);
-    expect(AUTO_RESTORE_TIME_BUDGET_MS).toBeLessThan(10_000);
+    expect(AUTO_RESTORE_TIME_BUDGET_MS).toBeLessThanOrEqual(3_000); // inside the checkout tx's 6 s with room to spare
   });
 
   it("a restore over the row cap is refused BEFORE any write and leaves the snapshot un-restored", async () => {

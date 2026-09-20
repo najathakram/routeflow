@@ -35,7 +35,9 @@ const DAY_MS = 86_400_000;
  * is the guard against a malformed or hostile payload holding the transaction open.
  */
 export const AUTO_RESTORE_MAX_ROWS = 200;
-export const AUTO_RESTORE_TIME_BUDGET_MS = 4_000;
+// Sits inside the checkout hook's 6 s transaction (BillingService CHECKOUT_TX_OPTIONS) next to the
+// Stripe/catalog work and the commit, so it is deliberately well under it.
+export const AUTO_RESTORE_TIME_BUDGET_MS = 3_000;
 
 export class RestoreBudgetExceededError extends Error {
   constructor(detail: string) {

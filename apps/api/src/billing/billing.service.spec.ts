@@ -812,6 +812,13 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
         expect(planTransition.onPlanChange).not.toHaveBeenCalled();
         expect(prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
         expect(prisma.$transaction).not.toHaveBeenCalled();
+        // Stripe gets a 200, so the refusal must leave a trail (tenantId null: the claim is unproven).
+        expect(prisma.auditLog.create.mock.calls[0][0].data).toMatchObject({
+          tenantId: null,
+          action: "STRIPE_CHECKOUT_REFUSED",
+          entityId: "cs_1",
+          meta: { reason: "unknown_tenant" },
+        });
       });
 
       it("MAJOR 4: a session whose customer is not the tenant's stored Stripe customer is REFUSED", async () => {
@@ -830,6 +837,22 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
 
         expect(planTransition.onPlanChange).not.toHaveBeenCalled();
         expect(prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
+        expect(prisma.auditLog.create.mock.calls[0][0].data).toMatchObject({
+          tenantId: "t1",
+          action: "STRIPE_CHECKOUT_REFUSED",
+          meta: { reason: "customer_mismatch" },
+        });
+      });
+
+      it("a stale checkout's CREATE branch keeps a valid enum currentPlan (a plan KEY must never reach the enum column)", async () => {
+        const { svc, prisma } = make({ transitionCount: 1 });
+        prisma.tenantFeatureConfigSnapshot.findFirst.mockResolvedValue({ id: "snap-newer" });
+
+        await (svc as any).onCheckoutCompleted(withId("cs_stale2", { created: 1_700_000_000 }));
+
+        const create = prisma.tenantSubscription.upsert.mock.calls[0][0].create;
+        expect(create.planKey).toBeNull(); // the plan change is skipped ...
+        expect(create.currentPlan).toBe("TEAM"); // ... but currentPlan is planKeyToEnum("GROWTH"), not "GROWTH"
       });
 
       it("MAJOR 3: a hook failure on a PAID checkout leaves an alarm audit row and still fails the handler (Stripe retries)", async () => {
