@@ -48,6 +48,8 @@ export interface BlockedLine {
 /** Thrown as a 409 by `assertLinesSellable` — mirrors `REGULATED_AUTH_REQUIRED`'s shape. */
 export interface SellingRestrictedError {
   code: "SELLING_RESTRICTED";
+  /** One human sentence (a client with no blocked-lines panel toasts it); the detail is `blockedLines`. */
+  message: string;
   blockedLines: BlockedLine[];
 }
 
