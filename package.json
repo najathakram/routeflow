@@ -18,6 +18,7 @@
     "lint:migrations": "node scripts/lint-migrations.mjs",
     "smoke": "node scripts/smoke.mjs",
     "post-deploy-check": "node scripts/post-deploy-check.mjs",
+    "release-health": "node scripts/release-health.mjs",
     "feature-smoke": "node scripts/feature-smoke.mjs",
     "smoke:google": "node scripts/google-signin-monitor.mjs",
     "regression": "npm run verify && npm run post-deploy-check && npm run feature-smoke",
