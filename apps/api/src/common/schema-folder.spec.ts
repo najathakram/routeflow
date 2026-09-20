@@ -35,8 +35,8 @@ const EXPECTED_FILES = [
 // actually matter are asserted instead (below): every model is mapped to — and lives in — its domain
 // file, no map row names a model the folder lacks, every enum is used by the file that declares it,
 // and every name is unique. Floors (not pins) only prove the scanner is still reading the folder.
-const MODEL_FLOOR = 100;
-const ENUM_FLOOR = 60;
+const MODEL_FLOOR = 135;
+const ENUM_FLOOR = 92;
 
 function listSchemaFiles(): string[] {
   if (!fs.existsSync(SCHEMA_DIR)) return [];
