@@ -153,6 +153,14 @@ describe("TenantConfigSnapshotAdminService (A2 step c)", () => {
     ]);
   });
 
+  it("restoreNow() runs in a transaction with an explicit 30 s budget (the admin restore is unbounded, so Prisma's 5 s default would P2028 a large snapshot)", async () => {
+    const { svc, prisma } = build();
+
+    await svc.restoreNow("t1", "s1", "admin-1", NOW);
+
+    expect(prisma.$transaction.mock.calls[0][1]).toEqual({ timeout: 30_000, maxWait: 5_000 });
+  });
+
   it("restoreNow() writes its audit row (actor + report) INSIDE the restore transaction", async () => {
     const { svc, tx } = build();
 

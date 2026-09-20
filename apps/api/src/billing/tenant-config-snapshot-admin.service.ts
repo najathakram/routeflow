@@ -44,6 +44,13 @@ export interface RestoreNowResult extends RestoreResult {
  * pure/DB layers deliberately do not know: which plan the tenant is on now, the plan-aware
  * allow-list, the 404/409/422 mapping, and dropping the affected caches after a write.
  */
+/**
+ * The explicit "Restore now" is deliberately UNBOUNDED (no row cap, no time budget — unlike the
+ * automatic path), so its transaction must not inherit Prisma's 5 s default: a large snapshot is
+ * one round trip per config row and would fail with P2028 half-way. 30 s is generous but finite.
+ */
+export const ADMIN_RESTORE_TX_OPTIONS = { timeout: 30_000, maxWait: 5_000 } as const;
+
 @Injectable()
 export class TenantConfigSnapshotAdminService {
   constructor(
@@ -133,7 +140,7 @@ export class TenantConfigSnapshotAdminService {
         },
       });
       return res;
-    });
+    }, ADMIN_RESTORE_TX_OPTIONS);
 
     // After commit: the resolver, the override cache and each touched config key.
     this.authority.invalidate(tenantId);
