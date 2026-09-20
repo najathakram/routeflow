@@ -94,7 +94,10 @@ export interface BuyerOrder {
   customer: { id: string; businessName: string };
   lineItems: Array<{
     id: string;
-    productId: string;
+    /** Null for a staff-added custom (unlisted) line — it has no `product` either. */
+    productId: string | null;
+    /** Free-text label of a custom line (its `product` is null). */
+    name?: string | null;
     qty: number;
     unitPrice: number;
     subtotal: number;
@@ -108,7 +111,7 @@ export interface BuyerOrder {
     /** BUY_N_GET_M snapshot: whole free selling units on this line (boxes for a
      *  boxed line). Drives the "{n} free" label and the edit preview's subtotal. */
     promoFreeUnits?: number | null;
-    product: { id: string; name: string; unit: string; unitsPerBox?: number | null };
+    product: { id: string; name: string; unit: string; unitsPerBox?: number | null } | null;
   }>;
   invoices?: Array<{ id: string; invoiceNumber: string; status: string; total: number }>;
   /** P5-09: post-dispatch change requests, newest first (absent on older API). */
