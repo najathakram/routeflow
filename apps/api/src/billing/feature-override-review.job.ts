@@ -32,8 +32,7 @@ const AUDIT_LOOKUP_BOUND = 5000;
  * audit trail carries exactly one row per override, however many nights it stays unrevoked.
  *
  * THIS job never revokes — it only flags. Closing an expired row is the separate B569 sweep
- * (`FeatureOverrideExpiryJob`, 06:30), which waits 24h after expiry so this job has always
- * flagged the row first. A human calling `FeatureOverrideService.revoke()` still ends an
+ * (`FeatureOverrideExpiryJob`, 06:30), which only takes rows this job has already flagged. A human calling `FeatureOverrideService.revoke()` still ends an
  * override at any time.
  * `FeatureOverrideService.create()`'s own auto-close of an expired row is a side-effect of
  * allowing a same-key re-grant, not a policy decision that the override should end — this job
@@ -79,7 +78,8 @@ export class FeatureOverrideReviewJob {
         expiresAt: { lte: now },
         ...(auditedIds.length > 0 ? { id: { notIn: auditedIds } } : {}),
       },
-      orderBy: { expiresAt: "asc" },
+      // `id` tiebreak: rows sharing an expiresAt (bulk grants) must not reorder between ticks.
+      orderBy: [{ expiresAt: "asc" }, { id: "asc" }],
       take: REVIEW_BATCH_SIZE,
       select: {
         id: true,
@@ -90,6 +90,14 @@ export class FeatureOverrideReviewJob {
         expiresAt: true,
       },
     });
+
+    if (expired.length >= REVIEW_BATCH_SIZE) {
+      // A full page is indistinguishable from an empty backlog from outside — say so.
+      this.logger.warn(
+        `reviewExpiredOverrides hit its batch cap of ${REVIEW_BATCH_SIZE} — more expired ` +
+          `overrides may be waiting for review; the next tick continues from the oldest.`,
+      );
+    }
 
     for (const row of expired) {
       this.logger.warn(
