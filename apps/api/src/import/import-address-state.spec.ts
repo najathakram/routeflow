@@ -64,4 +64,18 @@ describe("ImportService.importContacts — address state columns (F4)", () => {
       stateNeedsReview: true,
     });
   });
+
+  it("an ambiguous 'Washington' resolves only where a civilian zip confirms it (F5)", async () => {
+    const csv = [
+      "Customer Name,Billing Address,Billing City,Billing State,Billing Code,Shipping Address,Shipping City,Shipping State,Shipping Code",
+      "Beta Foods,1 Pike St,Seattle,Washington,98101,2 Main St,Washington,Washington,20001",
+    ].join("\n");
+
+    await service.importContacts(Buffer.from(csv), "user-1");
+
+    const rows = prisma.customerAddress.create.mock.calls.map((c: any) => c[0].data);
+    const byLabel = Object.fromEntries(rows.map((r: any) => [r.label, r]));
+    expect(byLabel.Billing).toMatchObject({ stateCode: "WA", stateNeedsReview: false });
+    expect(byLabel.Shipping).toMatchObject({ stateCode: null, stateNeedsReview: true }); // a DC zip
+  });
 });
