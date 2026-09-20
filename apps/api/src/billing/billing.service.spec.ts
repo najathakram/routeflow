@@ -13,6 +13,8 @@ jest.mock("../common/db-locks", () => ({
 
 import { Test, TestingModule } from "@nestjs/testing";
 import { Logger } from "@nestjs/common";
+import { PlanTransitionConfigService } from "./plan-transition-config.service";
+import { normalizePlanKey, planKeyFromEnum } from "./plan-catalog.constants";
 import { BillingService } from "./billing.service";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
 import { PrismaService } from "../prisma/prisma.service";
@@ -57,10 +59,16 @@ function make(
     tenantAddon: {
       findMany: jest.fn().mockResolvedValue(overrides.addons ?? []),
     },
+    // onCheckoutCompleted writes the subscription inside a transaction (A2/B593); it is the SAME
+    // mock as prisma.tenantSubscription.upsert so every existing assertion on it still holds.
+    tenantSubscription: {
+      upsert: jest.fn((args: unknown) => prisma.tenantSubscription.upsert(args)),
+    },
   };
   const prisma = {
     tenant: {
       update: jest.fn().mockResolvedValue({}),
+      findUnique: jest.fn().mockResolvedValue({ plan: "STARTER", planVersionId: "v1" }),
     },
     tenantSubscription: {
       findFirst: jest.fn().mockResolvedValue(sub),
@@ -105,6 +113,10 @@ function make(
     notifyCancelled: jest.fn().mockResolvedValue(undefined),
     notifySuspended: jest.fn().mockResolvedValue(undefined),
   } as any;
+  const planTransition = {
+    prepare: jest.fn().mockResolvedValue({ enabled: false, planAllows: null }),
+    onPlanChange: jest.fn().mockResolvedValue({ action: "none" }),
+  } as any;
   const svc = new BillingService(
     prisma,
     stripe,
@@ -113,8 +125,19 @@ function make(
     events,
     pricing,
     billingNotification,
+    planTransition,
   );
-  return { svc, prisma, tx, stripe, events, tenantStatus, pricing, billingNotification };
+  return {
+    svc,
+    prisma,
+    tx,
+    stripe,
+    events,
+    tenantStatus,
+    pricing,
+    billingNotification,
+    planTransition,
+  };
 }
 
 const deltaOf = (events: any, type: string) => {
@@ -526,6 +549,78 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
     // emitPayingDelta reads the delta straight off sub.basePriceSnapshot === 199.)
     expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_RESUMED)).toBe(199);
   });
+
+  // ── Lane B A2 / B593: the snapshot/restore hook ────────────────────────────────────────────
+  describe("plan-transition hook (B593)", () => {
+    it("prepare() runs BEFORE the transaction, onPlanChange(tx) INSIDE it, ahead of the subscription write", async () => {
+      const { svc, prisma, tx, planTransition } = make({ transitionCount: 1 });
+      const order: string[] = [];
+      planTransition.prepare.mockImplementation(async () => {
+        order.push("prepare");
+        return { enabled: true, planAllows: null };
+      });
+      const realTx = prisma.$transaction.getMockImplementation();
+      prisma.$transaction.mockImplementation(async (fn: any) => {
+        order.push("tx-open");
+        return realTx!(fn);
+      });
+      planTransition.onPlanChange.mockImplementation(async () => {
+        order.push("onPlanChange");
+        return { action: "none" };
+      });
+      tx.tenantSubscription.upsert.mockImplementation(async (a: unknown) => {
+        order.push("upsert");
+        return prisma.tenantSubscription.upsert(a);
+      });
+
+      await (svc as any).onCheckoutCompleted(session("GROWTH"));
+
+      expect(order.slice(0, 4)).toEqual(["prepare", "tx-open", "onPlanChange", "upsert"]);
+      const [txArg, transition] = planTransition.onPlanChange.mock.calls[0];
+      expect(txArg).toBe(tx);
+      expect(transition).toMatchObject({
+        tenantId: "t1",
+        fromPlanKey: normalizePlanKey("BUSINESS"), // the stored subscription key, normalised
+        toPlanKey: "GROWTH",
+        toPlanVersionId: "v1",
+        actor: { id: null },
+      });
+    });
+
+    it("a subscription with no stored planKey is judged from the legacy Tenant.plan", async () => {
+      const { svc, prisma, planTransition } = make({
+        sub: { tenantId: "t1", planKey: null, basePriceSnapshot: null, discount: 0 },
+      });
+      prisma.tenant.findUnique.mockResolvedValue({ plan: "PROFESSIONAL", planVersionId: null });
+
+      await (svc as any).onCheckoutCompleted(session("GROWTH"));
+
+      const [, transition] = planTransition.onPlanChange.mock.calls[0];
+      expect(transition.fromPlanKey).toBe(planKeyFromEnum("PROFESSIONAL"));
+      expect(transition.toPlanVersionId).toBeNull();
+    });
+
+    it("a checkout that names no plan cannot move it: the hook is not consulted at all", async () => {
+      const { svc, planTransition } = make({ transitionCount: 1 });
+
+      await (svc as any).onCheckoutCompleted(session(null));
+
+      expect(planTransition.prepare).not.toHaveBeenCalled();
+      expect(planTransition.onPlanChange).not.toHaveBeenCalled();
+    });
+
+    it("a failing hook aborts the checkout handler (Stripe redelivers): no subscription write, no MRR event", async () => {
+      const { svc, prisma, events, planTransition } = make({ transitionCount: 1 });
+      planTransition.onPlanChange.mockRejectedValueOnce(new Error("snapshot failed"));
+
+      await expect((svc as any).onCheckoutCompleted(session("GROWTH"))).rejects.toThrow(
+        "snapshot failed",
+      );
+
+      expect(prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
+      expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
+    });
+  });
 });
 
 // B216 (owner ruling 2026-09-14): REVERSED from "a reinstatement disarms". Paying an invoice
@@ -706,6 +801,10 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
         {
           provide: BillingNotificationService,
           useValue: { notifyCancelled: jest.fn(), notifySuspended: jest.fn() },
+        },
+        {
+          provide: PlanTransitionConfigService,
+          useValue: { prepare: jest.fn(), onPlanChange: jest.fn() },
         },
       ],
     }).compile();

@@ -9,8 +9,15 @@ import { roundMoney } from "@routeflow/pricing";
 import { StripeService } from "./stripe.service";
 import { BillingEventService } from "./billing-event.service";
 import { PlatformPricingService } from "./platform-pricing.service";
-import { BILLING_EVENTS, BillingEventType, planKeyToEnum } from "./plan-catalog.constants";
+import {
+  BILLING_EVENTS,
+  BillingEventType,
+  planKeyToEnum,
+  normalizePlanKey,
+  planKeyFromEnum,
+} from "./plan-catalog.constants";
 import { BillingNotificationService } from "./billing-notification.service";
+import { PlanTransitionConfigService } from "./plan-transition-config.service";
 
 /** Grace period (in days) after a payment failure before suspending the tenant. */
 const PAYMENT_GRACE_DAYS = 3;
@@ -69,6 +76,9 @@ export class BillingService {
     private readonly events: BillingEventService,
     private readonly pricing: PlatformPricingService,
     private readonly billingNotification: BillingNotificationService,
+    // Lane B A2 / B593: a checkout that moves the plan snapshots/restores the tenant's feature
+    // config in the same transaction as the subscription write (live flag, default off).
+    private readonly planTransition: PlanTransitionConfigService,
   ) {}
 
   /**
@@ -588,38 +598,68 @@ export class BillingService {
     // webhook has no business reason to overwrite it with the catalog figure.
     const existingOverride = await this.prisma.tenantSubscription.findUnique({
       where: { tenantId },
-      select: { priceOverrideMonthly: true, priceOverrideAnnual: true },
+      select: { priceOverrideMonthly: true, priceOverrideAnnual: true, planKey: true },
     });
     const hasNegotiatedOverride =
       existingOverride?.priceOverrideMonthly != null ||
       existingOverride?.priceOverrideAnnual != null;
 
-    const upserted = await this.prisma.tenantSubscription.upsert({
-      where: { tenantId },
-      create: {
-        tenantId,
-        stripeCustomerId: session.customer as string,
-        stripeSubId: subscriptionId,
-        currentPlan: resolvedPlanKey
-          ? planKeyToEnum(resolvedPlanKey)
-          : ((session.metadata?.plan as TenantPlan) ?? "STARTER"),
-        planKey: resolvedPlanKey,
-        basePriceSnapshot: resolvedBasePrice,
-        periodStart: new Date(stripeSub.current_period_start * 1000),
-        periodEnd: new Date(stripeSub.current_period_end * 1000),
-        billingInterval,
-      },
-      update: {
-        stripeSubId: subscriptionId,
-        stripeCustomerId: session.customer as string,
-        periodStart: new Date(stripeSub.current_period_start * 1000),
-        periodEnd: new Date(stripeSub.current_period_end * 1000),
-        ...(billingInterval ? { billingInterval } : {}),
-        ...(resolvedPlanKey ? { planKey: resolvedPlanKey } : {}),
-        ...(resolvedPlanKey && resolvedBasePrice != null && !hasNegotiatedOverride
-          ? { basePriceSnapshot: resolvedBasePrice }
-          : {}),
-      },
+    // Lane B A2 / B593: the plan being LEFT is the stored subscription key, else the legacy
+    // `Tenant.plan` (the same fallback every plan path uses). Only a checkout that names a plan can
+    // move it; a replay of the same webhook resolves to the same rank -> the hook does nothing.
+    // `prepare()` (the flag + catalog read) runs BEFORE the transaction, `onPlanChange` inside it.
+    const tenantRow = resolvedPlanKey
+      ? await this.prisma.tenant.findUnique({
+          where: { id: tenantId },
+          select: { plan: true, planVersionId: true },
+        })
+      : null;
+    const transition =
+      resolvedPlanKey && tenantRow
+        ? {
+            tenantId,
+            fromPlanKey:
+              normalizePlanKey(existingOverride?.planKey) ?? planKeyFromEnum(tenantRow.plan),
+            toPlanKey: resolvedPlanKey,
+            toPlanVersionId: tenantRow.planVersionId ?? null,
+            actor: { id: null, name: "system: stripe checkout" },
+          }
+        : null;
+    const preparedTransition = transition ? await this.planTransition.prepare(transition) : null;
+
+    const upserted = await this.prisma.$transaction(async (tx) => {
+      if (transition && preparedTransition) {
+        // A snapshot failure throws -> the whole checkout handler fails -> Stripe redelivers, so a
+        // downgrade is never applied without its snapshot (fail closed).
+        await this.planTransition.onPlanChange(tx, transition, preparedTransition);
+      }
+      return tx.tenantSubscription.upsert({
+        where: { tenantId },
+        create: {
+          tenantId,
+          stripeCustomerId: session.customer as string,
+          stripeSubId: subscriptionId,
+          currentPlan: resolvedPlanKey
+            ? planKeyToEnum(resolvedPlanKey)
+            : ((session.metadata?.plan as TenantPlan) ?? "STARTER"),
+          planKey: resolvedPlanKey,
+          basePriceSnapshot: resolvedBasePrice,
+          periodStart: new Date(stripeSub.current_period_start * 1000),
+          periodEnd: new Date(stripeSub.current_period_end * 1000),
+          billingInterval,
+        },
+        update: {
+          stripeSubId: subscriptionId,
+          stripeCustomerId: session.customer as string,
+          periodStart: new Date(stripeSub.current_period_start * 1000),
+          periodEnd: new Date(stripeSub.current_period_end * 1000),
+          ...(billingInterval ? { billingInterval } : {}),
+          ...(resolvedPlanKey ? { planKey: resolvedPlanKey } : {}),
+          ...(resolvedPlanKey && resolvedBasePrice != null && !hasNegotiatedOverride
+            ? { basePriceSnapshot: resolvedBasePrice }
+            : {}),
+        },
+      });
     });
 
     // Atomic non-ACTIVE→ACTIVE: activates the tenant, and if it was previously non-paying (e.g.
