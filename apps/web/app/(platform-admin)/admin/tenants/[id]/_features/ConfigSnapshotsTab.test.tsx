@@ -23,6 +23,7 @@ const snap = (over: Partial<ConfigSnapshotListItem> = {}): ConfigSnapshotListIte
   restoredToPlanKey: null,
   createdByName: "Ann Admin",
   ageDays: 10,
+  restoreReport: null,
   entries: { configs: 2, overrides: 1 },
   ...over,
 });
@@ -174,5 +175,55 @@ describe("ConfigSnapshotsTab", () => {
     expect(
       (within(dialog).getByRole("button", { name: "Restore now" }) as HTMLButtonElement).disabled,
     ).toBe(true);
+  });
+
+  it("shows the age in the list and the counts of the restore that applied a snapshot", async () => {
+    await renderTab([
+      snap({ ageDays: 3 }),
+      snap({
+        id: "s2",
+        restoredAt: "2026-09-12T00:00:00.000Z",
+        restoredToPlanKey: "SCALE",
+        restoreReport: { restored: 4, skipped: 1, keptNewer: 2, unchanged: 0, automatic: true },
+      }),
+    ]);
+
+    expect(await screen.findByText(/3d ago/)).toBeTruthy();
+    expect(screen.getByText(/automatic: 4 restored, 2 kept, 1 skipped/)).toBeTruthy();
+  });
+
+  it("a restored snapshot with no recorded report shows no counts, just the date and plan", async () => {
+    await renderTab([
+      snap({
+        restoredAt: "2026-09-12T00:00:00.000Z",
+        restoredToPlanKey: "SCALE",
+        restoreReport: null,
+      }),
+    ]);
+
+    const status = await screen.findByText(/Restored .*→ SCALE/);
+    expect(status.textContent).not.toMatch(/restored,/);
+  });
+
+  it("the confirm dialog shows the age, and a snapshot beyond 90 days gets the deliberate-override warning", async () => {
+    mockPreview.mockResolvedValue({ ...PREVIEW, ageDays: 120, beyondAutoRestoreHorizon: true });
+    await renderTab([snap({ ageDays: 120 })]);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Restore now" }));
+    const dialog = await screen.findByRole("dialog");
+
+    expect(await within(dialog).findByText(/120 days old/)).toBeTruthy();
+    expect(within(dialog).getByRole("note").textContent).toMatch(/older than 90 days/);
+  });
+
+  it("a recent snapshot gets no warning", async () => {
+    mockPreview.mockResolvedValue(PREVIEW);
+    await renderTab();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Restore now" }));
+    const dialog = await screen.findByRole("dialog");
+
+    await within(dialog).findByText(/10 days old/);
+    expect(within(dialog).queryByRole("note")).toBeNull();
   });
 });

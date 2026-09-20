@@ -15,7 +15,9 @@ const emptyPlan = () => ({
   overrides: { create: [], unchanged: [], keptNewer: [], skipped: [] },
 });
 
-function build(opts: { tenant?: any; preview?: any; restore?: any } = {}) {
+function build(
+  opts: { tenant?: any; preview?: any; restore?: any; listed?: any[]; audits?: any[] } = {},
+) {
   const tx = { tag: "tx" };
   const prisma = {
     tenant: {
@@ -27,12 +29,13 @@ function build(opts: { tenant?: any; preview?: any; restore?: any } = {}) {
             : opts.tenant,
         ),
     },
+    auditLog: { findMany: jest.fn().mockResolvedValue(opts.audits ?? []) },
     $transaction: jest.fn(async (fn: any) => fn(tx)),
   };
   const planAllows = jest.fn().mockReturnValue(true);
   const transitions = { planAllowsFor: jest.fn().mockResolvedValue(planAllows) };
   const snapshots = {
-    list: jest.fn().mockResolvedValue([]),
+    list: jest.fn().mockResolvedValue(opts.listed ?? []),
     previewRestore: jest
       .fn()
       .mockResolvedValue(
@@ -70,6 +73,78 @@ describe("TenantConfigSnapshotAdminService (A2 step c)", () => {
     const { svc, snapshots, prisma } = build();
     await svc.list("t1");
     expect(snapshots.list).toHaveBeenCalledWith(prisma, "t1");
+  });
+
+  describe("list() attaches the restore report from the AUDIT TRAIL (decision 3, no migration)", () => {
+    const row = (id: string, over: any = {}) => ({
+      id,
+      restoredAt: null,
+      restoredToPlanKey: null,
+      ...over,
+    });
+    const audit = (snapshotId: string, report: any, automatic = true) => ({
+      meta: { snapshotId, automatic, report },
+    });
+
+    it("a restored snapshot carries the counts of the restore that applied it", async () => {
+      const { svc, prisma } = build({
+        listed: [row("s1", { restoredAt: NOW, restoredToPlanKey: HIGH })],
+        audits: [audit("s1", { restored: 3, skipped: 1, keptNewer: 2, unchanged: 0 })],
+      });
+
+      const out = await svc.list("t1");
+
+      expect(out[0].restoreReport).toEqual({
+        restored: 3,
+        skipped: 1,
+        keptNewer: 2,
+        unchanged: 0,
+        automatic: true,
+      });
+      expect(prisma.auditLog.findMany.mock.calls[0][0].where).toMatchObject({
+        tenantId: "t1",
+        action: "CONFIG_SNAPSHOT_RESTORED",
+      });
+    });
+
+    it("a manual restore is reported as not automatic; the NEWEST row for a snapshot wins", async () => {
+      const { svc } = build({
+        listed: [row("s1", { restoredAt: NOW, restoredToPlanKey: HIGH })],
+        audits: [
+          audit("s1", { restored: 9, skipped: 0, keptNewer: 0, unchanged: 0 }, false), // newest (desc)
+          audit("s1", { restored: 1, skipped: 0, keptNewer: 0, unchanged: 0 }, true),
+        ],
+      });
+
+      expect((await svc.list("t1"))[0].restoreReport).toMatchObject({
+        restored: 9,
+        automatic: false,
+      });
+    });
+
+    it("a restored snapshot with no audit row (restored before the report existed) has restoreReport: null", async () => {
+      const { svc } = build({ listed: [row("s1", { restoredAt: NOW, restoredToPlanKey: HIGH })] });
+      expect((await svc.list("t1"))[0].restoreReport).toBeNull();
+    });
+
+    it("tolerates a malformed audit meta instead of throwing", async () => {
+      const { svc } = build({
+        listed: [row("s1", { restoredAt: NOW, restoredToPlanKey: HIGH })],
+        audits: [{ meta: null }, { meta: { snapshotId: 5 } }, { meta: { snapshotId: "s1" } }],
+      });
+      expect((await svc.list("t1"))[0].restoreReport).toBeNull();
+    });
+
+    it("no restored snapshot (or only superseded ones) means NO audit query at all", async () => {
+      const { svc, prisma } = build({
+        listed: [row("s1"), row("s2", { restoredAt: NOW, restoredToPlanKey: "SUPERSEDED" })],
+      });
+
+      const out = await svc.list("t1");
+
+      expect(prisma.auditLog.findMany).not.toHaveBeenCalled();
+      expect(out.every((r) => r.restoreReport === null)).toBe(true);
+    });
   });
 
   it("preview() judges the snapshot against the tenant's CURRENT plan and flattens the plan", async () => {

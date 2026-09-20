@@ -9,6 +9,7 @@ import { EntitlementAuthority } from "./entitlement-authority.service";
 import { FeatureConfigStore } from "./feature-config.store";
 import { FeatureOverrideService } from "./feature-override.service";
 import { normalizePlanKey, planKeyFromEnum } from "./plan-catalog.constants";
+import { CONFIG_SNAPSHOT_RESTORED_ACTION } from "./config-snapshot-audit.constants";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import type { RestorePlan, SkippedEntry } from "./tenant-config-snapshot";
 import {
@@ -36,6 +37,18 @@ export interface SnapshotPreviewView {
   unchangedCount: number;
 }
 
+/** The restore report the audit trail holds for a restored snapshot (no migration — see below). */
+export interface StoredRestoreReport {
+  restored: number;
+  skipped: number;
+  keptNewer: number;
+  unchanged: number;
+  /** true = a re-upgrade restored it; false = a super-admin's "Restore now". */
+  automatic: boolean;
+}
+
+export type SnapshotListRow = SnapshotListItem & { restoreReport: StoredRestoreReport | null };
+
 export interface RestoreNowResult extends RestoreResult {
   restoredToPlanKey: string;
 }
@@ -57,8 +70,41 @@ export class TenantConfigSnapshotAdminService {
     private readonly configStore: FeatureConfigStore,
   ) {}
 
-  list(tenantId: string): Promise<SnapshotListItem[]> {
-    return this.snapshots.list(this.prisma, tenantId);
+  /**
+   * The snapshots, each restored one carrying the report of THE restore that applied it. The
+   * report lives in the existing audit trail (both restore paths write a CONFIG_SNAPSHOT_RESTORED
+   * row keyed by `meta.snapshotId`) — no column, no migration. Newest row wins; a snapshot whose
+   * audit row is missing (restored before the report was recorded) simply has `restoreReport: null`.
+   */
+  async list(tenantId: string): Promise<SnapshotListRow[]> {
+    const rows = await this.snapshots.list(this.prisma, tenantId);
+    if (!rows.some((r) => r.restoredAt && r.restoredToPlanKey !== "SUPERSEDED")) {
+      return rows.map((r) => ({ ...r, restoreReport: null }));
+    }
+    const audits = await this.prisma.auditLog.findMany({
+      where: { tenantId, action: CONFIG_SNAPSHOT_RESTORED_ACTION },
+      orderBy: { createdAt: "desc" },
+      take: 200,
+      select: { meta: true },
+    });
+    const bySnapshot = new Map<string, StoredRestoreReport>();
+    for (const a of audits) {
+      const m = a.meta as {
+        snapshotId?: unknown;
+        automatic?: unknown;
+        report?: Partial<Record<"restored" | "skipped" | "keptNewer" | "unchanged", unknown>>;
+      } | null;
+      if (typeof m?.snapshotId !== "string" || bySnapshot.has(m.snapshotId) || !m.report) continue;
+      const n = (v: unknown) => (typeof v === "number" ? v : 0);
+      bySnapshot.set(m.snapshotId, {
+        restored: n(m.report.restored),
+        skipped: n(m.report.skipped),
+        keptNewer: n(m.report.keptNewer),
+        unchanged: n(m.report.unchanged),
+        automatic: m.automatic === true,
+      });
+    }
+    return rows.map((r) => ({ ...r, restoreReport: bySnapshot.get(r.id) ?? null }));
   }
 
   async preview(tenantId: string, snapshotId: string): Promise<SnapshotPreviewView> {

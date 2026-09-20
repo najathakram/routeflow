@@ -39,8 +39,12 @@ function statusOf(s: ConfigSnapshotListItem): { label: string; tone: string } {
   if (s.restoredToPlanKey === "SUPERSEDED") {
     return { label: "Superseded by a newer snapshot", tone: "text-slate-400" };
   }
+  const r = s.restoreReport;
+  const counts = r
+    ? ` (${r.automatic ? "automatic" : "manual"}: ${r.restored} restored, ${r.keptNewer} kept, ${r.skipped} skipped)`
+    : "";
   return {
-    label: `Restored ${fmt(s.restoredAt)}${s.restoredToPlanKey ? ` → ${s.restoredToPlanKey}` : ""}`,
+    label: `Restored ${fmt(s.restoredAt)}${s.restoredToPlanKey ? ` → ${s.restoredToPlanKey}` : ""}${counts}`,
     tone: "text-green-400",
   };
 }
@@ -155,7 +159,10 @@ export function ConfigSnapshotsTab({ tenantId }: { tenantId: string }) {
                 const st = statusOf(r);
                 return (
                   <tr key={r.id} className="hover:bg-slate-700/20">
-                    <td className="px-4 py-2 text-slate-300">{fmt(r.takenAt)}</td>
+                    <td className="px-4 py-2 text-slate-300">
+                      {fmt(r.takenAt)}
+                      <span className="text-slate-400"> · {r.ageDays}d ago</span>
+                    </td>
                     <td className="px-4 py-2 text-slate-300">{r.planKey}</td>
                     <td className="px-4 py-2 text-slate-400">
                       {r.reason === "DOWNGRADE" ? "Downgrade" : "Manual"}
@@ -223,9 +230,16 @@ export function ConfigSnapshotsTab({ tenantId }: { tenantId: string }) {
         {preview && (
           <div className="flex flex-col gap-4 text-xs">
             <p className="text-slate-300">
-              Snapshot of {fmt(preview.takenAt)} (taken leaving {preview.planKey}), restored as it
-              was onto the tenant&apos;s current plan, <b>{preview.currentPlanKey}</b>.
+              Snapshot of {fmt(preview.takenAt)} ({preview.ageDays} days old, taken leaving{" "}
+              {preview.planKey}), restored as it was onto the tenant&apos;s current plan,{" "}
+              <b>{preview.currentPlanKey}</b>.
             </p>
+            {preview.beyondAutoRestoreHorizon && (
+              <p role="note" className="rounded-lg bg-amber-900/30 px-3 py-2 text-amber-200">
+                This snapshot is older than 90 days, so an automatic restore would not have applied
+                it. You are restoring it deliberately — check the list below before confirming.
+              </p>
+            )}
             <PreviewSection title={`Will be restored (${preview.willRestore.length})`}>
               {preview.willRestore.length === 0 ? (
                 <li className="text-slate-400">

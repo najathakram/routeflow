@@ -16,6 +16,11 @@ export interface ConfigSnapshotListItem {
   createdByName: string | null;
   /** Whole days since it was taken. */
   ageDays: number;
+  /**
+   * The counts of the restore that applied it, read from the audit trail (null: not restored, or
+   * restored before the report was recorded).
+   */
+  restoreReport: (ConfigSnapshotRestoreReport & { automatic: boolean }) | null;
   /** null = the stored payload is not a readable version-1 document. */
   entries: { configs: number; overrides: number } | null;
 }

@@ -698,6 +698,7 @@ export class PlatformAdminController {
   ) {
     const result = await this.snapshotAdmin.restoreNow(id, snapshotId);
     await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.CONFIG_SNAPSHOT_RESTORED, {
+      automatic: false,
       snapshotId: result.snapshotId,
       snapshotTakenAt: result.takenAt,
       snapshotPlanKey: result.planKey,
