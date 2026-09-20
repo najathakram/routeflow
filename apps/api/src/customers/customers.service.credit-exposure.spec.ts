@@ -19,7 +19,7 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { CREDIT_NOT_APPLICABLE } from "../invoices/invoice-status-sets";
-import { computeCreditExposure } from "../invoices/credit-exposure";
+import { computeCreditExposure, OPEN_ORDER_STATUSES } from "../invoices/credit-exposure";
 
 const MOCK_CUSTOMER = {
   id: "cust-1",
@@ -202,6 +202,23 @@ describe("CustomersService — credit exposure (D6 / B462, option B)", () => {
       expect((result.data[0] as any).receivables).toBe(180);
     });
 
+    it("findAll: the summed receivable is cents, never binary-float dust (0.1 + 0.2 → 0.3)", async () => {
+      prisma.customer.findMany.mockResolvedValue([MOCK_CUSTOMER]);
+      prisma.customer.count.mockResolvedValue(1);
+      prisma.advancePayment.findMany.mockResolvedValue([]);
+      prisma.invoice.findMany.mockImplementation(
+        honouringTake([
+          { customerId: "cust-1", status: "SENT", total: 0.1, order: null, payments: [] },
+          { customerId: "cust-1", status: "SENT", total: 0.2, order: null, payments: [] },
+        ]),
+      );
+
+      const result = await service.findAll({ page: 1, limit: 20 });
+
+      // 0.1 + 0.2 === 0.30000000000000004 in binary floating point.
+      expect((result.data[0] as any).receivables).toBe(0.3);
+    });
+
     it("exportCustomers: the nested invoice read keeps drafts; the CSV Receivables column drops ONLY unbacked drafts", async () => {
       // A findMany that APPLIES the nested `include.invoices.where` to the fixture, so the CSV
       // total below proves which invoices reach the sum (PAID dropped in SQL, unbacked drafts in JS).
@@ -262,6 +279,51 @@ describe("CustomersService — credit exposure (D6 / B462, option B)", () => {
       expect(listed).toBe(450);
     });
 
+    it("exportCustomers: a settled-to-the-cent invoice shows 0.00, never -0.00 float dust (B584)", async () => {
+      prisma.customer.findMany.mockImplementation((args: any) => {
+        const notIn: string[] = args.include.invoices.where.status.notIn;
+        return Promise.resolve([
+          {
+            ...MOCK_CUSTOMER,
+            customerType: "RETAIL",
+            user: { status: "ACTIVE" },
+            invoices: [
+              {
+                status: "SENT",
+                total: 0.3,
+                order: null,
+                // 0.3 − (0.1 + 0.2) === −5.55e-17 in binary floating point → "-0.00" via toFixed
+                payments: [
+                  { amount: 0.1, status: "PAID" },
+                  { amount: 0.2, status: "PAID" },
+                ],
+              },
+            ].filter((i) => !notIn.includes(i.status)),
+            advancePayments: [],
+          },
+        ]);
+      });
+
+      const csv = await service.exportCustomers({});
+
+      expect(csv.split("\n")[1]).toContain(",0.00,0.00");
+      expect(csv.split("\n")[1]).not.toContain("-0.00");
+    });
+
+    it("findAll: unusedCredits is cents too (0.1 + 0.2 → 0.3)", async () => {
+      prisma.customer.findMany.mockResolvedValue([MOCK_CUSTOMER]);
+      prisma.customer.count.mockResolvedValue(1);
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.advancePayment.findMany.mockResolvedValue([
+        { customerId: "cust-1", balance: 0.1 },
+        { customerId: "cust-1", balance: 0.2 },
+      ]);
+
+      const result = await service.findAll({ page: 1, limit: 20 });
+
+      expect((result.data[0] as any).unusedCredits).toBe(0.3);
+    });
+
     describe("getStatementForOperator exposure figures", () => {
       const invoices = [
         {
@@ -297,6 +359,17 @@ describe("CustomersService — credit exposure (D6 / B462, option B)", () => {
         prisma.creditNote.findMany.mockResolvedValue([]);
         prisma.advancePayment.findMany.mockResolvedValue([]);
         prisma.order.findMany.mockResolvedValue(openOrders);
+      });
+
+      it("the statement's pending-orders tile reads the SAME open-order set as the credit block (B584)", async () => {
+        await service.getStatementForOperator("cust-1", { includeExposure: true });
+
+        const openReads = prisma.order.findMany.mock.calls
+          .map(([args]: [any]) => args?.where?.status?.in)
+          .filter(Boolean);
+        // the tile's own read AND the shared reader's read both use OPEN_ORDER_STATUSES
+        expect(openReads.length).toBeGreaterThanOrEqual(2);
+        for (const set of openReads) expect(new Set(set)).toEqual(new Set(OPEN_ORDER_STATUSES));
       });
 
       it("includeExposure: true returns creditExposure (issued balances + open orders) and pendingExposure (unbacked drafts)", async () => {
