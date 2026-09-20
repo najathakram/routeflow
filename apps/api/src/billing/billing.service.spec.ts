@@ -634,7 +634,7 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
       expect(transition.toPlanKey).toBe(normalizePlanKey("BUSINESS"));
     });
 
-    it("MINOR 6: the STORED planKey (create and update) is the canonical key too, not the raw metadata string", async () => {
+    it("MINOR 6 (flag ON): the STORED planKey (create and update) is the canonical key, not the raw legacy metadata string", async () => {
       const { svc, prisma } = make();
 
       await (svc as any).onCheckoutCompleted({
@@ -649,20 +649,36 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
       expect(args.create.planKey).toBe(canonical);
     });
 
+    it("flag OFF stays BYTE-IDENTICAL: the legacy metadata.plan string is stored raw (create and update), no canonicalisation", async () => {
+      const { svc, prisma, planTransition } = make();
+      planTransition.isEnabled.mockResolvedValue(false);
+
+      await (svc as any).onCheckoutCompleted({
+        metadata: { tenantId: "t1", plan: "BUSINESS" },
+        subscription: "sub_1",
+        customer: "cus_1",
+      });
+
+      const args = prisma.tenantSubscription.upsert.mock.calls[0][0];
+      expect(args.update.planKey).toBe("BUSINESS");
+      expect(args.create.planKey).toBe("BUSINESS");
+      expect(normalizePlanKey("BUSINESS")).not.toBe("BUSINESS"); // the test would be vacuous otherwise
+    });
+
     it("an unknown plan string is stored as-is (never dropped or nulled)", async () => {
       const { svc, prisma } = make();
       await (svc as any).onCheckoutCompleted(session("GROWTH"));
       expect(prisma.tenantSubscription.upsert.mock.calls[0][0].update.planKey).toBe("GROWTH");
     });
 
-    it("the checkout transaction has an explicit budget that ends inside Stripe's ~10 s webhook window", async () => {
+    it("the checkout transaction has an explicit, bounded budget (our own number — Stripe documents no seconds figure)", async () => {
       const { svc, prisma } = make();
 
       await (svc as any).onCheckoutCompleted(session("GROWTH"));
 
       const opts = prisma.$transaction.mock.calls[0][1];
       expect(opts).toEqual({ timeout: 6_000, maxWait: 2_000 });
-      expect(opts.timeout + opts.maxWait).toBeLessThan(10_000); // worst case still answers Stripe in time
+      expect(opts.timeout + opts.maxWait).toBeLessThan(10_000); // bounded: a slow restore times out and Stripe retries
     });
 
     it("flag OFF: no extra tenant read, the hook is never consulted, and the upsert is the PLAIN one (no transaction)", async () => {
