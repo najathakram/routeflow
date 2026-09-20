@@ -58,10 +58,11 @@ jest.mock("@/lib/api/tracked-categories", () => ({ useTrackedCategories: () => (
 jest.mock("@/lib/api/tobacco", () => ({ useHasAddon: () => false }));
 // order_ui_v2 is the gate for every behaviour under test (dark by default); scan_v2 stays off.
 let mockOrderUiV2 = true;
+let mockScanV2 = false;
 jest.mock("@/lib/api/addons", () => ({
   ...jest.requireActual("@/lib/api/addons"),
   useOrderUiV2: () => ({ enabled: mockOrderUiV2, resolved: true }),
-  useScanV2: () => false,
+  useScanV2: () => mockScanV2,
 }));
 jest.mock("@/lib/api-client", () => ({
   apiClient: {
@@ -73,14 +74,29 @@ jest.mock("@/lib/api-client", () => ({
 }));
 
 let capturedOnScan: ((code: string) => void) | undefined;
+let capturedOpenContinuous: (() => void) | undefined;
 jest.mock("@/components/BarcodeScannerButton", () => ({
-  BarcodeScannerButton: (props: { onScan: (code: string) => void; title?: string }) => {
+  BarcodeScannerButton: (props: {
+    onScan: (code: string) => void;
+    onOpenContinuous?: () => void;
+    title?: string;
+  }) => {
     capturedOnScan = props.onScan;
+    capturedOpenContinuous = props.onOpenContinuous;
     return (
       <button type="button" title={props.title}>
         scan
       </button>
     );
+  },
+}));
+
+// The continuous scan screen is mounted whenever scan_v2 is on; only its resolveCode prop matters here.
+let capturedScanScreenResolve: ((code: string) => Promise<unknown>) | undefined;
+jest.mock("./scan/ScanOrderScreen", () => ({
+  ScanOrderScreen: (props: { resolveCode: (code: string) => Promise<unknown> }) => {
+    capturedScanScreenResolve = props.resolveCode;
+    return null;
   },
 }));
 
@@ -96,6 +112,9 @@ jest.mock("@routeflow/ui/web", () => ({
 }));
 
 const search = () => screen.getByPlaceholderText(/search by name, sku or scan barcode/i);
+/** A plain (non-boxed) line's qty — the stepper's own readout, not the row's text (which holds "$2.50"). */
+const unitsOf = (name: string) =>
+  lineFor(name).querySelector("span.w-8.text-center")?.textContent ?? "";
 const qtyField = () => screen.getByLabelText("Quantity to add") as HTMLInputElement;
 
 async function pick(name: string, qty?: string) {
@@ -122,7 +141,7 @@ describe("adding a product — typed Qty and merging (LANE-S step 10)", () => {
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     await pick("Sample Cola", "3");
     await waitFor(() => expect(lineFor("Sample Cola")).toBeTruthy());
-    expect(lineFor("Sample Cola").textContent).toContain("3");
+    expect(unitsOf("Sample Cola")).toBe("3");
     expect(qtyField().value).toBe("1");
     expect(mockToast).not.toHaveBeenCalled(); // a first add is not a merge
   });
@@ -143,7 +162,7 @@ describe("adding a product — typed Qty and merging (LANE-S step 10)", () => {
     );
     // still exactly one line for the product
     expect(screen.getAllByTitle("Remove")).toHaveLength(1);
-    expect(lineFor("Sample Cola").textContent).toContain("5");
+    expect(unitsOf("Sample Cola")).toBe("5");
   });
 
   it("a plain repeat pick (Qty left at 1) is +1", async () => {
@@ -204,7 +223,7 @@ describe("typed Qty and the scan paths", () => {
 
     await waitFor(() => expect(lineFor("Sample Cola")).toBeTruthy());
     expect(mockResolveProductByCode).toHaveBeenCalledWith("100200300");
-    expect(lineFor("Sample Cola").textContent).toContain("4");
+    expect(unitsOf("Sample Cola")).toBe("4");
   });
 
   it("a camera scan is always +1 — it never inherits a qty typed for an Enter that added nothing", async () => {
@@ -223,7 +242,7 @@ describe("typed Qty and the scan paths", () => {
       capturedOnScan!("100200300");
     });
     await waitFor(() => expect(lineFor("Sample Cola")).toBeTruthy());
-    expect(lineFor("Sample Cola").textContent).not.toContain("9");
+    expect(unitsOf("Sample Cola")).toBe("1");
     // ...and the scan did not consume or wipe what the operator typed
     expect(qtyField().value).toBe("9");
   });
@@ -250,6 +269,55 @@ describe("typed Qty and the scan paths", () => {
         }),
       ),
     );
+  });
+});
+
+describe("typed Qty and the scan screen (Opus F1)", () => {
+  afterEach(() => {
+    mockScanV2 = false;
+  });
+
+  it("a qty typed for an Enter that added nothing never rides into a scan-screen scan", async () => {
+    mockScanV2 = true;
+    mockResolveProductByCode
+      .mockResolvedValueOnce({ notFound: false, archived: true, product: PLAIN })
+      .mockResolvedValueOnce({ notFound: false, archived: false, product: PLAIN });
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    fireEvent.change(qtyField(), { target: { value: "9" } });
+    fireEvent.change(search(), { target: { value: "999999999999" } });
+    fireEvent.keyDown(search(), { key: "Enter" });
+    await waitFor(() => expect(mockResolveProductByCode).toHaveBeenCalledTimes(1));
+
+    let res: any;
+    await act(async () => {
+      res = await capturedScanScreenResolve!("100200300");
+    });
+    await waitFor(() => expect(lineFor("Sample Cola")).toBeTruthy());
+    expect(unitsOf("Sample Cola")).toBe("1"); // +1, not 9
+    expect(res).toMatchObject({ created: true }); // so the screen's Undo removes the whole line
+  });
+
+  it("a repeat scan on the scan screen does not toast", async () => {
+    mockScanV2 = true;
+    mockResolveProductByCode.mockResolvedValue({
+      notFound: false,
+      archived: false,
+      product: PLAIN,
+    });
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    act(() => capturedOpenContinuous!());
+    let first: any;
+    let second: any;
+    await act(async () => {
+      first = await capturedScanScreenResolve!("100200300");
+    });
+    await act(async () => {
+      second = await capturedScanScreenResolve!("100200300");
+    });
+    // the second scan really hit the merge path (not a fresh line) and stayed silent
+    expect(first).toMatchObject({ created: true });
+    expect(second).toMatchObject({ created: false });
+    expect(mockToast).not.toHaveBeenCalled();
   });
 });
 
@@ -317,7 +385,7 @@ describe("order_ui_v2 OFF — the modal is what it was (LANE-S step 10)", () => 
     await pick("Sample Cola");
     await waitFor(() => expect(lineFor("Sample Cola")).toBeTruthy());
     await pick("Sample Cola");
-    await waitFor(() => expect(lineFor("Sample Cola").textContent).toContain("2"));
+    await waitFor(() => expect(unitsOf("Sample Cola")).toBe("2"));
     expect(mockToast).not.toHaveBeenCalled();
   });
 

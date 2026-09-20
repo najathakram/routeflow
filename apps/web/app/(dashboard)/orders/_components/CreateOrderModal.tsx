@@ -1981,7 +1981,11 @@ export function CreateOrderModal({
           onClose={() => setScanScreenOpen(false)}
           lines={lineItems}
           renderLine={renderLine}
-          resolveCode={(code) => barcodeScanHandlerRef.current(code)}
+          resolveCode={(code) => {
+            // A qty typed for an Enter that added nothing must never ride into a camera scan.
+            typedQtyRef.current = null;
+            return barcodeScanHandlerRef.current(code);
+          }}
           onUndo={undoScan}
           hasCustomer={!!selectedCustomer}
         />
