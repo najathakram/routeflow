@@ -13,6 +13,8 @@ import { TenantContextService } from "../tenant/tenant-context.service";
 import { OrdersService } from "../orders/orders.service";
 import { isMergeContention } from "../orders/merge-contention";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { splitRestrictedLines } from "./template-restrictions";
 import { NotificationsService } from "../notifications/notifications.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { CreateOrderTemplateDto } from "./dto/create-order-template.dto";
@@ -38,6 +40,7 @@ export class OrderTemplatesService {
     private readonly authGuard: AuthorizationGuardService,
     private readonly notifications: NotificationsService,
     private readonly systemConfig: SystemConfigService,
+    private readonly sellingRestrictions: SellingRestrictionsService,
   ) {}
 
   // ─── CRUD ────────────────────────────────────────────────────────────────────
@@ -262,11 +265,11 @@ export class OrderTemplatesService {
     if (!template.isActive) throw new BadRequestException("Template is not active");
     const order = await this.createOrderFromTemplate(template);
     // Null = every line was a license-gated category the customer isn't verified
-    // for, so nothing was ordered. Surface it (the cron path tolerates null; a
+    // for (or a restricted line), so nothing was ordered. Surface it (the cron path tolerates null; a
     // manual reorder should tell the caller why the order is empty).
     if (!order) {
       throw new BadRequestException(
-        "Every item in this standing order needs a license this customer isn't verified for — nothing was ordered.",
+        "Every item in this standing order is unavailable to this customer right now (license or selling restriction) — nothing was ordered.",
       );
     }
     return order;
@@ -412,6 +415,30 @@ export class OrderTemplatesService {
     // there is nothing to order. Callers treat null as "skipped".
     if (allowedItems.length === 0) return null;
 
+    // Lane R: selling restrictions, skip-and-notify like the license guard. A standing order is the
+    // customer's own order, so it is judged on the BUYER_PORTAL channel (strictest; plan §9 Q2).
+    // OFF = one policy read.
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId)
+      throw new ForbiddenException("Selling restrictions require a tenant-scoped session");
+    const { allowed: sellableItems, blocked: restricted } = splitRestrictedLines(
+      allowedItems,
+      await this.sellingRestrictions.checkLinesSellable({
+        tenantId,
+        customerId: template.customerId,
+        lines: allowedItems.map((i) => ({ productId: i.productId })),
+        channel: "BUYER_PORTAL",
+      }),
+    );
+    if (restricted.length > 0) {
+      await this.notifySkippedRestrictedLines(
+        template,
+        restricted,
+        allowedItems.length - sellableItems.length,
+      ).catch(() => {});
+    }
+    if (sellableItems.length === 0) return null;
+
     // REG-B48: a standing order is the CUSTOMER's order whoever triggers it (06:00 cron,
     // operator "Generate now", buyer "Reorder"), so every line is priced exactly as the
     // buyer's own checkout in orders.service.create: per-product CustomerPrice tier >
@@ -432,9 +459,8 @@ export class OrderTemplatesService {
     const activePromos = await this.ordersService.loadActivePromotions(UserRole.CUSTOMER);
     const priceHistory = await this.ordersService.getCustomerPriceHistory(template.customerId);
 
-    const tenantId = this.prisma.getTenantId();
     let subtotal = 0;
-    const lineItemsData = allowedItems.map((item) => {
+    const lineItemsData = sellableItems.map((item) => {
       const product = productMap.get(item.productId);
       if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
       const tierForProduct = cpTier.get(item.productId) ?? defaultTier;
@@ -489,7 +515,12 @@ export class OrderTemplatesService {
     const orderNumber = `ORD-${Date.now()}`;
     const today = new Date();
     const skipNote =
-      skippedCount > 0 ? ` (${skippedCount} regulated line(s) skipped — license not verified)` : "";
+      (skippedCount > 0
+        ? ` (${skippedCount} regulated line(s) skipped — license not verified)`
+        : "") +
+      (restricted.length > 0
+        ? ` (${allowedItems.length - sellableItems.length} line(s) skipped — restricted)`
+        : "");
 
     const created = await this.prisma.forTenant().order.create({
       data: {
@@ -543,6 +574,36 @@ export class OrderTemplatesService {
 
   /** Spec §8: when a standing order skips license-gated lines, notify the buyer
    *  (push) and the seller's operators (push). Best-effort per recipient. */
+  /** Restricted lines dropped from a standing order (lane R): tell the customer generically, the operators by name. */
+  private async notifySkippedRestrictedLines(
+    template: { customerId: string; name: string },
+    blocked: Array<{ productName: string }>,
+    skippedCount: number,
+  ): Promise<void> {
+    await this.notifications
+      .sendToCustomer(
+        template.customerId,
+        "Items skipped from your standing order",
+        `${skippedCount} line(s) were skipped from "${template.name}" because they can't be sold to your account right now.`,
+      )
+      .catch(() => {});
+    const operators = await this.prisma.user.findMany({
+      where: {
+        tenantId: this.prisma.getTenantId(),
+        role: { in: ["OPERATOR", "TENANT_ADMIN"] },
+        status: "ACTIVE",
+      },
+      select: { id: true },
+    });
+    const names = [...new Set(blocked.map((b) => b.productName))].join(", ");
+    const body = `Standing order "${template.name}" skipped ${skippedCount} restricted line(s): ${names}.`;
+    for (const op of operators) {
+      await this.notifications
+        .sendToUser(op.id, { title: "Standing order skipped restricted items", body })
+        .catch(() => {});
+    }
+  }
+
   private async notifySkippedRegulatedLines(
     template: { customerId: string; name: string },
     blocked: Array<{ categoryName: string }>,

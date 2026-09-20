@@ -1,3 +1,4 @@
+import { CHANGE_REQUEST_TYPE_VALUES, type ChangeRequestType } from "@routeflow/types";
 import {
   sellableLinesForChangeRequest,
   sellableLinesForReplaceEdit,
@@ -195,7 +196,7 @@ describe("sellableLinesForReplaceEdit", () => {
 });
 
 describe("sellableLinesForChangeRequest", () => {
-  const cr = (type: string, over: Record<string, unknown> = {}) => ({ type, ...over });
+  const cr = (type: ChangeRequestType, over: Record<string, unknown> = {}) => ({ type, ...over });
 
   it("ADD_ITEM is always checked — the product comes from the row, else the payload", () => {
     expect(sellableLinesForChangeRequest(cr("ADD_ITEM", { productId: "p2" }), [])).toStrictEqual([
@@ -239,5 +240,14 @@ describe("sellableLinesForChangeRequest", () => {
     ).toEqual([]);
     expect(sellableLinesForChangeRequest(cr("REMOVE_ITEM", base), [line()])).toEqual([]);
     expect(sellableLinesForChangeRequest(cr("NOTE"), [line()])).toEqual([]);
+  });
+
+  it("classifies EVERY real ChangeRequestType — a new or renamed type cannot fall through unnoticed", () => {
+    const base = { orderItemId: "li-1", payload: { newQty: 99 } };
+    const adds = new Set<ChangeRequestType>(["ADD_ITEM", "CHANGE_QTY"]);
+    for (const type of CHANGE_REQUEST_TYPE_VALUES) {
+      const lines = sellableLinesForChangeRequest(cr(type, { ...base, productId: "p1" }), [line()]);
+      expect([type, lines.length > 0]).toEqual([type, adds.has(type)]);
+    }
   });
 });

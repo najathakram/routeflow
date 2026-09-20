@@ -28,6 +28,8 @@
  * read can hide an increase under a concurrent edit).
  */
 
+import type { ChangeRequestType } from "@routeflow/types";
+
 /**
  * One line for `SellingRestrictionsService.assertLinesSellable` — structurally its `SellableLine`
  * (no `qtyDelta` = a new line, always checked; a number = the net change in quantity). Kept local
@@ -256,7 +258,8 @@ export function sellableLinesForReplaceEdit(
 
 /** The change-request row fields the at-door approval reads. */
 export interface ChangeRequestFacts {
-  type: string;
+  /** The shared enum, not `string`: a renamed or mistyped literal below is then a compile error (L-072), never a silent fail-open. */
+  type: ChangeRequestType;
   productId?: string | null;
   orderItemId?: string | null;
   payload?: unknown;

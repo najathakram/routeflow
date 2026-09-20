@@ -8,6 +8,11 @@ import { OrdersService } from "../orders/orders.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+/** Selling restrictions OFF: the choke point answers OFF and nothing is dropped. */
+const OFF_RESTRICTIONS = {
+  checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "OFF", reasons: [] }),
+};
 
 /**
  * W6b follow-up: the standing-order (reorder) path used to write orders via a
@@ -76,6 +81,7 @@ describe("OrderTemplatesService — regulated license guard on reorder", () => {
         },
         { provide: OrdersService, useValue: ordersService },
         { provide: AuthorizationGuardService, useValue: authGuard },
+        { provide: SellingRestrictionsService, useValue: OFF_RESTRICTIONS },
         { provide: NotificationsService, useValue: notifications },
       ],
     }).compile();
@@ -240,6 +246,7 @@ describe("OrderTemplatesService — template ownership (F2-003)", () => {
           provide: AuthorizationGuardService,
           useValue: { checkAuthorized: jest.fn().mockResolvedValue({ blocked: [] }) },
         },
+        { provide: SellingRestrictionsService, useValue: OFF_RESTRICTIONS },
         {
           provide: NotificationsService,
           useValue: { sendToCustomer: jest.fn(), sendToUser: jest.fn() },
@@ -399,6 +406,7 @@ describe("OrderTemplatesService — pricing pin, tier 1 unchanged (T16)", () => 
           provide: AuthorizationGuardService,
           useValue: { checkAuthorized: jest.fn().mockResolvedValue({ blocked: [] }) },
         },
+        { provide: SellingRestrictionsService, useValue: OFF_RESTRICTIONS },
         {
           provide: NotificationsService,
           useValue: { sendToCustomer: jest.fn(), sendToUser: jest.fn() },
@@ -454,6 +462,7 @@ describe("OrderTemplatesService — update() with no items key (T27)", () => {
           provide: AuthorizationGuardService,
           useValue: { checkAuthorized: jest.fn().mockResolvedValue({ blocked: [] }) },
         },
+        { provide: SellingRestrictionsService, useValue: OFF_RESTRICTIONS },
         {
           provide: NotificationsService,
           useValue: { sendToCustomer: jest.fn(), sendToUser: jest.fn() },

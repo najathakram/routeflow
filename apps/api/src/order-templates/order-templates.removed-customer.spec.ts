@@ -19,6 +19,11 @@ import { OrdersService } from "../orders/orders.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+/** Selling restrictions OFF: the choke point answers OFF and nothing is dropped. */
+const OFF_RESTRICTIONS = {
+  checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "OFF", reasons: [] }),
+};
 
 // Honest stand-in for Postgres: applies the `where` the service actually sends, so a where-only fix is
 // observable (L-081: a mock that injects a fixed result cannot see one). Strict: an unmodelled filter
@@ -97,6 +102,7 @@ describe("OrderTemplatesService.generateDailyOrders — removed customer (B131)"
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("10") } },
         { provide: OrdersService, useValue: {} },
         { provide: AuthorizationGuardService, useValue: {} },
+        { provide: SellingRestrictionsService, useValue: OFF_RESTRICTIONS },
         { provide: NotificationsService, useValue: {} },
       ],
     }).compile();
@@ -190,6 +196,7 @@ describe("OrderTemplatesService.create — removed customer (B131)", () => {
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("10") } },
         { provide: OrdersService, useValue: {} },
         { provide: AuthorizationGuardService, useValue: {} },
+        { provide: SellingRestrictionsService, useValue: OFF_RESTRICTIONS },
         { provide: NotificationsService, useValue: {} },
       ],
     }).compile();

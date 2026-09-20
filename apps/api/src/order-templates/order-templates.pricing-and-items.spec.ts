@@ -8,6 +8,11 @@ import { OrdersService } from "../orders/orders.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+/** Selling restrictions OFF: the choke point answers OFF and nothing is dropped. */
+const OFF_RESTRICTIONS = {
+  checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "OFF", reasons: [] }),
+};
 
 /**
  * B48: a standing-order line was priced with the raw catalog price
@@ -63,6 +68,7 @@ describe("OrderTemplatesService — pricing via the shared resolver, PATCH item 
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("10") } },
         { provide: OrdersService, useValue: ordersService },
         { provide: AuthorizationGuardService, useValue: authGuard },
+        { provide: SellingRestrictionsService, useValue: OFF_RESTRICTIONS },
         { provide: NotificationsService, useValue: notifications },
       ],
     }).compile();
