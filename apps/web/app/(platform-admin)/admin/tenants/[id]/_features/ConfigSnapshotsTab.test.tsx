@@ -54,6 +54,13 @@ async function renderTab(rows: ConfigSnapshotListItem[] = [snap()]) {
 }
 
 describe("ConfigSnapshotsTab", () => {
+  it("the intro copy does not promise automatic snapshots (the platform switch may be off)", async () => {
+    await renderTab([]);
+    const intro = screen.getByText(/Archived when a plan change downgrades this tenant/);
+    expect(intro.textContent).toMatch(/once automatic archiving is switched on/);
+    expect(document.body.textContent).not.toMatch(/Taken automatically/);
+  });
+
   it("lists snapshots with plan, reason, entry counts and status", async () => {
     await renderTab([
       snap(),

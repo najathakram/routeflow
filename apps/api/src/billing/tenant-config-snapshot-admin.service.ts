@@ -1,3 +1,4 @@
+import { CONFIG_SNAPSHOT_RESTORED_ACTION } from "./config-snapshot-audit.constants";
 import {
   ConflictException,
   Injectable,
@@ -79,9 +80,15 @@ export class TenantConfigSnapshotAdminService {
     };
   }
 
+  /**
+   * `actorId` is the acting super-admin: the audit row that carries the restore report is written
+   * INSIDE the restore transaction, so a restore and its record commit or roll back together (the
+   * tab's "what was restored" reads it) — never a restore that happened with no trail.
+   */
   async restoreNow(
     tenantId: string,
     snapshotId: string,
+    actorId: string | null = null,
     now: Date = new Date(),
   ): Promise<RestoreNowResult> {
     const { planKey, planAllows } = await this.currentPlan(tenantId);
@@ -106,6 +113,25 @@ export class TenantConfigSnapshotAdminService {
       );
       // Lost a race with another restore between the preview read and the write.
       if (!res) throw new ConflictException("This snapshot was already restored");
+      await tx.auditLog.create({
+        data: {
+          tenantId,
+          userId: actorId,
+          action: CONFIG_SNAPSHOT_RESTORED_ACTION,
+          entityType: "tenant",
+          entityId: tenantId,
+          meta: {
+            platformAdmin: true,
+            automatic: false,
+            snapshotId: res.snapshotId,
+            snapshotTakenAt: res.takenAt,
+            snapshotPlanKey: res.planKey,
+            restoredToPlanKey: planKey,
+            report: { ...res.report },
+            supersededSnapshots: res.supersededSnapshots,
+          },
+        },
+      });
       return res;
     });
 

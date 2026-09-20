@@ -13,6 +13,7 @@ import {
   HttpStatus,
   ConflictException,
   NotFoundException,
+  ParseUUIDPipe,
 } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from "@nestjs/swagger";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -645,7 +646,7 @@ export class PlatformAdminController {
   @ApiOperation({
     summary: "A tenant's archived feature-config snapshots (taken on downgrade), newest first",
   })
-  listConfigSnapshots(@Param("id") id: string) {
+  listConfigSnapshots(@Param("id", ParseUUIDPipe) id: string) {
     return this.snapshotAdmin.list(id);
   }
 
@@ -653,7 +654,10 @@ export class PlatformAdminController {
   @ApiOperation({
     summary: "What restoring this snapshot would restore / keep / skip right now — writes nothing",
   })
-  previewConfigSnapshotRestore(@Param("id") id: string, @Param("snapshotId") snapshotId: string) {
+  previewConfigSnapshotRestore(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Param("snapshotId", ParseUUIDPipe) snapshotId: string,
+  ) {
     return this.snapshotAdmin.preview(id, snapshotId);
   }
 
@@ -661,19 +665,12 @@ export class PlatformAdminController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Restore Now — apply one snapshot as-was to the tenant's current plan" })
   async restoreConfigSnapshot(
-    @Param("id") id: string,
-    @Param("snapshotId") snapshotId: string,
+    @Param("id", ParseUUIDPipe) id: string,
+    @Param("snapshotId", ParseUUIDPipe) snapshotId: string,
     @CurrentUser() admin: JwtPayload,
   ) {
-    const result = await this.snapshotAdmin.restoreNow(id, snapshotId);
-    await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.CONFIG_SNAPSHOT_RESTORED, {
-      snapshotId: result.snapshotId,
-      snapshotTakenAt: result.takenAt,
-      snapshotPlanKey: result.planKey,
-      restoredToPlanKey: result.restoredToPlanKey,
-      report: result.report,
-    });
-    return result;
+    // The audit row (with the report) is written by the service INSIDE the restore transaction.
+    return this.snapshotAdmin.restoreNow(id, snapshotId, admin.sub);
   }
 
   // ─── Platform AI Configuration ────────────────────────────────────────────

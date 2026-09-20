@@ -46,8 +46,8 @@ function statusOf(s: ConfigSnapshotListItem): { label: string; tone: string } {
 }
 
 /**
- * Tenant "Configuration snapshots" tab (Lane B A2 step c). A snapshot is taken automatically when
- * a plan change downgrades the tenant; "Restore now" applies one as-was to the plan the tenant is
+ * Tenant "Configuration snapshots" tab (Lane B A2 step c). A snapshot is taken when a plan
+ * change downgrades the tenant (only while automatic archiving is on; the copy stays neutral); "Restore now" applies one as-was to the plan the tenant is
  * on today, after showing exactly what will be restored, kept and skipped (the preview is the same
  * plan a real restore runs). Restoring is a write, so it always goes through this preview → confirm.
  */
@@ -112,9 +112,9 @@ export function ConfigSnapshotsTab({ tenantId }: { tenantId: string }) {
   return (
     <AdminCard title="Configuration snapshots" noPadding>
       <p className="border-b border-slate-700 px-5 py-3 text-xs text-slate-400">
-        Taken automatically when a plan change downgrades this tenant. Nothing is deleted on a
-        downgrade — settings and grants stay but stop being honoured. Restore puts a snapshot back
-        as it was, on the plan the tenant is on today.
+        Archived when a plan change downgrades this tenant, once automatic archiving is switched on
+        for the platform. Nothing is deleted on a downgrade — settings and grants stay but stop
+        being honoured. Restore puts a snapshot back as it was, on the plan the tenant is on today.
       </p>
       {notice && (
         <p

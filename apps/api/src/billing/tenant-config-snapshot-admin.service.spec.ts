@@ -16,7 +16,7 @@ const emptyPlan = () => ({
 });
 
 function build(opts: { tenant?: any; preview?: any; restore?: any } = {}) {
-  const tx = { tag: "tx" };
+  const tx = { tag: "tx", auditLog: { create: jest.fn().mockResolvedValue({}) } };
   const prisma = {
     tenant: {
       findUnique: jest
@@ -133,7 +133,7 @@ describe("TenantConfigSnapshotAdminService (A2 step c)", () => {
       preview: { snapshotId: "s1", takenAt: TAKEN, planKey: HIGH, restoredAt: null, plan },
     });
 
-    const res = await svc.restoreNow("t1", "s1", NOW);
+    const res = await svc.restoreNow("t1", "s1", "admin-1", NOW);
 
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     expect(snapshots.previewRestore.mock.calls[0][0]).toBe(tx);
@@ -151,6 +151,31 @@ describe("TenantConfigSnapshotAdminService (A2 step c)", () => {
       ["t1", CONFIG_KEY],
       ["t1", "second.config"],
     ]);
+  });
+
+  it("restoreNow() writes its audit row (actor + report) INSIDE the restore transaction", async () => {
+    const { svc, tx } = build();
+
+    await svc.restoreNow("t1", "s1", "admin-1", NOW);
+
+    const data = tx.auditLog.create.mock.calls[0][0].data;
+    expect(data).toMatchObject({
+      tenantId: "t1",
+      userId: "admin-1",
+      action: "CONFIG_SNAPSHOT_RESTORED",
+      entityType: "tenant",
+      entityId: "t1",
+      meta: { platformAdmin: true, automatic: false, snapshotId: "s1", restoredToPlanKey: HIGH },
+    });
+  });
+
+  it("if the audit write fails the whole restore fails and no cache is dropped (never a restore with no trail)", async () => {
+    const { svc, tx, authority } = build();
+    tx.auditLog.create.mockRejectedValueOnce(new Error("audit down"));
+
+    await expect(svc.restoreNow("t1", "s1", "admin-1", NOW)).rejects.toThrow("audit down");
+
+    expect(authority.invalidate).not.toHaveBeenCalled();
   });
 
   it("restoreNow() refuses an already-restored snapshot with 409 and writes nothing", async () => {
