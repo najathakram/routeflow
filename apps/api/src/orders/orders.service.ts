@@ -2644,6 +2644,13 @@ export class OrdersService implements OnApplicationBootstrap {
       checkedProductIds = new Set(pids);
     }
 
+    // B585: an order going OUT for delivery is credit-checked (operators only, by the role gates
+    // above; before any write; a driver's stop completion is not gated). Nothing runs unless set.
+    if (dto.status === OrderStatus.OUT_FOR_DELIVERY) {
+      const p = { customerId: order.customerId, projectedTotal: Number(order.total) };
+      await this.creditGate({ ...p, excludeOrderId: id, action: "delivery", principal: user });
+    }
+
     // Refuse the cancel BEFORE writing the status — a rejection must leave the
     // order exactly as it was, not cancelled-but-not-unwound.
     if (dto.status === OrderStatus.CANCELLED) await this.assertCancellableOrThrow(id);
