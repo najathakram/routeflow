@@ -13,7 +13,7 @@ jest.mock("../common/db-locks", () => ({
 
 import { Logger } from "@nestjs/common";
 import { BillingCronService } from "./billing-cron.service";
-import { BILLING_EVENTS } from "./plan-catalog.constants";
+import { BILLING_EVENTS, normalizePlanKey, planKeyFromEnum } from "./plan-catalog.constants";
 
 function make(
   data: {
@@ -52,7 +52,12 @@ function make(
   // route findMany call-sites by argument shape
   prisma.tenantSubscription.findMany.mockImplementation(({ where }: any) => {
     if (where.graceStartedAt) return Promise.resolve(data.graceSubs ?? []);
-    if (where.downgradeEffectiveAt) return Promise.resolve(data.downgrades ?? []);
+    // `tenant.plan` is part of the real select (the nullable-planKey fallback); default it here.
+    if (where.downgradeEffectiveAt) {
+      return Promise.resolve(
+        (data.downgrades ?? []).map((d: any) => ({ tenant: { plan: "BUSINESS" }, ...d })),
+      );
+    }
     if (where.cancelAtPeriodEnd) return Promise.resolve(data.cancellations ?? []);
     return Promise.resolve(data.rollSubs ?? []);
   });
@@ -87,6 +92,10 @@ function make(
     notifyTrialEnding: jest.fn().mockResolvedValue(undefined),
     notifyDowngradeApplied: jest.fn().mockResolvedValue(undefined),
   } as any;
+  const planTransition = {
+    prepare: jest.fn().mockResolvedValue({ planAllows: null }),
+    onPlanChange: jest.fn().mockResolvedValue({ action: "none" }),
+  } as any;
   const svc = new BillingCronService(
     prisma,
     events,
@@ -95,8 +104,10 @@ function make(
     catalog,
     meters,
     billingNotification,
+    planTransition,
   );
   return {
+    planTransition,
     svc,
     prisma,
     tx,
@@ -238,6 +249,83 @@ describe("BillingCronService", () => {
       graceMeter: null,
     });
     expect(emitted(events)).toContain(BILLING_EVENTS.GRACE_EXPIRED);
+  });
+
+  it("A2b: a scheduled downgrade snapshots via the hook INSIDE its transaction, before the plan write", async () => {
+    const { svc, tx, planTransition } = make({
+      downgrades: [
+        {
+          tenantId: "t1",
+          planKey: "BUSINESS",
+          planVersionId: "v7",
+          downgradeToPlanKey: "STARTER",
+          retainedUserIds: [],
+        },
+      ],
+    });
+    const order: string[] = [];
+    planTransition.onPlanChange.mockImplementation(async () => {
+      order.push("onPlanChange");
+      return { action: "snapshot", snapshotId: "s1" };
+    });
+    tx.tenantSubscription.update.mockImplementation(async () => {
+      order.push("plan-write");
+      return {};
+    });
+
+    await svc.applyScheduledDowngrades();
+
+    expect(order).toEqual(["onPlanChange", "plan-write"]);
+    const [txArg, transition] = planTransition.onPlanChange.mock.calls[0];
+    expect(txArg).toBe(tx);
+    expect(transition).toMatchObject({
+      tenantId: "t1",
+      fromPlanKey: normalizePlanKey("BUSINESS"), // the stored key, normalised (BUSINESS -> SCALE)
+      toPlanKey: "STARTER",
+      actor: { id: null },
+    });
+  });
+
+  it("A2b: a NULL stored planKey resolves the plan being left from tenant.plan, never skips the snapshot", async () => {
+    const { svc, planTransition } = make({
+      downgrades: [
+        {
+          tenantId: "t1",
+          planKey: null,
+          planVersionId: "v7",
+          downgradeToPlanKey: "STARTER",
+          retainedUserIds: [],
+          tenant: { plan: "BUSINESS" },
+        },
+      ],
+    });
+
+    await svc.applyScheduledDowngrades();
+
+    const [, transition] = planTransition.onPlanChange.mock.calls[0];
+    expect(transition.fromPlanKey).toBe(planKeyFromEnum("BUSINESS"));
+  });
+
+  it("A2b: a snapshot failure fails closed and LOUD — no plan write, and the sweep surfaces it as a cron failure", async () => {
+    const { svc, tx, planTransition, events } = make({
+      downgrades: [
+        {
+          tenantId: "t1",
+          planKey: "BUSINESS",
+          planVersionId: "v7",
+          downgradeToPlanKey: "STARTER",
+          retainedUserIds: [],
+        },
+      ],
+    });
+    planTransition.onPlanChange.mockRejectedValueOnce(new Error("snapshot failed"));
+
+    // Same policy as every other non-data error in this sweep (F2): rethrown, not swallowed as if
+    // it were a bad plan key. The schedule stays armed, so the next tick retries the tenant.
+    await expect(svc.applyScheduledDowngrades()).rejects.toThrow("snapshot failed");
+
+    expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+    expect(emitted(events)).not.toContain(BILLING_EVENTS.PLAN_CHANGED);
   });
 
   it("applyScheduledDowngrades switches plan, frees non-retained seats, emits events", async () => {
