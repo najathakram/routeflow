@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Badge, Button, Card, EmptyState, PageHeader, Skeleton, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { useAuth } from "@/lib/auth-context";
 import {
   RULES_LIST_CAP,
   useRestrictionRules,
@@ -20,6 +21,7 @@ import {
   surfaceText,
   windowText,
 } from "@/lib/restriction-rules";
+import { RuleFormDialog } from "./_components/RuleFormDialog";
 
 function RuleCard({ rule }: { rule: SellingRestrictionListItemDto }) {
   const target = ruleTarget(rule);
@@ -88,6 +90,8 @@ export default function RestrictionRulesPage() {
   const { setTitle } = usePageTitle();
   React.useEffect(() => setTitle("Selling restrictions"), [setTitle]);
 
+  const isAdmin = useAuth().user?.role === "TENANT_ADMIN";
+  const [creating, setCreating] = React.useState(false);
   const [filter, setFilter] = React.useState<RestrictionStatus | "ALL">("ALL");
   const rules = useRestrictionRules(filter === "ALL" ? undefined : filter);
   const data = rules.data ?? [];
@@ -99,7 +103,9 @@ export default function RestrictionRulesPage() {
       <PageHeader
         title="Restriction rules"
         subtitle="Rules that stop products being sold where they are banned."
+        action={isAdmin ? <Button onClick={() => setCreating(true)}>New rule</Button> : undefined}
       />
+      {isAdmin && <RuleFormDialog open={creating} onClose={() => setCreating(false)} />}
 
       <div role="group" aria-label="Filter rules by status" className="flex flex-wrap gap-2">
         {STATUS_FILTERS.map((f) => (
