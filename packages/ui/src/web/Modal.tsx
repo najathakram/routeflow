@@ -29,6 +29,18 @@ export interface ModalProps {
    */
   onOpenAutoFocus?: (event: Event) => void;
   onCloseAutoFocus?: (event: Event) => void;
+  /**
+   * Opt-in: cap the dialog at 92vh, pin the header (with its X) and the footer, and scroll only the
+   * body. Without it the dialog is centred with `-translate-y-1/2` and no max height, so one taller
+   * than the viewport spills off BOTH edges and its X and footer buttons become unreachable (body
+   * scroll is locked). Off by default so existing dialogs are untouched.
+   *
+   * DO NOT enable it on a dialog whose body contains absolutely-positioned children, such as an
+   * inline typeahead or dropdown list (`absolute … top-full`): the body becomes a scroll container,
+   * which CLIPS them (and adds a scrollbar just for the open list). Portal those first, or leave
+   * `scroll` off. Prove any dialog you opt in at a short viewport.
+   */
+  scroll?: boolean;
 }
 
 export const Modal = ({
@@ -42,6 +54,7 @@ export const Modal = ({
   onEscapeKeyDown,
   onOpenAutoFocus,
   onCloseAutoFocus,
+  scroll = false,
 }: ModalProps) => (
   <Dialog.Root open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
     <Dialog.Portal>
@@ -51,10 +64,8 @@ export const Modal = ({
         onOpenAutoFocus={onOpenAutoFocus}
         onCloseAutoFocus={onCloseAutoFocus}
         className={cn(
-          // Centred with -translate-y-1/2, so an over-tall dialog used to spill off BOTH edges and take
-          // its header X and footer buttons out of reach (body scroll is locked). Cap the height;
-          // the header and footer stay put and only the body scrolls.
-          "fixed left-1/2 top-1/2 z-50 flex max-h-[92vh] w-full max-w-lg -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl bg-white p-6 shadow-modal",
+          "fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl bg-white p-6 shadow-modal",
+          scroll && "flex max-h-[92vh] flex-col",
           "data-[state=open]:animate-in data-[state=closed]:animate-out",
           "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
           "data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
@@ -64,7 +75,7 @@ export const Modal = ({
         )}
       >
         {/* Header */}
-        <div className="mb-4 flex shrink-0 items-start justify-between gap-4">
+        <div className={cn("mb-4 flex items-start justify-between gap-4", scroll && "shrink-0")}>
           <div className="min-w-0">
             {title ? (
               <Dialog.Title className="text-lg font-semibold text-navy">{title}</Dialog.Title>
@@ -89,14 +100,24 @@ export const Modal = ({
         </div>
 
         {/* Body */}
-        {/* -mx-1/px-1 keeps a focus ring at the edge from being clipped by the scroll box */}
-        <div className="-mx-1 min-h-0 flex-1 overflow-y-auto px-1 text-sm text-navy/80">
+        <div
+          className={cn(
+            "text-sm text-navy/80",
+            // -mx-1/px-1: a focus ring at the edge is not clipped by the scroll box
+            scroll && "-mx-1 min-h-0 flex-1 overflow-y-auto px-1",
+          )}
+        >
           {children}
         </div>
 
         {/* Footer */}
         {footer && (
-          <div className="mt-6 flex shrink-0 items-center justify-end gap-3 border-t border-surface-border pt-4">
+          <div
+            className={cn(
+              "mt-6 flex items-center justify-end gap-3 border-t border-surface-border pt-4",
+              scroll && "shrink-0",
+            )}
+          >
             {footer}
           </div>
         )}

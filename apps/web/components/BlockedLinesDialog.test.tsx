@@ -34,6 +34,12 @@ describe("BlockedLinesDialog", () => {
     expect(screen.queryByText(/uuid-/)).toBeNull();
   });
 
+  it("opts into the scroll cap so a long list cannot push OK off-screen", () => {
+    render(<BlockedLinesDialog lines={lines} onClose={jest.fn()} />);
+    expect(screen.getByRole("dialog").className).toMatch(/max-h-\[92vh\]/);
+    expect(screen.getByRole("button", { name: "OK" })).toBeInTheDocument();
+  });
+
   it("renders nothing when there are no lines, and OK closes it", () => {
     const onClose = jest.fn();
     const { rerender } = render(<BlockedLinesDialog lines={null} onClose={onClose} />);
