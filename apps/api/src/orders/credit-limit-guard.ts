@@ -5,11 +5,11 @@ import { loadCreditExposure } from "../invoices/credit-exposure";
 import type { PrismaService } from "../prisma/prisma.service";
 
 /**
- * The credit-limit guard, lifted out of `OrdersService` (B585 prefactor — behaviour identical) so
- * that new enforcement points cost the 6.7k-line service a call, not a copy. `OrdersService` keeps
- * private delegators with the same names; nothing about who calls the guard, when, or with what has
- * changed. `invoices/credit-exposure-coverage.spec.ts` pins that the guard reads exposure ONLY
- * through `loadCreditExposure`.
+ * The credit-limit guard, lifted out of `OrdersService` (B585) so that new enforcement points cost
+ * the 6.7k-line service a call, not a copy. `OrdersService` calls `assertWithinCreditLimit`
+ * directly and keeps one private adapter (`isCreditLimitCheckEnabled`) that binds its own prisma /
+ * entitlements / logger. `invoices/credit-exposure-coverage.spec.ts` pins that the guard reads
+ * exposure ONLY through `loadCreditExposure` and that the service carries no copy of it.
  */
 
 /** What `isCreditLimitCheckEnabled` reads — the service's own collaborators, passed in. */
