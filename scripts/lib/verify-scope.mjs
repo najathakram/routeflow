@@ -12,8 +12,9 @@
 // outside their own workspace (see turbo.json): `@routeflow/pricing#test` (no-mirrors walks
 // apps/*, package-shape reads the Dockerfiles) and apps/api's `test:repo-truth`.
 //
-// Pure functions + one git wrapper; scripts/verify-turbo.mjs and scripts/campaign-check.mjs are
-// the consumers, scripts/verify-turbo.self-test.mjs is the proof.
+// Pure functions + one git wrapper; scripts/verify-turbo.mjs is the consumer (it also asks
+// scripts/campaign-check.mjs --print-stale which reports are refused, and adds those workspaces),
+// scripts/verify-turbo.self-test.mjs is the proof.
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
@@ -163,19 +164,26 @@ export function decideScope(root, env = process.env, probe = {}) {
   const files = "files" in probe ? probe.files : changedFilesSince(root);
   if (files === null) return { mode: "full", reason: "cannot diff against origin/master" };
   const workspaces = loadWorkspaces(root);
-  // `probe.stale` is the same kind of test seam as branch/files: the workspaces whose campaign
-  // report is refused (see staleWorkspaces). A real run asks campaign-check.
+  const scope = computeScope(files, workspaces);
+  // Only a scoped decision can use the answer (a full run already covers every workspace), so a
+  // diff that tripped a FULL pattern never pays the spawn. `probe.stale` is the same kind of test
+  // seam as branch/files: the workspaces whose campaign report is refused (see staleWorkspaces).
+  if (scope.mode !== "scoped") return scope;
   const stale = "stale" in probe ? probe.stale : staleWorkspaces(root, workspaces);
-  return withStale(computeScope(files, workspaces), stale);
+  return withStale(scope, stale);
 }
 
 /**
  * Workspaces whose campaign report (.campaign/runs/<ws>.json) `campaign-check` would refuse —
  * missing, partial or stale — from its read-only `--print-stale`. A scoped run that never touched
  * such a workspace would leave the report as it is and then be refused at the end of verify for
- * evidence it had no reason to regenerate; adding the workspace makes its tests run, which rewrites
- * the report. FAILS OPEN ([]): an unanswerable question must never narrow or break a run — the
- * end-of-verify check still enforces freshness exactly as before.
+ * evidence it had no reason to regenerate; adding the workspace puts its tests in the run, and
+ * turbo rewrites the report when they actually execute (a cache MISS). On a cache HIT turbo
+ * replays without running jest — the `--freshness-only` pre-step earlier in `npm run verify`
+ * forces a real run for exactly that case (order pinned by verify-turbo.self-test SP8). FAILS
+ * OPEN ([]): an unanswerable question must never narrow or break a run — the end-of-verify check
+ * still enforces freshness exactly as before. Note campaign-check scrubs a fixed list of GIT_*
+ * variables while `cleanGitEnv` strips all of them; git does not export GIT_CONFIG_* into hooks.
  */
 export function staleWorkspaces(root, workspaces = loadWorkspaces(root)) {
   const r = spawnSync(

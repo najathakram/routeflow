@@ -254,7 +254,8 @@ check(
 );
 check(
   "S6f a legacy VERIFY_SCOPE variable changes nothing (there is no ambient switch)",
-  decideScope(gitRoot, { VERIFY_SCOPE: "full" }, { branch: "feat/x", files: someFiles }).mode,
+  decideScope(gitRoot, { VERIFY_SCOPE: "full" }, { branch: "feat/x", files: someFiles, stale: [] })
+    .mode,
   "scoped",
 );
 
@@ -330,6 +331,30 @@ check(
   pkg.scripts.verify.includes("turbo run check-types lint test"),
   false,
 );
+
+// SP7/SP8: the two pins the stale-report addition depends on.
+// SP7: `--print-stale` prints turbo PACKAGE names and decideScope keeps only names the workspace
+// graph knows — a drift to short names ("api") would silently no-op the whole feature.
+check(
+  "SP7 the workspace graph carries the exact package names campaign-check --print-stale prints",
+  ["@routeflow/api", "@routeflow/mobile", "@routeflow/pricing", "@routeflow/web"].every((n) =>
+    workspaces.some((w) => w.name === n),
+  ),
+  true,
+);
+// SP8: adding a stale workspace to the filter regenerates its report only on a turbo cache MISS —
+// on a HIT turbo replays without running jest. The `--freshness-only` pre-step forces a real run on
+// a HIT, so it MUST come before verify-turbo in the verify chain; nothing else enforces the order.
+{
+  const chain = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).scripts.verify;
+  const fresh = chain.indexOf("--freshness-only");
+  const scoped = chain.indexOf("verify-turbo.mjs");
+  check(
+    "SP8 verify runs campaign-check --freshness-only BEFORE verify-turbo (forces a real run on a cache HIT)",
+    fresh !== -1 && scoped !== -1 && fresh < scoped,
+    true,
+  );
+}
 
 // S10: portable containment — the POSIX-only startsWith(`${root}/`) threw on every Windows push.
 const W = path.win32;
