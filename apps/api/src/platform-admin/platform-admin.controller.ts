@@ -42,6 +42,7 @@ import { EntitlementsModeService } from "../billing/entitlements-mode.service";
 import { FeatureDiffService } from "../billing/feature-diff.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { FeaturePreviewService } from "../billing/feature-preview.service";
+import { TenantConfigSnapshotAdminService } from "../billing/tenant-config-snapshot-admin.service";
 import { toEffectiveFeature } from "../billing/feature-resolver.service";
 import type { FeaturePreviewRequest } from "@routeflow/types";
 import { AdminAuditAction } from "./audit-actions.constant";
@@ -62,6 +63,7 @@ export class PlatformAdminController {
     private readonly featureDiffs: FeatureDiffService,
     private readonly authority: EntitlementAuthority,
     private readonly featurePreview: FeaturePreviewService,
+    private readonly snapshotAdmin: TenantConfigSnapshotAdminService,
   ) {}
 
   @Get("stats")
@@ -632,6 +634,44 @@ export class PlatformAdminController {
     this.authority.invalidate(id);
     await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.FEATURE_OVERRIDE_REVOKED, {
       overrideId,
+    });
+    return result;
+  }
+
+  // ─── Configuration snapshots (Lane B A2 step c) ───────────────────────────
+  // Every route here inherits the class-level SuperAdminGuard.
+
+  @Get("tenants/:id/config-snapshots")
+  @ApiOperation({
+    summary: "A tenant's archived feature-config snapshots (taken on downgrade), newest first",
+  })
+  listConfigSnapshots(@Param("id") id: string) {
+    return this.snapshotAdmin.list(id);
+  }
+
+  @Get("tenants/:id/config-snapshots/:snapshotId/preview")
+  @ApiOperation({
+    summary: "What restoring this snapshot would restore / keep / skip right now — writes nothing",
+  })
+  previewConfigSnapshotRestore(@Param("id") id: string, @Param("snapshotId") snapshotId: string) {
+    return this.snapshotAdmin.preview(id, snapshotId);
+  }
+
+  @Post("tenants/:id/config-snapshots/:snapshotId/restore")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Restore Now — apply one snapshot as-was to the tenant's current plan" })
+  async restoreConfigSnapshot(
+    @Param("id") id: string,
+    @Param("snapshotId") snapshotId: string,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    const result = await this.snapshotAdmin.restoreNow(id, snapshotId);
+    await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.CONFIG_SNAPSHOT_RESTORED, {
+      snapshotId: result.snapshotId,
+      snapshotTakenAt: result.takenAt,
+      snapshotPlanKey: result.planKey,
+      restoredToPlanKey: result.restoredToPlanKey,
+      report: result.report,
     });
     return result;
   }
