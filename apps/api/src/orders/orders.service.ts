@@ -90,6 +90,7 @@ import {
   assertCreditAtEnforcementPoint,
   assertWithinCreditLimit,
   isCreditLimitCheckEnabled,
+  type CreditPointParams,
 } from "./credit-limit-guard";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { InventoryService } from "../inventory/inventory.service";
@@ -2286,8 +2287,8 @@ export class OrdersService implements OnApplicationBootstrap {
         customerId,
         lines: lineItemsData.map((li) => ({ trackedCategoryId: li.trackedCategoryId })),
       });
-      // B585: credit check for a NEW order (dark unless the tenant switch is "true").
-      await this.creditGate(customerId, total, "order");
+      // B585: credit check for a NEW order (nothing runs unless the tenant switch is set).
+      await this.creditGate({ customerId, projectedTotal: total, principal: user });
     }
 
     // RF-017 + RF-014: create the order inside a transaction so we can
@@ -5127,15 +5128,10 @@ export class OrdersService implements OnApplicationBootstrap {
   }
 
   /** B585: the credit check at an enforcement point; MUST run before any write / stock tx. */
-  private creditGate(
-    customerId: string,
-    projectedTotal: number,
-    action: "order" | "delivery",
-    excludeOrderId?: string,
-  ): Promise<void> {
+  private creditGate(p: CreditPointParams): Promise<void> {
     return assertCreditAtEnforcementPoint(
       { prisma: this.prisma, entitlements: this.entitlements, logger: this.logger },
-      { tenantId: this.prisma.getTenantId(), customerId, projectedTotal, excludeOrderId, action },
+      { ...p, tenantId: this.prisma.getTenantId() },
     );
   }
 

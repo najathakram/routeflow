@@ -343,7 +343,7 @@ describe("OrdersService.create — B587 order-number generation", () => {
     expect(created()).toEqual(["ORD-00006", "ORD-00007"]);
   });
 
-  // B585 — the credit check at create sits BEFORE the stock tx, behind the DARK/ENFORCED switch.
+  // B585 — the credit check at create sits BEFORE the stock tx, behind the OFF/DARK/ENFORCED switch.
   describe("B585 — credit-limit check for a new order", () => {
     const CAPPED = { id: "cust-1", pricingTier: 1, creditLimit: 5 }; // the order below totals 10
     const arrangeOver = (switchValue: string | null = null) => {
@@ -362,8 +362,19 @@ describe("OrdersService.create — B587 order-number generation", () => {
     });
     afterEach(() => warn.mockRestore());
 
-    it("DARK (default): an over-limit order is still created and one would-deny line is logged", async () => {
+    it("OFF (default, switch absent): the order is created and NO exposure is even computed", async () => {
       arrangeOver();
+      await service.create(items as never, customerPayload as never);
+
+      expect(created()).toEqual(["ORD-00001"]);
+      expect(prisma.invoice.findMany).not.toHaveBeenCalled();
+      expect(warn.mock.calls.map((c) => String(c[0])).some((m) => m.includes("would DENY"))).toBe(
+        false,
+      );
+    });
+
+    it("DARK ('dark'): an over-limit order is still created and one would-deny line is logged", async () => {
+      arrangeOver("dark");
       await service.create(items as never, customerPayload as never);
 
       expect(created()).toEqual(["ORD-00001"]);
@@ -372,13 +383,32 @@ describe("OrdersService.create — B587 order-number generation", () => {
       expect(line).toContain("limit=5");
     });
 
-    it("ENFORCED ('true'): the same order is refused 409 CREDIT_LIMIT_EXCEEDED before anything is created", async () => {
+    it("ENFORCED ('true'), a BUYER: refused 409 with the code and NO figures, before anything is created", async () => {
       arrangeOver("true");
-      await expect(service.create(items as never, customerPayload as never)).rejects.toMatchObject({
-        response: { code: "CREDIT_LIMIT_EXCEEDED", limit: 5, exposure: 10 },
+      const err = await service
+        .create(items as never, customerPayload as never)
+        .catch((e: { getResponse(): unknown }) => e);
+
+      expect(err.getResponse()).toEqual({
+        code: "CREDIT_LIMIT_EXCEEDED",
+        message: expect.stringContaining("can't be placed right now"),
       });
       expect(prisma.order.create).not.toHaveBeenCalled();
       expect(prisma.tenantTransaction).not.toHaveBeenCalled(); // refused before the stock transaction
+    });
+
+    it("ENFORCED ('true'), STAFF creating for the customer: the same refusal names the figures", async () => {
+      arrangeOver("true");
+      prisma.customer.findUnique.mockResolvedValue({
+        ...CAPPED,
+        user: { status: "ACTIVE" },
+        deletedAt: null,
+      });
+      await expect(
+        service.create({ customerId: "cust-1", ...items } as never, operatorPayload as never),
+      ).rejects.toMatchObject({
+        response: { code: "CREDIT_LIMIT_EXCEEDED", limit: 5, exposure: 10 },
+      });
     });
 
     it("a DRAFT is not a sale: never checked, even ENFORCED", async () => {

@@ -5,7 +5,7 @@ import {
   creditEnforcementMode,
 } from "./credit-limit-guard";
 
-// B585 — the credit check for a NEW order behind the per-tenant DARK/ENFORCED switch.
+// B585 — the credit check for a NEW order behind the per-tenant OFF / DARK / ENFORCED switch.
 
 const TENANT = "tenant-1";
 const CUSTOMER = "cust-1";
@@ -55,24 +55,37 @@ const sent = (total: number) => ({
 });
 
 describe("creditEnforcementMode (the per-tenant switch)", () => {
-  it("absent = DARK; ONLY the exact value 'true' ENFORCES — never TRUE / ' true ' / True", async () => {
+  it("absent = OFF; exactly 'dark' OBSERVES and exactly 'true' ENFORCES — never TRUE / ' true ' / Dark", async () => {
+    const values = [
+      null,
+      "true",
+      "dark",
+      " TRUE ",
+      "True",
+      " true ",
+      "Dark",
+      "DARK",
+      "false",
+      "1",
+      "",
+    ];
     const modes = await Promise.all(
-      [null, "true", " TRUE ", "True", " true ", "false", "FALSE", "yes", "1", "", "enforce"].map(
-        (v) => creditEnforcementMode(makeDeps({ switchValue: v }).prisma as never, TENANT),
+      values.map((v) =>
+        creditEnforcementMode(makeDeps({ switchValue: v }).prisma as never, TENANT),
       ),
     );
     expect(modes).toEqual([
-      "DARK",
+      "OFF",
       "ENFORCED",
       "DARK",
-      "DARK",
-      "DARK",
-      "DARK",
-      "DARK",
-      "DARK",
-      "DARK",
-      "DARK",
-      "DARK",
+      "OFF",
+      "OFF",
+      "OFF",
+      "OFF",
+      "OFF",
+      "OFF",
+      "OFF",
+      "OFF",
     ]);
   });
 
@@ -102,24 +115,40 @@ describe("assertCreditAtEnforcementPoint", () => {
     d: ReturnType<typeof makeDeps>,
     projectedTotal: number,
     tenantId = TENANT as string | null,
+    principal: { role: string } | null = { role: "OPERATOR" },
   ) =>
-    assertCreditAtEnforcementPoint(d as never, { tenantId, customerId: CUSTOMER, projectedTotal });
+    assertCreditAtEnforcementPoint(d as never, {
+      tenantId,
+      customerId: CUSTOMER,
+      projectedTotal,
+      principal,
+    });
 
-  it("within the limit: resolves and the switch is never read (lazy)", async () => {
+  it("OFF (switch absent) is FREE: one switch read and NOTHING else — no entitlement, customer or exposure read", async () => {
     const d = makeDeps({ creditLimit: 100, invoices: [sent(60)] });
+    await expect(run(d, 1_000_000)).resolves.toBeUndefined();
+    expect(d.db.systemConfig.findFirst).toHaveBeenCalledTimes(1);
+    expect(d.entitlements.hasFlag).not.toHaveBeenCalled();
+    expect(d.db.customer.findFirst).not.toHaveBeenCalled();
+    expect(d.db.invoice.findMany).not.toHaveBeenCalled();
+    expect(d.db.order.findMany).not.toHaveBeenCalled();
+    expect(d.logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("within the limit (observing): resolves, nothing logged", async () => {
+    const d = makeDeps({ creditLimit: 100, invoices: [sent(60)], switchValue: "dark" });
     await expect(run(d, 40)).resolves.toBeUndefined(); // 100 = limit, not over
-    expect(d.db.systemConfig.findFirst).not.toHaveBeenCalled();
     expect(d.logger.warn).not.toHaveBeenCalled();
   });
 
   it("no credit limit configured: resolves without reading exposure", async () => {
-    const d = makeDeps({ creditLimit: null });
+    const d = makeDeps({ creditLimit: null, switchValue: "dark" });
     await expect(run(d, 1_000_000)).resolves.toBeUndefined();
     expect(d.db.invoice.findMany).not.toHaveBeenCalled();
   });
 
-  it("DARK (switch absent): an over-limit order is ALLOWED and exactly one would-deny line is logged (ids + figures only)", async () => {
-    const d = makeDeps({ creditLimit: 100, invoices: [sent(60)] });
+  it("DARK ('dark'): an over-limit order is ALLOWED and exactly one would-deny line is logged (ids + figures only)", async () => {
+    const d = makeDeps({ creditLimit: 100, invoices: [sent(60)], switchValue: "dark" });
     await expect(run(d, 40.01)).resolves.toBeUndefined();
 
     expect(d.logger.warn).toHaveBeenCalledTimes(1);
@@ -131,7 +160,7 @@ describe("assertCreditAtEnforcementPoint", () => {
     expect(line).toContain("limit=100");
   });
 
-  it("ENFORCED ('true'): the same order is refused with the 409 body — and nothing is logged as dark", async () => {
+  it("ENFORCED ('true'), STAFF: the same order is refused with the full 409 body — and nothing is logged as dark", async () => {
     const d = makeDeps({ creditLimit: 100, invoices: [sent(60)], switchValue: "true" });
     const attempt = run(d, 40.01);
 
@@ -147,16 +176,38 @@ describe("assertCreditAtEnforcementPoint", () => {
     expect(d.logger.warn).not.toHaveBeenCalled();
   });
 
-  it("no tenant on the caller: DARK, and no switch read is attempted", async () => {
+  it.each([
+    ["a CUSTOMER", { role: "CUSTOMER" }],
+    ["the buyer pseudo-user", { role: "CUSTOMER", type: "BUYER" }],
+    ["an unknown role", { role: "SALES_AGENT" }],
+    ["no principal at all", null],
+  ])(
+    "ENFORCED, %s: refused with the code but NO limit and NO exposure (a buyer never sees the figures)",
+    async (_who, principal) => {
+      const d = makeDeps({ creditLimit: 100, invoices: [sent(60)], switchValue: "true" });
+      const error = (await run(d, 40.01, TENANT, principal).catch(
+        (e: unknown) => e,
+      )) as ConflictException;
+      expect(error).toBeInstanceOf(ConflictException);
+      expect(error.getResponse()).toEqual({
+        code: "CREDIT_LIMIT_EXCEEDED",
+        message: "This order can't be placed right now. Please contact your account manager.",
+      });
+    },
+  );
+
+  it("no tenant on the caller: OFF, and neither the switch nor anything else is read", async () => {
     const d = makeDeps({ creditLimit: 10, switchValue: "true" });
     await expect(run(d, 11, null)).resolves.toBeUndefined();
     expect(d.db.systemConfig.findFirst).not.toHaveBeenCalled();
-    expect(d.logger.warn.mock.calls[0][0]).toContain("tenant=none");
+    expect(d.db.customer.findFirst).not.toHaveBeenCalled();
+    expect(d.logger.warn).not.toHaveBeenCalled();
   });
 
   it("a new order excludes NOTHING: every existing invoice counts, including one that carries an order id", async () => {
     const d = makeDeps({
       creditLimit: 100,
+      switchValue: "dark",
       invoices: [
         { ...sent(90), orderId: "o-1", order: { id: "o-1", status: "CONFIRMED", total: 90 } },
       ],
@@ -180,8 +231,8 @@ describe("assertCreditAtEnforcementPoint", () => {
     }
   });
 
-  it("DARK never breaks a create: a failure to reach a verdict, or an unreadable switch, logs ERROR and ALLOWS", async () => {
-    const noVerdict = makeDeps({ creditLimit: 100, switchValue: null });
+  it("DARK never breaks a create: a failure to reach a verdict logs ERROR and ALLOWS; an unreadable switch is OFF with an ERROR", async () => {
+    const noVerdict = makeDeps({ creditLimit: 100, switchValue: "dark" });
     noVerdict.db.invoice.findMany.mockRejectedValue(new Error("invoice read failed"));
     await expect(run(noVerdict, 1)).resolves.toBeUndefined();
     expect(noVerdict.logger.error).toHaveBeenCalledWith(
@@ -190,11 +241,12 @@ describe("assertCreditAtEnforcementPoint", () => {
     );
 
     const noSwitch = makeDeps({ creditLimit: 10, switchError: new Error("config down") });
-    await expect(run(noSwitch, 11)).resolves.toBeUndefined(); // would-deny AND an unreadable switch
+    await expect(run(noSwitch, 11)).resolves.toBeUndefined();
     expect(noSwitch.logger.error).toHaveBeenCalledWith(
-      expect.stringContaining("switch unreadable (treated as dark)"),
+      expect.stringContaining("switch unreadable (treated as off)"),
       expect.any(Error),
     );
+    expect(noSwitch.db.invoice.findMany).not.toHaveBeenCalled(); // and nothing else ran
   });
 
   it("ENFORCED: a failure to reach a verdict propagates (a tenant that opted in never gets a silent allow)", async () => {
