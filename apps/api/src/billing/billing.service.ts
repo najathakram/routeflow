@@ -1,4 +1,10 @@
-import { Injectable, Logger, NotFoundException, BadRequestException } from "@nestjs/common";
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  BadRequestException,
+  ConflictException,
+} from "@nestjs/common";
 import { CronExpression } from "@nestjs/schedule";
 import { LeaderCron } from "../common/cron-lock";
 import { Prisma, TenantPlan } from "@prisma/client";
@@ -9,11 +15,34 @@ import { roundMoney } from "@routeflow/pricing";
 import { StripeService } from "./stripe.service";
 import { BillingEventService } from "./billing-event.service";
 import { PlatformPricingService } from "./platform-pricing.service";
-import { BILLING_EVENTS, BillingEventType, planKeyToEnum } from "./plan-catalog.constants";
+import {
+  BILLING_EVENTS,
+  BillingEventType,
+  planKeyToEnum,
+  normalizePlanKey,
+  planKeyFromEnum,
+} from "./plan-catalog.constants";
 import { BillingNotificationService } from "./billing-notification.service";
+import { PlanTransitionConfigService } from "./plan-transition-config.service";
+import {
+  STRIPE_CHECKOUT_APPLIED_ACTION,
+  STRIPE_CHECKOUT_ENTITY,
+  STRIPE_CHECKOUT_HOOK_FAILED_ACTION,
+  STRIPE_CHECKOUT_REFUSED_ACTION,
+  STRIPE_CHECKOUT_STALE_ACTION,
+} from "./config-snapshot-audit.constants";
 
 /** Grace period (in days) after a payment failure before suspending the tenant. */
 const PAYMENT_GRACE_DAYS = 3;
+
+/** Returned by the checkout transaction when the session was already applied (a redelivery). */
+const ALREADY_APPLIED = Symbol("checkout-session-already-applied");
+
+/** A deadlock/serialization failure is a retryable race, not a "hook failed a paid checkout". */
+const isDeadlockOrSerialization = (err: unknown): boolean => {
+  const code = (err as { code?: string } | null)?.code;
+  return code === "P2034" || code === "40P01" || /deadlock/i.test((err as Error)?.message ?? "");
+};
 
 /**
  * The ONE shape that disarms a scheduled plans-as-data downgrade (L-072: never hand-type it twice).
@@ -57,6 +86,18 @@ function scheduleLeftArmed(sub: {
   };
 }
 
+/**
+ * The checkout hook transaction's budget. OUR OWN number, not a Stripe-documented limit: Stripe's
+ * webhook docs (https://docs.stripe.com/webhooks) only say to "quickly return a successful status
+ * code (2xx) before any complex logic that could cause a timeout", list "(Timed out) ERR — the
+ * destination server took too long to respond" as a failed delivery, and retry failures for up to
+ * three days in live mode; they publish no seconds figure. So the budget is deliberately short
+ * (Prisma's 5 s default is too small for a restore's per-row round trips, an unbounded one risks
+ * the "timed out" failure): on timeout the transaction rolls back, the handler answers non-2xx and
+ * Stripe's automatic retry runs the checkout again — nothing is lost, only delayed.
+ */
+const CHECKOUT_TX_OPTIONS = { timeout: 6_000, maxWait: 2_000 } as const;
+
 @Injectable()
 export class BillingService {
   private readonly logger = new Logger(BillingService.name);
@@ -69,6 +110,9 @@ export class BillingService {
     private readonly events: BillingEventService,
     private readonly pricing: PlatformPricingService,
     private readonly billingNotification: BillingNotificationService,
+    // Lane B A2 / B593: a checkout that moves the plan snapshots/restores the tenant's feature
+    // config in the same transaction as the subscription write (live flag, default off).
+    private readonly planTransition: PlanTransitionConfigService,
   ) {}
 
   /**
@@ -588,22 +632,156 @@ export class BillingService {
     // webhook has no business reason to overwrite it with the catalog figure.
     const existingOverride = await this.prisma.tenantSubscription.findUnique({
       where: { tenantId },
-      select: { priceOverrideMonthly: true, priceOverrideAnnual: true },
+      select: {
+        priceOverrideMonthly: true,
+        priceOverrideAnnual: true,
+        planKey: true,
+        stripeCustomerId: true,
+      },
     });
     const hasNegotiatedOverride =
       existingOverride?.priceOverrideMonthly != null ||
       existingOverride?.priceOverrideAnnual != null;
 
-    const upserted = await this.prisma.tenantSubscription.upsert({
+    // Lane B A2 / B593: the plan being LEFT is the stored subscription key, else the legacy
+    // `Tenant.plan` (the same fallback every plan path uses). Only a checkout that names a plan can
+    // move it; a replay of the same webhook resolves to the same rank -> the hook does nothing.
+    // `prepare()` (the flag + catalog read) runs BEFORE the transaction, `onPlanChange` inside it.
+    // Read ONLY while the snapshot flag is on: flag off, this handler issues exactly the queries it
+    // did before the hook existed.
+    // Every session, plan-naming or not: the tenant/customer/replay guards below protect the Stripe
+    // ids + period write too, and a legacy session with no planKey used to skip all of them.
+    const snapshotOn = await this.planTransition.isEnabled();
+    const tenantRow = snapshotOn
+      ? await this.prisma.tenant.findUnique({
+          where: { id: tenantId },
+          select: { plan: true, planVersionId: true },
+        })
+      : null;
+
+    // ── Flag-ON guards (none of these run, or read anything, while the flag is off) ──────────────
+    // The signature proves the Stripe account, not that RouteFlow created this session, and the
+    // hook now snapshots/RESTORES config: a session for a tenant we do not know, or whose customer
+    // is not the one we stored for that tenant, is refused before anything is written.
+    // The STORED key is canonical (a legacy `metadata.plan` enum name -> its canonical key) only
+    // while the snapshot flag is on — the same string the snapshot/audit rows carry, so it never
+    // differs by cohort. Flag OFF the raw key is written exactly as before (byte-identical).
+    let planKeyForCheckout =
+      snapshotOn && resolvedPlanKey
+        ? (normalizePlanKey(resolvedPlanKey) ?? resolvedPlanKey)
+        : resolvedPlanKey;
+    if (snapshotOn) {
+      const storedCustomer = existingOverride?.stripeCustomerId;
+      if (!tenantRow || (storedCustomer && storedCustomer !== session.customer)) {
+        this.logger.error(
+          `checkout.session.completed REFUSED for tenant ${tenantId}: ` +
+            (tenantRow ? "customer does not match the tenant's Stripe customer" : "unknown tenant"),
+        );
+        // Stripe gets a 200 (there is nothing to retry), so the refusal must leave a findable trail,
+        // not only a log line. tenantId is the METADATA's claim, so an unknown tenant is stored null.
+        await this.prisma.auditLog
+          .create({
+            data: {
+              tenantId: tenantRow ? tenantId : null,
+              action: STRIPE_CHECKOUT_REFUSED_ACTION,
+              entityType: STRIPE_CHECKOUT_ENTITY,
+              entityId: session.id ?? null,
+              meta: {
+                reason: tenantRow ? "customer_mismatch" : "unknown_tenant",
+                requestedPlanKey: resolvedPlanKey,
+              },
+            },
+          })
+          .catch(() => undefined);
+        return;
+      }
+      if (session.id) {
+        // A redelivery of a session we already applied does nothing: a late redelivery must never
+        // re-run an old plan change over whatever the tenant chose since.
+        const processed = await this.prisma.auditLog.findFirst({
+          where: {
+            tenantId,
+            entityType: STRIPE_CHECKOUT_ENTITY,
+            entityId: session.id,
+            action: STRIPE_CHECKOUT_APPLIED_ACTION,
+          },
+          select: { id: true },
+        });
+        if (processed) {
+          this.logger.log(`checkout.session.completed ${session.id} already applied — ignoring`);
+          return;
+        }
+      }
+      if (typeof session.created === "number") {
+        // A downgrade that committed AFTER this session was created is the tenant's (or an admin's)
+        // newer decision: an out-of-order/redelivered checkout must not reverse it. The Stripe ids
+        // and period still land (money moved); only the PLAN change is skipped.
+        const newerDowngrade = await this.prisma.tenantFeatureConfigSnapshot.findFirst({
+          where: {
+            tenantId,
+            reason: "DOWNGRADE",
+            takenAt: { gt: new Date(session.created * 1000) },
+          },
+          select: { id: true },
+        });
+        if (newerDowngrade) {
+          this.logger.warn(
+            `checkout.session.completed ${session.id}: tenant ${tenantId} downgraded after this ` +
+              `session was created — recording Stripe ids/period but NOT changing the plan`,
+          );
+          planKeyForCheckout = null;
+          await this.prisma.auditLog
+            .create({
+              data: {
+                tenantId,
+                action: STRIPE_CHECKOUT_STALE_ACTION,
+                entityType: STRIPE_CHECKOUT_ENTITY,
+                entityId: session.id ?? null,
+                meta: { requestedPlanKey: resolvedPlanKey },
+              },
+            })
+            .catch(() => undefined);
+          // Money was taken but the plan was NOT changed: tell the tenant's admin(s) (idempotent per
+          // session; never throws) instead of a silent 200 to Stripe.
+          if (resolvedPlanKey && session.id) {
+            await this.billingNotification.notifyCheckoutPlanNotApplied(
+              tenantId,
+              resolvedPlanKey,
+              session.id,
+            );
+          }
+        }
+      }
+    }
+
+    const transition =
+      planKeyForCheckout && tenantRow
+        ? {
+            tenantId,
+            fromPlanKey:
+              normalizePlanKey(existingOverride?.planKey) ?? planKeyFromEnum(tenantRow.plan),
+            // Canonical key (metadata.plan can be a legacy enum name): the snapshot and audit rows
+            // store this string, so it must not differ by cohort.
+            toPlanKey: planKeyForCheckout,
+            toPlanVersionId: tenantRow.planVersionId ?? null,
+            actor: { id: null, name: "system: stripe checkout" },
+          }
+        : null;
+    const preparedTransition = transition ? await this.planTransition.prepare(transition) : null;
+
+    const upsertArgs = {
       where: { tenantId },
       create: {
         tenantId,
         stripeCustomerId: session.customer as string,
         stripeSubId: subscriptionId,
+        // The plan KEY resolved from the session, never the skipped/stale one: when the plan
+        // change is skipped `planKeyForCheckout` is null and this would otherwise fall back to a
+        // raw `metadata.plan` cast to the enum — a plan-key value is a Prisma enum reject (500 loop).
         currentPlan: resolvedPlanKey
           ? planKeyToEnum(resolvedPlanKey)
           : ((session.metadata?.plan as TenantPlan) ?? "STARTER"),
-        planKey: resolvedPlanKey,
+        planKey: planKeyForCheckout,
         basePriceSnapshot: resolvedBasePrice,
         periodStart: new Date(stripeSub.current_period_start * 1000),
         periodEnd: new Date(stripeSub.current_period_end * 1000),
@@ -615,12 +793,106 @@ export class BillingService {
         periodStart: new Date(stripeSub.current_period_start * 1000),
         periodEnd: new Date(stripeSub.current_period_end * 1000),
         ...(billingInterval ? { billingInterval } : {}),
-        ...(resolvedPlanKey ? { planKey: resolvedPlanKey } : {}),
-        ...(resolvedPlanKey && resolvedBasePrice != null && !hasNegotiatedOverride
+        ...(planKeyForCheckout ? { planKey: planKeyForCheckout } : {}),
+        ...(planKeyForCheckout && resolvedBasePrice != null && !hasNegotiatedOverride
           ? { basePriceSnapshot: resolvedBasePrice }
           : {}),
       },
-    });
+    };
+
+    // Flag OFF (or a checkout that names no plan): EXACTLY the plain upsert this handler always
+    // did — no transaction, no hook. Only an active hook wraps it, so it commits with the snapshot.
+    let upserted: any;
+    if (transition && preparedTransition?.enabled) {
+      try {
+        upserted = await this.prisma.$transaction(
+          async (tx) => {
+            // One processor per checkout session at a time (the audit row below has no unique
+            // index, and adding one is a migration): a concurrent redelivery waits here, then sees
+            // the winner's committed row and does nothing.
+            if (session.id) {
+              await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"stripe-checkout"}), hashtext(${session.id}))`;
+              const done = await tx.auditLog.findFirst({
+                where: {
+                  tenantId,
+                  entityType: STRIPE_CHECKOUT_ENTITY,
+                  entityId: session.id,
+                  action: STRIPE_CHECKOUT_APPLIED_ACTION,
+                },
+                select: { id: true },
+              });
+              if (done) return ALREADY_APPLIED;
+            }
+            // A snapshot failure (a DOWNGRADE) throws -> the handler fails -> Stripe redelivers,
+            // so a downgrade is never applied without its snapshot (fail closed).
+            await this.planTransition.onPlanChange(tx, transition, preparedTransition);
+            // Compare-and-swap on the plan we judged the transition from (the same shape as
+            // upgrade()'s guard): if an in-app change moved it since we read it, this checkout is
+            // stale — throw so the tx (hook writes included) rolls back and Stripe redelivers,
+            // instead of silently reversing the newer change.
+            if (existingOverride) {
+              const held = await tx.tenantSubscription.updateMany({
+                where: { tenantId, planKey: existingOverride.planKey ?? null },
+                data: { stripeSubId: subscriptionId },
+              });
+              if (held.count === 0) {
+                throw new ConflictException("Plan changed concurrently — the checkout is retried.");
+              }
+            }
+            const row = await tx.tenantSubscription.upsert(upsertArgs);
+            if (session.id) {
+              await tx.auditLog.create({
+                data: {
+                  tenantId,
+                  action: STRIPE_CHECKOUT_APPLIED_ACTION,
+                  entityType: STRIPE_CHECKOUT_ENTITY,
+                  entityId: session.id,
+                  meta: { fromPlanKey: transition.fromPlanKey, toPlanKey: transition.toPlanKey },
+                },
+              });
+            }
+            return row;
+          },
+          // Explicit, bounded budget — see CHECKOUT_TX_OPTIONS for why these numbers.
+          CHECKOUT_TX_OPTIONS,
+        );
+      } catch (err) {
+        if (!(err instanceof ConflictException) && !isDeadlockOrSerialization(err)) {
+          // A paid checkout the hook/transaction cannot process (anything but the retryable CAS
+          // conflict) can fail every redelivery the same way until Stripe gives up after days:
+          // leave an audit row so it is findable, not just a log line.
+          this.logger.error(
+            `PAID checkout ${session.id ?? "?"} blocked by the plan-transition hook: ${(err as Error).message}`,
+          );
+          await this.prisma.auditLog
+            .create({
+              data: {
+                tenantId,
+                action: STRIPE_CHECKOUT_HOOK_FAILED_ACTION,
+                entityType: STRIPE_CHECKOUT_ENTITY,
+                entityId: session.id ?? null,
+                // name + Prisma code only: a raw message can carry SQL/row fragments.
+                meta: {
+                  toPlanKey: transition.toPlanKey,
+                  errorName: (err as Error)?.name ?? null,
+                  code: (err as { code?: string })?.code ?? null,
+                },
+              },
+            })
+            .catch(() => undefined);
+        }
+        throw err;
+      }
+    } else {
+      // Flag OFF (or a checkout that names no plan / a stale one): EXACTLY the plain upsert this handler always
+      // did — no transaction, no hook. Only an active hook wraps it, so it commits with the snapshot.
+      upserted = await this.prisma.tenantSubscription.upsert(upsertArgs);
+    }
+
+    if (upserted === ALREADY_APPLIED) {
+      this.logger.log(`checkout.session.completed ${session.id} already applied — ignoring`);
+      return;
+    }
 
     // Atomic non-ACTIVE→ACTIVE: activates the tenant, and if it was previously non-paying (e.g.
     // SUSPENDED) re-adds its run-rate exactly once — idempotent against the paired

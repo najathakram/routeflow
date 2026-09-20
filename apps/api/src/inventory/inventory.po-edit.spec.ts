@@ -766,4 +766,88 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
       });
     });
   });
+
+  // ─── a PO with a LIVE linked bill can't move what it authorised ────────────
+
+  describe("a purchase order that has been billed", () => {
+    const linked = () =>
+      prisma.vendorBill.findFirst.mockResolvedValue({ billNumber: "BILL-2026-0007" });
+
+    it("refuses a line edit (409 PO_HAS_LINKED_BILL) and names the bill — nothing is written", async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue(
+        po({ status: "SENT", items: [poLine({ qtyReceived: D(0) })] }),
+      );
+      linked();
+      const err: any = await service
+        .updatePurchaseOrder(
+          "po-1",
+          { items: [{ id: "poi-1", productId: "prod-1", qtyOrdered: 12, unitCost: 3 }] },
+          "u",
+        )
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse()).toMatchObject({
+        code: "PO_HAS_LINKED_BILL",
+        billNumber: "BILL-2026-0007",
+      });
+      expect(err.getResponse().message).toMatch(/BILL-2026-0007/);
+      expect(err.getResponse().message).toMatch(/Void the bill/);
+      expect(prisma.purchaseOrder.update).not.toHaveBeenCalled();
+      expectNoStockWrites();
+    });
+
+    it("refuses a supplier change too", async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue(po());
+      prisma.supplier.findUnique.mockResolvedValue({ id: "sup-2" });
+      linked();
+      await expect(
+        service.updatePurchaseOrder("po-1", { supplierId: "sup-2", reapplyInventory: true }, "u"),
+      ).rejects.toMatchObject({ response: { code: "PO_HAS_LINKED_BILL" } });
+      expect(prisma.purchaseOrder.update).not.toHaveBeenCalled();
+    });
+
+    it("refuses a re-apply line edit on a RECEIVED, billed PO as well", async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue(po());
+      linked();
+      await expect(
+        service.updatePurchaseOrder(
+          "po-1",
+          {
+            reapplyInventory: true,
+            items: [{ id: "poi-1", productId: "prod-1", qtyOrdered: 10, unitCost: 4 }],
+          },
+          "u",
+        ),
+      ).rejects.toMatchObject({ response: { code: "PO_HAS_LINKED_BILL" } });
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+    });
+
+    it("still allows a header-only edit (notes, expected date) — and does not even look for a bill", async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue(po());
+      linked();
+      await service.updatePurchaseOrder("po-1", { notes: "Dock 5", expectedDate: null }, "u");
+      expect(prisma.purchaseOrder.update.mock.calls[0][0].data).toEqual({
+        notes: "Dock 5",
+        expectedDate: null,
+      });
+      expect(prisma.vendorBill.findFirst).not.toHaveBeenCalled();
+    });
+
+    it("only a LIVE bill locks it — the lookup excludes VOID bills", async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue(
+        po({ status: "SENT", items: [poLine({ qtyReceived: D(0) })] }),
+      );
+      // no live bill found (a voided one is filtered out by the query itself)
+      await service.updatePurchaseOrder(
+        "po-1",
+        { items: [{ id: "poi-1", productId: "prod-1", qtyOrdered: 12, unitCost: 3 }] },
+        "u",
+      );
+      expect(prisma.vendorBill.findFirst).toHaveBeenCalledWith({
+        where: { purchaseOrderId: "po-1", status: { not: "VOID" } },
+        select: { billNumber: true },
+      });
+      expect(prisma.purchaseOrder.update).toHaveBeenCalled();
+    });
+  });
 });

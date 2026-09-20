@@ -1,11 +1,11 @@
-import { OrderStatus } from "@prisma/client";
-import { roundMoney } from "@routeflow/pricing";
+import { InvoiceStatus, OrderStatus } from "@prisma/client";
+import { roundMoney, splitConfirmed } from "@routeflow/pricing";
 import { CREDIT_EXPOSURE_EXCLUDED, CREDIT_NOT_APPLICABLE } from "./invoice-status-sets";
 
 /**
  * ONE derivation of a customer's credit exposure (D6 / B462, owner ruling "option B").
  *
- * Consumed by BOTH the hard credit-limit block (`OrdersService.assertWithinCreditLimit`)
+ * Consumed by BOTH the hard credit-limit block (`assertWithinCreditLimit` in `orders/credit-limit-guard.ts`)
  * and the operator statement (`CustomersService.getStatementForOperator`), so the
  * panel can never disagree with the block (lesson L-119: both halves of one money
  * figure derive from ONE collection). Do NOT re-derive any of this at a call site —
@@ -63,7 +63,95 @@ export const BACKING_ORDER_STATUSES: OrderStatus[] = [
   ...DELIVERED_ORDER_STATUSES,
 ];
 
+/**
+ * The statuses that do NOT back a draft. Together with BACKING_ORDER_STATUSES this must cover
+ * EVERY `OrderStatus` exactly once — `credit-exposure.spec.ts` pins that (B584), so a NEW order
+ * status can never silently fall on the wrong side of the credit block.
+ */
+export const NON_BACKING_ORDER_STATUSES: OrderStatus[] = [OrderStatus.DRAFT, OrderStatus.CANCELLED];
+
 const BACKING_ORDER_STATUS_SET: ReadonlySet<string> = new Set(BACKING_ORDER_STATUSES);
+
+/**
+ * Settled invoices that still COVER their order's value (B577): a PAID invoice has no balance, but
+ * the order it bills is no longer "unbilled" — so its total is subtracted from that order's
+ * remainder. VOID is deliberately absent: a voided invoice bills nothing, so its order's value is
+ * exposure again. WRITTEN_OFF is deliberately absent too (fleet-lead ruling): a write-off means we
+ * gave up collecting, which is the strongest reason to WITHHOLD credit — a written-off invoice
+ * leaves its order counted.
+ */
+export const SETTLED_COVERING_STATUSES: InvoiceStatus[] = [InvoiceStatus.PAID];
+const SETTLED_COVERING_STATUS_SET: ReadonlySet<string> = new Set(SETTLED_COVERING_STATUSES);
+
+/** Issued, still-unsettled statuses: they owe a balance and can survive an order edit. */
+export const UNSETTLED_INVOICE_STATUSES: readonly string[] = [
+  "SENT",
+  "VIEWED",
+  "PARTIAL",
+  "OVERDUE",
+];
+/** Statuses that never carry money received toward an order (pinned vs `InvoiceStatus`). */
+export const NO_RECEIVED_PAYMENT_INVOICE_STATUSES: readonly string[] = [
+  "DRAFT",
+  "VOID",
+  "WRITTEN_OFF",
+];
+/** Invoice statuses whose CONFIRMED payments count as money received toward their order. */
+const RECEIVED_PAYMENT_INVOICE_STATUSES: ReadonlySet<string> = new Set([
+  ...UNSETTLED_INVOICE_STATUSES,
+  "PAID",
+]);
+
+/**
+ * Money already RECEIVED toward ONE order: per issued-or-paid invoice, the CONFIRMED cash-like and
+ * ADVANCE applications (`splitConfirmed`), capped at that invoice's total. A CREDIT_NOTE application
+ * is never money received (B421): a goodwill credit note that flips an invoice to PAID must not cover
+ * the order. Netted out of the edited order's projected total (`editedOrderContribution`), else a
+ * fully prepaid order is blocked for money already paid. Conservative on purpose (it can only LOOSEN
+ * the guard): DRAFT/VOID invoices and DRAFT/PENDING payments contribute nothing.
+ */
+export function orderPaidAmount(invoices: ExposureInvoice[], orderId: string): number {
+  let paid = 0;
+  for (const inv of invoices) {
+    if (inv.orderId !== orderId || !RECEIVED_PAYMENT_INVOICE_STATUSES.has(inv.status)) continue;
+    const { cash, advanceApplied } = splitConfirmed(inv.payments ?? []);
+    paid += Math.min(toNumber(inv.total), cash + advanceApplied);
+  }
+  return paid;
+}
+
+/**
+ * What the ISSUED, unsettled invoices of ONE order owe as stored. They may SURVIVE an edit untouched
+ * (a delivered, partially invoiced order runs neither the revert nor the re-sync): one invoice's
+ * payment must never erase another's balance — or the edit rewrites them (`editedOrderContribution`).
+ */
+export function orderUnsettledOutstanding(invoices: ExposureInvoice[], orderId: string): number {
+  const unsettled = new Set(UNSETTLED_INVOICE_STATUSES);
+  let owed = 0;
+  for (const inv of invoices) {
+    if (inv.orderId === orderId && unsettled.has(inv.status))
+      owed += Math.max(0, invoiceBalance(inv));
+  }
+  return owed;
+}
+
+/**
+ * The edited order's contribution to the credit block: what is still UNPAID of its projected total
+ * (floored at 0), never less than what its unsettled invoices owe. When the edit REWRITES them
+ * (`invoicesSurviveEdit` false, the safe default) that stored balance is stale and counts only up
+ * to the projected total: never stricter than a guard that ignored payments.
+ */
+export function editedOrderContribution(
+  projectedOrderTotal: number,
+  excludedOrderPaid: number,
+  excludedOrderUnsettledOutstanding = 0,
+  invoicesSurviveEdit = false,
+): number {
+  const owed = invoicesSurviveEdit
+    ? excludedOrderUnsettledOutstanding
+    : Math.min(projectedOrderTotal, excludedOrderUnsettledOutstanding);
+  return Math.max(Math.max(0, projectedOrderTotal - excludedOrderPaid), owed);
+}
 
 /** "Not an ISSUED invoice": settled/dead/forgiven statuses AND DRAFT. */
 const NOT_ISSUED_STATUSES: ReadonlySet<string> = new Set(CREDIT_EXPOSURE_EXCLUDED);
@@ -73,9 +161,13 @@ export interface ExposureInvoice {
   total: unknown;
   status: string;
   orderId: string | null;
-  payments: { amount: unknown; status: string }[];
-  /** The invoice's order (Invoice.order), when it has one. Decides whether a DRAFT is backed. */
-  order?: { id: string; status: string; total: unknown } | null;
+  payments: { amount: unknown; status: string; method?: string }[]; // method: credit note vs cash
+  /**
+   * The invoice's order (Invoice.order); decides whether a DRAFT is backed. REQUIRED (B584): a
+   * caller that forgets `order` in its select must fail to COMPILE, not quietly treat every draft
+   * as unbacked (an under-count). `null` = no order (orderId null).
+   */
+  order: { id: string; status: string; total: unknown } | null;
 }
 
 export interface ExposureOrder {
@@ -113,7 +205,8 @@ export interface CreditExposure {
  */
 export function isUnbackedDraft(inv: {
   status: string;
-  order?: { status: string } | null;
+  /** Required on purpose (B584): omitting it from a select is a compile error, not a silent under-count. */
+  order: { status: string } | null;
 }): boolean {
   return (
     inv.status === "DRAFT" && !(inv.order != null && BACKING_ORDER_STATUS_SET.has(inv.order.status))
@@ -165,7 +258,7 @@ export const RECEIVABLE_INVOICE_SELECT = {
  * (`credit-exposure-coverage.spec.ts` fails the build if either stops calling it).
  */
 export function receivableBalance(
-  inv: BalancedInvoice & { status: string; order?: { status: string } | null },
+  inv: BalancedInvoice & { status: string; order: { status: string } | null },
 ): number {
   return isUnbackedDraft(inv) ? 0 : invoiceBalance(inv);
 }
@@ -179,15 +272,19 @@ export function receivableBalance(
  *   3. Group the counted invoices by orderId. An order uses the MAX RULE when it is OPEN (it is
  *      in `openOrders`) OR its group holds ≥ 1 backed draft. For such an order with total T
  *      (the `openOrders` row if present, else the invoices' `order.total`):
- *        counted_o = Σ balance(counted invoices of o) + max(0, T − Σ total(counted invoices of o))
+ *        counted_o = Σ balance(counted invoices of o)
+ *                    + max(0, T − Σ total(counted invoices of o) − Σ total(PAID invoices of o))
  *      — equals max(T, issued + draft) when nothing is paid, and keeps netting payments. An
- *      OPEN order with NO counted invoice counts T (the whole remainder).
+ *      OPEN order with NO invoice at all counts T (the whole remainder). A PAID invoice adds no
+ *      balance but still COVERS its order (B577): an open order fully prepaid by a PAID invoice
+ *      counts 0, never its whole total again. VOID and WRITTEN_OFF cover nothing.
  *   4. Counted invoices outside a max-rule group (orderId null, or a delivered order with only
  *      issued invoices, or an order that is neither open nor carries a backed draft) count by
  *      plain balance — pre-D6 behaviour, no remainder added.
  *
- * @param input.invoices  every NON-SETTLED invoice, drafts included, each with its `order`.
- *   Settled statuses (PAID/VOID/WRITTEN_OFF) are tolerated and ignored, so a caller that
+ * @param input.invoices  every NON-SETTLED invoice, drafts included, each with its `order`, plus
+ *   the PAID invoices of the customer's OPEN orders (they cover their order). Settled invoices never
+ *   add a balance, and cover ONLY an order that is open or carries a backed draft, so a caller that
  *   over-fetches can never inflate the figure.
  * @param input.openOrders  orders in OPEN_ORDER_STATUSES.
  * @param input.excludeOrderId  the order being edited: its invoices and its order row
@@ -207,16 +304,21 @@ export function computeCreditExposure(input: {
   const invoices = input.invoices.filter((inv) => !isExcludedOrder(inv.orderId));
   const openOrders = input.openOrders.filter((o) => !isExcludedOrder(o.id));
 
-  // Steps 1-2: split into pending (unbacked drafts) and counted (issued + backed drafts).
+  // Steps 1-2: split into pending (unbacked drafts) and counted (issued + backed drafts). A PAID
+  // invoice has no balance to count, but its total COVERS its order (B577): collect it.
   let pendingExposure = 0;
   const counted: ExposureInvoice[] = [];
+  const settledCover = new Map<string, number>();
   for (const inv of invoices) {
     if (isUnbackedDraft(inv)) {
       pendingExposure += invoiceBalance(inv);
     } else if (inv.status === "DRAFT" || !NOT_ISSUED_STATUSES.has(inv.status)) {
-      // A backed draft, or an issued invoice. Settled statuses fall through and are ignored.
+      // A backed draft, or an issued invoice.
       counted.push(inv);
+    } else if (inv.orderId != null && SETTLED_COVERING_STATUS_SET.has(inv.status)) {
+      settledCover.set(inv.orderId, (settledCover.get(inv.orderId) ?? 0) + toNumber(inv.total));
     }
+    // Any other settled status (VOID) is ignored: it bills nothing.
   }
 
   // Step 3 prep: group counted invoices by order; the rest count by plain balance (step 4).
@@ -247,7 +349,8 @@ export function computeCreditExposure(input: {
       openOrderTotals.get(orderId) ??
       toNumber(group.find((inv) => inv.order != null)?.order?.total);
     const groupBalance = group.reduce((sum, inv) => sum + invoiceBalance(inv), 0);
-    const groupTotal = group.reduce((sum, inv) => sum + toNumber(inv.total), 0);
+    const groupTotal =
+      group.reduce((sum, inv) => sum + toNumber(inv.total), 0) + (settledCover.get(orderId) ?? 0);
     invoiceExposure += groupBalance;
     uninvoicedOrderExposure += Math.max(0, orderTotal - groupTotal);
   }
@@ -271,31 +374,62 @@ export function computeCreditExposure(input: {
  * The ONLY reader. `db` is the (tenant-scoped) client the caller passes — the hard
  * block passes its transaction client, the statement passes `prisma.forTenant()`.
  * Reads non-settled invoices INCLUDING drafts, each with its order (the pure core splits
- * counted vs pending on it) and the customer's open orders, then derives everything through
- * `computeCreditExposure`.
+ * counted vs pending on it), the PAID invoices of the customer's OPEN orders (they cover their
+ * order, B577 — bounded by the customer's open orders, never by their paid history) and the
+ * customer's open orders, then derives everything through `computeCreditExposure`.
  */
 export async function loadCreditExposure(
   db: ExposureDb,
   customerId: string,
   opts?: { excludeOrderId?: string | null },
-): Promise<CreditExposure> {
+): Promise<
+  CreditExposure & {
+    excludedOrderPaid?: number;
+    excludedOrderUnsettledOutstanding?: number;
+  }
+> {
+  const excludeOrderId = opts?.excludeOrderId ?? null;
   const invoices = (await db.invoice.findMany({
-    where: { customerId, status: { notIn: CREDIT_NOT_APPLICABLE } },
+    where: {
+      customerId,
+      OR: [
+        { status: { notIn: CREDIT_NOT_APPLICABLE } },
+        // B577: a PAID invoice has no balance but still covers its OPEN order's value. Open orders
+        // only: delivered orders are terminal, so their paid invoices would grow with lifetime
+        // history on every credit check.
+        {
+          status: { in: SETTLED_COVERING_STATUSES },
+          order: { status: { in: OPEN_ORDER_STATUSES } },
+        },
+        // The edited order's own PAID invoices, whatever its status (an edit may target a
+        // delivered order): its prepayment is netted out of its projected total.
+        ...(excludeOrderId != null
+          ? [{ status: { in: SETTLED_COVERING_STATUSES }, orderId: excludeOrderId }]
+          : []),
+      ],
+    },
     select: {
       total: true,
       status: true,
       orderId: true,
       order: { select: { id: true, status: true, total: true } },
-      payments: { select: { amount: true, status: true } },
+      payments: { select: { amount: true, status: true, method: true } },
     },
   })) as ExposureInvoice[];
   const openOrders = (await db.order.findMany({
     where: { customerId, status: { in: OPEN_ORDER_STATUSES } },
     select: { id: true, total: true },
   })) as ExposureOrder[];
-  return computeCreditExposure({
-    invoices,
-    openOrders,
-    excludeOrderId: opts?.excludeOrderId ?? null,
-  });
+  const exposure = computeCreditExposure({ invoices, openOrders, excludeOrderId });
+  // Present ONLY when an order is being edited; every other caller gets the four figures it
+  // always did.
+  return excludeOrderId != null
+    ? {
+        ...exposure,
+        excludedOrderPaid: roundMoney(orderPaidAmount(invoices, excludeOrderId)),
+        excludedOrderUnsettledOutstanding: roundMoney(
+          orderUnsettledOutstanding(invoices, excludeOrderId),
+        ),
+      }
+    : exposure;
 }

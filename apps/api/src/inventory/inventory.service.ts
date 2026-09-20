@@ -1021,15 +1021,89 @@ export class InventoryService {
   }
 
   // ── Purchase Orders ──
-  private async nextPoNumber(): Promise<string> {
+  private async nextPoNumber(
+    client: Pick<Prisma.TransactionClient, "purchaseOrder"> = this.prisma.forTenant() as never,
+  ): Promise<string> {
     const year = new Date().getFullYear();
     const prefix = `PO-${year}-`;
-    const last = await this.prisma.forTenant().purchaseOrder.findFirst({
+    const last = await client.purchaseOrder.findFirst({
       where: { poNumber: { startsWith: prefix } },
       orderBy: { poNumber: "desc" },
     });
     const seq = last ? parseInt(last.poNumber.split("-")[2], 10) + 1 : 1;
     return `${prefix}${String(seq).padStart(4, "0")}`;
+  }
+
+  /**
+   * Create a DRAFT purchase order inside a caller's tenant transaction — the
+   * "raise a PO from a scanned bill" path (units/PO step 7). Two documents, ruled:
+   * the PO is what moves stock (send → receive, unchanged); the bill linked to it
+   * is money only. Lines arrive in the PO's denomination — PIECES and a per-PIECE
+   * cost — with the supplier's own SKU / pack size carried through for display.
+   * Running in the caller's transaction means the bill and its PO are created, or
+   * not created, together.
+   */
+  async createDraftPurchaseOrderInTx(
+    tx: Prisma.TransactionClient,
+    input: {
+      supplierId: string;
+      notes?: string | null;
+      lines: {
+        productId: string;
+        qtyOrdered: Prisma.Decimal;
+        unitCost: Prisma.Decimal;
+        sku?: string | null;
+        packSize?: number | null;
+      }[];
+    },
+  ) {
+    if (input.lines.length === 0) throw new BadRequestException("At least one item is required");
+
+    // The same checks createPurchaseOrder makes — this path is reachable from a bill
+    // whose lines are deliberately loose (a bill legitimately carries negative
+    // discount/deposit lines), and a PO line must be a real, positive purchase.
+    const supplier = await tx.supplier.findUnique({ where: { id: input.supplierId } });
+    if (!supplier) throw new NotFoundException("Supplier not found");
+    for (const l of input.lines) {
+      if (!(Number(l.qtyOrdered) > 0) || Number(l.unitCost) < 0) {
+        throw new BadRequestException(
+          "A purchase order can't carry a zero or negative quantity or a negative price — " +
+            "take discount and deposit lines off the bill before raising a purchase order from it.",
+        );
+      }
+    }
+    const products = await tx.product.findMany({
+      where: { id: { in: [...new Set(input.lines.map((l) => l.productId))] } },
+      select: { id: true },
+    });
+    const known = new Set(products.map((p) => p.id));
+    for (const l of input.lines) {
+      if (!known.has(l.productId)) throw new NotFoundException(`Product ${l.productId} not found`);
+    }
+
+    // B571: explicit tenantId on the nested lines — the tenant proxy only stamps the top-level create.
+    const tenantId = this.prisma.getTenantId();
+    const items = input.lines.map((l) => ({
+      tenantId,
+      productId: l.productId,
+      qtyOrdered: l.qtyOrdered,
+      qtyReceived: 0,
+      unitCost: l.unitCost,
+      totalCost: roundMoney(Number(l.qtyOrdered) * Number(l.unitCost)),
+      sku: l.sku ?? null,
+      packSize: l.packSize ?? null,
+    }));
+    return tx.purchaseOrder.create({
+      data: {
+        poNumber: await this.nextPoNumber(tx),
+        supplierId: input.supplierId,
+        status: "DRAFT",
+        notes: input.notes ?? null,
+        totalAmount: roundMoney(items.reduce((sum, i) => sum + i.totalCost, 0)),
+        items: { create: items },
+      },
+      select: { id: true, poNumber: true, status: true },
+    });
   }
 
   async createPurchaseOrder(dto: any, userId: string) {
@@ -1616,6 +1690,27 @@ export class InventoryService {
       if (editsLines && dto.items!.length === 0)
         throw new BadRequestException("At least one item is required");
       const supplierChanged = dto.supplierId !== undefined && dto.supplierId !== po.supplierId;
+
+      // A PO with a LIVE linked bill can't change what it authorised: the bill was gated
+      // against these lines and this supplier, and letting either move would let the two
+      // documents drift apart (an over-billed PO, a bill for another supplier's order).
+      // Header edits (notes, expected date) stay open. Void the bill to release the PO.
+      if (editsLines || supplierChanged) {
+        const liveBill = await tx.vendorBill.findFirst({
+          where: { purchaseOrderId: id, status: { not: "VOID" as never } },
+          select: { billNumber: true },
+        });
+        if (liveBill) {
+          throw new ConflictException({
+            code: "PO_HAS_LINKED_BILL",
+            message:
+              `${po.poNumber} has already been billed (${liveBill.billNumber}), so its lines and supplier ` +
+              "are locked — the bill was checked against them. Void the bill to change them, or edit " +
+              "only the notes or expected date.",
+            billNumber: liveBill.billNumber,
+          });
+        }
+      }
       const touchesStock = wasReceived && (editsLines || supplierChanged);
       if (touchesStock && dto.reapplyInventory === undefined) {
         throw new BadRequestException(

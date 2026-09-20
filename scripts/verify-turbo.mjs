@@ -5,6 +5,8 @@
 // workspaces the diff reaches are checked, printed as "AFFECTED SCOPE: <workspaces>". master,
 // CI, a detached HEAD, an uncomputable diff, a diff that touches a file feeding every workspace,
 // and FULL_VERIFY=1 (the coordinator's landing run — the only override) run every workspace.
+// A workspace whose campaign report is missing/partial/stale (`campaign-check --print-stale`) is
+// added to a scoped run so its tests execute — see scripts/lib/verify-scope.mjs `withStale`.
 // CI's full run is the authority.
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -35,6 +37,12 @@ console.log(
     `always-run tripwires: @routeflow/pricing tests, @routeflow/api test:repo-truth). ` +
     `FULL_VERIFY=1 runs everything.`,
 );
+if (scope.stale?.length) {
+  console.log(
+    `+ STALE REPORTS: ${scope.stale.join(", ")} — campaign-check would refuse their report, so ` +
+      `their tests join the run (turbo regenerates the report on a cache miss; the --freshness-only pre-step forces a real run on a hit). No enforcement is relaxed.`,
+  );
+}
 const filters = scope.workspaces.map((w) => `--filter=${w}`);
 const first = turbo(["check-types", "lint", "test", ...filters]);
 // Keep going after a failure so one push reports every red workspace, like the full chain does.

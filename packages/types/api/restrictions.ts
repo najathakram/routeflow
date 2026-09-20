@@ -18,7 +18,7 @@ export interface RestrictionsPolicy {
 /** OFF = feature disabled · ALLOW = enabled, nothing blocks · BLOCK · INDETERMINATE = enabled but the state can't be resolved (fail closed). */
 export type RestrictionOutcome = "OFF" | "ALLOW" | "BLOCK" | "INDETERMINATE";
 
-/** BUYER_PORTAL = self-serve; STAFF = every other path (staff UI, cron, system). */
+/** BUYER_PORTAL = the self-serve buyer (principal `type: "BUYER"` or the CUSTOMER role, and any caller not positively staff); STAFF = a staff principal or an explicit system caller. */
 export type RestrictionChannel = "BUYER_PORTAL" | "STAFF";
 
 export interface RestrictionsEvaluation {
@@ -45,9 +45,11 @@ export interface BlockedLine {
   message: string;
 }
 
-/** Thrown as a 409 by `assertSellable` — mirrors `REGULATED_AUTH_REQUIRED`'s shape. */
+/** Thrown as a 409 by `assertLinesSellable` — mirrors `REGULATED_AUTH_REQUIRED`'s shape. */
 export interface SellingRestrictedError {
   code: "SELLING_RESTRICTED";
+  /** One human sentence (a client with no blocked-lines panel toasts it); the detail is `blockedLines`. */
+  message: string;
   blockedLines: BlockedLine[];
 }
 

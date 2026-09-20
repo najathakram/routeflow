@@ -215,6 +215,35 @@ model TenantFeatureConfig {
   @@index([tenantId])
 }
 
+/// Why a TenantFeatureConfigSnapshot was taken. DOWNGRADE = automatic, in the same transaction as
+/// a plan change to a lower rank; MANUAL = a platform admin archived the config on demand.
+enum SnapshotReason {
+  DOWNGRADE
+  MANUAL
+}
+
+/// Entitlement config that survives downgrade -> re-upgrade (owner ruling 2026-09-18): the tenant's
+/// full effective config (TenantFeatureConfig rows + active TenantFeatureOverride rows), archived as
+/// ONE jsonb document at the state-changing event and rehydrated as-was on a same-or-higher plan.
+/// A snapshot is data — never deleted by a sweep. `payload` is written and read only by
+/// serializeTenantFeatureConfig / restore in tenant-config-snapshot.ts. `planKey` is the plan being LEFT.
+model TenantFeatureConfigSnapshot {
+  id                String         @id @default(uuid())
+  tenantId          String
+  planKey           String
+  takenAt           DateTime       @default(now())
+  reason            SnapshotReason
+  payload           Json
+  restoredAt        DateTime?
+  restoredToPlanKey String?
+  createdById       String?
+  createdByName     String?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, takenAt])
+}
+
 // ─── Billing plan catalog (GLOBAL reference data — not tenant-scoped) ─────────
 
 model PlanVersion {

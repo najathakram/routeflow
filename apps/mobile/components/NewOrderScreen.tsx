@@ -88,6 +88,9 @@ import {
   setLineUnits,
 } from "../lib/sale-line";
 import { LicenseGuardModal } from "./LicenseGuardModal";
+import { BlockedLinesModal } from "./BlockedLinesModal";
+import { parseSellingRestricted } from "../lib/selling-restricted";
+import type { BlockedLine } from "@routeflow/types";
 import { parseRegulatedAuthError, type BlockedCategory } from "../lib/api/authorizations";
 import { ScanOutcome } from "../lib/scan-loop";
 import { bumpScanOrder, nextFlash, trayRowsFrom, type ScanFlash } from "../lib/scan-tray";
@@ -656,6 +659,8 @@ function ProductPickView({
   // submitOrder(mergeChoice) to replay once the license/override is captured.
   const [licenseBlock, setLicenseBlock] = useState<BlockedCategory[] | null>(null);
   const licenseRetryRef = useRef<"merge" | "separate" | undefined>(undefined);
+  // Selling restrictions: the lines the API refused (409 SELLING_RESTRICTED); no override exists.
+  const [restrictedBlock, setRestrictedBlock] = useState<BlockedLine[] | null>(null);
   // Order-level options (mirror web CreateOrderModal): notes, urgent flag,
   // requested delivery date (YYYY-MM-DD), and an order-level discount.
   const [orderNotes, setOrderNotes] = useState(() => draftSeed?.orderNotes ?? "");
@@ -2094,6 +2099,11 @@ function ProductPickView({
             );
             return;
           }
+          const restricted = parseSellingRestricted(err);
+          if (restricted) {
+            setRestrictedBlock(restricted);
+            return;
+          }
           // Regulated-sale block: open the license guard and replay this exact
           // submit (same mergeChoice) once the license/override is captured.
           const blocked = parseRegulatedAuthError(err);
@@ -2509,6 +2519,8 @@ function ProductPickView({
           acceptScannedProduct(p as unknown as Product);
         }}
       />
+
+      <BlockedLinesModal lines={restrictedBlock} onClose={() => setRestrictedBlock(null)} />
 
       <LicenseGuardModal
         open={!!licenseBlock}
