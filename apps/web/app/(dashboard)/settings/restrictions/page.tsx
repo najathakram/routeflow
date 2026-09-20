@@ -9,6 +9,7 @@ import { useAuth } from "@/lib/auth-context";
 import {
   friendlySettingsError,
   notReadyReadiness,
+  twoStepNotice,
   useRestrictionsReadiness,
   useRestrictionsSettings,
   useUpdateRestrictionsSettings,
@@ -70,18 +71,20 @@ export default function RestrictionsSettingsPage() {
         toast({ title: "Saved", variant: "success" });
       },
       onError: (e) => {
+        // Only the guided cases toast here (and are in providers.tsx's HANDLED_CODES so the global
+        // handler skips them). Any other error is toasted once, with the server message, by that
+        // global handler — a second toast here would double it (B594 class).
         const r = notReadyReadiness(e);
-        if (r) setRefused(r);
-        const friendly = friendlySettingsError(e);
-        setNotice(friendly);
-        toast({
-          title: r
-            ? "Can't enable yet — see what to fix below"
-            : friendly
-              ? "Do this in two steps"
-              : "Couldn't save",
-          variant: "error",
-        });
+        if (r) {
+          setRefused(r);
+          toast({ title: "Can't enable yet — see what to fix below", variant: "error" });
+          return;
+        }
+        const twoStep = twoStepNotice(e);
+        if (twoStep) {
+          setNotice(twoStep);
+          toast({ title: "Do this in two steps", variant: "error" });
+        }
       },
     });
 

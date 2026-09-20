@@ -50,15 +50,21 @@ export function notReadyReadiness(err: unknown): RestrictionsEnableReadiness | n
     : null;
 }
 
+const TWO_STEP_CODE = "SELLING_RESTRICTIONS_ENABLE_AND_POLICY_TOGETHER";
+
+/** The two-step instruction for "enable + change the address policy in one request" (by its stable code). */
+export function twoStepNotice(err: unknown): string | null {
+  return (err as ApiError)?.response?.data?.code === TWO_STEP_CODE
+    ? "Do this in two steps: first change which address decides the state, then turn enforcement on."
+    : null;
+}
+
 /**
  * Friendly copy for the API's known refusals (never a raw 400/429). Keyed on the stable error code /
  * status, not on message text.
  */
 export function friendlySettingsError(err: unknown): string | null {
-  const r = (err as ApiError)?.response;
-  if (r?.data?.code === "SELLING_RESTRICTIONS_ENABLE_AND_POLICY_TOGETHER") {
-    return "Do this in two steps: first change which address decides the state, then turn enforcement on.";
-  }
-  if (r?.status === 429) return "Too many readiness checks. Wait a minute and try again.";
-  return null;
+  if ((err as ApiError)?.response?.status === 429)
+    return "Too many readiness checks. Wait a minute and try again.";
+  return twoStepNotice(err);
 }
