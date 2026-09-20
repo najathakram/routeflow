@@ -600,6 +600,38 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
       expect(transition.toPlanVersionId).toBeNull();
     });
 
+    it("a replay: the stored key equals the checkout's plan, so the hook sees NO rank move (from == to)", async () => {
+      const { svc, planTransition } = make({
+        sub: { tenantId: "t1", planKey: "GROWTH", basePriceSnapshot: 349, discount: 0 },
+      });
+
+      await (svc as any).onCheckoutCompleted(session("GROWTH"));
+
+      const [, transition] = planTransition.onPlanChange.mock.calls[0];
+      expect(transition.fromPlanKey).toBe(transition.toPlanKey);
+    });
+
+    it("a legacy metadata.plan name is normalised to the canonical key before it is stored", async () => {
+      const { svc, planTransition } = make();
+
+      await (svc as any).onCheckoutCompleted({
+        metadata: { tenantId: "t1", plan: "BUSINESS" },
+        subscription: "sub_1",
+        customer: "cus_1",
+      });
+
+      const [, transition] = planTransition.onPlanChange.mock.calls[0];
+      expect(transition.toPlanKey).toBe(normalizePlanKey("BUSINESS"));
+    });
+
+    it("the checkout transaction has an explicit budget (Prisma's 5 s default is too small for a restore)", async () => {
+      const { svc, prisma } = make();
+
+      await (svc as any).onCheckoutCompleted(session("GROWTH"));
+
+      expect(prisma.$transaction.mock.calls[0][1]).toEqual({ timeout: 20_000, maxWait: 10_000 });
+    });
+
     it("a checkout that names no plan cannot move it: the hook is not consulted at all", async () => {
       const { svc, planTransition } = make({ transitionCount: 1 });
 

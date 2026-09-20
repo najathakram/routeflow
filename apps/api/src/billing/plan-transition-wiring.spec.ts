@@ -40,8 +40,9 @@ const WIRED: Record<string, number> = {
   // updatePlan() (the cron applies it later), setPriceOverride, updatePlanPrices, updateStatus's
   // NULL-planKey fill-in, and createTenant (no prior plan).
   "platform-admin/platform-admin.service.ts": 2,
-  // Stripe onCheckoutCompleted (B593). Its other writes (price-ledger reconcile, the
-  // cancel/CANCELLED and past-due status moves) touch no plan rank, so they stay unwired.
+  // Stripe onCheckoutCompleted (B593) — the ONE wired write in this file. The other `currentPlan:`
+  // there is ensureStripeCustomer's upsert, which copies Tenant.plan and never sets `planKey`, so
+  // no rank moves; the status moves (cancel/CANCELLED, past-due) touch no plan either.
   "billing/billing.service.ts": 1,
 };
 
