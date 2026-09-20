@@ -95,13 +95,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { resolveLineUnits } from "../products/line-units";
-import {
-  buildUnitLine,
-  categoryTaxForLine,
-  isUnitAware,
-  prepareUnitLadders,
-  replayLineKey,
-} from "./unit-line-build";
+import * as unitLines from "./unit-line-build";
 import { assertBuyerCartPricesCurrent } from "./buyer-cart-price-check";
 import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
@@ -1813,7 +1807,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // units_v1: a stored unit line compares by its unit count + label (see replayLineKey).
           const norm = (rows: never[], stored: boolean) =>
             rows
-              .map((r) => replayLineKey(r, stored))
+              .map((r) => unitLines.replayLineKey(r, stored))
               .sort()
               .join("|");
           const incomingNorm = norm((dto.items ?? []) as never[], false);
@@ -1889,7 +1883,7 @@ export class OrdersService implements OnApplicationBootstrap {
 
     // units_v1 (4b-2b): the gate (staff only, flag.units_v1) + the server ladder of every product a
     // line names a unit for; nothing is read when no line asks for a unit.
-    const unitsByProduct = await prepareUnitLadders(items, {
+    const unitsByProduct = await unitLines.prepareUnitLadders(items, {
       isStaff: isStaffRole,
       tenantId: this.prisma.getTenantId(),
       entitlements: this.entitlements,
@@ -2006,15 +2000,15 @@ export class OrdersService implements OnApplicationBootstrap {
       // pack's own label, a Piece on an unboxed product) falls through, byte-identical to before.
       const ladder = unitsByProduct.get(product.id) ?? [];
       const resolvedUnits = resolveLineUnits(product, ladder, item);
-      if (isUnitAware(resolvedUnits)) {
+      if (unitLines.isUnitAware(resolvedUnits)) {
         const category = categoryMap.get(product.trackedCategoryId ?? "");
-        const unitLine = buildUnitLine({
+        const unitLine = unitLines.buildUnitLine({
           product,
           units: ladder,
           resolved: resolvedUnits,
           item: { ...item, productId: product.id },
           tier: cpMap.get(product.id) ?? defaultTier,
-          taxFor: (qty, sub) => categoryTaxForLine(category, qty, sub),
+          taxFor: (qty, sub) => unitLines.categoryTaxForLine(category, qty, sub),
           position: index,
           tenantId: this.prisma.getTenantId(),
         });
