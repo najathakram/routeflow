@@ -89,6 +89,12 @@ describe("ConfigSnapshotsTab", () => {
     expect((await screen.findByRole("alert")).textContent).toMatch(/Failed to load/);
   });
 
+  it("an unreadable snapshot is labelled and offers no restore", async () => {
+    await renderTab([snap({ entries: null })]);
+    expect(await screen.findByText("Unreadable")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Restore now" })).toBeNull();
+  });
+
   it("Restore now opens a PREVIEW first — restored / kept / skipped / unchanged — and writes nothing", async () => {
     mockPreview.mockResolvedValue(PREVIEW);
     await renderTab();
@@ -103,5 +109,67 @@ describe("ConfigSnapshotsTab", () => {
     expect(within(dialog).getByText("Feature no longer exists", { exact: false })).toBeTruthy();
     expect(within(dialog).getByText(/3 already match/)).toBeTruthy();
     expect(mockRestore).not.toHaveBeenCalled();
+  });
+
+  it("confirming restores, shows the report, closes the dialog and refreshes the list", async () => {
+    mockPreview.mockResolvedValue(PREVIEW);
+    mockRestore.mockResolvedValue({
+      snapshotId: "s1",
+      takenAt: "2026-09-10T12:00:00.000Z",
+      planKey: "SCALE",
+      restoredToPlanKey: "SCALE",
+      report: { restored: 2, skipped: 1, keptNewer: 1, unchanged: 3 },
+    });
+    await renderTab();
+    fireEvent.click(await screen.findByRole("button", { name: "Restore now" }));
+    const dialog = await screen.findByRole("dialog");
+    await within(dialog).findByText("Will be restored (2)");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Restore now" }));
+
+    await waitFor(() => expect(mockRestore).toHaveBeenCalledWith(TENANT, "s1"));
+    expect((await screen.findByRole("status")).textContent).toMatch(
+      /2 restored, 1 kept \(changed since\), 1 skipped/,
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(mockList).toHaveBeenCalledTimes(2); // initial load + refresh
+  });
+
+  it("nothing to restore disables the confirm button", async () => {
+    mockPreview.mockResolvedValue({ ...PREVIEW, willRestore: [], keptNewer: [], skipped: [] });
+    await renderTab();
+    fireEvent.click(await screen.findByRole("button", { name: "Restore now" }));
+    const dialog = await screen.findByRole("dialog");
+
+    await within(dialog).findByText(/Nothing to restore/);
+    expect(
+      (within(dialog).getByRole("button", { name: "Restore now" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  it("a 409 (already restored) is explained, keeps the dialog honest and refreshes the list", async () => {
+    mockPreview.mockResolvedValue(PREVIEW);
+    mockRestore.mockRejectedValue({ response: { status: 409 } });
+    await renderTab();
+    fireEvent.click(await screen.findByRole("button", { name: "Restore now" }));
+    const dialog = await screen.findByRole("dialog");
+    await within(dialog).findByText("Will be restored (2)");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Restore now" }));
+
+    expect((await within(dialog).findByRole("alert")).textContent).toMatch(/already restored/);
+    await waitFor(() => expect(mockList).toHaveBeenCalledTimes(2));
+  });
+
+  it("a failed preview shows the error and cannot be confirmed", async () => {
+    mockPreview.mockRejectedValue({ response: { status: 422 } });
+    await renderTab();
+    fireEvent.click(await screen.findByRole("button", { name: "Restore now" }));
+    const dialog = await screen.findByRole("dialog");
+
+    expect((await within(dialog).findByRole("alert")).textContent).toMatch(/unreadable/);
+    expect(
+      (within(dialog).getByRole("button", { name: "Restore now" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
   });
 });
