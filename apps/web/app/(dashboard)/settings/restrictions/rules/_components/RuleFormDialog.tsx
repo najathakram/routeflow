@@ -14,7 +14,6 @@ import {
 } from "@/lib/restriction-rule-form";
 import { StatePicker } from "./StatePicker";
 
-const PRODUCT_LIMIT = 8;
 type Errors = Partial<Record<keyof RuleFormValues, string>>;
 
 const Legend = ({ children }: { children: React.ReactNode }) => (
@@ -38,7 +37,7 @@ function ProductPick({
     return () => clearTimeout(t);
   }, [q]);
   const { data } = useProducts(
-    { search: term || undefined, isActive: true, limit: PRODUCT_LIMIT },
+    { search: term || undefined, isActive: true, limit: 8 },
     { enabled: !!term },
   );
   const results: { id: string; name: string; sku?: string | null }[] = term
@@ -83,11 +82,6 @@ function ProductPick({
             </li>
           ))}
         </ul>
-      )}
-      {results.length === PRODUCT_LIMIT && (
-        <p className="text-xs text-navy/60">
-          Showing the first {PRODUCT_LIMIT}. Refine your search.
-        </p>
       )}
       {term && results.length === 0 && data && (
         <p className="text-xs text-navy/60">No matching products</p>
