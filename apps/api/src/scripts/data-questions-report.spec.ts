@@ -259,6 +259,39 @@ describe("data-questions-report", () => {
       expect(t).not.toMatch(/JOIN "OrderItem"/);
       expect(t).toMatch(/EXISTS \(SELECT 1 FROM "OrderItem" oi/);
     });
+
+    it("Q10 (round 2): estimate and invoice lines are summed per (document, product) in their own CTE before a 1:1 join", () => {
+      const t = sql(10)[0];
+      expect(t).toMatch(/WITH est AS[\s\S]*GROUP BY 1, 2, 3, 4[\s\S]*inv AS/);
+      expect(t).not.toMatch(
+        /LEFT JOIN "InvoiceItem" ii ON ii\."invoiceId" = e\."invoiceId" AND ii\."productId" = ei\."productId"/,
+      );
+    });
+
+    it("Q5 (round 2): each draft order's total is counted once, not once per change request that points at it", () => {
+      const t = sql(5)[0];
+      // the dedup happens BEFORE the sum: drafts is DISTINCT on (tenantId, type, order id), draft_totals sums
+      // that deduped set, and the outer query reads it with max() (already 1:1 per group), never a raw sum
+      // over one row per change request.
+      expect(t).toMatch(
+        /drafts AS \(\s*SELECT DISTINCT nd\."tenantId", nd\.type, nd\."nextOrderId"/,
+      );
+      expect(t).toMatch(/draft_totals AS \([\s\S]*sum\(n\.total\)[\s\S]*FROM drafts d/);
+      expect(t).toMatch(/max\(dt\.drafts_total_dollars\)/);
+    });
+
+    it("Q16 (round 2): the Return join checks tenantId, and an ambiguous id-prefix match is excluded", () => {
+      const t = sql(16)[0];
+      expect(t).toMatch(/JOIN "Return" r ON r\."tenantId" = m\."tenantId"/);
+      expect(t).toMatch(/NOT EXISTS[\s\S]*"Return" r2[\s\S]*r2\.id <> r\.id/);
+    });
+
+    it("Q1 (round 2): qualifies each pair via EXISTS, then sums ALL invoice lines of the pair (not only re-created ones)", () => {
+      const t = sql(1)[1];
+      expect(t).toMatch(/EXISTS \(\s*SELECT 1 FROM "InvoiceItem" ii2/);
+      expect(t).toMatch(/ii2\."createdAt" > i\."createdAt" \+ interval '1 minute'/);
+      expect(t).not.toMatch(/\bii\.boxes IS NULL/);
+    });
   });
 
   it("holds no client identifier: no uuid and no credential-shaped URL in the script or the library", () => {

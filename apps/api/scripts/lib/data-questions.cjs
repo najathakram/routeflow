@@ -29,7 +29,7 @@ const QUESTIONS = [
     bug: "B645",
     title: "boxed-product estimates converted to an invoice, then edited",
     approx:
-      "edited = the invoice line was re-created >1 min after its invoice; dollars = per (invoice, product) invoice total minus the estimate total (no line key links the two)",
+      "edited = at least one split-less boxed invoice line of the (invoice, product) pair was re-created >1 min after its invoice (the qualifying test); dollars = ALL invoice lines of that pair minus ALL estimate lines of the pair (no line key links the two)",
     stmts: [
       s(
         "converted estimates with boxed lines",
@@ -43,13 +43,21 @@ const QUESTIONS = [
         // Both sides are summed per (estimate/invoice, product) BEFORE they are joined 1:1, so a product that
         // repeats on a document can never multiply rows or double-count dollars (review item 3). No line key links
         // an estimate line to its invoice line, so the conversion link is estimate -> invoice id, then product.
+        // A pair qualifies via EXISTS when at least one split-less boxed invoice line was re-created after the
+        // invoice; once qualified, aff sums ALL invoice lines of that (invoice, product) pair, not only the
+        // re-created ones, so the dollar delta is never biased low against the estimate's full product total
+        // (review item 4, second round).
         `WITH aff AS (
            SELECT e.id AS estimate_id, e."tenantId", i.id AS invoice_id, ii."productId",
                   count(*) AS inv_lines, sum(ii.subtotal) AS inv_dollars
            FROM "Estimate" e JOIN "Invoice" i ON i.id = e."invoiceId"
              JOIN "InvoiceItem" ii ON ii."invoiceId" = i.id JOIN "Product" p ON p.id = ii."productId"
-           WHERE e.status = 'CONVERTED' AND ${BOXED} AND ii.boxes IS NULL
-             AND ii."createdAt" > i."createdAt" + interval '1 minute'
+           WHERE e.status = 'CONVERTED' AND ${BOXED}
+             AND EXISTS (
+               SELECT 1 FROM "InvoiceItem" ii2
+               WHERE ii2."invoiceId" = i.id AND ii2."productId" = ii."productId" AND ii2.boxes IS NULL
+                 AND ii2."createdAt" > i."createdAt" + interval '1 minute'
+             )
            GROUP BY 1, 2, 3, 4
          ), est AS (
            SELECT ei."estimateId" AS estimate_id, ei."productId", sum(ei.subtotal) AS est_dollars
@@ -138,13 +146,28 @@ const QUESTIONS = [
     stmts: [
       s(
         "next-delivery resolutions",
-        `SELECT cr."tenantId", cr.type::text AS type, count(*)::int AS requests,
-                count(cr."nextOrderId")::int AS drafts_produced,
+        // drafts_total_dollars sums each DISTINCT draft order exactly once: several change requests can share
+        // one nextOrderId ("several requests fed one draft"), and the old sum(n.total) joined a draft in once
+        // per request that pointed at it. drafts (deduped by tenant/type/order id) feeds draft_totals, which
+        // the outer query reads with max() per group since the value is already 1:1 on (tenantId, type)
+        // (review item 2, second round). requests/drafts_produced stay per-request, unaffected.
+        `WITH nd AS (
+           SELECT cr."tenantId", cr.type::text AS type, cr."orderItemId", cr."nextOrderId"
+           FROM "ChangeRequest" cr WHERE cr.resolution = 'NEXT_DELIVERY'
+         ), drafts AS (
+           SELECT DISTINCT nd."tenantId", nd.type, nd."nextOrderId" AS order_id
+           FROM nd WHERE nd."nextOrderId" IS NOT NULL
+         ), draft_totals AS (
+           SELECT d."tenantId", d.type, sum(n.total) AS drafts_total_dollars
+           FROM drafts d JOIN "Order" n ON n.id = d.order_id GROUP BY 1, 2
+         )
+         SELECT nd."tenantId", nd.type, count(*)::int AS requests,
+                count(nd."nextOrderId")::int AS drafts_produced,
                 count(*) FILTER (WHERE oi.boxes IS NOT NULL)::int AS on_box_split_line,
-                sum(n.total)::numeric(14,2) AS drafts_total_dollars
-         FROM "ChangeRequest" cr LEFT JOIN "OrderItem" oi ON oi.id = cr."orderItemId"
-           LEFT JOIN "Order" n ON n.id = cr."nextOrderId"
-         WHERE cr.resolution = 'NEXT_DELIVERY' GROUP BY 1, 2 ORDER BY 3 DESC`,
+                max(dt.drafts_total_dollars)::numeric(14,2) AS drafts_total_dollars
+         FROM nd LEFT JOIN "OrderItem" oi ON oi.id = nd."orderItemId"
+           LEFT JOIN draft_totals dt ON dt."tenantId" = nd."tenantId" AND dt.type = nd.type
+         GROUP BY 1, 2 ORDER BY 3 DESC`,
       ),
     ],
   },
@@ -234,18 +257,33 @@ const QUESTIONS = [
     n: 10,
     bug: "B659",
     title: "estimates converted to invoices that contain tracked-category products",
-    approx: "same estimate as Q9 for percent levies",
+    approx:
+      "same estimate as Q9 for percent levies; no line key links an estimate line to its invoice line, so both sides are summed per (document, product) in their own CTE before a 1:1 join (same shape as Q1) — a product repeated on either document can never multiply lines, estimate_dollars or invoice_levy",
     stmts: [
       s(
         "converted estimate lines on tracked categories vs the levy on the invoice line",
-        `SELECT e."tenantId", tc."taxType"::text AS tax_type, count(*)::int AS lines, count(DISTINCT e.id)::int AS estimates,
-                sum(ei.subtotal)::numeric(14,2) AS estimate_dollars,
-                sum(ii."categoryTaxAmount")::numeric(14,2) AS invoice_levy,
-                sum(CASE WHEN tc."taxType"::text = 'PERCENT_OF_SALE' THEN ei.subtotal * tc.rate ELSE 0 END)::numeric(14,2) AS estimated_levy_percent_types
-         FROM "Estimate" e JOIN "EstimateItem" ei ON ei."estimateId" = e.id JOIN "Product" p ON p.id = ei."productId"
-           JOIN "TrackedCategory" tc ON tc.id = p."trackedCategoryId"
-           LEFT JOIN "InvoiceItem" ii ON ii."invoiceId" = e."invoiceId" AND ii."productId" = ei."productId"
-         WHERE e.status = 'CONVERTED' GROUP BY 1, 2 ORDER BY 3 DESC`,
+        // est sums estimate lines per (estimate, product); inv sums invoice lines per (estimate, product) via
+        // the estimate's own invoiceId, joined 1:1 by estimate_id + productId — never a direct EstimateItem to
+        // InvoiceItem join on invoice+product alone (review item 1, second round).
+        `WITH est AS (
+           SELECT e.id AS estimate_id, e."tenantId", ei."productId", tc."taxType"::text AS tax_type,
+                  count(*) AS lines, sum(ei.subtotal) AS estimate_dollars,
+                  sum(CASE WHEN tc."taxType"::text = 'PERCENT_OF_SALE' THEN ei.subtotal * tc.rate ELSE 0 END) AS estimated_levy_percent_types
+           FROM "Estimate" e JOIN "EstimateItem" ei ON ei."estimateId" = e.id JOIN "Product" p ON p.id = ei."productId"
+             JOIN "TrackedCategory" tc ON tc.id = p."trackedCategoryId"
+           WHERE e.status = 'CONVERTED'
+           GROUP BY 1, 2, 3, 4
+         ), inv AS (
+           SELECT e.id AS estimate_id, ii."productId", sum(ii."categoryTaxAmount") AS invoice_levy
+           FROM "Estimate" e JOIN "InvoiceItem" ii ON ii."invoiceId" = e."invoiceId"
+           WHERE e.id IN (SELECT estimate_id FROM est) GROUP BY 1, 2
+         )
+         SELECT est."tenantId", est.tax_type, sum(est.lines)::int AS lines, count(DISTINCT est.estimate_id)::int AS estimates,
+                sum(est.estimate_dollars)::numeric(14,2) AS estimate_dollars,
+                sum(coalesce(inv.invoice_levy, 0))::numeric(14,2) AS invoice_levy,
+                sum(est.estimated_levy_percent_types)::numeric(14,2) AS estimated_levy_percent_types
+         FROM est LEFT JOIN inv ON inv.estimate_id = est.estimate_id AND inv."productId" = est."productId"
+         GROUP BY 1, 2 ORDER BY 3 DESC`,
       ),
     ],
   },
@@ -414,19 +452,26 @@ const QUESTIONS = [
     bug: "B665",
     title: "standard returns of box-unaware lines already restocked",
     approx:
-      "assumes the operator typed BOXES for a box-unaware line (R-ui's unverified premise); deficit_pieces = quantity x (unitsPerBox - 1)",
+      "assumes the operator typed BOXES for a box-unaware line (R-ui's unverified premise); deficit_pieces = quantity x (unitsPerBox - 1); reference carries no FK, so a movement is matched to its Return by tenant + 8-char id prefix, and a movement whose prefix matches more than one STANDARD Return in that tenant is excluded as ambiguous",
     stmts: [
       s(
         "RETURN stock movements from standard returns against box-unaware boxed lines",
         // Each movement is counted ONCE: order lines are tested with EXISTS, never joined, so several order lines
         // of one product cannot multiply restocked_qty or the deficit (review item 4). A product that is on both a
-        // box-aware and a box-unaware line of the same order is ambiguous and excluded.
+        // box-aware and a box-unaware line of the same order is ambiguous and excluded. reference carries no FK,
+        // so the Return join is scoped to the movement's own tenant, and a NOT EXISTS pair excludes a movement
+        // whose 8-char id prefix matches more than one STANDARD Return in that tenant (review item 3, second round).
         `SELECT m."tenantId", count(DISTINCT m.id)::int AS movements, sum(m.quantity)::numeric AS restocked_qty,
                 sum(m.quantity * (p."unitsPerBox" - 1))::numeric AS deficit_pieces_if_typed_in_boxes
          FROM "StockMovement" m
-           JOIN "Return" r ON m.reference = 'RET-' || left(r.id::text, 8) AND r.kind::text = 'STANDARD'
+           JOIN "Return" r ON r."tenantId" = m."tenantId" AND m.reference = 'RET-' || left(r.id::text, 8)
+             AND r.kind::text = 'STANDARD'
            JOIN "Product" p ON p.id = m."productId"
          WHERE m.type::text = 'RETURN' AND ${BOXED}
+           AND NOT EXISTS (
+             SELECT 1 FROM "Return" r2 WHERE r2."tenantId" = m."tenantId" AND r2.kind::text = 'STANDARD'
+               AND r2.id <> r.id AND 'RET-' || left(r2.id::text, 8) = m.reference
+           )
            AND EXISTS (SELECT 1 FROM "OrderItem" oi WHERE oi."orderId" = r."orderId" AND oi."productId" = m."productId"
                          AND oi.boxes IS NULL AND oi."unitsPerBox" IS NULL)
            AND NOT EXISTS (SELECT 1 FROM "OrderItem" oa WHERE oa."orderId" = r."orderId" AND oa."productId" = m."productId"
