@@ -138,6 +138,68 @@ describe("InvoicesService.duplicate — what the Duplicate button now depends on
     expect(created().items.create[0].unitsPerBox).toBeNull();
   });
 
+  describe("regulated LEVY - a subtotal-only assertion would pass while the levy is 12x wrong", () => {
+    // A regulated boxed product: 12 pieces per box, EXCISE_PER_UNIT $0.10 per PIECE. 6 boxes = 72 pieces
+    // at $40/box: subtotal $240 and levy 72 x $0.10 = $7.20 (a qty-only rebuild bases the levy on
+    // qty x unitsPerBox = 864 pieces = $86.40, the 12x the old Duplicate button produced).
+    const regulatedLine = { ...boxedLine, trackedCategoryId: "cat-excise", categoryTaxAmount: 7.2 };
+    const regulated = (over: Record<string, unknown> = {}) =>
+      source({ subtotal: 240, taxAmount: 7.2, total: 247.2, items: [regulatedLine], ...over });
+
+    it("the copy carries the levy $7.20 (not $86.40) with the same 72 pieces / $240 it was priced on", async () => {
+      prisma.invoice.findUnique.mockResolvedValue(regulated());
+      await service.duplicate("inv-1");
+      const line = created().items.create[0];
+      expect(line.categoryTaxAmount).toBe(7.2);
+      expect(line.categoryTaxAmount).not.toBe(86.4);
+      // the triple the ledger's SALE row reads when the copy is issued: qty / subtotal / levy
+      expect({ qty: line.qty, subtotal: line.subtotal, levy: line.categoryTaxAmount }).toEqual({
+        qty: 72,
+        subtotal: 240,
+        levy: 7.2,
+      });
+      expect(line.trackedCategoryId).toBe("cat-excise");
+    });
+
+    it("the levy folds into the copy's tax and total: tax $7.20, total $247.20 (not $86.40 / $326.40)", async () => {
+      prisma.invoice.findUnique.mockResolvedValue(regulated());
+      await service.duplicate("inv-1");
+      expect(created().subtotal).toBe(240);
+      expect(created().taxAmount).toBe(7.2);
+      expect(created().total).toBe(247.2);
+    });
+
+    it("several regulated lines sum their levies", async () => {
+      prisma.invoice.findUnique.mockResolvedValue(
+        regulated({
+          items: [
+            regulatedLine,
+            {
+              ...regulatedLine,
+              id: "li-2",
+              qty: 36,
+              boxes: 3,
+              subtotal: 120,
+              categoryTaxAmount: 3.6,
+            },
+          ],
+        }),
+      );
+      await service.duplicate("inv-1");
+      expect(created().taxAmount).toBe(10.8);
+      expect(created().total).toBe(370.8);
+    });
+
+    it("a tax-exempt customer's copy carries no levy on the line or the invoice", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: true });
+      prisma.invoice.findUnique.mockResolvedValue(regulated());
+      await service.duplicate("inv-1");
+      expect(created().items.create[0].categoryTaxAmount).toBe(0);
+      expect(created().taxAmount).toBe(0);
+      expect(created().total).toBe(240);
+    });
+  });
+
   describe("due date - derived from the copied terms, so the copy can go OVERDUE and age", () => {
     it("Net 15 source: due 15 days after the COPY's issue date, label kept", async () => {
       prisma.invoice.findUnique.mockResolvedValue(source({ paymentTermsLabel: "Net 15" }));
