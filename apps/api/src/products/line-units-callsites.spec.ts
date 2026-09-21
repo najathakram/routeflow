@@ -25,6 +25,10 @@ const BASELINE: Record<string, number> = {
   "invoices/manual-invoice-lines.ts": 2, // B659: packSnapshot replaced the box split's two reads with one
   "estimates/estimates.service.ts": 2,
   "order-templates/order-templates.service.ts": 1,
+  // B646: generation is a NEW sale, so the recurring generator reads the LIVE pack at generation time (the
+  // Senior Architect buildLine contract) to store a boxed template line in pieces; the split lives in
+  // recurring-invoices/recurring-line-split.ts.
+  "recurring-invoices/recurring-invoices.service.ts": 1,
   "returns/inline-returns-quote.service.ts": 3,
   "buyer/buyer.controller.ts": 1,
   "buyer/replenishment.service.ts": 1,
