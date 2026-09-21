@@ -7,7 +7,12 @@ import {
 } from "@nestjs/common";
 import { EstimateStatus, PriceType } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { computeLineSubtotal, getTierPrice, roundMoney } from "@routeflow/pricing";
+import {
+  computeLineSubtotal,
+  getTierPrice,
+  packFromOwnSplit,
+  roundMoney,
+} from "@routeflow/pricing";
 import { loadMsrpMap } from "../common/msrp";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
 import { EntitlementsService } from "../billing/entitlements.service";
@@ -139,11 +144,17 @@ export class EstimatesService {
     let subtotal = 0;
     const itemsData = items.map((i: any) => {
       const product = i.productId ? productMap.get(i.productId) : null;
+      // B645 / line-units-callsites ratchet: read this ONCE and reuse it below
+      // (qty resolution, computeLineSubtotal, and the B645 snapshot on the
+      // returned item) rather than re-reading `product.unitsPerBox` at each
+      // site — keeps this file's direct-read count at the ratchet's baseline
+      // instead of adding a third counted read for the same value.
+      const productUnitsPerBox = product?.unitsPerBox ?? null;
 
       // Resolve qty from boxes/pieces when provided
       let qty = Number(i.qty);
       if (product && (i.boxes != null || i.pieces != null)) {
-        const unitsPerBox = Number(product.unitsPerBox ?? 0);
+        const unitsPerBox = Number(productUnitsPerBox ?? 0);
         qty = (i.boxes ?? 0) * unitsPerBox + (i.pieces ?? 0);
       }
 
@@ -180,7 +191,7 @@ export class EstimatesService {
         qty,
         boxes: i.boxes ?? null,
         pieces: i.pieces ?? null,
-        unitsPerBox: product?.unitsPerBox ?? null,
+        unitsPerBox: productUnitsPerBox,
       });
       subtotal += sub;
       return {
@@ -193,6 +204,13 @@ export class EstimatesService {
         originalPrice,
         boxes: i.boxes ?? null,
         pieces: i.pieces ?? null,
+        // B645: snapshot the SAME factor just used above for qty/subtotal — the
+        // live product's unitsPerBox at creation time — rather than letting it be
+        // computed, spent, and discarded. Without this, a future repack of the
+        // product silently changes what this estimate line means on any later
+        // recompute (edit, convert, re-price). Null exactly when the line isn't
+        // boxed, matching InvoiceItem's twin column.
+        unitsPerBox: productUnitsPerBox,
         tenantId,
       };
     });
@@ -429,6 +447,29 @@ export class EstimatesService {
                 taxRate: lineTaxRate,
                 subtotal: i.subtotal,
                 msrp: i.productId ? (msrpMap.get(i.productId) ?? null) : null,
+                // B645: carry the box-split triplet through — InvoiceItem has the
+                // same boxes/pieces/unitsPerBox columns as EstimateItem, but this
+                // create previously dropped all three, leaving `boxes: null` on
+                // every converted line. invoices.service.ts's own re-price paths
+                // gate their box proration on `boxes != null`; with it null a
+                // converted boxed line is treated as a plain per-unit line and
+                // any later re-save (edit form, applyPriceAdjustment) recomputes
+                // qty * unitPrice from a qty that was actually total pieces,
+                // over-billing by unitsPerBox. boxes/pieces are already stored on
+                // every existing estimate item today and copy through verbatim.
+                // `unitsPerBox` is newer (only this fix's create() snapshots it),
+                // so a pre-fix line has it null — conversion recovers the pack
+                // from that line's OWN boxes/pieces/qty split when the split
+                // makes one derivable (packFromOwnSplit), and only falls back to
+                // null when it can't. This NEVER reads the live product: a
+                // repack since the estimate was written must not change what an
+                // already-written line means.
+                boxes: i.boxes ?? null,
+                pieces: i.pieces ?? null,
+                unitsPerBox:
+                  i.unitsPerBox != null && i.unitsPerBox > 1
+                    ? i.unitsPerBox
+                    : packFromOwnSplit({ qty: i.qty, boxes: i.boxes, pieces: i.pieces }),
                 tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
               })),
             },
