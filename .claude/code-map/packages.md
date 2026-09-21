@@ -367,3 +367,33 @@ Flat ESLint configs (ESM). Exports: `./base` (recommended + turbo + typescript-e
 TS config presets (JSON inheritance): `base.json` (es2022, strict, nodeNext), `nextjs.json`
 (ESNext, Bundler, noEmit, jsx preserve), `react-library.json` (jsx react-jsx). Used via
 `extends` in app `tsconfig.json`.
+
+## Catch-up 2026-09-21
+
+> Drift `c19cb81` -> HEAD. New workspace `@routeflow/scanning`; new shared DTO files; modified types/pricing/ui. Scripts/schema: [`api/catchup-2026-09-21-scripts-schema.md`](api/catchup-2026-09-21-scripts-schema.md).
+
+### `@routeflow/scanning` (`packages/scanning`) — NEW, extracted from apps/mobile (#948)
+
+- `packages/scanning/package.json` — name `@routeflow/scanning` 0.0.1, private; `main`/`types` = `./src/index.ts` (no build step); scripts test/lint/check-types; consumed by apps/web (transpilePackages) and apps/mobile (metro + jest alias).
+- `packages/scanning/src/index.ts` — barrel; `export *` from scan-loop, scan-pending-buffer, scan-engine, scan-feedback.
+- `packages/scanning/src/scan-loop.ts` — dedupe gate (per-code cooldown, absence clock, LRU slots); exports `gateScan(code,state,now,cooldownMs?,candidatesOf?)`, `ScanGateState`, `ScanSlot`, `ScanCandidates`, `ScanOutcome`, `ScanFeedback`, `SCAN_COOLDOWN_MS=600`, `ABSENCE_GAP_MS`, `SCAN_SLOTS=4`.
+- `packages/scanning/src/scan-pending-buffer.ts` — bounded FIFO so a mid-resolve detection is queued not dropped; exports `createPendingBuffer()`, `pushScan(state,code)`, `completeResolve(state)`, `PendingBufferState`, `PENDING_BUFFER_DEPTH=2`.
+- `packages/scanning/src/scan-engine.ts` — sequencing seam gate -> buffer, pure (caller injects `now`); exports `createScanEngine()`, `frameScanned(state,code,now,candidatesOf?)`, `manualScanned(state,code)`, `scanSettled(state)` -> `ScanEngineStep`.
+- `packages/scanning/src/scan-feedback.ts` — exports `cueForOutcome(outcome): ScanCue` (`"accepted"|"rejected"|"none"`); sound/vibration stay per-app (`scan-cue`).
+- `packages/scanning/jest.config.js` — ts-jest, node env, `roots:["<rootDir>/src"]`, `*.spec.ts`. `packages/scanning/tsconfig.json` — extends typescript-config base, commonjs/node, noEmit, `noUncheckedIndexedAccess:false`.
+- Callers: `apps/mobile/lib/scan-{engine,feedback,loop,pending-buffer}.ts` (thin re-export shims; engine injects `normalizeScanCode`); web `orders/_components/scan/{ScanOrderScreen.tsx,useContinuousScanCamera.ts}` (useScanV2, #977).
+
+### `@routeflow/types` new files (`packages/types/api/`), all re-exported from `packages/types/index.ts`
+
+- `packages/types/api/config-snapshots.ts` — platform-admin config-snapshot wire shapes (A2c #1023/#1109); exports `ConfigSnapshotListItem`, `ConfigSnapshotPreview`, `ConfigSnapshotRestoreReport`, `ConfigSnapshotRestoreResult`, `ConfigSnapshotEntryKind`, `ConfigSnapshotSkipReason`.
+- `packages/types/api/product-labels.ts` — category-label manager + product label panel DTOs (Lane R step 4, #990); exports `LabelCategoryDto`, `ProductLabelDto`, `InheritedLabelDto`, `ProductLabelsDto`, `SetProductLabelRequest`; uses `LabelMode`.
+- `packages/types/api/restrictions-admin.ts` — selling-restriction rules admin contract (#995/#1003); exports `RESTRICTION_STATUS_VALUES`, `RestrictionStatus`, `SellingRestrictionListItemDto`, `CreateSellingRestrictionRequest`, `LiftSellingRestrictionRequest`.
+- `packages/types/api/restrictions-settings.ts` — `/settings/restrictions` contract (#1000/#1031); exports `RestrictionsSettingsDto{enabled,governingAddress}`, `RestrictionsEnableReadiness`, `UpdateRestrictionsSettingsRequest`.
+
+### Modified
+
+- **Modified `packages/types/api/enums.ts`:** +`RESTRICTION_ADDRESS_PRECEDENCE_VALUES`/`RestrictionAddressPrecedence`, +`SNAPSHOT_REASON_VALUES`/`SnapshotReasonValue` (#1000/#1002).
+- **Modified `packages/types/api/restrictions.ts`:** +`RestrictionOutcome`, `RestrictionChannel`, `RestrictionsEvaluation`, `BuyerBlockedLine`, `BuyerSellingRestrictedError`; `addressPrecedence` replaces `governingAddress`; +`UNKNOWN_PRODUCT`; 409 message (#956/#1061/#1126).
+- **Modified `packages/types/`:** `api/products.ts` (unit prices `string|null`; `PutProductUnitsPayload` -> `CreateProductUnitPayload`/`UpdateProductUnitPayload`, #947); `api/us-states.ts` (comment only: AA/AE/AP/FM/MH/PW/UM out of scope); `index.ts` (+4 re-exports).
+- **Modified `packages/pricing/src/unit-levels.ts`:** `resolveUnitPrice` now delegates to new `resolveLevelPrice(input: ResolveLevelPriceInput)`; new `Numeric` type accepts Decimal/string; explicit price = positive number only; zero packPrice guard (#943/#947).
+- **Modified `packages/ui/src/web/`:** `Badge.tsx` (`children` now rendered, #946); `Modal.tsx` (+`scroll` 92vh cap, `onOpenAutoFocus`, `onCloseAutoFocus`, #1062/#1115). ui + eslint-config `package.json`: dep bumps (#972).
