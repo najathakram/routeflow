@@ -33,6 +33,7 @@ import { clampLimit } from "../common/pagination";
 import { isInternalEmail } from "../common/internal-email";
 import { loadMsrpMap } from "../common/msrp";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
+import { finalizeOrderRecompute } from "./finalize-order-recompute";
 import { EntitlementsService } from "../billing/entitlements.service";
 import {
   CheckStatus,
@@ -2399,44 +2400,17 @@ export class InvoicesService {
       }
     }
 
-    // Order lines billed by no invoice → cancel (they weren't actually sold).
-    for (const orphan of existingById.values()) {
-      await db.orderItem.update({
-        where: { id: orphan.id },
-        data: {
-          status: "CANCELLED",
-          qty: 0,
-          subtotal: 0,
-          boxes: null,
-          pieces: null,
-          invoicedQty: 0,
-        },
-      });
-    }
-
-    // Preserve the order's effective tax rate (avoids depending on global config
-    // drift); mirror updateOrderItems' total = subtotal + regular tax + category tax.
-    subtotal = roundMoney(subtotal);
-    const prevSubtotal = Number(order.subtotal) || 0;
-    // B294 round 2: same semantics as the inline `prevSubtotal > 0 ? tax/prevSubtotal : 0`
-    // this replaced — the shared helper's zero-subtotal guard lands on the same 0.
-    const effectiveTaxRate = effectiveTaxRateFromTotals(order.tax, prevSubtotal, false);
-    const tax = roundMoney(subtotal * effectiveTaxRate);
-    // RF-4: fold the billed category tax (Σ per line) back into the order total, so
-    // the order stays in step with what the invoices actually charged.
-    const categoryTax = roundMoney(categoryTaxSum);
-    // Shipping back-sync: the order's fee is DEFINED as Σ(non-void invoice fees) —
-    // an invoice-side fee edit lands here and updates the order, which is what
-    // lets the order-driven reconciles treat the order as source of truth.
-    const shippingFeeSum = roundMoney(
-      invoices.reduce((s: number, inv: any) => s + Number(inv.shippingFee ?? 0), 0),
-    );
-    const total = roundMoney(subtotal + tax + categoryTax + shippingFeeSum);
-    await db.order.update({
-      where: { id: orderId },
-      data: { subtotal, tax, total, shippingFee: shippingFeeSum },
+    // B667: cancelling never-billed lines and rewriting the order's totals is only correct
+    // once the invoices being read cover the WHOLE order — see finalizeOrderRecompute's doc.
+    return finalizeOrderRecompute({
+      db,
+      orderId,
+      order,
+      unbilled: existingById,
+      subtotal,
+      categoryTaxSum,
+      invoices,
     });
-    return { orderId, subtotal, tax, total, shippingFee: shippingFeeSum };
   }
 
   /**
