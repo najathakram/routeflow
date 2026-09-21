@@ -276,7 +276,6 @@ export interface UpdatePurchaseOrderInput {
   reapplyInventory?: boolean;
 }
 
-// scan-ok: dead-hook — its caller, the Edit-PO modal (LANE-U step 6 web, part 3 of 3), lands in a later PR; the size cap split it out. Remove this note then.
 export function useUpdatePurchaseOrder() {
   const qc = useQueryClient();
   return useMutation({
