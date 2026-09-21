@@ -7,7 +7,12 @@ import {
 } from "@nestjs/common";
 import { EstimateStatus, PriceType } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { computeLineSubtotal, getTierPrice, roundMoney } from "@routeflow/pricing";
+import {
+  computeLineSubtotal,
+  getTierPrice,
+  packFromOwnSplit,
+  roundMoney,
+} from "@routeflow/pricing";
 import { loadMsrpMap } from "../common/msrp";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
 import { EntitlementsService } from "../billing/entitlements.service";
@@ -450,19 +455,21 @@ export class EstimatesService {
                 // converted boxed line is treated as a plain per-unit line and
                 // any later re-save (edit form, applyPriceAdjustment) recomputes
                 // qty * unitPrice from a qty that was actually total pieces,
-                // over-billing by unitsPerBox. Retroactive: boxes/pieces are
-                // already stored on every existing estimate item today (only
-                // `unitsPerBox` is new, from tonight's A0 migration), so this
-                // heals every already-accepted, not-yet-converted historical
-                // estimate the moment it ships — no backfill needed.
-                // `unitsPerBox` copies through as `null` for a pre-A0 estimate
-                // line unchanged; that's fine — `boxes != null` alone is what
-                // gates the proration downstream, and the live product's
-                // unitsPerBox is still read at render/recompute time exactly as
-                // it always was for those older rows.
+                // over-billing by unitsPerBox. boxes/pieces are already stored on
+                // every existing estimate item today and copy through verbatim.
+                // `unitsPerBox` is newer (only this fix's create() snapshots it),
+                // so a pre-fix line has it null — conversion recovers the pack
+                // from that line's OWN boxes/pieces/qty split when the split
+                // makes one derivable (packFromOwnSplit), and only falls back to
+                // null when it can't. This NEVER reads the live product: a
+                // repack since the estimate was written must not change what an
+                // already-written line means.
                 boxes: i.boxes ?? null,
                 pieces: i.pieces ?? null,
-                unitsPerBox: i.unitsPerBox ?? null,
+                unitsPerBox:
+                  i.unitsPerBox != null && i.unitsPerBox > 1
+                    ? i.unitsPerBox
+                    : packFromOwnSplit({ qty: i.qty, boxes: i.boxes, pieces: i.pieces }),
                 tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
               })),
             },

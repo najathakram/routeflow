@@ -2,6 +2,7 @@ import {
   computeLineSubtotal,
   roundMoney,
   normalizeBoxesPieces,
+  packFromOwnSplit,
   perUnitPrice,
   costPerSellingUnit,
   computeMarginFraction,
@@ -229,6 +230,36 @@ describe("pricing — money discipline", () => {
         pieces: null,
         qty: 0,
       });
+    });
+  });
+
+  // B645 review gap: an existing EstimateItem/InvoiceItem written before unitsPerBox
+  // was itself snapshotted has it null, but still stores boxes/pieces/qty — and that
+  // split alone is enough to recover the pack, per the invariant normalizeBoxesPieces
+  // enforces (qty === boxes * pack + pieces). NEVER read the live product for this —
+  // it may have been repacked since the line was written.
+  describe("packFromOwnSplit — recovering a legacy line's pack from its own split", () => {
+    it("derives the pack from a whole-box line (6 boxes, 0 pieces, qty 72 -> 12)", () => {
+      expect(packFromOwnSplit({ qty: 72, boxes: 6, pieces: 0 })).toBe(12);
+    });
+
+    it("derives the pack from a line with loose pieces (2 boxes, 3 pieces, qty 51 -> 24)", () => {
+      expect(packFromOwnSplit({ qty: 51, boxes: 2, pieces: 3 })).toBe(24);
+    });
+
+    it("returns null when there are no boxes to divide by", () => {
+      expect(packFromOwnSplit({ qty: 10, boxes: 0, pieces: 0 })).toBeNull();
+      expect(packFromOwnSplit({ qty: 10, boxes: null, pieces: null })).toBeNull();
+    });
+
+    it("returns null when the split doesn't land on a whole number", () => {
+      // (10 - 0) / 3 = 3.33...
+      expect(packFromOwnSplit({ qty: 10, boxes: 3, pieces: 0 })).toBeNull();
+    });
+
+    it("returns null for a pack of exactly 1 (indistinguishable from not boxed)", () => {
+      // (6 - 0) / 6 = 1
+      expect(packFromOwnSplit({ qty: 6, boxes: 6, pieces: 0 })).toBeNull();
     });
   });
 

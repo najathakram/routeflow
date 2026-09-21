@@ -90,6 +90,30 @@ export function normalizeBoxesPieces(input: {
   return { boxes: null, pieces: null, qty };
 }
 
+/**
+ * Recover a legacy line's pack size (`unitsPerBox`) from its OWN stored
+ * boxes/pieces/qty split — never from the live product, which may have been
+ * repacked since. A boxed line's `qty` is always `boxes * pack + pieces` (the
+ * invariant `normalizeBoxesPieces` enforces going forward), so the pack is
+ * just `(qty - pieces) / boxes` whenever that division lands on a whole
+ * number greater than 1. Returns `null` whenever the split can't recover a
+ * pack — no boxes, a non-integer quotient, or a quotient of exactly 1 (a
+ * "pack of one" is indistinguishable from not boxed at all) — so the caller
+ * falls back to its existing null-`unitsPerBox` behavior rather than guess.
+ */
+export function packFromOwnSplit(input: {
+  qty: number;
+  boxes?: number | null;
+  pieces?: number | null;
+}): number | null {
+  const boxes = Number(input.boxes ?? 0);
+  if (!(boxes > 0)) return null;
+  const pieces = Number(input.pieces ?? 0);
+  const qty = Number(input.qty ?? 0);
+  const pack = (qty - pieces) / boxes;
+  return Number.isInteger(pack) && pack > 1 ? pack : null;
+}
+
 export interface LineSubtotalInput {
   unitPrice: number;
   /** Total qty in pieces — kept for backward compat & non-boxed products. */

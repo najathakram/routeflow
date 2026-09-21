@@ -1061,7 +1061,7 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       expect(createdLine.subtotal).toBe(1440);
     });
 
-    it("REG-B645 convertToInvoice() carries a NULL unitsPerBox through unchanged for a pre-A0 estimate (no migration needed — the live product read still gates `boxes != null` downstream)", async () => {
+    it("REG-B645 convertToInvoice() recovers a pre-fix estimate line's pack from its OWN boxes/pieces/qty split, never the live product (boxes 6, qty 72 -> unitsPerBox 12)", async () => {
       prisma.estimate.updateMany.mockResolvedValue({ count: 1 });
       prisma.estimate.findUnique.mockResolvedValue({
         id: "est-645-old",
@@ -1077,10 +1077,15 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
           {
             description: "Widget (pre-A0 row)",
             productId: "prod-645",
-            qty: 5,
+            // A real estimate line always stores qty = boxes * pack + pieces —
+            // 6 boxes with no loose pieces means qty is 72 (pack 12), never 5.
+            // unitsPerBox is null because this row predates the create()
+            // snapshot this fix added; the pack is still recoverable from the
+            // line's own split, (72 - 0) / 6 = 12.
+            qty: 72,
             unitPrice: 100,
             subtotal: 500,
-            boxes: 5,
+            boxes: 6,
             pieces: 0,
             unitsPerBox: null,
           },
@@ -1093,7 +1098,49 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       await service.convertToInvoice("est-645-old");
 
       const createdLine = prisma.invoice.create.mock.calls[0][0].data.items.create[0];
-      expect(createdLine.boxes).toBe(5);
+      expect(createdLine.boxes).toBe(6);
+      expect(createdLine.pieces).toBe(0);
+      // Red without the derivation: HEAD's convertToInvoice() (pre this commit)
+      // only ever carries `i.unitsPerBox ?? null` through, so this line's null
+      // unitsPerBox would pass through unchanged instead of being derived.
+      expect(createdLine.unitsPerBox).toBe(12);
+    });
+
+    it("REG-B645 convertToInvoice() carries unitsPerBox null unchanged when a pre-fix line's own split can't recover a pack (no boxes)", async () => {
+      prisma.estimate.updateMany.mockResolvedValue({ count: 1 });
+      prisma.estimate.findUnique.mockResolvedValue({
+        id: "est-645-old-unboxed",
+        status: "ACCEPTED",
+        customerId: "cust-645",
+        subtotal: 50,
+        taxAmount: 0,
+        discount: 0,
+        total: 50,
+        notes: null,
+        terms: null,
+        items: [
+          {
+            description: "Loose widget (never boxed)",
+            productId: "prod-645",
+            qty: 10,
+            unitPrice: 5,
+            subtotal: 50,
+            // boxes: 0 — packFromOwnSplit has nothing to divide by, so there is
+            // no pack to recover; this must stay null, not become 0 or guess.
+            boxes: 0,
+            pieces: 0,
+            unitsPerBox: null,
+          },
+        ],
+      });
+      prisma.invoice.create.mockImplementation((args: any) =>
+        Promise.resolve({ id: "inv-645-old-unboxed", ...args.data, customer: {} }),
+      );
+
+      await service.convertToInvoice("est-645-old-unboxed");
+
+      const createdLine = prisma.invoice.create.mock.calls[0][0].data.items.create[0];
+      expect(createdLine.boxes).toBe(0);
       expect(createdLine.unitsPerBox).toBeNull();
     });
 
