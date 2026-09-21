@@ -43,7 +43,7 @@ const BASELINE: Record<string, number> = {
   "apps/mobile/components/NewOrderScreen.tsx": 4556,
   "apps/web/app/(dashboard)/inventory/page.tsx": 3303,
   "apps/web/app/(marketing)/marketing.css": 9941,
-  "apps/web/components/ScanInvoiceModal.tsx": 3134,
+  "apps/web/components/ScanInvoiceModal.tsx": 2475, // prefactor: leaf components, types and pure helpers live in components/scan-invoice/ (was 3134)
 };
 
 function lineCount(abs: string): number {
