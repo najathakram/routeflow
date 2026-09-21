@@ -1,11 +1,14 @@
 import { defineConfig, devices } from "@playwright/test";
 import path from "path";
+import { requireBaseUrl } from "./lib/e2e-setup-guard";
 
 /**
  * Playwright configuration for full Chrome UI coverage against Railway.
  *
  * Required env vars (create .env.playwright or export before running):
- *   PLAYWRIGHT_BASE_URL   — e.g. https://app.routeflow.io or Railway URL
+ *   PLAYWRIGHT_BASE_URL   — REQUIRED, no default (unset/empty aborts the run). Local: http://localhost:3001.
+ *                           A non-local target is human-only: it needs GITHUB_ACTIONS=true (CI) or a
+ *                           human's explicit E2E_ALLOW_REMOTE_AUTH=1 — an agent must never set either.
  *   PLAYWRIGHT_TENANT_SLUG — tenant slug for operator / customer tests
  *
  * Run commands:
@@ -21,8 +24,10 @@ import path from "path";
  *   without re-hitting the login endpoint on every beforeEach.
  */
 
-const BASE_URL =
-  process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
+// No default: an unset PLAYWRIGHT_BASE_URL used to resolve to PRODUCTION, so a forgotten inline
+// variable pointed every login at the live site. requireBaseUrl() throws instead — see
+// lib/e2e-setup-guard.ts (the setup project additionally vets locality + tenant).
+const BASE_URL = requireBaseUrl();
 
 // Path to the pre-authenticated storage state files created by the setup project
 const AUTH_DIR = path.join(__dirname, "e2e/setup/.auth");
