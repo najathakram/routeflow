@@ -150,7 +150,11 @@ describe("InvoicesService", () => {
         { provide: SystemConfigService, useValue: mockSystemConfig },
         {
           provide: RegulatedLedgerService,
-          useValue: { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() },
+          useValue: {
+            writeSaleEntries: jest.fn(),
+            reverseInvoiceEntries: jest.fn(),
+            correctSaleForPriceChange: jest.fn(),
+          },
         },
         {
           provide: AuthorizationGuardService,

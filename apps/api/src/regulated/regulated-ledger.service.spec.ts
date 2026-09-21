@@ -1,5 +1,6 @@
+import { prorateLineSubtotal } from "@routeflow/pricing";
 import { Test } from "@nestjs/testing";
-import { RegulatedLedgerService } from "./regulated-ledger.service";
+import { RegulatedLedgerService, priceCorrectionTarget } from "./regulated-ledger.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
@@ -1304,6 +1305,220 @@ describe("RegulatedLedgerService", () => {
       await service.unreverseCreditNoteEntries({ creditNoteId: "cn-1", db: prisma });
       expect(prisma.regulatedSalesLedger.deleteMany).toHaveBeenCalledWith({
         where: { creditNoteId: "cn-1", entryType: "REVERSAL" },
+      });
+    });
+  });
+
+  // ─── B662: a price change on an ISSUED invoice books an append-only correction row ───
+  describe("correctSaleForPriceChange (B662)", () => {
+    // 6 boxes of 12 (72 pieces) at $40/box: SALE qty 72, net $240, category tax $60.
+    const sale = (over: Record<string, unknown> = {}) => ({
+      id: "sale-1",
+      tenantId: "t1",
+      trackedCategoryId: "cat-A",
+      trackedSubcategoryId: "sub-1",
+      entryType: "SALE",
+      orderId: "ord-1",
+      orderItemId: "oi-1",
+      invoiceId: "inv-1",
+      invoiceItemId: "ii-1",
+      qty: 72,
+      unitBasisQty: 72,
+      netSales: 240,
+      categoryTax: 60,
+      soldAt: new Date("2026-08-15T00:00:00Z"),
+      createdAt: new Date("2026-08-15T00:00:00Z"),
+      correctsEntryId: null,
+      returnId: null,
+      ...over,
+    });
+    const line = (over: Record<string, unknown> = {}) => ({
+      invoiceItemId: "ii-1",
+      qty: 72,
+      netSales: 300, // re-priced: $50/box
+      categoryTax: 75,
+      boxes: 6,
+      unitsPerBox: 12,
+      promoFreeUnits: null,
+      ...over,
+    });
+    const run = (rows: unknown[], lines: any[]) => {
+      prisma.regulatedSalesLedger.findMany.mockResolvedValue(rows);
+      prisma.regulatedSalesLedger.createMany.mockClear();
+      return service.correctSaleForPriceChange({ invoiceId: "inv-1", lines, db: prisma });
+    };
+    const rows = () => prisma.regulatedSalesLedger.createMany.mock.calls[0][0].data;
+
+    beforeEach(() => {
+      jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] });
+      jest.setSystemTime(new Date("2026-09-21T15:00:00.000Z"));
+    });
+    afterEach(() => jest.useRealTimers());
+
+    it("an INCREASE books one SALE-type correction: signed deltas, qty 0, both new columns, current period", async () => {
+      expect(await run([sale()], [line()])).toBe(1);
+      expect(rows()).toHaveLength(1);
+      expect(rows()[0]).toEqual({
+        tenantId: "t1",
+        trackedCategoryId: "cat-A",
+        trackedSubcategoryId: "sub-1",
+        entryType: "SALE",
+        orderId: "ord-1",
+        orderItemId: "oi-1",
+        invoiceId: "inv-1",
+        invoiceItemId: "ii-1",
+        qty: 0,
+        unitBasisQty: 0,
+        netSales: 60, // 300 - 240
+        categoryTax: 15, // 75 - 60
+        soldAt: new Date("2026-09-21T15:00:00.000Z"), // never backdated
+        originalSoldAt: new Date("2026-08-15T00:00:00Z"), // the sale date it corrects
+        correctsEntryId: "sale-1",
+        periodBucket: "2026-09", // the CURRENT month, not the sale's
+      });
+    });
+
+    it("a DECREASE books a REVERSAL-type correction with negative deltas", async () => {
+      await run([sale()], [line({ netSales: 180, categoryTax: 45 })]);
+      expect(rows()[0]).toMatchObject({
+        entryType: "REVERSAL",
+        netSales: -60,
+        categoryTax: -15,
+        qty: 0,
+        correctsEntryId: "sale-1",
+      });
+    });
+
+    it("is IDEMPOTENT: repeating the same adjustment (the correction is now held) writes nothing", async () => {
+      const correction = sale({
+        id: "corr-1",
+        qty: 0,
+        unitBasisQty: 0,
+        netSales: 60,
+        categoryTax: 15,
+        correctsEntryId: "sale-1",
+      });
+      expect(await run([sale(), correction], [line()])).toBe(0);
+      expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
+    });
+
+    it("a second, different adjustment corrects only the difference and still points at the ORIGINAL sale", async () => {
+      const correction = sale({
+        id: "corr-1",
+        qty: 0,
+        unitBasisQty: 0,
+        netSales: 60,
+        categoryTax: 15,
+        correctsEntryId: "sale-1",
+      });
+      await run([sale(), correction], [line({ netSales: 330, categoryTax: 82.5 })]);
+      expect(rows()[0]).toMatchObject({
+        entryType: "SALE",
+        netSales: 30, // 330 - (240 + 60)
+        categoryTax: 7.5,
+        correctsEntryId: "sale-1", // never the earlier correction
+      });
+    });
+
+    it("PARTIAL RETURN in between: the TARGET is the new subtotal prorated to the qty still held", async () => {
+      // 12 pieces (1 box) came back at the OLD price: reversal qty -12, net -40, tax -10.
+      const returned = sale({
+        id: "rev-1",
+        entryType: "REVERSAL",
+        qty: -12,
+        unitBasisQty: -12,
+        netSales: -40,
+        categoryTax: -10,
+        returnId: "ret-1",
+      });
+      await run([sale(), returned], [line()]);
+      // held: qty 60 net 200 tax 50. target = 300 x 60/72 = 250 -> +50; tax 75 x 60/72 = 62.5 -> +12.5
+      expect(rows()[0]).toMatchObject({ entryType: "SALE", netSales: 50, categoryTax: 12.5 });
+      // repeating it is a no-op: the correction now brings the held net to the target exactly
+      const applied = sale({
+        id: "corr-1",
+        qty: 0,
+        unitBasisQty: 0,
+        netSales: 50,
+        categoryTax: 12.5,
+        correctsEntryId: "sale-1",
+      });
+      expect(await run([sale(), returned, applied], [line()])).toBe(0);
+    });
+
+    it("goes through the pricing package's proration helper: BUY_N_GET_M free units are honoured", async () => {
+      const held = [sale({ netSales: 200, categoryTax: 50 })];
+      const l = line({ promoFreeUnits: 1, netSales: 250, categoryTax: 62.5 });
+      await run(held, [l]);
+      // full qty held: prorate(250, 72, 72, 1 free box of 12) is the stored 250 verbatim
+      expect(prorateLineSubtotal(250, 72, 72, 1, 12)).toBe(250);
+      expect(rows()[0]).toMatchObject({ netSales: 50, categoryTax: 12.5 });
+      // and priceCorrectionTarget is that helper (free size 12 for a box-split line, 1 otherwise)
+      expect(priceCorrectionTarget(250, 60, l)).toBe(prorateLineSubtotal(250, 60, 72, 1, 12));
+      expect(priceCorrectionTarget(250, 60, { ...l, boxes: null })).toBe(
+        prorateLineSubtotal(250, 60, 72, 1, 1),
+      );
+    });
+
+    it("skips a line with no live SALE, a fully returned line, and rounding noise", async () => {
+      expect(await run([], [line()])).toBe(0); // never booked
+      const fullyReturned = sale({
+        id: "rev-1",
+        entryType: "REVERSAL",
+        qty: -72,
+        unitBasisQty: -72,
+        netSales: -240,
+        categoryTax: -60,
+        returnId: "ret-1",
+      });
+      expect(await run([sale(), fullyReturned], [line()])).toBe(0);
+      expect(await run([sale()], [line({ netSales: 240.004, categoryTax: 60.003 })])).toBe(0);
+      expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
+    });
+
+    it("writes one row per changed line, none for an unchanged one, and one query for all of them", async () => {
+      const second = sale({ id: "sale-2", invoiceItemId: "ii-2", orderItemId: "oi-2" });
+      await run(
+        [sale(), second],
+        [line(), line({ invoiceItemId: "ii-2", netSales: 240, categoryTax: 60 })],
+      );
+      expect(rows()).toHaveLength(1);
+      expect(rows()[0].invoiceItemId).toBe("ii-1");
+      expect(prisma.regulatedSalesLedger.findMany).toHaveBeenCalledTimes(1);
+    });
+
+    it("no lines: no query, no rows", async () => {
+      prisma.regulatedSalesLedger.findMany.mockClear();
+      expect(
+        await service.correctSaleForPriceChange({ invoiceId: "inv-1", lines: [], db: prisma }),
+      ).toBe(0);
+      expect(prisma.regulatedSalesLedger.findMany).not.toHaveBeenCalled();
+    });
+
+    it("update()'s re-sync reverses the NET the ledger holds: the SALE plus every correction pointing at it", async () => {
+      const correction = sale({
+        id: "corr-1",
+        qty: 0,
+        unitBasisQty: 0,
+        netSales: 60,
+        categoryTax: 15,
+        correctsEntryId: "sale-1",
+      });
+      prisma.regulatedSalesLedger.findMany.mockResolvedValue([sale(), correction]);
+      prisma.regulatedSalesLedger.createMany.mockClear();
+      await service.reverseInvoiceEntries({
+        invoiceId: "inv-1",
+        db: prisma,
+        preserveReturns: true,
+      });
+      // 240 + 60 = 300 net, 60 + 15 = 75 tax: reversed in full, so a draft re-sync cannot double count
+      expect(rows()).toHaveLength(1);
+      expect(rows()[0]).toMatchObject({
+        entryType: "REVERSAL",
+        invoiceItemId: "ii-1",
+        qty: -72,
+        netSales: -300,
+        categoryTax: -75,
       });
     });
   });

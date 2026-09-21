@@ -30,7 +30,7 @@ const HEADROOM = 25;
 /** Repo-relative path → baseline line count (measured 2026-09-19 at 91d323de). */
 const BASELINE: Record<string, number> = {
   "apps/api/src/orders/orders.service.ts": 5780, // U1 extraction: class tail minus deleteOrder (updateShipment, updateFulfillPath, toggleUrgent, applyBuyerMergeHeader, setCommissionRate, bulkDeleteOrders, findOneOrThrow) -> order-lifecycle.ts (was 5880)
-  "apps/api/src/invoices/invoices.service.ts": 6389, // 4c-1 prefactor: manual line builder -> manual-invoice-lines.ts (was 6412)
+  "apps/api/src/invoices/invoices.service.ts": 6322, // B662: price-adjustment writes -> price-adjustment-ledger.ts (was 6389); 4c-1 prefactor: manual line builder -> manual-invoice-lines.ts
   "apps/api/src/orders/orders.service.spec.ts": 9511,
   "apps/api/src/customers/customers.service.ts": 3307,
   "apps/api/src/invoices/invoices.service.spec.ts": 9351,
