@@ -200,7 +200,7 @@ export function LineItemRowReadOnly({
         {freeCount > 0 && (
           <p className="text-[10px] font-medium text-amber-700">{freeCount} free</p>
         )}
-        {showDeliveryProgress && delivered != null && delivered < qty && (
+        {showDeliveryProgress && !cancelled && delivered != null && delivered < qty && (
           <p className="text-xs text-navy/70">
             {formatQtySplit({ qty: delivered })} of {formatQtySplit({ qty })} delivered
           </p>
