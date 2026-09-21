@@ -75,6 +75,23 @@ const PENDING_CR = {
   requestedByRole: "CUSTOMER",
 };
 
+// B655: a CHANGE_QTY request approved to the next delivery. `payload.newQty` is the line's NEW
+// ABSOLUTE qty (in pieces); the resolved delta must never ride into create() as a bare selling-unit
+// qty for a boxed pack line.
+const CHANGE_QTY_CR = {
+  id: "cr-2",
+  orderId: "ord-1",
+  orderItemId: "item-1",
+  productId: "prod-1",
+  type: "CHANGE_QTY" as const,
+  status: "PENDING" as const,
+  payload: { orderItemId: "item-1", newQty: 75 },
+  note: null,
+  requestedById: "user-op",
+  requestedByName: "operator1",
+  requestedByRole: "OPERATOR",
+};
+
 describe("ChangeRequestsService", () => {
   let service: ChangeRequestsService;
   let prisma: ReturnType<typeof createMockPrisma>;
@@ -472,6 +489,112 @@ describe("ChangeRequestsService", () => {
 
       expect(ordersService.deleteOrder).toHaveBeenCalledWith("draft-1");
       expect(prisma.changeRequest.updateMany).not.toHaveBeenCalled();
+    });
+
+    // B655: rolling a CHANGE_QTY delta to the next delivery re-created the line through create()
+    // with a bare qty — for a boxed pack line, that qty is interpreted as SELLING UNITS (boxes),
+    // not pieces, so a 51-piece delta on a 24-pack product posted as 51 boxes (1,224 pieces) at the
+    // live price instead of 2 boxes + 3 pieces.
+    it("splits a boxed-pack CHANGE_QTY delta into boxes/pieces instead of a bare qty (B655)", async () => {
+      prisma.changeRequest.findFirst.mockResolvedValue(CHANGE_QTY_CR);
+      prisma.orderItem.findFirst.mockResolvedValue({
+        id: "item-1",
+        productId: "prod-1",
+        qty: 24,
+        unitsPerBox: 24,
+        unitLabel: null,
+        status: "PENDING",
+      });
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        trackedCategoryId: null,
+        unitsPerBox: 24,
+      });
+
+      await service.resolve(
+        "ord-1",
+        "cr-2",
+        { action: ChangeRequestResolveAction.APPROVE_NEXT_DELIVERY },
+        operatorUser,
+      );
+
+      // delta = 75 - 24 = 51 pieces; upb 24 -> 2 boxes + 3 pieces (51 = 2*24 + 3).
+      expect(ordersService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          items: [expect.objectContaining({ productId: "prod-1", qty: 51, boxes: 2, pieces: 3 })],
+        }),
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    // Falls back to the LIVE product's unitsPerBox only when the line predates the snapshot
+    // column (li.unitsPerBox is null) — the line's own snapshot wins whenever it is present.
+    it("falls back to the live product's unitsPerBox when the line's own snapshot is null", async () => {
+      prisma.changeRequest.findFirst.mockResolvedValue(CHANGE_QTY_CR);
+      prisma.orderItem.findFirst.mockResolvedValue({
+        id: "item-1",
+        productId: "prod-1",
+        qty: 24,
+        unitsPerBox: null,
+        unitLabel: null,
+        status: "PENDING",
+      });
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        trackedCategoryId: null,
+        unitsPerBox: 24,
+      });
+
+      await service.resolve(
+        "ord-1",
+        "cr-2",
+        { action: ChangeRequestResolveAction.APPROVE_NEXT_DELIVERY },
+        operatorUser,
+      );
+
+      expect(ordersService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          items: [expect.objectContaining({ productId: "prod-1", qty: 51, boxes: 2, pieces: 3 })],
+        }),
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    // Control: a non-boxed line's rolled delta is unaffected by the split — still a bare qty,
+    // with no boxes/pieces keys added.
+    it("does not split a non-boxed CHANGE_QTY line's delta (control)", async () => {
+      prisma.changeRequest.findFirst.mockResolvedValue({
+        ...CHANGE_QTY_CR,
+        payload: { orderItemId: "item-1", newQty: 10 },
+      });
+      prisma.orderItem.findFirst.mockResolvedValue({
+        id: "item-1",
+        productId: "prod-1",
+        qty: 5,
+        unitsPerBox: null,
+        unitLabel: null,
+        status: "PENDING",
+      });
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        trackedCategoryId: null,
+        unitsPerBox: null,
+      });
+
+      await service.resolve(
+        "ord-1",
+        "cr-2",
+        { action: ChangeRequestResolveAction.APPROVE_NEXT_DELIVERY },
+        operatorUser,
+      );
+
+      expect(ordersService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ items: [{ productId: "prod-1", qty: 5 }] }),
+        expect.anything(),
+        expect.anything(),
+      );
     });
 
     it("400s INVALID_RESOLUTION_FOR_TYPE for REMOVE_ITEM and NOTE requests", async () => {

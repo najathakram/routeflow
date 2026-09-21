@@ -7,6 +7,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import * as unitAware from "./unit-aware-guard";
+import { normalizeBoxesPieces } from "@routeflow/pricing";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { OrdersService } from "./orders.service";
@@ -298,6 +299,10 @@ export class ChangeRequestsService {
     const payload = cr.payload as any;
     let productId: string;
     let qty: number;
+    // CHANGE_QTY only: the line's OWN unitsPerBox snapshot (Product.unitsPerBox at sale time),
+    // used to split the rolled delta into boxes/pieces below. null until fetched, and left null
+    // for ADD_ITEM (out of scope here — payload.qty there is an absolute add, not a pieces delta).
+    let lineUnitsPerBoxSnapshot: number | null = null;
     if (cr.type === ChangeRequestType.ADD_ITEM) {
       productId = cr.productId ?? payload.productId;
       qty = Number(payload.qty);
@@ -318,6 +323,7 @@ export class ChangeRequestsService {
       }
       productId = li.productId;
       qty = delta;
+      lineUnitsPerBoxSnapshot = li.unitsPerBox != null ? Number(li.unitsPerBox) : null;
     } else {
       throw new BadRequestException({
         code: "INVALID_RESOLUTION_FOR_TYPE",
@@ -327,7 +333,7 @@ export class ChangeRequestsService {
 
     const product = await this.prisma.forTenant().product.findFirst({
       where: { id: productId },
-      select: { id: true, trackedCategoryId: true },
+      select: { id: true, trackedCategoryId: true, unitsPerBox: true },
     });
     if (!product) throw new BadRequestException("Product no longer exists");
     // Regulated license guard re-runs on approval (G6).
@@ -336,6 +342,23 @@ export class ChangeRequestsService {
       lines: [{ trackedCategoryId: product.trackedCategoryId ?? null }],
       orderId: order.id,
     });
+
+    // B655 / units_v1's boxed-pack half: create()'s item.qty is a SELLING-UNIT count for a boxed
+    // product with no boxes/pieces alongside it (see recomputeQty in orders.service.ts) — a bare
+    // pieces delta would post as that many BOXES (51 pieces on a 24-pack -> 51 boxes = 1,224
+    // pieces at the live price). Split it here with the line's own unitsPerBox snapshot, falling
+    // back to the live product's only when the line predates that column, so create() takes its
+    // normal box-aware path instead of the bare-qty one. A non-boxed line (upb <= 1) is untouched:
+    // normalizeBoxesPieces returns null boxes/pieces and `qty` unchanged.
+    let boxes: number | null = null;
+    let pieces: number | null = null;
+    if (cr.type === ChangeRequestType.CHANGE_QTY) {
+      const upb = lineUnitsPerBoxSnapshot ?? Number(product.unitsPerBox ?? 0);
+      const split = normalizeBoxesPieces({ qty, unitsPerBox: upb });
+      qty = split.qty;
+      boxes = split.boxes;
+      pieces = split.pieces;
+    }
 
     // Customer pseudo-user so create() prices via the buyer effective path.
     const customer = await this.prisma
@@ -354,7 +377,7 @@ export class ChangeRequestsService {
 
     const draft = await this.ordersService.create(
       {
-        items: [{ productId, qty }],
+        items: [{ productId, qty, ...(boxes != null ? { boxes, pieces } : {}) }],
         status: "DRAFT",
         notes: `From change request on order #${order.orderNumber ?? order.id} (not on truck)`,
       } as any,
