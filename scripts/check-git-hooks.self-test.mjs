@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkGitHooks, hooksDirFor } from "./lib/check-git-hooks.mjs";
+import { checkGitHooks, hooksDirFor, scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 let failed = 0;
@@ -14,12 +14,19 @@ const ok = (name, cond, detail = "") => {
   console.log(`${cond ? "  ok  " : "  FAIL"} ${name}${cond ? "" : ` ${detail}`}`);
   if (!cond) failed += 1;
 };
-const sh = (cwd, ...args) => execFileSync("git", args, { cwd, stdio: "pipe", encoding: "utf8" });
+// HERMETIC: every git call here scrubs GIT_* (a pre-push hook exports GIT_DIR/GIT_WORK_TREE, and
+// without this these fixture commands ran against the REAL repository: B420).
+const sh = (cwd, ...args) =>
+  execFileSync("git", args, { cwd, stdio: "pipe", encoding: "utf8", env: scrubbedGitEnv() });
 const tmp = realpathSync(mkdtempSync(path.join(tmpdir(), "check-git-hooks-")));
 const repo = (name) => {
   const dir = path.join(tmp, name);
   mkdirSync(dir, { recursive: true });
   sh(dir, "init", "-q");
+  // canary: refuse to touch anything unless git really is operating on the fixture
+  if (!realpathSync(sh(dir, "rev-parse", "--absolute-git-dir").trim()).startsWith(tmp)) {
+    throw new Error(`fixture git dir escaped the temp directory: ${dir}`);
+  }
   sh(dir, "config", "user.email", "t@example.test");
   sh(dir, "config", "user.name", "t");
   writeFileSync(path.join(dir, "f.txt"), "x");
@@ -176,7 +183,7 @@ try {
     spawnSync(process.execPath, [path.join(ROOT, "scripts/check-git-hooks.mjs"), ...args], {
       cwd,
       encoding: "utf8",
-      env: { ...process.env, CI: "", ...env },
+      env: { ...scrubbedGitEnv(), CI: "", ...env },
     });
   const silent = (o) => o.status === 0 && o.stdout === "" && o.stderr === "";
   let o = cli(a, ["--warn"]);
@@ -197,6 +204,26 @@ try {
     o.status === 1,
     JSON.stringify(o),
   );
+
+  // T11f — the pre-push shape (B420): GIT_DIR/GIT_WORK_TREE exported for ANOTHER repo (a throwaway
+  // decoy, never a real one) must not hijack the answer about the directory the guard was asked about.
+  const decoy = repo("decoy");
+  const saved = { GIT_DIR: process.env.GIT_DIR, GIT_WORK_TREE: process.env.GIT_WORK_TREE };
+  process.env.GIT_DIR = path.join(decoy, ".git");
+  process.env.GIT_WORK_TREE = decoy;
+  try {
+    r = run(wt);
+    ok(
+      "T11f GIT_DIR/GIT_WORK_TREE exported for another repo do not hijack the answer (the worktree still FAILS)",
+      r.status === 1 && r.message.includes(path.join(wt, ".husky", "_")),
+      JSON.stringify(r),
+    );
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
 
   // T12 — structural: the guard is actually wired where it must be.
   const pkg = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8"));

@@ -20,9 +20,20 @@ import path from "node:path";
 const FIX =
   "run `npx husky` at the worktree root (and do not create worktrees with `npm ci --ignore-scripts`)";
 
+/**
+ * The process environment WITHOUT git's own variables. A git hook (pre-push) exports GIT_DIR,
+ * GIT_WORK_TREE, GIT_INDEX_FILE ... into everything it spawns, and those override the repository git
+ * would discover from a cwd, so a child asking "which repo is THIS directory?" would silently be
+ * answered about the hook's repo instead (the B420 shape). The guard asks about a directory, so it
+ * must not inherit them.
+ */
+export function scrubbedGitEnv(env = process.env) {
+  return Object.fromEntries(Object.entries(env).filter(([k]) => !k.startsWith("GIT_")));
+}
+
 /** Default git runner: `git <args>` in `cwd`, returning { status, stdout }. */
 export function runGit(cwd, args) {
-  const r = spawnSync("git", args, { cwd, encoding: "utf8" });
+  const r = spawnSync("git", args, { cwd, encoding: "utf8", env: scrubbedGitEnv() });
   return { status: r.error ? -1 : r.status, stdout: (r.stdout ?? "").trim() };
 }
 
