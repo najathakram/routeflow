@@ -124,10 +124,28 @@ function fulfillJson(route: Route, body: unknown, status = 200) {
   });
 }
 
-/** Installs mocks for every endpoint the tenant detail page's Overview + Addons tabs touch. */
+/**
+ * Installs mocks for every endpoint the tenant detail page's Overview + Addons tabs touch.
+ *
+ * ORDER IS LOAD-BEARING. Playwright matches routes in REVERSE order of registration (the last
+ * registered route overrides the earlier ones), so the catch-all abort below is registered FIRST:
+ * every specific mock registered after it, here and in the tests, takes precedence, and only a
+ * request nobody mocked falls through to the abort. Registered last it would override them all.
+ *
+ * Why the catch-all exists (B627): this spec fakes its own auth (a fake-signature token), so a
+ * request that reaches a REAL API gets a 401, `admin-api.ts` wipes both tokens and navigates to
+ * /admin-login, and every test then waits 15-20 s for a button on the wrong page. Failing an
+ * unmocked request in milliseconds keeps a missing mock a fast, legible failure.
+ */
 async function mockTenantShell(page: Page) {
+  await page.route("**/api/v1/**", (route) => route.abort());
   await page.route(new RegExp(`/platform-admin/tenants/${TENANT_ID}$`), (route) =>
     fulfillJson(route, tenantFixture()),
+  );
+  // The tenant page's `fetchAdmin` (`res.data.admin`): unmocked, a real API 401s the fake token
+  // (B627). `admin: null` is what a tenant with no admin user returns.
+  await page.route(new RegExp(`/platform-admin/tenants/${TENANT_ID}/admin(\\?.*)?$`), (route) =>
+    fulfillJson(route, { admin: null }),
   );
   await page.route(new RegExp(`/platform-admin/tenants/${TENANT_ID}/addons(\\?.*)?$`), (route) =>
     fulfillJson(route, []),
