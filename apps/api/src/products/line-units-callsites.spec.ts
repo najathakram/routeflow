@@ -22,7 +22,7 @@ import { join, relative, sep } from "path";
 const BASELINE: Record<string, number> = {
   "orders/orders.service.ts": 20,
   "invoices/invoices.service.ts": 5, // 4c-1 prefactor: create()'s line builder moved (3 reads) to:
-  "invoices/manual-invoice-lines.ts": 3,
+  "invoices/manual-invoice-lines.ts": 2, // B659: packSnapshot replaced the box split's two reads with one
   "estimates/estimates.service.ts": 2,
   "order-templates/order-templates.service.ts": 1,
   "returns/inline-returns-quote.service.ts": 3,

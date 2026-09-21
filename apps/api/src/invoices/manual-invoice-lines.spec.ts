@@ -12,6 +12,13 @@ const productMap = new Map([
     { id: "loose", unitsPerBox: null, trackedCategoryId: null, trackedSubcategoryId: null },
   ],
 ]);
+// A product re-packed to 6 since a quote was written with a 12-pack (B659).
+productMap.set("repacked", {
+  id: "repacked",
+  unitsPerBox: 6,
+  trackedCategoryId: "cat",
+  trackedSubcategoryId: "sub",
+});
 const categoryMap = new Map([
   ["cat", { taxType: "PERCENT_OF_SALE", rate: 0.1, priceIncludesTax: false }],
 ]);
@@ -62,5 +69,38 @@ describe("buildManualInvoiceLines", () => {
     expect(itemsData[0].promoFreeUnits).toBe(4); // capped at units - 1
     expect(itemsData[0].subtotal).toBe(10);
     expect(itemsData[1].promoFreeUnits).toBeNull();
+  });
+
+  describe("packSnapshot (an EXISTING line keeps the pack it was priced with, B659)", () => {
+    const line = {
+      description: "Repacked",
+      productId: "repacked",
+      boxes: 2,
+      pieces: 6,
+      unitPrice: 24,
+    };
+
+    it("without a snapshot the LIVE pack re-splits the line (a NEW line: unchanged behaviour)", () => {
+      const { itemsData } = build([{ ...line, qty: 1 }]);
+      expect(itemsData[0]).toMatchObject({ boxes: 3, pieces: 0, qty: 18, subtotal: 72 });
+    });
+
+    it("with the quote's pack a live pack change does NOT move the quoted subtotal, the split or the levy", () => {
+      const { itemsData, subtotal } = build([{ ...line, qty: 1, packSnapshot: 12 }]);
+      expect(itemsData[0]).toMatchObject({
+        boxes: 2,
+        pieces: 6,
+        unitsPerBox: 12, // the snapshot, not the live 6
+        qty: 30,
+        subtotal: 60, // 2.5 boxes x $24, exactly what was quoted
+        categoryTaxAmount: 6, // the levy is computed fresh, on the honoured price
+      });
+      expect(subtotal).toBe(60);
+    });
+
+    it("a null snapshot means no override (the live pack)", () => {
+      const { itemsData } = build([{ ...line, qty: 1, packSnapshot: null }]);
+      expect(itemsData[0]).toMatchObject({ boxes: 3, subtotal: 72 });
+    });
   });
 });

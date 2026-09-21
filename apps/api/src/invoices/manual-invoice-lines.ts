@@ -17,8 +17,15 @@ import {
  * the injected `clampFreeUnits`, `this.prisma.getTenantId()` -> the injected `tenantId`, and the
  * running subtotal returned instead of closed over.
  */
+/**
+ * A line to build. `packSnapshot` (B659) is the box size an EXISTING line was priced with (an estimate line
+ * converted to an invoice): when set it replaces the LIVE product's `unitsPerBox` for the box split, so a
+ * pack change since the quote cannot re-prorate the agreed subtotal. Absent = the live pack (a NEW line).
+ */
+export type ManualLineItem = CreateInvoiceDto["items"][number] & { packSnapshot?: number | null };
+
 export function buildManualInvoiceLines(
-  items: CreateInvoiceDto["items"],
+  items: ManualLineItem[],
   ctx: {
     productMap: ReadonlyMap<string, any>;
     categoryMap: ReadonlyMap<string, any>;
@@ -54,8 +61,9 @@ export function buildManualInvoiceLines(
     let pieces: number | null = null;
     let unitsPerBox: number | undefined;
     if (item.productId && (item.boxes != null || item.pieces != null)) {
-      if (product?.unitsPerBox) {
-        unitsPerBox = product.unitsPerBox;
+      const pack = item.packSnapshot ?? product?.unitsPerBox;
+      if (pack) {
+        unitsPerBox = pack;
         // Force integer boxes/pieces and roll pieces >= unitsPerBox into boxes.
         const split = normalizeBoxesPieces({
           boxes: item.boxes,
