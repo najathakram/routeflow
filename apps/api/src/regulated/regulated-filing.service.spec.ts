@@ -356,23 +356,40 @@ describe("RegulatedFilingService", () => {
   });
 
   describe("listFilings + downloadUrl", () => {
-    it("lists tenant-scoped filings filtered by category", async () => {
-      prisma.regulatedFiling.findMany.mockResolvedValue([{ id: "f1" }]);
+    // A real filing row always carries its own stored period — listFilings/downloadUrl re-gate
+    // against exactly this window (bucketsCovering(periodStart, periodEnd)), same as prepareFiling.
+    const storedPeriod = {
+      trackedCategoryId: "cat-1",
+      periodKey: `${pastYear}-01`,
+      periodStart: new Date(Date.UTC(pastYear, 0, 1)),
+      periodEnd: new Date(Date.UTC(pastYear, 1, 1)),
+    };
+
+    it("lists tenant-scoped filings filtered by category, with parkedUnresolved: 0 when clean", async () => {
+      prisma.regulatedFiling.findMany.mockResolvedValue([{ id: "f1", ...storedPeriod }]);
       const res = await service.listFilings("cat-1");
       expect(prisma.forTenant).toHaveBeenCalled();
       expect(prisma.regulatedFiling.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { trackedCategoryId: "cat-1" } }),
       );
-      expect(res).toEqual([{ id: "f1" }]);
+      expect(res).toEqual([expect.objectContaining({ id: "f1", parkedUnresolved: 0 })]);
     });
 
     it("returns a presigned CSV url", async () => {
-      prisma.regulatedFiling.findUnique.mockResolvedValue({ id: "f1", csvKey: "k" });
+      prisma.regulatedFiling.findUnique.mockResolvedValue({
+        id: "f1",
+        ...storedPeriod,
+        csvKey: "k",
+      });
       expect(await service.downloadUrl("f1", "csv")).toEqual({ url: "https://signed" });
     });
 
     it("404s when the requested artifact key is null", async () => {
-      prisma.regulatedFiling.findUnique.mockResolvedValue({ id: "f1", csvKey: null });
+      prisma.regulatedFiling.findUnique.mockResolvedValue({
+        id: "f1",
+        ...storedPeriod,
+        csvKey: null,
+      });
       await expect(service.downloadUrl("f1", "csv")).rejects.toBeInstanceOf(NotFoundException);
     });
   });

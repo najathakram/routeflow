@@ -11,6 +11,7 @@ jest.mock("../common/db-locks", () => ({
   LockUnavailableError: class extends Error {},
 }));
 
+import { ConflictException } from "@nestjs/common";
 import { RegulatedFilingCronService, previousClosedPeriod } from "./regulated-filing-cron.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
@@ -160,5 +161,54 @@ describe("RegulatedFilingCronService", () => {
     expect(filing.prepareFiling).toHaveBeenCalledWith(
       expect.objectContaining({ trackedCategoryId: "cat-1" }),
     );
+  });
+
+  describe("FILING GATE 409s — counted apart from ordinary failures, logged loudly", () => {
+    it("counts a gate 409 separately as `gated`, logs it at ERROR naming tenantId/category id/period key, and still continues the batch", async () => {
+      prisma.trackedCategory.findMany.mockResolvedValue([
+        { id: "cat-1", tenantId: "t1", reportCadence: "MONTHLY" },
+        { id: "cat-2", tenantId: "t2", reportCadence: "MONTHLY" },
+      ]);
+      prisma.tenantAddon.findMany.mockResolvedValue([{ tenantId: "t1" }, { tenantId: "t2" }]);
+      prisma.regulatedFiling.findFirst.mockResolvedValue(null);
+      const gateErr = new ConflictException({
+        code: "PARKED_REVERSALS_UNRESOLVED",
+        count: 1,
+        returnIds: ["ret-1"],
+        message: "1 return reversal(s) for Tobacco 2024-01 are parked (pack unknown)",
+      });
+      filing.prepareFiling.mockRejectedValueOnce(gateErr).mockResolvedValueOnce({ id: "filing-2" });
+
+      const errorSpy = jest.spyOn((svc as any).logger, "error").mockImplementation(() => {});
+      const warnSpy = jest.spyOn((svc as any).logger, "warn").mockImplementation(() => {});
+
+      await expect(svc.autoPrepareClosedFilings()).resolves.toBeUndefined();
+
+      // batch continued past the gated tenant to the second one
+      expect(filing.prepareFiling).toHaveBeenCalledTimes(2);
+      expect(warnSpy).not.toHaveBeenCalled();
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      const [msg] = errorSpy.mock.calls[0];
+      expect(msg).toMatch(/gated/i);
+      expect(msg).toContain("cat-1"); // category id
+      expect(msg).toContain("t1"); // tenantId — ids only, never a tenant slug/name
+    });
+
+    it("an ordinary (non-gate) failure still logs at WARN, and does not bump the gated count's log line", async () => {
+      prisma.trackedCategory.findMany.mockResolvedValue([
+        { id: "cat-1", tenantId: "t1", reportCadence: "MONTHLY" },
+      ]);
+      prisma.tenantAddon.findMany.mockResolvedValue([{ tenantId: "t1" }]);
+      prisma.regulatedFiling.findFirst.mockResolvedValue(null);
+      filing.prepareFiling.mockRejectedValueOnce(new Error("boom"));
+
+      const errorSpy = jest.spyOn((svc as any).logger, "error").mockImplementation(() => {});
+      const warnSpy = jest.spyOn((svc as any).logger, "warn").mockImplementation(() => {});
+
+      await svc.autoPrepareClosedFilings();
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(errorSpy).not.toHaveBeenCalled();
+    });
   });
 });

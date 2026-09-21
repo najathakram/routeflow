@@ -16,22 +16,11 @@ import { allColumnKeys, defaultColumnKeys } from "./template-registry";
 import { projectReportColumns } from "./report-projection";
 import { RegulatedReport } from "./report-types";
 import { listParkedReversals, parkedRestockNote, withParkedFirst } from "./parked-reversals";
-import { periodBucketOf } from "./period";
+import { bucketsCovering } from "./period";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_RANGE_DAYS = 366;
-
-/** Every "YYYY-MM" ledger bucket a half-open [from, to) window touches (a partial month counts: conservative). */
-function bucketsCovering(from: Date, toExclusive: Date): string[] {
-  const out: string[] = [];
-  const cursor = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), 1));
-  while (cursor < toExclusive) {
-    out.push(periodBucketOf(cursor));
-    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
-  }
-  return out;
-}
 
 /**
  * WP11: stateless regulated reporting — computes a `RegulatedReport` over an
@@ -183,7 +172,10 @@ export class RegulatedReportService {
     }
 
     // The filing gate's other half: unresolved parked reversals of the range's months (and the parked-restock
-    // stock note) lead the report; a preview with any is marked "do not file from this export".
+    // stock note) lead the report; a preview with any is marked "do not file from this export". Same guard
+    // prepareFiling uses: a null tenant context (SUPER_ADMIN) makes forTenant() unscoped — read PARKED rows
+    // through that would leak other tenants' returnIds/orderIds into this preview.
+    if (!this.prisma.getTenantId()) throw new BadRequestException("Filings are tenant-scoped");
     const db = this.prisma.forTenant();
     const [parked, restockNote] = await Promise.all([
       listParkedReversals(db, {

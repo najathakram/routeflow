@@ -14,6 +14,22 @@ export function monthRange(bucket: string): { from: Date; to: Date } {
   return { from: new Date(Date.UTC(y, m - 1, 1)), to: new Date(Date.UTC(y, m, 1)) };
 }
 
+/**
+ * Every "YYYY-MM" ledger bucket a half-open [from, toExclusive) window touches (a partial
+ * month counts: conservative). Shared by regulated-report.service.ts (arbitrary date-range
+ * previews) and regulated-filing.service.ts (re-gating a stored filing's own periodStart/
+ * periodEnd at download time) so both derive buckets from the identical walk.
+ */
+export function bucketsCovering(from: Date, toExclusive: Date): string[] {
+  const out: string[] = [];
+  const cursor = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), 1));
+  while (cursor < toExclusive) {
+    out.push(periodBucketOf(cursor));
+    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  }
+  return out;
+}
+
 export type FilingCadence = "MONTHLY" | "QUARTERLY" | "ANNUAL";
 
 /**

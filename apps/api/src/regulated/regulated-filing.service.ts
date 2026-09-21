@@ -6,7 +6,7 @@ import { AuditService } from "../audit/audit.service";
 import { RegulatedService } from "./regulated.service";
 import { RegulatedReportService } from "./regulated-report.service";
 import { roundMoney } from "@routeflow/pricing";
-import { filingPeriod, FilingCadence } from "./period";
+import { filingPeriod, FilingCadence, bucketsCovering } from "./period";
 import { buildFilingCsv } from "./filing-csv";
 import { serializeReportCsv } from "./report-csv";
 import { assertNoParkedReversals, listParkedReversals } from "./parked-reversals";
@@ -47,18 +47,54 @@ export class RegulatedFilingService {
     private readonly reports: RegulatedReportService,
   ) {}
 
-  /** Tenant-scoped list of prepared filings, newest period first. */
+  /**
+   * Tenant-scoped list of prepared filings, newest period first. Each row carries
+   * `parkedUnresolved` — the SAME reader (`listParkedReversals`) prepareFiling and
+   * downloadUrl gate on, re-run against that filing's own [periodStart, periodEnd)
+   * — so a reversal parked AFTER the filing was prepared shows up here as a stale,
+   * still-downloadable filing (0 when clean; never a second/looser count).
+   */
   async listFilings(categoryId?: string) {
-    return this.prisma.forTenant().regulatedFiling.findMany({
+    const db = this.prisma.forTenant();
+    const filings = await db.regulatedFiling.findMany({
       where: categoryId ? { trackedCategoryId: categoryId } : {},
       orderBy: [{ periodKey: "desc" }],
     });
+    return Promise.all(
+      filings.map(async (f) => {
+        const parked = await listParkedReversals(db, {
+          trackedCategoryId: f.trackedCategoryId,
+          buckets: bucketsCovering(f.periodStart, f.periodEnd),
+        });
+        return { ...f, parkedUnresolved: parked.length };
+      }),
+    );
   }
 
-  /** Presigned URL for a filing's stored CSV/PDF artifact. */
+  /**
+   * Presigned URL for a filing's stored CSV/PDF artifact — RE-GATED: a return reversal
+   * parked AFTER this filing was prepared must not leave a stale CSV downloadable and
+   * unflagged. Runs the identical assert helper (and identical 409 body) prepareFiling
+   * uses, over the filing's own stored [periodStart, periodEnd) — never a looser/second
+   * check that could disagree with prepareFiling or listFilings.
+   */
   async downloadUrl(id: string, format: "csv" | "pdf") {
-    const filing = await this.prisma.forTenant().regulatedFiling.findUnique({ where: { id } });
+    const db = this.prisma.forTenant();
+    const filing = await db.regulatedFiling.findUnique({ where: { id } });
     if (!filing) throw new NotFoundException("Filing not found");
+
+    const category = await db.trackedCategory.findUnique({
+      where: { id: filing.trackedCategoryId },
+      select: { name: true },
+    });
+    assertNoParkedReversals(
+      await listParkedReversals(db, {
+        trackedCategoryId: filing.trackedCategoryId,
+        buckets: bucketsCovering(filing.periodStart, filing.periodEnd),
+      }),
+      { categoryName: category?.name ?? filing.trackedCategoryId, periodKey: filing.periodKey },
+    );
+
     const key = format === "csv" ? filing.csvKey : filing.pdfKey;
     if (!key) throw new NotFoundException(`No ${format.toUpperCase()} stored for this filing`);
     return { url: await this.storage.presignedUrl(key) };

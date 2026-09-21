@@ -5,7 +5,7 @@
  * category and period, and the report lists parked rows first and marks its export "do not file".
  */
 import { Test } from "@nestjs/testing";
-import { ConflictException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import { RegulatedFilingService } from "./regulated-filing.service";
 import { RegulatedService } from "./regulated.service";
 import { RegulatedReportService } from "./regulated-report.service";
@@ -56,13 +56,16 @@ describe("filing gate: unresolved parked reversals", () => {
   let filing: RegulatedFilingService;
   let reports: RegulatedReportService;
   let prisma: ReturnType<typeof createMockPrisma>;
-  let storage: { upload: jest.Mock };
+  let storage: { upload: jest.Mock; presignedUrl: jest.Mock };
   let parkedTable: ParkedFake[];
   let salesCategory: Record<string, string>;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
-    storage = { upload: jest.fn().mockResolvedValue("key") };
+    storage = {
+      upload: jest.fn().mockResolvedValue("key"),
+      presignedUrl: jest.fn().mockResolvedValue("https://signed"),
+    };
     parkedTable = [];
     salesCategory = { "sale-1": "cat-1" };
     // In-memory stand-ins that honour the two filters the reader depends on (resolvedAt, periodBucket) so
@@ -245,6 +248,73 @@ describe("filing gate: unresolved parked reversals", () => {
       expect(report.parked ?? []).toEqual([]);
       expect(report.csv.preamble.flat().join(" ")).not.toMatch(/PREVIEW/);
       await expect(prepare()).resolves.toBeDefined(); // a parked restock never blocks a filing
+    });
+
+    it("REJECTS a null-tenant context (SUPER_ADMIN) with the SAME error prepareFiling throws, instead of reading parked rows through an unscoped forTenant() and leaking another tenant's returnIds/orderIds", async () => {
+      prisma.getTenantId.mockReturnValue(null);
+      const err: any = await reports.buildReport(range).catch((e) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.message).toBe("Filings are tenant-scoped");
+    });
+  });
+
+  describe("downloadUrl / listFilings — re-gated the SAME way prepareFiling is", () => {
+    const filingRow = (over: Record<string, unknown> = {}) => ({
+      id: "filing-1",
+      trackedCategoryId: "cat-1",
+      periodKey: `${YEAR}-01`,
+      periodStart: new Date(Date.UTC(YEAR, 0, 1)),
+      periodEnd: new Date(Date.UTC(YEAR, 1, 1)),
+      csvKey: "k",
+      pdfKey: null,
+      ...over,
+    });
+
+    it("downloadUrl REFUSES with the identical 409 body prepareFiling throws when a reversal was parked AFTER this filing was prepared", async () => {
+      prisma.regulatedFiling.findUnique.mockResolvedValue(filingRow());
+      parkedTable.push(parkedRow());
+      const err: any = await filing.downloadUrl("filing-1", "csv").catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse()).toMatchObject({
+        code: "PARKED_REVERSALS_UNRESOLVED",
+        count: 1,
+        returnIds: ["ret-1"],
+      });
+      expect(storage.presignedUrl).not.toHaveBeenCalled();
+    });
+
+    it("downloadUrl PASSES (signed url) once nothing is parked for the filing's own period", async () => {
+      prisma.regulatedFiling.findUnique.mockResolvedValue(filingRow());
+      await expect(filing.downloadUrl("filing-1", "csv")).resolves.toEqual({
+        url: "https://signed",
+      });
+    });
+
+    it("listFilings adds parkedUnresolved via the SAME reader: 0 when clean, the live count once a row is parked", async () => {
+      prisma.regulatedFiling.findMany.mockResolvedValue([filingRow()]);
+      let rows = await filing.listFilings("cat-1");
+      expect(rows).toEqual([expect.objectContaining({ id: "filing-1", parkedUnresolved: 0 })]);
+
+      parkedTable.push(parkedRow());
+      rows = await filing.listFilings("cat-1");
+      expect(rows).toEqual([expect.objectContaining({ id: "filing-1", parkedUnresolved: 1 })]);
+    });
+
+    it("PINS all three surfaces to the identical count for one parked row: listFilings' parkedUnresolved, downloadUrl's 409, and prepareFiling's 409 — they read through the same listParkedReversals and can never disagree", async () => {
+      prisma.regulatedFiling.findMany.mockResolvedValue([filingRow()]);
+      prisma.regulatedFiling.findUnique.mockResolvedValue(filingRow());
+      parkedTable.push(parkedRow()); // ONE parked row, booked after the filing existed
+
+      const listed = await filing.listFilings("cat-1");
+      expect(listed[0].parkedUnresolved).toBe(1);
+
+      const downloadErr: any = await filing.downloadUrl("filing-1", "csv").catch((e) => e);
+      expect(downloadErr).toBeInstanceOf(ConflictException);
+      expect(downloadErr.getResponse().count).toBe(1);
+
+      const prepareErr: any = await prepare().catch((e) => e);
+      expect(prepareErr).toBeInstanceOf(ConflictException);
+      expect(prepareErr.getResponse().count).toBe(1);
     });
   });
 });

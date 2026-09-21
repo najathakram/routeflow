@@ -1,4 +1,4 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { ConflictException, Injectable, Logger } from "@nestjs/common";
 import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
@@ -81,6 +81,9 @@ export class RegulatedFilingCronService {
 
     let prepared = 0;
     let skipped = 0;
+    let gatedCount = 0; // periods refused by the FILING GATE (unresolved parked reversals) — counted apart
+    // from an ordinary failure so a growing backlog of gated periods is visible in the run summary, not
+    // buried in warn-level noise.
     for (const cat of gated) {
       const cadence = cat.reportCadence as FilingCadence;
       const { year, index } = previousClosedPeriod(cadence, now);
@@ -105,16 +108,31 @@ export class RegulatedFilingCronService {
         if (done) prepared++;
         else skipped++;
       } catch (err) {
-        this.logger.warn(
-          `Auto-prepare failed for category ${cat.id} (tenant ${cat.tenantId}) ` +
-            `${cadence} ${periodKey}: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        // FILING GATE 409 (unresolved parked reversals): logged loudly, not just warn — a period the
+        // cron can never auto-file on its own is an operator action item, not routine noise. Ids only
+        // (tenantId, category id, period key) — never a tenant slug/name in logs.
+        if (
+          err instanceof ConflictException &&
+          (err.getResponse() as any)?.code === "PARKED_REVERSALS_UNRESOLVED"
+        ) {
+          gatedCount++;
+          this.logger.error(
+            `Auto-prepare GATED (unresolved parked reversals) for category ${cat.id} ` +
+              `(tenant ${cat.tenantId}) ${cadence} ${periodKey}`,
+          );
+        } else {
+          this.logger.warn(
+            `Auto-prepare failed for category ${cat.id} (tenant ${cat.tenantId}) ` +
+              `${cadence} ${periodKey}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       }
     }
 
-    if (prepared || skipped) {
+    if (prepared || skipped || gatedCount) {
       this.logger.log(
-        `Regulated filing auto-prepare: ${prepared} prepared, ${skipped} already present ` +
+        `Regulated filing auto-prepare: ${prepared} prepared, ${skipped} already present, ` +
+          `${gatedCount} gated (unresolved parked reversals) ` +
           `(${gated.length} of ${categories.length} active categories on pack tenants)`,
       );
     }
