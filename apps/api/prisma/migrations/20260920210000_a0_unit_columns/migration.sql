@@ -3,9 +3,12 @@
 -- existing rows read NULL = "the pack", exactly as today. Each ADD COLUMN of a nullable column with
 -- no default is metadata-only in Postgres (no table rewrite, no scan), so this is instant.
 --
--- ORDERING: apply to prod BEFORE the PR that reads these columns merges — Prisma selects every
--- scalar on a model, so code deployed ahead of these columns would 500 every read of
--- OrderTemplateItem / RecurringInvoiceItem / EstimateItem.
+-- ORDERING: apply to prod BEFORE the PR that adds these columns to the Prisma schema merges. The API
+-- image runs `prisma generate` at build time and Railway rebuilds on any apps/api/** change, so
+-- merging that PR redeploys a client that selects these columns on every read of OrderTemplateItem /
+-- RecurringInvoiceItem / EstimateItem: it 500s until the columns exist. The reverse order is safe
+-- (old code names its columns explicitly and ignores the new ones). Merge promptly after applying:
+-- until master's schema folder has the columns, the prod drift gate reports drift.
 --
 -- Rollback (instant, columns are empty until U1 writes them):
 --   ALTER TABLE "OrderTemplateItem" DROP COLUMN "unitLabel";

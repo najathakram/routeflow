@@ -1,8 +1,9 @@
 /**
  * A0 (fleet lead 2026-09-20) — the smallest possible schema change: four additive, NULLABLE columns
  * so template / recurring-invoice / estimate lines can carry a selling unit. Pins that it stays
- * exactly that: no NOT NULL, no DEFAULT, no index, no backfill. It ships to prod BEFORE any code
- * that reads the columns merges (Prisma selects every scalar, so code ahead of the columns 500s).
+ * exactly that: no NOT NULL, no DEFAULT, no index, no backfill. It ships to prod BEFORE the PR that
+ * adds the columns to the Prisma schema merges (the image runs `prisma generate` at build time and
+ * Prisma selects every scalar, so a client ahead of the columns 500s every read of these models).
  */
 import * as fs from "fs";
 import * as path from "path";
@@ -14,7 +15,7 @@ const sql = fs
     "utf8",
   )
   .split("\n")
-  .filter((l) => !l.trim().startsWith("--"))
+  .map((l) => l.replace(/--.*$/, "")) // whole-line AND trailing SQL comments
   .join("\n");
 const schemaOf = (file: string) =>
   fs.readFileSync(path.join(API, "prisma", "schema", file), "utf8");
