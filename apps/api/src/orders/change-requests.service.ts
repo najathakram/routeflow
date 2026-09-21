@@ -298,9 +298,30 @@ export class ChangeRequestsService {
     const payload = cr.payload as any;
     let productId: string;
     let qty: number;
+    // B673: set from ADD_ITEM's own boxes/pieces (captured at request time — see
+    // CreateChangeRequestDto) once reconciled against the LIVE product below. Left null for
+    // CHANGE_QTY, unaffected by this fix.
+    let boxes: number | null = null;
+    let pieces: number | null = null;
+    let requestedBoxes: number | null = null;
+    let requestedPieces: number | null = null;
     if (cr.type === ChangeRequestType.ADD_ITEM) {
       productId = cr.productId ?? payload.productId;
       qty = Number(payload.qty);
+      // Same "was a split actually given" predicate create() itself uses — boxes:0/pieces:0 (the
+      // mobile client's explicit non-boxed convention) is "no split", not an inconsistent one.
+      if ((payload.boxes ?? 0) > 0 || (payload.pieces ?? 0) > 0) {
+        const b = payload.boxes;
+        const p = payload.pieces ?? 0;
+        if (!Number.isInteger(b) || !Number.isInteger(p) || b < 0 || p < 0) {
+          throw new BadRequestException({
+            code: "INVALID_LINE_SPLIT",
+            message: "boxes/pieces must be non-negative whole numbers",
+          });
+        }
+        requestedBoxes = b;
+        requestedPieces = p;
+      }
     } else if (cr.type === ChangeRequestType.CHANGE_QTY) {
       const li = await this.prisma
         .forTenant()
@@ -327,9 +348,34 @@ export class ChangeRequestsService {
 
     const product = await this.prisma.forTenant().product.findFirst({
       where: { id: productId },
-      select: { id: true, trackedCategoryId: true },
+      select: { id: true, trackedCategoryId: true, unitsPerBox: true },
     });
     if (!product) throw new BadRequestException("Product no longer exists");
+
+    // B673: reconcile ADD_ITEM's own boxes/pieces against the LIVE pack (a new line's correct
+    // contract) instead of dropping them — a bare `qty` for a boxed product lands on create()'s
+    // box-UNAWARE convention (qty read as a BOX count), so a driver's "2 boxes + 3 pieces" of a
+    // 24-pack (qty sent as the 51-piece total, matching the mobile client's own workaround for
+    // create()'s two disagreeing bare-qty interpretations) would post as 51 boxes = 1,224 pieces.
+    if (requestedBoxes != null) {
+      const upb = Number(product.unitsPerBox ?? 0);
+      if (upb <= 1) {
+        throw new BadRequestException({
+          code: "INVALID_LINE_SPLIT",
+          message: "boxes/pieces were given but this product is no longer sold by the box",
+        });
+      }
+      const expectedQty = requestedBoxes * upb + (requestedPieces ?? 0);
+      if (expectedQty !== qty) {
+        throw new BadRequestException({
+          code: "INVALID_LINE_SPLIT",
+          message: `qty (${qty}) does not match boxes (${requestedBoxes}) + pieces (${requestedPieces}) at ${upb}/box`,
+        });
+      }
+      boxes = requestedBoxes;
+      pieces = requestedPieces;
+    }
+
     // Regulated license guard re-runs on approval (G6).
     await this.authGuard.assertAuthorizedOrThrow({
       customerId: order.customerId,
@@ -352,9 +398,13 @@ export class ChangeRequestsService {
       type: "BUYER",
     } as JwtPayload;
 
+    // This split is handed to create() for a NEW draft line — create() re-splits it against the
+    // LIVE product's pack (its own, correct, contract for a new sale line). If the pack changed
+    // since this request was filed, the boxes/pieces intent survives but the raw piece count can
+    // shift with it — inherent to that contract.
     const draft = await this.ordersService.create(
       {
-        items: [{ productId, qty }],
+        items: [{ productId, qty, ...(boxes != null ? { boxes, pieces } : {}) }],
         status: "DRAFT",
         notes: `From change request on order #${order.orderNumber ?? order.id} (not on truck)`,
       } as any,

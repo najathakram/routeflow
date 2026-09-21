@@ -474,6 +474,107 @@ describe("ChangeRequestsService", () => {
       expect(prisma.changeRequest.updateMany).not.toHaveBeenCalled();
     });
 
+    // B673: ADD_ITEM's own boxes/pieces (captured at request time) were dropped here — a bare qty
+    // for a boxed product lands on create()'s box-UNAWARE convention (qty read as a BOX count), so
+    // a driver's "2 boxes + 3 pieces" of a 24-pack (qty sent as the 51-piece total) posted as
+    // 51 boxes = 1,224 pieces.
+    it("posts ADD_ITEM's own boxes/pieces split instead of qty-as-boxes (B673)", async () => {
+      prisma.changeRequest.findFirst.mockResolvedValue({
+        ...PENDING_CR,
+        payload: { productId: "prod-1", qty: 51, boxes: 2, pieces: 3, productName: "Tomatoes" },
+      });
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        trackedCategoryId: null,
+        unitsPerBox: 24,
+      });
+
+      await service.resolve(
+        "ord-1",
+        "cr-1",
+        { action: ChangeRequestResolveAction.APPROVE_NEXT_DELIVERY },
+        operatorUser,
+      );
+
+      expect(ordersService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          items: [expect.objectContaining({ productId: "prod-1", qty: 51, boxes: 2, pieces: 3 })],
+        }),
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    it("refuses ADD_ITEM when qty doesn't match boxes+pieces at the live pack size", async () => {
+      prisma.changeRequest.findFirst.mockResolvedValue({
+        ...PENDING_CR,
+        payload: { productId: "prod-1", qty: 999, boxes: 2, pieces: 3, productName: "Tomatoes" },
+      });
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        trackedCategoryId: null,
+        unitsPerBox: 24,
+      });
+
+      await expect(
+        service.resolve(
+          "ord-1",
+          "cr-1",
+          { action: ChangeRequestResolveAction.APPROVE_NEXT_DELIVERY },
+          operatorUser,
+        ),
+      ).rejects.toMatchObject({
+        response: expect.objectContaining({ code: "INVALID_LINE_SPLIT" }),
+      });
+      expect(ordersService.create).not.toHaveBeenCalled();
+    });
+
+    it("refuses ADD_ITEM boxes/pieces when the live product is no longer sold by the box", async () => {
+      prisma.changeRequest.findFirst.mockResolvedValue({
+        ...PENDING_CR,
+        payload: { productId: "prod-1", qty: 51, boxes: 2, pieces: 3, productName: "Tomatoes" },
+      });
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        trackedCategoryId: null,
+        unitsPerBox: null,
+      });
+
+      await expect(
+        service.resolve(
+          "ord-1",
+          "cr-1",
+          { action: ChangeRequestResolveAction.APPROVE_NEXT_DELIVERY },
+          operatorUser,
+        ),
+      ).rejects.toMatchObject({
+        response: expect.objectContaining({ code: "INVALID_LINE_SPLIT" }),
+      });
+      expect(ordersService.create).not.toHaveBeenCalled();
+    });
+
+    it("refuses non-integer/negative ADD_ITEM boxes or pieces", async () => {
+      prisma.changeRequest.findFirst.mockResolvedValue({
+        ...PENDING_CR,
+        payload: { productId: "prod-1", qty: 51, boxes: 2.5, pieces: 3, productName: "Tomatoes" },
+      });
+
+      await expect(
+        service.resolve(
+          "ord-1",
+          "cr-1",
+          { action: ChangeRequestResolveAction.APPROVE_NEXT_DELIVERY },
+          operatorUser,
+        ),
+      ).rejects.toMatchObject({
+        response: expect.objectContaining({ code: "INVALID_LINE_SPLIT" }),
+      });
+      expect(ordersService.create).not.toHaveBeenCalled();
+    });
+
+    // Control: a plain ADD_ITEM with no boxes/pieces (the non-boxed convention) is unaffected —
+    // covered by "drafts a next-delivery order for ADD_ITEM" above, which asserts a bare qty.
+
     it("400s INVALID_RESOLUTION_FOR_TYPE for REMOVE_ITEM and NOTE requests", async () => {
       prisma.changeRequest.findFirst.mockResolvedValue({
         ...PENDING_CR,

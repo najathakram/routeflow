@@ -21,6 +21,9 @@ import { join, relative, sep } from "path";
  */
 const BASELINE: Record<string, number> = {
   "orders/orders.service.ts": 20,
+  // B673: ADD_ITEM rolls to a NEW draft line, which correctly prices off the live pack (SA
+  // ruling) — see approveNextDelivery's reconciliation of the request's own boxes/pieces.
+  "orders/change-requests.service.ts": 1,
   "invoices/invoices.service.ts": 5, // 4c-1 prefactor: create()'s line builder moved (3 reads) to:
   "invoices/manual-invoice-lines.ts": 3,
   "estimates/estimates.service.ts": 2,
