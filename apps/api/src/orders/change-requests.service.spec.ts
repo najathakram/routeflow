@@ -492,24 +492,23 @@ describe("ChangeRequestsService", () => {
     });
 
     // B655: rolling a CHANGE_QTY delta to the next delivery re-created the line through create()
-    // with a bare qty — for a boxed pack line, that qty is interpreted as SELLING UNITS (boxes),
-    // not pieces, so a 51-piece delta on a 24-pack product posted as 51 boxes (1,224 pieces) at the
-    // live price instead of 2 boxes + 3 pieces.
-    it("splits a boxed-pack CHANGE_QTY delta into boxes/pieces instead of a bare qty (B655)", async () => {
+    // with a bare qty. For a BOX-AWARE line (li.boxes != null), OrderItem.qty is TOTAL PIECES, so
+    // that bare qty is a pieces delta re-read by create() as SELLING UNITS (boxes) — a 51-piece
+    // delta on a 24-pack product posted as 51 boxes (1,224 pieces) at the live price instead of
+    // 2 boxes + 3 pieces.
+    it("splits a box-aware CHANGE_QTY line's pieces delta using its own unitsPerBox snapshot (B655)", async () => {
       prisma.changeRequest.findFirst.mockResolvedValue(CHANGE_QTY_CR);
       prisma.orderItem.findFirst.mockResolvedValue({
         id: "item-1",
         productId: "prod-1",
-        qty: 24,
+        qty: 24, // total pieces (1 box of 24)
+        boxes: 1,
+        pieces: 0,
         unitsPerBox: 24,
         unitLabel: null,
         status: "PENDING",
       });
-      prisma.product.findFirst.mockResolvedValue({
-        id: "prod-1",
-        trackedCategoryId: null,
-        unitsPerBox: 24,
-      });
+      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", trackedCategoryId: null });
 
       await service.resolve(
         "ord-1",
@@ -526,25 +525,30 @@ describe("ChangeRequestsService", () => {
         expect.anything(),
         expect.anything(),
       );
+      // Never re-derived from the live product — an existing line's rewrite uses only what the
+      // line itself stored (SA ruling).
+      expect(prisma.product.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ select: { id: true, trackedCategoryId: true } }),
+      );
     });
 
-    // Falls back to the LIVE product's unitsPerBox only when the line predates the snapshot
-    // column (li.unitsPerBox is null) — the line's own snapshot wins whenever it is present.
-    it("falls back to the live product's unitsPerBox when the line's own snapshot is null", async () => {
+    // A box-aware line whose unitsPerBox snapshot predates the column (null) derives the pack
+    // EXACTLY from its own stored split — (qty - pieces) / boxes — never from the live product.
+    it("derives a box-aware line's pack from its own stored split when the snapshot is null", async () => {
       prisma.changeRequest.findFirst.mockResolvedValue(CHANGE_QTY_CR);
       prisma.orderItem.findFirst.mockResolvedValue({
         id: "item-1",
         productId: "prod-1",
-        qty: 24,
+        qty: 24, // (24 - 0) / 1 = 24
+        boxes: 1,
+        pieces: 0,
         unitsPerBox: null,
         unitLabel: null,
         status: "PENDING",
       });
-      prisma.product.findFirst.mockResolvedValue({
-        id: "prod-1",
-        trackedCategoryId: null,
-        unitsPerBox: 24,
-      });
+      // The live product's pack, if it were read, would derive a DIFFERENT (wrong) split —
+      // proves the derivation never touches it.
+      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", trackedCategoryId: null });
 
       await service.resolve(
         "ord-1",
@@ -562,8 +566,40 @@ describe("ChangeRequestsService", () => {
       );
     });
 
-    // Control: a non-boxed line's rolled delta is unaffected by the split — still a bare qty,
-    // with no boxes/pieces keys added.
+    // No snapshot AND no derivable pack (boxes: 0 — nothing to divide by) refuses rather than
+    // guessing at a factor.
+    it("refuses a box-aware line whose pack can't be derived, naming the line", async () => {
+      prisma.changeRequest.findFirst.mockResolvedValue(CHANGE_QTY_CR);
+      prisma.orderItem.findFirst.mockResolvedValue({
+        id: "item-1",
+        productId: "prod-1",
+        qty: 5,
+        boxes: 0,
+        pieces: 5,
+        unitsPerBox: null,
+        unitLabel: null,
+        status: "PENDING",
+      });
+      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", trackedCategoryId: null });
+
+      await expect(
+        service.resolve(
+          "ord-1",
+          "cr-2",
+          { action: ChangeRequestResolveAction.APPROVE_NEXT_DELIVERY },
+          operatorUser,
+        ),
+      ).rejects.toMatchObject({
+        response: expect.objectContaining({
+          code: "LINE_PACK_UNDERIVABLE",
+          message: expect.stringContaining("item-1"),
+        }),
+      });
+      expect(ordersService.create).not.toHaveBeenCalled();
+    });
+
+    // Control: a plain non-boxed line's rolled delta is a bare qty, unaffected — no boxes/pieces
+    // keys added.
     it("does not split a non-boxed CHANGE_QTY line's delta (control)", async () => {
       prisma.changeRequest.findFirst.mockResolvedValue({
         ...CHANGE_QTY_CR,
@@ -573,15 +609,13 @@ describe("ChangeRequestsService", () => {
         id: "item-1",
         productId: "prod-1",
         qty: 5,
+        boxes: null,
+        pieces: null,
         unitsPerBox: null,
         unitLabel: null,
         status: "PENDING",
       });
-      prisma.product.findFirst.mockResolvedValue({
-        id: "prod-1",
-        trackedCategoryId: null,
-        unitsPerBox: null,
-      });
+      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", trackedCategoryId: null });
 
       await service.resolve(
         "ord-1",
@@ -592,6 +626,42 @@ describe("ChangeRequestsService", () => {
 
       expect(ordersService.create).toHaveBeenCalledWith(
         expect.objectContaining({ items: [{ productId: "prod-1", qty: 5 }] }),
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    // SA's exact under-charge example: a BOX-UNAWARE line's qty IS ALREADY the box count (no
+    // split stored), so its delta must post as bare boxes — splitting it against ANY pack (even
+    // the line's own unitsPerBox) would misread a boxes delta as pieces. A 3-box delta split
+    // against upb 24 would become 0 boxes + 3 pieces: an under-charge, not a fix.
+    it("keeps a box-unaware BOXED line's delta as bare boxes — never splits it against a pack", async () => {
+      prisma.changeRequest.findFirst.mockResolvedValue({
+        ...CHANGE_QTY_CR,
+        payload: { orderItemId: "item-1", newQty: 5 }, // 5 boxes total
+      });
+      prisma.orderItem.findFirst.mockResolvedValue({
+        id: "item-1",
+        productId: "prod-1",
+        qty: 2, // 2 boxes (box-unaware convention — no boxes/pieces split stored)
+        boxes: null,
+        pieces: null,
+        unitsPerBox: 24, // present on the line, but must never be used to split this shape
+        unitLabel: null,
+        status: "PENDING",
+      });
+      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", trackedCategoryId: null });
+
+      await service.resolve(
+        "ord-1",
+        "cr-2",
+        { action: ChangeRequestResolveAction.APPROVE_NEXT_DELIVERY },
+        operatorUser,
+      );
+
+      // delta = 5 - 2 = 3 boxes; must stay a bare qty:3, never {qty, boxes:0, pieces:3}.
+      expect(ordersService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ items: [{ productId: "prod-1", qty: 3 }] }),
         expect.anything(),
         expect.anything(),
       );

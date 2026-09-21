@@ -21,9 +21,6 @@ import { join, relative, sep } from "path";
  */
 const BASELINE: Record<string, number> = {
   "orders/orders.service.ts": 20,
-  // B655: the line's OWN unitsPerBox snapshot is read first; this is the fallback for a line that
-  // predates that column, not a factor derivation off the live product — see approveNextDelivery.
-  "orders/change-requests.service.ts": 1,
   "invoices/invoices.service.ts": 5, // 4c-1 prefactor: create()'s line builder moved (3 reads) to:
   "invoices/manual-invoice-lines.ts": 3,
   "estimates/estimates.service.ts": 2,

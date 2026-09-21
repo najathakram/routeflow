@@ -299,10 +299,10 @@ export class ChangeRequestsService {
     const payload = cr.payload as any;
     let productId: string;
     let qty: number;
-    // CHANGE_QTY only: the line's OWN unitsPerBox snapshot (Product.unitsPerBox at sale time),
-    // used to split the rolled delta into boxes/pieces below. null until fetched, and left null
-    // for ADD_ITEM (out of scope here — payload.qty there is an absolute add, not a pieces delta).
-    let lineUnitsPerBoxSnapshot: number | null = null;
+    // B655: set only for a CHANGE_QTY delta on a BOX-AWARE line (li.boxes != null), where the
+    // delta is in PIECES and needs the pack size to split. Left null otherwise.
+    let boxes: number | null = null;
+    let pieces: number | null = null;
     if (cr.type === ChangeRequestType.ADD_ITEM) {
       productId = cr.productId ?? payload.productId;
       qty = Number(payload.qty);
@@ -322,8 +322,44 @@ export class ChangeRequestsService {
         });
       }
       productId = li.productId;
-      qty = delta;
-      lineUnitsPerBoxSnapshot = li.unitsPerBox != null ? Number(li.unitsPerBox) : null;
+
+      // B655: an EXISTING line's rewrite never re-derives its factor from the LIVE product (SA
+      // ruling) — only the line's own stored shape decides how the delta is read.
+      //
+      // Box-AWARE line (li.boxes != null): OrderItem.qty is TOTAL PIECES (create()'s split sets
+      // it that way), so `delta` is a pieces delta. Split it with the line's own unitsPerBox
+      // snapshot; if that snapshot predates the column, derive the pack EXACTLY from the line's
+      // own stored split — (qty - pieces) / boxes — accepted only when it comes out to a whole
+      // number > 1. Anything else (no derivable pack) refuses rather than guessing.
+      //
+      // Box-UNAWARE line (li.boxes == null — the template/buyer bare-qty convention): OrderItem.qty
+      // IS ALREADY the line's own selling-unit count (a box count for a boxed product with no
+      // split stored, a piece count otherwise — see the "box-unaware boxed line's qty IS the box
+      // count" comment in orders.service.ts). So `delta` is already in that unit, and today's bare
+      // `{ productId, qty }` — which create() reads as selling units — is CORRECT for this shape.
+      // Splitting it against any pack (live or snapshot) would misread a boxes delta as pieces and
+      // under-charge (a 3-box delta split against upb 24 becomes 0 boxes + 3 pieces).
+      if (li.boxes != null) {
+        let upb = li.unitsPerBox != null ? Number(li.unitsPerBox) : null;
+        if (upb == null) {
+          const boxesNum = Number(li.boxes);
+          const piecesNum = Number(li.pieces ?? 0);
+          const derived = boxesNum > 0 ? (Number(li.qty) - piecesNum) / boxesNum : NaN;
+          upb = Number.isInteger(derived) && derived > 1 ? derived : null;
+        }
+        if (upb == null) {
+          throw new BadRequestException({
+            code: "LINE_PACK_UNDERIVABLE",
+            message: `Order line ${li.id} has no derivable pack size — it can't be rolled to the next delivery.`,
+          });
+        }
+        const split = normalizeBoxesPieces({ qty: delta, unitsPerBox: upb });
+        qty = split.qty;
+        boxes = split.boxes;
+        pieces = split.pieces;
+      } else {
+        qty = delta;
+      }
     } else {
       throw new BadRequestException({
         code: "INVALID_RESOLUTION_FOR_TYPE",
@@ -333,7 +369,7 @@ export class ChangeRequestsService {
 
     const product = await this.prisma.forTenant().product.findFirst({
       where: { id: productId },
-      select: { id: true, trackedCategoryId: true, unitsPerBox: true },
+      select: { id: true, trackedCategoryId: true },
     });
     if (!product) throw new BadRequestException("Product no longer exists");
     // Regulated license guard re-runs on approval (G6).
@@ -342,23 +378,6 @@ export class ChangeRequestsService {
       lines: [{ trackedCategoryId: product.trackedCategoryId ?? null }],
       orderId: order.id,
     });
-
-    // B655 / units_v1's boxed-pack half: create()'s item.qty is a SELLING-UNIT count for a boxed
-    // product with no boxes/pieces alongside it (see recomputeQty in orders.service.ts) — a bare
-    // pieces delta would post as that many BOXES (51 pieces on a 24-pack -> 51 boxes = 1,224
-    // pieces at the live price). Split it here with the line's own unitsPerBox snapshot, falling
-    // back to the live product's only when the line predates that column, so create() takes its
-    // normal box-aware path instead of the bare-qty one. A non-boxed line (upb <= 1) is untouched:
-    // normalizeBoxesPieces returns null boxes/pieces and `qty` unchanged.
-    let boxes: number | null = null;
-    let pieces: number | null = null;
-    if (cr.type === ChangeRequestType.CHANGE_QTY) {
-      const upb = lineUnitsPerBoxSnapshot ?? Number(product.unitsPerBox ?? 0);
-      const split = normalizeBoxesPieces({ qty, unitsPerBox: upb });
-      qty = split.qty;
-      boxes = split.boxes;
-      pieces = split.pieces;
-    }
 
     // Customer pseudo-user so create() prices via the buyer effective path.
     const customer = await this.prisma
