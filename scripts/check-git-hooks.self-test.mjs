@@ -2,11 +2,19 @@
 // Self-test for scripts/lib/check-git-hooks.mjs (B637). Real temp git repos, no network, no jest.
 // Wired into `npm run verify`. Exit 0 when every check passes, 1 otherwise.
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkGitHooks, hooksDirFor, scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
+import { checkGitHooks, hooksDirFor, isCi, scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 let failed = 0;
@@ -37,8 +45,10 @@ const repo = (name) => {
 const withHook = (dir, rel) => {
   mkdirSync(path.join(dir, rel), { recursive: true });
   writeFileSync(path.join(dir, rel, "pre-push"), "#!/bin/sh\nexit 0\n");
+  chmodSync(path.join(dir, rel, "pre-push"), 0o755); // git ignores a non-executable hook
 };
 const run = (cwd, env = {}) => checkGitHooks({ cwd, env });
+const check = (cwd) => checkGitHooks({ cwd, env: {} });
 
 try {
   // T1 — the incident: a relative hooksPath whose directory does not exist FAILS.
@@ -76,6 +86,7 @@ try {
   r = run(c);
   ok("T4a hooksPath unset, no pre-push in .git/hooks FAILS (1)", r.status === 1, JSON.stringify(r));
   writeFileSync(path.join(c, ".git/hooks/pre-push"), "#!/bin/sh\nexit 0\n");
+  chmodSync(path.join(c, ".git/hooks/pre-push"), 0o755);
   r = run(c);
   ok("T4b hooksPath unset, pre-push present PASSES (0)", r.status === 0, JSON.stringify(r));
 
@@ -203,6 +214,51 @@ try {
     "T11e the plain CLI on the hookless worktree exits 1 (verify would stop)",
     o.status === 1,
     JSON.stringify(o),
+  );
+
+  // T10c — CI means TRUE only: "false", "0", "" and friends must NOT switch the guard off.
+  for (const v of ["false", "FALSE", "0", "", " ", "no", "off"]) {
+    r = run(e, { CI: v });
+    ok(
+      `T10c CI=${JSON.stringify(v)} is NOT CI: the hookless tree still FAILS (1)`,
+      r.status === 1 && !isCi({ CI: v }),
+      JSON.stringify(r),
+    );
+  }
+  for (const v of ["1", "true", "TRUE", "True", "yes", "YES", " true "]) {
+    ok(
+      `T10d CI=${JSON.stringify(v)} IS CI: the guard skips`,
+      isCi({ CI: v }) && run(e, { CI: v }).status === 0,
+    );
+  }
+  ok("T10e CI unset is NOT CI", !isCi({}));
+
+  // T13 — a present pre-push that is NOT executable is a hook git will ignore: FAILS on POSIX.
+  const f = repo("exec-bit");
+  sh(f, "config", "core.hooksPath", ".husky/_");
+  withHook(f, ".husky/_");
+  chmodSync(path.join(f, ".husky/_/pre-push"), 0o644);
+  r = check(f);
+  ok(
+    "T13a pre-push present but chmod -x FAILS (1) with the distinct 'not executable' message",
+    process.platform === "win32" ||
+      (r.status === 1 && /NOT RUNNABLE/.test(r.message) && /not executable/.test(r.message)),
+    JSON.stringify(r),
+  );
+  chmodSync(path.join(f, ".husky/_/pre-push"), 0o755);
+  ok("T13b the same hook chmod +x PASSES (0)", check(f).status === 0);
+  chmodSync(path.join(f, ".husky/_/pre-push"), 0o644);
+  r = checkGitHooks({ cwd: f, env: {}, platform: "win32" });
+  ok(
+    "T13c on win32 the exec-bit half is skipped (0): there is no exec bit to check",
+    r.status === 0,
+    JSON.stringify(r),
+  );
+  r = checkGitHooks({ cwd: f, env: {}, platform: "linux" });
+  ok(
+    "T13d on linux the same non-executable hook FAILS (1)",
+    r.status === 1 && /NOT RUNNABLE/.test(r.message),
+    JSON.stringify(r),
   );
 
   // T11f — the pre-push shape (B420): GIT_DIR/GIT_WORK_TREE exported for ANOTHER repo (a throwaway

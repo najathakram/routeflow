@@ -9,6 +9,10 @@
 // A control must assert its own presence, or its absence looks like success. This resolves the
 // hooks directory git will really use and FAILS unless it exists and holds a `pre-push` hook.
 //
+// Scope: `pre-push` is deliberately the single gate this checks: it is the verify that mirrors CI.
+// `commit-msg` (commitlint) and `pre-commit` (lint-staged) live in the same directory and could go
+// missing the same way, but they shape commits; they do not stand between a change and origin.
+//
 // Exit contract: 0 hooks present, or nothing to check (CI is its own authority; a non-checkout such as a
 // Docker build context is skipped with a note) · 1 hooks missing · 2 INSIDE a work tree but the state
 // could not be read (toplevel/config unreadable) — fail CLOSED, never pass.
@@ -65,8 +69,22 @@ export function hooksDirFor(value, toplevel, gitPathHooks, home = homedir()) {
   return path.resolve(toplevel, value);
 }
 
-export function checkGitHooks({ cwd = process.cwd(), env = process.env, git = runGit } = {}) {
-  if (env.CI)
+/**
+ * CI is on only when CI is set to something that MEANS true. `CI=false` / `CI=0` / `CI=` are exported
+ * by plenty of shells and tools on a developer machine and must NOT switch the guard off (a bare
+ * truthiness test treated the string "false" as CI: the guard silently skipping itself).
+ */
+export function isCi(env = process.env) {
+  return /^(1|true|yes)$/i.test(String(env.CI ?? "").trim());
+}
+
+export function checkGitHooks({
+  cwd = process.cwd(),
+  env = process.env,
+  git = runGit,
+  platform = process.platform,
+} = {}) {
+  if (isCi(env))
     return {
       status: 0,
       message: "check-git-hooks: CI is the authority for this run — hooks are not required here.",
@@ -124,6 +142,19 @@ export function checkGitHooks({ cwd = process.cwd(), env = process.env, git = ru
     return {
       status: 1,
       message: `check-git-hooks: GIT HOOKS ARE NOT INSTALLED — ${dir} has no pre-push hook. Fix: ${FIX}.`,
+    };
+  }
+  // Git IGNORES a hook that is not executable (only a hint), so a complete .husky/_ whose files lost
+  // their exec bit (cp -R, an archive extraction, a permissions-stripping filesystem) would pass an
+  // existence check while running no hooks: the incident, reproduced through the guard. On POSIX the
+  // mode bit is authoritative. On Windows there is no exec bit to check (Git for Windows runs a hook
+  // by shebang through its bundled sh), so that half is skipped there rather than failing forever.
+  if (platform !== "win32" && (statSync(path.join(dir, "pre-push")).mode & 0o111) === 0) {
+    return {
+      status: 1,
+      message:
+        `check-git-hooks: GIT HOOKS ARE NOT RUNNABLE — ${path.join(dir, "pre-push")} is present but not executable, ` +
+        `and git silently ignores a non-executable hook. Fix: chmod +x it, or ${FIX}.`,
     };
   }
   return { status: 0, message: `check-git-hooks: ok — pre-push present in ${dir}` };
