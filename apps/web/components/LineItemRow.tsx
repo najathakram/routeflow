@@ -6,6 +6,7 @@ import { cn, type BadgeStatus } from "@routeflow/ui/web";
 import { computeLineSubtotal, perUnitPrice } from "@routeflow/pricing";
 import { MarginHint } from "@/components/MarginHint";
 import { MoneyInput } from "@/components/MoneyInput";
+import type { PackBase } from "@/lib/order-line-unit";
 import type { TrackedCategory } from "@/lib/api/tracked-categories";
 
 /**
@@ -43,6 +44,11 @@ export interface LineItemRowItem {
   /** UI-only qty entry mode for case-packed lines. NEVER submitted — the payload always
    *  carries {qty, boxes, pieces} and the per-case unitPrice. */
   sellBy?: "case" | "unit";
+  /** units_v1: the non-pack unit this line sells by (`undefined` = the pack). `qty` then counts that
+   *  unit and `unitPrice` is per unit — no boxes/pieces. Sent as `unitLabel`. */
+  unitLabel?: string;
+  /** UI-only: the pack fields a unit switch overwrote, so choosing the pack restores them. */
+  packBase?: PackBase;
 }
 
 export interface LineItemRowProps {
@@ -81,6 +87,8 @@ export interface LineItemRowProps {
    *  inline-editable exactly as it is today — this prop only adds a click target
    *  around the existing price display, it never removes the inline input. */
   onTapPrice?: () => void;
+  /** Optional control rendered under the price block (the order modal's "Sell by" unit picker). */
+  unitSlot?: React.ReactNode;
 
   /** Registers/unregisters this row's root `<li>` with the caller (e.g.
    *  `CreateOrderModal`'s `rowRefs` map, used to scroll a just-scanned/just-added
@@ -133,6 +141,7 @@ export function LineItemRow({
   onUpdateUnlistedName,
   onUpdateUnlistedPrice,
   onRemove,
+  unitSlot,
   onTapPrice,
   rowRef,
 }: LineItemRowProps) {
@@ -247,6 +256,7 @@ export function LineItemRow({
               ${perUnitPrice(li.unitPrice, li.unitsPerBox)?.toFixed(2)} / piece
             </div>
           )}
+          {unitSlot && <div className="mt-1">{unitSlot}</div>}
           {/* Regulated tag (regulated-items-spec: "{Category} · regulated"). */}
           {category && (
             <span className="mt-1 inline-flex items-center rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">
