@@ -132,15 +132,39 @@ describe("assertOrderEditAllowed", () => {
     expect(f).not.toHaveBeenCalled();
   });
 
-  it("units_v1 (A1): OPERATOR and TENANT_ADMIN pass unconditionally on a unit-aware order — CONVERTED, not guarded; no owner lookup, no product/DB dependency", async () => {
+  it("units_v1 (A1): OPERATOR and TENANT_ADMIN pass a non-replaceAll diff on a unit-aware order unconditionally — CONVERTED, not guarded; no owner lookup, no product/DB dependency", async () => {
+    const f = owner(null);
+    const diff = { replaceAll: false, items: [{ id: "li-case", unitLabel: "Case", qty: 3 }] };
+    await expect(
+      assertOrderEditAllowed(order, diff, { role: "OPERATOR" }, f),
+    ).resolves.toBeUndefined();
+    await expect(
+      assertOrderEditAllowed(order, diff, { role: "TENANT_ADMIN" }, f),
+    ).resolves.toBeUndefined();
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it("units_v1 (A1, hardening): a staff replaceAll against a unit-aware order is refused — a full replace has no per-line id to preserve a unit through and would silently re-denominate it to the pack", async () => {
     const f = owner(null);
     await expect(
       assertOrderEditAllowed(order, { replaceAll: true, items: [] }, { role: "OPERATOR" }, f),
-    ).resolves.toBeUndefined();
+    ).rejects.toBeInstanceOf(ConflictException);
     await expect(
       assertOrderEditAllowed(order, { replaceAll: true, items: [] }, { role: "TENANT_ADMIN" }, f),
-    ).resolves.toBeUndefined();
+    ).rejects.toBeInstanceOf(ConflictException);
     expect(f).not.toHaveBeenCalled();
+  });
+
+  it("a staff replaceAll against a PACK-only order is NOT refused (nothing to re-denominate)", async () => {
+    const f = owner(null);
+    await expect(
+      assertOrderEditAllowed(
+        { customerId: "c1", lineItems: [packLine] },
+        { replaceAll: true, items: [] },
+        { role: "OPERATOR" },
+        f,
+      ),
+    ).resolves.toBeUndefined();
   });
 
   it("DRIVER stays refused on a unit-aware order (only staff is converted)", async () => {

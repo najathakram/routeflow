@@ -62,9 +62,16 @@ interface EditDto {
  * non-staff caller can remove a mistaken Case line. A buyer's ownership is settled FIRST
  * (`findOwner`): the refusal names a unit on THIS order, which a non-owner must never learn.
  *
- * units_v1 (A1): a STAFF principal (OPERATOR/TENANT_ADMIN) is CONVERTED, not guarded — every write
- * site in `updateOrderItems` resolves a unit-aware line's own factor via `resolveLineUnits` (see
- * `unit-line-edit.ts`), so staff pass through unconditionally here.
+ * units_v1 (A1): a STAFF principal (OPERATOR/TENANT_ADMIN) is CONVERTED, not guarded, for every
+ * shape EXCEPT `replaceAll: true`: a full replace re-denominates every existing line by matching
+ * `productId` alone (see `updateOrderItems`'s replace-all branch), which would silently collapse a
+ * Case line to the pack's price the moment the client's replace payload carries no line ids (the
+ * B606 shape — a Case at $480 becomes a pack at $42, unnoticed). So a staff replaceAll is refused,
+ * same as CUSTOMER/DRIVER, whenever the order already holds a unit-aware line — regardless of
+ * whether `flag.units_v1` is still on for this tenant (a line already sold by a unit must never be
+ * silently downgraded, flag or no flag). Every OTHER staff shape (diff add/update/substitute) stays
+ * fully converted — those sites resolve each line's own factor via `resolveLineUnits`, never the
+ * live product (see `unit-line-edit.ts`).
  */
 export async function assertOrderEditAllowed(
   order: { customerId: string; lineItems: ReadonlyArray<LineLike> },
@@ -72,7 +79,10 @@ export async function assertOrderEditAllowed(
   user: { role?: string } | undefined,
   findOwner: () => Promise<{ id: string } | null>,
 ): Promise<void> {
-  if (user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN") return;
+  if (user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN") {
+    if (dto.replaceAll === true) assertNoUnitAwareLines(order.lineItems, "replaced wholesale");
+    return;
+  }
   const items = dto.items ?? [];
   const strikeOffOnly =
     dto.replaceAll === false &&

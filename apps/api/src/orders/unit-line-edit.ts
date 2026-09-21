@@ -112,7 +112,14 @@ export interface UnitWriteContext {
   tier: (productId: string) => number;
 }
 
-/** Replace-all create + diff-ADD (both create a brand-new order line). */
+/**
+ * B635: this function's own `tx.orderItem.create` call is itself invisible to
+ * `unit-line-writers.ast.spec.ts`'s scanner — it only inspects methods inside a class. Filed, not
+ * fixed here (do not widen the scanner in this PR); `updateOrderItems`'s literal `resolveLineUnits`
+ * call is what the AST proof actually pins today.
+ *
+ * Replace-all create + diff-ADD (both create a brand-new order line).
+ */
 export async function createUnitLine(
   ctx: UnitWriteContext,
   orderId: string,

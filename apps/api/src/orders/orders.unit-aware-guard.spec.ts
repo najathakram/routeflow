@@ -255,15 +255,22 @@ describe("OrdersService — units_v1 fail-closed guard on rewrite paths", () => 
   });
 
   describe("updateOrderItems refuses an order holding a unit-aware line (409 UNIT_AWARE_LINE)", () => {
-    // units_v1 (A1): staff is CONVERTED, not blanket-guarded — "staff replace-all" was removed
-    // from this table (a replace-all sends the order's complete new line set, same as any
-    // pack-only replace-all; it is not a per-id "target this line" edit, so the money-seam
-    // unitLabel-naming rule below does not apply to it). "staff diff qty edit" stays IN this
-    // table: it names an EXISTING unit-aware line by id with no unitLabel, so it is still
-    // refused with the SAME code/message — now via assertUnitLabelNamed, not the old guard.
+    // units_v1 (A1): staff is CONVERTED, not blanket-guarded, for every shape EXCEPT
+    // `replaceAll: true` — a full replace re-denominates every line by productId alone (the
+    // replace-all branch has no per-line id to preserve a unit through), which would silently
+    // collapse a Case line to the pack's price. So "staff replace-all" is BACK in this table
+    // (hardening round, coordinator-reviewed): refused the same as CUSTOMER/DRIVER, now via the
+    // guard's own replaceAll check rather than the old blanket rule. "staff diff qty edit" is
+    // refused for the money-seam reason instead — it names an EXISTING unit-aware line by id with
+    // no unitLabel, via assertUnitLabelNamed, not this guard.
     const payloads = [
       [
-        "staff diff qty edit (no unitLabel named — the money seam, not the old blanket guard)",
+        "staff replace-all (re-denomination refusal — the guard's own replaceAll check)",
+        operatorPayload,
+        { replaceAll: true, items: [{ productId: "prod-box", qty: 2 }] },
+      ],
+      [
+        "staff diff qty edit (no unitLabel named — the money seam, not this guard)",
         operatorPayload,
         { replaceAll: false, items: [{ id: "li-case", qty: 3 }] },
       ],
@@ -288,19 +295,6 @@ describe("OrdersService — units_v1 fail-closed guard on rewrite paths", () => 
       expect(prisma.orderItem.deleteMany).not.toHaveBeenCalled();
       expect(prisma.orderItem.create).not.toHaveBeenCalled();
       expect(prisma.orderItem.update).not.toHaveBeenCalled();
-    });
-
-    it("units_v1 (A1): a staff replace-all naming no unitLabel is NOT refused by the old blanket guard (it is a fresh line set, not a targeted edit)", async () => {
-      prisma.order.findUnique.mockResolvedValue(unitAwareOrder());
-      prisma.product.findMany.mockResolvedValue([]);
-      const err = await service
-        .updateOrderItems(
-          "ord-1",
-          { replaceAll: true, items: [{ productId: "prod-box", qty: 2 }] } as never,
-          operatorPayload as never,
-        )
-        .catch((e) => e);
-      expect(err?.getResponse?.()?.code).not.toBe("UNIT_AWARE_LINE");
     });
 
     it("a CANCELLED unit-aware line does not trip the guard (the edit proceeds past it)", async () => {

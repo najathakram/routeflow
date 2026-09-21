@@ -150,6 +150,7 @@ describe("OrdersService.updateOrderItems — units_v1 (A1) staff conversion", ()
   let service: OrdersService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let entitlements: { hasFlag: jest.Mock };
+  let invoicesService: { revertLinkedInvoicesForOrderEdit: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
@@ -265,6 +266,7 @@ describe("OrdersService.updateOrderItems — units_v1 (A1) staff conversion", ()
 
     service = module.get<OrdersService>(OrdersService);
     entitlements = module.get(EntitlementsService);
+    invoicesService = module.get(InvoicesService);
 
     prisma.customer.findFirst.mockResolvedValue({ id: "cust-1", pricingTier: 1 });
     prisma.product.findMany.mockResolvedValue([caseProduct]);
@@ -308,6 +310,26 @@ describe("OrdersService.updateOrderItems — units_v1 (A1) staff conversion", ()
     expect(err).toBeInstanceOf(ConflictException);
     expect(err.getResponse()).toMatchObject({ code: "UNIT_AWARE_LINE" });
     expect(prisma.orderItem.update).not.toHaveBeenCalled();
+    // The blocking defect this pin exists for: the unit gate is hoisted ABOVE the un-tx'd
+    // revertLinkedInvoicesForOrderEdit call, so a refusal must never let that side effect commit
+    // first — a SENT invoice's pending mirror would otherwise be stranded in DRAFT.
+    expect(invoicesService.revertLinkedInvoicesForOrderEdit).not.toHaveBeenCalled();
+  });
+
+  it("a staff replaceAll against an order with a unit-aware line is REFUSED, never silently re-denominated to the pack", async () => {
+    prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, lineItems: [existingCaseLine] });
+    const err = await service
+      .updateOrderItems(
+        "ord-1",
+        { replaceAll: true, items: [{ productId: "prod-case", qty: 2 }] } as never,
+        operatorPayload as never,
+      )
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({ code: "UNIT_AWARE_LINE" });
+    expect(prisma.orderItem.create).not.toHaveBeenCalled();
+    expect(prisma.orderItem.deleteMany).not.toHaveBeenCalled();
+    expect(invoicesService.revertLinkedInvoicesForOrderEdit).not.toHaveBeenCalled();
   });
 
   it("qty edit on a Case line: 2 -> 3 Cases writes qty in BASE units (36), boxes=3, pieces=0", async () => {

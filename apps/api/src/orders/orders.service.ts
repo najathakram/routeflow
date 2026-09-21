@@ -3118,6 +3118,23 @@ export class OrdersService implements OnApplicationBootstrap {
       this.prisma.forTenant().customer.findFirst({ where: { userId: user?.sub, deletedAt: null } }),
     );
 
+    // units_v1 (A1): resolve every dto item's unit-awareness ONCE, up front — see unit-line-edit.ts.
+    // Hoisted here, BEFORE the restriction plan and the un-tx'd revertLinkedInvoicesForOrderEdit
+    // below (which commits on its own connection): a refused unit edit must never let that revert
+    // commit and then throw, stranding a SENT invoice's pending mirror in DRAFT with nothing left
+    // to re-sync it. Re-verified under the row lock inside the transaction (see heldItems below) —
+    // this pre-lock pass is only what a REFUSAL must see before any commit happens.
+    const unitCtx = await unitEdit.prepareUnitEditContext(this, order, dto, user);
+    const unitRows = new Map<object, ReturnType<typeof resolveLineUnits>>();
+    for (const item of dto.items ?? []) {
+      const li = item.id ? unitCtx.existingById.get(item.id) : undefined;
+      unitEdit.assertUnitLabelNamed(li, item);
+      const pid = item.substituteProductId ?? item.productId ?? li?.productId;
+      const product = pid ? unitCtx.products.get(pid) : undefined;
+      if (product)
+        unitRows.set(item, resolveLineUnits(product, unitCtx.ladders.get(pid!) ?? [], item, li));
+    }
+
     // B63 (REG-B63): buyers self-edit only pre-dispatch orders — the post-dispatch
     // relaxation in the comment above is operator + driver only. Thrown BEFORE any
     // side effect (invoice revert, line writes, revision, status event); buyers use
@@ -3229,18 +3246,6 @@ export class OrdersService implements OnApplicationBootstrap {
     // must not issue a non-transactional query from in there.
     const creditCheckEnabled = await this.isCreditLimitCheckEnabled();
 
-    // units_v1 (A1): resolve every dto item's unit-awareness ONCE, up front — see unit-line-edit.ts.
-    const unitCtx = await unitEdit.prepareUnitEditContext(this, order, dto, user);
-    const unitRows = new Map<object, ReturnType<typeof resolveLineUnits>>();
-    for (const item of dto.items ?? []) {
-      const li = item.id ? unitCtx.existingById.get(item.id) : undefined;
-      unitEdit.assertUnitLabelNamed(li, item);
-      const pid = item.substituteProductId ?? item.productId ?? li?.productId;
-      const product = pid ? unitCtx.products.get(pid) : undefined;
-      if (product)
-        unitRows.set(item, resolveLineUnits(product, unitCtx.ladders.get(pid!) ?? [], item, li));
-    }
-
     // P5-08b: the entire mutation phase — item writes, totals recompute, the
     // stock/credit guards, and the order-header update — runs in ONE tenant
     // transaction. A guard violation (or any failure) rolls back every item
@@ -3265,6 +3270,23 @@ export class OrdersService implements OnApplicationBootstrap {
           select: { ...EXISTING_LINE_SELECT, deliveredQty: true },
         });
         restrictionPlan?.assertHeld(heldItems);
+
+        // units_v1 (A1, #1102 precedent): the pre-lock resolution above can go stale under a
+        // concurrent edit of the SAME line — re-run it against the just-locked, authoritative
+        // heldItems (never the pre-tx `order.lineItems`) before any write. `unitRows.set` keys
+        // by the same `item` object reference, so this simply overwrites each entry in place.
+        const heldById = new Map<string, any>(heldItems.map((h: any) => [h.id, h]));
+        for (const item of dto.items ?? []) {
+          const li = item.id ? heldById.get(item.id) : undefined;
+          unitEdit.assertUnitLabelNamed(li, item);
+          const pid = item.substituteProductId ?? item.productId ?? li?.productId;
+          const product = pid ? unitCtx.products.get(pid) : undefined;
+          if (product)
+            unitRows.set(
+              item,
+              resolveLineUnits(product, unitCtx.ladders.get(pid!) ?? [], item, li),
+            );
+        }
 
         // Customer/Driver path: replace items by productId. A4: a DRIVER diff
         // payload skips this branch entirely — it merges below like an operator
