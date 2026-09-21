@@ -57,6 +57,15 @@ export function OrderLineUnitPicker({
     }
   }, [enabled, units.data, product, tier, packPrice]);
 
+  const packOption: UnitOption = {
+    value: "",
+    label: line.packBase?.unit ?? line.unit,
+    factorToBase: line.packBase?.unitsPerBox ?? line.unitsPerBox ?? 1,
+    kind: "pack",
+    price: packPrice,
+    listPrice: line.packBase?.listPrice ?? line.listPrice,
+  };
+
   // The customer's tier changed under a unit line: refresh its ladder price. A one-time price the
   // operator typed (DISCOUNTED / MANUAL) is theirs and stands.
   const held = options.find((o) => o.value === (line.unitLabel ?? ""));
@@ -75,7 +84,10 @@ export function OrderLineUnitPicker({
       ariaLabel={`Sell ${line.productName} by`}
       value={line.unitLabel ?? ""}
       onChange={(label) => {
-        const option = options.find((o) => o.value === label);
+        // "" = back to the pack, which must work even when the ladder is gone (no options to look in):
+        // the held unit would otherwise be unfixable and the save would 400 on it.
+        const option =
+          options.find((o) => o.value === label) ?? (label === "" ? packOption : undefined);
         if (option) onChange(option, false);
       }}
     />

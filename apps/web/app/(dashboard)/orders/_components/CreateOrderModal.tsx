@@ -1169,7 +1169,8 @@ export function CreateOrderModal({
       marginFloor={floorForCategory(marginConfig, li.category)}
       floorAcked={floorAcked.has(li.tempId)}
       costRevealed={costRevealed.has(li.tempId)}
-      priceHistoryEntry={priceHistory?.[li.productId]}
+      // the remembered price is a PACK price (the server excludes unit lines from it, B606)
+      priceHistoryEntry={li.unitLabel ? undefined : priceHistory?.[li.productId]}
       highlighted={ctx?.highlighted}
       rowRef={(el) => {
         if (el) rowRefs.current.set(li.tempId, el);

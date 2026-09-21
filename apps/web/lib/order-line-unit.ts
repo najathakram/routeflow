@@ -1,4 +1,4 @@
-import { normalizeBoxesPieces, type LadderProduct } from "@routeflow/pricing";
+import { getTierPrice, normalizeBoxesPieces, type LadderProduct } from "@routeflow/pricing";
 import type { UnitOption } from "@/lib/unit-options";
 
 /**
@@ -30,6 +30,8 @@ export interface PackBase {
 export interface UnitLine extends PackBase {
   unitLabel?: string;
   packBase?: PackBase;
+  /** The product's tier-price columns (the modal's snapshot) — lets a restored pack line be re-priced. */
+  tierPrices?: Parameters<typeof getTierPrice>[0];
 }
 
 const snapshot = (li: PackBase): PackBase => ({
@@ -63,8 +65,18 @@ export function applyLineUnit<T extends UnitLine>(
   if (option.kind === "pack") {
     if (!li.packBase) return li;
     const { packBase, ...rest } = li;
-    void packBase;
-    return { ...rest, ...li.packBase, unitLabel: undefined } as T;
+    const restored = { ...rest, ...packBase, unitLabel: undefined } as T;
+    // The snapshot's AUTO-derived price (tier / list) goes stale if the customer's tier moved while the
+    // line sold by a unit — restoring it verbatim would show a price the server will not store. Only an
+    // operator's one-time price (`discountedPrice`) is theirs to keep across the switch.
+    if (packBase.discountedPrice == null && li.tierPrices) {
+      const tierPrice = getTierPrice(li.tierPrices, ctx.tier);
+      const special = ctx.tier !== 1;
+      restored.unitPrice = tierPrice;
+      restored.priceType = special ? "SPECIAL" : "STANDARD";
+      restored.specialPrice = special ? tierPrice : undefined;
+    }
+    return restored;
   }
   const special = ctx.tier !== 1;
   return {

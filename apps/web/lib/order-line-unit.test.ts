@@ -92,6 +92,43 @@ describe("applyLineUnit", () => {
     expect(back.packBase).toBeUndefined();
   });
 
+  describe("restoring the pack after the customer's tier moved (review defect 1)", () => {
+    const tierPrices = { pricePerUnit: "42.00", priceTier2: "21.00" };
+    const autoPriced = (tier: 1 | 2): typeof packLine & { tierPrices: typeof tierPrices } => ({
+      ...packLine,
+      tierPrices,
+      discountedPrice: undefined,
+      unitPrice: tier === 2 ? 21 : 42,
+      priceType: tier === 2 ? "SPECIAL" : "STANDARD",
+      specialPrice: tier === 2 ? 21 : undefined,
+    });
+
+    it("re-derives the auto price at the CURRENT tier, not the snapshot's (tier 2 -> 1)", () => {
+      const opts = options();
+      const asCase = applyLineUnit(autoPriced(2), by(options(2), "Case"), { tier: 2 });
+      const back = applyLineUnit(asCase, by(opts, ""), { tier: 1 }); // the customer changed to tier 1
+      expect(back).toMatchObject({ unitPrice: 42, priceType: "STANDARD", specialPrice: undefined });
+    });
+
+    it("...and the other way (tier 1 -> 2)", () => {
+      const asCase = applyLineUnit(autoPriced(1), by(options(), "Case"), { tier: 1 });
+      const back = applyLineUnit(asCase, by(options(2), ""), { tier: 2 });
+      expect(back).toMatchObject({ unitPrice: 21, priceType: "SPECIAL", specialPrice: 21 });
+    });
+
+    it("an operator's one-time price is theirs: it survives the round trip and a tier change", () => {
+      const withOverride = {
+        ...autoPriced(1),
+        unitPrice: 40,
+        priceType: "DISCOUNTED" as const,
+        discountedPrice: 40,
+      };
+      const asCase = applyLineUnit(withOverride, by(options(), "Case"), { tier: 1 });
+      const back = applyLineUnit(asCase, by(options(2), ""), { tier: 2 });
+      expect(back).toMatchObject({ unitPrice: 40, priceType: "DISCOUNTED", discountedPrice: 40 });
+    });
+  });
+
   it("choosing the pack on a line that never left it changes nothing", () => {
     expect(applyLineUnit(packLine, by(options(), ""), { tier: 1 })).toBe(packLine);
   });
