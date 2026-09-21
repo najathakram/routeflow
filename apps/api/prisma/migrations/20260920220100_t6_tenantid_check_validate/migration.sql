@@ -6,7 +6,7 @@
 --
 -- Rollback: none needed (validation changes no data); to remove the guard entirely see part 1.
 -- If this migration FAILS it is recorded as failed: fix the NULL rows the error names (or drop that
--- table's constraint), then `prisma migrate resolve --rolled-back 20260920200100_t6_tenantid_check_validate`
+-- table's constraint), then `prisma migrate resolve --rolled-back 20260920220100_t6_tenantid_check_validate`
 -- from apps/api and re-run. NEVER `--applied`.
 --
 -- lock_timeout: VALIDATE holds SHARE UPDATE EXCLUSIVE (writes continue) but conflicts with DDL and

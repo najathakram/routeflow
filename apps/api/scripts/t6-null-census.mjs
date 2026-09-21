@@ -19,7 +19,7 @@ import { redactUrl, resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
 const here = dirname(fileURLToPath(import.meta.url));
 const PART1 = resolve(
   here,
-  "../prisma/migrations/20260920200000_t6_tenantid_check_not_valid/migration.sql",
+  "../prisma/migrations/20260920220000_t6_tenantid_check_not_valid/migration.sql",
 );
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "postgres", "db"]);
 

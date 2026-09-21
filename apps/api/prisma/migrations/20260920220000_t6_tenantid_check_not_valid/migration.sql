@@ -21,7 +21,7 @@
 -- their sum). On real tables each ADD is metadata-only and instant, so the whole file takes well
 -- under a second; if a wait ever exceeds 5s the statement errors, the transaction rolls back (no
 -- constraint is left half-added) and the migration is recorded as FAILED — recover with
--- `prisma migrate resolve --rolled-back 20260920200000_t6_tenantid_check_not_valid` from apps/api,
+-- `prisma migrate resolve --rolled-back 20260920220000_t6_tenantid_check_not_valid` from apps/api,
 -- then re-run (see the PR body). NEVER `--applied`: that would mark the guard as installed when it is not.
 SET lock_timeout = '5s';
 
