@@ -128,6 +128,151 @@ describe("RegulatedLedgerService", () => {
       });
       expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
     });
+
+    describe("B661: unitBasisQty is the PIECE count, never the raw (possibly BOX) qty", () => {
+      it("MONEY: a box-split line's qty is already pieces — unitBasisQty passes through unchanged", async () => {
+        await service.writeSaleEntries({
+          tenantId: "t1",
+          orderId: null,
+          invoiceId: "inv-1",
+          soldAt: new Date("2026-07-15T00:00:00Z"),
+          lines: [
+            {
+              invoiceItemId: "ii-1",
+              orderItemId: null,
+              trackedCategoryId: "cat-tob",
+              qty: 72, // 6 boxes of 12, already pieces
+              boxes: 6,
+              unitsPerBox: 12,
+              productId: "p1",
+              netSales: 240,
+              categoryTax: 0,
+            },
+          ],
+          db: prisma,
+        });
+        expect(prisma.product.findMany).not.toHaveBeenCalled(); // boxes given: no live fetch needed
+        expect(prisma.regulatedSalesLedger.createMany.mock.calls[0][0].data[0]).toMatchObject({
+          qty: 72,
+          unitBasisQty: 72,
+        });
+      });
+
+      it("MONEY: a boxed line sold in SELLING UNITS (boxes null) expands qty via the LIVE product size", async () => {
+        prisma.product.findMany.mockResolvedValue([{ id: "p1", unitsPerBox: 12 }]);
+        await service.writeSaleEntries({
+          tenantId: "t1",
+          orderId: null,
+          invoiceId: "inv-1",
+          soldAt: new Date("2026-07-15T00:00:00Z"),
+          lines: [
+            {
+              invoiceItemId: "ii-1",
+              orderItemId: null,
+              trackedCategoryId: "cat-tob",
+              qty: 6, // 6 BOXES — the mixed-denomination shape B661 fixes
+              boxes: null,
+              unitsPerBox: null,
+              productId: "p1",
+              netSales: 240,
+              categoryTax: 0,
+            },
+          ],
+          db: prisma,
+        });
+        expect(prisma.product.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { id: { in: ["p1"] } } }),
+        );
+        const row = prisma.regulatedSalesLedger.createMany.mock.calls[0][0].data[0];
+        expect(row.qty).toBe(6); // the stored line qty is unchanged
+        expect(row.unitBasisQty).toBe(72); // 6 boxes x 12 = 72 pieces, never 6
+      });
+
+      it("a non-boxed product (unitsPerBox <= 1) is not expanded", async () => {
+        prisma.product.findMany.mockResolvedValue([{ id: "p2", unitsPerBox: 1 }]);
+        await service.writeSaleEntries({
+          tenantId: "t1",
+          orderId: null,
+          invoiceId: "inv-1",
+          soldAt: new Date("2026-07-15T00:00:00Z"),
+          lines: [
+            {
+              invoiceItemId: "ii-1",
+              orderItemId: null,
+              trackedCategoryId: "cat-tob",
+              qty: 4,
+              boxes: null,
+              unitsPerBox: null,
+              productId: "p2",
+              netSales: 40,
+              categoryTax: 0,
+            },
+          ],
+          db: prisma,
+        });
+        expect(prisma.regulatedSalesLedger.createMany.mock.calls[0][0].data[0].unitBasisQty).toBe(
+          4,
+        );
+      });
+
+      it("only fetches products for regulated lines with boxes null (never a standard line, never a box-split one)", async () => {
+        await service.writeSaleEntries({
+          tenantId: "t1",
+          orderId: null,
+          invoiceId: "inv-1",
+          soldAt: new Date("2026-07-15T00:00:00Z"),
+          lines: [
+            {
+              invoiceItemId: "ii-1",
+              orderItemId: null,
+              trackedCategoryId: null,
+              qty: 1,
+              boxes: null,
+              productId: "p-standard",
+              netSales: 5,
+              categoryTax: 0,
+            },
+            {
+              invoiceItemId: "ii-2",
+              orderItemId: null,
+              trackedCategoryId: "cat-tob",
+              qty: 24,
+              boxes: 2,
+              unitsPerBox: 12,
+              productId: "p-boxed",
+              netSales: 80,
+              categoryTax: 0,
+            },
+          ],
+          db: prisma,
+        });
+        expect(prisma.product.findMany).not.toHaveBeenCalled();
+      });
+
+      it("no productId at all (an older/unupdated caller) degrades to today's behavior — qty passed through", async () => {
+        await service.writeSaleEntries({
+          tenantId: "t1",
+          orderId: null,
+          invoiceId: "inv-1",
+          soldAt: new Date("2026-07-15T00:00:00Z"),
+          lines: [
+            {
+              invoiceItemId: "ii-1",
+              orderItemId: null,
+              trackedCategoryId: "cat-tob",
+              qty: 6,
+              netSales: 240,
+              categoryTax: 0,
+            },
+          ],
+          db: prisma,
+        });
+        expect(prisma.product.findMany).not.toHaveBeenCalled();
+        expect(prisma.regulatedSalesLedger.createMany.mock.calls[0][0].data[0].unitBasisQty).toBe(
+          6,
+        );
+      });
+    });
   });
 
   describe("reverseInvoiceEntries (net-aware)", () => {

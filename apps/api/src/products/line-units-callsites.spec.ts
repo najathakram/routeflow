@@ -39,6 +39,10 @@ const NON_WRITERS = new Set([
   "products/line-units.ts",
   "orders/unit-line-build.ts", // copies unit/unitsPerBox into the ladder base; never derives a factor
   "regulated/tx-report.ts",
+  // B661: reads unitsPerBox to re-derive an ALREADY-STORED line's PIECE count for the regulated
+  // ledger (unitBasisQty) — fallback only for a legacy line whose own snapshot is null. Never
+  // decides a NEW line's selling denomination; same shape as tx-report.ts above.
+  "regulated/regulated-ledger.service.ts",
 ]);
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");

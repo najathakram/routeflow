@@ -61,7 +61,7 @@ import { EmailService } from "../email/email.service";
 import { InvoicePdfService } from "./invoice-pdf.service";
 import { buildInvoiceEmailAttachment, InvoiceEmailAttachment } from "./invoice-attachment";
 import { SystemConfigService } from "../system-config/system-config.service";
-import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { RegulatedLedgerService, SaleLedgerLine } from "../regulated/regulated-ledger.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { assertNoUnspentSourcedCredits } from "../credit-notes/sourced-credit-guard";
@@ -122,6 +122,21 @@ function calendarDayOf(raw: string, field: string): string {
 // `no-runtime-workspace-imports.spec.ts`), so it keeps a local copy instead — pinned value-equal
 // to the canonical export by `check-transitions-parity.spec.ts`. See that file's own doc for the
 // V1-only rule (no `CHECK_TRANSITIONS_V2` here — a later PR owns that).
+
+// B661: one shape, one place — all 3 writeSaleEntries call sites below build this from a stored
+// InvoiceItem. productId/boxes/unitsPerBox feed unitBasisQty's pieces-vs-boxes basis.
+const toSaleLedgerLine = (it: any): SaleLedgerLine => ({
+  invoiceItemId: it.id,
+  orderItemId: it.orderItemId ?? null,
+  trackedCategoryId: it.trackedCategoryId ?? null,
+  trackedSubcategoryId: it.trackedSubcategoryId ?? null,
+  qty: Number(it.qty),
+  netSales: Number(it.subtotal),
+  categoryTax: Number(it.categoryTaxAmount ?? 0),
+  productId: it.productId ?? null,
+  boxes: it.boxes ?? null,
+  unitsPerBox: it.unitsPerBox ?? null,
+});
 
 @Injectable()
 export class InvoicesService {
@@ -507,15 +522,7 @@ export class InvoicesService {
             orderId: null,
             invoiceId: created.id,
             soldAt: created.issueDate ?? new Date(),
-            lines: (created.items ?? []).map((it: any) => ({
-              invoiceItemId: it.id,
-              orderItemId: it.orderItemId ?? null,
-              trackedCategoryId: it.trackedCategoryId ?? null,
-              trackedSubcategoryId: it.trackedSubcategoryId ?? null,
-              qty: Number(it.qty),
-              netSales: Number(it.subtotal),
-              categoryTax: Number(it.categoryTaxAmount ?? 0),
-            })),
+            lines: (created.items ?? []).map(toSaleLedgerLine),
             db: tx,
           });
         }
@@ -1290,15 +1297,7 @@ export class InvoicesService {
           orderId: order.id,
           invoiceId: inv.id,
           soldAt: inv.issueDate ?? new Date(),
-          lines: (inv.items ?? []).map((it: any) => ({
-            invoiceItemId: it.id,
-            orderItemId: it.orderItemId ?? null,
-            trackedCategoryId: it.trackedCategoryId ?? null,
-            trackedSubcategoryId: it.trackedSubcategoryId ?? null,
-            qty: Number(it.qty),
-            netSales: Number(it.subtotal),
-            categoryTax: Number(it.categoryTaxAmount ?? 0),
-          })),
+          lines: (inv.items ?? []).map(toSaleLedgerLine),
           db: tx,
         });
       }
@@ -1820,15 +1819,7 @@ export class InvoicesService {
       orderId,
       invoiceId,
       soldAt: new Date(),
-      lines: (items ?? []).map((it: any) => ({
-        invoiceItemId: it.id,
-        orderItemId: it.orderItemId ?? null,
-        trackedCategoryId: it.trackedCategoryId ?? null,
-        trackedSubcategoryId: it.trackedSubcategoryId ?? null,
-        qty: Number(it.qty),
-        netSales: Number(it.subtotal),
-        categoryTax: Number(it.categoryTaxAmount ?? 0),
-      })),
+      lines: (items ?? []).map(toSaleLedgerLine),
       db,
     });
   }

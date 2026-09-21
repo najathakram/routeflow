@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { roundMoney } from "@routeflow/pricing";
 import { periodBucketOf } from "./period";
+import { linePieceQty } from "../orders/line-piece-qty";
 
 /** Round a quantity to 3 decimals (matches the Decimal(12,3) ledger columns). */
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
@@ -17,6 +18,13 @@ export interface SaleLedgerLine {
   qty: number;
   netSales: number; // the line's post-discount subtotal
   categoryTax: number; // computed category tax (0 today — tobacco is rate=0)
+  // B661: for `linePieceQty` — a box-split line's qty is already pieces (boxes non-null); a
+  // boxed SELLING-UNIT line (boxes null) needs the product's unitsPerBox to expand it. Optional
+  // so an older caller that hasn't been updated yet still typechecks (degrades to today's
+  // behavior: qty passed through unexpanded, same as before this fix).
+  productId?: string | null;
+  boxes?: number | null;
+  unitsPerBox?: number | null;
 }
 
 /**
@@ -50,6 +58,12 @@ export class RegulatedLedgerService {
    * `invoiceItemId` is real. Uses the caller's `db` (tx or base client). Requires
    * a tenantId (the ledger is tenant-scoped and NOT null); skips for the
    * SUPER_ADMIN/no-tenant context, which never generates real sales.
+   *
+   * B661: `unitBasisQty` is the PIECE count (`linePieceQty`), never the raw line `qty` — a boxed
+   * product sold in selling units (no box split) stores `qty` in boxes, which every other regulated
+   * writer already expands. Rows this wrote BEFORE the fix may still hold a box count; this only
+   * corrects NEW writes (never rewrites a stored row). A read-time correction for the OLD rows is
+   * owed separately in `regulated-filing.service.ts` (design pending — `legacyLinePieces`, #938).
    */
   async writeSaleEntries(params: {
     tenantId: string | null;
@@ -62,26 +76,49 @@ export class RegulatedLedgerService {
     const { tenantId, orderId, invoiceId, soldAt, lines, db } = params;
     if (!tenantId) return;
     const bucket = periodBucketOf(soldAt);
-    const rows = lines
-      .filter((l) => l.trackedCategoryId)
-      .map((l) => ({
-        tenantId,
-        trackedCategoryId: l.trackedCategoryId as string,
-        // RF-3: reporting breakdown passthrough (null = section-only). Never gates.
-        trackedSubcategoryId: l.trackedSubcategoryId ?? null,
-        entryType: "SALE" as const,
-        orderId,
-        orderItemId: l.orderItemId,
-        invoiceId,
-        invoiceItemId: l.invoiceItemId,
-        qty: l.qty,
-        // W5: no unitBasis conversion yet (W3 owns pack/carton math) — passthrough.
-        unitBasisQty: l.qty,
-        netSales: roundMoney(l.netSales),
-        categoryTax: roundMoney(l.categoryTax),
-        soldAt,
-        periodBucket: bucket,
-      }));
+    const regulatedLines = lines.filter((l) => l.trackedCategoryId);
+    // B661: `qty` is ambiguous the same way computeLineSubtotal's box-unaware branch is — a
+    // box-split line stores it already in PIECES, but a boxed product sold in SELLING UNITS
+    // (boxes null) stores it in BOXES, and create only snapshots the line's OWN unitsPerBox for
+    // a box-split line. Fetch the live product size as `linePieceQty`'s fallback for exactly
+    // those lines — mirrors `orders.service.ts`'s `recomputeLineCategoryTaxes` (`upbMap`) and
+    // `invoices.service.ts`'s re-price closure, the two other places this same expansion runs.
+    const prodIds = [
+      ...new Set(
+        regulatedLines
+          .filter((l) => l.boxes == null && l.productId)
+          .map((l) => l.productId as string),
+      ),
+    ];
+    const products = prodIds.length
+      ? await db.product.findMany({
+          where: { id: { in: prodIds } },
+          select: { id: true, unitsPerBox: true },
+        })
+      : [];
+    const unitsPerBoxByProduct = new Map<string, number>(
+      products.map((p: any) => [p.id, Number(p.unitsPerBox ?? 0)]),
+    );
+    const rows = regulatedLines.map((l) => ({
+      tenantId,
+      trackedCategoryId: l.trackedCategoryId as string,
+      // RF-3: reporting breakdown passthrough (null = section-only). Never gates.
+      trackedSubcategoryId: l.trackedSubcategoryId ?? null,
+      entryType: "SALE" as const,
+      orderId,
+      orderItemId: l.orderItemId,
+      invoiceId,
+      invoiceItemId: l.invoiceItemId,
+      qty: l.qty,
+      unitBasisQty: linePieceQty(
+        { qty: l.qty, boxes: l.boxes ?? null, unitsPerBox: l.unitsPerBox },
+        unitsPerBoxByProduct.get(l.productId ?? ""),
+      ),
+      netSales: roundMoney(l.netSales),
+      categoryTax: roundMoney(l.categoryTax),
+      soldAt,
+      periodBucket: bucket,
+    }));
     if (rows.length === 0) return;
     await db.regulatedSalesLedger.createMany({ data: rows });
   }
