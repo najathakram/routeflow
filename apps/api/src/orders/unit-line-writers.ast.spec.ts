@@ -155,7 +155,7 @@ const INVENTORY: Record<string, Row> = {
   },
   "estimates/estimates.service.ts::EstimatesService.convertToInvoice": {
     kind: "CONVERTED",
-    why: "resolveLineUnits per line; buildManualInvoiceLines builds the invoice lines (B659)",
+    why: "unit-aware estimate lines are refused pre-flight (assertNoUnitAwareLines) before reserveNext; convertToInvoice stays CONVERTED — it still calls resolveLineUnits per line inside the tx, and buildManualInvoiceLines builds the invoice lines (B659)",
   },
   "import/import.service.ts::ImportService.importInvoices": {
     kind: "PACK_ONLY_CREATE",

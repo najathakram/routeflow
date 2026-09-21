@@ -62,7 +62,12 @@ export function buildManualInvoiceLines(
     let unitsPerBox: number | undefined;
     if (item.productId && (item.boxes != null || item.pieces != null)) {
       const pack = item.packSnapshot ?? product?.unitsPerBox;
-      if (pack) {
+      // B659 (review finding 7): truthy, not `> 1`, let a pack of 1 through — `normalizeBoxesPieces`
+      // itself only does box math when unitsPerBox > 1 (its own `hasBoxPackaging` gate) and otherwise
+      // falls back to an `input.qty` this caller never passes, so a pack-1 product's split silently
+      // zeroed to qty 0 / $0. Match normalizeBoxesPieces's own threshold so a pack of 1 (or 0) skips
+      // the split entirely and the line's original qty survives untouched.
+      if (Number(pack) > 1) {
         unitsPerBox = pack;
         // Force integer boxes/pieces and roll pieces >= unitsPerBox into boxes.
         const split = normalizeBoxesPieces({
@@ -92,7 +97,10 @@ export function buildManualInvoiceLines(
     // same basis as the regular line tax. Piece count is the basis for per-unit
     // levies; a boxed selling-unit line expands via the product's box size.
     const category = product?.trackedCategoryId ? categoryMap.get(product.trackedCategoryId) : null;
-    const upbForPieces = Number(product?.unitsPerBox ?? 0);
+    // B659 (review finding 2): a NO-SPLIT line (boxes == null, so the branch above never ran) still
+    // needs the QUOTED pack for its per-piece levy basis, never a live repack — same snapshot the
+    // box-split branch above already honours via `pack` (item.packSnapshot ?? product?.unitsPerBox).
+    const upbForPieces = Number(item.packSnapshot ?? product?.unitsPerBox ?? 0);
     const pieceQty = boxes != null ? qty : upbForPieces > 1 ? qty * upbForPieces : qty;
     const categoryTaxAmount = category
       ? computeCategoryTax({
