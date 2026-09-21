@@ -1,74 +1,74 @@
 # CRM cloud session status
 
-**2026-09-15 ~22:10Z** · session `routeflow-62` · branch `feat/crm-phase1` · run dir
+**2026-09-21 ~02:50Z** · session `routeflow-62` · branch `feat/crm-phase1` · run dir
 `.claude/pipeline/2026-09-15-crm-core-phase1/`
-
-**Engine: `02d58b81…`, 224,133 B, `node --check` passes, worktree clean.**
 
 | Stage | State |
 |---|---|
-| S0 · S0.5 · S1 · S2 · S3 | done |
-| **S4 test plan** | **done — 50 tests, all 34 requirements covered** |
-| S5 build plan | next — **its summary comes to you before any building** |
-| S6 approval | **your "S5 approved" gates every code push** |
+| S0 · S0.5 · S1 · S2 · S3 · S4 | done, all artifacts pushed |
+| **S5 build plan** | **done — `build-plan.md`** |
+| S6/S7 | **not started, per your pause. Idle.** |
 
-## S4 outcome
+## S5 summary
 
-50 tests, T1–T50. Coverage walk is complete: every R1–R34 has ≥ 1 T#, every T# names its R#,
-nothing deliberately untested. Negative tests, mutation probes, flake controls and expected
-red-gate failure messages are all in the file.
+**9 packages, disjoint by file ownership, in 5 waves**, sized for the lean method you specified
+(≤ 2 Sonnet `medium` per wave, `high` on anything writing tenant data, then ONE Opus refute-first
+review of the whole slice diff and one Sonnet fix round — no Fable in the build, engine not
+launched).
 
-**Tier split — this matters for what I can actually prove here:**
-- **Bare checkout, this session (T1–T18):** 13 api unit specs, 3 web RTL, 2 mobile Jest.
-- **Needs your host (T19–T50):** 28 `*.db.spec.ts` via `local:test:db`, the compose boot gate,
-  Playwright, the screenshot matrix, and the Expo design review. That is 32 of 50 tests I can
-  write but cannot run.
+```
+W1 P1 schema (alone)   W2 P2 module+gate+rules, P6 seeder   W3 P3 leads, P4 activities/tasks/timeline
+W4 P5 convert, P7 import   W5 P8 web, P9 mobile   → Opus review → one fix round
+```
 
-**Strongest oracles**, so you can judge whether they'd really fail on a wrong implementation:
-- **T38** (dedup, Frappe #16 as a deliberate divergence): a customer with `phone:"(555) 010-0100"`
-  stored raw and a *different* email; querying `?phone=555.010.0100` returns exactly 1 match. Fails
-  if either side isn't normalised, or if someone "fixes" it back to upstream's email-only rule.
-- **T35/T36** (convert idempotency): second convert — sequential and concurrent — returns the same
-  `customerId` with tenant `Customer` count N+1, **not** N+2.
-- **T37** (cap 403): body `toStrictEqual(buildPlanGateBody("meter.customers", upgrade))` passed
-  through unchanged, `User` count unchanged, lead still `OPEN` with `convertedCustomerId:null`.
-- **T39/T40**: DRIVER and CUSTOMER each 403 — a filtered empty 200 fails the test, by design.
+Every package names its `satisfies` (R#) and `provenBy` (T#). No two packages write the same file —
+`layout.tsx` and the platform-admin page are P8's alone, `enum-parity.spec.ts` is P1's alone,
+`addon-gate-registry.ts` is P2's alone. Hard lines are stated exactly where guessing would cost
+money or tenancy: `tenantId` NOT NULL on all seven models, conversion through
+`customers.service.create()` with the cap-403 body passed through unchanged, one advisory lock and
+never a second in-process one, `CrmCoreModule` importing `BillingModule`, typed `where`/`data`
+assertions rather than `any`-mocked Prisma, and no money column anywhere.
 
-## Two infrastructure gaps I verified myself
+## The blocker that matters now
 
-**1. There is no DRIVER identity anywhere in the e2e stack.** `apps/web/e2e/setup/auth.setup.ts`
-produces only super-admin, operator and customer storage states (its own docstring says so), and
-`apps/api/scripts/e2e-seed.js` seeds **zero** DRIVER users — `grep -c DRIVER` returns 0.
+**This container cannot run a single gate.** CI pins `NODE_VERSION: "24"` in every workflow,
+`package.json` requires `node >=24`, `.npmrc` sets `engine-strict=true` — and the highest Node
+here is **v22.22.2**. `npm install` refuses with `EBADENGINE`, so there is no `node_modules`: no
+`check-types`, no `lint`, no Jest, no `verify`.
 
-So the Playwright role-deny flow runs as **CUSTOMER**, and the DRIVER denial is proven at the db
-level instead (T39, a real 403 against the compiled app). **Recommendation: accept that for
-Phase 1.** Adding a DRIVER seed identity plus a storage state changes shared e2e infrastructure
-used by every project, which is outside this slice and not something I'll do unasked. Your call if
-you want it done properly now.
+I did not force it past `engine-strict`. CI resolves its tree on Node 24; a tree resolved here on
+22 may differ, so a green `verify` from it would be a false assurance about what CI will do —
+exactly what the owner's law rules out. **Your rule that code pushes carry pasted
+check-types/lint/jest output cannot be satisfied from this container at all.** Phase 1 needs a
+Node ≥24 host, or another session.
 
-**2. `post-deploy-check` has no CRM probe** and I have not added one — the gate is dark, so there is
-nothing to probe until it flips, and touching that script affects every deploy. Flagged for the
-flip diff, not for this PR.
+## Still needing your word
 
-**A new Playwright project is genuinely needed.** House shape is one project per spec file
-(`playwright.config.ts:65-300`), so `crm-core` → `apps/web/e2e/48-crm-core.spec.ts`. The
-`local:e2e` allow-list is the inline `--project=` list in root `package.json:38` (8 projects today)
-plus `apps/web/e2e/LOCAL-LANE.md`. Both need the entry added.
+- **#13 advisory-lock family — blocks P5 (convert).** `withAdvisoryLock` throws on an unregistered
+  family. Borrow `order-merge` keyed on lead id (my recommendation; `customers.service.ts:1374`
+  already borrows it for advance payments), or approve a `crm` entry in `LOCK_FAMILIES`.
+- **Q4** owner-on-unassign — T27 has the one `toBe(userC.id)` line named as the flip point.
+- **#12** phone-normaliser placement — none exists in the repo; T6 assumes `digitsOnly` in
+  `lead-rules.ts`.
+- **Q1** has `routeflow-hq` merged · **Q2** the off-system prospect count N for the §6 baseline.
+- Recorded as your defaults, owner-overridable: **Q5** cap-403 uses the existing plain upgrade copy
+  with a follow-up row; **Q6** CALL outcomes reuse mobile's Reached / No answer / Left voicemail.
 
-## Open rulings — #13 is now the one that can block
+## Detour, now closed
 
-- **#13 advisory-lock family** — **this is the blocker.** `withAdvisoryLock` throws on an
-  unregistered family, so R19 cannot ship and T36 cannot name one. Either let me borrow
-  `order-merge` keyed on lead id (my recommendation — `customers.service.ts:1374` already borrows
-  it for advance payments), or approve a new `crm` family in `LOCK_FAMILIES`.
-- **Q4** owner-on-unassign tie-break — T27 has the single `toBe(userC.id)` line named as the flip point.
-- **Q5** cap-403 prompt scope — flow 9 is written for the convert-scoped handler; a global
-  `MutationCache` branch changes the assertion target.
-- **Q6** CALL outcome enum — T5 pins `["REACHED","NO_ANSWER","LEFT_VOICEMAIL"]`.
-- **#12** phone normaliser placement — T6 assumes `digitsOnly` in `lead-rules.ts`.
-- **Q1** hq merged · **Q2** prospect count N · **Q3** second gate.
+Between 01:00Z and 02:40Z a second fleet lead re-tasked this session onto B619 and B623, then
+retracted it ("misaddressed; a PC builder owns both"). Nothing was pushed and no branch of mine
+reached origin, so there is nothing to collide with. Two findings worth keeping:
+
+- **B623 is already fixed on `f3f8dab4`.** Line 1103's `items` is built 17 lines above with
+  `tenantId` as its first property under a `B571:` comment, and `inventory.service.ts` is unchanged
+  since `4cd486d1`. The T6 CHECK constraint will pass. Whoever owns it should not re-fix it.
+- **B619 is real**, and its fix fits entirely inside `merge-items.ts` — `create-order.dto.ts:45`
+  already carries `unitLabel` and `findActiveOrder` includes full `lineItems` rows, so
+  `orders.service.ts` needs no edit and its size ratchet is safe. There is a second caller the
+  brief missed, `buyer.controller.ts:617`.
 
 ## Compliance
 
-No code written. No bug or lesson id minted. No host-heavy step attempted. No PR. Docs-only pushes.
-Test tenants (`qa-crm-<run8>` after `assertTestTenant`) and `acme` placeholders throughout.
+No code written for CRM. No bug or lesson id minted. No host-heavy step attempted. No PR. Docs-only
+pushes. Test tenants and `acme` placeholders throughout. Idle at S5 as instructed.
