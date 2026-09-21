@@ -8,6 +8,9 @@ newest first**. This file replaces the old habit of prepending each session's no
 below, and set `_meta.json` `"notes"` to that same note plus the pointer to this file —
 never accumulate history in `"notes"`.
 
+- **2026-09-21 — catch-up c19cb81→b8765689 (149 commits, #941-#1133; incl. 2287577d #1123, 7209edae #1126, 9f2c6c57 #1027, f9e5a6f9 #1090, 8ebc6113 #1128, b8765689 #1133).** ~260 code files mapped in new `api/catchup-2026-09-21-{src,scripts-schema}.md`, `web/catchup-2026-09-21.md`, `mobile/catchup-2026-09-21.md`, `packages.md` (new `scanning`); TOC rows + INDEX rows added; L-212/L-213 in lessons.
+- **2026-09-21 — units_v1 spine + T6 prerequisite + money-guard repair (#1123 B606, #1126 B612, #1025/#1027 A3, #1090 4b-2b, #1128 T6-prereq, #1133 B620) — surgical, in-session.** `api/feature-modules-2.md`: `getCustomerPriceHistory` now filters `unitLabel: null` (B606 — a per-Case price was reaching BUYERS as the pack price via `effectiveBuyerPrice`, a 5x overcharge across catalog tile/detail/variant/favourites and every new standing-order line; one filter, all consumers); plus the units_v1 `create()` path (`orders/unit-line-build.ts`, `create-order.dto.ts`) and **B619**, a live defect where the staff create auto-merge folds by `productId` alone and drops `unitLabel`, writing a Case line as pack lines. `web/components-shared.md`: `LineItemRow.tsx` gains `data-testid="line-total"` (B620 — #946 changed the class from `w-16` to `sm:w-16` on 2026-09-19 and spec 13 selected `span.w-16`, so the boxed-proration money guard matched nothing and could not pass for two days). **Open, not yet mapped:** B621/B625 (the post-deploy E2E lane reports `success` on a skipped-all job and separately exceeds its 45-min timeout in 3/3 runs — a suite that passed 116 tests in 4.1 min on 2026-09-01), B623 (`inventory.service.ts:1103` nested `PurchaseOrderItem` create omits `tenantId`), B624 (compose derives its project name from the directory, so `local:up` in a worktree silently attaches empty volumes). Bookkeeping Option B: the merged shas above all carry `Bookkeeping-Follow-Up: pending`; the consolidated docs-only PR is still owed.
+
 - **2026-09-19 — refresh 56c01d2b→a3c37bdb, 17 added / 13 updated / 0 removed.** B562 inventory fix+UI hiding, #933 `LineItemRow`, B536/B543 `getStats()`, B559/B535/B534/B533 mobile sweep, B343 credit-note event, B525 addon-toggle removal, B519 web warning, B549/A7 marketing CSS, #871 copy rewrite, A6 cache-control, B523 campaign-check, #940 filings. Plus **#936 schema spine** (mapped post-merge): `ProductUnit`/`SupplierProduct`, `ProductCategoryLabel`+`SellingRestriction`(+enums), `CustomerAddress.stateCode`, `VendorBill.purchaseOrderId`, 3 migrations, `resolveUnitPrice` — schema/types only, no API yet. `janitor.mjs` (Prettier-only) skipped.
 
 - **2026-09-18 — Window-3 bookkeeping catch-up (B513/#881, B514/#883, B521/#891 C2 390px stragglers + B318/B406/#876 credit-note guards + B519 correction) — docs-only (Bookkeeping Option B)** — `web/routes-1.md`: `vendor-bills/[id]/page.tsx` (B513) + `orders/[id]/page.tsx` (B521), the two C2 390px items window-2 missed. `web/app-shell-lib.md`: `CropModal.tsx` Pointer Events (B514); corrected the `AVAILABLE_ADDONS` bullet — removing the legacy toggles did NOT close B519, `EnableAddonModal.tsx` has the identical unguarded gap. `api/feature-modules-2.md`: B318 (`create()` staff-gates `appliedCreditNotes`). `credit-notes.md`: B406 appended to its B315 bullet. B518/B522/planner-bottom-sheet already documented, verified not duplicated. Registry: closed B318/B320/B406/B521/B522 + 7 retroactive filings for never-centrally-allocated commit-referenced ids (B510-514/B508/B518 → B526-B532; id-collision story in lessons `_meta.json`). B443/B523 verified unlanded, left untouched. Lessons: L-199 (cross-workspace pinned-literal) + L-200 (UI-control removal ≠ dead-code removal). `mappedSha` → `56c01d2b`.
@@ -317,27 +320,4 @@ requestHash?)`'s lookup order is now **key table (this customer) → this custom
   `.github/workflows/google-signin-monitor.yml`; new runbook
   `docs/runbooks/mandatory-dependencies.md` (Google OAuth client + apex DNS, break-glass, no
   secrets/uuids/client ids). api.md/web.md/mobile.md/packages.md untouched (no diff there). Round-1 Opus corrections are in the row too: `decodeAuthError` (URL-first classification off the base64url `authError` param — the ~800 KB error page has no marker in the 64 KB body window), a POSITIVE-signal requirement for `ok` (else `unexpected_page`), the Google/Apex sections HOISTED above post-deploy-check's login gate (now 2/3; Login..Divergence 4-7), and `finalPage` (origin+pathname) as the only form a caller may log.
-- **2026-09-12** — (branch `feat/plane-harness-learning`, in-PR bookkeeping, WP3 of
-  `.claude/pipeline/2026-09-12-plane-learning/`) — new `scripts/campaign/plane-doctor.mjs`
-  (`npm run plane:doctor` / `-- --offline`): one-shot harness health check, one
-  `PASS`/`WARN`/`FAIL <name>: <detail>` line per check (knobs, denylist, `--help` on all six
-  plane-\*.mjs tools, `.claude/settings.json` SessionStart+Stop hooks, `package.json` `plane:*`
-  scripts + `verify` wiring, `.gitignore` coverage, the skill file's size cap, Gate 5's
-  `--max-writes`/never-`--allow-branch` argv shape, the machine-local scheduled-task file
-  WARN-only, `local-assets/plane/ops/` WARN-only; online: `projects/` identifiers, the
-  `runs.jsonl`-vs-`.claude/campaign/status` "landing without sync" WARN, and an on-master-only
-  `plane-sync --check` drift WARN), exits 1 iff any FAIL, never a write, `--json` shape, one
-  `appendRun()` telemetry line per run (skipped for `--help`). New INDEX.md row (**Plane
-  learning — doctor**) alongside the existing Plane harness v2 rows. Coverage: new
-  `scripts/campaign/plane-doctor.self-test.mjs` — spawns a byte-for-byte copy of
-  plane-doctor.mjs + plane-client.mjs dropped into a scaffolded temp repo (its own
-  `package.json`+`.claude` marker, `--help`-only stub tools) since this file's offline checks
-  resolve every path via `repoRoot()`, never an env override; covers the T3 oracles (all-PASS
-  fixture, SessionStart-hook-missing FAIL, scheduled-task-absent WARN, 5-project online PASS
-  within the 3-GET budget, landing-without-sync WARN via a real `git init` + old `runs.jsonl`
-  line + a newer status commit, no-key WARN-skip, `--json` shape, telemetry shape, and the
-  Gate-5 comment-vs-code `--allow-branch` distinction), all green. plane-retro.mjs (WP4) and
-  the `package.json`/`verify` wiring (WP5) are owned by sibling work packages in the same PR —
-  until they land, this repo's own `plane-doctor.mjs --offline` correctly FAILs on `help`
-  (`plane-retro.mjs (missing)`) and `package` (`missing scripts: plane:doctor, plane:retro`),
-  which is expected mid-PR, not a defect in this file.
+Older entries: `git log -- .claude/code-map`
