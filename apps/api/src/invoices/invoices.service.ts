@@ -3352,12 +3352,12 @@ export class InvoicesService {
   }
 
   async update(id: string, dto: Partial<CreateInvoiceDto>) {
+    const inv = await this.findOneOrThrow(id); // a missing invoice is a 404 whatever else is wrong
     // units_v1: a line can be CREATED by a unit (create(), 4c-1) but not yet REWRITTEN by one (4c-2);
     // the shared DTO accepts `unitLabel`, and this path would silently store a PACK line for it.
     if (dto.items?.some(requestsUnit)) {
       throw new BadRequestException("Selling by a unit can't be set on an invoice edit yet.");
     }
-    const inv = await this.findOneOrThrow(id);
     if (inv.status !== InvoiceStatus.DRAFT)
       throw new BadRequestException("Only DRAFT invoices can be edited");
     await this.assertOrderInvoiceUnlocked(inv);

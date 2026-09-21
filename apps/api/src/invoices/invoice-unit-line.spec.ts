@@ -49,6 +49,13 @@ describe("buildInvoiceUnitLine — a manual invoice line sold by a non-pack unit
     });
   });
 
+  it("rounds a sub-cent typed price to cents before pricing and storing it (every monetary write is rounded)", () => {
+    // 3 Cases at 12.344: rounded price 12.34 -> subtotal 37.02 (an unrounded price would give 37.03)
+    expect(build({ unitPrice: 12.344 })).toMatchObject({ unitPrice: 12.34, subtotal: 37.02 });
+    // a 2dp price — including an off-ladder one — is untouched (verbatim)
+    expect(build({ unitPrice: 300 })).toMatchObject({ unitPrice: 300, subtotal: 900 });
+  });
+
   it("takes the line discount off the subtotal and carries tax rate and notes", () => {
     expect(build({ discount: 40, taxRate: 0.08, notes: "n" })).toMatchObject({
       subtotal: 1400,
