@@ -1400,7 +1400,13 @@ export function CreateOrderModal({
                   setExpandedParentId(null);
                 }}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") {
+                  // B672 follow-up: BarcodeScannerButton's own USB-wedge detector (a native
+                  // listener on this SAME input) now actually fires and calls preventDefault()
+                  // on a real scan — but preventDefault() does not stop this separate React
+                  // handler from ALSO running. Without this check, a real wedge scan double-adds:
+                  // once via the detector (correct, +1) and once here, which (mis)treats it as a
+                  // manually-typed SKU and applies whatever is in the Qty field.
+                  if (e.key === "Enter" && !e.defaultPrevented) {
                     e.preventDefault();
                     e.stopPropagation();
                     handleProductSearchEnter();
