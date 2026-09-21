@@ -402,7 +402,10 @@ export function LineItemRow({
         </div>
       )}
       {/* Line total */}
-      <span className="col-start-2 row-start-2 self-center text-right text-sm font-semibold text-navy sm:w-16 sm:self-auto">
+      <span
+        data-testid="line-total"
+        className="col-start-2 row-start-2 self-center text-right text-sm font-semibold text-navy sm:w-16 sm:self-auto"
+      >
         $
         {computeLineSubtotal({
           unitPrice: li.unitPrice,

@@ -216,7 +216,7 @@ test.describe("Operator — Boxed order entry (WP2-13)", () => {
   }
 
   async function readLineTotal(row: Locator): Promise<number> {
-    const text = (await row.locator("span.w-16").innerText()).trim();
+    const text = (await row.getByTestId("line-total").innerText()).trim();
     const value = parseFloat(text.replace(/[$,]/g, ""));
     expect(Number.isNaN(value), `line total text was not a number: "${text}"`).toBe(false);
     return value;
