@@ -24,6 +24,8 @@ export interface UnitOption {
   kind: "pack" | "piece" | "level";
   /** Price per ONE of this unit at the customer's tier (`resolveUnitPrice`, same as the server). */
   price: number;
+  /** The same unit's TIER-1 price — what a typed one-time price is compared against (server rule). */
+  listPrice: number;
 }
 
 const norm = (s: string) => s.trim().toLowerCase();
@@ -60,6 +62,7 @@ export function buildUnitOptions(
 ): UnitOption[] {
   const ladder = units.map(toLadderUnit);
   const price = (label: string) => resolveUnitPrice(product, ladder, label, tier);
+  const list = (label: string) => resolveUnitPrice(product, ladder, label, 1);
   const pack = resolveLadderLevel(product, ladder, "");
   const options: UnitOption[] = [
     {
@@ -68,6 +71,7 @@ export function buildUnitOptions(
       factorToBase: pack.factorToBase,
       kind: "pack",
       price: packPrice ?? price(""),
+      listPrice: list(""),
     },
   ];
   const seen = new Set([norm(pack.label), norm(PIECE_LABEL)]);
@@ -83,6 +87,7 @@ export function buildUnitOptions(
       factorToBase: u.factorToBase,
       kind: u.factorToBase === 1 ? "piece" : "level",
       price: price(u.label),
+      listPrice: list(u.label),
     });
   }
   // gate on the ladder, not on `options`: a ladder whose only row is the explicit Piece (or is
@@ -94,6 +99,7 @@ export function buildUnitOptions(
       factorToBase: 1,
       kind: "piece",
       price: price(PIECE_LABEL),
+      listPrice: list(PIECE_LABEL),
     });
   }
   return options;

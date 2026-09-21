@@ -36,7 +36,7 @@ const PALLET = level({ label: "Pallet", factorToBase: 5760 });
 describe("buildUnitOptions", () => {
   it("a product with no levels offers only the pack, sent as an empty unitLabel", () => {
     expect(buildUnitOptions(product, [])).toEqual([
-      { value: "", label: "Box", factorToBase: 24, kind: "pack", price: 42 },
+      { value: "", label: "Box", factorToBase: 24, kind: "pack", price: 42, listPrice: 42 },
     ]);
   });
 

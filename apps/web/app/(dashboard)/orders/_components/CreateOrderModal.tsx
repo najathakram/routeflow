@@ -26,6 +26,15 @@ import { displayProductName } from "@/lib/product-display";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { LineItemRow } from "@/components/LineItemRow";
+import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
+import {
+  applyLineUnit,
+  mergeSameLine,
+  sameProductUnit,
+  unitLabelPayload,
+  type PackBase,
+} from "@/lib/order-line-unit";
+import type { UnitOption } from "@/lib/unit-options";
 import { useScanCodeHandler } from "./scan/useScanCodeHandler";
 import { ScanOrderScreen } from "./scan/ScanOrderScreen";
 import type { ScanHistoryEntry } from "./scan/scan-summary";
@@ -103,6 +112,10 @@ interface LineItem {
   /** UI-only qty entry mode for case-packed lines. NEVER submitted — the payload always
    *  carries {qty, boxes, pieces} and the per-case unitPrice. */
   sellBy?: "case" | "unit";
+  /** units_v1: the non-pack unit this line sells by (`undefined` = the pack); see LineItemRowItem. */
+  unitLabel?: string;
+  /** UI-only: the pack fields a unit switch overwrote (restored when the pack is chosen again). */
+  packBase?: PackBase;
   /**
    * The product's tier-price columns, snapshotted when the line is added, so a customer chosen
    * AFTER scanning can still re-price the line (owner ruling D1) without refetching the product.
@@ -313,7 +326,7 @@ export function CreateOrderModal({
     addLineItem: (product) => {
       // `created` is read in the same closure that performs the add, so it is exact even
       // though setLineItems has not flushed yet (the scan screen uses it to undo).
-      const created = !lineItems.some((li) => li.productId === product.id);
+      const created = !lineItems.some((li) => sameProductUnit(li, { productId: product.id }));
       addLineItem(product);
       return { created };
     },
@@ -402,7 +415,8 @@ export function CreateOrderModal({
     setLineItems((prev) => {
       let changed = false;
       const next = prev.map((li) => {
-        if (li.isUnlisted || !li.tierPrices) return li;
+        // a unit line is re-priced by its own picker from the product's ladder, not the pack's tiers
+        if (li.isUnlisted || !li.tierPrices || li.unitLabel) return li;
         if (li.priceType === "DISCOUNTED" || li.priceType === "MANUAL") return li;
         if (li.discountedPrice != null) return li;
         const tier = cpMap.get(li.productId) ?? selectedCustomer?.pricingTier ?? 1;
@@ -499,11 +513,11 @@ export function CreateOrderModal({
 
   const addLineItem = (product: any) => {
     // If already in the list, add one more unit (supports repeated scans of the same item)
-    const existing = lineItems.find((li) => li.productId === product.id);
+    const existing = lineItems.find((li) => sameProductUnit(li, { productId: product.id }));
     if (existing) {
       setLineItems((prev) =>
         prev.map((li) =>
-          li.productId === product.id
+          sameProductUnit(li, { productId: product.id })
             ? // scan_v2 adds a whole case to a case-packed line (a new line starts as one case);
               // the classic picker keeps its historical +1 qty so nothing changes with the gate off.
               scanV2
@@ -701,6 +715,29 @@ export function CreateOrderModal({
 
   const setSellBy = (tempId: string, sellBy: "case" | "unit") =>
     setLineItems((prev) => prev.map((li) => (li.tempId === tempId ? { ...li, sellBy } : li)));
+
+  /** The effective price tier for a product on this order (per-product override, else the customer's). */
+  const tierForProduct = (productId: string) =>
+    cpMap.get(productId) ?? selectedCustomer?.pricingTier ?? 1;
+
+  /**
+   * units_v1: sell a line by another unit (or back by the pack). A line switched to a unit the
+   * product already has on this order folds into that line (product + unit is the line's identity).
+   */
+  const setLineUnit = (tempId: string, option: UnitOption, refresh: boolean) =>
+    setLineItems((prev) => {
+      const target = prev.find((li) => li.tempId === tempId);
+      if (!target) return prev;
+      const next = applyLineUnit(target, option, {
+        tier: tierForProduct(target.productId),
+        keepQty: refresh,
+      });
+      const twin = prev.find((li) => li.tempId !== tempId && sameProductUnit(li, next));
+      if (!twin) return prev.map((li) => (li.tempId === tempId ? next : li));
+      return prev
+        .filter((li) => li.tempId !== tempId)
+        .map((li) => (li.tempId === twin.tempId ? mergeSameLine(li, next) : li));
+    });
 
   const setDiscountedPrice = (tempId: string, value: number | null) => {
     setLineItems((prev) =>
@@ -988,6 +1025,7 @@ export function CreateOrderModal({
             productId: li.productId,
             qty: li.qty,
             ...(li.unitsPerBox ? { boxes: li.boxes ?? 0, pieces: li.pieces ?? 0 } : {}),
+            ...unitLabelPayload(li),
             // Send unitPrice for one-time overrides — discounts (below list) and
             // upsells (MANUAL, above list). Not for permanent SPECIAL tier prices
             // (backend handles those via CustomerPrice).
@@ -1151,6 +1189,13 @@ export function CreateOrderModal({
       onUpdateUnlistedName={(name) => updateUnlistedName(li.tempId, name)}
       onUpdateUnlistedPrice={(value) => updateUnlistedPrice(li.tempId, value)}
       onRemove={() => removeLineItem(li.tempId)}
+      unitSlot={
+        <OrderLineUnitPicker
+          line={li}
+          tier={tierForProduct(li.productId)}
+          onChange={(option, refresh) => setLineUnit(li.tempId, option, refresh)}
+        />
+      }
     />
   );
 
@@ -1158,7 +1203,7 @@ export function CreateOrderModal({
   // it is still that single unit — so an operator who has since edited the quantity (or two rapid
   // scans that both recorded "created") never loses the whole line to one Undo.
   const undoScan = ({ productId, created }: ScanHistoryEntry) => {
-    const line = lineItems.find((li) => li.productId === productId);
+    const line = lineItems.find((li) => sameProductUnit(li, { productId }));
     if (!line) return; // the operator already removed it by hand
     const singleUnit = line.unitsPerBox
       ? (line.boxes ?? 0) <= 1 && (line.pieces ?? 0) === 0
