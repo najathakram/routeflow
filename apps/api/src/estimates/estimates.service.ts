@@ -139,11 +139,17 @@ export class EstimatesService {
     let subtotal = 0;
     const itemsData = items.map((i: any) => {
       const product = i.productId ? productMap.get(i.productId) : null;
+      // B645 / line-units-callsites ratchet: read this ONCE and reuse it below
+      // (qty resolution, computeLineSubtotal, and the B645 snapshot on the
+      // returned item) rather than re-reading `product.unitsPerBox` at each
+      // site — keeps this file's direct-read count at the ratchet's baseline
+      // instead of adding a third counted read for the same value.
+      const productUnitsPerBox = product?.unitsPerBox ?? null;
 
       // Resolve qty from boxes/pieces when provided
       let qty = Number(i.qty);
       if (product && (i.boxes != null || i.pieces != null)) {
-        const unitsPerBox = Number(product.unitsPerBox ?? 0);
+        const unitsPerBox = Number(productUnitsPerBox ?? 0);
         qty = (i.boxes ?? 0) * unitsPerBox + (i.pieces ?? 0);
       }
 
@@ -180,7 +186,7 @@ export class EstimatesService {
         qty,
         boxes: i.boxes ?? null,
         pieces: i.pieces ?? null,
-        unitsPerBox: product?.unitsPerBox ?? null,
+        unitsPerBox: productUnitsPerBox,
       });
       subtotal += sub;
       return {
@@ -199,7 +205,7 @@ export class EstimatesService {
         // product silently changes what this estimate line means on any later
         // recompute (edit, convert, re-price). Null exactly when the line isn't
         // boxed, matching InvoiceItem's twin column.
-        unitsPerBox: product?.unitsPerBox ?? null,
+        unitsPerBox: productUnitsPerBox,
         tenantId,
       };
     });
