@@ -1364,8 +1364,6 @@ export class InventoryService {
      * replay order (and the average it yields) would be a coin flip.
      */
     movementAt?: Date,
-    /** Pieces of the re-created lot already sold under a #966-era lot (see reversePoReceipts). */
-    lotConsumed?: Prisma.Decimal,
   ) {
     const qtyReceived = new Prisma.Decimal(qty);
     // The PO line's cost basis is a property of the STORED row, never of the
@@ -1407,9 +1405,7 @@ export class InventoryService {
         productId: item.productId,
         purchaseDate: lotPurchaseDate ?? new Date(),
         qty: qtyReceived,
-        remainingQty: lotConsumed
-          ? Prisma.Decimal.max(qtyReceived.sub(lotConsumed), 0)
-          : qtyReceived,
+        remainingQty: qtyReceived,
         unitCost: itemUnitCost,
         reference: po.poNumber,
       },
@@ -1460,16 +1456,18 @@ export class InventoryService {
    * restated average is approximate and stock may pass through a lower value inside
    * the transaction — exactly what a bill's revertToDraft does today.
    *
-   * LEGACY LOTS (POs re-applied under #966, before B583): that release surrendered a
-   * partly-consumed lot by zeroing it and annotating "(PO edited; N already consumed)",
-   * then re-created a full-size lot. Refusing such a PO forever would strand it, so a lot
-   * that is zeroed AND carries that annotation is treated as already reversed: it is
-   * removed with the rest, and the N units it records as sold are carried onto the
-   * re-created lot (remaining = received − N), which restores the true pool. Any OTHER
-   * lot with remaining < qty still refuses.
+   * LEGACY LOTS (POs re-applied under #966, before B583) are NOT special-cased. That
+   * release surrendered a partly-consumed lot by zeroing it and writing "(PO edited; N
+   * already consumed)" into its free-text `notes`; a later version parsed that text to
+   * credit N back. It was removed (B608): `receiveStock` writes BOTH `reference` and
+   * `notes` from operator input onto a StockLot, and this method finds lots by
+   * `reference`, so anyone able to receive stock could mint a lot naming a real PO with
+   * that text and have N credited as free stock once it drained. A PO from that window
+   * now refuses re-apply like any other partly-consumed lot (409 PO_LOT_PARTIALLY_CONSUMED)
+   * and stays document-only editable; there is no migration.
    *
    * Returns the original purchase date of each product's lot, so the re-posted lot
-   * keeps its place in FIFO/LIFO order, and the prior consumption to carry per product.
+   * keeps its place in FIFO/LIFO order.
    */
   private async reversePoReceipts(
     tx: Prisma.TransactionClient,
@@ -1480,7 +1478,7 @@ export class InventoryService {
     userId: string,
     /** Strictly increasing timestamps for the compensating movements (see postPoReceipt). */
     nextAt: () => Date,
-  ): Promise<{ lotDates: Map<string, Date>; carriedConsumption: Map<string, Prisma.Decimal> }> {
+  ): Promise<{ lotDates: Map<string, Date> }> {
     const productIds = [...new Set(po.items.map((i) => i.productId))];
 
     // ── Refuse first: nothing below runs unless every check passes ──
@@ -1498,13 +1496,7 @@ export class InventoryService {
     const lots = await tx.stockLot.findMany({
       where: { reference: po.poNumber, productId: { in: productIds } },
     });
-    const legacyRe = /\(PO edited; ([0-9.]+) already consumed\)/;
-    const isLegacyZeroed = (l: (typeof lots)[number]) =>
-      new Prisma.Decimal(l.remainingQty).eq(0) && legacyRe.test(l.notes ?? "");
-    const staleLots = lots.filter(isLegacyZeroed);
-    const consumedLots = lots.filter(
-      (l) => !isLegacyZeroed(l) && new Prisma.Decimal(l.remainingQty).lt(l.qty),
-    );
+    const consumedLots = lots.filter((l) => new Prisma.Decimal(l.remainingQty).lt(l.qty));
     if (consumedLots.length > 0) {
       throw new ConflictException({
         code: "PO_LOT_PARTIALLY_CONSUMED",
@@ -1628,17 +1620,7 @@ export class InventoryService {
       const seen = lotDates.get(l.productId);
       if (!seen || l.purchaseDate < seen) lotDates.set(l.productId, l.purchaseDate);
     }
-    const carriedConsumption = new Map<string, Prisma.Decimal>();
-    for (const l of staleLots) {
-      const n = legacyRe.exec(l.notes ?? "");
-      if (n) {
-        carriedConsumption.set(
-          l.productId,
-          (carriedConsumption.get(l.productId) ?? new Prisma.Decimal(0)).add(n[1]),
-        );
-      }
-    }
-    return { lotDates, carriedConsumption };
+    return { lotDates };
   }
 
   /**
@@ -1800,7 +1782,6 @@ export class InventoryService {
 
       // ── Reverse (re-apply only) ──
       let lotDates = new Map<string, Date>();
-      let carriedConsumption = new Map<string, Prisma.Decimal>();
       // Strictly increasing movement timestamps: compensation(s) first, then the re-post.
       const clockBase = Date.now();
       let tick = 0;
@@ -1810,7 +1791,7 @@ export class InventoryService {
           ...po.items.map((i) => i.productId),
           ...items.map((l) => l.productId),
         ]);
-        ({ lotDates, carriedConsumption } = await this.reversePoReceipts(tx, po, userId, nextAt));
+        ({ lotDates } = await this.reversePoReceipts(tx, po, userId, nextAt));
       }
       const tenantId = this.prisma.getTenantId();
 
@@ -1881,13 +1862,6 @@ export class InventoryService {
         },
       });
 
-      // Prior consumption is carried onto the FIRST re-created lot of a product only.
-      const takeConsumed = (productId: string) => {
-        const n = carriedConsumption.get(productId);
-        carriedConsumption.delete(productId);
-        return n;
-      };
-
       // ── Re-post (re-apply only) ──
       if (reapply) {
         const supplierId = supplierChanged ? dto.supplierId! : po.supplierId;
@@ -1903,7 +1877,6 @@ export class InventoryService {
             userId,
             lotDates.get(l.line.productId),
             nextAt(),
-            takeConsumed(l.line.productId),
           );
           restockedProductIds.push(l.line.productId);
         }
