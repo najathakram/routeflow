@@ -13,6 +13,7 @@ import {
   HttpStatus,
   ConflictException,
   NotFoundException,
+  ParseUUIDPipe,
 } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from "@nestjs/swagger";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -42,6 +43,7 @@ import { EntitlementsModeService } from "../billing/entitlements-mode.service";
 import { FeatureDiffService } from "../billing/feature-diff.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { FeaturePreviewService } from "../billing/feature-preview.service";
+import { TenantConfigSnapshotAdminService } from "../billing/tenant-config-snapshot-admin.service";
 import { toEffectiveFeature } from "../billing/feature-resolver.service";
 import type { FeaturePreviewRequest } from "@routeflow/types";
 import { AdminAuditAction } from "./audit-actions.constant";
@@ -62,6 +64,7 @@ export class PlatformAdminController {
     private readonly featureDiffs: FeatureDiffService,
     private readonly authority: EntitlementAuthority,
     private readonly featurePreview: FeaturePreviewService,
+    private readonly snapshotAdmin: TenantConfigSnapshotAdminService,
   ) {}
 
   @Get("stats")
@@ -634,6 +637,40 @@ export class PlatformAdminController {
       overrideId,
     });
     return result;
+  }
+
+  // ─── Configuration snapshots (Lane B A2 step c) ───────────────────────────
+  // Every route here inherits the class-level SuperAdminGuard.
+
+  @Get("tenants/:id/config-snapshots")
+  @ApiOperation({
+    summary: "A tenant's archived feature-config snapshots (taken on downgrade), newest first",
+  })
+  listConfigSnapshots(@Param("id", ParseUUIDPipe) id: string) {
+    return this.snapshotAdmin.list(id);
+  }
+
+  @Get("tenants/:id/config-snapshots/:snapshotId/preview")
+  @ApiOperation({
+    summary: "What restoring this snapshot would restore / keep / skip right now — writes nothing",
+  })
+  previewConfigSnapshotRestore(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Param("snapshotId", ParseUUIDPipe) snapshotId: string,
+  ) {
+    return this.snapshotAdmin.preview(id, snapshotId);
+  }
+
+  @Post("tenants/:id/config-snapshots/:snapshotId/restore")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Restore Now — apply one snapshot as-was to the tenant's current plan" })
+  async restoreConfigSnapshot(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Param("snapshotId", ParseUUIDPipe) snapshotId: string,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    // The audit row (with the report) is written by the service INSIDE the restore transaction.
+    return this.snapshotAdmin.restoreNow(id, snapshotId, admin.sub);
   }
 
   // ─── Platform AI Configuration ────────────────────────────────────────────

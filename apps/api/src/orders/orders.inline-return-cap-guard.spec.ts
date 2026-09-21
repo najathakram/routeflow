@@ -40,6 +40,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
@@ -150,6 +151,14 @@ describe("OrdersService.updateOrderItems — DRIVER edit-down vs. inline-return 
         {
           provide: InventoryService,
           useValue: { recordSale: jest.fn() },
+        },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "OFF", reasons: [] }),
+            getPolicy: jest.fn().mockResolvedValue({ enabled: false }),
+          },
         },
         {
           provide: AuthorizationGuardService,

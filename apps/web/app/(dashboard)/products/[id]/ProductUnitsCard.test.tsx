@@ -87,6 +87,14 @@ describe("ProductUnitsCard", () => {
     expect(screen.getByText(/No other units yet/)).toBeInTheDocument();
   });
 
+  it("the default radio says what it does — pre-selected on STAFF orders; the buyer portal sells the pack regardless", () => {
+    mockUnits = [caseUnit];
+    renderCard();
+    // one radio on the pack row + one on the Case row
+    expect(screen.getAllByLabelText("Pre-selected on staff orders")).toHaveLength(2);
+    expect(screen.queryByText(/sells by default/i)).toBeNull();
+  });
+
   it("adds a unit through the create mutation (Add stays disabled until name + size); a 0 price is sent as null", () => {
     renderCard();
     const add = screen.getByRole("button", { name: "Add unit" });

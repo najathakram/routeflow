@@ -258,7 +258,9 @@ export class ProductUnitsService {
     label: string,
     factorToBase: number,
   ): Promise<void> {
-    const where = {
+    // Through the PARENT (order/invoice) relation, never `orderItem`/`invoiceItem` top-level: a
+    // top-level read is scoped by the ITEM's nullable tenantId and would miss a NULL-tenant line.
+    const lineWhere = {
       productId,
       unitLabel: { equals: label, mode: "insensitive" as const },
       // Explicit OR: SQL `NOT (col = n)` drops NULL rows, and a line with no snapshot factor is
@@ -266,8 +268,8 @@ export class ProductUnitsService {
       OR: [{ unitsPerBox: null }, { unitsPerBox: { not: factorToBase } }],
     };
     const [order, invoice] = await Promise.all([
-      db.orderItem.findFirst({ where, select: { id: true } }),
-      db.invoiceItem.findFirst({ where, select: { id: true } }),
+      db.order.findFirst({ where: { lineItems: { some: lineWhere } }, select: { id: true } }),
+      db.invoice.findFirst({ where: { items: { some: lineWhere } }, select: { id: true } }),
     ]);
     if (order || invoice) {
       throw new ConflictException(

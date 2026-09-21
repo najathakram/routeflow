@@ -2,35 +2,68 @@
 // local-assets/handoff/2026-09-18/PLAN-categories-jurisdiction-bans.md §1-3 and
 // MASTER-EXECUTION-PLAN.md §6 contracts 7-8.
 
-/**
- * Ordered precedence over which customer address governs a STATE restriction
- * check (owner ruling R1 — tenant-configurable, not a hardcoded assumption).
- */
-export type GoverningAddressSource = "DELIVERY" | "BILLING" | "DEFAULT" | "LICENSED_PREMISES";
+import type { RestrictionAddressPrecedence } from "./enums";
 
+/**
+ * Tenant policy. `addressPrecedence` = which customer address TYPE governs a STATE rule first
+ * (owner ruling D4: the customer's DEFAULT address; see `RESTRICTION_ADDRESS_PRECEDENCE_VALUES`).
+ * A licensed-premises address source (`CustomerAuthorization.premisesState`) is deliberately
+ * deferred — owner: "no licensed-premises field now"; reintroduce it as a third source when ruled in.
+ */
 export interface RestrictionsPolicy {
   enabled: boolean;
-  governingAddress: GoverningAddressSource[];
+  addressPrecedence: RestrictionAddressPrecedence;
+}
+
+/** OFF = feature disabled · ALLOW = enabled, nothing blocks · BLOCK · INDETERMINATE = enabled but the state can't be resolved (fail closed). */
+export type RestrictionOutcome = "OFF" | "ALLOW" | "BLOCK" | "INDETERMINATE";
+
+/** BUYER_PORTAL = the self-serve buyer (principal `type: "BUYER"` or the CUSTOMER role, and any caller not positively staff); STAFF = a staff principal or an explicit system caller. */
+export type RestrictionChannel = "BUYER_PORTAL" | "STAFF";
+
+export interface RestrictionsEvaluation {
+  outcome: RestrictionOutcome;
+  /**
+   * One entry per blocked / indeterminate PRODUCT (duplicate lines of one product collapse to a
+   * single entry); empty for OFF and ALLOW.
+   */
+  reasons: BlockedLine[];
 }
 
 /** Why a line was blocked — mirrors the engine's three-state result (plan §2.6). */
 export type RestrictionReason =
-  "FEDERAL_BAN" | "STATE_BAN" | "BUYER_PORTAL_ONLY" | "INDETERMINATE_ADDRESS";
+  "FEDERAL_BAN" | "STATE_BAN" | "BUYER_PORTAL_ONLY" | "INDETERMINATE_ADDRESS" | "UNKNOWN_PRODUCT";
 
 export interface BlockedLine {
   productId: string;
   productName: string;
   categoryName?: string;
-  ruleId: string;
+  /** Null only for UNKNOWN_PRODUCT (no rule was matched — the product couldn't be resolved). */
+  ruleId: string | null;
   reason: RestrictionReason;
   state?: string;
   message: string;
 }
 
-/** Thrown as a 409 by `assertSellable` — mirrors `REGULATED_AUTH_REQUIRED`'s shape. */
+/** Thrown as a 409 by `assertLinesSellable` — mirrors `REGULATED_AUTH_REQUIRED`'s shape. */
 export interface SellingRestrictedError {
   code: "SELLING_RESTRICTED";
+  /** One human sentence (a client with no blocked-lines panel toasts it); the detail is `blockedLines`. */
+  message: string;
   blockedLines: BlockedLine[];
+}
+
+/**
+ * What a BUYER-channel caller gets in `blockedLines` (B612): the product only — no rule id, reason,
+ * state, category or rule text. Staff still get the full {@link BlockedLine}.
+ */
+export type BuyerBlockedLine = Pick<BlockedLine, "productId" | "productName">;
+
+/** The 409 body for a BUYER-channel caller: the same code, a generic sentence, names only. */
+export interface BuyerSellingRestrictedError {
+  code: "SELLING_RESTRICTED";
+  message: string;
+  blockedLines: BuyerBlockedLine[];
 }
 
 export type RestrictionJurisdiction = "FEDERAL" | "STATE";

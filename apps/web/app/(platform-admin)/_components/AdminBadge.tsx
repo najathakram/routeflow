@@ -4,7 +4,7 @@ const STATUS_COLORS: Record<string, string> = {
   ACTIVE: "bg-green-900/40 text-green-400 ring-green-600/30",
   TRIAL: "bg-yellow-900/40 text-yellow-400 ring-yellow-600/30",
   SUSPENDED: "bg-red-900/40 text-red-400 ring-red-600/30",
-  CANCELLED: "bg-slate-700 text-slate-400 ring-slate-600/30",
+  CANCELLED: "bg-slate-700 text-slate-300 ring-slate-600/30",
 };
 
 const PLAN_COLORS: Record<string, string> = {
@@ -38,7 +38,7 @@ interface AdminBadgeProps {
 
 export function AdminBadge({ children, variant = "status", className = "" }: AdminBadgeProps) {
   const colors = variant === "plan" ? PLAN_COLORS : STATUS_COLORS;
-  const colorClass = colors[children] ?? "bg-slate-700 text-slate-400 ring-slate-600/30";
+  const colorClass = colors[children] ?? "bg-slate-700 text-slate-300 ring-slate-600/30";
   const text = variant === "plan" ? planLabel(children) : children;
   return (
     <span

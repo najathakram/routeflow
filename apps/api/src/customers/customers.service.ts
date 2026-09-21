@@ -28,6 +28,12 @@ import {
   KPI_SUMMARY_EXCLUDED,
   LIFETIME_INVOICED_EXCLUDED,
 } from "../invoices/invoice-status-sets";
+import {
+  loadCreditExposure,
+  OPEN_ORDER_STATUSES,
+  RECEIVABLE_INVOICE_SELECT,
+  receivableBalance,
+} from "../invoices/credit-exposure";
 import { geocodeAddress, GeocodableAddress, GeocodeCoords } from "../common/geocode.util";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import { SCHEDULED_ROUTE_KIND_WHERE } from "../routes/route-stop-filters.util";
@@ -47,6 +53,7 @@ import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { buildPlanGateBody, PlanGateUpgrade } from "../billing/plan-gate";
 import { EmailService } from "../email/email.service";
+import { addressStateFields } from "./address-state";
 // Same grace window BillingCronService.expireGrace() clears hourly — the create()
 // gate applies it synchronously rather than waiting for the cron to run.
 import { GRACE_DAYS } from "../billing/plan-catalog.constants";
@@ -238,13 +245,10 @@ export class CustomersService {
       this.prisma.forTenant().invoice.findMany({
         where: {
           customerId: { in: customerIds },
-          status: { notIn: ["PAID", "VOID", "WRITTEN_OFF"] },
+          // D6 / B462: drafts included — `receivableBalance` drops only UNBACKED ones.
+          status: { notIn: CREDIT_NOT_APPLICABLE },
         },
-        select: {
-          customerId: true,
-          total: true,
-          payments: { select: { amount: true, status: true } },
-        },
+        select: { customerId: true, ...RECEIVABLE_INVOICE_SELECT },
       }),
       this.prisma.forTenant().advancePayment.findMany({
         where: {
@@ -257,17 +261,9 @@ export class CustomersService {
 
     const receivablesMap: Record<string, number> = {};
     for (const inv of invoices) {
-      // Exclude VOID payments (a bounced check flips InvoicePayment.status to VOID
-      // in P5-12) so a reversed payment no longer counts against the receivable.
-      // scan-ok: draft-payment-not-void — TRACKED FOLLOW-UP: receivables/exposure
-      // DRAFT basis — owner ruling pending. PR-2 review (routeflow-Lead,
-      // 2026-09-16) reverted the earlier sumConfirmed conversion here — out of
-      // PR-2's scope (see orders.service.ts's exposure formula, same follow-up).
-      const paid = inv.payments
-        .filter((p) => p.status !== "VOID")
-        .reduce((s, p) => s + Number(p.amount), 0);
-      const outstanding = Number(inv.total) - paid;
-      receivablesMap[inv.customerId] = (receivablesMap[inv.customerId] ?? 0) + outstanding;
+      // Basis + unbacked-draft skip: invoices/credit-exposure.ts (DRAFT-PAYMENT follow-up open).
+      receivablesMap[inv.customerId] =
+        (receivablesMap[inv.customerId] ?? 0) + receivableBalance(inv);
     }
 
     const creditsMap: Record<string, number> = {};
@@ -277,8 +273,8 @@ export class CustomersService {
 
     const enriched = data.map((c) => ({
       ...c,
-      receivables: receivablesMap[c.id] ?? 0,
-      unusedCredits: creditsMap[c.id] ?? 0,
+      receivables: roundMoney(receivablesMap[c.id] ?? 0),
+      unusedCredits: roundMoney(creditsMap[c.id] ?? 0),
       regulatedCount: (c as any)._count?.authorizations ?? 0,
     }));
 
@@ -608,6 +604,7 @@ export class CustomersService {
             line2: addr.line2,
             city: addr.city,
             state: addr.state,
+            ...addressStateFields(addr.state, addr.zip),
             zip: addr.zip,
             isDefault: idx === 0,
             ...(addressCoords[idx] ?? {}),
@@ -904,6 +901,7 @@ export class CustomersService {
           line2: dto.line2,
           city: dto.city,
           state: dto.state,
+          ...addressStateFields(dto.state, dto.zip),
           zip: dto.zip,
           isDefault: dto.isDefault ?? false,
           addressType: dto.addressType ?? "BILLING",
@@ -922,9 +920,28 @@ export class CustomersService {
           data: { isDefault: false },
         });
       }
+      // Recompute BOTH derived columns when the state or zip CHANGED (the form resends them unchanged
+      // on every save) or the code is NULL: a written code must never contradict its zip.
+      const current = await tx.customerAddress.findFirst({
+        where: { id: addrId, customerId: id },
+        select: { state: true, zip: true, stateCode: true },
+      });
+      if (!current) throw new NotFoundException("Address not found");
+      const stateChanged =
+        (dto.state !== undefined && dto.state !== current.state) ||
+        (dto.zip !== undefined && dto.zip !== current.zip) ||
+        current.stateCode == null;
       return tx.customerAddress.update({
         where: { id: addrId, customerId: id },
-        data: { ...dto, lat: null, lng: null }, // clear stale coords when address changes
+        // clear stale coords when the address changes
+        data: {
+          ...dto,
+          ...(stateChanged
+            ? addressStateFields(dto.state ?? current.state, dto.zip ?? current.zip)
+            : {}),
+          lat: null,
+          lng: null,
+        },
       });
     });
     // Re-geocode asynchronously (don't block the response)
@@ -1002,7 +1019,11 @@ export class CustomersService {
 
   // ─── Operator statement ────────────────────────────────────────────────────
 
-  async getStatementForOperator(customerId: string) {
+  /**
+   * `includeExposure` (operator route only) adds creditExposure/pendingExposure (D6 / B462); the
+   * keys are ABSENT otherwise — the buyer portal reuses this and must never see them.
+   */
+  async getStatementForOperator(customerId: string, opts?: { includeExposure?: boolean }) {
     await this.findCustomerOrThrow(customerId);
 
     const INVOICE_SELECT = {
@@ -1050,6 +1071,7 @@ export class CustomersService {
       pendingOrders,
       lifetimeInvoicedAgg,
       lifetimeReceivedAgg,
+      exposure,
     ] = await Promise.all([
       this.prisma.forTenant().invoice.findMany({
         // DRAFT is excluded with the settled/dead/forgiven statuses: a
@@ -1089,7 +1111,9 @@ export class CustomersService {
       this.prisma.forTenant().order.findMany({
         where: {
           customerId,
-          status: { in: ["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"] as any },
+          // The same open set `loadCreditExposure` uses (B584): a new open status can't reach the
+          // block but miss this tile.
+          status: { in: OPEN_ORDER_STATUSES },
         },
         select: { id: true, total: true, orderNumber: true, status: true, createdAt: true },
       }),
@@ -1115,6 +1139,10 @@ export class CustomersService {
         // received either way, via CONFIRMED_PAYMENT.
         where: { ...CONFIRMED_PAYMENT, method: RECEIVED_METHOD_FILTER, invoice: { customerId } },
       }),
+      // D6 / B462: operator-only exposure (the credit block's own derivation); null = not asked.
+      opts?.includeExposure
+        ? loadCreditExposure(this.prisma.forTenant(), customerId)
+        : Promise.resolve(null),
     ]);
 
     // Each ledger read asks for one row MORE than its cap; a read that comes
@@ -1236,6 +1264,12 @@ export class CustomersService {
       lifetimeReceived,
       transactionsTruncated,
       transactions,
+      ...(exposure
+        ? {
+            creditExposure: roundMoney(exposure.counted),
+            pendingExposure: roundMoney(exposure.pendingExposure),
+          }
+        : {}),
     };
   }
 
@@ -1797,8 +1831,9 @@ export class CustomersService {
       include: {
         user: { select: { status: true } },
         invoices: {
-          where: { status: { notIn: ["PAID", "VOID", "WRITTEN_OFF"] } },
-          select: { total: true, payments: { select: { amount: true, status: true } } },
+          // D6 / B462: drafts included — `receivableBalance` drops only UNBACKED ones.
+          where: { status: { notIn: CREDIT_NOT_APPLICABLE } },
+          select: RECEIVABLE_INVOICE_SELECT,
         },
         advancePayments: {
           where: { balance: { gt: 0 } },
@@ -1819,17 +1854,7 @@ export class CustomersService {
     const header =
       "Business Name,Contact Name,Email,Phone,Customer Type,Status,Receivables,Credits";
     const rows = customers.map((c) => {
-      const receivables = c.invoices.reduce((sum, inv) => {
-        // Exclude VOID payments (a bounced check flips InvoicePayment.status to VOID
-        // in P5-12) so a reversed payment no longer counts against the receivable.
-        // scan-ok: draft-payment-not-void — TRACKED FOLLOW-UP: receivables/exposure
-        // DRAFT basis — owner ruling pending. See the list-view receivablesMap
-        // above for the same revert and its rationale.
-        const paid = inv.payments
-          .filter((p) => p.status !== "VOID")
-          .reduce((s, p) => s + Number(p.amount), 0);
-        return sum + (Number(inv.total) - paid);
-      }, 0);
+      const receivables = c.invoices.reduce((sum, inv) => sum + receivableBalance(inv), 0);
       const credits = c.advancePayments.reduce((s, a) => s + Number(a.balance), 0);
 
       return [
@@ -1839,7 +1864,7 @@ export class CustomersService {
         escCsv(c.phone),
         escCsv(c.customerType),
         escCsv(c.user?.status),
-        receivables.toFixed(2),
+        roundMoney(receivables).toFixed(2),
         credits.toFixed(2),
       ].join(",");
     });

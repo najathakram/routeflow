@@ -114,7 +114,7 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
   return (
     <AdminCard title="Pricing" className="lg:col-span-2">
       {loading ? (
-        <p className="text-sm text-slate-500">Loading pricing…</p>
+        <p className="text-sm text-slate-400">Loading pricing…</p>
       ) : (
         <div className="flex flex-col gap-5">
           {loadError && (
@@ -137,11 +137,11 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
               <div>
                 <div className="flex items-baseline gap-2">
                   <span className="text-2xl font-bold text-white">{usd(pricing.monthly ?? 0)}</span>
-                  <span className="text-sm text-slate-500">/mo</span>
-                  <span className="text-sm text-slate-600">·</span>
+                  <span className="text-sm text-slate-400">/mo</span>
+                  <span className="text-sm text-slate-400">·</span>
                   <span className="text-sm text-slate-300">{usd(pricing.annual ?? 0)}/yr</span>
                 </div>
-                <p className="mt-0.5 text-xs text-slate-500">
+                <p className="mt-0.5 text-xs text-slate-400">
                   {pricing.planName} ({pricing.planKey})
                 </p>
               </div>
@@ -190,7 +190,7 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
 
           {/* Custom fee editor */}
           <div className="border-t border-slate-700 pt-4">
-            <p className="mb-3 text-xs font-medium uppercase tracking-wider text-slate-500">
+            <p className="mb-3 text-xs font-medium uppercase tracking-wider text-slate-400">
               Custom fee override
             </p>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -199,6 +199,7 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
                   Monthly (USD)
                 </label>
                 <input
+                  aria-label="Monthly (USD)"
                   type="number"
                   min={0}
                   max={100000}
@@ -212,9 +213,10 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
               <div>
                 <label className="mb-1 block text-xs font-medium text-slate-400">
                   Annual (USD){" "}
-                  <span className="text-slate-600">(optional — defaults to 10× monthly)</span>
+                  <span className="text-slate-400">(optional — defaults to 10× monthly)</span>
                 </label>
                 <input
+                  aria-label="Annual (USD)"
                   type="number"
                   min={0}
                   max={100000}
@@ -252,11 +254,12 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
               unpriceable plan would 400 at Stripe anyway. */}
           {resolved && pricing && (
             <div className="border-t border-slate-700 pt-4">
-              <p className="mb-3 text-xs font-medium uppercase tracking-wider text-slate-500">
+              <p className="mb-3 text-xs font-medium uppercase tracking-wider text-slate-400">
                 Checkout
               </p>
               <div className="flex flex-wrap items-center gap-3">
                 <select
+                  aria-label="Billing interval"
                   value={billingInterval}
                   onChange={(e) => setBillingInterval(e.target.value as BillingInterval)}
                   className="h-9 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"

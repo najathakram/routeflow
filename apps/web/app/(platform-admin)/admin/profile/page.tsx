@@ -184,7 +184,7 @@ function SessionsPanel() {
       )}
 
       {!loading && !error && sessions.length === 0 && (
-        <p className="text-sm text-slate-500">No active sessions found.</p>
+        <p className="text-sm text-slate-400">No active sessions found.</p>
       )}
 
       {!loading && !error && sessions.length > 0 && (
@@ -204,12 +204,12 @@ function SessionsPanel() {
                     </span>
                   </p>
                   {session.ipAddress && (
-                    <p className="mt-0.5 text-xs text-slate-500">
+                    <p className="mt-0.5 text-xs text-slate-400">
                       <Globe className="mr-1 inline-block h-3 w-3" />
                       {session.ipAddress}
                     </p>
                   )}
-                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-slate-500">
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-slate-400">
                     <span>
                       <Clock className="mr-0.5 inline-block h-3 w-3" />
                       Signed in {formatRelative(session.createdAt)}

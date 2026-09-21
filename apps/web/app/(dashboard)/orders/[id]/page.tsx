@@ -38,6 +38,7 @@ import {
   useToast,
   type BadgeStatus,
 } from "@routeflow/ui/web";
+import { orderLineName } from "@/lib/product-display";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useOrder,
@@ -57,7 +58,7 @@ import {
 } from "@/lib/api/orders";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
-import { SALES_AGENTS_ADDON } from "@/lib/api/addons";
+import { SALES_AGENTS_ADDON, useOrderUiV2 } from "@/lib/api/addons";
 import { describeCancelImpact } from "@/lib/cancel-impact";
 import { fmtCalendarDate, isInternalEmail } from "@/lib/formatting";
 import { formatMoney, formatQty } from "@/lib/format";
@@ -69,11 +70,18 @@ import {
 } from "@/lib/change-requests";
 import { useCreateInvoiceFromOrder, useSendInvoice, useSendInvoiceEmail } from "@/lib/api/invoices";
 import { LicenseGuardModal } from "../_components/LicenseGuardModal";
+import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
+import { OrderLineItemCards } from "./_components/OrderLineItemCards";
+import { ActionTier } from "./_components/ActionTier";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
+import { parseSellingRestricted } from "@/lib/api/selling-restricted";
+import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
+import type { BlockedLine } from "@routeflow/types";
+import { CreditLimitGuardDialog } from "@/components/CreditLimitGuardDialog";
+import { parseCreditLimitError, type CreditLimitInfo } from "@/lib/api/credit-limit";
 import { useProducts } from "@/lib/api/products";
 import {
   computeLineSubtotal,
-  formatQtySplit,
   getTierPrice,
   normalizeBoxesPieces,
   roundMoney,
@@ -1398,7 +1406,10 @@ function EditableLineItems({
                     Not available
                   </button>
                   <button
-                    className={cn(TAP_TARGET, "rounded p-1 text-navy/30 hover:text-danger hover:bg-danger-bg transition-colors")}
+                    className={cn(
+                      TAP_TARGET,
+                      "rounded p-1 text-navy/30 hover:text-danger hover:bg-danger-bg transition-colors",
+                    )}
                     title="Delete item"
                     onClick={() => onDelete(item.id)}
                   >
@@ -1579,7 +1590,10 @@ function EditableLineItems({
                 setCustomFormOpen(false);
                 setCustomError("");
               }}
-              className={cn(TAP_TARGET, "rounded p-1 text-navy/40 hover:text-danger transition-colors")}
+              className={cn(
+                TAP_TARGET,
+                "rounded p-1 text-navy/40 hover:text-danger transition-colors",
+              )}
               title="Cancel"
             >
               <X className="h-3.5 w-3.5" />
@@ -1679,29 +1693,6 @@ function EditableLineItems({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 /**
- * Displayed fulfillment status for an order line. `OrderItem.status` only advances to
- * DELIVERED/PARTIAL via the route delivery flow (completeStop); when an order is marked
- * delivered another way (operator status change, van sale, `/routes` stop-complete) the
- * lines stay at their PENDING default. Derive the shown label from real delivery data
- * (deliveredQty) or the order's terminal state so the page reads consistently — WITHOUT
- * mutating the stored item status (item status stays route-authoritative).
- */
-function displayLineStatus(
-  li: { status: string; deliveredQty?: number; qty: number },
-  orderStatus: string,
-): BadgeStatus {
-  // A real line-level outcome (route-recorded or explicitly set) always wins.
-  if (li.status === "CANCELLED" || li.status === "DELIVERED" || li.status === "PARTIAL")
-    return li.status as BadgeStatus;
-  // Line still at its PENDING/CONFIRMED default:
-  const delivered = Number(li.deliveredQty ?? 0);
-  if (delivered > 0) return delivered + 1e-6 >= Number(li.qty) ? "DELIVERED" : "PARTIAL";
-  // No per-line delivery recorded, but the whole order is delivered → reflect that.
-  if (orderStatus === "DELIVERED") return "DELIVERED";
-  return li.status as BadgeStatus;
-}
-
-/**
  * Render a date-only field (stored midnight UTC) as its calendar day. Parsing the
  * parts by hand avoids the day-behind shift `new Date(iso)` causes west of UTC.
  */
@@ -1729,6 +1720,8 @@ export default function OrderDetailPage() {
   const id = params.id as string;
   const { setTitle } = usePageTitle();
   const { data: order, isLoading, isError } = useOrder(id);
+  // `order_ui_v2` (dark): card-list lines instead of the table.
+  const orderUiV2 = useOrderUiV2();
   const { data: priceHistory } = useCustomerPriceHistory(order?.customerId);
   // Customer tier pricing (mirrors mobile's edit-items screen): a substituted
   // line prices off the customer's effective tier, not the raw list price.
@@ -1803,14 +1796,27 @@ export default function OrderDetailPage() {
   // License guard (W6b): the edit/promote guard can 409 REGULATED_AUTH_REQUIRED.
   const [licenseBlock, setLicenseBlock] = React.useState<BlockedCategory[] | null>(null);
   const licenseRetryRef = React.useRef<(() => void) | null>(null);
+  // Selling restrictions: lines the API refused for this customer (a dialog, not a raw toast).
+  const [restrictedBlock, setRestrictedBlock] = React.useState<BlockedLine[] | null>(null);
+  // Credit limit: the server's numbers + a "collect a payment" exit (no override exists).
+  const [creditBlock, setCreditBlock] = React.useState<CreditLimitInfo | null>(null);
   // Opens the guard modal on a REGULATED_AUTH_REQUIRED 409; other errors fall
   // through to the global mutation toast.
   const guardError = (retry: () => void) => (err: unknown) => {
+    const restricted = parseSellingRestricted(err);
+    if (restricted) {
+      setRestrictedBlock(restricted);
+      return;
+    }
     const blocked = parseRegulatedAuthError(err);
     if (blocked && blocked.length > 0) {
       licenseRetryRef.current = retry;
       setLicenseBlock(blocked);
+      return;
     }
+    // A credit-limit 409 gets its own dialog (real numbers + a way out), not a bare toast.
+    const credit = parseCreditLimitError(err);
+    if (credit) setCreditBlock(credit);
   };
 
   // Status tracking — use actual API status directly
@@ -1865,7 +1871,7 @@ export default function OrderDetailPage() {
             .filter((li) => li.status !== "CANCELLED")
             .map((li) => {
               const isUnlisted = !li.productId;
-              const label = li.product?.name ?? li.name ?? li.productId ?? "Custom item";
+              const label = orderLineName(li) ?? li.productId ?? "Custom item";
               return {
                 id: li.id,
                 isUnlisted,
@@ -1953,8 +1959,8 @@ export default function OrderDetailPage() {
    * lost race: toast what happened and let the hook's onSettled invalidation
    * refetch the winning state. REGULATED_AUTH_REQUIRED routes into the
    * existing license-guard modal with a retry, like every other guarded 409
-   * on this page. INSUFFICIENT_STOCK / CREDIT_LIMIT_EXCEEDED carry a server
-   * message and surface via the global mutation toast — no handling needed.
+   * on this page. CREDIT_LIMIT_EXCEEDED opens the credit guard dialog via guardError;
+   * INSUFFICIENT_STOCK carries a server message and surfaces via the global mutation toast.
    */
   function handleResolve(cr: ChangeRequest, action: ChangeRequestResolveAction, reason?: string) {
     const run = () =>
@@ -2020,7 +2026,7 @@ export default function OrderDetailPage() {
         .filter((li) => li.status !== "CANCELLED")
         .map((li) => {
           const isUnlisted = !li.productId;
-          const label = li.product?.name ?? li.name ?? li.productId ?? "Custom item";
+          const label = orderLineName(li) ?? li.productId ?? "Custom item";
           return {
             id: li.id,
             isUnlisted,
@@ -2275,6 +2281,8 @@ export default function OrderDetailPage() {
     updateStatus.mutate(
       { id: order.id, status: "DELIVERED" },
       {
+        // Delivery can be refused for credit (B585 gate): open the guard, not a bare toast.
+        onError: guardError(() => handleDeliver()),
         onSuccess: () => {
           setLocalStatus("DELIVERED");
           // Create the invoice (idempotent — returns existing if already there)
@@ -2478,14 +2486,16 @@ export default function OrderDetailPage() {
         <div className="flex flex-wrap items-center gap-2">
           {/* Edit Items button */}
           {canEdit && !isEditing && (
-            <Button
-              size="sm"
-              variant="secondary"
-              leftIcon={<Pencil className="h-4 w-4" />}
-              onClick={enterEditMode}
-            >
-              Edit Items
-            </Button>
+            <ActionTier tier="secondary">
+              <Button
+                size="sm"
+                variant="secondary"
+                leftIcon={<Pencil className="h-4 w-4" />}
+                onClick={enterEditMode}
+              >
+                Edit Items
+              </Button>
+            </ActionTier>
           )}
 
           {/* P5-08 / R1: staff editing closes only once the order is CANCELLED
@@ -2525,202 +2535,222 @@ export default function OrderDetailPage() {
           {/* DRAFT actions */}
           {localStatus === "DRAFT" && !isEditing && (
             <>
-              <Button
-                size="sm"
-                leftIcon={<CheckCircle2 className="h-4 w-4" />}
-                onClick={() => {
-                  const publish = () =>
-                    updateStatus.mutate(
-                      { id: order.id, status: "PENDING" as any },
-                      {
-                        onSuccess: () => setLocalStatus("PENDING"),
-                        onError: guardError(() => publish()),
-                      },
-                    );
-                  publish();
-                }}
-                loading={updateStatus.isPending}
-              >
-                Publish Order
-              </Button>
-              {showDeleteConfirm ? (
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-danger font-medium">Delete order?</span>
-                  <Button
-                    size="sm"
-                    variant="danger"
-                    loading={deleteOrder.isPending}
-                    onClick={() => {
-                      deleteOrder.mutate(order.id, {
-                        onSuccess: () => {
-                          toast({ title: "Draft deleted", variant: "success" });
-                          router.push("/orders");
-                        },
-                        onError: (e) => {
-                          toast({ title: e.message, variant: "error" });
-                          setShowDeleteConfirm(false);
-                        },
-                      });
-                    }}
-                  >
-                    Confirm Delete
-                  </Button>
-                  <button
-                    onClick={() => setShowDeleteConfirm(false)}
-                    className="text-sm text-navy/70 hover:text-navy transition-colors"
-                  >
-                    No
-                  </button>
-                </div>
-              ) : (
+              <ActionTier tier="primary">
                 <Button
                   size="sm"
-                  variant="ghost"
-                  leftIcon={<Trash2 className="h-4 w-4" />}
-                  onClick={() => setShowDeleteConfirm(true)}
+                  leftIcon={<CheckCircle2 className="h-4 w-4" />}
+                  onClick={() => {
+                    const publish = () =>
+                      updateStatus.mutate(
+                        { id: order.id, status: "PENDING" as any },
+                        {
+                          onSuccess: () => setLocalStatus("PENDING"),
+                          onError: guardError(() => publish()),
+                        },
+                      );
+                    publish();
+                  }}
+                  loading={updateStatus.isPending}
                 >
-                  Delete Draft
+                  Publish Order
                 </Button>
-              )}
+              </ActionTier>
+              <ActionTier tier="danger">
+                {showDeleteConfirm ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-danger font-medium">Delete order?</span>
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      loading={deleteOrder.isPending}
+                      onClick={() => {
+                        deleteOrder.mutate(order.id, {
+                          onSuccess: () => {
+                            toast({ title: "Draft deleted", variant: "success" });
+                            router.push("/orders");
+                          },
+                          onError: (e) => {
+                            toast({ title: e.message, variant: "error" });
+                            setShowDeleteConfirm(false);
+                          },
+                        });
+                      }}
+                    >
+                      Confirm Delete
+                    </Button>
+                    <button
+                      onClick={() => setShowDeleteConfirm(false)}
+                      className="text-sm text-navy/70 hover:text-navy transition-colors"
+                    >
+                      No
+                    </button>
+                  </div>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    leftIcon={<Trash2 className="h-4 w-4" />}
+                    onClick={() => setShowDeleteConfirm(true)}
+                  >
+                    Delete Draft
+                  </Button>
+                )}
+              </ActionTier>
             </>
           )}
 
           {/* PENDING actions */}
           {localStatus === "PENDING" && !isEditing && (
             <>
-              <Button
-                size="sm"
-                leftIcon={<CheckCircle2 className="h-4 w-4" />}
-                onClick={handleConfirm}
-                loading={updateStatus.isPending}
-              >
-                Confirm Order
-              </Button>
-              <Button
-                size="sm"
-                variant="danger"
-                leftIcon={<XCircle className="h-4 w-4" />}
-                onClick={handleCancel}
-              >
-                Cancel Order
-              </Button>
-              {showDeleteConfirm ? (
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-danger font-medium">Delete order?</span>
-                  <Button
-                    size="sm"
-                    variant="danger"
-                    loading={deleteOrder.isPending}
-                    onClick={() => {
-                      deleteOrder.mutate(order.id, {
-                        onSuccess: () => {
-                          toast({ title: "Order deleted", variant: "success" });
-                          router.push("/orders");
-                        },
-                        onError: (e) => {
-                          toast({ title: e.message, variant: "error" });
-                          setShowDeleteConfirm(false);
-                        },
-                      });
-                    }}
-                  >
-                    Confirm Delete
-                  </Button>
-                  <button
-                    onClick={() => setShowDeleteConfirm(false)}
-                    className="text-sm text-navy/70 hover:text-navy transition-colors"
-                  >
-                    No
-                  </button>
-                </div>
-              ) : (
+              <ActionTier tier="primary">
                 <Button
                   size="sm"
-                  variant="ghost"
-                  leftIcon={<Trash2 className="h-4 w-4" />}
-                  onClick={() => setShowDeleteConfirm(true)}
+                  leftIcon={<CheckCircle2 className="h-4 w-4" />}
+                  onClick={handleConfirm}
+                  loading={updateStatus.isPending}
                 >
-                  Delete
+                  Confirm Order
                 </Button>
-              )}
+              </ActionTier>
+              <ActionTier tier="danger">
+                <Button
+                  size="sm"
+                  variant="danger"
+                  leftIcon={<XCircle className="h-4 w-4" />}
+                  onClick={handleCancel}
+                >
+                  Cancel Order
+                </Button>
+                {showDeleteConfirm ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-danger font-medium">Delete order?</span>
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      loading={deleteOrder.isPending}
+                      onClick={() => {
+                        deleteOrder.mutate(order.id, {
+                          onSuccess: () => {
+                            toast({ title: "Order deleted", variant: "success" });
+                            router.push("/orders");
+                          },
+                          onError: (e) => {
+                            toast({ title: e.message, variant: "error" });
+                            setShowDeleteConfirm(false);
+                          },
+                        });
+                      }}
+                    >
+                      Confirm Delete
+                    </Button>
+                    <button
+                      onClick={() => setShowDeleteConfirm(false)}
+                      className="text-sm text-navy/70 hover:text-navy transition-colors"
+                    >
+                      No
+                    </button>
+                  </div>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    leftIcon={<Trash2 className="h-4 w-4" />}
+                    onClick={() => setShowDeleteConfirm(true)}
+                  >
+                    Delete
+                  </Button>
+                )}
+              </ActionTier>
             </>
           )}
 
           {/* CONFIRMED actions */}
           {localStatus === "CONFIRMED" && !isEditing && (
             <>
-              <div className="flex flex-col items-start gap-1">
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  leftIcon={<Truck className="h-4 w-4" />}
-                  onClick={handleLock}
-                  loading={updateStatus.isPending}
-                >
-                  {order.fulfillPath === "SHIP" ? "Mark shipped" : "Out for Delivery"}
-                </Button>
-                {order.fulfillPath === "SHIP" && (
-                  <p className="text-[11px] text-navy/50">
-                    Sets the order to Out for Delivery — the customer is notified it&apos;s on the
-                    way.
-                  </p>
-                )}
-              </div>
+              <ActionTier tier="primary">
+                <div className="flex flex-col items-start gap-1">
+                  <Button
+                    size="sm"
+                    variant={orderUiV2.enabled ? undefined : "secondary"}
+                    leftIcon={<Truck className="h-4 w-4" />}
+                    onClick={handleLock}
+                    loading={updateStatus.isPending}
+                  >
+                    {order.fulfillPath === "SHIP" ? "Mark shipped" : "Out for Delivery"}
+                  </Button>
+                  {order.fulfillPath === "SHIP" && (
+                    <p className="text-[11px] text-navy/50">
+                      Sets the order to Out for Delivery — the customer is notified it&apos;s on the
+                      way.
+                    </p>
+                  )}
+                </div>
+              </ActionTier>
               {/* CONFIRMED→PENDING is a demotion — the server rejects it without a
                   reason, so the ONLY path is the DemoteReasonModal. A second
                   "Unconfirm" button used to submit directly (predating the
                   reason rule) and guaranteed a 400 with nowhere to type one. */}
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<RotateCcw className="h-4 w-4" />}
-                onClick={() => setDemoteTarget("PENDING")}
-                loading={updateStatus.isPending}
-              >
-                Unconfirm
-              </Button>
-              <Button
-                size="sm"
-                variant="danger"
-                leftIcon={<XCircle className="h-4 w-4" />}
-                onClick={handleCancel}
-              >
-                Cancel Order
-              </Button>
-              {renderDeleteOrderAction("Delete this order? This can't be undone.")}
+              <ActionTier tier="secondary">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  leftIcon={<RotateCcw className="h-4 w-4" />}
+                  onClick={() => setDemoteTarget("PENDING")}
+                  loading={updateStatus.isPending}
+                >
+                  Unconfirm
+                </Button>
+              </ActionTier>
+              <ActionTier tier="danger">
+                <Button
+                  size="sm"
+                  variant="danger"
+                  leftIcon={<XCircle className="h-4 w-4" />}
+                  onClick={handleCancel}
+                >
+                  Cancel Order
+                </Button>
+                {renderDeleteOrderAction("Delete this order? This can't be undone.")}
+              </ActionTier>
             </>
           )}
 
           {/* OUT_FOR_DELIVERY actions */}
           {localStatus === "OUT_FOR_DELIVERY" && (
             <>
-              <Button
-                size="sm"
-                leftIcon={<CheckCircle2 className="h-4 w-4" />}
-                onClick={handleDeliver}
-                loading={updateStatus.isPending}
-              >
-                {order.fulfillPath === "SHIP" ? "Mark delivered" : "Mark as Delivered"}
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<RefreshCcw className="h-4 w-4" />}
-                onClick={() => setDemoteTarget("CONFIRMED")}
-              >
-                {order.fulfillPath === "SHIP" ? "Unmark shipped" : "Return to Confirmed"}
-              </Button>
-              <Button
-                size="sm"
-                variant="danger"
-                leftIcon={<XCircle className="h-4 w-4" />}
-                onClick={handleCancel}
-              >
-                Cancel Order
-              </Button>
-              {renderDeleteOrderAction(
-                "Delete this order? It's out for delivery — this can't be undone.",
-              )}
+              <ActionTier tier="primary">
+                <Button
+                  size="sm"
+                  leftIcon={<CheckCircle2 className="h-4 w-4" />}
+                  onClick={handleDeliver}
+                  loading={updateStatus.isPending}
+                >
+                  {order.fulfillPath === "SHIP" ? "Mark delivered" : "Mark as Delivered"}
+                </Button>
+              </ActionTier>
+              <ActionTier tier="secondary">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  leftIcon={<RefreshCcw className="h-4 w-4" />}
+                  onClick={() => setDemoteTarget("CONFIRMED")}
+                >
+                  {order.fulfillPath === "SHIP" ? "Unmark shipped" : "Return to Confirmed"}
+                </Button>
+              </ActionTier>
+              <ActionTier tier="danger">
+                <Button
+                  size="sm"
+                  variant="danger"
+                  leftIcon={<XCircle className="h-4 w-4" />}
+                  onClick={handleCancel}
+                >
+                  Cancel Order
+                </Button>
+                {renderDeleteOrderAction(
+                  "Delete this order? It's out for delivery — this can't be undone.",
+                )}
+              </ActionTier>
             </>
           )}
 
@@ -2733,83 +2763,91 @@ export default function OrderDetailPage() {
               special-cased UI needed here. */}
           {localStatus === "DELIVERED" && (
             <>
-              <div className="flex flex-col items-start gap-1">
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  leftIcon={<RotateCcw className="h-4 w-4" />}
-                  onClick={() => setDemoteTarget("CONFIRMED")}
-                >
-                  Reopen Order
-                </Button>
-                <p className="text-[11px] text-navy/50">
-                  Reopening keeps the invoice in sync while you edit. Orders delivered on a route
-                  reopen at their original stop.
-                </p>
-              </div>
-              {renderDeleteOrderAction(
-                "Delete this DELIVERED order? Its delivery record is removed permanently.",
-              )}
+              <ActionTier tier="secondary">
+                <div className="flex flex-col items-start gap-1">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    leftIcon={<RotateCcw className="h-4 w-4" />}
+                    onClick={() => setDemoteTarget("CONFIRMED")}
+                  >
+                    Reopen Order
+                  </Button>
+                  <p className="text-[11px] text-navy/50">
+                    Reopening keeps the invoice in sync while you edit. Orders delivered on a route
+                    reopen at their original stop.
+                  </p>
+                </div>
+              </ActionTier>
+              <ActionTier tier="danger">
+                {renderDeleteOrderAction(
+                  "Delete this DELIVERED order? Its delivery record is removed permanently.",
+                )}
+              </ActionTier>
             </>
           )}
 
           {/* CANCELLED */}
           {localStatus === "CANCELLED" && (
             <>
-              <Button
-                variant="secondary"
-                size="sm"
-                leftIcon={<RotateCcw className="h-4 w-4" />}
-                onClick={() => {
-                  if (confirm("Reopen this order? It will return to Pending status.")) {
-                    reopenOrder.mutate(order.id, {
-                      onSuccess: () => setLocalStatus("PENDING"),
-                    });
-                  }
-                }}
-                loading={reopenOrder.isPending}
-              >
-                Reopen Order
-              </Button>
-              {showDeleteConfirm ? (
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-danger font-medium">Delete order?</span>
+              <ActionTier tier="secondary">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  leftIcon={<RotateCcw className="h-4 w-4" />}
+                  onClick={() => {
+                    if (confirm("Reopen this order? It will return to Pending status.")) {
+                      reopenOrder.mutate(order.id, {
+                        onSuccess: () => setLocalStatus("PENDING"),
+                      });
+                    }
+                  }}
+                  loading={reopenOrder.isPending}
+                >
+                  Reopen Order
+                </Button>
+              </ActionTier>
+              <ActionTier tier="danger">
+                {showDeleteConfirm ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-danger font-medium">Delete order?</span>
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      loading={deleteOrder.isPending}
+                      onClick={() => {
+                        deleteOrder.mutate(order.id, {
+                          onSuccess: () => {
+                            toast({ title: "Order deleted", variant: "success" });
+                            router.push("/orders");
+                          },
+                          onError: (e) => {
+                            toast({ title: e.message, variant: "error" });
+                            setShowDeleteConfirm(false);
+                          },
+                        });
+                      }}
+                    >
+                      Confirm Delete
+                    </Button>
+                    <button
+                      onClick={() => setShowDeleteConfirm(false)}
+                      className="text-sm text-navy/70 hover:text-navy transition-colors"
+                    >
+                      No
+                    </button>
+                  </div>
+                ) : (
                   <Button
                     size="sm"
-                    variant="danger"
-                    loading={deleteOrder.isPending}
-                    onClick={() => {
-                      deleteOrder.mutate(order.id, {
-                        onSuccess: () => {
-                          toast({ title: "Order deleted", variant: "success" });
-                          router.push("/orders");
-                        },
-                        onError: (e) => {
-                          toast({ title: e.message, variant: "error" });
-                          setShowDeleteConfirm(false);
-                        },
-                      });
-                    }}
+                    variant="ghost"
+                    leftIcon={<Trash2 className="h-4 w-4" />}
+                    onClick={() => setShowDeleteConfirm(true)}
                   >
-                    Confirm Delete
+                    Delete
                   </Button>
-                  <button
-                    onClick={() => setShowDeleteConfirm(false)}
-                    className="text-sm text-navy/70 hover:text-navy transition-colors"
-                  >
-                    No
-                  </button>
-                </div>
-              ) : (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  leftIcon={<Trash2 className="h-4 w-4" />}
-                  onClick={() => setShowDeleteConfirm(true)}
-                >
-                  Delete
-                </Button>
-              )}
+                )}
+              </ActionTier>
             </>
           )}
         </div>
@@ -3005,177 +3043,18 @@ export default function OrderDetailPage() {
                   )}
                 </div>
               </div>
+            ) : orderUiV2.enabled ? (
+              <OrderLineItemCards
+                lineItems={order.lineItems}
+                orderStatus={order.status}
+                total={total}
+              />
             ) : (
-              <div className="-mx-6 -mb-6 overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="border-b border-surface-border bg-surface-raised">
-                    <tr>
-                      <th className="overline px-6 py-2.5 text-left">Product</th>
-                      <th className="overline px-4 py-2.5 text-right">Qty</th>
-                      <th className="overline px-4 py-2.5 text-right">Unit Price</th>
-                      <th className="overline px-4 py-2.5 text-right">Line Total</th>
-                      <th className="overline px-6 py-2.5 text-left">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-surface-border">
-                    {order.lineItems.map((li) => (
-                      <tr
-                        key={li.id}
-                        className={cn(
-                          "hover:bg-surface-raised",
-                          li.status === "CANCELLED" && "opacity-50",
-                        )}
-                      >
-                        <td className="px-6 py-3">
-                          <div className="flex items-center gap-3">
-                            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-raised">
-                              <Package className="h-4 w-4 text-navy/30" />
-                            </div>
-                            <div className="min-w-0">
-                              <span
-                                className={cn(
-                                  "font-medium text-navy",
-                                  li.status === "CANCELLED" && "line-through",
-                                )}
-                              >
-                                {li.product?.name ?? li.name ?? "Custom item"}
-                              </span>
-                              {li.notes && (
-                                <p className="mt-0.5 text-xs italic text-navy/60">{li.notes}</p>
-                              )}
-                            </div>
-                            {!li.productId && (
-                              <span className="rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-700 ring-1 ring-brand-200">
-                                Custom
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-right text-navy/70">
-                          {li.boxes != null || li.pieces != null ? (
-                            <span title={`${Number(li.qty)} pcs total`}>
-                              {formatQtySplit({
-                                qty: li.qty,
-                                boxes: li.boxes,
-                                pieces: li.pieces,
-                              })}
-                            </span>
-                          ) : (
-                            <span className="mono">{formatQtySplit({ qty: li.qty })}</span>
-                          )}
-                          {/* BUY_N_GET_M: name the free units, or the reduced line
-                              total reads as a pricing error. */}
-                          {Number(li.promoFreeUnits ?? 0) > 0 && (
-                            <p className="mt-0.5 text-[10px] font-medium text-amber-700">
-                              {Number(li.promoFreeUnits)} free
-                            </p>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <div className="flex flex-col items-end gap-0.5">
-                            {li.priceType === "SPECIAL" ? (
-                              <>
-                                <span className="strike text-xs">
-                                  {formatMoney(li.originalPrice)}
-                                </span>
-                                <span className="money text-emerald-600">
-                                  {formatMoney(li.unitPrice)}
-                                </span>
-                                <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
-                                  Special
-                                </span>
-                              </>
-                            ) : li.priceType === "MANUAL" &&
-                              li.originalPrice != null &&
-                              Number(li.unitPrice) > Number(li.originalPrice) ? (
-                              <>
-                                {/* Upsell: sold above list. Operator-only green badge;
-                                    no strikethrough — the base is redacted before the
-                                    customer ever sees this line. */}
-                                <span className="money text-emerald-600">
-                                  {formatMoney(li.unitPrice)}
-                                </span>
-                                <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
-                                  Upsell
-                                </span>
-                              </>
-                            ) : (li.priceType === "DISCOUNTED" ||
-                                li.priceType === "MANUAL" ||
-                                li.priceType === "PROMO") &&
-                              li.originalPrice != null ? (
-                              <>
-                                <span className="strike text-xs">
-                                  {formatMoney(li.originalPrice)}
-                                </span>
-                                <span className="money text-amber-600">
-                                  {formatMoney(li.unitPrice)}
-                                </span>
-                                <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">
-                                  {li.priceType === "MANUAL"
-                                    ? "Adjusted"
-                                    : li.priceType === "PROMO"
-                                      ? "Promo"
-                                      : "Discounted"}
-                                </span>
-                              </>
-                            ) : (
-                              <span className="money text-navy/70">
-                                {formatMoney(li.unitPrice)}
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          {li.status === "CANCELLED" ? (
-                            <span className="text-navy/40">—</span>
-                          ) : (
-                            <span className="money text-navy">
-                              {formatMoney(
-                                li.subtotal != null
-                                  ? Number(li.subtotal)
-                                  : computeLineSubtotal({
-                                      unitPrice: Number(li.unitPrice),
-                                      qty: Number(li.qty),
-                                      boxes: li.boxes ?? null,
-                                      pieces: li.pieces ?? null,
-                                      // Snapshot upb, never the live product.
-                                      unitsPerBox:
-                                        li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
-                                      // BUY_N_GET_M snapshot, or the fallback bills
-                                      // a free-units line at full price.
-                                      freeUnits: Math.max(
-                                        0,
-                                        Math.trunc(Number(li.promoFreeUnits ?? 0) || 0),
-                                      ),
-                                    }),
-                              )}
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-6 py-3">
-                          <Badge status={displayLineStatus(li, order.status)} />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot className="border-t-2 border-surface-border">
-                    <tr>
-                      <td
-                        colSpan={3}
-                        className="px-6 py-3 text-right text-sm font-semibold text-navy"
-                      >
-                        Order Total
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <span className="money text-[15px] font-semibold text-navy">
-                          {formatMoney(total)}
-                        </span>
-                      </td>
-                      <td />
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
+              <OrderLineItemsTable
+                lineItems={order.lineItems}
+                orderStatus={order.status}
+                total={total}
+              />
             )}
           </div>
 
@@ -3646,7 +3525,7 @@ export default function OrderDetailPage() {
         orderNumber={order.orderNumber ?? null}
         items={(order.lineItems ?? []).map((li: any) => ({
           id: li.id,
-          productName: li.product?.name ?? li.name ?? "Custom item",
+          productName: orderLineName(li) ?? "Custom item",
           qty: Number(li.qty),
           invoicedQty: Number((li as any).invoicedQty ?? 0),
           unitPrice: Number(li.unitPrice),
@@ -3709,6 +3588,7 @@ export default function OrderDetailPage() {
 
       {/* License guard (W6b): an edit/promote hit a 409 REGULATED_AUTH_REQUIRED.
           Lines are removed via the edit UI here, so the remove exit is omitted. */}
+      <BlockedLinesDialog lines={restrictedBlock} onClose={() => setRestrictedBlock(null)} />
       {licenseBlock && order && (
         <LicenseGuardModal
           open
@@ -3723,6 +3603,11 @@ export default function OrderDetailPage() {
           onClose={() => setLicenseBlock(null)}
         />
       )}
+      <CreditLimitGuardDialog
+        info={creditBlock}
+        customerId={order?.customerId}
+        onClose={() => setCreditBlock(null)}
+      />
     </div>
   );
 }

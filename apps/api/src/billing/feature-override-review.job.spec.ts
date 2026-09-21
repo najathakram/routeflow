@@ -13,6 +13,7 @@ jest.mock("../common/db-locks", () => ({
   LockUnavailableError: class extends Error {},
 }));
 
+import { Logger } from "@nestjs/common";
 import {
   FeatureOverrideReviewJob,
   FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION,
@@ -67,6 +68,23 @@ function build(rows: ReturnType<typeof overrideRow>[], auditedIds: string[] = []
 describe("FeatureOverrideReviewJob.reviewExpiredOverrides", () => {
   beforeEach(() => withAdvisoryLockMock.mockClear());
 
+  it("B589: a page that comes back exactly at the cap is logged; a smaller one is not", async () => {
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    try {
+      const full = Array.from({ length: 500 }, (_, i) =>
+        overrideRow({ id: `ov${i}`, expiresAt: new Date(Date.UTC(2000, 0, 1, 0, 0, i)) }),
+      );
+      await build(full).job.reviewExpiredOverrides();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("hit its batch cap of 500"));
+
+      warn.mockClear();
+      await build(full.slice(0, 499)).job.reviewExpiredOverrides();
+      expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("batch cap"));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("flags exactly one expired-unrevoked override and leaves an active one alone", async () => {
     const { job, audit } = build([
       overrideRow({ id: "ov-expired", expiresAt: new Date("2000-01-01T00:00:00Z") }),
@@ -109,7 +127,7 @@ describe("FeatureOverrideReviewJob.reviewExpiredOverrides", () => {
     expect(prisma.tenantFeatureOverride.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({ revokedAt: null, expiresAt: { lte: expect.any(Date) } }),
-        orderBy: { expiresAt: "asc" },
+        orderBy: [{ expiresAt: "asc" }, { id: "asc" }], // B589: id tiebreak
         take: 500,
       }),
     );

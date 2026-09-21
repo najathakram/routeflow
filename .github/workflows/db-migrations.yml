@@ -45,6 +45,7 @@ on:
       # only by the DB-lane pin (invoice-numbering.db.spec.ts) — a PR touching
       # these three files must run this lane, not just the one that touches
       # the spec file itself.
+      - "apps/api/src/billing/config-snapshot-flag.service.ts"
       - "apps/api/src/import/numbering.service.ts"
       - "apps/api/src/invoices/invoices.service.ts"
       - "apps/api/src/estimates/estimates.service.ts"
@@ -58,7 +59,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  NODE_VERSION: "20"
+  NODE_VERSION: "24"
 
 jobs:
   replay:

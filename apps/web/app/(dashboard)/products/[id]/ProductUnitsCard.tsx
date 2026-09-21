@@ -191,7 +191,7 @@ function UnitRow({
             onChange={() => onMakeDefault(unit)}
             disabled={busy}
           />
-          Sells by default
+          Pre-selected on staff orders
         </label>
         <div className="flex gap-2">
           {dirty && (
@@ -324,7 +324,7 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
                   }
                 }}
               />
-              Sells by default
+              Pre-selected on staff orders
             </label>
           </span>
         </div>

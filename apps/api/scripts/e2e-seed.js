@@ -38,7 +38,7 @@ const LOCAL_DEFAULT_DB_URL = "postgresql://user:pass@localhost:5432/routeflow_de
 // Resolves the seed's DB target the same way prod-migrate.mjs/schema-drift.mjs do (Railway
 // proxy vars win over DATABASE_URL, since under `railway run` DATABASE_URL is the unreachable
 // *.railway.internal host) — imported dynamically because the shared helper is an ESM module
-// (`.mjs`) and CI still runs this script under Node 20, which cannot `require()` ESM.
+// (`.mjs`) and this script was written when CI ran Node 20, which cannot `require()` ESM (CI is Node 24 since B570, so the workaround is now optional).
 async function resolveTargetDbUrl() {
   const { resolveDatabaseUrl } = await import("./lib/railway-db-url.mjs");
   try {
@@ -139,6 +139,213 @@ async function ensureLicensedTrackedCategory(tenantId) {
     },
     update: { requiresLicense: true, active: true },
   });
+}
+
+// B566 — the commerce rows the web e2e specs read off a FRESH database. Before this the tenant
+// had users and addons but no customers or products, so on a clean `local:reset` + seed the
+// customer picker, the product table and the boxed-line discovery were all empty and six specs
+// (06 CP-09, 08 ESC-01/ESC-02, 13 BOXED-01, 21 REG-B130/REG-B154) failed — passing only later
+// as a side effect of earlier specs creating rows. Idempotent (find-or-create on a stable key;
+// nothing is overwritten), fixture-prefixed so it never collides with a spec's own throwaways.
+// Business names contain an "e": 08/13 open the builder and type "e" into the customer picker.
+const FIXTURE_CUSTOMERS = [
+  { username: "e2e_fixture_cust_1", businessName: "E2E Fixture Cafe One" },
+  { username: "e2e_fixture_cust_2", businessName: "E2E Fixture Market Two" },
+  { username: "e2e_fixture_cust_3", businessName: "E2E Fixture Deli Three" },
+];
+// One boxed product (13 BOXED-01 discovers it by probing the product search — its name carries
+// "case" — and reads box price / pack size off the row) plus two plain ones, so the products
+// table has >= 3 selectable rows (21 REG-B154 selects up to 3, then 2) and CP-09 has price cells.
+// Money as integer cents -> "d.cc" strings: the product prices AND the invoice/order figures are
+// all derived from these, never re-typed as independent literals that could drift apart.
+const cents = (n) => (n / 100).toFixed(2);
+const BOX_PRICE_CENTS = 2400;
+const WIDGET_A_CENTS = 450;
+const WIDGET_B_CENTS = 725;
+const ORDER_QTY = 2;
+
+const FIXTURE_PRODUCTS = [
+  {
+    sku: "E2E-FIX-001",
+    name: "E2E Fixture Widget A",
+    unit: "each",
+    pricePerUnit: cents(WIDGET_A_CENTS),
+  },
+  {
+    sku: "E2E-FIX-002",
+    name: "E2E Fixture Widget B",
+    unit: "each",
+    pricePerUnit: cents(WIDGET_B_CENTS),
+  },
+  {
+    sku: "E2E-FIX-BOX",
+    name: "E2E Fixture Boxed Case",
+    unit: "box",
+    pricePerUnit: cents(BOX_PRICE_CENTS),
+    unitsPerBox: 12,
+  },
+];
+
+const FIXTURE_INVOICE_NUMBER = "E2E-FIX-INV-001";
+// One PENDING order with one line on the first plain fixture product: 06 CP-02/CP-06 read real
+// order rows off a fresh DB, and 21 REG-B24 needs an ACTIVE order item against a catalog product
+// to prove the bulk-delete skip-guard. Found by a stable idempotencyKey — NOT by number: the app
+// generates the next order number as (numeric max over conforming "ORD-<digits>") + 1
+// (orders.service.ts / order-number.ts, B587), so a fixed high literal like ORD-900001 would skew that tenant's sequence
+// forever. The fixture takes the NEXT number in sequence exactly as a real order would, and
+// "ORD-<digits>" is also the shape 06 CP-06 finds the row by.
+const FIXTURE_ORDER_KEY = "e2e-fixture-order";
+
+// The API's customer soft-delete (customers.service.ts, REG-B159) RELEASES the User's identity:
+// username -> "<username>~removed~<id8>", email -> "removed+<id>@placeholder.local", deletedAt set.
+// So a fixture user that was soft-deleted no longer matches its exact username — match the
+// tombstone prefix too, and put the identity back.
+const TOMBSTONE = "~removed~";
+
+async function ensureFixtureUser(tenantId, c) {
+  const email = `${c.username}@e2e-routeflow.test`;
+  let user = await prisma.user.findFirst({ where: { tenantId, username: c.username } });
+  if (!user) {
+    const tomb = await prisma.user.findFirst({
+      where: { tenantId, username: { startsWith: `${c.username}${TOMBSTONE}` } },
+      orderBy: { createdAt: "asc" },
+    });
+    if (tomb) {
+      user = await prisma.user.update({
+        where: { id: tomb.id },
+        data: { username: c.username, email, deletedAt: null },
+      });
+    }
+  }
+  if (!user) {
+    // Composite-unique upsert (not find-then-create): the DB lane runs specs in parallel.
+    user = await prisma.user.upsert({
+      where: { tenantId_username: { tenantId, username: c.username } },
+      create: {
+        email,
+        username: c.username,
+        // Never a login identity — a random hash nobody holds.
+        password: await bcrypt.hash(require("crypto").randomBytes(16).toString("hex"), 10),
+        role: "CUSTOMER",
+        status: "ACTIVE",
+        forcePasswordChange: false,
+        tenantId,
+      },
+      update: {},
+    });
+  } else if (user.deletedAt) {
+    user = await prisma.user.update({ where: { id: user.id }, data: { deletedAt: null } });
+  }
+  return user;
+}
+
+async function ensureCommerceFixtures(tenantId) {
+  const customers = [];
+  for (const c of FIXTURE_CUSTOMERS) {
+    const user = await ensureFixtureUser(tenantId, c);
+    // userId is @unique -> a safe upsert; `update` un-deletes a soft-deleted customer (a spec's
+    // bulk delete soft-deletes one that holds records) so a re-seed repairs it.
+    const customer = await prisma.customer.upsert({
+      where: { userId: user.id },
+      create: {
+        userId: user.id,
+        businessName: c.businessName,
+        contactName: "E2E Fixture",
+        tenantId,
+      },
+      update: { deletedAt: null },
+    });
+    customers.push(customer);
+  }
+
+  const products = new Map();
+  for (const p of FIXTURE_PRODUCTS) {
+    const product = await prisma.product.upsert({
+      where: { tenantId_sku: { tenantId, sku: p.sku } },
+      create: { tenantId, currentStock: 500, isActive: true, ...p },
+      update: { isActive: true },
+    });
+    products.set(p.sku, product);
+  }
+
+  // One SENT invoice so 06 CP-01 scans real amount cells on a fresh DB (its "$" scan otherwise
+  // reads the empty-state block as a malformatted amount).
+  await prisma.invoice.upsert({
+    where: { tenantId_invoiceNumber: { tenantId, invoiceNumber: FIXTURE_INVOICE_NUMBER } },
+    create: {
+      tenantId,
+      customerId: customers[0].id,
+      invoiceNumber: FIXTURE_INVOICE_NUMBER,
+      status: "SENT",
+      sentAt: new Date(),
+      subtotal: cents(BOX_PRICE_CENTS),
+      total: cents(BOX_PRICE_CENTS),
+      items: {
+        create: [
+          {
+            tenantId, // a nested create is not tenant-scoped for us — set it explicitly (B571 class)
+            description: "E2E Fixture Boxed Case",
+            qty: 1,
+            unitPrice: cents(BOX_PRICE_CENTS),
+            subtotal: cents(BOX_PRICE_CENTS),
+          },
+        ],
+      },
+    },
+    update: {},
+  });
+
+  // One PENDING order + one line (see FIXTURE_ORDER_KEY). Same numbering rule as the app.
+  const widget = products.get("E2E-FIX-001");
+  // B587: NUMERIC max over conforming `ORD-<1..9 digits>` numbers only (ORD-SEED-1 and friends
+  // sort above every numeric number as text) — the same rule as apps/api/src/orders/order-number.ts.
+  const existingOrderNumbers = await prisma.order.findMany({
+    where: { tenantId, orderNumber: { startsWith: "ORD-" } },
+    select: { orderNumber: true },
+  });
+  const maxSeq = existingOrderNumbers.reduce((max, o) => {
+    const m = /^ORD-([0-9]{1,9})$/.exec(o.orderNumber ?? "");
+    return m ? Math.max(max, Number(m[1])) : max;
+  }, 0);
+  const orderNumber = `ORD-${String(maxSeq + 1).padStart(5, "0")}`;
+  await prisma.order.upsert({
+    where: { tenantId_idempotencyKey: { tenantId, idempotencyKey: FIXTURE_ORDER_KEY } },
+    create: {
+      tenantId,
+      customerId: customers[1].id,
+      orderNumber,
+      idempotencyKey: FIXTURE_ORDER_KEY,
+      // A staff create for this customer must never hit MERGE_CHOICE_REQUIRED (409) because of
+      // the fixture order: specs 08/13 create orders for the first picker customer.
+      skipAutoMerge: true,
+      status: "PENDING",
+      subtotal: cents(ORDER_QTY * WIDGET_A_CENTS),
+      total: cents(ORDER_QTY * WIDGET_A_CENTS),
+      lineItems: {
+        create: [
+          {
+            tenantId,
+            productId: widget.id,
+            status: "PENDING",
+            qty: ORDER_QTY,
+            unitPrice: cents(WIDGET_A_CENTS),
+            subtotal: cents(ORDER_QTY * WIDGET_A_CENTS),
+          },
+        ],
+      },
+    },
+    // Self-healing like the customer/product upserts: a spec or operator that cancelled/moved the
+    // fixture order would otherwise leave REG-B24 (needs an ACTIVE line) red forever.
+    update: {
+      status: "PENDING",
+      skipAutoMerge: true,
+      lineItems: { updateMany: { where: {}, data: { status: "PENDING" } } },
+    },
+  });
+
+  console.log(
+    `  ✓ Commerce fixtures present: ${FIXTURE_CUSTOMERS.length} customers, ${FIXTURE_PRODUCTS.length} products (1 boxed), 1 invoice, 1 order`,
+  );
 }
 
 async function main() {
@@ -253,6 +460,9 @@ async function main() {
     // ── Licensed tracked category (REG-B91 precondition) ───────────────────────
     await ensureLicensedTrackedCategory(existing.id);
     console.log(`  ✓ Licensed tracked category "${LICENSED_TRACKED_CATEGORY_NAME}" active`);
+
+    // ── Commerce fixtures (B566) ─────────────────────────────────────────────────
+    await ensureCommerceFixtures(existing.id);
 
     // ── Sweep stale parked drafts left by the web e2e suite ─────────────────────
     // 08-create-order-escape's ESC tests auto-park REAL drafts ("Order, <name>",
@@ -377,6 +587,9 @@ async function main() {
   // ── Licensed tracked category (REG-B91 precondition) ──────────────────────────
   await ensureLicensedTrackedCategory(tenant.id);
   console.log(`  ✓ Licensed tracked category "${LICENSED_TRACKED_CATEGORY_NAME}" created`);
+
+  // ── Commerce fixtures (B566) ─────────────────────────────────────────────────
+  await ensureCommerceFixtures(tenant.id);
 
   console.log("\n✅ E2E seed complete.\n");
 }

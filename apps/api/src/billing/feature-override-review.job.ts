@@ -3,11 +3,13 @@ import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 
-/** Audit action code for a flagged-for-review row — read by nothing else yet (brief B ships
- * API-only), so it is a plain string here rather than an entry in platform-admin's
- * `AdminAuditAction` (that constant is specifically for PlatformAdminService's own tenant-keyed
- * admin-action rows; `AuditService.log()`'s `action` field is a plain string with no registry). */
-export const FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION = "FEATURE_OVERRIDE_EXPIRED_REVIEW";
+import {
+  FEATURE_OVERRIDE_AUDIT_ENTITY_TYPE,
+  FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION,
+} from "./feature-override-audit.constants";
+
+// Re-exported: the constant's home is `feature-override-audit.constants.ts` (shared with the sweep).
+export { FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION };
 
 /** Per-tick cap (pre-merge review, SHOULD-2026-09-17): bounds one tick's cost when a large
  * backlog of expired-unrevoked rows exists. Oldest-`expiresAt`-first (`orderBy`) so a backlog
@@ -31,7 +33,10 @@ const AUDIT_LOOKUP_BOUND = 5000;
  * an unchanged, still-not-reviewed row nightly is pure noise, not a stronger signal), so the
  * audit trail carries exactly one row per override, however many nights it stays unrevoked.
  *
- * NEVER auto-revokes: only a human calling `FeatureOverrideService.revoke()` ends an override.
+ * THIS job never revokes — it only flags. Closing an expired row is the separate B569 sweep
+ * (`FeatureOverrideExpiryJob`, 06:30), which only takes rows this job has already flagged.
+ * A human calling `FeatureOverrideService.revoke()` still ends an
+ * override at any time.
  * `FeatureOverrideService.create()`'s own auto-close of an expired row is a side-effect of
  * allowing a same-key re-grant, not a policy decision that the override should end — this job
  * makes the same distinction and only ever reads the row.
@@ -60,7 +65,7 @@ export class FeatureOverrideReviewJob {
     const auditedRows = await this.prisma.auditLog.findMany({
       where: {
         action: FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION,
-        entityType: "tenantFeatureOverride",
+        entityType: FEATURE_OVERRIDE_AUDIT_ENTITY_TYPE,
       },
       orderBy: { createdAt: "desc" },
       take: AUDIT_LOOKUP_BOUND,
@@ -76,7 +81,8 @@ export class FeatureOverrideReviewJob {
         expiresAt: { lte: now },
         ...(auditedIds.length > 0 ? { id: { notIn: auditedIds } } : {}),
       },
-      orderBy: { expiresAt: "asc" },
+      // `id` tiebreak: rows sharing an expiresAt (bulk grants) must not reorder between ticks.
+      orderBy: [{ expiresAt: "asc" }, { id: "asc" }],
       take: REVIEW_BATCH_SIZE,
       select: {
         id: true,
@@ -87,6 +93,14 @@ export class FeatureOverrideReviewJob {
         expiresAt: true,
       },
     });
+
+    if (expired.length >= REVIEW_BATCH_SIZE) {
+      // A full page is indistinguishable from an empty backlog from outside — say so.
+      this.logger.warn(
+        `reviewExpiredOverrides hit its batch cap of ${REVIEW_BATCH_SIZE} — more expired ` +
+          `overrides may be waiting for review; the next tick continues from the oldest.`,
+      );
+    }
 
     for (const row of expired) {
       this.logger.warn(
@@ -100,7 +114,7 @@ export class FeatureOverrideReviewJob {
         tenantId: row.tenantId,
         userId: null,
         action: FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION,
-        entityType: "tenantFeatureOverride",
+        entityType: FEATURE_OVERRIDE_AUDIT_ENTITY_TYPE,
         entityId: row.id,
         meta: {
           featureKey: row.featureKey,

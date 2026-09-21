@@ -118,7 +118,11 @@ describe("turbo.json test:repo-truth cache-safety", () => {
 describe("verify + package script wiring for test:repo-truth", () => {
   it("root package.json's verify script runs test:repo-truth", () => {
     const rootPkg = readJson(ROOT_PKG_PATH);
-    expect(rootPkg.scripts?.verify).toEqual(expect.stringContaining("test:repo-truth"));
+    // The turbo step of `verify` goes through scripts/verify-turbo.mjs (affected-scope pre-push),
+    // which names test:repo-truth in BOTH its full and its scoped invocation.
+    expect(rootPkg.scripts?.verify).toEqual(expect.stringContaining("scripts/verify-turbo.mjs"));
+    const wrapper = readFileSync(join(REPO_ROOT, "scripts", "verify-turbo.mjs"), "utf8");
+    expect(wrapper.match(/test:repo-truth/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
   });
 
   it("apps/api/package.json declares the test:repo-truth script", () => {

@@ -72,9 +72,10 @@ const MAX_PRODUCT_IDS = 200;
  * Used so existing tenant services can scope their queries correctly:
  *   - `sub`      → User.id (the Customer's user account; may be null for portal-only buyers)
  *   - `role`     → defaults to CUSTOMER; pass OPERATOR to skip userId-lookup paths in services
+ *   - `type`     → ALWAYS "BUYER", whatever the role: the restrictions channel is BUYER_PORTAL
  *   - `tenantId` → from BuyerSellerContextGuard (set by BuyerTenantInterceptor ALS run)
  */
-function makePseudoUser(ctx: {
+export function makePseudoUser(ctx: {
   userId?: string | null;
   tenantId: string;
   tenantSlug: string;
@@ -88,6 +89,7 @@ function makePseudoUser(ctx: {
     forcePasswordChange: false,
     tenantId: ctx.tenantId,
     tenantSlug: ctx.tenantSlug,
+    type: "BUYER",
   };
 }
 
@@ -560,7 +562,9 @@ export class BuyerController {
           // and only the sweep/force paths (no client attached) take the service's 20s wait.
           { family: "order-merge", key: ctx.customerId, mode: "wait", waitMs: 10_000 },
           async () => {
-            const activeOrder = await this.ordersService.findActiveOrder(ctx.customerId);
+            const activeOrder = await this.ordersService.findActiveOrder(ctx.customerId, {
+              forMerge: true,
+            });
             if (!activeOrder) return null;
             // REG-B47: denomination-aware fold (F30's staff exemplar, shared module) over
             // LIVE-normalized snapshots — a box-unaware line of a boxed product counts

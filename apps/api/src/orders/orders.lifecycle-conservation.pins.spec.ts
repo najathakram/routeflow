@@ -76,6 +76,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
@@ -190,6 +191,13 @@ describe("OrdersService — F07 lifecycle-conservation pins (green pre-fix)", ()
         {
           provide: InventoryService,
           useValue: { recordSale: jest.fn().mockResolvedValue({}) },
+        },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "OFF", reasons: [] }),
+          },
         },
         {
           provide: AuthorizationGuardService,

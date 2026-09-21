@@ -68,6 +68,7 @@ import { MSRP_ADDON } from "@/lib/api/addons";
 import { CropModal } from "./CropModal";
 import { DemandCard } from "./DemandCard";
 import { SalesHistoryCard } from "./SalesHistoryCard";
+import { ProductLabelsCard } from "./ProductLabelsCard";
 import { ProductUnitsCard } from "./ProductUnitsCard";
 import { ImageLightbox } from "./ImageLightbox";
 import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
@@ -2393,8 +2394,7 @@ export default function ProductDetailPage() {
               </div>
             )}
 
-            {/* Multi-level units (units_v1) — renders nothing unless the tenant is granted
-                flag.units_v1. Own file: this page is already ~2.9k lines. */}
+            <ProductLabelsCard productId={product.id} />
             <ProductUnitsCard product={product} />
 
             {/* Sales demand — real data from invoiced sales. In its own file (unlike

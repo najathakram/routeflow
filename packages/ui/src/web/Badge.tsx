@@ -124,10 +124,12 @@ export interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
 }
 
 export const Badge = React.forwardRef<HTMLSpanElement, BadgeProps>(
-  ({ className, variant, status, label, ...props }, ref) => {
+  ({ className, variant, status, label, children, ...props }, ref) => {
     const resolved = status ? STATUS_MAP[status] : null;
     const resolvedVariant = variant ?? resolved?.variant ?? "neutral";
-    const resolvedLabel = label ?? resolved?.label ?? status ?? "";
+    // `children` used to be silently discarded (the span renders its own content), so every
+    // `<Badge variant=…>text</Badge>` showed a blank pill. Explicit `label` still wins.
+    const resolvedLabel = label ?? children ?? resolved?.label ?? status ?? "";
 
     const styles = VARIANT_STYLES[resolvedVariant];
 

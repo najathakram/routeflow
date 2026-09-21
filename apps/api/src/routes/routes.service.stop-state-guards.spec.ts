@@ -300,7 +300,7 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
 
       expect(prisma.orderItem.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { orderId: "order-1" },
+          where: { orderId: "order-1", status: { not: "CANCELLED" } },
           data: expect.objectContaining({ status: "PENDING", deliveredQty: 0 }),
         }),
       );
