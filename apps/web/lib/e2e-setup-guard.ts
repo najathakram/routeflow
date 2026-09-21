@@ -24,6 +24,9 @@ import { isLocalUrl } from "./local-url";
 
 const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 
+/** An environment map. Deliberately NOT NodeJS.ProcessEnv: Next's types make NODE_ENV required there. */
+type EnvLike = Record<string, string | undefined>;
+
 export type SetupGuardCheck =
   "base-url-unset" | "base-url-invalid" | "scheme" | "non-local" | "tenant";
 
@@ -131,7 +134,7 @@ export function assertSafeSetupTarget(
  * Config-level rule (every project, not just setup): the base URL is REQUIRED — no default.
  * Returns it untouched (the caller's own string) when present; throws when unset or empty.
  */
-export function requireBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
+export function requireBaseUrl(env: EnvLike = process.env): string {
   const value = env.PLAYWRIGHT_BASE_URL;
   if (value === undefined || value.trim() === "") {
     throw new SetupGuardError("base-url-unset", refuseText("base-url-unset", UNSET_DETAIL));
@@ -139,7 +142,7 @@ export function requireBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
   return value;
 }
 
-export function envInput(env: NodeJS.ProcessEnv): SetupTargetInput {
+export function envInput(env: EnvLike): SetupTargetInput {
   return {
     baseUrl: env.PLAYWRIGHT_BASE_URL,
     tenantSlug: env.PLAYWRIGHT_TENANT_SLUG,

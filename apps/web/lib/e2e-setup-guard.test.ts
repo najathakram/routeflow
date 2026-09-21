@@ -234,7 +234,7 @@ describe("envInput maps the real environment variable names", () => {
         PLAYWRIGHT_TENANT_SLUG: "qa-x",
         GITHUB_ACTIONS: "true",
         E2E_ALLOW_REMOTE_AUTH: "1",
-      } as NodeJS.ProcessEnv),
+      }),
     ).toEqual({
       baseUrl: "http://localhost:3001",
       tenantSlug: "qa-x",
@@ -244,7 +244,7 @@ describe("envInput maps the real environment variable names", () => {
   });
 
   it("an empty environment yields an input that is refused (unset), never defaulted", () => {
-    expect(evaluateSetupTarget(envInput({} as NodeJS.ProcessEnv))).toMatchObject({
+    expect(evaluateSetupTarget(envInput({}))).toMatchObject({
       ok: false,
       check: "base-url-unset",
     });
@@ -257,14 +257,14 @@ describe("requireBaseUrl (config level, every project)", () => {
     ["empty", { PLAYWRIGHT_BASE_URL: "" }],
     ["whitespace", { PLAYWRIGHT_BASE_URL: "  " }],
   ])("throws when %s — there is no fallback", (_n, env) => {
-    expect(() => requireBaseUrl(env as NodeJS.ProcessEnv)).toThrow(SetupGuardError);
+    expect(() => requireBaseUrl(env)).toThrow(SetupGuardError);
   });
 
   it("returns the caller's value untouched when set (locality is the setup project's job)", () => {
-    expect(
-      requireBaseUrl({ PLAYWRIGHT_BASE_URL: "http://localhost:3001" } as NodeJS.ProcessEnv),
-    ).toBe("http://localhost:3001");
-    expect(requireBaseUrl({ PLAYWRIGHT_BASE_URL: PROD } as NodeJS.ProcessEnv)).toBe(PROD);
+    expect(requireBaseUrl({ PLAYWRIGHT_BASE_URL: "http://localhost:3001" })).toBe(
+      "http://localhost:3001",
+    );
+    expect(requireBaseUrl({ PLAYWRIGHT_BASE_URL: PROD })).toBe(PROD);
   });
 });
 
