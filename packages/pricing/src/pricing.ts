@@ -139,56 +139,80 @@ export class AmbiguousLineError extends Error {
 }
 
 /**
- * `computeLineSubtotal`'s strict sibling for NEW writes (owner ruling 2026-09-21, the "refuse
- * ambiguity" design on #938 — the B644 family). `computeLineSubtotal` is deliberately lenient: a
- * boxed product (`unitsPerBox > 1`) with neither `boxes` nor `pieces` given falls through to the
- * non-boxed branch and silently prices `qty x unitPrice` — exactly the B644 shape (6 boxes of 12
- * read as 72 x the BOX price, a 12x overcharge). This throws {@link AmbiguousLineError} instead of
- * guessing, for:
- *   - a boxed product with NEITHER boxes nor pieces given — the axis is unknown.
- *   - `pieces >= unitsPerBox` — a stale split that should have rolled over first
- *     (`normalizeBoxesPieces`; correct either way money-wise, but a real caller bug).
- *   - a non-integer `qty`/`boxes`/`pieces`.
- *   - `boxes`/`pieces` given and their `boxes*unitsPerBox+pieces` disagrees with `qty` — the two
- *     axes were never reconciled. Never fires when the caller normalizes first (see
- *     {@link buildLine}, `./build-line`), only for a caller who skips that step.
- * `computeLineSubtotal` itself is unchanged and keeps every existing caller (display, PDF,
- * duplicate, legacy rows) lenient forever; this only guards a NEW write that opts in.
+ * Pure ambiguity check for a line shape — no throw, no side effect. Returns the reason a shape is
+ * ambiguous, or `null` when it's fine. {@link computeLineSubtotalStrict} throws when this is
+ * non-null; a warn-phase caller (owner ruling 2026-09-21: warn-first, throw in its own diff) can
+ * call this directly and just log the reason — there is no try/catch-and-swallow needed to get a
+ * non-throwing form (Senior Architect review, HOLD 3, 2026-09-21).
+ *
+ * `qty`'s integer check applies ONLY when `unitsPerBox > 1` (a real box/piece count is always
+ * whole). A non-boxed line's `qty` is `Decimal(10,3)` in the schema — a fractional selling
+ * quantity (e.g. 1.5 kg) is legitimate and never flagged here (HOLD 1).
+ *
+ * Reasons: a boxed product (`unitsPerBox > 1`) with NEITHER `boxes` nor `pieces` given (the B644
+ * shape: 6 boxes of 12 read as 72 x the BOX price); `pieces >= unitsPerBox` (a stale split that
+ * should have rolled over via `normalizeBoxesPieces`); a non-integer `boxes`/`pieces`/boxed-`qty`;
+ * or `boxes`/`pieces` given and their `boxes*unitsPerBox+pieces` disagrees with `qty`.
  */
-export function computeLineSubtotalStrict(input: LineSubtotalInput): number {
-  const { unitPrice, qty, boxes, pieces, unitsPerBox, freeUnits = 0 } = input;
+export function lineAmbiguity(input: {
+  qty: number;
+  boxes?: number | null;
+  pieces?: number | null;
+  unitsPerBox?: number | null;
+}): string | null {
+  const { qty, boxes, pieces, unitsPerBox } = input;
   const upb = Number(unitsPerBox ?? 0);
   const hasBoxPackaging = upb > 1;
   const boxesGiven = boxes != null;
   const piecesGiven = pieces != null;
 
-  const fail = (msg: string): never => {
-    throw new AmbiguousLineError(`computeLineSubtotalStrict: ${msg}`);
-  };
-
   for (const [name, v] of [
-    ["qty", qty],
     ["boxes", boxes],
     ["pieces", pieces],
   ] as const) {
-    if (v != null && !Number.isInteger(Number(v))) fail(`${name} must be an integer, got ${v}`);
+    if (v != null && !Number.isInteger(Number(v))) return `${name} must be an integer, got ${v}`;
+  }
+  if (hasBoxPackaging && qty != null && !Number.isInteger(Number(qty))) {
+    return `qty must be an integer, got ${qty}`;
   }
 
   if (hasBoxPackaging && !boxesGiven && !piecesGiven) {
-    fail(
-      "unitsPerBox > 1 with neither boxes nor pieces given — qty alone is ambiguous (per-box vs per-piece); the B644 shape",
-    );
+    return "unitsPerBox > 1 with neither boxes nor pieces given — qty alone is ambiguous (per-box vs per-piece); the B644 shape";
   }
   if (hasBoxPackaging && piecesGiven && Number(pieces) >= upb) {
-    fail(`pieces (${pieces}) >= unitsPerBox (${upb}) — roll over via normalizeBoxesPieces first`);
+    return `pieces (${pieces}) >= unitsPerBox (${upb}) — roll over via normalizeBoxesPieces first`;
   }
   if (hasBoxPackaging && (boxesGiven || piecesGiven)) {
     const implied = Number(boxes ?? 0) * upb + Number(pieces ?? 0);
     if (Number(qty) !== implied) {
-      fail(`qty (${qty}) disagrees with boxes*unitsPerBox+pieces (${implied})`);
+      return `qty (${qty}) disagrees with boxes*unitsPerBox+pieces (${implied})`;
     }
   }
+  return null;
+}
 
+/**
+ * `computeLineSubtotal`'s strict sibling for NEW writes (owner ruling 2026-09-21, the "refuse
+ * ambiguity" design on #938 — the B644 family). `computeLineSubtotal` is deliberately lenient: a
+ * boxed product (`unitsPerBox > 1`) with neither `boxes` nor `pieces` given falls through to the
+ * non-boxed branch and silently prices `qty x unitPrice` — exactly the B644 shape (a 12x
+ * overcharge). This throws {@link AmbiguousLineError} instead of guessing whenever
+ * {@link lineAmbiguity} finds a reason (see its doc for the exact list). Never fires when the
+ * caller normalizes first (see {@link buildLine}, `./build-line`) and gives a boxed axis a real
+ * split — only for a caller who skips that step, or gives an inconsistent one.
+ *
+ * ERROR CONTRACT: `AmbiguousLineError.code` is `"AMBIGUOUS_LINE"`. A caller that surfaces this
+ * through the API must map it to a 4xx, never a 500 — staff see the reason, a buyer a generic
+ * line (Senior Architect review, 2026-09-21). No API caller exists yet (PR-1 has none); the
+ * NestJS exception filter is wired in the PR that adds the first real caller.
+ *
+ * `computeLineSubtotal` itself is unchanged and keeps every existing caller (display, PDF,
+ * duplicate, legacy rows) lenient forever; this only guards a NEW write that opts in.
+ */
+export function computeLineSubtotalStrict(input: LineSubtotalInput): number {
+  const { unitPrice, qty, boxes, pieces, unitsPerBox, freeUnits = 0 } = input;
+  const reason = lineAmbiguity({ qty, boxes, pieces, unitsPerBox });
+  if (reason != null) throw new AmbiguousLineError(`computeLineSubtotalStrict: ${reason}`);
   return computeLineSubtotal({ unitPrice, qty, boxes, pieces, unitsPerBox, freeUnits });
 }
 

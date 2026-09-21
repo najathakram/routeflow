@@ -1,6 +1,7 @@
 import {
   computeLineSubtotal,
   computeLineSubtotalStrict,
+  lineAmbiguity,
   AmbiguousLineError,
   roundMoney,
   normalizeBoxesPieces,
@@ -228,6 +229,44 @@ describe("pricing — money discipline", () => {
       } catch (e) {
         expect(e).toBeInstanceOf(AmbiguousLineError);
         expect((e as AmbiguousLineError).code).toBe("AMBIGUOUS_LINE");
+      }
+    });
+
+    it("HOLD 1: a non-boxed product's fractional qty is NEVER flagged — OrderItem.qty is Decimal(10,3)", () => {
+      expect(computeLineSubtotalStrict({ unitPrice: 10, qty: 1.5, unitsPerBox: null })).toBe(15);
+      expect(computeLineSubtotalStrict({ unitPrice: 10, qty: 1.5, unitsPerBox: 1 })).toBe(15);
+    });
+  });
+
+  describe("lineAmbiguity — the pure, non-throwing form (HOLD 3, #938)", () => {
+    it("returns null for every non-ambiguous shape strict accepts", () => {
+      expect(lineAmbiguity({ qty: 72, boxes: 6, pieces: 0, unitsPerBox: 12 })).toBeNull();
+      expect(lineAmbiguity({ qty: 2 })).toBeNull();
+      expect(lineAmbiguity({ qty: 1.5, unitsPerBox: null })).toBeNull(); // HOLD 1
+    });
+
+    it("returns the same reason strict throws, for the B644 shape — never throws itself", () => {
+      const reason = lineAmbiguity({ qty: 72, unitsPerBox: 12 });
+      expect(reason).toMatch(/ambiguous/i);
+      expect(() => lineAmbiguity({ qty: 72, unitsPerBox: 12 })).not.toThrow();
+    });
+
+    it("computeLineSubtotalStrict throws exactly when lineAmbiguity is non-null (same predicate)", () => {
+      const cases = [
+        { qty: 72, unitsPerBox: 12 },
+        { qty: 25, boxes: 1, pieces: 15, unitsPerBox: 10 },
+        { qty: 99, boxes: 2, pieces: 0, unitsPerBox: 10 },
+        { qty: 22, boxes: 2, pieces: 0, unitsPerBox: 11 },
+      ];
+      for (const c of cases) {
+        const ambiguous = lineAmbiguity(c) != null;
+        let threw = false;
+        try {
+          computeLineSubtotalStrict({ ...c, unitPrice: 10 });
+        } catch (e) {
+          threw = e instanceof AmbiguousLineError;
+        }
+        expect(threw).toBe(ambiguous);
       }
     });
   });

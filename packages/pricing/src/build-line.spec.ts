@@ -48,12 +48,26 @@ describe("buildLine — pack axis", () => {
     expect(line.qty).toBe(21);
   });
 
-  it("refuses a stale split (pieces >= unitsPerBox) instead of rolling it over silently", () => {
+  it("HOLD 2: a stale split (pieces >= unitsPerBox) is ROLLED OVER, never refused — a real split was given", () => {
+    // 1 box + 15 loose of a 10-pack = 25 pieces = 2 boxes + 5, same money either way (2.5 boxes).
+    // Only a MISSING split (qty alone) is the B644 ambiguity; an unrolled one is buildLine's job
+    // to normalize (Senior Architect review, HOLD 2, 2026-09-21 — supersedes the prior "refuses a
+    // stale split" expectation, which passed the RAW unrolled split into strict and threw).
+    const line = buildLine({
+      axis: { kind: "pack", boxes: 1, pieces: 15, unitsPerBox: 10 },
+      unitPrice: 10,
+    });
+    expect(line).toMatchObject({ qty: 25, boxes: 2, pieces: 5, unitsPerBox: 10, subtotal: 25 });
+  });
+
+  it("HOLD 1: a non-boxed product's fractional qty is NEVER truncated (OrderItem.qty is Decimal(10,3))", () => {
+    const line = buildLine({ axis: { kind: "pack", qty: 1.5, unitsPerBox: null }, unitPrice: 10 });
+    expect(line).toMatchObject({ qty: 1.5, boxes: null, pieces: null, subtotal: 15 });
+  });
+
+  it("HOLD 1 mutation guard: a boxed product's fractional qty (impossible from a real split) still throws", () => {
     expect(() =>
-      buildLine({
-        axis: { kind: "pack", boxes: 1, pieces: 15, unitsPerBox: 10 },
-        unitPrice: 10,
-      }),
+      buildLine({ axis: { kind: "pack", boxes: 1.5, pieces: 0, unitsPerBox: 10 }, unitPrice: 10 }),
     ).toThrow(AmbiguousLineError);
   });
 });
