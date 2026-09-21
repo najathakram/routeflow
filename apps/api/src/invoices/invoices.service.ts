@@ -36,7 +36,7 @@ import { clampLimit } from "../common/pagination";
 import { isInternalEmail } from "../common/internal-email";
 import { loadMsrpMap } from "../common/msrp";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
-import { finalizeOrderRecompute } from "./finalize-order-recompute";
+import { checkOrderCoverage, finalizeOrderRecompute } from "./finalize-order-recompute";
 import { EntitlementsService } from "../billing/entitlements.service";
 import {
   CheckStatus,
@@ -2323,6 +2323,10 @@ export class InvoicesService {
       }
     }
 
+    // B667: coverage decided BEFORE any line is rewritten — see checkOrderCoverage's doc.
+    const coverage = await checkOrderCoverage({ db, orderId, order, byTarget, invoices });
+    if (!coverage.fullyCovered) return coverage.totals;
+
     let subtotal = 0;
     let categoryTaxSum = 0;
     for (const agg of byTarget.values()) {
@@ -2386,8 +2390,8 @@ export class InvoicesService {
       }
     }
 
-    // B667: cancelling never-billed lines and rewriting the order's totals is only correct
-    // once the invoices being read cover the WHOLE order — see finalizeOrderRecompute's doc.
+    // B667: cancelling an orphan and rewriting the order's totals — coverage was already
+    // confirmed above, before this loop ran.
     return finalizeOrderRecompute({
       db,
       orderId,
