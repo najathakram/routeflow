@@ -70,6 +70,39 @@ describe("buildLine — pack axis", () => {
       buildLine({ axis: { kind: "pack", boxes: 1.5, pieces: 0, unitsPerBox: 10 }, unitPrice: 10 }),
     ).toThrow(AmbiguousLineError);
   });
+
+  it.each([
+    [
+      "boxes/pieces on a non-boxed axis (would be silently dropped)",
+      { kind: "pack" as const, boxes: 1, pieces: 0, qty: 5, unitsPerBox: null },
+    ],
+    ["qty missing (used to price at $0)", { kind: "pack" as const, unitsPerBox: 1 }],
+    ["qty NaN", { kind: "pack" as const, qty: NaN, unitsPerBox: null }],
+    ["qty zero", { kind: "pack" as const, qty: 0, unitsPerBox: null }],
+    ["qty negative", { kind: "pack" as const, qty: -3, unitsPerBox: null }],
+  ])("G1: refuses %s", (_name, axis) => {
+    expect(() => buildLine({ axis, unitPrice: 10 })).toThrow(AmbiguousLineError);
+  });
+
+  it("G3: refuses a split AND a qty that disagrees with it (never silently drops the qty)", () => {
+    // boxes:1, pieces:0 of a 12-pack implies 12 pieces, not the caller's qty:5.
+    expect(() =>
+      buildLine({
+        axis: { kind: "pack", boxes: 1, pieces: 0, qty: 5, unitsPerBox: 12 },
+        unitPrice: 10,
+      }),
+    ).toThrow(AmbiguousLineError);
+  });
+
+  it("G3: a qty that AGREES with the raw (unrolled) split is fine, not a false positive", () => {
+    // 1 box + 15 of a 10-pack is unrolled but self-consistent (1*10+15=25) — HOLD 2 rolls it
+    // over to 2 boxes + 5, same 25 pieces; G3 must not flag an honest, matching qty.
+    const line = buildLine({
+      axis: { kind: "pack", boxes: 1, pieces: 15, qty: 25, unitsPerBox: 10 },
+      unitPrice: 10,
+    });
+    expect(line).toMatchObject({ qty: 25, boxes: 2, pieces: 5 });
+  });
 });
 
 describe("buildLine — unit axis", () => {
@@ -117,6 +150,8 @@ describe("buildLine — unit axis", () => {
     ["a blank label", { kind: "unit" as const, label: "   ", count: 1, factorToBase: 12 }],
     ["a zero count", { kind: "unit" as const, label: "Case", count: 0, factorToBase: 12 }],
     ["a negative count", { kind: "unit" as const, label: "Case", count: -1, factorToBase: 12 }],
+    // G2 (R-ui review, 2026-09-21): Math.trunc alone billed 1.5 Cases as 1 — refuse instead.
+    ["a fractional count", { kind: "unit" as const, label: "Case", count: 1.5, factorToBase: 12 }],
     ["a zero factor", { kind: "unit" as const, label: "Case", count: 1, factorToBase: 0 }],
     ["a negative factor", { kind: "unit" as const, label: "Case", count: 1, factorToBase: -12 }],
   ])("refuses %s", (_name, axis) => {
