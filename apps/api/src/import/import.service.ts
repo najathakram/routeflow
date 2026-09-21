@@ -780,6 +780,7 @@ export class ImportService {
           taxRate: 0,
           subtotal: sub,
           ...(productId ? { productId } : {}),
+          tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
         });
       }
 
@@ -791,6 +792,7 @@ export class ImportService {
           discount: 0,
           taxRate: 0,
           subtotal: total,
+          tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
         });
       }
 

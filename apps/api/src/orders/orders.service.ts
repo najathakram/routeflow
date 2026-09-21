@@ -62,6 +62,7 @@ import {
   planOrderEditRestrictions,
   type OrderEditRestrictionPlan,
 } from "./order-edit-restrictions";
+import { planChangeRequestRestrictions } from "./change-request-restrictions";
 import { parseCommissionRatePct, parseOrderDate } from "./order-parsers";
 import { getOrderTracking } from "./order-tracking";
 import { CreateSaleDto } from "./dto/create-sale.dto";
@@ -5117,6 +5118,21 @@ export class OrdersService implements OnApplicationBootstrap {
       });
     }
 
+    // Lane R: an at-door add / qty raise of a banned product refuses (409 SELLING_RESTRICTED) BEFORE
+    // the tx; OFF = one policy read. Re-checked under the row lock below (change-request-restrictions.ts).
+    const tenantId = this.restrictionTenantId(resolver, order.tenantId);
+    const restrictionPlan = await planChangeRequestRestrictions(
+      { restrictions: this.sellingRestrictions },
+      { tenantId, existing: order.lineItems ?? [], cr },
+    );
+    if (restrictionPlan)
+      await this.sellingRestrictions.assertLinesSellable({
+        tenantId,
+        customerId: order.customerId,
+        lines: restrictionPlan.lines,
+        channel: restrictionChannelForPrincipal(resolver),
+      });
+
     // P5-08b posture: reference reads on separate pooled connections are
     // hoisted BEFORE the interactive tx (pool-starvation guard, :1660-1672).
     const taxRate = await this.getTaxRate();
@@ -5204,8 +5220,9 @@ export class OrdersService implements OnApplicationBootstrap {
 
         const heldItems = await tx.orderItem.findMany({
           where: { orderId: order.id },
-          select: { id: true, productId: true, qty: true, deliveredQty: true, status: true },
+          select: { ...EXISTING_LINE_SELECT, deliveredQty: true },
         });
+        restrictionPlan?.assertHeld(heldItems);
 
         // ── G6 atomic claim: FIRST resolution wins and LOCKS ─────────────────
         const claimed = await tx.changeRequest.updateMany({

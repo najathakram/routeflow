@@ -499,6 +499,7 @@ export class BookkeepingService implements OnModuleInit {
                   account: li.account,
                   notes: li.notes,
                   amount: li.amount,
+                  tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
                 })),
               },
             }
@@ -1580,7 +1581,8 @@ export class BookkeepingService implements OnModuleInit {
       : new Date();
     // Query via Invoice (correct tenantId) and include items via relation.
     // Direct invoiceItem.findMany with forTenant() would inject tenantId on InvoiceItem,
-    // but nested-created items have tenantId=null (bypass extension), so we go through Invoice.
+    // but older nested-created items (written before nested creates were stamped) may have
+    // tenantId=null, so we go through Invoice.
     const invoices = await this.prisma.forTenant().invoice.findMany({
       where: {
         status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF] },
