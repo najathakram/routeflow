@@ -105,6 +105,9 @@ export class InlineReturnsService {
         returnId: ret.id,
         orderId: sourceOrderId,
         returnedByProduct,
+        // B660: an INLINE capture stores TRUE PIECES (see returnRequestPieces), which the ledger
+        // must compare with the line's PIECE qty, not with a box-unaware line's BOX count.
+        returnedUnit: "PIECES",
         db: tx,
       });
     }

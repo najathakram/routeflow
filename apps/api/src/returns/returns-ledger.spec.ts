@@ -60,6 +60,7 @@ describe("ReturnsService → regulated ledger (W5c)", () => {
     expect(arg.orderId).toBe("ord-1");
     expect(arg.returnedByProduct.get("p1")).toBe(3); // 2 + 1 pooled
     expect(arg.returnedByProduct.get("p2")).toBe(5);
+    expect(arg.returnedUnit).toBe("LINE_UNIT"); // B660: STANDARD = the line's own unit
     expect(arg.db).toBeDefined(); // the tx client
   });
 

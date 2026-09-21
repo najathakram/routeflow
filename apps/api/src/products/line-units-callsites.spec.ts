@@ -39,6 +39,9 @@ const NON_WRITERS = new Set([
   "products/line-units.ts",
   "orders/unit-line-build.ts", // copies unit/unitsPerBox into the ladder base; never derives a factor
   "regulated/tx-report.ts",
+  // B660: the return reversal reads the live pack ONLY to notice that a boxed product's line is ambiguous
+  // (no split); the pieces-per-unit itself comes from legacyLinePieces, never from this read.
+  "regulated/regulated-ledger.service.ts",
 ]);
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");

@@ -1,3 +1,4 @@
+import { Logger } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { RegulatedLedgerService } from "./regulated-ledger.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -843,6 +844,380 @@ describe("RegulatedLedgerService", () => {
         db: prisma,
       });
       expect(written()[0]).toMatchObject({ qty: -7.7, netSales: -76, categoryTax: -15.2 });
+    });
+
+    // ─── B660: the returned qty and the SALE qty must be compared in the SAME unit ───
+    //
+    // A box-unaware boxed line (standing-order / buyer bare-qty line of a 12-per-box product) is
+    // stored `boxes: null, unitsPerBox: null` with qty = BOXES: 6 boxes = 72 pieces, $240 net, $60 levy.
+    // Its pack comes ONLY from legacyLinePieces (own split, or a same-product source line with a split),
+    // NEVER from the live product (Senior Architect ruling 2026-09-21).
+    describe("B660: returned unit vs line unit", () => {
+      const boxSale = () =>
+        saleRow({
+          id: "sale-1",
+          orderItemId: "oi-1",
+          qty: 6,
+          unitBasisQty: 6,
+          netSales: 240,
+          categoryTax: 60,
+        });
+      const boxLine = (over: Record<string, unknown> = {}) => ({
+        id: "oi-1",
+        productId: "p1",
+        qty: 6,
+        boxes: null,
+        pieces: null,
+        unitsPerBox: null,
+        product: { unitsPerBox: 12 }, // the live pack: only a TRIGGER, never a factor
+        ...over,
+      });
+      /** A same-product line WITH a split: the source line that lets the classifier read the pack. */
+      const sourceWithSplit = () => ({
+        productId: "p1",
+        qty: 72,
+        boxes: 6,
+        pieces: 0,
+        unitsPerBox: 12,
+      });
+      /** Call 1 = the sale rows' order lines; call 2 (only for ambiguous lines) = same-product source lines. */
+      const armLines = (lines: unknown[], sources: unknown[] = []) => {
+        prisma.orderItem.findMany.mockReset();
+        prisma.orderItem.findMany.mockResolvedValueOnce(lines).mockResolvedValueOnce(sources);
+      };
+      const reverse = (qty: number, returnedUnit?: "LINE_UNIT" | "PIECES", returnId = "ret-1") =>
+        service.reverseReturnEntries({
+          returnId,
+          orderId: "ord-1",
+          returnedByProduct: new Map([["p1", qty]]),
+          ...(returnedUnit ? { returnedUnit } : {}),
+          db: prisma,
+        });
+      const arrangeBox = (extra: Record<string, unknown> = {}) =>
+        arrange({ sales: [boxSale()], items: [{ id: "ii-1", productId: "p1" }], ...extra });
+
+      it("INLINE (PIECES): 12 pieces of a 6-box line reverse 1/6, not the whole row", async () => {
+        arrangeBox();
+        armLines([boxLine()], [sourceWithSplit()]);
+        await reverse(12, "PIECES");
+        expect(written()).toHaveLength(1);
+        expect(written()[0]).toMatchObject({
+          qty: -1,
+          unitBasisQty: -1,
+          netSales: -40, // 12 / 72 of $240, not 100%
+          categoryTax: -10,
+        });
+      });
+
+      it("INLINE (PIECES): a 3-piece return reverses 3/72 (about 4.2%), not 50%", async () => {
+        arrangeBox();
+        armLines([boxLine()], [sourceWithSplit()]);
+        await reverse(3, "PIECES");
+        expect(written()[0]).toMatchObject({ qty: -0.25, netSales: -10, categoryTax: -2.5 });
+      });
+
+      it("INLINE (PIECES): returning ALL 72 pieces closes the line exactly", async () => {
+        arrangeBox();
+        armLines([boxLine()], [sourceWithSplit()]);
+        await reverse(72, "PIECES");
+        expect(written()[0]).toMatchObject({ qty: -6, netSales: -240, categoryTax: -60 });
+      });
+
+      it("INLINE (PIECES): a second partial return is capped by what the first left", async () => {
+        const prior = [
+          { invoiceItemId: "ii-1", orderItemId: "oi-1", qty: -1, netSales: -40, categoryTax: -10 },
+        ];
+        arrangeBox({ priorReversals: prior });
+        armLines([boxLine()], [sourceWithSplit()]);
+        await reverse(12, "PIECES", "ret-2");
+        expect(written()[0]).toMatchObject({ qty: -1, netSales: -40, categoryTax: -10 });
+        // and it can never reverse more than the 5 boxes (60 pieces) still on the line
+        prisma.regulatedSalesLedger.createMany.mockClear();
+        arrangeBox({ priorReversals: prior });
+        armLines([boxLine()], [sourceWithSplit()]);
+        await reverse(500, "PIECES", "ret-3");
+        expect(written()[0]).toMatchObject({ qty: -5, netSales: -200, categoryTax: -50 });
+      });
+
+      it("STANDARD (LINE_UNIT): 1 typed BOX reverses the same 1/6 (unit-consistent, unchanged)", async () => {
+        arrangeBox();
+        await reverse(1, "LINE_UNIT");
+        expect(written()[0]).toMatchObject({ qty: -1, netSales: -40, categoryTax: -10 });
+        expect(prisma.orderItem.findMany).not.toHaveBeenCalled(); // no extra query on this path
+      });
+
+      it("BOTH return paths book the identical reversal for the same physical return (1 box = 12 pieces)", async () => {
+        arrangeBox();
+        await reverse(1, "LINE_UNIT", "ret-std");
+        const standard = written()[0];
+        prisma.regulatedSalesLedger.createMany.mockClear();
+        arrangeBox();
+        armLines([boxLine()], [sourceWithSplit()]);
+        await reverse(12, "PIECES", "ret-inl");
+        const inline = written()[0];
+        const money = ({ qty, unitBasisQty, netSales, categoryTax }: any) => ({
+          qty,
+          unitBasisQty,
+          netSales,
+          categoryTax,
+        });
+        expect(money(inline)).toEqual(money(standard));
+      });
+
+      it("the default unit is LINE_UNIT and never queries order lines (existing behaviour)", async () => {
+        arrangeBox();
+        await reverse(6);
+        expect(written()[0]).toMatchObject({ qty: -6, netSales: -240, categoryTax: -60 });
+        expect(prisma.orderItem.findMany).not.toHaveBeenCalled();
+      });
+
+      it("declaring the WRONG unit reproduces B660 (12 pieces read as 12 boxes closes the row)", async () => {
+        arrangeBox();
+        await reverse(12, "LINE_UNIT"); // what the inline path did before the unit was declared
+        expect(written()[0]).toMatchObject({ qty: -6, netSales: -240, categoryTax: -60 });
+      });
+
+      it("PIECES on a box-AWARE line or a product with no pack uses factor 1 (no source query)", async () => {
+        const pieceSale = () =>
+          saleRow({
+            orderItemId: "oi-1",
+            qty: 72,
+            unitBasisQty: 72,
+            netSales: 360,
+            categoryTax: 72,
+          });
+        arrange({ sales: [pieceSale()], items: [{ id: "ii-1", productId: "p1" }] });
+        armLines([boxLine({ qty: 72, boxes: 6, unitsPerBox: 12 })]);
+        await reverse(12, "PIECES");
+        expect(written()[0]).toMatchObject({ qty: -12, netSales: -60, categoryTax: -12 });
+        expect(prisma.orderItem.findMany).toHaveBeenCalledTimes(1);
+        prisma.regulatedSalesLedger.createMany.mockClear();
+        arrange({ sales: [pieceSale()], items: [{ id: "ii-1", productId: "p1" }] });
+        armLines([boxLine({ qty: 72, product: { unitsPerBox: null } })]);
+        await reverse(12, "PIECES", "ret-2");
+        expect(written()[0]).toMatchObject({ qty: -12, netSales: -60, categoryTax: -12 });
+      });
+
+      it("PIECES across a box-unaware line AND a box-aware line of one product converts per row", async () => {
+        arrange({
+          sales: [
+            boxSale(),
+            saleRow({
+              invoiceItemId: "ii-2",
+              orderItemId: "oi-2",
+              qty: 72,
+              unitBasisQty: 72,
+              netSales: 360,
+              categoryTax: 72,
+            }),
+          ],
+          items: [
+            { id: "ii-1", productId: "p1" },
+            { id: "ii-2", productId: "p1" },
+          ],
+        });
+        armLines(
+          [boxLine(), boxLine({ id: "oi-2", qty: 72, boxes: 6, unitsPerBox: 12 })],
+          [sourceWithSplit()],
+        );
+        await reverse(84, "PIECES"); // 72 pieces close the box line, 12 more come off the piece line
+        expect(written()).toHaveLength(2);
+        expect(written()[0]).toMatchObject({
+          orderItemId: "oi-1",
+          qty: -6,
+          netSales: -240,
+          categoryTax: -60,
+        });
+        expect(written()[1]).toMatchObject({
+          orderItemId: "oi-2",
+          qty: -12,
+          netSales: -60,
+          categoryTax: -12,
+        });
+      });
+
+      it("PIECES on a freeform line (no orderItemId) queries nothing and uses factor 1", async () => {
+        arrange({ sales: [saleRow()], items: [{ id: "ii-1", productId: "p1" }] });
+        await reverse(3, "PIECES");
+        expect(prisma.orderItem.findMany).not.toHaveBeenCalled();
+        expect(written()[0]).toMatchObject({ qty: -3, netSales: -30, categoryTax: -6 });
+      });
+
+      it("a no-split line WITH a pack snapshot (the B644/B656 shape) reaches the classifier: qty 72 counts pieces, so factor 1, never x12", async () => {
+        const pieceSale = () =>
+          saleRow({
+            id: "sale-1",
+            orderItemId: "oi-1",
+            qty: 72,
+            unitBasisQty: 72,
+            netSales: 360,
+            categoryTax: 72,
+          });
+        arrange({ sales: [pieceSale()], items: [{ id: "ii-1", productId: "p1" }] });
+        armLines([boxLine({ qty: 72, unitsPerBox: 12 })], [sourceWithSplit()]);
+        await reverse(12, "PIECES");
+        // qty === source.qty -> "source-pieces": 12 of 72 pieces is 1/6, NOT 12 x 12 pieces
+        expect(written()[0]).toMatchObject({ qty: -12, netSales: -60, categoryTax: -12 });
+        expect(prisma.orderItem.findMany).toHaveBeenCalledTimes(2); // it DID go looking for a source
+      });
+
+      it("the linked InvoiceItem is the preferred source: a sibling is not even queried", async () => {
+        arrangeBox();
+        prisma.invoiceItem.findMany.mockReset();
+        prisma.invoiceItem.findMany
+          .mockResolvedValueOnce([{ id: "ii-1", productId: "p1" }]) // the productId bridge
+          .mockResolvedValueOnce([{ id: "ii-1", qty: 72, boxes: 6, pieces: 0, unitsPerBox: 12 }]);
+        armLines([boxLine()], [{ ...sourceWithSplit(), qty: 100, boxes: 8 }]); // a sibling that would say unknown
+        await reverse(12, "PIECES");
+        expect(written()[0]).toMatchObject({ qty: -1, netSales: -40, categoryTax: -10 });
+        expect(prisma.orderItem.findMany).toHaveBeenCalledTimes(1); // no sibling query
+      });
+
+      it("an InvoiceItem WITHOUT a split falls back to a same-product sibling with a split", async () => {
+        arrangeBox();
+        prisma.invoiceItem.findMany.mockReset();
+        prisma.invoiceItem.findMany
+          .mockResolvedValueOnce([{ id: "ii-1", productId: "p1" }])
+          .mockResolvedValueOnce([
+            { id: "ii-1", qty: 6, boxes: null, pieces: null, unitsPerBox: null },
+          ]);
+        armLines([boxLine()], [sourceWithSplit()]);
+        await reverse(12, "PIECES");
+        expect(written()[0]).toMatchObject({ qty: -1, netSales: -40, categoryTax: -10 });
+        expect(prisma.orderItem.findMany).toHaveBeenCalledTimes(2);
+      });
+
+      describe("unknown pack: parked, never a guess (Senior Architect ruling 2026-09-21)", () => {
+        let errorSpy: jest.SpyInstance;
+        const parkedMock = () => (prisma as any).regulatedLedgerParkedReversal.createMany;
+        beforeEach(() => {
+          errorSpy = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+          parkedMock().mockClear();
+        });
+        afterEach(() => errorSpy.mockRestore());
+
+        it("a box-unaware line with NO own split and NO source line books NOTHING and PARKS the true pieces, even though the live product says 12", async () => {
+          arrangeBox();
+          armLines([boxLine({ product: { unitsPerBox: 12 } })], []); // live pack 12, no source with a split
+          await reverse(12, "PIECES");
+          expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
+          expect(parkedMock()).toHaveBeenCalledTimes(1);
+          expect(parkedMock()).toHaveBeenCalledWith({
+            data: [
+              {
+                tenantId: "t1",
+                returnId: "ret-1",
+                orderId: "ord-1",
+                orderItemId: "oi-1",
+                saleEntryId: "sale-1", // the SALE row it will reverse
+                returnedPieces: 12, // the TRUE captured pieces, exactly
+                reason: expect.stringMatching(/no own split/),
+                periodBucket: expect.stringMatching(/^\d{4}-\d{2}$/),
+              },
+            ],
+            skipDuplicates: true, // a retried capture parks it once (UNIQUE returnId + saleEntryId)
+          });
+          expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/ret-1[\s\S]*unknown pack/));
+        });
+
+        it("a source line WITHOUT a split does not count as a source: it parks", async () => {
+          arrangeBox();
+          armLines(
+            [boxLine()],
+            [{ productId: "p1", qty: 72, boxes: null, pieces: null, unitsPerBox: 12 }],
+          );
+          await reverse(12, "PIECES");
+          expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
+          expect(parkedMock()).toHaveBeenCalledTimes(1);
+        });
+
+        it("the returned pieces are not spilled onto the next row: ALL 84 are parked against the unknown row", async () => {
+          arrange({
+            sales: [
+              boxSale(),
+              saleRow({
+                id: "sale-2",
+                invoiceItemId: "ii-2",
+                orderItemId: "oi-2",
+                qty: 72,
+                unitBasisQty: 72,
+                netSales: 360,
+                categoryTax: 72,
+              }),
+            ],
+            items: [
+              { id: "ii-1", productId: "p1" },
+              { id: "ii-2", productId: "p1" },
+            ],
+          });
+          armLines([boxLine(), boxLine({ id: "oi-2", qty: 72, boxes: 6, unitsPerBox: 12 })], []);
+          await reverse(84, "PIECES");
+          expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
+          expect(parkedMock()).toHaveBeenCalledTimes(1);
+          expect(parkedMock().mock.calls[0][0].data[0]).toMatchObject({
+            saleEntryId: "sale-1",
+            returnedPieces: 84,
+          });
+        });
+
+        it("only the unknown product parks: a KNOWN product in the same return still books", async () => {
+          arrange({
+            sales: [
+              boxSale(),
+              saleRow({
+                id: "sale-3",
+                invoiceItemId: "ii-3",
+                orderItemId: "oi-3",
+                qty: 3,
+                unitBasisQty: 3,
+                netSales: 30,
+                categoryTax: 6,
+              }),
+            ],
+            items: [
+              { id: "ii-1", productId: "p1" },
+              { id: "ii-3", productId: "p2" },
+            ],
+          });
+          armLines([
+            boxLine(),
+            boxLine({ id: "oi-3", productId: "p2", qty: 3, boxes: 1, unitsPerBox: 12 }),
+          ]);
+          await service.reverseReturnEntries({
+            returnId: "ret-1",
+            orderId: "ord-1",
+            returnedByProduct: new Map([
+              ["p1", 12],
+              ["p2", 3],
+            ]),
+            returnedUnit: "PIECES",
+            db: prisma,
+          });
+          expect(parkedMock().mock.calls[0][0].data[0]).toMatchObject({
+            saleEntryId: "sale-1",
+            returnedPieces: 12,
+          });
+          expect(written()).toHaveLength(1);
+          expect(written()[0]).toMatchObject({ orderItemId: "oi-3", qty: -3, netSales: -30 });
+        });
+
+        it("a line whose qty matches neither the source's boxes nor its qty is unknown: it parks", async () => {
+          arrangeBox();
+          armLines([boxLine({ qty: 10 })], [{ ...sourceWithSplit(), qty: 100, boxes: 8 }]);
+          await reverse(12, "PIECES");
+          expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
+          expect(parkedMock()).toHaveBeenCalledTimes(1);
+        });
+
+        it("nothing is parked when the pack is known, or on the LINE_UNIT path", async () => {
+          arrangeBox();
+          armLines([boxLine()], [sourceWithSplit()]);
+          await reverse(12, "PIECES");
+          arrangeBox();
+          await reverse(1, "LINE_UNIT", "ret-2");
+          expect(parkedMock()).not.toHaveBeenCalled();
+        });
+      });
     });
   });
 

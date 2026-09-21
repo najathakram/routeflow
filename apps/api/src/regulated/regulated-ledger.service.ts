@@ -1,7 +1,8 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { roundMoney } from "@routeflow/pricing";
 import { periodBucketOf } from "./period";
+import { legacyLinePieces } from "./legacy-line-pieces.stub"; // -> @routeflow/pricing when U-units lands it
 
 /** Round a quantity to 3 decimals (matches the Decimal(12,3) ledger columns). */
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
@@ -18,6 +19,9 @@ export interface SaleLedgerLine {
   netSales: number; // the line's post-discount subtotal
   categoryTax: number; // computed category tax (0 today — tobacco is rate=0)
 }
+
+/** What `reverseReturnEntries`' returned quantities are counted in (see its UNITS note, B660). */
+export type ReturnedUnit = "LINE_UNIT" | "PIECES";
 
 /**
  * Phase 4 (W5): writes the immutable RegulatedSalesLedger — the source of truth
@@ -42,6 +46,8 @@ export interface SaleLedgerLine {
  */
 @Injectable()
 export class RegulatedLedgerService {
+  private readonly logger = new Logger(RegulatedLedgerService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   /**
@@ -205,14 +211,34 @@ export class RegulatedLedgerService {
    * non-regulated line of the same order, returning the non-regulated units still
    * reverses the regulated row — the per-line remaining cap prevents OVER-reversal, but
    * attribution is approximate. Fixing this needs a ReturnItem→line linkage.
+   *
+   * UNITS (B660). A SALE row's qty is in the ORDER LINE's own unit: pieces for a box-aware line,
+   * BOXES for a box-unaware one (a standing-order / buyer bare-qty line of a boxed product is stored
+   * `boxes: null, unitsPerBox: null`, qty = boxes). `returnedUnit` says what `returnedByProduct` is
+   * counted in, and the pro-rating never mixes the two:
+   *   - "LINE_UNIT" (default; STANDARD returns): ReturnItem.qty is what the operator typed, in the
+   *     line's own unit, so it is compared with the SALE qty as-is.
+   *   - "PIECES" (INLINE captures): ReturnItem.qty is TRUE PIECES. For a box-unaware boxed line the
+   *     returned pieces are compared with the line's PIECE qty, taken from `legacyLinePieces` (the line's
+   *     own split, else its linked InvoiceItem or a same-product sibling order line WITH a split, read by
+   *     comparing quantities: NEVER the live product's unitsPerBox, Senior Architect ruling 2026-09-21), and the booked reversal qty is converted back to the line's
+   *     unit; every other line has factor 1. Without this, returning 12 pieces against a line sold as 6
+   *     BOXES closed the whole row (100% of net and tax reversed instead of 12/72).
+   *   - UNKNOWN pack (the classifier says `unknown`): NOTHING is booked for that product (no guess, and the
+   *     returned pieces are not spilled onto another row). The reversal is PARKED in
+   *     RegulatedLedgerParkedReversal (true returned pieces + the SALE row it will reverse; parked while
+   *     resolvedAt IS NULL) and an ERROR is logged. The resolution flow and the period-filing gate are
+   *     follow-up PRs (Senior Architect ruling 2026-09-21).
    */
   async reverseReturnEntries(params: {
     returnId: string;
     orderId: string;
     returnedByProduct: Map<string, number>;
+    returnedUnit?: ReturnedUnit;
     db: any;
   }): Promise<void> {
     const { returnId, orderId, returnedByProduct, db } = params;
+    const returnedUnit: ReturnedUnit = params.returnedUnit ?? "LINE_UNIT";
     if (!returnedByProduct || returnedByProduct.size === 0) return;
 
     // Idempotency key is (returnId, orderId), not returnId alone (PR-1a/§5): an INLINE
@@ -311,6 +337,97 @@ export class RegulatedLedgerService {
       salesByProduct.get(pid)!.push(s);
     }
 
+    // B660: returned-unit units per LINE unit, per SALE row. 1 everywhere in LINE_UNIT mode (so that
+    // path is byte-identical to before). In PIECES mode a box-unaware boxed line counts BOXES; its
+    // pieces-per-box comes from legacyLinePieces (own split / same-product source line), NEVER the live
+    // product's pack. The live product is used only to notice that a pack exists at all.
+    const pieceFactorByOrderItem = new Map<string, number>();
+    const unknownPackByOrderItem = new Map<string, string>(); // orderItemId -> reason
+    if (returnedUnit === "PIECES") {
+      const orderItemIds = [...new Set(sales.map((s: any) => s.orderItemId).filter(Boolean))];
+      const lines: any[] =
+        orderItemIds.length > 0
+          ? await db.orderItem.findMany({
+              where: { id: { in: orderItemIds } },
+              select: {
+                id: true,
+                productId: true,
+                qty: true,
+                boxes: true,
+                pieces: true,
+                unitsPerBox: true,
+                product: { select: { unitsPerBox: true } },
+              },
+            })
+          : [];
+      const hasSplit = (x: any) => !!x && (x.boxes != null || x.pieces != null);
+      // Factor 1 only for lines WITH a split and for products with no pack at all. A line with NO split and
+      // a pack (its own snapshot > 1, or the live pack > 1) is ambiguous: it always goes through the
+      // classifier (a snapshot with no split is the B644/B656 shape, where qty already counts pieces).
+      const ambiguous = lines.filter(
+        (li) =>
+          !hasSplit(li) &&
+          (Number(li.unitsPerBox ?? 0) > 1 || Number(li.product?.unitsPerBox ?? 0) > 1),
+      );
+      if (ambiguous.length > 0) {
+        // Source precedence: the SALE row's own linked InvoiceItem first (same sale, same product; it may
+        // carry the split), then a same-product sibling order line with a split.
+        const saleOfLine = new Map<string, any>();
+        for (const sr of sales) {
+          if (sr.orderItemId && !saleOfLine.has(sr.orderItemId)) saleOfLine.set(sr.orderItemId, sr);
+        }
+        const invoiceItemIdOf = (li: any): string | undefined =>
+          saleOfLine.get(li.id)?.invoiceItemId ?? undefined;
+        const invIds = [...new Set(ambiguous.map(invoiceItemIdOf).filter(Boolean))] as string[];
+        const invItems: any[] =
+          invIds.length > 0
+            ? await db.invoiceItem.findMany({
+                where: { id: { in: invIds } },
+                select: { id: true, qty: true, boxes: true, pieces: true, unitsPerBox: true },
+              })
+            : [];
+        const invById = new Map<string, any>(invItems.map((x) => [x.id, x]));
+        const needSibling = ambiguous.filter(
+          (li) => !hasSplit(invById.get(invoiceItemIdOf(li) ?? "")),
+        );
+        const siblings: any[] =
+          needSibling.length > 0
+            ? await db.orderItem.findMany({
+                where: {
+                  orderId,
+                  productId: { in: [...new Set(needSibling.map((li) => li.productId))] },
+                  boxes: { not: null },
+                },
+                select: {
+                  productId: true,
+                  qty: true,
+                  boxes: true,
+                  pieces: true,
+                  unitsPerBox: true,
+                },
+              })
+            : [];
+        const asLegacy = (x: any) => ({
+          qty: Number(x.qty),
+          boxes: x.boxes,
+          pieces: x.pieces,
+          unitsPerBox: x.unitsPerBox,
+        });
+        for (const li of ambiguous) {
+          const inv = invById.get(invoiceItemIdOf(li) ?? "");
+          const sibling = siblings.find((x) => x.productId === li.productId);
+          const source = hasSplit(inv) ? inv : (sibling ?? null);
+          const res = legacyLinePieces(asLegacy(li), source && asLegacy(source));
+          if ("unknown" in res) unknownPackByOrderItem.set(li.id, res.reason);
+          else if (Number(li.qty) > 0) {
+            pieceFactorByOrderItem.set(li.id, res.pieces / Number(li.qty));
+          }
+        }
+      }
+    }
+    const pieceFactorOfSale = (s: any): number =>
+      (s.orderItemId ? pieceFactorByOrderItem.get(s.orderItemId) : undefined) ?? 1;
+
     const now = new Date();
     const bucket = periodBucketOf(now);
     const rows: any[] = [];
@@ -327,10 +444,43 @@ export class RegulatedLedgerService {
         // reconcile that rotated the invoice item), not just this row's own qty.
         const rowRemaining = remQtyByLine.get(lk) ?? 0;
         if (rowRemaining <= 0) continue;
+        // B660: the pack of this line is UNKNOWN (no own split, no source line): book nothing for the
+        // product, do not spill its returned pieces onto another row, and alarm.
+        const unknownReason = s.orderItemId ? unknownPackByOrderItem.get(s.orderItemId) : undefined;
+        if (unknownReason) {
+          // PARK it (Senior Architect ruling): only the ledger's units figure waits. The row stores the
+          // TRUE returned pieces still unattributed and the SALE row it will reverse, so the reversal can
+          // book itself once an operator supplies the split. UNIQUE (returnId, saleEntryId) +
+          // skipDuplicates make a retried capture park it once. Still an ERROR log: parking is an alarm.
+          await db.regulatedLedgerParkedReversal.createMany({
+            data: [
+              {
+                tenantId: s.tenantId,
+                returnId,
+                orderId,
+                orderItemId: s.orderItemId,
+                saleEntryId: s.id,
+                returnedPieces: round3(remaining),
+                reason: unknownReason,
+                periodBucket: bucket,
+              },
+            ],
+            skipDuplicates: true,
+          });
+          this.logger.error(
+            `reverseReturnEntries: return ${returnId} order line ${s.orderItemId} has an unknown pack (${unknownReason}); reversal PARKED (needs basis) for product ${productId}`,
+          );
+          break;
+        }
+        // `remaining` is in the RETURNED unit; the line's remaining is in the LINE unit (B660).
+        const factor = pieceFactorOfSale(s);
+        const rowRemainingReturned = rowRemaining * factor;
         // This chunk CLOSES the line when it consumes all of its remaining qty.
-        const closesRow = remaining >= rowRemaining;
-        const r = Math.min(remaining, rowRemaining);
-        remaining -= r;
+        const closesRow = remaining >= rowRemainingReturned;
+        const chunkReturned = Math.min(remaining, rowRemainingReturned);
+        remaining -= chunkReturned;
+        // Back to the line's own unit (exact rowRemaining when the chunk closes the line).
+        const r = closesRow ? rowRemaining : chunkReturned / factor;
         const frac = r / saleQty; // pro-rate off the LIVE row's per-unit snapshot
         const netRem = remNetByLine.get(lk) ?? 0; // remaining line net (>= 0)
         const taxRem = remTaxByLine.get(lk) ?? 0;

@@ -509,6 +509,9 @@ export class ReturnsService {
         returnId: ret.id,
         orderId: ret.orderId,
         returnedByProduct,
+        // B660: a STANDARD return stores the qty the operator typed, in the order line's OWN unit
+        // (boxes for a box-unaware line), so it is unit-consistent with the SALE row.
+        returnedUnit: "LINE_UNIT",
         db: tx,
       });
       // Status already flipped to RECEIVED by the claim above; return the record.

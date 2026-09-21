@@ -241,7 +241,11 @@ describe("InlineReturnsService", () => {
     );
     // Ledger reversal keyed to the SOURCE order, not the carrying order.
     expect(ledger.reverseReturnEntries).toHaveBeenCalledWith(
-      expect.objectContaining({ returnId: "ret-1", orderId: "src-order-1" }),
+      expect.objectContaining({
+        returnId: "ret-1",
+        orderId: "src-order-1",
+        returnedUnit: "PIECES", // B660: INLINE = true pieces
+      }),
     );
     // m-1: mints the priced total (§3.3 total = subtotal+tax+categoryTax).
     expect(creditNotes.mintStandaloneInTx).toHaveBeenCalledWith(
