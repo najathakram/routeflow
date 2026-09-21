@@ -3,6 +3,22 @@
 "use strict";
 
 const BOXED = `p."unitsPerBox" > 1`;
+const UNAWARE = `oi.boxes IS NULL AND oi."unitsPerBox" IS NULL`;
+/** Reversals summed PER ORDER LINE and kind, and one SALE total per line: the sale can never repeat per reversal row. */
+const REV_SALE = `WITH rev AS (
+           SELECT l."tenantId", l."orderItemId", r.kind::text AS kind,
+                  count(*) AS reversal_rows, sum(abs(l."netSales")) AS reversed_net
+           FROM "RegulatedSalesLedger" l JOIN "Return" r ON r.id = l."returnId"
+           WHERE l."entryType" = 'REVERSAL' AND l."orderItemId" IS NOT NULL GROUP BY 1, 2, 3
+         ), sale AS (
+           SELECT s."orderItemId", sum(s."netSales") AS sale_net, sum(s.qty) AS sale_qty
+           FROM "RegulatedSalesLedger" s
+           WHERE s."entryType" = 'SALE' AND s."orderItemId" IN (SELECT "orderItemId" FROM rev) GROUP BY 1
+         )`;
+/** A route-delivered order with a live invoice and no payment on any invoice of it (closed on account). */
+const ON_ACCOUNT_DELIVERED = `o."routeRunId" IS NOT NULL AND o.status IN ('DELIVERED', 'PARTIALLY_DELIVERED')
+           AND EXISTS (SELECT 1 FROM "Invoice" i WHERE i."orderId" = o.id AND i.status <> 'VOID')
+           AND NOT EXISTS (SELECT 1 FROM "Invoice" i JOIN "InvoicePayment" ip ON ip."invoiceId" = i.id WHERE i."orderId" = o.id)`;
 
 const s = (label, sql) => ({ label, sql: sql.trim() });
 
@@ -13,7 +29,7 @@ const QUESTIONS = [
     bug: "B645",
     title: "boxed-product estimates converted to an invoice, then edited",
     approx:
-      "edited = the invoice line was re-created >1 min after its invoice; dollars = invoice line minus estimate line",
+      "edited = the invoice line was re-created >1 min after its invoice; dollars = per (invoice, product) invoice total minus the estimate total (no line key links the two)",
     stmts: [
       s(
         "converted estimates with boxed lines",
@@ -24,14 +40,24 @@ const QUESTIONS = [
       ),
       s(
         "of those, split-less lines re-created after the invoice (12x risk)",
-        `SELECT i."tenantId", count(*)::int AS lines, count(DISTINCT i.id)::int AS invoices,
-                sum(ii.subtotal - ei.subtotal)::numeric(14,2) AS invoice_minus_estimate_dollars
-         FROM "Estimate" e JOIN "Invoice" i ON i.id = e."invoiceId"
-           JOIN "InvoiceItem" ii ON ii."invoiceId" = i.id
-           JOIN "EstimateItem" ei ON ei."estimateId" = e.id AND ei."productId" = ii."productId"
-           JOIN "Product" p ON p.id = ii."productId"
-         WHERE e.status = 'CONVERTED' AND ${BOXED} AND ii.boxes IS NULL
-           AND ii."createdAt" > i."createdAt" + interval '1 minute'
+        // Both sides are summed per (estimate/invoice, product) BEFORE they are joined 1:1, so a product that
+        // repeats on a document can never multiply rows or double-count dollars (review item 3). No line key links
+        // an estimate line to its invoice line, so the conversion link is estimate -> invoice id, then product.
+        `WITH aff AS (
+           SELECT e.id AS estimate_id, e."tenantId", i.id AS invoice_id, ii."productId",
+                  count(*) AS inv_lines, sum(ii.subtotal) AS inv_dollars
+           FROM "Estimate" e JOIN "Invoice" i ON i.id = e."invoiceId"
+             JOIN "InvoiceItem" ii ON ii."invoiceId" = i.id JOIN "Product" p ON p.id = ii."productId"
+           WHERE e.status = 'CONVERTED' AND ${BOXED} AND ii.boxes IS NULL
+             AND ii."createdAt" > i."createdAt" + interval '1 minute'
+           GROUP BY 1, 2, 3, 4
+         ), est AS (
+           SELECT ei."estimateId" AS estimate_id, ei."productId", sum(ei.subtotal) AS est_dollars
+           FROM "EstimateItem" ei WHERE ei."estimateId" IN (SELECT estimate_id FROM aff) GROUP BY 1, 2
+         )
+         SELECT aff."tenantId", sum(aff.inv_lines)::int AS lines, count(DISTINCT aff.invoice_id)::int AS invoices,
+                sum(aff.inv_dollars - coalesce(est.est_dollars, 0))::numeric(14,2) AS invoice_minus_estimate_dollars
+         FROM aff LEFT JOIN est ON est.estimate_id = aff.estimate_id AND est."productId" = aff."productId"
          GROUP BY 1 ORDER BY 4 DESC NULLS LAST`,
       ),
     ],
@@ -249,26 +275,55 @@ const QUESTIONS = [
     bug: "B660",
     title: "regulated ledger REVERSAL rows vs the SALE they reverse, by return path",
     approx:
-      "reversed_pct near 100 on a partial return is the over-reversal signature; standard vs inline is split by Return.kind",
+      "reversals are summed PER ORDER LINE before the sale is joined (one sale per line and kind); reversed_pct near 100 with a partial return is the over-reversal signature. INLINE returns are keyed to the line (ReturnItem.sourceOrderItemId); STANDARD returns store no line key, so they are matched by productId inside the return's order and only when that product is on exactly ONE order line (others are counted as unmatched)",
     stmts: [
       s(
-        "reversal rows on box-unaware boxed lines: share of the SALE net reversed",
-        `SELECT l."tenantId", r.kind::text AS return_kind, count(*)::int AS reversal_rows,
-                sum(abs(l."netSales"))::numeric(14,2) AS reversed_net,
-                sum(sl.net)::numeric(14,2) AS sale_net,
-                round(100 * sum(abs(l."netSales")) / nullif(sum(sl.net), 0), 1) AS reversed_pct,
-                sum(ri.pieces)::numeric AS returned_qty_as_stored,
-                sum(sl.qty)::numeric AS sale_qty
-         FROM "RegulatedSalesLedger" l
-           JOIN "Return" r ON r.id = l."returnId"
-           JOIN "OrderItem" oi ON oi.id = l."orderItemId"
-           JOIN "Product" p ON p.id = oi."productId"
-           JOIN LATERAL (SELECT sum(s."netSales") AS net, sum(s.qty) AS qty FROM "RegulatedSalesLedger" s
-                         WHERE s."entryType" = 'SALE' AND s."orderItemId" = l."orderItemId") sl ON true
-           JOIN LATERAL (SELECT sum(x.qty) AS pieces FROM "ReturnItem" x
-                         WHERE x."returnId" = l."returnId" AND x."productId" = oi."productId") ri ON true
-         WHERE l."entryType" = 'REVERSAL' AND oi.boxes IS NULL AND oi."unitsPerBox" IS NULL AND ${BOXED}
-         GROUP BY 1, 2 ORDER BY 3 DESC`,
+        "box-unaware boxed lines: share of the SALE net reversed, by return kind",
+        `${REV_SALE}
+         SELECT rev."tenantId", rev.kind AS return_kind, count(*)::int AS lines,
+                sum(rev.reversal_rows)::int AS reversal_rows, sum(rev.reversed_net)::numeric(14,2) AS reversed_net,
+                sum(sale.sale_net)::numeric(14,2) AS sale_net,
+                round(100 * sum(rev.reversed_net) / nullif(sum(sale.sale_net), 0), 1) AS reversed_pct,
+                count(*) FILTER (WHERE rev.reversed_net >= sale.sale_net * 0.99)::int AS lines_fully_reversed
+         FROM rev JOIN sale ON sale."orderItemId" = rev."orderItemId"
+           JOIN "OrderItem" oi ON oi.id = rev."orderItemId" JOIN "Product" p ON p.id = oi."productId"
+         WHERE ${UNAWARE} AND ${BOXED} GROUP BY 1, 2 ORDER BY 3 DESC`,
+      ),
+      s(
+        "INLINE returns (exact line key): fully reversed although fewer pieces came back than were sold",
+        `${REV_SALE},
+         ret AS (
+           SELECT x."sourceOrderItemId" AS "orderItemId", sum(x.qty) AS returned_pieces
+           FROM "ReturnItem" x JOIN "Return" r ON r.id = x."returnId"
+           WHERE r.kind::text = 'INLINE' AND x."sourceOrderItemId" IN (SELECT "orderItemId" FROM rev) GROUP BY 1
+         )
+         SELECT rev."tenantId", count(*)::int AS lines, sum(ret.returned_pieces)::numeric AS returned_pieces,
+                sum(sale.sale_qty * p."unitsPerBox")::numeric AS sold_pieces_if_sale_qty_is_boxes,
+                count(*) FILTER (WHERE rev.reversed_net >= sale.sale_net * 0.99
+                                   AND ret.returned_pieces < sale.sale_qty * p."unitsPerBox")::int AS fully_reversed_but_partly_returned,
+                count(*) FILTER (WHERE ret.returned_pieces IS NULL)::int AS unmatched_lines
+         FROM rev JOIN sale ON sale."orderItemId" = rev."orderItemId" LEFT JOIN ret ON ret."orderItemId" = rev."orderItemId"
+           JOIN "OrderItem" oi ON oi.id = rev."orderItemId" JOIN "Product" p ON p.id = oi."productId"
+         WHERE rev.kind = 'INLINE' AND ${UNAWARE} AND ${BOXED} GROUP BY 1 ORDER BY 2 DESC`,
+      ),
+      s(
+        "STANDARD returns (matched by product within the order; single-line products only): same test in the line's own unit",
+        `${REV_SALE},
+         ret AS (
+           SELECT oi.id AS "orderItemId", sum(x.qty) AS returned_qty
+           FROM "ReturnItem" x JOIN "Return" r ON r.id = x."returnId" AND r.kind::text = 'STANDARD'
+             JOIN "OrderItem" oi ON oi."orderId" = r."orderId" AND oi."productId" = x."productId"
+           WHERE oi.id IN (SELECT "orderItemId" FROM rev)
+             AND (SELECT count(*) FROM "OrderItem" o2 WHERE o2."orderId" = oi."orderId" AND o2."productId" = oi."productId") = 1
+           GROUP BY 1
+         )
+         SELECT rev."tenantId", count(*)::int AS lines, sum(ret.returned_qty)::numeric AS returned_qty_line_unit,
+                sum(sale.sale_qty)::numeric AS sale_qty,
+                count(*) FILTER (WHERE rev.reversed_net >= sale.sale_net * 0.99 AND ret.returned_qty < sale.sale_qty)::int AS fully_reversed_but_partly_returned,
+                count(*) FILTER (WHERE ret.returned_qty IS NULL)::int AS unmatched_lines
+         FROM rev JOIN sale ON sale."orderItemId" = rev."orderItemId" LEFT JOIN ret ON ret."orderItemId" = rev."orderItemId"
+           JOIN "OrderItem" oi ON oi.id = rev."orderItemId" JOIN "Product" p ON p.id = oi."productId"
+         WHERE rev.kind = 'STANDARD' AND ${UNAWARE} AND ${BOXED} GROUP BY 1 ORDER BY 2 DESC`,
       ),
     ],
   },
@@ -277,27 +332,34 @@ const QUESTIONS = [
     bug: "B663",
     title: "deliveries closed on account (no payment) with a short or refused line",
     approx:
-      "delivered-basis dollars are qty x unitPrice: exact for non-boxed lines only, so boxed lines are counted separately and excluded from the delta",
+      "OrderItem.deliveredQty is NOT NULL DEFAULT 0, so 'delivered 0' (refused) cannot be told from 'never recorded': the two buckets are reported SEPARATELY. Bucket 1 (0 < deliveredQty < qty) is unambiguous evidence of a recorded short. Delivered-basis dollars are qty x unitPrice: exact for non-boxed lines only, so boxed lines are counted separately",
     stmts: [
       s(
-        "orders with an unpaid invoice and a short/refused non-boxed line: invoice subtotal vs delivered-basis",
+        "bucket 1 (recorded short, non-boxed): dollars billed at the ordered qty beyond what was delivered",
         `SELECT o."tenantId", count(DISTINCT o.id)::int AS orders, count(*)::int AS short_lines,
-                sum(oi.qty * oi."unitPrice" - oi."deliveredQty" * oi."unitPrice")::numeric(14,2) AS overbilled_if_invoice_at_ordered_qty
+                sum((oi.qty - oi."deliveredQty") * oi."unitPrice")::numeric(14,2) AS overbilled_if_invoice_at_ordered_qty
          FROM "Order" o JOIN "OrderItem" oi ON oi."orderId" = o.id LEFT JOIN "Product" p ON p.id = oi."productId"
-         WHERE o."routeRunId" IS NOT NULL AND o.status IN ('DELIVERED', 'PARTIALLY_DELIVERED')
-           AND oi."deliveredQty" IS NOT NULL AND oi."deliveredQty" < oi.qty AND (p."unitsPerBox" IS NULL OR p."unitsPerBox" <= 1)
-           AND EXISTS (SELECT 1 FROM "Invoice" i WHERE i."orderId" = o.id AND i.status <> 'VOID')
-           AND NOT EXISTS (SELECT 1 FROM "Invoice" i JOIN "InvoicePayment" ip ON ip."invoiceId" = i.id WHERE i."orderId" = o.id)
+         WHERE ${ON_ACCOUNT_DELIVERED} AND oi.status <> 'CANCELLED'
+           AND oi."deliveredQty" > 0 AND oi."deliveredQty" < oi.qty AND (p."unitsPerBox" IS NULL OR p."unitsPerBox" <= 1)
          GROUP BY 1 ORDER BY 4 DESC NULLS LAST`,
       ),
       s(
-        "same, boxed lines (counted only)",
-        `SELECT o."tenantId", count(DISTINCT o.id)::int AS orders, count(*)::int AS short_boxed_lines
+        "bucket 2 (deliveredQty = 0: REFUSED or NEVER RECORDED, indistinguishable; split by a DeliveryMutation row on the line)",
+        `SELECT o."tenantId", count(DISTINCT o.id)::int AS orders, count(*)::int AS zero_delivered_lines,
+                count(*) FILTER (WHERE EXISTS (SELECT 1 FROM "DeliveryMutation" dm WHERE dm."orderItemId" = oi.id))::int AS with_delivery_mutation,
+                sum(oi.qty * oi."unitPrice") FILTER (WHERE EXISTS (SELECT 1 FROM "DeliveryMutation" dm WHERE dm."orderItemId" = oi.id))::numeric(14,2) AS dollars_with_mutation,
+                sum(oi.qty * oi."unitPrice")::numeric(14,2) AS dollars_all_zero_delivered
+         FROM "Order" o JOIN "OrderItem" oi ON oi."orderId" = o.id LEFT JOIN "Product" p ON p.id = oi."productId"
+         WHERE ${ON_ACCOUNT_DELIVERED} AND oi.status <> 'CANCELLED'
+           AND oi."deliveredQty" = 0 AND oi.qty > 0 AND (p."unitsPerBox" IS NULL OR p."unitsPerBox" <= 1)
+         GROUP BY 1 ORDER BY 6 DESC NULLS LAST`,
+      ),
+      s(
+        "boxed lines, both buckets (counted only)",
+        `SELECT o."tenantId", count(DISTINCT o.id)::int AS orders, count(*)::int AS short_boxed_lines,
+                count(*) FILTER (WHERE oi."deliveredQty" = 0)::int AS zero_delivered
          FROM "Order" o JOIN "OrderItem" oi ON oi."orderId" = o.id JOIN "Product" p ON p.id = oi."productId"
-         WHERE o."routeRunId" IS NOT NULL AND o.status IN ('DELIVERED', 'PARTIALLY_DELIVERED')
-           AND oi."deliveredQty" IS NOT NULL AND oi."deliveredQty" < oi.qty AND ${BOXED}
-           AND EXISTS (SELECT 1 FROM "Invoice" i WHERE i."orderId" = o.id AND i.status <> 'VOID')
-           AND NOT EXISTS (SELECT 1 FROM "Invoice" i JOIN "InvoicePayment" ip ON ip."invoiceId" = i.id WHERE i."orderId" = o.id)
+         WHERE ${ON_ACCOUNT_DELIVERED} AND oi.status <> 'CANCELLED' AND oi."deliveredQty" < oi.qty AND ${BOXED}
          GROUP BY 1 ORDER BY 2 DESC`,
       ),
     ],
@@ -356,14 +418,19 @@ const QUESTIONS = [
     stmts: [
       s(
         "RETURN stock movements from standard returns against box-unaware boxed lines",
+        // Each movement is counted ONCE: order lines are tested with EXISTS, never joined, so several order lines
+        // of one product cannot multiply restocked_qty or the deficit (review item 4). A product that is on both a
+        // box-aware and a box-unaware line of the same order is ambiguous and excluded.
         `SELECT m."tenantId", count(DISTINCT m.id)::int AS movements, sum(m.quantity)::numeric AS restocked_qty,
                 sum(m.quantity * (p."unitsPerBox" - 1))::numeric AS deficit_pieces_if_typed_in_boxes
          FROM "StockMovement" m
            JOIN "Return" r ON m.reference = 'RET-' || left(r.id::text, 8) AND r.kind::text = 'STANDARD'
-           JOIN "Order" o ON o.id = r."orderId"
-           JOIN "OrderItem" oi ON oi."orderId" = o.id AND oi."productId" = m."productId"
            JOIN "Product" p ON p.id = m."productId"
-         WHERE m.type::text = 'RETURN' AND oi.boxes IS NULL AND oi."unitsPerBox" IS NULL AND ${BOXED}
+         WHERE m.type::text = 'RETURN' AND ${BOXED}
+           AND EXISTS (SELECT 1 FROM "OrderItem" oi WHERE oi."orderId" = r."orderId" AND oi."productId" = m."productId"
+                         AND oi.boxes IS NULL AND oi."unitsPerBox" IS NULL)
+           AND NOT EXISTS (SELECT 1 FROM "OrderItem" oa WHERE oa."orderId" = r."orderId" AND oa."productId" = m."productId"
+                         AND (oa.boxes IS NOT NULL OR oa."unitsPerBox" IS NOT NULL))
          GROUP BY 1 ORDER BY 2 DESC`,
       ),
     ],
@@ -373,9 +440,17 @@ const QUESTIONS = [
 const READ_ONLY = /^\s*(select|with)\b/i;
 const WRITES =
   /\b(insert|update|delete|truncate|alter|create|drop|grant|revoke|copy|merge|call|do)\b/i;
-/** Every statement must be a SELECT/WITH with no write keyword (checked again by the spec). */
+/** Transaction control has no place inside a report statement (a lone END is impossible: no ";" and SELECT/WITH only). */
+const TX_CONTROL =
+  /\b(commit|rollback|abort|begin|savepoint|release|start\s+transaction|set\s+(transaction|session|local|role))\b/i;
+/** Every statement: ONE SELECT/WITH, no semicolon, no transaction control, no write keyword (the spec re-checks). */
 function assertReadOnly(sql) {
-  if (!READ_ONLY.test(sql) || WRITES.test(sql.replace(/"[^"]*"/g, '""').replace(/'[^']*'/g, "''")))
+  const bare = sql.replace(/"[^"]*"/g, '""').replace(/'[^']*'/g, "''");
+  if (bare.includes(";"))
+    throw new Error(`refusing a statement containing a semicolon: ${sql.slice(0, 80)}`);
+  if (TX_CONTROL.test(bare))
+    throw new Error(`refusing transaction control in a statement: ${sql.slice(0, 80)}`);
+  if (!READ_ONLY.test(sql) || WRITES.test(bare))
     throw new Error(`refusing non-read-only statement: ${sql.slice(0, 80)}`);
 }
 
@@ -387,22 +462,30 @@ function parseOnly(arg) {
   return new Set(ns);
 }
 
-/** Run the questions on an already-connected `client`; `log` receives every output line. Never writes. */
+/**
+ * Run the questions on an already-connected `client`. `log` receives the DETAIL lines (they hold tenant and
+ * product ids: the caller writes them to a private file). Returns an id-free SUMMARY for stdout. Never writes.
+ */
 async function runReport(
   client,
-  { only = null, cap = 100, timeoutMs = 30000 } = {},
+  { only = null, cap = 100, timeoutMs = 30000, lockTimeoutMs = 2000 } = {},
   log = console.log,
 ) {
-  await client.query("BEGIN READ ONLY");
+  const summary = [];
   try {
+    await client.query("BEGIN READ ONLY");
     await client.query(`SET LOCAL statement_timeout = ${timeoutMs}`);
+    await client.query(`SET LOCAL lock_timeout = ${lockTimeoutMs}`);
     for (const q of QUESTIONS) {
       if (only && !only.has(q.n)) continue;
       log(`\n== question ${q.n} (${q.bug}): ${q.title}`);
       if (q.approx) log(`   approx: ${q.approx}`);
+      const sq = { n: q.n, bug: q.bug, statements: 0, rows: 0, failed: 0, capped: 0 };
+      summary.push(sq);
       let idx = 0;
       for (const st of q.stmts) {
         const sp = `q${q.n}_${idx++}`;
+        sq.statements++;
         try {
           await client.query(`SAVEPOINT ${sp}`);
           const { rows } = await client.query(
@@ -410,17 +493,31 @@ async function runReport(
           );
           await client.query(`RELEASE SAVEPOINT ${sp}`);
           const capped = rows.length > cap;
+          sq.rows += Math.min(rows.length, cap);
+          if (capped) sq.capped++;
           log(`   -- ${st.label}: ${capped ? `${cap}+ rows (CAPPED)` : `${rows.length} row(s)`}`);
           for (const r of rows.slice(0, cap)) log(`   ${JSON.stringify(r)}`);
         } catch (e) {
+          sq.failed++;
           await client.query(`ROLLBACK TO SAVEPOINT ${sp}`).catch(() => undefined);
           log(`   question ${q.n}: FAILED (${st.label}) ${String(e.message).split("\n")[0]}`);
         }
       }
     }
+    return summary;
   } finally {
     await client.query("ROLLBACK").catch(() => undefined);
   }
 }
 
-module.exports = { QUESTIONS, assertReadOnly, parseOnly, runReport };
+/** Connect, run, and ALWAYS close the client (also when BEGIN or a SET fails: then no question has run). */
+async function execute(client, opts, log) {
+  try {
+    await client.connect();
+    return await runReport(client, opts, log);
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+}
+
+module.exports = { QUESTIONS, assertReadOnly, parseOnly, runReport, execute };
