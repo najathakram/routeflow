@@ -218,7 +218,7 @@ export function FeatureConsole({
   // gate and the loading/error/empty early returns come only after all of them are declared.
   if (!currentRoleIsSuperAdmin()) {
     return (
-      <p className="text-sm text-slate-500">Feature console is available to super admins only.</p>
+      <p className="text-sm text-slate-400">Feature console is available to super admins only.</p>
     );
   }
 
@@ -272,7 +272,7 @@ export function FeatureConsole({
   }
 
   if (loading) {
-    return <div className="py-8 text-center text-slate-500">Loading feature console...</div>;
+    return <div className="py-8 text-center text-slate-400">Loading feature console...</div>;
   }
 
   if (loadError) {
@@ -285,7 +285,7 @@ export function FeatureConsole({
 
   if (!registry || registry.length === 0) {
     return (
-      <div className="rounded-lg bg-slate-800 px-4 py-8 text-center text-sm text-slate-500 ring-1 ring-white/5">
+      <div className="rounded-lg bg-slate-800 px-4 py-8 text-center text-sm text-slate-400 ring-1 ring-white/5">
         No features are registered yet.
       </div>
     );
@@ -325,7 +325,7 @@ export function FeatureConsole({
                 : "Preview tier change"}
           </button>
         </div>
-        <div className="flex items-center gap-3 text-xs text-slate-500">
+        <div className="flex items-center gap-3 text-xs text-slate-400">
           {entitlementsMode === "shadow" && (
             <span className="rounded px-1.5 py-0.5 ring-1 ring-slate-600/40">
               Preview mode — no customer changes yet
@@ -356,7 +356,7 @@ export function FeatureConsole({
       {/* Body: registry rows grouped by area */}
       {groups.map(([area, rows]) => (
         <div key={area} className="mb-6">
-          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
             {area}
           </h3>
           <div className="flex flex-col gap-2">
@@ -393,7 +393,7 @@ export function FeatureConsole({
                         )}
                         <span
                           className={
-                            feature?.serving ? "text-emerald-400 text-xs" : "text-slate-500 text-xs"
+                            feature?.serving ? "text-emerald-400 text-xs" : "text-slate-400 text-xs"
                           }
                         >
                           {feature?.serving ? "On" : "Off"}
@@ -518,7 +518,7 @@ function ModeSelector({
   const isMixed = mode.effective === "mixed";
   return (
     <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-slate-700 pt-3">
-      <span className="text-xs text-slate-500">Mode:</span>
+      <span className="text-xs text-slate-400">Mode:</span>
       {isMixed && (
         <span className="rounded bg-purple-900/40 px-1.5 py-0.5 text-[10px] font-medium text-purple-300 ring-1 ring-purple-600/30">
           {MIXED_LABEL}
@@ -533,7 +533,7 @@ function ModeSelector({
               key={option.key}
               title={blocked ? (blockedReason(option, effectiveKeys) ?? undefined) : undefined}
               className={`flex items-center gap-1.5 text-xs ${
-                blocked ? "cursor-not-allowed text-slate-600" : "text-slate-300"
+                blocked ? "cursor-not-allowed text-slate-400" : "text-slate-300"
               }`}
             >
               <input

@@ -151,4 +151,19 @@ describe("platform-admin a11y — controls carry an accessible name (A3 F1/F2/F3
     const wrapped = "<label>Name <input/><select>";
     expect(isNamed(f(wrapped), openingTags(wrapped, "select")[0])).toBe(false); // only the FIRST control is named
   });
+
+  // axe `color-contrast`: #64748b (slate-500) on the slate-800 cards is 3.07:1 and #475569
+  // (slate-600) is 1.93:1 — both below WCAG AA's 4.5:1 for body text. Secondary text on this dark
+  // console is slate-400 (5.7:1) or lighter; a new slate-500/600 text colour would bring back the
+  // ~130 failing nodes the A3 audit found on every page.
+  it("no text-slate-500 / text-slate-600 text colour (fails AA on the dark console surfaces)", () => {
+    const bad = files.flatMap((f) =>
+      f.src
+        .split("\n")
+        .map((l, i) => ({ l, n: i + 1 }))
+        .filter(({ l }) => /(?<![\w:-])text-slate-(500|600)\b/.test(l))
+        .map(({ n }) => `${f.rel}:${n}`),
+    );
+    expect(bad).toEqual([]);
+  });
 });

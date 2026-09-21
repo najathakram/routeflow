@@ -1,4 +1,7 @@
 import type { CreateInvoiceDto } from "./dto/create-invoice.dto";
+import type { ResolvedLineUnits } from "../products/line-units";
+import { isUnitAware } from "../orders/unit-line-build";
+import { buildInvoiceUnitLine } from "./invoice-unit-line";
 import {
   computeCategoryTax,
   computeLineSubtotal,
@@ -21,12 +24,31 @@ export function buildManualInvoiceLines(
     categoryMap: ReadonlyMap<string, any>;
     tenantId: string | null | undefined;
     clampFreeUnits: (free: number | undefined, boxes: number | null, qty: number) => number;
+    /** units_v1: `resolveLineUnits` per item, index-aligned with `items` (the caller resolves). */
+    resolved?: ReadonlyArray<ResolvedLineUnits>;
   },
 ) {
-  const { productMap, categoryMap, tenantId, clampFreeUnits } = ctx;
+  const { productMap, categoryMap, tenantId, clampFreeUnits, resolved } = ctx;
   let subtotal = 0;
-  const itemsData = items.map((item) => {
+  const itemsData = items.map((item, index) => {
     const product = item.productId ? productMap.get(item.productId) : undefined;
+    // units_v1 (4c-1): a non-pack unit is built from the SERVER ladder's factor; the pack falls
+    // through to the unchanged branch below.
+    const unitResolution = resolved?.[index];
+    if (product && unitResolution && isUnitAware(unitResolution)) {
+      const category = product.trackedCategoryId
+        ? categoryMap.get(product.trackedCategoryId)
+        : null;
+      const unitLine = buildInvoiceUnitLine({
+        item,
+        product,
+        resolved: unitResolution,
+        category,
+        tenantId,
+      });
+      subtotal += unitLine.subtotal;
+      return unitLine;
+    }
     let qty = item.qty;
     let boxes: number | null = null;
     let pieces: number | null = null;

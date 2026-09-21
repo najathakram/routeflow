@@ -80,8 +80,10 @@ test.describe("Operator — Boxed order entry (WP2-13)", () => {
       .click();
     const title = page.getByRole("heading", { name: "Create Order" });
     await expect(title).toBeVisible({ timeout: 10_000 });
-    // First row, data-agnostic: "e" matches most seeded business names.
-    await page.getByPlaceholder("Search by business name…").fill("e");
+    // A known seeded customer (e2e-seed.js FIXTURE_CUSTOMERS) BY EXACT NAME, not "the first row for
+    // 'e'": that depended on customer creation order (the seeded approved buyer's customer also
+    // contains an "e").
+    await page.getByPlaceholder("Search by business name…").fill("E2E Fixture Deli Three");
     await page
       .locator('input[placeholder="Search by business name…"] ~ ul li button')
       .first()
@@ -216,7 +218,7 @@ test.describe("Operator — Boxed order entry (WP2-13)", () => {
   }
 
   async function readLineTotal(row: Locator): Promise<number> {
-    const text = (await row.locator("span.w-16").innerText()).trim();
+    const text = (await row.getByTestId("line-total").innerText()).trim();
     const value = parseFloat(text.replace(/[$,]/g, ""));
     expect(Number.isNaN(value), `line total text was not a number: "${text}"`).toBe(false);
     return value;

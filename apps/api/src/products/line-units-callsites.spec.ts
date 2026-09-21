@@ -37,6 +37,7 @@ const NON_WRITERS = new Set([
   "products/products.service.ts",
   "products/product-units.service.ts",
   "products/line-units.ts",
+  "orders/unit-line-build.ts", // copies unit/unitsPerBox into the ladder base; never derives a factor
   "regulated/tx-report.ts",
 ]);
 

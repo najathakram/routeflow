@@ -315,7 +315,8 @@ export default function BuyerCartPage() {
 
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Items */}
-        <div className="lg:col-span-2">
+        {/* min-w-0: below lg the grid is one auto column, which grew to the items table's 640px min-width and made the whole page (and the refusal banner) scroll sideways at 390px. */}
+        <div className="min-w-0 lg:col-span-2">
           <div className="rounded-xl border border-surface-border bg-white overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full min-w-[640px]">
@@ -512,7 +513,7 @@ export default function BuyerCartPage() {
         </div>
 
         {/* Order options + summary */}
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           {/* Options */}
           <div className="rounded-xl border border-surface-border bg-white p-4 space-y-4">
             <h3 className="text-sm font-semibold text-navy">Order Options</h3>

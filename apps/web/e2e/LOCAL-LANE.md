@@ -44,6 +44,17 @@ and unsets `CI`. To run a subset by hand, use the same wrapper directly:
 node scripts/local-env.mjs --e2e -- "npm --prefix apps/web run test:e2e -- --project=setup --project=critical-paths"
 ```
 
+### The setup guard (fail-closed)
+
+`PLAYWRIGHT_BASE_URL` has **no default**: unset/empty aborts the run (it used to resolve to
+production). The `setup` project (the auth mint) additionally refuses unless the target parses as
+`http(s)://localhost|127.0.0.1|[::1]` and the tenant passes `assertTestTenant` — see
+`apps/web/lib/e2e-setup-guard.ts` (table-tested in `e2e-setup-guard.test.ts`). A non-local target
+is human-only: it runs only on GitHub Actions (`GITHUB_ACTIONS=true`, so post-deploy/nightly are
+unchanged) or when a human sets `E2E_ALLOW_REMOTE_AUTH=1` for that run. **An agent never sets that
+variable and never targets a non-local host** — a refusal is the guard working, not a bug to route
+around.
+
 ## The allow-list (`local:e2e`)
 
 `setup` plus the money/guard projects, trimmed to stay ≤ 10 min wall clock on this machine:

@@ -117,7 +117,7 @@ export default function MergeRequestsPage() {
                 </span>
               )}
             </div>
-            <p className="text-xs text-slate-500">{total} total</p>
+            <p className="text-xs text-slate-400">{total} total</p>
           </div>
         </div>
         <div className="ml-auto flex items-center gap-3">
@@ -145,11 +145,11 @@ export default function MergeRequestsPage() {
             <Loader2 className="h-8 w-8 animate-spin text-indigo-400" />
           </div>
         ) : requests.length === 0 ? (
-          <div className="py-16 text-center text-slate-500">No merge requests found.</div>
+          <div className="py-16 text-center text-slate-400">No merge requests found.</div>
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
+              <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-400">
                 <th className="px-4 py-3 text-left">Primary Account</th>
                 <th className="px-4 py-3 text-left">Secondary Account</th>
                 <th className="px-4 py-3 text-left">Initiated By</th>
@@ -165,18 +165,18 @@ export default function MergeRequestsPage() {
                     <p className="font-medium text-white">
                       {req.primaryAccount.name ?? req.primaryAccount.email}
                     </p>
-                    <p className="text-xs text-slate-500">{req.primaryAccount.email}</p>
+                    <p className="text-xs text-slate-400">{req.primaryAccount.email}</p>
                   </td>
                   <td className="px-4 py-3">
                     <p className="font-medium text-white">
                       {req.secondaryAccount.name ?? req.secondaryAccount.email}
                     </p>
-                    <p className="text-xs text-slate-500">{req.secondaryAccount.email}</p>
+                    <p className="text-xs text-slate-400">{req.secondaryAccount.email}</p>
                   </td>
                   <td className="px-4 py-3 text-slate-400">
                     <p>{INITIATOR_LABELS[req.initiatedBy] ?? req.initiatedBy}</p>
                     {req.initiatingTenant && (
-                      <p className="text-xs text-slate-500">{req.initiatingTenant.name}</p>
+                      <p className="text-xs text-slate-400">{req.initiatingTenant.name}</p>
                     )}
                   </td>
                   <td className="px-4 py-3">
@@ -186,7 +186,7 @@ export default function MergeRequestsPage() {
                       {req.status.replace(/_/g, " ")}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-slate-500 text-xs">
+                  <td className="px-4 py-3 text-slate-400 text-xs">
                     {new Date(req.createdAt).toLocaleDateString()}
                   </td>
                   <td className="px-4 py-3">
