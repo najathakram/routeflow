@@ -11,8 +11,8 @@ import * as path from "path";
 const API = path.join(__dirname, "..", "..");
 const MIG = path.join(API, "prisma", "migrations");
 const read = (dir: string) => fs.readFileSync(path.join(MIG, dir, "migration.sql"), "utf8");
-const PART1 = "20260920200000_t6_tenantid_check_not_valid";
-const PART2 = "20260920200100_t6_tenantid_check_validate";
+const PART1 = "20260920220000_t6_tenantid_check_not_valid";
+const PART2 = "20260920220100_t6_tenantid_check_validate";
 
 // The 19 that need a backfill first and the 6 that stay nullable by design: NEVER in these migrations.
 const NOT_YET = [
