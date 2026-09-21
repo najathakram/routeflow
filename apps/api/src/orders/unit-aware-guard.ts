@@ -15,7 +15,8 @@ import { ConflictException, ForbiddenException } from "@nestjs/common";
  * fails the build if any listed rewrite path stops calling this. Converting a path means deleting
  * its guard call in the same PR that makes it unit-aware and updating that spec.
  *
- * Nothing can create a unit-aware line yet (no DTO accepts `unitLabel`), so this is inert today.
+ * Order create (4b-2b) and manual-invoice create (4c-1) now mint unit-aware lines (behind flag.units_v1);
+ * every REWRITE path stays fenced here until it is converted.
  */
 export const UNIT_AWARE_LINE = "UNIT_AWARE_LINE";
 
