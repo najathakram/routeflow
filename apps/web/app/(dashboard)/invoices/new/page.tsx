@@ -404,6 +404,20 @@ function createEmptyItem(): LineItemState {
   };
 }
 
+/**
+ * B664: only unitsPerBox > 1 is real box packaging. A product can carry unitsPerBox = 1
+ * (the DTO has no minimum), and a truthy check alone (`upb ? … : undefined`) seeds a line
+ * with boxes:1/pieces:0/unitsPerBox:1 for it — on the server, `manual-invoice-lines.ts`
+ * re-derives quantity from those boxes/pieces via `normalizeBoxesPieces` and, because
+ * `pricing.ts`'s own `hasBoxPackaging` is also `upb > 1`, stores the line at qty 0 / $0.
+ * The edit form's hydrate already guards with `> 1` (see its onChange callback); this
+ * mirrors that so the new-invoice form never sends boxes/pieces for a degenerate upb.
+ */
+function boxedUnitsPerBox(value: unknown): number | undefined {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 1 ? n : undefined;
+}
+
 function lineTotal(item: LineItemState): number {
   // Use the shared boxed-proration helper (same as the backend + order builder).
   // A plain qty*unitPrice OVER-charges boxed lines by unitsPerBox, because qty is
@@ -862,7 +876,7 @@ export default function NewInvoicePage() {
    * (or 1 unit) — same ergonomics as the order scan flow.
    */
   function addProductFromCatalog(product: any) {
-    const upb = product.unitsPerBox ? Number(product.unitsPerBox) : undefined;
+    const upb = boxedUnitsPerBox(product.unitsPerBox);
     const listPrice = parseFloat(String(product.pricePerUnit ?? 0));
     // Per-product tier override first, then the customer's own tier ladder —
     // a Tier-3 customer previously billed at LIST on every catalog add here.
@@ -1804,7 +1818,7 @@ export default function NewInvoicePage() {
                           const specialPrice = pid ? priceMap[pid] : undefined;
                           const effectivePrice =
                             specialPrice ?? (price ? parseFloat(price) : item.unitPrice);
-                          const upb = unitsPerBox ?? undefined;
+                          const upb = boxedUnitsPerBox(unitsPerBox);
                           updateItem(item.key, {
                             description: desc,
                             productId: pid || undefined,
@@ -2147,7 +2161,7 @@ export default function NewInvoicePage() {
           if (createProductTargetIdx !== null) {
             // Real box size so a just-created boxed product gets the Boxes+Pcs
             // editor — mirrors the ProductSearchInput onChange handler above.
-            const upb = product.unitsPerBox ?? undefined;
+            const upb = boxedUnitsPerBox(product.unitsPerBox);
             setItems((prev) =>
               prev.map((item, i) =>
                 i === createProductTargetIdx
