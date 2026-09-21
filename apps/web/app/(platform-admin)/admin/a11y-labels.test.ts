@@ -174,4 +174,42 @@ describe("platform-admin a11y — controls carry an accessible name (A3 F1/F2/F3
     );
     expect(bad).toEqual([]);
   });
+
+  // A3 F8: a control disabled for a reason the user cannot see. Each site below renders a
+  // <DisabledHint id="X"> and points the control's aria-describedby at the same id, in the same
+  // file. (The other ~60 `disabled` sites are pending-state or pagination bounds: self-evident.)
+  const REASONED_DISABLED: Array<[string, string]> = [
+    [path.join("admin", "tenants", "[id]", "page.tsx"), "feature-override-hint"],
+    [
+      path.join("admin", "tenants", "[id]", "_features", "ConfigSnapshotsTab.tsx"),
+      "restore-nothing-hint",
+    ],
+    [
+      path.join("admin", "tenants", "[id]", "_features", "PreviewDrawer.tsx"),
+      "preview-empty-reason",
+    ],
+    [path.join("admin", "buyers", "merge-requests", "[id]", "page.tsx"), "mr-notes-hint"],
+    [path.join("admin", "settings", "page.tsx"), "test-connection-hint"],
+    [path.join("admin", "billing", "page.tsx"), "export-csv-hint"],
+  ];
+  it.each(REASONED_DISABLED)("%s explains why a control is disabled (%s)", (rel, id) => {
+    const f = files.find((x) => x.rel === rel);
+    expect(f).toBeDefined();
+    expect(f!.src).toContain(`aria-describedby={`); // some control is described
+    expect(f!.src).toContain(`"${id}"`); // by this id
+    const declared = new RegExp(`(<DisabledHint\\s+id="${id}"|\\bid="${id}")`).test(f!.src);
+    expect({ rel, id, declared }).toEqual({ rel, id, declared: true });
+  });
+
+  // A3 F9: an error banner must be announced. The red banner pattern of the console
+  // (`bg-red-900/40 … text-red-400`) has to carry role="alert".
+  it("every red error banner div carries role=alert", () => {
+    const bad = files.flatMap((f) =>
+      openingTags(f.src, "div")
+        .filter((t) => /bg-red-900\/40/.test(t.text) && /text-red-400/.test(t.text))
+        .filter((t) => !/role="alert"/.test(t.text))
+        .map((t) => `${f.rel}:${t.line}`),
+    );
+    expect(bad).toEqual([]);
+  });
 });

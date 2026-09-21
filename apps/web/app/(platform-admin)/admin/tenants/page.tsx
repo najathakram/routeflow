@@ -289,7 +289,10 @@ export default function AdminTenantsPage() {
     <div className="p-6">
       {/* Action error banner */}
       {actionError && (
-        <div className="mb-4 flex items-center justify-between rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700">
+        <div
+          role="alert"
+          className="mb-4 flex items-center justify-between rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700"
+        >
           <span>{actionError}</span>
           <button
             onClick={() => setActionError(null)}
@@ -464,7 +467,10 @@ export default function AdminTenantsPage() {
         }
       >
         {bulkError && (
-          <div className="mb-3 rounded-lg bg-red-900/40 px-3 py-2 text-sm text-red-400 ring-1 ring-red-700">
+          <div
+            role="alert"
+            className="mb-3 rounded-lg bg-red-900/40 px-3 py-2 text-sm text-red-400 ring-1 ring-red-700"
+          >
             {bulkError}
           </div>
         )}
@@ -522,7 +528,10 @@ export default function AdminTenantsPage() {
       >
         <div className="space-y-3">
           {actionError && (
-            <div className="rounded-lg bg-red-900/40 px-3 py-2 text-sm text-red-400 ring-1 ring-red-700">
+            <div
+              role="alert"
+              className="rounded-lg bg-red-900/40 px-3 py-2 text-sm text-red-400 ring-1 ring-red-700"
+            >
               {actionError}
             </div>
           )}
@@ -550,7 +559,10 @@ export default function AdminTenantsPage() {
 
       {loading && <div className="text-center text-slate-400 py-12">Loading tenants...</div>}
       {error && (
-        <div className="rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700 mb-4">
+        <div
+          role="alert"
+          className="rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700 mb-4"
+        >
           {error}
         </div>
       )}
