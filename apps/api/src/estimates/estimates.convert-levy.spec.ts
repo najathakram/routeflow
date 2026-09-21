@@ -20,6 +20,14 @@ const category = (rate: number) => ({
   rate,
   priceIncludesTax: false,
 });
+// EXCISE_PER_UNIT: rate x unitBasisQty (the piece count) — orthogonal to how the
+// price is prorated across boxes (B659 review finding 2).
+const perUnitCategory = (rate: number) => ({
+  id: "cat-1",
+  taxType: "EXCISE_PER_UNIT",
+  rate,
+  priceIncludesTax: false,
+});
 const regulatedProduct = (over: Record<string, unknown> = {}) => ({
   id: "p-reg",
   unit: "pack",
@@ -79,25 +87,32 @@ describe("EstimatesService.convertToInvoice — regulated levy and quoted pack (
     exempt?: boolean;
     subtotal?: number;
     taxAmount?: number;
+    discount?: number;
+    total?: number;
     products?: any[];
     rate?: number;
+    category?: Record<string, unknown>;
   }) => {
     const subtotal = opts.subtotal ?? 100;
+    const taxAmount = opts.taxAmount ?? 0;
+    const discount = opts.discount ?? 0;
     prisma.estimate.findUnique.mockResolvedValue({
       id: "est-1",
       status: "ACCEPTED",
       customerId: "cust-1",
       customer: { isTaxExempt: !!opts.exempt },
       subtotal,
-      taxAmount: opts.taxAmount ?? 0,
-      discount: 0,
-      total: subtotal + (opts.taxAmount ?? 0),
+      taxAmount,
+      discount,
+      total: opts.total ?? subtotal - discount + taxAmount,
       notes: null,
       terms: null,
       items: opts.items,
     });
     prisma.product.findMany.mockResolvedValue(opts.products ?? [regulatedProduct()]);
-    prisma.trackedCategory.findMany.mockResolvedValue([category(opts.rate ?? 0.1)]);
+    prisma.trackedCategory.findMany.mockResolvedValue([
+      opts.category ?? category(opts.rate ?? 0.1),
+    ]);
   };
   const created = () => prisma.invoice.create.mock.calls[0][0].data;
 
@@ -204,8 +219,10 @@ describe("EstimatesService.convertToInvoice — regulated levy and quoted pack (
         products: [regulatedProduct({ unitsPerBox: 12 })],
       });
       await expect(service.convertToInvoice("est-1")).rejects.toThrow(BadRequestException);
+      // B659 review finding 1: there is no estimate-update path, so the message must not name an
+      // impossible remedy ("re-save the estimate") — the only remedy is a fresh estimate.
       await expect(service.convertToInvoice("est-1")).rejects.toThrow(
-        "pack unknown for line 2: re-save the estimate",
+        "pack unknown for line 2: void this estimate and create a new one",
       );
       expect(numbering.reserveNext).not.toHaveBeenCalled();
       expect(prisma.estimate.updateMany).not.toHaveBeenCalled();
@@ -236,6 +253,106 @@ describe("EstimatesService.convertToInvoice — regulated levy and quoted pack (
       arm({ items: [line({ productId: null, description: "Fee" })], products: [] });
       await expect(service.convertToInvoice("est-1")).resolves.toBeDefined();
       expect(created().items.create[0]).toMatchObject({ subtotal: 100, trackedCategoryId: null });
+    });
+  });
+
+  describe("PER_UNIT levy basis follows the QUOTED pack, never a live repack (B659 review finding 2)", () => {
+    const split = (over: Record<string, unknown> = {}) =>
+      line({ qty: 30, unitPrice: 24, subtotal: 60, boxes: 2, pieces: 6, ...over });
+
+    it("(a) a split line's basis stays the quoted 30 pieces (2 boxes + 6 @ pack 12), even though the live pack repacked to 6", async () => {
+      arm({
+        items: [split({ unitsPerBox: 12 })],
+        subtotal: 60,
+        products: [regulatedProduct({ unitsPerBox: 6 })],
+        category: perUnitCategory(1), // $1/piece
+      });
+      await service.convertToInvoice("est-1");
+      expect(created().items.create[0]).toMatchObject({
+        boxes: 2,
+        pieces: 6,
+        unitsPerBox: 12,
+        categoryTaxAmount: 30, // 30 pieces x $1 — the QUOTED pack, not the live 6
+      });
+    });
+
+    it("(b) a NO-SPLIT line's basis is qty x the quoted pack (12), never qty x the live pack (6)", async () => {
+      // No boxes/pieces recorded — a plain qty line on a product quoted at a 12-pack.
+      arm({
+        items: [line({ qty: 5, unitPrice: 24, subtotal: 120, unitsPerBox: 12 })],
+        subtotal: 120,
+        products: [regulatedProduct({ unitsPerBox: 6 })], // live repack to 6
+        category: perUnitCategory(1), // $1/piece
+      });
+      await service.convertToInvoice("est-1");
+      expect(created().items.create[0]).toMatchObject({
+        boxes: null,
+        categoryTaxAmount: 60, // 5 x 12 = 60 pieces x $1 — never 5 x 6 = 30
+      });
+    });
+  });
+
+  describe("unit-aware estimate lines are refused pre-flight, before reserveNext (B659 review finding 3)", () => {
+    it("a line with unitLabel set is refused (409) and no number/claim/invoice is ever made", async () => {
+      arm({ items: [line({ unitLabel: "Case" })] });
+      await expect(service.convertToInvoice("est-1")).rejects.toMatchObject({
+        status: 409,
+        response: { code: "UNIT_AWARE_LINE" },
+      });
+      expect(numbering.reserveNext).not.toHaveBeenCalled();
+      expect(prisma.estimate.updateMany).not.toHaveBeenCalled();
+      expect(prisma.invoice.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("both estimate item reads are ordered, so 'line N' names the same line the tx builds (B659 review finding 4)", () => {
+    it("pins orderBy: { id: 'asc' } on the pre-flight read AND the tx read", async () => {
+      arm({ items: [line()] });
+      await service.convertToInvoice("est-1");
+      const preFlightArgs = prisma.estimate.findUnique.mock.calls[0][0];
+      expect(preFlightArgs.select.items.orderBy).toEqual({ id: "asc" });
+      const txArgs = prisma.estimate.findUnique.mock.calls[1][0];
+      expect(txArgs.include.items.orderBy).toEqual({ id: "asc" });
+    });
+  });
+
+  describe("money guards run pre-flight, from the estimate's own totals, before reserveNext (B659 review finding 5)", () => {
+    it("a line with a negative subtotal (discount > line total) refuses before a number is reserved", async () => {
+      arm({ items: [line({ subtotal: -5 })] });
+      await expect(service.convertToInvoice("est-1")).rejects.toThrow(BadRequestException);
+      await expect(service.convertToInvoice("est-1")).rejects.toThrow(/negative subtotal/);
+      expect(numbering.reserveNext).not.toHaveBeenCalled();
+      expect(prisma.estimate.updateMany).not.toHaveBeenCalled();
+      expect(prisma.invoice.create).not.toHaveBeenCalled();
+    });
+
+    it("a discount over the estimate's own subtotal (-> a negative total) refuses before a number is reserved", async () => {
+      arm({ items: [line()], subtotal: 100, discount: 500, total: -400 });
+      await expect(service.convertToInvoice("est-1")).rejects.toMatchObject({
+        status: 400,
+        response: { code: "MONEY_INVARIANT" },
+      });
+      expect(numbering.reserveNext).not.toHaveBeenCalled();
+      expect(prisma.estimate.updateMany).not.toHaveBeenCalled();
+      expect(prisma.invoice.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("a 0/0 split is NO split (B659 review finding 6)", () => {
+    it("boxes 0, pieces 0 on a boxed product converts as a plain qty line — never collapsed to 0 via normalizeBoxesPieces", async () => {
+      arm({
+        items: [
+          line({ qty: 10, unitPrice: 5, subtotal: 50, boxes: 0, pieces: 0, unitsPerBox: null }),
+        ],
+        subtotal: 50,
+        products: [regulatedProduct({ unitsPerBox: 12 })], // a boxed product
+      });
+      await service.convertToInvoice("est-1");
+      expect(created().items.create[0]).toMatchObject({
+        qty: 10,
+        subtotal: 50,
+        boxes: null,
+      });
     });
   });
 });

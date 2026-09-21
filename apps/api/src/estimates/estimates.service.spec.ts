@@ -112,7 +112,17 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       // Simulates the losing side of a race: another request's claim already
       // flipped ACCEPTED -> CONVERTED first, so this updateMany matches nothing.
       prisma.estimate.updateMany.mockResolvedValue({ count: 0 });
-      prisma.estimate.findUnique.mockResolvedValue({ id: "est-1", status: "ACCEPTED" });
+      // B659: the pre-flight now also reads subtotal/discount/taxAmount/total for the money
+      // guards (finding 5) — trivially-passing values here so this stays a pure race-loss repro.
+      prisma.estimate.findUnique.mockResolvedValue({
+        id: "est-1",
+        status: "ACCEPTED",
+        subtotal: 0,
+        discount: 0,
+        taxAmount: 0,
+        total: 0,
+        items: [],
+      });
 
       await expect(service.convertToInvoice("est-1")).rejects.toThrow(BadRequestException);
       await expect(service.convertToInvoice("est-1")).rejects.toThrow(

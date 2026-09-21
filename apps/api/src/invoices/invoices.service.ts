@@ -7,6 +7,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import * as unitAware from "../orders/unit-aware-guard";
+import { assertNoNegativeLineSubtotal } from "../common/money-invariants.util";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
@@ -389,14 +390,9 @@ export class InvoicesService {
     subtotal = roundMoney(subtotal);
     await this.applyMsrpSnapshots(this.prisma.forTenant(), dto.customerId, itemsData);
 
-    // Validate no line item has a negative subtotal (discount > line total)
-    for (const item of itemsData) {
-      if (item.subtotal < 0) {
-        throw new BadRequestException(
-          `Line item "${item.description}" has a negative subtotal (${item.subtotal}). Discount cannot exceed line total.`,
-        );
-      }
-    }
+    // Validate no line item has a negative subtotal (discount > line total) — B659: extracted to
+    // money-invariants.util.ts, shared with EstimatesService.convertToInvoice's pre-flight.
+    assertNoNegativeLineSubtotal(itemsData);
 
     const invDiscount = dto.discount ?? 0;
     const shipping = dto.shippingFee ?? 0;

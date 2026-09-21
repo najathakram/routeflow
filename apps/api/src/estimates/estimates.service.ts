@@ -18,7 +18,11 @@ import { packAtSaleByProduct, toSaleLedgerLines } from "../invoices/pack-at-sale
 import { resolveLineUnits } from "../products/line-units";
 import { estimateConvertLineItems } from "./estimate-convert-lines";
 import { NumberingService } from "../import/numbering.service";
-import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
+import {
+  assertMoneyInvariantsOrThrow,
+  assertNoNegativeLineSubtotal,
+} from "../common/money-invariants.util";
+import { assertNoUnitAwareLines } from "../orders/unit-aware-guard";
 import { CreateEstimateDto } from "./dto/create-estimate.dto";
 
 // B70: terminal status set — CONVERTED is terminal and cannot be re-transitioned; voided
@@ -373,12 +377,18 @@ export class EstimatesService {
       select: {
         id: true,
         status: true,
+        subtotal: true,
+        discount: true,
+        taxAmount: true,
+        total: true,
         items: {
+          orderBy: { id: "asc" }, // B659 finding 4: pins "line N" to the SAME line the tx builds
           select: {
             description: true,
             productId: true,
             qty: true,
             unitPrice: true,
+            subtotal: true,
             boxes: true,
             pieces: true,
             unitLabel: true,
@@ -391,6 +401,21 @@ export class EstimatesService {
     if (existing.status !== "ACCEPTED") {
       throw new BadRequestException("Only ACCEPTED estimates can be converted");
     }
+    // units_v1: no DTO can write a unit-aware estimate line today, but refuse it here — BEFORE a
+    // number is reserved — with the same fence every other line rewrite/copy path uses. There is no
+    // estimate-update path, so a hit here has no remedy short of voiding the estimate.
+    assertNoUnitAwareLines(existing.items ?? [], "converted to an invoice");
+    // B659 finding 5: the SAME guards InvoicesService.create() runs on a manual invoice — a
+    // negative line subtotal, an invoice-level discount over subtotal, a negative total — run here
+    // from the ESTIMATE'S OWN stored totals, before a number is reserved. The tx below recomputes
+    // its own totals from the resolved lines, but a corrupt estimate must never burn a number first.
+    assertNoNegativeLineSubtotal(existing.items ?? []);
+    assertMoneyInvariantsOrThrow({
+      subtotal: Number(existing.subtotal),
+      discount: Number(existing.discount ?? 0),
+      tax: Number(existing.taxAmount ?? 0),
+      total: Number(existing.total),
+    });
     // B659: a box-split line whose quoted pack cannot be established refuses here, BEFORE a number is
     // reserved (a deterministic rejection must not burn one per click).
     estimateConvertLineItems(existing.items ?? [], 0);
@@ -416,7 +441,10 @@ export class EstimatesService {
 
       const est = await tx.estimate.findUnique({
         where: { id },
-        include: { items: true, customer: { select: { isTaxExempt: true } } },
+        include: {
+          items: { orderBy: { id: "asc" } }, // B659 finding 4: same order as the pre-flight read
+          customer: { select: { isTaxExempt: true } },
+        },
       });
       if (!est) throw new NotFoundException("Estimate not found");
 
