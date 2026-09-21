@@ -182,6 +182,8 @@ export interface AdminOrder {
     deliveredQty?: number | null;
     /** Sale-time box-size snapshot; the live `product.unitsPerBox` is only a fallback. */
     unitsPerBox?: number | null;
+    /** units_v1: the unit this line is sold by ("Case"…); null on a plain piece/pack line. */
+    unitLabel?: string | null;
     overrideReason?: string | null;
     /** Per-line note — carried onto the invoice line (buyer-visible). */
     notes?: string | null;

@@ -310,3 +310,44 @@ describe("boxed line: delivery progress and the spoken label (B597)", () => {
     expect(m.spoken.match(/cancelled/gi)).toHaveLength(1);
   });
 });
+
+// A Case line (units_v1: `unitLabel` travels with the line) names its box level "Case", never "box".
+describe("unit-aware boxed line names its own unit", () => {
+  const caseLine = (over: Record<string, unknown> = {}) =>
+    line({
+      qty: 36,
+      boxes: 3,
+      pieces: 0,
+      unitsPerBox: 12,
+      unitLabel: "Case",
+      unitPrice: 30,
+      subtotal: 90,
+      deliveredQty: 12,
+      ...over,
+    });
+
+  it("a 3-Case line reads '3 Cases', priced per Case — not '3 boxes'", () => {
+    const m = orderLineCardModel(caseLine(), "CONFIRMED");
+    expect(m.qtyPriceLine).toBe("3 Cases · $30.00 / Case of 12");
+    expect(m.qtyPriceLine).not.toMatch(/box/i);
+  });
+
+  it("singular, with loose pieces, and in progress and the spoken label", () => {
+    expect(
+      orderLineCardModel(caseLine({ qty: 15, boxes: 1, pieces: 3 }), "CONFIRMED").qtyPriceLine,
+    ).toBe("1 Case + 3 pcs · $30.00 / Case of 12");
+    const m = orderLineCardModel(caseLine(), "PARTIALLY_DELIVERED");
+    expect(m.deliveryText).toBe("1 Case of 3 Cases delivered");
+    expect(m.spoken).toContain("3 Cases");
+    expect(m.spoken).not.toMatch(/box/i);
+  });
+
+  it("a line with no unitLabel is unchanged ('boxes')", () => {
+    expect(orderLineCardModel(caseLine({ unitLabel: null }), "CONFIRMED").qtyPriceLine).toBe(
+      "3 boxes · $30.00 / box of 12",
+    );
+    expect(orderLineCardModel(caseLine({ unitLabel: "  " }), "CONFIRMED").qtyPriceLine).toBe(
+      "3 boxes · $30.00 / box of 12",
+    );
+  });
+});

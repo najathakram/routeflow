@@ -200,6 +200,8 @@ interface LineInput {
   boxes?: number | null;
   pieces?: number | null;
   unitsPerBox?: number | null;
+  /** units_v1: the unit a line is sold by ("Case", "Pallet") — names the box level of a boxed line. */
+  unitLabel?: string | null;
   promoFreeUnits?: number | null;
   status: string;
   notes?: string | null;
@@ -214,10 +216,13 @@ export function orderLineCardModel(li: LineInput, orderStatus: string): OrderLin
   const upb = li.unitsPerBox ?? li.product?.unitsPerBox ?? null;
   const hasSplit = li.boxes != null || li.pieces != null;
   const boxed = hasSplit && !!upb && upb > 1;
+  // The box-level noun is the line's own unit when it has one (a 3-Case line reads "3 Cases", not
+  // "3 boxes"); `formatQtySplit` does the naming and pluralising — nothing is mirrored here.
+  const boxLabel = li.unitLabel?.trim() || null;
   const qtyPriceLine = boxed
-    ? `${formatQtySplit({ qty, boxes: li.boxes, pieces: li.pieces })} · ${money(unitPrice)} / box of ${upb}`
+    ? `${formatQtySplit({ qty, boxes: li.boxes, pieces: li.pieces, boxLabel })} · ${money(unitPrice)} / ${boxLabel ?? "box"} of ${upb}`
     : hasSplit
-      ? `${formatQtySplit({ qty, boxes: li.boxes, pieces: li.pieces })} × ${money(unitPrice)}`
+      ? `${formatQtySplit({ qty, boxes: li.boxes, pieces: li.pieces, boxLabel })} × ${money(unitPrice)}`
       : `${formatQtySplit({ qty })} × ${money(unitPrice)}`;
 
   const cancelled = li.status === "CANCELLED";
@@ -258,7 +263,9 @@ export function orderLineCardModel(li: LineInput, orderStatus: string): OrderLin
   // `qty` and `deliveredQty` are both in PIECES; a boxed line shows its quantity as boxes + pieces,
   // so progress must read in the same units ("0 of 2 boxes + 3 pcs", never "0 of 51") — B597.
   const qtyText = (n: number) =>
-    boxed ? formatQtySplit(splitIntoBoxes(n, upb as number)) : formatQtySplit({ qty: n });
+    boxed
+      ? formatQtySplit({ ...splitIntoBoxes(n, upb as number), boxLabel })
+      : formatQtySplit({ qty: n });
   const delivered = li.deliveredQty == null ? null : Number(li.deliveredQty);
   const deliveryText =
     DELIVERY_PROGRESS_STATUSES.has(orderStatus) && delivered != null && delivered < qty
