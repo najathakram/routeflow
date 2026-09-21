@@ -82,10 +82,12 @@ export function buildLine(input: BuildLineInput): BuiltLine {
     if (!(count > 0)) {
       throw new AmbiguousLineError(`buildLine: unit count must be > 0 (got ${axis.count})`);
     }
-    const factor = Math.trunc(Number(axis.factorToBase));
-    if (!(factor > 0)) {
+    // N2 (R-ui review, optional — factorToBase is integer upstream anyway, but the same guard
+    // is one line): a fractional factor has no meaning (pieces per unit is always whole).
+    const factor = Number(axis.factorToBase);
+    if (!Number.isInteger(factor) || !(factor > 0)) {
       throw new AmbiguousLineError(
-        `buildLine: "${label}" needs a positive factorToBase (got ${axis.factorToBase})`,
+        `buildLine: "${label}" needs a positive integer factorToBase (got ${axis.factorToBase})`,
       );
     }
     const split =
@@ -203,6 +205,14 @@ export function buildLine(input: BuildLineInput): BuiltLine {
     qty: axis.qty,
     unitsPerBox: axis.unitsPerBox,
   });
+  // N1 (R-ui review, 2026-09-21): boxes:0, pieces:0 passes every check above (both given, so
+  // "neither given" doesn't fire; 0 is an integer; 0 disagrees with nothing) and used to mint a
+  // $0 line — matches G1, the unit axis and create()'s own "> 0" requirement.
+  if (!(normalized.qty > 0)) {
+    throw new AmbiguousLineError(
+      `buildLine: qty must be > 0, got boxes:${axis.boxes} pieces:${axis.pieces} (${normalized.qty} total)`,
+    );
+  }
   const subtotal = computeLineSubtotalStrict({
     unitPrice,
     qty: normalized.qty,

@@ -103,6 +103,12 @@ describe("buildLine — pack axis", () => {
     });
     expect(line).toMatchObject({ qty: 25, boxes: 2, pieces: 5 });
   });
+
+  it("N1: refuses boxes:0, pieces:0 on a boxed product — used to mint a $0 line", () => {
+    expect(() =>
+      buildLine({ axis: { kind: "pack", boxes: 0, pieces: 0, unitsPerBox: 12 }, unitPrice: 10 }),
+    ).toThrow(AmbiguousLineError);
+  });
 });
 
 describe("buildLine — unit axis", () => {
@@ -153,6 +159,8 @@ describe("buildLine — unit axis", () => {
     // G2 (R-ui review, 2026-09-21): Math.trunc alone billed 1.5 Cases as 1 — refuse instead.
     ["a fractional count", { kind: "unit" as const, label: "Case", count: 1.5, factorToBase: 12 }],
     ["a zero factor", { kind: "unit" as const, label: "Case", count: 1, factorToBase: 0 }],
+    // N2 (R-ui review, optional, 2026-09-21): a fractional factorToBase has no meaning.
+    ["a fractional factor", { kind: "unit" as const, label: "Case", count: 1, factorToBase: 12.5 }],
     ["a negative factor", { kind: "unit" as const, label: "Case", count: 1, factorToBase: -12 }],
   ])("refuses %s", (_name, axis) => {
     expect(() => buildLine({ axis, unitPrice: 40 })).toThrow(AmbiguousLineError);
