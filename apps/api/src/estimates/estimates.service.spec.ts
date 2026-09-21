@@ -6,6 +6,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { NumberingService } from "../import/numbering.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { computeLineSubtotal } from "@routeflow/pricing";
 
 // B8: accept() had no status guard and convertToInvoice() was a read-then-write
 // with no transaction, so a double-click (re-accept a CONVERTED estimate, or two
@@ -967,6 +968,213 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
 
       const data = prisma.estimate.create.mock.calls[0][0].data;
       expect(data.expiresAt.toISOString()).toBe("2026-04-01T00:00:00.000Z");
+    });
+  });
+
+  // B645: a boxed estimate line survives create() with `boxes`/`pieces` stored but
+  // NOT the `unitsPerBox` factor that was actually used to compute its subtotal —
+  // the factor is read off the live product, spent on computeLineSubtotal, and then
+  // discarded. convertToInvoice() then drops `boxes`/`pieces`/`unitsPerBox`
+  // entirely when building the invoice line. Downstream, every invoice re-price
+  // (edit form, PDF, applyPriceAdjustment) gates its box-split proration on
+  // `li.boxes != null` (invoices.service.ts) — with `boxes: null` the line is
+  // treated as a plain per-unit line and a re-save recomputes
+  // `qty(total pieces) * unitPrice(the box price)`, overcharging by unitsPerBox
+  // (a 12x inflation on a 12-pack). Fix has two parts: create() must snapshot the
+  // factor it already computed (hardening — protects a FUTURE repack from
+  // silently changing what an OLD estimate means), and convertToInvoice() must
+  // copy boxes/pieces/unitsPerBox onto the new InvoiceItem (the actual fix — this
+  // alone is retroactive: boxes/pieces are already stored on every existing
+  // estimate line today, so it heals already-converted-nothing-yet and
+  // not-yet-converted historical estimates the moment it ships, no backfill
+  // needed).
+  describe("B645: boxed estimate lines survive create() and convertToInvoice() as box-split", () => {
+    it("REG-B645 create() persists unitsPerBox (the factor it already used for the line's subtotal), not just boxes/pieces", async () => {
+      prisma.customer.findUnique.mockResolvedValue({ id: "cust-645", pricingTier: 1 });
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-645", unitsPerBox: 12, pricePerUnit: 10, tier1: 10 },
+      ]);
+      prisma.estimate.create.mockResolvedValue({ id: "est-645" });
+
+      await service.create({
+        customerId: "cust-645",
+        items: [{ productId: "prod-645", boxes: 1, unitPrice: 10 }],
+      });
+
+      const createdItem = prisma.estimate.create.mock.calls[0][0].data.items.create[0];
+      expect(createdItem.boxes).toBe(1);
+      // Red today: HEAD's itemsData object never includes `unitsPerBox` even
+      // though it was read off the product and used for this very line's
+      // qty/subtotal computation a few lines earlier in create().
+      expect(createdItem.unitsPerBox).toBe(12);
+    });
+
+    it("REG-B645 convertToInvoice() copies boxes/pieces/unitsPerBox onto the new InvoiceItem so it stays box-split, not a 12x re-price on save", async () => {
+      prisma.estimate.updateMany.mockResolvedValue({ count: 1 });
+      prisma.estimate.findUnique.mockResolvedValue({
+        id: "est-645",
+        status: "ACCEPTED",
+        customerId: "cust-645",
+        // 12 boxes * 12 units/box @ $10/unit = $1,440 — the exact repro shape
+        // from the live bug report (12x, $1,440 -> $17,280 on a naive re-price).
+        subtotal: 1440,
+        taxAmount: 0,
+        discount: 0,
+        total: 1440,
+        notes: null,
+        terms: null,
+        items: [
+          {
+            description: "Widget (case of 12)",
+            productId: "prod-645",
+            qty: 144,
+            unitPrice: 10,
+            subtotal: 1440,
+            boxes: 12,
+            pieces: 0,
+            unitsPerBox: 12,
+          },
+        ],
+      });
+      prisma.invoice.create.mockImplementation((args: any) =>
+        Promise.resolve({ id: "inv-645", ...args.data, customer: {} }),
+      );
+
+      await service.convertToInvoice("est-645");
+
+      const createdLine = prisma.invoice.create.mock.calls[0][0].data.items.create[0];
+      // Red today: HEAD's convertToInvoice() maps only
+      // {description, productId, qty, unitPrice, discount, taxRate, subtotal,
+      // msrp, tenantId} — boxes/pieces/unitsPerBox are silently dropped, so
+      // createdLine.boxes is `undefined` here, invoices.service.ts's
+      // `isBoxSplit = li.boxes != null` reads it as a plain line, and the very
+      // next re-save recomputes subtotal as qty(144) * unitPrice(10) = $1,440 —
+      // which already LOOKS right until the box-split path is what's meant to
+      // gate it; the real live-tenant repro is a case-of-12 unitPrice PER BOX
+      // ($120/box, $10/unit priced as $120 unitPrice with qty=12 boxes), which
+      // this same missing gate turns into a 12x inflation. Pinning the exact
+      // field carry-through here is the fix regardless of which qty convention
+      // a given line uses, since it's what makes `isBoxSplit` true again.
+      expect(createdLine.boxes).toBe(12);
+      expect(createdLine.pieces).toBe(0);
+      expect(createdLine.unitsPerBox).toBe(12);
+      expect(createdLine.subtotal).toBe(1440);
+    });
+
+    it("REG-B645 convertToInvoice() carries a NULL unitsPerBox through unchanged for a pre-A0 estimate (no migration needed — the live product read still gates `boxes != null` downstream)", async () => {
+      prisma.estimate.updateMany.mockResolvedValue({ count: 1 });
+      prisma.estimate.findUnique.mockResolvedValue({
+        id: "est-645-old",
+        status: "ACCEPTED",
+        customerId: "cust-645",
+        subtotal: 500,
+        taxAmount: 0,
+        discount: 0,
+        total: 500,
+        notes: null,
+        terms: null,
+        items: [
+          {
+            description: "Widget (pre-A0 row)",
+            productId: "prod-645",
+            qty: 5,
+            unitPrice: 100,
+            subtotal: 500,
+            boxes: 5,
+            pieces: 0,
+            unitsPerBox: null,
+          },
+        ],
+      });
+      prisma.invoice.create.mockImplementation((args: any) =>
+        Promise.resolve({ id: "inv-645-old", ...args.data, customer: {} }),
+      );
+
+      await service.convertToInvoice("est-645-old");
+
+      const createdLine = prisma.invoice.create.mock.calls[0][0].data.items.create[0];
+      expect(createdLine.boxes).toBe(5);
+      expect(createdLine.unitsPerBox).toBeNull();
+    });
+
+    it("REG-B645 a converted boxed line's subsequent re-price stays at $240 (6 boxes @ $40/box), never the 12x piece-basis figure of $2,880", async () => {
+      prisma.estimate.updateMany.mockResolvedValue({ count: 1 });
+      prisma.estimate.findUnique.mockResolvedValue({
+        id: "est-645-box-price",
+        status: "ACCEPTED",
+        customerId: "cust-645",
+        // unitPrice here is the BOX price ($40/box), per computeLineSubtotal's own
+        // contract (packages/pricing/src/pricing.ts: "unitPrice is the BOX price.
+        // One box = unitPrice; loose pieces are prorated"). 6 boxes * $40 = $240.
+        // `qty` is the total PIECE count (6 boxes * unitsPerBox 12 = 72) — the
+        // convention every other B645 fixture in this file also uses. This is the
+        // shape that actually exercises the 12x failure mode: unlike the
+        // per-unit-priced fixtures above (where unitPrice * qty happens to equal
+        // the box-split subtotal too), a per-BOX unitPrice run through the
+        // piece-basis fallback (`unitPrice * qty`) inflates by exactly
+        // unitsPerBox — the live-tenant repro from the commit message
+        // ($1,440 -> $17,280 there; $240 -> $2,880 here).
+        subtotal: 240,
+        taxAmount: 0,
+        discount: 0,
+        total: 240,
+        notes: null,
+        terms: null,
+        items: [
+          {
+            description: "Case of widgets (6 boxes @ $40/box)",
+            productId: "prod-645-box",
+            qty: 72,
+            unitPrice: 40,
+            subtotal: 240,
+            boxes: 6,
+            pieces: 0,
+            unitsPerBox: 12,
+          },
+        ],
+      });
+      prisma.invoice.create.mockImplementation((args: any) =>
+        Promise.resolve({ id: "inv-645-box-price", ...args.data, customer: {} }),
+      );
+
+      await service.convertToInvoice("est-645-box-price");
+
+      const createdLine = prisma.invoice.create.mock.calls[0][0].data.items.create[0];
+      expect(createdLine.boxes).toBe(6);
+      expect(createdLine.pieces).toBe(0);
+      expect(createdLine.unitsPerBox).toBe(12);
+      expect(createdLine.subtotal).toBe(240);
+
+      // The actual "subsequent re-price/edit" proof: feed the CREATED invoice
+      // line's own fields through computeLineSubtotal — the single money function
+      // every re-price path (invoices.service.ts's buildInvoiceItemData legacy
+      // branch, a DRAFT line edit, estimates' own create()) is required to route
+      // through per CLAUDE.md's money discipline. With boxes/pieces/unitsPerBox
+      // carried through by the fix, it reproduces the agreed $240 exactly.
+      expect(
+        computeLineSubtotal({
+          unitPrice: createdLine.unitPrice,
+          qty: createdLine.qty,
+          boxes: createdLine.boxes,
+          pieces: createdLine.pieces,
+          unitsPerBox: createdLine.unitsPerBox,
+        }),
+      ).toBe(240);
+
+      // Pins the regression this guards against: the SAME unitPrice/qty, run
+      // through computeLineSubtotal with boxes/pieces/unitsPerBox dropped to null
+      // (what HEAD's convertToInvoice() produced before the fix), falls back to
+      // the piece-basis formula and inflates by exactly unitsPerBox — $2,880, not
+      // $240. This is the 12x the live tenant hit.
+      expect(
+        computeLineSubtotal({
+          unitPrice: createdLine.unitPrice,
+          qty: createdLine.qty,
+          boxes: null,
+          pieces: null,
+          unitsPerBox: null,
+        }),
+      ).toBe(2880);
     });
   });
 });

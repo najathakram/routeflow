@@ -193,6 +193,13 @@ export class EstimatesService {
         originalPrice,
         boxes: i.boxes ?? null,
         pieces: i.pieces ?? null,
+        // B645: snapshot the SAME factor just used above for qty/subtotal — the
+        // live product's unitsPerBox at creation time — rather than letting it be
+        // computed, spent, and discarded. Without this, a future repack of the
+        // product silently changes what this estimate line means on any later
+        // recompute (edit, convert, re-price). Null exactly when the line isn't
+        // boxed, matching InvoiceItem's twin column.
+        unitsPerBox: product?.unitsPerBox ?? null,
         tenantId,
       };
     });
@@ -429,6 +436,27 @@ export class EstimatesService {
                 taxRate: lineTaxRate,
                 subtotal: i.subtotal,
                 msrp: i.productId ? (msrpMap.get(i.productId) ?? null) : null,
+                // B645: carry the box-split triplet through — InvoiceItem has the
+                // same boxes/pieces/unitsPerBox columns as EstimateItem, but this
+                // create previously dropped all three, leaving `boxes: null` on
+                // every converted line. invoices.service.ts's own re-price paths
+                // gate their box proration on `boxes != null`; with it null a
+                // converted boxed line is treated as a plain per-unit line and
+                // any later re-save (edit form, applyPriceAdjustment) recomputes
+                // qty * unitPrice from a qty that was actually total pieces,
+                // over-billing by unitsPerBox. Retroactive: boxes/pieces are
+                // already stored on every existing estimate item today (only
+                // `unitsPerBox` is new, from tonight's A0 migration), so this
+                // heals every already-accepted, not-yet-converted historical
+                // estimate the moment it ships — no backfill needed.
+                // `unitsPerBox` copies through as `null` for a pre-A0 estimate
+                // line unchanged; that's fine — `boxes != null` alone is what
+                // gates the proration downstream, and the live product's
+                // unitsPerBox is still read at render/recompute time exactly as
+                // it always was for those older rows.
+                boxes: i.boxes ?? null,
+                pieces: i.pieces ?? null,
+                unitsPerBox: i.unitsPerBox ?? null,
                 tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
               })),
             },
