@@ -73,6 +73,11 @@ import { startOfCalendarDay, endOfCalendarDay } from "../common/calendar-date";
 import { lockRowsNoWait } from "../common/db-locks";
 import { NumberingService } from "../import/numbering.service";
 import { buildManualInvoiceLines } from "./manual-invoice-lines";
+import {
+  foldCategoryTax,
+  loadManualLineContext,
+  writeInvoiceSaleEntries,
+} from "./manual-invoice-context";
 import { resolveLineUnits } from "../products/line-units";
 import { prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
 
@@ -359,28 +364,9 @@ export class InvoicesService {
     // on the row just read (L-081), so restoreCustomer() re-enables it with no other write.
     if (!customer || customer.deletedAt) throw new NotFoundException("Customer not found");
 
-    // Pre-fetch products for every product-linked line: box size for qty resolution
-    // AND the regulated-category snapshot (so a manual regulated invoice reaches the
-    // W5 sales ledger just like an order-derived one).
-    const productIds = [...new Set(dto.items.filter((i) => i.productId).map((i) => i.productId!))];
-    const products =
-      productIds.length > 0
-        ? await this.prisma.forTenant().product.findMany({
-            where: { id: { in: productIds } },
-            select: {
-              id: true,
-              unit: true,
-              unitsPerBox: true,
-              trackedCategoryId: true,
-              trackedSubcategoryId: true,
-            },
-          })
-        : [];
-    const productMap = new Map(products.map((p) => [p.id, p]));
-    // units_v1 (4c-1): the gate (flag.units_v1) + the server ladder of the products a line names a
-    // unit for, then EVERY line's factor through resolveLineUnits (the pack = today's behaviour).
-    const unitsByProduct = await prepareUnitLadders(dto.items, {
-      isStaff: true, // POST /invoices is OPERATOR+ (RolesGuard)
+    // Products (box size + regulated snapshot), the unit ladders and the regulated tax config of every
+    // line: see manual-invoice-context.ts (B659: shared with EstimatesService.convertToInvoice).
+    const { productMap, categoryMap, unitsByProduct } = await loadManualLineContext(dto.items, {
       prisma: this.prisma,
       entitlements: this.entitlements,
     });
@@ -390,19 +376,6 @@ export class InvoicesService {
         unitsByProduct.get(it.productId ?? "") ?? [],
         it,
       ),
-    );
-    // RF-4: load the regulated section (TrackedCategory) tax config so a manual
-    // invoice's regulated lines carry + owe category tax just like an order-derived one.
-    const manualCatIds = [
-      ...new Set(products.map((p) => p.trackedCategoryId).filter(Boolean)),
-    ] as string[];
-    const categoryMap = new Map<string, any>(
-      (manualCatIds.length > 0
-        ? await this.prisma
-            .forTenant()
-            .trackedCategory.findMany({ where: { id: { in: manualCatIds } } })
-        : []
-      ).map((c: any) => [c.id, c]),
     );
 
     // Manual-invoice line builder: see manual-invoice-lines.ts (verbatim move; units_v1 4c-1 prefactor).
@@ -453,10 +426,6 @@ export class InvoicesService {
     }
 
     const tenantDefaults = await this.resolveTenantInvoiceDefaults();
-    // A regulated line makes this a filable sale — create the invoice AND its W5 ledger
-    // rows atomically (a ledger write that fails must not leave a committed invoice with
-    // no SALE row). Non-regulated invoices skip the ledger call entirely (no-op anyway).
-    const hasRegulated = itemsData.some((it) => it.trackedCategoryId != null);
     // B100/F16b: reserved BEFORE the transaction below opens (fix-round-2.md D1).
     // reserveNext runs its own short transaction and commits it, so this one never
     // holds the NumberingSequence row lock — the lock that inverted lock order against
@@ -501,24 +470,10 @@ export class InvoicesService {
             payments: true,
           },
         });
-        if (hasRegulated) {
-          await this.ledger.writeSaleEntries({
-            tenantId: this.prisma.getTenantId(),
-            orderId: null,
-            invoiceId: created.id,
-            soldAt: created.issueDate ?? new Date(),
-            lines: (created.items ?? []).map((it: any) => ({
-              invoiceItemId: it.id,
-              orderItemId: it.orderItemId ?? null,
-              trackedCategoryId: it.trackedCategoryId ?? null,
-              trackedSubcategoryId: it.trackedSubcategoryId ?? null,
-              qty: Number(it.qty),
-              netSales: Number(it.subtotal),
-              categoryTax: Number(it.categoryTaxAmount ?? 0),
-            })),
-            db: tx,
-          });
-        }
+        await writeInvoiceSaleEntries(this.ledger, created, {
+          tenantId: this.prisma.getTenantId(),
+          tx,
+        });
         return created;
       });
     } catch (err: any) {
@@ -755,22 +710,12 @@ export class InvoicesService {
     return created;
   }
 
-  /**
-   * RF-4: category (regulated) tax folds into an invoice's tax EXACTLY like the
-   * regular sales tax w.r.t. tax exemption — an exempt customer owes $0 of BOTH.
-   * Returns the Σ per-line category tax to add on top of the regular tax; when the
-   * customer is exempt it returns 0 AND zeroes each line's snapshot in place, so the
-   * stored InvoiceItem + the regulated-sales ledger record the $0 that was billed.
-   */
+  /** RF-4: see foldCategoryTax in manual-invoice-context.ts (shared with estimate conversion, B659). */
   private foldCategoryTax(
     itemsData: Array<{ categoryTaxAmount?: number }>,
     isTaxExempt: boolean,
   ): number {
-    if (isTaxExempt) {
-      for (const it of itemsData) it.categoryTaxAmount = 0;
-      return 0;
-    }
-    return roundMoney(itemsData.reduce((s, it) => s + Number(it.categoryTaxAmount ?? 0), 0));
+    return foldCategoryTax(itemsData, isTaxExempt);
   }
 
   /**

@@ -4,6 +4,7 @@ import { EstimatesService } from "./estimates.service";
 import * as EstimatesServiceModule from "./estimates.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { NumberingService } from "../import/numbering.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
@@ -25,8 +26,21 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
     reserveNext: jest.fn().mockResolvedValue("INV-2026-0001"),
   };
 
+  /** What prisma.invoice.create returns: the created row, with its nested item creates as real rows. */
+  const echoInvoice = (id: string, args: any) => ({
+    id,
+    ...args.data,
+    items: (args.data.items?.create ?? []).map((c: any, i: number) => ({
+      id: `${id}-ii-${i}`,
+      ...c,
+    })),
+    customer: {},
+  });
+  const mockLedger = { writeSaleEntries: jest.fn().mockResolvedValue(undefined) };
+
   beforeEach(async () => {
     prisma = createMockPrisma();
+    mockLedger.writeSaleEntries.mockClear();
     mockNumbering.reserveNext.mockClear();
     mockNumbering.reserveNext.mockResolvedValue("INV-2026-0001");
     const mod = await Test.createTestingModule({
@@ -39,6 +53,7 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
           useValue: { hasFlag: jest.fn().mockResolvedValue(false) },
         },
         { provide: NumberingService, useValue: mockNumbering },
+        { provide: RegulatedLedgerService, useValue: mockLedger },
       ],
     }).compile();
     service = mod.get(EstimatesService);
@@ -133,7 +148,7 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
         ],
       });
       prisma.invoice.create.mockImplementation((args: any) =>
-        Promise.resolve({ id: "inv-1", ...args.data, customer: {} }),
+        Promise.resolve(echoInvoice("inv-1", args)),
       );
 
       const inv = await service.convertToInvoice("est-1");
@@ -181,7 +196,7 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
         ],
       });
       prisma.invoice.create.mockImplementation((args: any) =>
-        Promise.resolve({ id: "inv-294", ...args.data, customer: {} }),
+        Promise.resolve(echoInvoice("inv-294", args)),
       );
 
       await service.convertToInvoice("est-294");
@@ -221,7 +236,7 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
         ],
       });
       prisma.invoice.create.mockImplementation((args: any) =>
-        Promise.resolve({ id: "inv-294x", ...args.data, customer: {} }),
+        Promise.resolve(echoInvoice("inv-294x", args)),
       );
 
       await service.convertToInvoice("est-294x");
@@ -277,7 +292,7 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       });
       mockNumbering.reserveNext.mockResolvedValueOnce("INV-2026-0038");
       prisma.invoice.create.mockImplementation((args: any) =>
-        Promise.resolve({ id: "inv-9", ...args.data, customer: {} }),
+        Promise.resolve(echoInvoice("inv-9", args)),
       );
 
       const inv = await service.convertToInvoice("est-3");

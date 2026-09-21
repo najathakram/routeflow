@@ -154,8 +154,8 @@ const INVENTORY: Record<string, Row> = {
     why: "removes the invoice's lines",
   },
   "estimates/estimates.service.ts::EstimatesService.convertToInvoice": {
-    kind: "PACK_ONLY_CREATE",
-    why: "EstimateItem has no unit columns; writes plain lines",
+    kind: "CONVERTED",
+    why: "resolveLineUnits per line; buildManualInvoiceLines builds the invoice lines (B659)",
   },
   "import/import.service.ts::ImportService.importInvoices": {
     kind: "PACK_ONLY_CREATE",

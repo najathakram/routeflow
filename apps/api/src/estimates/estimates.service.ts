@@ -11,6 +11,15 @@ import { computeLineSubtotal, getTierPrice, roundMoney } from "@routeflow/pricin
 import { loadMsrpMap } from "../common/msrp";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { buildManualInvoiceLines } from "../invoices/manual-invoice-lines";
+import {
+  foldCategoryTax,
+  loadManualLineContext,
+  writeInvoiceSaleEntries,
+} from "../invoices/manual-invoice-context";
+import { resolveLineUnits } from "../products/line-units";
+import { estimateConvertLineItems } from "./estimate-convert-lines";
 import { NumberingService } from "../import/numbering.service";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { CreateEstimateDto } from "./dto/create-estimate.dto";
@@ -28,6 +37,7 @@ export class EstimatesService {
     private readonly prisma: PrismaService,
     private readonly entitlements: EntitlementsService,
     private readonly numbering: NumberingService,
+    private readonly ledger: RegulatedLedgerService,
   ) {}
 
   private readonly logger = new Logger(EstimatesService.name);
@@ -348,13 +358,32 @@ export class EstimatesService {
     // is advisory only: the authoritative check stays the atomic claim inside the
     // transaction, so a race LOSER still burns a number (accepted, rare) while the
     // common rejection now costs nothing.
-    const existing = await this.prisma
-      .forTenant()
-      .estimate.findUnique({ where: { id }, select: { id: true, status: true } });
+    const existing = await this.prisma.forTenant().estimate.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        status: true,
+        items: {
+          select: {
+            description: true,
+            productId: true,
+            qty: true,
+            unitPrice: true,
+            boxes: true,
+            pieces: true,
+            unitLabel: true,
+            unitsPerBox: true,
+          },
+        },
+      },
+    });
     if (!existing) throw new NotFoundException("Estimate not found");
     if (existing.status !== "ACCEPTED") {
       throw new BadRequestException("Only ACCEPTED estimates can be converted");
     }
+    // B659: a box-split line whose quoted pack cannot be established refuses here, BEFORE a number is
+    // reserved (a deterministic rejection must not burn one per click).
+    estimateConvertLineItems(existing.items ?? [], 0);
 
     // B100/F16b: reserved BEFORE the transaction below opens (fix-round-2.md D1).
     // reserveNext commits its own short transaction, so this one never holds the
@@ -406,35 +435,62 @@ export class EstimatesService {
         !!est.customer?.isTaxExempt,
       );
 
+      // B659: the invoice is built through the SAME line path as an interactive invoice: the quoted PRICE
+      // is honoured, but the regulated category (and its levy) is read from the product NOW and computed
+      // through computeCategoryTax, and the SALE ledger rows are booked below, so a conversion can never
+      // file a quote-date rate or skip the ledger. Pack = the estimate line's own (estimate-convert-lines.ts).
+      const lines = estimateConvertLineItems(est.items, lineTaxRate);
+      const { productMap, categoryMap, unitsByProduct } = await loadManualLineContext(lines, {
+        prisma: { getTenantId: () => tenantId, forTenant: () => tx }, // read on THIS transaction's connection
+        entitlements: this.entitlements,
+      });
+      const resolved = lines.map((it) =>
+        resolveLineUnits(
+          productMap.get(it.productId ?? "") ?? {},
+          unitsByProduct.get(it.productId ?? "") ?? [],
+          it,
+        ),
+      );
+      const { itemsData, subtotal: linesSubtotal } = buildManualInvoiceLines(lines, {
+        productMap,
+        categoryMap,
+        tenantId,
+        clampFreeUnits: () => 0,
+        resolved,
+      });
+      itemsData.forEach((it, idx) => {
+        const pid = lines[idx].productId;
+        it.msrp = pid ? (msrpMap.get(pid) ?? null) : null;
+      });
+      const subtotal = roundMoney(linesSubtotal);
+      const isTaxExempt = !!est.customer?.isTaxExempt;
+      // B294 (L-159): regular tax and levy both come from THIS call. est.taxAmount holds the quote's REGULAR
+      // tax only (never the display levy of a later stage), so lineTaxRate above is a one-source recovery.
+      const regularTax = isTaxExempt
+        ? 0
+        : roundMoney(itemsData.reduce((sum, it) => sum + it.subtotal * (it.taxRate ?? 0), 0));
+      const taxTotal = roundMoney(regularTax + foldCategoryTax(itemsData, isTaxExempt));
+      const discount = Number(est.discount ?? 0);
+      const total = roundMoney(subtotal - discount + taxTotal);
+
       try {
         const inv = await tx.invoice.create({
           data: {
             invoiceNumber,
             customerId: est.customerId,
             status: "DRAFT",
-            subtotal: est.subtotal,
-            taxAmount: est.taxAmount,
-            discount: est.discount,
+            subtotal,
+            taxAmount: taxTotal,
+            discount,
             shippingFee: 0,
-            total: est.total,
+            total,
             notes: est.notes,
             terms: est.terms,
-            items: {
-              create: est.items.map((i) => ({
-                description: i.description,
-                productId: i.productId,
-                qty: i.qty,
-                unitPrice: i.unitPrice,
-                discount: 0,
-                taxRate: lineTaxRate,
-                subtotal: i.subtotal,
-                msrp: i.productId ? (msrpMap.get(i.productId) ?? null) : null,
-                tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
-              })),
-            },
+            items: { create: itemsData },
           },
           include: { customer: { select: { id: true, businessName: true } }, items: true },
         });
+        await writeInvoiceSaleEntries(this.ledger, inv, { tenantId, tx });
 
         // B17: link the estimate to the invoice it minted, inside the same transaction
         // as the claim above — a mismatch here (another write raced this same estimate
