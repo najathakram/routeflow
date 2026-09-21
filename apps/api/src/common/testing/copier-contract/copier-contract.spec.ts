@@ -162,11 +162,14 @@ const realWorld = (copiers: Copier[] = COPIERS): World => ({
   sites: () =>
     walk(SRC)
       .filter(
-        (f) => /\.ts$/.test(f) && !/\.(spec|test|d)\.ts$/.test(f) && !/(^|\/)testing(\/|$)/.test(f),
+        (f) =>
+          /\.ts$/.test(f) &&
+          !/\.(spec|test|d)\.ts$/.test(f) &&
+          !/(^|[\\/])testing([\\/]|$)/.test(f),
       )
       .flatMap((f) =>
         writeSites(fs.readFileSync(f, "utf8"), MODELS, RELATIONS).map(
-          (fn) => `${path.relative(SRC, f)}::${fn}`,
+          (fn) => `${path.relative(SRC, f).split(path.sep).join("/")}::${fn}`,
         ),
       ),
   notACopier: NOT_A_COPIER,
