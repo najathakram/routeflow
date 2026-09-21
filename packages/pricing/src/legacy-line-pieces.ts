@@ -43,12 +43,16 @@
  *         because a partial's `qty` has no reason to equal the FULL source's box count except
  *         coincidence.
  *       - neither condition holds — `unknown`.
- *   (c) no split, no usable source (missing, or itself has no split) — falls back to
- *       `opts.productPackNow`: if given and NOT boxed now (`<= 1` / null), `pieces = line.qty`,
- *       basis `"non-boxed-now"` (weaker evidence than the others — an ordinary never-boxed
- *       product's line has no split and usually no usable source either, and defaulting those to
- *       `unknown` would flood every consumer with false negatives). If `productPackNow` is boxed
- *       now, or wasn't given at all, this fallback does not apply — `unknown`.
+ *   (c) NO usable source (missing, or itself has no split) — falls back to `opts.productPackNow`:
+ *       if given and NOT boxed now (`<= 1` / a product that exists but has no box size),
+ *       `pieces = line.qty`, basis `"non-boxed-now"` (weaker evidence than the others — an
+ *       ordinary never-boxed product's line has no split and usually no usable source either,
+ *       and defaulting those to `unknown` would flood every consumer with false negatives). If
+ *       `productPackNow` is boxed now, or wasn't given at all, this fallback does not apply —
+ *       `unknown`. Gated on the source having NO split (not merely "didn't match"): a source WITH
+ *       a split proves the product WAS boxed when it sold, so a non-boxed pack size today means
+ *       the pack changed after the sale — exactly the case the live product must not decide.
+ *       That stays `unknown`, never `"non-boxed-now"`, even with a matching `productPackNow`.
  */
 
 /** A line as this classifier needs it — a stored InvoiceItem/OrderItem/ReturnItem or similar. */
@@ -75,8 +79,11 @@ export interface LegacyLinePiecesOptions {
    */
   relation?: "full" | "partial";
   /** The product's CURRENT `unitsPerBox` — a GATE ("is this boxed at all today"), NEVER a
-   * multiplier. Omit when unknown; omitting only loses the `"non-boxed-now"` fallback, it never
-   * causes a wrong answer. */
+   * multiplier. `null` means the product EXISTS and has no box size — NOT "I couldn't find live
+   * pack info". A product that wasn't found (deleted, bad id) must be OMITTED, never passed as
+   * `null`: passing `null` for a missing product would classify its lines as pieces on no real
+   * evidence. Omitting entirely only loses the `"non-boxed-now"` fallback — it never causes a
+   * wrong answer. */
   productPackNow?: number | null;
 }
 
@@ -127,10 +134,12 @@ export function legacyLinePieces(
     }
   }
 
-  // Opt-in only: an OMITTED productPackNow means the caller didn't check, so this must not
-  // silently apply — only an explicitly supplied value (even literal null, "I checked, no live
-  // pack info") counts as evidence.
-  if (opts?.productPackNow !== undefined) {
+  // Opt-in only: an OMITTED productPackNow means the caller didn't check (or the product wasn't
+  // found), so this must not silently apply — only an explicitly supplied value counts as
+  // evidence. Gated on the SOURCE having no split: a source WITH a split proves the product was
+  // boxed when it sold, so a non-boxed pack size today is a pack change, not proof the line was
+  // always sold loose — the live product must not override that.
+  if (opts?.productPackNow !== undefined && !sourceHasSplit) {
     const packNow = finiteNumber(opts.productPackNow);
     if (!(packNow != null && packNow > 1)) {
       return { pieces: lineQty, basis: "non-boxed-now" };

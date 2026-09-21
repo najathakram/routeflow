@@ -141,7 +141,7 @@ describe("legacyLinePieces", () => {
       expect(result).toEqual({ pieces: 4, basis: "non-boxed-now" });
     });
 
-    it("productPackNow: null (checked, no live pack info) also counts as not-boxed-now", () => {
+    it("productPackNow: null (the product EXISTS and has no box size) also counts as not-boxed-now", () => {
       const result = legacyLinePieces({ qty: 4, boxes: null, pieces: null }, null, {
         productPackNow: null,
       });
@@ -152,6 +152,18 @@ describe("legacyLinePieces", () => {
       const result = legacyLinePieces({ qty: 4, boxes: null, pieces: null }, null, {
         productPackNow: 12,
       });
+      expect(result).toMatchObject({ unknown: true });
+    });
+
+    it("HOLD: a source WITH a split proves the product WAS boxed — non-boxed-now must not override it", () => {
+      // The source's own split shows this product was sold boxed once. A non-boxed pack size
+      // TODAY means the pack changed after the sale, not that the line was always sold loose —
+      // the live product must not decide that. Senior Architect follow-up HOLD, 2026-09-21.
+      const result = legacyLinePieces(
+        { qty: 999, boxes: null, pieces: null }, // matches neither the source's boxes nor its qty
+        { qty: 72, boxes: 6, pieces: 0 },
+        { relation: "full", productPackNow: 1 },
+      );
       expect(result).toMatchObject({ unknown: true });
     });
 
