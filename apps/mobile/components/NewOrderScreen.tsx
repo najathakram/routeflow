@@ -113,6 +113,7 @@ import {
   toOrderDraftPayload,
   fromOrderDraftPayload,
   draftParkable,
+  unitLineRefusal,
   type OrderDraftPayload,
   type DraftBuilderState,
   type DraftCatalogLine,
@@ -784,6 +785,8 @@ function ProductPickView({
   // `cancelable` on native), and nothing else re-triggers the effect — so the
   // retry ALSO lives in the spinner view itself, never only in the dialog.
   const [hydrateFailed, setHydrateFailed] = useState(false);
+  // A draft this screen can't hold (a line sold by a unit, B638) is refused whole, untouched.
+  const [hydrateRefusal, setHydrateRefusal] = useState<string | null>(null);
   const retryHydrate = useCallback(() => {
     setHydrateFailed(false);
     setHydrateAttempt((n) => n + 1);
@@ -793,6 +796,8 @@ function ProductPickView({
     if (!hydrating || hydrationStartedRef.current) return;
     hydrationStartedRef.current = true;
     const parkedLines: DraftCatalogLine[] = draftSeed?.items ?? [];
+    const refusal = unitLineRefusal(parkedLines);
+    if (refusal) return setHydrateRefusal(refusal); // `hydrating` stays true: no autosave, draft intact
     let cancelled = false;
     (async () => {
       const results = await Promise.all(
@@ -2200,21 +2205,26 @@ function ProductPickView({
           }
         />
         <View style={styles.hydrateState}>
-          {hydrateFailed ? (
+          {hydrateFailed || hydrateRefusal ? (
             <>
-              <Text style={styles.hydrateFailTitle}>Couldn&apos;t restore your order</Text>
-              <Text style={styles.hydrateFailText}>
-                Some items couldn&apos;t be loaded. Check your connection and try again.
+              <Text style={styles.hydrateFailTitle}>
+                {hydrateRefusal ? "Open this draft on the web" : "Couldn't restore your order"}
               </Text>
-              <Pressable
-                style={styles.hydrateRetryBtn}
-                onPress={retryHydrate}
-                accessibilityRole="button"
-                accessibilityLabel="Retry restoring your parked order"
-              >
-                <Ionicons name="refresh" size={16} color={ios.brand} />
-                <Text style={styles.hydrateRetryText}>Retry</Text>
-              </Pressable>
+              <Text style={styles.hydrateFailText}>
+                {hydrateRefusal ??
+                  "Some items couldn't be loaded. Check your connection and try again."}
+              </Text>
+              {!hydrateRefusal && (
+                <Pressable
+                  style={styles.hydrateRetryBtn}
+                  onPress={retryHydrate}
+                  accessibilityRole="button"
+                  accessibilityLabel="Retry restoring your parked order"
+                >
+                  <Ionicons name="refresh" size={16} color={ios.brand} />
+                  <Text style={styles.hydrateRetryText}>Retry</Text>
+                </Pressable>
+              )}
             </>
           ) : (
             <>

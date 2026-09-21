@@ -21,6 +21,34 @@ import type { SaleDraft } from "./api/drafts";
  * lines (see apps/mobile/lib/pricing.ts header).
  */
 
+/**
+ * The pack fields a unit switch overwrote on web (`PackBase`, order-line-unit.ts), restored when the
+ * pack is chosen again. Carried opaquely so a line parked on web survives a mobile round trip.
+ */
+export interface DraftPackBase {
+  unit: string;
+  qty: number;
+  unitsPerBox?: number;
+  boxes?: number;
+  pieces?: number;
+  sellBy?: "case" | "unit";
+  listPrice: number;
+  unitPrice: number;
+  priceType: "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL";
+  specialPrice?: number;
+  discountedPrice?: number;
+  unitCost?: number;
+}
+
+/**
+ * Keys on a wire line that this mirror does NOT model. Web parks its whole builder `LineItem`, so
+ * the wire carries keys web's own `DraftLineItem` never declares (`sellBy`, `trackedCategoryId`,
+ * `noteOpen`, `tierPrices` today, and whatever web adds next). The converters below carry every such
+ * key through untouched instead of dropping it, so a new web field cannot be silently lost by this
+ * hand-maintained mirror (lesson L-072).
+ */
+export type DraftLineExtra = Record<string, unknown>;
+
 /** One line item as parked in a draft — mirrors web's `DraftLineItem` field-for-field. */
 export interface DraftLineItem {
   tempId: string;
@@ -41,6 +69,15 @@ export interface DraftLineItem {
   isUnlisted?: boolean;
   /** Optional per-line note — carried onto the invoice line (buyer-visible). */
   note?: string;
+  /**
+   * units_v1: the non-pack unit this line is sold in (`undefined` = the pack). On such a line `qty`
+   * counts THAT unit and `unitPrice` is per unit, so dropping it prices the line as pieces.
+   */
+  unitLabel?: string;
+  /** The pack fields a unit switch overwrote (web restores them when the pack is chosen again). */
+  packBase?: DraftPackBase;
+  /** Any other key on the wire line — see `DraftLineExtra`. */
+  [extra: string]: unknown;
 }
 
 export interface DraftCustomer {
@@ -107,6 +144,11 @@ export interface DraftCatalogLine {
   unitCost?: number;
   category?: string;
   note?: string;
+  /** units_v1 unit this line was parked in (`undefined` = the pack). See `DraftLineItem`. */
+  unitLabel?: string;
+  packBase?: DraftPackBase;
+  /** Wire keys this mirror does not model, carried through untouched. See `DraftLineExtra`. */
+  extra?: DraftLineExtra;
 }
 
 /** An ad-hoc, non-catalog line — mirrors the builder's local `UnlistedLine` state. */
@@ -116,6 +158,70 @@ export interface DraftUnlistedLine {
   unitPrice: number;
   qty: number;
   note?: string;
+  /** Wire keys this mirror does not model, carried through untouched. See `DraftLineExtra`. */
+  extra?: DraftLineExtra;
+}
+
+/**
+ * The wire keys each converter models explicitly. Everything else on a wire line rides in `extra`
+ * (see `splitLine`), and `structural round-trip` in drafts-payload.test.ts holds this to account.
+ */
+const CATALOG_MODELED_KEYS = new Set([
+  "tempId",
+  "productId",
+  "productName",
+  "unit",
+  "listPrice",
+  "specialPrice",
+  "discountedPrice",
+  "unitPrice",
+  "priceType",
+  "qty",
+  "unitsPerBox",
+  "boxes",
+  "pieces",
+  "unitCost",
+  "category",
+  "note",
+  "unitLabel",
+  "packBase",
+]);
+const UNLISTED_MODELED_KEYS = new Set([
+  "tempId",
+  "isUnlisted",
+  "productName",
+  "unitPrice",
+  "qty",
+  "note",
+]);
+
+/**
+ * The keys of `line` that are not in `modeled` — the open-ended remainder to carry through. A key
+ * whose value equals the `defaults` entry is left out: the emitting side regenerates it anyway, so
+ * carrying it would only make a mobile-origin line grow an `extra` it never needed.
+ */
+function splitLine(
+  line: DraftLineItem,
+  modeled: Set<string>,
+  defaults: Record<string, unknown> = {},
+): DraftLineExtra | undefined {
+  const extra: DraftLineExtra = {};
+  for (const key of Object.keys(line)) {
+    if (!modeled.has(key) && line[key] !== defaults[key]) extra[key] = line[key];
+  }
+  return Object.keys(extra).length ? extra : undefined;
+}
+
+/**
+ * A parked draft with a line sold in a non-pack unit can't be resumed on mobile: the builder rebuilds
+ * every line from the live product as pieces/boxes and has nowhere to hold a unit, so it would price
+ * the line as a pack (288 pieces -> 1). Returns the reason to refuse the WHOLE draft, or null. Nothing
+ * is edited or dropped, so the draft stays intact for the web dashboard.
+ */
+export function unitLineRefusal(items: readonly DraftCatalogLine[]): string | null {
+  return items.some((li) => !!li.unitLabel)
+    ? "This draft has items sold by the case or another unit. Open it on the web dashboard."
+    : null;
 }
 
 /**
@@ -153,6 +259,7 @@ export interface DraftBuilderState {
  */
 export function toOrderDraftPayload(state: DraftBuilderState): OrderDraftPayload {
   const catalogItems: DraftLineItem[] = state.items.map((li) => ({
+    ...li.extra,
     tempId: li.productId,
     productId: li.productId,
     productName: li.productName,
@@ -169,15 +276,18 @@ export function toOrderDraftPayload(state: DraftBuilderState): OrderDraftPayload
     unitCost: li.unitCost,
     category: li.category,
     note: li.note,
+    unitLabel: li.unitLabel,
+    packBase: li.packBase,
   }));
   const unlistedItems: DraftLineItem[] = state.unlisted.map((u) => ({
-    tempId: u.id,
     productId: "", // no catalog id — mirrors web's addUnlistedItem
-    productName: u.name,
     unit: "each",
     listPrice: u.unitPrice,
-    unitPrice: u.unitPrice,
     priceType: "STANDARD" as const,
+    ...u.extra, // a web-parked line's own values win over these defaults
+    tempId: u.id,
+    productName: u.name,
+    unitPrice: u.unitPrice,
     qty: u.qty,
     isUnlisted: true,
     note: u.note,
@@ -214,6 +324,12 @@ export function fromOrderDraftPayload(payload: OrderDraftPayload): DraftBuilderS
         unitPrice: li.unitPrice,
         qty: li.qty,
         note: li.note,
+        extra: splitLine(li, UNLISTED_MODELED_KEYS, {
+          productId: "",
+          unit: "each",
+          listPrice: li.unitPrice,
+          priceType: "STANDARD",
+        }),
       });
     } else {
       items.push({
@@ -232,6 +348,9 @@ export function fromOrderDraftPayload(payload: OrderDraftPayload): DraftBuilderS
         unitCost: li.unitCost,
         category: li.category,
         note: li.note,
+        unitLabel: li.unitLabel,
+        packBase: li.packBase,
+        extra: splitLine(li, CATALOG_MODELED_KEYS),
       });
     }
   }
