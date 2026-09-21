@@ -16,6 +16,18 @@
  * whether that's one line billed for only part of its qty, or a subset of lines billed at full
  * qty while others are un-invoiced. See `finalize-order-recompute.ts`.
  *
+ * #1185 review round 2 — three more cases folded in:
+ *   1. (HIGH) coverage must be decided PER LINE, BEFORE the existing-line update loop runs —
+ *      that loop matches a line billed for only PART of its qty too, so checking "matched vs
+ *      not" only after it already ran let a partially-billed line's own row get silently
+ *      shrunk to whatever is currently billed (order qty 10, bill 6 -> row becomes qty 6).
+ *   2. (MED) a line an operator REMOVED from the only invoice that ever billed it still needs
+ *      cancelling — that is the mechanism's original purpose. Distinguished by `invoicedQty`:
+ *      > 0 and no longer billed -> a genuine orphan, cancel it; = 0 -> never billed, leave it.
+ *   3. (MED) the shipping-fee back-sync must reach the order even while the rest of the
+ *      recompute stays gated — `Order.shippingFee` is DEFINED as Σ(non-void invoice fees), a
+ *      property of the invoices alone.
+ *
  * WHY THE DB LANE: a mocked Prisma can't prove the read-then-write sequence across TWO tables
  * (OrderItem + Order) inside `recomputeOrderFromInvoices`'s own transaction, nor that the
  * un-invoiced line's row is genuinely untouched (not just returned as if untouched by a mock).
@@ -174,6 +186,30 @@ describeDb(
       await prisma.customer.deleteMany({ where: { tenantId } });
       await prisma.user.deleteMany({ where: { tenantId } });
       await prisma.tenant.delete({ where: { id: tenantId } });
+    }
+
+    /** Tenant + customer boilerplate shared by every scenario below. */
+    async function seedTenantAndCustomer(label: string) {
+      const slug = freshTenantSlug(label);
+      const tenant = await prisma.tenant.create({ data: { slug, name: `B667 ${slug}` } });
+      createdTenantIds.push(tenant.id);
+      const user = await prisma.user.create({
+        data: {
+          email: `${slug}@example.invalid`,
+          username: slug,
+          role: "CUSTOMER",
+          tenantId: tenant.id,
+        },
+      });
+      const customer = await prisma.customer.create({
+        data: {
+          userId: user.id,
+          businessName: `B667 ${slug}`,
+          contactName: `B667 ${slug}`,
+          tenantId: tenant.id,
+        },
+      });
+      return { slug, tenant, customer };
     }
 
     /**
@@ -344,6 +380,113 @@ describeDb(
       expect(refreshedC.status).toBe("CANCELLED");
       expect(Number(refreshedC.qty)).toBe(0); // normalized — was stale at 3
       expect(Number(refreshedC.subtotal)).toBe(0); // normalized — was stale at 15
+    });
+
+    it("finding 1 (HIGH, #1185): a line billed for only PART of its qty keeps its FULL qty/subtotal — the update loop never runs while any line is under-billed", async () => {
+      const { tenant, customer } = await seedTenantAndCustomer("e");
+      const product = await prisma.product.create({
+        data: { name: `A ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
+      });
+      const order = await prisma.order.create({
+        data: {
+          customerId: customer.id,
+          status: "PARTIALLY_DELIVERED",
+          subtotal: 100,
+          total: 100,
+          tenantId: tenant.id,
+        },
+      });
+      const lineA = await prisma.orderItem.create({
+        data: {
+          orderId: order.id,
+          productId: product.id,
+          status: "PENDING",
+          qty: 10,
+          unitPrice: 10,
+          subtotal: 100,
+          tenantId: tenant.id,
+        },
+      });
+
+      const invoice = await tenantCtx.run(tenant.id, () =>
+        // Bill only 6 of the 10 — a PARTIAL bill on a SINGLE line (not a separate unbilled line).
+        invoicesService.createPartialFromOrder(order.id, {
+          items: [{ orderItemId: lineA.id, qty: 6 }],
+        }),
+      );
+      await tenantCtx.run(tenant.id, () =>
+        invoicesService.update((invoice as any).id, { discount: 0 } as any),
+      );
+
+      const refreshedA = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineA.id } });
+      expect(refreshedA.status).toBe("PENDING");
+      expect(Number(refreshedA.qty)).toBe(10); // NOT shrunk to the billed 6
+      expect(Number(refreshedA.subtotal)).toBe(100); // NOT shrunk to 60
+      const refreshedOrder = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
+      expect(Number(refreshedOrder.subtotal)).toBe(100); // NOT rewritten to 60
+      expect(Number(refreshedOrder.total)).toBe(100);
+    });
+
+    it("finding 2 (MED, #1185): a line removed from the only invoice that billed it IS a genuine orphan (invoicedQty > 0) — cancels it, distinct from a never-billed line (invoicedQty 0, test 1 above) which never does", async () => {
+      const { tenant, customer } = await seedTenantAndCustomer("f");
+      const product = await prisma.product.create({
+        data: { name: `A ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
+      });
+      const order = await prisma.order.create({
+        data: {
+          customerId: customer.id,
+          status: "PARTIALLY_DELIVERED",
+          subtotal: 40,
+          total: 40,
+          tenantId: tenant.id,
+        },
+      });
+      const lineA = await prisma.orderItem.create({
+        data: {
+          orderId: order.id,
+          productId: product.id,
+          status: "PENDING",
+          qty: 4,
+          unitPrice: 10,
+          subtotal: 40,
+          tenantId: tenant.id,
+        },
+      });
+
+      const invoice = await tenantCtx.run(tenant.id, () =>
+        // Bill it in FULL first (invoicedQty -> 4) …
+        invoicesService.createPartialFromOrder(order.id, {
+          items: [{ orderItemId: lineA.id, qty: 4 }],
+        }),
+      );
+      // … then the operator removes it from the invoice entirely (replaces the item list with
+      // none). The line's invoicedQty (4) still records that it WAS billed — that is exactly
+      // what distinguishes it from a line that was simply never invoiced.
+      await tenantCtx.run(tenant.id, () =>
+        invoicesService.update((invoice as any).id, { items: [] } as any),
+      );
+
+      const refreshedA = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineA.id } });
+      expect(refreshedA.status).toBe("CANCELLED");
+      expect(Number(refreshedA.qty)).toBe(0);
+      expect(Number(refreshedA.subtotal)).toBe(0);
+      expect(Number(refreshedA.invoicedQty)).toBe(0);
+    });
+
+    it("finding 3 (MED, #1185): a shipping-fee edit on a partial invoice still back-syncs Order.shippingFee — while subtotal/the unbilled line stay gated exactly as in test 1", async () => {
+      const { order, lineB, invoice } = await seedPartiallyInvoicedOrder("g");
+
+      await tenantCtx.run(order.tenantId!, () =>
+        invoicesService.update((invoice as any).id, { shippingFee: 15 } as any),
+      );
+
+      const refreshedOrder = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
+      expect(Number(refreshedOrder.shippingFee)).toBe(15); // synced despite the gate
+      expect(Number(refreshedOrder.total)).toBe(85); // 70 (unchanged subtotal) + the new fee
+      expect(Number(refreshedOrder.subtotal)).toBe(70); // still gated — NOT rewritten to 40
+      const refreshedB = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineB.id } });
+      expect(refreshedB.status).toBe("PENDING"); // still gated — NOT cancelled
+      expect(Number(refreshedB.qty)).toBe(6);
     });
 
     it("control: once the SECOND line is also billed in full, the recompute applies — order subtotal becomes the billed sum", async () => {

@@ -1781,6 +1781,8 @@ describe("InvoicesService", () => {
 
   // ─── Backward sync: recomputeOrderFromInvoices ─────────────────────────────
 
+  // Fixtures set qty/invoicedQty to what gets billed — the full-coverage gate (B667/#1185)
+  // requires that; an under-billed line is proven separately in recompute-order-partial.db.spec.ts.
   describe("recomputeOrderFromInvoices — backward sync (issue 2)", () => {
     it("rebuilds the order from the SUM of all its non-void invoices", async () => {
       // Two invoices each bill 1 unit of p1 @ 220 → order should show qty 2, $440.
@@ -1788,7 +1790,7 @@ describe("InvoicesService", () => {
         id: "o1",
         subtotal: 100, // prior values — used to derive effective tax rate (10%)
         tax: 10,
-        lineItems: [{ id: "li1", productId: "p1" }],
+        lineItems: [{ id: "li1", productId: "p1", qty: 2 }],
       });
       prisma.invoice.findMany.mockResolvedValue([
         {
@@ -1812,7 +1814,7 @@ describe("InvoicesService", () => {
       expect(prisma.orderItem.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: "li1" },
-          data: expect.objectContaining({ qty: 2, subtotal: 440, invoicedQty: 2 }),
+          data: expect.objectContaining({ qty: 2, subtotal: 440 }),
         }),
       );
       // Order totals: subtotal 440, tax = 440 * (10/100) = 44, total 484.
@@ -1831,7 +1833,7 @@ describe("InvoicesService", () => {
         id: "o1",
         subtotal: 100,
         tax: 0,
-        lineItems: [{ id: "li1", productId: "p1", boxes: 2, pieces: 0, unitsPerBox: 11 }],
+        lineItems: [{ id: "li1", productId: "p1", boxes: 2, pieces: 0, unitsPerBox: 11, qty: 22 }],
       });
       prisma.invoice.findMany.mockResolvedValue([
         {
@@ -1865,7 +1867,7 @@ describe("InvoicesService", () => {
         id: "o1",
         subtotal: 100,
         tax: 0,
-        lineItems: [{ id: "li1", productId: "p1", boxes: null, pieces: null }],
+        lineItems: [{ id: "li1", productId: "p1", boxes: null, pieces: null, qty: 4 }],
       });
       prisma.invoice.findMany.mockResolvedValue([
         {
@@ -1910,7 +1912,7 @@ describe("InvoicesService", () => {
         id: "o1",
         subtotal: 100,
         tax: 10,
-        lineItems: [{ id: "li1", productId: "p1" }],
+        lineItems: [{ id: "li1", productId: "p1", qty: 2 }],
       });
       prisma.invoice.findMany.mockResolvedValue([
         {

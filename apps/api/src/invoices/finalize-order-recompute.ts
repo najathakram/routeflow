@@ -10,48 +10,104 @@ export interface OrderRecomputeTotals {
 }
 
 /**
- * B667 — the tail of `recomputeOrderFromInvoices`: cancel orphan (never-billed) order lines and
- * rewrite the order's totals to the sum of what its invoices bill. That is only correct when the
- * invoices being read COVER THE WHOLE ORDER — the same "wholly invoiced" precondition
- * `resyncOrderInvoicesForEdit` documents (never partially invoiced: not a line billed for only
- * part of its qty, and not a subset of lines billed at full qty while others are un-invoiced).
+ * B667 (#1185 review, finding 1): decide full coverage BEFORE any line is rewritten. A line
+ * billed for only PART of its qty is still "matched" in byTarget, so checking matched-vs-not
+ * AFTER the caller's update loop runs let a partially-billed line's own qty get silently shrunk
+ * to whatever is currently billed (order qty 10, bill 6 -> row becomes qty 6). A line not
+ * matched at all is judged by invoicedQty (finding 2): 0 means never billed, still legitimately
+ * pending, and blocks coverage; >0 means it WAS billed and has since been removed from every
+ * invoice — a genuine orphan-cancel candidate, not a blocker.
  *
- * A genuinely partial invoice (`createPartialFromOrder`, then any DRAFT edit on it — a discount,
- * shipping, anything) used to run this tail anyway: it cancelled the not-yet-invoiced line
- * (qty/subtotal forced to 0, though it was never actually sold-and-refused, just not billed
- * YET) and overwrote the order subtotal to only the billed sum, discarding the unbilled line's
- * contribution. Now it leaves both the line and the order totals untouched until the order is
- * genuinely fully covered — the next recompute after the rest is billed applies them then.
+ * When not fully covered, still runs the shipping-fee back-sync (finding 3) — Order.shippingFee
+ * is DEFINED as Σ(non-void invoice fees), a property of the invoices alone, so a shipping edit
+ * on a partial invoice must still reach the order even while the rest stays gated. `total`
+ * shifts by exactly the fee's own delta so it stays consistent without re-deriving the
+ * (still-gated) subtotal/tax. Returns the order's totals UNCHANGED otherwise (finding 4).
+ */
+export async function checkOrderCoverage(params: {
+  db: any;
+  orderId: string;
+  order: {
+    subtotal: unknown;
+    tax: unknown;
+    total: unknown;
+    shippingFee: unknown;
+    lineItems: any[];
+  };
+  byTarget: Map<string, { qty: number }>;
+  invoices: any[];
+}): Promise<{ fullyCovered: true } | { fullyCovered: false; totals: OrderRecomputeTotals }> {
+  const { db, orderId, order, byTarget, invoices } = params;
+  const fullyCovered = (order.lineItems as any[])
+    .filter((li) => li.status !== "CANCELLED")
+    .every((li) => {
+      const agg = byTarget.get(`line:${li.id}`);
+      if (agg) return agg.qty >= Number(li.qty);
+      return Number(li.invoicedQty ?? 0) > 0;
+    });
+  if (fullyCovered) return { fullyCovered: true };
+
+  const shippingFeeSum = roundMoney(
+    invoices.reduce((s: number, inv: any) => s + Number(inv.shippingFee ?? 0), 0),
+  );
+  const prevShippingFee = Number(order.shippingFee) || 0;
+  const orderTotal = roundMoney((Number(order.total) || 0) - prevShippingFee + shippingFeeSum);
+  if (shippingFeeSum !== prevShippingFee) {
+    await db.order.update({
+      where: { id: orderId },
+      data: { shippingFee: shippingFeeSum, total: orderTotal },
+    });
+  }
+  return {
+    fullyCovered: false,
+    totals: {
+      orderId,
+      subtotal: Number(order.subtotal) || 0,
+      tax: Number(order.tax) || 0,
+      total: orderTotal,
+      shippingFee: shippingFeeSum,
+    },
+  };
+}
+
+/**
+ * B667 — the tail of `recomputeOrderFromInvoices`: cancel orphan order lines and rewrite the
+ * order's totals to the sum of what its invoices bill. The CALLER decides whether it is safe to
+ * be here at all — this only ever runs once every active order line is billed to its full qty
+ * (the "wholly invoiced" precondition `resyncOrderInvoicesForEdit` documents, reused not
+ * invented; see `invoices.service.ts`'s `fullyCovered` check, computed BEFORE any line's own
+ * qty/subtotal gets rewritten — a line billed for only PART of its qty is still "matched", so
+ * deciding coverage from byTarget membership alone, after lines are already rewritten, let a
+ * partially-billed line's row get silently shrunk to whatever is currently billed. #1185 review).
+ *
+ * ORPHAN DEFINITION (#1185 review, finding 2): among the lines no live invoice resolved to,
+ * `invoicedQty > 0` means this line WAS billed and has since been removed from every invoice —
+ * a genuine orphan, cancel it (this is the mechanism's original purpose: an invoice-side removal
+ * back-syncing onto the order). `invoicedQty === 0` means never billed at all — it must never
+ * reach here while still active (the caller's fullyCovered gate excludes it), but an
+ * already-CANCELLED line with stale non-zero qty/subtotal (a prior return, a prior recompute)
+ * still gets its numbers normalized to zero.
  */
 export async function finalizeOrderRecompute(params: {
   db: any;
   orderId: string;
-  order: { subtotal: unknown; tax: unknown; total: unknown; shippingFee: unknown };
+  order: { subtotal: unknown; tax: unknown };
   /** Order lines no invoice line resolved to (the caller's existing-line loop already removed
-   *  every line it matched, so whatever remains here was never billed at all). */
-  unbilled: Map<string, { id: string; status?: string }>;
+   *  every line it matched). */
+  unbilled: Map<string, { id: string; status?: string; invoicedQty?: unknown }>;
   subtotal: number;
   categoryTaxSum: number;
   invoices: any[];
 }): Promise<OrderRecomputeTotals> {
   const { db, orderId, order, unbilled, categoryTaxSum, invoices } = params;
 
-  // Fully covered = nothing ACTIVE is left un-billed. A line an invoice never touched but that
-  // is already CANCELLED (a prior return, a prior recompute) needs no coverage — only a line
-  // still PENDING/etc. and un-billed blocks the order-wide rewrite below.
-  const fullyCovered = [...unbilled.values()].every((li) => li.status === "CANCELLED");
-  if (!fullyCovered) {
-    return {
-      orderId,
-      subtotal: Number(order.subtotal) || 0,
-      tax: Number(order.tax) || 0,
-      total: Number(order.total) || 0,
-      shippingFee: Number(order.shippingFee) || 0,
-    };
-  }
-
-  // Order lines billed by no invoice → cancel (they weren't actually sold).
+  // Cancel a genuine orphan (was billed, now removed) and normalize an already-cancelled line's
+  // stale qty/subtotal. A line that was NEVER billed (invoicedQty 0) and isn't already cancelled
+  // is left untouched — it should not appear here at all while the caller's gate holds.
   for (const orphan of unbilled.values()) {
+    const wasBilled = Number(orphan.invoicedQty ?? 0) > 0;
+    const alreadyCancelled = orphan.status === "CANCELLED";
+    if (!wasBilled && !alreadyCancelled) continue;
     await db.orderItem.update({
       where: { id: orphan.id },
       data: { status: "CANCELLED", qty: 0, subtotal: 0, boxes: null, pieces: null, invoicedQty: 0 },
