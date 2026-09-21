@@ -132,18 +132,29 @@ describe("assertOrderEditAllowed", () => {
     expect(f).not.toHaveBeenCalled();
   });
 
-  it("refuses staff on a unit-aware order", async () => {
+  it("units_v1 (A1): OPERATOR and TENANT_ADMIN pass unconditionally on a unit-aware order — CONVERTED, not guarded; no owner lookup, no product/DB dependency", async () => {
+    const f = owner(null);
+    await expect(
+      assertOrderEditAllowed(order, { replaceAll: true, items: [] }, { role: "OPERATOR" }, f),
+    ).resolves.toBeUndefined();
+    await expect(
+      assertOrderEditAllowed(order, { replaceAll: true, items: [] }, { role: "TENANT_ADMIN" }, f),
+    ).resolves.toBeUndefined();
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it("DRIVER stays refused on a unit-aware order (only staff is converted)", async () => {
     await expect(
       assertOrderEditAllowed(
         order,
-        { replaceAll: true, items: [] },
-        { role: "OPERATOR" },
+        { replaceAll: false, items: [{ id: "li-case", qty: 3 }] },
+        { role: "DRIVER" },
         owner(null),
       ),
     ).rejects.toBeInstanceOf(ConflictException);
   });
 
-  it("allows a diff of ONLY CANCEL/DELETE entries, but not a mixed one, nor a replace-all", async () => {
+  it("allows a diff of ONLY CANCEL/DELETE entries, but not a mixed one, nor a replace-all (DRIVER — a non-staff role still refused; units_v1 A1 converts staff only)", async () => {
     const strike = {
       replaceAll: false,
       items: [
@@ -152,7 +163,7 @@ describe("assertOrderEditAllowed", () => {
       ],
     };
     await expect(
-      assertOrderEditAllowed(order, strike, { role: "OPERATOR" }, owner(null)),
+      assertOrderEditAllowed(order, strike, { role: "DRIVER" }, owner(null)),
     ).resolves.toBeUndefined();
     const mixed = {
       replaceAll: false,
@@ -162,13 +173,13 @@ describe("assertOrderEditAllowed", () => {
       ],
     };
     await expect(
-      assertOrderEditAllowed(order, mixed, { role: "OPERATOR" }, owner(null)),
+      assertOrderEditAllowed(order, mixed, { role: "DRIVER" }, owner(null)),
     ).rejects.toBeInstanceOf(ConflictException);
     await expect(
       assertOrderEditAllowed(
         order,
         { replaceAll: true, items: [{ id: "a", action: "CANCEL" }] },
-        { role: "OPERATOR" },
+        { role: "DRIVER" },
         owner(null),
       ),
     ).rejects.toBeInstanceOf(ConflictException);
@@ -176,7 +187,7 @@ describe("assertOrderEditAllowed", () => {
       assertOrderEditAllowed(
         order,
         { replaceAll: false, items: [] },
-        { role: "OPERATOR" },
+        { role: "DRIVER" },
         owner(null),
       ),
     ).rejects.toBeInstanceOf(ConflictException);

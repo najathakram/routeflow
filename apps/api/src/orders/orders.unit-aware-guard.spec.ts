@@ -255,14 +255,15 @@ describe("OrdersService — units_v1 fail-closed guard on rewrite paths", () => 
   });
 
   describe("updateOrderItems refuses an order holding a unit-aware line (409 UNIT_AWARE_LINE)", () => {
+    // units_v1 (A1): staff is CONVERTED, not blanket-guarded — "staff replace-all" was removed
+    // from this table (a replace-all sends the order's complete new line set, same as any
+    // pack-only replace-all; it is not a per-id "target this line" edit, so the money-seam
+    // unitLabel-naming rule below does not apply to it). "staff diff qty edit" stays IN this
+    // table: it names an EXISTING unit-aware line by id with no unitLabel, so it is still
+    // refused with the SAME code/message — now via assertUnitLabelNamed, not the old guard.
     const payloads = [
       [
-        "staff replace-all",
-        operatorPayload,
-        { replaceAll: true, items: [{ productId: "prod-box", qty: 2 }] },
-      ],
-      [
-        "staff diff qty edit",
+        "staff diff qty edit (no unitLabel named — the money seam, not the old blanket guard)",
         operatorPayload,
         { replaceAll: false, items: [{ id: "li-case", qty: 3 }] },
       ],
@@ -287,6 +288,19 @@ describe("OrdersService — units_v1 fail-closed guard on rewrite paths", () => 
       expect(prisma.orderItem.deleteMany).not.toHaveBeenCalled();
       expect(prisma.orderItem.create).not.toHaveBeenCalled();
       expect(prisma.orderItem.update).not.toHaveBeenCalled();
+    });
+
+    it("units_v1 (A1): a staff replace-all naming no unitLabel is NOT refused by the old blanket guard (it is a fresh line set, not a targeted edit)", async () => {
+      prisma.order.findUnique.mockResolvedValue(unitAwareOrder());
+      prisma.product.findMany.mockResolvedValue([]);
+      const err = await service
+        .updateOrderItems(
+          "ord-1",
+          { replaceAll: true, items: [{ productId: "prod-box", qty: 2 }] } as never,
+          operatorPayload as never,
+        )
+        .catch((e) => e);
+      expect(err?.getResponse?.()?.code).not.toBe("UNIT_AWARE_LINE");
     });
 
     it("a CANCELLED unit-aware line does not trip the guard (the edit proceeds past it)", async () => {
@@ -315,7 +329,7 @@ describe("OrdersService — units_v1 fail-closed guard on rewrite paths", () => 
       expect(err?.getResponse?.()?.code).not.toBe("UNIT_AWARE_LINE");
     });
 
-    it("but a mixed diff (cancel + qty edit) IS refused", async () => {
+    it("but a mixed diff (cancel of one line + a qty edit naming no unitLabel on the unit-aware line) IS refused — units_v1 (A1): via assertUnitLabelNamed now, same code/message", async () => {
       prisma.order.findUnique.mockResolvedValue(unitAwareOrder());
       const err = await service
         .updateOrderItems(
@@ -323,8 +337,8 @@ describe("OrdersService — units_v1 fail-closed guard on rewrite paths", () => 
           {
             replaceAll: false,
             items: [
-              { id: "li-case", action: "CANCEL" },
-              { id: "li-other", qty: 3 },
+              { id: "li-other", action: "CANCEL" },
+              { id: "li-case", qty: 3 },
             ],
           } as never,
           operatorPayload as never,

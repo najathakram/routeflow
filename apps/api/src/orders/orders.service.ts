@@ -106,6 +106,7 @@ import { InventoryService } from "../inventory/inventory.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { resolveLineUnits } from "../products/line-units";
 import * as unitLines from "./unit-line-build";
+import * as unitEdit from "./unit-line-edit";
 import { assertBuyerCartPricesCurrent } from "./buyer-cart-price-check";
 import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
@@ -137,9 +138,9 @@ export class OrdersService implements OnApplicationBootstrap {
   private readonly logger = new Logger(OrdersService.name);
 
   constructor(
-    // Not `private`: order-lifecycle.ts's verbatim-extracted methods (a size-ratchet headroom
-    // move, no behaviour change) read this off an explicit `self: OrdersService` from outside
-    // the class — TS `private` is compile-time only, so this is byte-identical at runtime.
+    // Not `private`: order-lifecycle.ts's verbatim-extracted methods AND unit-line-edit.ts (units_v1
+    // A1) read this off an explicit `self: OrdersService` from outside the class — TS `private` is
+    // compile-time only, so this is byte-identical at runtime.
     readonly prisma: PrismaService,
     @InjectQueue("invoices") private readonly invoiceQueue: Queue,
     private readonly gateway: RouteFlowGateway,
@@ -155,7 +156,7 @@ export class OrdersService implements OnApplicationBootstrap {
     private readonly messaging: MessagingService,
     readonly creditNotes: CreditNotesService,
     readonly commissionEngine: CommissionEngineService,
-    private readonly entitlements: EntitlementsService,
+    readonly entitlements: EntitlementsService,
     // B65 (REG-B65): reverses regulated-ledger entries in deleteOrder's
     // per-invoice teardown — the two sibling paths (voidInvoiceInTx,
     // deleteInvoice) already do this.
@@ -3228,6 +3229,18 @@ export class OrdersService implements OnApplicationBootstrap {
     // must not issue a non-transactional query from in there.
     const creditCheckEnabled = await this.isCreditLimitCheckEnabled();
 
+    // units_v1 (A1): resolve every dto item's unit-awareness ONCE, up front — see unit-line-edit.ts.
+    const unitCtx = await unitEdit.prepareUnitEditContext(this, order, dto, user);
+    const unitRows = new Map<object, ReturnType<typeof resolveLineUnits>>();
+    for (const item of dto.items ?? []) {
+      const li = item.id ? unitCtx.existingById.get(item.id) : undefined;
+      unitEdit.assertUnitLabelNamed(li, item);
+      const pid = item.substituteProductId ?? item.productId ?? li?.productId;
+      const product = pid ? unitCtx.products.get(pid) : undefined;
+      if (product)
+        unitRows.set(item, resolveLineUnits(product, unitCtx.ladders.get(pid!) ?? [], item, li));
+    }
+
     // P5-08b: the entire mutation phase — item writes, totals recompute, the
     // stock/credit guards, and the order-header update — runs in ONE tenant
     // transaction. A guard violation (or any failure) rolls back every item
@@ -3523,6 +3536,12 @@ export class OrdersService implements OnApplicationBootstrap {
           const operatorCpMap = new Map<string, number | null>(
             operatorCustomerPrices.map((cp: any) => [cp.productId, cp.pricingTier]),
           );
+          const uctx: unitEdit.UnitWriteContext = {
+            tx,
+            ladders: unitCtx.ladders,
+            tenantId: this.prisma.getTenantId(),
+            tier: (pid) => (isStaffEdit ? (operatorCpMap.get(pid) ?? operatorDefaultTier) : 1),
+          };
 
           if (replaceAll) {
             // Replace-all: client sends the full item list. Delete existing items then
@@ -3658,6 +3677,11 @@ export class OrdersService implements OnApplicationBootstrap {
               }
               const product = productMap.get(item.productId);
               if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
+              const unitRow = unitRows.get(item);
+              if (unitRow && unitLines.isUnitAware(unitRow)) {
+                await unitEdit.createUnitLine(uctx, orderId, product, unitRow, item, pos++);
+                continue;
+              }
 
               // Recompute qty from boxes/pieces when the operator split a boxed
               // product (matches createOrder's authority). Normalize to integers and
@@ -3960,6 +3984,11 @@ export class OrdersService implements OnApplicationBootstrap {
                 // a belt-and-braces invariant — never silently drop a line.
                 const product = addProductMap.get(item.productId);
                 if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
+                const unitRow = unitRows.get(item);
+                if (unitRow && unitLines.isUnitAware(unitRow)) {
+                  await unitEdit.createUnitLine(uctx, orderId, product, unitRow, item, nextPos++);
+                  continue;
+                }
                 // Recompute qty from boxes/pieces when present.
                 let qty = item.qty ?? 0;
                 if (hasBoxSplit) {
@@ -4117,6 +4146,11 @@ export class OrdersService implements OnApplicationBootstrap {
                 const product = await tx.product.findUniqueOrThrow({
                   where: { id: item.substituteProductId },
                 });
+                const unitRow = unitRows.get(item);
+                if (unitRow && unitLines.isUnitAware(unitRow)) {
+                  await unitEdit.updateUnitLine(uctx, item.id!, product, unitRow, item);
+                  continue;
+                }
                 const existingQty = order.lineItems.find((li) => li.id === item.id)?.qty ?? 1;
                 // Substitution may also carry a box/piece split when the substitute
                 // is itself a boxed product. Honor it the same way as a fresh add —
@@ -4280,6 +4314,12 @@ export class OrdersService implements OnApplicationBootstrap {
                         : {}),
                     },
                   });
+                  continue;
+                }
+                const unitRow = unitRows.get(item);
+                if (unitRow && unitLines.isUnitAware(unitRow)) {
+                  const p = unitCtx.products.get(li.productId!)!;
+                  await unitEdit.updateUnitLine(uctx, item.id!, p, unitRow, item);
                   continue;
                 }
                 // A zero boxes+pieces payload is "not using box entry", not "zero

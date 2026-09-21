@@ -56,12 +56,15 @@ interface EditDto {
 }
 
 /**
- * `updateOrderItems` entry guard. Every branch (buyer/driver/staff replace-all, diff add,
- * substitute, qty/price edit) re-derives the factor + price from the LIVE product, so an order with
- * a unit-aware line is refused — EXCEPT a diff of ONLY CANCEL/DELETE entries, which just strikes
- * lines off (no factor, no price) and is the operator's only way to remove a mistaken Case line.
- * A buyer's ownership is settled FIRST (`findOwner`): the refusal names a unit on THIS order,
- * which a non-owner must never learn.
+ * `updateOrderItems` entry guard. CUSTOMER/DRIVER branches still re-derive the factor + price from
+ * the LIVE product, so an order with a unit-aware line refuses them — EXCEPT a diff of ONLY
+ * CANCEL/DELETE entries, which just strikes lines off (no factor, no price) and is the only way a
+ * non-staff caller can remove a mistaken Case line. A buyer's ownership is settled FIRST
+ * (`findOwner`): the refusal names a unit on THIS order, which a non-owner must never learn.
+ *
+ * units_v1 (A1): a STAFF principal (OPERATOR/TENANT_ADMIN) is CONVERTED, not guarded — every write
+ * site in `updateOrderItems` resolves a unit-aware line's own factor via `resolveLineUnits` (see
+ * `unit-line-edit.ts`), so staff pass through unconditionally here.
  */
 export async function assertOrderEditAllowed(
   order: { customerId: string; lineItems: ReadonlyArray<LineLike> },
@@ -69,6 +72,7 @@ export async function assertOrderEditAllowed(
   user: { role?: string } | undefined,
   findOwner: () => Promise<{ id: string } | null>,
 ): Promise<void> {
+  if (user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN") return;
   const items = dto.items ?? [];
   const strikeOffOnly =
     dto.replaceAll === false &&
