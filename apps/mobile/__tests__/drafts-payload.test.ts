@@ -12,7 +12,11 @@ import {
   draftDeviceLabel,
   parkedAgo,
   draftSummary,
+  unitLineRefusal,
   type DraftBuilderState,
+  type DraftCatalogLine,
+  type DraftLineItem,
+  type OrderDraftPayload,
 } from "../lib/drafts-payload";
 
 const fixture: DraftBuilderState = {
@@ -202,5 +206,155 @@ describe("draftSummary", () => {
     expect(draftSummary(draft).title).toBe("Order draft");
     expect(draftSummary(draft).itemCount).toBe(0);
     expect(draftSummary(draft).total).toBe(0);
+  });
+});
+
+// ─── B638: a hand-typed mirror of web's parked line must not drop what web parks ────────────────────
+//
+// Web parks its whole builder `LineItem`, which carries keys web's own `DraftLineItem` never declares
+// (unitLabel, packBase, sellBy, trackedCategoryId, noteOpen, tierPrices, ...). The mirror used to drop
+// them: a Case line parked on web resumed on mobile as a pack line. The guard below is STRUCTURAL: it
+// enumerates the keys of a web-shaped line, so the next field web adds cannot be dropped silently.
+
+const webPackBase = {
+  unit: "each",
+  qty: 288,
+  unitsPerBox: 24,
+  boxes: 12,
+  pieces: 0,
+  sellBy: "case" as const,
+  listPrice: 42,
+  unitPrice: 42,
+  priceType: "STANDARD" as const,
+  unitCost: 30,
+};
+
+/** A catalog line exactly as web's builder parks it — every LineItem key, plus one web has not added yet. */
+const webUnitLine = {
+  tempId: "web-tmp-1", // web mints a random tempId; the mirror re-derives it (= productId) by design
+  productId: "prod-case",
+  productName: "Widget",
+  unit: "each",
+  listPrice: 480,
+  unitPrice: 480,
+  priceType: "STANDARD",
+  qty: 1,
+  unitCost: 30,
+  category: "General",
+  isUnlisted: false,
+  note: "one case",
+  trackedCategoryId: "cat-tracked",
+  noteOpen: true,
+  sellBy: "case",
+  unitLabel: "Case",
+  packBase: webPackBase,
+  tierPrices: { pricePerUnit: "42", priceTier2: "40" },
+  zzFutureWebField: { nested: [1, 2, 3] }, // a key nobody has modeled yet
+} as const;
+
+const webUnlistedLine = {
+  tempId: "web-unl-1",
+  productId: "",
+  productName: "Pallet wrap",
+  unit: "each",
+  listPrice: 12.5,
+  unitPrice: 12.5,
+  priceType: "STANDARD",
+  qty: 2,
+  isUnlisted: true,
+  noteOpen: true,
+  zzFutureWebField: "keep me",
+} as const;
+
+function webPayload(lines: readonly object[]): OrderDraftPayload {
+  return {
+    customer: { id: "cust-1", businessName: "Acme" },
+    lineItems: lines as unknown as DraftLineItem[],
+    orderDiscount: "",
+    shippingFee: "",
+    requestedDeliveryDate: "",
+    orderDate: "",
+    notes: "",
+    urgent: false,
+    floorAcked: [],
+  };
+}
+
+describe("structural round-trip: every key web parks on a line survives", () => {
+  const before = webPayload([webUnitLine, webUnlistedLine]);
+  const after = toOrderDraftPayload(fromOrderDraftPayload(before));
+
+  // Catalog lines re-derive tempId = productId on purpose (keeps floorAcked stable on mobile).
+  const DERIVED = new Set(["tempId"]);
+
+  it.each(before.lineItems.map((li) => [li.productName, li] as const))(
+    "%s: no key is dropped or changed on park -> resume -> re-park",
+    (name, original) => {
+      const roundTripped = after.lineItems.find((li) => li.productName === name);
+      expect(roundTripped).toBeDefined();
+      const lost = Object.keys(original).filter(
+        (key) =>
+          !DERIVED.has(key) &&
+          JSON.stringify(roundTripped?.[key]) !== JSON.stringify(original[key]),
+      );
+      expect(lost).toEqual([]);
+    },
+  );
+
+  it("keeps a unit line's unitLabel and packBase as typed fields on the builder state", () => {
+    const state = fromOrderDraftPayload(before);
+    expect(state.items[0].unitLabel).toBe("Case");
+    expect(state.items[0].packBase).toEqual(webPackBase);
+  });
+
+  it("a mobile-origin line (no extra keys) still emits exactly what it did before", () => {
+    const out = toOrderDraftPayload(fixture);
+    expect(Object.keys(out.lineItems[0]).sort()).toEqual(
+      [
+        "tempId",
+        "productId",
+        "productName",
+        "unit",
+        "listPrice",
+        "specialPrice",
+        "discountedPrice",
+        "unitPrice",
+        "priceType",
+        "qty",
+        "unitsPerBox",
+        "boxes",
+        "pieces",
+        "unitCost",
+        "category",
+        "note",
+        "unitLabel",
+        "packBase",
+      ].sort(),
+    );
+  });
+});
+
+describe("unitLineRefusal — mobile can't hold a unit, so a draft with a unit line is refused whole", () => {
+  const pack: DraftCatalogLine = fixture.items[0];
+
+  it("is null for a draft of pack lines (including one with no unit fields at all)", () => {
+    expect(unitLineRefusal([pack, { ...pack, productId: "prod-2" }])).toBeNull();
+    expect(unitLineRefusal([])).toBeNull();
+  });
+
+  it("refuses when ANY line carries a non-pack unitLabel, and says where to open it", () => {
+    const reason = unitLineRefusal([pack, { ...pack, productId: "prod-2", unitLabel: "Case" }]);
+    expect(reason).toMatch(/web dashboard/i);
+  });
+
+  it("refuses the draft resumed from a web-parked unit line", () => {
+    expect(unitLineRefusal(fromOrderDraftPayload(webPayload([webUnitLine])).items)).not.toBeNull();
+  });
+
+  it("does not modify the lines it inspects (nothing is dropped — the web draft stays intact)", () => {
+    const items = fromOrderDraftPayload(webPayload([webUnitLine])).items;
+    const snapshot = JSON.stringify(items);
+    unitLineRefusal(items);
+    expect(JSON.stringify(items)).toBe(snapshot);
   });
 });

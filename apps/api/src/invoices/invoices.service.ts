@@ -3352,12 +3352,12 @@ export class InvoicesService {
   }
 
   async update(id: string, dto: Partial<CreateInvoiceDto>) {
+    const inv = await this.findOneOrThrow(id); // a missing invoice is a 404 whatever else is wrong
     // units_v1: a line can be CREATED by a unit (create(), 4c-1) but not yet REWRITTEN by one (4c-2);
     // the shared DTO accepts `unitLabel`, and this path would silently store a PACK line for it.
     if (dto.items?.some(requestsUnit)) {
       throw new BadRequestException("Selling by a unit can't be set on an invoice edit yet.");
     }
-    const inv = await this.findOneOrThrow(id);
     if (inv.status !== InvoiceStatus.DRAFT)
       throw new BadRequestException("Only DRAFT invoices can be edited");
     await this.assertOrderInvoiceUnlocked(inv);
@@ -4626,6 +4626,13 @@ export class InvoicesService {
       taxRate: i.taxRate,
       boxes: (i as any).boxes ?? null,
       pieces: (i as any).pieces ?? null,
+      // The sale-time box size travels with the boxes/pieces: without it the copy depends on the LIVE
+      // pack, and a client that rebuilds the line from it re-prices per piece (B644 sibling).
+      unitsPerBox: (i as any).unitsPerBox ?? null,
+      // Price markers and the per-line note travel too (a copy must not reset DISCOUNTED to STANDARD).
+      originalPrice: (i as any).originalPrice != null ? Number((i as any).originalPrice) : null,
+      priceType: (i as any).priceType ?? undefined, // undefined -> the schema default (STANDARD)
+      notes: (i as any).notes ?? null,
       // BUY_N_GET_M snapshot travels with the copy — the subtotal is verbatim, and
       // without the snapshot the copy's first edit would re-price the line to full.
       promoFreeUnits: (i as any).promoFreeUnits ?? null,
@@ -4656,6 +4663,15 @@ export class InvoicesService {
     // invariant; omitting it here left it to whatever the schema default
     // (`now()`) resolves to, a real instant rather than a calendar stamp.
     const tenantDefaults = await this.resolveTenantInvoiceDefaults();
+    const issueDate = startOfCalendarDay(new Date(), tenantDefaults.timezone);
+    // The copy's due date runs from ITS issue date on the source's own terms — it had none, so a copy
+    // could never become OVERDUE and never aged. A label that cannot drive a date is dropped WITH the date,
+    // so `paymentTermsLabel` and `dueDate` always agree (finance.prisma invariant).
+    const sourceTerms = String((inv as any).paymentTermsLabel ?? "").trim();
+    const termDays = Object.prototype.hasOwnProperty.call(TERM_DAYS, sourceTerms)
+      ? TERM_DAYS[sourceTerms]
+      : null;
+    const dueDate = termDays != null ? addCalendarDays(issueDate, termDays) : null;
 
     try {
       // B100/F16b: the number is reserved in reserveNext's OWN short transaction,
@@ -4671,7 +4687,8 @@ export class InvoicesService {
             invoiceNumber,
             customerId: inv.customerId,
             status: InvoiceStatus.DRAFT,
-            issueDate: startOfCalendarDay(new Date(), tenantDefaults.timezone),
+            issueDate,
+            dueDate,
             subtotal,
             taxAmount: taxTotal,
             discount: invDiscount,
@@ -4679,11 +4696,11 @@ export class InvoicesService {
             total,
             notes: inv.notes,
             terms: inv.terms,
-            // Copy the "Net 30"-style label verbatim — it still describes this line-item
-            // set. Deposit fields do NOT travel: a duplicate is a fresh invoice with its
+            // The "Net 30"-style label travels only when it drove the dueDate above (they must
+            // agree). Deposit fields do NOT travel: a duplicate is a fresh invoice with its
             // own (unstarted) payment story, not a continuation of the source's deposit
             // schedule (out of scope: no InvoiceInstallment / deposit-aware statuses).
-            paymentTermsLabel: (inv as any).paymentTermsLabel ?? null,
+            paymentTermsLabel: dueDate ? sourceTerms : null,
             referenceNumber: (inv as any).referenceNumber ?? null,
             subject: (inv as any).subject ?? null,
             items: { create: itemsData },

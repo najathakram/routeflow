@@ -25,7 +25,10 @@ name: Migration replay
 
 on:
   pull_request:
-    branches: [master]
+    # No `branches:` filter (was `[master]`): it filtered on the PR's BASE, so a stacked PR that
+    # adds a migration got no lint/replay at all. `--base` below is the PR's own base.sha, so a
+    # stacked PR is linted on its own migrations only. See ci.yml's `on:` note for the caveat that
+    # the workflow file is read from the PR's merge ref.
     paths:
       - "apps/api/prisma/**"
       # The tenancy engine itself. `prisma.service.ts` is what the DB-backed

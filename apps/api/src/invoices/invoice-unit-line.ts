@@ -46,8 +46,9 @@ export function buildInvoiceUnitLine(input: {
   }
   const boxes = factor === 1 ? null : count;
   const pieces = factor === 1 ? null : 0;
+  const unitPrice = roundMoney(item.unitPrice); // round every monetary write, as the order path does
   const lineSub = roundMoney(
-    computeLineSubtotal({ unitPrice: item.unitPrice, qty, boxes, pieces, unitsPerBox: factor }) -
+    computeLineSubtotal({ unitPrice, qty, boxes, pieces, unitsPerBox: factor }) -
       (item.discount ?? 0),
   );
   if (lineSub > MAX_LINE_SUBTOTAL) {
@@ -59,7 +60,7 @@ export function buildInvoiceUnitLine(input: {
     description: item.description,
     productId: item.productId,
     qty,
-    unitPrice: item.unitPrice,
+    unitPrice,
     discount: item.discount ?? 0,
     taxRate: item.taxRate ?? 0,
     subtotal: lineSub,

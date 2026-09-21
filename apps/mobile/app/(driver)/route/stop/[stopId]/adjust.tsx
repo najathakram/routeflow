@@ -28,7 +28,7 @@ import {
   type AtDoorEditedLine,
 } from "../../../../../lib/at-door-diff";
 import { computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
-import { editedLineFreeUnits } from "../../../../../lib/invoice-totals";
+import { adjustLineFreeUnits, lineUnitsPerBox } from "../../../../../lib/at-door-line-units";
 import { freeUnitsLabel } from "../../../../../lib/buyer-cart-logic";
 import { sanitizeIntInput, parseIntQty } from "../../../../../lib/qty";
 import { archivedMessage, resolveProductByCode } from "../../../../../lib/barcode-resolve";
@@ -78,31 +78,6 @@ interface AddedLineDraft {
   pieces: number;
   /** Total pieces — always the piece-equivalent, never a bare box count (see lib/at-door-diff.ts). */
   qty: number;
-}
-
-/**
- * BUY_N_GET_M free units for the at-door ESTIMATE, rescaled to the quantity the
- * driver has dialled in. Same rule as the order/invoice edit forms (and the
- * server's `rescaleBogoFreeUnits` fallback): the snapshot was earned at the
- * line's stored selling-unit count, so a shrunk line earns proportionally fewer
- * and a grown one never earns more than was already agreed. Loose pieces never
- * count — a boxed line's selling units are its BOXES.
- */
-function adjustLineFreeUnits(li: OrderItem, qty: number): number {
-  const upb = Number(li.product?.unitsPerBox ?? 0);
-  const stored = normalizeBoxesPieces({
-    boxes: li.boxes,
-    pieces: li.pieces,
-    qty: li.qty,
-    unitsPerBox: upb,
-  });
-  const now = normalizeBoxesPieces({ qty, unitsPerBox: upb });
-  return editedLineFreeUnits({
-    promoFreeUnits: li.promoFreeUnits,
-    promoBaseUnits: upb > 1 ? stored.boxes : stored.qty,
-    boxes: upb > 1 ? now.boxes : null,
-    qty: now.qty,
-  });
 }
 
 export default function AdjustOrderScreen() {
@@ -168,7 +143,7 @@ export default function AdjustOrderScreen() {
     for (const li of adjustable) {
       const qty = qtyById[li.id] ?? li.qty;
       if (qty <= 0) continue;
-      const upb = Number(li.product?.unitsPerBox ?? 0);
+      const upb = lineUnitsPerBox(li);
       // BUY_N_GET_M: the agreed line already has free units off — bill them off
       // the estimate too, or the door total over-states what the buyer owes.
       const freeUnits = adjustLineFreeUnits(li, qty);
@@ -547,7 +522,7 @@ function AdjustLineRow({
   qty: number;
   onChangeQty: (qty: number) => void;
 }) {
-  const upb = Number(li.product?.unitsPerBox ?? 0);
+  const upb = lineUnitsPerBox(li);
   const isBoxed = upb > 1;
   // Seed once from the line's STORED split — never re-derive on every render,
   // so an in-flight refetch (pre-save) doesn't reset an in-progress edit.
