@@ -679,19 +679,39 @@ export class BillingService {
         );
         // Stripe gets a 200 (there is nothing to retry), so the refusal must leave a findable trail,
         // not only a log line. tenantId is the METADATA's claim, so an unknown tenant is stored null.
-        await this.prisma.auditLog
-          .create({
-            data: {
-              tenantId: tenantRow ? tenantId : null,
-              action: STRIPE_CHECKOUT_REFUSED_ACTION,
-              entityType: STRIPE_CHECKOUT_ENTITY,
-              entityId: session.id ?? null,
-              meta: {
-                reason: tenantRow ? "customer_mismatch" : "unknown_tenant",
-                requestedPlanKey: resolvedPlanKey,
+        // Exactly ONE row per session: two deliveries of the same session (parallel webhook
+        // workers, or checkout.session.completed and its async_payment_* sibling) serialize on the
+        // same advisory lock the APPLIED path takes, then the second sees the first's committed row.
+        // The dedupe key is (entityType, entityId, action) ONLY — the tenant id is payload, because
+        // it can differ between deliveries (unknown tenant -> null, tenant created later -> its id).
+        // Best-effort: a failure here must never change the 200 Stripe already gets.
+        await this.prisma
+          .$transaction(async (tx) => {
+            if (session.id) {
+              await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"stripe-checkout"}), hashtext(${session.id}))`;
+              const recorded = await tx.auditLog.findFirst({
+                where: {
+                  entityType: STRIPE_CHECKOUT_ENTITY,
+                  entityId: session.id,
+                  action: STRIPE_CHECKOUT_REFUSED_ACTION,
+                },
+                select: { id: true },
+              });
+              if (recorded) return;
+            }
+            await tx.auditLog.create({
+              data: {
+                tenantId: tenantRow ? tenantId : null,
+                action: STRIPE_CHECKOUT_REFUSED_ACTION,
+                entityType: STRIPE_CHECKOUT_ENTITY,
+                entityId: session.id ?? null,
+                meta: {
+                  reason: tenantRow ? "customer_mismatch" : "unknown_tenant",
+                  requestedPlanKey: resolvedPlanKey,
+                },
               },
-            },
-          })
+            });
+          }, CHECKOUT_TX_OPTIONS)
           .catch(() => undefined);
         return;
       }
@@ -882,6 +902,11 @@ export class BillingService {
             .catch(() => undefined);
         }
         throw err;
+      }
+      // Committed: an automatic restore may have rewritten the tenant's feature rows, so drop the
+      // 30 s resolver/override/config caches. A redelivery that did nothing has nothing to drop.
+      if (upserted !== ALREADY_APPLIED) {
+        this.planTransition.invalidateCaches(tenantId, preparedTransition);
       }
     } else {
       // Flag OFF (or a checkout that names no plan / a stale one): EXACTLY the plain upsert this handler always

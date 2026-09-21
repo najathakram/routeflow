@@ -98,6 +98,7 @@ function make(
     prepare: jest.fn().mockResolvedValue({ enabled: true, planAllows: null }),
     onPlanChange: jest.fn().mockResolvedValue({ action: "none" }),
     transactionOptions: jest.fn().mockReturnValue(undefined),
+    invalidateCaches: jest.fn(),
   } as any;
   const svc = new BillingCronService(
     prisma,
@@ -416,6 +417,28 @@ describe("BillingCronService", () => {
     planTransition.onPlanChange.mockRejectedValueOnce(new Error("pool exhausted"));
     await expect(svc.applyScheduledDowngrades()).rejects.toThrow("pool exhausted");
     expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+  });
+
+  it("A2b: a downgrade that applied invalidates the hook's caches, and a held-back one does not", async () => {
+    const row = (tenantId: string) => ({
+      tenantId,
+      planKey: "BUSINESS",
+      planVersionId: "v7",
+      downgradeToPlanKey: "STARTER",
+      retainedUserIds: [],
+    });
+    const { svc, planTransition } = make({ downgrades: [row("t1"), row("t2")] });
+    planTransition.onPlanChange
+      .mockRejectedValueOnce(new SnapshotFailedError("t1", new Error("disk full")))
+      .mockResolvedValue({ action: "none" });
+
+    await svc.applyScheduledDowngrades();
+
+    expect(planTransition.invalidateCaches).toHaveBeenCalledTimes(1);
+    expect(planTransition.invalidateCaches).toHaveBeenCalledWith("t2", {
+      enabled: true,
+      planAllows: null,
+    });
   });
 
   it("A2b: the per-tenant transaction gets the hook's timeout options", async () => {

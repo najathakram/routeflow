@@ -32,9 +32,9 @@ export function AdminStatCard({
     <div className={`rounded-xl bg-slate-800 p-5 ring-1 ${ring} ${className}`}>
       <div className="flex items-start justify-between">
         <div>
-          <p className="text-xs font-medium uppercase tracking-wider text-slate-500">{label}</p>
+          <p className="text-xs font-medium uppercase tracking-wider text-slate-400">{label}</p>
           <p className="mt-2 text-3xl font-bold text-white">{value}</p>
-          {sub && <p className="mt-1 text-xs text-slate-500">{sub}</p>}
+          {sub && <p className="mt-1 text-xs text-slate-400">{sub}</p>}
           {trend && (
             <p
               className={`mt-1 text-xs font-medium ${trend.value >= 0 ? "text-green-400" : "text-red-400"}`}

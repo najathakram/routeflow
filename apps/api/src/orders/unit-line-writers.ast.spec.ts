@@ -62,8 +62,8 @@ const INVENTORY: Record<string, Row> = {
     why: "merge folds by productId; bails out when any candidate is unit-aware",
   },
   "orders/orders.service.ts::OrdersService.create": {
-    kind: "PACK_ONLY_CREATE",
-    why: "no DTO accepts unitLabel yet (4b-2)",
+    kind: "CONVERTED",
+    why: "resolveLineUnits decides pack vs unit; buildUnitLine builds the unit line (4b-2b)",
   },
   "orders/orders.service.ts::OrdersService.recomputeLineCategoryTaxes": {
     kind: "FIELD_ONLY",

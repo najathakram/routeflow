@@ -119,14 +119,14 @@ export default function PlansPage() {
 
       <AdminCard title="Catalog" noPadding>
         {loading ? (
-          <p className="p-5 text-sm text-slate-500">Loading plans…</p>
+          <p className="p-5 text-sm text-slate-400">Loading plans…</p>
         ) : loadError ? (
           <p className="p-5 text-sm text-red-400">{loadError}</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
+                <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-400">
                   <th className="px-5 py-3 text-left">Plan</th>
                   <th className="px-5 py-3 text-left">Tenants</th>
                   <th className="px-5 py-3 text-left">Monthly (USD)</th>
@@ -145,7 +145,7 @@ export default function PlansPage() {
                     <tr key={plan.planKey} className="hover:bg-slate-700/20">
                       <td className="px-5 py-3">
                         <div className="text-white">{plan.name}</div>
-                        <div className="text-xs text-slate-500">
+                        <div className="text-xs text-slate-400">
                           {plan.planKey}
                           {plan.isCustom ? " · custom-quoted" : ""}
                         </div>
@@ -155,6 +155,7 @@ export default function PlansPage() {
                       </td>
                       <td className="px-5 py-3">
                         <input
+                          aria-label={`${plan.name} monthly price (USD)`}
                           type="number"
                           min={0}
                           max={100000}
@@ -167,6 +168,7 @@ export default function PlansPage() {
                       </td>
                       <td className="px-5 py-3">
                         <input
+                          aria-label={`${plan.name} annual price (USD)`}
                           type="number"
                           min={0}
                           max={100000}
