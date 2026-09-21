@@ -1,5 +1,7 @@
 import {
   computeLineSubtotal,
+  computeLineSubtotalStrict,
+  AmbiguousLineError,
   roundMoney,
   normalizeBoxesPieces,
   perUnitPrice,
@@ -150,6 +152,83 @@ describe("pricing — money discipline", () => {
     it("treats unitsPerBox <= 1 as per-piece", () => {
       expect(computeLineSubtotal({ unitPrice: 5.25, qty: 4, unitsPerBox: 1 })).toBe(21);
       expect(computeLineSubtotal({ unitPrice: 5.25, qty: 4, unitsPerBox: null })).toBe(21);
+    });
+  });
+
+  describe("computeLineSubtotalStrict — B644's guard for NEW writes (design doc, #938)", () => {
+    it("MONEY: agrees with computeLineSubtotal for every non-ambiguous shape", () => {
+      expect(
+        computeLineSubtotalStrict({
+          unitPrice: 220,
+          qty: 22,
+          boxes: 2,
+          pieces: 0,
+          unitsPerBox: 11,
+        }),
+      ).toBe(440);
+      expect(
+        computeLineSubtotalStrict({
+          unitPrice: 220,
+          qty: 21,
+          boxes: 1,
+          pieces: 10,
+          unitsPerBox: 11,
+        }),
+      ).toBe(420);
+      expect(computeLineSubtotalStrict({ unitPrice: 220, qty: 2 })).toBe(440);
+      expect(computeLineSubtotalStrict({ unitPrice: 5.25, qty: 4, unitsPerBox: 1 })).toBe(21);
+    });
+
+    it("MONEY: throws AmbiguousLineError on the exact B644 shape (6 boxes of 12, qty alone)", () => {
+      // The bug: computeLineSubtotal({unitPrice: 40, qty: 72, unitsPerBox: 12}) silently returns
+      // 40 x 72 = 2880 (72 x the BOX price) instead of refusing. Strict must never return that.
+      expect(() => computeLineSubtotalStrict({ unitPrice: 40, qty: 72, unitsPerBox: 12 })).toThrow(
+        AmbiguousLineError,
+      );
+      expect(() => computeLineSubtotalStrict({ unitPrice: 40, qty: 72, unitsPerBox: 12 })).toThrow(
+        /ambiguous/i,
+      );
+    });
+
+    it("a non-boxed product with qty alone is NOT ambiguous (unitsPerBox null/1)", () => {
+      expect(computeLineSubtotalStrict({ unitPrice: 5.25, qty: 4, unitsPerBox: null })).toBe(21);
+      expect(computeLineSubtotalStrict({ unitPrice: 5.25, qty: 4, unitsPerBox: 1 })).toBe(21);
+    });
+
+    it("throws when pieces >= unitsPerBox (a stale split that should have rolled over)", () => {
+      expect(() =>
+        computeLineSubtotalStrict({
+          unitPrice: 10,
+          qty: 25,
+          boxes: 1,
+          pieces: 15,
+          unitsPerBox: 10,
+        }),
+      ).toThrow(AmbiguousLineError);
+    });
+
+    it("throws when qty disagrees with boxes*unitsPerBox+pieces", () => {
+      expect(() =>
+        computeLineSubtotalStrict({ unitPrice: 10, qty: 99, boxes: 2, pieces: 0, unitsPerBox: 10 }),
+      ).toThrow(AmbiguousLineError);
+    });
+
+    it.each([
+      ["qty", { unitPrice: 10, qty: 1.5, boxes: 0, pieces: 0, unitsPerBox: 10 }],
+      ["boxes", { unitPrice: 10, qty: 10, boxes: 1.5, pieces: 0, unitsPerBox: 10 }],
+      ["pieces", { unitPrice: 10, qty: 10, boxes: 0, pieces: 5.5, unitsPerBox: 10 }],
+    ])("throws on a non-integer %s", (_name, input) => {
+      expect(() => computeLineSubtotalStrict(input)).toThrow(AmbiguousLineError);
+    });
+
+    it("every AmbiguousLineError carries code AMBIGUOUS_LINE", () => {
+      try {
+        computeLineSubtotalStrict({ unitPrice: 40, qty: 72, unitsPerBox: 12 });
+        throw new Error("expected a throw");
+      } catch (e) {
+        expect(e).toBeInstanceOf(AmbiguousLineError);
+        expect((e as AmbiguousLineError).code).toBe("AMBIGUOUS_LINE");
+      }
     });
   });
 

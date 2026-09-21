@@ -128,6 +128,70 @@ export function computeLineSubtotal(input: LineSubtotalInput): number {
   return roundMoney(unitPrice * Math.max(0, qty - free));
 }
 
+/** Thrown by {@link computeLineSubtotalStrict} — see its doc comment. */
+export class AmbiguousLineError extends Error {
+  readonly code = "AMBIGUOUS_LINE" as const;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "AmbiguousLineError";
+  }
+}
+
+/**
+ * `computeLineSubtotal`'s strict sibling for NEW writes (owner ruling 2026-09-21, the "refuse
+ * ambiguity" design on #938 — the B644 family). `computeLineSubtotal` is deliberately lenient: a
+ * boxed product (`unitsPerBox > 1`) with neither `boxes` nor `pieces` given falls through to the
+ * non-boxed branch and silently prices `qty x unitPrice` — exactly the B644 shape (6 boxes of 12
+ * read as 72 x the BOX price, a 12x overcharge). This throws {@link AmbiguousLineError} instead of
+ * guessing, for:
+ *   - a boxed product with NEITHER boxes nor pieces given — the axis is unknown.
+ *   - `pieces >= unitsPerBox` — a stale split that should have rolled over first
+ *     (`normalizeBoxesPieces`; correct either way money-wise, but a real caller bug).
+ *   - a non-integer `qty`/`boxes`/`pieces`.
+ *   - `boxes`/`pieces` given and their `boxes*unitsPerBox+pieces` disagrees with `qty` — the two
+ *     axes were never reconciled. Never fires when the caller normalizes first (see
+ *     {@link buildLine}, `./build-line`), only for a caller who skips that step.
+ * `computeLineSubtotal` itself is unchanged and keeps every existing caller (display, PDF,
+ * duplicate, legacy rows) lenient forever; this only guards a NEW write that opts in.
+ */
+export function computeLineSubtotalStrict(input: LineSubtotalInput): number {
+  const { unitPrice, qty, boxes, pieces, unitsPerBox, freeUnits = 0 } = input;
+  const upb = Number(unitsPerBox ?? 0);
+  const hasBoxPackaging = upb > 1;
+  const boxesGiven = boxes != null;
+  const piecesGiven = pieces != null;
+
+  const fail = (msg: string): never => {
+    throw new AmbiguousLineError(`computeLineSubtotalStrict: ${msg}`);
+  };
+
+  for (const [name, v] of [
+    ["qty", qty],
+    ["boxes", boxes],
+    ["pieces", pieces],
+  ] as const) {
+    if (v != null && !Number.isInteger(Number(v))) fail(`${name} must be an integer, got ${v}`);
+  }
+
+  if (hasBoxPackaging && !boxesGiven && !piecesGiven) {
+    fail(
+      "unitsPerBox > 1 with neither boxes nor pieces given — qty alone is ambiguous (per-box vs per-piece); the B644 shape",
+    );
+  }
+  if (hasBoxPackaging && piecesGiven && Number(pieces) >= upb) {
+    fail(`pieces (${pieces}) >= unitsPerBox (${upb}) — roll over via normalizeBoxesPieces first`);
+  }
+  if (hasBoxPackaging && (boxesGiven || piecesGiven)) {
+    const implied = Number(boxes ?? 0) * upb + Number(pieces ?? 0);
+    if (Number(qty) !== implied) {
+      fail(`qty (${qty}) disagrees with boxes*unitsPerBox+pieces (${implied})`);
+    }
+  }
+
+  return computeLineSubtotal({ unitPrice, qty, boxes, pieces, unitsPerBox, freeUnits });
+}
+
 /**
  * Prorate a line's ALREADY-AGREED subtotal for a partial delivered/billed
  * quantity — e.g. the driver at-door short-pick estimate, or any other "what
