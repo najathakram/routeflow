@@ -64,6 +64,11 @@ const SCRIPT_EXCLUSIONS = new Set([
   // T6 migration (to list the guarded tables) and runs SELECT count(*) in a READ ONLY transaction.
   // Hand-run via `railway run`; never enters the API image (outside tsconfig.build.json).
   "t6-null-census.mjs",
+  // reason: T6 owner-run READ-ONLY forensic report; like the census it holds DDL text only inside a
+  // regex that PARSES the T6 migration (to list the guarded tables) and runs SELECTs in a READ ONLY
+  // transaction. Hand-run via `railway run`; never enters the API image. (The sibling stamp script
+  // t6-stamp-null-rows.mjs contains no DDL keyword, so it needs no exemption and gets none.)
+  "t6-null-rows-report.mjs",
 ]);
 
 /**
