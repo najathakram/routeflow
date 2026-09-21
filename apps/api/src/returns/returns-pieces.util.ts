@@ -3,14 +3,21 @@
  * returns.service.ts — split out of `create()` so the same numbers are used by
  * both the STANDARD post-delivery flow and the (PR-1c/1d) INLINE capture flow.
  *
- * `OrderItem.qty` is ALWAYS stored as total PIECES, for boxed and non-boxed
- * lines alike (`packages/pricing`'s `normalizeBoxesPieces` — `boxes`/`pieces`
- * are a sale-time entry snapshot, never the source of truth for the line
- * total). `ReturnItem.qty` for a STANDARD return is a raw piece count in that
- * same unit. Today that makes the "conversion" in `standardReturnPieces` an
- * identity function — it exists as a named seam (B4/m-6) so a future
- * box/piece-aware DTO can convert without `create()`'s comparison or its
- * refusal-message text changing shape.
+ * UNITS (corrected under B665; this header used to say "always PIECES", which is false). `OrderItem.qty`
+ * is counted in the LINE'S OWN UNIT: pieces for a box-split or ordinary line, but BOXES for a box-unaware
+ * boxed line (a standing-order / buyer bare-qty line of a boxed product is stored `boxes: null,
+ * unitsPerBox: null`, qty = boxes). `ReturnItem.qty` of a STANDARD return is what the operator typed,
+ * capped by that same raw line qty, so it is in the line's own unit too (every creator: web returns page,
+ * mobile operator return, driver undelivered return). So `soldQtyForProduct` and the STANDARD returned qty
+ * are consistent with each other, which is why `create()`'s cap works, but NEITHER is a piece count for a
+ * box-unaware line. INLINE items (`returnedPiecesByProduct` below adds them in) ARE true pieces, so a
+ * product that was returned by both paths on a box-unaware line sums two units: a known limit of that
+ * reader, not fixed here. Stock and the regulated ledger convert through `common/line-pack-factors.ts`
+ * (`legacyLinePieces`), never by assuming this axis is pieces.
+ *
+ * `standardReturnPieces` stays a named seam (B4/m-6) so a future box/piece-aware DTO can convert without
+ * `create()`'s comparison or its refusal-message text changing shape; today it is an identity function on
+ * the line's own axis.
  */
 
 export interface OrderLineForPieces {
@@ -25,14 +32,14 @@ export interface OrderForPieces {
 }
 
 /**
- * Sold pieces for (order, product) = the SUM of the product's non-CANCELLED
- * lines on that order, normalised to pieces (already pieces — see file
- * header). Fixes the B4/m-6 undercount: the pre-fix code picked a single
+ * Sold qty for (order, product) = the SUM of the product's non-CANCELLED
+ * lines on that order, in the LINE'S OWN UNIT (see the file header: boxes for
+ * a box-unaware boxed line, NOT pieces). Fixes the B4/m-6 undercount: the pre-fix code picked a single
  * `.find()`-matched line, so a product split across two lines on the same
  * order (a re-added line, a post-edit split) undercounted what was actually
  * sold.
  */
-export function soldPiecesForProduct(order: OrderForPieces, productId: string): number {
+export function soldQtyForProduct(order: OrderForPieces, productId: string): number {
   return (order.lineItems ?? [])
     .filter((li) => li.productId === productId && li.status !== "CANCELLED")
     .reduce((sum, li) => sum + Number(li.qty), 0);

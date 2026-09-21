@@ -2,7 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { roundMoney } from "@routeflow/pricing";
 import { periodBucketOf } from "./period";
-import { legacyLinePieces } from "./legacy-line-pieces.stub"; // -> @routeflow/pricing when U-units lands it
+import { resolvePackFactors } from "../common/line-pack-factors";
 
 /** Round a quantity to 3 decimals (matches the Decimal(12,3) ledger columns). */
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
@@ -360,69 +360,31 @@ export class RegulatedLedgerService {
               },
             })
           : [];
-      const hasSplit = (x: any) => !!x && (x.boxes != null || x.pieces != null);
-      // Factor 1 only for lines WITH a split and for products with no pack at all. A line with NO split and
-      // a pack (its own snapshot > 1, or the live pack > 1) is ambiguous: it always goes through the
-      // classifier (a snapshot with no split is the B644/B656 shape, where qty already counts pieces).
-      const ambiguous = lines.filter(
-        (li) =>
-          !hasSplit(li) &&
-          (Number(li.unitsPerBox ?? 0) > 1 || Number(li.product?.unitsPerBox ?? 0) > 1),
-      );
-      if (ambiguous.length > 0) {
-        // Source precedence: the SALE row's own linked InvoiceItem first (same sale, same product; it may
-        // carry the split), then a same-product sibling order line with a split.
-        const saleOfLine = new Map<string, any>();
-        for (const sr of sales) {
-          if (sr.orderItemId && !saleOfLine.has(sr.orderItemId)) saleOfLine.set(sr.orderItemId, sr);
-        }
-        const invoiceItemIdOf = (li: any): string | undefined =>
-          saleOfLine.get(li.id)?.invoiceItemId ?? undefined;
-        const invIds = [...new Set(ambiguous.map(invoiceItemIdOf).filter(Boolean))] as string[];
-        const invItems: any[] =
-          invIds.length > 0
-            ? await db.invoiceItem.findMany({
-                where: { id: { in: invIds } },
-                select: { id: true, qty: true, boxes: true, pieces: true, unitsPerBox: true },
-              })
-            : [];
-        const invById = new Map<string, any>(invItems.map((x) => [x.id, x]));
-        const needSibling = ambiguous.filter(
-          (li) => !hasSplit(invById.get(invoiceItemIdOf(li) ?? "")),
-        );
-        const siblings: any[] =
-          needSibling.length > 0
-            ? await db.orderItem.findMany({
-                where: {
-                  orderId,
-                  productId: { in: [...new Set(needSibling.map((li) => li.productId))] },
-                  boxes: { not: null },
-                },
-                select: {
-                  productId: true,
-                  qty: true,
-                  boxes: true,
-                  pieces: true,
-                  unitsPerBox: true,
-                },
-              })
-            : [];
-        const asLegacy = (x: any) => ({
-          qty: Number(x.qty),
-          boxes: x.boxes,
-          pieces: x.pieces,
-          unitsPerBox: x.unitsPerBox,
-        });
-        for (const li of ambiguous) {
-          const inv = invById.get(invoiceItemIdOf(li) ?? "");
-          const sibling = siblings.find((x) => x.productId === li.productId);
-          const source = hasSplit(inv) ? inv : (sibling ?? null);
-          const res = legacyLinePieces(asLegacy(li), source && asLegacy(source));
-          if ("unknown" in res) unknownPackByOrderItem.set(li.id, res.reason);
-          else if (Number(li.qty) > 0) {
-            pieceFactorByOrderItem.set(li.id, res.pieces / Number(li.qty));
+      const saleOfLine = new Map<string, any>();
+      for (const sr of sales) {
+        if (sr.orderItemId && !saleOfLine.has(sr.orderItemId)) saleOfLine.set(sr.orderItemId, sr);
+      }
+      const packs = await resolvePackFactors(db, {
+        orderId,
+        lines,
+        // The SALE row's own linked InvoiceItem is the preferred source (same sale, same product).
+        loadInvoiceItems: async (lineIds) => {
+          const byInvoiceItem = new Map<string, string>();
+          for (const id of lineIds) {
+            const ii = saleOfLine.get(id)?.invoiceItemId;
+            if (ii) byInvoiceItem.set(ii, id);
           }
-        }
+          if (byInvoiceItem.size === 0) return new Map();
+          const items: any[] = await db.invoiceItem.findMany({
+            where: { id: { in: [...byInvoiceItem.keys()] } },
+            select: { id: true, qty: true, boxes: true, pieces: true, unitsPerBox: true },
+          });
+          return new Map(items.map((x) => [byInvoiceItem.get(x.id)!, x]));
+        },
+      });
+      for (const [lineId, p] of packs) {
+        if ("unknown" in p) unknownPackByOrderItem.set(lineId, p.reason);
+        else pieceFactorByOrderItem.set(lineId, p.factor);
       }
     }
     const pieceFactorOfSale = (s: any): number =>

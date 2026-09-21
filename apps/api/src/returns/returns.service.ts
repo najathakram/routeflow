@@ -36,10 +36,11 @@ import { IdempotencyService } from "../common/idempotency.service";
 import { NumberingService } from "../import/numbering.service";
 import {
   returnedPiecesByProduct,
-  soldPiecesForProduct,
+  soldQtyForProduct,
   standardReturnPieces,
 } from "./returns-pieces.util";
 import { restockReturnItems } from "./returns-restock.util";
+import { standardRestockResolver } from "./returns-restock-pieces";
 
 /** M6/§2.3: every standard-path method refuses an INLINE-kind return — it has its own
  * endpoints and state machine (PR-1c/1d). Thrown the moment a `kind` is known to be INLINE. */
@@ -237,7 +238,7 @@ export class ReturnsService {
         // order (not just the first one `.find()` happened to match) — see
         // returns-pieces.util.ts. A product absent from every live line still 400s,
         // matching the pre-fix "not in the original order" behaviour.
-        const orderedQty = soldPiecesForProduct(order as any, item.productId);
+        const orderedQty = soldQtyForProduct(order as any, item.productId);
         if (orderedQty <= 0)
           throw new BadRequestException(`Product ${item.productId} was not in the original order`);
         const { pieces: returnPieces, toLineUnit } = standardReturnPieces(
@@ -493,7 +494,8 @@ export class ReturnsService {
         await tx.returnItem.updateMany({ where: { returnId: id }, data: { restock: false } });
       } else {
         // PR-1c: shared with InlineReturnsService.capture() — see returns-restock.util.ts.
-        await restockReturnItems(tx, ret, userId);
+        // B665: a STANDARD return is typed in the line's own unit; stock is in pieces.
+        await restockReturnItems(tx, ret, userId, standardRestockResolver(tx, ret.orderId));
       }
       // W5c: reverse the regulated sales ledger for the returned goods (pro-rated,
       // idempotent per return). Independent of `restock` — a returned regulated
@@ -627,7 +629,7 @@ export class ReturnsService {
     if (allInvoices.length === 0) {
       // Never invoiced (or its invoice rows are gone) — legacy order-line basis.
       // PR-1a fix-round (Opus review F1): create()'s over-return cap now sums a
-      // product's qty across every non-CANCELLED line (soldPiecesForProduct), but this
+      // product's qty across every non-CANCELLED line (soldQtyForProduct), but this
       // basis used to price off a SINGLE `.find()`-matched line's per-unit rate against
       // the full (now-pooled) returned qty — a product split across two lines priced
       // the whole return at one line's rate, over-crediting whenever the lines differ
@@ -886,17 +888,31 @@ export class ReturnsService {
       // `GROUP BY status` count shows zero PROCESSED rows.
       if (fresh.status === "RECEIVED" || fresh.status === "PROCESSED") {
         const returnRef = `RET-${fresh.id.slice(0, 8)}`;
+        // B665: undo EXACTLY what receive() restocked (in PIECES), read from its own RET-<id>
+        // movements, never recomputed from the typed qty (a box-unaware line's qty counts BOXES). A parked
+        // or restock:false item has no movement, so there is nothing to undo for it.
+        const moved: any[] = await tx.stockMovement.findMany({
+          where: { reference: returnRef, type: "RETURN" },
+          select: { productId: true, quantity: true },
+        });
+        const undo = new Map<string, number>();
+        for (const m of moved)
+          undo.set(m.productId, (undo.get(m.productId) ?? 0) + Number(m.quantity));
+        for (const [productId, qty] of undo) {
+          await tx.product.update({
+            where: { id: productId },
+            data: { currentStock: { decrement: qty } },
+          });
+        }
         for (const item of fresh.items) {
-          if (item.restock) {
-            await tx.product.update({
-              where: { id: item.productId },
-              data: { currentStock: { decrement: Number(item.qty) } },
-            });
-          }
           await tx.stockMovement.deleteMany({
             where: { productId: item.productId, reference: returnRef },
           });
         }
+        // A restock still parked for this return is void once the return is cancelled.
+        await tx.returnParkedRestock.deleteMany({
+          where: { returnId: fresh.id, resolvedAt: null },
+        });
         // W5c: undo the regulated ledger reversal written at receive() (symmetric
         // to deleting the stock movements above). cancel() blocks REFUNDED returns,
         // so a finalized reversal is never touched.
@@ -961,7 +977,7 @@ export class ReturnsService {
     if (ret.kind === "INLINE") throw new BadRequestException(INLINE_RETURN_USE_INLINE_ENDPOINTS);
 
     // Enrich each return item with orderedQty from the original order. `orderedQty`
-    // uses the same pooled-across-lines basis as create()'s cap (soldPiecesForProduct,
+    // uses the same pooled-across-lines basis as create()'s cap (soldQtyForProduct,
     // fix-round: the pre-fix single-line `.find()` here could show an operator a cap
     // lower than what create() actually enforces); `unitPrice` stays a single line's
     // rate — display-only — since a pooled per-unit rate has no one line to attribute
@@ -970,7 +986,7 @@ export class ReturnsService {
       const orderLine = ret.order?.lineItems?.find((li) => li.productId === item.productId);
       return {
         ...item,
-        orderedQty: ret.order ? soldPiecesForProduct(ret.order as any, item.productId) : null,
+        orderedQty: ret.order ? soldQtyForProduct(ret.order as any, item.productId) : null,
         unitPrice: orderLine ? Number(orderLine.unitPrice) : null,
       };
     });

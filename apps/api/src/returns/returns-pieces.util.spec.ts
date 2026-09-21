@@ -9,11 +9,11 @@
 import {
   firstNonCancelledLine,
   returnedPiecesByProduct,
-  soldPiecesForProduct,
+  soldQtyForProduct,
   standardReturnPieces,
 } from "./returns-pieces.util";
 
-describe("soldPiecesForProduct (B4/m-6)", () => {
+describe("soldQtyForProduct (B4/m-6)", () => {
   it("sums qty across every non-CANCELLED line for the product — not just the first match", () => {
     const order = {
       lineItems: [
@@ -24,7 +24,12 @@ describe("soldPiecesForProduct (B4/m-6)", () => {
     };
     // Revert probe: the pre-fix `.find()` picked ONE line (10), undercounting the true
     // sold total of 15 across both live lines for p1.
-    expect(soldPiecesForProduct(order, "p1")).toBe(15);
+    expect(soldQtyForProduct(order, "p1")).toBe(15);
+  });
+
+  it("counts a line in its OWN unit: a box-unaware boxed line of 6 boxes stays 6, never 72 pieces (B665)", () => {
+    const order = { lineItems: [{ productId: "p1", qty: 6, status: "PENDING" }] };
+    expect(soldQtyForProduct(order, "p1")).toBe(6);
   });
 
   it("excludes CANCELLED lines from the sum", () => {
@@ -34,13 +39,13 @@ describe("soldPiecesForProduct (B4/m-6)", () => {
         { productId: "p1", qty: 20, status: "CANCELLED" },
       ],
     };
-    expect(soldPiecesForProduct(order, "p1")).toBe(10);
+    expect(soldQtyForProduct(order, "p1")).toBe(10);
   });
 
   it("returns 0 for a product with no live line (the caller 400s on <= 0)", () => {
     const order = { lineItems: [{ productId: "p1", qty: 10, status: "CANCELLED" }] };
-    expect(soldPiecesForProduct(order, "p1")).toBe(0);
-    expect(soldPiecesForProduct(order, "p-never-ordered")).toBe(0);
+    expect(soldQtyForProduct(order, "p1")).toBe(0);
+    expect(soldQtyForProduct(order, "p-never-ordered")).toBe(0);
   });
 
   it("box-split STANDARD DTO literal (§3.5): a 2bx+6pcs line (qty already 30 pieces) sums correctly", () => {
@@ -49,7 +54,7 @@ describe("soldPiecesForProduct (B4/m-6)", () => {
         { productId: "p1", qty: 30, boxes: 2, pieces: 6, unitsPerBox: 12, status: "PENDING" },
       ],
     };
-    expect(soldPiecesForProduct(order, "p1")).toBe(30);
+    expect(soldQtyForProduct(order, "p1")).toBe(30);
   });
 });
 
