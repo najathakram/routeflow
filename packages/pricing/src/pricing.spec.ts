@@ -236,6 +236,14 @@ describe("pricing — money discipline", () => {
       expect(computeLineSubtotalStrict({ unitPrice: 10, qty: 1.5, unitsPerBox: null })).toBe(15);
       expect(computeLineSubtotalStrict({ unitPrice: 10, qty: 1.5, unitsPerBox: 1 })).toBe(15);
     });
+
+    it("N1 (R-ui PC-probe follow-up): refuses boxes:0, pieces:0 on a boxed product — used to mint a $0 line", () => {
+      // buildLine already refuses this (N1); a caller of computeLineSubtotalStrict directly must
+      // get the same refusal, not just a $0 result, so the two never disagree.
+      expect(() =>
+        computeLineSubtotalStrict({ unitPrice: 10, qty: 0, boxes: 0, pieces: 0, unitsPerBox: 12 }),
+      ).toThrow(AmbiguousLineError);
+    });
   });
 
   describe("lineAmbiguity — the pure, non-throwing form (HOLD 3, #938)", () => {

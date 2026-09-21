@@ -187,6 +187,13 @@ export function lineAmbiguity(input: {
     if (Number(qty) !== implied) {
       return `qty (${qty}) disagrees with boxes*unitsPerBox+pieces (${implied})`;
     }
+    // R-ui PC-probe follow-up, 2026-09-21: boxes:0, pieces:0 passed every check above (both
+    // given, so "neither given" doesn't fire; disagreement agrees with itself at 0) and minted
+    // a $0 line — buildLine's N1 already refuses this at the choke point, but a direct caller of
+    // computeLineSubtotalStrict (skipping buildLine) got no such refusal. Now they agree.
+    if (!(implied > 0)) {
+      return `qty must be > 0, got boxes:${boxes} pieces:${pieces} (${implied} total)`;
+    }
   }
   return null;
 }
