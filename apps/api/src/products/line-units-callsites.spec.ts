@@ -23,7 +23,12 @@ const BASELINE: Record<string, number> = {
   "orders/orders.service.ts": 20,
   "invoices/invoices.service.ts": 5, // 4c-1 prefactor: create()'s line builder moved (3 reads) to:
   "invoices/manual-invoice-lines.ts": 3,
-  "estimates/estimates.service.ts": 2,
+  // B645: create()'s itemsData mapper read product.unitsPerBox at 3 sites (qty
+  // resolve, computeLineSubtotal, and the B645 boxes/pieces/unitsPerBox snapshot
+  // this fix added) — hoisted to one `productUnitsPerBox` local reused at all
+  // three, so the counted baseline goes DOWN from 2 to 1 even though a 3rd
+  // logical use was added.
+  "estimates/estimates.service.ts": 1,
   "order-templates/order-templates.service.ts": 1,
   "returns/inline-returns-quote.service.ts": 3,
   "buyer/buyer.controller.ts": 1,

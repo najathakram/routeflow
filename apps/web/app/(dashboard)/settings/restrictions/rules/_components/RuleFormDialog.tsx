@@ -61,6 +61,7 @@ function ProductPick({
         placeholder="Search products by name or SKU"
         value={q}
         onChange={(e) => setQ(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && e.preventDefault()}
         error={error}
       />
       {results.length > 0 && (
@@ -104,8 +105,10 @@ export function RuleFormDialog({ open, onClose }: { open: boolean; onClose: () =
   // The page mounts this only while open, so Radix has no trigger to return focus to: remember
   // who had focus and give it back on close (the BlockedLinesDialog pattern).
   const returnFocusTo = React.useRef<HTMLElement | null>(null);
-  const set = <K extends keyof RuleFormValues>(k: K, val: RuleFormValues[K]) =>
+  const set = <K extends keyof RuleFormValues>(k: K, val: RuleFormValues[K]) => {
     setV((p) => ({ ...p, [k]: val }));
+    setErrors((e) => (e[k] ? { ...e, [k]: undefined } : e));
+  };
 
   React.useEffect(() => {
     if (open) {

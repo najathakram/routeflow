@@ -69,6 +69,7 @@ import { CropModal } from "./CropModal";
 import { DemandCard } from "./DemandCard";
 import { SalesHistoryCard } from "./SalesHistoryCard";
 import { ProductLabelsCard } from "./ProductLabelsCard";
+import { ProductUnitsCard } from "./ProductUnitsCard";
 import { ImageLightbox } from "./ImageLightbox";
 import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
 
@@ -2394,6 +2395,7 @@ export default function ProductDetailPage() {
             )}
 
             <ProductLabelsCard productId={product.id} />
+            <ProductUnitsCard product={product} />
 
             {/* Sales demand — real data from invoiced sales. In its own file (unlike
                 CostHistoryCard below) because it owns range/metric state and five
