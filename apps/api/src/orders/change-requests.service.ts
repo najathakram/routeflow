@@ -340,7 +340,12 @@ export class ChangeRequestsService {
       // Splitting it against any pack (live or snapshot) would misread a boxes delta as pieces and
       // under-charge (a 3-box delta split against upb 24 becomes 0 boxes + 3 pieces).
       if (li.boxes != null) {
-        let upb = li.unitsPerBox != null ? Number(li.unitsPerBox) : null;
+        // A snapshot of <= 1 is not a real pack (it's the "not case-packed" value) — treat it as
+        // absent and fall through to deriving one, same as a null snapshot, rather than letting
+        // it reach normalizeBoxesPieces' non-boxed branch, which posts the pieces delta as a bare
+        // qty (the exact B655 shape this whole fix exists to close).
+        const snapshotUpb = li.unitsPerBox != null ? Number(li.unitsPerBox) : null;
+        let upb = snapshotUpb != null && snapshotUpb > 1 ? snapshotUpb : null;
         if (upb == null) {
           const boxesNum = Number(li.boxes);
           const piecesNum = Number(li.pieces ?? 0);
@@ -394,6 +399,11 @@ export class ChangeRequestsService {
       type: "BUYER",
     } as JwtPayload;
 
+    // This split is handed to create() for a NEW draft line — create() re-splits it against the
+    // LIVE product's pack (its own, correct, contract for a new sale line: unlike the rewrite
+    // above, a new line has no existing snapshot to preserve). If the pack changed since the
+    // original line was sold, the boxes/pieces intent survives but the raw piece count can shift
+    // with it — inherent to that contract, not something this rollover can or should override.
     const draft = await this.ordersService.create(
       {
         items: [{ productId, qty, ...(boxes != null ? { boxes, pieces } : {}) }],

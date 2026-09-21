@@ -598,6 +598,40 @@ describe("ChangeRequestsService", () => {
       expect(ordersService.create).not.toHaveBeenCalled();
     });
 
+    // A snapshot of 0 (or 1) is not a real pack — the "not case-packed" value, not a genuine
+    // factor. It must fall through to deriving from the line's own stored split exactly like a
+    // null snapshot, never reach normalizeBoxesPieces' non-boxed branch (which would post the
+    // pieces delta as a bare qty — the original B655 shape).
+    it("treats a box-aware line's unitsPerBox: 0 snapshot as absent and derives from its own split", async () => {
+      prisma.changeRequest.findFirst.mockResolvedValue(CHANGE_QTY_CR);
+      prisma.orderItem.findFirst.mockResolvedValue({
+        id: "item-1",
+        productId: "prod-1",
+        qty: 24, // (24 - 0) / 1 = 24
+        boxes: 1,
+        pieces: 0,
+        unitsPerBox: 0,
+        unitLabel: null,
+        status: "PENDING",
+      });
+      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", trackedCategoryId: null });
+
+      await service.resolve(
+        "ord-1",
+        "cr-2",
+        { action: ChangeRequestResolveAction.APPROVE_NEXT_DELIVERY },
+        operatorUser,
+      );
+
+      expect(ordersService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          items: [expect.objectContaining({ productId: "prod-1", qty: 51, boxes: 2, pieces: 3 })],
+        }),
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
     // Control: a plain non-boxed line's rolled delta is a bare qty, unaffected — no boxes/pieces
     // keys added.
     it("does not split a non-boxed CHANGE_QTY line's delta (control)", async () => {
