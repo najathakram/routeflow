@@ -20,6 +20,24 @@ import {
 } from "./purchase-orders-edit";
 import { PurchaseOrderLinesTable, type CatalogProduct } from "./PurchaseOrderLinesTable";
 
+/**
+ * Escape, for this hand-rolled overlay (it is a bare `fixed inset-0` div, not the Radix Modal, so it
+ * gets no Escape handling for free — W2 saw the key do nothing). The handler decides what Escape
+ * means right now (Back on the prompt, close on the form, nothing while a save is in flight).
+ */
+function useEscape(handler: () => void) {
+  const ref = React.useRef(handler);
+  ref.current = handler;
+  React.useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      ref.current();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
+}
+
 const inputCls =
   "w-full rounded border border-surface-border px-2 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500";
 
@@ -65,6 +83,18 @@ function EditModalBody({
   const [pending, setPending] = React.useState<UpdatePurchaseOrderInput | null>(null);
 
   const supplierChanged = supplierId !== (po.supplier?.id ?? "");
+
+  // Escape = the same as the visible way out: Back on the Re-apply prompt, Cancel on the form.
+  // Ignored while a save is in flight, so a half-sent PATCH is never abandoned mid-air.
+  useEscape(() => {
+    if (updatePO.isPending) return;
+    if (pending) {
+      setPending(null);
+      setError(null);
+    } else {
+      onClose();
+    }
+  });
 
   /** A line's product may be missing from the catalog list (archived) — keep it selectable. */
   const nameFor = (line: EditLine) =>
@@ -309,6 +339,10 @@ export function PurchaseOrdersEditModal({
   const { data: fresh, isError } = usePurchaseOrder(po.id);
   const snapshot = React.useRef<PurchaseOrder | null>(null);
   if (!snapshot.current && fresh && products.length > 0) snapshot.current = fresh as PurchaseOrder;
+  // While loading (no body yet) Escape closes; once the body mounts it owns the key.
+  useEscape(() => {
+    if (!snapshot.current) onClose();
+  });
 
   if (snapshot.current) {
     return (
