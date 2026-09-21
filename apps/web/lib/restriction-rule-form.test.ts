@@ -1,4 +1,5 @@
 import {
+  dayEndToIso,
   dayToIso,
   emptyRuleForm,
   ruleFormSchema,
@@ -45,15 +46,25 @@ describe("ruleFormSchema (mirrors the API's validation, in plain words)", () => 
     expect(errorsOf({ ...valid, reason: "x".repeat(501) }).reason).toMatch(/under 500/);
   });
 
-  it("the end must be after the start; an open end or open start is fine", () => {
-    const bad = { ...valid, startsOn: "2026-10-10", endsOn: "2026-10-10" };
-    expect(errorsOf(bad)).toEqual({ endsOn: "The end date must be after the start date" });
-    expect(
-      errorsOf({ ...valid, startsOn: "2026-10-10", endsOn: "2026-10-09" }).endsOn,
-    ).toBeTruthy();
+  it("a one-day rule (start = end) is valid; an end before the start is refused in words", () => {
+    expect(errorsOf({ ...valid, startsOn: "2026-10-10", endsOn: "2026-10-10" })).toEqual({});
     expect(errorsOf({ ...valid, startsOn: "2026-10-10", endsOn: "2026-10-11" })).toEqual({});
-    expect(errorsOf({ ...valid, endsOn: "2026-10-11" })).toEqual({});
+    expect(errorsOf({ ...valid, startsOn: "2026-10-10", endsOn: "2026-10-09" })).toEqual({
+      endsOn: "The end date can't be before the start date",
+    });
+    expect(errorsOf({ ...valid, endsOn: "2999-10-11" })).toEqual({});
     expect(errorsOf({ ...valid, startsOn: "2026-10-10" })).toEqual({});
+  });
+
+  it("a blank start means now: an end day already past is refused here, today is fine", () => {
+    const iso = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const today = new Date();
+    const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+    expect(errorsOf({ ...valid, endsOn: iso(yesterday) })).toEqual({
+      endsOn: "The end date has already passed",
+    });
+    expect(errorsOf({ ...valid, endsOn: iso(today) })).toEqual({});
   });
 });
 
@@ -87,11 +98,25 @@ describe("toCreateRequest", () => {
     expect(open).not.toHaveProperty("effectiveFrom");
     expect(open).not.toHaveProperty("effectiveTo");
     const timed = toCreateRequest({ ...valid, startsOn: "2026-10-10", endsOn: "2026-12-31" });
-    expect(timed.effectiveFrom).toBe(dayToIso("2026-10-10"));
-    expect(timed.effectiveTo).toBe(dayToIso("2026-12-31"));
-    expect(new Date(timed.effectiveTo!).getTime()).toBeGreaterThan(
-      new Date(timed.effectiveFrom!).getTime(),
-    );
+    // Start is INCLUSIVE at the start of the chosen day; the end is EXCLUSIVE, so "ends Dec 31"
+    // goes out as the start of Jan 1 (local), keeping all of Dec 31 in force. Expected instants are
+    // built independently of the helpers.
+    expect(timed.effectiveFrom).toBe(new Date("2026-10-10T00:00:00").toISOString());
+    expect(timed.effectiveTo).toBe(new Date("2027-01-01T00:00:00").toISOString());
+  });
+
+  it("a year below 100 is not remapped to 19xx (end stays one day after the start)", () => {
+    expect(new Date(dayEndToIso("0026-12-31")).getFullYear()).toBe(27);
+    expect(new Date(dayToIso("0026-12-31")).getFullYear()).toBe(26);
+  });
+
+  it("the exclusive end handles month and year rollover and a one-day rule", () => {
+    expect(dayEndToIso("2026-01-31")).toBe(new Date("2026-02-01T00:00:00").toISOString());
+    expect(dayEndToIso("2028-02-28")).toBe(new Date("2028-02-29T00:00:00").toISOString());
+    expect(dayEndToIso("2028-02-29")).toBe(new Date("2028-03-01T00:00:00").toISOString());
+    const oneDay = toCreateRequest({ ...valid, startsOn: "2026-12-15", endsOn: "2026-12-15" });
+    expect(oneDay.effectiveFrom).toBe(new Date("2026-12-15T00:00:00").toISOString());
+    expect(oneDay.effectiveTo).toBe(new Date("2026-12-16T00:00:00").toISOString());
   });
 
   it("trims the reason and sends the channel", () => {

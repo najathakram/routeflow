@@ -189,21 +189,6 @@
 - **Guard:** none yet — propose a scoped `npm run lint -w apps/web -- --file <changed-file>`
   invocation, or a pre-push step that diffs lint output against a baseline.
 
-### L-192 · 2026-09-17 · tooling · jsdom offsetParent is always null (focus-trap RTL false negative)
-
-- **Symptom:** a focus trap's `getFocusable()` filtered candidates with
-  `el.offsetParent !== null`; three RTL tests failed as if the trap never moved focus, while the
-  handler's own logic was correct.
-- **Root cause:** jsdom has no layout engine, so `offsetParent` (like
-  `offsetWidth`/`offsetHeight`) is always `null` regardless of real visibility — the filter
-  discarded every candidate, turning the handler into a silent no-op under test.
-- **Lesson:** **Never gate a DOM-query result on a layout-dependent property (`offsetParent`,
-  `offsetWidth`/`offsetHeight`, `getBoundingClientRect`) in code exercised by RTL/jsdom — use
-  `getComputedStyle` for a visibility check jsdom actually computes, or say in a comment the
-  check is real-browser-only.**
-- **Guard:** `ResponsiveSidebar.tsx`'s `getFocusable()` carries no visibility filter, with a
-  comment stating why (everything rendered while the drawer is open is meant to be reachable).
-
 ### L-193 · 2026-09-17 · tooling · bugs.mjs index carries catalogue-only fields forward BY ID POSITION
 
 - **Symptom:** renumbering 17 filed bug records (to dodge an id collision) then running
@@ -580,23 +565,6 @@
   `packages/types/api/enums.ts`, plus a regression layer pinning the drifted files and the
   mobile jest stub that can't `require` the shared package directly.
 
-### L-081 · 2026-09-06 · domain · F09
-
-- **Symptom:** wallet credit kept being consumed by WRITTEN_OFF (forgiven) invoices after the
-  settle query had excluded VOID — a fix at that query would still have missed the auto-apply
-  path (`send()`/`sendEmail()`), and a test whose mock injects the query result couldn't even
-  see a `where`-only fix.
-- **Root cause:** the guard lived at one call site's query instead of at the money write; four
-  hand-rolled status lists (manual apply, settle, delivery payments, advance wallet) had drifted
-  apart, and PAID had to stay in the settle set because the same loop shrinks excess credit.
-- **Lesson:** **Gate a money write inside the primitive that performs it, on the row it just read
-  (an exclude-list, so a fixture without the field still writes) — sibling primitives and
-  result-injecting mocks bypass a where-only fix; keep every status set in one named module with
-  the reason each differs written beside it.**
-- **Guard:** REG-B67/REG-B66 T1–T11 (incl. the auto-apply door) in
-  `credit-notes.wallet-integrity.spec.ts`; `apps/api/src/invoices/invoice-status-sets.ts` is the
-  one home.
-
 ### L-116 · 2026-09-12 · tooling · plane self-test machine-root invariants
 
 - **Symptom:** a lead's pre-push verify failed at a plane self-test's "shared runs.jsonl
@@ -653,23 +621,6 @@
   a wrong charge date.**
 - **Guard:** the time-of-day half shipped alone; the drift half is filed, blocked on an
   `anchorDay` column. Sibling [[L-118]].
-
-### L-145 · 2026-09-14 · domain · mobile scan-to-order, staged-edit persistence
-
-- **Symptom:** a new per-order "staged edits" snapshot was flagged as a likely violation of R1
-  (local persistence must go through the user-scoped zustand `persist` store, never a raw
-  AsyncStorage key, to prevent one user's work surfacing under the next login).
-- **Root cause:** R1 was written against a single-blob-per-user shape. This snapshot is
-  one-per-ORDER — a single zustand store can't hold a dynamic per-order keyspace, so the code
-  used a `<userId>:<orderId>` AsyncStorage keyspace instead, with a teardown routine enumerating
-  and wiping every key under a user's prefix on logout.
-- **Lesson:** **A binding rule written for one shape does not automatically bind a different
-  shape the same way. Check what invariant the rule actually protects — here, no cross-user
-  data leak — and whether the deviation still satisfies THAT, not just whether it uses the
-  literal mechanism. Verify the substitute mechanism is real (grep the teardown/hydrate wiring),
-  don't take a code comment's claim on faith.**
-- **Guard:** `session-teardown.ts` imports and calls the snapshot's own prefix-clear helper —
-  grep for it before trusting this reasoning again on the same file.
 
 ### L-143 · 2026-09-15 · domain · B421 (credit-applied vs paid, full fix)
 
@@ -802,3 +753,68 @@
   successful.**
 - **Guard:** none yet — propose `post-deploy-check` reading the full status array (not just
   index 0) or verifying the served commit sha directly.
+
+### L-210 · 2026-09-21 · domain · One shared read poisons every consumer (B606)
+
+- **Symptom:** a buyer saw $120 for a single pack of a $24 product on the catalog tile, product
+  detail, variant row and favourites, and every new standing-order line inherited it — a 5x
+  overcharge. Staff paths over-charged 10.7x on the same product.
+- **Root cause:** `getCustomerPriceHistory` remembered the per-Case price of a unit-aware line
+  (`unitLabel:"Case"`, 6 packs) against the product with no `unitLabel` filter. Every buyer price
+  surface funnels through that one query, and `effectiveBuyerPrice` lets a remembered price
+  ABOVE list win over the tier, so one poisoned row propagated to four UIs and a template writer.
+- **Lesson:** **A single query that feeds customer-facing prices needs its own regression spec
+  pinning what it must EXCLUDE — not just coverage of its callers. When a new line shape
+  (unit-aware, boxed, upsell) is introduced, grep every `findMany` that reads `unitPrice` and ask
+  whether the new shape's price is denominated the same way; if not, the filter goes in the
+  query, not in each consumer.**
+- **Guard:** `orders/price-history-unit-lines.spec.ts` (#1123) pins the `unitLabel: null`
+  filter; `unit-line-writers.ast.spec.ts` classifies every writer. Propose: a read-only prod
+  count (`unitLabel IS NOT NULL` on `OrderItem`/`InvoiceItem`) before any remediation script —
+  it returned 0 here and made the planned remediation unnecessary.
+
+### L-211 · 2026-09-21 · process · A target named only in prose is not a target
+
+- **Symptom:** a locally-intended Playwright mint (`npx playwright test --project=setup`) ran
+  against PRODUCTION: operator and customer logged into the prod regression tenant, the seeded
+  buyer 401'd three times. `failedLoginAttempts` on the local row read 0 — the request never
+  arrived there.
+- **Root cause:** `playwright.config.ts` and `auth.setup.ts` both read
+  `process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production…"`. Unset means
+  production. The instruction said "against the LOCAL stack" in prose; the env var was not in
+  the command. An earlier mint had worked only because that shell happened to have it set.
+- **Lesson:** **A command that targets an environment must carry the target IN the command
+  (`PLAYWRIGHT_BASE_URL=http://localhost:3001 npx …`), never in the sentence beside it. Where a
+  config defaults to production on an unset variable, that default is the defect, not the
+  operator — and any guard belongs on the RESOLVED URL, not on whether the variable is present.
+  Before GO on a minted state, decode the file's origins and require the local host.**
+- **Guard:** `scripts/local-env.mjs --e2e` sets the base URL itself and strips inherited
+  `RAILWAY_*` (use it for local runs); #1127's buyer setup step gains a skip unless the resolved
+  base URL is local. Propose: the setup project refuses to run against a `*.railway.app` host
+  unless an explicit `PLAYWRIGHT_ALLOW_REMOTE=1` is set.
+
+### L-212 · 2026-09-21 · testing · a Playwright selector keyed to a responsive utility class rots silently (B620)
+
+- **Symptom:** the boxed-proration e2e spec's line-total reader matched nothing and reported
+  nothing — a selector that matches zero elements raised no error.
+- **Root cause:** the selector was keyed to a layout utility class (`span.w-16`); a later UI
+  change (#946) replaced it with a breakpoint-prefixed variant (`sm:w-16`), so the literal class
+  no longer existed and the query silently returned an empty set.
+- **Lesson:** **Never select by a layout or responsive utility class — a breakpoint prefix added
+  later makes the selector match nothing with no error. Select by `data-testid`, which no styling
+  change can rename.**
+- **Guard:** #1133 (b8765689) added `data-testid="line-total"`; spec 13's `readLineTotal` reads it
+  via `getByTestId`.
+
+### L-213 · 2026-09-21 · process · a batch merge script must re-read the board per merge, not per batch
+
+- **Symptom:** two PRs (#1112, #1087) landed over a BLOCK/UNPROVEN verdict posted on the shared
+  coordination issue minutes earlier, because the verdict was read once before a script merged ten
+  PRs in a row.
+- **Root cause:** the review-channel read was a per-batch precondition, so every merge after the
+  first ran on a stale view of the channel. This is L-209 applied in code instead of by hand.
+- **Lesson:** **The "read the shared review channel immediately before every merge" rule (L-209)
+  binds each individual merge, not the batch — a loop that merges N PRs must re-read the channel
+  N times.**
+- **Guard:** the landing procedure re-reads the coordination issue (#938) immediately before each
+  merge; no unattended batch merge loops.

@@ -50,11 +50,27 @@ export function jurisdictionText(
 export const surfaceText = (s: SellingRestrictionListItemDto["surface"]) =>
   s === "BUYER_PORTAL" ? "Buyer portal only (staff can still sell)" : "All sales";
 
+/**
+ * The window as an admin reads it. `effectiveTo` is EXCLUSIVE (the engine stops applying the rule AT
+ * that instant), so a rule the admin ended "on Dec 31" is stored as the start of Jan 1; showing
+ * that stored date would read one day late. Show the last day the rule is in force: the day
+ * containing the final millisecond before the end. This is right for any stored end (an API rule
+ * ending mid-afternoon still shows that same day).
+ */
+export const lastDayInForce = (effectiveTo: string): string => {
+  const t = new Date(effectiveTo).getTime();
+  // An unparseable end must not crash the page render (`toISOString` throws on NaN): hand it back
+  // untouched and let `fmtDate` show its usual dash.
+  return Number.isNaN(t) ? effectiveTo : new Date(t - 1).toISOString();
+};
+
 export function windowText(
   r: Pick<SellingRestrictionListItemDto, "effectiveFrom" | "effectiveTo">,
 ) {
   const from = fmtDate(r.effectiveFrom);
-  return r.effectiveTo ? `${from} – ${fmtDate(r.effectiveTo)}` : `From ${from}, no end date`;
+  return r.effectiveTo
+    ? `${from} – ${fmtDate(lastDayInForce(r.effectiveTo))}`
+    : `From ${from}, no end date`;
 }
 
 export function emptyText(filter: RestrictionStatus | "ALL"): {
