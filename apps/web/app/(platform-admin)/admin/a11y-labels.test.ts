@@ -19,7 +19,10 @@ function walk(dir: string, out: string[] = []): string[] {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, e.name);
     if (e.isDirectory()) walk(p, out);
-    else if (/\.tsx$/.test(e.name) && !/\.test\.tsx$/.test(e.name)) out.push(p);
+    // .ts too: class-name maps (a badge colour table) live in plain .ts and carry text colours the
+    // contrast guard must see; the JSX scans below simply find no tags in a .ts file.
+    else if (/\.tsx?$/.test(e.name) && !/\.test\.tsx?$/.test(e.name) && !e.name.endsWith(".d.ts"))
+      out.push(p);
   }
   return out;
 }
@@ -156,6 +159,11 @@ describe("platform-admin a11y — controls carry an accessible name (A3 F1/F2/F3
   // (slate-600) is 1.93:1 — both below WCAG AA's 4.5:1 for body text. Secondary text on this dark
   // console is slate-400 (5.7:1) or lighter; a new slate-500/600 text colour would bring back the
   // ~130 failing nodes the A3 audit found on every page.
+  it("the contrast scan covers plain .ts colour tables, not only .tsx (badge.ts once slipped past it)", () => {
+    expect(files.some((f) => f.rel.endsWith("badge.ts"))).toBe(true);
+    expect(files.some((f) => /\.test\.tsx?$/.test(f.rel))).toBe(false);
+  });
+
   it("no text-slate-500 / text-slate-600 text colour (fails AA on the dark console surfaces)", () => {
     const bad = files.flatMap((f) =>
       f.src
