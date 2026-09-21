@@ -150,6 +150,8 @@ export interface OrderItem {
   pieces?: number | null;
   /** Sale-time box-size snapshot. Box math must use THIS, not the live product. */
   unitsPerBox?: number | null;
+  /** units_v1: the unit this line is sold by ("Case"…); null on a plain piece/pack line. */
+  unitLabel?: string | null;
   /** BUY_N_GET_M snapshot: whole free selling units on this line (boxes for a
    *  boxed line). Any local re-pricing MUST subtract it — otherwise the line
    *  previews at full price while the server bills the reduced subtotal. */
