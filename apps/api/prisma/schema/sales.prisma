@@ -938,6 +938,9 @@ model OrderTemplateItem {
   productId  String
   qty        Int
   notes      String?
+  // U1 (A0): the selling unit chosen for this line (OrderItem.unitLabel's twin). Null = the pack,
+  // exactly as every existing row is today.
+  unitLabel  String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   tenantId   String?

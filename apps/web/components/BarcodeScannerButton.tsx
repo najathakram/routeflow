@@ -69,6 +69,13 @@ export function BarcodeScannerButton({
   onErrorRef.current = onError;
 
   // ── USB / physical scanner auto-submit ──────────────────────────────────
+  // B672: every real caller passes `onScan` as a fresh inline closure (e.g.
+  // `onScan={(code) => ...}`), recreated on every one of the PARENT's own re-renders — and the
+  // parent always re-renders on every keystroke of a controlled search input. Depending on
+  // `onScan` directly (as this effect used to) tore the listener down and rebuilt it (wiping
+  // `sequence`) on EVERY character, so a real wedge scanner could never reach the 6-char length
+  // gate below. Routed through `onScanRef` instead — same fix the camera path already uses one
+  // effect down, for the identical reason ("parents recreate these callbacks every render").
   React.useEffect(() => {
     if (!inputRef?.current) return;
     const input = inputRef.current;
@@ -83,7 +90,7 @@ export function BarcodeScannerButton({
         // If we have a barcode-length sequence that arrived fast, treat as scan
         if (sequence.length >= 6 && now - lastKeyTime < 150) {
           e.preventDefault();
-          onScan(sequence);
+          onScanRef.current(sequence);
           sequence = "";
         }
         return;
@@ -102,7 +109,7 @@ export function BarcodeScannerButton({
 
     input.addEventListener("keydown", handleKeyDown);
     return () => input.removeEventListener("keydown", handleKeyDown);
-  }, [inputRef, onScan]);
+  }, [inputRef]);
 
   // ── Webcam scanner ───────────────────────────────────────────────────────
   const startWebcam = async () => {

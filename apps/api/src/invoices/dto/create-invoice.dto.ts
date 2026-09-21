@@ -27,6 +27,12 @@ export class CreateInvoiceItemDto {
   @IsNumber() @Min(0) unitPrice: number;
   @IsOptional() @IsNumber() @Min(0) discount?: number;
   @IsOptional() @IsNumber() @Min(0) taxRate?: number;
+  /**
+   * units_v1: sell this line by a unit of the product's ladder (Case, Pallet, Piece …); `qty` then
+   * counts the unit (a whole number) and boxes/pieces/promoFreeUnits must be omitted. Behind
+   * flag.units_v1; blank = the pack.
+   */
+  @IsOptional() @IsString() @MaxLength(64) unitLabel?: string | null;
   @IsOptional() @IsInt() @Min(0) boxes?: number;
   @IsOptional() @IsInt() @Min(0) pieces?: number;
   /**

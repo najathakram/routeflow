@@ -7,6 +7,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import * as unitAware from "./unit-aware-guard";
+import { normalizeBoxesPieces } from "@routeflow/pricing";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { OrdersService } from "./orders.service";
@@ -298,6 +299,10 @@ export class ChangeRequestsService {
     const payload = cr.payload as any;
     let productId: string;
     let qty: number;
+    // B655: set only for a CHANGE_QTY delta on a BOX-AWARE line (li.boxes != null), where the
+    // delta is in PIECES and needs the pack size to split. Left null otherwise.
+    let boxes: number | null = null;
+    let pieces: number | null = null;
     if (cr.type === ChangeRequestType.ADD_ITEM) {
       productId = cr.productId ?? payload.productId;
       qty = Number(payload.qty);
@@ -317,7 +322,49 @@ export class ChangeRequestsService {
         });
       }
       productId = li.productId;
-      qty = delta;
+
+      // B655: an EXISTING line's rewrite never re-derives its factor from the LIVE product (SA
+      // ruling) — only the line's own stored shape decides how the delta is read.
+      //
+      // Box-AWARE line (li.boxes != null): OrderItem.qty is TOTAL PIECES (create()'s split sets
+      // it that way), so `delta` is a pieces delta. Split it with the line's own unitsPerBox
+      // snapshot; if that snapshot predates the column, derive the pack EXACTLY from the line's
+      // own stored split — (qty - pieces) / boxes — accepted only when it comes out to a whole
+      // number > 1. Anything else (no derivable pack) refuses rather than guessing.
+      //
+      // Box-UNAWARE line (li.boxes == null — the template/buyer bare-qty convention): OrderItem.qty
+      // IS ALREADY the line's own selling-unit count (a box count for a boxed product with no
+      // split stored, a piece count otherwise — see the "box-unaware boxed line's qty IS the box
+      // count" comment in orders.service.ts). So `delta` is already in that unit, and today's bare
+      // `{ productId, qty }` — which create() reads as selling units — is CORRECT for this shape.
+      // Splitting it against any pack (live or snapshot) would misread a boxes delta as pieces and
+      // under-charge (a 3-box delta split against upb 24 becomes 0 boxes + 3 pieces).
+      if (li.boxes != null) {
+        // A snapshot of <= 1 is not a real pack (it's the "not case-packed" value) — treat it as
+        // absent and fall through to deriving one, same as a null snapshot, rather than letting
+        // it reach normalizeBoxesPieces' non-boxed branch, which posts the pieces delta as a bare
+        // qty (the exact B655 shape this whole fix exists to close).
+        const snapshotUpb = li.unitsPerBox != null ? Number(li.unitsPerBox) : null;
+        let upb = snapshotUpb != null && snapshotUpb > 1 ? snapshotUpb : null;
+        if (upb == null) {
+          const boxesNum = Number(li.boxes);
+          const piecesNum = Number(li.pieces ?? 0);
+          const derived = boxesNum > 0 ? (Number(li.qty) - piecesNum) / boxesNum : NaN;
+          upb = Number.isInteger(derived) && derived > 1 ? derived : null;
+        }
+        if (upb == null) {
+          throw new BadRequestException({
+            code: "LINE_PACK_UNDERIVABLE",
+            message: `Order line ${li.id} has no derivable pack size — it can't be rolled to the next delivery.`,
+          });
+        }
+        const split = normalizeBoxesPieces({ qty: delta, unitsPerBox: upb });
+        qty = split.qty;
+        boxes = split.boxes;
+        pieces = split.pieces;
+      } else {
+        qty = delta;
+      }
     } else {
       throw new BadRequestException({
         code: "INVALID_RESOLUTION_FOR_TYPE",
@@ -352,9 +399,14 @@ export class ChangeRequestsService {
       type: "BUYER",
     } as JwtPayload;
 
+    // This split is handed to create() for a NEW draft line — create() re-splits it against the
+    // LIVE product's pack (its own, correct, contract for a new sale line: unlike the rewrite
+    // above, a new line has no existing snapshot to preserve). If the pack changed since the
+    // original line was sold, the boxes/pieces intent survives but the raw piece count can shift
+    // with it — inherent to that contract, not something this rollover can or should override.
     const draft = await this.ordersService.create(
       {
-        items: [{ productId, qty }],
+        items: [{ productId, qty, ...(boxes != null ? { boxes, pieces } : {}) }],
         status: "DRAFT",
         notes: `From change request on order #${order.orderNumber ?? order.id} (not on truck)`,
       } as any,
