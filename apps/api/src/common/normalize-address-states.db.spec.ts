@@ -43,7 +43,7 @@ import { randomUUID } from "crypto";
 import fs from "fs";
 import path from "path";
 import { Client } from "pg";
-import { describeDb, requireLocalDatabaseUrl } from "./testing/db-spec";
+import { describeDb, relaxTenantIdGuards, requireLocalDatabaseUrl } from "./testing/db-spec";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -250,15 +250,22 @@ describeDb("normalize-address-states.mjs — real Postgres (report / dry-run / l
     };
   }
 
+  // T6: this spec plants legacy NULL-tenant rows on purpose, so it lifts the tenantId guard on these tables.
+  let restoreTenantIdGuards: (() => Promise<void>) | undefined;
+
   beforeAll(async () => {
     databaseUrl = requireLocalDatabaseUrl();
     db = new Client({ connectionString: databaseUrl });
     await db.connect();
+    restoreTenantIdGuards = await relaxTenantIdGuards(db, ["CustomerAddress"]);
     await insertTenantGraph(TENANT_ID, TENANT_SLUG, USER_ID, CUSTOMER_ID);
   }, 120_000);
 
   afterAll(async () => {
     if (!db) return;
+    // First, and NOT VALID (no scan): restoring the guard cannot fail on the NULL rows still there,
+    // and a throwing delete below can no longer leave the shared DB without its guard.
+    await restoreTenantIdGuards?.();
     // FK order, and never anything outside this run's own id prefix. By prefix, not by id: it is
     // also the net that removes the refusal fixture if D10 ever fails part-way.
     await db.query('DELETE FROM "CustomerAddress" WHERE "id" LIKE $1', [`${ID_PREFIX}%`]);
