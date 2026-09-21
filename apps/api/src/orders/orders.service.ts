@@ -57,6 +57,15 @@ import {
 import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
 import { cancelImpact } from "./order-cancel-impact";
 import {
+  applyBuyerMergeHeaderImpl,
+  bulkDeleteOrdersImpl,
+  findOneOrThrowImpl,
+  setCommissionRateImpl,
+  toggleUrgentImpl,
+  updateFulfillPathImpl,
+  updateShipmentImpl,
+} from "./order-lifecycle";
+import {
   EXISTING_LINE_SELECT,
   orderEditMode,
   planOrderEditRestrictions,
@@ -127,11 +136,14 @@ export class OrdersService implements OnApplicationBootstrap {
   private readonly logger = new Logger(OrdersService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    // Not `private`: order-lifecycle.ts's verbatim-extracted methods (a size-ratchet headroom
+    // move, no behaviour change) read this off an explicit `self: OrdersService` from outside
+    // the class — TS `private` is compile-time only, so this is byte-identical at runtime.
+    readonly prisma: PrismaService,
     @InjectQueue("invoices") private readonly invoiceQueue: Queue,
     private readonly gateway: RouteFlowGateway,
     private readonly notifications: NotificationsService,
-    private readonly invoicesService: InvoicesService,
+    readonly invoicesService: InvoicesService,
     private readonly systemConfig: SystemConfigService,
     private readonly inventoryService: InventoryService,
     private readonly authGuard: AuthorizationGuardService,
@@ -140,13 +152,13 @@ export class OrdersService implements OnApplicationBootstrap {
     private readonly sellingRestrictions: SellingRestrictionsService,
     private readonly promotionsService: PromotionsService,
     private readonly messaging: MessagingService,
-    private readonly creditNotes: CreditNotesService,
-    private readonly commissionEngine: CommissionEngineService,
+    readonly creditNotes: CreditNotesService,
+    readonly commissionEngine: CommissionEngineService,
     private readonly entitlements: EntitlementsService,
     // B65 (REG-B65): reverses regulated-ledger entries in deleteOrder's
     // per-invoice teardown — the two sibling paths (voidInvoiceInTx,
     // deleteInvoice) already do this.
-    private readonly ledger: RegulatedLedgerService,
+    readonly ledger: RegulatedLedgerService,
     // B323: the hourly/boot-time pending-order sweep has no HTTP request, so ALS is
     // empty — sweepAllPendingOrders() re-enters each customer's own tenant scope
     // via tenantCtx.run() (the RF-008 pattern already used by recurring-invoices,
@@ -5605,142 +5617,28 @@ export class OrdersService implements OnApplicationBootstrap {
    * tracking number also clears `shippedAt`. The values are mirrored onto the
    * order's non-void invoices so the shipment shows on the customer's invoice.
    */
+  /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. */
   async updateShipment(orderId: string, dto: UpdateShipmentDto, _user?: JwtPayload) {
-    const order = await this.prisma
-      .forTenant()
-      .order.findFirst({ where: { id: orderId }, select: { id: true, shippedAt: true } });
-    if (!order) throw new NotFoundException("Order not found");
-
-    const carrier = dto.shippingCarrier?.trim() || null;
-    const tracking = dto.shippingTrackingNumber?.trim() || null;
-    // Stamp shippedAt the first time a tracking number is set; clear it when the
-    // tracking number is removed; otherwise keep the original ship date.
-    const shippedAt = tracking ? (order.shippedAt ?? new Date()) : null;
-
-    const updated = await this.prisma.forTenant().order.update({
-      where: { id: orderId },
-      data: { shippingCarrier: carrier, shippingTrackingNumber: tracking, shippedAt },
-    });
-
-    // Mirror onto every non-void invoice generated from this order.
-    await this.prisma.forTenant().invoice.updateMany({
-      where: { orderId, status: { not: "VOID" } },
-      data: { shippingCarrier: carrier, shippingTrackingNumber: tracking, shippedAt },
-    });
-
-    return updated;
+    return updateShipmentImpl(this, orderId, dto, _user);
   }
 
-  /**
-   * Ad-hoc trips + fulfillment mode: change an order's fulfillment path
-   * (ROUTE ↔ SHIP) while it's still open. Locked once the order has left the
-   * "open" states — a shipped/delivered/cancelled order's fulfillment history
-   * shouldn't move out from under its trip/shipment records after the fact —
-   * and locked toward SHIP while the order sits on a live run.
-   */
+  /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. */
   async updateFulfillPath(orderId: string, dto: UpdateFulfillPathDto, _user?: JwtPayload) {
-    // `findFirst`, NOT `findUnique`: forTenant()'s findUnique can only POST-filter
-    // on the returned row's `tenantId`, and an exclusive `select` that omits it
-    // silently disables that check — which would leak another tenant's order
-    // status and driver name through the 400 messages below. findFirst gets
-    // `tenantId` injected into the `where`, so a foreign id simply 404s here.
-    const order = await this.prisma.forTenant().order.findFirst({
-      where: { id: orderId },
-      select: {
-        id: true,
-        status: true,
-        routeRunStopId: true,
-        routeRunStop: {
-          select: {
-            routeRun: { select: { status: true, driver: { select: { contactName: true } } } },
-          },
-        },
-      },
-    });
-    if (!order) throw new NotFoundException("Order not found");
-    if (
-      order.status === OrderStatus.OUT_FOR_DELIVERY ||
-      order.status === OrderStatus.DELIVERED ||
-      order.status === OrderStatus.CANCELLED
-    ) {
-      throw new BadRequestException("Fulfillment path can only be changed while the order is open");
-    }
-    // Status alone isn't enough: the dispatch sweep attaches orders to a run
-    // while they're still CONFIRMED, so a freshly dispatched order would flip
-    // to SHIP and render as "Shipped" while still standing as a stop on the
-    // driver's live run. Stale attachments are harmless, so only ACTIVE runs
-    // block, mirroring TripsService.checkEligibility's ON_ACTIVE_RUN predicate.
-    // Since F11 a run going terminal RELEASES the orders of every stop that
-    // recorded no work, so a stale attachment now only survives on a COMPLETED
-    // stop — or on a row stranded before that deploy, until the D4 repair runs.
-    const run = order.routeRunStop?.routeRun ?? null;
-    const onActiveRun =
-      order.routeRunStopId != null &&
-      run != null &&
-      (run.status === RouteRunStatus.SCHEDULED || run.status === RouteRunStatus.IN_PROGRESS);
-    if (dto.fulfillPath === FulfillPath.SHIP && onActiveRun) {
-      throw new BadRequestException(
-        `This order is out on an active delivery run${
-          run?.driver?.contactName ? ` with ${run.driver.contactName}` : ""
-        }. Remove it from the run before switching it to shipping.`,
-      );
-    }
-    return this.prisma.forTenant().order.update({
-      where: { id: orderId },
-      data: { fulfillPath: dto.fulfillPath },
-    });
+    return updateFulfillPathImpl(this, orderId, dto, _user);
   }
 
+  /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. */
   async toggleUrgent(id: string, user: JwtPayload, urgent?: boolean) {
-    const order = await this.findOneOrThrow(id);
-    if (user.role === UserRole.CUSTOMER) {
-      // REG-B131: `deletedAt: null` here — a removal deactivates the user but an access token
-      // minted just before it stays valid for up to 15 minutes, so a removed customer's own
-      // in-flight session must fall into the existing refusal below.
-      const customer = await this.prisma
-        .forTenant()
-        .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
-      if (!customer || customer.id !== order.customerId) throw new ForbiddenException();
-    }
-    // If caller provides an explicit value, SET it; otherwise toggle (legacy web clients)
-    const newValue = urgent !== undefined ? urgent : !order.urgent;
-    return this.prisma.forTenant().order.update({ where: { id }, data: { urgent: newValue } });
+    return toggleUrgentImpl(this, id, user, urgent);
   }
 
-  /**
-   * REG-B78: header fields a buyer's cart merge must carry onto the EXISTING
-   * order — merge semantics, not create semantics: notes APPEND (never clobber),
-   * urgent only ever SETS true (a non-urgent add never clears an urgent order),
-   * requestedDeliveryDate sets when provided and never clears.
-   */
+  /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. */
   async applyBuyerMergeHeader(
     orderId: string,
     header: { notes?: string; urgent?: boolean; requestedDeliveryDate?: string },
     user: JwtPayload,
   ): Promise<void> {
-    const order = await this.prisma.forTenant().order.findFirst({ where: { id: orderId } });
-    if (!order) throw new NotFoundException("Order not found");
-    if (user.role === UserRole.CUSTOMER) {
-      // REG-B131: `deletedAt: null` here — a removal deactivates the user but an access token
-      // minted just before it stays valid for up to 15 minutes, so a removed customer's own
-      // in-flight session must fall into the existing refusal below.
-      const customer = await this.prisma
-        .forTenant()
-        .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
-      if (!customer || order.customerId !== customer.id) throw new ForbiddenException();
-    }
-    const data: Record<string, unknown> = {};
-    const notes = (header.notes ?? "").trim();
-    if (notes) data.notes = order.notes ? `${order.notes}\n${notes}` : notes;
-    if (header.urgent === true) data.urgent = true;
-    if (header.requestedDeliveryDate) {
-      // Mirrors create()'s exact parse (:2107-2109) so merge and create agree
-      // on timezone handling.
-      data.requestedDeliveryDate = new Date(header.requestedDeliveryDate);
-    }
-    if (Object.keys(data).length) {
-      await this.prisma.forTenant().order.update({ where: { id: orderId }, data });
-    }
+    return applyBuyerMergeHeaderImpl(this, orderId, header, user);
   }
 
   /** The order-tracking card (route / driver / stop / delivery window) — see `order-tracking.ts`. */
@@ -5753,6 +5651,12 @@ export class OrdersService implements OnApplicationBootstrap {
    * DELIVERED included — behind the client's explicit warning. Money, not
    * status, is the gate now. `user` is optional so internal callers keep
    * working (change-requests' abandoned-draft cleanup passes none).
+   *
+   * NOT extracted to `order-lifecycle.ts` with its siblings below — it is the one
+   * method in that region with a direct `orderItem`/`invoiceItem` write, which
+   * `unit-line-writers.ast.spec.ts`'s AST scanner only tracks inside a CLASS
+   * method (`ts.isClassDeclaration`); a top-level function in a sibling file is
+   * invisible to it. Kept here so the guard's coverage stays intact.
    */
   async deleteOrder(id: string, user?: JwtPayload) {
     const order = await this.prisma.forTenant().order.findUnique({
@@ -5858,48 +5762,19 @@ export class OrdersService implements OnApplicationBootstrap {
     return { success: true };
   }
 
-  /**
-   * Sales agents & commissions: staff-set (or clear, via `null`) per-order
-   * commission-rate override. `0` is a valid value ("exempt"). Update + engine
-   * resync run in ONE transaction so a resolved-rate change is atomic with the
-   * order write. Does NOT touch updateOrderItems / item money — the existing
-   * rebuildSiblingDrafts hook already covers item-edit money changes.
-   */
+  /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. */
   async setCommissionRate(orderId: string, ratePct: number | null, user: JwtPayload) {
-    if (user.role !== UserRole.OPERATOR && user.role !== UserRole.TENANT_ADMIN) {
-      throw new ForbiddenException("Only staff can set a commission rate");
-    }
-    if (
-      ratePct !== null &&
-      (typeof ratePct !== "number" || Number.isNaN(ratePct) || ratePct < 0 || ratePct > 100)
-    ) {
-      throw new BadRequestException(
-        "commissionRatePct must be between 0 and 100, or null to clear",
-      );
-    }
-    await this.findOneOrThrow(orderId);
-    return this.prisma.tenantTransaction(async (tx) => {
-      const order = await tx.order.update({
-        where: { id: orderId },
-        data: { commissionRatePct: ratePct },
-      });
-      await this.commissionEngine.syncOrderInvoices(orderId, tx);
-      return order;
-    });
+    return setCommissionRateImpl(this, orderId, ratePct, user);
   }
 
+  /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. */
   async bulkDeleteOrders(ids: string[], user?: JwtPayload) {
-    const results = await Promise.allSettled(ids.map((id) => this.deleteOrder(id, user)));
-    const deleted = results.filter((r) => r.status === "fulfilled").length;
-    const errors = results
-      .map((r, i) => (r.status === "rejected" ? `${ids[i]}: ${r.reason?.message}` : null))
-      .filter(Boolean) as string[];
-    return { deleted, errors };
+    return bulkDeleteOrdersImpl(this, ids, user);
   }
 
-  private async findOneOrThrow(id: string) {
-    const order = await this.prisma.forTenant().order.findUnique({ where: { id } });
-    if (!order) throw new NotFoundException("Order not found");
-    return order;
+  /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. Not
+   * `private`: called from sibling extracted functions (toggleUrgent/setCommissionRate) there. */
+  async findOneOrThrow(id: string) {
+    return findOneOrThrowImpl(this, id);
   }
 }
