@@ -10,6 +10,8 @@ import { RequireAddon } from "../billing/require-addon.decorator";
 import { RegulatedService } from "./regulated.service";
 import { RegulatedFilingService } from "./regulated-filing.service";
 import { RegulatedReportService } from "./regulated-report.service";
+import { ParkedResolutionService } from "./parked-resolution.service";
+import { ResolveParkedDto } from "./dto/resolve-parked.dto";
 import { ListLedgerDto } from "./dto/list-ledger.dto";
 import { ListFilingsDto } from "./dto/list-filings.dto";
 import { PrepareFilingDto } from "./dto/prepare-filing.dto";
@@ -28,6 +30,7 @@ export class RegulatedController {
     private readonly regulated: RegulatedService,
     private readonly filings: RegulatedFilingService,
     private readonly reports: RegulatedReportService,
+    private readonly parkedResolution: ParkedResolutionService,
   ) {}
 
   @Get("ledger")
@@ -80,6 +83,26 @@ export class RegulatedController {
   @RequireAddon("tobacco_dealer")
   prepare(@Body() dto: PrepareFilingDto, @CurrentUser() user: { id: string }) {
     return this.filings.prepareFiling({ ...dto, userId: user.id });
+  }
+
+  // ─── Parked reversals (units resolution) ────────────────────────────────────
+  // Same class guards as `filings/prepare` (Jwt + Roles OPERATOR + the tobacco_dealer addon). The operator
+  // supplies the PACK only; the quantity comes from the stored row.
+
+  @Get("parked-reversals")
+  @RequireAddon("tobacco_dealer")
+  listParked(@Query("category") category?: string) {
+    return this.parkedResolution.list(category);
+  }
+
+  @Post("parked-reversals/:id/resolve")
+  @RequireAddon("tobacco_dealer")
+  resolveParked(
+    @Param("id") id: string,
+    @Body() dto: ResolveParkedDto,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.parkedResolution.resolve(id, dto.unitsPerBoxSupplied, user);
   }
 
   @Get("filings/:id/csv")

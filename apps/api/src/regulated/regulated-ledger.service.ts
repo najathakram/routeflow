@@ -235,11 +235,22 @@ export class RegulatedLedgerService {
     orderId: string;
     returnedByProduct: Map<string, number>;
     returnedUnit?: ReturnedUnit;
+    /**
+     * RESOLUTION of a parked reversal (see ParkedResolutionService): books ONE parked row's stored pieces
+     * against its own SALE row with the OPERATOR-supplied pack, through this same maths. It skips the
+     * (returnId, orderId) already-reversed guard (a parked row's return usually has sibling REVERSAL rows, so
+     * the guard would silently book nothing; the caller's conditional claim on resolvedAt IS NULL is the
+     * idempotency instead), targets only `saleEntryId`, uses `pack` as the line's pieces-per-unit instead of
+     * the classifier's, gives the row the pre-generated `entryId`, and stamps `originalSoldAt` with the
+     * SALE's date. It still books into the CURRENT period (never backdated into a filed one). The pack is
+     * NOT written back to any line or product.
+     */
+    resolution?: { saleEntryId: string; pack: number; entryId: string };
     db: any;
-  }): Promise<void> {
-    const { returnId, orderId, returnedByProduct, db } = params;
-    const returnedUnit: ReturnedUnit = params.returnedUnit ?? "LINE_UNIT";
-    if (!returnedByProduct || returnedByProduct.size === 0) return;
+  }): Promise<number> {
+    const { returnId, orderId, returnedByProduct, db, resolution } = params;
+    const returnedUnit: ReturnedUnit = resolution ? "PIECES" : (params.returnedUnit ?? "LINE_UNIT");
+    if (!returnedByProduct || returnedByProduct.size === 0) return 0;
 
     // Idempotency key is (returnId, orderId), not returnId alone (PR-1a/§5): an INLINE
     // return's goods can be sold across MULTIPLE source orders, and this method is called
@@ -247,17 +258,19 @@ export class RegulatedLedgerService {
     // STANDARD caller — see receive()). Keying on returnId alone would treat the second
     // source order's call as an already-reversed no-op. A STANDARD return has exactly one
     // source order, so this is a no-op change for it.
-    const prior = await db.regulatedSalesLedger.findMany({
-      where: { returnId, orderId, entryType: "REVERSAL" },
-      select: { id: true },
-    });
-    if (prior.length > 0) return;
+    if (!resolution) {
+      const prior = await db.regulatedSalesLedger.findMany({
+        where: { returnId, orderId, entryType: "REVERSAL" },
+        select: { id: true },
+      });
+      if (prior.length > 0) return 0;
+    }
 
     // The order's SALE rows are the snapshot we reverse against.
     const sales = await db.regulatedSalesLedger.findMany({
       where: { orderId, entryType: "SALE" },
     });
-    if (sales.length === 0) return;
+    if (sales.length === 0) return 0;
 
     // SALE rows carry no productId — recover it via each row's invoice item.
     const invoiceItemIds = [
@@ -331,6 +344,7 @@ export class RegulatedLedgerService {
     // above already accounts for the pre-reconcile rows on the deleted items.
     const salesByProduct = new Map<string, any[]>();
     for (const s of sales) {
+      if (resolution && s.id !== resolution.saleEntryId) continue; // a resolution targets ONE row
       const pid = productByItem.get(s.invoiceItemId);
       if (!pid) continue;
       if (!salesByProduct.has(pid)) salesByProduct.set(pid, []);
@@ -343,7 +357,11 @@ export class RegulatedLedgerService {
     // product's pack. The live product is used only to notice that a pack exists at all.
     const pieceFactorByOrderItem = new Map<string, number>();
     const unknownPackByOrderItem = new Map<string, string>(); // orderItemId -> reason
-    if (returnedUnit === "PIECES") {
+    if (resolution) {
+      // The operator's pack IS the line's pieces-per-unit; nothing is classified or guessed.
+      const target = sales.find((s: any) => s.id === resolution.saleEntryId);
+      if (target?.orderItemId) pieceFactorByOrderItem.set(target.orderItemId, resolution.pack);
+    } else if (returnedUnit === "PIECES") {
       const orderItemIds = [...new Set(sales.map((s: any) => s.orderItemId).filter(Boolean))];
       const lines: any[] =
         orderItemIds.length > 0
@@ -477,12 +495,14 @@ export class RegulatedLedgerService {
           categoryTax: bookedTax,
           soldAt: now,
           periodBucket: bucket,
+          ...(resolution ? { id: resolution.entryId, originalSoldAt: s.soldAt } : {}),
         });
       }
     }
 
-    if (rows.length === 0) return;
+    if (rows.length === 0) return 0;
     await db.regulatedSalesLedger.createMany({ data: rows });
+    return rows.length;
   }
 
   /**

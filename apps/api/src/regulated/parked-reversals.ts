@@ -23,7 +23,7 @@ export interface ParkedReversalRow {
 }
 
 /**
- * The unresolved parked reversals that belong to `trackedCategoryId` in the given "YYYY-MM" buckets (the
+ * The unresolved parked reversals that belong to `trackedCategoryId` (any category when omitted) in the given "YYYY-MM" buckets (the
  * RETURN's period bucket: where the reversal will book). The parked table has no category column: it is
  * resolved through `saleEntryId -> RegulatedSalesLedger.trackedCategoryId` (a scalar pointer, no FK). A row
  * whose sale entry cannot be found is UNRESOLVABLE and is returned for every category, never dropped.
@@ -31,10 +31,13 @@ export interface ParkedReversalRow {
  */
 export async function listParkedReversals(
   db: any,
-  params: { trackedCategoryId: string; buckets: string[] },
+  params: { trackedCategoryId?: string; buckets?: string[] },
 ): Promise<ParkedReversalRow[]> {
   const parked: any[] = await db.regulatedLedgerParkedReversal.findMany({
-    where: { resolvedAt: null, periodBucket: { in: params.buckets } },
+    where: {
+      resolvedAt: null,
+      ...(params.buckets ? { periodBucket: { in: params.buckets } } : {}),
+    },
     orderBy: { createdAt: "asc" },
   });
   if (parked.length === 0) return [];
@@ -46,7 +49,7 @@ export async function listParkedReversals(
   return parked
     .filter((p) => {
       const cat = categoryOfSale.get(p.saleEntryId);
-      return cat === undefined || cat === params.trackedCategoryId;
+      return !params.trackedCategoryId || cat === undefined || cat === params.trackedCategoryId;
     })
     .map((p) => ({
       id: p.id,
