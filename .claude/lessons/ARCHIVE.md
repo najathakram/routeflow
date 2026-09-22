@@ -2594,7 +2594,7 @@ citations, closed-out with its own post-init assertion guard).
   advisory allowlist) needs its own named assertion — the next unrelated edit to that file can't
   silently delete it without a visible red diff.**
 - **Guard:** name the assertion after the floor it enforces (e.g. `it("enforces the CVE-2026-xxxx
-  floor", ...)`), not after the generic thing being tested — restored in `next-version.spec.ts`.
+floor", ...)`), not after the generic thing being tested — restored in `next-version.spec.ts`.
 
 ## Archived 2026-09-18 — headroom for source-text-assertion lesson (bookkeeping-batch window-6)
 
@@ -2771,3 +2771,20 @@ citations, closed-out with its own post-init assertion guard).
   don't take a code comment's claim on faith.**
 - **Guard:** `session-teardown.ts` imports and calls the snapshot's own prefix-clear helper —
   grep for it before trusting this reasoning again on the same file.
+
+### L-116 · 2026-09-12 · tooling · plane self-test machine-root invariants
+
+- **Symptom:** a lead's pre-push verify failed at a plane self-test's "shared runs.jsonl
+  byte-unchanged" check — ANOTHER session's own hooks had legitimately appended to it mid-run.
+- **Root cause:** every "byte-identical before/after" invariant in the plane self-tests binds on
+  `machineRoot()`'s shared dir (see [[L-114]]) — the SAME dir every worktree resolves to — so it
+  races any other session, not just a concurrent run of the same suite.
+- **Lesson:** **A self-test invariant must never bind to a shared machine-local file — assert
+  only on fixtures the run owns. A file another session can write at any moment needs a
+  throwaway stand-in, never the real shared path.**
+- **Guard:** `PLANE_MACHINE_ROOT` (gated behind `PLANE_SYNC_SELF_TEST=1`) lets every plane
+  self-test point `machineRoot()` at its own temp root; `T-concurrent-writer` proves isolation
+  under a genuine concurrent writer. Related [[L-114]]. (Archived 2026-09-22 to make room at
+  cap — zero cross-references elsewhere in LESSONS.md/CLAUDE.md, and the guard is a standing,
+  automated test isolation mechanism rather than a rule a session needs to recall by reading
+  this prose.)

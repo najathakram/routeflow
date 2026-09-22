@@ -116,6 +116,7 @@ let mockScanV2 = false;
 jest.mock("@/lib/api/addons", () => ({
   ...jest.requireActual("@/lib/api/addons"),
   useScanV2: () => mockScanV2,
+  useOrderUiV2: () => ({ enabled: false, resolved: true }), // order_ui_v2 has its own file (add-line)
 }));
 let cameraDetect: ((code: string) => void) | undefined;
 let cameraEnabled: boolean | undefined;
