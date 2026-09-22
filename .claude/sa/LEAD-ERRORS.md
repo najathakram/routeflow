@@ -5,7 +5,7 @@
 
 ## Tally
 
-A 7 · B 5 · C 1 · D 4 (lead) · SA own: A 9 · B 6 | needless asks ("you did not need to ask me"): 0 | measurements outsourced: 1 | evidence-free questions refused: 0
+A 7 · B 5 · C 1 · D 4 (lead) · SA own: A 10 · B 6 | needless asks ("you did not need to ask me"): 0 | measurements outsourced: 1 | evidence-free questions refused: 0
 
 ## Seeded from the lead's own account (role doc §0, 2026-09-20)
 
@@ -52,6 +52,7 @@ A 7 · B 5 · C 1 · D 4 (lead) · SA own: A 9 · B 6 | needless asks ("you did 
 - SA-E13 · 2026-09-22 · A · attached predicted red values (−5, −60) to SA-052's revert instruction without running the reverted code → the true values are 0 (no discrimination) and −4; Lane B observed and reported instead of fitting fixtures. The instruction shape ("revert and observe") was right; the numbers were a claim never executed against the thing it described — the same shape as the six controls. Rule: a red-first instruction names the CASE and says "observe and report the value"; a predicted number is offered only when the SA has run it, and is labelled a prediction otherwise.
 - SA-E14 · 2026-09-22 · A · told the Mac Lead the registers had "gained SA-059 → SA-064a since your 91017f44 commit" → three later commits already carried all but SA-064; the SA had verified blob equality minutes earlier and still reported the older observation. Pattern with SA-E12: a state last observed, reported as current. Rule: never report the Mac Lead's commit position; say "at rest" and let it read the files. HANDOFF now cites the branch head, not a sha.
 - SA-E15 · 2026-09-23 · A · called a stop-the-line on "contradictory owner decisions" → the Mac Lead's two messages were sequential, the later superseding the earlier by one owner decision; the SA read the older as live. Same shape as SA-E14 (a state last observed, treated as current), on inbound messages this time. Rule: when two messages from the same sender disagree, the newer supersedes unless it says otherwise; verify by asking for the verbatim record, never by halting a lane that is building the item common to both lists.
+- SA-E16 · 2026-09-23 · A · SA-068 case (c) named {qty 10, boxes 3, pieces 1} as the non-derivable split → (10 − 1) / 3 = 3 exactly; it exercises the DERIVABLE branch and would have passed green testing nothing. Third SA-specified number tonight to fail execution (with SA-052's −5 and −60), all derived by reasoning about code, none labelled a prediction, each caught by a builder running it. Rule, tightened from SA-E13: before an expected value enters a spec, the SA runs the fixture through the real helper (a one-line node call against the pricing source takes seconds) and writes the OBSERVED value; a value the SA has not run is written as "observe and report" with no number at all.
 - E-015 · 2026-09-20 · A · relayed the owner's deadline as "10:00 GMT" → the owner says 10 am Eastern (14:00Z). Four hours of plan, off.
 
 ## Prediction (update weekly)
