@@ -1450,6 +1450,88 @@ describe("RegulatedLedgerService", () => {
         expect(booked().qty).toBe(-60);
         expect(booked().unitBasisQty).toBe(-60);
       });
+
+      it("SA-052 / B687: a money-only credit (CreditNoteItem.qty 0, amount > 0) books qty 0 and unitBasisQty 0; net still moves", async () => {
+        // A price adjustment on an otherwise-open line: goods did not come back, so
+        // pieces must not move even though net does.
+        armCredit(
+          [boxUnawareSale()],
+          [
+            {
+              tenantId: "t1",
+              trackedCategoryId: "cat-A",
+              invoiceItemId: "ii-1",
+              amount: 10, // a price adjustment, not a full credit — remaining stays open
+              qty: 0,
+              categoryTax: 0,
+            },
+          ],
+        );
+        await service.reverseCreditNoteEntries({ creditNoteId: "cn-1", db: prisma });
+        // Math.abs to tolerate -0 (a zero-qty credit naturally negates to -0 in JS;
+        // Jest's toMatchObject/toBe distinguish -0 from 0, but the ledger does not).
+        expect(Math.abs(booked().qty)).toBe(0);
+        expect(Math.abs(booked().unitBasisQty)).toBe(0);
+        expect(booked().netSales).toBe(-10);
+      });
+
+      it("SA-052 / B687: a prior RETURN of 12 pieces is folded into the remaining unitBasisQty a credit-note close can book", async () => {
+        // Same 5-box pack-12 line, but a RETURN already reversed 1 box (12 pieces,
+        // $10/$2 tax) before this credit. A full close of the remaining balance must
+        // book -48 pieces, not -60 (which would double-count the pieces the return
+        // already accounted for).
+        armCredit(
+          [
+            boxUnawareSale(),
+            {
+              entryType: "REVERSAL",
+              invoiceItemId: "ii-1",
+              orderItemId: "oi-1",
+              qty: -1,
+              unitBasisQty: -12,
+              netSales: -10,
+              categoryTax: -2,
+            },
+          ],
+          [
+            {
+              tenantId: "t1",
+              trackedCategoryId: "cat-A",
+              invoiceItemId: "ii-1",
+              amount: 40, // exactly the remaining $40 after the $10 return — closes
+              qty: 4,
+              categoryTax: 8,
+            },
+          ],
+        );
+        await service.reverseCreditNoteEntries({ creditNoteId: "cn-1", db: prisma });
+        expect(booked()).toMatchObject({ qty: -4, netSales: -40, categoryTax: -8 });
+        expect(booked().unitBasisQty).toBe(-48);
+      });
+
+      it("SA-052 / B687 (case C): unitBasisQty prorates off the GOODS share, never the MONEY share, when the two diverge", async () => {
+        // 1 box of a 5-box pack-12 line, credited at $20 of $50 — a money share (0.4)
+        // that differs from a goods share (0.2, since 1 box out of 5). No historical
+        // code reverts to this shape: it pins against the REFUSED alternative
+        // (SA-047), a money-prorated implementation, which would book -24 (60 * 0.4)
+        // instead of the correct -12 (60 * 1/5, the goods share).
+        armCredit(
+          [boxUnawareSale()],
+          [
+            {
+              tenantId: "t1",
+              trackedCategoryId: "cat-A",
+              invoiceItemId: "ii-1",
+              amount: 20, // 0.4 of the $50 SALE — a money share of 0.4
+              qty: 1, // 1 of 5 boxes — a goods share of 0.2
+              categoryTax: 2,
+            },
+          ],
+        );
+        await service.reverseCreditNoteEntries({ creditNoteId: "cn-1", db: prisma });
+        expect(booked()).toMatchObject({ qty: -1, netSales: -20, categoryTax: -2 });
+        expect(booked().unitBasisQty).toBe(-12); // NOT -24 (60 * money share 0.4)
+      });
     });
 
     it("reverses a credited regulated line against its matching SALE row (stamps source ids)", async () => {
