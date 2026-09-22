@@ -51,6 +51,25 @@ export async function packAtSaleByProduct(
  * and disagree: that's evidence the product was repacked since the line was written, worth
  * knowing about even though the snapshot is still the right value to book.
  */
+/**
+ * SA-078(b): orderItemId -> a soon-to-be-replaced InvoiceItem's own `unitsPerBox`.
+ * `invoices.service.ts`'s reconcile rebuilds (`buildInvoiceItemData`'s callers) delete
+ * and recreate every InvoiceItem on a draft; a box-unaware order line has no
+ * `unitsPerBox` of its own, so without this the rebuild fell through to the LIVE
+ * product -- a line sold at pack 12 silently re-booked at pack 24 after a repack, on
+ * every reconcile. Own function (not inline in invoices.service.ts) for the same
+ * repo's-size-ratchet reason `toSaleLedgerLines` above already is.
+ */
+export function priorUnitsPerBoxMap(
+  items: { orderItemId?: string | null; unitsPerBox?: number | null }[],
+): Map<string, number | null> {
+  return new Map(
+    items
+      .filter((it) => it.orderItemId)
+      .map((it) => [it.orderItemId as string, it.unitsPerBox ?? null]),
+  );
+}
+
 export function toSaleLedgerLines(items: any[], packMap: Map<string, number>) {
   return items.map((it: any) => {
     const snapshotPack: number | null = it.unitsPerBox ?? null;

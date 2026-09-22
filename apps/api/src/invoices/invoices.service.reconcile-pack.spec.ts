@@ -143,7 +143,13 @@ describe("SA-078(b) — reconcile rebuild carries the PRIOR InvoiceItem's unitsP
     ],
   };
 
-  const draftInvoice = { id: "d1", status: InvoiceStatus.DRAFT, deliveryBatchId: null, discount: 0, shippingFee: 0 };
+  const draftInvoice = {
+    id: "d1",
+    status: InvoiceStatus.DRAFT,
+    deliveryBatchId: null,
+    discount: 0,
+    shippingFee: 0,
+  };
 
   function armDeliveredReconcile() {
     // The order's live, non-VOID invoices -- ONE open draft whose CURRENT item (about to
@@ -198,18 +204,29 @@ describe("SA-078(b) — reconcile rebuild carries the PRIOR InvoiceItem's unitsP
     expect(ledgerLine.qty * (ledgerLine.packAtSale as number)).toBe(60);
   });
 
+  // reconcileOrderDeliveredInvoices only ever rebuilds lines that already have SOME
+  // provenance on an existing draft (it partitions by each draft's CURRENT items'
+  // orderItemId) -- a line with no prior InvoiceItem at all isn't reachable through it.
+  // reconcileOrderDraftInvoice's single-draft branch is the one that rebuilds every
+  // CURRENT order.lineItems regardless of prior provenance, so that's the real path for
+  // this case.
   it("a GENUINELY NEW order line (no prior InvoiceItem) still snapshots the live pack (24) -- the fix never starves a first-time line of evidence", async () => {
-    prisma.invoice.findMany.mockResolvedValue([{ ...draftInvoice, items: [] }]); // no prior items at all
+    // reconcileSplitOrderDrafts (tried first) bails to the single-draft path below it
+    // when there's only one open draft.
+    prisma.invoice.findMany.mockResolvedValue([{ ...draftInvoice, items: [] }]);
+    prisma.invoice.findFirst.mockResolvedValue({ id: "d1", discount: 0, shippingFee: 0 });
+    prisma.invoiceItem.findMany.mockResolvedValue([]); // no prior items for this draft at all
     prisma.order.findUnique.mockResolvedValue(order);
     prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: false });
+    prisma.invoice.aggregate.mockResolvedValue({ _sum: { shippingFee: 0 } });
     prisma.invoiceItem.deleteMany.mockResolvedValue({});
     prisma.invoice.update.mockImplementation((args: any) =>
       Promise.resolve({ id: "d1", items: args.data.items.create }),
     );
+    prisma.orderItem.findMany.mockResolvedValue([{ id: "li1" }]);
     prisma.orderItem.update.mockResolvedValue({});
-    prisma.product.findMany.mockResolvedValue([{ id: "p1", unitsPerBox: 24 }]);
 
-    await service.reconcileOrderDeliveredInvoices("o1");
+    await service.reconcileOrderDraftInvoice("o1", { basis: "delivered" });
     const createdItem = prisma.invoice.update.mock.calls[0][0].data.items.create[0];
     expect(createdItem.unitsPerBox).toBe(24);
   });

@@ -30,7 +30,7 @@ import {
   sumConfirmed,
 } from "./payment-predicates";
 import { PAYABLE, KPI_SUMMARY_EXCLUDED } from "./invoice-status-sets";
-import { packAtSaleByProduct, toSaleLedgerLines } from "./pack-at-sale";
+import { packAtSaleByProduct, priorUnitsPerBoxMap, toSaleLedgerLines } from "./pack-at-sale";
 import { clampLimit } from "../common/pagination";
 import { isInternalEmail } from "../common/internal-email";
 import { loadMsrpMap } from "../common/msrp";
@@ -854,18 +854,6 @@ export class InvoicesService {
     const orderQty = Number(li.qty) || 0;
     const storedSubtotal = li.subtotal != null ? Number(li.subtotal) : null;
     const unitPrice = Number(li.unitPrice);
-    // SA-078(b): a RECONCILE rebuild (this function deletes and recreates the
-    // InvoiceItem) must carry forward the PRIOR InvoiceItem's own `unitsPerBox` for
-    // this same orderItemId, when one exists, ahead of the order line's snapshot or
-    // the live product. B700 made this function prefer a SNAPSHOT over the live
-    // product, but on a box-unaware order line (orders.service.ts stores no
-    // unitsPerBox there — the qty axis carries the unit) `li.unitsPerBox` is null, so
-    // without this the rebuild fell through to `li.product?.unitsPerBox` — TODAY's
-    // live pack — and B700's own "prefer the snapshot" guarantee was a snapshot of
-    // nothing: a line originally sold at pack 12 silently re-books at pack 24 after a
-    // repack, on every reconcile. `opts.priorUnitsPerBox` is that carried-forward
-    // value; callers that have no prior item (a fresh createSplitInvoices/
-    // createPartialFromOrder) simply omit it, unchanged.
     const unitsPerBox = Number(
       opts?.priorUnitsPerBox ?? li.unitsPerBox ?? li.product?.unitsPerBox ?? 0,
     );
@@ -1449,18 +1437,11 @@ export class InvoicesService {
     }
     if (!draft) return null;
 
-    // SA-078(b): this rebuild deletes and recreates the draft's items below (via
-    // `update({ items: { create: ... } })`) -- carry each CURRENT item's own
-    // unitsPerBox forward by orderItemId so a repack between reconciles is invisible,
-    // the same evidence `rebuildSiblingDrafts` reads off its own `pairs`.
     const priorItems = await db.invoiceItem.findMany({
       where: { invoiceId: draft.id },
       select: { orderItemId: true, unitsPerBox: true },
     });
-    const priorUnitsPerBoxByOrderItemId = new Map<string, number | null>(
-      priorItems.filter((it: any) => it.orderItemId).map((it: any) => [it.orderItemId, it.unitsPerBox ?? null]),
-    );
-
+    const priorUnitsPerBoxByOrderItemId = priorUnitsPerBoxMap(priorItems);
     const order = await db.order.findUnique({
       where: { id: orderId },
       include: {
@@ -1645,8 +1626,6 @@ export class InvoicesService {
         deliveryBatchId: true,
         discount: true,
         shippingFee: true,
-        // unitsPerBox: SA-078(b) -- rebuildSiblingDrafts carries each item's own
-        // snapshot forward by orderItemId so a repack between reconciles is invisible.
         items: { select: { orderItemId: true, unitsPerBox: true } },
       },
     });
@@ -1871,14 +1850,7 @@ export class InvoicesService {
       basis === "delivered" ? Number(li.deliveredQty ?? 0) : Number(li.qty);
 
     const perDraft = pairs.map(({ draft, lines }) => {
-      // SA-078(b): the draft's CURRENT items (about to be deleted and recreated below)
-      // are this rebuild's own prior state -- carry each one's own unitsPerBox forward
-      // by orderItemId so a repack between reconciles never silently re-books the line.
-      const priorUnitsPerBoxByOrderItemId = new Map<string, number | null>(
-        (draft.items ?? [])
-          .filter((it: any) => it.orderItemId)
-          .map((it: any) => [it.orderItemId as string, it.unitsPerBox ?? null]),
-      );
+      const priorUnitsPerBoxByOrderItemId = priorUnitsPerBoxMap(draft.items ?? []);
       const billable = lines
         .map((li: any) => ({ li, billQty: billQtyOf(li) }))
         .filter((x: any) => x.billQty > 0.001);
@@ -2061,8 +2033,6 @@ export class InvoicesService {
           discount: true,
           shippingFee: true,
           dueDate: true,
-          // unitsPerBox: SA-078(b) -- rebuildSiblingDrafts carries each item's own
-          // snapshot forward by orderItemId so a repack between reconciles is invisible.
           items: { select: { orderItemId: true, unitsPerBox: true } },
           payments: { select: { amount: true, status: true } },
         },
@@ -2211,8 +2181,6 @@ export class InvoicesService {
         deliveryBatchId: true,
         discount: true,
         shippingFee: true,
-        // unitsPerBox: SA-078(b) -- rebuildSiblingDrafts carries each item's own
-        // snapshot forward by orderItemId so a repack between reconciles is invisible.
         items: { select: { orderItemId: true, trackedCategoryId: true, unitsPerBox: true } },
       },
     });
