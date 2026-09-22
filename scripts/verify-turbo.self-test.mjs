@@ -33,6 +33,9 @@ import {
   staleWorkspaces,
   withStale,
 } from "./lib/verify-scope.mjs";
+// Pure builders only — never `main`, which is side-effecting. Safe to import: verify-turbo.mjs's
+// direct-execution guard means importing it does NOT spawn turbo or call process.exit.
+import { buildArgv, buildTurboFlags, jestPassthrough } from "./verify-turbo.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const workspaces = loadWorkspaces(ROOT);
@@ -355,6 +358,70 @@ check(
     true,
   );
 }
+
+// ---- WC: the JEST_MAX_WORKERS / VERIFY_CONCURRENCY worker/concurrency caps (2026-09-22 incident:
+// an unbounded verify hit the Mac mini's memory kill line; `JEST_MAX_WORKERS` was told to lanes
+// as the fix tonight before anything actually read it). Imports the pure builders — never `main`,
+// which is side-effecting (spawns real processes, calls process.exit); the direct-execution guard
+// at the bottom of verify-turbo.mjs is what makes this import safe at all. ------------------------
+check(
+  "WC1 buildTurboFlags(unset) is BYTE-IDENTICAL to the original hardcoded default",
+  buildTurboFlags(""),
+  ["--concurrency=2", "--continue=dependencies-successful"],
+);
+check(
+  "WC2 buildTurboFlags narrows --concurrency when VERIFY_CONCURRENCY is set",
+  buildTurboFlags("1"),
+  ["--concurrency=1", "--continue=dependencies-successful"],
+);
+check(
+  "WC3-SP-CONTINUE --continue=dependencies-successful is present at every concurrency value " +
+    "(the property the full-tree-kill recovery note in verify-turbo.mjs's header depends on — " +
+    "see that comment for why a live kill-mid-run respawn test was rejected in favour of this " +
+    "static pin)",
+  ["", "1", "2", "8"].every((c) =>
+    buildTurboFlags(c).includes("--continue=dependencies-successful"),
+  ),
+  true,
+);
+check("WC4 jestPassthrough(unset) is [] — no passthrough at all", jestPassthrough(""), []);
+check("WC5 jestPassthrough(set) forwards --maxWorkers, `--` first", jestPassthrough("4"), [
+  "--",
+  "--maxWorkers=4",
+]);
+check(
+  "WC6 buildArgv with no passthrough (the default path) never emits a bare trailing '--'",
+  buildArgv(["test"], buildTurboFlags("")),
+  ["turbo", "run", "test", "--concurrency=2", "--continue=dependencies-successful"],
+);
+check(
+  "WC7 buildArgv with a passthrough puts '--' + the jest flag AFTER every turbo flag",
+  buildArgv(["test", "--filter=@routeflow/api"], buildTurboFlags("3"), jestPassthrough("4")),
+  [
+    "turbo",
+    "run",
+    "test",
+    "--filter=@routeflow/api",
+    "--concurrency=3",
+    "--continue=dependencies-successful",
+    "--",
+    "--maxWorkers=4",
+  ],
+);
+check(
+  "WC8 the default (both env vars unset) end-to-end argv is IDENTICAL to the pre-fix hardcoded " +
+    "invocation — this is the 'CI is bit-for-bit unchanged' claim, checked, not stated",
+  buildArgv(["check-types", "lint", "test"], buildTurboFlags(""), jestPassthrough("")),
+  [
+    "turbo",
+    "run",
+    "check-types",
+    "lint",
+    "test",
+    "--concurrency=2",
+    "--continue=dependencies-successful",
+  ],
+);
 
 // S10: portable containment — the POSIX-only startsWith(`${root}/`) threw on every Windows push.
 const W = path.win32;
