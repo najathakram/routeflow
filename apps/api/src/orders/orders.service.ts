@@ -3272,7 +3272,15 @@ export class OrdersService implements OnApplicationBootstrap {
         await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
         const heldItems = await tx.orderItem.findMany({
           where: { orderId },
-          select: { ...EXISTING_LINE_SELECT, deliveredQty: true },
+          // B709: plus every column the diff branch reads off an existing line (see requireHeld).
+          select: {
+            ...EXISTING_LINE_SELECT,
+            deliveredQty: true,
+            invoicedQty: true,
+            unitPrice: true,
+            promoFreeUnits: true,
+            overrideReason: true,
+          },
         });
         restrictionPlan?.assertHeld(heldItems);
 
@@ -3281,6 +3289,21 @@ export class OrdersService implements OnApplicationBootstrap {
         // heldItems (never the pre-tx `order.lineItems`) before any write. `unitRows.set` keys
         // by the same `item` object reference, so this simply overwrites each entry in place.
         const heldById = new Map<string, any>(heldItems.map((h: any) => [h.id, h]));
+        // B709 (B135 shape): the diff branch reads every existing line from the LOCKED rows, never
+        // the pre-tx `order.lineItems` snapshot another writer may have replaced while this tx
+        // waited on the lock. An id the lock never held fails closed — no silent skip, no snapshot write.
+        const requireHeld = (id: string): any => {
+          const held = heldById.get(id);
+          if (!held) {
+            throw new ConflictException({
+              code: "CONCURRENT_UPDATE",
+              reason: "LINE_VANISHED",
+              retryable: true,
+              message: "Another update changed this order line. Try again.",
+            });
+          }
+          return held;
+        };
         for (const item of dto.items ?? []) {
           const li = item.id ? heldById.get(item.id) : undefined;
           unitEdit.assertUnitLabelNamed(li, item);
@@ -4138,7 +4161,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 // Hard-remove a line added by mistake. Only safe when nothing
                 // downstream references it — a billed or delivered line is struck
                 // off instead so invoice/delivery history stays intact.
-                const li = order.lineItems.find((l) => l.id === item.id);
+                const li = requireHeld(item.id);
                 const hasDeliveries = await tx.deliveryMutation.count({
                   where: { orderItemId: item.id },
                 });
@@ -4180,7 +4203,7 @@ export class OrdersService implements OnApplicationBootstrap {
                   await unitEdit.updateUnitLine(uctx, item.id!, product, unitRow, item);
                   continue;
                 }
-                const existingQty = order.lineItems.find((li) => li.id === item.id)?.qty ?? 1;
+                const existingQty = requireHeld(item.id!).qty ?? 1;
                 // Substitution may also carry a box/piece split when the substitute
                 // is itself a boxed product. Honor it the same way as a fresh add —
                 // but only when the SUBSTITUTE is case-packed: the incoming split is
@@ -4307,8 +4330,8 @@ export class OrdersService implements OnApplicationBootstrap {
                 item.overrideReason !== undefined ||
                 item.notes !== undefined
               ) {
-                const li = order.lineItems.find((li) => li.id === item.id);
-                if (!li) continue;
+                if (!item.id) continue;
+                const li = requireHeld(item.id);
 
                 // N4 (independent review round 2, PR-2): a payload carrying ONLY
                 // overrideReason/notes (no qty/boxes/pieces/unitPrice at all) must never fall
