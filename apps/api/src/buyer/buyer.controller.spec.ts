@@ -54,7 +54,9 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
     unsnooze: jest.Mock;
   };
   let invoicesService: jest.Mocked<Pick<InvoicesService, "findAll">>;
-  let templatesService: jest.Mocked<Pick<OrderTemplatesService, "findAllForUser">>;
+  let templatesService: jest.Mocked<
+    Pick<OrderTemplatesService, "findAllForUser" | "generateOrder">
+  >;
   let authorizationsService: jest.Mocked<Pick<AuthorizationsService, "listForBuyer" | "submit">>;
   let stockAlertService: {
     subscribe: jest.Mock;
@@ -80,6 +82,7 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
     invoicesService = { findAll: jest.fn().mockResolvedValue({ data: [], meta: { total: 0 } }) };
     templatesService = {
       findAllForUser: jest.fn().mockResolvedValue({ data: [], meta: { total: 0 } }),
+      generateOrder: jest.fn().mockResolvedValue({ id: "o1" }),
     };
     authorizationsService = {
       listForBuyer: jest.fn().mockResolvedValue([]),
@@ -197,6 +200,40 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
     // templatesService.findAllForUser resolves to { data: [], meta: { total: 0 } }
     expect(result).toBeDefined();
     expect(templatesService.findAllForUser).toHaveBeenCalledTimes(1);
+  });
+
+  // #1208 review LOW-MED: this buyer-portal path bypasses generateOrderForUser entirely
+  // (there is no JwtPayload here), so it must pass isStaffRole itself — a hardcoded/
+  // defaulted true would let a buyer's "Reorder" silently oversell where their own
+  // checkout (orders.service.ts create()) returns 409 INSUFFICIENT_STOCK.
+  describe("reorderFromTemplate (POST /buyer/templates/:id/reorder)", () => {
+    it("generates with isStaffRole=false — the buyer's own hard-block posture, never staff oversell", async () => {
+      prisma.orderTemplate.findFirst.mockResolvedValue({ customerId: "cust-abc" });
+
+      const result = await controller.reorderFromTemplate("tpl-1", MOCK_CTX as any);
+
+      expect(templatesService.generateOrder).toHaveBeenCalledTimes(1);
+      expect(templatesService.generateOrder).toHaveBeenCalledWith("tpl-1", false);
+      expect(result).toEqual({ id: "o1" });
+    });
+
+    it("refuses a template belonging to another customer — never calls generateOrder", async () => {
+      prisma.orderTemplate.findFirst.mockResolvedValue({ customerId: "someone-elses-customer" });
+
+      await expect(controller.reorderFromTemplate("tpl-1", MOCK_CTX as any)).rejects.toThrow(
+        "This template does not belong to your account",
+      );
+      expect(templatesService.generateOrder).not.toHaveBeenCalled();
+    });
+
+    it("404s a nonexistent template — never calls generateOrder", async () => {
+      prisma.orderTemplate.findFirst.mockResolvedValue(null);
+
+      await expect(
+        controller.reorderFromTemplate("no-such-template", MOCK_CTX as any),
+      ).rejects.toThrow("Template not found");
+      expect(templatesService.generateOrder).not.toHaveBeenCalled();
+    });
   });
 
   // RF-217: GET /buyer/me returns 200 — it is a direct passthrough of ctx.customer

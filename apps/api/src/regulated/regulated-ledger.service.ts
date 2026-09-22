@@ -225,7 +225,24 @@ export class RegulatedLedgerService {
    * category, which may have drifted). Idempotent per `(returnId, orderId)` (PR-1a —
    * widened from `returnId` alone so an INLINE return spanning multiple source orders
    * reverses each independently; a STANDARD return has exactly one source order, so
-   * this is unchanged for it). Everything already
+   * this is unchanged for it).
+   *
+   * `returnedUnit` (live production regression, B661/B671 fix, round 2): `returnedByProduct`
+   * arrives in a DIFFERENT unit per caller, and the caller must say which — never inferred.
+   * `returns.service.ts`'s standard `receive()` sums raw `ReturnItem.qty`, which mirrors
+   * `OrderItem.qty` (the identity conversion `returns-pieces.util.ts`'s `standardReturnPieces`
+   * documents) — the LINE's OWN unit, boxes for a box-unaware line, never pieces despite that
+   * file's header comment. `inline-returns.service.ts`'s `capture()` builds `ReturnItem.qty`
+   * from `priced.chunks[].pieces` — genuinely PIECES. B671 made `unitBasisQty` (pieces) the
+   * cap/closing/pro-rata axis unconditionally, which is correct for the inline (PIECES) caller
+   * but silently compared boxes against pieces for the standard (LINE_UNIT) caller: a
+   * box-unaware sale of 5 boxes at pack 12 fully returned computed `closesRow = 5 >= 60` as
+   * false and `frac = 5/60`, reversing ~8% of the sale instead of all of it. `returnedUnit`
+   * selects which axis (`remQtyByLine`/`s.qty` for LINE_UNIT, `remUnitBasisByLine`/
+   * `s.unitBasisQty` for PIECES — both already seeded below) caps/closes/pro-rates off; the
+   * OTHER axis is then derived proportionally by the same fraction, never independently
+   * clamped-and-rounded the way the native axis is (that would re-admit drift the closing rule
+   * exists to prevent). Everything already
    * reversed on the ORDER LINE (earlier returns, invoice voids, credit notes AND
    * reconcile re-syncs) is subtracted so cumulative reversed qty/net can never exceed
    * the sold amount — and the cap is keyed on `orderItemId` (not the invoice item), so
@@ -245,9 +262,13 @@ export class RegulatedLedgerService {
     returnId: string;
     orderId: string;
     returnedByProduct: Map<string, number>;
+    /** Which unit `returnedByProduct`'s values are in — see the doc above. Required, never
+     *  defaulted: the two callers disagree, and guessing wrong silently under- or
+     *  over-reverses the filing. */
+    returnedUnit: "LINE_UNIT" | "PIECES";
     db: any;
   }): Promise<void> {
-    const { returnId, orderId, returnedByProduct, db } = params;
+    const { returnId, orderId, returnedByProduct, returnedUnit, db } = params;
     if (!returnedByProduct || returnedByProduct.size === 0) return;
 
     // Idempotency key is (returnId, orderId), not returnId alone (PR-1a/§5): an INLINE
@@ -360,28 +381,34 @@ export class RegulatedLedgerService {
     const bucket = periodBucketOf(now);
     const rows: any[] = [];
 
+    // Which per-line remaining map is the CALLER's own axis — the one `returnedByProduct`'s
+    // values are directly comparable against (cap, closesRow, and the pro-rata fraction all
+    // read off this one; the other axis is DERIVED from it, never independently clamped).
+    const nativeRemByLine = returnedUnit === "PIECES" ? remUnitBasisByLine : remQtyByLine;
+
     for (const [productId, returnedQtyRaw] of returnedByProduct.entries()) {
-      // B671: PIECES (returnedPiecesByProduct) — the same axis unitBasisQty is on, never the
-      // line's own `qty` (boxes for a box-unaware line).
       let remaining = Number(returnedQtyRaw);
       if (!(remaining > 0)) continue;
       for (const s of salesByProduct.get(productId) ?? []) {
         if (remaining <= 0) break;
+        const saleQty = Number(s.qty);
         const saleUnitBasis = Number(s.unitBasisQty);
-        if (saleUnitBasis <= 0) continue;
+        const saleNativeAxis = returnedUnit === "PIECES" ? saleUnitBasis : saleQty;
+        if (saleNativeAxis <= 0) continue;
         const lk = lineKeyOfSale(s);
-        // Cap this chunk at the ORDER LINE's remaining un-reversed PIECES (survives a
-        // reconcile that rotated the invoice item), not just this row's own unitBasisQty —
-        // and not the line's own qty (B671: comparing PIECES against a box-unaware line's box
-        // count silently closed the whole line on a fractional-box return).
-        const rowRemainingUnitBasis = remUnitBasisByLine.get(lk) ?? 0;
-        if (rowRemainingUnitBasis <= 0) continue;
-        // This chunk CLOSES the line when it consumes all of its remaining PIECES.
-        const closesRow = remaining >= rowRemainingUnitBasis;
-        const rPieces = Math.min(remaining, rowRemainingUnitBasis);
-        remaining -= rPieces;
-        const frac = rPieces / saleUnitBasis; // pro-rate off the LIVE row's own unitBasisQty
+        // Cap this chunk at the ORDER LINE's remaining un-reversed amount ON THE CALLER'S OWN
+        // AXIS (survives a reconcile that rotated the invoice item), not the other axis — B671:
+        // comparing pieces against a box-unaware line's box count (or vice versa) silently
+        // closed the whole line on a fractional return, or reversed only a sliver of a full one.
+        const rowRemainingNative = nativeRemByLine.get(lk) ?? 0;
+        if (rowRemainingNative <= 0) continue;
+        // This chunk CLOSES the line when it consumes all of its remaining native-axis amount.
+        const closesRow = remaining >= rowRemainingNative;
+        const rNative = Math.min(remaining, rowRemainingNative);
+        remaining -= rNative;
+        const frac = rNative / saleNativeAxis; // pro-rate off the LIVE row's own native axis
         const rowRemainingQty = remQtyByLine.get(lk) ?? 0; // the line's OWN unit (boxes, etc.)
+        const rowRemainingUnitBasis = remUnitBasisByLine.get(lk) ?? 0; // pieces
         const netRem = remNetByLine.get(lk) ?? 0; // remaining line net (>= 0)
         const taxRem = remTaxByLine.get(lk) ?? 0;
         // Money: the chunk that CLOSES the line books its EXACT remaining balance so a
@@ -395,11 +422,24 @@ export class RegulatedLedgerService {
         let bookedTax = closesRow ? roundMoney(-taxRem) : roundMoney(-Number(s.categoryTax) * frac);
         if (bookedNet < -netRem) bookedNet = roundMoney(-netRem);
         if (bookedTax < -taxRem) bookedTax = roundMoney(-taxRem);
-        // qty (the line's OWN unit) moves by the same frac, same clamp pattern as net/tax.
-        let bookedQty = closesRow ? rowRemainingQty : round3(Number(s.qty) * frac);
-        if (bookedQty > rowRemainingQty) bookedQty = rowRemainingQty;
+        // The NATIVE axis is exactly rNative (never re-derived through frac — that would
+        // re-admit the rounding drift the closing rule exists to prevent). The OTHER axis is
+        // derived by the same frac, clamped to ITS OWN remaining the same way net/tax are.
+        let bookedQty: number;
+        let bookedUnitBasis: number;
+        if (returnedUnit === "PIECES") {
+          bookedUnitBasis = closesRow ? rowRemainingUnitBasis : rNative;
+          if (bookedUnitBasis > rowRemainingUnitBasis) bookedUnitBasis = rowRemainingUnitBasis;
+          bookedQty = closesRow ? rowRemainingQty : round3(saleQty * frac);
+          if (bookedQty > rowRemainingQty) bookedQty = rowRemainingQty;
+        } else {
+          bookedQty = closesRow ? rowRemainingQty : rNative;
+          if (bookedQty > rowRemainingQty) bookedQty = rowRemainingQty;
+          bookedUnitBasis = closesRow ? rowRemainingUnitBasis : round3(saleUnitBasis * frac);
+          if (bookedUnitBasis > rowRemainingUnitBasis) bookedUnitBasis = rowRemainingUnitBasis;
+        }
         remQtyByLine.set(lk, rowRemainingQty - bookedQty);
-        remUnitBasisByLine.set(lk, rowRemainingUnitBasis - rPieces);
+        remUnitBasisByLine.set(lk, rowRemainingUnitBasis - bookedUnitBasis);
         remNetByLine.set(lk, netRem + bookedNet);
         remTaxByLine.set(lk, taxRem + bookedTax);
         rows.push({
@@ -414,7 +454,7 @@ export class RegulatedLedgerService {
           invoiceItemId: s.invoiceItemId,
           returnId,
           qty: -round3(bookedQty),
-          unitBasisQty: -round3(rPieces),
+          unitBasisQty: -round3(bookedUnitBasis),
           netSales: bookedNet,
           categoryTax: bookedTax,
           soldAt: now,

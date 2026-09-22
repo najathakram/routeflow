@@ -43,6 +43,11 @@ import {
 } from "../../../../lib/invoice-send-logic";
 import { showToast } from "../../../../lib/toast";
 import { BlockedLinesModal } from "../../../../components/BlockedLinesModal";
+import { CreditLimitGuardModal } from "../../../../components/CreditLimitGuardModal";
+import {
+  parseCreditLimitError,
+  type CreditLimitExceededInfo,
+} from "../../../../lib/credit-limit-error";
 import { parseSellingRestricted } from "../../../../lib/selling-restricted";
 import type { BlockedLine } from "@routeflow/types";
 import { alertInfo, confirm } from "../../../../lib/confirm";
@@ -109,6 +114,9 @@ export default function OrderDetailScreen() {
   const [shipmentModal, setShipmentModal] = useState(false);
   // Selling restrictions: the lines a status change (e.g. promoting a draft) was refused for.
   const [restrictedBlock, setRestrictedBlock] = useState<BlockedLine[] | null>(null);
+  // Credit limit: a status change (send out for delivery) the server refused with the customer's
+  // real limit/exposure; no server-side override exists, so the exit is "collect a payment".
+  const [creditBlock, setCreditBlock] = useState<CreditLimitExceededInfo | null>(null);
   const [sendSheet, setSendSheet] = useState<{
     invoiceId: string;
     invoiceNumber: string;
@@ -170,6 +178,12 @@ export default function OrderDetailScreen() {
   const isTerminal = order.status === "DELIVERED" || order.status === "CANCELLED";
 
   const toastError = (e: unknown, fallback = "Try again.") => {
+    // A credit-limit 409 gets the guard modal (real numbers + a way out), not a bare toast.
+    const credit = parseCreditLimitError(e);
+    if (credit) {
+      setCreditBlock(credit);
+      return;
+    }
     // A selling-restriction 409 gets its own modal, not the raw server message.
     const restricted = parseSellingRestricted(e);
     if (restricted) {
@@ -1054,6 +1068,18 @@ export default function OrderDetailScreen() {
       />
 
       <BlockedLinesModal lines={restrictedBlock} onClose={() => setRestrictedBlock(null)} />
+
+      <CreditLimitGuardModal
+        open={!!creditBlock}
+        info={creditBlock}
+        onCollectPayment={() => {
+          setCreditBlock(null);
+          // push, not replace: this screen stays on the stack; no auto-retry — the operator
+          // re-taps the action after recording the payment.
+          router.push(`/(operator)/invoices?customerId=${order.customerId ?? ""}` as any);
+        }}
+        onCancel={() => setCreditBlock(null)}
+      />
     </SafeAreaView>
   );
 }
