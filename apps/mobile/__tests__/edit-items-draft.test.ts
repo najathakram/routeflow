@@ -582,9 +582,34 @@ describe("edit-items-draft: hydrateFromOrder reads a line's OWN pack snapshot (B
     const edited = { ...draft, p1: { ...draft.p1, boxes: 4 } };
     const originals = orderOriginals(order);
 
+    // productId rides along with unitLabel (mobile unit picker, order-item-diff.ts) so the
+    // server's prepareUnitEditContext preloads the product/ladder for this item.
     expect(stagedDiffItems({ draft: edited, unlisted: [], pendingDeletes: [] }, originals)).toEqual(
-      [{ id: "L1", action: "UPDATE", qty: 4, unitLabel: "Case" }],
+      [{ id: "L1", action: "UPDATE", qty: 4, unitLabel: "Case", productId: "p1" }],
     );
+  });
+
+  it("units_v1: a brand-new unit-sold draft line (picker, no lineId) maps basePrice off the unit's OWN price, never the pack's catalogPrice", () => {
+    // Same defect shape as B465 on #1252: without unitPriceBase, stagedDiffItems fed
+    // buildOrderItemDiff a basePrice of 24 (the Box's catalogPrice) against a Case unitPrice of
+    // 220 — an untouched picker selection would misclassify as a $196 manual override and send
+    // an unwanted unitPrice/overrideReason on a line nobody typed a price into.
+    const draft: Record<string, DraftItem> = {
+      p9: {
+        productId: "p9",
+        qty: 3, // the unit COUNT
+        unitsPerBox: null,
+        unitPrice: 220, // set by setUnitLabel to the picked option's own resolved price
+        unitBasePrice: 220, // set alongside it — untouched, so basePrice must equal unitPrice
+        catalogPrice: 24, // the PACK's price — must NOT be used as the comparison base
+        unitLabel: "Case",
+        name: "Case widget",
+        // no lineId: this line was added THIS session via the picker
+      },
+    };
+    expect(stagedDiffItems({ draft, unlisted: [], pendingDeletes: [] }, [])).toEqual([
+      { productId: "p9", qty: 3, unitLabel: "Case" },
+    ]);
   });
 
   it("B707c: a repacked legacy split line (boxes 2, pieces 3, snapshot 12) prices off ITS OWN 12, not the live product's now-24 pack — untouched, no UPDATE", () => {
