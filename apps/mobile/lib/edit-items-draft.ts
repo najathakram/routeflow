@@ -27,8 +27,14 @@ import {
   type OriginalLine,
 } from "./order-item-diff";
 import { editedLineFreeUnits } from "./invoice-totals";
+import { lineUnitsPerBox } from "./at-door-line-units";
 import { trayRowsFrom, type TrayRow } from "./scan-tray";
 import type { UpdateOrderItemInput } from "./api/orders";
+
+/** Shared with the route file's own "Add unlisted item" flow. */
+export function newLocalId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 
 /**
  * One row of the in-progress edit. `qty` is total pieces (server's source of
@@ -54,6 +60,13 @@ export type DraftItem = {
   lineId?: string;
   /** The line was stored with a box split — send boxes/pieces on save only then. */
   boxSplit?: boolean;
+  /**
+   * units_v1: the unit this line is sold by ("Case"…), carried unchanged from
+   * the stored line — this screen never sets or clears one. Required on the
+   * UPDATE wire payload whenever set, or the server refuses the edit
+   * (UNIT_AWARE_LINE) since a bare qty would be misread as pieces (B707).
+   */
+  unitLabel?: string | null;
   /** Set when this row substitutes a different product onto its original line. */
   substituteProductId?: string;
   /**
@@ -102,6 +115,80 @@ function toNumber(v: number | string | null | undefined): number {
     return Number.isFinite(n) ? n : 0;
   }
   return 0;
+}
+
+/**
+ * Server lines -> the editor's staged shape. Lives here, not the route file,
+ * so red-first tests can reach it directly — jest cannot import a route file
+ * (expo-router hooks fire on import), same reason B657/#1171 pulled
+ * `lineUnitsPerBox` out of `adjust.tsx` into `at-door-line-units.ts`.
+ *
+ * B707: `unitsPerBox` comes from the line's OWN stored snapshot first via
+ * `lineUnitsPerBox` — the live product is only a fallback for a legacy line
+ * with none, never the other way. Reading the live product ALONE (the
+ * pre-fix bug) desyncs an already-agreed line the moment its product is
+ * repacked: a unit line's fabricated qty change gets refused server-side
+ * (UNIT_AWARE_LINE, since the request then carries no `unitLabel`), and a
+ * legacy box-split line is silently re-denominated at the new pack size.
+ * `unitLabel` is carried through unchanged too — this screen never sets or
+ * clears a line's unit, only resends the one it was loaded with (see
+ * `stagedDiffItems` below, which puts it on the wire for a unit line's save).
+ */
+export function hydrateFromOrder(order: { lineItems?: readonly any[] | null } | null | undefined): {
+  draft: Record<string, DraftItem>;
+  unlisted: UnlistedDraft[];
+} {
+  const next: Record<string, DraftItem> = {};
+  const nextUnlisted: UnlistedDraft[] = [];
+  for (const li of order?.lineItems ?? []) {
+    // Unlisted line (no productId): carry it through the replace-all save so
+    // it isn't lost. `name` holds the free-text label.
+    // Skip already-cancelled lines (they aren't editable and shouldn't diff).
+    if ((li as any).status === "CANCELLED") continue;
+    if (!li.productId) {
+      nextUnlisted.push({
+        id: li.id ?? newLocalId(),
+        lineId: li.id ?? undefined,
+        name: li.name ?? "Unlisted item",
+        unitPrice: toNumber(li.unitPrice),
+        qty: toNumber(li.qty),
+        notes: (li as any).notes ?? undefined,
+      });
+      continue;
+    }
+    const product = (li as any).product ?? {};
+    const catalogPrice = toNumber(product.pricePerUnit ?? li.unitPrice);
+    const unitsPerBox = lineUnitsPerBox({ unitsPerBox: li.unitsPerBox, product });
+    next[li.productId] = {
+      productId: li.productId,
+      qty: toNumber(li.qty),
+      boxes: li.boxes ?? undefined,
+      pieces: li.pieces ?? undefined,
+      unitsPerBox,
+      unitLabel: li.unitLabel ?? undefined,
+      unitPrice: toNumber(li.unitPrice),
+      catalogPrice,
+      name: product.name ?? "Item",
+      unit: product.unit,
+      overrideReason: li.overrideReason ?? undefined,
+      notes: (li as any).notes ?? undefined,
+      lineId: li.id ?? undefined,
+      // Preserve the stored denomination so a qty-only edit doesn't invent a split.
+      boxSplit: li.boxes != null || li.pieces != null,
+      // NEW (P10-POS-1): read via the existing `any`-cast `product` ref above —
+      // the server already returns these on the order's embedded product, only
+      // AdminOrder's TS type doesn't declare them yet (out of scope here).
+      averageCost: product.averageCost ?? null,
+      category: product.category ?? null,
+      // BUY_N_GET_M: the snapshot plus the selling-unit count it was earned
+      // at, so a qty edit rescales it exactly like the server does on save.
+      promoFreeUnits: li.promoFreeUnits ?? null,
+      promoBaseUnits: li.promoFreeUnits
+        ? Math.trunc(Number(li.boxes != null ? li.boxes : li.qty) || 0)
+        : null,
+    };
+  }
+  return { draft: next, unlisted: nextUnlisted };
 }
 
 /**
@@ -198,6 +285,7 @@ export function stagedDiffItems(
     overrideReason: i.overrideReason,
     substituteProductId: i.substituteProductId,
     notes: i.notes,
+    unitLabel: i.unitLabel ?? null,
   }));
   const unlistedLines: DiffUnlistedLine[] = staged.unlisted.map((u) => ({
     lineId: u.lineId,

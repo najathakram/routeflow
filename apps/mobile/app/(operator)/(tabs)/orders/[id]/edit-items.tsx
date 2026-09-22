@@ -52,8 +52,10 @@ import {
   deserializeEditItemsSnapshot,
   editItemsSnapshotKey,
   hasUnsavedWork,
+  hydrateFromOrder,
   isSnapshotStale,
   makeEditItemsSnapshot,
+  newLocalId,
   orderOriginals,
   pickerTrayExpandedHeight,
   serializeEditItemsSnapshot,
@@ -108,10 +110,6 @@ import {
 import { useAuthStore } from "../../../../../lib/auth-store";
 import { fmtCalendarDate } from "../../../../../lib/format-date";
 
-function newLocalId(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
 function toNumber(v: number | string | null | undefined): number {
   if (typeof v === "number") return v;
   if (typeof v === "string") {
@@ -119,68 +117,6 @@ function toNumber(v: number | string | null | undefined): number {
     return Number.isFinite(n) ? n : 0;
   }
   return 0;
-}
-
-/**
- * Server lines -> the editor's staged shape. Extracted from the hydration
- * effect so the restore banner's "Discard changes" can rebuild EXACTLY the
- * state a fresh load would produce, instead of a second, drifting mapping.
- */
-function hydrateFromOrder(order: { lineItems?: readonly any[] } | null | undefined): {
-  draft: Record<string, DraftItem>;
-  unlisted: UnlistedDraft[];
-} {
-  const next: Record<string, DraftItem> = {};
-  const nextUnlisted: UnlistedDraft[] = [];
-  for (const li of order?.lineItems ?? []) {
-    // Unlisted line (no productId): carry it through the replace-all save so
-    // it isn't lost. `name` holds the free-text label.
-    // Skip already-cancelled lines (they aren't editable and shouldn't diff).
-    if ((li as any).status === "CANCELLED") continue;
-    if (!li.productId) {
-      nextUnlisted.push({
-        id: li.id ?? newLocalId(),
-        lineId: li.id ?? undefined,
-        name: li.name ?? "Unlisted item",
-        unitPrice: toNumber(li.unitPrice),
-        qty: toNumber(li.qty),
-        notes: (li as any).notes ?? undefined,
-      });
-      continue;
-    }
-    const product = (li as any).product ?? {};
-    const catalogPrice = toNumber(product.pricePerUnit ?? li.unitPrice);
-    const upbRaw = product.unitsPerBox;
-    const unitsPerBox = upbRaw == null ? null : Number(upbRaw);
-    next[li.productId] = {
-      productId: li.productId,
-      qty: toNumber(li.qty),
-      boxes: li.boxes ?? undefined,
-      pieces: li.pieces ?? undefined,
-      unitsPerBox,
-      unitPrice: toNumber(li.unitPrice),
-      catalogPrice,
-      name: product.name ?? "Item",
-      unit: product.unit,
-      overrideReason: li.overrideReason ?? undefined,
-      notes: (li as any).notes ?? undefined,
-      lineId: li.id ?? undefined,
-      // Preserve the stored denomination so a qty-only edit doesn't invent a split.
-      boxSplit: li.boxes != null || li.pieces != null,
-      // NEW (P10-POS-1): read via the existing `any`-cast `product` ref above —
-      // the server already returns these on the order's embedded product, only
-      // AdminOrder's TS type doesn't declare them yet (out of scope here).
-      averageCost: product.averageCost ?? null,
-      category: product.category ?? null,
-      // BUY_N_GET_M: the snapshot plus the selling-unit count it was earned
-      // at, so a qty edit rescales it exactly like the server does on save.
-      promoFreeUnits: li.promoFreeUnits ?? null,
-      promoBaseUnits: li.promoFreeUnits
-        ? Math.trunc(Number(li.boxes != null ? li.boxes : li.qty) || 0)
-        : null,
-    };
-  }
-  return { draft: next, unlisted: nextUnlisted };
 }
 
 /**
