@@ -134,6 +134,16 @@ describe("OrderLineUnitPicker", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
+  it("resets a held unit to the pack even when the product's ladder is now EMPTY (review defect 3)", () => {
+    mockUnits = [];
+    const onChange = jest.fn();
+    render(<OrderLineUnitPicker line={caseLine} tier={1} onChange={onChange} />);
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ value: "", kind: "pack", label: "Box", factorToBase: 24 }),
+      false,
+    );
+  });
+
   it("resets a held unit the product no longer has back to the pack instead of masking it", () => {
     const onChange = jest.fn();
     render(
