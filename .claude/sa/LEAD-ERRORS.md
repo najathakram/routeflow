@@ -1,0 +1,48 @@
+# Lead error log — RouteFlow SA
+
+> One line per error: id · class · claimed → true. Classes: A stale/second-hand · B untraced path ·
+> C unforced work · D correctness traded for flow. Purpose is prediction, not blame.
+
+## Tally
+
+A 7 · B 5 · C 1 · D 3 (lead) · SA own: A 5 · B 3 | needless asks ("you did not need to ask me"): 0 | measurements outsourced: 1 | evidence-free questions refused: 0
+
+## Seeded from the lead's own account (role doc §0, 2026-09-20)
+
+- E-001 · A · said a DB column was "not on master" → it was; read from a 227-commit-stale working tree.
+- E-002 · A · relayed ratchet "5953 of 5954, zero margin" → a merge had made it 5854 of 5905; two lanes planned on the wrong number.
+- E-003 · A · told the coordinator #951/#1118 were landable on the lane's own measurement → ratchet-red by 7 lines at the merge point.
+- E-004 · A · reported "at risk" against 09-21 from a previous lead's tracker → the owner's plan says Day 7 ≈ 09-25; baseline never checked at session start.
+- E-005 · B · advised a prover to self-register a buyer → no approved seller link, so it never reaches the path under proof.
+- E-006 · B · planned a DB seeding task for a PC session → the database lives on the Mac.
+- E-007 · B · declared work "blocked on #982" without diffing → the hunks did not overlap; a workstream sat parked.
+- E-008 · C · approved a ~700-line prefactor of a 2282-line page → the file carries no size ratchet; nothing forced it.
+- E-009 · D · about to accept a buyer-facing PR because "the flag is off" → the API leaked internal rule ids to buyers; the owner stopped it.
+- E-010 · D · a day where the owner's two priority features took 5 of 97 merges while adjacent work took half → unnoticed.
+
+## Logged by the SA
+
+- E-011 · 2026-09-20 · A · role doc says "eleven real errors" → it lists ten (A4 B3 C1 D2). A count stated, not re-derived.
+
+- E-012 · 2026-09-20 · B · (lead's own account, final role doc) handed the owner a mint command pointing at one worktree while the prover read from another → three .auth/ directories exist on that Mac; the consumer's path was never checked.
+- E-013 · 2026-09-20 · B · "I commit the SA registers in the bookkeeping PR" → the SA and its files are on the Mac, the lead is on the PC; it cannot commit a file that is not on its machine. Trigger 10 of its own doc.
+- E-014 · 2026-09-20 · D · listed selling_restrictions.enabled among "flags that stay off" until the owner flips them → PATCH settings/restrictions is guarded by role TENANT_ADMIN only; any tenant admin can turn it on while enforcement covers 3 of 16 paths.
+- E-016 · 2026-09-22 · A · R-ui reported fix/b608-strip-legacy-note-parsing @155a2d22 NOT landed from `git merge-base --is-ancestor` → #984 squash-merged as c0a478b4 (2026-09-21T14:40Z); Mac Lead proved it by content. Standing read: on this repo nothing merges with its original sha, so `--is-ancestor` can never prove a fix is missing — prove landing by content or by the PR's mergeCommit (L-197).
+- note · Hour 0 Q4: the textual-overlap half was a measurement (one merge-tree command) sent as a question. The semantic half was a fair ask. The lead marked it "not diffed by me", which is the right habit.
+
+## The SA's own errors (same standard)
+
+- SA-E1 · 2026-09-20 · A · told the lead AND the owner that a permission-mode mismatch was holding messages, inferred from the from-mode "prompting" tag → both sessions are in auto; the tag is session state; nothing was held. An inference stated as a diagnosis.
+- SA-E2 · 2026-09-20 · A · cited the restrictions settings controller by bare filename → the lead resolved it to the wrong directory and had to look it up. Full repo-relative paths in every citation. The conclusion held; the lead verified it independently, which is the check working.
+
+- SA-E3 · 2026-09-20 · A/B · ruled "cut everything mobile: no user impact without an app build" → apps/mobile has a Dockerfile and railway.toml; it is an Expo web export on nginx, deployed on merge. The owner corrected it. One `git ls-tree` would have shown it.
+- SA-E4 · 2026-09-20 · A · estimated "Wed 09-23" from the plan's builder-day figures → the SA had itself measured 107 merges on 09-20; about 35 PRs in 14 hours is inside the demonstrated rate. Used a stale estimate over a fresh measurement.
+- SA-E5 · 2026-09-20 · A · ruled Day 7 = 09-25 from the artifact → the owner's working plan was 2.5 days ending 10 am Eastern 09-21. The "09-21 from a previous lead's tracker" that E-004 calls an error was the true deadline; E-004's correction was the error.
+- SA-E6 · 2026-09-21 · B · planned "funding extractions" to buy 50+ lines of room (SA-005, SA-014 B) → under the house rule a shrink lowers the baseline in the same PR, so an extraction leaves exactly 25 lines, cumulative. The path was not traced through the ratchet's own rule until the extraction was about to land.
+- SA-E7 · 2026-09-21 · B · ruled that the stored subtotal classifies a boxes-null line (SA-027) → a broken line's subtotal was computed by the same fallback, so both shapes store qty*unitPrice; the lead and R-ui caught it. The path was not traced through how the bad rows were produced.
+- SA-E8 · 2026-09-21 · B · the classifier ruling (SA-031) was not traced through non-boxed lines or partial copies → as ruled it floods unknown for ordinary lines and misreads a partial of 5 pieces against 5 boxes as 60. Caught by the SA on reading the implementation, before any consumer landed.
+- E-015 · 2026-09-20 · A · relayed the owner's deadline as "10:00 GMT" → the owner says 10 am Eastern (14:00Z). Four hours of plan, off.
+
+## Prediction (update weekly)
+
+- 2026-09-20 · A dominates (5 of 11) → the fix is mechanical: re-derive at the moment of decision and name the sha. Next likely instance: a "ready to land", "N behind" or ratchet figure relayed from a lane across a merge window. D is the expensive class: watch every "the flag is off" and every merge list that is mostly one lane.
